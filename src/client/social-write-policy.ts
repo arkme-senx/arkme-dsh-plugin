@@ -8,7 +8,7 @@ export function socialWriteAction(operation: string, params?: Record<string, unk
     case 'contacts.team-join': return '加入团队'
     case 'contacts.add': return '添加联系人'
     case 'group.create': case 'group.private.create': return '创建群聊'
-    case 'social.groups.join': return '加入群聊'
+    case 'social.groups.join': case 'identity.share.join': return '加入群聊'
     case 'social.people.listing.set': return params?.isListed === true ? '展示自己' : undefined
     case 'social.groups.settings.set': return params?.isPublic === true ? '公开群聊' : undefined
     case 'social.groups.showcase.set': return params?.isShown === true ? '展示群聊' : undefined

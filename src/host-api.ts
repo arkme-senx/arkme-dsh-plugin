@@ -1573,6 +1573,23 @@ export async function dispatchArkmeHostOperation(
       { ...(params.isPublic === undefined ? {} : { isPublic: requiredBooleanParam(params, 'isPublic') }), ...(params.introduction === undefined ? {} : { introduction: stringParam(params, 'introduction') }), ...(params.accountScope === undefined ? {} : { accountScope: stringParam(params, 'accountScope') }), ...(requestSignal ? { signal: requestSignal } : {}) },
     )
     case 'group.private.context': return await service.privateGroupContext({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope') }, requestSignal)
+    case 'identity.person.read':
+    case 'identity.share.link': {
+      const scope = stringParam(params, 'accountScope'), kind = stringParam(params, 'kind')
+      const read = operation === 'identity.person.read' ? service.identityPersonProfile.bind(service) : service.identityShareLink.bind(service)
+      if (kind === 'self') return await read(scope, { kind }, requestSignal)
+      if (kind === 'person') return await read(scope, { kind, userId: numberParam(params, 'userId', 0) }, requestSignal)
+      if (kind === 'contact') return await read(scope, { kind, contactRef: stringParam(params, 'contactRef') }, requestSignal)
+      if (kind === 'member') return await read(scope, { kind, sourceRef: stringParam(params, 'sourceRef'), memberRef: stringParam(params, 'memberRef') }, requestSignal)
+      if (kind === 'author') return await read(scope, { kind, authorRef: stringParam(params, 'authorRef') }, requestSignal)
+      if (kind === 'source') return await read(scope, { kind, sourceRef: stringParam(params, 'sourceRef') }, requestSignal)
+      if (kind === 'member-event') return await read(scope, { kind, sourceRef: stringParam(params, 'sourceRef'), eventId: stringParam(params, 'eventId') }, requestSignal)
+      if (kind === 'team-person') return await read(scope, { kind, conversationRef: stringParam(params, 'conversationRef'), ...(typeof params.personRef === 'string' ? { personRef: params.personRef } : {}) }, requestSignal)
+      throw new ArkmePluginError('identity-share-target-invalid', '名片目标无效', false, 400)
+    }
+    case 'identity.share.read': return await service.identityShareRead(stringParam(params, 'accountScope'), stringParam(params, 'url'), requestSignal)
+    case 'identity.share.open': return await service.identityShareOpen(stringParam(params, 'accountScope'), stringParam(params, 'url'), params.expectedUserId === undefined ? undefined : numberParam(params, 'expectedUserId', 0), requestSignal)
+    case 'identity.share.join': return await service.identityShareJoin(stringParam(params, 'accountScope'), stringParam(params, 'url'), requestSignal)
     case 'group.private.people': return await service.privateGroupPeople({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}) }, requestSignal)
     case 'group.private.matches': return await service.privateGroupMatches({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs') }, requestSignal)
     case 'group.private.create': return await service.createGroupFromPrivate({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs'), title: stringParam(params, 'title'), clientMutationId: stringParam(params, 'clientMutationId'), isPublic: requiredBooleanParam(params, 'isPublic'), allowDuplicate: requiredBooleanParam(params, 'allowDuplicate'), allowUnchecked: requiredBooleanParam(params, 'allowUnchecked') }, requestSignal)

@@ -1,3 +1,4 @@
+import { identityShareUi } from './identity-share-ui.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
@@ -123,6 +124,7 @@ import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetail
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
 import { PrivateGroupCreateDialog } from './PrivateGroupCreateDialog.js'
+import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
 import { arkmeTopicPathNames } from './source-tree.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeCallDetailDrawer } from './ArkmeCallDetailDrawer.js'
@@ -3038,6 +3040,7 @@ export function ArkmeSurface({
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
   const [sharePrivateChatOpen,setSharePrivateChatOpen]=useState(false)
   const [privateGroupCreateOpen, setPrivateGroupCreateOpen] = useState(false)
+  const identityShareRequest = useSyncExternalStore(identityShareUi.subscribe, identityShareUi.getSnapshot, () => undefined)
   useEffect(() => { setPrivateGroupCreateOpen(false) }, [authenticatedAccountKey, conversationKey])
   const [selfMenuOpen, setSelfMenuOpen] = useState(false)
   const [conversationLocationOpen, setConversationLocationOpen] = useState(false)
@@ -7836,6 +7839,7 @@ export function ArkmeSurface({
     || selectedMoment !== undefined
     || relatedMenuOpen
     || privateGroupCreateOpen
+    || identityShareRequest?.accountScope === authenticatedAccountKey && identityShareRequest !== undefined
     || selfMenuOpen
     || conversationLocationOpen
     || relatedPanelOpen
@@ -8689,7 +8693,7 @@ export function ArkmeSurface({
           }}>
             {sharePrivateChatOpen && source && <SharePrivateChat key={source.sourceRef} sourceRef={source.sourceRef} name={source.displayName} onClose={()=>setSharePrivateChatOpen(false)}/>}
             {source?.kind === 'private_chat' && source.peerUserId !== undefined && source.peerUserId > 0 && <ArkmeConversationHeaderIconButton label={tr('发起群聊')} hasPopup="dialog" expanded={privateGroupCreateOpen} onClick={() => { setRelatedMenuOpen(false); setPrivateGroupCreateOpen(true) }}><UserPlus size={22} aria-hidden /></ArkmeConversationHeaderIconButton>}
-            <ConversationActionsMenu items={[{ id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+            <ConversationActionsMenu items={[...(source?.kind === 'private_chat' && authenticatedAccountKey ? [{ id: 'copy-person-link', label: tr('复制对方链接'), icon: <span aria-hidden>↗</span>, invoke: () => { void copyIdentityShareLink(authenticatedAccountKey, { kind: 'source', sourceRef: source.sourceRef }).then(() => showMessageActionStatus(tr('链接已复制'))).catch(error => showMessageActionStatus(errorMessage(error))) } }] : []), { id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
@@ -9488,6 +9492,7 @@ export function ArkmeSurface({
           }}
         />}
         {activeConversation && memberProfile !== undefined && <ArkmeMemberProfileCard
+          copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : source ? { kind: 'member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef } : undefined}
           member={memberProfile}
           showTopicNickname={source?.kind === 'group_chat'}
           busy={privateChatBusy}

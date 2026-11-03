@@ -935,11 +935,12 @@ export class TeamAppService {
         return { conversation: current, messages: await Promise.all(rows.map(v => this.message(v, actor, context))),
           hasMore: data.has_more === true, beforeSeq: num(data.before_seq) } satisfies TeamTimeline
       }
+      case 'team.app.person.world-target':
       case 'team.app.person.private.open':
       case 'team.app.people.remarks': {
         const context = await conversation()
         if (context.side !== 'team') throw invalid()
-        const refs = operation === 'team.app.person.private.open' ? [p.personRef] : p.personRefs
+        const refs = operation === 'team.app.people.remarks' ? p.personRefs : [p.personRef]
         if (!Array.isArray(refs) || !refs.length || refs.length > 50) throw invalid()
         const people = await Promise.all(refs.map(async ref => {
           const person = await this.open('person', ref, actor), id = recordOwnerId(person.user_id)
@@ -949,6 +950,7 @@ export class TeamAppService {
         }))
         const data = await post('conversations/timeline/page', { ...context, before_seq: 0, limit: 1 }, true)
         if (obj(data.conversation).conversation_uid !== context.conversation_uid || obj(data.conversation).side !== 'team') throw invalid()
+        if (operation === 'team.app.person.world-target') return { userId: people[0]! }
         if (operation === 'team.app.person.private.open') {
           if (!this.privateChat || String(people[0]) === String(actor)) throw invalid()
           return await this.privateChat.openPrivateChatFromUser(people[0]!, { expectedViewerUserId: actor, ...(signal ? { signal } : {}) })
@@ -957,6 +959,7 @@ export class TeamAppService {
         const remarks = await this.contacts.privateRemarksByUserIds(people, signal ? { signal } : {})
         return { items: await Promise.all([...new Set(people)].map(async id => ({ personKey: await this.key(`person:${id}`, actor), remark: remarks.get(id) ?? '' }))) }
       }
+      case 'team.app.visitor.world-target':
       case 'team.app.visitor.private.open': {
         const context = await conversation()
         if (context.side !== 'team') throw invalid()
@@ -965,10 +968,11 @@ export class TeamAppService {
         const current = obj(data.conversation)
         const peer = recordOwnerId(current.external_user_id)
         if (current.conversation_uid !== context.conversation_uid || current.side !== 'team') throw invalid()
-        if (!peer || String(peer) === String(actor) || !this.privateChat || obj(current.visitor).kind !== 'person' || obj(current.visitor).account_state !== 'active') {
+        if (!peer || (operation === 'team.app.visitor.private.open' && (String(peer) === String(actor) || !this.privateChat)) || obj(current.visitor).kind !== 'person' || obj(current.visitor).account_state !== 'active') {
           throw new ArkmePluginError('team-visitor-identity-unavailable', '暂时无法确认外部用户的私聊账号，请稍后重试', true, 409)
         }
-        return await this.privateChat.openPrivateChatFromUser(peer, {
+        if (operation === 'team.app.visitor.world-target') return { userId: peer }
+        return await this.privateChat!.openPrivateChatFromUser(peer, {
           presentationDisplayName: str(obj(current.visitor).nickname), expectedViewerUserId: actor,
           ...(signal ? { signal } : {}),
         })
