@@ -1,5 +1,10 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '云端 {size}': 'Cloud {size}',
+  '读取录音存储失败，请重试': 'Could not read audio storage. Please retry.',
+  '重试读取存储': 'Retry storage read',
+  '服务端已保存的音频大小，包含正式播放音频及增强补充音频；不包含原件、处理临时文件和算法对比产物。': 'Audio saved on the server, including playback and supplemental enhancement audio. Excludes originals, temporary processing files, and algorithm comparison results.',
+
   "选择{v0}分析模型：{v1}": "Choose {v0} analysis model: {v1}",
   "选择{v0}分析模型": "Choose {v0} analysis model",
   "当前分析模型": "Current analysis model",

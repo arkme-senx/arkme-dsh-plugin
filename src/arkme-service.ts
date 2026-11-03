@@ -1345,6 +1345,7 @@ arkoImagesV1:true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
         recordingStrategiesV1: true,
+        recordingFileStorageV1: true,
         recordingStrategyRecordingsV1: true,
         recordingProcessingPreferenceV1: true,
         offlineContextV1:true,
@@ -1583,6 +1584,7 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
+  recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
   /** @internal Built-in loopback UI; detection and exactly-once note writes are Audio-owner capabilities. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
     return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingSpeakerCorrectionItems(query, signal)).request(action, input, signal)

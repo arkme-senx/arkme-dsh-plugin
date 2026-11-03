@@ -1,5 +1,6 @@
 import { parseRecordingEvidence, validateRecordingEvidenceQuery, type RecordingEvidenceQuery, type RecordingEvidenceResult } from '../recording-evidence-contract.js'
 import { RecordingStrategyService } from './recording-strategy-service.js'
+import { RecordingFileStorageService } from './recording-file-storage-service.js'
 import { recordingStrategy, type RecordingStrategy } from '../recording-strategy-contract.js'
 import { recordingUploadedByViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
@@ -354,6 +355,11 @@ export class RecordingService {
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-forward-account-changed', '账号已切换，请重新选择录音', false, 409)
     selected.sort((left, right) => left.startAtMillis - right.startAtMillis || left.childId.localeCompare(right.childId) || left.asrItemIndex - right.asrItemIndex)
     return { session, selection: { sessionId: first.sessionId, segments: selected.map(item => ({ childId: item.childId, asrItemIndex: item.asrItemIndex, transcriptSource: item.transcriptSource })) } }
+  }
+
+  async recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<import('../recording-file-storage.js').RecordingFileStoragePage> {
+    this.assertWorkbenchEnabled()
+    return new RecordingFileStorageService(this.runtime, ref => this.openRecordingImportSessionRef(ref)).query(input, signal)
   }
 
   async recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {

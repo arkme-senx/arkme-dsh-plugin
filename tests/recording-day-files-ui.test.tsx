@@ -25,10 +25,59 @@ beforeEach(() => {
   mock.call.mockReset().mockImplementation(async (operation: string, input: any) => {
     if (operation === 'recordings.import.list') return { items: current.slice(input.offset, input.offset + input.limit), owner: { state: 'available', hasMore: current.length > input.offset + input.limit, nextOffset: input.offset + input.limit } }
     if (operation === 'recordings.import.history') return { items: completed.slice(input.offset, input.offset + input.limit), hasMore: completed.length > input.offset + input.limit, offset: input.offset }
+    if (operation === 'recordings.files.storage') return { items: input.sessionRefs.map((sessionRef: string) => ({ sessionRef, bytes: 2097152, checkedAtMillis: 1234 })) }
     return {}
   })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
+
+it('shows measured storage beside original size and queries only files on the selected day in bounded batches', async () => {
+  completed = Array.from({ length: 23 }, (_, i) => file({ taskKey: `f${i}`, sessionRef: `s${i}`, fileName: `文件${i}.wav` }))
+  completed.push(file({ taskKey: 'offday', sessionRef: 'offday', startAtMillis: day - 100000, endAtMillis: day - 1000 }))
+  await render()
+  const calls = mock.call.mock.calls.filter(([op]) => op === 'recordings.files.storage')
+  expect(calls.map(([, input]) => input.sessionRefs.length)).toEqual([20, 3])
+  expect(calls.flatMap(([, input]) => input.sessionRefs)).not.toContain('offday')
+  const text = host.querySelector('[data-recording-file-key="f0"]')!.textContent!
+  expect(text).toContain('1.00 MB'); expect(text).toContain('云端 2.00 MB')
+  expect(host.textContent).not.toContain('暂不可用')
+})
+
+it('keeps files and actions usable when storage fails and lets the label retry independently', async () => {
+  const original = mock.call.getMockImplementation()!
+  let failed = true
+  mock.call.mockImplementation((op, input, signal) => op === 'recordings.files.storage' && failed ? Promise.reject(new Error('offline')) : original(op, input, signal))
+  await render()
+  const existingRow = host.querySelector('[data-recording-file-key="one"]')
+  expect(host.textContent).toContain('读取录音存储失败，请重试'); expect(host.textContent).toContain('会议.m4a')
+  failed = false
+  await act(async () => button('重试读取存储').click())
+  expect(host.textContent).toContain('云端 2.00 MB'); expect(host.querySelector('[data-recording-file-key="one"]')).toBe(existingRow)
+  await openMenu(); expect(button('删除文件')).toBeDefined()
+  expect(changed).not.toHaveBeenCalled()
+})
+
+it('shows confirmed zero and unfinished storage without borrowing original file bytes', async () => {
+  const original = mock.call.getMockImplementation()!
+  mock.call.mockImplementation((op, input, signal) => op === 'recordings.files.storage'
+    ? { items: [{ sessionRef: 'ref1', bytes: 0, checkedAtMillis: 1 }] } : original(op, input, signal))
+  await render(); expect(host.textContent).toContain('云端 0.00 MB')
+  mock.call.mockImplementation((op, input, signal) => op === 'recordings.files.storage'
+    ? { items: [{ sessionRef: 'ref1', bytes: 100, checkedAtMillis: 1 }] } : original(op, input, signal))
+  await render({ refreshRevision: 1 }); expect(host.textContent).toContain('云端 0.000095 MB')
+})
+
+it('discards a late storage observation after switching day or account', async () => {
+  const original = mock.call.getMockImplementation()!
+  let resolve!: (result: unknown) => void
+  mock.call.mockImplementation((op, input, signal) => op === 'recordings.files.storage' ? new Promise(done => { resolve = done }) : original(op, input, signal))
+  await render(); expect(host.textContent).not.toContain('云端')
+  const finishOldDay = resolve
+  await render({ dateStamp: day + 86400000 })
+  await act(async () => finishOldDay({ items: [{ sessionRef: 'ref1', bytes: 999999, checkedAtMillis: 1 }] }))
+  expect(host.textContent).not.toContain('云端 0.953673 MB')
+  await render({ accountKey: 'test:43' }); expect(host.textContent).not.toContain('云端 0.953673 MB')
+})
 
 it('continues beyond the first page to find an older day and includes active files', async () => {
   completed = Array.from({ length: 55 }, (_, i) => file({ taskKey: `other${i}`, sessionRef: `ref${i}`, fileName: `其他${i}`, startAtMillis: day - 86400000, endAtMillis: day - 86340000 }))
