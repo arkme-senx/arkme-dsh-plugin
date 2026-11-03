@@ -5,7 +5,7 @@ import { installArkmeSettingsDialog } from '../src/client/ArkmeSettingsDialog.js
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import type { Context } from '@deepseek-ai/cordis'
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ Modal: ({ children, title, onClose }: { children: ReactNode; title: string; onClose(): void }) => <div role="dialog" aria-label={title}><button onClick={onClose}>关闭</button>{children}</div> }))
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({ Modal: ({ children, title, onClose, headless, className }: { children: ReactNode; title: string; onClose(): void; headless?: boolean; className?: string }) => <div role="dialog" aria-label={title} className={className}>{!headless && <button onClick={onClose}>关闭</button>}{children}</div> }))
 vi.mock('../src/client/ArkmeSettingsSurface.js', () => ({ ArkmeSettingsSurface: ({ view = 'account' }: { view?: string }) => <div data-page={view} /> }))
 vi.mock('../src/client/ArkmeAccountUsageSettings.js', () => ({ ArkmeAccountUsageSettings: () => <div data-page="usage" /> }))
 vi.mock('../src/client/ArkmeDataManagementSettings.js', () => ({ ArkmeDataManagementSettings: () => <div data-page="data" /> }))
@@ -22,11 +22,14 @@ beforeEach(() => {
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 41 })
 })
 afterEach(async () => { await act(async () => dispose?.()); dispose = undefined; document.body.replaceChildren(); vi.unstubAllGlobals() })
-const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(n => n.textContent === name)!
+const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(n => n.textContent === name || n.getAttribute('aria-label') === name)!
 it('opens account/data directly, keeps the sidebar mounted, and closes on an account switch', async () => {
   const sidebar = document.createElement('nav'); sidebar.textContent = '原有侧栏'; document.body.append(sidebar)
   await act(async () => { dispose = installArkmeSettingsDialog(preferences() as unknown as Context) })
   await act(async () => arkmeUi.openDshSettings('arkme-data'))
+  expect(document.querySelectorAll('h2.arkme-settings-nav-title')).toHaveLength(1)
+  expect(document.querySelectorAll('.arkme-settings-close[aria-label="关闭"]')).toHaveLength(1)
+  expect(document.querySelectorAll('nav[aria-label] button > svg[aria-hidden="true"]')).toHaveLength(5)
   expect(document.querySelector('[data-page="data"]')).not.toBeNull()
   expect(sidebar.isConnected).toBe(true)
   expect([...document.querySelectorAll('nav[aria-label] button')].map(n => n.textContent)).toEqual(['我的账户', '用量与额度', '数据管理', '通用设置', '关于'])
