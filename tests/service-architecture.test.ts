@@ -22,6 +22,7 @@ const expectedPublicMethods = [
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
   'deletedArrangements', 'deletedArrangementDetail',
+  'arrangementOccurrenceRequest', 'arrangementRecognitionRequest',
   // Independent World namespaces, authenticated original reads and selected-text forwarding.
   'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
@@ -143,6 +144,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'arrangement-occurrence-contract.ts', 'service-error.ts',
   'recording-file-storage-service.ts',
   'private-group-create-service.ts',
   'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts',
