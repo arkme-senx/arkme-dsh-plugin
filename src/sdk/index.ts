@@ -1,3 +1,4 @@
+export type { ArkmeMessageExtensionSummary, ArkmeMessageExtensionSummaryItem } from '../message-extension-summary.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
@@ -2631,6 +2632,12 @@ export class ArkmeSdk {
 
   async modelDirectory(expectedAccountScope: string, signal?: AbortSignal): Promise<import('../model-directory.js').UnifiedModelCatalog> {
     return this.call('models.directory', { expectedAccountScope }, signal)
+  }
+
+  async sourceMessageExtensionSummaries(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<import('../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]> {
+    if ((await this.capabilities(signal)).features.messageExtensionSummariesV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持完整评论汇总，请升级', retryable: false })
+    if (!sourceRef.trim() || !actionRefs.length || actionRefs.length > 40 || actionRefs.some(ref => !ref.trim())) throw new TypeError('Expected authorized source and message action references')
+    return this.call('source.message-extension.summaries', { sourceRef, actionRefs }, signal)
   }
 
   async sourceMessageExtensionContext(

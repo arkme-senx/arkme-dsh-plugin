@@ -25,7 +25,7 @@ const expectedPublicMethods = [
   'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
-  'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
+  'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities', 'sourceMessageExtensionSummaries',
   'deletedArrangements', 'deletedArrangementDetail', 'restoreArrangement',
   'arrangementOccurrenceRequest', 'arrangementRecognitionRequest', 'conversationArrangements', 'conversationArrangementDetail',
   // Independent World namespaces, authenticated original reads and selected-text forwarding.

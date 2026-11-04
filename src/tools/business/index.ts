@@ -12,7 +12,7 @@ import { worldReactionReadTool, worldReactionWriteTool } from './world/reactions
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
-import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
+import { readMessageExtensionsSummaryToolModule, readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
 import { thoughtReplyToolModules } from './conversation/thought-replies.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
 import { analyticsToolModules } from './conversation/analytics.js'
@@ -152,7 +152,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listFavoriteStickersToolModule,
   readReactionsToolModule,
   writeReactionsToolModule,
-  readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
+  readMessageExtensionsSummaryToolModule, readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
   ...thoughtReplyToolModules,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,

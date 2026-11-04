@@ -2639,6 +2639,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-thought-continuations.retry': return await service.sourceMessageThoughtContinuations(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), {
       retryId: stringParam(params, 'id'),
     }, requestSignal)
+    case 'source.message-extension.summaries': return await service.sourceMessageExtensionSummaries(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'), requestSignal)
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),

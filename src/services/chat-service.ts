@@ -1,3 +1,4 @@
+import { readExtensionSummaryBatch } from '../message-extension-summary.js'
 import { thoughtReplyFromWire } from '../thought-reply.js'
 import { recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { snapshotDateLabel, snapshotMovement, snapshotWeatherText, snapshotPositionLabel } from '../record-snapshot-presentation.js'
@@ -3931,6 +3932,26 @@ nextPublic = next
       throw new ArkmePluginError('message-quote-source-changed', '引用与原文不一致，请打开原消息重新选择；回复正文已保留', false, 409)
     }
     return quote
+  }
+
+  async sourceMessageExtensionSummaries(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal) {
+    if (actionRefs.length < 1 || actionRefs.length > 40 || new Set(actionRefs).size !== actionRefs.length)
+      throw new ArkmePluginError('extension-summary-targets-invalid', '评论汇总目标无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat')
+      throw new ArkmePluginError('extension-summary-source-invalid', '此来源不是聊天消息', false, 400)
+    const targets = []
+    for (const ref of actionRefs) {
+      const opened = await this.openMessageActionRef(ref, session.userId, source)
+      if (opened.chatSessionUid !== source.ownerRef || !opened.relationUid || !opened.sourceSequence)
+        throw new ArkmePluginError('extension-summary-occurrence-invalid', '消息来源已变化，请刷新', true, 409)
+      targets.push({ record_owner_user_id: recordOwnerId(opened.recordOwnerUserId), record_uid: opened.recordUid,
+        relation_uid: opened.relationUid, sequence: opened.sourceSequence })
+    }
+    const data = await this.runtime.authenticatedChatPost<unknown>('/api/v1/chats/extensions/summaries/batch',
+      { chat_session_uid: source.ownerRef, targets }, session, signal)
+    return readExtensionSummaryBatch(data, actionRefs)
   }
 
   async sourceMessageExtensionContext(

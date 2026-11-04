@@ -1652,6 +1652,7 @@ arkoImagesV1?:true
     directMessageAdmission?: true
     publicSocialV1?: true
     messageTextAnchorsV1?: true
+    messageExtensionSummariesV1?: true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
     reactionsV1?: true
@@ -4313,7 +4314,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'chat_extensions' | 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4746,6 +4747,7 @@ export type ArkmePluginOperation =
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
+  | 'source.message-extension.summaries'
   | 'source.message-extension.context'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'

@@ -340,6 +340,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
+        if (update.type === 'projection-invalidated' && update.projection === 'chat_extensions') { invalidateMessageQuoteSources(); return }
         if (update.type === 'projection-invalidated' && update.projection === 'message_annotations') { invalidateMessageMarks(); return }
         if (update.type === 'projection-invalidated') {
           if(update.projection==='team_codex'){window.dispatchEvent(new Event('arkme-codex-changed'));invalidateMessageMarks();return}

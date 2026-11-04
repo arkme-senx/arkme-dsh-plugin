@@ -12,6 +12,8 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+ sourceMessageExtensionSummaries(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<import('../../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]>
+
  teamOutboundOpen(teamRef:string,recipient:import('../../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../../team-outbound-contract.js').TeamOutboundOpenResult>
 
   groupIdentityContext(sourceRef:string,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamGroupContext>
