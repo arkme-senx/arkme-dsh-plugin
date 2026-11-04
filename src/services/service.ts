@@ -71,6 +71,9 @@ arkoFileRefs(userId:number):Promise<string[]>
   writeAvatarCache?(userId: number, imageRef: string, image: import('../types.js').ArkmeImageBytes): Promise<void>
   selfRoleAvatarLocalRef?(userId: number, fileAssetUid: string): Promise<string | undefined>
   forgetCachedMembers?(userId: number, group: string, refs: readonly string[]): Promise<void>
+  clearPublicPeople?(environment: string, viewer: number, target?: number): Promise<void>
+  cachedPublicPerson?(environment: string, viewer: number, target: number): Promise<import('../public-person-cache.js').PublicPersonSnapshot | undefined>
+  cachePublicPeople?(environment: string, viewer: number, entries: readonly import('../public-person-cache.js').PublicPersonSnapshot[], missing: readonly number[], observedAt: number): Promise<void>
   cachedConversationMembers?(userId: number, group: string): Promise<import('../types.js').ArkmeConversationMemberCache | undefined>
   mergeConversationMembers?(userId: number, group: string, page: import('../types.js').ArkmeConversationMemberUpdate): Promise<void>
   clearConversationMembers?(userId: number, group: string): Promise<void>
@@ -416,9 +419,13 @@ export class ServiceRuntime {
       // 只执行一次写入；未知写结果也需让后续查询回到 owner，不加入写前的 flight。
       return await operation()
     } finally {
-      this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${route}:`)
-      this.messageSyncCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${route}:`)
+      this.invalidateOwnerRead(this.requestScope(session.userId), route)
     }
+  }
+
+  invalidateOwnerRead(scope: string, route: string): void {
+    this.requestCoordinator.invalidateKey(scope, `owner-read:${route}:`)
+    this.messageSyncCoordinator.invalidateKey(scope, `owner-read:${route}:`)
   }
 
   async runOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {

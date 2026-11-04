@@ -11,6 +11,7 @@ export type TeamAppOperation = `team.app.${
   | 'snapshot.capabilities' | 'snapshot.seal' | 'snapshot.read' | 'snapshot.receipt'
   | 'history' | 'history.chunk' | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
+  | 'feature-links.get' | 'feature-links.save'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
   | 'entries.cached' | 'entries.query' | 'entries.list' | 'entries.change'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'

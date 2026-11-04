@@ -1,9 +1,11 @@
+import { WorldPublicationActions } from './WorldPublicationControls.js'
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeWorldAuthorLabel, ArkmeWorldFeedItem } from '../types.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
 import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { WorldPublisherAttribution } from './ArkmeWorldSurface.js'
+import { WorldTeamBadge } from './WorldTeamBadge.js'
 import { callArkme } from './api.js'
 import { invalidateWorldImages } from './world-image-cache.js'
 import { worldReactionContexts } from './world-reactions.js'
@@ -99,9 +101,10 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
   const avatar = renderAvatar(item)
   return <ArkmeDetailShell title="" label={tr('世界动态详情')} closeLabel={tr('关闭动态详情')} resizeLabel={tr('调整动态详情宽度')}
     style={{ top: 0 }} widthPreferenceKey="arkme:world-detail-width:v1" onClose={onClose}
+    headerActions={<WorldPublicationActions target={{recordRef:seed.recordRef}} onUnpublished={onClose}/>}
     headerContent={<ArkmeMessageDetailAuthor
       avatar={authorAction ? <button type="button" style={authorButton} aria-label={tr('查看{v0}的用户卡片', { v0: item.authorName })} onClick={authorAction}>{avatar}</button> : avatar}
-      name={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>{authorAction ? <button type="button" style={authorButton} onClick={authorAction}>{item.authorName}</button> : item.authorName}<ArkmeMembershipBadge memberType={item.memberType} /></span>}
+      name={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>{authorAction ? <button type="button" style={authorButton} onClick={authorAction}>{item.authorName}</button> : item.authorName}{item.teamAuthor ? <WorldTeamBadge /> : <ArkmeMembershipBadge memberType={item.memberType} />}</span>}
       at={item.publishedAtMillis || item.createdAtMillis}
       timeSuffix={item.teamAuthor && item.publisher?.name ? <WorldPublisherAttribution item={item} /> : undefined} />}
     onPointerDownOutside={event => {

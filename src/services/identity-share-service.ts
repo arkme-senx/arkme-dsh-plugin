@@ -1,4 +1,4 @@
-import type { IdentityPersonProfile, IdentityShareActionResult, IdentityShareCard, IdentityShareLink, IdentityShareTarget } from '../identity-share-contract.js'
+import type { IdentityPersonProfile, PersonProfileReadOptions, IdentityShareActionResult, IdentityShareCard, IdentityShareLink, IdentityShareTarget } from '../identity-share-contract.js'
 import { identityShareTarget } from '../identity-share-link.js'
 import type { RecordOwnerId } from '../record-owner-id.js'
 import type { ShareLinkTarget } from '../share-link-preview.js'
@@ -47,7 +47,7 @@ export class IdentityShareService {
       if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw invalid()
       userId = target.userId
     } else if (target.kind === 'contact') userId = await this.contacts.resolveTeamRecipient(target.contactRef, signal)
-    else if (target.kind === 'author') userId = (await this.world.worldAuthorFromRef(target.authorRef, true)).userId
+    else if (target.kind === 'author') userId = (await this.world.worldAuthorFromRef(target.authorRef, true, { labels: false, ...(signal ? { signal } : {}) })).userId
     else if (target.kind === 'member') userId = (await this.chat.memberWorldTarget(target.sourceRef, target.memberRef, signal)).userId
     else if (target.kind === 'member-event') userId = (await this.chat.memberEvents.worldTarget(target.sourceRef, target.eventId, signal)).userId
     else if (target.kind === 'team-person') {
@@ -65,17 +65,54 @@ export class IdentityShareService {
     await this.session(scope, signal)
     return userId
   }
-  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityPersonProfile> {
-    const userId = await this.personId(scope, target, signal), session = await this.session(scope, signal)
+  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityPersonProfile>
+  async person(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, includeAccountName: boolean): Promise<IdentityPersonProfile>
+  async person(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, options: PersonProfileReadOptions): Promise<IdentityPersonProfile | null>
+  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal, options: boolean | PersonProfileReadOptions = {}): Promise<IdentityPersonProfile | null> {
+    if (options === false) {
+      // World navigation needs the verified identity, without optional public decoration.
+      const userId = await this.personId(scope, target, signal), session = await this.session(scope, signal)
+      if (typeof userId !== 'number') throw new ArkmePluginError('world-user-id-unsupported', '当前世界接口暂不支持此用户标识', false, 501)
+      return { userId, isSelf: userId === session.userId }
+    }
+    if (options === true) options = {}
+    const owner = await this.session(scope, signal)
+    let userId: RecordOwnerId
+    if (options.cacheOnly) {
+      // Cache probes resolve only locally signed identities; they must never perform a business RPC.
+      if (target.kind === 'self') userId = owner.userId
+      else if (target.kind === 'person' && Number.isSafeInteger(target.userId) && target.userId > 0) userId = target.userId
+      else if (target.kind === 'member') userId = await this.chat.cachedMemberPersonId(target.sourceRef, target.memberRef, signal)
+      else return null
+    } else userId = await this.personId(scope, target, signal)
+    const session = await this.session(scope, signal)
     if (typeof userId !== 'number') throw new ArkmePluginError('world-user-id-unsupported', '当前世界接口暂不支持此用户标识', false, 501)
-    // A public handle is optional: decoration must never be required to enter a world.
-    const profile = (await this.profiles.publicProfileSummariesByUserIds([userId], session, signal, 0).catch(error => {
+    const stored = await this.profiles.cachedPublicPerson?.(session.userId, userId)
+    await this.session(scope, signal)
+    const display = async (profile: NonNullable<typeof stored>['profile'], cachedAtMillis?: number): Promise<IdentityPersonProfile> => ({
+      userId, isSelf: String(userId) === String(session.userId),
+      ...((profile.accountName || profile.arkmeId) ? { accountName: profile.accountName || profile.arkmeId } : {}),
+      ...(profile.displayName ? { publicDisplayName: profile.displayName } : {}),
+      ...(profile.avatarUrl ? { avatarRef: await this.profiles.sealProfileImageRef(session.userId, userId) } : {}),
+      ...(profile.avatarFallback ? { avatarFallback: profile.avatarFallback } : {}),
+      ...(cachedAtMillis === undefined ? {} : { cachedAtMillis }),
+    })
+    if (options.cacheOnly) {
+      const value = stored ? await display(stored.profile, stored.updatedAtMillis) : null
+      await this.session(scope, signal); return value
+    }
+    let failed = false
+    const profile = (await this.profiles.publicProfileSummariesByUserIds([userId], session, signal, options.forceRefresh ? 0 : undefined).catch(error => {
       if (signal?.aborted) throw error
-      return new Map()
+      failed = true; return new Map()
     })).get(userId)
     await this.session(scope, signal)
-    const accountName = profile?.accountName || profile?.arkmeId
-    return { userId, isSelf: String(userId) === String(session.userId), ...(accountName ? { accountName } : {}) }
+    const cached = profile ? await this.profiles.cachedPublicPerson?.(session.userId, userId) : undefined
+    const value = profile ? await display(profile, cached?.updatedAtMillis)
+      : failed && stored ? { ...await display(stored.profile, stored.updatedAtMillis), refreshFailed: true }
+      : { userId, isSelf: String(userId) === String(session.userId), ...(failed ? { refreshFailed: true } : {}) }
+    await this.session(scope, signal)
+    return value
   }
   async link(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityShareLink> {
     const session = await this.session(scope, signal)

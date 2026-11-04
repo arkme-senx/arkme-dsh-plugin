@@ -1,4 +1,5 @@
 import {recordOwnerId} from '../record-owner-id.js'
+import { OriginalFileStore, originalFileKey } from './original-file-store.js'
 import { recordingPlaybackPath, recordingPlaybackRef, recordingPlaybackLocator, sameRecordingPlaybackLocation, type RecordingPlaybackLocator, type RecordingPlaybackRef } from '../recording-playback-ref.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { avatarReferenceDiagnostic, logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -306,6 +307,7 @@ function cloneImageBytes(value: ArkmeImageBytes): ArkmeImageBytes {
 }
 
 export class MediaService {
+  private readonly originalFiles: OriginalFileStore
   private readonly mediaRefs = new Map<string, StoredMediaDescriptor>()
   private readonly stableMediaRefs = new Map<string, string>()
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
@@ -325,7 +327,7 @@ export class MediaService {
     private readonly recordIdentity: ArkmeRecordIdentity,
     private readonly botImages?: ArkmeBotImageReader,
     private readonly selfRoleAvatars?: SelfRoleAvatarStore,
-  ) {}
+  ) { this.originalFiles = new OriginalFileStore(runtime) }
 
   dispose(): void {
     this.imageGeneration += 1
@@ -529,6 +531,11 @@ export class MediaService {
         || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname))) {
       throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
     }
+    const key = this.runtime.config.fileStateDirectory && descriptor.purpose === 'original' ? originalFileKey(this.runtime.config.environment,session.userId,url) : undefined
+    if (key && range === undefined && method === 'GET') {
+      const cached=await this.originalFiles.read(session.userId,key,descriptor.size)
+      if(cached)return {response:this.originalFiles.response(cached,descriptor.mimeType),descriptor}
+    }
     const response = await this.runtime.fetchImpl(url, {
       headers: range === undefined ? {} : { Range: range },
       redirect: 'error',
@@ -536,6 +543,10 @@ export class MediaService {
     })
     if (!response.ok && response.status !== 206) {
       throw new ArkmePluginError('media-fetch-failed', `媒体读取失败（${String(response.status)}）`, true, 502)
+    }
+    if(key && range===undefined && method==='GET' && response.status===200) {
+      const captured=await this.originalFiles.capture(session.userId,key,response,descriptor.size,signal).catch(()=>response)
+      return {response:captured,descriptor}
     }
     return { response, descriptor }
   }
@@ -1011,9 +1022,10 @@ export class MediaService {
           trustedSignedImageUrl(this.runtime.config.environment, avatarUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
         )
       } catch (error) {
-        if (cachedAvatarUrl === undefined || cachedAvatarUrl !== avatarUrl) throw error
-        this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
-        const refreshedUrl = (await this.profile.publicProfilesByUserIds([reference.targetUserId], session, signal))
+        signal?.throwIfAborted()
+        if (!(error instanceof ArkmePluginError) || !['image-download-failed', 'image-download-timeout'].includes(error.code)) throw error
+        await this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
+        const refreshedUrl = (await this.profile.publicProfileSummariesByUserIds([reference.targetUserId], session, signal, 0))
           .get(reference.targetUserId)?.avatarUrl
         if (refreshedUrl === undefined) throw error
         return await this.downloadSignedImage(
