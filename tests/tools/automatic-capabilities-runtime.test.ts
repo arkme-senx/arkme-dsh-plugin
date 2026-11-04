@@ -12,7 +12,7 @@ it('official DSH discovers safe control tools without an automatic-enable capabi
   await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
   try {
     const session = ctx.sessions.create(), agent = { id: session.id, session }
-    const query = vi.fn(async () => ({ accountScope: 'prod:123', settings: [{ key: 'record_thought', title: '快记建议', enabled: false, version: 0, enabledAt: 0 }] }))
+    const query = vi.fn(async () => ({ accountScope: 'prod:123', settings: [{ key: 'recording_voice_trigger', title: '录音语音触发', enabled: false, version: 0, enabledAt: 0 }] }))
     const update = vi.fn()
     registerArkmeTools(ctx, { automaticCapabilities: query, updateAutomaticCapability: update } as never, 'business')
     const schemas = ctx.tools.schemas(agent as never)
@@ -21,7 +21,7 @@ it('official DSH discovers safe control tools without an automatic-enable capabi
     expect(schemas.map(tool => tool.name)).not.toContain('arkme_enable_automatic_ai')
     const result = await ctx.tools.execute({ callId: CallId('read-capabilities'), agent: agent as never, signal: new AbortController().signal, name: 'arkme_automatic_ai_settings', arguments: {} })
     expect(result.isError).toBe(false)
-    expect(String(result.value)).toContain('record_thought')
+    expect(String(result.value)).toContain('recording_voice_trigger')
     expect(String(result.value)).not.toContain('prod:123')
     expect(update).not.toHaveBeenCalled()
   } finally { await ctx.fiber.dispose() }
