@@ -6439,8 +6439,15 @@ nextPublic = next
         const enriched = snapshotDetailFromChatRaw(mergeSnapshotLocationContext(raw, snapshotLocationContext(locationContext)), {
           itemUid: target.recordUid, textContent: stringValue(snapshot.text_content), sendAtMillis: numberValue(snapshot.edit_at),
         })
-        const { recordDurationMillis: _record, editDurationMillis: _edit, ...environment } = enriched
-        detail = { ...detail, ...environment }
+        // This read owns location facts only. Re-projecting its merged raw
+        // record must not replace the selected edit's duration or capture.
+        const { locationCapture, locationLabel, weather, altitudeMeters, movement } = enriched
+        detail = { ...detail,
+          ...(locationCapture === undefined ? {} : { locationCapture }),
+          ...(locationLabel === undefined ? {} : { locationLabel }),
+          ...(weather === undefined ? {} : { weather }),
+          ...(altitudeMeters === undefined ? {} : { altitudeMeters }),
+          ...(movement === undefined ? {} : { movement }) }
       }
     }
     const revisionAtMillis = nonNegativeNumberValue(snapshot.edit_at)

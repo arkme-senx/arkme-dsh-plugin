@@ -112,6 +112,19 @@ describe('revision-bound memory snapshots', () => {
     expect(detail.locationCapture).toBeUndefined()
     expect(detail.locationLabel).toBeUndefined()
   })
+  it('location enrichment cannot rewrite per-edit duration or invent ambient capture', async () => {
+    const f = hostFixture()
+    f.runtime.authenticatedPost.mockResolvedValue({ record_uid: 'note', revision_uid: 'edit',
+      location: { lat: 30.1, lon: 114.2 }, position_detail: { address: '当时地点' } } as never)
+    const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'edit', version: 3,
+      edit_at: 1700000000000, edit_duration_known: true, edit_duration_millis: 0,
+      content_payload: { media_refs: [{ file_asset_uid: 'retained-audio', content_file_role: 4 }] } }, target)
+    expect(detail.durationState).toBe('complete')
+    expect(detail.editDurationMillis).toBe(0)
+    expect(detail.backgroundSound).toBe('unknown')
+    expect(detail.backgroundSoundPlayback).toBeUndefined()
+    expect(detail.locationLabel).toContain('当时地点')
+  })
   it('accepts location enrichment explicitly bound to the selected revision', async () => {
     const f = hostFixture()
     f.runtime.authenticatedPost.mockResolvedValueOnce({ record_uid: 'note', revision_uid: 'old',
