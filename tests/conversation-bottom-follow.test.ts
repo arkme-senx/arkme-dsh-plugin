@@ -179,3 +179,47 @@ it('restores an existing inline anchor policy on scope disposal without leaking 
   expect(f.body.style.overflowAnchor).toBe('auto')
   expect(f.body.style.getPropertyPriority('overflow-anchor')).toBe('important')
 })
+
+it.each([false, true])('returns immediately and survives deferred layout before/after the scroll event (scroll first: %s)', scrollFirst => {
+  const f = fixture()
+  let resize = () => {}
+  vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { resize = callback } observe() {} disconnect() {} })
+  const content = document.createElement('ul'), row = document.createElement('li')
+  row.dataset.arkmeConversationRow = 'message:old-reading-row'
+  f.body.append(content); content.append(row)
+  f.body.getBoundingClientRect = () => new DOMRect(0, 0, 600, 500)
+  content.getBoundingClientRect = () => new DOMRect(0, -f.body.scrollTop, 600, f.body.scrollHeight)
+  row.getBoundingClientRect = () => new DOMRect(0, 500-f.body.scrollTop, 600, 100)
+  const dispose = observeConversationResize(f.body, undefined, content)
+  try {
+    for(let i=0;i<300;i++)f.grow()
+    followConversationBottom(f.body, false, 'instant')
+    expect(f.body.scrollTop).toBe(f.body.scrollHeight-500)
+    expect(f.frames.size).toBe(0)
+    if(scrollFirst)f.body.dispatchEvent(new Event('scroll'))
+    for(let i=0;i<10;i++){f.grow();resize();expect(f.body.scrollTop).toBe(f.body.scrollHeight-500)}
+    expect(f.frames.size).toBe(0)
+    expect(isConversationFollowing(f.body)).toBe(true)
+    expect(arkmeConversationViewport(f.body).stickToBottom).toBe(true)
+    f.body.dispatchEvent(new Event('wheel'))
+    f.body.scrollTop=500;f.body.dispatchEvent(new Event('scroll'))
+    f.grow();resize()
+    expect(f.body.scrollTop).toBe(500)
+    expect(isConversationFollowing(f.body)).toBe(false)
+  } finally {dispose();cancelConversationFollow(f.body)}
+})
+
+it('upgrades existing animation to an instant return, then animates actual new arrivals normally', () => {
+  const f=fixture()
+  followConversationBottom(f.body);f.frame()
+  expect(f.frames.size).toBe(1)
+  followConversationBottom(f.body,false,'instant')
+  expect(f.body.scrollTop).toBe(1000)
+  expect(f.frames.size).toBe(0)
+  f.grow();followConversationBottom(f.body,false,'animated')
+  f.frame()
+  expect(f.body.scrollTop).toBeGreaterThan(1000)
+  expect(f.body.scrollTop).toBeLessThan(1050)
+  cancelConversationFollow(f.body)
+  expect(f.frames.size).toBe(0)
+})

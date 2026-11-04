@@ -1,10 +1,17 @@
 import type { TeamCodexState, TeamCodexTask, CodexTaskPosition } from '../../../team-codex-contract.js'
 import { codexTaskStatus, mergeCodexActivityTasks, type CodexTaskStatus } from './codex-task-status.js'
+import { conversationActivityAtMillis } from '../../conversation-directory-order.js'
 
 export interface CodexActivitySnapshot {
   tasks: TeamCodexTask[]
   complete: boolean
   checkedAt: number
+}
+
+/** All own visible conversations, independent of the selected task or its execution phase. */
+export function codexActivityAtMillis(snapshot: CodexActivitySnapshot | undefined): number {
+  return snapshot?.tasks.reduce((at, task) => task.eventCount > 0 && !task.excluded && !task.projectExcluded && task.classification?.kind !== 'background'
+    ? Math.max(at, conversationActivityAtMillis(task.updatedAt)) : at, 0) ?? 0
 }
 
 /** Bounded metadata-only scan; no message bodies and no dependence on the picker page. */

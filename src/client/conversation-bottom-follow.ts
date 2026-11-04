@@ -1,16 +1,16 @@
 /** One cancellable latest-edge motion per viewport; data is never queued for animation. */
 interface ConversationFollow {
   cancel(): void
-  retarget(rebased?: boolean): void
+  retarget(rebased?: boolean, motion?: 'animated' | 'instant'): void
 }
 const followers = new WeakMap<HTMLElement, ConversationFollow>()
 const FOLLOW_MILLIS = 180
 export function isConversationFollowing(body: HTMLElement): boolean { return followers.has(body) }
 export function cancelConversationFollow(body: HTMLElement): void { followers.get(body)?.cancel() }
 
-export function followConversationBottom(body: HTMLElement, rebased = false): void {
+export function followConversationBottom(body: HTMLElement, rebased = false, motion?: 'animated' | 'instant'): void {
   const current = followers.get(body)
-  if (current) { current.retarget(rebased); return }
+  if (current) { current.retarget(rebased, motion); return }
   const view = body.ownerDocument?.defaultView
   if (!view || typeof view.requestAnimationFrame !== 'function') {
     body.scrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
@@ -29,6 +29,7 @@ export function followConversationBottom(body: HTMLElement, rebased = false): vo
   let previousFrame = 0
   let elapsed = 0
   let duration = FOLLOW_MILLIS
+  let currentMotion = motion ?? 'animated'
   const cancel = () => {
     if (frame !== undefined) view.cancelAnimationFrame(frame)
     frame = undefined
@@ -53,8 +54,19 @@ export function followConversationBottom(body: HTMLElement, rebased = false): vo
     body.scrollTop = from + (target - from) * (1 - (1 - progress) ** 3)
     if (progress < 1) frame = view.requestAnimationFrame(tick)
   }
-  const retarget = (rebased = false) => {
+  const retarget = (rebased = false, motion?: 'animated' | 'instant') => {
+    if (motion !== undefined) currentMotion = motion
     const next = Math.max(0, body.scrollHeight - body.clientHeight)
+    if (currentMotion === 'instant') {
+      // An explicit return owns the latest edge before any programmatic scroll
+      // event. Deferred virtual/media layout must not restore the old history row
+      // or animate a multi-screen return for tens of seconds.
+      if (frame !== undefined) view.cancelAnimationFrame(frame)
+      frame = undefined
+      target = next
+      body.scrollTop = next
+      return
+    }
     // ResizeObserver/React may repeat the same target; never restart its clock.
     if (!rebased && frame !== undefined && Math.abs(next - target) <= 1) return
     target = next
