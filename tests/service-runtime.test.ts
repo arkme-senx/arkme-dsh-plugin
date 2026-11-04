@@ -708,3 +708,25 @@ describe('speaker directory HTTP contract', () => {
     runtime.dispose()
   })
 })
+
+describe('device revocation response compatibility', () => {
+  it.each(['business-denied', 'unavailable', 'revoked', 'refresh-unavailable'] as const)('keeps extension auth and business errors separate: %s', async mode => {
+    let stored: ArkmeSessionCredentials | undefined = { userId: 42, accessToken: 'active', refreshToken: 'refresh' }
+    const removed = vi.fn(async () => { stored = undefined })
+    const calls: string[] = []
+    const runtime = new ServiceRuntime({ ...config, extensionPublishBaseUrl: 'https://extensions.test' }, {
+      async read() { return stored }, async write(value) { stored = value }, delete: removed,
+    }, {} as StateStore, vi.fn(async input => {
+      const url = String(input); calls.push(url)
+      if (url.includes('/auth/new-short')) return new Response('', { status: mode === 'refresh-unavailable' ? 503 : 403, headers: mode === 'refresh-unavailable' ? {} : { 'X-Jotmo-Auth-Failure': 'session_ended' } })
+      return new Response('', { status: mode === 'unavailable' ? 503 : 403, headers: mode === 'revoked' || mode === 'refresh-unavailable' ? { 'X-Jotmo-Auth-Failure': 'session_ended' } : {} })
+    }))
+    try {
+      await expect(runtime.extensionPost('/api/v1/extensions/mine', {})).rejects.toMatchObject({ code: mode === 'revoked' ? 'login-expired' : 'arkme-http-error' })
+      expect(calls.filter(url => url.includes('/auth/new-short'))).toHaveLength(mode === 'revoked' || mode === 'refresh-unavailable' ? 1 : 0)
+      expect(removed).toHaveBeenCalledTimes(mode === 'revoked' ? 1 : 0)
+      expect(stored === undefined).toBe(mode === 'revoked')
+      expect(calls.filter(url => url.includes('/extensions/mine'))).toHaveLength(1)
+    } finally { runtime.dispose() }
+  })
+})

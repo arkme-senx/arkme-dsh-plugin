@@ -570,7 +570,7 @@ export class ServiceRuntime {
           } else if (!await this.accountSessions.deleteIfCurrent(session)) throw contextChanged()
           // 1004 是通用“账号不可用”，也覆盖注销等既有状态，不能在客户端臆断为封禁。
           if (error.code === 'arkme-code-1004') throw new ArkmePluginError('account-unavailable', '当前即我账号暂不可用', false, 403)
-          throw new ArkmePluginError('login-expired', 'Arkme 登录已过期，请重新扫码', false, 401)
+          throw new ArkmePluginError('login-expired', 'Arkme 登录已失效，请重新登录', false, 401)
         }
         throw error
       }
@@ -761,7 +761,7 @@ export class ServiceRuntime {
         body: multipart ? body : stringifyOwnerJson(body),
         signal: controller.signal,
       })
-      if (response.status === 401 || (response.status === 403 && !preserveForbiddenError)) {
+      if (response.status === 401 || (response.status === 403 && (!preserveForbiddenError || response.headers.get('X-Jotmo-Auth-Failure') === 'session_ended'))) {
         throw new ArkmePluginError(`auth-http-${response.status}`, 'Arkme 登录凭据已失效', false, response.status)
       }
       if (!response.ok) {
@@ -1637,7 +1637,7 @@ export class ServiceRuntime {
     try {
       return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true, true)
     } catch (error) {
-      if (!(error instanceof ArkmePluginError) || error.code !== 'auth-http-401') throw error
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
       session = await this.refreshAccessToken(session)
       return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true, true)
     }

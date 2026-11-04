@@ -29,4 +29,8 @@ Host/SDK/Tools/UI 有单元和 jsdom 测试；同源真实 HTTP 边界与打包�
 
 后端 TEST 仅两个隔离账号开启纳管。本轮限定桌面设备管理；腾讯通话票据撤销、原生 VoIP/CallKit 改造及移动端新增通知能力不在范围内。旧手机没有声明完整通知能力时，两开关禁用并保持既有通知策略；不能用协议 fixture 的声明代替已安装手机支持。Flutter 仅保留识别 `session_ended` 的既有退出链兼容。
 
-Bury、Jupiter、ASR Stream、旧 Memory、独立 Keyword 不属于桌面 JWT 消费链，已移除联网会话校验与配置；为防止已签发的托管 token 绕过撤销，仅保留本地拒绝其 `sid` 的兼容边界。实际桌面 API 消费者继续校验登录权威。完整证据见 `/Users/apple/hehs/task-artifacts/login-devices-development-20261103/scope-reduction/范围收敛与最终交付.md`。未全量启用、未生产发布。
+2026-11-04 兼容回归修正：Bury、Jupiter、ASR Stream、旧 Memory、独立 Keyword 的用户 JWT 入口保留最小会话权威校验。原“本地拒绝所有 SID”的收敛方式会连有效凭据一起拒绝，已撤销；现在有效 SID 正常通过，撤销 SID 返回 403 + `session_ended`。非灰度旧 sidless 不新增联网依赖，内部调用路径不改。Jupiter/ASR Stream 保持原有 0 副本，未恢复 ASR 逐帧远程检查。
+
+扩展接口仅将带 `session_ended` 的 403 当成会话失效；普通业务 403 不触发退出。明确失效后只尝试一次刷新，刷新再次拒绝时通过既有会话 owner 清理当前凭据并提示“登录已失效，请重新登录”。网络/503 保留凭据，旧请求不得清掉后来登录的会话。
+
+本轮 136 项插件相关自动化及 2 项内存会话接真实 TEST HTTP 检查通过；不等同真实 DSH 或原生凭据清理验收。最新跨仓回归、部署、性能及边界见 `/Users/apple/hehs/task-artifacts/login-devices-regression-20261104/凭据兼容与撤销回归.md`。未全量启用、未生产发布。
