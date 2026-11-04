@@ -7,3 +7,5 @@ autoInstallPeers: false
 # DSH JSONL persistence needs this locked native binding to verify its prebuild.
 allowBuilds:
   koffi@3.1.1: true
+  '@google/genai@2.21.0': false
+  protobufjs@7.6.6: false
