@@ -17,9 +17,12 @@ const expectedPublicMethods = [
   'publicGroupJoinRequests', 'resolvePublicGroupJoinRequest', 'publicSocialRead', 'publicSocialWrite',
   'queryPublicPeople', 'readPublicPerson', 'setPublicPerson', 'openPublicPerson',
   'attachModelDirectoryReader', 'modelDirectory',
+  'attachModelConnectorEnroller', 'enrollModelConnector', 'onAccountModelsChanged',
+  'accountModels', 'saveAccountModel', 'accountModelPreferences', 'disableAccountModel', 'accountModelUsage', 'accountModelHostRequest',
   'recordingVoiceTriggers', // Included by the latest dev voice-trigger feature.
   'registerRecordingImportStrategies', // Internal native-upload strategy handoff; no SDK method.
   'dataExport', 'dataExportRangePreview', 'dataExportSaved',
+  'attachExportDirectoryPicker', 'dataExportDirectoryPick', 'dataExportDirectoryOpen',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
   'worldPublications', 'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
@@ -150,6 +153,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'account-model-service.ts',
   'identity-share-service.ts',
   'arrangement-occurrence-contract.ts', 'service-error.ts',
   'recording-file-storage-service.ts',
@@ -161,6 +165,7 @@ const expectedServiceFiles = [
   'conversation-location-service.ts',
   'recording-voice-trigger-service.ts',
   'record-export-service.ts', 'record-export-range-service.ts',
+  'record-directory-export-service.ts', 'backup-directory-store.ts', 'original-file-capacity.ts', 'original-file-store.ts',
   'team-world-service.ts',
   'world-publication-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
