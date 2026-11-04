@@ -86,7 +86,7 @@ function ArkoReplyManagerBody({ accountScope, onClose }: { accountScope: string;
   const changedCount=book?.items.filter(item=>item.userBody!==null).length ?? 0
   const feedback=<>{error && <p role="alert" style={{ ...note, color: theme.danger }}>{tr(error)}{promptReadFailed && <button type="button" onClick={loadPrompts} style={{ ...quiet, marginLeft: 8 }}>{tr('重试')}</button>}</p>}{notice && <p role="status" style={note}>{notice}</p>}</>
   const rows = [
-    ...history.thoughts.map(entry => ({ key: entry.key, title: arkoReplySceneInfo[entry.scene].title, source: entry.source.displayName, at: entry.item.sendAtMillis, content: entry.thought.display?.headline || entry.thought.content,
+    ...history.thoughts.map(entry => ({ key: entry.key, title: arkoReplySceneInfo[entry.scene].title, source: entry.source.displayName, at: entry.sourceOrderAtMillis, content: entry.thought.display?.headline || entry.thought.content,
       open: () => openThought(entry), disabled: false })),
   ]
   return <ArkmeDetailShell title={title} label={tr('Arko 回复管理')} onClose={() => navigate(onClose)}
