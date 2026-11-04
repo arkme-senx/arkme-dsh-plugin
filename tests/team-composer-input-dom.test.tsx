@@ -38,6 +38,12 @@ beforeEach(async () => {
   await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" onChanged={()=>{}} /></>))
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
+it('places related arrangements above the team composer and hides it while editing',async()=>{
+  const shortcuts=host.querySelector<HTMLElement>('[data-arkme-composer-shortcuts]')!
+  expect(shortcuts).not.toBeNull();expect(shortcuts.textContent).toContain('相关安排');expect(shortcuts.hidden).toBe(false)
+  await act(async()=>editor().focus());expect(shortcuts.hidden).toBe(true)
+  await act(async()=>host.querySelector<HTMLButtonElement>('[data-outside]')!.focus());expect(shortcuts.hidden).toBe(false)
+})
 it('keeps existing composer tools before dictation, with the microphone directly after screenshot',()=>{
   const tools=[...host.querySelectorAll<HTMLButtonElement>('[data-arkme-composer-footer="tools"] button')].map(button=>button.getAttribute('aria-label'))
   const screenshot=tools.indexOf('截屏'), microphone=tools.indexOf('语音输入')

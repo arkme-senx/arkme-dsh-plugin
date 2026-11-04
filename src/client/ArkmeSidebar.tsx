@@ -1,6 +1,7 @@
 import { MessageAvatar } from './MessageAvatar.js'
 export { MessageAvatar } from './MessageAvatar.js'
 import { messageMemberTarget, useMemberInteraction, type MemberActionTarget } from './member-interaction.js'
+import { useConversationRecognitionAction } from './ConversationRecognitionControl.js'
 import { identityShareUi } from './identity-share-ui.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
@@ -2979,6 +2980,7 @@ export function ArkmeSurface({
     if (authView === 'login') setError('')
   }, [authView, localeId])
   const [relatedMenuOpen, setRelatedMenuOpen] = useState(false)
+  const conversationRecognitionAction = useConversationRecognitionAction(authenticatedAccountKey ?? '', source?.conversationRef ?? source?.sourceRef ?? '', 'chat', activeConversation && source?.kind === 'private_chat' && relatedMenuOpen)
   const [sharePrivateChatOpen,setSharePrivateChatOpen]=useState(false)
   const [privateGroupCreateOpen, setPrivateGroupCreateOpen] = useState(false)
   const identityShareRequest = useSyncExternalStore(identityShareUi.subscribe, identityShareUi.getSnapshot, () => undefined)
@@ -8652,7 +8654,7 @@ export function ArkmeSurface({
           }}>
             {sharePrivateChatOpen && source && <SharePrivateChat key={source.sourceRef} sourceRef={source.sourceRef} name={source.displayName} onClose={()=>setSharePrivateChatOpen(false)}/>}
             {source?.kind === 'private_chat' && source.peerUserId !== undefined && source.peerUserId > 0 && <ArkmeConversationHeaderIconButton label={tr('发起群聊')} hasPopup="dialog" expanded={privateGroupCreateOpen} onClick={() => { setRelatedMenuOpen(false); setPrivateGroupCreateOpen(true) }}><UserPlus size={22} aria-hidden /></ArkmeConversationHeaderIconButton>}
-            <ConversationActionsMenu items={[...(source?.kind === 'private_chat' && authenticatedAccountKey ? [{ id: 'copy-person-link', label: tr('复制对方链接'), icon: <span aria-hidden>↗</span>, invoke: () => { void copyIdentityShareLink(authenticatedAccountKey, { kind: 'source', sourceRef: source.sourceRef }).then(() => showMessageActionStatus(tr('链接已复制'))).catch(error => showMessageActionStatus(errorMessage(error))) } }] : []), { id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+            <ConversationActionsMenu items={[conversationRecognitionAction, ...(source?.kind === 'private_chat' && authenticatedAccountKey ? [{ id: 'copy-person-link', label: tr('复制对方链接'), icon: <span aria-hidden>↗</span>, invoke: () => { void copyIdentityShareLink(authenticatedAccountKey, { kind: 'source', sourceRef: source.sourceRef }).then(() => showMessageActionStatus(tr('链接已复制'))).catch(error => showMessageActionStatus(errorMessage(error))) } }] : []), { id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
