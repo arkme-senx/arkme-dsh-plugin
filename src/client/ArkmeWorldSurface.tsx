@@ -1,3 +1,5 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
+import { WorldSubscribeButton, WorldSubscriptionEntry } from './WorldSubscriptions.js'
 import { TeamWorldActivity } from './TeamWorldActivity.js'
 import { WorldTeamBadge } from './WorldTeamBadge.js'
 import { WorldPublishIdentityDialog } from './WorldPublishIdentityDialog.js'
@@ -24,7 +26,6 @@ import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeImagePayload,
   ArkmeOpenPrivateChatResult,
@@ -666,9 +667,7 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect,
 
   return <div role="dialog" aria-modal="true" aria-label={tr("世界图片预览")} style={styles.previewBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section style={styles.previewModal}>
-      <button data-arkme-feedback="neutral" type="button" style={styles.previewClose} aria-label={tr("关闭图片预览")} title={tr("关闭")} onClick={onClose}>
-        <X size={16} weight="bold" aria-hidden />
-      </button>
+      <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.previewClose} aria-label={tr("关闭图片预览")} title={tr("关闭")} onClick={onClose} />
       <div style={styles.previewStage}>
         <div
           ref={viewportRef}
@@ -1404,6 +1403,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}{tr("的世界")}</h1><p style={styles.subtitle}>{tr("TA 公开分享的内容")}</p></div>
         </div>}
       <div style={styles.headerActions}>
+        {target ? <WorldSubscribeButton target={{ kind: 'person', userId: target.userId }} /> : <WorldSubscriptionEntry />}
         {scope === 'mine' && !publicTab && target === undefined && <ArkmeActionMenu open={more} label={tr('我的世界操作')} onClose={() => setMore(false)} align="end"
           anchor={<button type="button" style={styles.iconButton} aria-label={tr('更多世界操作')} onClick={() => setMore(value => !value)}><DotsThree size={20} /></button>}
           actions={[{ id: 'team-activity', label: tr('我的团队操作'), onSelect: () => { setMore(false); setActivity(true) } }]} />}
@@ -1693,7 +1693,7 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     <section style={{ ...styles.modal, width: 'min(640px, 100%)', maxHeight: 'calc(100vh - 48px)', padding: 20, borderRadius: 16 }} data-world-publish-dialog="shared-self">
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16 }}>{tr('发世界')}</h2>
-        <button type="button" style={styles.publishClose} disabled={sending} aria-label={tr('关闭发布窗口')} onClick={onClose}><X size={18} /></button>
+        <ArkmeCloseButton type="button" style={styles.publishClose} disabled={sending} aria-label={tr('关闭发布窗口')} onClick={onClose} />
       </header>
       {origin && <p style={{ margin: '0 0 8px', fontSize: 11, color: arkmeTheme.secondary }}>{tr('来自{v0} · 发布副本', { v0: sourceState.snapshot?.sourceLabel ?? worldPublishSourceLabel(origin) })}</p>}
       {sourceState.loading && <p role="status">{tr('正在读取原内容…')}</p>}

@@ -1,5 +1,5 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, type CSSProperties } from 'react'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { TeamWorldPublisherState } from './TeamWorldPublisher.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -85,9 +85,7 @@ export function WorldPublishIdentityDialog({
       >
         <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
           <h2 style={{ margin: 0, fontSize: 16 }}>{tr('选择发布身份')}</h2>
-          <button type="button" aria-label={tr('关闭发布窗口')} disabled={busy} style={close} onClick={onClose}>
-            <X size={18} />
-          </button>
+          <ArkmeCloseButton type="button" aria-label={tr('关闭发布窗口')} disabled={busy} style={close} onClick={onClose} />
         </header>
         <p style={{ margin: '12px 0 16px', color: c.secondary, fontSize: 12, lineHeight: 1.7 }}>
           {tr('将完整原消息公开到所选身份的世界。')}

@@ -21,16 +21,19 @@ export interface ArkmeConversationViewportRestore {
   followLatest?: boolean | undefined
 }
 
+const readingAnchors = new WeakMap<HTMLDivElement, HTMLElement>()
+
 export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = false, captureLatestAnchor = false): ArkmeConversationViewportSnapshot {
   const stickToBottom = !messagesOnly && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
   if (stickToBottom && !captureLatestAnchor) return { scrollTop: root.scrollTop, stickToBottom: true }
   const rootRect = root.getBoundingClientRect()
-  for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
-    if (messagesOnly && !row.dataset.arkmeConversationRow?.startsWith('message:')) continue
+  const snapshot = (row: HTMLElement): ArkmeConversationViewportSnapshot | undefined => {
+    if (messagesOnly && !row.dataset.arkmeConversationRow?.startsWith('message:')) return undefined
     const rowRect = row.getBoundingClientRect()
-    if (rowRect.bottom <= rootRect.top || rowRect.top >= rootRect.bottom) continue
+    if (rowRect.bottom <= rootRect.top || rowRect.top >= rootRect.bottom) return undefined
     const anchorId = row.dataset.arkmeConversationRow
     if (anchorId !== undefined) {
+      readingAnchors.set(root, row)
       let messageAnchor: ArkmeConversationViewportSnapshot['messageAnchor']
       if (anchorId.startsWith('message:') && row.dataset.arkmeMessageItemUid) {
         const owner = recordOwnerId(row.dataset.arkmeMessageOwnerId)
@@ -45,6 +48,19 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
       }
     }
   }
+  // Any surviving visible row is a stable reading anchor. Reuse it through
+  // small scrolls instead of walking every earlier mounted row on each event.
+  const previous = readingAnchors.get(root)
+  if (previous && root.contains?.(previous)) {
+    const value = snapshot(previous)
+    if (value) return value
+  }
+  for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
+    if (row === previous) continue
+    const value = snapshot(row)
+    if (value) return value
+  }
+  readingAnchors.delete(root)
   return { scrollTop: root.scrollTop, stickToBottom }
 }
 

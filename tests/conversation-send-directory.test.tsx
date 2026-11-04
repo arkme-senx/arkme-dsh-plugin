@@ -751,9 +751,15 @@ describe('conversation send directory projection', () => {
       })
     })
     if (history) await act(async () => { arkmeUi.showConversationTarget(target, 'bottom-history', 11, 7) })
-    act(() => {
+    await act(async () => {
       body.scrollTop = 200
       renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll()
+      // This renderer's default RAF stub records callbacks without running them.
+      // Deliver the scheduled paint before checking the scroll affordance.
+      if (vi.isMockFunction(requestAnimationFrame)) {
+        const callback = vi.mocked(requestAnimationFrame).mock.calls.at(-1)?.[0]
+        callback?.(0)
+      }
     })
     return body
   }
@@ -7983,7 +7989,7 @@ describe('conversation send directory projection', () => {
     const newerObservers: IntersectionObserverCallback[] = []
     vi.stubGlobal('IntersectionObserver', class {
       constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        if (options?.rootMargin === '120px 0px 0px') olderObservers.push(callback)
+        if (options?.rootMargin === '800px 0px 0px') olderObservers.push(callback)
         if (options?.rootMargin === '0px 0px 120px') newerObservers.push(callback)
       }
       observe() {}
@@ -8104,7 +8110,7 @@ describe('conversation send directory projection', () => {
       const callbacks: IntersectionObserverCallback[] = []
       vi.stubGlobal('IntersectionObserver', class {
         constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-          if (options?.rootMargin === '120px 0px 0px') callbacks.push(callback)
+          if (options?.rootMargin === '800px 0px 0px') callbacks.push(callback)
         }
         observe() {} disconnect() {}
       })

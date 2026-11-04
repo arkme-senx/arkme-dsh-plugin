@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
@@ -87,7 +88,7 @@ export function ArkmeArrangementDetailPane({ accountScope, onSettings, onApplied
             { id: 'delete', label: tr('删除'), danger: true, disabled: actionDisabled,
               onSelect: () => selectAction(() => onDelete(current)) },
           ]} />}
-        <button type="button" aria-label={tr('关闭安排详情')} onClick={onClose}><X size={20} /></button>
+        <ArkmeCloseButton type="button" aria-label={tr('关闭安排详情')} onClick={onClose} />
       </div>
     </header>
     <div className="arkme-arrangement-detail-scroll">

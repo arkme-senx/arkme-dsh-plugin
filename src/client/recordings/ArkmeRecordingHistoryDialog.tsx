@@ -1,6 +1,6 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { RecordingHistoryItem, RecordingHistoryPage } from '../../recording-history.js'
 import { callArkme } from '../api.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
@@ -51,7 +51,7 @@ export function ArkmeRecordingHistoryDialog({ onClose }: { onClose: () => void }
     style={{ width: 'min(840px, calc(100vw - 40px))', maxHeight: 'min(640px, calc(100vh - 48px))', padding: 0, border: `1px solid ${theme.border}`, borderRadius: 12, background: theme.base, color: theme.text, boxShadow: theme.shadow, overflow: 'hidden' }}>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: `1px solid ${theme.border}` }}>
       <h2 style={{ margin: 0, fontSize: 18 }}>{tr('最近录音记录')}</h2>
-      <button type="button" data-arkme-feedback="neutral" aria-label={tr('关闭录音记录')} onClick={onClose} style={{ ...buttonStyle, width: 36, height: 36, padding: 0, flexShrink: 0, display: 'grid', placeItems: 'center' }}><X size={20} aria-hidden /></button>
+      <ArkmeCloseButton type="button" data-arkme-feedback="neutral" aria-label={tr('关闭录音记录')} onClick={onClose} style={{ ...buttonStyle, width: 36, height: 36, padding: 0, flexShrink: 0, display: 'grid', placeItems: 'center' }} />
     </div>
     <div style={{ padding: '0 20px 16px', maxHeight: 'min(540px, calc(100vh - 140px))', overflowY: 'auto' }}>
       <p style={{ fontSize: 12, color: theme.secondary }}>{tr('各设备同步的录音记录，按开始时间倒序')}</p>

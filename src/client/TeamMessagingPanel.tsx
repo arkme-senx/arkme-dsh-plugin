@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
@@ -1127,7 +1128,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     {(selection.status || selection.error) && <div role={selection.error ? 'alert' : 'status'} style={{ padding: '8px 16px', color: selection.error ? arkmeTheme.danger : arkmeTheme.secondary, fontSize: 12 }}>
       {selection.status} {selection.error}
       {selection.error && <button type="button" disabled={selection.busy} onClick={() => { void recover() }}>{tr('刷新核对')}</button>}
-      {!selection.busy && <button type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus}>×</button>}
+      {!selection.busy && <ArkmeCloseButton type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus} />}
     </div>}
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
     <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current); bottomVisibility.measure() }} aria-label={tr("团队消息记录")}>

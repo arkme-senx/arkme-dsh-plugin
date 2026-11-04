@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from '../../ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { callArkme } from '../../api.js'
@@ -59,7 +60,7 @@ export function CodexPrivateImages({teamRef,task,event}:Props) {
     <small>{tr(task.cloud?.remote?'仅本人可见':'仅本人可见 · 同步状态以云端回执为准')}</small>
     {selected&&createPortal(<div className="arkme-codex-private-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(undefined)}}>
       <div ref={dialog} tabIndex={-1} className="arkme-codex-private-dialog" role="dialog" aria-modal="true" aria-label={tr('图片预览')}>
-        <button className="arkme-codex-private-close" type="button" aria-label={tr('关闭图片预览')} onClick={()=>setSelected(undefined)}>×</button>
+        <ArkmeCloseButton className="arkme-codex-private-close" type="button" aria-label={tr('关闭图片预览')} onClick={()=>setSelected(undefined)} />
         <Picture image={selected} params={params} full/><small>{tr('仅本人可见')}</small>
       </div>
     </div>,document.body)}

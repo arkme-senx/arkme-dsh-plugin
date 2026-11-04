@@ -444,7 +444,7 @@ describe('record re-edit attachment UI', () => {
     const observers: IntersectionObserverCallback[] = []
     vi.stubGlobal('IntersectionObserver', class {
       constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        if (options?.rootMargin === '120px 0px 0px') observers.push(callback)
+        if (options?.rootMargin === '800px 0px 0px') observers.push(callback)
       }
       observe() {} disconnect() {}
     })

@@ -1,8 +1,10 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { MessageAvatar } from './MessageAvatar.js'
 export { MessageAvatar } from './MessageAvatar.js'
 import { messageMemberTarget, useMemberInteraction, type MemberActionTarget } from './member-interaction.js'
 import { useConversationRecognitionAction } from './ConversationRecognitionControl.js'
 import { identityShareUi } from './identity-share-ui.js'
+import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
@@ -36,7 +38,10 @@ import { useQuoteReplySupport } from './use-quote-reply-support.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
-import { OfflineContextCandidates, OfflineContextConnected, offlineRelinkOptions } from './offline-context/OfflineContextConnected.js'
+import { OfflineContextConnected, offlineRelinkOptions } from './offline-context/OfflineContextConnected.js'
+import { OfflineContextDirectory } from './offline-context/OfflineContextDirectory.js'
+import { ConversationHistoryStatus } from './ConversationHistoryStatus.js'
+import { useConversationScrollFrame } from './conversation-scroll-frame.js'
 import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { StatisticsSurface } from './statistics/StatisticsSurface.js'
 import { SelfConversationStatistics } from './statistics/SelfConversationStatistics.js'
@@ -2988,6 +2993,8 @@ export function ArkmeSurface({
   const [selfMenuOpen, setSelfMenuOpen] = useState(false)
   const [conversationLocationOpen, setConversationLocationOpen] = useState(false)
   useEffect(() => { setConversationLocationOpen(false) }, [authenticatedAccountKey, conversationKey])
+  const [offlineContextOpen, setOfflineContextOpen] = useState(false)
+  useEffect(() => { setOfflineContextOpen(false) }, [authenticatedAccountKey, conversationKey, activeConversation])
   const [selfCalendarOpen, setSelfCalendarOpen] = useState(false)
   const [selfHeaderPanel, setSelfHeaderPanel] = useState<'search' | 'statistics'>()
   const openSelfHeaderPanel = (panel: 'search' | 'statistics', open: boolean) => {
@@ -4585,7 +4592,7 @@ export function ArkmeSurface({
         return
       }
       if (state.armed) void loadOlderHistory()
-    }, { root, rootMargin: '120px 0px 0px' })
+    }, { root, rootMargin: '800px 0px 0px' })
     observer.observe(sentinel); return () => { active = false; observer.disconnect() }
   }, [activeConversation, authenticated, hasMore, loadOlderHistory, loadingOlder, nextCursor, ui.conversationTarget])
 
@@ -7683,13 +7690,18 @@ export function ArkmeSurface({
       ...displayRows,
     ])
   }, [activeConversation, timelineStateKey, conversationKey, displayRows, interwovenWindow.prelude])
-  const handleConversationScroll = useCallback(() => {
-    if (rememberConversationViewport()?.stickToBottom) setNewMessageCount(0)
+  const updateScrollAffordances = useConversationScrollFrame(`${authenticatedAccountKey}:${conversationKey}:${activeConversation}`, () => {
     arkmeChatDirectory.refreshReadingIntent()
     bottomVisibility.measure()
     const body = bodyRef.current
     if (body !== null && body.scrollHeight - body.clientHeight - body.scrollTop <= 2) void acknowledgeRead(items)
-  }, [acknowledgeRead, items, bottomVisibility.measure, rememberConversationViewport])
+  })
+  const handleConversationScroll = useCallback(() => {
+    // Capture synchronously: switching conversations before the next frame must
+    // retain the outgoing reading position, never sample the replacement DOM.
+    if (rememberConversationViewport()?.stickToBottom) setNewMessageCount(count => count === 0 ? count : 0)
+    updateScrollAffordances()
+  }, [rememberConversationViewport, updateScrollAffordances])
   const returnToLatest = useCallback(async () => {
     setCalendarMomentWindow(undefined)
     const body = bodyRef.current
@@ -7796,6 +7808,7 @@ export function ArkmeSurface({
     || identityShareRequest?.accountScope === authenticatedAccountKey && identityShareRequest !== undefined
     || selfMenuOpen
     || conversationLocationOpen
+    || offlineContextOpen
     || relatedPanelOpen
     || commonGroupsOpen
     || relatedDetail !== undefined
@@ -8591,6 +8604,7 @@ export function ArkmeSurface({
             onError={setError}
             onExport={() => { startConversationExport(source) }}
             onLocation={() => { setConversationLocationOpen(true) }}
+            onOfflineContext={() => { setOfflineContextOpen(true) }}
             exportBusy={conversationExport?.status === 'downloading'}
             exportProcessed={conversationExport?.processed ?? 0}
           />}
@@ -8654,7 +8668,7 @@ export function ArkmeSurface({
           }}>
             {sharePrivateChatOpen && source && <SharePrivateChat key={source.sourceRef} sourceRef={source.sourceRef} name={source.displayName} onClose={()=>setSharePrivateChatOpen(false)}/>}
             {source?.kind === 'private_chat' && source.peerUserId !== undefined && source.peerUserId > 0 && <ArkmeConversationHeaderIconButton label={tr('发起群聊')} hasPopup="dialog" expanded={privateGroupCreateOpen} onClick={() => { setRelatedMenuOpen(false); setPrivateGroupCreateOpen(true) }}><UserPlus size={22} aria-hidden /></ArkmeConversationHeaderIconButton>}
-            <ConversationActionsMenu items={[conversationRecognitionAction, ...(source?.kind === 'private_chat' && authenticatedAccountKey ? [{ id: 'copy-person-link', label: tr('复制对方链接'), icon: <span aria-hidden>↗</span>, invoke: () => { void copyIdentityShareLink(authenticatedAccountKey, { kind: 'source', sourceRef: source.sourceRef }).then(() => showMessageActionStatus(tr('链接已复制'))).catch(error => showMessageActionStatus(errorMessage(error))) } }] : []), { id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
+            <ConversationActionsMenu items={[conversationRecognitionAction, ...(source?.kind === 'private_chat' && authenticatedAccountKey ? [{ id: 'copy-person-link', label: tr('复制对方链接'), icon: <span aria-hidden>↗</span>, invoke: () => { void copyIdentityShareLink(authenticatedAccountKey, { kind: 'source', sourceRef: source.sourceRef }).then(() => showMessageActionStatus(tr('链接已复制'))).catch(error => showMessageActionStatus(errorMessage(error))) } }] : []), { id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden />, invoke: () => { setConversationLocationOpen(true) } }, { id: 'offline-context', label: tr('线下交流'), icon: <Waveform size={20} aria-hidden />, invoke: () => { setOfflineContextOpen(true) } }, {id:'team-external-share',label:'共享为对外私聊',icon:<span>↗</span>,invoke:()=>setSharePrivateChatOpen(true)},...(privateMessageDnd ? [privateMessageDnd] : []), ...privateChatActionItems(privateActions, directAdmission, openRelatedPanel, {
               busy: conversationExport?.status === 'downloading',
               processed: conversationExport?.processed ?? 0,
               invoke: () => { startConversationExport(source) },
@@ -8678,6 +8692,10 @@ export function ArkmeSurface({
         </header>}
         {conversationLocationOpen && authenticated && source && <ArkmeLocationDialog key={`conversation-location:${authenticatedAccountKey}:${conversationKey}`}
           initialSource={source} onClose={() => { setConversationLocationOpen(false) }} />}
+        {offlineContextOpen && authenticated && activeConversation && sourceIsChat && source && <OfflineContextDirectory
+          key={`offline-directory:${authenticatedAccountKey}:${conversationKey}`} source={source} items={displayItems}
+          onClose={() => setOfflineContextOpen(false)}
+          onChanged={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(() => {}) }} />}
         {privateGroupCreateOpen && authenticatedAccountKey && source?.kind === 'private_chat' && <PrivateGroupCreateDialog accountScope={authenticatedAccountKey} source={source} onClose={() => setPrivateGroupCreateOpen(false)} onCreated={activateSource} />}
         {activeConversation && calendarNavigation.status !== undefined && <ArkmeCalendarNavigationStatus
           status={calendarNavigation.status} onCancel={calendarNavigation.cancel} onRetry={calendarNavigation.retry}
@@ -8838,15 +8856,8 @@ export function ArkmeSurface({
             {interwovenWindow.prelude.length > 0 && <ArkmeInterwovenPrelude
               key={conversationKey} moments={interwovenWindow.prelude} onOpen={openMomentDetail} />}
             <div ref={sentinelRef} style={styles.sentinel} />
-            {hasMore && <div style={styles.loading}>
-              {(olderLoadError !== '' || nextCursor === undefined) && <div role="alert">
-                {olderLoadError || '暂时无法继续加载，请刷新会话后重试'}
-              </div>}
-              {nextCursor !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.retry} disabled={loadingOlder}
-                onClick={() => { void loadOlderHistory() }}>
-                {loadingOlder ? tr("正在加载更早内容…") : olderLoadError === '' ? '继续加载更早消息' : '重试加载更早消息'}
-              </button>}
-            </div>}
+            {hasMore && <ConversationHistoryStatus loading={loadingOlder} error={olderLoadError} canLoad={nextCursor !== undefined}
+              onLoad={() => { void loadOlderHistory() }} />}
             {timelineSkeletonKey === conversationKey && displayRows.length === 0 && <div
               role="status"
               aria-label={tr("正在加载会话内容")}
@@ -8859,7 +8870,6 @@ export function ArkmeSurface({
               <span style={styles.timelineSkeletonAvatar} />
               <span style={{ ...styles.timelineSkeletonBubble, width: `${width}%` }} />
             </div>)}</div>}
-            {authenticated && activeConversation && sourceIsChat && source !== undefined && <OfflineContextCandidates key={`offline-context:${authenticatedAccountKey}:${conversationKey}`} source={source} items={displayItems} onChanged={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(() => {}) }} />}
             {displayRows.length > 0 && <ul ref={recordsRef} data-arkme-message-selection-scope data-arkme-message-selecting={activeSelectMode !== undefined} className={`arkme-conversation-records${timelineRevealKey === conversationKey
               ? ' arkme-conversation-records-reveal'
               : ''}`} style={styles.records}>
@@ -8875,7 +8885,6 @@ export function ArkmeSurface({
               </WindowedTimelineRows> : renderedMessageRows}
 
             </ul>}
-            {authenticated && activeConversation && sourceIsChat && source !== undefined && <OfflineContextCandidates state="dismissed" key={`offline-context-removed:${authenticatedAccountKey}:${conversationKey}`} source={source} items={displayItems} onChanged={() => { void loadTimeline(undefined, true, 40, 'refresh').catch(() => {}) }} />}
             <div ref={newerSentinelRef} style={styles.sentinel} />
             {newerHasMore && newerLoadFailed && <div role="status" data-arkme-newer-load-error style={styles.notice}>
               {tr('暂时无法加载后续消息')}
@@ -9631,7 +9640,7 @@ export function ArkmeSurface({
           <section style={styles.contactDialog} role="dialog" aria-modal="true" aria-labelledby="arkme-contact-add-title">
             <header style={styles.contactDialogHeader}>
               <h2 id="arkme-contact-add-title" style={styles.contactDialogTitle}>{tr("添加联系人")}</h2>
-              <button data-arkme-feedback="neutral" type="button" style={styles.contactDialogClose} aria-label={tr("关闭添加联系人")} onClick={() => { arkmeUi.showConversations() }}>×</button>
+              <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.contactDialogClose} aria-label={tr("关闭添加联系人")} onClick={() => { arkmeUi.showConversations() }} />
             </header>
             <div style={styles.contactDialogBody}>
               <ArkmeContactAddSurface

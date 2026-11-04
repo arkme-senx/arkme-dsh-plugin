@@ -1,4 +1,5 @@
 import { installArkmeSettingsDialog } from './ArkmeSettingsDialog.js'
+import { installModalInteractions } from './modal-interactions.js'
 import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
 import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
@@ -103,6 +104,7 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  ctx.effect(installModalInteractions, 'dsh-arkme: modal pointer and close interactions')
   // Only the main top frame is authorized by the desktop to register this capability.
   void nativeScreenshotBridge()?.enableStandaloneEditor?.('reset-v1').catch(() => {})
   // Explicit loopback-only review surface; never inject synthetic events into a real chat.
