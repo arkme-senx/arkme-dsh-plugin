@@ -1,4 +1,5 @@
 import { TeamWorldActivity } from './TeamWorldActivity.js'
+import { WorldTeamBadge } from './WorldTeamBadge.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { ArkmeSelfRoleMenu } from './ArkmeSelfRoleMenu.js'
@@ -934,7 +935,7 @@ function InteractionRow({ item, replyToName, replyToMemberType, compact, preview
       <header style={styles.interactionMeta}>
         <span style={styles.interactionAuthorLine}>
           <strong style={{ ...styles.interactionAuthor, ...(reply ? styles.interactionReplyAuthor : {}) }}>{item.authorName}</strong>
-          <WorldMembershipBadge memberType={item.memberType} />
+          {item.teamAuthor ? <WorldTeamBadge /> : <WorldMembershipBadge memberType={item.memberType} />}
           {replyToName !== undefined && <span style={styles.interactionReplyTarget}>{tr("回复 {v0}", { v0: replyToName })}<WorldMembershipBadge memberType={replyToMemberType} /></span>}
         </span>
         <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
@@ -1173,7 +1174,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
           {item.authorRef === undefined && !item.teamAuthor
             ? <strong style={styles.author}>{item.authorName}</strong>
             : <button data-arkme-feedback="neutral" type="button" style={styles.authorButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
-          <WorldMembershipBadge memberType={item.memberType} />
+          {item.teamAuthor ? <WorldTeamBadge /> : <WorldMembershipBadge memberType={item.memberType} />}
           {playable
             ? <button data-arkme-feedback="neutral" data-arkme-feedback-selected={voiceprintActive} type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? tr("正在生成{v0}的声纹，点击停止", { v0: item.authorName }) : voiceprintActive ? tr("停止播放{v0}的声纹", { v0: item.authorName }) : tr("播放{v0}的声纹", { v0: item.authorName })} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
               {voiceprintLoading
@@ -1297,11 +1298,13 @@ export function WorldInfiniteScrollTrigger({ scrollRootRef, loading, error, onLo
   </div>
 }
 
-export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, catalogOwnerName, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension, onOpenAllExtensions, onLoadMore, onSelectPublicTab, publicGroupsSlot }: {
+export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, catalogOwnerName, voiceprintPlayableRefs, voiceprintRecordRef, voiceprintLoadingRecordRef, interactionRecordRef, actionMessage, onRefresh, onBackToWorld, onSelectScope, onOpenComposer, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenExtension, onOpenAllExtensions, onLoadMore, onSelectPublicTab, publicGroupsSlot, publicTab, publicContent }: {
   state: ArkmeWorldViewState
   scope: WorldScope
   onSelectPublicTab?(tab: PublicSocialTab): void
   publicGroupsSlot?: import('react').ReactNode
+  publicTab?: PublicSocialTab | undefined
+  publicContent?: import('react').ReactNode
   target?: ArkmeWorldViewTarget
   catalogOwnerUserId?: number
   catalogOwnerName?: string
@@ -1325,7 +1328,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
 }) {
   useArkmeLocale()
   const [activity, setActivity] = useState(false), [more, setMore] = useState(false)
-  const detailContext = `${scope}:${target?.userId ?? ''}:${target && 'contactRef' in target ? target.contactRef : ''}`
+  const detailContext = `${publicTab ?? scope}:${target?.userId ?? ''}:${target && 'contactRef' in target ? target.contactRef : ''}`
   const [detailSelection, setDetailSelection] = useState<{ context: string; item: ArkmeWorldFeedItem }>()
   const selectedDetail = detailSelection?.context === detailContext ? detailSelection.item : undefined
   const detailItem = selectedDetail ? state.items.find(item => item.recordRef === selectedDetail.recordRef) ?? selectedDetail : undefined
@@ -1338,7 +1341,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     ? undefined
     : state.items.find(item => item.recordRef === interactionRecordRef)
   const scrollRootRef = useRef<HTMLDivElement | null>(null)
-  const scrollPositionsRef = useRef<Record<WorldScope, number>>({ all: 0, mine: 0 })
+  const scrollPositionsRef = useRef<Record<WorldScope, number> & Record<string, number>>({ all: 0, mine: 0 })
+  const scrollKey = target === undefined ? scope : `user:${target.userId}`
   const cardCallbacksRef = useRef({
     onOpenInteractions,
     onInteractionCreated,
@@ -1359,9 +1363,10 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
   const inviteCardVoiceprint = useCallback((item: ArkmeWorldFeedItem) => { cardCallbacksRef.current.onInviteVoiceprint?.(item) }, [])
   const openCardAuthor = useCallback((item: ArkmeWorldFeedItem) => { cardCallbacksRef.current.onOpenAuthor?.(item) }, [])
   const bindScrollRoot = useCallback((element: HTMLDivElement | null) => {
+    if (element === null && scrollRootRef.current) scrollPositionsRef.current[scrollKey] = scrollRootRef.current.scrollTop
     scrollRootRef.current = element
-    if (element !== null) element.scrollTop = scrollPositionsRef.current[scope]
-  }, [scope])
+    if (element !== null) element.scrollTop = scrollPositionsRef.current[scrollKey] ?? 0
+  }, [scrollKey])
   const notificationFocus = useContext(WorldNotificationFocus)
   const selectScope = (nextScope: WorldScope) => {
     if (nextScope === scope && !notificationFocus) return
@@ -1378,8 +1383,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     <style>{`.arkme-world-columns { position:relative; width:100%; max-width:1020px; padding:0 clamp(12px,2vw,24px); margin:0 auto; box-sizing:border-box; flex:1; min-width:0; min-height:0; display:grid; grid-template-columns:minmax(0,min(640px,100%)) minmax(0,1fr); column-gap:clamp(0px,calc(100% - 688px),32px); }
       .arkme-world-primary { min-width:0; min-height:0; display:flex; flex-direction:column; }`}</style>
     <div className="arkme-world-columns" data-world-columns>
-    <div className="arkme-world-primary" data-world-primary-column>
-    <header style={styles.header}>
+    <div className="arkme-world-primary" data-world-primary-column style={publicTab ? { gridColumn: '1 / -1' } : undefined}>
+    <header style={{ ...styles.header, maxWidth: 640 }}>
       {target === undefined
         ? <div><h1 style={styles.heading}>{tr("世界")}</h1><p style={styles.subtitle}>{tr("看看大家此刻正在记录什么")}</p></div>
         : <div style={styles.targetHeading}>
@@ -1393,11 +1398,11 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}{tr("的世界")}</h1><p style={styles.subtitle}>{tr("TA 公开分享的内容")}</p></div>
         </div>}
       <div style={styles.headerActions}>
-        {scope === 'mine' && target === undefined && <ArkmeActionMenu open={more} label={tr('我的世界操作')} onClose={() => setMore(false)} align="end"
+        {scope === 'mine' && !publicTab && target === undefined && <ArkmeActionMenu open={more} label={tr('我的世界操作')} onClose={() => setMore(false)} align="end"
           anchor={<button type="button" style={styles.iconButton} aria-label={tr('更多世界操作')} onClick={() => setMore(value => !value)}><DotsThree size={20} /></button>}
           actions={[{ id: 'team-activity', label: tr('我的团队操作'), onSelect: () => { setMore(false); setActivity(true) } }]} />}
 
-        <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? tr("刷新中") : tr("刷新")} aria-label={state.refreshing ? tr("刷新中") : tr("刷新")} onClick={onRefresh}>
+        <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} disabled={!publicTab && state.refreshing} title={!publicTab && state.refreshing ? tr("刷新中") : tr("刷新")} aria-label={!publicTab && state.refreshing ? tr("刷新中") : tr("刷新")} onClick={onRefresh}>
           <ArrowClockwise size={18} weight="light" />
         </button>
         {target === undefined && <button data-arkme-feedback="primary" type="button" style={{ ...styles.button, ...styles.primaryButton }} aria-label={tr("发世界")} onClick={onOpenComposer}><Plus size={14} weight="regular" aria-hidden />{tr("发布")}</button>}
@@ -1405,13 +1410,13 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     </header>
     {target === undefined && <div style={styles.worldToolbar}>
       <nav style={styles.tabs} aria-label={tr("世界范围")}>
-        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(scope === 'all' ? styles.tabActive : {}) }} aria-current={scope === 'all' ? 'page' : undefined} onClick={() => { selectScope('all') }}>{tr("世界")}</button>
-        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(scope === 'mine' ? styles.tabActive : {}) }} aria-current={scope === 'mine' ? 'page' : undefined} onClick={() => { selectScope('mine') }}>{tr("我的世界")}</button>
-        {onSelectPublicTab && <><button data-arkme-feedback="neutral" type="button" style={styles.tab} onClick={() => onSelectPublicTab('groups')}>{tr('公开群聊')}</button><button data-arkme-feedback="neutral" type="button" style={styles.tab} onClick={() => onSelectPublicTab('people')}>{tr('找人聊聊')}</button></>}
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(!publicTab && scope === 'all' ? styles.tabActive : {}) }} aria-current={!publicTab && scope === 'all' ? 'page' : undefined} onClick={() => { if (publicTab) onSelectScope('all'); else selectScope('all') }}>{tr("世界")}</button>
+        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(!publicTab && scope === 'mine' ? styles.tabActive : {}) }} aria-current={!publicTab && scope === 'mine' ? 'page' : undefined} onClick={() => { if (publicTab) onSelectScope('mine'); else selectScope('mine') }}>{tr("我的世界")}</button>
+        {onSelectPublicTab && <><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(publicTab === 'groups' ? styles.tabActive : {}) }} aria-current={publicTab === 'groups' ? 'page' : undefined} onClick={() => onSelectPublicTab('groups')}>{tr('公开群聊')}</button><button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...(publicTab === 'people' ? styles.tabActive : {}) }} aria-current={publicTab === 'people' ? 'page' : undefined} onClick={() => onSelectPublicTab('people')}>{tr('找人聊聊')}</button></>}
       </nav>
     </div>}
     <div style={styles.worldLayout} data-world-layout={interactionItem === undefined ? 'feed' : 'comments-open'}>
-      <div key={scope} ref={bindScrollRoot} style={styles.body} data-world-feed-pane="true" data-world-scroll-container="true" data-world-scope={scope}>
+      <div key={scope} ref={bindScrollRoot} style={{ ...styles.body, ...(publicTab ? { display: 'none' } : {}) }} data-world-feed-pane="true" data-world-scroll-container="true" data-world-scope={scope}>
         <div style={styles.feed} data-world-content-stack="true">
         {publicGroupsSlot}
         {catalogOwnerUserId !== undefined && <WorldExtensionShelf
@@ -1453,9 +1458,10 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
         </>}
         </div>
       </div>
+      {publicContent && <div data-world-directory-pane style={{ display: publicTab ? 'flex' : 'none', flex: 1, minHeight: 0, minWidth: 0 }}>{publicContent}</div>}
     </div>
     </div>
-    <aside className="arkme-world-reserved" aria-hidden="true" data-world-reserved-column />
+    {!publicTab && <aside className="arkme-world-reserved" aria-hidden="true" data-world-reserved-column />}
     </div>
     {activity && <TeamWorldActivity onClose={() => setActivity(false)} />}
     {detailItem && <ArkmeWorldRecordDetail key={detailItem.recordRef} item={detailItem} onClose={closeDetail}
@@ -1873,7 +1879,8 @@ function worldAuthorCardMember(item: ArkmeWorldFeedItem): ArkmeMemberProfileIden
   }
 }
 
-export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, accountScope, onBackToWorld, onSourceActivated }: {
+export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all', currentUserId, accountScope, onBackToWorld, onSourceActivated, active = true }: {
+  active?: boolean
   notificationRef?: string
   target?: ArkmeWorldViewTarget
   initialScope?: WorldScope
@@ -1889,6 +1896,8 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   const [notificationFocus, setNotificationFocus] = useState<string>()
   const [scope, setScope] = useState<WorldScope>(initialScope)
   const [publicTab, setPublicTab] = useState<PublicSocialTab>()
+  const [visitedDirectories, setVisitedDirectories] = useState<PublicSocialTab[]>([])
+  const [directoryRevisions, setDirectoryRevisions] = useState({ groups: 0, people: 0 })
   const [profileGroupView, setProfileGroupView] = useState<{ uid?: string }>()
   const [createGroupOpen, setCreateGroupOpen] = useState(false)
   useEffect(() => { setProfileGroupView(undefined) }, [target?.userId, scope])
@@ -1915,6 +1924,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   const [actionMessage, setActionMessage] = useState<string>()
   const [targetView, setTargetView] = useState<ArkmeWorldViewState>(() => loadingState())
   const loadControllers = useRef<Partial<Record<WorldScope | 'target', AbortController>>>({})
+  const authorLabelControllers = useRef(new Set<AbortController>())
   const audioRef = useRef<HTMLAudioElement>()
   const voiceprintControllerRef = useRef<AbortController>()
   const voiceprintAudioRefsRef = useRef(new Set<HTMLAudioElement>())
@@ -1941,8 +1951,17 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   }, [])
 
   const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldFeedItem[], signal: AbortSignal) => {
-    void hydrateWorldAuthorLabels(items.filter(item => !item.teamAuthor).map(item => item.authorRef ?? item.recordRef), signal, applyViewerAuthorLabels).catch(() => {})
+    const refs = items.filter(item => !item.teamAuthor).map(item => item.authorRef ?? item.recordRef)
+    if (!refs.length) return
+    const controller = new AbortController()
+    authorLabelControllers.current.add(controller)
+    void hydrateWorldAuthorLabels(refs, AbortSignal.any([signal, controller.signal]), applyViewerAuthorLabels).catch(() => {})
+      .finally(() => { authorLabelControllers.current.delete(controller) })
   }, [applyViewerAuthorLabels])
+  useEffect(() => () => {
+    for (const controller of authorLabelControllers.current) controller.abort()
+    authorLabelControllers.current.clear()
+  }, [scope, target?.userId, publicTab, active])
 
   const stopVoiceprintMedia = () => {
     voiceprintControllerRef.current?.abort()
@@ -1960,6 +1979,9 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     voiceprintAudioUrlsRef.current.clear()
     audioRef.current = undefined
   }
+  useEffect(() => {
+    if (!active) { voiceprintTokenRef.current += 1; stopVoiceprintMedia(); setVoiceprintRecordRef(undefined); setVoiceprintLoadingRecordRef(undefined) }
+  }, [active])
 
   const load = useCallback((target: WorldScope, position: number | string = 0, preserveItems = false) => {
     loadControllers.current[target]?.abort()
@@ -2102,6 +2124,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   }, [state.items, state.status, voiceprintAvailabilityRevision])
 
   const refresh = () => {
+    if (publicTab && target === undefined) { setDirectoryRevisions(current => ({ ...current, [publicTab]: current[publicTab] + 1 })); return }
     setActionMessage(undefined)
     invalidateWorldVoiceprintAvailability(state.items.map(item => item.recordRef))
     for (const item of state.items) resolvedVoiceprintRefsRef.current.delete(item.recordRef)
@@ -2110,7 +2133,16 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     else if (target === undefined) load(scope, 0, true)
     else loadUser(target, 0, true)
   }
-  const selectScope = (next: WorldScope) => { setPublicTab(undefined); setProfileGroupView(undefined); setNotificationTarget(undefined); setLoaded({ all: false, mine: false }); setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next) }
+  const selectScope = (next: WorldScope) => {
+    if (notificationTarget) { loadControllers.current.all?.abort(); setLoaded(current => ({ ...current, all: false })) }
+    setPublicTab(undefined); setProfileGroupView(undefined); setNotificationTarget(undefined); setActionMessage(undefined); setInteractionRecordRef(undefined); setScope(next)
+  }
+  const selectDirectory = (tab: PublicSocialTab) => {
+    if (publicTab === tab) return
+    stopVoiceprintMedia(); setVoiceprintRecordRef(undefined); setInteractionRecordRef(undefined)
+    setVisitedDirectories(current => current.includes(tab) ? current : [...current, tab])
+    setPublicTab(tab)
+  }
   const toggleInteractions = (item: ArkmeWorldFeedItem) => {
     setInteractionRecordRef(current => current === item.recordRef ? undefined : item.recordRef)
   }
@@ -2254,17 +2286,26 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
 
   const profileUserId = target?.userId ?? (scope === 'mine' ? currentUserId : undefined)
   return <WorldNotificationFocus.Provider value={notificationTarget ? notificationFocus : undefined}><main style={styles.root} data-arkme-owned="world-surface" aria-label={tr("世界")}>
-    {accountScope && profileUserId && !profileGroupView && !publicTab && <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 20px 0' }}><IdentityCopyLinkButton accountScope={accountScope} target={{ kind: 'person', userId: profileUserId }} label={profileUserId === currentUserId ? '复制我的链接' : '复制个人链接'} /></div>}
-    {accountScope && (profileGroupView || publicTab && target === undefined) ? <PublicSocialDirectory
-      key={`${accountScope}:${profileGroupView ? profileUserId : 'all'}:${publicTab ?? 'groups'}`}
-      accountScope={accountScope} currentUserId={currentUserId} mode={profileGroupView ? 'groups' : publicTab ?? 'groups'}
+    {accountScope && profileGroupView ? <PublicSocialDirectory
+      key={`${accountScope}:${profileUserId}:groups`}
+      accountScope={accountScope} currentUserId={currentUserId} mode="groups"
       {...(profileGroupView && profileUserId ? { profileUserId, profileName: target?.displayName ?? tr('我'), initialGroupUid: profileGroupView.uid, onBack: () => setProfileGroupView(undefined) } : {})}
-      onTabChange={next => { if (next === 'all' || next === 'mine') selectScope(next); else setPublicTab(next) }}
+      onTabChange={next => { if (next === 'all' || next === 'mine') selectScope(next); else selectDirectory(next) }}
       onCreateGroup={() => setCreateGroupOpen(true)} onSourceActivated={onSourceActivated}
       onOpenWorld={person => { setPublicTab(undefined); setProfileGroupView(undefined); arkmeUi.showUserWorld({ userId: person.userId, displayName: person.displayName || tr('即我用户') }) }}
     /> : <ArkmeWorldContent state={state} scope={scope} {...(target === undefined ? {} : { target })}
-      {...(accountScope ? { onSelectPublicTab: (tab: PublicSocialTab) => { stopVoiceprintMedia(); setVoiceprintRecordRef(undefined); setPublicTab(tab) } } : {})}
-      {...(accountScope && profileUserId ? { publicGroupsSlot: <PublicWorldGroups accountScope={accountScope} userId={profileUserId} onOpen={uid => setProfileGroupView(uid ? { uid } : {})} /> } : {})}
+      publicTab={target === undefined ? publicTab : undefined}
+      {...(accountScope ? { onSelectPublicTab: selectDirectory,
+        publicContent: visitedDirectories.map(mode => <div key={mode} data-world-directory-tab={mode} style={{ display: target === undefined && publicTab === mode ? 'flex' : 'none', flex: 1, minHeight: 0, minWidth: 0 }}>
+          <PublicSocialDirectory embedded active={target === undefined && publicTab === mode} accountScope={accountScope} currentUserId={currentUserId} mode={mode} refreshKey={directoryRevisions[mode]}
+            onCreateGroup={() => setCreateGroupOpen(true)} onSourceActivated={onSourceActivated}
+            onOpenWorld={person => { arkmeUi.showUserWorld({ userId: person.userId, displayName: person.displayName || tr('即我用户') }) }} />
+        </div>),
+      } : {})}
+      {...(accountScope && profileUserId ? { publicGroupsSlot: <>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '0 0 2px' }}><IdentityCopyLinkButton accountScope={accountScope} target={{ kind: 'person', userId: profileUserId }} label={profileUserId === currentUserId ? '复制我的链接' : '复制个人链接'} /></div>
+        <PublicWorldGroups accountScope={accountScope} userId={profileUserId} onOpen={uid => setProfileGroupView(uid ? { uid } : {})} />
+      </> } : {})}
       {...(target?.userId !== undefined ? { catalogOwnerUserId: target.userId } : target === undefined && scope === 'mine' && currentUserId !== undefined ? { catalogOwnerUserId: currentUserId } : {})}
       {...(target?.displayName !== undefined ? { catalogOwnerName: target.displayName } : scope === 'mine' ? { catalogOwnerName: '我' } : {})}
       voiceprintPlayableRefs={playableRefs} voiceprintRecordRef={voiceprintRecordRef}

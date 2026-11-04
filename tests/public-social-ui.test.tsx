@@ -25,12 +25,41 @@ describe('desktop public social interactions', () => {
     await act(async () => button('公开群聊').props.onClick())
     expect(renderer!.root.findByType(PublicSocialDirectory).props.mode).toBe('groups')
     await act(async () => button('找人聊聊').props.onClick())
-    expect(renderer!.root.findByType(PublicSocialDirectory).props.mode).toBe('people')
+    expect(renderer!.root.findAllByType(PublicSocialDirectory).map(view => view.props.mode)).toEqual(['groups', 'people'])
     await act(async () => button('我的世界').props.onClick())
-    expect(renderer!.root.findAllByType(PublicSocialDirectory)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(PublicSocialDirectory)).toHaveLength(2)
+    expect(mocks.call.mock.calls.filter(([op, input]) => op === 'social.groups.query' && !input.userId)).toHaveLength(1)
     expect(mocks.call).toHaveBeenCalledWith('world.mine', expect.any(Object), expect.any(AbortSignal))
     await act(async () => button('查看全部').props.onClick())
     expect(renderer!.root.findByType(PublicSocialDirectory).props.profileUserId).toBe(1001)
+  })
+  it('retains directory searches, selections and feed data across all four tabs', async () => {
+    mocks.call.mockImplementation(async (op: string) => op === 'social.groups.query' ? { items: [group], hasMore: false } : op === 'social.people.query' ? { items: [person], hasMore: false } : op === 'social.people.read' ? person : { items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface accountScope="test:1001" currentUserId={1001} />) })
+    await act(async () => button('公开群聊').props.onClick())
+    const directory = renderer!.root.findByType(PublicSocialDirectory)
+    await act(async () => directory.findByType('input').props.onChange({ currentTarget: { value: '产品' } }))
+    await act(async () => directory.findByType('form').props.onSubmit({ preventDefault() {} }))
+    const reads = mocks.call.mock.calls.filter(([op, input]) => op === 'social.groups.query' && !input.userId).length
+    await act(async () => button('找人聊聊').props.onClick())
+    await act(async () => button('我的世界').props.onClick())
+    await act(async () => button('世界').props.onClick())
+    await act(async () => button('公开群聊').props.onClick())
+    expect(renderer!.root.findAllByType(PublicSocialDirectory)[0]!.findByType('input').props.value).toBe('产品')
+    expect(mocks.call.mock.calls.filter(([op, input]) => op === 'social.groups.query' && !input.userId)).toHaveLength(reads)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.feed')).toHaveLength(1)
+    expect(renderer!.root.findAllByType('h1').map(heading => heading.children.join(''))).toEqual(['世界'])
+    expect(renderer!.root.findAllByType('nav').filter(nav => nav.props['aria-label'] === '世界范围')).toHaveLength(1)
+    expect(button('公开群聊').props['aria-current']).toBe('page')
+    expect(button('世界').props['aria-current']).toBeUndefined()
+  })
+  it('cancels optional author decoration when its feed is left', async () => {
+    mocks.call.mockImplementation(async (op: string) => op === 'world.feed' ? { items: [{ recordRef: 'post', authorRef: 'author', authorName: '公开昵称', headline: '', textContent: '正文', tags: [], templateKind: 0, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0, extendCount: 0 }], hasMore: false } : op === 'world.author-labels' ? new Promise(() => {}) : { items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface accountScope="test:1001" currentUserId={1001} />) })
+    const signal = mocks.call.mock.calls.find(([op]) => op === 'world.author-labels')![2] as AbortSignal
+    expect(signal.aborted).toBe(false)
+    await act(async () => button('公开群聊').props.onClick())
+    expect(signal.aborted).toBe(true)
   })
   it('prevents duplicate joins and reuses the request identity after an uncertain failure', async () => {
     let reject!: (error: Error) => void
@@ -49,6 +78,17 @@ describe('desktop public social interactions', () => {
     mocks.call.mockResolvedValueOnce({ status: 'joined', group: { ...group, hasJoined: true }, source })
     await act(async () => button('加入群聊').props.onClick())
     expect(joins()[1]![1].requestUid).toBe(requestUid); expect(activated).toHaveBeenCalledWith(source)
+  })
+  it('retains a pending join result without navigating away from the newly selected tab', async () => {
+    let finish!: (value: unknown) => void
+    const activated = vi.fn()
+    mocks.call.mockImplementation(async (op: string) => op === 'social.groups.query' ? { items: [group], hasMore: false } : new Promise(resolve => { finish = resolve }))
+    await act(async () => { renderer = create(<PublicSocialDirectory accountScope="test:1001" mode="groups" onSourceActivated={activated} />) })
+    await act(async () => button('加入群聊').props.onClick())
+    await act(async () => renderer!.update(<PublicSocialDirectory active={false} accountScope="test:1001" mode="groups" onSourceActivated={activated} />))
+    await act(async () => finish({ status: 'joined', group: { ...group, hasJoined: true }, source }))
+    expect(activated).not.toHaveBeenCalled()
+    expect(button('打开群聊')).toBeDefined()
   })
   it('refreshes approval state and completes the original approved request', async () => {
     let approved = false

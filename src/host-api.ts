@@ -1591,7 +1591,10 @@ export async function dispatchArkmeHostOperation(
     case 'identity.person.read':
     case 'identity.share.link': {
       const scope = stringParam(params, 'accountScope'), kind = stringParam(params, 'kind')
-      const read = operation === 'identity.person.read' ? service.identityPersonProfile.bind(service) : service.identityShareLink.bind(service)
+      const includeAccountName = operation === 'identity.person.read' && params.includeAccountName !== undefined ? requiredBooleanParam(params, 'includeAccountName') : true
+      const read = operation === 'identity.person.read'
+        ? (scope: string, target: import('./identity-share-contract.js').IdentityShareTarget, signal?: AbortSignal) => service.identityPersonProfile(scope, target, signal, includeAccountName)
+        : service.identityShareLink.bind(service)
       if (kind === 'self') return await read(scope, { kind }, requestSignal)
       if (kind === 'person') return await read(scope, { kind, userId: numberParam(params, 'userId', 0) }, requestSignal)
       if (kind === 'contact') return await read(scope, { kind, contactRef: stringParam(params, 'contactRef') }, requestSignal)

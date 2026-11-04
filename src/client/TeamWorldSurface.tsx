@@ -7,7 +7,7 @@ import { TeamWorldFeedback } from './TeamWorldFeedback.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { WorldCard, WorldInfiniteScrollTrigger, WorldAuthorAvatar, WorldNotificationFocus, WorldTeamReplyContext } from './ArkmeWorldSurface.js'
 import { ArkmeWorldRecordDetail } from './ArkmeWorldRecordDetail.js'
-import type { ArkmeWorldFeedItem, ArkmeWorldFeedPage, ArkmeWorldNotificationTarget } from '../types.js'
+import type { ArkmeTeam, ArkmeWorldFeedItem, ArkmeWorldFeedPage, ArkmeWorldNotificationTarget } from '../types.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
@@ -66,7 +66,7 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
     const controller = new AbortController()
     pageRequest.current?.abort(); setPaging(false)
     setState(current => ({ ...current, loading: true }))
-    void callArkme<TeamWorldView>('team.app.world.view', { expectedAccountKey: accountKey, jotmoId: target.jotmoId }, controller.signal).then(async value => {
+    void callArkme<TeamWorldView>('team.app.world.view', { expectedAccountKey: accountKey, jotmoId: target.jotmoId, includeMemberTeam: false }, controller.signal).then(async value => {
       if (controller.signal.aborted) return
       if (value.state !== 'ready' || !value.context?.capabilities || !Array.isArray(value.feed?.items) || value.team?.jotmoId !== target.jotmoId || !value.team.name
         || (value.memberTeam && (value.memberTeam.jotmoId !== target.jotmoId || !value.memberTeam.teamRef))) throw new Error(tr('团队世界返回异常，请重试'))
@@ -84,6 +84,12 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
       feedPages.current = fresh; setWindowed(!!firstCursor)
       setState({ value: { ...value, feed: { ...fresh[fresh.length - 1]!.feed, items: [...new Map(fresh.flatMap(part => part.feed.items).map(item => [item.recordRef, item])).values()] } }, loading: false })
       if (!value.context.capabilities.feedback) setFeedbackOpen(false)
+      // Member presentation enables publishing, but never gates public reading.
+      if (!value.memberTeam && value.context.capabilities.publish) void callArkme<ArkmeTeam[]>('team.app.teams', { expectedAccountKey: accountKey }, controller.signal).then(teams => {
+        if (controller.signal.aborted) return
+        const memberTeam = teams.find(team => team.jotmoId === target.jotmoId && team.teamRef)
+        if (memberTeam) setState(current => current.value ? { ...current, value: { ...current.value, memberTeam, team: { ...current.value.team, ...(memberTeam.avatar ? { avatar: memberTeam.avatar } : {}) } } } : current)
+      }).catch(() => {})
     }).catch(error => { if (!controller.signal.aborted) setState({ loading: false, error: error instanceof Error ? error.message : tr('团队世界暂时无法加载') }) })
     return () => controller.abort()
   }, [accountKey, target.jotmoId, revision])

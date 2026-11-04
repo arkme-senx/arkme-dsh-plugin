@@ -93,7 +93,8 @@ export function ArkmeMemberProfileCard(props: {
     // and use the same portable profile destination as a shared-link card.
     const child = conversationWindowRequested()
     try {
-      const current = person ?? await readPerson(controller.signal)
+      // The optional account handle and viewer labels must not hold navigation.
+      const current = person ?? await callArkme<IdentityPersonProfile>('identity.person.read', { accountScope: scope, ...target, includeAccountName: false }, controller.signal)
       if (controller.signal.aborted || scope !== identityShareAccountScope()) { return }
       if (child) {
         const link = props.browserUrl ? { url: props.browserUrl } : await callArkme<IdentityShareLink>('identity.share.link', { accountScope: scope, ...target }, controller.signal)
@@ -119,7 +120,7 @@ export function ArkmeMemberProfileCard(props: {
     accountName={person?.accountName ?? props.accountName} isSelf={person?.isSelf ?? props.member.isSelf} avatarRef={props.member.avatarRef} avatarFallback={props.member.avatarFallback}
     imagePort={props.imagePort} imageKey={props.imageKey} accountScope={scope} copyLinkTarget={target} copyUrl={props.copyUrl}
     refreshing={props.refreshing ?? profileRefreshing} refreshError={props.refreshError ?? profileRefreshError}
-    busy={props.busy} closeWhileBusy={props.closeWhileBusy === true} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
+    busy={props.busy} closeWhileBusy={props.closeWhileBusy === true || worldBusy && !props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
     hideSend={props.hideSend} error={error || props.error} onClose={props.onClose} onSend={() => { if (scope === identityShareAccountScope()) props.onSend() }}
     onContactAsTeam={team} onWorld={() => { void world() }} browserUrl={props.browserUrl}
     onRefresh={props.onRefresh ?? (target ? () => { if (profileReadBusy.current) return; profileReadBusy.current = true; setProfileRefreshing(true); setError(''); setRevision(value => value + 1) } : undefined)} />

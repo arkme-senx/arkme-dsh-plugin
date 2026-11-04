@@ -21,10 +21,27 @@ function fixture() {
   const contacts = { resolveTeamRecipient: vi.fn(async () => 8) }, groups = { groupInvitePreview: vi.fn(async () => ({ inviteLink: groupUrl, expireAtMillis: state.expire_at })) }
   const chat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { kind: 'private_chat', sourceRef: 'A-B', displayName: 'B公开昵称' } })), memberWorldTarget: vi.fn(async () => ({ userId: 8 })) }
   const world = { worldAuthorFromRef: vi.fn(async () => ({ userId: 8 })) }
-  return { service: new IdentityShareService(runtime as never, profile as never, source as never, contacts as never, groups as never, chat as never, world as never), runtime, profile, state, subject, chatPost, chat, source, groups, switchAccount: () => { actor = 99 } }
+  return { service: new IdentityShareService(runtime as never, profile as never, source as never, contacts as never, groups as never, chat as never, world as never), runtime, profile, state, subject, chatPost, chat, source, groups, world, switchAccount: () => { actor = 99 } }
 }
 
 describe('portable person and group links', () => {
+  it('resolves navigation without querying handles or private viewer labels and still fences accounts', async () => {
+    const f = fixture(), controller = new AbortController()
+    f.profile.publicProfileSummariesByUserIds.mockImplementation(() => new Promise(() => {}))
+    await expect(f.service.person(scope, { kind: 'author', authorRef: 'viewer-bound' }, controller.signal, false)).resolves.toEqual({ userId: 8, isSelf: false })
+    expect(f.world.worldAuthorFromRef).toHaveBeenCalledWith('viewer-bound', true, { labels: false, signal: controller.signal })
+    expect(f.profile.publicProfileSummariesByUserIds).not.toHaveBeenCalled()
+    f.world.worldAuthorFromRef.mockImplementation(async () => { f.switchAccount(); return { userId: 8 } })
+    await expect(f.service.person(scope, { kind: 'author', authorRef: 'viewer-bound' }, controller.signal, false)).rejects.toMatchObject({ code: 'identity-share-account-changed' })
+  })
+  it('validates the lightweight profile option at the host boundary', async () => {
+    const read = vi.fn(async () => ({ userId: 8, isSelf: false })), controller = new AbortController()
+    const facade = { identityPersonProfile: read } as never
+    await dispatchArkmeHostOperation(facade, 'identity.person.read', { accountScope: scope, kind: 'author', authorRef: 'issued', includeAccountName: false }, undefined, undefined, undefined, undefined, controller.signal)
+    expect(read).toHaveBeenCalledWith(scope, { kind: 'author', authorRef: 'issued' }, controller.signal, false)
+    await expect(dispatchArkmeHostOperation(facade, 'identity.person.read', { accountScope: scope, kind: 'author', authorRef: 'issued', includeAccountName: 'false' })).rejects.toBeInstanceOf(Error)
+    expect(read).toHaveBeenCalledOnce()
+  })
   it('resolves a world target without requiring a shareable handle or creating a conversation', async () => {
     const f = fixture()
     f.profile.publicProfileSummariesByUserIds.mockResolvedValue(new Map())

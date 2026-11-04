@@ -1754,16 +1754,19 @@ export class WorldService {
   }
 
   /** Resolve an opaque World author reference only inside the trusted Provider. */
-  async worldAuthorFromRef(recordRef: string, allowSelf = false): Promise<{ userId: number; displayName: string }> {
+  async worldAuthorFromRef(recordRef: string, allowSelf = false, options: { labels?: boolean; signal?: AbortSignal } = {}): Promise<{ userId: number; displayName: string }> {
+    options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
+    options.signal?.throwIfAborted()
     const entry = this.openWorldRecordRef(recordRef, session.userId)
     const userId = entry.ownerUserId ?? 0
     if (!Number.isSafeInteger(userId) || userId <= 0 || (!allowSelf && userId === session.userId)) {
       throw new ArkmePluginError('world-author-target-invalid', '无法确认这位用户，请刷新世界后重试', false, 403)
     }
-    const labels = this.viewerLabels === undefined
+    const labels = options.labels === false || this.viewerLabels === undefined
       ? new Map<number, string>()
-      : await this.viewerLabels.privateDisplayNamesByUserIds([userId]).catch(() => new Map<number, string>())
+      : await this.viewerLabels.privateDisplayNamesByUserIds([userId], { ...(options.signal ? { signal: options.signal } : {}) }).catch(() => new Map<number, string>())
+    options.signal?.throwIfAborted()
     return { userId, displayName: labels.get(userId) ?? entry.authorName ?? 'Arkme用户' }
   }
 

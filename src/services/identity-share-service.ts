@@ -47,7 +47,7 @@ export class IdentityShareService {
       if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw invalid()
       userId = target.userId
     } else if (target.kind === 'contact') userId = await this.contacts.resolveTeamRecipient(target.contactRef, signal)
-    else if (target.kind === 'author') userId = (await this.world.worldAuthorFromRef(target.authorRef, true)).userId
+    else if (target.kind === 'author') userId = (await this.world.worldAuthorFromRef(target.authorRef, true, { labels: false, ...(signal ? { signal } : {}) })).userId
     else if (target.kind === 'member') userId = (await this.chat.memberWorldTarget(target.sourceRef, target.memberRef, signal)).userId
     else if (target.kind === 'member-event') userId = (await this.chat.memberEvents.worldTarget(target.sourceRef, target.eventId, signal)).userId
     else if (target.kind === 'team-person') {
@@ -65,9 +65,10 @@ export class IdentityShareService {
     await this.session(scope, signal)
     return userId
   }
-  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityPersonProfile> {
+  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal, includeAccountName = true): Promise<IdentityPersonProfile> {
     const userId = await this.personId(scope, target, signal), session = await this.session(scope, signal)
     if (typeof userId !== 'number') throw new ArkmePluginError('world-user-id-unsupported', '当前世界接口暂不支持此用户标识', false, 501)
+    if (!includeAccountName) return { userId, isSelf: userId === session.userId }
     // A public handle is optional: decoration must never be required to enter a world.
     const profile = (await this.profiles.publicProfileSummariesByUserIds([userId], session, signal, 0).catch(error => {
       if (signal?.aborted) throw error

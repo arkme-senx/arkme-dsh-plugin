@@ -129,6 +129,31 @@ describe('identity links stay portable and acquire explicit in-app actions', () 
 
 
 describe('one profile surface for avatars and portable links', () => {
+  it('enters a world while optional profile decoration is still pending', async () => {
+    const close = vi.fn()
+    api.call.mockImplementation(async (_op, params) => params.includeAccountName === false ? { userId: 8, isSelf: false } : new Promise(() => {}))
+    await mount(<ArkmeMemberProfileCard copyLinkTarget={{ kind: 'author', authorRef: 'author-ref' }} member={{ displayName: '小林' }} busy={false} onClose={close} onSend={() => {}} />)
+    await click(button('进入 TA 的世界'))
+    expect(arkmeUi.getSnapshot().worldTarget).toMatchObject({ userId: 8, displayName: '小林' })
+    expect(close).toHaveBeenCalledOnce()
+    expect(api.call.mock.calls.filter(([, params]) => params.includeAccountName !== false)).toHaveLength(1)
+    expect(api.call).toHaveBeenCalledWith('identity.person.read', { accountScope: scope, kind: 'author', authorRef: 'author-ref', includeAccountName: false }, expect.any(AbortSignal))
+  })
+  it('lets a pending world navigation close and ignores its cancelled result', async () => {
+    let finish!: (value: unknown) => void
+    const close = vi.fn()
+    api.call.mockImplementation(async (_op, params) => params.includeAccountName === false ? new Promise(resolve => { finish = resolve }) : new Promise(() => {}))
+    await mount(<ArkmeMemberProfileCard copyLinkTarget={{ kind: 'author', authorRef: 'author-ref' }} member={{ displayName: '小林' }} busy={false} onClose={close} onSend={() => {}} />)
+    await click(button('进入 TA 的世界'))
+    const signal = api.call.mock.calls.find(([, params]) => params.includeAccountName === false)![2] as AbortSignal
+    expect(button('关闭').disabled).toBe(false)
+    await click(button('关闭'))
+    expect(close).toHaveBeenCalledOnce()
+    await mount(<></>)
+    expect(signal.aborted).toBe(true)
+    await act(async () => finish({ userId: 88, isSelf: false }))
+    expect(arkmeUi.getSnapshot().worldTarget?.userId).not.toBe(88)
+  })
   it('resolves an avatar through its member reference and enters the same world as the shared link', async () => {
     const close = vi.fn(), send = vi.fn()
     await mount(<ArkmeMemberProfileCard copyLinkTarget={{ kind: 'member', sourceRef: 'group-ref', memberRef: 'member-ref' }}
