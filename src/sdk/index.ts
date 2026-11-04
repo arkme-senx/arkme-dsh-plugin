@@ -2840,6 +2840,10 @@ export class ArkmeSdk {
     return await this.call('reactions', input, signal)
   }
 
+  async worldPublications<R extends import('../world-publication-contract.js').WorldPublicationRequest>(input: R, signal?: AbortSignal): Promise<import('../world-publication-contract.js').WorldPublicationResponse<R>> {
+    return this.call('world.publications', input, signal)
+  }
+
   async teamWorld<R extends import('../team-world-contract.js').TeamWorldRequest>(input: R, signal?: AbortSignal): Promise<import('../team-world-contract.js').TeamWorldResponse<R>> {
     if ((await this.capabilities(signal)).features.teamWorldV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持团队世界，请升级', retryable: false })
     return this.call('team.world', input, signal)
@@ -3402,3 +3406,5 @@ export type { TeamWorldRequest, TeamWorldResponse, TeamWorldContext, TeamWorldCa
 
 export type { ArkmeArkoInteraction, ArkmeArkoInteractionQuery, ArkmeArkoInteractionPage, ArkmeArkoInteractionTarget, ArkmeArkoTimelineCache, ArkmeArkoTimelinePort } from '../arko-timeline-contract.js'
 export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '../world-reaction-contract.js'
+
+export type { WorldPublication, WorldPublicationRequest, WorldPublicationResponse, WorldPublicationSourceTarget } from '../world-publication-contract.js'

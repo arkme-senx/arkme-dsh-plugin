@@ -63,6 +63,10 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
   }
   const refresh = useCallback(() => setRevision(value => value + 1), [])
   useEffect(() => {
+    window.addEventListener('arkme-world-publications-changed', refresh)
+    return () => window.removeEventListener('arkme-world-publications-changed', refresh)
+  }, [refresh])
+  useEffect(() => {
     const controller = new AbortController()
     pageRequest.current?.abort(); setPaging(false)
     setState(current => ({ ...current, loading: true }))

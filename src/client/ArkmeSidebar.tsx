@@ -8157,8 +8157,8 @@ export function ArkmeSurface({
                             ? <div className="arkme-offline-message-footer"><OfflineContextMessageLink onOpen={() => {
                               const entry = offlineMessageLinks.get(item.offlineContextMessageRef!)!
                               arkmeUi.showConversationTarget(source, entry.id, entry.startAtMillis, undefined, undefined, false, false, entry.id)
-                            }} /><MessageQuoteThreadTimestamp item={item} /></div>
-                            : <MessageQuoteThreadTimestamp item={item} />
+                            }} /><MessageQuoteThreadTimestamp item={item} sourceRef={canPublishSelfNote(source, item) ? source.sourceRef : undefined} /></div>
+                            : <MessageQuoteThreadTimestamp item={item} sourceRef={canPublishSelfNote(source, item) ? source.sourceRef : undefined} />
                           const messageBubble = <div
                             className="arkme-timed-bubble"
                             role="button"
