@@ -4536,6 +4536,8 @@ export type ArkmePluginOperation =
   | 'data.export.preflight'
   | 'data.export.range.preview'
   | 'data.export.saved'
+  | 'data.export.directory.pick'
+  | 'data.export.directory.open'
   | 'data.export'
   | 'data.recover'
   | 'billing.order.create'

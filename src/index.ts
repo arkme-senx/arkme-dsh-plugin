@@ -1,3 +1,4 @@
+import type {} from '@deepseek-ai/dsh-host-directory-picker'
 import {createScreenshotEditorRoutes} from './screenshot-editor-route.js'
 import { RealtimeDictationSocket } from './realtime-dictation-socket.js'
 import { resolveHostPolicy } from './host-policy.js'
@@ -315,6 +316,11 @@ export function apply(ctx: Context, config: Config): void {
   const sessionStore = new ObservedArkmeSessionStore(rawSessionStore)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files'), recordingImportDirectory: join(stateDirectory, 'recording-imports') }, sessionStore, localDatabase, fetch, pendingSessionStore, undefined, undefined, undefined, () => ctx.get('sessionQuery'))
+  service.attachExportDirectoryPicker(async signal => {
+    const capability = ctx.get('directoryPicker')?.capability()
+    if (!capability || capability.kind !== 'native') throw new Error('当前宿主没有本机目录选择能力，请在桌面客户端导出')
+    return capability.pick(signal)
+  })
   const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
   const openApiMcpController = new ManagedOpenApiMcpController({
     mountMcp: config.openApiMcpEnabled,
