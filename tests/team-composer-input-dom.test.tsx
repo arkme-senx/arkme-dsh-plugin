@@ -32,7 +32,10 @@ beforeEach(async () => {
   localStorage.clear(); mocks.call.mockReset(); mocks.stage.mockReset()
   mocks.policy.mockReset().mockResolvedValue({maxAttachments:9,maxImageBytes:1024,maxFileBytes:2048})
   mocks.stage.mockImplementation(()=>new Promise((resolve,reject)=>{finish=resolve;fail=reject}))
-  mocks.call.mockImplementation(async (op:string, params:any)=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}
+  mocks.call.mockImplementation(async (op:string, params:any)=>op==='arrangements.conversation.recognition.get'
+    ?{accountScope:params.expectedAccountScope,enabled:true,version:0,enabledAt:0,effectiveEnabled:true,blockedReason:''}
+    :op==='arrangements.conversation.list'?{items:[],hasMore:false,nextCursor:''}
+    :op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}
     :op==='team.app.send.enqueue'?{...params,taskRef:'task',conversationKey:'key',createdAtMillis:Date.now(),state:'queued',files:[local],attempts:0,nextAttemptAt:0}:[])
   host=document.createElement('div');document.body.append(host);root=createRoot(host)
   await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" onChanged={()=>{}} /></>))
