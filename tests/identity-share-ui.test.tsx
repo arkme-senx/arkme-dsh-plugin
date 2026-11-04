@@ -2,8 +2,14 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const api = vi.hoisted(() => ({ call: vi.fn(), upsert: vi.fn() }))
-vi.mock('../src/client/api.js', async original => ({ ...await original<object>(), callArkme: api.call }))
+const api = vi.hoisted(() => ({ call: vi.fn(), upsert: vi.fn(), subscriptionState: vi.fn() }))
+vi.mock('../src/client/api.js', async original => ({ ...await original<object>(), callArkme: (operation: string, ...args: any[]) => {
+  if (operation === 'world.subscriptions' && args[0]?.action === 'state') {
+    const auth = arkmeAuthStore.getSnapshot().auth
+    return api.subscriptionState(...args, auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : '')
+  }
+  return api.call(operation, ...args)
+} }))
 vi.mock('../src/client/chat-directory-store.js', () => ({ arkmeChatDirectory: { upsert: api.upsert } }))
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
@@ -30,6 +36,7 @@ const mount = async (content: React.ReactNode) => { await act(async () => root.r
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(v => v.textContent === label || v.getAttribute('aria-label') === label)!
 const click = async (element: Element) => { await act(async () => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))) }
 beforeEach(() => {
+  api.subscriptionState.mockReset().mockResolvedValue({ subscribed: false })
   teamContactTeams.reset()
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
@@ -40,6 +47,12 @@ beforeEach(() => {
 })
 afterEach(async () => {
   await act(async () => { root.unmount(); identityShareUi.close(); arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' }); arkmeUi.authChanged(false, true) })
+  for (const [params, signal, account] of api.subscriptionState.mock.calls) {
+    expect(account).not.toBe('')
+    expect(params).toMatchObject({ accountKey: account, action: 'state' })
+    expect(signal).toBeInstanceOf(AbortSignal)
+  }
+  expect(api.call.mock.calls.filter(([op]) => op === 'world.subscriptions')).toHaveLength(0)
   vi.useRealTimers(); node.remove(); clipboard.mockClear(); api.call.mockReset(); api.upsert.mockReset(); vi.restoreAllMocks()
 })
 
