@@ -59,7 +59,8 @@ export function ArkmeLongArticleWindow() {
   </div>
   if (target.surface) return <ArkmeBrowseWindow target={target} invalidated={invalidated} />
   if (target.article?.mode === 'snapshot') return <ArkmeLongArticleSnapshotDialog standalone windowMode={mode} item={target.article.item} onClose={() => { void bridge?.close() }} />
-  return <ArkmeLongArticleDialog sourceRef={target.sourceRef} windowMode={mode} sendOnConfirm={!target.autoPublish} {...(target.article ? { item: target.article.item } : {})}
+  return <ArkmeLongArticleDialog key={JSON.stringify([target.accountKey, target.sourceKey, target.composition])} sourceRef={target.sourceRef}
+    draftScope={target.composition?.draftScope} representation={target.composition?.representation} windowMode={mode} sendOnConfirm={!target.autoPublish} {...(target.article ? { item: target.article.item } : {})}
     onDeleted={() => { void bridge?.changed?.() }}
     onUpdated={async detail => { if (bridge?.version === 3) return; if (!await bridge?.published({ ...(target.article?.item ?? { senderName: '我', isMe: true, status: 1, templateKind: 8, displayKind: 1 }), ...detail, recordVersion: detail.version })) throw new Error('更新回执同步失败，请重新打开长文核对') }}
     onCreated={async item => { if (target.autoPublish) { await bridge?.changed?.() } else await bridge?.published(item) }} onClose={() => { void bridge?.close() }} />

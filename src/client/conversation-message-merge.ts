@@ -95,6 +95,7 @@ export function applyConversationSendResult(
     ...(result.messageActionRef === undefined ? {} : { messageActionRef: result.messageActionRef }),
     ...(result.recordTopicAssignmentRef === undefined ? {} : { recordTopicAssignmentRef: result.recordTopicAssignmentRef }),
     ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
+    ...(result.localState !== 'synced' || result.representation === undefined ? {} : { representation: result.representation }),
     ...(result.aiPolish === undefined ? {} : {
       aiPolish: result.aiPolish,
       ...(result.aiPolish.state === 'polished' && result.aiPolish.polishedText !== undefined
