@@ -1,5 +1,29 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+可用模型|Available models
+即我可用模型|Arkme models
+查看官方模型，可在对应功能中选用|Explore official models to use in the corresponding features
+刷新模型目录|Refresh model catalog
+关闭模型目录|Close model catalog
+搜索模型名称或提供方|Search models or providers
+筛选模型适用场景|Filter by use case
+正在读取官方模型…|Loading official models…
+暂时无法读取模型目录|Could not load the model catalog
+部分场景暂时无法读取，已展示可确认的模型。|Some use cases are unavailable. Verified models are shown.
+共 {v0} 个模型|{v0} models
+没有找到匹配的模型|No matching models
+该场景暂未提供可用模型|No models available for this use case
+查看 {v0} 的能力与费用|View capabilities and pricing for {v0}
+能力与费用|Capabilities and pricing
+识别与分析|Recognition and analysis
+使用 AI 积分|Uses AI points
+计费信息待确认|Billing not confirmed
+每 1,000 Token，单位：积分|AI points per 1,000 tokens
+缓存输入|Cached input
+该场景的计费详情暂未提供|Pricing details are not available for this use case
+模型能力及费用以对应场景为准，实际费用按用量结算。|Capabilities and pricing vary by use case. Charges are based on actual usage.
+模型目录会随官方开放情况更新|The catalog updates as official models become available
+读取于 {v0}|Read at {v0}
 选择导出文件夹|Choose export folder
 更换导出文件夹|Change export folder
 将快记与原文件直接保存到本地文件夹。|Save notes and original files directly to a local folder.
@@ -130,6 +154,7 @@ Arko 回复建议|Arko suggestions
 左侧「安排」|Plans in the left navigation
 「探索 → 目标」|Explore → Goals
 开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
+开启后自动处理，按模型使用偏好调用。官方模型消耗积分，自提供模型使用提供方账号额度。|Automatic processing follows your model preferences. Official models use Arkme points; your models use the provider account allowance.
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
 自动使用额度|Automatic allowance usage
@@ -2231,4 +2256,57 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 团队消息延展列表|Team message replies
 正在加载延展…|Loading replies…
 返回延展列表|Back to replies
+AI 额度消费记录|AI allowance spending
+统计|Statistics
+明细|Details
+按天|Day
+按周|Week
+按月|Month
+Arko 对话|Arko conversations
+录音总结|Recording summary
+线下交流关联|Offline context links
+截至|As of
+合计|Total
+刷新消费记录|Refresh spending
+关闭消费记录|Close spending
+消费记录视图|Spending view
+统计粒度|Time grouping
+上一段时间|Previous period
+下一段时间|Next period
+所选时段消费|Spending in selected period
+近15天消费|Spending over the past 15 days
+近8周消费|Spending over the past 8 weeks
+近12个月消费|Spending over the past 12 months
+按时间 · 积分|Over time · points
+消费积分时间趋势|Spending over time
+{v0}，消费 {v1} 积分|{v0}, {v1} points spent
+按类型|By type
+查看当前时段|View current period
+查看全部时段|View all periods
+全部时段|All periods
+截至当前|So far
+查看{v0}消费明细|View {v0} spending details
+明细时间范围|Detail time range
+清除类型筛选|Clear type filter
+该时段暂无积分消费|No points spent in this period
+仅统计已结算的 AI 积分消费|Settled AI point charges only
+北京时间|China Standard Time
+正在核对完整消费记录…|Checking the complete spending history…
+暂时无法读取消费统计，请重试。|Unable to load spending statistics. Please retry.
+账单正在更新，暂时无法确认完整统计，请重试。|Your statement is updating. Please retry for complete statistics.
+账单已更新，请刷新统计后再查看明细。|Your statement changed. Refresh statistics before viewing details.
+记录较多，当前无法完成统计。请按天查看或选择单个时段。|Too many records to finish this view. Try daily grouping or a single period.
+个人档案识别|Profile recognition
+安排识别|Plan recognition
+目标识别|Goal recognition
+录音时间轴|Recording timeline
+快记分析|Note analysis
+聊天分析|Chat analysis
+登录后查看模型设置|Sign in to view model settings
+管理模型，查看各功能可用的模型与费用|Manage models and review availability and pricing by feature
+模型来源|Model source
+即我官方|Arkme official
+自提供模型|Custom models
+自提供模型配置|Custom model configuration
+配置保存在当前服务，同一服务的客户端共用；不会自动同步至其他服务。|Configuration is shared by clients connected to this service. It does not sync automatically to other services.
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

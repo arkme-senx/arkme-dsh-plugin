@@ -1,3 +1,4 @@
+import { AccountModelService } from './services/account-model-service.js'
 import { WorldPublicationService } from './services/world-publication-service.js'
 import{readSelectedTextNoteQuote}from'./selected-text-note.js'
 import { ConversationArrangementService } from "./services/conversation-arrangement-service.js"
@@ -60,6 +61,7 @@ import { ModelDirectoryService } from './services/model-directory-service.js'
 import { ThoughtRealtimeService } from './services/thought-realtime-service.js'
 import { readRecordThoughts } from './services/record-thought-service.js'
 import type { ArkmeAiPointsQuery } from './ai-points.js'
+import type { ArkmeAiPointsStatisticsQuery, ArkmeAiPointsRangeQuery } from './ai-points-statistics.js'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { SelfRoleAvatarStore } from './self-role-avatar-store.js'
@@ -474,10 +476,22 @@ export class ArkmeService {
   async retrySourceMessageThoughtContinuation(sourceRef: string, messageActionRef: string, id: string, signal?: AbortSignal) {
     return this.sourceMessageThoughtContinuations(sourceRef, messageActionRef, { retryId: id }, signal)
   }
-  async modelDirectory(expectedScope: string, signal?: AbortSignal) {
-    return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
+  private readonly accountModelListeners = new Set<() => void>()
+  onAccountModelsChanged(listener: () => void): () => void { this.accountModelListeners.add(listener); return () => { this.accountModelListeners.delete(listener) } }
+  private notifyAccountModelsChanged(): void { for (const listener of this.accountModelListeners) listener() }
+  accountModels(scope: string, signal?: AbortSignal) { return new AccountModelService(this.runtime).settings(scope, signal) }
+  async saveAccountModel(scope: string, input: import('./account-models.js').AccountModelSave, signal?: AbortSignal) { await new AccountModelService(this.runtime).save(scope, input, signal); this.notifyAccountModelsChanged(); return await this.accountModels(scope, signal) }
+  async accountModelPreferences(scope: string, revision: number, preferences: import('./account-models.js').AccountModelPreferences, signal?: AbortSignal) { await new AccountModelService(this.runtime).preferences(scope, revision, preferences, signal); this.notifyAccountModelsChanged(); return await this.accountModels(scope, signal) }
+  async disableAccountModel(scope: string, revision: number, uid: string, disabled: boolean, signal?: AbortSignal) { await new AccountModelService(this.runtime).disable(scope, revision, uid, disabled, signal); this.notifyAccountModelsChanged(); return await this.accountModels(scope, signal) }
+  accountModelUsage(scope: string, query: import('./account-models.js').ModelUsageQuery, signal?: AbortSignal) { return new AccountModelService(this.runtime).usage(scope, query, signal) }
+  accountModelHostRequest<T>(scope: string, path: string, body: Record<string, unknown>, signal?: AbortSignal) { return new AccountModelService(this.runtime).request<T>(scope,path,body,signal) }
+  private modelConnectorEnroller: ((scope: string) => Promise<unknown>) | undefined
+  attachModelConnectorEnroller(enroll: (scope: string) => Promise<unknown>): () => void { this.modelConnectorEnroller=enroll;return () => {if(this.modelConnectorEnroller===enroll)this.modelConnectorEnroller=undefined} }
+  async enrollModelConnector(scope: string) { if(!this.modelConnectorEnroller) throw new ArkmePluginError('connector-unavailable','当前 Host 不支持模型连接器',false,503);return await this.modelConnectorEnroller(scope) }
+  async modelDirectory(expectedScope: string, signal?: AbortSignal, officialOnly = false) {
+    return new ModelDirectoryService(this.runtime, { account: signal=>this.accountModels(expectedScope,signal), dsh: this.modelDirectoryReader,
       arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
-      explore: signal => this.explore.modelDirectory(expectedScope, signal) }).read(expectedScope, signal)
+      explore: signal => this.explore.modelDirectory(expectedScope, signal) }).read(expectedScope, signal, officialOnly)
   }
   private readonly aiVideo: AiVideoService
   private readonly aiLetter: AiLetterService
@@ -1103,6 +1117,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async updateAutomaticCapability(input: ArkmeCapabilityUpdate, expectedScope: string, signal?: AbortSignal) { return new CapabilityService(this.runtime).update(input, expectedScope, signal) }
   async aiPointsAccount(expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).account(expectedScope, signal) }
   async aiPointsConsumption(query: ArkmeAiPointsQuery, expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).consumption(query, expectedScope, signal) }
+  async aiPointsStatistics(query: ArkmeAiPointsStatisticsQuery, expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).statistics(query, expectedScope, signal) }
+  async aiPointsConsumptionRange(query: ArkmeAiPointsRangeQuery, expectedScope?: string, signal?: AbortSignal) { return await new AiPointsService(this.runtime).consumptionRange(query, expectedScope, signal) }
 
   async accountTokenUsage(expectedScope: string) { return await new AccountUsageService(this.runtime).tokens(expectedScope) }
   async accountStorageUsage(expectedScope: string) { return await new AccountUsageService(this.runtime).storage(expectedScope) }
