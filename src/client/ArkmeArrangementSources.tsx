@@ -9,8 +9,9 @@ import { recordingSourceLocalDate } from '../arrangement-recording-source.js'
 import conversationCss from './conversation-arrangements.css?inline'
 import { tr } from './locale.js'
 import { useArrangementSourceQuotes } from './arrangement-source-quotes.js'
+import { TeamMessageContent } from './TeamMessageContent.js'
 
-const labels: Record<ArkmeArrangementEvidence['kind'], string> = {record:'快记或聊天',audio_summary:'录音总结',call:'通话',input:'直接输入',voice_input:'语音输入',agent:'助手创建',manual:'手动创建'}
+const labels: Record<ArkmeArrangementEvidence['kind'], string> = {record:'快记或聊天',team_message:'团队对话',audio_summary:'录音总结',call:'通话',input:'直接输入',voice_input:'语音输入',agent:'助手创建',manual:'手动创建'}
 // The current call API also uses this reason for a quote mismatch. It does not
 // establish that the call itself was deleted or that its owner lost access.
 function sourceReadReason(e: ArkmeArrangementEvidence, reason: string) {
@@ -70,7 +71,10 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
   const row=(e:ArkmeArrangementEvidence,showText:boolean)=>{
     const quote=showText&&e.readOnExpand?quotes.quote(e.id):undefined
     const conversation=quote?.state==='ready'?quote.conversation:undefined
+    const team=quote?.state==='ready'?quote.teamConversation:undefined
     return <div className="arkme-arrangement-source-item" key={e.id}>
+    {team && <div className="arkme-arrangement-source-conversation"><strong>{tr('团队对话')} · {team.conversation.channel.name}</strong>
+      <span>{team.message.sender.nickname}</span><small>{new Date(team.message.createdAt).toLocaleString()}</small></div>}
     {conversation && <div className="arkme-arrangement-source-conversation">
       <strong>{tr(conversation.source.kind==='group_chat'?'群聊':'私聊')} · {conversation.source.displayName}</strong>
       <button type="button" className="arkme-arrangement-recording-source" disabled={!!pending} onClick={event=>{event.stopPropagation();void open(e)}}>{tr('定位原消息')} ↗</button>
@@ -97,6 +101,10 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
     {!expanded&&unavailableCount>0&&<div className="arkme-arrangement-content-empty">{unavailableCount} {tr('条依据暂未通过核验，可展开核对')}</div>}
     {error&&<div role="alert" className="arkme-arrangement-content-empty">{error} {failedRequest&&<button type="button" className="arkme-arrangement-recording-source" onClick={event=>{event.stopPropagation();void open(failedRequest.evidence,failedRequest.alternatives)}}>{tr('重试')}</button>}</div>}
     {target?.kind==='document'&&<ArkmeDetailShell title={target.title} label={target.title} onClose={()=>setTarget(undefined)}><div style={{whiteSpace:'pre-wrap'}}>{target.text}</div></ArkmeDetailShell>}
+    {target?.kind==='team_conversation'&&<ArkmeDetailShell title={target.conversation.channel.name} label={tr('来源团队消息')} onClose={()=>setTarget(undefined)}>
+      <p>{target.message.sender.nickname} · {new Date(target.message.createdAt).toLocaleString()}</p>
+      <TeamMessageContent message={target.message} conversationRef={target.conversation.ref} conversationKey={target.conversation.key} readOnly />
+    </ArkmeDetailShell>}
     {target?.kind==='record'&&<ArkmeTimelineDetailDrawer item={target.item} canExtend={false} showOriginal={original} onToggleOriginal={()=>setOriginal(v=>!v)} onClose={()=>setTarget(undefined)}/>}
     {target?.kind==='call'&&history&&<ArkmeDetailShell title={tr('来源通话')} label={tr('来源通话')} onClose={()=>setTarget(undefined)}>{target.quoteState && target.quoteState !== 'exact' && <div role="status" className="arkme-arrangement-content-empty">{tr(target.quoteState === 'pending' ? '通话转写处理中，暂不高亮语句' : '原句待定位，暂不高亮任何语句')}</div>}<div ref={callContainer}><ArkmeCallDetailContent selectedItem={history} detail={target.detail} detailState="ready" compact/></div></ArkmeDetailShell>}
   </>

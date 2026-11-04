@@ -1,16 +1,8 @@
 import type { ArrangementRecognitionTrace } from '../arrangement-recognition.js'
+import { arrangementRecognitionSourceNames } from '../arrangement-recognition.js'
 import { tr } from './locale.js'
 
-export const sourceNames: Record<string, string> = {
-  default: '默认模型',
-  note: '个人快记',
-  private: '私聊',
-  group: '群聊',
-  audio: '录音',
-  call: '通话',
-  manual: '手动创建',
-  other: '其他来源',
-}
+export const sourceNames: Readonly<Record<string, string>> = arrangementRecognitionSourceNames
 export function PromptText({ label, value }: { label: string; value: string }) {
   return (
     <details className="arkme-recognition-code">

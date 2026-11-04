@@ -1608,7 +1608,7 @@ describe('conversation send directory projection', () => {
     vi.useFakeTimers()
     Object.assign(window, {
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
     })
     try {
       timeline = [{
@@ -1710,7 +1710,7 @@ describe('conversation send directory projection', () => {
     vi.useFakeTimers()
     Object.assign(window, {
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
     })
     const draftWrite = deferred<{ saved: true; draftRevision: number }>()
     const recordWrite = deferred<import('../src/record-reedit-contract.js').ArkmeRecordReeditSubmissionView>()
@@ -1952,7 +1952,7 @@ describe('conversation send directory projection', () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
       open: vi.fn(),
       confirm: vi.fn(() => true),
       localStorage: {
@@ -8890,7 +8890,7 @@ describe('conversation send directory projection', () => {
     vi.useFakeTimers()
     Object.assign(window, {
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
     })
     try {
       timeline = [{
@@ -9648,7 +9648,7 @@ describe('conversation send directory projection', () => {
 
   it('lets copied-link loading time out and retry without accepting a late response', async () => {
     vi.useFakeTimers()
-    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, innerWidth: 1000 })
+    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, innerWidth: 1000 })
     const original = mocks.callArkme.getMockImplementation()!
     let resolveFirst!: (value: unknown) => void
     let firstSignal: AbortSignal | undefined
@@ -9834,7 +9834,7 @@ describe('conversation send directory projection', () => {
 
   it('keeps copied-link content and draft usable when a post-send refresh times out', async () => {
     vi.useFakeTimers()
-    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, innerWidth: 1000 })
+    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, innerWidth: 1000 })
     const original = mocks.callArkme.getMockImplementation()!
     let resolveCalls = 0
     let refreshSignal: AbortSignal | undefined

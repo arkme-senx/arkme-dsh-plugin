@@ -5,6 +5,7 @@ import type {
   ArrangementOccurrenceResponse,
 } from '../arrangement-occurrence.js'
 import type { ArrangementRecognitionSettings, ArrangementRecognitionInspection } from "../arrangement-recognition.js"
+import { isArrangementRecognitionSource } from "../arrangement-recognition.js"
 import { arrangementEvidence, projectEvidence, type ArrangementEvidenceData } from '../arrangement-provenance.js'
 import { ArrangementSourceRecovery } from './arrangement-source-recovery.js'
 import { parseArrangementBoardCachePages, type ArkmeArrangementBoardCache } from '../arrangement-board-cache.js'
@@ -275,9 +276,7 @@ export class ArrangementService {
       throw new ArkmePluginError('invalid-params', '缺少安排引用', false, 400)
     if (
       action === 'settings/set' &&
-      !['default', 'note', 'private', 'group', 'audio', 'call', 'manual', 'other'].includes(
-        input.source ?? '',
-      )
+      !isArrangementRecognitionSource(input.source)
     )
       throw new ArkmePluginError('invalid-params', '识别来源无效', false, 400)
     let raw: Record<string, unknown>
@@ -905,7 +904,7 @@ export class ArrangementService {
       if (result.state === 'unavailable') throw new ArkmePluginError('arrangement-source-unavailable', stringValue(result.reason) || '来源已删除或当前无权查看', false, 404)
       const source = objectValue(result.source)
       // IDs locate evidence; never let a response replace its saved identity or destination.
-      const fields = ['id', 'kind', 'role', 'record_uid', 'record_version', 'topic_uid', 'origin_kind', 'origin_ref',
+      const fields = ['id', 'kind', 'role', 'record_uid', 'record_version', 'topic_uid', 'origin_kind', 'origin_ref', 'team_conversation_uid', 'team_message_uid', 'team_side',
         'summary_id', 'date_stamp', 'tz_offset', 'room_id', 'start_ms', 'end_ms', 'speaker_ref', 'utterance_id', 'transcript_version',
         'input_id', 'request_uid', 'voice_file_id', 'agent_session_id', 'agent_message_id', 'occurred_at']
       if (result.state !== 'ready' || fields.some(key => source[key] !== evidence[key])
