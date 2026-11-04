@@ -4645,6 +4645,7 @@ export type ArkmePluginOperation =
   | 'user.arkme-id.set'
   | 'image.read'
   | 'images.list'
+  | 'world.publications'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'
