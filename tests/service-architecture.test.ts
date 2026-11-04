@@ -223,7 +223,7 @@ function publicMethodNames(path: string): string[] {
   const service = file.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'ArkmeService')
   if (service === undefined || !ts.isClassDeclaration(service)) throw new Error('ArkmeService class not found')
   return service.members
-    .filter((member): member is ts.MethodDeclaration => ts.isMethodDeclaration(member))
+    .filter((member): member is ts.MethodDeclaration => ts.isMethodDeclaration(member) && member.body !== undefined)
     .filter(member => !member.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.PrivateKeyword))
     .map(member => member.name.getText(file))
     .sort()
