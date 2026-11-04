@@ -104,5 +104,4 @@ const styles: Record<string, CSSProperties> = {
   contact: { display: 'flex', justifyContent: 'flex-end', paddingTop: 8 },
   features: { borderTop: `1px solid ${arkmeTheme.borderSoft}`, marginTop: 16, paddingTop: 20 },
   featureList: { margin: 0, paddingLeft: 18, color: arkmeTheme.secondary, lineHeight: 2, fontSize: 13 },
-  notice: { padding: 12, borderRadius: 10, background: arkmeTheme.subtle, lineHeight: 1.7 },
 }

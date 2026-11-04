@@ -1,3 +1,4 @@
+import { TeamRepresentationBadge } from './TeamRepresentationBadge.js'
 import { useMessageTextSelectionTarget, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
 import { SelectedTextSelfNoteContent } from './SelectedTextSelfNoteContent.js'
 import { selectedTextNotePresentation } from '../selected-text-note.js'
@@ -1065,6 +1066,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
     return <div ref={selectionRef} style={styles.sharedRecordingCard} data-arkme-shared-recording-card="true">
       <div style={styles.sharedRecordingTop}>
         <p style={styles.sharedRecordingTitle} title={arkmeEmojiPlainText(item.sharedRecording.title)}><ArkmeRichText text={item.sharedRecording.title} presentation="preview" /></p>
+        {item.representation && <TeamRepresentationBadge value={item.representation} />}
         {timeText !== '' && <span style={styles.sharedRecordingTime}>{timeText}</span>}
       </div>
       <p style={styles.sharedRecordingSummary}><ArkmeRichText text={item.sharedRecording.summary} presentation="preview" highlightMentions={highlightMentions} /></p>

@@ -6,7 +6,7 @@ import { ArkmeComposerResourcePicker } from './ArkmeComposerResourcePicker.js'
 import { detailExtensionSends, useDetailExtensionSends, publicTimelineExtensionSends, detailExtensionSendTimelineItem, DetailExtensionSendStatus } from './detail-extension-send.js'
 import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedback} from './record-input-transfer.js'
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
-import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
+import {TeamRepresentationBadge, TeamRepresentationAvatar} from './TeamRepresentationBadge.js'
 import type {TeamGroupIdentity,TeamRepresentationSelection} from '../team-group-contract.js'
 import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
 import { ArkmeExtensionParentPreview } from './ArkmeExtensionParentPreview.js'
@@ -1513,13 +1513,11 @@ export function ArkmeTimelineMessageHeader({
   item: ArkmeTimelineItem
   profile?: ArkmeUserProfile
   member?: Pick<ArkmeConversationMemberItem, 'displayName'>
-  presentationIsMe?: boolean
 }) {
   const memberDisplayName = member?.displayName.trim()
   const senderName = item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
   return <span style={styles.messageHeader}>
     {item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>}
-    {item.representation&&<TeamRepresentationBadge value={item.representation}/>}
   </span>
 }
 
@@ -1721,7 +1719,7 @@ function CopyLinkDetailDrawer({
   const renderSingleRecord = (item: ArkmeMessageCopyLinkSnapshotItem) => {
     const snapshot = copyLinkSnapshotTimelineItem(item, 0)
     return <div style={styles.copyLinkDetailRecord}>
-      <CopyLinkRecordAvatar item={item} />
+      <TeamRepresentationAvatar value={item.representation}><CopyLinkRecordAvatar item={item} /></TeamRepresentationAvatar>
       <div style={styles.copyLinkDetailRecordMeta}>
         <span style={styles.copyLinkDetailRecordSender}>{copyLinkSnapshotSenderName(item)}</span>
         {forwardShortTimeLabel(item.sendAtMillis) !== '' && <span style={styles.copyLinkDetailRecordTime}>{forwardShortTimeLabel(item.sendAtMillis)}</span>}
@@ -1734,7 +1732,7 @@ function CopyLinkDetailDrawer({
   const renderMultiRecord = (item: ArkmeMessageCopyLinkSnapshotItem, index: number) => {
     const snapshot = copyLinkSnapshotTimelineItem(item, index)
     return <div key={`${String(index)}:${String(item.sendAtMillis)}:${copyLinkSnapshotSenderName(item)}`} style={styles.copyLinkDetailMultiRow}>
-      <CopyLinkRecordAvatar item={item} size={36} />
+      <TeamRepresentationAvatar value={item.representation}><CopyLinkRecordAvatar item={item} size={36} /></TeamRepresentationAvatar>
       <div style={styles.copyLinkDetailMultiContent}>
         <span style={styles.copyLinkDetailRecordSender}>{copyLinkSnapshotSenderName(item)}</span>
         {forwardShortTimeLabel(item.sendAtMillis) !== '' && <span style={styles.copyLinkDetailRecordTime}>{forwardShortTimeLabel(item.sendAtMillis)}</span>}
@@ -1748,7 +1746,7 @@ function CopyLinkDetailDrawer({
   const renderExtensionItem = (item: ArkmeMessageCopyLinkExtensionItem) => {
     const snapshot = copyLinkSnapshotTimelineItem(item, 0)
     return <div key={item.recordUid} style={styles.copyLinkDetailExtensionItem}>
-      <CopyLinkRecordAvatar item={item} size={36} />
+      <TeamRepresentationAvatar value={item.representation}><CopyLinkRecordAvatar item={item} size={36} /></TeamRepresentationAvatar>
       <div style={{ minWidth: 0 }}>
         <div style={styles.copyLinkDetailExtensionHead}>
           <span style={styles.copyLinkDetailExtensionSender}>{copyLinkSnapshotSenderName(item)}</span>
@@ -2076,6 +2074,10 @@ export function ArkmeSurface({
   const [teamIdentityState,setTeamIdentityState]=useState<{scope:string;value?:TeamGroupIdentity}>({scope:''})
   const selectedTeamIdentity=source?.kind==='group_chat'&&teamIdentityState.scope===teamIdentityScope?teamIdentityState.value:undefined
   const selectTeamIdentity=(value:TeamGroupIdentity|undefined)=>setTeamIdentityState({scope:teamIdentityScope,...(value?{value}:{})})
+  const selectedTeamComposition = selectedTeamIdentity ? {
+    draftScope: selectedTeamIdentity.team.key ?? selectedTeamIdentity.team.jotmoId,
+    representation: selectedTeamIdentity.selection,
+  } : undefined
   const baseComposerDraftKey = arkmeSourceComposerDraftKey(authenticatedUserId, source)
   const composerDraftKey=baseComposerDraftKey===undefined?undefined:selectedTeamIdentity?`${baseComposerDraftKey}:team:${selectedTeamIdentity.team.key??selectedTeamIdentity.team.jotmoId}`:baseComposerDraftKey
   useConversationDraftPresence(activeConversation ? composerDraftKey : undefined)
@@ -2548,10 +2550,14 @@ export function ArkmeSurface({
   const [error, setError] = useState(initialAuth?.status === 'binding-required' ? t('error.binding.required') : '')
   const [timelineError, setTimelineError] = useState('')
   const conversationError = error || timelineError
+  const openComposerLongArticleWindow = () => source ? openLongArticleWindow({
+    ...source, sourceKey: conversationKey,
+    displayName: selectedTeamIdentity ? `${source.displayName} · ${tr('我 · {v0}团队', { v0: selectedTeamIdentity.team.name })}` : source.displayName,
+  }, undefined, false, selectedTeamComposition) : Promise.resolve(false)
   const createLongArticle = async () => {
     if (!source) return
     try {
-      if (selectedTeamIdentity || !await openLongArticleWindow({ ...source, sourceKey: conversationKey })) setLongArticleCreating(true)
+      if (!await openComposerLongArticleWindow()) setLongArticleCreating(true)
     } catch (caught) { setError(errorMessage(caught)) }
   }
   const [agreed, setAgreed] = useState(true)
@@ -5246,6 +5252,7 @@ export function ArkmeSurface({
             itemUid: result.recordUid,
             status: result.status,
             localState: result.localState,
+            ...(result.representation === undefined ? {} : { representation: result.representation }),
             ...(result.sequence === undefined ? {} : { sequence: result.sequence }),
           }, optimistic, cachedTimeline?.items ?? [],
         ).map(item => item.itemUid === result.recordUid
@@ -7796,7 +7803,7 @@ export function ArkmeSurface({
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
-  )
+  ) + (selectedTeamIdentity ? ` · ${tr('我 · {v0}团队', { v0: selectedTeamIdentity.team.name })}` : '')
   const effectiveComposerPlaceholder = activeRecordReeditComposer !== undefined
     ? '重新编辑快记…'
     : directAdmission.blocked ? directAdmission.message
@@ -8109,7 +8116,6 @@ export function ArkmeSurface({
                   : conversationMemberByRef.get(item.memberRef)
                 const messageHeader = presentationIsMe || source.kind === 'private_chat' ? null : <ArkmeTimelineMessageHeader
                   item={item}
-                  presentationIsMe={presentationIsMe}
                   {...(selfProfile === undefined ? {} : { profile: selfProfile })}
                   {...(source.kind === 'group_chat' && messageMember !== undefined ? { member: messageMember } : {})}
                 />
@@ -8119,7 +8125,7 @@ export function ArkmeSurface({
                 const isSharedRecordingCard = item.sharedRecording !== undefined
                 const isStructuredMessageCard = isForwardMessageCard || isSharedRecordingCard
                 const isExtensionMessage = !isSharedRecordingCard && item.extensionParent !== undefined
-                const messageAvatar = showMessageAvatars && !isSharedRecordingCard
+                const personalMessageAvatar = showMessageAvatars && !isSharedRecordingCard
                   ? <MessageAvatar senderKind={item.senderKind}
                     {...(avatarRef === undefined ? {} : { avatarRef })}
                     {...(roleFallback === undefined ? {} : { fallback: roleFallback, label: `${role?.name ?? ''}的角色头像` })}
@@ -8139,6 +8145,10 @@ export function ArkmeSurface({
                     onBotOpen={(...args) => timelineActions.current.openBotProfile(...args)}
                   />
                   : null
+                const messageAvatar = personalMessageAvatar && item.representation
+                  ? <span style={{ position: 'relative', display: 'inline-flex', alignSelf: 'flex-start' }}>
+                    {personalMessageAvatar}<TeamRepresentationBadge value={item.representation} compact />
+                  </span> : personalMessageAvatar
                 const selectionAnchor = arkmeMessageSelectionAnchor(item)
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
                 const messageLineBottomGap = index === displayRows.length - 1 || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
@@ -8150,7 +8160,8 @@ export function ArkmeSurface({
                     data-arkme-width-sender-kind={item.senderKind ?? 'human'}
                     data-arkme-selection-key={arkmeTimelineOccurrenceKey(item)} data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid}
                     data-arkme-message-version={item.recordVersion ?? 0} data-arkme-message-sequence={item.sequence}
-                    data-arkme-message-owner-id={item.recordOwnerUserId} style={{
+                    data-arkme-message-owner-id={item.recordOwnerUserId}
+                    aria-description={item.representation ? tr('代表{v0}发言', { v0: item.representation.name }) : undefined} style={{
                     ...styles.row,
                     ...(activeSelectMode === undefined
                       ? isSharedRecordingCard
@@ -8192,7 +8203,7 @@ export function ArkmeSurface({
                       // The viewport already supplies the gap above the composer.
                       marginBottom: messageLineBottomGap,
                     }}>
-                      {!isExtensionMessage && (item.representation?<span style={{position:'relative',display:'inline-flex',alignSelf:'flex-start'}}>{messageAvatar}<TeamRepresentationBadge value={item.representation} compact/></span>:messageAvatar)}
+                      {!isExtensionMessage && messageAvatar}
                       <div style={{
                         ...styles.messageBody,
                         ...(presentationIsMe && !isSharedRecordingCard ? styles.messageBodyMe : {}),
@@ -9331,7 +9342,6 @@ export function ArkmeSurface({
                   key={JSON.stringify([authenticatedAccountKey, source.sourceRef])}
                   accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} selfAvatarRef={selfProfile?.avatarRef}
                   value={selectedTeamIdentity} onSelect={selectTeamIdentity}
-                  selfName={selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'}
                   disabled={composerFilesDisabled || activeSelectMode !== undefined}
                 />}
               <ArkmeComposerSendButton
@@ -9747,6 +9757,7 @@ export function ArkmeSurface({
       {articlePickerOpen && source !== undefined && authenticatedUserId !== undefined && typeof document !== 'undefined' && createPortal(
         <ArkmeArticlePicker key={`${articleDraftKey}:${articlePickerScope.generation}`} sourceRef={source.sourceRef} userId={authenticatedUserId}
           draftScope={`composer:${articleDraftKey}`}
+          composition={selectedTeamComposition}
           onClose={() => { setArticlePickerScope(undefined); if (sameComposerAsyncScope(articlePickerScope)) textareaRef.current?.focus() }}
           onSelect={article => { if (articleDraftKey && sameComposerAsyncScope(articlePickerScope)) composerArticleStore.set(articleDraftKey, article) }} />,
         document.body,
@@ -9755,8 +9766,8 @@ export function ArkmeSurface({
         <ArkmeLongArticleDialog
           key={composerDraftKey}
           sourceRef={source.sourceRef}
-          draftScope={selectedTeamIdentity?.team.key ?? selectedTeamIdentity?.team.jotmoId}
-          representation={selectedTeamIdentity?.selection}
+          draftScope={selectedTeamComposition?.draftScope}
+          representation={selectedTeamComposition?.representation}
           sendOnConfirm
           onClose={() => { setLongArticleCreating(false) }}
           onCreated={item => {
