@@ -7,6 +7,7 @@ vi.mock('../src/client/api.js', async original => ({ ...await original<object>()
 vi.mock('../src/client/chat-directory-store.js', () => ({ arkmeChatDirectory: { upsert: api.upsert } }))
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
+import { teamContactTeams } from '../src/client/team-contact.js'
 import { subscribeTeamOutbound } from '../src/client/team-outbound.js'
 import { IdentityShareHost } from '../src/client/IdentityShareHost.js'
 import { arkmeAvatarImages } from '../src/client/avatar-image-runtime.js'
@@ -29,11 +30,12 @@ const mount = async (content: React.ReactNode) => { await act(async () => root.r
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(v => v.textContent === label || v.getAttribute('aria-label') === label)!
 const click = async (element: Element) => { await act(async () => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))) }
 beforeEach(() => {
+  teamContactTeams.reset()
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 7 })
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: clipboard } })
-  api.call.mockImplementation(async (op, params) => op === 'identity.person.read' ? person : op === 'identity.share.read' ? params.url === url ? person : group : op === 'identity.share.link' ? { kind: 'person', url } : { status: 'opened', source })
+  api.call.mockImplementation(async (op, params) => op === 'team.app.teams' ? [] : op === 'chat.member.world-target' ? { userId: 8 } : op === 'identity.person.read' ? person : op === 'identity.share.read' ? params.url === url ? person : group : op === 'identity.share.link' ? { kind: 'person', url } : { status: 'opened', source })
   vi.spyOn(sharePreviewClient, 'acquire').mockReturnValue({ promise: Promise.resolve({ kind: 'world', state: 'ready', title: '小林' }), release() {} })
 })
 afterEach(async () => {
@@ -51,9 +53,9 @@ describe('identity links stay portable and acquire explicit in-app actions', () 
     expect(api.call).not.toHaveBeenCalled()
     await click(link)
     expect(document.querySelector('[role=dialog]')?.textContent).toContain('linshare')
-    expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read'])
+    expect(api.call.mock.calls.map(([op]) => op).filter(op => op !== 'team.app.teams')).toEqual(['identity.share.read'])
     await click(button('发消息'))
-    expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read', 'identity.share.open'])
+    expect(api.call.mock.calls.map(([op]) => op).filter(op => op !== 'team.app.teams')).toEqual(['identity.share.read', 'identity.share.open'])
     expect(arkmeUi.getSnapshot().selectedSource).toEqual(source)
     expect(api.upsert).toHaveBeenCalledWith(source)
     expect(item.textContent).toBe(`可以和这位朋友聊聊：${url}`)
@@ -79,10 +81,10 @@ describe('identity links stay portable and acquire explicit in-app actions', () 
     api.call.mockImplementation(async op => op === 'identity.share.read' ? group : { status: 'pending' })
     await mount(<IdentityShareHost />)
     await act(async () => identityShareUi.open(scope, groupUrl))
-    expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read'])
+    expect(api.call.mock.calls.map(([op]) => op).filter(op => op !== 'team.app.teams')).toEqual(['identity.share.read'])
     await click(button('复制群聊链接'))
     expect(clipboard).toHaveBeenCalledExactlyOnceWith(groupUrl)
-    expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read'])
+    expect(api.call.mock.calls.map(([op]) => op).filter(op => op !== 'team.app.teams')).toEqual(['identity.share.read'])
     await click(button('申请加入'))
     expect(button('等待审批').disabled).toBe(true)
     expect(api.upsert).not.toHaveBeenCalled()
@@ -133,14 +135,14 @@ describe('one profile surface for avatars and portable links', () => {
     const close = vi.fn(), send = vi.fn()
     await mount(<ArkmeMemberProfileCard copyLinkTarget={{ kind: 'member', sourceRef: 'group-ref', memberRef: 'member-ref' }}
       member={{ displayName: '小林', memberName: '群内昵称' }} showTopicNickname busy={false} onClose={close} onSend={send} />)
-    expect(api.call).toHaveBeenCalledWith('identity.person.read', { accountScope: scope, kind: 'member', sourceRef: 'group-ref', memberRef: 'member-ref' }, expect.any(AbortSignal))
+    expect(api.call).toHaveBeenCalledWith('identity.person.read', { accountScope: scope, kind: 'member', sourceRef: 'group-ref', memberRef: 'member-ref', cacheOnly: true }, expect.any(AbortSignal))
     const avatarSurface = document.querySelector('[data-arkme-person-profile]')!
     expect(avatarSurface.textContent).toContain('群内昵称')
     expect(avatarSurface.textContent).toContain('linshare')
     await click(button('进入 TA 的世界'))
     expect(arkmeUi.getSnapshot().worldTarget?.userId).toBe(8)
     expect(close).toHaveBeenCalledOnce(); expect(send).not.toHaveBeenCalled()
-    expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.person.read'])
+    expect(api.call.mock.calls.map(([op]) => op).filter(op => op !== 'team.app.teams')).toEqual(['identity.person.read', 'chat.member.world-target'])
     await mount(<IdentityShareHost />)
     await act(async () => identityShareUi.open(scope, url))
     expect(document.querySelector('[data-arkme-person-profile]')?.className).toBe(avatarSurface.className)
@@ -149,14 +151,15 @@ describe('one profile surface for avatars and portable links', () => {
     expect(document.querySelector('[role=dialog]')).toBeNull()
     expect(api.call.mock.calls.some(([op]) => op.endsWith('.open'))).toBe(false)
   })
-  it('offers team contact from the personal-link card through the existing selector', async () => {
+  it('opens team contact directly from the personal-link card with its verified recipient', async () => {
     const team = vi.fn(), unsubscribe = subscribeTeamOutbound(team)
+    api.call.mockImplementation(async op => op === 'identity.share.read' ? person : op === 'team.app.teams' ? [{ teamRef: 'sealed-team', jotmoId: 'team-a', name: '研发团队' }] : { state: 'backend_pending' })
     try {
       await mount(<IdentityShareHost />); await act(async () => identityShareUi.open(scope, url))
-      await click(button('以团队联系'))
-      expect(team).toHaveBeenCalledWith({ accountKey: scope, person: { recipient: { kind: 'profile-link', url, expectedUserId: 8 }, displayName: '小林' } })
-      expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read'])
-      expect(document.querySelector('[role=dialog]')).toBeNull()
+      await click(button('以 研发团队 联系'))
+      expect(team).not.toHaveBeenCalled()
+      expect(api.call).toHaveBeenLastCalledWith('team.app.outbound.open', { expectedAccountKey: scope, teamRef: 'sealed-team', recipient: { kind: 'profile-link', url, expectedUserId: 8 }, requestUid: expect.any(String) }, expect.any(AbortSignal))
+      expect(document.querySelectorAll('[role=dialog]')).toHaveLength(1)
     } finally { unsubscribe() }
   })
   it('keeps self-world navigation separate from send-to-self and hides team contact', async () => {
@@ -187,7 +190,7 @@ it('translates the common profile actions and footer in English', async () => {
     await mount(<IdentityShareHost />); await act(async () => identityShareUi.open(scope, url))
     expect(button('Visit their world')).toBeDefined()
     expect(button('Message')).toBeDefined()
-    expect(button('Contact as team')).toBeDefined()
+    expect(button('Contact as team')).toBeUndefined()
     expect(button('Copy profile link')).toBeDefined()
     await click(button('More actions'))
     expect(button('Refresh card')).toBeDefined()
@@ -207,7 +210,7 @@ it('opens the verified public world from a fixed conversation window without cha
     await click(button('进入 TA 的世界'))
     expect(open).toHaveBeenCalledWith(url, '_blank', 'noopener,noreferrer')
     expect(arkmeUi.getSnapshot().worldTarget).toBe(previousWorld)
-    expect(api.call.mock.calls.map(([op]) => op)).toEqual(['identity.share.read'])
+    expect(api.call.mock.calls.map(([op]) => op).filter(op => op !== 'team.app.teams')).toEqual(['identity.share.read'])
   } finally { history.replaceState({}, '', original) }
 })
 
@@ -236,7 +239,7 @@ it('opens a preloaded card without another read, and repeats without a loading f
     expect(document.body.textContent).not.toContain('正在读取资料…')
     await click(button('关闭'))
   }
-  expect(api.call).not.toHaveBeenCalled()
+  expect(api.call.mock.calls.filter(([op]) => op !== 'team.app.teams')).toHaveLength(0)
 })
 it('shares an in-flight preview read with a clicked dialog without a duplicate request', async () => {
   let finish!: (value: unknown) => void
@@ -247,7 +250,7 @@ it('shares an in-flight preview read with a clicked dialog without a duplicate r
   expect((api.call.mock.calls[0]![2] as AbortSignal).aborted).toBe(false)
   await act(async () => {finish(person);await preload.promise})
   expect(document.querySelector('[data-arkme-person-profile-ready=true]')).not.toBeNull()
-  expect(api.call).toHaveBeenCalledOnce()
+  expect(api.call.mock.calls.filter(([op]) => op !== 'team.app.teams')).toHaveLength(1)
 })
 it('keeps a stale card usable during refresh and still sends with the displayed expected identity', async () => {
   let now=100;vi.spyOn(Date,'now').mockImplementation(()=>now)
@@ -266,10 +269,10 @@ it('prepares the actual visible message preview and the popup with one native id
   await mount(<><ArkmeMessageContent item={{itemUid:'preload',senderName:'介绍人',isMe:false,sendAtMillis:1,status:1,title:'',textContent:url}} /><IdentityShareHost /></>)
   const link=node.querySelector('a')!
   expect(link.textContent).toContain('小林')
-  expect(api.call.mock.calls.map(([op])=>op)).toEqual(['identity.share.read'])
+  expect(api.call.mock.calls.map(([op])=>op).filter(op=>op!=='team.app.teams')).toEqual(['identity.share.read'])
   await click(link)
   expect(document.querySelector('[data-arkme-person-profile-ready=true]')).not.toBeNull()
-  expect(api.call).toHaveBeenCalledOnce()
+  expect(api.call.mock.calls.filter(([op]) => op !== 'team.app.teams')).toHaveLength(1)
 })
 
 
@@ -336,7 +339,7 @@ it('refreshes a pending approval and offers Open without automatically opening o
   await act(async()=>{await vi.advanceTimersByTimeAsync(10_000)})
   expect(button('打开群聊').disabled).toBe(false)
   await act(async()=>{await vi.advanceTimersByTimeAsync(30_000)})
-  expect(api.call.mock.calls.map(([op])=>op)).toEqual(['identity.share.read','identity.share.read'])
+  expect(api.call.mock.calls.map(([op])=>op).filter(op=>op!=='team.app.teams')).toEqual(['identity.share.read','identity.share.read'])
 })
 it('pauses approval reads when hidden, checks on return and stops after close', async () => {
   vi.useFakeTimers();const hidden=vi.spyOn(document,'hidden','get').mockReturnValue(false)
@@ -357,7 +360,7 @@ it('copies the received URL even when its profile read is still pending', async 
   await mount(<IdentityShareHost />);await act(async()=>identityShareUi.open(scope,url))
   await click(button('复制个人链接'))
   expect(clipboard).toHaveBeenCalledExactlyOnceWith(url)
-  expect(api.call.mock.calls.map(([op])=>op)).toEqual(['identity.share.read'])
+  expect(api.call.mock.calls.map(([op])=>op).filter(op=>op!=='team.app.teams')).toEqual(['identity.share.read'])
   expect(button('发消息').disabled).toBe(true)
   await click(button('关闭'));await act(async()=>finish(person))
 })

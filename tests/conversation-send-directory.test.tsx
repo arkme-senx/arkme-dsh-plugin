@@ -5416,6 +5416,31 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.placeholder).toBe('发消息到 群聊 B(22人)')
   })
 
+  it('opens a visible sender before any roster page or member presentation has returned', async () => {
+    activeSource = group
+    timeline = [{ itemUid: 'cold-avatar', memberRef: 'signed-cold-member', senderName: '迟到分页的群友', isMe: false,
+      sendAtMillis: 1, title: '', textContent: '头像已出现', status: 1 }]
+    arkmeChatDirectory.publish([group]); arkmeUi.selectSource(group)
+    const original = memberApi.callArkme
+    let release!: () => void
+    const wait = new Promise<void>(resolve => { release = resolve })
+    const request = vi.spyOn(memberApi, 'callArkme').mockImplementation(async (operation, params, signal) => {
+      if (['source.members.page', 'source.members.presentation'].includes(operation)) await wait
+      return await original(operation, params, signal)
+    })
+    try {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'cold-avatar' })
+      const image = row.findByType(MessageAvatar)
+      expect(image.props.member).toMatchObject({ memberRef: 'signed-cold-member', displayName: '迟到分页的群友', statsKnown: false })
+      expect(image.props.member).not.toHaveProperty('role')
+      act(() => image.findByType('button').props.onClick({ stopPropagation: vi.fn() }))
+      expect(renderer!.root.findByType(ArkmeMemberProfileCard).props.member.displayName).toBe('迟到分页的群友')
+      act(() => renderer!.root.findByType(ArkmeMemberProfileCard).props.onClose())
+      expect(renderer!.root.findAllByType(ArkmeMemberProfileCard)).toHaveLength(0)
+    } finally { await act(async () => { release(); await wait }); request.mockRestore() }
+  })
+
   it('does not turn a partial member page into the group total or block composing', async () => {
     const pagedGroup: ArkmeSourceItem = { ...group, displayName: '分页群',
       groupAvatar: { memberCount: 500, strategy: 'owner_recent_speakers', computedAtMillis: 1, slots: [] } }
