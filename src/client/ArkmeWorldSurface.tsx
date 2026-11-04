@@ -1,3 +1,8 @@
+import { TeamWorldActivity } from './TeamWorldActivity.js'
+import { ArkmeActionMenu } from './ArkmeDshMenu.js'
+import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
+import { ArkmeSelfRoleMenu } from './ArkmeSelfRoleMenu.js'
+import type { TeamWorldContext } from '../team-world-contract.js'
 import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { worldPublishSourceLabel } from '../world-publish-source.js'
 import { WorldPublishGuide } from './WorldPublishGuide.js'
@@ -45,6 +50,7 @@ import type { ArkmeExtensionCatalogItem, ArkmeExtensionCatalogPage } from '../ex
 import { ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES, ARKME_WORLD_PUBLISH_MAX_IMAGES } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { callArkme, ArkmeClientError } from './api.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
@@ -517,8 +523,9 @@ export function worldImagePreviewDragPosition(origin: WorldImagePreviewDragOrigi
   }
 }
 
-export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect }: {
-  item: ArkmeWorldFeedItem
+export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect, renderMedia }: {
+  item: Pick<ArkmeWorldFeedItem, 'imageRefs' | 'authorName'>
+  renderMedia?(imageRef: string, zoomed: boolean): import('react').ReactNode
   previewIndex: number
   onClose(): void
   onSelect(index: number): void
@@ -672,7 +679,7 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect 
           onPointerUp={endPreviewDrag}
           onPointerCancel={endPreviewDrag}
         >
-          <WorldImagePreviewMedia imageRef={imageRef} alt={tr("{v0}发布的图片 {v1}", { v0: item.authorName, v1: String(previewIndex + 1) })} zoomed={zoomed} />
+          {renderMedia ? renderMedia(imageRef, zoomed) : <WorldImagePreviewMedia imageRef={imageRef} alt={tr("{v0}发布的图片 {v1}", { v0: item.authorName, v1: String(previewIndex + 1) })} zoomed={zoomed} />}
         </div>
         {multiple && <>
           <button data-arkme-feedback="neutral" type="button" style={{ ...styles.previewNav, left: 10, opacity: previewIndex === 0 ? 0.3 : 1 }} aria-label={tr("上一张图片")} disabled={previewIndex === 0} onClick={() => { selectImage(Math.max(0, previewIndex - 1)) }}>‹</button>
@@ -861,27 +868,62 @@ function InteractionAvatar({ item, reply, compact }: { item: ArkmeWorldInteracti
   </span>
 }
 
-const WorldNotificationFocus = createContext<string | undefined>(undefined)
+function WorldImageThumbnails({ item, detail = false, onSelect }: { item: Pick<ArkmeWorldFeedItem, 'imageRefs' | 'authorName'>; detail?: boolean; onSelect(index: number): void }) {
+  const visibleImageRefs = detail ? item.imageRefs : item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
+  const hiddenImageCount = Math.max(0, item.imageRefs.length - visibleImageRefs.length)
+  return <>
+    {visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
+      const overflowCount = index === visibleImageRefs.length - 1 ? hiddenImageCount : 0
+      return <button
+        key={imageRef}
+        type="button"
+        style={styles.imageButton}
+        aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}${overflowCount > 0 ? `，另有 ${String(overflowCount)} 张图片` : ''}`}
+        onClick={() => { onSelect(index) }}
+      >
+        <WorldImage imageRef={imageRef} alt={tr("{v0}发布的图片 {v1}", { v0: item.authorName, v1: String(index + 1) })} />
+        {overflowCount > 0 && <span style={styles.imageOverflow} data-world-image-overflow={overflowCount}>+{overflowCount}</span>}
+      </button>
+    })}</div>}
+  </>
+}
 
-function InteractionRow({ item, replyToName, replyToMemberType, compact, replyTargetRef, onReply }: {
+export const WorldTeamReplyContext = createContext<TeamWorldContext | undefined>(undefined)
+export const WorldNotificationFocus = createContext<string | undefined>(undefined)
+
+function InteractionRow({ item, replyToName, replyToMemberType, compact, previewImages = false, replyTargetRef, onReply }: {
   item: ArkmeWorldInteractionItem
   replyToName?: string
   replyToMemberType?: ArkmeWorldInteractionItem['memberType']
   compact: boolean
+  previewImages?: boolean
   replyTargetRef?: string
   onReply?(item: ArkmeWorldInteractionItem): void
 }) {
   const focused = useContext(WorldNotificationFocus) === item.interactionRef
+  const teamContext = useContext(WorldTeamReplyContext)
+  const [previewIndex, setPreviewIndex] = useState<number>()
+  const media = { imageRefs: item.imageRefs ?? [], authorName: item.authorName }
+  useEffect(() => {
+    if (previewIndex === undefined) return
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setPreviewIndex(undefined) } }
+    document.addEventListener('keydown', close, true)
+    return () => document.removeEventListener('keydown', close, true)
+  }, [previewIndex])
   const rowRef = useRef<HTMLDivElement>(null)
   useEffect(() => { if (focused) rowRef.current?.scrollIntoView?.({ block: 'center' }) }, [focused])
   const reply = replyToName !== undefined
   const active = replyTargetRef === item.interactionRef
   if (compact) {
-    return <span data-world-comment-level={reply ? 'reply' : 'root'} style={{ ...styles.compactCommentRow, ...(reply ? styles.compactCommentReply : {}) }}>
-      <strong style={styles.compactCommentAuthor}>{item.authorName}</strong><WorldMembershipBadge memberType={item.memberType} />
-      {replyToName !== undefined && <><span> {tr("回复")} </span><strong style={styles.compactCommentAuthor}>{replyToName}</strong><WorldMembershipBadge memberType={replyToMemberType} /></>}
-      <span>：<WorldLinkText text={item.textContent} /></span>
-    </span>
+    return <div data-world-comment-level={reply ? 'reply' : 'root'} style={{ ...styles.compactCommentRow, ...(reply ? styles.compactCommentReply : {}), ...(previewImages ? { whiteSpace: 'normal', fontSize: 13, padding: '4px 0' } : {}) }}>
+      <span style={previewImages ? { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' } : undefined}>
+        <strong style={styles.compactCommentAuthor}>{item.authorName}</strong><WorldMembershipBadge memberType={item.memberType} />
+        {replyToName !== undefined && <><span> {tr("回复")} </span><strong style={styles.compactCommentAuthor}>{replyToName}</strong><WorldMembershipBadge memberType={replyToMemberType} /></>}
+        <span>：<WorldLinkText text={item.textContent} /></span>
+      </span>
+      {previewImages && media.imageRefs.length > 0 && <div style={{ maxWidth: 360 }}><WorldImageThumbnails item={media} onSelect={setPreviewIndex} /></div>}
+      {previewImages && previewIndex !== undefined && <WorldImagePreviewDialog item={media} previewIndex={previewIndex} onClose={() => setPreviewIndex(undefined)} onSelect={setPreviewIndex} />}
+    </div>
   }
   return <div ref={rowRef} data-world-notification-focus={focused || undefined} data-world-comment-level={reply ? 'reply' : 'root'} style={{
     ...(reply ? styles.interactionReply : styles.interactionRoot),
@@ -901,15 +943,18 @@ function InteractionRow({ item, replyToName, replyToMemberType, compact, replyTa
         <p style={{ ...styles.interactionText, ...(reply ? styles.interactionReplyText : {}) }}><WorldLinkText text={item.textContent} /></p>
         {onReply !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.interactionAction} aria-label={tr("回复{v0}的评论", { v0: item.authorName })} onClick={() => { onReply(item) }}>{active ? tr("取消回复") : tr("回复")}</button>}
       </div>
+      {teamContext && media.imageRefs.length > 0 && <WorldImageThumbnails item={media} onSelect={setPreviewIndex} />}
+      {teamContext && previewIndex !== undefined && <WorldImagePreviewDialog item={media} previewIndex={previewIndex} onClose={() => setPreviewIndex(undefined)} onSelect={setPreviewIndex} />}
     </div>
   </div>
 }
 
-export function WorldInteractionThreadList({ rootRef, items, maxVisibleItems, compact = false, replyTargetRef, onReply }: {
+export function WorldInteractionThreadList({ rootRef, items, maxVisibleItems, compact = false, previewImages = false, replyTargetRef, onReply }: {
   rootRef: string
   items: readonly ArkmeWorldInteractionItem[]
   maxVisibleItems?: number
   compact?: boolean
+  previewImages?: boolean
   replyTargetRef?: string
   onReply?(item: ArkmeWorldInteractionItem): void
 }) {
@@ -924,9 +969,9 @@ export function WorldInteractionThreadList({ rootRef, items, maxVisibleItems, co
   }
   return <div style={styles.interactionList} data-world-comment-preview={compact || undefined}>
     {visible.map(thread => <section key={thread.root.interactionRef} style={{ ...styles.interactionThread, ...(compact ? { padding: 0, borderBottom: 0 } : {}) }}>
-      <InteractionRow item={thread.root} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />
+      <InteractionRow item={thread.root} compact={compact} previewImages={previewImages} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply === undefined ? {} : { onReply })} />
       {thread.replies.length > 0 && <div style={{ ...styles.interactionReplyList, ...(compact ? { margin: 0, paddingLeft: 0, borderLeft: 0 } : {}) }}>
-        {thread.replies.map(reply => <InteractionRow key={reply.item.interactionRef} item={reply.item} replyToName={reply.replyToName} {...(reply.replyToMemberType === undefined ? {} : { replyToMemberType: reply.replyToMemberType })} compact={compact} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply ===undefined ? {} : { onReply })} />)}
+        {thread.replies.map(reply => <InteractionRow key={reply.item.interactionRef} item={reply.item} replyToName={reply.replyToName} {...(reply.replyToMemberType === undefined ? {} : { replyToMemberType: reply.replyToMemberType })} compact={compact} previewImages={previewImages} {...(replyTargetRef === undefined ? {} : { replyTargetRef })} {...(onReply ===undefined ? {} : { onReply })} />)}
       </div>}
     </section>)}
   </div>
@@ -938,35 +983,55 @@ export function worldInteractionCountLabel(count: number, hasMore = false): stri
   return `评论 ${String(normalized)}${hasMore ? '+' : ''}`
 }
 
-export function WorldInteractionPreviewContent({ item, items, onOpen }: { item: ArkmeWorldFeedItem; items: readonly ArkmeWorldInteractionItem[]; onOpen(): void }) {
-  return <section style={styles.commentPreview} aria-label={tr("{v0}的精选评论", { v0: item.authorName })}>
-    <WorldInteractionThreadList rootRef={item.recordRef} items={items} maxVisibleItems={3} compact />
-    <button type="button" style={styles.commentPreviewHitTarget} aria-label={tr("打开{v0}的评论面板，共 {v1} 条评论", { v0: item.authorName, v1: String(item.extendCount) })} title={tr("打开全部评论")} onClick={onOpen} />
+export function WorldInteractionPreviewContent({ item, items, onOpen, previewImages = false }: { item: ArkmeWorldFeedItem; items: readonly ArkmeWorldInteractionItem[]; onOpen(): void; previewImages?: boolean }) {
+  return <section style={styles.commentPreview} aria-label={tr("{v0}的精选评论", { v0: item.authorName })}
+    onClick={previewImages ? event => {
+      if (event.defaultPrevented || !(event.target instanceof Element) || event.target.closest('button,a,[role="dialog"],[data-arkme-membership-anchor]') || window.getSelection()?.toString()) return
+      event.stopPropagation(); onOpen()
+    } : undefined}>
+    <WorldInteractionThreadList rootRef={item.recordRef} items={items} maxVisibleItems={3} compact previewImages={previewImages} />
+    {!previewImages && <button type="button" style={styles.commentPreviewHitTarget} aria-label={tr("打开{v0}的评论面板，共 {v1} 条评论", { v0: item.authorName, v1: String(item.extendCount) })} title={tr("打开全部评论")} onClick={onOpen} />}
   </section>
 }
 
-function WorldInteractionPreview({ item, onOpen }: { item: ArkmeWorldFeedItem; onOpen(): void }) {
+function WorldInteractionPreview({ item, onOpen, teamPreview = false, refreshVersion = 0 }: { item: ArkmeWorldFeedItem; onOpen(): void; teamPreview?: boolean; refreshVersion?: number }) {
   useArkmeLocale()
   const [items, setItems] = useState<ArkmeWorldInteractionItem[]>([])
+  const container = useRef<HTMLDivElement>(null)
+  const previous = useRef<ArkmeWorldInteractionItem[]>([])
+  // Team publications do not carry a comment count; read only visible cards, never scan history for previews.
+  const refreshItem = teamPreview ? item : undefined
   useEffect(() => {
-    if (item.extendCount <= 0) {
-      setItems([])
-      return
+    if (!teamPreview && item.extendCount <= 0) { setItems([]); return }
+    let controller: AbortController | undefined
+    const read = () => {
+      controller = new AbortController()
+      const signal = controller.signal
+      void withArkmeReadDeadline(readSignal => callArkme<ArkmeWorldRepliesPage>('world.replies', { recordRef: item.recordRef, limit: teamPreview ? 3 : 20 }, readSignal, teamPreview ? { priority: 'background' } : undefined), signal)
+        .then(page => {
+          if (signal.aborted) return
+          const currentImages = new Set(page.items.flatMap(comment => comment.imageRefs ?? []))
+          invalidateWorldImages(previous.current.flatMap(comment => comment.imageRefs ?? []).filter(ref => !currentImages.has(ref)))
+          previous.current = page.items; setItems(page.items)
+          const visible = worldInteractionThreads(item.recordRef, page.items).flatMap(thread => [thread.root, ...thread.replies.map(reply => reply.item)]).slice(0, 3)
+          void hydrateWorldAuthorLabels(visible.filter(comment => !comment.teamAuthor).map(comment => comment.authorRef ?? comment.interactionRef), signal,
+            labels => { if (!signal.aborted) setItems(current => applyWorldInteractionAuthorLabels(current, labels)) }).catch(() => {})
+        })
+        .catch(() => {
+          if (signal.aborted) return
+          invalidateWorldImages(previous.current.flatMap(comment => comment.imageRefs ?? [])); previous.current = []; setItems([])
+        })
     }
-    const controller = new AbortController()
-    void callArkme<ArkmeWorldRepliesPage>('world.replies', { recordRef: item.recordRef, limit: 20 }, controller.signal)
-      .then(page => {
-        if (controller.signal.aborted) return
-        setItems(page.items)
-        const visible = worldInteractionThreads(item.recordRef, page.items).flatMap(thread => [thread.root, ...thread.replies.map(reply => reply.item)]).slice(0, 3)
-        void hydrateWorldAuthorLabels(visible.filter(comment => !comment.teamAuthor).map(comment => comment.authorRef ?? comment.interactionRef), controller.signal,
-          labels => setItems(current => applyWorldInteractionAuthorLabels(current, labels))).catch(() => {})
-      })
-      .catch(() => { if (!controller.signal.aborted) setItems([]) })
-    return () => { controller.abort() }
-  }, [item.extendCount, item.recordRef])
-  if (items.length === 0) return null
-  return <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} />
+    if (!teamPreview || typeof IntersectionObserver === 'undefined' || !container.current) { read(); return () => controller?.abort() }
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { if (!controller) read() }
+      else { controller?.abort(); controller = undefined }
+    })
+    observer.observe(container.current)
+    return () => { observer.disconnect(); controller?.abort() }
+  }, [item.extendCount, item.recordRef, teamPreview, refreshItem, refreshVersion])
+  const content = items.length > 0 ? <WorldInteractionPreviewContent item={item} items={items} onOpen={onOpen} previewImages={teamPreview} /> : null
+  return teamPreview ? <div ref={container} style={{ minHeight: 1 }} data-world-team-comments>{content}</div> : content
 }
 
 export function worldExtensionPublicationTextContent(item: ArkmeWorldFeedItem): string {
@@ -1028,13 +1093,21 @@ function WorldExtensionShelf({ ownerUserId, ownerName, onOpen, onOpenAll }: {
 
 
 
-function WorldAuthorAvatar({ item }: { item: ArkmeWorldFeedItem }) {
+export function WorldPublisherAttribution({ item }: { item: ArkmeWorldFeedItem }) {
+  if (!item.teamAuthor || !item.publisher?.name) return null
+  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, verticalAlign: 'middle', overflowWrap: 'anywhere' }}>
+    {item.publisher.avatarRef && <span data-arkme-avatar style={{ width: 14, height: 14, flexShrink: 0, borderRadius: '50%', overflow: 'hidden' }}><WorldImage imageRef={item.publisher.avatarRef} alt={item.publisher.name} avatar /></span>}
+    {tr('{v0} 发布', { v0: item.publisher.name })}
+  </span>
+}
+
+export function WorldAuthorAvatar({ item }: { item: ArkmeWorldFeedItem }) {
   return <span data-arkme-avatar style={styles.avatar}>{item.avatarRef === undefined
     ? item.avatarFallback?.label ?? item.authorName.slice(0, 1)
     : <WorldImage imageRef={item.avatarRef} alt={tr('{v0}的头像', { v0: item.authorName })} avatar />}</span>
 }
 
-export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenDetail, selected = false, detail = false, commentsRefreshKey }: {
+export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading, interactionsOpen, onOpenInteractions, onInteractionCreated, onToggleVoiceprint, onInviteVoiceprint, onOpenAuthor, onOpenDetail, selected = false, detail = false, commentsRefreshKey, teamCommentPreview = false, commentPreviewVersion }: {
   item: ArkmeWorldFeedItem
   playable: boolean
   voiceprintActive: boolean
@@ -1049,6 +1122,8 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
   selected?: boolean
   detail?: boolean
   commentsRefreshKey?: object | undefined
+  teamCommentPreview?: boolean
+  commentPreviewVersion?: number
 }) {
   useArkmeLocale()
   const [previewIndex, setPreviewIndex] = useState<number>()
@@ -1061,8 +1136,6 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     else onOpenInteractions(item)
   }
   const interactionsId = interactionRegionId(item.recordRef, detail)
-  const visibleImageRefs = detail ? item.imageRefs : item.imageRefs.slice(0, WORLD_FEED_IMAGE_LIMIT)
-  const hiddenImageCount = Math.max(0, item.imageRefs.length - visibleImageRefs.length)
   const textContent = item.extensionPublication === undefined
     ? item.textContent
     : worldExtensionPublicationTextContent(item)
@@ -1091,7 +1164,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
         event.preventDefault(); onOpenDetail(item)
       },
     })}>
-    {!detail && <header style={styles.cardHeader}>
+    {!detail && <header style={{ ...styles.cardHeader, ...(item.teamAuthor ? { gridTemplateColumns: '36px minmax(0,1fr)' } : {}) }}>
       {item.authorRef === undefined && !item.teamAuthor
         ? <WorldAuthorAvatar item={item} />
         : <button type="button" style={styles.avatarButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><WorldAuthorAvatar item={item} /></button>}
@@ -1111,8 +1184,12 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
               <Microphone size={17} weight="light" />
             </button>}
         </span>
+        {item.teamAuthor && <span style={{ color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px', marginTop: 4 }}>
+          <time>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
+          {item.publisher?.name && <> · <WorldPublisherAttribution item={item} /></>}
+        </span>}
       </span>
-      <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>
+      {!item.teamAuthor && <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>}
     </header>}
     {item.headline !== '' && <h2 style={styles.headline}><ArkmeRichText text={item.headline} presentation="preview" /></h2>}
     {textContent.trim() !== '' && (detail ? <div style={{ ...styles.text, marginTop: 0 }}><WorldLinkText text={textContent} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></div> : <WorldCollapsibleText
@@ -1122,19 +1199,8 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
       hasMedia={item.imageRefs.length > 0 || item.videoCount > 0 || item.voiceCount > 0}
       {...(extensionShareLink === undefined ? {} : { extensionShareLink })}
     />)}
-    {visibleImageRefs.length > 0 && <div style={styles.imageGrid}>{visibleImageRefs.map((imageRef, index) => {
-      const overflowCount = index === visibleImageRefs.length - 1 ? hiddenImageCount : 0
-      return <button
-        key={imageRef}
-        type="button"
-        style={styles.imageButton}
-        aria-label={`预览${item.authorName}发布的图片 ${String(index + 1)}${overflowCount > 0 ? `，另有 ${String(overflowCount)} 张图片` : ''}`}
-        onClick={() => { setPreviewIndex(index) }}
-      >
-        <WorldImage imageRef={imageRef} alt={tr("{v0}发布的图片 {v1}", { v0: item.authorName, v1: String(index + 1) })} />
-        {overflowCount > 0 && <span style={styles.imageOverflow} data-world-image-overflow={overflowCount}>+{overflowCount}</span>}
-      </button>
-    })}</div>}
+    <WorldImageThumbnails item={item} detail={detail} onSelect={setPreviewIndex} />
+    {teamCommentPreview && <h3 data-world-feedback-heading style={{ margin: '14px 0 2px', fontSize: 12, fontWeight: 500, color: arkmeTheme.secondary }}>{tr('共同反馈')}</h3>}
     <footer style={styles.cardFooter}>
       <ArkmeWorldReactions item={item} onUnavailable={onReactionUnavailable}>
       <button data-arkme-feedback="neutral" data-arkme-feedback-selected={interactionsOpen} type="button" style={{ ...styles.commentButton, ...(interactionsOpen ? styles.commentButtonActive : {}) }} title={tr("评论")} aria-label={tr("评论")} aria-expanded={interactionsOpen} aria-controls={interactionsId} onClick={composeComment}>
@@ -1143,7 +1209,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
       <ArkmeWorldShareActions item={item} />
       </ArkmeWorldReactions>
     </footer>
-    {!interactionsOpen && item.extendCount > 0 && <WorldInteractionPreview item={item} onOpen={composeComment} />}
+    {!interactionsOpen && (teamCommentPreview || item.extendCount > 0) && <WorldInteractionPreview item={item} onOpen={composeComment} teamPreview={teamCommentPreview} refreshVersion={commentPreviewVersion ?? 0} />}
     {interactionsOpen && <InteractionPanel item={item} commentsRefreshKey={commentsRefreshKey} textareaRef={commentInputRef} onClose={() => { onOpenInteractions(item) }} onInteractionCreated={onInteractionCreated} detail={detail} />}
     {previewIndex !== undefined && <WorldImagePreviewDialog item={item} previewIndex={previewIndex} onClose={() => { setPreviewIndex(undefined) }} onSelect={setPreviewIndex} />}
   </article>
@@ -1258,6 +1324,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
   onLoadMore?(): void
 }) {
   useArkmeLocale()
+  const [activity, setActivity] = useState(false), [more, setMore] = useState(false)
   const detailContext = `${scope}:${target?.userId ?? ''}:${target && 'contactRef' in target ? target.contactRef : ''}`
   const [detailSelection, setDetailSelection] = useState<{ context: string; item: ArkmeWorldFeedItem }>()
   const selectedDetail = detailSelection?.context === detailContext ? detailSelection.item : undefined
@@ -1326,6 +1393,10 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}{tr("的世界")}</h1><p style={styles.subtitle}>{tr("TA 公开分享的内容")}</p></div>
         </div>}
       <div style={styles.headerActions}>
+        {scope === 'mine' && target === undefined && <ArkmeActionMenu open={more} label={tr('我的世界操作')} onClose={() => setMore(false)} align="end"
+          anchor={<button type="button" style={styles.iconButton} aria-label={tr('更多世界操作')} onClick={() => setMore(value => !value)}><DotsThree size={20} /></button>}
+          actions={[{ id: 'team-activity', label: tr('我的团队操作'), onSelect: () => { setMore(false); setActivity(true) } }]} />}
+
         <button data-arkme-feedback="neutral" type="button" style={styles.iconButton} disabled={state.refreshing} title={state.refreshing ? tr("刷新中") : tr("刷新")} aria-label={state.refreshing ? tr("刷新中") : tr("刷新")} onClick={onRefresh}>
           <ArrowClockwise size={18} weight="light" />
         </button>
@@ -1386,6 +1457,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
     </div>
     <aside className="arkme-world-reserved" aria-hidden="true" data-world-reserved-column />
     </div>
+    {activity && <TeamWorldActivity onClose={() => setActivity(false)} />}
     {detailItem && <ArkmeWorldRecordDetail key={detailItem.recordRef} item={detailItem} onClose={closeDetail}
       renderAvatar={item => <WorldAuthorAvatar item={item} />}
       {...(onOpenAuthor ? { onOpenAuthor: openCardAuthor } : {})}
@@ -1623,6 +1695,10 @@ function InteractionPanel(props: InteractionPanelProps) {
 }
 function ScopedInteractionPanel({ item, textareaRef, onClose, onInteractionCreated, detail = false, accountKey, commentsRefreshKey }: InteractionPanelProps & { accountKey: string }) {
   useArkmeLocale()
+  const replyTeam = useContext(WorldTeamReplyContext)
+  const [asTeam, setAsTeam] = useState(false), [identityOpen, setIdentityOpen] = useState(false)
+  const teamCommand = useRef<Extract<TeamWorldRequest, { action: 'submit' }>>()
+  const teamOrigin = useRef<import('../world-publish-source.js').WorldPublishOrigin>()
   const pending = useRef<{ targetRef: string; textContent: string; clientMutationId: string }>()
   const [frozen, setFrozen] = useState(false)
   const sendController = useRef<AbortController>()
@@ -1713,9 +1789,24 @@ function ScopedInteractionPanel({ item, textareaRef, onClose, onInteractionCreat
     if (sendingRef.current || (!pending.current && !textContent)) return
     sendingRef.current = true; setSending(true)
     const controller = new AbortController(); sendController.current = controller
-    pending.current ??= { targetRef: replyTarget?.interactionRef ?? item.recordRef, textContent, clientMutationId: uuid() }
+    if (asTeam && !teamCommand.current && !replyTeam?.capabilities.reply) { sendingRef.current = false; setSending(false); setState(current => ({ ...current, message: tr('当前团队身份不可用，请重新选择') })); return }
+    if (asTeam) teamCommand.current ??= { action: 'submit', accountKey, teamRef: replyTeam!.teamRef, expectedRevision: 0, requestUid: uuid(), change: 'publish', draft: { title: '', text: textContent, format: 'plain', imageRefs: [], parentRef: replyTarget?.interactionRef ?? item.recordRef } }
+    else pending.current ??= { targetRef: replyTarget?.interactionRef ?? item.recordRef, textContent, clientMutationId: uuid() }
     setFrozen(true)
     try {
+      if (teamCommand.current) {
+        if (!teamCommand.current.draft!.sourceRef) {
+          teamOrigin.current ??= { kind: 'local', sourceRef: 'world-reply', itemUid: teamCommand.current.requestUid, textContent: teamCommand.current.draft!.text, sourceLabel: '世界评论', sendAtMillis: Date.now(), hasAttachments: false }
+          const source = await callArkme<{ sourceRef: string }>('team.world', { action: 'source', accountKey, origin: teamOrigin.current, version: 1 }, controller.signal)
+          teamCommand.current.draft!.sourceRef = source.sourceRef
+        }
+        const receipt = await callArkme<TeamWorldReceipt>('team.world', teamCommand.current, controller.signal)
+        if (controller.signal.aborted) return
+        if (receipt.pending || !receipt.result) { setState(current => ({ ...current, message: tr('发送结果尚未确认，请重试原请求') })); return }
+        teamCommand.current = undefined; teamOrigin.current = undefined; setFrozen(false)
+        if (receipt.result.visibility !== 'published') { setState(current => ({ ...current, message: tr(receipt.result!.visibility === 'pending' ? '评论正在审核' : '评论当前未公开') })); return }
+        setDraft(''); setReplyTarget(undefined); load(); onInteractionCreated(item.recordRef); return
+      }
       const result = await callArkme<ArkmeWorldInteractionCreateResult>('world.interactions.create-text', pending.current, controller.signal)
       if (controller.signal.aborted) return
       pending.current = undefined; setFrozen(false)
@@ -1738,6 +1829,9 @@ function ScopedInteractionPanel({ item, textareaRef, onClose, onInteractionCreat
         {!detail && <button data-arkme-feedback="neutral" type="button" style={styles.interactionPanelClose} aria-label={tr("收起评论")} onClick={onClose}>{tr("收起")}</button>}
       </header>
       <div style={styles.interactionComposer}>
+        {replyTeam?.capabilities.reply && <ArkmeSelfRoleMenu open={identityOpen} onClose={() => setIdentityOpen(false)} selectedIds={[asTeam ? 'team' : 'personal']} showSelectionIndicator
+          anchor={<button type="button" style={styles.linkButton} disabled={sending || frozen} onClick={() => setIdentityOpen(value => !value)} aria-label={tr('回复身份')}>{asTeam ? replyTeam.name : tr('我')} ▾</button>}
+          actions={[{ id: 'personal', label: tr('我'), onSelect: () => { setAsTeam(false); setIdentityOpen(false) } }, { id: 'team', label: replyTeam.name, onSelect: () => { setAsTeam(true); setIdentityOpen(false) } }]} />}
         {replyTarget !== undefined && <div style={styles.replyTarget}><span>{tr("回复")} {replyTarget.authorName}</span><button data-arkme-feedback="neutral" type="button" style={styles.linkButton} disabled={sending || frozen} onClick={() => { setReplyTarget(undefined); textareaRef.current?.focus() }}>{tr("取消回复")}</button></div>}
         <div style={styles.interactionComposerRow}>
           <textarea ref={textareaRef} aria-label={tr("评论内容")} rows={1} style={styles.interactionInput} value={draft} disabled={sending || frozen} maxLength={20_000} placeholder={replyTarget === undefined ? '写一条评论…' : tr("回复 {v0}…", { v0: replyTarget.authorName })} onChange={event => {

@@ -15,6 +15,8 @@ export interface TeamWorldReceipt {
   result?: { visibility: 'published' | 'pending' | 'rejected' | 'unpublished' | 'deleted'; contentRevision: string; publicationVersion: number }
 }
 export interface TeamWorldFeedback {
+  contentKey?: string
+  publication?: import('./types.js').ArkmeWorldFeedItem
   key: string; sequence: number; contentRef: string; kind: 'reaction' | 'comment'; isMe: boolean; at: number
   eventRef: string
   actorName: string

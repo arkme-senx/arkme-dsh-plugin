@@ -58,3 +58,17 @@ it('preserves separate notification navigation and command references through pu
   expect(JSON.stringify(output)).toContain('public-content')
   expect(ports.worldReactions).toHaveBeenCalledExactlyOnceWith(input, expect.any(AbortSignal))
 })
+
+it('discovers archive version paging separately from current World support in both adapters', async () => {
+ let supported=false
+ const call=vi.fn(async (operation:string)=>operation==='provider.capabilities'?{contractVersion:ARKME_PROVIDER_CONTRACT_VERSION,features:{worldReactionsV1:true,worldReactionArchiveVersionsV1:supported}}:{items:[],hasMore:false})
+ const sdk=createArkmeSdk({fetchImpl:async (_,init)=>{const request=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await call(request.operation)}),{headers:{'content-type':'application/json'}})}})
+ const input={accountKey:'test:7',target:{id:'old-world',worldRecordRef:'sealed'},limit:10}
+ await expect(sdk.worldReactionVersions(input)).rejects.toMatchObject({body:{code:'CAPABILITY_UNSUPPORTED'}})
+ supported=true
+ expect(await sdk.worldReactionVersions(input)).toEqual({items:[],hasMore:false})
+ const ports={worldReactionVersions:vi.fn(async()=>({items:[],hasMore:false}))}
+ const read=createArkmeCoreToolDefinitions(ports as never).find(tool=>tool.name==='arkme_world_reactions_read')!
+ await read.execute({request_json:JSON.stringify({...input,action:'versions'})},{signal:new AbortController().signal} as never)
+ expect(ports.worldReactionVersions).toHaveBeenCalledWith({...input,action:'versions'},expect.any(AbortSignal))
+})

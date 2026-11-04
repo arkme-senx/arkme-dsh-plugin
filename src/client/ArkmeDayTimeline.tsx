@@ -1,4 +1,8 @@
 import { ArkmeRichText } from './ArkmeRichText.js'
+import { callArkme } from './api.js'
+import { expressionIdentity } from './reaction-expression.js'
+import type { ReactionPreviewEvent } from './reaction-preview-store.js'
+import type { ReactionSetResult, ReactionRequest, ReactionState } from '../reaction-contract.js'
 import { ReactionLabel } from './ReactionLabel.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useDayTimelineData, type DayTimelineData } from './use-day-timeline-data.js'
@@ -272,6 +276,7 @@ function DayTimelineContent({ data: { activities: data, reactions: reactionData 
           <div>我 · <DayActivityTimestamp at={event.at} timezone={query.timezone} /></div>
           <p><ReactionAction added={event.added} label={event.label} /></p>
         </article>)}
+        <WorldReactionRetract key={query.accountScope + reactionDetail.index} scope={query.accountScope} event={reactionDetail.event} onChanged={reactionData.updateWorldState} />
         {reactionDetail.event.originalMessage && !reactionDetail.event.restricted && onOpenReactionSource && <button type="button" className="arkme-day-source"
           onClick={() => onOpenReactionSource(reactionDetail.event.originalMessage!, reactionDetail.event.expression)}>{tr('前往原始来源')}</button>}
       </aside>}
@@ -403,4 +408,26 @@ function RecordingCoverage({ page }: { page: DayActivityPage }) {
     <div className="arkme-day-ticks"><span>{tr("当天开始")}</span><span>{tr("当天结束")}</span></div>
     {coverage.state === 'partial' && <p className="arkme-day-coverage-status">{tr('部分录音时段尚未显示。')}</p>}
   </section>
+}
+
+export function WorldReactionRetract({ scope, event, onChanged }: { scope: string; event: ReactionPreviewEvent; onChanged(id: string, state: ReactionState): void }) {
+  const pending = useRef<Extract<ReactionRequest, { action: 'set' }>>()
+  const request = useRef<AbortController>()
+  const [busy, setBusy] = useState(false), [error, setError] = useState('')
+  useEffect(() => () => request.current?.abort(), [])
+  const eligible = event.worldRetraction && event.expression && event.worldRetraction.state.selections.some(value => expressionIdentity(value.expression) === expressionIdentity(event.expression!))
+  const retract = async () => {
+    if (busy || !eligible) return
+    const { target, state } = event.worldRetraction!
+    pending.current ??= { action: 'set', accountKey: scope, target, expression: event.expression!, active: false, expected_revision: state.revision, request_id: crypto.randomUUID() }
+    const controller = new AbortController(); request.current = controller; setBusy(true); setError('')
+    try {
+      const result = await callArkme<ReactionSetResult>('world.reactions', pending.current, controller.signal)
+      if (controller.signal.aborted) return
+      pending.current = undefined; onChanged(target.id, result.state)
+      if (result.outcome === 'revision_conflict') setError(tr('表态已在其他设备更新，请核对后重试'))
+    } catch (error) { if (!controller.signal.aborted) setError(error instanceof Error ? error.message : tr('取消失败，请重试原操作')) }
+    finally { if (!controller.signal.aborted) setBusy(false) }
+  }
+  return <>{error && <p role="alert">{error}</p>}{eligible && <button type="button" className="arkme-day-source" disabled={busy} onClick={() => void retract()}>{tr('取消我的表态')}</button>}</>
 }

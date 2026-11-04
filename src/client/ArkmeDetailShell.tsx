@@ -16,6 +16,7 @@ export interface ArkmeDetailShellProps {
   widthPreferenceKey?: string
   label: string
   headerContent?: ReactNode
+  headerActions?: ReactNode
   subtitle?: string
   footer?: ReactNode
   /** Hide a subview's editor without discarding its draft or staged attachments. */
@@ -42,7 +43,7 @@ const styles: Record<string, CSSProperties> = {
 }
 
 /** Non-modal overlay: the conversation retains its width and scroll position. */
-export function ArkmeDetailShell({ open = true, className, style, bodyStyle, closeLabel, widthPreferenceKey, title, label, headerContent, subtitle, footer, footerHidden = false, onClose, onPointerDownOutside, onBack, backLabel, bodyRef, children, resizeLabel, returnFocusRef }: ArkmeDetailShellProps) {
+export function ArkmeDetailShell({ open = true, className, style, bodyStyle, closeLabel, widthPreferenceKey, title, label, headerContent, headerActions, subtitle, footer, footerHidden = false, onClose, onPointerDownOutside, onBack, backLabel, bodyRef, children, resizeLabel, returnFocusRef }: ArkmeDetailShellProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLElement>(null)
@@ -92,7 +93,7 @@ export function ArkmeDetailShell({ open = true, className, style, bodyStyle, clo
   }, [hasBack, open])
   return <aside ref={panelRef} hidden={!open} className={className} role="dialog" aria-label={label} aria-labelledby={headerContent === undefined ? titleId : undefined} style={{ ...styles.drawer, ...style, ...resize.style, ...(!open ? { display: 'none' } : {}) }} data-arkme-note-detail="true">
     {resize.handle}
-    <ArkmeRightPanelHeader title={<ArkmeRichText text={title} presentation="preview" />} titleId={titleId} heading={headerContent}
+    <ArkmeRightPanelHeader title={<ArkmeRichText text={title} presentation="preview" />} titleId={titleId} heading={headerContent} actions={headerActions}
       subtitle={subtitle} onClose={onClose} {...(closeLabel ? { closeLabel } : {})} closeRef={closeRef} onBack={onBack} backLabel={backLabel} backRef={backRef} />
     <div ref={bodyRef} style={{ ...styles.body, ...bodyStyle }}>{children}</div>
     {footer !== undefined && footer !== null && <footer hidden={footerHidden} style={typeof footer === 'string' ? styles.footer : styles.extensionFooter}>{footer}</footer>}

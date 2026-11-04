@@ -6,7 +6,7 @@ import { reactionLibrary, type ReactionLibraryStore } from './reaction-library.j
 import { ArkmeClientError } from './api.js'
 
 export type ReactionPreviewTarget = ReactionTargetRef & { source: string; sourceKind?: ArkmeSourceKind; text: string; sourceKey?: string | undefined; itemUid?: string; resolveActor?: (actor: ReactionActor) => ReactionActor | undefined }
-export interface ReactionPreviewEvent extends ReactionHistoryContext { id: string; eventId?: string; expression?: ReactionExpression; restricted?: boolean; source: string; sourceKind?: ArkmeSourceKind; text: string; label: string; added: boolean; at: number }
+export interface ReactionPreviewEvent extends ReactionHistoryContext { worldRetraction?: { target: ReactionTargetRef; state: import('../reaction-contract.js').ReactionState }; id: string; eventId?: string; expression?: ReactionExpression; restricted?: boolean; source: string; sourceKind?: ArkmeSourceKind; text: string; label: string; added: boolean; at: number }
 type Transport = (input: ReactionRequest, signal?: AbortSignal) => Promise<unknown>
 /** Server-owned state. Poll mounted targets only; retain at most 400 recent inactive snapshots in this account/window. */
 export class ReactionPreviewStore {

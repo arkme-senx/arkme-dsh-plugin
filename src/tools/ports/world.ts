@@ -14,6 +14,7 @@ export interface ArkmeWorldToolPort {
   listWorldReplies(recordRef: string, options?: { limit?: number; cursor?: string; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeWorldRepliesPage>
   teamWorld(input: import('../../team-world-contract.js').TeamWorldRequest, signal?: AbortSignal): Promise<unknown>
   prepareNoteWorldReactions(accountKey: string, sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<import('../../world-reaction-contract.js').WorldReactionContextPage>
+  worldReactionVersions(input: import('../../world-reaction-contract.js').WorldReactionVersionsRequest, signal?: AbortSignal): Promise<import('../../world-reaction-contract.js').WorldReactionVersionsPage>
   prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal): Promise<import('../../world-reaction-contract.js').WorldReactionContextPage>
   worldReactions(input: import('../../world-reaction-contract.js').WorldReactionRequest, signal?: AbortSignal): Promise<unknown>
   worldReactionArchive(input: import('../../world-reaction-contract.js').WorldReactionArchiveRequest, signal?: AbortSignal): Promise<unknown>

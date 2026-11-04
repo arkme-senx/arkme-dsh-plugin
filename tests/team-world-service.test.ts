@@ -143,12 +143,14 @@ it('batches previews and shows exact add/remove events; never substitutes curren
   const items = Array.from({ length: 20 }, (_, i) => ({ id: `feedback-${i}`, sequence: i+1, content_uid: 'original', kind: 'reaction', actor_user_id: 9, at: 100+i, event_uid: `event-${i}`, context_uid: 'context', content_revision: 'historical' }))
   f.upstream.mockImplementation(async (path, body) => {
     if (path.endsWith('/feedback/query')) return { items, has_more: false, after_sequence: 20, seen_through: 0, offered_through: 20 } as never
-    if (path.endsWith('/previews')) return { items: (body.items as Record<string, unknown>[]).map((item, i) => ({ ...item, readable: true, team_name: '团队', title: '', text: '当前原稿', reaction: { event_uid: item.event_uid, actor_user_id: 9, at: 100+i, context_uid:'context', content_revision:'historical', active:i%2===0, expression:{text:'收到'} } })) } as never
+    if (path.endsWith('/previews')) return { items: (body.items as Record<string, unknown>[]).map((item, i) => ({ ...item, readable: true, publication_uid:'world-original', team_name: '团队', title: '', text: '当前原稿', reaction: { event_uid: item.event_uid, actor_user_id: 9, at: 100+i, context_uid:'context', content_revision:'historical', active:i%2===0, expression:{text:'收到'} } })) } as never
     throw Error('unexpected')
   })
   const page = await f.service.execute({ action: 'feedback', accountKey: 'test:8', teamRef: 'team-ref' }) as { items: import('../src/team-world-contract.js').TeamWorldFeedback[] }
   expect(page.items[0]).toMatchObject({ actorName:'小李', reaction:{active:true,expression:{text:'收到'}}, preview:{text:'当前原稿'} })
   expect(page.items[1]?.reaction?.active).toBe(false)
+  expect(page.items[0]?.contentKey).toBe(page.items[1]?.contentKey)
+  expect(f.publicPreviews).toHaveBeenCalledWith([{recordUID:'world-original',ancestorUID:''}], undefined)
   expect(f.upstream.mock.calls).toHaveLength(2)
   expect(f.upstream.mock.lastCall?.[1]).toEqual({ items: items.map(r => ({team_id:team, content_uid:r.content_uid, event_uid:r.event_uid})) })
   expect(JSON.stringify(page)).not.toContain('event-0')
@@ -159,7 +161,7 @@ it('fails closed on revoked or mismatched preview and preserves activity facts w
     const f = fixture()
     f.upstream.mockImplementation(async (path, body) => {
       if (path.endsWith('/feedback/query')) return { items:[{ id:'f',sequence:1,content_uid:'original',kind:'reaction',actor_user_id:9,at:100,event_uid:'event',context_uid:'context',content_revision:'old' }],has_more:false,after_sequence:1,seen_through:0,offered_through:1 } as never
-      if (path.endsWith('/previews')) return { items:(body.items as object[]).map(item => ({ ...item,readable:mismatch!=='revoked',text:'protected',reaction:{event_uid:mismatch==='event'?'wrong':'event',actor_user_id:mismatch==='actor'?10:9,at:mismatch==='time'?101:100,context_uid:mismatch==='context'?'wrong':'context',content_revision:mismatch==='revision'?'wrong':'old',active:false,expression:{text:'收到'}} })) } as never
+      if (path.endsWith('/previews')) return { items:(body.items as object[]).map(item => ({ ...item,readable:mismatch!=='revoked',publication_uid:'world-original',text:'protected',reaction:{event_uid:mismatch==='event'?'wrong':'event',actor_user_id:mismatch==='actor'?10:9,at:mismatch==='time'?101:100,context_uid:mismatch==='context'?'wrong':'context',content_revision:mismatch==='revision'?'wrong':'old',active:false,expression:{text:'收到'}} })) } as never
       throw Error('unexpected')
     })
     await expect(f.service.execute({action:'feedback',accountKey:'test:8',teamRef:'team-ref'})).rejects.toThrow()

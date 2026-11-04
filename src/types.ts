@@ -1655,6 +1655,7 @@ arkoImagesV1?:true
     arkoThoughtContinuationsV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
+    worldReactionArchiveVersionsV1?: true
     teamWorldV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
@@ -4646,6 +4647,7 @@ export type ArkmePluginOperation =
   | 'chat.official-author.private.open'
   | 'world.voiceprint.availability'
   | 'team.world'
+  | 'world.reactions.versions'
   | 'world.reactions.archive'
   | 'world.reactions.from-note'
   | 'world.reactions.prepare'
