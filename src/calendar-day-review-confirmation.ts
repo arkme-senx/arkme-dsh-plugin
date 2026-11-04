@@ -10,21 +10,30 @@ const denied = () => new ArkmePluginError('day-review-human-required', '请在�
 const escape = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 type Prepared = Record<string, unknown> & import('./calendar-day-review.js').DayReviewQuery
 type Action = 'create' | 'resume' | 'reconcile'
-interface Pending { input: Prepared; action: Action; account: string; nonce: string; expires: number; status: 'pending' | 'submitting' | 'ready' | 'failed'; result?: import('./calendar-day-review.js').DayReviewState; message?: string; error?: import('./types.js').ArkmePluginErrorBody; displayed: boolean }
+interface Pending { input: Prepared; action: Action; account: string; nonce: string; expires: number; status: 'pending' | 'submitting' | 'ready' | 'failed'; result?: import('./calendar-day-review.js').DayReviewState; message?: string; error?: import('./types.js').ArkmePluginErrorBody; displayed: boolean; modelName?: string; userModel?: boolean }
 
 /** The confirmation document is opaque-origin and script-free. Its CSRF nonce
  * is never available through SDK/JSON, same-origin fetch, parent DOM or frames.
  * A native browser navigation/form gesture is required at both boundaries. */
 export class DayReviewConfirmation {
   private readonly pending = new Map<string, Pending>()
-  constructor(private readonly service: Pick<ArkmeService, 'createDayReview' | 'resumeDayReview' | 'reconcileDayReview' | 'dayReviewConfirmationAccount'>) {}
+  constructor(private readonly service: Pick<ArkmeService, 'createDayReview' | 'resumeDayReview' | 'reconcileDayReview' | 'dayReviewConfirmationAccount' | 'dayReviewModels'>) {}
   async prepare(input: Prepared, action: Action, signal: AbortSignal, id: string) {
     for (const [id, p] of this.pending) if (p.expires < Date.now()) this.pending.delete(id)
     if (!['create', 'resume', 'reconcile'].includes(action)) throw denied()
     const account = await this.service.dayReviewConfirmationAccount(input, signal)
     if (this.pending.size >= 32) throw new Error('待确认请求过多，请稍后重试')
     if (!/^[a-f0-9-]{36}$/.test(id) || this.pending.has(id)) throw denied()
-    this.pending.set(id, { input: structuredClone(input), action, account, nonce: randomBytes(32).toString('hex'), expires: Date.now() + TTL, status: 'pending', displayed: false })
+    let modelName: string | undefined, userModel = false
+    if (action === 'create' && typeof input.modelRoute === 'string') {
+      const catalog = await this.service.dayReviewModels(input, signal)
+      const selected = catalog.unified ? catalog.models.find(model => model.route === input.modelRoute) : undefined
+      if (!selected) throw new ArkmePluginError('calendar-review-model-unsupported', '所选模型当前不可用，本次未提交生成', false, 409)
+      modelName = selected.displayName; userModel = selected.origin === 'user-provided'
+    }
+    // Account/catalog reads can overlap; recheck capacity at the actual insert.
+    if (this.pending.size >= 32 || this.pending.has(id)) throw denied()
+    this.pending.set(id, { ...(modelName ? { modelName } : {}), userModel, input: structuredClone(input), action, account, nonce: randomBytes(32).toString('hex'), expires: Date.now() + TTL, status: 'pending', displayed: false })
 
   }
   async status(id: string) {
@@ -47,8 +56,8 @@ export class DayReviewConfirmation {
       const title = { create: '生成当天回顾', resume: '继续生成回顾', reconcile: '核对上次提交' }[p.action]
       const description = { create: '将所选资料整理为当天的日总结和时间轴。', resume: '从上次中断处继续，保留已完成的内容。', reconcile: '先核对上次请求是否已受理，避免重复创建任务。' }[p.action]
       const action = { create: '确认生成', resume: '继续生成', reconcile: '确认核对' }[p.action]
-      const billing = p.action === 'resume' ? '已完成步骤会复用，不重复收费；剩余步骤仍会消耗 AI 积分。' : p.action === 'reconcile' ? '核对本身不消耗积分。如需继续生成，后续步骤仍会消耗 AI 积分。' : '生成会消耗 AI 积分，按实际模型用量结算。'
-      this.page(res, `<header><p class="eyebrow">日回顾</p><h1>${title}</h1><p class="description">${description}</p></header><dl><div><dt>日期</dt><dd>${escape(p.input.bucketDate)}<small>${escape(p.input.timezone)}</small></dd></div><div><dt>内容来源</dt><dd>${sources}</dd></div>${p.action === 'create' && p.input.modelCode ? `<div><dt>生成模型</dt><dd>${escape(String(p.input.modelCode))}</dd></div>` : ''}</dl><p class="billing">${billing}</p><form method="post"><input type="hidden" name="nonce" value="${p.nonce}"><footer><span>确认前不会提交或扣费</span><div class="actions"><button class="secondary" type="submit" name="decision" value="cancel">取消</button><button type="submit">${action}</button></div></footer></form>`, true, theme)
+      const billing = p.action === 'resume' ? '已完成步骤会复用；剩余步骤按原任务所选模型的计费方式继续执行。' : p.action === 'reconcile' ? '核对本身不收费。如需继续生成，后续步骤沿用原任务所选模型。' : p.userModel ? '使用已绑定模型账户，由模型提供方计费，不扣即我 AI 积分。调用失败时不会改用积分模型。' : '生成会消耗 AI 积分，按实际模型用量结算。'
+      this.page(res, `<header><p class="eyebrow">日回顾</p><h1>${title}</h1><p class="description">${description}</p></header><dl><div><dt>日期</dt><dd>${escape(p.input.bucketDate)}<small>${escape(p.input.timezone)}</small></dd></div><div><dt>内容来源</dt><dd>${sources}</dd></div>${p.action === 'create' && (p.modelName || p.input.modelCode) ? `<div><dt>生成模型</dt><dd>${escape(p.modelName ?? String(p.input.modelCode))}</dd></div>` : ''}</dl><p class="billing">${billing}</p><form method="post"><input type="hidden" name="nonce" value="${p.nonce}"><footer><span>确认前不会提交或扣费</span><div class="actions"><button class="secondary" type="submit" name="decision" value="cancel">取消</button><button type="submit">${action}</button></div></footer></form>`, true, theme)
       return
     }
     if (req.method !== 'POST' || req.headers.origin !== 'null' || !req.headers['content-type']?.startsWith('application/x-www-form-urlencoded') || !p.displayed || p.status !== 'pending') throw denied()
