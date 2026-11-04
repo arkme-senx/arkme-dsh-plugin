@@ -2223,6 +2223,7 @@ Arko 对话|Arko conversations
 正在核对完整消费记录…|Checking the complete spending history…
 暂时无法读取消费统计，请重试。|Unable to load spending statistics. Please retry.
 账单正在更新，暂时无法确认完整统计，请重试。|Your statement is updating. Please retry for complete statistics.
+账单已更新，请刷新统计后再查看明细。|Your statement changed. Refresh statistics before viewing details.
 记录较多，当前无法完成统计。请按天查看或选择单个时段。|Too many records to finish this view. Try daily grouping or a single period.
 个人档案识别|Profile recognition
 安排识别|Plan recognition

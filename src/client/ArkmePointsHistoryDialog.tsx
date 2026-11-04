@@ -11,6 +11,9 @@ import { PointsHistoryError, PointsHistoryReader, pointsBusinessLabel, pointsCat
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import css from './points-history.css?inline'
+import { usePointsHistoryDetails } from './use-points-history-details.js'
+import { useModalLayer } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ArkmeAiPointsStatistics, ArkmeAiPointsRangePage } from '../ai-points-statistics.js'
 
 function dateLabel(time: number, month = false): string {
   return new Intl.DateTimeFormat(arkmeIntlLocale(), { year: month ? 'numeric' : undefined, month: month ? 'long' : 'numeric', day: month ? undefined : 'numeric', timeZone: 'Asia/Shanghai' }).format(time)
@@ -31,6 +34,7 @@ export function ArkmePointsHistoryDialog({ scope, revision, onClose, returnFocus
 }) {
   useArkmeLocale()
   const dialog = useRef<HTMLDialogElement>(null), id = useId()
+  useModalLayer(dialog, true, onClose)
   const [tab, setTab] = useState<'statistics' | 'details'>('statistics')
   const [grain, setGrain] = useState<PointsGrain>('day'), [offset, setOffset] = useState(0)
   const [now, setNow] = useState(Date.now), [reload, setReload] = useState(0)
@@ -41,7 +45,10 @@ export function ArkmePointsHistoryDialog({ scope, revision, onClose, returnFocus
   const [result, setResult] = useState<Result>()
   const reader = useMemo(() => new PointsHistoryReader(scope, (month, beforeId, signal, limit) => callArkme<ArkmeAiPointsPage>('account.points.consumption', {
     expectedAccountScope: scope, month, limit, ...(beforeId ? { beforeId } : {}),
-  }, signal)), [scope, revision, reload])
+  }, signal), Date.now, {
+    summary: (query, signal) => callArkme<ArkmeAiPointsStatistics>('account.points.statistics', { expectedAccountScope: scope, ...query }, signal),
+    range: (query, signal) => callArkme<ArkmeAiPointsRangePage>('account.points.consumption.range', { expectedAccountScope: scope, ...query }, signal),
+  }), [scope, revision, reload])
   const windowKey = `${scope}:${revision}:${reload}:${grain}:${window.from}`
   const key = `${windowKey}:${selected}`
   useLayoutEffect(suspendArkmeVisibleReadIntent, [])
@@ -62,8 +69,10 @@ export function ArkmePointsHistoryDialog({ scope, revision, onClose, returnFocus
   const failed = result?.key === key && result.error !== undefined
   const selectedPeriod = window.periods.find(period => period.key === selected)
   const label = selectedPeriod ? periodLabel(selectedPeriod, grain) : tr('全部时段')
-  const items = data?.items.filter(item => !category || pointsCategory(item.businessCode) === category) ?? []
-  const detailTotal = nanoCnyToPoints(items.reduce((sum, item) => sum + pointsUnits(item.chargedPoints), 0n).toString())
+  const detail = usePointsHistoryDetails(reader, data, selectedPeriod?.from ?? window.from, selectedPeriod?.until ?? window.until, category, tab === 'details')
+  const aggregate = data?.source === 'aggregate'
+  const items = aggregate ? detail.items ?? [] : data?.items.filter(item => !category || pointsCategory(item.businessCode) === category) ?? []
+  const detailTotal = aggregate ? detail.total : nanoCnyToPoints(items.reduce((sum, item) => sum + pointsUnits(item.chargedPoints), 0n).toString())
   const max = chart?.buckets.reduce((max, bucket) => pointsUnits(bucket.chargedPoints) > max ? pointsUnits(bucket.chargedPoints) : max, 0n) ?? 0n
   const maximum = max > 0n ? nanoCnyToPoints(max.toString()) : '1'
   const changeGrain = (value: PointsGrain) => { setGrain(value); setOffset(0); setSelection(undefined); setCategory(undefined); setLimit(20) }
@@ -77,7 +86,7 @@ export function ArkmePointsHistoryDialog({ scope, revision, onClose, returnFocus
     : <p className="arkme-points-history-state" role="status">{tr('正在核对完整消费记录…')}</p>
   const core = new Set<PointsCategory>(['dsh', 'arko', 'arrangement', 'profile', 'summary', 'timeline', 'goal'])
   const categories = data?.categories.filter(item => core.has(item.category) || pointsUnits(item.chargedPoints) > 0n) ?? []
-  return createPortal(<dialog ref={dialog} className="arkme-points-history-dialog" aria-labelledby={`${id}-title`}
+  return createPortal(<dialog ref={dialog} role="dialog" aria-modal="true" className="arkme-points-history-dialog" aria-labelledby={`${id}-title`}
     data-arkme-notification-blocking-overlay="true" onCancel={event => { event.preventDefault(); event.stopPropagation(); onClose() }}
     onKeyDown={event => event.stopPropagation()} onClick={event => {
       if (event.target !== event.currentTarget) return
@@ -87,7 +96,7 @@ export function ArkmePointsHistoryDialog({ scope, revision, onClose, returnFocus
     <style>{css}</style>
     <header className="arkme-points-history-header"><h2 id={`${id}-title`}>{tr('AI 额度消费记录')}</h2><div>
       <button type="button" aria-label={tr('刷新消费记录')} disabled={!data && !failed} onClick={refresh}><ArrowClockwise size={18} aria-hidden /></button>
-      <button type="button" autoFocus aria-label={tr('关闭消费记录')} onClick={onClose}><X size={20} aria-hidden /></button>
+      <button type="button" data-modal-autofocus aria-label={tr('关闭消费记录')} onClick={onClose}><X size={20} aria-hidden /></button>
     </div></header>
     <div className="arkme-points-history-tabs" role="tablist" aria-label={tr('消费记录视图')} onKeyDown={event => {
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -131,9 +140,11 @@ export function ArkmePointsHistoryDialog({ scope, revision, onClose, returnFocus
           <option value="all">{tr('全部时段')}</option>{window.periods.map(period => <option key={period.key} value={period.key}>{periodLabel(period, grain)}</option>)}
         </select>{data && <span>{tr('合计')} {formatAiPoints(detailTotal)} {tr('积分')}</span>}</div>
         {category && <div className="arkme-points-history-filter">{tr(pointsCategoryLabel(category))}<button type="button" aria-label={tr('清除类型筛选')} onClick={() => setCategory(undefined)}><X size={12} aria-hidden /></button></div>}
-        {!data ? status : <div className="arkme-usage-breakdown" data-usage-detail="points">
+        {!data ? status : aggregate && !detail.ready ? detail.status === 'error' ? <div className="arkme-points-history-state" role="alert"><p>{tr(detail.error instanceof PointsHistoryError && detail.error.reason === 'changed' ? '账单已更新，请刷新统计后再查看明细。' : '暂时无法读取消费明细。')}</p><button type="button" onClick={detail.error instanceof PointsHistoryError && detail.error.reason === 'changed' ? refresh : detail.retry}>{tr('重试')}</button></div>
+          : <p className="arkme-points-history-state" role="status">{tr('读取中…')}</p> : <div className="arkme-usage-breakdown" data-usage-detail="points">
           {items.length === 0 ? <p className="arkme-points-history-empty">{tr('该时段暂无积分消费')}</p> : <PointsConsumptionRows items={items} limit={limit} label={pointsBusinessLabel} />}
-          {groupPointsConsumption(items).length > limit && <button type="button" className="arkme-points-history-more" onClick={() => setLimit(value => value + 20)}>{tr('加载更多')}</button>}
+          {detail.moreError !== undefined && aggregate && <p role="alert">{tr('加载失败，已有明细已保留。')}</p>}
+          {(aggregate ? detail.next : groupPointsConsumption(items).length > limit) && <button type="button" className="arkme-points-history-more" disabled={aggregate && detail.loadingMore} onClick={() => { setLimit(value => value + 20); if (aggregate) detail.loadMore() }}>{tr(aggregate && detail.loadingMore ? '读取中…' : aggregate && detail.moreError ? '重试' : '加载更多')}</button>}
         </div>}
       </section>
     </div>

@@ -140,7 +140,7 @@ describe('account points and independent usage', () => {
     expect(document.querySelector('dialog.arkme-points-history-dialog[open]')).not.toBeNull()
     expect(host.querySelector('.arkme-points-history-dialog')).toBeNull()
     expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('统计')
-    expect(mocks.call.mock.calls.at(-1)?.[0]).toBe('account.points.consumption')
+    expect(mocks.call.mock.calls.at(-1)?.[0]).toBe('account.points.statistics')
     await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭消费记录"]')!.click())
     expect(signal?.aborted).toBe(true)
     expect(document.querySelector('.arkme-points-history-dialog')).toBeNull()

@@ -4524,6 +4524,8 @@ export type ArkmePluginOperation =
   | 'account.capabilities.update'
   | 'account.points.query'
   | 'account.points.consumption'
+  | 'account.points.statistics'
+  | 'account.points.consumption.range'
   | 'account.usage.tokens'
   | 'account.usage.storage'
   | 'account.usage.voice'

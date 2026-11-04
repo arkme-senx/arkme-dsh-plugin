@@ -1,0 +1,66 @@
+import { groupPointsConsumption, pointsUnits, type ArkmeAiPointsConsumption, type ArkmeAiPointsAccount, type ArkmeAiPointsPage } from '../ai-points.js'
+import { ArkmePluginError, objectValue } from './service.js'
+
+function invalid(): never { throw new ArkmePluginError('ai-points-contract-invalid', '积分数据暂时无法确认，请重试', true, 502) }
+function points(value: unknown): string {
+  if (typeof value !== 'string') return invalid()
+  try { pointsUnits(value) } catch { return invalid() }
+  return value
+}
+function timestamp(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return invalid()
+  return value
+}
+function text(value: unknown): string { if (typeof value !== 'string' || !value.trim()) return invalid(); return value }
+function integerString(value: unknown): string { if (typeof value !== 'string' || !/^(?:0|[1-9]\d*)$/.test(value)) return invalid(); return value }
+function unit(raw: Record<string, unknown>): void { if (raw.unit !== 'ai_points') invalid() }
+
+export function parseAiPointsAccount(raw: Record<string, unknown>, accountScope: string): ArkmeAiPointsAccount {
+  unit(raw)
+  if (raw.points_per_cny !== 100 || !Array.isArray(raw.grants)) return invalid()
+  const result: ArkmeAiPointsAccount = {
+    accountScope, unit: 'ai_points', availablePoints: points(raw.available_points), reservedPoints: points(raw.reserved_points),
+    grantedPoints: points(raw.granted_points), purchasedPoints: points(raw.purchased_points), observedAt: timestamp(raw.observed_at),
+    grants: raw.grants.map(value => { const row = objectValue(value); return { source: text(row.source), availablePoints: points(row.available_points), expiresAt: timestamp(row.expires_at) } }),
+  }
+  if (pointsUnits(result.availablePoints) !== pointsUnits(result.grantedPoints) + pointsUnits(result.purchasedPoints)
+    || result.grants.reduce((total, grant) => total + pointsUnits(grant.availablePoints), 0n) !== pointsUnits(result.grantedPoints)) return invalid()
+  return result
+}
+
+export function parseAiPointsPage(raw: Record<string, unknown>, accountScope: string, month: string, limit = 20): ArkmeAiPointsPage {
+  unit(raw)
+  if (raw.month !== month || !Array.isArray(raw.items)) return invalid()
+  const nextBeforeId = raw.next_before_id === '' ? '' : integerString(raw.next_before_id)
+  const result: ArkmeAiPointsPage = { accountScope, unit: 'ai_points', month, chargedPoints: points(raw.charged_points), nextBeforeId,
+    items: parseAiPointsItems(raw.items, limit),
+  }
+  return result
+}
+
+
+export function parseAiPointsItems(raw: unknown, limit = 20): ArkmeAiPointsConsumption[] {
+  if (!Array.isArray(raw)) return invalid()
+const items = raw.map(value => {
+    const row = objectValue(value), tokens = objectValue(row.tokens)
+    const chargedPoints = points(row.charged_points), grantedPoints = points(row.granted_points), purchasedPoints = points(row.purchased_points)
+    if (pointsUnits(chargedPoints) <= 0n || pointsUnits(chargedPoints) !== pointsUnits(grantedPoints) + pointsUnits(purchasedPoints)) return invalid()
+    const modelPoints = points(row.model_points)
+    if (!Array.isArray(row.services) || row.services.length > 16) return invalid()
+    const services = row.services.map(value => {
+      const service = objectValue(value)
+      const quantity = integerString(service.quantity), chargedPoints = points(service.charged_points)
+      if (quantity === '0' || pointsUnits(chargedPoints) === 0n) return invalid()
+      return { code: text(service.code), quantity, chargedPoints }
+    })
+    if (new Set(services.map(service => service.code)).size !== services.length
+      || pointsUnits(modelPoints) + services.reduce((sum, service) => sum + pointsUnits(service.chargedPoints), 0n) !== pointsUnits(chargedPoints)) return invalid()
+    if (typeof row.business_code !== 'string') return invalid()
+    return { operationUid: typeof row.operation_uid === 'string' ? row.operation_uid : '', requestUid: text(row.request_uid), businessCode: row.business_code, model: text(row.model), chargedPoints, modelPoints, services, grantedPoints, purchasedPoints,
+      createdAt: timestamp(row.created_at), completedAt: timestamp(row.completed_at),
+      tokens: { cacheHitInput: integerString(tokens.cache_hit_input), cacheMissInput: integerString(tokens.cache_miss_input), output: integerString(tokens.output) } }
+  })
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || new Set(items.map(item => item.requestUid)).size !== items.length || groupPointsConsumption(items).length > limit) return invalid()
+  return items
+}
+
