@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { codexPromptDisplayText, codexPromptPresentation, codexPromptText } from '../src/team-codex-prompt-text.js'
-import { agentsContext, environmentContext } from './fixtures/codex-prompt.js'
+import { agentsContext, environmentContext, environmentUpdateContext } from './fixtures/codex-prompt.js'
 
 const vectors = JSON.parse(readFileSync(new URL('./fixtures/codex-app-context-v1.json', import.meta.url), 'utf8')) as {name:string;kind:string;input:string;expected:string}[]
 describe('Codex skill references and generated context', () => {
   it('hides complete workspace context without changing stored text', () => {
     const combined = `${agentsContext}\n${environmentContext}`
-    for (const raw of [agentsContext, environmentContext, combined, combined.replaceAll('\n', '\r\n')]) {
+    for (const raw of [agentsContext, environmentContext, environmentUpdateContext, combined, combined.replaceAll('\n', '\r\n')]) {
       expect(codexPromptPresentation(raw)).toEqual({ text: '', hidden: true })
       expect(codexPromptText(raw)).toBe(raw)
     }

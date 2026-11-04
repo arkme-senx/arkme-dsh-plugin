@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CodexMessageBody, TeamCodexConversation, codexReadingKey, mergeCodexEvents, newCodexReadingState } from '../src/client/redesign/contacts/TeamCodexConversation.js'
 import type { TeamCodexEvent, TeamCodexTask } from '../src/team-codex-contract.js'
-import { agentsContext, environmentContext, browserContext, wrappedCodexPrompt, questionReplyPrompt, responseAnnotationPrompt } from './fixtures/codex-prompt.js'
+import { agentsContext, environmentContext, environmentUpdateContext, browserContext, wrappedCodexPrompt, questionReplyPrompt, responseAnnotationPrompt } from './fixtures/codex-prompt.js'
 import { quoteDomProjection } from '../src/client/message-quote-selection.js'
 import { connectArkmeLocale } from '../src/client/locale.js'
 import { codexPromptText, codexPromptDisplayText } from '../src/team-codex-prompt-text.js'
@@ -37,7 +37,8 @@ describe('Codex conversation reader', () => {
     const input=event(2,raw,'UserPromptSubmit')
     const page='<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>'
     const skill='<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo/SKILL.md</path>\n---\nname: demo-skill\ndescription: Hidden instructions\n---\nPrivate instruction body\n</skill>'
-    const source=[event(0,`${agentsContext}\n${environmentContext}`,'UserPromptSubmit'),event(1,page,'UserPromptSubmit'),input,event(3,skill,'UserPromptSubmit')]
+    const source=[event(0,`${agentsContext}\n${environmentContext}`,'UserPromptSubmit'),event(1,page,'UserPromptSubmit'),input,
+      event(3,skill,'UserPromptSubmit'),event(4,environmentUpdateContext,'UserPromptSubmit')]
     mocks.callArkme.mockResolvedValue({items:source})
     const reading=await render()
     expect(host.querySelectorAll('[data-codex-row]')).toHaveLength(1)

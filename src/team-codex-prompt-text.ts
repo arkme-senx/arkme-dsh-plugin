@@ -8,7 +8,15 @@ const withinContextLimit = (text:string) => text.length <= 1024*1024 && new Text
 
 const agentsHeader = '# AGENTS.md instructions for '
 const agentsContext = /^# AGENTS\.md instructions for (?:\/|[A-Za-z]:[\\/]|\\\\)[^\r\n]*\r?\n(?:[ \t]*\r?\n)*<INSTRUCTIONS>\r?\n[\s\S]+?\r?\n<\/INSTRUCTIONS>(?=\r?\n|$)/
-const environmentContext = /^<environment_context>\r?\n[ \t]*<cwd>[^<>\r\n]+<\/cwd>\r?\n[ \t]*<shell>[^<>\r\n]+<\/shell>\r?\n(?:[ \t]*<(current_date|timezone|approval_policy|sandbox_mode|network_access)>[^<>\r\n]*<\/\1>\r?\n)*(?:[ \t]*<filesystem><workspace_roots>[^\r\n]*<\/workspace_roots><permission_profile\b[^<>\r\n]*>[^\r\n]*<\/permission_profile><\/filesystem>\r?\n)?<\/environment_context>$/
+const environmentContext = new RegExp([
+  String.raw`^<environment_context>\r?\n`,
+  // Codex emits a full snapshot at startup and a smaller date/time update later.
+  String.raw`(?:[ \t]*<cwd>[^<>\r\n]+</cwd>\r?\n[ \t]*<shell>[^<>\r\n]+</shell>\r?\n`,
+  String.raw`(?:[ \t]*<(current_date|timezone|approval_policy|sandbox_mode|network_access)>[^<>\r\n]*</\1>\r?\n)*`,
+  String.raw`|[ \t]*<current_date>\d{4}-\d{2}-\d{2}</current_date>\r?\n[ \t]*<timezone>[^<>\r\n]+</timezone>\r?\n)`,
+  String.raw`(?:[ \t]*<filesystem><workspace_roots>(?:<root>[^<>\r\n]*</root>)*</workspace_roots>`,
+  String.raw`<permission_profile\b[^<>\r\n]*>[^\r\n]*</permission_profile></filesystem>\r?\n)?</environment_context>$`,
+].join(''))
 
 /** Recognize complete app messages, never quoted examples or mixed user prose. */
 function hiddenAppContext(text:string):boolean {
