@@ -1,6 +1,6 @@
 # 世界发布状态与取消公开验收
 
-基线：插件 `origin/dev f9a3da8aeb1a9b47b6dae13afdd1979dc520e146`；配套 Record 提交 `406252c57fe1b89449c2d44ede836ffc5c57b0f4`，[审查单 #496](https://codeup.aliyun.com/senguo/jotmo/jotmo-record/change/496)。本轮新代码尚未合并或发布。
+初始基线：插件 `origin/dev f9a3da8aeb1a9b47b6dae13afdd1979dc520e146`；合并前同步最新 `dev fde3d1d978d0c3de135b9dde1ac8db1cb64c4a8c`，保留新的 Arko 与团队联系功能。配套 Record 已通过 [生产审查单 #498](https://codeup.aliyun.com/senguo/jotmo/jotmo-record/change/498) 上线，生产提交 `c653da475ec23d952a21585241d94c1258d61331`、Jenkins #224。插件生产 Runtime 尚未发布。
 
 ## 行为
 
@@ -20,8 +20,12 @@ Record 在真实隔离 Mongo 7.0.45 副本集执行团队相关 `-race`、路由
 
 测试摘要、截图及本地 Runtime 读取结果保存在工作区 `artifacts/world-publication-20261104` 与 `artifacts/world-release-20261104/world-publication-preview-3180`。原始截图含真实账号信息，不作为公共 PR 附件。
 
-## 尚待上线验收
+## 后端上线后的真实账号复查
 
-配套 Record 接口尚未部署，团队来源反查在当前生产服务中不可用。完整的团队跨设备标识、原消息取消及发布/取消写入闭环必须先在测试服与插件测试 Runtime 中验证；自动化测试和真实账号只读点击不替代该步骤。已安装客户端没有替换或重新启动。
+后端生产候选重新通过真实隔离 Mongo/race 回归、TEST Jenkins #701 和 7 项部署后复查，再经 PROD Jenkins #224 上线；线上实例 Ready、无重启，16 项真实账号只读检查通过。
+
+本对话固定 Web 端口 3180 和同一 Profile，使用已安装客户端当前支持的 Keychain 命名空间 `com.senqisi.dsh-arkme.prod`，不复制账号凭据。实际点击确认：原消息块与详情页均显示“已发到世界 · 即我”；原消息详情可打开团队取消公开确认并返回。身份选择没有编辑输入框，个人/团队选择、世界导航和团队公开内容已用真实数据点击。没有执行生产发布或取消；已安装客户端没有替换或重新启动。
+
+测试服团队发布及取消闭环、来源保留、分页和账号/离队权限的 62 项最终断言通过，但首次写入中已复现现有 World 前台与恢复任务并发时返回 50001、后台随后完成的缺陷；固定 request_uid 重试可恢复。该写状态机问题尚未修复，不能以只读接口或图标验证替代其后续修复验收。团队跨设备和已安装原生客户端的新代码验收也仍未完成。
 
 发布顺序：Record 后端与索引 → 插件测试 Runtime → 隔离账号及真实账号验收 → 生产发布。回滚先插件后后端，非唯一索引可以保留，不需要数据回迁。

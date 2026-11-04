@@ -446,7 +446,30 @@ export const arkoLifecycleChangeToolModule = defineArkmeCoreToolModule({
   }),
 })
 
+export const arkoInteractionsToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.interactions.v1', toolName: 'arkme_arko_interactions', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create: (service: ArkmeArkoToolPort) => defineTool({ name: 'arkme_arko_interactions', description: 'Read the signed-in user’s Arko interactions from self notes and chats, ordered by actual interaction time. This is a permission-filtered page, not a scan of source conversations.',
+    parameters: { cursor: { type: 'string', description: 'Exact nextCursor from the previous page.' }, limit: { type: 'integer', description: '1-20, default 20.' } }, output: ARKO_OUTPUT, isConcurrencySafe: () => true,
+    async execute(args, exec) { return JSON.stringify(await service.arkoInteractions({ ...(args.cursor ? { cursor: args.cursor } : {}), ...(args.limit ? { limit: args.limit } : {}) }, exec.signal)) },
+  }),
+})
+export const arkoInteractionOpenToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.interaction-open.v1', toolName: 'arkme_arko_interaction_open', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create: (service: ArkmeArkoToolPort) => defineTool({ name: 'arkme_arko_interaction_open', description: 'Resolve an exact opaque Arko interactionRef under current source permissions. Returns its source target and optional reply suggestion. Does not send messages or fill drafts.',
+    parameters: { interaction_ref: { type: 'string', required: true, description: 'Exact interactionRef returned by arkme_arko_interactions.' } }, output: ARKO_OUTPUT, isConcurrencySafe: () => true,
+    async execute(args, exec) { return JSON.stringify(await service.arkoInteractionOpen(args.interaction_ref, exec.signal)) },
+  }),
+})
+export const arkoTimelineCacheToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.arko.timeline-cache.v1', toolName: 'arkme_arko_timeline_cache', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
+  create: (service: ArkmeArkoToolPort) => defineTool({ name: 'arkme_arko_timeline_cache', description: 'Read or save the current account’s bounded local Arko display cache. Saving is local presentation only and requires an explicit human request; it never sends messages or changes server facts. Preserve original opaque references.',
+    parameters: { account_scope: { type: 'string', required: true, description: 'Exact current environment:user account scope.' }, snapshot_json: { type: 'string', description: 'Optional exact cache snapshot JSON to save; omit to read.' } }, output: ARKO_OUTPUT,
+    async execute(args) { const value = args.snapshot_json === undefined ? undefined : JSON.parse(args.snapshot_json) as import('../../../arko-timeline-contract.js').ArkmeArkoTimelineCache; return JSON.stringify(await service.arkoTimelineCache(args.account_scope, value) ?? null) },
+  }),
+})
+
 export const arkoToolModules = [
+  arkoInteractionsToolModule, arkoInteractionOpenToolModule, arkoTimelineCacheToolModule,
   arkoLifecycleReadToolModule, arkoLifecycleChangeToolModule,
  arkoModelsToolModule,arkoPendingToolModule,
   arkoProfileToolModule,

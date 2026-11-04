@@ -1,3 +1,4 @@
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { ConversationActionsMenu } from '../src/client/PrivateChatActions.js'
 import { ArkmeArkoHistoryTools } from '../src/client/ArkmeArkoHistoryTools.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
@@ -53,6 +54,7 @@ function visibleText(node: ReactTestInstance): string { return node.children.map
 function shortcut() { const item = renderer.root.findByType(ConversationActionsMenu).props.items.find((item: { id: string }) => item.id === 'capabilities'); return { label: item.label, props: { onClick: item.invoke, disabled: item.disabled } } }
 
 beforeEach(() => {
+ arkoTimelineMemory.clear()
   arkoModelCache.clear()
   arkmeArkoProfileStore.activateUser(undefined)
   sessionAvailable = true

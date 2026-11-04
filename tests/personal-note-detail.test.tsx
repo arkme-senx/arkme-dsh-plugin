@@ -62,6 +62,50 @@ describe('personal note details use the Record owner instead of a list projectio
     expect(mocks.callArkme).toHaveBeenCalledTimes(1)
   })
 
+  it('retains canonical content during a slow refresh of the same note', async () => {
+    await render()
+    let resolve!: (value: ArkmeTimelineItem) => void
+    mocks.callArkme.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await render({ revision: 1 })
+    expect(detail.item?.textContent).toBe(canonical.textContent)
+    expect(detail.loading).toBe(false)
+    await act(async () => resolve({ ...canonical, textContent: '最新完整正文' }))
+    expect(detail.item?.textContent).toBe('最新完整正文')
+  })
+
+  it('retains canonical content through a transient refresh error and explicit retry', async () => {
+    await render()
+    mocks.callArkme.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    await render({ revision: 1 })
+    expect(detail.item?.textContent).toBe(canonical.textContent)
+    expect(detail.error).toBe('Failed to fetch')
+    let resolve!: (value: ArkmeTimelineItem) => void
+    mocks.callArkme.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await act(async () => detail.retry())
+    expect(detail.item?.textContent).toBe(canonical.textContent)
+    expect(detail.loading).toBe(false)
+    await act(async () => resolve(canonical))
+    expect(detail.error).toBeUndefined()
+  })
+
+  it('does not retain canonical content after an authoritative access denial', async () => {
+    await render()
+    mocks.callArkme.mockRejectedValueOnce(Object.assign(new Error('No access'), { body: { code: 'record-detail-unavailable', retryable: false } }))
+    await render({ revision: 1 })
+    expect(detail.item).toBe(preview)
+    expect(detail.error).toBe('No access')
+  })
+
+  it('does not reuse a retained detail while switching to another source', async () => {
+    await render()
+    let resolve!: (value: ArkmeTimelineItem) => void
+    mocks.callArkme.mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    await render({ sourceKey: 'different-source' })
+    expect(detail.item).toBe(preview)
+    expect(detail.loading).toBe(true)
+    await act(async () => resolve(canonical))
+  })
+
   it('keeps preview content and exposes retry on a failed read', async () => {
     mocks.callArkme.mockRejectedValueOnce(new Error('读取失败'))
     await render()
