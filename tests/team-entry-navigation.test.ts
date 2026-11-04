@@ -1,22 +1,24 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamOpen } from '../src/team-app-contract.js'
-const mock = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn(), restore: vi.fn(), navigation: vi.fn(), auth: { status: 'authenticated', environment: 'test', userId: 11 } as Record<string, unknown>, listeners: new Set<() => void>() }))
+const mock = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn(), restore: vi.fn(), navigation: vi.fn(), invalidate: vi.fn(), canPresent: vi.fn(), auth: { status: 'authenticated', environment: 'test', userId: 11 } as Record<string, unknown>, listeners: new Set<() => void>() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 vi.mock('../src/client/auth-store.js', () => ({ arkmeAuthStore: { getSnapshot: () => ({ auth: mock.auth }), subscribe: (listener: () => void) => { mock.listeners.add(listener); return () => mock.listeners.delete(listener) } } }))
-vi.mock('../src/client/team-directory-preferences.js', () => ({ teamDirectoryPreferences: { restoreTarget: mock.restore, restoreNavigation: mock.navigation } }))
-vi.mock('../src/client/team-messaging-events.js', () => ({ openTeamMessages: mock.open, subscribeTeamMessageChanges: vi.fn() }))
+vi.mock('../src/client/team-directory-preferences.js', () => ({ teamDirectoryPreferences: { restoreTarget: mock.restore, restoreNavigation: mock.navigation, canPresent: mock.canPresent } }))
+vi.mock('../src/client/team-messaging-events.js', () => ({ openTeamMessages: mock.open, invalidateTeamMessages: mock.invalidate, subscribeTeamMessageChanges: vi.fn() }))
+import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
 import * as navigation from '../src/client/team-entry-navigation.js'
 const { openTeamEntryMessages } = navigation
 const c: TeamConversation = { ref: 'conversation', key: 'key', side: 'team', channel: { teamRef: 'folder', name: '团队', jotmoId: 'team', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }, lastSeq: 3, latestTeamReplySeq: 0, myReadSeq: 0, unread: 3, needsReply: true, blocked: false, revision: 1, updatedAt: 1 }
 beforeEach(() => {
+  openedTeamConversations.reset(); mock.restore.mockResolvedValue(undefined); mock.canPresent.mockReturnValue(true)
   mock.auth = { status: 'authenticated', environment: 'test', userId: 11 }
   mock.navigation.mockImplementation(async (account, resolve, signal) => {
     const target = await resolve()
     if (target && (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) > 0 && !signal?.aborted) await mock.restore(account, target, true)
   })
 })
-afterEach(() => { vi.resetAllMocks(); mock.listeners.clear() })
+afterEach(() => { vi.resetAllMocks(); mock.listeners.clear(); openedTeamConversations.reset() })
 it('opens a folder immediately, then restores only after authorized published history is found', async () => {
   let release!: (value: unknown) => void
   mock.call.mockReturnValue(new Promise(resolve => { release = resolve }))
@@ -102,4 +104,33 @@ it('rejects a stale component event and keeps normal same-account token refresh 
   complete({ channel: c.channel, openInbox: false, conversation: c })
   await view
   await vi.waitFor(() => expect(mock.restore).toHaveBeenCalledOnce())
+})
+
+it('retains a confirmed zero-message contact before navigation without waiting for optional preferences', async () => {
+  mock.restore.mockReturnValue(new Promise(() => {}))
+  mock.open.mockImplementation(() => expect(openedTeamConversations.read('test:11')).toEqual([empty]))
+  const empty = { ...c, lastSeq: 0, unread: 0 }
+  expect(navigation.openConfirmedTeamContact('test:11', empty)).toBe(true)
+  expect(mock.restore).toHaveBeenCalledExactlyOnceWith('test:11', { kind: 'conversation', conversation: empty })
+  expect(mock.open).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation: empty })
+  expect(mock.invalidate).toHaveBeenCalledWith('test:11')
+})
+
+it('does not retain passive empty panes, another account, an external open or a malformed contact', () => {
+  openTeamEntryMessages({ kind: 'conversation', conversation: { ...c, lastSeq: 0 } })
+  expect(openedTeamConversations.read('test:11')).toEqual([])
+  for (const [account, conversation] of [['test:12', c], ['test:11', { ...c, side: 'external' }], ['test:11', { ...c, key: '' }]] as const)
+    expect(navigation.openConfirmedTeamContact(account, conversation)).toBe(false)
+  expect(openedTeamConversations.read('test:11')).toEqual([])
+  expect(mock.open).toHaveBeenCalledTimes(1)
+})
+
+it('optional preference failure preserves the open, while an authority denial retires its retained row', async () => {
+  mock.restore.mockRejectedValueOnce(new Error('offline'))
+  navigation.openConfirmedTeamContact('test:11', c)
+  await vi.waitFor(() => expect(mock.open).toHaveBeenCalledOnce())
+  expect(openedTeamConversations.read('test:11')).toHaveLength(1)
+  mock.canPresent.mockReturnValue(false)
+  navigation.openConfirmedTeamContact('test:11', c)
+  await vi.waitFor(() => expect(openedTeamConversations.read('test:11')).toEqual([]))
 })

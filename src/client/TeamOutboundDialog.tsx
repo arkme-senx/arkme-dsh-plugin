@@ -1,22 +1,37 @@
-import { openTeamEntryMessages } from './team-entry-navigation.js'
+import { openConfirmedTeamContact } from './team-entry-navigation.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
-import type { ArkmeContactSearchResult, ArkmeDirectoryItem, ArkmeDirectoryPage, ArkmeSourceItem, ArkmeSourceList, ArkmeTeam } from '../types.js'
+import type { ArkmeContactSearchResult, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmePeoplePickerSearch } from './ArkmePeoplePickerSearch.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
-import { invalidateTeamMessages } from './team-messaging-events.js'
-import { chooseContactTeam, contactTeamError, openTeamContact, rememberContactTeam } from './team-contact.js'
+import { chooseContactTeam, contactTeamError, openTeamContact, rememberContactTeam, teamContactTeams } from './team-contact.js'
 import { subscribeTeamOutbound, type TeamOutboundIntent, type TeamOutboundPerson } from './team-outbound.js'
+import { loadMoreTeamOutboundContacts, observeTeamOutboundAccount, teamOutboundContacts } from './team-outbound-contacts.js'
+import { arkmeChatDirectory } from './chat-directory-store.js'
+import { arkmeAuthStore } from './auth-store.js'
+import { identityShareAccountScope } from './identity-share-ui.js'
+import type { ResourceStore } from './resource-store.js'
 import { tr, useArkmeLocale } from './locale.js'
 
-type Contact = Extract<ArkmeDirectoryItem, { kind: 'contact' }>
 const errorText = (e: unknown) => e instanceof Error ? e.message : tr('加载失败，请重试')
 const personKey = (person?: TeamOutboundPerson) => JSON.stringify(person?.recipient)
+
+function usePickerResource<T>(store: ResourceStore<T, string>, account: string, enabled: boolean) {
+  const subscribe = useCallback((listener: () => void) => enabled ? store.subscribe(account, account, listener) : () => {}, [store, account, enabled])
+  const snapshot = useSyncExternalStore(subscribe, () => enabled ? store.get(account, account) : store.empty)
+  const refresh = useCallback(() => { if (enabled) void store.refresh(account, account).catch(() => {}) }, [store, account, enabled])
+  useEffect(() => { if (enabled) void store.refresh(account, account, false).catch(() => {}) }, [store, account, enabled])
+  // Provider replacement clears opaque references. Active consumers reload the cleared snapshot.
+  useEffect(() => {
+    if (enabled && snapshot.value === undefined && !snapshot.refreshing && snapshot.error === undefined) refresh()
+  }, [enabled, snapshot.value, snapshot.refreshing, snapshot.error, refresh])
+  return { snapshot, refresh }
+}
 
 export function TeamOutboundMount({ accountKey, active }: { accountKey: string; active: boolean }) {
   const [request, setRequest] = useState<{ intent: TeamOutboundIntent; revision: number }>()
@@ -65,67 +80,53 @@ function GroupPeople({ accountKey, source, query, selected, disabled, onSelect }
 /** A compact single-person picker. Opening a session never sends a message. */
 export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIntent; onClose(): void }) {
   useArkmeLocale()
-  const [teams, setTeams] = useState<ArkmeTeam[]>([]), [teamId, setTeamId] = useState('')
-  const [teamLoading, setTeamLoading] = useState(true), [teamError, setTeamError] = useState(''), [attempt, setAttempt] = useState(0)
+  const account = useSyncExternalStore(arkmeAuthStore.subscribe, identityShareAccountScope)
+  const enabled = !!account && account === intent.accountKey
+  const { snapshot: teamSnapshot, refresh: refreshTeams } = usePickerResource(teamContactTeams, intent.accountKey, enabled)
+  const { snapshot: contactSnapshot, refresh: refreshContacts } = usePickerResource(teamOutboundContacts, intent.accountKey, enabled && !intent.person)
+  const directory = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getSnapshot)
+  const conversations = useSyncExternalStore(arkmeChatDirectory.subscribe, arkmeChatDirectory.getConversationSnapshot)
+  const teams = teamSnapshot.value ?? [], [teamId, setTeamId] = useState('')
+  const teamLoading = teamSnapshot.value === undefined && !teamSnapshot.error
+  const teamError = teamSnapshot.error ? errorText(teamSnapshot.error) : !teamLoading && intent.teamJotmoId && !teams.some(value => value.jotmoId === intent.teamJotmoId) ? tr('你已不在该团队中，请重新进入团队') : ''
   const [person, setPerson] = useState<TeamOutboundPerson | undefined>(intent.person)
-  const [contacts, setContacts] = useState<Contact[]>([]), [cursor, setCursor] = useState<string>()
-  const [hasMore, setHasMore] = useState(false), [contactsLoading, setContactsLoading] = useState(false), [contactsError, setContactsError] = useState('')
-  const [groups, setGroups] = useState<ArkmeSourceItem[]>([]), [groupCursor, setGroupCursor] = useState<string>(), [groupsMore, setGroupsMore] = useState(false)
-  const [groupsLoading, setGroupsLoading] = useState(false), [groupsError, setGroupsError] = useState(''), [expanded, setExpanded] = useState('')
+  const contacts = contactSnapshot.value?.items ?? [], hasMore = contactSnapshot.value?.hasMore === true
+  const contactsLoading = contactSnapshot.refreshing || contactSnapshot.mutating || (contactSnapshot.value === undefined && !contactSnapshot.error)
+  const contactsError = contactSnapshot.error || contactSnapshot.operationError ? errorText(contactSnapshot.error ?? contactSnapshot.operationError) : ''
+  const groups = conversations.accountScope === intent.accountKey ? conversations.sources.filter(source => source.kind === 'group_chat') : []
+  const [groupsReadError, setGroupsReadError] = useState(''), [expanded, setExpanded] = useState('')
+  const groupsError = groupsReadError || (conversations.accountScope === intent.accountKey ? directory.projection?.error ?? '' : '')
+  const groupsLoading = !groupsError && (conversations.accountScope !== intent.accountKey || !conversations.baselineReady || (directory.projection
+    ? directory.projection.phase === 'cached' || directory.projection.phase === 'syncing' : directory.isRefreshing))
   const [query, setQuery] = useState(''), [lookup, setLookup] = useState(false), [lookupError, setLookupError] = useState(''), [found, setFound] = useState<TeamOutboundPerson>()
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
-  const requests = useRef(new Set<AbortController>()), contactRequest = useRef<AbortController>(), groupRequest = useRef<AbortController>(), lookupRequest = useRef<AbortController>()
+  const requests = useRef(new Set<AbortController>()), lookupRequest = useRef<AbortController>()
   const opening = useRef(false), requestUid = useRef(''), dialog = useRef<HTMLDivElement>(null)
   const mounted = useRef(true)
   const team = chooseContactTeam(teams, intent.accountKey, teamId, intent.teamJotmoId)
   const controller = () => { const c = new AbortController(); requests.current.add(c); return c }
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; for (const c of requests.current) c.abort(); requests.current.clear(); contactRequest.current = undefined; groupRequest.current = undefined; lookupRequest.current = undefined } }, [])
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; for (const c of requests.current) c.abort(); requests.current.clear(); lookupRequest.current = undefined } }, [])
+  useEffect(() => {
+    if (!intent.person && contactSnapshot.value === undefined) { setPerson(undefined); setFound(undefined); requestUid.current = '' }
+  }, [Boolean(intent.person), contactSnapshot.value === undefined])
   useLayoutEffect(() => {
     const previous = document.activeElement
     dialog.current?.focus({ preventScroll: true })
     return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }) }
   }, [])
+  const loadGroups = useCallback((force = false) => {
+    setGroupsReadError('')
+    void arkmeChatDirectory.refreshRoot({ force }).catch(e => {
+      if (mounted.current && identityShareAccountScope() === intent.accountKey) setGroupsReadError(errorText(e))
+    })
+  }, [intent.accountKey])
   useEffect(() => {
-    const c = controller()
-    setTeamLoading(true); setTeamError('')
-    void callArkme<ArkmeTeam[]>('team.app.teams', { expectedAccountKey: intent.accountKey }, c.signal).then(values => {
-      if (c.signal.aborted) return
-      if (!Array.isArray(values) || values.some(value => !value.teamRef || !value.jotmoId || !value.name)) throw new Error(tr('团队列表返回异常，请重试'))
-      setTeams(values)
-      if (intent.teamJotmoId && !values.some(value => value.jotmoId === intent.teamJotmoId)) setTeamError(tr('你已不在该团队中，请重新进入团队'))
-    }).catch(e => { if (!c.signal.aborted) { setTeams([]); setTeamError(errorText(e)) } })
-      .finally(() => { requests.current.delete(c); if (!c.signal.aborted) setTeamLoading(false) })
-    return () => c.abort()
-  }, [intent.accountKey, intent.teamJotmoId, attempt])
-
-  const loadContacts = async (next?: string) => {
-    if (contactRequest.current) return
-    const c = controller(); contactRequest.current = c
-    setContactsLoading(true); setContactsError('')
-    try {
-      const page = await callArkme<ArkmeDirectoryPage>('directory.list', { section: 'contacts', limit: 50, ...(next ? { cursor: next } : {}) }, c.signal)
-      if (c.signal.aborted) return
-      if (!Array.isArray(page.items) || typeof page.hasMore !== 'boolean') throw new Error(tr('目录返回异常，请重试'))
-      if (page.hasMore && (!page.nextCursor || page.nextCursor === next)) throw new Error(tr('联系人分页异常，请重试'))
-      setContacts(old => [...new Map([...(next ? old : []), ...page.items.filter((v): v is Contact => v.kind === 'contact')].map(v => [v.contactRef, v])).values()])
-      setCursor(page.nextCursor); setHasMore(page.hasMore)
-    } catch (e) { if (!c.signal.aborted) setContactsError(errorText(e)) }
-    finally { requests.current.delete(c); if (contactRequest.current === c) contactRequest.current = undefined; if (!c.signal.aborted) setContactsLoading(false) }
-  }
-  const loadGroups = async (next?: string) => {
-    if (groupRequest.current) return
-    const c = controller(); groupRequest.current = c; setGroupsLoading(true); setGroupsError('')
-    try {
-      const page = await callArkme<ArkmeSourceList>('sources.list', { directory: 'root', limit: 50, localFirst: true, ...(next ? { cursor: next } : {}) }, c.signal)
-      if (c.signal.aborted) return
-      if (!Array.isArray(page.items) || typeof page.hasMore !== 'boolean') throw new Error(tr('目录返回异常，请重试'))
-      if (page.hasMore && (!page.nextCursor || page.nextCursor === next)) throw new Error(tr('会话分页异常，请重试'))
-      setGroups(old => [...new Map([...(next ? old : []), ...page.items.filter(value => value.kind === 'group_chat')].map(value => [value.sourceRef, value])).values()])
-      setGroupCursor(page.nextCursor); setGroupsMore(page.hasMore)
-    } catch (e) { if (!c.signal.aborted) setGroupsError(errorText(e)) }
-    finally { requests.current.delete(c); if (groupRequest.current === c) groupRequest.current = undefined; if (!c.signal.aborted) setGroupsLoading(false) }
-  }
-  useEffect(() => { if (!intent.person) { void loadContacts(); void loadGroups() } }, [])
+    if (!enabled || intent.person) return
+    observeTeamOutboundAccount()
+    arkmeChatDirectory.activateAccount(intent.accountKey)
+    loadGroups()
+  }, [enabled, intent.accountKey, Boolean(intent.person), loadGroups])
+  useEffect(() => { if (directory.projection?.phase === 'complete') setGroupsReadError('') }, [directory.projection?.revision, directory.projection?.phase])
   const selectPerson = (next: TeamOutboundPerson) => {
     lookupRequest.current?.abort(); lookupRequest.current = undefined; setLookup(false)
     if (personKey(next) !== personKey(person)) requestUid.current = ''
@@ -156,13 +157,15 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
     try {
       const conversation = await openTeamContact({ accountKey: intent.accountKey, person }, team, requestUid.current, c.signal)
       if (c.signal.aborted || !mounted.current) return
+      if (!openConfirmedTeamContact(intent.accountKey, conversation)) throw new Error(tr('登录账号已变化，请重新打开此窗口'))
       rememberContactTeam(intent.accountKey, team)
-      invalidateTeamMessages(intent.accountKey); onClose(); openTeamEntryMessages({ kind: 'conversation', conversation })
+      onClose()
     } catch (e) { if (!c.signal.aborted) setError(contactTeamError(e, team)) }
     finally { requests.current.delete(c); opening.current = false; if (!c.signal.aborted && mounted.current) setBusy(false) }
   }
   const search = query.trim().toLowerCase()
   const filtered = contacts.filter(value => [value.displayName, value.nickname, value.remark, value.accountName].some(text => text?.toLowerCase().includes(search)))
+  if (!enabled) return null
   return createPortal(<div style={styles.backdrop} data-team-outbound-backdrop onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}>
     <div ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label={tr('联系用户')} style={styles.dialog} onKeyDown={e => {
       e.stopPropagation()
@@ -176,7 +179,7 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
     }}>
       <ArkmeRightPanelHeader title={team ? tr('联系用户 · {team}', { team: team.name }) : tr('联系用户')} onClose={onClose} closeLabel={tr('关闭')}/>
       {teamLoading && <p role="status" style={styles.message}>{tr('正在加载团队…')}</p>}
-      {teamError && <p role="alert" style={styles.message}>{teamError} <button type="button" style={styles.link} disabled={busy || teamLoading} onClick={() => setAttempt(v => v + 1)}>{tr('重试')}</button></p>}
+      {teamError && <p role="alert" style={styles.message}>{teamError} <button type="button" style={styles.link} disabled={busy || teamSnapshot.refreshing} onClick={refreshTeams}>{tr('重试')}</button></p>}
       {!teamLoading && !teamError && !teams.length && <p style={styles.message}>{tr('尚未加入团队')}</p>}
       {!intent.teamJotmoId && teams.length > 1 && <select aria-label={tr('选择团队')} value={team?.jotmoId ?? ''} disabled={busy || teamLoading} style={styles.teamSelect} onChange={e => { setTeamId(e.currentTarget.value); setError(''); requestUid.current = '' }}>{teams.map(value => <option key={value.jotmoId} value={value.jotmoId}>{value.name}</option>)}</select>}
       {!intent.person && <ArkmePeoplePickerSearch value={query} onChange={changeQuery} onSubmit={() => { void findUser() }} disabled={busy} label="查找联系用户" placeholder="搜索联系人 / 即我号 / 手机号"/>}
@@ -188,17 +191,20 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
           <div style={styles.section}>{tr('联系人')}</div>
           <div role="radiogroup" aria-label={tr('选择联系用户')}>{filtered.map(value => <PersonRow key={value.contactRef} person={{ recipient: { kind: 'directory-contact', contactRef: value.contactRef }, displayName: value.remark || value.displayName, avatarRef: value.avatarRef }} selected={person} disabled={busy} onSelect={selectPerson}/>)}</div>
           {!contactsLoading && !contactsError && !filtered.length && <p style={styles.hint}>{tr('已加载联系人中没有匹配结果')}</p>}
-          {contactsLoading && <p role="status" style={styles.hint}>{tr('正在加载联系人…')}</p>}
+          {contactsLoading && <p role="status" style={styles.hint}>{tr(contacts.length ? '正在更新联系人…' : '正在加载联系人…')}</p>}
           {contactsError && <p role="alert" style={styles.error}>{contactsError}</p>}
-          {(hasMore || contactsError) && <button type="button" style={styles.link} disabled={contactsLoading || busy} onClick={() => { void loadContacts(cursor) }}>{tr(contactsError ? '重试加载联系人' : '加载更多联系人')}</button>}
+          {(hasMore || contactsError) && <button type="button" style={styles.link} disabled={contactsLoading || busy} onClick={() => {
+            if (contactSnapshot.error || !contactSnapshot.value) refreshContacts()
+            else void loadMoreTeamOutboundContacts(intent.accountKey).catch(() => {})
+          }}>{tr(contactsError ? '重试加载联系人' : '加载更多联系人')}</button>}
           <div style={styles.section}>{tr('群聊')}</div>
           {groups.map(group => <div key={group.sourceRef}>
             <button type="button" style={styles.contact} disabled={busy} aria-expanded={expanded === group.sourceRef} onClick={() => setExpanded(old => old === group.sourceRef ? '' : group.sourceRef)}><span style={styles.groupIcon}>#</span><span style={styles.name}>{group.displayName}</span><CaretDown size={16} style={{ transform: expanded === group.sourceRef ? 'rotate(180deg)' : undefined }}/></button>
             {expanded === group.sourceRef && <GroupPeople accountKey={intent.accountKey} source={group} query={search} selected={person} disabled={busy} onSelect={selectPerson}/>}
           </div>)}
-          {groupsLoading && <p role="status" style={styles.hint}>{tr('正在加载群聊…')}</p>}
+          {groupsLoading && <p role="status" style={styles.hint}>{tr(groups.length ? '正在同步群聊…' : '正在加载群聊…')}</p>}
           {groupsError && <p role="alert" style={styles.error}>{groupsError}</p>}
-          {(groupsMore || groupsError) && <button type="button" style={styles.link} disabled={groupsLoading || busy} onClick={() => { void loadGroups(groupCursor) }}>{tr(groupsError ? '重试加载群聊' : '加载更多会话')}</button>}
+          {groupsError && <button type="button" style={styles.link} disabled={directory.isRefreshing || busy} onClick={() => loadGroups(true)}>{tr('重试加载群聊')}</button>}
           {!groups.length && !groupsLoading && !groupsError && <p style={styles.hint}>{tr('暂无群聊')}</p>}
         </>}
       </div>
