@@ -10,7 +10,7 @@ it('decodes both private and public chat invalidations without trusting pushed c
   expect(decodeThoughtNotification(line({ biz_type: 7, data: { ...event, status: 99 } }), 'notify')).toBeUndefined()
 })
 it('accepts self response deltas, ignores legacy chat content and never displays upstream errors', () => {
-  const event = { msg_id: 'stream', kind: 8, payload: { record_uid: 'note', msg_id: 'stream', delta: '你好', content_len: 6, status: 'running' } }
+  const event = { msg_id: 'stream', kind: 8, payload: { source_version:1,record_uid: 'note', msg_id: 'stream', delta: '你好', content_len: 6, status: 'running' } }
   expect(decodeThoughtNotification(line(event), 'global')).toMatchObject({ stream: { recordUid: 'note', streamId: 'stream', delta: '你好', contentBytes: 6, phase: 'generating', biz: 2 } })
   expect(decodeThoughtNotification(line({ ...event, payload: { ...event.payload, chat_type: 2, group_id: 12 } }), 'global')).toBeUndefined()
   expect(decodeThoughtNotification(line({ ...event, payload: { ...event.payload, chat_type: 1 } }), 'global')).toBeUndefined()

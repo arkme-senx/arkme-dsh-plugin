@@ -8,7 +8,6 @@ import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
 import { RecordThoughtStore, type RecordThoughtState } from './record-thought-store.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
-import { arkoReplyHistory } from './arko-reply-history.js'
 import { subscribeThoughtInvalidation } from './thought-invalidations.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { arkmeExtensionDetailListStyles as replyStyles } from './extension-detail-list-styles.js'
@@ -23,7 +22,6 @@ export function RecordThoughtsProvider({ accountScope, enabled, sourceRef, sourc
   accountScope: string | undefined; enabled: boolean; sourceRef?: string | undefined; sourceKey?: string | undefined; source?: ArkmeSourceItem | undefined; chat?: boolean;
   onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined; children: ReactNode
 }) {
-  useEffect(() => arkoReplyHistory.activate(accountScope), [accountScope])
   const chatRef = chat ? sourceRef : undefined
   const store = useMemo(() => new RecordThoughtStore(accountScope ?? '', (scope, recordUids, signal, messageActionRefs) =>
     callArkme<ArkmeRecordThoughts>(chatRef ? 'chat.thoughts.query' : 'record.thoughts.query',
@@ -52,11 +50,7 @@ function useThought(item: RecordItem) {
     [store, item.itemUid, item.sendAtMillis, item.recordVersion, item.version, item.messageActionRef, item.timelineItemKey])
   const get = useCallback(() => store?.get(item.itemUid) ?? empty, [store, item.itemUid])
   const state = useSyncExternalStore(subscribe, get, get)
-  useEffect(() => {
-    if (!context?.source || !store) return
-    arkoReplyHistory.observeItem(context.accountScope, context.source, item)
-    if (state.loaded && !state.loading && !state.error) arkoReplyHistory.observe(context.accountScope, context.source, item, state.items)
-  }, [context?.accountScope, context?.source, store, item, state.loaded, state.loading, state.error, state.items])
+
   return { ...state, chat: context?.chat === true, onFill: context?.onFill, retry: () => store?.refresh(item.itemUid), focus: () => store?.requestFocus(item.itemUid), takeFocus: () => store?.takeFocus(item.itemUid) }
 }
 const buttonStyle = { border: 0, background: 'transparent', padding: 0, color: arkmeTheme.accent, font: 'inherit', fontSize: 12, cursor: 'pointer' } as const

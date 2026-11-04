@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { RecordThoughtStore } from '../src/client/record-thought-store.js'
 import type { ArkmeRecordThoughts } from '../src/record-thought-contract.js'
 const scope = 'production:42'
-const thought = (uid = 'note') => ({ id: uid, recordUid: uid, content: '一个想法', biz: 1 as const })
+const thought = (uid = 'note') => ({sourceVersion:1,currentSourceVersion:1,id: uid, recordUid: uid, content: '一个想法', biz: 1 as const })
 let stores: RecordThoughtStore[]
 beforeEach(() => { vi.useFakeTimers(); stores = [] })
 afterEach(() => { stores.forEach(store => store.dispose()); vi.useRealTimers() })
@@ -70,19 +70,19 @@ it('refreshes an edited record even when its previous version is cached in anoth
 })
 
 it('drops cached legacy content immediately on edit and does not restore the same stale thought', async () => {
-  let content = '一个想法'
-  const store = create(async () => ({ accountScope: scope, items: [{ ...thought(), content }] }))
+  let content = '一个想法', version=1
+  const store = create(async () => ({ accountScope: scope, items: [{ ...thought(), sourceVersion:version,currentSourceVersion:version,content }] }))
   const off = store.subscribe('note', 1, 1, () => {}); await vi.advanceTimersByTimeAsync(32); off()
   store.subscribe('note', 1, 2, () => {}); expect(store.get('note').items).toEqual([])
   await vi.advanceTimersByTimeAsync(32); expect(store.get('note').items).toEqual([])
-  content = '根据新版生成的想法'; store.refresh(); await vi.advanceTimersByTimeAsync(32)
+  version=2;content = '根据新版生成的想法'; store.refresh(); await vi.advanceTimersByTimeAsync(32)
   expect(store.get('note').items[0]?.content).toBe('根据新版生成的想法')
 })
 it('deduplicates Unicode stream deltas, drops broken ranges and reconciles a completed result', async () => {
   let ready = false
   const store = create(async () => ({ accountScope: scope, items: ready ? [{ ...thought(), biz: 2 as const, content: '你好' }] : [] }))
   store.subscribe('note', 1, 1, () => {}); await vi.advanceTimersByTimeAsync(32)
-  const delta = { recordUid: 'note', streamId: 'one', biz: 2 as const, delta: '你', contentBytes: 3, phase: 'generating' as const }
+  const delta = {sourceVersion:1,recordUid: 'note', streamId: 'one', biz: 2 as const, delta: '你', contentBytes: 3, phase: 'generating' as const }
   store.applyStream(delta); store.applyStream(delta)
   expect(store.get('note').items[0]?.content).toBe('你')
   store.applyStream({ ...delta, delta: '坏片段', contentBytes: 99 }); expect(store.get('note').items[0]?.content).toBe('你')

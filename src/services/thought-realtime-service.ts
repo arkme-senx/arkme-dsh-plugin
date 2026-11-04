@@ -31,10 +31,11 @@ export function decodeThoughtNotification(line: string, stream: 'notify' | 'glob
     || (payload.chat_type !== undefined && payload.chat_type !== 0) || Number(payload.group_id ?? 0) > 0) return undefined
   const recordUid = uid(payload.record_uid), streamId = uid(payload.msg_id) || uid(row.msg_id)
   if (!streamId) return undefined
+  if (!Number.isSafeInteger(payload.source_version) || Number(payload.source_version)<=0) return {records:[recordUid]}
   const delta = typeof payload.delta === 'string' ? payload.delta.slice(0, 131_072) : ''
   const contentBytes = Number.isSafeInteger(payload.content_len) && (payload.content_len as number) >= 0 ? payload.content_len as number : 0
   const phase = payload.error === true || payload.status === 'error' ? 'failed' : payload.done === true || payload.status === 'done' ? 'ready' : 'generating'
-  return { stream: { recordUid, streamId, biz: payload.trigger_mode === 'auto_self_whisper' ? 1 : 2,
+  return { stream: { sourceVersion:Number(payload.source_version),recordUid, streamId, biz: payload.trigger_mode === 'auto_self_whisper' ? 1 : 2,
     delta: phase === 'failed' ? '' : delta, contentBytes, phase } }
 }
 

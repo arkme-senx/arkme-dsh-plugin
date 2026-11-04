@@ -1654,6 +1654,7 @@ arkoImagesV1?:true
     messageTextAnchorsV1?: true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
+    arkoReplyManagementV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
@@ -4373,6 +4374,10 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'arko.reply-prompts.get'
+  | 'arko.reply-prompts.save'
+  | 'arko.reply-prompts.reset'
+  | 'arko.replies.page'
   | 'record.thoughts.query'
   | 'chat.thoughts.query'
   | 'composer.resources.list'

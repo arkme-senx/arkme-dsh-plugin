@@ -10,7 +10,7 @@ const item = { itemUid: 'note', sendAtMillis: 1, isMe: true, version: 1 }
 let root: Root, host: HTMLDivElement
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.useFakeTimers()
-  mocks.callArkme.mockReset().mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'one', recordUid: 'note', content: '**建议内容**', biz: 1 }] })
+  mocks.callArkme.mockReset().mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'one', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '**建议内容**', biz: 1 }] })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -76,7 +76,7 @@ it('presents a thought as an Arko reply without a second heading or invented mes
 it('activates Arko replies by card click or keyboard without consuming links or selected text', async () => {
   const reply = vi.fn()
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [
-    { id: 'one', recordUid: 'note', content: '建议 [链接](https://example.com)', biz: 1 },
+    { id: 'one', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '建议 [链接](https://example.com)', biz: 1 },
   ] })
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
     <RecordThoughtContent item={item} embedded onReply={reply} selectedThoughtId="one"/>
@@ -101,8 +101,8 @@ it('activates Arko replies by card click or keyboard without consuming links or 
 
 it.each(['generating', 'failed'] as const)('retains the Arko author and %s state in embedded replies', async status => {
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [
-    { id: 'state', recordUid: 'note', content: '', biz: 2, status, visibility: 'user' },
-    { id: 'old', recordUid: 'note', content: '旧回复', biz: 1, status: 'invalidated' },
+    { id: 'state', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '', biz: 2, status, visibility: 'user' },
+    { id: 'old', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '旧回复', biz: 1, status: 'invalidated' },
   ] })
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
     <RecordThoughtContent item={item} embedded onReply={() => { throw new Error('unfinished replies are not selectable') }}/>
@@ -117,7 +117,7 @@ it.each(['generating', 'failed'] as const)('retains the Arko author and %s state
 })
 
 it('shows private chat suggestions beneath received messages and cycles candidates locally without sending', async () => {
-  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'suggestion', recordUid: 'note', content: '建议一', biz: 1, scene: 5, visibility: 'user', status: 'ready', generation: 1,
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'suggestion', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '建议一', biz: 1, scene: 5, visibility: 'user', status: 'ready', generation: 1,
     display: { headline: '确认时间', context: '正在约定见面', warnings: [], suggestions: [{ style: '自然', items: ['建议一', '建议二'] }] } }] })
   const fill = vi.fn(), record = { ...item, isMe: false, messageActionRef: 'signed' }
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="chat-source" chat enabled onFill={fill}>
@@ -133,9 +133,9 @@ it('shows private chat suggestions beneath received messages and cycles candidat
 })
 it('separates group-public replies from private whispers and hides invalidated projections', async () => {
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [
-    { id: 'public', recordUid: 'note', content: '公开回答', biz: 2, scene: 2, visibility: 'members', status: 'ready' },
-    { id: 'private', recordUid: 'note', content: '私人分析', biz: 2, scene: 3, visibility: 'user', status: 'ready' },
-    { id: 'old', recordUid: 'note', content: '旧建议', biz: 1, scene: 5, visibility: 'user', status: 'invalidated' },
+    { id: 'public', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '公开回答', biz: 2, scene: 2, visibility: 'members', status: 'ready' },
+    { id: 'private', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '私人分析', biz: 2, scene: 3, visibility: 'user', status: 'ready' },
+    { id: 'old', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '旧建议', biz: 1, scene: 5, visibility: 'user', status: 'invalidated' },
   ] })
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="group" chat enabled>
     <RecordThoughtEntry item={{ ...item, messageActionRef: 'signed' }} onOpen={() => {}}/>
@@ -148,10 +148,10 @@ it('separates group-public replies from private whispers and hides invalidated p
 })
 it('shows generation and failure states without inventing a completed result or automatically generating', async () => {
   const fill = vi.fn()
-  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'pending', recordUid: 'note', content: '', biz: 2, scene: 1, status: 'generating' }] })
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'pending', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '', biz: 2, scene: 1, status: 'generating' }] })
   const render = () => root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="chat" chat enabled onFill={fill}><RecordThoughtEntry item={{ ...item, messageActionRef: 'signed' }} onOpen={() => {}}/></RecordThoughtsProvider>)
   await act(async () => { render() }); await load(); expect(host.textContent).toContain('Arko 正在思考')
-  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'pending', recordUid: 'note', content: '', biz: 2, scene: 1, status: 'failed' }] })
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'pending', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '', biz: 2, scene: 1, status: 'failed' }] })
   await act(async () => vi.advanceTimersByTimeAsync(4_032)); expect(host.textContent).toContain('暂时没能完成')
   await act(async () => host.querySelector('button')!.click()); expect(fill).toHaveBeenCalledExactlyOnceWith('@阿森 ', true)
   expect(mocks.callArkme.mock.calls.every(([operation]) => operation === 'chat.thoughts.query')).toBe(true)
@@ -178,7 +178,7 @@ it('keeps the thought entry and original clock inside the bubble and opens its d
 })
 
 it.each(['empty', 'invalidated'] as const)('retains the original direct timestamp and no footer for %s thoughts', async mode => {
-  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: mode === 'empty' ? [] : [{ id: 'old', recordUid: 'note', content: '过期想法', biz: 1, status: 'invalidated' }] })
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: mode === 'empty' ? [] : [{ id: 'old', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '过期想法', biz: 1, status: 'invalidated' }] })
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
     <div className="arkme-timed-bubble"><p>消息正文</p><RecordThoughtMessageFooter item={item} onOpen={() => {}}><ArkmeMessageTimestamp at={item.sendAtMillis}/></RecordThoughtMessageFooter></div>
   </RecordThoughtsProvider>)); await load()
@@ -188,7 +188,7 @@ it.each(['empty', 'invalidated'] as const)('retains the original direct timestam
 })
 
 it('keeps generating thought state inside the bubble footer without presenting a completed entry', async () => {
-  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'pending', recordUid: 'note', content: '', biz: 2, status: 'generating' }] })
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'pending', recordUid: 'note', sourceVersion:1,currentSourceVersion:1, content: '', biz: 2, status: 'generating' }] })
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
     <div className="arkme-timed-bubble"><RecordThoughtMessageFooter item={item} onOpen={() => {}}><ArkmeMessageTimestamp at={item.sendAtMillis}/></RecordThoughtMessageFooter></div>
   </RecordThoughtsProvider>)); await load()

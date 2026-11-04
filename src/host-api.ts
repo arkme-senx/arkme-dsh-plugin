@@ -2460,6 +2460,10 @@ export async function dispatchArkmeHostOperation(
         requestSignal,
       )
     }
+    case 'arko.reply-prompts.get': return await service.arkoReplyPrompts(stringParam(params,'expectedAccountScope') || undefined,requestSignal)
+    case 'arko.reply-prompts.save': return await service.saveArkoReplyPrompt(params.input as import('./arko-reply-contract.js').ArkoReplyPromptWrite,stringParam(params,'expectedAccountScope'),requestSignal)
+    case 'arko.reply-prompts.reset': return await service.resetArkoReplyPrompt(params.input as import('./arko-reply-contract.js').ArkoReplyPromptWrite,stringParam(params,'expectedAccountScope'),requestSignal)
+    case 'arko.replies.page': return await service.arkoRepliesPage((params.query ?? {}) as import('./arko-reply-contract.js').ArkoReplyHistoryQuery,stringParam(params,'expectedAccountScope') || undefined,requestSignal)
     case 'record.thoughts.query': return await service.recordThoughts(stringParam(params, 'expectedAccountScope'), params.recordUids, requestSignal)
     case 'chat.thoughts.query': return await service.chatThoughts(stringParam(params, 'expectedAccountScope'), stringParam(params, 'sourceRef'), params.messageActionRefs, requestSignal)
     case 'source.timeline': {
