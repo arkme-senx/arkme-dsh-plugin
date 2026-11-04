@@ -18,6 +18,7 @@ import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Prohibit } from '@phosphor-icons/react/dist/icons/Prohibit'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
+import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import qrcode from 'qrcode-generator'
 import type {
@@ -1222,6 +1223,7 @@ function GroupSettingsMenu(props: {
   onError: (message: string) => void
   onExport: () => void
   onLocation?: () => void
+  onOfflineContext?: () => void
   exportBusy: boolean
   exportProcessed: number
 }) {
@@ -1409,6 +1411,7 @@ function GroupSettingsMenu(props: {
   entries.push(
     { type: 'separator', id: 'export-separator' },
     { type: 'label', id: 'export-label', text: '聊天记录' },
+    ...(props.onOfflineContext ? [{ id: 'offline-context', label: tr('线下交流'), icon: <Waveform size={20} aria-hidden /> }] : []),
     ...(props.onLocation ? [{ id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden /> }] : []),
     { id: 'export', label: props.exportBusy
       ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
@@ -1438,6 +1441,7 @@ function GroupSettingsMenu(props: {
       if (id === 'management') { if (effective.canRename || canManage) setManagementOpen(true); return }
       if (id === 'back') { setManagementOpen(false); return }
       if (id === 'export') { close(); props.onExport(); return }
+      if (id === 'offline-context') { close(); props.onOfflineContext?.(); return }
       if (id === 'location') { close(); props.onLocation?.(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
       if (id === 'public-settings') { close(); props.onPublicSettingsOpen?.(); return }
@@ -1721,6 +1725,7 @@ export function ArkmeGroupChatControls(props: {
   onError: (message: string) => void
   onExport?: () => void
   onLocation?: () => void
+  onOfflineContext?: () => void
   exportBusy?: boolean
   exportProcessed?: number
 } & GroupBotActions) {
@@ -1817,6 +1822,7 @@ export function ArkmeGroupChatControls(props: {
         onError={reportError}
         onExport={() => { props.onExport?.() }}
         {...(props.onLocation ? { onLocation: props.onLocation } : {})}
+        {...(props.onOfflineContext ? { onOfflineContext: props.onOfflineContext } : {})}
         exportBusy={props.exportBusy === true}
         exportProcessed={props.exportProcessed ?? 0}
       />
