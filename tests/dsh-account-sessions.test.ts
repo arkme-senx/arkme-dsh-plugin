@@ -1,3 +1,4 @@
+import { DshRemoteError } from '../src/dsh-remote/errors.js'
 import type { LocalAliasReader } from '../src/dsh-remote/local-history-coverage.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,7 +21,7 @@ import { ArkmeSdk } from '../src/sdk/index.js'
 import { accountSessionTools } from '../src/dsh-remote/account-session-tools.js'
 import { ArkmePluginError } from '../src/arkme-service.js'
 
-function fixture(online = true, historyCache?: DshNativeHistoryCache, localAliasReader?: LocalAliasReader, registering = false, localSession?: (runtime: string, session: string) => boolean) {
+function fixture(online = true, historyCache?: DshNativeHistoryCache, localAliasReader?: LocalAliasReader, registering = false, localSession?: (runtime: string, session: string) => boolean, localNative?: ConstructorParameters<typeof DshAccountSessions>[0]['localNative']) {
   let receive: Parameters<DshRemoteRealtimeTransport['subscribe']>[0]['onEvent'] | undefined
   const metadata: DshRemoteTrustedEventMetadata = { senderRole: 'host', runtimeRef: 'runtime-remote', acceptedAtMillis: Date.now(), targetHostLeaseGeneration: 8 }
   const transport: DshRemoteRealtimeTransport = {
@@ -41,7 +42,7 @@ function fixture(online = true, historyCache?: DshNativeHistoryCache, localAlias
     throw new Error(path)
   })
   const requireAccount = vi.fn(async () => '3016')
-  const directory = new DshAccountSessions({ ...(localAliasReader ? { localAliasReader } : {}), request: { post }, requireAccount, localSession, ...(historyCache ? { historyCache } : {}), transport, connected: signal => transport.connect({ profileRef: 'controller-profile', clientRef: 'controller', signal }), localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, ...(!registering ? { runtimeRef: 'runtime-local' } : {}), hostGeneration: 1, capabilities: [], revision: 1 }) })
+  const directory = new DshAccountSessions({ ...(localAliasReader ? { localAliasReader } : {}), request: { post }, requireAccount, localSession, localNative, ...(historyCache ? { historyCache } : {}), transport, connected: signal => transport.connect({ profileRef: 'controller-profile', clientRef: 'controller', signal }), localStatus: () => ({ contractVersion: 1, available: true, enabled: true, connected: true, ...(!registering ? { runtimeRef: 'runtime-local' } : {}), hostGeneration: 1, capabilities: [], revision: 1 }) })
   return { directory, post, transport, requireAccount, emit: (payload: Record<string, unknown>, overrides: Partial<DshRemoteTrustedEventMetadata> = {}) => receive?.(payload, { ...metadata, ...overrides }) }
 }
 
@@ -70,9 +71,56 @@ describe('account DSH directory and controller', () => {
     expect(f.post.mock.calls.some(([path]) => path.endsWith('/workspaces/list'))).toBe(false)
     f.directory.close()
   })
-  it('keeps the canonical address but uses native identity for a verified shared local session', async () => {
+  it('reads repaired raw cloud history through the same Tools and SDK owner when old turn projections are incomplete', async () => {
+    const f = fixture(), original = f.post.getMockImplementation()!
+    const event = { seq: 101, time: 1, type: 'user/message', surfaceOp: 'append', data: { role: 'user', content: [{ type: 'text', text: 'recovered' }] } }
+    f.post.mockImplementation(async path => path.endsWith('/session-turns/list') ? { items: [], complete: false } as never
+      : path.endsWith('/session-events/list') ? { entries: [{ event }], complete: true, next_cursor: 101 } as never : original(path))
+    try {
+      const first = await f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', source: 'cloud' })
+      expect(first.nodes).not.toHaveLength(0)
+      expect(first.nextCursor).toEqual({ source: 'cloud-raw', before: 101 })
+      await f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', cursor: first.nextCursor })
+      expect(f.post).toHaveBeenLastCalledWith('/api/v1/dsh-remote/session-events/list', expect.objectContaining({ before_seq: 101 }), expect.any(AbortSignal))
+      expect(f.transport.publish).not.toHaveBeenCalled()
+    } finally { f.directory.close() }
+  })
+  it('pins projected cloud pages to the native format coordinate space and rejects mixed cursors', async () => {
+    const f = fixture(false), original = f.post.getMockImplementation()!
+    let through = 102
+    f.post.mockImplementation(async (path, body, signal) => path.endsWith('/sessions/metadata') ? { native_history_format: 4 } as never
+      : path.endsWith('/session-history/format-read') ? { ready: true, header: { id: 'same-session', version: 4 }, through_seq: through,
+        entries: [{ event: { seq: body?.before_seq ? 100 : 101, time: 1, type: 'user/message', surfaceOp: 'append', data: { role: 'user', content: [{ type: 'text', text: 'current coordinates' }] } } }],
+        ...(body?.before_seq ? {} : { next_cursor: 101 }) } as never : original(path, body, signal))
+    try {
+      const page = await f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', source: 'cloud' })
+      expect(page.nextCursor).toEqual({ source: 'cloud-format', before: 101, through: 102 })
+      expect(page.nodes[0]?.anchor_seq).toBe(101)
+      await expect(f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', cursor: { source: 'cloud-raw', before: 101 } })).rejects.toMatchObject({ code: 'REMOTE_PROJECTION_CONFLICT' })
+      expect((await f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', cursor: page.nextCursor })).nodes[0]?.anchor_seq).toBe(100)
+      through++
+      await expect(f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', cursor: page.nextCursor })).rejects.toMatchObject({ code: 'REMOTE_PROJECTION_CONFLICT' })
+      expect(f.post.mock.calls.some(([path]) => path.endsWith('/session-events/list') || path.endsWith('/session-turns/list'))).toBe(false)
+    } finally { f.directory.close() }
+  })
+  it('discards a repaired cloud-history response that arrives after the account reader is cancelled', async () => {
+    const f = fixture(), original = f.post.getMockImplementation()!, controller = new AbortController()
+    let release!: () => void
+    f.post.mockImplementation(async path => {
+      if (!path.endsWith('/session-events/list')) return original(path)
+      await new Promise<void>(resolve => { release = resolve })
+      return { entries: [], complete: true } as never
+    })
+    try {
+      const read = f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', cursor: { source: 'cloud-raw', before: 101 } }, controller.signal)
+      const rejected = expect(read).rejects.toMatchObject({ name: 'AbortError' })
+      await vi.waitFor(() => expect(release).toBeDefined())
+      controller.abort(); release(); await rejected
+    } finally { f.directory.close() }
+  })
+  it('keeps canonical routing identity separate from verified physical local access', async () => {
     const f = fixture(true, undefined, undefined, false, (runtime, session) => runtime === 'runtime-remote' && session === 'same-session')
-    expect((await f.directory.list()).items[0]).toMatchObject({ runtimeRef: 'runtime-remote', local: true, localTakeover: true })
+    expect((await f.directory.list()).items[0]).toMatchObject({ runtimeRef: 'runtime-remote', local: false, localAvailable: true, localTakeover: true })
     f.directory.close()
   })
   it.each([true, false])('routes a taken-over session with directory loaded=%s', async loaded => {
@@ -256,7 +304,7 @@ it('serves SDK through the HTTP boundary, rejects originless writes and releases
       host_generation: 2, projection_at: 3, source_updated_at: 4, running: false, blank: false, archived: false, title: 'x'.repeat(5000) }] }
     f.emit({ kind: 'session.response', directoryChanged: true, directoryDelta })
     await vi.waitFor(() => expect(catalogChanged).toHaveBeenCalledTimes(3))
-    expect(catalogChanged.mock.lastCall?.[0]).toEqual({ ...directoryDelta, sessions: [{ ...directoryDelta.sessions[0], localTakeover: false }] })
+    expect(catalogChanged.mock.lastCall?.[0]).toEqual({ ...directoryDelta, sessions: [{ ...directoryDelta.sessions[0], localAvailable: false, localTakeover: false }] })
     f.emit({ kind: 'session.response', directoryChanged: true, directoryDelta: { ...directoryDelta, version: 99 } })
     await vi.waitFor(() => expect(catalogChanged).toHaveBeenCalledTimes(4))
     expect(catalogChanged.mock.lastCall?.[0]).toBeUndefined()
@@ -439,7 +487,8 @@ it('invalidates all session subscriptions on handoff, closes the original Host a
     for (const endpoint of ['session/follow', 'session/control', '$events']) await request(endpoint, 'close')
     expect(queries()).toBe(2)
     const closes = vi.mocked(f.transport.publish).mock.calls.filter(([x]) => (x.payload.body as any).mode === 'close')
-    expect(closes.map(([x]) => x.target.runtimeRef)).toEqual(['runtime-remote', 'runtime-remote', 'runtime-remote'])
+    // The completed follow is already released; only the two pending streams need closes.
+    expect(closes.map(([x]) => x.target.runtimeRef)).toEqual(['runtime-remote', 'runtime-remote'])
     await f.directory.native({ ...params, sessionRef: 'other', body: { mode: 'close', streamRef: 'other-stream' } })
     f.post.mockImplementation(async (path, body, signal) => {
       const value = await post(path, body, signal)
@@ -778,4 +827,116 @@ it('resumes an existing cloud-only page on canonical ready without a directory H
     expect(f.transport.connect).toHaveBeenCalledOnce()
     expect(f.transport.subscribe).toHaveBeenCalledOnce()
   } finally { timer.mockRestore(); f.directory.close() }
+})
+
+it('shares local native history and pagination between the official Tool runtime and SDK HTTP consumer', async () => {
+  const localNative = vi.fn(async (params: Record<string, unknown>) => {
+    const request = (params.body as any).payload.args.request
+    expect(request.address).toEqual({ kind: 'session', sessionId: 'same-session' })
+    return { ok: true, value: { records: [{ type: 'event', event: { type: 'user/message', surfaceOp: 'append', seq: request.beforeSeq === undefined ? 4 : 0, time: 1,
+      data: { source: { kind: 'user' }, content: [{ type: 'text', text: '本机旧历史' }] } } }], hasMore: request.beforeSeq === undefined } }
+  })
+  const f = fixture(false, undefined, undefined, false, undefined, localNative), ctx = new Context()
+  const options = { expectedPort: 0, allowNonLoopback: false, accountSessions: () => f.directory }
+  const server = createServer(createArkmeHostApi({} as never, options))
+  server.listen(0, '127.0.0.1'); await once(server, 'listening')
+  const address = server.address(); if (!address || typeof address === 'string') throw new Error('missing address')
+  options.expectedPort = address.port
+  const sdk = new ArkmeSdk({ fetchImpl: (url, init) => fetch(new URL(String(url), `http://127.0.0.1:${address.port}`), init) })
+  try {
+    const page = await sdk.readDshAccountSession({ runtimeRef: 'runtime-remote', sessionRef: 'same-session' })
+    expect(page).toMatchObject({ local: true, complete: false, nextCursor: { source: 'local', before: 4 } })
+    expect(JSON.stringify(page.nodes)).toContain('本机旧历史')
+    expect(await sdk.readDshAccountSession({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', cursor: page.nextCursor })).toMatchObject({ local: true, complete: true })
+    await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
+    for (const tool of accountSessionTools(f.directory)) ctx.tools.register(tool)
+    const session = ctx.sessions.create(), agent = { id: session.id, session }
+    const result = await ctx.tools.execute({ callId: CallId('local-read'), name: 'arkme_dsh_session_read',
+      arguments: { runtime_ref: 'runtime-remote', session_ref: 'same-session' }, agent: agent as never, signal: new AbortController().signal })
+    expect(result.isError).toBe(false); expect(String(result.value)).toContain('本机旧历史')
+    expect(f.post).not.toHaveBeenCalled(); expect(f.transport.connect).not.toHaveBeenCalled()
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); f.directory.close(); await ctx.fiber.dispose() }
+})
+
+it.each(['legacy', 'session-channel'])('releases failed %s pull capacity before repeated native generations retry', async protocol => {
+  const f = fixture()
+  const original = vi.mocked(f.transport.publish).getMockImplementation()!
+  let failing = true
+  if (protocol === 'session-channel') {
+    const post = f.post.getMockImplementation()!
+    f.post.mockImplementation(async (path, body, signal) => {
+      const result = await post(path, body, signal)
+      if (path.endsWith('/desktops/list')) (result as any).desktops[0].runtimes[0].runtime.capabilities.push('session.native.channel')
+      return result
+    })
+    vi.spyOn(f.directory as any, 'accountChannel').mockReturnValue({ request: async (_address: unknown, body: any) => {
+      if (failing && body.mode === 'pull') throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'fixture disconnected', true)
+      return { accepted: true }
+    } })
+  }
+  vi.mocked(f.transport.publish).mockImplementation(async input => {
+    if (failing && (input.payload.body as any).mode === 'pull') throw new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'fixture disconnected', true)
+    return original(input)
+  })
+  const params = { runtimeRef: 'runtime-remote', sessionRef: 'same-session' }
+  try {
+    for (let i = 0; i < 80; i++) {
+      await expect(f.directory.native({ ...params, requestRef: `retry-request-${i}`, body: { mode: 'pull', streamRef: `failed-${i}`, endpoint: '$events', payload: { args: {} } } }))
+        .rejects.toMatchObject({ code: 'REMOTE_TRANSPORT_FAILED' })
+    }
+    failing = false
+    await expect(f.directory.native({ ...params, requestRef: 'recovered', body: { mode: 'pull', streamRef: 'recovered', endpoint: '$events', payload: { args: {} } } })).resolves.toMatchObject({ accepted: true })
+  } finally { f.directory.close() }
+})
+
+it('negotiates recovery through an online account Host when the offline source predates channels', async () => {
+  const f = fixture(false), original = f.post.getMockImplementation()!
+  f.post.mockImplementation(async (path, body, signal) => {
+    const result = await original(path, body, signal)
+    if (path.endsWith('/desktops/list')) {
+      const row = (result as any).desktops[0].runtimes[0]
+      ;(result as any).desktops.push({ desktop: { desktop_ref: 'current-login', display_name: 'current' }, runtimes: [{ runtime: { ...row.runtime, runtime_ref: 'runtime-current', capabilities: ['session.native.channel', 'session.commands.channel'] }, presence: { presence: 'online', lease_generation: 9 } }] })
+      row.runtime.host_generation = 99999999
+    }
+    return result
+  })
+  f.transport.publish = vi.fn(async ({ payload }) => {
+    if (payload.kind === 'session.request') f.emit({ ...payload, requestRef: payload.requestRef, kind: 'session.response', epoch: 1,
+      value: { ok: true, value: { title: 'live' } } })
+    if (payload.kind === 'session.command') {
+      const envelope = payload.envelope as any
+      f.emit({ kind: 'session.response', runtimeRef: payload.runtimeRef,
+        envelope: { ...envelope, kind: 'response', status: 'completed', result: envelope.operation === 'session.history' ? { entries: [], hasMore: false } : { accepted: true } } })
+    }
+    return { sequence: 1 }
+  })
+  const address = { runtimeRef: 'runtime-remote', sessionRef: 'same-session' }
+  try {
+    await f.directory.list()
+    f.post.mockClear()
+    await expect(f.directory.native({ ...address, requestRef: 'native-ready', body: { mode: 'call', endpoint: 'session/page', payload: { args: {} } } })).resolves.toMatchObject({ sourceWritable: true })
+    for (const id of ['request-one', 'request-two']) {
+      await f.directory.command({ ...address, operation: 'session.cancel', requestRef: id })
+      await f.directory.read({ ...address, source: 'host' })
+    }
+    expect(f.post).not.toHaveBeenCalled()
+    expect(f.transport.connect).toHaveBeenCalledOnce()
+    expect(f.transport.subscribe).toHaveBeenCalledOnce()
+    f.directory.close()
+    await f.directory.command({ ...address, operation: 'session.cancel', requestRef: 'new-account' })
+    expect(f.post.mock.calls.some(([path]) => path.endsWith('/sessions/execution'))).toBe(true)
+  } finally { f.directory.close() }
+})
+
+
+it('reads explicit cloud history without waiting for executor discovery or realtime', async () => {
+  const f = fixture(false), original = f.post.getMockImplementation()!
+  f.post.mockImplementation(async (path, body, signal) => {
+    if (path.endsWith('/sessions/execution') || path.endsWith('/desktops/list')) throw new Error('executor discovery must not block history')
+    return original(path, body, signal)
+  })
+  try {
+    await expect(f.directory.read({ runtimeRef: 'runtime-remote', sessionRef: 'same-session', source: 'cloud' })).resolves.toMatchObject({ online: false })
+    expect(f.transport.connect).not.toHaveBeenCalled()
+  } finally { f.directory.close() }
 })

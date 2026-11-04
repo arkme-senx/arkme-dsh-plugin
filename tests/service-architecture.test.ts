@@ -32,7 +32,7 @@ const expectedPublicMethods = [
   'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareNoteWorldReactions', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
   'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
-  'nativeAnnotations', 'setNativeAnnotationSource',
+  'nativeAnnotations', 'setNativeAnnotationSource', 'setNativeAnnotationAccess', 'setNativeAnnotationHistorySync',
   'nativeLocalMarkCapabilities', 'nativeLocalMarks', 'changeNativeLocalMark',
   'sourceUnderlineCapabilities', 'sourceUnderlines', 'changeSourceUnderline',
   'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',

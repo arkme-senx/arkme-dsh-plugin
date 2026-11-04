@@ -23,7 +23,11 @@ function fixture(search = '?arkme-harness-embed=1') {
     return Response.json(String(url).startsWith('/arkme') ? { ok: true, value: { ok: true, value: {}, sourceWritable: true } }
       : { type: 'server-response', rpcId: body.rpcId, result: { ok: true, value: { items: [{ sessionId: 'local' }] } } })
   })
-  const wire = vi.fn(async (params: any) => ({ ok: true, value: params.body.mode === 'close' ? { done: true } : {
+  // The handler stub is shared by HTTP writes and multiplexed read frames.
+  const http = vi.fn(fetch)
+  const wire = vi.fn(async (params: any) => params.body.mode === 'call'
+    ? (await fetch('/arkme-self/api', { body: JSON.stringify({ operation: 'remote.session.native', params }) })).json()
+    : ({ ok: true, value: params.body.mode === 'close' ? { done: true } : {
     items: params.body.endpoint === '$events' ? [{ type: 'ready', clientId: 'remote-client', host: { home: 'C:/' } }]
       : params.body.endpoint === 'session/control' ? [currentBaseline]
         : params.body.endpoint === 'session/follow' ? [{ type: 'snapshot', header: { id: 'same' }, cursor: -1, records: [] }] : [], done: true,
@@ -46,13 +50,27 @@ function fixture(search = '?arkme-harness-embed=1') {
     close() { this.readyState = 3; this.onclose?.() }
   }
   let nextId = 0
-  runInNewContext(harnessNativeTransportScript('/arkme-self/api'), { window, Error, WebSocket: Socket, DOMException, URLSearchParams, URL, AbortController, AbortSignal, structuredClone, setTimeout, clearTimeout, fetch, Response, crypto: { randomUUID: () => `request-${++nextId}` } })
+  runInNewContext(harnessNativeTransportScript('/arkme-self/api'), { window, Error, WebSocket: Socket, DOMException, URLSearchParams, URL, AbortController, AbortSignal, structuredClone, setTimeout, clearTimeout, fetch: http, Response, crypto: { randomUUID: () => `request-${++nextId}` } })
   disposers.push(() => listeners.get('pagehide')?.())
   const hooks = window.__DSH_TRANSPORT__
   const rpc = async (method: string, args: object) => (await hooks.fetch(`api/${method}`, { body: JSON.stringify({ rpcId: 'rpc', method, payload: { args } }) })).json()
   const row = (runtimeRef = 'windows', extra = {}) => ({ runtimeRef, sessionRef: 'same', title: runtimeRef, updatedAt: 42, running: false, blank: false, local: false, presence: 'online', capabilities: ['session.native'], ...extra })
-  return { window, attributes, fetch, wire, sockets, localBaseline, listeners, rpc, row, hooks, directory: window.__ARKME_NATIVE_DIRECTORY__ }
+  return { window, attributes, fetch, http, wire, sockets, localBaseline, listeners, rpc, row, hooks, directory: window.__ARKME_NATIVE_DIRECTORY__ }
 }
+it('keeps a physically local old session selectable after a native list refresh omits its idle writer', async () => {
+  const f = fixture()
+  f.directory.publish([f.row('old', { localAvailable: true, localTakeover: true, presence: 'offline' })], 'current')
+  for (let i = 0; i < 2; i++) {
+    const list = await f.rpc('session/list', {})
+    expect(list.result.value.items.map((item: any) => item.sessionId)).toEqual(['local', 'arkme:old:same'])
+  }
+  f.directory.select('arkme:old:same')
+  expect(f.directory.writable('arkme:old:same')).toBe(true)
+  await f.rpc('session/rename', { request: { sessionId: 'arkme:old:same', title: 'renamed' } })
+  const request = JSON.parse(String(f.fetch.mock.calls.at(-1)![1].body))
+  expect(request.params.runtimeRef).toBe('old')
+  expect(request.params.body.payload.args.request.sessionId).toBe('same')
+})
 it('leaves non-embedded pages untouched', () => expect(fixture('').hooks).toBeUndefined())
 it('reads reminders and their catalogue from the selected source, keeping prompt text and task ids exact', async () => {
   const f = fixture()
@@ -103,9 +121,11 @@ it('ignores a late failure after selecting another source', async () => {
   let finish!: (value: Response) => void
   f.fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
   const pending = f.rpc('schedule/catalog', {})
+  const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  await vi.waitFor(() => expect(f.fetch).toHaveBeenCalled())
   f.directory.select('arkme:linux:same')
   finish(Response.json({ ok: true, value: { ok: false, error: { code: 'RUNTIME_OFFLINE' } } }))
-  await pending
+  await cancelled
   expect(f.attributes.has('data-arkme-schedule-error')).toBe(false)
 })
 it('invalidates native reminder caches when the selected source or source availability changes', async () => {
@@ -601,17 +621,40 @@ it('returns a cold-start cloud selection to its native owner when registration i
 
 
 
-it('waits offline without opening remote streams and resumes the journal when the source returns', async () => {
+it('probes an offline source once, then waits for a recovery hint after the Host denies it', async () => {
   vi.useFakeTimers()
-  const f = fixture(), abort = new AbortController()
+  const f = fixture(), abort = new AbortController(), original = f.wire.getMockImplementation()!
+  f.wire.mockImplementation(async params => params.body.mode === 'close' ? original(params)
+    : { ok: true, value: { sourceWritable: false, items: [], done: true } } as any)
   f.directory.publish([f.row('windows', { presence: 'offline' })]); f.directory.select('arkme:windows:same')
   const journal = f.hooks.openStream('session/follow', { args: { request: { address: { sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
   const next = journal.next()
   await vi.advanceTimersByTimeAsync(2000)
-  expect(f.wire).not.toHaveBeenCalled()
+  const paused = f.wire.mock.calls.length
+  expect(paused).toBeGreaterThan(0)
+  await vi.advanceTimersByTimeAsync(600_000)
+  expect(f.wire).toHaveBeenCalledTimes(paused)
+  f.wire.mockImplementation(original)
   f.directory.publish([f.row()]); await vi.advanceTimersByTimeAsync(1000)
   expect((await next).value.header.id).toBe('arkme:windows:same')
   abort.abort(); await journal.return()
+})
+
+it('reads locally discovered history even when its legacy creator is offline and has no native capability', async () => {
+  const f = fixture(), abort = new AbortController(), original = f.wire.getMockImplementation()!
+  f.directory.publish([f.row('windows', { presence: 'offline', capabilities: [] })]); f.directory.select('arkme:windows:same')
+  f.wire.mockImplementation(async params => {
+    if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
+    const result = await original(params)
+    return { ...result, value: { ...result.value, sourceWritable: true, done: false } }
+  })
+  const journal = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }, abort.signal)[Symbol.asyncIterator]()
+  try {
+    expect((await journal.next()).value).toMatchObject({ type: 'snapshot', header: { id: 'arkme:windows:same' } })
+    expect(f.directory.writable('arkme:windows:same')).toBe(true)
+    expect(f.attributes.has('data-arkme-history-state')).toBe(false)
+    expect(f.wire.mock.calls.every(([params]) => params.body.mode === 'pull' || params.body.mode === 'close' || params.body.mode === 'call' && params.body.endpoint === 'session/page')).toBe(true)
+  } finally { abort.abort(); await journal.return() }
 })
 
 it('starts a new combined control generation instead of appending a second baseline', async () => {
@@ -964,10 +1007,13 @@ it('ignores an old cancelled read-only response after its successor became writa
   expect(f.directory.writable('arkme:creator:same')).toBe(true)
 })
 
-it('keeps stable-session actions available while their creator is offline', async () => {
+it('shows cloud history immediately for an offline channel and enables actions only after a Host response', async () => {
   const f = fixture()
   f.directory.publish([f.row('windows', { presence: 'offline', capabilities: ['session.native', 'session.native.channel'] })])
   f.directory.select('arkme:windows:same')
+  expect(f.directory.writable('arkme:windows:same')).toBe(false)
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('false')
+  await f.rpc('session/page', { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } })
   expect(f.directory.writable('arkme:windows:same')).toBe(true)
   expect((await f.rpc('session/selectModel', { request: { sessionId: 'arkme:windows:same', provider: 'deepseek', model: 'pro' } })).result.ok).toBe(true)
   expect(JSON.parse(String(f.fetch.mock.calls.at(-1)![1].body)).params).toMatchObject({ runtimeRef: 'windows', sessionRef: 'same' })
@@ -1025,7 +1071,7 @@ it.each([false, true])('restores the official journal from read-only after direc
     expect(f.wire.mock.calls.filter(([params]) => params.body.endpoint === 'session/follow')).toHaveLength(4)
     expect(f.wire.mock.calls.filter(([params]) => params.body.endpoint === '$events')).toHaveLength(4)
     expect(f.wire.mock.calls.filter(([params]) => params.body.endpoint === 'session/control')).toHaveLength(4)
-    expect(f.wire.mock.calls.every(([params]) => params.body.mode === 'pull' || params.body.mode === 'close')).toBe(true)
+    expect(f.wire.mock.calls.every(([params]) => params.body.mode === 'pull' || params.body.mode === 'close' || params.body.mode === 'call' && params.body.endpoint === 'session/page')).toBe(true)
   } finally { await dispose(); await pending?.catch(() => undefined); await vi.advanceTimersByTimeAsync(0); expect(vi.getTimerCount()).toBe(0) }
 })
 
@@ -1036,6 +1082,7 @@ it.each([{ executorRuntimeRef: 'restored' }, { directoryVersion: [2, 3] }, { his
   f.directory.publish([row]); f.directory.select('arkme:windows:same')
   f.fetch.mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true, value: {}, sourceWritable: false } }))
   await f.rpc('session/page', { request: { address: { sessionId: 'arkme:windows:same' } } })
+  f.wire.mockClear()
   f.wire.mockImplementation(async params => {
     if (params.body.mode === 'pull' && !params.body.endpoint) return await new Promise(() => {})
     const response = await original(params)
@@ -1110,4 +1157,118 @@ it('reopens a previously verified legacy source when presence returns without en
     expect(restored.generation).toBe(2)
     expect(f.directory.writable('arkme:windows:same')).toBe(true)
   } finally { await dispose(); await pending?.catch(() => undefined) }
+})
+
+it('shows a selected history failure and clears it when navigating to another session', async () => {
+  const f = fixture()
+  f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
+  f.wire.mockImplementation(async (params: any) => params.body.endpoint === 'session/follow'
+    ? { ok: false, error: { code: 'REMOTE_STORAGE_FAILED', message: 'history unavailable' } } as any
+    : { ok: true, value: { items: [], done: true } })
+  const iterator = f.hooks.openStream('session/follow', { args: { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } } }, new AbortController().signal)[Symbol.asyncIterator]()
+  await expect(iterator.next()).rejects.toThrow('history unavailable')
+  expect(f.attributes.get('data-arkme-history-state')).toBe('error')
+  f.directory.select('local')
+  expect(f.attributes.has('data-arkme-history-state')).toBe(false)
+})
+
+
+it('keeps cloud content visible after control readiness until an actual native history page arrives', async () => {
+  const f = fixture(); f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
+  expect(f.attributes.get('data-arkme-source-writable')).toBe('true')
+  expect(f.attributes.get('data-arkme-native-history-ready')).toBe('false')
+  await f.rpc('session/getModel', { request: { sessionId: 'arkme:windows:same' } })
+  expect(f.attributes.get('data-arkme-native-history-ready')).toBe('false')
+  f.fetch.mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true, value: { records: [], hasMore: false }, sourceWritable: true } }))
+  await f.rpc('session/page', { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } })
+  expect(f.attributes.get('data-arkme-native-history-ready')).toBe('true')
+  f.fetch.mockResolvedValueOnce(Response.json({ ok: true, value: { ok: true, value: {}, sourceWritable: false } }))
+  await f.rpc('session/page', { request: { address: { kind: 'session', sessionId: 'arkme:windows:same' } } })
+  expect(f.attributes.get('data-arkme-native-history-ready')).toBe('false')
+})
+
+it('keeps slow native reads off HTTP and cancels every old-view read on selection change', async () => {
+  const f = fixture(); f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:windows:same')
+  f.wire.mockImplementation(() => new Promise(() => {}))
+  const reads = Array.from({ length: 8 }, (_, i) => f.rpc('schedule/history', { request: { sessionId: 'arkme:windows:same', id: `task-${i}` } }))
+  const finished = Promise.allSettled(reads)
+  await vi.waitFor(() => expect(f.wire).toHaveBeenCalledTimes(8))
+  expect(f.http).not.toHaveBeenCalled(); expect(f.sockets).toHaveLength(1)
+  f.directory.select('arkme:linux:same')
+  expect((await finished).every(result => result.status === 'rejected' && result.reason.name === 'AbortError')).toBe(true)
+  expect(f.sockets[0]!.frames.filter(frame => frame.cancel)).toHaveLength(8)
+  expect(f.attributes.has('data-arkme-schedule-error')).toBe(false)
+})
+
+it('coalesces duplicate reads while one caller can detach without cancelling another', async () => {
+  const f = fixture(); f.directory.publish([f.row()]); f.directory.select('arkme:windows:same')
+  let finish!: (value: any) => void
+  f.wire.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const caller = new AbortController()
+  const body = JSON.stringify({ rpcId: 'one', method: 'schedule/list', payload: { args: { request: { sessionId: 'arkme:windows:same' } } } })
+  const one = f.hooks.fetch('api/schedule/list', { body, signal: caller.signal })
+  const cancelled = expect(one).rejects.toMatchObject({ name: 'AbortError' })
+  const two = f.rpc('schedule/list', { request: { sessionId: 'arkme:windows:same' } })
+  await vi.waitFor(() => expect(f.wire).toHaveBeenCalledTimes(1))
+  caller.abort(); await cancelled
+  expect(f.sockets[0]!.frames.some(frame => frame.cancel)).toBe(false)
+  finish({ ok: true, value: { ok: true, value: [{ id: 'task' }], sourceWritable: true } })
+  expect((await two).result).toEqual({ ok: true, value: [{ id: 'task' }], sourceWritable: true })
+})
+
+it('does not probe offline reminder stores until an actual reader becomes available', async () => {
+  const f = fixture(); f.directory.publish([f.row('windows', { presence: 'offline', capabilities: ['session.native.channel'] })]); f.directory.select('arkme:windows:same')
+  expect((await f.rpc('schedule/catalog', {})).result).toMatchObject({ ok: false, error: { code: 'RUNTIME_OFFLINE' } })
+  expect(f.wire).not.toHaveBeenCalled(); expect(f.http).not.toHaveBeenCalled()
+  f.directory.publish([f.row('windows', { presence: 'offline', localAvailable: true, capabilities: ['session.native.channel'] })])
+  f.wire.mockResolvedValueOnce({ ok: true, value: { ok: true, value: [], sourceWritable: true } })
+  expect((await f.rpc('schedule/catalog', {})).result.ok).toBe(true)
+})
+
+it('keeps dispatched writes alive on selection changes and does not replay reads on carrier loss', async () => {
+  const f = fixture(); f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:windows:same')
+  let finish!: (value: Response) => void
+  f.fetch.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const writing = f.rpc('session/prompt', { request: { sessionId: 'arkme:windows:same', content: [] } })
+  f.directory.select('arkme:linux:same')
+  finish(Response.json({ ok: true, value: { ok: true, value: {} } }))
+  expect((await writing).result.ok).toBe(true); expect(f.http).toHaveBeenCalledTimes(1)
+  f.wire.mockImplementation(() => new Promise(() => {}))
+  const reading = f.rpc('session/page', { request: { address: { sessionId: 'arkme:linux:same' } } })
+  const failed = expect(reading).rejects.toMatchObject({ dshRemoteStreamFailure: { kind: 'carrier' } })
+  await vi.waitFor(() => expect(f.wire).toHaveBeenCalledTimes(1))
+  f.sockets[0]!.close(); await failed
+  expect(f.wire).toHaveBeenCalledTimes(1)
+})
+
+it('updates sync from durable push receipts without another history request and fences stale responses and selections', async () => {
+  const f = fixture()
+  f.directory.publish([f.row(), f.row('linux')]); f.directory.select('arkme:windows:same')
+  await f.rpc('schedule/list', { request: { sessionId: 'arkme:windows:same' } })
+  const socket = f.sockets.find(value => String(value.url).includes('native-streams'))!
+  const update = (runtimeRef: string, state: string, revision: number) => socket.receive({ event: 'history-sync', runtimeRef, sessionRef: 'same', status: { state, nextSeq: 2, throughSeq: 1 }, revision })
+  update('windows', 'syncing', 1); expect(f.attributes.get('data-arkme-history-sync')).toBe('syncing')
+  update('windows', 'complete', 2); expect(f.attributes.get('data-arkme-history-sync')).toBe('complete')
+  update('windows', 'pending', 1); expect(f.attributes.get('data-arkme-history-sync')).toBe('complete')
+  f.fetch.mockImplementation(async () => Response.json({ ok: true, value: { ok: true, value: [], sourceWritable: true, historySync: { state: 'pending' } } }))
+  await f.rpc('schedule/list', { request: { sessionId: 'arkme:windows:same' } }); expect(f.attributes.get('data-arkme-history-sync')).toBe('complete')
+  f.directory.select('arkme:linux:same'); expect(f.attributes.has('data-arkme-history-sync')).toBe(false)
+  update('windows', 'syncing', 3); expect(f.attributes.has('data-arkme-history-sync')).toBe(false)
+  f.directory.select('arkme:windows:same'); expect(f.attributes.get('data-arkme-history-sync')).toBe('syncing')
+  socket.close(); await f.rpc('schedule/list', { request: { sessionId: 'arkme:windows:same' } })
+  update('windows', 'failed', 100); expect(f.attributes.has('data-arkme-history-sync')).toBe(false)
+})
+
+it('subscribes a folded local conversation without remote reads and bounds reconnects to the page lifetime', async () => {
+  vi.useFakeTimers()
+  const f = fixture()
+  f.directory.publish([f.row('windows', { local: true, localAvailable: true })], 'windows')
+  f.directory.select('same')
+  expect(f.sockets).toHaveLength(1); expect(f.wire).not.toHaveBeenCalled()
+  f.sockets[0]!.receive({ event: 'history-sync', runtimeRef: 'windows', sessionRef: 'same', status: { state: 'complete' }, revision: 1 })
+  expect(f.attributes.get('data-arkme-history-sync')).toBe('complete')
+  for (let i = 0; i < 7; i++) { f.sockets.at(-1)!.close(); await vi.advanceTimersByTimeAsync(30_000) }
+  expect(f.sockets).toHaveLength(7)
+  f.listeners.get('pagehide')!(); await vi.advanceTimersByTimeAsync(60_000)
+  expect(f.sockets).toHaveLength(7); expect(f.sockets.every(socket => socket.readyState === 3)).toBe(true)
 })

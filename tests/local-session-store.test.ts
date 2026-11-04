@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { expect, it } from 'vitest'
-import { localSessionProfilePatch, prepareLocalSessionStore } from '../src/local-session-store.js'
+import { localHistoryProfilePatch, localSessionProfilePatch, prepareLocalSessionStore } from '../src/local-session-store.js'
 import { LocalSessionOwnership } from '../src/local-session-ownership.js'
 
 it('moves complete native directories with cloud aliases and leaves conflicting histories untouched', async () => {
@@ -59,4 +59,19 @@ it('owns profile composition and rejects unsupported scopes before migration', a
   expect(() => localSessionProfilePatch({...input, environment: 'prod'})).toThrow('测试环境')
   expect(() => localSessionProfilePatch({...input, dshVersion: '0.1.5'})).toThrow('0.2.1-rc.2')
   await expect(prepareLocalSessionStore({...input, environment: 'prod', dshHome: join(input.root, 'unused')})).rejects.toThrow('测试环境')
+})
+
+it('preserves production and user patches and composes history idempotently without redirecting logs', () => {
+  const root = join(tmpdir(), 'history profile'), dshHome = join(root, 'dsh')
+  const input = { root: join(root, 'coordination'), accountRef: 'a'.repeat(64), environment: 'prod' as const,
+    dshVersion: '0.2.1-rc.2', pluginDir: join(root, 'plugin'), history: { dshHome, userHome: root,
+      indexRoot: join(root, '.arkme'), dataRoots: [], searchRoots: [] },
+    basePatch: '- id: arkme-self\n  config:\n    environment: prod\n- insert:\n  - id: user-extension\n    name: user-plugin\n  - id: arkme-local-history\n    name: stale\n' }
+  const patch = localHistoryProfilePatch(input)
+  expect(patch).toContain('environment: prod')
+  expect(patch).toContain('user-extension')
+  expect(patch).not.toContain('stale')
+  expect(patch).toContain('arkme-local-attachments')
+  expect(localHistoryProfilePatch({ ...input, basePatch: patch })).toBe(patch)
+  expect(() => localHistoryProfilePatch({ ...input, basePatch: '- id: session-persistence-jsonl\n  config:\n    root: /custom-store\n' })).toThrow('自定义')
 })

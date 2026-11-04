@@ -1,3 +1,4 @@
+import type { HistorySyncEvent } from '../local-history-cloud-repair.js'
 import { LocalHistoryCoverage, type LocalAliasReader } from './local-history-coverage.js'
 import { DshSessionChannelClient } from './session-channel.js'
 import type { DshDirectoryDelta } from './account-session-directory.js'
@@ -72,6 +73,9 @@ export class DshAccountSessions {
     connected: (signal: AbortSignal) => Promise<void>
     localNative?: (params: Record<string, unknown>, signal: AbortSignal) => Promise<unknown | undefined>
     localSession?: (runtimeRef: string, sessionRef: string) => boolean
+    observeLocalHistorySync?: (notify: (event: HistorySyncEvent) => void, signal: AbortSignal) => Promise<void>
+    observeLocalIdentity?: (row: Record<string, unknown>) => void
+    localAccess?: (runtimeRef: string, sessionRef: string) => import('./account-session-types.js').LocalSessionAccess | undefined
   }) {
     this.cloud = new DshCloudNativeTransport(options.request)
     if (options.localAliasReader) this.coverage = new LocalHistoryCoverage(options.localAliasReader)
@@ -158,8 +162,10 @@ export class DshAccountSessions {
       const row = object(raw), runtimeRef = ref(row.runtime_ref), runtime = runtimes.get(row.executor_runtime_ref ? ref(row.executor_runtime_ref) : runtimeRef)
       const deleted = Number(row.deleted_at ?? 0) > 0
       if (!runtime && !deleted) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '会话目录发生变化，请刷新', true)
-      if (runtime && !deleted) this.rememberStableRoute(runtimeRef, row.session_ref, runtime)
-      const localTakeover = this.options.localSession?.(runtimeRef, ref(row.session_ref)) === true
+      if (runtime && !deleted) this.rememberStableRoute(runtimeRef, row.session_ref, this.protocolRuntime(runtime, runtimes))
+      this.options.observeLocalIdentity?.(row)
+      const localAccess = this.options.localAccess?.(runtimeRef, ref(row.session_ref))
+      const localTakeover = localAccess?.readHistory ?? this.options.localSession?.(runtimeRef, ref(row.session_ref)) === true
       return {
         canonicalIdentity: row.canonical_identity === true,
         ...(Array.isArray(row.deduplicated_runtime_refs) ? { previousRuntimeRefs: row.deduplicated_runtime_refs.map(ref) } : {}),
@@ -170,15 +176,16 @@ export class DshAccountSessions {
         ...(Number.isSafeInteger(row.host_generation) && Number(row.host_generation) > 0 && Number.isSafeInteger(row.projection_at) && Number(row.projection_at) > 0
           ? { directoryVersion: [Number(row.host_generation), Number(row.projection_at)] as const } : {}),
         ...(deleted ? { deleted: true } : {}),
-        capabilities: runtime?.capabilities ?? [], title: String(row.title ?? ''), updatedAt: Number(row.source_updated_at), running: row.running === true,
+        capabilities: runtime ? this.protocolRuntime(runtime, runtimes).capabilities : [], title: String(row.title ?? ''), updatedAt: Number(row.source_updated_at), running: row.running === true,
         projectionAsOfSeq: Number.isSafeInteger(row.projection_as_of_seq) && Number(row.projection_as_of_seq) >= -1 ? Number(row.projection_as_of_seq) : -1,
         blank: row.blank === true, archived: row.archived === true, origin: String(row.origin ?? ''),
         desktopName: runtime?.desktopName ?? '', runtimeName: runtime?.runtimeName ?? '',
         sameDesktop: runtime !== undefined && runtime.desktopRef === localRuntime?.desktopRef,
         presence: (runtime?.presence === 'online' || runtime?.presence === 'offline' ? runtime.presence : 'unknown') as 'online' | 'offline' | 'unknown',
-        local: runtimeRef === localRuntimeRef || localTakeover,
+        local: runtimeRef === localRuntimeRef,
         ...(row.executor_runtime_ref ? { executorRuntimeRef: ref(row.executor_runtime_ref) } : {}),
-        ...(localTakeover ? { localTakeover: true } : {}),
+        ...(localTakeover ? { localAvailable: true, localTakeover: true } : {}),
+        ...(localAccess ? { localAccess } : {}),
       }
     })
     let warning: string | undefined
@@ -226,6 +233,15 @@ export class DshAccountSessions {
     return runtime
   }
 
+  private protocolRuntime(runtime: Runtime, runtimes: Map<string, Runtime>): Runtime {
+    if (runtime.presence === 'online' || runtime.capabilities.includes('session.commands.channel')) return runtime
+    // Protocol negotiation is account scoped; only a Host with verified local
+    // history may answer, and every write still requires its execution epoch.
+    const recovery = [...runtimes.values()].find(candidate => candidate.presence === 'online'
+      && candidate.capabilities.includes('session.commands.channel') && candidate.capabilities.includes('session.native.channel'))
+    return recovery ? { ...runtime, capabilities: recovery.capabilities } : runtime
+  }
+
   private rememberStableRoute(runtimeRef: string, sessionRef: unknown, runtime: Runtime): void {
     const key = JSON.stringify([runtimeRef, sessionRef])
     if (runtime.presence === 'online' && typeof sessionRef === 'string') this.cloud.resume(runtimeRef, sessionRef)
@@ -243,7 +259,9 @@ export class DshAccountSessions {
     // Once negotiated, the account channel routes by the canonical session.
     const value = await this.options.request.post(`${BASE}/sessions/execution`, { runtime_ref: canonical, session_ref: session }, signal)
     const executor = value.executor_runtime_ref ? ref(value.executor_runtime_ref) : canonical
-    const runtime = await this.runtime(executor, signal)
+    const runtimes = await this.runtimes(signal), executorRuntime = runtimes.get(executor)
+    if (!executorRuntime) throw new DshRemoteError('REMOTE_NOT_FOUND', '当前账号没有该实例')
+    const runtime = this.protocolRuntime(executorRuntime, runtimes)
     this.rememberStableRoute(canonical, session, runtime)
     return runtime
   }
@@ -362,12 +380,21 @@ export class DshAccountSessions {
     }, address => this.cloud.resume(address.runtimeRef, address.sessionRef))
   }
 
+  async observeHistorySync(notify: (event: HistorySyncEvent) => void, requestSignal: AbortSignal): Promise<void> {
+    const signal = await this.scope(requestSignal)
+    await this.options.observeLocalHistorySync?.(notify, signal)
+    signal.throwIfAborted()
+  }
+
   async observeDirectory(requestSignal: AbortSignal, notify: (delta?: DshDirectoryDelta) => void): Promise<void> {
     const signal = await this.scope(requestSignal)
     await this.accountChannel().observeDirectory(signal, delta => notify(delta === undefined ? undefined : {
-      ...delta, sessions: delta.sessions.map(row => ({ ...row,
-        localTakeover: this.options.localSession?.(row.runtime_ref, row.session_ref) === true,
-      })),
+      ...delta, sessions: delta.sessions.map(row => {
+        this.options.observeLocalIdentity?.(row)
+        const localAccess = this.options.localAccess?.(row.runtime_ref, row.session_ref)
+        const localAvailable = localAccess?.readHistory ?? this.options.localSession?.(row.runtime_ref, row.session_ref) === true
+        return { ...row, localAvailable, localTakeover: localAvailable, ...(localAccess ? { localAccess } : {}) }
+      }),
     }))
   }
 
@@ -443,19 +470,69 @@ export class DshAccountSessions {
   }
 
   async read(params: Record<string, unknown>, requestSignal?: AbortSignal): Promise<DshAccountSessionHistory> {
-    const signal = await this.scope(requestSignal), runtime = await this.executionRuntime(params.runtimeRef, params.sessionRef, signal), sessionRef = ref(params.sessionRef)
+    const signal = await this.scope(requestSignal), sessionRef = ref(params.sessionRef)
     const cursor = params.cursor === undefined ? undefined : object(params.cursor) as unknown as DshSessionHistoryCursor
-    if (cursor && (!['host', 'cloud'].includes(cursor.source) || !Number.isSafeInteger(cursor.before) || cursor.before < 0)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '历史游标无效')
+    if (cursor && (!['host', 'cloud', 'cloud-raw', 'cloud-format', 'local'].includes(cursor.source) || !Number.isSafeInteger(cursor.before) || cursor.before < 0)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '历史游标无效')
     if (params.source !== undefined && params.source !== 'host' && params.source !== 'cloud') throw new DshRemoteError('REMOTE_REQUEST_INVALID', '历史来源无效')
-    const source = cursor?.source ?? (params.source === 'host' ? 'host' : 'cloud')
-    if (source === 'host' && (runtime.presence === 'online' || runtime.capabilities.includes('session.commands.channel'))) {
+    if ((!cursor && params.source === undefined) || cursor?.source === 'local') {
+      const local = await this.options.localNative?.({ runtimeRef: ref(params.runtimeRef), sessionRef, requestRef: randomUUID(), body: {
+        mode: 'call', endpoint: 'session/page', payload: { args: { request: { address: { kind: 'session', sessionId: sessionRef }, ...(cursor ? { beforeSeq: cursor.before } : {}) } } },
+      } }, signal)
+      if (local !== undefined) {
+        const result = object(local)
+        if (result.ok !== true) throw new DshRemoteError('REMOTE_STORAGE_FAILED', String(object(result.error).message ?? '本机历史读取失败'))
+        const page = object(result.value), records = array(page.records).map(row => object(row).event) as DshRemoteHistoryEntry['event'][]
+        const entries = records.map(event => ({ type: 'event' as const, event }))
+        return { nodes: projectDshHistoryNodes(entries), local: true, online: false, complete: page.hasMore !== true,
+          ...(result.historySync ? { historySync: result.historySync as NonNullable<DshAccountSessionHistory['historySync']> } : {}),
+          ...(page.hasMore === true && records.length ? { nextCursor: { source: 'local' as const, before: records[0]!.seq } } : {}) }
+      }
+      if (cursor?.source === 'local') throw new DshRemoteError('REMOTE_NOT_FOUND', '本机历史来源已不可用，请重新打开会话')
+    }
+    const requestedSource = cursor?.source ?? params.source
+    const runtime = requestedSource && requestedSource !== 'host' ? undefined : await this.executionRuntime(params.runtimeRef, params.sessionRef, signal)
+    const source = requestedSource ?? (runtime?.presence === 'online' && runtime.capabilities.includes('session.history') ? 'host' : 'cloud')
+    if (source === 'host' && runtime && (runtime.presence === 'online' || runtime.capabilities.includes('session.commands.channel'))) {
       const value = object(await this.rpc(runtime, 'session.history', { session_ref: sessionRef, limit: 50, ...(cursor ? { before_seq: cursor.before } : {}), omit_superseded_chunks: true }, randomUUID(), signal, undefined, ref(params.runtimeRef)))
       const nodes = projectDshHistoryNodes(array(value.entries) as DshRemoteHistoryEntry[])
       return { nodes, complete: value.hasMore !== true, online: true, ...(value.nextCursor === undefined ? {} : { nextCursor: { source: 'host', before: Number(value.nextCursor) } }) }
     }
     if (source === 'host') throw new DshRemoteError('RUNTIME_OFFLINE', '源电脑已离线，请重新打开已同步历史', true)
+    const metadata = await this.options.request.post(`${BASE}/sessions/metadata`, { runtime_ref: ref(params.runtimeRef), session_ref: sessionRef }, signal)
+    signal.throwIfAborted()
+    if (metadata.native_history_format === 4 || source === 'cloud-format') {
+      if (cursor && cursor.source !== 'cloud-format') throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '历史版本已更新，请重新打开会话', true)
+      const value = await this.options.request.post(`${BASE}/session-history/format-read`, { runtime_ref: ref(params.runtimeRef), session_ref: sessionRef, format_version: 4, ...(cursor ? { before_seq: cursor.before } : {}) }, signal)
+      signal.throwIfAborted()
+      const header = object(value.header), entries = array(value.entries) as DshRemoteHistoryEntry[]
+      if (value.ready !== true || header.id !== sessionRef || header.version !== 4 || entries.length > 100
+        || !Number.isSafeInteger(value.through_seq) || Number(value.through_seq) < -1
+        || cursor && cursor.through !== value.through_seq
+        || entries.some((entry, index) => !Number.isSafeInteger(entry.event?.seq) || entry.event.seq < 0 || entry.event.seq > Number(value.through_seq)
+          || cursor && entry.event.seq >= cursor.before || index > 0 && entry.event.seq !== entries[index - 1]!.event.seq + 1)
+        || value.next_cursor !== undefined && value.next_cursor !== entries[0]?.event.seq) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '云端历史版本尚未就绪，请重新打开会话', true)
+      return { nodes: projectDshHistoryNodes(entries), online: false, complete: value.next_cursor === undefined,
+        ...(value.next_cursor === undefined ? {} : { nextCursor: { source: 'cloud-format' as const, before: Number(value.next_cursor), through: Number(value.through_seq) } }) }
+    }
+    const rawHistory = async (): Promise<DshAccountSessionHistory | undefined> => {
+      const raw = await this.options.request.post(`${BASE}/session-events/list`, { runtime_ref: ref(params.runtimeRef), session_ref: sessionRef, limit: 100, ...(cursor ? { before_seq: cursor.before } : {}) }, signal)
+      signal.throwIfAborted()
+      if (raw.complete !== true) return
+      const entries = array(raw.entries) as DshRemoteHistoryEntry[]
+      return { nodes: projectDshHistoryNodes(entries), online: false, complete: raw.next_cursor === undefined,
+        ...(raw.next_cursor === undefined ? {} : { nextCursor: { source: 'cloud-raw' as const, before: Number(raw.next_cursor) } }) }
+    }
+    if (source === 'cloud-raw') {
+      const raw = await rawHistory()
+      if (!raw) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '云端历史已变化，请重新打开会话', true)
+      return raw
+    }
     const value = await this.options.request.post(`${BASE}/session-turns/list`, { runtime_ref: ref(params.runtimeRef), session_ref: sessionRef, limit: 20, ...(cursor ? { before_start_seq: cursor.before } : {}) }, signal)
     signal.throwIfAborted()
+    if (value.complete !== true) {
+      const raw = await rawHistory()
+      if (raw) return raw
+    }
     const nodes = array(value.items).flatMap(raw => array(object(raw).nodes) as DshRemoteTimelineNode[]).sort((a, b) => a.anchor_seq - b.anchor_seq || a.ordinal - b.ordinal)
     return { nodes, complete: value.complete === true, online: false, ...(value.next_cursor === undefined ? {} : { nextCursor: { source: 'cloud', before: Number(value.next_cursor) } }), ...(value.complete === true ? {} : { warning: '部分历史尚未同步，等待源电脑补齐' }) }
   }
@@ -558,7 +635,7 @@ export class DshAccountSessions {
       if (body.mode === 'pull' && value.done === true && !route.sessionChannel) this.invalidateNativeRoute(route)
       else if (body.mode === 'pull') { const retained = this.nativeStreams.get(stream); if (retained) retained.timer.refresh() }
       signal.throwIfAborted()
-      if (value.done === true) this.nativeHistories.delete(stream)
+      if (body.mode === 'pull' && value.done === true) this.releaseStream(stream)
       if (!cache) return { ...value, sourceWritable: true }
       if (key && body.endpoint === 'session/page' && value.ok === true) this.cached(() => cache.write(key!, object(value.value).records as NativeHistoryRecord[]))
       if (history && Array.isArray(value.items)) {
@@ -582,6 +659,12 @@ export class DshAccountSessions {
       }
       return { ...value, sourceWritable: true }
     } catch (error) {
+      // A failed pull cannot retain capacity while its consumer opens a new generation.
+      if (body.mode === 'pull' && this.nativeStreams.has(stream)) {
+        this.releaseStream(stream)
+        void route.runtime.then(runtime => this.nativeRpc(runtime, { mode: 'close', streamRef: body.streamRef }, randomUUID(),
+          AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(3_000)]), route)).catch(() => undefined)
+      }
       if (route.sessionChannel && error instanceof DshRemoteError && error.code === 'RUNTIME_OFFLINE') {
         this.invalidateNativeRoute(route)
         if (!signal.aborted && (body.mode === 'pull' && body.endpoint !== undefined || body.mode === 'call' && body.endpoint === 'session/page')) return await readCloud()

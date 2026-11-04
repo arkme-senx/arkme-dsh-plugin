@@ -105,7 +105,6 @@ function ArkoPreview({ name }: { name: string }) {
 function HarnessHistory({ session }: { session: DshAccountSession }) {
   const read = useCallback(async (cursor: string | undefined, signal: AbortSignal): Promise<Page<DshRemoteTimelineNode>> => {
     const page = await callArkme<DshAccountSessionHistory>('remote.session.read', { runtimeRef: session.runtimeRef, sessionRef: session.sessionRef,
-      source: session.presence === 'online' && session.capabilities.includes('session.history') ? 'host' : 'cloud',
       ...(cursor ? { cursor: JSON.parse(cursor) as DshSessionHistoryCursor } : {}) }, signal)
     return { items: page.nodes, ...(page.nextCursor ? { cursor: JSON.stringify(page.nextCursor) } : {}), ...(page.warning ? { warning: page.warning } : {}) }
   }, [session.runtimeRef, session.sessionRef, session.presence, session.capabilities])

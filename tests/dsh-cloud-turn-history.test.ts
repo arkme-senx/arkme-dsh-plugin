@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
-import { readCloudTurnHistory } from '../src/dsh-remote/cloud-turn-history.js'
+import { readCloudTurnHistory, visitCloudTurnHistory } from '../src/dsh-remote/cloud-turn-history.js'
 import { DshCloudNativeTransport } from '../src/dsh-remote/cloud-native-transport.js'
 import { DshNativeHistoryCache } from '../src/dsh-remote/native-history-cache.js'
 import { DshRemoteError } from '../src/dsh-remote/errors.js'
@@ -216,4 +216,21 @@ it('reports download failures and cancels a stalled cloud request after its dead
     expect(timeout).toHaveBeenCalledWith(30_000)
     expect(stalled.cloud.has('timeout')).toBe(false)
   } finally { timeout.mockRestore() }
+})
+
+it('validates a large legacy turn one object at a time without widening native display limits', async () => {
+  const f = fixture(), item = f.objects[0]!, count = 50_001
+  item.value.events = Array.from({ length: count }, (_, seq) => ({ event: { seq, time: 1, type: seq === 0 ? 'turn/start' : 'assistant/chunk', data: {} } })) as typeof item.value.events
+  item.value.turn.end_seq = count - 1; item.value.integrity.event_count = count
+  item.index.end_seq = count - 1; item.index.event_count = count
+  item.bytes = gzipSync(JSON.stringify(item.value)); item.index.compressed_bytes = item.bytes.length
+  item.index.content_sha256 = createHash('sha256').update(item.bytes).digest('hex')
+  await expect(f.read()).rejects.toMatchObject({ code: 'CAPABILITY_UNSUPPORTED' })
+  expect(f.fetcher).not.toHaveBeenCalled()
+  let visited = 0
+  await visitCloudTurnHistory({ post: f.post }, identity, new AbortController().signal, entry => { visited++; return record(entry) })
+  expect(visited).toBe(count); expect(f.fetcher).toHaveBeenCalledOnce()
+  item.index.content_sha256 = '0'.repeat(64); visited = 0
+  await expect(visitCloudTurnHistory({ post: f.post }, identity, new AbortController().signal, entry => { visited++; return record(entry) })).rejects.toMatchObject({ code: 'REMOTE_INVALID_RESPONSE' })
+  expect(visited).toBe(0)
 })

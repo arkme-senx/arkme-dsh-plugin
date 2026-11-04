@@ -3,6 +3,7 @@ import type { DshRemoteHttpRequester } from './dsh-remote/control-plane.js'
 import type { DshRemoteSessionOwnership } from './dsh-remote/session-ownership-store.js'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import { createHash } from 'node:crypto'
+import { SharedReadGroup } from './shared-read-group.js'
 import { parseDshDirectoryDelta, type DshDirectorySession } from './dsh-remote/account-session-directory.js'
 
 type Json = Record<string, unknown>
@@ -12,7 +13,10 @@ const BASE = '/api/v1/dsh-remote'
  * outboxes still own retries and payloads; this adapter owns only addressing. */
 export class LocalSessionCloud implements DshRemoteHttpRequester, DshRemoteSessionOwnership {
   private runtime: { ref: string; generation: number } | undefined
+  repairHost(): { ref: string; generation: number } | undefined { return this.runtime && { ...this.runtime } }
   private readonly claims = new Map<string, { key: string; generation: number }>()
+  private readonly claimFlights = new SharedReadGroup<{ key: string; generation: number }>()
+  private readonly claiming = new Set<string>()
   private readonly snapshots = new Map<string, number>()
   private readonly metadata = new Map<string, string>()
 
@@ -21,7 +25,10 @@ export class LocalSessionCloud implements DshRemoteHttpRequester, DshRemoteSessi
     instance: string
     accountId: string
     request: DshRemoteHttpRequester
+    recoveredLocalSource?: (session: string) => boolean
   }) {}
+
+  close(): void { this.claimFlights.clear() }
 
   async ownerAccountId(id: string): Promise<string | undefined> {
     return this.options.ownership.address(id) ? this.options.accountId : undefined
@@ -69,13 +76,31 @@ export class LocalSessionCloud implements DshRemoteHttpRequester, DshRemoteSessi
     const key = `${execution.runtime_ref}/${execution.host_generation}/${owner.epoch}`
     let claim = this.claims.get(id)
     if (claim?.key !== key) {
-      const result = await this.options.request.post(`${BASE}/sessions/claim-execution`, { runtime_ref: owner.runtime, session_ref: id, execution }, signal)
-      if (!Number.isSafeInteger(result.host_generation) || Number(result.host_generation) < 1) throw new Error('会话执行权响应无效')
-      if (this.check(id).epoch !== owner.epoch) throw new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变', true)
-      claim = { key, generation: Number(result.host_generation) }
-      // A cache miss is harmless: the claim endpoint is idempotent.
-      if (this.claims.size >= 1024) this.claims.clear()
-      this.claims.set(id, claim)
+      const flightKey = JSON.stringify([owner.runtime, id, key])
+      claim = await this.claimFlights.run(flightKey, async shared => {
+        if (this.claiming.size >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '会话执行权登记数量超限', true)
+        this.claiming.add(flightKey)
+        try {
+          let localRecovery: Json | undefined
+          if (this.options.recoveredLocalSource?.(id)) {
+            const source = await this.options.request.post(`${BASE}/sessions/execution`, { runtime_ref: owner.runtime, session_ref: id }, shared)
+            if (!Number.isSafeInteger(source.host_generation) || Number(source.host_generation) < 1
+              || source.owner_epoch !== undefined && (!Number.isSafeInteger(source.owner_epoch) || Number(source.owner_epoch) < 0)) throw new Error('原会话执行权响应无效')
+            localRecovery = { host_generation: source.host_generation, owner_epoch: source.owner_epoch ?? 0, writer_acquired: true }
+            if (this.check(id).epoch !== owner.epoch || this.check(id).runtime !== owner.runtime) throw new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变', true)
+          }
+          const result = await this.options.request.post(`${BASE}/sessions/claim-execution`, { runtime_ref: owner.runtime, session_ref: id,
+            execution: { ...execution, ...(localRecovery ? { local_recovery: localRecovery } : {}) } }, shared)
+          shared.throwIfAborted()
+          if (!Number.isSafeInteger(result.host_generation) || Number(result.host_generation) < 1) throw new Error('会话执行权响应无效')
+          if (this.check(id).epoch !== owner.epoch || this.check(id).runtime !== owner.runtime) throw new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变', true)
+          const accepted = { key, generation: Number(result.host_generation) }
+          // A cache miss is harmless: the claim endpoint is idempotent.
+          if (this.claims.size >= 1024) this.claims.clear()
+          this.claims.set(id, accepted)
+          return accepted
+        } finally { this.claiming.delete(flightKey) }
+      }, signal)
     }
     return { runtime_ref: owner.runtime, host_generation: claim.generation, execution }
   }
@@ -89,6 +114,7 @@ export class LocalSessionCloud implements DshRemoteHttpRequester, DshRemoteSessi
       const result = await this.options.request.post(path, body, signal)
       if (typeof result.runtime_ref !== 'string' || !Number.isSafeInteger(result.host_generation)) throw new Error('实例注册响应无效')
       this.runtime = { ref: result.runtime_ref, generation: Number(result.host_generation) }
+      this.claimFlights.clear()
       this.claims.clear(); this.snapshots.clear(); this.metadata.clear()
       return result
     }
@@ -124,6 +150,7 @@ export class LocalSessionCloud implements DshRemoteHttpRequester, DshRemoteSessi
         catch (error) {
           // Handoff can precede first publication. The backend verifies the
           // current executor and the canonical address share one desktop.
+          if (this.options.recoveredLocalSource?.(id)) throw error
           if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'REMOTE_NOT_FOUND') throw error
           const result = await this.options.request.post(path, { ...body, runtime_ref: owner.runtime, snapshot_ref: '', items: [item],
             execution: { runtime_ref: this.runtime!.ref, host_generation: this.runtime!.generation, owner_epoch: owner.epoch },
@@ -131,7 +158,7 @@ export class LocalSessionCloud implements DshRemoteHttpRequester, DshRemoteSessi
           accepted(result, owner.runtime, [item])
           // Successful managed sync already stores the writer and metadata.
           // The next real write can resolve its canonical generation on demand.
-          if (this.check(id).epoch !== owner.epoch) throw new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变', true)
+          if (this.check(id).epoch !== owner.epoch || this.check(id).runtime !== owner.runtime) throw new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变', true)
         }
         if (address) accepted(await this.options.request.post(path, { ...body, ...address, snapshot_ref: '', items: [item] }, signal), owner.runtime, [item])
         if (this.metadata.size >= 10000 && !this.metadata.has(id)) this.metadata.clear()
@@ -161,7 +188,7 @@ export class LocalSessionCloud implements DshRemoteHttpRequester, DshRemoteSessi
       }
       return { items }
     }
-    if (typeof body.session_ref === 'string' && path.startsWith(`${BASE}/session-`)) {
+    if (typeof body.session_ref === 'string' && (path.startsWith(`${BASE}/session-`) || path === `${BASE}/annotations/source-context`)) {
       const address = path.endsWith('/list')
         ? { runtime_ref: this.check(body.session_ref).runtime }
         : await this.address(body.session_ref, signal)

@@ -53,7 +53,7 @@ it('previews Harness tasks then real read-only history without navigation or com
   await act(async () => root.render(<BuiltinConversationPreview kind="harness" name="DeepSeek Harness" onClose={close} />))
   await act(async () => button('任务甲项目').click())
   expect(document.body.textContent).toContain('真实回复')
-  expect(call).toHaveBeenLastCalledWith('remote.session.read', {runtimeRef:'runtime',sessionRef:'session',source:'cloud'},expect.any(AbortSignal))
+  expect(call).toHaveBeenLastCalledWith('remote.session.read', {runtimeRef:'runtime',sessionRef:'session'},expect.any(AbortSignal))
   expect(call.mock.calls.every(([op]) => ['remote.sessions.list','remote.session.read'].includes(op))).toBe(true)
   await act(async () => document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
   expect(close).toHaveBeenCalledOnce()

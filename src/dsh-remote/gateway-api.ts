@@ -87,6 +87,12 @@ export function createDshGatewayApi(
       return { items: array(value.items) as WorkspaceValue['items'], archivedSessionIds: array(value.archivedSessionIds) as string[] }
     }) },
     sessions: {
+      modelState: wrap(async payload => {
+        const snapshot = await opening('session', 'follow', { request: { address: { kind: 'session', sessionId: payload.sessionId }, maxMessages: 1 } })
+        if (snapshot.type !== 'snapshot') throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 会话缺少 snapshot')
+        const values = record(record(snapshot.projections).values)
+        return values.modelSelection === undefined ? {} : record(values.modelSelection)
+      }),
       rename: wrap(async payload => record(await invoke('rename', payload)) as unknown as SessionValue<'rename'>),
       list: wrap(async payload => record(await invoke('list', payload)) as unknown as SessionValue<'list'>),
       create: wrap(async payload => record(await invoke('create', payload)) as unknown as SessionValue<'create'>),

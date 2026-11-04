@@ -28,7 +28,7 @@ export function accountSessionTools(directory: DshAccountSessions) {
       execute: async (args, exec) => JSON.stringify(await directory.list({ ...(args.cursor_json ? { cursor: JSON.parse(args.cursor_json) as unknown } : {}), ...(args.limit === undefined ? {} : { limit: args.limit }) }, exec.signal)),
     }),
     defineTool({
-      name: 'arkme_dsh_session_read', description: '读取账号会话列表返回的精确 runtimeRef/sessionRef 的历史。源电脑离线时读取已同步历史，complete 不代表源电脑仍在线。',
+      name: 'arkme_dsh_session_read', description: '读取账号会话列表返回的精确 runtimeRef/sessionRef 的历史。优先读取验证归属的本机旧实例日志，否则读取已同步历史；local 表示本机日志，complete 不代表源电脑仍在线。',
       parameters: { runtime_ref: { type: 'string', required: true }, session_ref: { type: 'string', required: true }, cursor_json: { type: 'string' } },
       output: TEXT_OUTPUT, isConcurrencySafe: () => true,
       execute: async (args, exec) => JSON.stringify(await directory.read({ runtimeRef: args.runtime_ref, sessionRef: args.session_ref, ...(args.cursor_json ? { cursor: JSON.parse(args.cursor_json) as unknown } : {}) }, exec.signal)),

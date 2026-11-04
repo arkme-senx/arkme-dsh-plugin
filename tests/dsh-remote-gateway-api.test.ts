@@ -8,6 +8,20 @@ import { createDshGatewayApi, type DshGatewayLike } from '../src/dsh-remote/gate
 import { DshApiProxyAdapter } from '../src/dsh-remote/api-proxy-adapter.js'
 
 const peers: Peer[] = []
+it('reads one model projection without listing the corpus and closes the observation', async () => {
+  const f = fixture()
+  const stopped = vi.fn()
+  vi.mocked(f.gateway.stream).mockImplementation(async input => (async function* () {
+    try {
+      expect(input).toMatchObject({ namespace: 'session', method: 'follow', args: { request: { address: { kind: 'session', sessionId: 'old-session' } } } })
+      yield { type: 'snapshot', projections: { values: { modelSelection: { next: { provider: 'deepseek', model: 'model' } } } } }
+    } finally { stopped(input.signal?.aborted) }
+  })())
+  const adapter = new DshApiProxyAdapter(f.api)
+  expect(await adapter.sessionModel({ sessionId: 'old-session' })).toEqual({ current: { provider: 'deepseek', model: 'model' } })
+  expect(f.gateway.invoke).not.toHaveBeenCalled()
+  expect(stopped).toHaveBeenCalledWith(true)
+})
 afterEach(async () => { await Promise.all(peers.splice(0).map(peer => peer.dispose())) })
 
 function feed(signal: AbortSignal) {

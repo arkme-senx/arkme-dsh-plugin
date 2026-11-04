@@ -7,12 +7,12 @@ import { DshRemoteError } from '../src/dsh-remote/errors.js'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const stop of cleanup.splice(0).reverse()) await stop() })
-async function fixture() {
+async function fixture(observeHistorySync?: (notify: (event: any) => void, signal: AbortSignal) => Promise<void>) {
   const native = vi.fn(async (_params: Record<string, unknown>, _signal: AbortSignal): Promise<unknown> => ({ items: [{ type: 'ready' }], sourceWritable: false }))
   const server = createServer((_req, res) => res.end('available'))
   server.listen(0, '127.0.0.1'); await once(server, 'listening')
   const port = (server.address() as { port: number }).port
-  const carrier = new DshNativeSocket(() => ({ native }) as never, port)
+  const carrier = new DshNativeSocket(() => ({ native, observeHistorySync }) as never, port)
   server.on('upgrade', carrier.handler)
   cleanup.push(async () => { carrier.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) })
   return { native, carrier, origin: `http://127.0.0.1:${port}`, url: `ws://127.0.0.1:${port}/native-streams` }
@@ -76,4 +76,43 @@ it('preserves retryability across the browser carrier boundary', async () => {
   f.native.mockRejectedValueOnce(new DshRemoteError('HOST_GENERATION_STALE', 'host restarted', true))
   const message = once(client, 'message'); client.send(request('retry'))
   expect(JSON.parse(String((await message)[0]))).toMatchObject({ ok: false, error: { code: 'HOST_GENERATION_STALE', retryable: true } })
+})
+
+it('multiplexes slow readonly calls, cancels consumers, and keeps writes out of the carrier', async () => {
+  const f = await fixture(), signals: AbortSignal[] = [], messages: any[] = []
+  f.native.mockImplementation(async (_params, signal) => {
+    signals.push(signal)
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    return { ok: true, value: [] }
+  })
+  const client = new WebSocket(f.url, { origin: f.origin })
+  client.on('message', data => messages.push(JSON.parse(String(data)))); await once(client, 'open')
+  for (let i = 0; i < 8; i++) client.send(JSON.stringify({ id: `read-${i}`, params: {
+    runtimeRef: 'owned', sessionRef: 'old', requestRef: `read-${i}`, body: { mode: 'call', endpoint: 'schedule/list', payload: { args: {} } },
+  } }))
+  await vi.waitFor(() => expect(signals).toHaveLength(8))
+  expect(await (await fetch(f.origin)).text()).toBe('available')
+  client.send(JSON.stringify({ id: 'write', params: { body: { mode: 'call', endpoint: 'schedule/update' } } }))
+  await vi.waitFor(() => expect(messages).toHaveLength(1))
+  expect(messages[0]).toMatchObject({ id: 'write', ok: false, error: { code: 'REMOTE_REQUEST_INVALID' } })
+  client.send(JSON.stringify({ id: 'read-0', cancel: true }))
+  await vi.waitFor(() => expect(signals[0]?.aborted).toBe(true))
+  expect(signals.slice(1).every(signal => !signal.aborted)).toBe(true)
+  client.close(); await once(client, 'close')
+  await vi.waitFor(() => expect(signals.every(signal => signal.aborted)).toBe(true))
+})
+
+
+it('pushes account-scoped history receipts without a read and releases the observer on disconnect', async () => {
+  let send!: (event: any) => void, signal!: AbortSignal
+  const f = await fixture(async (notify, scoped) => {
+    send = notify; signal = scoped
+    await new Promise<void>(resolve => scoped.addEventListener('abort', () => resolve(), { once: true }))
+  })
+  const client = new WebSocket(f.url, { origin: f.origin }); await once(client, 'open')
+  const received = once(client, 'message')
+  send({ runtimeRef: 'canonical', sessionRef: 'old', status: { state: 'complete', nextSeq: 2, throughSeq: 1 }, revision: 3 })
+  expect(JSON.parse(String((await received)[0]))).toMatchObject({ event: 'history-sync', revision: 3, status: { state: 'complete' } })
+  expect(f.native).not.toHaveBeenCalled()
+  client.close(); await once(client, 'close'); await vi.waitFor(() => expect(signal.aborted).toBe(true))
 })

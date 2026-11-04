@@ -154,7 +154,9 @@ export function applyAccountSessionDelta(previous: DshAccountSession[], value: u
       running: item.running, blank: item.blank, archived: item.archived, origin: item.origin ?? '',
       capabilities: source?.capabilities ?? [], desktopName: source?.desktopName ?? '', runtimeName: source?.runtimeName ?? '',
       sameDesktop: source?.sameDesktop ?? false, presence: source?.presence ?? 'unknown',
-      local: item.runtime_ref === localRuntimeRef || item.localTakeover === true,
+      local: item.runtime_ref === localRuntimeRef,
+      ...(item.localAvailable !== undefined ? { localAvailable: item.localAvailable } : {}),
+      ...(item.localAccess ? { localAccess: item.localAccess } : {}),
       ...(item.localTakeover ? { localTakeover: true } : {}),
       ...(item.executor_runtime_ref ? { executorRuntimeRef: item.executor_runtime_ref } : {}),
     })
@@ -362,7 +364,7 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   const command = async (id: string, operation: string, body = {}) => {
     const target = remote(id)
     if (!target) throw new Error('会话不存在')
-    if (!target.local) { readOnly(); return }
+    if (!target.local && !(target.localAvailable ?? target.localTakeover)) { readOnly(); return }
     const value = await callArkme('remote.session.command', { runtimeRef: target.runtimeRef, sessionRef: target.sessionRef, operation, body, requestRef: crypto.randomUUID() }, catalog.signal)
     await catalog.refresh()
     return value
@@ -376,8 +378,8 @@ function AccountBrowser({ Native, surface, ...props }: BrowserProps & { Native: 
   }
   return <>
     <Native {...props} useSessions={useSessions} useWorkspaces={useWorkspaces} useStore={useStore} open={open}
-      renameSession={async (id, title) => { if (id.startsWith('arkme:')) { readOnly(); return }; if (remote(id)) await command(id, 'session.rename', { title }); else await props.renameSession(id, title) }}
-      archiveSession={async id => { if (id.startsWith('arkme:')) { readOnly(); return }; if (!remote(id)) return props.archiveSession(id); await command(id, 'session.archive') }}
+      renameSession={async (id, title) => { if (remote(id)) await command(id, 'session.rename', { title }); else await props.renameSession(id, title) }}
+      archiveSession={async id => { if (!remote(id)) return props.archiveSession(id); await command(id, 'session.archive') }}
       forkSession={id => { if (!id.startsWith('arkme:') && !remote(id)) props.forkSession(id); else setOperationError('此操作需要在对话所属电脑上执行。') }}
       startSession={id => {
         if (!id?.startsWith('arkme:')) { props.startSession(id); return }
