@@ -1,3 +1,9 @@
+import { parseArkoTimelineCache } from '../arko-timeline-cache.js'
+import { WindowedTimelineRows } from './WindowedTimelineRows.js'
+import { subscribeThoughtInvalidation } from './thought-invalidations.js'
+import { arkoTimelineMemory } from './arko-timeline-memory.js'
+import { ArkoInteractionRow } from './ArkoInteractionRow.js'
+import type { ArkmeArkoTimelineCache, ArkmeArkoInteractionPage, ArkmeArkoInteraction } from '../arko-timeline-contract.js'
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import type { ArkmeArkoLifecycleItem, ArkmeArkoLifecycleSnapshot } from '../arko-lifecycle-contract.js'
 import { ArkmeDictationButton } from './ArkmeDictationButton.js'
@@ -83,30 +89,7 @@ type ArkoMessageRole = 'user' | 'assistant' | 'divider'
 type ArkoMessageStatus = 'sending' | 'done' | 'error'
 const arkoQuestionMaxLength = 60 * 1024
 
-interface ArkoMessage {
-  messageRef?: string
-  lifecycleVersion?: number
-  localMarkRef?: string
-  id: string
-  messageId?: number
-  sessionId?: number
-  role: ArkoMessageRole
-  text: string
-  contentBlocks?: ArkmeContentBlock[]
-  reasoning?: string
-  status: ArkoMessageStatus
-  createdAtMillis?: number
-  orderAtMillis?: number
-  sourceType?: number
-  createdRecordUids?: string[]
-  assistantMsgId?: number
-  runUid?: string
-  runStatus?: string
-  messageActionRef?: string
-  messageActionConversationRef?: string
-  copyLinkAvailable?: boolean
-  forwardAvailable?: boolean
-}
+type ArkoMessage = import('../arko-timeline-contract.js').ArkoTimelineMessage
 
 interface ArkoContinuationTarget {
   assistantMsgId: number
@@ -455,9 +438,10 @@ export function ArkmeArkoSurface() {
   const draft = draftSnapshot.text
   const accountKey = authSnapshot.auth?.status === 'authenticated' && profileUserId !== undefined
     ? `${authSnapshot.auth.environment}:${String(profileUserId)}` : undefined
+  const initialTimeline = useRef(arkoTimelineMemory.get(accountKey))
   const profile = profileSnapshot.userId === profileUserId ? profileSnapshot.profile : undefined
   const [userProfile, setUserProfile] = useState<ArkmeUserProfile | null>(null)
-  const [session, setSession] = useState<ArkmeArkoSession>()
+  const [session, setSession] = useState<ArkmeArkoSession | undefined>(initialTimeline.current?.session)
   useSyncExternalStore(arkoModelCache.subscribe, arkoModelCache.getRevision, arkoModelCache.getRevision)
   const catalog = arkoModelCache.get(accountKey)
   useEffect(() => {
@@ -469,7 +453,21 @@ export function ArkmeArkoSurface() {
     })
     return () => { active = false }
   }, [accountKey])
-  const [messages, setMessages] = useState<ArkoMessage[]>([])
+  const [messages, setMessages] = useState<ArkoMessage[]>(initialTimeline.current?.messages ?? [])
+  const interactionReadQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const readInteractions = useCallback((query: import('../arko-timeline-contract.js').ArkmeArkoInteractionQuery, signal: AbortSignal) => {
+    const task = interactionReadQueue.current.catch(() => undefined).then(() => { signal.throwIfAborted(); return callArkme<ArkmeArkoInteractionPage>('arko.interactions', { ...query }, signal) })
+    interactionReadQueue.current = task
+    return task
+  }, [])
+  const [interactions, setInteractions] = useState<ArkmeArkoInteraction[]>(initialTimeline.current?.interactions ?? [])
+  const [interactionCursor, setInteractionCursor] = useState<string | undefined>(initialTimeline.current?.interactionCursor)
+  const [interactionError, setInteractionError] = useState('')
+  const mergeInteractions = (old: ArkmeArkoInteraction[], page: ArkmeArkoInteractionPage) => {
+    const removed = new Set(page.removedKeys)
+    return [...new Map([...old.filter(item => !removed.has(item.interactionKey)), ...page.items].map(item => [item.interactionKey, item])).values()]
+      .sort((a,b) => a.occurredAtMillis - b.occurredAtMillis || a.interactionKey.localeCompare(b.interactionKey))
+  }
   const [historyWindow, setHistoryWindow] = useState<ArkmeArkoContextWindow>()
   const [windowLoading, setWindowLoading] = useState(false)
   const [windowError, setWindowError] = useState<{ direction: 'asc' | 'desc'; message: string }>()
@@ -514,11 +512,61 @@ export function ArkmeArkoSurface() {
     const element = bodyRef.current?.querySelector<HTMLElement>(`[data-arko-selection-key="history:${locationTarget}"]`)
     element?.scrollIntoView?.({ block: 'center' })
   }, [locationTarget, historyWindow])
-  useEffect(() => { setHistoryWindow(undefined); setWindowError(undefined); setWindowLoading(false); setLocationTarget(undefined); followTailRef.current = true }, [accountKey])
-  const [historyCursor, setHistoryCursor] = useState<string>()
+  useEffect(() => { setHistoryWindow(undefined); setWindowError(undefined); setWindowLoading(false); setLocationTarget(undefined); followTailRef.current = arkoTimelineMemory.get(accountKey)?.viewport?.followTail ?? true }, [accountKey])
+  const [historyCursor, setHistoryCursor] = useState<string | undefined>(initialTimeline.current?.historyCursor)
   const [historyError, setHistoryError] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(!initialTimeline.current)
   const [historyLoading, setHistoryLoading] = useState(false)
+  const timelineSnapshot = useRef<ArkmeArkoTimelineCache>()
+  const committedTimeline: ArkmeArkoTimelineCache = { schemaVersion: 1, savedAtMillis: Date.now(), messages, interactions,
+    ...(session ? { session } : {}), ...(historyCursor ? { historyCursor } : {}), ...(interactionCursor ? { interactionCursor } : {}) }
+  const restoredTimelineScope = useRef<string>()
+  const [viewportAnchor, setViewportAnchor] = useState<string | undefined>(initialTimeline.current?.viewport?.anchorId)
+  const restoreTimelineViewport = useRef(initialTimeline.current?.viewport)
+  useLayoutEffect(() => {
+    if (restoredTimelineScope.current === accountKey) return
+    restoredTimelineScope.current = accountKey
+    const cached = arkoTimelineMemory.get(accountKey)
+    setMessages(cached?.messages ?? []); setInteractions(cached?.interactions ?? []); setSession(cached?.session)
+    setHistoryCursor(cached?.historyCursor); setInteractionCursor(cached?.interactionCursor); setInteractionError('')
+    setViewportAnchor(cached?.viewport?.anchorId)
+    restoreTimelineViewport.current = cached?.viewport
+    followTailRef.current = cached?.viewport?.followTail ?? true
+    setLoading(!cached)
+  }, [accountKey])
+  useLayoutEffect(() => {
+    const viewport = restoreTimelineViewport.current, body = bodyRef.current
+    if (!viewport || !body || !messages.length && !interactions.length) return
+    const offset = arkmeConversationAnchorOffset(body,viewport.anchorId)
+    body.scrollTop = viewport.followTail ? body.scrollHeight : offset === undefined || viewport.anchorOffset === undefined
+      ? viewport.scrollTop : Math.max(0,body.scrollTop+offset-viewport.anchorOffset)
+    restoreTimelineViewport.current = undefined
+  }, [messages, interactions])
+  useLayoutEffect(() => {
+    if (!accountKey) return
+    const body = bodyRef.current
+    return () => {
+      const value = timelineSnapshot.current
+      if (!value) return
+      const snapshot = { ...value, savedAtMillis: Date.now(), ...(body ? { viewport: { ...arkmeConversationViewport(body,false,true), followTail: followTailRef.current } } : {}) }
+      arkoTimelineMemory.set(accountKey, snapshot)
+      void callArkme('arko.timeline.cache', { accountScope: accountKey, value: snapshot }).catch(() => undefined)
+    }
+  }, [accountKey])
+  useLayoutEffect(() => { timelineSnapshot.current = committedTimeline })
+  useEffect(() => {
+    if (!accountKey) return
+    // Coalesce committed page changes. Streaming and keystrokes never write snapshots.
+    if (messages.some(item => item.status === 'sending')) return
+    const timer = setTimeout(() => {
+      const value = timelineSnapshot.current, body = bodyRef.current
+      if (!value) return
+      const snapshot = { ...value, savedAtMillis: Date.now(), ...(body ? { viewport: { ...arkmeConversationViewport(body,false,true), followTail: followTailRef.current } } : {}) }
+      arkoTimelineMemory.set(accountKey, snapshot)
+      void callArkme('arko.timeline.cache', { accountScope: accountKey, value: snapshot }).catch(() => undefined)
+    }, 700)
+    return () => clearTimeout(timer)
+  }, [accountKey, messages, interactions, historyCursor, interactionCursor, session])
   const bottomVisibility = useScrollBottomVisibility(bodyRef, recordsRef, !loading, visibleMessages)
   const measureBottom = useRef(bottomVisibility.measure)
   measureBottom.current = bottomVisibility.measure
@@ -556,7 +604,7 @@ export function ArkmeArkoSurface() {
     if (bodyRef.current) observer.observe(bodyRef.current)
     if (recordsRef.current) observer.observe(recordsRef.current)
     return () => observer.disconnect()
-  }, [loading, visibleMessages, bottomVisibility.measure])
+  }, [loading, visibleMessages, interactions, bottomVisibility.measure])
   const [sending, setSending] = useState(false)
   const [clearing, setClearing] = useState(false)
   const selectingModel = arkoModelCache.isSelecting(accountKey)
@@ -719,47 +767,116 @@ export function ArkmeArkoSurface() {
   }, [profileUserId, scrollToBottom])
 
   useEffect(() => {
+    if (!accountKey) return
     const controller = new AbortController()
-    setLoading(true)
-    setError('')
-    setHistoryError('')
-    void Promise.allSettled([
-      callArkme<ArkmeArkoSession>('arko.session', undefined, controller.signal),
-      callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal),
-      readLatestArkoMessages(controller.signal),
-      callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async snapshot => (
-        snapshot.profile === null
-          ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)
-          : snapshot
-      )),
-    ]).then(([sessionResult, profileResult, historyResult, userProfileResult]) => {
-      if (controller.signal.aborted) return
-      if (sessionResult.status === 'rejected') {
-        setError(errorMessage(sessionResult.reason))
-        return
-      }
-      setSession(sessionResult.value)
-      if (profileResult.status === 'fulfilled' && profileUserId !== undefined) {
-        arkmeArkoProfileStore.setProfile(profileUserId, profileResult.value)
-      }
-      if (userProfileResult.status === 'fulfilled') setUserProfile(userProfileResult.value.profile)
-      if (historyResult.status === 'fulfilled') {
-        setMessages(current => mergeHistory(current, historyResult.value.items))
-        setHistoryCursor(historyResult.value.nextCursor)
-        scrollToBottom()
-        const restoredRun = latestActiveRun(historyResult.value.items, sessionResult.value.sessionId)
-        if (restoredRun !== undefined) {
-          setActiveRun(restoredRun)
-          setSending(true)
+    setError(''); setHistoryError('')
+    void (async () => {
+      let cached = arkoTimelineMemory.get(accountKey)
+      if (!cached) {
+        cached = parseArkoTimelineCache(await callArkme<unknown>('arko.timeline.cache', { accountScope: accountKey }, controller.signal).catch(() => undefined))
+        if (controller.signal.aborted) return
+        if (cached) {
+          arkoTimelineMemory.set(accountKey, cached)
+          setMessages(cached.messages); setInteractions(cached.interactions); setSession(cached.session)
+          setHistoryCursor(cached.historyCursor); setInteractionCursor(cached.interactionCursor)
+          setViewportAnchor(cached.viewport?.anchorId); restoreTimelineViewport.current = cached.viewport; followTailRef.current = cached.viewport?.followTail ?? true
+          setLoading(false)
         }
-      } else {
-        setHistoryError(tr("加载 Arko 对话记录失败：{v0}", { v0: errorMessage(historyResult.reason) }))
       }
-    }).finally(() => {
-      if (!controller.signal.aborted) setLoading(false)
+      const latestAt = Math.max(0, ...(cached?.messages ?? []).map(item => item.orderAtMillis ?? item.createdAtMillis ?? 0))
+      const sessionRead = callArkme<ArkmeArkoSession>('arko.session', undefined, controller.signal)
+      const historyRead = latestAt > 0
+        ? callArkme<ArkmeArkoMessagePage>('arko.messages', { startAtMillis: latestAt, direction: 'asc', limit: 50 }, controller.signal)
+        : readLatestArkoMessages(controller.signal)
+      const applyHistory = historyRead.then(async first => {
+        let page = first, cursor: string | undefined
+        const visited = new Set<string>()
+        do {
+          if (controller.signal.aborted) return
+          if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
+          setMessages(current => mergeHistory(current, page.items)); setLoading(false)
+          if (!cached) setHistoryCursor(first.nextCursor)
+          else if (page.items.length) scrollToBottom()
+          cursor = latestAt > 0 && page.hasMore ? page.nextCursor : undefined
+          if (cursor) { if (visited.has(cursor) || visited.size >= 100) throw new Error('Arko history cursor did not advance'); visited.add(cursor)
+            page = await callArkme<ArkmeArkoMessagePage>('arko.messages', { cursor, startAtMillis: latestAt, direction: 'asc', limit: 50 }, controller.signal) }
+        } while (cursor)
+        const restoredSession = await sessionRead
+        if (controller.signal.aborted) return
+        const restoredRun = latestActiveRun(first.items, restoredSession.sessionId)
+        if (restoredRun) { setActiveRun(restoredRun); setSending(true) }
+        if (!cached) scrollToBottom()
+      }).catch(caught => { if (!controller.signal.aborted) setHistoryError(tr('加载 Arko 对话记录失败：{v0}', { v0: errorMessage(caught) })) })
+      const applySession = sessionRead.then(value => { if (!controller.signal.aborted) setSession(value) }).catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught)) })
+      const profileRead = callArkme<ArkmeArkoProfile>('arko.profile', undefined, controller.signal).then(value => { if (!controller.signal.aborted && profileUserId !== undefined) arkmeArkoProfileStore.setProfile(profileUserId, value) })
+      const userRead = callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async value => value.profile ? value : callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)).then(value => { if (!controller.signal.aborted) setUserProfile(value.profile) })
+      // External records load independently; slow owner authorization cannot block direct chat.
+      const interactionRead = (async () => {
+        const after = Math.max(0, ...(cached?.interactions ?? []).map(item => item.occurredAtMillis))
+        let cursor: string | undefined
+        const visited = new Set<string>()
+        do {
+          const page = await readInteractions(cursor ? { cursor, limit: 20 } : { limit: 20, ...(after ? { afterMillis: after } : {}) }, controller.signal)
+          if (controller.signal.aborted || page.accountScope !== accountKey) return
+          if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
+          setInteractions(current => mergeInteractions(current, page))
+          if (!cached?.interactions.length) { setInteractionCursor(page.nextCursor); break }
+          cursor = page.hasMore ? page.nextCursor : undefined
+          if (cursor) { if (visited.has(cursor) || visited.size >= 100) throw new Error('Arko interaction cursor did not advance'); visited.add(cursor) }
+        } while (cursor)
+        setInteractionError('')
+      })().catch(caught => { if (!controller.signal.aborted) setInteractionError(errorMessage(caught)) })
+      const validateCached = async () => {
+        for (let at = 0; at < (cached?.interactions.length ?? 0); at += 100) {
+          const page = await readInteractions({ knownRefs: cached!.interactions.slice(at, at + 100).map(item => item.interactionRef) }, controller.signal)
+          if (controller.signal.aborted || page.accountScope !== accountKey) return
+          setInteractions(current => mergeInteractions(current, page))
+        }
+      }
+      await Promise.allSettled([applyHistory, applySession, profileRead, userRead, interactionRead, validateCached()])
+    })().finally(() => { if (!controller.signal.aborted) setLoading(false) })
+    return () => controller.abort()
+  }, [accountKey, profileUserId, scrollToBottom])
+
+  useEffect(() => {
+    if (!accountKey) return
+    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined, inFlight = false, dirty = false, revalidate = false
+    const refresh = async () => {
+      if (inFlight || controller.signal.aborted || document.visibilityState === 'hidden') return
+      inFlight = true; dirty = false
+      const verify = revalidate; revalidate = false
+      try {
+        const loaded = timelineSnapshot.current?.interactions ?? []
+        const after = Math.max(0, ...loaded.map(item => item.occurredAtMillis))
+        let cursor: string | undefined; const seen = new Set<string>()
+        do {
+          const page = await readInteractions(cursor ? { cursor, limit: 20 } : { limit: 20, ...(after ? { afterMillis: after } : {}) }, controller.signal)
+          if (controller.signal.aborted || page.accountScope !== accountKey) return
+          if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
+          setInteractions(current => mergeInteractions(current,page))
+          if (!loaded.length) { setInteractionCursor(page.nextCursor); break }
+          cursor = page.hasMore ? page.nextCursor : undefined
+          if (cursor) { if (seen.has(cursor) || seen.size >= 100) throw new Error('Arko interaction cursor did not advance'); seen.add(cursor) }
+        } while (cursor)
+        if (verify) for(let at=0;at<loaded.length;at+=100) {
+          const page = await readInteractions({knownRefs:loaded.slice(at,at+100).map(item=>item.interactionRef)},controller.signal)
+          if (controller.signal.aborted || page.accountScope!==accountKey) return
+          if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current=arkmeConversationViewport(bodyRef.current)
+          setInteractions(current=>mergeInteractions(current,page))
+        }
+        setInteractionError('')
+      } catch(caught) { if(!controller.signal.aborted) setInteractionError(errorMessage(caught)) }
+      finally { inFlight=false; if(dirty&&!controller.signal.aborted) timer=setTimeout(()=>{void refresh()},250) }
+    }
+    const unsubscribe=subscribeThoughtInvalidation(change=>{
+      if(change.accountScope!==accountKey || change.stream && change.stream.phase==='generating') return
+      dirty=true; revalidate ||= change.clear===true
+      if(timer) clearTimeout(timer); timer=setTimeout(()=>{void refresh()},250)
     })
-    return () => { controller.abort() }
-  }, [profileUserId, scrollToBottom])
+    const onVisible=()=>{if(dirty&&document.visibilityState!=='hidden')void refresh()}
+    document.addEventListener('visibilitychange',onVisible)
+    return()=>{controller.abort();unsubscribe();if(timer)clearTimeout(timer);document.removeEventListener('visibilitychange',onVisible)}
+  },[accountKey,readInteractions])
 
   const lifecycleHistoryRef = useRef({ accountKey, generation: lifecycleGeneration, allMessages, historyWindow })
   lifecycleHistoryRef.current = { ...lifecycleHistoryRef.current, allMessages, historyWindow }
@@ -872,16 +989,31 @@ export function ArkmeArkoSurface() {
   }, [activeRun, profileUserId, scrollToBottom])
 
   const loadEarlier = useCallback(async () => {
-    if (historyCursor === undefined || historyLoadInFlightRef.current) return
+    if (historyCursor === undefined && interactionCursor === undefined || historyLoadInFlightRef.current) return
     historyLoadInFlightRef.current = true
     setHistoryLoading(true)
     const controller = new AbortController(); historyController.current = controller
     try {
-      const page = await callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50, cursor: historyCursor }, controller.signal)
+      const expired = (error: unknown) => error instanceof ArkmeClientError && error.body.code === 'arkme-code-1001'
+      const messageRead = historyCursor ? callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50, cursor: historyCursor }, controller.signal).catch(caught => {
+        if (!expired(caught)) throw caught
+        const oldest = Math.min(...messages.map(item=>item.orderAtMillis??item.createdAtMillis??Infinity))
+        return callArkme<ArkmeArkoMessagePage>('arko.messages', {limit:50,...(Number.isFinite(oldest)?{endAtMillis:oldest+1}:{})},controller.signal)
+      }) : Promise.resolve(undefined)
+      const interactionRead = interactionCursor ? readInteractions({ limit: 20, cursor: interactionCursor }, controller.signal).catch(caught => {
+        if (!expired(caught)) throw caught
+        const oldest = Math.min(...interactions.map(item=>item.occurredAtMillis))
+        return readInteractions({limit:20,...(Number.isFinite(oldest)?{beforeMillis:oldest+1}:{})},controller.signal)
+      }) : Promise.resolve(undefined)
+      const [messageResult, interactionResult] = await Promise.allSettled([messageRead,interactionRead])
+      const page=messageResult.status==='fulfilled'?messageResult.value:undefined
+      const interactionPage=interactionResult.status==='fulfilled'?interactionResult.value:undefined
       if (controller.signal.aborted) return
       if (!historyViewRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
-      setMessages(current => mergeHistory(current, page.items))
-      setHistoryCursor(page.nextCursor)
+      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor) }
+      if (interactionPage && interactionPage.accountScope === accountKey) { setInteractions(current => mergeInteractions(current, interactionPage)); setInteractionCursor(interactionPage.nextCursor) }
+      if(messageResult.status==='rejected') throw messageResult.reason
+      if(interactionResult.status==='rejected') throw interactionResult.reason
       setHistoryError('')
     } catch (caught) {
       if (controller.signal.aborted) return
@@ -890,19 +1022,19 @@ export function ArkmeArkoSurface() {
       historyLoadInFlightRef.current = false
       setHistoryLoading(false)
     }
-  }, [historyCursor])
+  }, [historyCursor, interactionCursor, accountKey, messages, interactions, readInteractions])
 
   useEffect(() => {
     const root = bodyRef.current
     const sentinel = historySentinelRef.current
-    if (historyWindow !== undefined || loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyCursor === undefined) return
+    if (historyWindow !== undefined || loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyCursor === undefined && interactionCursor === undefined) return
     const observer = new IntersectionObserver(entries => {
       if (entries[0]?.isIntersecting !== true || historyLoadInFlightRef.current) return
       void loadEarlier()
     }, { root, rootMargin: '120px 0px 0px' })
     observer.observe(sentinel)
     return () => { observer.disconnect() }
-  }, [historyError, historyLoading, historyCursor, loadEarlier, loading, historyWindow])
+  }, [historyError, historyLoading, historyCursor, interactionCursor, loadEarlier, loading, historyWindow])
 
   const pageWindow = async (direction: 'asc' | 'desc') => {
     const current = historyWindow
@@ -936,8 +1068,8 @@ export function ArkmeArkoSurface() {
       const controller = new AbortController(); windowController.current = controller
       const page = await readLatestArkoMessages(controller.signal)
       controller.signal.throwIfAborted()
-      setMessages(current => mergeHistory(current, page.items))
-      setHistoryCursor(page.nextCursor)
+      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor) }
+
       setHistoryError('')
       // The historical DOM is still mounted here. Own the next layout before
       // its scroll events can turn off latest-follow or paint the old position.
@@ -961,8 +1093,8 @@ export function ArkmeArkoSurface() {
     try {
       const page = await readLatestArkoMessages(controller.signal)
       if (controller.signal.aborted) return
-      setMessages(current => mergeHistory(current, page.items))
-      setHistoryCursor(page.nextCursor)
+      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor) }
+
       scrollToBottom()
       if (session !== undefined) {
         const restoredRun = latestActiveRun(page.items, session.sessionId)
@@ -1252,6 +1384,13 @@ export function ArkmeArkoSurface() {
         ? pendingTurn?.images?.length ? '正在发送图片并等待回复' : '等待回复'
         : continuation === undefined ? '' : '继续当前任务'
 
+  const timelineRows = useMemo(() => {
+    const rows = [
+      ...visibleMessages.map(message => ({ kind: 'message' as const, message, at: message.orderAtMillis ?? message.createdAtMillis ?? Date.now(), key: message.id })),
+      ...(historyWindow ? [] : interactions.map(interaction => ({ kind: 'interaction' as const, interaction, at: interaction.occurredAtMillis, key: `interaction:${interaction.interactionKey}` }))),
+    ]
+    return rows.sort((a,b) => a.at - b.at || a.key.localeCompare(b.key))
+  }, [visibleMessages, messages, interactions, historyCursor, interactionCursor, historyWindow])
   return <div ref={shellRef} style={styles.shell}>
     {messageMarks.layer}
     <ArkmeMessageTextSelectionToolbar key={accountKey ?? 'logged-out'} replySourceRef={markSourceRef} selfNote={{ sourceLabel: displayName || 'Arko', ...(accountKey ? { accountKey } : {}) }}
@@ -1308,17 +1447,28 @@ export function ArkmeArkoSurface() {
           {historyLoading ? tr("加载中...") : tr("重新加载")}
         </button>
       </div>}
+      {interactionError && <div role="status" style={{ ...styles.notice, fontSize: 12 }}>
+        {tr('互动记录暂未同步，已加载内容仍可查看。')}
+        <button type="button" style={styles.retryButton} onClick={() => {
+          void callArkme<ArkmeArkoInteractionPage>('arko.interactions', { limit: 20 }).then(page => { if (page.accountScope === accountKey) { setInteractions(current => mergeInteractions(current, page)); setInteractionCursor(page.nextCursor); setInteractionError('') } }).catch(() => undefined)
+        }}>{tr('重试')}</button>
+      </div>}
       {pendingTurn !== undefined && !sending && activeRun === undefined && <div style={{ ...styles.notice, ...styles.feedbackRow }}>
         <span>{tr("上一次发送结果尚未确认，请先用原请求标识完成对账。")}</span>
         <button data-arkme-feedback="neutral" type="button" style={styles.retryButton} onClick={() => { void submitTurn(pendingTurn) }}>{tr("重试确认")}</button>
       </div>}
       {historyWindow === undefined && <div ref={historySentinelRef} style={styles.historySentinel} />}
       {historyWindow === undefined && historyLoading && <div style={styles.historyLoading} role="status">{tr("正在加载更早内容…")}</div>}
-      {!loading && historyError === '' && visibleMessages.length === 0 && <div style={styles.empty}>{tr("暂无对话记录")}</div>}
-      {visibleMessages.length > 0 && <ul ref={recordsRef} style={styles.records} data-arkme-message-selection-scope data-arkme-message-selecting={messageActions.selecting}>
-        {visibleMessages.map((item, index) => {
-          const previous = visibleMessages[index - 1]
-          const startsDay = item.role !== 'divider' && item.createdAtMillis !== undefined && arkoHistoryDate(item.createdAtMillis) !== '' && (previous?.createdAtMillis === undefined || dayKey(previous.createdAtMillis) !== dayKey(item.createdAtMillis))
+      {!loading && historyError === '' && timelineRows.length === 0 && <div style={styles.empty}>{tr("暂无对话记录")}</div>}
+      {timelineRows.length > 0 && <ul ref={recordsRef} style={styles.records} data-arkme-message-selection-scope data-arkme-message-selecting={messageActions.selecting}>
+        <WindowedTimelineRows scrollport={bodyRef} rowIds={timelineRows.map(row=>({id:row.key}))} anchorId={locationTarget!==undefined ? `history:${locationTarget}` : viewportAnchor}>
+        {timelineRows.map((row, index) => {
+          const startsDay = (row.kind==='interaction'||row.message.role!=='divider') && (index===0 || dayKey(timelineRows[index-1]!.at)!==dayKey(row.at))
+          if (row.kind === 'interaction') return <Fragment key={row.key}>{startsDay && <li style={arkmeConversationMessageLayout.date}><ArkmeConversationDate at={row.at}/></li>}<ArkoInteractionRow item={row.interaction} scope={accountKey!}/></Fragment>
+          const item = row.message
+          const previousRow = timelineRows[index - 1]
+          const previous = previousRow?.kind === 'message' ? previousRow.message : undefined
+
           const activity = arkoRunActivityLabel(item.runStatus)
           const showThinking = item.role === 'assistant'
             && shouldShowArkoThinking(item.status, item.reasoning)
@@ -1403,7 +1553,7 @@ export function ArkmeArkoSurface() {
             </div>
           </li>}
         </Fragment>})}
-      </ul>}
+      </WindowedTimelineRows></ul>}
     </div>
 
     <ArkmeConversationBottomControl showBackToBottom={bottomVisibility.visible || historyWindow !== undefined}

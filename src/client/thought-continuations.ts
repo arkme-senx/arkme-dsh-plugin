@@ -1,3 +1,4 @@
+import { arkoInteractionJump } from './arko-interaction-jump.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ArkmeThoughtContinuation } from '../thought-continuation.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -8,7 +9,7 @@ import { appendThoughtContinuationPage, readThoughtContinuationWindow, type Thou
 
 /** One mounted detail owns one cancellable poll, suspended while hidden.
  * The backend job continues independently of the browser lifetime. */
-export function useThoughtContinuations(sourceRef: string | undefined, actionRef: string | undefined, tasks: readonly DetailExtensionSend[]) {
+export function useThoughtContinuations(sourceRef: string | undefined, actionRef: string | undefined, tasks: readonly DetailExtensionSend[], rootUid?: string, sourceKey?: string) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
   const [state, setState] = useState<{ scope: string; key: string; items: ArkmeThoughtContinuation[]; supported: boolean; cursor?: string; error?: string; window?: ThoughtContinuationWindow }>({ scope: '', key: '', items: [], supported: false })
@@ -102,6 +103,16 @@ export function useThoughtContinuations(sourceRef: string | undefined, actionRef
     }
   }, [scope, key, sendKey, revision])
   const current: typeof state = state.scope === scope && state.key === key ? state : { scope, key, items: [], supported: false }
+  const target = useSyncExternalStore(arkoInteractionJump.subscribe, arkoInteractionJump.snapshot, arkoInteractionJump.snapshot)
+  const locationPages = useRef({ revision: 0, count: 0, cursor: '' })
+  useEffect(() => {
+    if (!target?.replyId || target.scope !== scope || target.rootUid !== rootUid || target.sourceKey !== sourceKey || !current.cursor
+      || current.items.some(item => item.id === target.replyId)) return
+    if (locationPages.current.revision !== target.revision) locationPages.current = { revision: target.revision, count: 0, cursor: '' }
+    if (locationPages.current.count >= 50 || locationPages.current.cursor === current.cursor) return
+    locationPages.current.count++; locationPages.current.cursor=current.cursor
+    more.current()
+  }, [target, scope, rootUid, sourceKey, current.cursor, current.items])
   return { ...current, pendingReplyRecordUids: [...pending.current.ids], nextCursor: current.cursor, retryingId,
     retry: (id: string) => { void retry.current(id) }, loadMore: () => more.current(), refresh: () => setRevision(n => n + 1) }
 }

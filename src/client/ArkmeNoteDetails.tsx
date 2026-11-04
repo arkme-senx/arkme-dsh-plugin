@@ -1,3 +1,4 @@
+import { arkoInteractionJump } from './arko-interaction-jump.js'
 import { detailExtensionSends, useDetailExtensionSends, DetailExtensionSendStatus, type DetailExtensionSend } from './detail-extension-send.js'
 import { readDetailExtensionPages } from './detail-extension-pages.js'
 import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
@@ -721,7 +722,7 @@ function DetailExtensionContext({
 }) {
   const quoteThreads = useMessageQuoteThreads()
   const thoughtReplies = useRecordThoughtReplySummary(rootItem)
-  const continuations = useThoughtContinuations(sourceRef, rootItem.messageActionRef, sendTasks)
+  const continuations = useThoughtContinuations(sourceRef, rootItem.messageActionRef, sendTasks, rootItem.itemUid, sourceIdentityKey)
   const context = state.kind === 'success' ? state.context : undefined
   const byUid = new Map<string, ArkmeMessageCopyLinkExtensionItem>()
   for (const item of optimistic) byUid.set(item.recordUid, item)
@@ -914,6 +915,30 @@ export function ArkmeTimelineDetailDrawer({
     scrollAnchorRef.current = anchor
     return () => { anchor(); if (scrollAnchorRef.current === anchor) scrollAnchorRef.current = undefined }
   }, [replyScopeKey, historyOpen, relatedView])
+  const interactionJump = useSyncExternalStore(arkoInteractionJump.subscribe, arkoInteractionJump.snapshot, arkoInteractionJump.snapshot)
+  useEffect(() => {
+    const request = interactionJump, body = bodyRef.current
+    if (!request || !body || request.scope !== accountKey || request.rootUid !== item.itemUid
+      || request.sourceKey !== (sourceIdentityKey ?? normalizedSourceRef) || historyOpen || relatedView !== 'source-detail') return
+    const expiry = setTimeout(() => arkoInteractionJump.consume(request.revision), Math.max(0,request.expiresAt-Date.now()))
+    let frame: number | undefined
+    const align = () => {
+      frame = undefined
+      const target = request.replyId
+        ? [...body.querySelectorAll<HTMLElement>('[data-arkme-thought-reply]')].find(node => node.dataset.arkmeThoughtReply === request.replyId)
+        : body.querySelector<HTMLElement>('[data-arkme-record-thought-content]')
+      if (!target) return
+      body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 12
+      scrollAnchorRef.current?.rebase()
+      arkoInteractionJump.consume(request.revision)
+    }
+    const schedule = () => { if (frame === undefined) frame = requestAnimationFrame(align) }
+    const cancel = () => arkoInteractionJump.consume(request.revision)
+    const observer = new MutationObserver(schedule); observer.observe(body, { childList: true, subtree: true })
+    body.addEventListener('wheel',cancel,{passive:true}); body.addEventListener('touchmove',cancel,{passive:true})
+    schedule()
+    return () => { clearTimeout(expiry); observer.disconnect(); if(frame!==undefined) cancelAnimationFrame(frame); body.removeEventListener('wheel',cancel); body.removeEventListener('touchmove',cancel) }
+  }, [interactionJump, accountKey, item.itemUid, sourceIdentityKey, normalizedSourceRef, historyOpen, relatedView])
   const quickNoteDetailsSupported = item.quickNoteDetailsSupported !== false
   const extensionParent = extensionState.kind === 'success'
     ? extensionState.context.extensionParent ?? item.extensionParent : item.extensionParent

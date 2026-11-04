@@ -671,6 +671,18 @@ export class ArkmeSdk {
   private async requireArkoHistory(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.arkoHistoryReadsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 历史读取，请升级', retryable: false })
   }
+  async arkoInteractions(query: import('../arko-timeline-contract.js').ArkmeArkoInteractionQuery = {}, signal?: AbortSignal): Promise<import('../arko-timeline-contract.js').ArkmeArkoInteractionPage> {
+    await this.requireArkoTimeline(signal); return this.call('arko.interactions', { ...query }, signal)
+  }
+  async arkoInteractionOpen(interactionRef: string, signal?: AbortSignal): Promise<import('../arko-timeline-contract.js').ArkmeArkoInteractionTarget> {
+    await this.requireArkoTimeline(signal); return this.call('arko.interaction.open', { interactionRef }, signal)
+  }
+  async arkoTimelineCache(accountScope: string, value?: import('../arko-timeline-contract.js').ArkmeArkoTimelineCache): Promise<import('../arko-timeline-contract.js').ArkmeArkoTimelineCache | undefined> {
+    await this.requireArkoTimeline(); return (await this.call<import('../arko-timeline-contract.js').ArkmeArkoTimelineCache | null>('arko.timeline.cache', { accountScope, ...(value ? { value } : {}) })) ?? undefined
+  }
+  private async requireArkoTimeline(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.arkoInteractionTimelineV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持 Arko 互动时间线，请升级', retryable: false })
+  }
   async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal): Promise<ArkmeArkoMessagePage> {
     await this.requireArkoHistory(signal)
     return this.call('arko.messages', { ...query }, signal)
@@ -3358,3 +3370,5 @@ export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditM
 export type { WorldReactionRequest, WorldReactionResponse, WorldReactionArchiveRequest, WorldReactionContext, WorldReactionContextPage, WorldReactionHistoryEvent, WorldReactionHistoryPage, WorldReactionNotificationPage } from '../world-reaction-contract.js'
 
 export type { TeamWorldRequest, TeamWorldResponse, TeamWorldContext, TeamWorldCapabilities, TeamWorldOriginal, TeamWorldReceipt, TeamWorldFeedback, TeamWorldFeedbackTarget, TeamWorldActivity, TeamWorldPreview } from '../team-world-contract.js'
+
+export type { ArkmeArkoInteraction, ArkmeArkoInteractionQuery, ArkmeArkoInteractionPage, ArkmeArkoInteractionTarget, ArkmeArkoTimelineCache, ArkmeArkoTimelinePort } from '../arko-timeline-contract.js'

@@ -135,6 +135,7 @@ import {
 } from './world-voiceprint-copy.js'
 import { AiVideoService } from './services/ai-video-service.js'
 import { AiLetterService } from './services/ai-letter-service.js'
+import { ArkoTimelineService } from './services/arko-timeline-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementSourceService } from './services/arrangement-source-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
@@ -514,6 +515,7 @@ export class ArkmeService {
   private readonly outgoingCall: OutgoingCallService
   private readonly world: WorldService
   private readonly recordExport: RecordExportService
+  private readonly arkoTimeline: ArkoTimelineService
   private readonly arko: ArkoService
   private readonly group: GroupService
   private readonly publicSocial: PublicSocialService
@@ -880,6 +882,7 @@ export class ArkmeService {
         return { kind: 'record', record_uid: source.itemUid, version: source.version }
       },
     })
+    this.arkoTimeline = new ArkoTimelineService(this.runtime, this.source)
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
       read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
 withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
@@ -1405,7 +1408,7 @@ arkoImagesV1:true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
         arkoLifecycleV1: true,
-        arkoHistoryReadsV1: true,
+        arkoHistoryReadsV1: true, arkoInteractionTimelineV1: true,
         recordExportV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
@@ -1814,6 +1817,9 @@ arkoImagesV1:true,
   async arkoLifecycle(refs: readonly string[] = [], signal?: AbortSignal) { return this.arko.arkoLifecycle(refs, signal) }
   async arkoChangeLifecycle(command: import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, signal?: AbortSignal) { return this.arko.arkoChangeLifecycle(command, signal) }
   async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal) { return this.arko.arkoRecentlyDeleted(cursor, signal) }
+  async arkoInteractions(query?: import('./arko-timeline-contract.js').ArkmeArkoInteractionQuery, signal?: AbortSignal) { return this.arkoTimeline.arkoInteractions(query, signal) }
+  async arkoInteractionOpen(ref: string, signal?: AbortSignal) { return this.arkoTimeline.arkoInteractionOpen(ref, signal) }
+  async arkoTimelineCache(scope: string, value?: import('./arko-timeline-contract.js').ArkmeArkoTimelineCache) { return this.arkoTimeline.arkoTimelineCache(scope, value) }
   async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal) {
     const { userId } = await this.runtime.requireSession()
     const page = await this.arko.arkoMessages(query, signal)
