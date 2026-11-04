@@ -1,4 +1,4 @@
-import { parseDayReviewModels, assertDayReviewEnvelope, emptyDayReviewState, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState, reviewKinds, reviewObject, reviewText, type DayReviewQuery, type DayReviewOriginalEvidence, type DayReviewEvidenceQuery } from '../calendar-day-review.js'
+import { validDayReviewModelRoute, parseDayReviewModels, assertDayReviewEnvelope, emptyDayReviewState, parseDayReviewQuery, parseDayReviewResult, parseDayReviewState, reviewKinds, reviewObject, reviewText, type DayReviewQuery, type DayReviewOriginalEvidence, type DayReviewEvidenceQuery } from '../calendar-day-review.js'
 import { parseReviewPromptConfig, parseReviewPromptSupport, sameReviewPrompts, type ReviewPromptSupport } from '../calendar-day-review-prompts.js'
 import type { ExploreSource } from '../explore-contract.js'
 import type { ArkmeCallDetail, ArkmeRecordingWindow } from '../types.js'
@@ -94,12 +94,15 @@ export class CalendarDayReviewService {
     if (!/^[a-zA-Z0-9-]{16,100}$/.test(requestId)) throw new Error('生成请求标识无效')
     const promptConfig = v.promptConfig === undefined ? undefined : parseReviewPromptConfig(v.promptConfig)
     const modelCode = v.modelCode === undefined ? undefined : reviewText(v.modelCode, 100)
+    const modelRoute = v.modelRoute === undefined ? undefined : reviewText(v.modelRoute, 256)
+    if (modelCode && modelRoute || modelRoute && !validDayReviewModelRoute(modelRoute)) throw new ArkmePluginError('calendar-review-model-unsupported', '模型选择无效，本次未提交生成', false, 409)
     const reuseResultId = v.reuseResultId === undefined ? undefined : reviewText(v.reuseResultId)
-    const request = { ...query, sourceKinds: sources, requestId, ...(modelCode ? { modelCode } : {}), ...(promptConfig ? { promptConfig } : {}), ...(reuseResultId ? { reuseResultId } : {}) }
+    const request = { ...query, sourceKinds: sources, requestId, ...(modelCode ? { modelCode } : {}), ...(modelRoute ? { modelRoute } : {}), ...(promptConfig ? { promptConfig } : {}), ...(reuseResultId ? { reuseResultId } : {}) }
     const pending = await this.pending(query)
-    if (!pending) {
+    if (!pending || modelRoute) {
       const capability = await this.capabilities(session, signal)
       if (!capability) throw unavailable()
+      if (modelRoute && capability.unified_models_v1 !== true) throw new ArkmePluginError('calendar-review-model-unsupported', '当前服务尚不支持此模型，选择已保留且未改用其他模型', false, 409)
       if (modelCode && capability.model_selection_v1 !== true) throw new ArkmePluginError('calendar-review-model-unsupported', '服务尚不支持自选模型，未提交生成', false, 409)
       if ((promptConfig && capability.prompt_config_v1 !== true) || (reuseResultId && capability.snapshot_reuse !== true)) throw new ArkmePluginError('calendar-review-prompt-unsupported', '服务尚不支持自定义提示词或复用资料，未提交生成', false, 409)
     }
@@ -108,7 +111,7 @@ export class CalendarDayReviewService {
     await this.guard(query, session, epoch, signal)
     let value: unknown
     try {
-      value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId, outputs: ['summary', 'timeline'], ...(modelCode ? { model_code: modelCode } : {}), ...(promptConfig ? { prompt_config: promptConfig } : {}), ...(reuseResultId ? { reuse_result_id: reuseResultId } : {}) }, session, signal, true)
+      value = await this.request('create', { ...this.body(query), source_kinds: sources, request_id: requestId, outputs: ['summary', 'timeline'], ...(modelCode ? { model_code: modelCode } : {}), ...(modelRoute ? { model_route: modelRoute } : {}), ...(promptConfig ? { prompt_config: promptConfig } : {}), ...(reuseResultId ? { reuse_result_id: reuseResultId } : {}) }, session, signal, true)
     } catch (error) {
       // A definite domain rejection is not a lost acknowledgement. Unknown
       // transport/settlement outcomes keep the immutable request for reconciliation.
@@ -126,6 +129,7 @@ export class CalendarDayReviewService {
       || JSON.stringify(receipt.outputs) !== JSON.stringify(['summary', 'timeline'])
       || (promptConfig && !sameReviewPrompts(parseReviewPromptConfig(receipt.prompt_config), promptConfig))
       || (receipt.model_code ?? '') !== (modelCode ?? '')
+      || (receipt.model_route ?? '') !== (modelRoute ?? '')
       || (receipt.reuse_result_id ?? '') !== (reuseResultId ?? '')
       || (state.job && state.job.id !== receipt.job_id) || (state.result && state.result.id !== receipt.job_id)) throw new Error('生成配置尚未确认，请核对同一次请求')
     parseReviewPromptConfig(receipt.prompt_config)
@@ -157,7 +161,7 @@ export class CalendarDayReviewService {
     const capability = await this.capabilities(session, signal)
     await this.guard(query, session, epoch, signal)
     if (!capability || capability.model_selection_v1 !== true) throw new ArkmePluginError('calendar-review-model-unsupported', '服务尚不支持自选模型，请更新服务后重试', false, 409)
-    const value = await this.request('models', this.body(query), session, signal)
+    const value = await this.request('models', { ...this.body(query), ...(capability.unified_models_v1 === true ? { unified_models_v1: true } : {}) }, session, signal)
     await this.guard(query, session, epoch, signal)
     return parseDayReviewModels(value, query)
   }

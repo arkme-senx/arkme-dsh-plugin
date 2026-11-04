@@ -4,6 +4,7 @@ import { ArkmeCalendarDayReview } from '../src/client/ArkmeCalendarDayReview.js'
 import { callArkme } from '../src/client/api.js'
 import { ArkmeClientError } from '../src/sdk/index.js'
 import { parseReviewPromptConfig, parseReviewPromptSnapshot, reviewPromptStorageKey } from '../src/calendar-day-review-prompts.js'
+vi.mock('../src/client/use-unified-models.js', () => ({ useUnifiedModels: () => ({ loading: false, refresh: async () => {} }) }))
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/explore/ExploreSurface.js', () => ({ ExploreRecordingSource: () => null }))
 vi.mock('../src/client/ArkmeNoteDetails.js', () => ({ ArkmeTimelineDetailDrawer: () => null }))
@@ -36,13 +37,13 @@ describe('calendar prompt editing and actual generation binding', () => {
     await act(async () => button('保存配置').props.onClick())
     await act(async () => button('更新回顾').props.onClick())
     vi.mocked(callArkme).mockRejectedValueOnce(new ArkmeClientError({ code, message: '本次生成未受理', retryable: false }))
-    await act(async () => button('确认').props.onClick())
+    await act(async () => button('确认并生成').props.onClick())
     expect(content()).toContain('本次生成未受理')
     expect(content()).not.toContain('核对提交')
     expect(button('恢复默认').props.disabled).toBe(false)
     await act(async () => button('恢复默认').props.onClick())
     await act(async () => button('更新回顾').props.onClick())
-    await act(async () => button('确认').props.onClick())
+    await act(async () => button('确认并生成').props.onClick())
     const submissions = vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')
     expect(submissions).toHaveLength(2)
     expect(submissions[1]![1]!.requestId).not.toBe(submissions[0]![1]!.requestId)
@@ -62,7 +63,7 @@ describe('calendar prompt editing and actual generation binding', () => {
     expect(button('更新回顾').props.disabled).toBe(false)
     expect(content()).toContain('提示词已修改，重新生成后生效')
     await act(async () => button('更新回顾').props.onClick())
-    await act(async () => button('确认').props.onClick())
+    await act(async () => button('确认并生成').props.onClick())
     const params = vi.mocked(callArkme).mock.calls.find(c => c[0] === 'calendar.day-review.create')![1]
     expect(params).toMatchObject({ promptConfig: { baseVersion: 'calendar-v1', summary: { instruction: '关注结论与进展', chunk: '保留分段证据' }, timeline: { instruction: '按事件发生时间组织', chunk: '保留时间精度和证据' } } })
     expect(params).not.toHaveProperty('constraints')
@@ -109,7 +110,7 @@ describe('calendar prompt editing and actual generation binding', () => {
     await act(async () => reuse.props.onChange({ target: { checked: true } }))
     await act(async () => button('更新回顾').props.onClick())
     vi.mocked(callArkme).mockRejectedValueOnce(new Error('network'))
-    await act(async () => button('确认').props.onClick())
+    await act(async () => button('确认并生成').props.onClick())
     const first = vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')[0]![1]
     expect(first).toMatchObject({ reuseResultId: 'r1', sourceKinds: ['audio'] })
     expect(view!.root.findAllByType('fieldset').every(f => f.props.disabled)).toBe(true)
