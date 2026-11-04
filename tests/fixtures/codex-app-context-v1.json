@@ -1,0 +1,176 @@
+[
+  {
+    "name": "inline-skill-reference",
+    "kind": "UserPromptSubmit",
+    "input": "[$demo-skill](/workspace/skills/demo-skill/SKILL.md) 继续检查",
+    "expected": "demo-skill 继续检查"
+  },
+  {
+    "name": "two-skill-references",
+    "kind": "UserPromptSubmit",
+    "input": "😀 [$demo-skill](/workspace/skills/demo-skill/SKILL.md) 和 [$second:skill](C:/tools/second/SKILL.md)",
+    "expected": "😀 demo-skill 和 second:skill"
+  },
+  {
+    "name": "path-with-spaces",
+    "kind": "UserPromptSubmit",
+    "input": "[$demo-skill](</workspace/tool skills/demo/SKILL.md>)",
+    "expected": "demo-skill"
+  },
+  {
+    "name": "inline-code-is-prose",
+    "kind": "UserPromptSubmit",
+    "input": "`[$demo-skill](/workspace/skills/demo-skill/SKILL.md)`",
+    "expected": "`[$demo-skill](/workspace/skills/demo-skill/SKILL.md)`"
+  },
+  {
+    "name": "fenced-code-is-prose",
+    "kind": "UserPromptSubmit",
+    "input": "```text\n[$demo-skill](/workspace/skills/demo-skill/SKILL.md)\n```",
+    "expected": "```text\n[$demo-skill](/workspace/skills/demo-skill/SKILL.md)\n```"
+  },
+  {
+    "name": "ordinary-link",
+    "kind": "UserPromptSubmit",
+    "input": "[demo-skill](/workspace/demo/SKILL.md)",
+    "expected": "[demo-skill](/workspace/demo/SKILL.md)"
+  },
+  {
+    "name": "web-link-is-ordinary",
+    "kind": "UserPromptSubmit",
+    "input": "[$demo-skill](https://example.invalid/SKILL.md)",
+    "expected": "[$demo-skill](https://example.invalid/SKILL.md)"
+  },
+  {
+    "name": "non-skill-file-is-ordinary",
+    "kind": "UserPromptSubmit",
+    "input": "[$demo-skill](/workspace/skills/demo-skill/notes.md)",
+    "expected": "[$demo-skill](/workspace/skills/demo-skill/notes.md)"
+  },
+  {
+    "name": "page-context-without-page",
+    "kind": "UserPromptSubmit",
+    "input": "<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>",
+    "expected": ""
+  },
+  {
+    "name": "page-context-with-page",
+    "kind": "UserPromptSubmit",
+    "input": "<external_codex_apps_open_page>{\"page_id\":\"page-example\"}</external_codex_apps_open_page>",
+    "expected": ""
+  },
+  {
+    "name": "page-context-unknown-field",
+    "kind": "UserPromptSubmit",
+    "input": "<external_codex_apps_open_page>{\"page_id\":null,\"other\":true}</external_codex_apps_open_page>",
+    "expected": "<external_codex_apps_open_page>{\"page_id\":null,\"other\":true}</external_codex_apps_open_page>"
+  },
+  {
+    "name": "page-context-invalid-id",
+    "kind": "UserPromptSubmit",
+    "input": "<external_codex_apps_open_page>{\"page_id\":42}</external_codex_apps_open_page>",
+    "expected": "<external_codex_apps_open_page>{\"page_id\":42}</external_codex_apps_open_page>"
+  },
+  {
+    "name": "page-context-quoted",
+    "kind": "UserPromptSubmit",
+    "input": "请解释：\n<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>",
+    "expected": "请解释：\n<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>"
+  },
+  {
+    "name": "page-context-fenced",
+    "kind": "UserPromptSubmit",
+    "input": "```xml\n<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>\n```",
+    "expected": "```xml\n<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>\n```"
+  },
+  {
+    "name": "page-context-with-user-body",
+    "kind": "UserPromptSubmit",
+    "input": "<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>\n继续处理",
+    "expected": "<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>\n继续处理"
+  },
+  {
+    "name": "expanded-skill-instructions",
+    "kind": "UserPromptSubmit",
+    "input": "<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo-skill/SKILL.md</path>\n---\nname: demo-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>",
+    "expected": ""
+  },
+  {
+    "name": "expanded-skill-crlf",
+    "kind": "UserPromptSubmit",
+    "input": "<skill>\r\n<name>demo-skill</name>\r\n<path>/workspace/skills/demo-skill/SKILL.md</path>\r\n---\r\nname: demo-skill\r\ndescription: Example skill instructions\r\n---\r\n\r\n# Example skill\r\nThese are tool instructions, not a chat message.\r\n</skill>",
+    "expected": ""
+  },
+  {
+    "name": "skill-name-mismatch",
+    "kind": "UserPromptSubmit",
+    "input": "<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo-skill/SKILL.md</path>\n---\nname: another-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>",
+    "expected": "<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo-skill/SKILL.md</path>\n---\nname: another-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>"
+  },
+  {
+    "name": "skill-invalid-path",
+    "kind": "UserPromptSubmit",
+    "input": "<skill>\n<name>demo-skill</name>\n<path>https://example.invalid/SKILL.md</path>\n---\nname: demo-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>",
+    "expected": "<skill>\n<name>demo-skill</name>\n<path>https://example.invalid/SKILL.md</path>\n---\nname: demo-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>"
+  },
+  {
+    "name": "expanded-skill-quoted",
+    "kind": "UserPromptSubmit",
+    "input": "请解释：\n<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo-skill/SKILL.md</path>\n---\nname: demo-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>",
+    "expected": "请解释：\n<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo-skill/SKILL.md</path>\n---\nname: demo-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>"
+  },
+  {
+    "name": "expanded-skill-with-user-body",
+    "kind": "UserPromptSubmit",
+    "input": "<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo-skill/SKILL.md</path>\n---\nname: demo-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>\n继续处理",
+    "expected": "<skill>\n<name>demo-skill</name>\n<path>/workspace/skills/demo-skill/SKILL.md</path>\n---\nname: demo-skill\ndescription: Example skill instructions\n---\n\n# Example skill\nThese are tool instructions, not a chat message.\n</skill>\n继续处理"
+  },
+  {
+    "name": "assistant-skill-link",
+    "kind": "Progress",
+    "input": "[$demo-skill](/workspace/skills/demo-skill/SKILL.md)",
+    "expected": "[$demo-skill](/workspace/skills/demo-skill/SKILL.md)"
+  },
+  {
+    "name": "assistant-page-example",
+    "kind": "Stop",
+    "input": "<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>",
+    "expected": "<external_codex_apps_open_page>{\"page_id\":null}</external_codex_apps_open_page>"
+  },
+  {
+    "name": "quoted-skill-reference",
+    "kind": "UserPromptSubmit",
+    "input": "> [$demo-skill](/workspace/skills/demo-skill/SKILL.md)",
+    "expected": "> [$demo-skill](/workspace/skills/demo-skill/SKILL.md)"
+  },
+  {
+    "name": "escaped-skill-reference",
+    "kind": "UserPromptSubmit",
+    "input": "\\[$demo-skill](/workspace/skills/demo-skill/SKILL.md)",
+    "expected": "\\[$demo-skill](/workspace/skills/demo-skill/SKILL.md)"
+  },
+  {
+    "name": "root-skill-file",
+    "kind": "UserPromptSubmit",
+    "input": "[$root](/SKILL.md)",
+    "expected": "root"
+  },
+  {
+    "name": "windows-backslash-skill-reference",
+    "kind": "UserPromptSubmit",
+    "input": "[$demo-skill](C:\\workspace\\demo\\SKILL.md)",
+    "expected": "demo-skill"
+  },
+  {
+    "name": "escaped-skill-name",
+    "kind": "UserPromptSubmit",
+    "input": "[$demo\\-skill](/workspace/demo/SKILL.md)",
+    "expected": "[$demo\\-skill](/workspace/demo/SKILL.md)"
+  },
+  {
+    "name": "titled-link-is-prose",
+    "kind": "UserPromptSubmit",
+    "input": "[$demo](/workspace/demo/SKILL.md \"title)note\")",
+    "expected": "[$demo](/workspace/demo/SKILL.md \"title)note\")"
+  }
+]
