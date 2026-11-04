@@ -10,8 +10,8 @@ import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ArkmeRecordRevisionSnapshotDialog } from './ArkmeRecordRevisionSnapshotDialog.js'
 
 const historyReader: ArkmeRecordEditHistoryReader = {
-  page: (sourceRef, messageActionRef, cursorEditAt, signal) => callArkme<ArkmeRecordEditHistoryPage>(
-    'source.record-edit-history', { sourceRef, messageActionRef, cursorEditAt }, signal,
+  page: (sourceRef, messageActionRef, cursorVersion, signal) => callArkme<ArkmeRecordEditHistoryPage>(
+    'source.record-edit-history', { sourceRef, messageActionRef, cursorVersion }, signal,
   ),
   snapshot: (sourceRef, messageActionRef, revisionUid, signal) => callArkme(
     'source.record-revision-snapshot', { sourceRef, messageActionRef, revisionUid }, signal,
@@ -67,7 +67,7 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
           const items = cursor === 0 ? result.items : [...new Map([...previous.items, ...result.items].map(item => [item.revisionUid, item])).values()]
           return { ...result, items }
         })
-        cursorRef.current = result.hasMore ? result.nextCursorEditAt ?? 0 : 0
+        cursorRef.current = result.hasMore ? result.nextCursorVersion ?? 0 : 0
       } catch (caught) {
         if (controller.signal.aborted) return
         setError(caught instanceof Error ? caught.message : '编辑记录暂不可用')
@@ -107,10 +107,8 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
           <div>{index === 0 && <span data-arkme-history-latest style={{ display: 'inline-block', marginLeft: 10, padding: '1px 4px', borderRadius: 4, border: `0.5px solid color-mix(in srgb, ${arkmeTheme.recordHistoryLatest} 30%, transparent)`, color: arkmeTheme.recordHistoryLatest, fontSize: 10, fontWeight: 700, lineHeight: '14px' }}>{tr("最新")}</span>}</div>
         </div>
         <div data-arkme-history-row style={{ display: 'flex', flexDirection: mine ? 'row-reverse' : 'row', alignItems: 'flex-start', gap: 10 }}>
-          <ArkmeUserAvatar {...((revision.avatarRef ?? author?.avatarRef) === undefined ? {} : { avatarRef: (revision.avatarRef ?? author?.avatarRef)! })}
-            fallbackContent={revision.avatarRef && author?.avatarRef && revision.avatarRef !== author.avatarRef
-              ? <ArkmeUserAvatar avatarRef={author.avatarRef} size={32} label={author.senderName || tr('作者头像')} /> : undefined}
-            {...(author?.senderKind === undefined ? {} : { senderKind: author.senderKind })} size={32} label={revision.senderName || author?.senderName || tr("作者头像")} />
+          <ArkmeUserAvatar {...((revision.avatarRef) === undefined ? {} : { avatarRef: (revision.avatarRef)! })}
+            {...(author?.senderKind === undefined ? {} : { senderKind: author.senderKind })} size={32} label={revision.senderName || tr('未记录')} />
           <div data-arkme-history-bubble tabIndex={mine ? 0 : undefined}
             aria-label={mine ? tr('历史消息，可右键查看记忆快照') : undefined}
             onContextMenu={event => { if (mine) { event.preventDefault(); event.stopPropagation(); setMenu({ revision, x: event.clientX, y: event.clientY }) } }}
@@ -118,7 +116,7 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
               event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); setMenu({ revision, x: rect.left + 20, y: rect.top + 20 })
             } }}
             style={{ minWidth: 0, width: 'calc(100% - 42px)', minHeight: 42, boxSizing: 'border-box', padding: 12, borderRadius: mine ? '12px 4px 12px 12px' : '4px 12px 12px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, background: mine ? arkmeTheme.messageOwn : arkmeTheme.messageOther, overflowWrap: 'anywhere' }}>
-            <ArkmeRecordRevisionDiff revision={revision} previous={page.items[index + 1]} orderUncertain={page.items[index - 1]?.editAtMillis === revision.editAtMillis} hasMore={page.hasMore} senderName={author?.senderName ?? ''} mine={mine} />
+            <ArkmeRecordRevisionDiff revision={revision} previous={page.items[index + 1]} orderUncertain={revision.version === undefined && page.items[index - 1]?.editAtMillis === revision.editAtMillis} hasMore={page.hasMore} senderName={author?.senderName ?? ''} mine={mine} />
           </div>
         </div>
       </section>)}
@@ -131,7 +129,7 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
       {menu && <ArkmeActionMenu label={tr('历史消息操作')} point={menu} onClose={() => setMenu(undefined)}
         actions={[{ id: 'snapshot', label: tr('记忆快照'), onSelect: () => { setSnapshot(menu.revision); setMenu(undefined) } }]} />}
       {snapshot && <ArkmeRecordRevisionSnapshotDialog key={snapshot.revisionUid} revision={snapshot} sourceRef={sourceRef}
-        messageActionRef={messageActionRef} reader={reader} mine={mine} senderName={snapshot.senderName || author?.senderName || ''} onClose={closeSnapshot} />}
+        messageActionRef={messageActionRef} reader={reader} mine={mine} senderName={snapshot.senderName || tr('未记录')} onClose={closeSnapshot} />}
     </div>
 }
 
