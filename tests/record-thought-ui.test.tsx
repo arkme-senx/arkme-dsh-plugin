@@ -49,6 +49,28 @@ it('never queries another author and clears old account content immediately on a
   expect(host.textContent).not.toContain('Arko有想法')
   await load(); expect(host.textContent).not.toContain('Arko有想法')
 })
+
+it('keeps a continuation row and its status line stable through temporary read recovery', async () => {
+  const refresh = vi.fn()
+  const thought = { id: 'pending', recordUid: 'note', biz: 2 as const, status: 'generating' as const, content: '' }
+  const render = (error?: string) => root.render(<RecordThoughtContent item={item} embedded items={[thought]}
+    refreshError={error} onRefresh={refresh}/>)
+  await act(async () => render())
+  const section = host.querySelector('[data-arkme-record-thought-content]')
+  const row = host.querySelector('[data-arkme-thought-reply]')
+  expect(host.querySelector<HTMLElement>('[role="status"]')?.style.minHeight).toBe('20px')
+  await act(async () => render('Failed to fetch'))
+  expect(host.querySelector('[data-arkme-record-thought-content]')).toBe(section)
+  expect(host.querySelector('[data-arkme-thought-reply]')).toBe(row)
+  expect(host.textContent).toContain('连接暂时不畅')
+  expect(host.querySelector<HTMLElement>('[role="status"]')?.style.minHeight).toBe('20px')
+  await act(async () => host.querySelector<HTMLButtonElement>('button')!.click())
+  expect(refresh).toHaveBeenCalledOnce()
+  expect(mocks.callArkme).not.toHaveBeenCalled()
+  await act(async () => render())
+  expect(host.querySelector('[data-arkme-thought-reply]')).toBe(row)
+  expect(host.textContent).toContain('Arko 正在回复')
+})
 it('allows a failed detail read to retry without changing the original message', async () => {
   mocks.callArkme.mockRejectedValueOnce(Error('offline'))
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>

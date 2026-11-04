@@ -66,6 +66,7 @@ import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from '../src/client
 import { ArkmeClientError } from '../src/client/api.js'
 import { usePersonalNoteDetail } from '../src/client/use-personal-note-detail.js'
 import { RecordThoughtsProvider } from '../src/client/RecordThoughts.js'
+import { invalidateMessageQuoteSources } from '../src/client/message-quote-invalidations.js'
 
 const timelineItem: ArkmeTimelineItem = {
   itemUid: 'record-source',
@@ -90,6 +91,34 @@ const relatedList: ArkmeRelatedQuickNoteList = {
 }
 
 describe('normal timeline related quick note drawer', () => {
+  it('keeps existing extension rows while a realtime invalidation revalidates the same detail', async () => {
+    const extension = { recordUid: 'stable-existing-reply', parentRecordUid: timelineItem.itemUid, level: 2,
+      sourceKind: 'record_extension', senderDisplayName: '小林', title: '', textContent: '已有评论保持原位', sendAtMillis: 100,
+      templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] }
+    const context = { parentRecordUid: timelineItem.itemUid, extensionCount: 1, extensions: [extension] }
+    let reads = 0, finish!: (value: unknown) => void
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.related-quick-notes.from-message') return relatedList
+      if (operation === 'source.message-extension.context') {
+        reads++
+        return reads === 1 ? context : new Promise(resolve => { finish = resolve })
+      }
+      return { features: { markdownQuickNotes: false } }
+    })
+    let view!: ReactTestRenderer
+    try {
+      await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={timelineItem} sourceRef="source" sourceIdentityKey="stable-source"
+        sourceKind="send_to_self" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+      const rows = () => view.root.findAllByProps({ 'data-arkme-note-extension-item': extension.recordUid })
+      expect(rows()).toHaveLength(1)
+      await act(async () => invalidateMessageQuoteSources('stable-source'))
+      expect(reads).toBe(2)
+      expect(rows()).toHaveLength(1)
+      await act(async () => finish(context))
+      expect(rows()).toHaveLength(1)
+    } finally { if (view) act(() => view.unmount()) }
+  })
+
   it('queues an owner-backed Arko reply immediately with its typed reference and frozen quote', async () => {
     vi.useFakeTimers()
     let finish!: (value: unknown) => void

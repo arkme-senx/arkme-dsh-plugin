@@ -1910,6 +1910,7 @@ ICP备案号|ICP registration
 正在同步设备录音状态…|Syncing device recording status…
 设备录音状态暂未启用|Device recording status is not enabled yet
 同步暂时失败，正在重试|Sync failed temporarily. Retrying
+连接暂时不畅，正在重试…|Connection interrupted. Retrying…
 暂无设备上报录音状态|No devices are reporting recording status
 已暂停|Paused
 已中断|Interrupted

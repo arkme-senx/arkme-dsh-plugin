@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 function App({ source = 'source', tasks = [] }: { source?: string; tasks?: unknown[] }) {
   const state = useThoughtContinuations(source, 'signed-action', tasks as never)
-  return <div>{state.items.map(row => <p key={row.id}>{row.status}:{row.content}</p>)}{state.error}<button onClick={() => state.retry(item.id)}>retry</button></div>
+  return <div data-pending={state.pendingReplyRecordUids.join(',')}>{state.items.map(row => <p key={row.id}>{row.status}:{row.content}</p>)}{state.error}<button onClick={() => state.retry(item.id)}>retry</button></div>
 }
 it('polls one mounted detail, stops on ready and cancels everything on unmount', async () => {
   await act(async () => root.render(<App/>))
@@ -60,10 +60,12 @@ it('keeps tracking an accepted send after its local receipt leaves the journal',
   mocks.read.mockResolvedValue({ accountScope: 'test:11', supported: true, items: [] })
   await act(async () => root.render(<App tasks={[{ recordUid: 'human', thoughtReplyRef: 'signed-ai', state: 'sent' }]}/>))
   await act(async () => root.render(<App tasks={[]}/>))
+  expect(host.firstElementChild?.getAttribute('data-pending')).toBe('human')
   const before = mocks.read.mock.calls.length
   mocks.read.mockResolvedValue(page('ready'))
   await act(async () => vi.advanceTimersByTimeAsync(3000))
   expect(mocks.read.mock.calls.length).toBe(before + 1); expect(host.textContent).toContain('answer')
+  expect(host.firstElementChild?.getAttribute('data-pending')).toBe('')
 })
 it('preserves ready replies while a new human send revalidates the same detail', async () => {
   mocks.read.mockResolvedValue(page('ready'))
@@ -75,4 +77,47 @@ it('preserves ready replies while a new human send revalidates the same detail',
   expect(host.textContent).toContain('answer')
   await act(async () => resolve(page('ready')))
   expect(host.textContent).toContain('answer')
+})
+
+it('retains the same visible reply nodes across a transient poll failure and recovery', async () => {
+  await act(async () => root.render(<App/>))
+  const row = host.querySelector('p')
+  mocks.read.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(host.querySelector('p')).toBe(row)
+  expect(host.textContent).toContain('generating')
+  expect(host.textContent).toContain('Failed to fetch')
+  mocks.read.mockResolvedValue(page('ready'))
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(host.querySelector('p')).toBe(row)
+  expect(host.textContent).toContain('answer')
+  expect(host.textContent).not.toContain('Failed to fetch')
+  expect(mocks.read).toHaveBeenCalledTimes(3)
+})
+
+it('keeps existing replies on a transient retry read failure', async () => {
+  mocks.read.mockResolvedValue(page('failed'))
+  await act(async () => root.render(<App/>))
+  const row = host.querySelector('p')
+  mocks.retry.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+  await act(async () => host.querySelector('button')!.click())
+  expect(host.querySelector('p')).toBe(row)
+  expect(host.textContent).toContain('failed')
+})
+
+it('drops retained replies when the current owner denies access', async () => {
+  await act(async () => root.render(<App/>))
+  mocks.read.mockRejectedValueOnce(Object.assign(new Error('Access denied'), { body: { code: 'record-detail-unavailable', retryable: false } }))
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(host.querySelector('p')).toBeNull()
+  expect(host.textContent).toContain('Access denied')
+})
+
+it('recognizes the public SDK unsupported error envelope', async () => {
+  await act(async () => root.render(<App/>))
+  mocks.read.mockRejectedValueOnce(Object.assign(new Error('Unsupported'), { body: { code: 'CAPABILITY_UNSUPPORTED', retryable: false } }))
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(host.querySelector('p')).toBeNull()
+  await act(async () => vi.advanceTimersByTimeAsync(30000))
+  expect(mocks.read).toHaveBeenCalledTimes(2)
 })

@@ -3,6 +3,7 @@ import type { ArkmeThoughtContinuation, ArkmeThoughtContinuationPage } from '../
 import { createArkmeSdk } from '../sdk/index.js'
 import { arkmeAuthStore } from './auth-store.js'
 import type { DetailExtensionSend } from './detail-extension-send.js'
+import { isArkmeTransientReadFailure } from './read-retry.js'
 
 /** One mounted detail owns one cancellable poll, suspended while hidden.
  * The backend job continues independently of the browser lifetime. */
@@ -19,7 +20,8 @@ export function useThoughtContinuations(sourceRef: string | undefined, actionRef
   const pending = useRef<{ scope: string; key: string; ids: Set<string> }>({ scope: '', key: '', ids: new Set() })
   if (pending.current.scope !== scope || pending.current.key !== key) pending.current = { scope, key, ids: new Set() }
   for (const task of tasks) if (task.thoughtReplyRef) {
-    if (task.state === 'failed') pending.current.ids.delete(task.recordUid)
+    const completed = state.scope === scope && state.key === key && state.items.some(item => item.replyRecordUid === task.recordUid && item.status !== 'generating')
+    if (task.state === 'failed' || completed) pending.current.ids.delete(task.recordUid)
     else pending.current.ids.add(task.recordUid)
   }
   while (pending.current.ids.size > 20) pending.current.ids.delete(pending.current.ids.values().next().value!)
@@ -44,7 +46,21 @@ export function useThoughtContinuations(sourceRef: string | undefined, actionRef
       // Head refresh replaces older pages so revoked content cannot survive
       // through a local merge. Explicit pagination revalidates each page.
       items = [...byId.values()].slice(-60); cursor = page.nextCursor
+      for (const item of items) if (item.status !== 'generating') pending.current.ids.delete(item.replyRecordUid)
       setState({ scope, key, items, supported: page.supported, ...(cursor ? { cursor } : {}) })
+    }
+    const fail = (error: unknown, fallback: string) => {
+      if (!active || signal.aborted) return
+      const code = error && typeof error === 'object'
+        ? (error as { body?: { code?: unknown }; code?: unknown }).body?.code ?? (error as { code?: unknown }).code : undefined
+      if (code === 'CAPABILITY_UNSUPPORTED') {
+        supported = false; items = []; cursor = undefined
+        setState({ scope, key, items, supported: false })
+        return
+      }
+      if (!isArkmeTransientReadFailure(error)) { items = []; cursor = undefined; pending.current.ids.clear(); supported = false }
+      setState({ scope, key, items, supported, ...(cursor ? { cursor } : {}),
+        error: error instanceof Error ? error.message : fallback })
     }
     const schedule = (force = false) => {
       if (timer) clearTimeout(timer)
@@ -59,18 +75,14 @@ export function useThoughtContinuations(sourceRef: string | undefined, actionRef
         const page = await sdk.sourceMessageThoughtContinuations(sourceRef, actionRef, { ...(after ? { cursor: after } : {}), signal })
         publish(page, !!after)
       } catch (error) {
-        if (active && !signal.aborted) {
-          if (error && typeof error === 'object' && 'code' in error && error.code === 'CAPABILITY_UNSUPPORTED') {
-            supported = false; setState({ scope, key, items: [], supported: false })
-          } else setState({ scope, key, items: [], supported: true, error: error instanceof Error ? error.message : 'Arko 回复暂时无法读取' })
-        }
+        fail(error, 'Arko 回复暂时无法读取')
       } finally { inFlight = false; schedule() }
     }
     retry.current = async id => {
       if (inFlight || !active || !visible()) return
       inFlight = true; setRetryingId(id)
       try { publish(await sdk.retrySourceMessageThoughtContinuation(sourceRef, actionRef, id, signal)) }
-      catch (error) { if (active && !signal.aborted) setState({ scope, key, items: [], supported: true, error: error instanceof Error ? error.message : 'Arko 回复重试失败' }) }
+      catch (error) { fail(error, 'Arko 回复重试失败') }
       finally { inFlight = false; if (active) setRetryingId(undefined); schedule(true) }
     }
     more.current = () => { if (cursor) void read(cursor) }
@@ -84,5 +96,6 @@ export function useThoughtContinuations(sourceRef: string | undefined, actionRef
     }
   }, [scope, key, sendKey, revision])
   const current: typeof state = state.scope === scope && state.key === key ? state : { scope, key, items: [], supported: false }
-  return { ...current, nextCursor: current.cursor, retryingId, retry: (id: string) => { void retry.current(id) }, loadMore: () => more.current(), refresh: () => setRevision(n => n + 1) }
+  return { ...current, pendingReplyRecordUids: [...pending.current.ids], nextCursor: current.cursor, retryingId,
+    retry: (id: string) => { void retry.current(id) }, loadMore: () => more.current(), refresh: () => setRevision(n => n + 1) }
 }

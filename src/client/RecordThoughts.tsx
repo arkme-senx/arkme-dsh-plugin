@@ -75,8 +75,13 @@ function title(thought: ArkmeRecordThought): string {
   if (thought.scene === 5) return 'Arko · 回复建议'
   return thought.biz === 2 ? 'Arko · 回应' : 'Arko有想法'
 }
-function ThoughtState({ thought, onFill, onRetry, retrying, continuation }: { thought: ArkmeRecordThought; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined; onRetry?: (() => void) | undefined; retrying?: boolean | undefined; continuation?: boolean }) {
-  if (thought.status === 'generating') return <span role="status" style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr(continuation ? 'Arko 正在回复…' : 'Arko 正在思考…')}</span>
+function ThoughtState({ thought, onFill, onRetry, retrying, continuation, refreshError, onRefresh }: { thought: ArkmeRecordThought; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined; onRetry?: (() => void) | undefined; retrying?: boolean | undefined; continuation?: boolean; refreshError?: string | undefined; onRefresh?: (() => void) | undefined }) {
+  if (continuation && refreshError && thought.status !== 'ready') return <span role="status" title={refreshError}
+    style={{ display: 'flex', alignItems: 'center', minHeight: 20, lineHeight: '20px', gap: 8, color: arkmeTheme.tertiary, fontSize: 12 }}>
+    <span style={{ minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{tr('连接暂时不畅，正在重试…')}</span>
+    {onRefresh && <button type="button" style={{ ...buttonStyle, flexShrink: 0 }} onClick={onRefresh}>{tr('重试')}</button>}
+  </span>
+  if (thought.status === 'generating') return <span role="status" style={{ color: arkmeTheme.tertiary, fontSize: 12, ...(continuation ? { display: 'block', minHeight: 20, lineHeight: '20px' } : {}) }}>{tr(continuation ? 'Arko 正在回复…' : 'Arko 正在思考…')}</span>
   if (thought.status === 'failed') return <span role="status" style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('failure' in thought && thought.failure === 'insufficient_balance' ? '积分不足，Arko 暂时无法回复' : 'Arko 暂时没能完成回应')}
     {onRetry ? <button type="button" disabled={retrying} style={{ ...buttonStyle, marginLeft: 8 }} onClick={onRetry}>{tr('重试')}</button> : onFill && <button type="button" style={{ ...buttonStyle, marginLeft: 8 }} onClick={() => onFill('@阿森 ', true)}>{tr('重新提问')}</button>}
   </span>
@@ -138,9 +143,10 @@ function ThoughtAnalysis({ thought }: { thought: ArkmeRecordThought }) {
     {display.warnings.length > 0 && <div style={{ margin: '10px 0' }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('需要留意')}</div>{display.warnings.map((warning, index) => <div key={index}>{warning}</div>)}</div>}
   </div>
 }
-export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId, items, onRetry, retryingId }: {
+export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId, items, onRetry, retryingId, refreshError, onRefresh }: {
   item: RecordItem; embedded?: boolean; onReply?: ((thought: ArkmeRecordThought) => void) | undefined; selectedThoughtId?: string | undefined
   items?: readonly ArkmeRecordThought[] | undefined; onRetry?: ((thought: ArkmeRecordThought) => void) | undefined; retryingId?: string | undefined
+  refreshError?: string | undefined; onRefresh?: (() => void) | undefined
 }) {
   const state = useThought(item), thoughts = visibleThoughts(items ?? state.items)
   const section = useRef<HTMLElement>(null)
@@ -163,7 +169,8 @@ export function RecordThoughtContent({ item, embedded = false, onReply, selected
           <span data-arkme-thought-author style={replyStyles.extensionContextName}>Arko</span>
           {thought.visibility === 'user' && <span style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('仅你可见')}</span>}
         </div>
-        <ThoughtState thought={thought} continuation={items !== undefined} onFill={items ? undefined : state.onFill} onRetry={onRetry ? () => onRetry(thought) : undefined} retrying={retryingId === thought.id}/>
+        <ThoughtState thought={thought} continuation={items !== undefined} refreshError={refreshError} onRefresh={onRefresh}
+          onFill={items ? undefined : state.onFill} onRetry={onRetry ? () => onRetry(thought) : undefined} retrying={retryingId === thought.id}/>
         {thought.status !== 'failed' && <>
           <ThoughtAnalysis thought={thought}/>
           {thought.display?.suggestions.length ? thought.display.suggestions.map((group, index) => <div key={index} style={{ marginTop: 14 }}>
