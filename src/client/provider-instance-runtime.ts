@@ -7,6 +7,7 @@ import { reconcileNavigationProviderInstance } from './navigation-cache.js'
 import { resetRecordingSpeakerCaches } from './recordings/recording-speaker-options-store.js'
 import { privateChatActions } from './private-chat-actions-store.js'
 import { invalidateSelfTopicDirectories } from './self-topic-directory-cache.js'
+import { teamOutboundContacts } from './team-outbound-contacts.js'
 
 interface ArkmeProviderInstanceGuardOptions {
   loadInstance(): Promise<string>
@@ -68,6 +69,7 @@ export const reconcileArkmeProviderInstance = createArkmeProviderInstanceGuard({
   onInvalidate: () => {
     invalidateSelfTopicDirectories(true)
     privateChatActions.reset()
+    teamOutboundContacts.reset()
     resetRecordingSpeakerCaches()
     revalidateArkmeProviderAvatarImages(arkmeAvatarImages)
   },

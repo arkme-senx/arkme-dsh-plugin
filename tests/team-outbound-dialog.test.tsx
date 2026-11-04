@@ -8,9 +8,14 @@ import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
 import { teamContactTeams } from '../src/client/team-contact.js'
 import { arkmeConversationMembers } from '../src/client/conversation-members-store.js'
 import { connectArkmeLocale } from '../src/client/locale.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
+import { teamOutboundContacts } from '../src/client/team-outbound-contacts.js'
+import type { ArkmeSourceList } from '../src/types.js'
 
 const { call, navigate, invalidate } = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), invalidate: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: call }))
+vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: call }))
+vi.mock('../src/client/provider-instance-runtime.js', () => ({ reconcileArkmeProviderInstance: vi.fn(async () => false) }))
 vi.mock('../src/client/team-messaging-events.js', () => ({ openTeamMessages: navigate, invalidateTeamMessages: invalidate }))
 const teams = [
   { teamRef: 'sealed-team-a', jotmoId: 'team_a', name: '即我', currentUserRole: 'member', createdAtMillis: 1, updatedAtMillis: 1 },
@@ -21,8 +26,9 @@ const close = vi.fn()
 let host: HTMLDivElement, root: Root
 function button(text: string) { const found = [...document.querySelectorAll('button')].find(n => n.getAttribute('aria-label') === text || n.textContent === text || n.textContent === `${text}✓`); if (!found) throw new Error(`Missing button: ${text}`); return found }
 const click = async (label: string) => act(async () => button(label).click())
-const renderCard = async (accountKey = intent.accountKey) => act(async () => root.render(<ArkmeMemberProfileCard member={{ displayName: '群友' }} busy={false} onClose={close} onSend={() => { throw new Error('personal send must not run') }} teamContact={{ accountKey, person: intent.person! }}/>))
-const render = async (value = intent) => act(async () => root.render(<TeamOutboundDialog intent={value} onClose={close} />))
+const signIn = (accountKey: string) => arkmeAuthStore.setAuth({ status: 'authenticated', environment: accountKey.split(':')[0] as 'prod', userId: Number(accountKey.split(':')[1]) } as never)
+const renderCard = async (accountKey = intent.accountKey) => act(async () => { signIn(accountKey); root.render(<ArkmeMemberProfileCard key={accountKey} member={{ displayName: '群友' }} busy={false} onClose={close} onSend={() => { throw new Error('personal send must not run') }} teamContact={{ accountKey, person: intent.person! }}/>); })
+const render = async (value = intent) => act(async () => { signIn(value.accountKey); root.render(<TeamOutboundDialog intent={value} onClose={close} />); })
 const selectTeam = async (id: string) => act(async () => { const node = document.querySelector('select')!; node.value = id; node.dispatchEvent(new Event('change', { bubbles: true })) })
 async function query(value: string) {
   await act(async () => {
@@ -32,8 +38,14 @@ async function query(value: string) {
   })
 }
 function deferred() { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+function groupProjection(names: string[], phase: 'syncing' | 'complete' | 'failed' = 'syncing', revision = 1, error?: string): ArkmeSourceList {
+  const items = names.map((name, index) => ({ kind: 'group_chat' as const, sourceRef: `group-${name}`, sourceKey: `key-${name}`, displayName: name, activeAtMillis: names.length - index, unreadCount: 0 }))
+  return { directory: 'root', items: items as never, hasMore: phase !== 'complete', projection: {
+    revision, phase, cachedAtMillis: Date.now(), bots: [], visibility: items.map(item => ({ entryKind: 'source' as const, entryRef: item.sourceRef, hidden: false })), ...(error ? { error } : {}),
+  } }
+}
 beforeEach(() => {
-  localStorage.clear(); teamContactTeams.reset(); arkmeConversationMembers.activateAccount('prod:90')
+  localStorage.clear(); teamContactTeams.reset(); teamOutboundContacts.reset(); arkmeChatDirectory.activateAccount(undefined); arkmeChatDirectory.activateAccount('prod:90'); arkmeConversationMembers.activateAccount('prod:90'); signIn('prod:90')
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.clearAllMocks(); call.mockReset()
   call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : ['directory.list', 'sources.list'].includes(op) ? { items: [], hasMore: false } : { state: 'backend_pending' })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -253,7 +265,7 @@ it('hides team contact for zero memberships and opens directly with the sole nam
   call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : { state: 'ready', conversation })
   await renderCard(); expect(document.querySelector('select')).toBeNull()
   await click('以 即我 联系')
-  expect(call.mock.calls.at(-1)![1]).toMatchObject({ expectedAccountKey: intent.accountKey, teamRef: 'sealed-team-a', recipient: intent.person!.recipient })
+  expect(call.mock.calls.filter(([op]) => op === 'team.app.outbound.open').at(-1)![1]).toMatchObject({ expectedAccountKey: intent.accountKey, teamRef: 'sealed-team-a', recipient: intent.person!.recipient })
   expect(navigate).toHaveBeenCalledWith({ kind: 'conversation', conversation })
   expect(localStorage.getItem(`arkme.team-contact.preferred.v1:${intent.accountKey}`)).toBe('team_a')
 })
@@ -299,7 +311,8 @@ it('cancels direct contact and ignores a late opening after the card account cha
 it('expands real group members and retains group-issued recipient references', async () => {
   const group = { sourceRef: 'group-ref', sourceKey: 'group-key', kind: 'group_chat', displayName: '研发群' }
   const member = { memberRef: 'member-ref', displayName: '群友乙', isSelf: false, status: 'active', role: 'member', isOwner: false, joinedAtMillis: 1, recordCount: 0, mentionCount: 0 }
-  call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list' ? { items: [group], hasMore: false }
+  call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list' ? { items: [group], hasMore: false,
+    projection: { revision: 1, phase: 'complete', cachedAtMillis: 1, bots: [], visibility: [{ entryKind: 'source', entryRef: group.sourceRef, hidden: false }] } }
     : op === 'source.members.cached' ? null : op === 'source.members.page' ? { kind: 'membership', selfRole: 'member', source: group, items: [member, { ...member, memberRef: 'self', isSelf: true }], removedMemberRefs: [], hasMore: false }
     : op === 'source.members.presentation' ? { kind: 'presentation', source: group, removedMemberRefs: [], unavailableProfileMemberRefs: [], items: [member] }
     : op === 'directory.list' ? { items: [], hasMore: false } : { state: 'backend_pending' })
@@ -317,6 +330,91 @@ it('keeps malformed directory responses inside the picker as retryable errors', 
   expect(document.body.textContent).toContain('目录返回异常，请重试')
   expect(button('发起会话').disabled).toBe(true)
   expect(button('重试加载联系人')).toBeDefined(); expect(button('重试加载群聊')).toBeDefined()
+})
+
+it('shows a syncing Host group snapshot without a cursor while contacts are still loading', async () => {
+  const contacts = deferred()
+  call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list' ? groupProjection(['新用户群101']) : contacts.promise)
+  await render({ accountKey: intent.accountKey, teamJotmoId: 'team_a' })
+  expect(button('#新用户群101')).toBeDefined()
+  expect(document.body.textContent).toContain('正在同步群聊…')
+  expect(document.body.textContent).toContain('正在加载联系人…')
+  expect(document.body.textContent).not.toContain('会话分页异常')
+  expect(document.querySelector('[role="alert"]')).toBeNull()
+  await act(async () => contacts.resolve({ items: [], hasMore: false }))
+})
+
+it('does not read or display the picker without a matching authenticated account', async () => {
+  await act(async () => {
+    arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' } as never)
+    root.render(<TeamOutboundDialog intent={{ accountKey: '' }} onClose={close} />)
+  })
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  expect(call).not.toHaveBeenCalled()
+})
+
+it('uses the already loaded second-column groups immediately and follows later Host updates', async () => {
+  arkmeChatDirectory.applyHostPage(groupProjection(['已有群']))
+  const wait = deferred()
+  call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list' ? wait.promise : { items: [], hasMore: false })
+  await render({ accountKey: intent.accountKey })
+  expect(button('#已有群')).toBeDefined()
+  await act(async () => arkmeChatDirectory.applyHostPage(groupProjection(['新增群', '已有群'], 'complete', 2)))
+  expect([...document.querySelectorAll('button[aria-expanded]')].map(node => node.textContent)).toEqual(['#新增群', '#已有群'])
+  expect(document.body.textContent).not.toContain('正在同步群聊')
+  await act(async () => wait.resolve(groupProjection(['已有群'], 'syncing', 1)))
+  expect(button('#新增群')).toBeDefined()
+})
+
+it('retains loaded contact pages across closing and reopening without repeating fresh reads', async () => {
+  call.mockImplementation(async (op, p) => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list' ? groupProjection(['研发群'], 'complete') : {
+    items: [{ kind: 'contact', contactRef: p.cursor ? 'b' : 'a', displayName: p.cursor ? '乙' : '甲' }], hasMore: !p.cursor, ...(!p.cursor ? { nextCursor: 'next' } : {}),
+  })
+  const picker = { accountKey: intent.accountKey, teamJotmoId: 'team_a' }
+  await render(picker); await click('加载更多联系人')
+  await act(async () => root.render(null))
+  const counts = call.mock.calls.length
+  await render(picker)
+  expect(button('甲')).toBeDefined(); expect(button('乙')).toBeDefined(); expect(button('#研发群')).toBeDefined()
+  expect(document.body.textContent).not.toContain('正在加载')
+  expect(call.mock.calls).toHaveLength(counts)
+})
+
+it('keeps cached contacts selectable during a refresh and after its failure', async () => {
+  call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list' ? groupProjection([], 'complete') : { items: [{ kind: 'contact', contactRef: 'a', displayName: '已有联系人' }], hasMore: false })
+  await render({ accountKey: intent.accountKey })
+  const wait = deferred(); call.mockImplementationOnce(() => wait.promise)
+  let refresh!: Promise<unknown>
+  await act(async () => { refresh = teamOutboundContacts.refresh(intent.accountKey, intent.accountKey).catch(() => {}) })
+  expect(document.body.textContent).toContain('正在更新联系人…')
+  await click('已有联系人'); expect(button('发起会话').disabled).toBe(false)
+  await act(async () => wait.resolve(Promise.reject(new Error('目录暂时离线')))); await act(async () => { await refresh })
+  expect(button('已有联系人')).toBeDefined(); expect(button('发起会话').disabled).toBe(false)
+  expect(document.body.textContent).toContain('目录暂时离线')
+})
+
+it('reloads cleared Provider references and clears the old selected recipient', async () => {
+  call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list' ? groupProjection([], 'complete') : { items: [{ kind: 'contact', contactRef: 'old', displayName: '旧引用' }], hasMore: false })
+  await render({ accountKey: intent.accountKey }); await click('旧引用')
+  const wait = deferred(); call.mockImplementationOnce(() => wait.promise)
+  await act(async () => teamOutboundContacts.reset())
+  expect(button('发起会话').disabled).toBe(true)
+  expect(document.body.textContent).toContain('未选择对象')
+  await act(async () => wait.resolve({ items: [{ kind: 'contact', contactRef: 'new', displayName: '新引用' }], hasMore: false }))
+  expect(button('新引用')).toBeDefined()
+  expect(document.body.textContent).not.toContain('旧引用')
+})
+
+it('keeps available groups on a failed projection and retries through the shared directory owner', async () => {
+  let attempts = 0
+  call.mockImplementation(async op => op === 'team.app.teams' ? [teams[0]] : op === 'sources.list'
+    ? ++attempts === 1 ? groupProjection(['已有群'], 'failed', 1, '群目录暂时离线') : groupProjection(['已有群', '补齐群'], 'complete', 2)
+    : { items: [], hasMore: false })
+  await render({ accountKey: intent.accountKey })
+  expect(button('#已有群')).toBeDefined(); expect(document.body.textContent).toContain('群目录暂时离线')
+  await click('重试加载群聊')
+  expect(button('#补齐群')).toBeDefined(); expect(document.querySelector('[role="alert"]')).toBeNull()
+  expect(call.mock.calls.filter(([op]) => op === 'sources.list').at(-1)![1]).toMatchObject({ localFirst: true, refresh: true })
 })
 
 it('locks multi-team selection during opening and reuses retries only for the same chosen team', async () => {
@@ -389,7 +487,7 @@ it('uses team IDs rather than equal display names to route the selected identity
   const conversation = { ref: 'verified-b', side: 'team', channel: { jotmoId: 'team_b' } }
   call.mockImplementation(async op => op === 'team.app.teams' ? sameNames : { state: 'ready', conversation })
   await renderCard(); await selectTeam('team_b'); await click('以 同名团队 联系')
-  expect(call.mock.calls.at(-1)![1].teamRef).toBe('sealed-team-b')
+  expect(call.mock.calls.filter(([op]) => op === 'team.app.outbound.open').at(-1)![1].teamRef).toBe('sealed-team-b')
   expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
 })
 
