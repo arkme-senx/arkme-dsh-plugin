@@ -74,7 +74,7 @@ it('keeps a continuation row and its status line stable through temporary read r
   expect(host.textContent).toContain('Arko 正在回复')
 })
 it('allows a failed detail read to retry without changing the original message', async () => {
-  mocks.callArkme.mockRejectedValueOnce(Error('offline'))
+  mocks.callArkme.mockRejectedValueOnce(new TypeError('Failed to fetch'))
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled>
     <p>原始消息正文</p><RecordThoughtContent item={item}/>
   </RecordThoughtsProvider>)); await load()
@@ -201,7 +201,7 @@ it('uses the same dialog from details and preserves its selected candidate, anal
   analysis.open = true
   const change = adviceAction('换一句'); change.focus()
   await act(async () => change.click())
-  mocks.callArkme.mockRejectedValueOnce(Error('offline'))
+  mocks.callArkme.mockRejectedValueOnce(new TypeError('Failed to fetch'))
   await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat' })); await load()
   expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBe(dialog)
   expect(dialog.textContent).toContain('建议二'); expect(analysis.open).toBe(true)
@@ -215,6 +215,67 @@ it('uses the same dialog from details and preserves its selected candidate, anal
   await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat' })); await load()
   expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBe(dialog)
   expect(dialog.textContent).toContain('建议一'); expect(dialog.textContent).not.toContain('建议二')
+})
+it.each(['ready', 'denied'] as const)('retains advice across signed-reference updates and drops a late %s old read', async outcome => {
+  const fills = vi.fn(), signed = { ...item, messageActionRef: 'signed', timelineItemKey: 'chat-note' }
+  let finishOld!: (value: unknown) => void
+  let rejectOld!: (error: unknown) => void
+  const render = (sourceRef: string, sourceKey = 'stable-chat') => root.render(<RecordThoughtsProvider accountScope="production:42" sourceKey={sourceKey} sourceRef={sourceRef} chat enabled onFill={fills}>
+    <RecordThoughtEntry item={signed} onOpen={() => {}}/>
+  </RecordThoughtsProvider>)
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })
+  await act(async () => render('before-rename')); await load(); await openAdvice()
+  const dialog = document.querySelector('[data-arkme-chat-suggestion-dialog]')!
+  const analysis = dialog.querySelector('details')!; analysis.open = true
+  const change = adviceAction('换一句'); change.focus()
+  await act(async () => change.click())
+  mocks.callArkme.mockImplementationOnce(() => new Promise((resolve, reject) => { finishOld = resolve; rejectOld = reject }))
+  await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'stable-chat' })); await load()
+  const oldSignal = mocks.callArkme.mock.calls.at(-1)![2] as AbortSignal
+  await act(async () => render('after-rename'))
+  expect(oldSignal.aborted).toBe(true)
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBe(dialog)
+  await load()
+  expect(mocks.callArkme.mock.calls.at(-1)![1].sourceRef).toBe('after-rename')
+  await act(async () => {
+    if (outcome === 'ready') finishOld({ accountScope: 'production:42', items: [{ ...advice, content: '旧请求晚到', generation: 99 }] })
+    else rejectOld(Object.assign(new Error('旧引用已失效'), { body: { retryable: false } }))
+  })
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBe(dialog)
+  expect(dialog.textContent).toContain('建议二'); expect(dialog.textContent).not.toContain('旧请求晚到')
+  expect(analysis.open).toBe(true); expect(document.activeElement).toBe(change)
+  await act(async () => render('after-rename', 'another-chat'))
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+})
+it.each(['account', 'missing-reference', 'unidentified-source'] as const)('does not inherit an open dialog across %s changes', async change => {
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })
+  const render = (next = false) => root.render(<RecordThoughtsProvider accountScope={next && change === 'account' ? 'production:99' : 'production:42'}
+    sourceKey={change === 'unidentified-source' ? undefined : 'stable-chat'}
+    sourceRef={next && change === 'missing-reference' ? undefined : next && change === 'unidentified-source' ? 'other-ref' : 'original-ref'} chat enabled>
+    <RecordThoughtEntry item={{ ...item, messageActionRef: 'signed' }} onOpen={() => {}}/>
+  </RecordThoughtsProvider>)
+  await act(async () => render()); await load(); await openAdvice()
+  await act(async () => render(true))
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+  expect(host.textContent).not.toContain('建议一')
+  if (change === 'missing-reference') {
+    const reads = mocks.callArkme.mock.calls.length
+    await load(); expect(mocks.callArkme).toHaveBeenCalledTimes(reads)
+    await act(async () => render()); await load()
+    expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+    expect(mocks.callArkme.mock.calls.every(([operation]) => operation === 'chat.thoughts.query')).toBe(true)
+  }
+})
+it('closes advice on definitive owner rejection and does not reopen it after recovery', async () => {
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })
+  await act(async () => root.render(<AdviceApp onFill={vi.fn()}/>)); await load(); await openAdvice()
+  mocks.callArkme.mockRejectedValueOnce(Object.assign(new Error('消息范围无效'), { body: { code: 'chat-thought-query-invalid', retryable: false } }))
+  await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat' })); await load()
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+  expect(host.textContent).not.toContain('建议一')
+  await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat' })); await load()
+  expect(host.textContent).toContain('建议一')
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
 })
 it('removes invalidated advice immediately and does not reopen it when a workspace is re-enabled', async () => {
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })

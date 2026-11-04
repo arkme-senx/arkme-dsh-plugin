@@ -26,14 +26,24 @@ export function RecordThoughtsProvider({ accountScope, enabled, sourceRef, sourc
 }) {
   useEffect(() => arkoReplyHistory.activate(accountScope), [accountScope])
   const chatRef = chat ? sourceRef : undefined
-  const dialogScope = JSON.stringify([accountScope, sourceKey ?? sourceRef, enabled, chat])
+  const canRead = enabled && !!accountScope && (!chat || !!chatRef)
+  const chatIdentity = chat ? sourceKey || sourceRef : undefined
+  const dialogScope = JSON.stringify([accountScope, sourceKey ?? sourceRef, canRead, chat])
   const [suggestion, setSuggestion] = useState<{ scope: string; item: RecordItem; id: string }>()
   const openSuggestion = useCallback((item: RecordItem, id: string) => setSuggestion({ scope: dialogScope, item, id }), [dialogScope])
   const closeSuggestion = useCallback(() => setSuggestion(undefined), [])
   useEffect(closeSuggestion, [dialogScope, closeSuggestion])
+  // The stable conversation owns state; its current signed reference owns each read.
+  // A separate holder per Store prevents an old account/source reader using a new binding.
+  const binding = useMemo(() => ({ sourceRef: chatRef }), [accountScope, chat, chatIdentity])
   const store = useMemo(() => new RecordThoughtStore(accountScope ?? '', (scope, recordUids, signal, messageActionRefs) =>
-    callArkme<ArkmeRecordThoughts>(chatRef ? 'chat.thoughts.query' : 'record.thoughts.query',
-      chatRef ? { expectedAccountScope: scope, sourceRef: chatRef, messageActionRefs } : { expectedAccountScope: scope, recordUids }, signal, { priority: 'background' })), [accountScope, chatRef])
+    callArkme<ArkmeRecordThoughts>(chat ? 'chat.thoughts.query' : 'record.thoughts.query',
+      chat ? { expectedAccountScope: scope, sourceRef: binding.sourceRef, messageActionRefs } : { expectedAccountScope: scope, recordUids }, signal, { priority: 'background' })), [accountScope, chat, binding])
+  useEffect(() => {
+    if (binding.sourceRef === chatRef) return
+    binding.sourceRef = chatRef
+    store.rebind()
+  }, [binding, chatRef, store])
   useEffect(() => subscribeThoughtInvalidation(change => {
     if (change.accountScope !== accountScope || change.sourceKey && change.sourceKey !== sourceKey) return
     if (change.stream) { if (!chat) store.applyStream(change.stream); return }
@@ -42,13 +52,13 @@ export function RecordThoughtsProvider({ accountScope, enabled, sourceRef, sourc
   }), [store, accountScope, sourceKey, chat])
   useEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') return
-    const visibility = () => store.setActive(enabled && !!accountScope && document.visibilityState !== 'hidden')
-    const focus = () => { visibility(); if (enabled && document.visibilityState !== 'hidden') store.refresh() }
+    const visibility = () => store.setActive(canRead && document.visibilityState !== 'hidden')
+    const focus = () => { visibility(); if (canRead && document.visibilityState !== 'hidden') store.refresh() }
     visibility(); document.addEventListener('visibilitychange', visibility); window.addEventListener('focus', focus)
     return () => { store.setActive(false); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('focus', focus) }
-  }, [store, enabled, accountScope])
+  }, [store, canRead])
   useEffect(() => () => store.dispose(), [store])
-  const context = useMemo(() => enabled && accountScope ? { store, chat, onFill, source, accountScope, openSuggestion } : null, [enabled, accountScope, store, chat, onFill, source, openSuggestion])
+  const context = useMemo(() => canRead && accountScope ? { store, chat, onFill, source, accountScope, openSuggestion } : null, [canRead, accountScope, store, chat, onFill, source, openSuggestion])
   return <Context.Provider value={context}>{children}
     {context && suggestion?.scope === dialogScope && <ChatSuggestionSelection key={`${dialogScope}:${suggestion.item.itemUid}:${suggestion.id}`}
       item={suggestion.item} id={suggestion.id} scopeKey={dialogScope} onClose={closeSuggestion}/>}
