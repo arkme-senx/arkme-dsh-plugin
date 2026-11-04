@@ -36,7 +36,7 @@ function ConversationArrangements({ reference, displayName, scope, accountScope,
   reference: string; displayName: string; scope: 'chat' | 'team'; accountScope: string; active: boolean; refreshRevision: number
 }) {
   const recognition = useConversationRecognition(accountScope, reference, scope, active)
-  const enabled = recognition.value?.enabled ?? Boolean(recognition.error)
+  const enabled = recognition.value?.enabled ?? false
   const [open, setOpen] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [host, setHost] = useState<Element | null>(null)

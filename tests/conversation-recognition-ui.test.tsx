@@ -7,14 +7,16 @@ vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 import { useConversationRecognitionAction } from '../src/client/ConversationRecognitionControl.js'
 import { ArkmeConversationArrangements } from '../src/client/ArkmeConversationArrangements.js'
 import type { ArkmeSourceItem } from '../src/types.js'
+import type { TeamConversation } from '../src/team-app-contract.js'
 let host: HTMLDivElement, root: Root, account: string
 const source = { sourceRef: 'recognition-source', sourceKey: 'recognition-chat', kind: 'private_chat', displayName: '测试对方' } as ArkmeSourceItem
 let enabled: boolean, version: number, failWrite: boolean, loseResponse: boolean
 const value = () => ({ accountScope: account, enabled, version, enabledAt: 0, effectiveEnabled: enabled, blockedReason: enabled ? '' : '已关闭' })
-function Harness({ scope = 'chat' }: { scope?: 'chat'|'team' }) {
+function Harness({ scope = 'chat', kind = 'private_chat' }: { scope?: 'chat'|'team'; kind?: ArkmeSourceItem['kind'] }) {
   const action = useConversationRecognitionAction(account, source.sourceRef, scope, true)
   return <><button onClick={action.invoke}>{action.label}</button>{action.error && <p role="alert">{action.error}</p>}
-    {scope === 'chat' && <ArkmeConversationArrangements source={source} accountScope={account} active refreshRevision={0} />}</>
+    {scope === 'chat' ? <ArkmeConversationArrangements source={{ ...source, kind }} accountScope={account} active refreshRevision={0} />
+      : <ArkmeConversationArrangements teamConversation={{ ref: source.sourceRef, key: 'recognition-team', side: 'team', channel: { name: '测试通道' }, visitor: { nickname: '测试访客' } } as TeamConversation} accountScope={account} active refreshRevision={0} />}</>
 }
 beforeEach(() => {
   vi.useFakeTimers(); account = `test:recognition-${crypto.randomUUID()}`; enabled = true; version = 0; failWrite = false; loseResponse = false
@@ -86,4 +88,40 @@ it('lets a confirmed switch interrupt background refresh and ignores its stale r
  expect(host.querySelector('[role="switch"]')?.getAttribute('aria-disabled')).not.toBe('true')
  await toggle();await act(async()=>resolve(stale))
  expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false');expect(host.textContent).not.toContain('相关安排')
+})
+
+it.each(['private_chat', 'group_chat', 'team'] as const)('keeps an unknown %s preference hidden after a cold read failure and retries without writing', async kind => {
+  enabled = false; version = 3
+  let failRead = true
+  mock.call.mockImplementation(async op => {
+    if (op === 'arrangements.conversation.recognition.get') {
+      if (failRead) throw new Error('读取失败')
+      return value()
+    }
+    return { items: [], hasMore: false, nextCursor: '' }
+  })
+  await act(async () => { root.render(<Harness scope={kind === 'team' ? 'team' : 'chat'} kind={kind === 'team' ? 'private_chat' : kind} />) })
+  expect(host.querySelector('[aria-label="相关安排"]')).toBeNull()
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('读取失败')
+  expect(host.textContent).toContain('重试')
+  expect(mock.call.mock.calls.filter(([op]) => op === 'arrangements.conversation.list')).toHaveLength(0)
+  failRead = false
+  await act(async () => { host.querySelector<HTMLButtonElement>('button')!.click() })
+  expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false')
+  expect(host.querySelector('[aria-label="相关安排"]')).toBeNull()
+  expect(mock.call.mock.calls.filter(([op]) => op.endsWith('.set'))).toHaveLength(0)
+})
+
+it.each([true, false])('retains the last confirmed enabled=%s preference when a later refresh fails', async initial => {
+  enabled = initial
+  await render()
+  mock.call.mockImplementation(async op => {
+    if (op === 'arrangements.conversation.recognition.get') throw new Error('刷新失败')
+    return { items: [], hasMore: false, nextCursor: '' }
+  })
+  await act(async () => { window.dispatchEvent(new Event('focus')) })
+  expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe(String(initial))
+  expect(Boolean(host.querySelector('[aria-label="相关安排"]'))).toBe(initial)
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('刷新失败')
+  expect(mock.call.mock.calls.filter(([op]) => op.endsWith('.set'))).toHaveLength(0)
 })

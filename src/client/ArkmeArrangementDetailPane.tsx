@@ -1,6 +1,5 @@
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import type { ArkmeArrangementDetail, ArkmeArrangementItem } from '../types.js'
 import { ArkmeArrangementRestore } from './ArkmeArrangementRestore.js'

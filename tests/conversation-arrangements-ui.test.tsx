@@ -5,7 +5,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ArkmeSourceItem } from '../src/types.js'
 import type { TeamConversation } from '../src/team-app-contract.js'
 const mock = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), manage: vi.fn(), prepare: vi.fn(), play: vi.fn(), cancel: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, params?: Record<string, unknown>, signal?: AbortSignal) =>
+  operation === 'arrangements.conversation.recognition.get'
+    ? Promise.resolve({ accountScope: params?.expectedAccountScope, enabled: true, version: 0, enabledAt: 0, effectiveEnabled: true, blockedReason: '' })
+    : mock.call(operation, params, signal) }))
 vi.mock('../src/client/ui-controller.js', () => ({ arkmeUi: { showConversationTarget: mock.navigate, showArrangements: mock.manage } }))
 vi.mock('../src/client/arrangement-completion-sound.js', () => ({ prepareArrangementCompletionSound: mock.prepare }))
 import { ArkmeConversationArrangements } from '../src/client/ArkmeConversationArrangements.js'
