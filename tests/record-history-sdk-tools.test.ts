@@ -4,19 +4,23 @@ import { dispatchArkmeHostOperation } from '../src/host-api.js'
 import { createArkmeCoreToolDefinitions } from '../src/tools/index.js'
 
 it('shares the exact revision and version cursor Host owner through the public SDK', async () => {
-  const owner = { recordEditHistoryPage: vi.fn(async () => ({ items: [], hasMore: false })),
-    recordRevisionSnapshot: vi.fn(async () => ({ revisionUid: 'r', durationState: 'complete', editDurationMillis: 0 })) }
+  const owner = { recordEditHistoryPage: vi.fn(async (..._args: unknown[]) => ({ items: [], hasMore: false })),
+    recordRevisionSnapshot: vi.fn(async (..._args: unknown[]) => ({ revisionUid: 'r', durationState: 'complete', editDurationMillis: 0 })) }
   const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
     const { operation, params } = JSON.parse(String(init?.body))
     const value = operation === 'provider.capabilities' ? { contractVersion: 1, features: { recordEditHistoryV1: true } }
       : await dispatchArkmeHostOperation(owner as never, operation, params, undefined, undefined, undefined, undefined, init?.signal ?? undefined)
     return new Response(JSON.stringify({ ok: true, value }))
   } })
-  const signal = new AbortController().signal
+  const controller = new AbortController(), signal = controller.signal
   await sdk.recordEditHistory('source', 'action', 9, signal)
-  expect(owner.recordEditHistoryPage).toHaveBeenCalledWith('source', 'action', 9, signal)
+  expect(owner.recordEditHistoryPage).toHaveBeenCalledWith('source', 'action', 9, expect.any(AbortSignal))
   expect(await sdk.recordRevisionSnapshot('source', 'action', 'r', signal)).toMatchObject({ editDurationMillis: 0 })
-  expect(owner.recordRevisionSnapshot).toHaveBeenCalledWith('source', 'action', 'r', signal)
+  expect(owner.recordRevisionSnapshot).toHaveBeenCalledWith('source', 'action', 'r', expect.any(AbortSignal))
+  controller.abort()
+  expect((owner.recordEditHistoryPage.mock.calls[0]![3] as AbortSignal).aborted).toBe(true)
+  expect((owner.recordRevisionSnapshot.mock.calls[0]![3] as AbortSignal).aborted).toBe(true)
+  sdk.dispose()
 })
 it('fails clearly for a Provider without the history capability', async () => {
   const sdk = createArkmeSdk({ fetchImpl: async () => new Response(JSON.stringify({ ok: true, value: { contractVersion: 1, features: {} } })) })
