@@ -1,4 +1,5 @@
 import { WorldSubscriptionService } from './services/world-subscription-service.js'
+import { WorldSoundService } from './services/world-sound-service.js'
 import { AccountModelService } from './services/account-model-service.js'
 import { WorldPublicationService } from './services/world-publication-service.js'
 import{readSelectedTextNoteQuote}from'./selected-text-note.js'
@@ -1501,6 +1502,7 @@ arkoImagesV1:true,
         worldReactionsV1: true,
         worldReactionArchiveVersionsV1: true,
         teamWorldV1: true,
+        worldSoundExcerptsV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         ...(this.config.markdownLongArticlesEnabled === true ? { markdownLongArticles: true as const } : {}),
@@ -3804,6 +3806,13 @@ arkoImagesV1:true,
   }
 
   async worldNotificationSources(offset: number, signal?: AbortSignal) { return this.world.worldNotificationSources(offset, signal) }
+  async worldSoundExcerpts(input:import('./world-sound-contract.js').WorldSoundRequest,signal?:AbortSignal){
+    return new WorldSoundService(this.runtime,{
+      recording:refs=>this.recording.soundExcerptSelection(refs),call:(ref,ids)=>this.callHistory.soundExcerptSelection(ref,ids),
+      team:(ref,actor)=>this.teamApp.worldTeamID(ref,actor),recordUID:async ref=>(await this.world.publicationPrincipal(ref,signal)).uid,
+      recordRef:uid=>this.world.publicationReference(uid),
+    }).execute(input,signal)
+  }
   async worldSubscriptions(input: import('./world-subscription-contract.js').WorldSubscriptionRequest, signal?: AbortSignal) {
     return new WorldSubscriptionService(this.runtime, this.profile, {
       openPrivate: (id, viewer, displayName, signal) => this.chat.openPrivateChatFromUser(id, { expectedViewerUserId: viewer, presentationDisplayName: displayName, ...(signal ? { signal } : {}) }),
