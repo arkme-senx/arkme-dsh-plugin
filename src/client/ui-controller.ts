@@ -717,4 +717,4 @@ export class ArkmeUiController {
 }
 
 export const arkmeUi = new ArkmeUiController()
-export type ArkmeSettingsSection = 'arkme-account' | 'arkme-usage' | 'arkme-data'
+export type ArkmeSettingsSection = 'arkme-account' | 'arkme-models' | 'arkme-usage' | 'arkme-data'

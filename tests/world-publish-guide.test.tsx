@@ -43,7 +43,8 @@ it('opens one shared confirmation and clears it on navigation, abort or account 
   await act(async () => root.render(<Host/>))
   const origin = { kind: 'local' as const, sourceRef: 'dsh:1', itemUid: 'input', textContent: '本人正文', sourceLabel: 'DSH', sendAtMillis: 1, hasAttachments: false }
   await act(async () => openWorldPublish({ accountKey: 'test:42', origin }))
-  expect(document.querySelector('[aria-label="世界内容"]')?.textContent).toBe('本人正文')
+  expect(document.querySelector('[role="dialog"][aria-label="选择发布身份"]')).not.toBeNull()
+  expect(document.querySelector('[aria-label="世界内容"]')).toBeNull()
   await act(async () => root.render(<Host navigation="group"/>))
   expect(document.querySelector('[aria-label="世界内容"]')).toBeNull()
   expect(() => openWorldPublish({ accountKey: 'test:99', origin })).toThrow('账号已变化')

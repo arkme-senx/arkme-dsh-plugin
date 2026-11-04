@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -55,6 +56,7 @@ async function capabilities() { await click(button('更多 Arko 操作')); await
 async function send() { await click(host.querySelector('button[aria-label="发送"]')!) }
 
 beforeEach(() => {
+ arkoTimelineMemory.clear()
   arkoModelCache.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16))

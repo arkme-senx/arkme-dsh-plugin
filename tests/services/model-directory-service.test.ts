@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { ModelDirectoryService } from '../../src/services/model-directory-service.js'
 import { mergeModelChoices, dshModelChoices, arkoModelChoices, modelSceneBilling } from '../../src/model-directory.js'
 import { exploreModelChoices } from '../../src/explore-models.js'
+import { publishedModelChoices } from '../../src/services/model-directory-contract.js'
 function fixture() {
   const session = { userId: 42 }
   const runtime = { config: { environment: 'production' }, requireSession: async () => session }
@@ -91,4 +92,30 @@ it('forwards model directory reads and cancellation through the SDK and Host wit
   } })
   await expect(sdk.modelDirectory('production:42', signal)).resolves.toEqual(value)
   expect(service.modelDirectory).toHaveBeenCalledExactlyOnceWith('production:42', signal)
+  await sdk.modelDirectory('production:42',signal,{officialOnly:true})
+  expect(service.modelDirectory).toHaveBeenLastCalledWith('production:42',signal,true)
+})
+
+const published = () => ({ provider:'arkme-managed',public_model_code:'official-v1',display_name:'Official One',supplier_code:'deepseek',catalog_release_id:'12',offering_revision_id:'34',
+  capability:{input_modalities:['text','image']},reasoning:{efforts:['off','high'],default_effort:'high'},
+  point_pricing:{cache_miss_input_per_thousand:'0.0000001',cache_hit_input_per_thousand:'0',output_per_thousand:'1.2345678'},api_key:'never-expose' })
+it('reads the official published catalog without depending on a DSH connection or including user-provided keys',async()=>{
+ const f=fixture(),read=vi.fn(async()=>({item_ls:[published()]}));Object.assign(f.runtime,{authenticatedIntelligentPost:read})
+ const value=await f.service.read('production:42',undefined,true)
+ expect(f.dsh).not.toHaveBeenCalled();expect(read).toHaveBeenCalledExactlyOnceWith('/api/v1/managed-ai/models/query',{},f.session,undefined)
+ const model=value.models.find(item=>item.dsh)!
+ expect(model).toMatchObject({origin:'official',supplierCode:'deepseek',images:true,pointPricing:{cacheMissInputPerThousand:'0.0000001',outputPerThousand:'1.2345678'},dsh:{provider:'arkme-managed',model:'official-v1'}})
+ expect(model.reasoning?.efforts.map(item=>item.id)).toEqual(['off','high']);expect(value.models.every(item=>item.origin==='official')).toBe(true)
+ expect(JSON.stringify(value)).not.toContain('never-expose')
+})
+it.each([
+ {provider:'private'}, {point_pricing:{cache_miss_input_per_thousand:'-1'}}, {point_pricing:{cache_miss_input_per_thousand:0.1}},
+ {capability:{input_modalities:[]}}, {reasoning:{efforts:['high','high'],default_effort:'high'}}, {reasoning:{efforts:['high'],default_effort:'off'}},
+])('rejects invalid published catalog facts instead of estimating capabilities or prices: %j',patch=>{
+ expect(()=>publishedModelChoices({item_ls:[{...published(),...patch}]})).toThrow('官方模型目录')
+})
+it('keeps partial scenes usable and reports published catalog failures explicitly',async()=>{
+ const f=fixture();Object.assign(f.runtime,{authenticatedIntelligentPost:vi.fn(async()=>({item_ls:[published(),published()]}))})
+ const value=await f.service.read('production:42',undefined,true)
+ expect(value.failures).toHaveLength(1);expect(value.failures[0]?.source).toBe('DSH 对话');expect(value.models.every(item=>!item.dsh)).toBe(true)
 })

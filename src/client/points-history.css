@@ -1,0 +1,91 @@
+.arkme-points-history-dialog {
+  --points-bg: var(--dsw-alias-bg-base, #fff);
+  --points-muted: var(--dsw-alias-label-secondary, #68707c);
+  --points-line: var(--dsw-alias-border-l2, #e1e3e6);
+  --points-layer: var(--dsw-alias-bg-layer-2, #f3f4f6);
+  --points-blue: var(--dsw-alias-state-business-primary, #3964fe);
+  position: fixed; width: min(740px, calc(100vw - 40px)); max-width: none;
+  max-height: calc(100dvh - 48px); margin: auto; padding: 0; box-sizing: border-box;
+  border: 1px solid var(--points-line); border-radius: 18px; overflow: hidden;
+  background: var(--points-bg); color: var(--dsw-alias-label-primary, #17191c);
+  box-shadow: var(--dsw-shadow-lv2, 0 20px 60px #0003); font-size: 13px; line-height: 1.5;
+}
+.arkme-points-history-dialog[open] { display: flex; flex-direction: column; }
+.arkme-points-history-dialog::backdrop { background: #0005; backdrop-filter: blur(3px); }
+.arkme-points-history-dialog * { box-sizing: border-box; }
+.arkme-points-history-dialog [hidden] { display: none !important; }
+.arkme-points-history-dialog button, .arkme-points-history-dialog select { font: inherit; color: inherit; }
+.arkme-points-history-dialog button { background: transparent; border: 0; cursor: pointer; }
+.arkme-points-history-dialog button:disabled { opacity: .4; cursor: default; }
+.arkme-points-history-dialog :is(button, select, summary):focus-visible { outline: 2px solid var(--points-blue); outline-offset: 3px; }
+.arkme-points-history-dialog h2, .arkme-points-history-dialog h3, .arkme-points-history-dialog p { margin: 0; }
+.arkme-points-history-header { padding: 20px 24px 12px; display: flex; justify-content: space-between; align-items: center; gap: 16px; flex: none; }
+.arkme-points-history-header h2 { font-size: 18px; line-height: 26px; font-weight: 600; }
+.arkme-points-history-header > div { display: flex; gap: 6px; }
+.arkme-points-history-header button { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 7px; color: var(--points-muted); }
+.arkme-points-history-header button:hover:not(:disabled) { background: var(--points-layer); }
+.arkme-points-history-tabs { display: flex; gap: 28px; padding: 0 24px; border-bottom: 1px solid var(--points-line); flex: none; }
+.arkme-points-history-tabs > button { padding: 9px 1px 13px; position: relative; color: var(--points-muted); }
+.arkme-points-history-tabs > button[aria-selected="true"] { color: inherit; font-weight: 600; }
+.arkme-points-history-tabs > button[aria-selected="true"]::after { content: ''; height: 2px; background: currentColor; position: absolute; left: 0; right: 0; bottom: -1px; }
+.arkme-points-history-body { padding: 20px 24px; overflow: auto; overscroll-behavior: contain; min-height: 0; }
+.arkme-points-history-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.arkme-points-history-grain { display: flex; gap: 3px; background: var(--points-layer); border-radius: 8px; padding: 3px; }
+.arkme-points-history-grain > button { color: var(--points-muted); padding: 5px 15px; border-radius: 6px; }
+.arkme-points-history-grain > button[aria-pressed="true"] { background: var(--points-bg); color: inherit; box-shadow: 0 1px 4px #0001; }
+.arkme-points-history-range { display: flex; align-items: center; gap: 8px; color: var(--points-muted); font-size: 12px; }
+.arkme-points-history-range > button { width: 24px; height: 28px; display: grid; place-items: center; border-radius: 5px; }
+.arkme-points-history-range > button:hover:not(:disabled) { background: var(--points-layer); }
+.arkme-points-history-overview { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-top: 22px; }
+.arkme-points-history-overview p, .arkme-points-history-overview > span { font-size: 12px; color: var(--points-muted); }
+.arkme-points-history-overview strong { display: block; font-size: 27px; line-height: 36px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.arkme-points-history-overview small { color: var(--points-muted); font-size: 12px; font-weight: 400; }
+.arkme-points-history-chart { display: grid; grid-template-columns: 60px minmax(0, 1fr); height: 180px; margin-top: 20px; }
+.arkme-points-history-axis { display: flex; flex-direction: column; justify-content: space-between; padding: 0 4px 29px 0; color: var(--points-muted); font-size: 11px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.arkme-points-history-axis > span { white-space: nowrap; }
+.arkme-points-history-columns { display: flex; gap: 6px; min-width: 0; background: linear-gradient(var(--points-line), var(--points-line)) 0 0 / 100% 1px, linear-gradient(var(--points-line), var(--points-line)) 0 75px / 100% 1px, linear-gradient(var(--points-line), var(--points-line)) 0 151px / 100% 1px; background-repeat: no-repeat; }
+.arkme-points-history-columns > button { padding: 0; min-width: 0; flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.arkme-points-history-bar-area { height: 152px; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+.arkme-points-history-bar { display: block; width: 74%; max-width: 34px; min-width: 2px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--points-blue) 32%, var(--points-bg)); transition: height .18s ease, background .15s ease; }
+.arkme-points-history-columns > button[aria-pressed="true"] .arkme-points-history-bar, .arkme-points-history-columns > button:hover .arkme-points-history-bar { background: var(--points-blue); }
+.arkme-points-history-tick { height: 20px; white-space: nowrap; color: var(--points-muted); font-size: 11px; }
+.arkme-points-history-tick[data-optional="true"] { visibility: hidden; }
+.arkme-points-history-columns > button[aria-pressed="true"] .arkme-points-history-tick { color: var(--points-blue); }
+.arkme-points-history-categories { margin-top: 20px; border-top: 1px solid var(--points-line); padding-top: 18px; }
+.arkme-points-history-section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.arkme-points-history-section-heading h3 { font-size: 14px; font-weight: 600; }
+.arkme-points-history-section-heading button { padding: 0; color: var(--points-blue); font-size: 12px; }
+.arkme-points-history-selection { font-size: 12px; color: var(--points-muted); margin: 5px 0 12px !important; }
+.arkme-points-history-selection strong { color: var(--dsw-alias-label-primary, #17191c); font-weight: 500; }
+.arkme-points-history-category { display: grid; grid-template-columns: 116px minmax(20px, 1fr) 84px 52px 13px; gap: 12px; align-items: center; width: 100%; padding: 9px 0; text-align: left; border-radius: 5px; }
+.arkme-points-history-category:hover { background: var(--points-layer); }
+.arkme-points-history-track { height: 5px; background: var(--points-layer); border-radius: 3px; overflow: hidden; }
+.arkme-points-history-track > span { display: block; height: 100%; background: var(--points-blue); opacity: .7; border-radius: 3px; }
+.arkme-points-history-category > span:nth-last-of-type(1), .arkme-points-history-category > small { text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.arkme-points-history-category small, .arkme-points-history-category > svg { color: var(--points-muted); font-size: 12px; }
+.arkme-points-history-detail-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
+.arkme-points-history-detail-toolbar select { padding: 6px 9px; background: var(--points-bg); border: 1px solid var(--points-line); border-radius: 7px; max-width: 100%; }
+.arkme-points-history-detail-toolbar > span { color: var(--points-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.arkme-points-history-filter { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px; padding: 3px 8px; border-radius: 5px; color: var(--points-blue); background: color-mix(in srgb, var(--points-blue) 10%, var(--points-bg)); font-size: 12px; }
+.arkme-points-history-filter button { padding: 0; display: grid; place-items: center; }
+.arkme-points-history-dialog .arkme-usage-breakdown { margin-bottom: 0; }
+.arkme-points-history-dialog .arkme-usage-breakdown summary { cursor: pointer; }
+.arkme-points-history-dialog .arkme-points-history-more, .arkme-points-history-state button { display: block; margin: 14px auto 0; background: var(--points-layer); border-radius: 7px; padding: 6px 14px; }
+.arkme-points-history-state, .arkme-points-history-empty { padding: 28px 0; text-align: center; color: var(--points-muted); }
+.arkme-points-history-state[role="alert"] { color: var(--dsw-alias-state-error-label, #b54841); }
+.arkme-points-history-footer { flex: none; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; padding: 12px 24px; border-top: 1px solid var(--points-line); color: var(--points-muted); font-size: 11px; }
+@media (max-width: 520px) {
+  .arkme-points-history-dialog { width: calc(100vw - 20px); max-height: calc(100dvh - 24px); border-radius: 14px; }
+  .arkme-points-history-header { padding: 16px 16px 10px; }
+  .arkme-points-history-header h2 { font-size: 16px; }
+  .arkme-points-history-tabs { padding: 0 16px; }
+  .arkme-points-history-body { padding: 16px; }
+  .arkme-points-history-footer { padding: 12px 16px; }
+  .arkme-points-history-chart { grid-template-columns: 40px minmax(0, 1fr); }
+  .arkme-points-history-columns { gap: 3px; }
+  .arkme-points-history-tick { visibility: hidden; }
+  .arkme-points-history-columns > button:first-child .arkme-points-history-tick, .arkme-points-history-columns > button:last-child .arkme-points-history-tick { visibility: visible; }
+  .arkme-points-history-category { grid-template-columns: 104px minmax(8px, 1fr) 68px 44px; gap: 6px; }
+  .arkme-points-history-category > svg { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .arkme-points-history-bar { transition: none; } }
