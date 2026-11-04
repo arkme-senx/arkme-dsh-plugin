@@ -121,7 +121,32 @@ describe('team World reference boundary', () => {
 })
 
 describe('team public card projection',()=>{
+ it.each(['17', '9007199254740993'])('normalizes existing decimal Team references %s at the request boundary', async teamId => {
+  const f = fixture(() => ({...channel, team_id: teamId}))
+  const teamRef = await f.service.worldTeamRef(teamId, 90)
+  await f.service.execute('team.app.channel', {teamRef})
+  expect(String(f.fetchImpl.mock.calls[0]?.[1]?.body)).toContain(`"team_id":${teamId}`)
+ })
+ it.each([0, -1, 'invalid', '9223372036854775808'])('rejects an invalid member-card Team ID %s', async teamId => {
+  const f = fixture(() => ({...channel, team_id:teamId, contact:{state:'disabled'}, navigation:{kind:'inbox'}}))
+  await expect(f.service.execute('team.app.public-card', {jotmoId:channel.jotmo_id})).rejects.toMatchObject({code:'team-reference-invalid'})
+  expect(f.requests).toHaveLength(1)
+ })
  const publicCard={...channel,contact:{state:'available',public_ref:channel.public_ref},navigation:{kind:'contact'},description:''}
+ it.each([17, '17', '9007199254740993', '9223372036854775807'])('opens the member directory from a public card with numeric int64 Team ID %s', async teamId => {
+  const memberChannel = {...channel, team_id: teamId}
+  const f = fixture(path => path.endsWith('/public-card/get')
+   ? {...memberChannel, contact:{state:'disabled'}, navigation:{kind:'inbox'}}
+   : path.endsWith('/message-channel/get') ? memberChannel : {items:[], has_more:false})
+  const card = await f.service.execute('team.app.public-card', {jotmoId:channel.jotmo_id}) as import('../src/team-group-contract.js').TeamPublicCard
+  await f.service.execute('team.app.channel', {teamRef:card.navigation!.teamRef})
+  await f.service.execute('team.app.conversations', {teamRef:card.navigation!.teamRef, side:'team', limit:1})
+  expect(f.requests.map(request => request.path)).toEqual(['/api/v1/team/public-card/get', '/api/v1/team/message-channel/get', '/api/v1/team/conversations/list'])
+  for (const [, init] of f.fetchImpl.mock.calls.slice(1)) {
+   expect(String(init?.body)).toContain(`"team_id":${teamId}`)
+   expect(String(init?.body)).not.toContain(`"team_id":"${teamId}"`)
+  }
+ })
  it('uses the pure public read and never repairs or opens a channel',async()=>{
   const f=fixture(()=>publicCard),value=await f.service.execute('team.app.public-card',{jotmoId:channel.jotmo_id,expectedAccountKey:'test:90'})
   expect(value).toMatchObject({name:channel.name,contact:{state:'available',publicRef:channel.public_ref},navigation:{kind:'contact'}})

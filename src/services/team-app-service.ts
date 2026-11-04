@@ -449,7 +449,9 @@ export class TeamAppService {
     const teamID = async () => {
       const value = await this.open('team', p.teamRef, actor)
       if ((operation === 'team.app.member-candidates' || operation.startsWith('team.app.members.add')) && value.environment !== this.runtime.config.environment) throw invalid()
-      return value.team_id
+      const id = recordOwnerId(value.team_id)
+      if (!id) throw invalid()
+      return id
     }
     const conversation = async () => {
       const v = await this.open('conversation', p.conversationRef, actor)
@@ -718,12 +720,14 @@ export class TeamAppService {
         const contact=obj(raw.contact), navigation=obj(raw.navigation)
         if(contact.state==='unavailable')return {name:'',jotmoId,contact:{state:'unavailable'},navigation:{kind:'none'}} satisfies TeamPublicCard
         if(raw.jotmo_id!==jotmoId||!str(raw.name)||!['available','disabled'].includes(str(contact.state))||!['contact','inbox','none'].includes(str(navigation.kind))||contact.state==='available'&&!str(contact.public_ref))throw invalid()
-        const teamRef=await this.ref('team',{team_id:str(raw.team_id)},actor)
+        const teamId = recordOwnerId(raw.team_id)
+        if (navigation.kind === 'inbox' && !teamId) throw invalid()
+        const teamRef = navigation.kind === 'inbox' ? await this.ref('team', {team_id:teamId}, actor) : undefined
         const avatar=await this.avatar({...raw,avatar:{...obj(raw.avatar),mode:'default'}},actor)
         if(obj(raw.avatar).mode==='custom')Object.assign(avatar,{mode:'custom',key:`team_avatar_asset://${avatar.key}`,imageRef:await this.ref('profile-image',{jotmo_id:jotmoId,public_card:true,key:obj(raw.avatar).key},actor)})
         return {name:str(raw.name),jotmoId,avatar,description:str(raw.description),
           contact:contact.state==='available'?{state:'available',publicRef:str(contact.public_ref)}:{state:'disabled'},
-          navigation:{kind:navigation.kind as 'contact'|'inbox'|'none',...(navigation.kind==='inbox'?{teamRef}:{})}} satisfies TeamPublicCard
+          navigation:{kind:navigation.kind as 'contact'|'inbox'|'none',...(teamRef ? {teamRef} : {})}} satisfies TeamPublicCard
       }
       case 'team.app.channel.configure': { const id = await teamID(), channel = await post('message-channel/get', { team_id: id }, true); return await this.channel(await post('message-channel/configure', { team_id: id, expected_revision: num(p.revision), enabled: p.enabled === true, rotate_link: p.rotate === true, avatar_url: str(channel.avatar_url) }), actor) }
       case 'team.app.official': return await this.channel(await post('official-feedback-target', {}, true), actor)
