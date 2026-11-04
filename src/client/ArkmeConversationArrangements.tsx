@@ -4,6 +4,7 @@ import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeArrangementItem, ArkmeSourceItem } from '../types.js'
+import type { TeamConversation } from '../team-app-contract.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeArrangementCompletionControl, arrangementCompletionChecked } from './ArkmeArrangementCompletionControl.js'
 import { ArkmeRelatedArrangementDialog } from './ArkmeRelatedArrangementDialog.js'
@@ -17,11 +18,22 @@ function time(value?: number) {
     ? new Intl.DateTimeFormat(arkmeIntlLocale(), { ...(new Date(value).getFullYear() !== new Date().getFullYear() ? { year: 'numeric' as const } : {}), month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : ''
 }
 const normalize = (text: string) => text.trim().replace(/\s+/gu, ' ')
-type Props = { source: ArkmeSourceItem; accountScope: string; active: boolean; refreshRevision: number }
+type Props = { accountScope: string; active: boolean; refreshRevision: number } &
+  ({ source: ArkmeSourceItem; teamConversation?: never } | { source?: never; teamConversation: TeamConversation })
 export function ArkmeConversationArrangements(props: Props) {
-  return <ConversationArrangements key={`${props.accountScope}:${props.source.conversationRef ?? props.source.sourceKey ?? props.source.sourceRef}`} {...props} />
+  if (props.source) {
+    const source = props.source
+    return <ConversationArrangements key={`${props.accountScope}:chat:${source.sourceKey ?? source.sourceRef}`} reference={source.conversationRef ?? source.sourceRef} displayName={source.displayName}
+      scope="chat" accountScope={props.accountScope} active={props.active} refreshRevision={props.refreshRevision} />
+  }
+  const team = props.teamConversation
+  return <ConversationArrangements key={`${props.accountScope}:team:${team.side}:${team.key}`} reference={team.ref}
+    displayName={team.side === 'team' ? `${team.visitor?.nickname ?? tr('用户')}（${team.channel.name}）` : team.channel.name}
+    scope="team" accountScope={props.accountScope} active={props.active} refreshRevision={props.refreshRevision} />
 }
-function ConversationArrangements({ source, accountScope, active, refreshRevision }: Props) {
+function ConversationArrangements({ reference, displayName, scope, accountScope, active, refreshRevision }: {
+  reference: string; displayName: string; scope: 'chat' | 'team'; accountScope: string; active: boolean; refreshRevision: number
+}) {
   const [open, setOpen] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [host, setHost] = useState<Element | null>(null)
@@ -30,7 +42,7 @@ function ConversationArrangements({ source, accountScope, active, refreshRevisio
   const [now, setNow] = useState(Date.now)
   const actions = useRelatedArrangementActions(active, accountScope, item => { data.updateItem(item); setLatestItem(item) },
     ref => { data.removeItem(ref); if (selected === ref) setSelected(undefined) })
-  const data = useConversationArrangements(source.conversationRef ?? source.sourceRef, active, refreshRevision, !!selected || !!actions.pending)
+  const data = useConversationArrangements(reference, active, refreshRevision, !!selected || !!actions.pending, scope)
   useEffect(() => { setHost(button.current?.closest('[data-arkme-active-conversation-identity]') ?? null) }, [])
   useEffect(() => { if (!active) { setOpen(false); setSelected(undefined) } }, [active])
   useEffect(() => {
@@ -69,7 +81,7 @@ function ConversationArrangements({ source, accountScope, active, refreshRevisio
             <ArrowClockwise size={17} aria-hidden className={data.loading && data.loadKind !== 'more' ? 'arkme-related-arrangements-spinning' : undefined} />
           </button>
         </div>
-        <p className="arkme-related-arrangements-scope" title={source.displayName}>{source.displayName} · {tr('仅显示我在此对话中的安排')}</p>
+        <p className="arkme-related-arrangements-scope" title={displayName}>{displayName} · {tr('仅显示我在此对话中的安排')}</p>
         <div className="arkme-related-arrangements-tabs" role="group" aria-label={tr('安排状态')}>
           <button type="button" aria-pressed={!completed} onClick={() => setCompleted(false)}>{tr('未完成')}</button>
           <button type="button" aria-pressed={completed} onClick={() => setCompleted(true)}>{tr('已完成')}</button>

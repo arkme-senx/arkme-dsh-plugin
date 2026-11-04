@@ -3,6 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ArkmeSourceItem } from '../src/types.js'
+import type { TeamConversation } from '../src/team-app-contract.js'
 const mock = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), manage: vi.fn(), prepare: vi.fn(), play: vi.fn(), cancel: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 vi.mock('../src/client/ui-controller.js', () => ({ arkmeUi: { showConversationTarget: mock.navigate, showArrangements: mock.manage } }))
@@ -24,6 +25,16 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers() })
 async function render(account = 'prod:12') { await act(async () => root.render(<ArkmeConversationArrangements source={source} accountScope={account} active refreshRevision={0} />)); await act(async () => { await vi.advanceTimersByTimeAsync(260) }) }
 async function click(text: string) { const button = [...host.querySelectorAll('button')].find(b => b.textContent?.includes(text)); expect(button).toBeTruthy(); await act(async () => button!.click()) }
+it.each(['team','external'] as const)('uses the same list for the %s side of a team conversation',async side=>{
+  const team={ref:'opaque-team-conversation',key:'team-key',side,channel:{name:'设计工作室'},visitor:{nickname:'王工'}} as TeamConversation
+  await act(async()=>root.render(<ArkmeConversationArrangements teamConversation={team} accountScope="prod:12" active refreshRevision={1}/>))
+  await act(async()=>{await vi.advanceTimersByTimeAsync(260)})
+  expect(mock.call.mock.calls.find(([op])=>op==='arrangements.conversation.list')?.[1]).toEqual({teamConversationRef:team.ref,cursor:''})
+  await click('相关安排')
+  expect(host.textContent).toContain('设计工作室');expect(host.textContent).toContain('仅显示我在此对话中的安排')
+  expect(host.querySelector('.arkme-arrangement-completion-control')).not.toBeNull()
+  await click('周五15:00');expect(document.querySelector('[aria-modal=true]')).not.toBeNull()
+})
 it('labels the personal scope and opens the existing arrangement detail', async () => {
   await render(); expect(host.textContent).toContain('相关安排 · 1'); await click('相关安排')
   expect(host.textContent).toContain('仅显示我在此对话中的安排')

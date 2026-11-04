@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ArkmeConversationArrangement, ArkmeConversationArrangementPage } from '../types.js'
 import type { ArrangementService } from './arrangement-service.js'
 import type { SourceService } from './source-service.js'
+import type { TeamAppService } from './team-app-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 type Reference = { viewer: number; environment: string; conversation: string; uid: string; expires: number }
@@ -12,12 +13,16 @@ const unavailable = () => new ArkmePluginError('conversation-arrangement-unavail
 export class ConversationArrangementService {
   private readonly references = new Map<string, Reference>()
   constructor(private readonly runtime: ServiceRuntime, private readonly source: Pick<SourceService, 'openSourceRef'>,
-    private readonly arrangement: Pick<ArrangementService, 'ownedArrangementReference'>) {}
+    private readonly arrangement: Pick<ArrangementService, 'ownedArrangementReference'>,
+    private readonly team?: Pick<TeamAppService, 'resolveConversation'>) {}
 
-  async read(sourceRef: string, cursor: string, relatedRef?: string, signal?: AbortSignal): Promise<ArkmeConversationArrangementPage | ArkmeConversationArrangement> {
+  async read(sourceRef: string, cursor: string, relatedRef?: string, signal?: AbortSignal, teamConversationRef?: string): Promise<ArkmeConversationArrangementPage | ArkmeConversationArrangement> {
+    if (!!sourceRef === !!teamConversationRef) throw new ArkmePluginError('conversation-arrangement-scope', '请选择一个有效对话', false, 400)
     const session = await this.runtime.requireSession()
-    const conversation = await this.source.openSourceRef(sourceRef, session.userId)
-    if (!['private_chat', 'group_chat'].includes(conversation.kind)) throw new ArkmePluginError('conversation-arrangement-scope', '仅私聊和群聊支持相关安排', false, 400)
+    const team = teamConversationRef && this.team ? await this.team.resolveConversation(teamConversationRef, session.userId) : undefined
+    if (teamConversationRef && !team) throw unavailable()
+    const conversation = team ? { kind: 'team', ownerRef: `team:${team.side}:${team.conversation_uid}` } : await this.source.openSourceRef(sourceRef, session.userId)
+    if (!['private_chat', 'group_chat', 'team'].includes(conversation.kind)) throw new ArkmePluginError('conversation-arrangement-scope', '当前来源不支持相关安排', false, 400)
     signal?.throwIfAborted()
     const now = Date.now()
     for (const [key, value] of this.references) if (value.expires <= now || value.viewer !== session.userId || value.environment !== this.runtime.config.environment) this.references.delete(key)
@@ -27,7 +32,7 @@ export class ConversationArrangementService {
     let raw: Record<string, unknown>
     try {
       raw = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/list', {
-        status: -1, limit: 20, chat_session_uid: conversation.ownerRef,
+        status: -1, limit: 20, ...(team ? { team_conversation_uid: team.conversation_uid, team_side: team.side } : { chat_session_uid: conversation.ownerRef }),
         ...(target ? { uids: [target.uid] } : { conversation_cursor: cursor }),
       }, session, signal, { lane: 'interactive-read', bypassCache: true })
     } catch (error) {
@@ -37,7 +42,9 @@ export class ConversationArrangementService {
     const scope = objectValue(raw.conversation_scope)
     // Old servers ignore unknown fields and return the unfiltered personal list.
     // Never expose those results or call them an empty conversation.
-    if (scope.kind !== 'personal' || scope.chat_session_uid !== conversation.ownerRef || scope.user_id !== session.userId) throw unavailable()
+    if (scope.user_id !== session.userId || (team
+      ? scope.kind !== 'personal_team' || scope.team_conversation_uid !== team.conversation_uid || scope.team_side !== team.side
+      : scope.kind !== 'personal' || scope.chat_session_uid !== conversation.ownerRef)) throw unavailable()
     if (!Array.isArray(raw.list) || raw.list.length > 20 || (raw.has_more !== undefined && typeof raw.has_more !== 'boolean')
       || (raw.next_cursor !== undefined && typeof raw.next_cursor !== 'string')) throw invalid()
     const next = stringValue(raw.next_cursor)

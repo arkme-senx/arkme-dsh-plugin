@@ -1033,7 +1033,7 @@ export type ArkmeRecordingArrangementPage =
 
 export interface ArkmeArrangementEvidence {
   id: string
-  kind: 'record' | 'audio_summary' | 'call' | 'input' | 'voice_input' | 'agent' | 'manual'
+  kind: 'record' | 'team_message' | 'audio_summary' | 'call' | 'input' | 'voice_input' | 'agent' | 'manual'
   role: 'initial' | 'supplement' | 'related'
   text: string
   canOpen: boolean
@@ -1045,7 +1045,7 @@ export interface ArkmeArrangementEvidence {
 }
 export type ArrangementQuoteState = 'exact' | 'unlocated' | 'ambiguous' | 'version_changed' | 'pending'
 export type ArkmeArrangementSourceRead =
-  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation; quoteState?: ArrangementQuoteState }
+  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation; teamConversation?: { conversation: import('./team-app-contract.js').TeamConversation; message: import('./team-app-contract.js').TeamMessage }; quoteState?: ArrangementQuoteState }
   | { evidenceId: string; state: 'unavailable'; reason: string }
 export interface ArkmeArrangementSourceConversation {
   source: ArkmeSourceItem
@@ -1071,6 +1071,7 @@ export interface ArkmeConversationArrangementPage {
   nextCursor: string
 }
 export type ArkmeArrangementSourceTarget =
+  | { kind: 'team_conversation'; conversation: import('./team-app-contract.js').TeamConversation; message: import('./team-app-contract.js').TeamMessage }
   | { kind: 'document'; title: string; text: string }
   | { kind: 'record'; item: ArkmeTimelineItem }
   | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }

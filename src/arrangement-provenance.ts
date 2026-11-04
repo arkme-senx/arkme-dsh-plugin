@@ -10,7 +10,7 @@ export interface ArrangementEvidenceData {
   persisted?: boolean
   [key: string]: unknown
 }
-const kinds = new Set(['record', 'audio_summary', 'call', 'input', 'voice_input', 'agent', 'manual'])
+const kinds = new Set(['record', 'team_message', 'audio_summary', 'call', 'input', 'voice_input', 'agent', 'manual'])
 export const sourceDigest = (value: string) => createHash('sha256').update(value).digest('hex')
 const rows = (value: unknown) => Array.isArray(value) ? value.map(objectValue) : []
 export function arrangementEvidence(item: Record<string, unknown>, recovered?: ArrangementEvidenceData): ArrangementEvidenceData[] {
@@ -39,9 +39,9 @@ export function arrangementEvidence(item: Record<string, unknown>, recovered?: A
 }
 export function projectEvidence(e: ArrangementEvidenceData): ArkmeArrangementEvidence {
   const validDay = validRecordingSourceDay(e.date_stamp, e.tz_offset)
-  const canOpen = e.kind === 'record' ? !!e.record_uid : e.kind === 'call' ? !!e.room_id : e.kind === 'audio_summary' ? !!e.summary_id && validDay : e.kind === 'agent' ? !!e.agent_session_id && !!e.agent_message_id : false
-  return { id: e.id, kind: e.kind as ArkmeArrangementEvidence['kind'], role: e.role as ArkmeArrangementEvidence['role'], text: e.kind==='record'&&canOpen?'':e.text, canOpen,
-    ...((e.kind === 'record' && canOpen) || (e.persisted && ['audio_summary', 'call', 'agent'].includes(e.kind)) ? { readOnExpand: true } : {}),
+  const canOpen = e.kind === 'team_message' ? !!e.team_conversation_uid && !!e.team_message_uid && ['team','external'].includes(String(e.team_side)) : e.kind === 'record' ? !!e.record_uid : e.kind === 'call' ? !!e.room_id : e.kind === 'audio_summary' ? !!e.summary_id && validDay : e.kind === 'agent' ? !!e.agent_session_id && !!e.agent_message_id : false
+  return { id: e.id, kind: e.kind as ArkmeArrangementEvidence['kind'], role: e.role as ArkmeArrangementEvidence['role'], text: ['record','team_message'].includes(e.kind)&&canOpen?'':e.text, canOpen,
+    ...((e.kind === 'record' && canOpen) || (e.persisted && ['team_message', 'audio_summary', 'call', 'agent'].includes(e.kind)) ? { readOnExpand: true } : {}),
     ...(e.kind === 'audio_summary' && validDay ? { sourceDate: new Date(Number(e.date_stamp) + Number(e.tz_offset)).toISOString().slice(0,10) } : {}),
     ...(typeof e.occurred_at === 'number' && e.occurred_at > 0 ? { createdAtMillis: e.occurred_at } : {}),
     ...(!canOpen && !['input', 'manual', 'voice_input'].includes(e.kind) ? { unavailableReason: e.pending_detail ? '展开查看来源' : '历史记录未保存定位信息' } : {}),

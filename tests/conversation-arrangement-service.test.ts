@@ -13,10 +13,26 @@ function fixture() {
     authenticatedIntelligentPost: vi.fn(async (): Promise<unknown> => page) }
   const source = { openSourceRef: vi.fn(async () => ({ kind: 'group_chat', ownerRef: 'chat-a' })) }
   const arrangement = { ownedArrangementReference: vi.fn(async () => 'owned-ref') }
-  const service = new ConversationArrangementService(runtime as unknown as ServiceRuntime, source as never, arrangement)
-  return { service, runtime, source, arrangement, item, page }
+  const team={resolveConversation:vi.fn(async()=>({conversation_uid:'team-a',side:'team' as 'team'|'external'}))}
+  const service = new ConversationArrangementService(runtime as unknown as ServiceRuntime, source as never, arrangement,team)
+  return { service, runtime, source, arrangement, item, page,team }
 }
 describe('conversation arrangements provider boundary', () => {
+  it.each(['team','external'] as const)('binds the team %s side to an acknowledged personal owner scope',async side=>{
+    const {service,runtime,source,team,item}=fixture();team.resolveConversation.mockResolvedValue({conversation_uid:'team-a',side})
+    runtime.authenticatedIntelligentPost.mockResolvedValue({list:[item],has_more:false,next_cursor:'',conversation_scope:{kind:'personal_team',team_conversation_uid:'team-a',team_side:side,user_id:12}})
+    const result=await service.read('','',undefined,undefined,'team-ref') as ArkmeConversationArrangementPage
+    expect(result.items[0]?.arrangementRef).toBe('owned-ref');expect(source.openSourceRef).not.toHaveBeenCalled()
+    expect(runtime.authenticatedIntelligentPost.mock.calls[0]?.[1]).toEqual({status:-1,limit:20,team_conversation_uid:'team-a',team_side:side,conversation_cursor:''})
+    team.resolveConversation.mockResolvedValue({conversation_uid:'team-b',side})
+    await expect(service.read('','',result.items[0]!.relatedRef,undefined,'other-team')).rejects.toMatchObject({code:'conversation-arrangement-expired'})
+  })
+  it('rejects ambiguous inputs and old servers that ignore a team filter',async()=>{
+    const {service,arrangement}=fixture()
+    await expect(service.read('chat','',undefined,undefined,'team')).rejects.toMatchObject({code:'conversation-arrangement-scope'})
+    await expect(service.read('','',undefined,undefined,'team')).rejects.toMatchObject({code:'conversation-arrangement-unavailable'})
+    expect(arrangement.ownedArrangementReference).not.toHaveBeenCalled()
+  })
   it('uses the personal list API and returns only opaque management references', async () => {
     const { service, runtime, arrangement } = fixture()
     const page = await service.read('source', '') as ArkmeConversationArrangementPage

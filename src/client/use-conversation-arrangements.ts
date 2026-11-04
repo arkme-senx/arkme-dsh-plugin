@@ -10,7 +10,7 @@ type State = {
 }
 const emptyState = (): State => ({ items: [], loading: true, hasLoaded: false, loadKind: 'initial', failedKind: null, error: '', hasMore: false, nextCursor: '', loadedPages: 0 })
 
-export function useConversationArrangements(sourceRef: string, active: boolean, refreshRevision: number, refreshPaused = false) {
+export function useConversationArrangements(sourceRef: string, active: boolean, refreshRevision: number, refreshPaused = false, scope: 'chat' | 'team' = 'chat') {
   const [state, setState] = useState<State>(emptyState)
   const [revision, setRevision] = useState(0)
   const request = useRef<AbortController>()
@@ -25,7 +25,9 @@ export function useConversationArrangements(sourceRef: string, active: boolean, 
     const loadKind: LoadKind = more ? 'more' : current.current.hasLoaded ? 'refresh' : 'initial'
     setState(previous => ({ ...previous, loading: true, loadKind, failedKind: null, error: '' }))
     try {
-      const page = await withArkmeReadDeadline(signal => callArkme<ArkmeConversationArrangementPage>('arrangements.conversation.list', { sourceRef, cursor }, signal), controller.signal)
+      const page = await withArkmeReadDeadline(signal => callArkme<ArkmeConversationArrangementPage>('arrangements.conversation.list', {
+        ...(scope === 'team' ? { teamConversationRef: sourceRef } : { sourceRef }), cursor,
+      }, signal), controller.signal)
       if (controller.signal.aborted) return
       if (!Array.isArray(page.items) || typeof page.hasMore !== 'boolean' || typeof page.nextCursor !== 'string'
         || (page.hasMore && (!page.nextCursor || page.nextCursor === cursor))) throw new Error('相关安排分页信息无效，请重试')
@@ -42,7 +44,7 @@ export function useConversationArrangements(sourceRef: string, active: boolean, 
       if (!controller.signal.aborted) setState(previous => ({ ...previous, loading: false, loadKind: null, failedKind: loadKind,
         error: error instanceof Error ? error.message : '相关安排加载失败' }))
     }
-  }, [sourceRef, active])
+  }, [sourceRef, active, scope])
   useEffect(() => {
     if (!active) { request.current?.abort(); setState(emptyState()); return }
     // Collapse bursts of timeline events into one fresh owner read.
