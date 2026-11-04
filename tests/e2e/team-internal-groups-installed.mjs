@@ -12,6 +12,7 @@ import {randomUUID,createHash} from 'node:crypto'
 import {getCACertificates,setDefaultCACertificates} from 'node:tls'
 const cli=process.env.ARKME_OFFICIAL_DSH_CLI,artifact=process.env.ARKME_PACKED_ARTIFACT,anchor=process.env.PLAYWRIGHT_MODULE_ANCHOR,fixtureFile=process.env.ARKME_ROSTER_FIXTURE
 assert(cli&&artifact&&anchor&&fixtureFile,'official CLI, immutable tgz, browser anchor and real Chat fixture required')
+const realOwners=process.env.ARKME_ROSTER_REAL_OWNERS==='1'
 const root=await mkdtemp(join(tmpdir(),'arkme internal groups installed ')),home=join(root,'home'),profile=join(home,'profiles/web'),capture=process.env.ARKME_E2E_CAPTURE_DIR||join(root,'capture')
 await mkdir(capture,{recursive:true})
 const cert=join(root,'cert.pem'),key=join(root,'key.pem')
@@ -25,7 +26,7 @@ const upstream=createServer({key:await readFile(key),cert:await readFile(cert)},
  const path=new URL(req.url,'https://localhost').pathname
  if(path.endsWith('/sse/chat/noty')){res.writeHead(200,{'content-type':'text/event-stream'});res.write(': isolated\n\n');sse.add(res);res.on('close',()=>sse.delete(res));return}
  const parts=[];for await(const b of req)parts.push(b);const input=JSON.parse(Buffer.concat(parts).toString()||'{}');calls.push({path,input})
- if(path.startsWith('/api/v1/chats/')){const r=await forward(path,input);res.writeHead(r.status,{'content-type':'application/json'});res.end(r.text);return}
+ if(path.startsWith('/api/v1/chats/')||path.startsWith('/api/v1/chat/')){const r=await forward(path,input);res.writeHead(r.status,{'content-type':'application/json'});res.end(r.text);return}
  let data={items:[],teams:[],users:[],has_more:false}
  if(path.endsWith('/the-best-api-for-testing'))data={access_token:'roster-fixture',refresh_token:'isolated-refresh'}
  else if(path.endsWith('/get-user-info'))data={user_id:1001,nick_name:'内部群验收',jotmo_id:'t25_user',phone:'13800000000'}
@@ -42,7 +43,7 @@ let ctx,shutdown,browser,page
 try{
  upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const origin=`https://127.0.0.1:${upstream.address().port}`
  const env={...process.env,DSH_HOME:home,NODE_EXTRA_CA_CERTS:cert,COREPACK_ENABLE_AUTO_PIN:'0',npm_config_auto_install_peers:'false'}
- await writeFile(join(capture,'isolation.json'),JSON.stringify({root,profile,artifact:resolve(artifact),fixture,authorities:'synthetic organization and empty legacy inventory; real Chat/Gin/Mongo'}))
+ await writeFile(join(capture,'isolation.json'),JSON.stringify({root,profile,artifact:resolve(artifact),fixture,authorities:realOwners?'real Team/Chat/Record/Subject handlers, Mongo/MySQL/ES/Rabbit and Completion; fixture login/profile/object storage':'synthetic organization and empty legacy inventory; real Chat/Gin/Mongo'}))
  execFileSync(process.execPath,[cli,'plugin','--profile','web','add','-w',resolve(artifact)],{cwd:root,env,stdio:'pipe',timeout:240000})
  const manifest=JSON.parse(await readFile(join(profile,'package.json'),'utf8'));assert.match(manifest.dependencies['@senguoyun/dsh-arkme'],/^file:.*\.tgz$/);manifest.dsh.profile.bundles=['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app','@senguoyun/dsh-arkme'];await writeFile(join(profile,'package.json'),JSON.stringify(manifest,null,2))
  // The official runtime reads its environment through its public launch snapshot.
@@ -101,8 +102,23 @@ try{
  await page.getByRole('button',{name:'确认以上变更',exact:true}).click()
  await page.getByText(/请求已受理/).waitFor();await forward('/fixture/reconcile',{})
  await page.getByRole('button',{name:'完成',exact:true}).waitFor();await page.screenshot({path:join(capture,'create-ready.png')});await page.getByRole('button',{name:'完成',exact:true}).click()
+ if(realOwners){
+ await page.getByRole('button',{name:'对话',exact:true}).click()
+ await page.getByText('界面关联的普通群',{exact:true}).first().click()
+ await page.getByRole('button',{name:'群聊设置',exact:true}).click()
+ await page.getByRole('menuitem',{name:'群管理',exact:true}).click()
+ await page.getByRole('menuitem',{name:'关联为团队内部群',exact:true}).click()
+ await page.getByRole('button',{name:'查看关联影响',exact:true}).click()
+ await page.getByRole('button',{name:'确认以上变更',exact:true}).waitFor()
+ await page.screenshot({path:join(capture,'link-ui-preview.png')})
+ await page.getByRole('button',{name:'确认以上变更',exact:true}).click()
+ await forward('/fixture/reconcile',{})
+ await page.getByRole('button',{name:'完成',exact:true}).waitFor()
+ await page.screenshot({path:join(capture,'link-ui-ready.png')})
+ await page.getByRole('button',{name:'完成',exact:true}).click()
+ }
  sdk.dispose();await assert.rejects(()=>sdk.teamInternalGroup({teamRef,action:'recover'}))
- await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',installedImmutableTgz:true,artifactSHA256:createHash('sha256').update(await readFile(artifact)).digest('hex'),sdkExistingGroupLink:true,realSessionDiscovery:true,writeHumanGrant:true,realChatGinMongo:true,externalTypedSdk:true,uiCreatePreviewConfirmReady:true,scope:'organization/profile and empty legacy inventory use isolated ports; completion worker invoked through owner entry; no production calls'},null,2))
+ await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',installedImmutableTgz:true,artifactSHA256:createHash('sha256').update(await readFile(artifact)).digest('hex'),sdkExistingGroupLink:true,realSessionDiscovery:true,writeHumanGrant:true,realChatGinMongo:true,externalTypedSdk:true,uiCreatePreviewConfirmReady:true,uiExistingGroupLink:realOwners,scope:realOwners?'real four owner HTTP adapters and actual SQL/Mongo/revisions/ES/Rabbit/Completion; only login/profile and object bytes fixture; no production calls':'organization/profile and empty legacy inventory use isolated ports; completion worker invoked through owner entry; no production calls'},null,2))
  console.log('T25_INSTALLED_ACCEPTANCE_OK',capture)
 }catch(error){console.error(error);await writeFile(join(capture,'calls-failure.json'),JSON.stringify(calls,null,2));if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}
 finally{await browser?.close();if(ctx?.get('arkmeData'))await ctx.get('arkmeData').logout().catch(()=>{});await shutdown?.shutdown(process.exitCode||0);for(const r of sse)r.end();upstream.closeAllConnections();await new Promise(r=>upstream.close(r))}
