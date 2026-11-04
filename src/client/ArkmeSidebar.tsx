@@ -22,7 +22,7 @@ import { useWorldPublishHost } from './WorldPublishHost.js'
 import { openWorldPublish } from './world-publish-entry.js'
 import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
 import {SharePrivateChat} from './TeamExternalChats.js'
-import { cancelConversationFollow } from './conversation-bottom-follow.js'
+import { cancelConversationFollow, followConversationBottom } from './conversation-bottom-follow.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
@@ -7719,7 +7719,7 @@ export function ArkmeSurface({
       arkmeUi.consumeConversationTarget(target.revision)
     }
     // Loaded latest window: no read request and no change to the 80px auto-follow policy.
-    body.scrollTo({ top: body.scrollHeight, behavior: 'instant' })
+    followConversationBottom(body, false, 'instant')
     conversationCacheRef.current.storeViewport(timelineStateKey, arkmeConversationViewport(body))
     setNewMessageCount(0)
     setHighlightedTargetUid('')

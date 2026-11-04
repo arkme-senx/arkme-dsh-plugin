@@ -169,7 +169,9 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
           rebased = true
         }
       }
-      followConversationBottom(body, rebased)
+      // Actual new timeline arrivals resume normal motion after an explicit jump;
+      // ResizeObserver retargets keep the existing jump/follow intent intact.
+      followConversationBottom(body, rebased, 'animated')
     } else {
       cancelConversationFollow(body)
       body.scrollTop = pending.newerPageStartAnchorId === undefined
