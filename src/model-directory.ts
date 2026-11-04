@@ -1,7 +1,7 @@
 import type { ArkmeArkoModelCatalog, ArkmeRecordingSummaryModelConfig } from './types.js'
 import type { DshRemoteModelCatalog } from './dsh-remote/types.js'
 
-export type ModelScene = 'dsh' | 'arko' | 'recording' | 'explore' | 'arrangement'
+export type ModelScene = 'dsh' | 'arko' | 'recording' | 'explore' | 'arrangement' | 'dayReview'
 export type ModelOrigin = 'official' | 'user-provided'
 export type ModelBilling = 'arkme-points' | 'provider-account' | 'unknown'
 export interface ModelChoice {
@@ -26,6 +26,7 @@ export interface ModelChoice {
   arko?: string
   arrangement?: string
   recording?: string
+  dayReview?: string
   /** Account- and module-bound activation reference from the Explore owner. */
   explore?: string
   /** Public Intelligent route identity, used only for exact catalog reconciliation. */
@@ -75,9 +76,21 @@ export function mergeModelChoices(...lists: readonly (readonly ModelChoice[])[])
       ...(owner.channel === '分析模型' ? { channel: model.channel } : {}),
       ...(!owner.billing && model.billing ? { billing: model.billing } : {}),
       ...(owner.billingByScene || model.billingByScene ? { billingByScene: { ...owner.billingByScene, ...model.billingByScene } } : {}),
-      ...(model.explore ? { explore: model.explore } : {}), exploreRouteKey: route })
+      ...(model.dayReview ? { dayReview: model.dayReview } : {}), ...(model.explore ? { explore: model.explore } : {}), exploreRouteKey: route })
     else result.set(model.id, { ...result.get(model.id), ...model,
       ...(result.get(model.id)?.billingByScene || model.billingByScene ? { billingByScene: { ...result.get(model.id)?.billingByScene, ...model.billingByScene } } : {}) })
   }
   return [...result.values()]
+}
+
+/** Calendar activation references come only from its authenticated scene owner. */
+export function dayReviewModelChoices(catalog: import('./calendar-day-review.js').DayReviewModels): ModelChoice[] {
+  return catalog.models.map(model => ({
+    id: JSON.stringify(['day-review', model.route ?? model.code]),
+    name: model.displayName, identifier: model.catalogRoute ?? model.code,
+    origin: model.origin ?? 'official', channel: model.origin === 'user-provided' ? '账号绑定模型' : '即我官方',
+    billingByScene: { dayReview: model.origin === 'user-provided' ? 'provider-account' : 'arkme-points' },
+    dayReview: model.route ?? model.code,
+    ...(model.catalogRoute ? { exploreRouteKey: model.catalogRoute } : {}),
+  }))
 }

@@ -1,4 +1,5 @@
-import { AnalysisModelDialog } from './AnalysisModelDialog.js'
+import { UnifiedModelPicker } from './UnifiedModelPicker.js'
+import { dayReviewModelChoices } from '../model-directory.js'
 import type { DayReviewModels } from '../calendar-day-review.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { DAY_REVIEW_LABELS, DAY_REVIEW_SOURCES, type DayReviewQuery, type DayReviewResult, type DayReviewSource, type DayReviewState } from '../calendar-day-review.js'
@@ -130,7 +131,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     const timer = setTimeout(() => { if (typeof document === 'undefined' || document.visibilityState === 'visible') void read() }, 5000)
     return () => clearTimeout(timer)
   }, [active, loading, submitting, error, read])
-  const generate = async (selectedModel?: string) => {
+  const generate = async (selectedModel?: string, selectedRoute?: string) => {
     if (submittingRef.current || (active && !uncertain) || !state?.supported || !sources.length || (!uncertain && prompts.block)) return
     submittingRef.current = true; setSubmitting(true); setError(''); setLoading(false)
     readRequest.current?.abort(); versionRequest.current?.abort(); setVersionLoading(false)
@@ -139,7 +140,7 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
     // Retain the same id after a lost acknowledgement; do not start a second billable job.
     requestId.current ||= crypto.randomUUID()
     const config = prompts.draft.saved ?? prompts.support?.defaults
-    pendingSubmission.current ??= { ...q, ...(selectedModel ? { modelCode: selectedModel } : {}), sourceKinds: reuse?.sourceKinds ?? [...sources], requestId: requestId.current,
+    pendingSubmission.current ??= { ...q, ...(selectedModel ? { modelCode: selectedModel } : {}), ...(selectedRoute ? { modelRoute: selectedRoute } : {}), sourceKinds: reuse?.sourceKinds ?? [...sources], requestId: requestId.current,
       ...(config ? { promptConfig: promptConfigOnly(config) } : {}), ...(reuse ? { reuseResultId: reuse.id } : {}) }
     try {
       const value = await (uncertain ? callArkme<DayReviewState>('calendar.day-review.reconcile', { ...q }, controller.signal) : callArkme<DayReviewState>('calendar.day-review.create', pendingSubmission.current!, controller.signal))
@@ -227,10 +228,15 @@ function DayReviewContent({ query, view, refreshVersion }: { query: DayReviewQue
       </div>
     </div>
     {!active && !result && <p className="day-review-hint">{tr('选择要包含的内容，生成当天的日总结和时间轴。')}</p>}
-    {modelOptions && <AnalysisModelDialog ariaLabel={tr('选择日回顾生成模型')} initialValue={modelCode ?? modelOptions.defaultCode}
-      options={modelOptions.models.map(model => ({ value: model.code, label: model.displayName }))}
-      onClose={() => setModelOptions(undefined)} onConfirm={code => {
-        setModelCode(code); setModelOptions(undefined); void generate(code)
+    {modelOptions && <UnifiedModelPicker ariaLabel={tr('选择日回顾生成模型')} scene="dayReview" scopeLabel="日历日回顾"
+      models={dayReviewModelChoices(modelOptions)} currentId={JSON.stringify(['day-review', modelCode ?? modelOptions.defaultRoute ?? modelOptions.defaultCode])}
+      confirmLabel="确认并生成" confirmationDescription={tr('本次生成 {v0} 的日总结和时间轴，模型选择仅用于本次任务。', { v0: q.bucketDate })}
+      onClose={() => setModelOptions(undefined)} onApply={async model => {
+        if (!model.dayReview) return false
+        const route = model.dayReview
+        setModelCode(route); setModelOptions(undefined)
+        void (modelOptions.unified ? generate(undefined, route) : generate(route))
+        return true
       }} />}
     <CalendarDayReviewPromptEditor controller={prompts} view={view} locked={submitting || active || uncertain} />
     {prompts.block && <p className="day-review-status">{tr(prompts.block)}</p>}

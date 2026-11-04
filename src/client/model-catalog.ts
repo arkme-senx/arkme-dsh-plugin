@@ -2,9 +2,9 @@ import type { ModelChoice, ModelScene } from '../model-directory.js'
 
 export type CatalogScene = 'all' | 'dsh' | 'arko' | 'recording' | 'analysis'
 export const catalogScenes = [['all', '全部'], ['dsh', 'DSH 对话'], ['arko', 'Arko 对话'], ['recording', '录音'], ['analysis', '识别与分析']] as const
-export const catalogSceneLabel = (scene: ModelScene): string => ({ dsh: 'DSH 对话', arko: 'Arko 对话', recording: '录音', explore: '识别与分析', arrangement: '安排识别' })[scene]
+export const catalogSceneLabel = (scene: ModelScene): string => ({ dsh: 'DSH 对话', arko: 'Arko 对话', recording: '录音', explore: '识别与分析', arrangement: '安排识别', dayReview: '日历日回顾' })[scene]
 export function catalogModelScenes(model: ModelChoice): ModelScene[] {
-  return (['dsh', 'arko', 'recording', 'explore', 'arrangement'] as const).filter(scene => !!model[scene] || scene === 'explore' && !!model.exploreRouteKey)
+  return (['dsh', 'arko', 'recording', 'explore', 'arrangement', 'dayReview'] as const).filter(scene => !!model[scene] || scene === 'explore' && !!model.exploreRouteKey)
 }
 export const catalogSupplier = (model: ModelChoice): string => ({ 'aliyun-bailian': '百炼', dashscope: '百炼', deepseek: 'DeepSeek', volcengine: '火山引擎', openai: 'OpenAI' } as Record<string,string>)[model.supplierCode ?? model.channel] ?? model.supplierCode ?? model.channel
 export interface CatalogModel { key: string; name: string; models: ModelChoice[]; scenes: ModelScene[] }
