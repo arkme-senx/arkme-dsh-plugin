@@ -19,6 +19,7 @@ import {arkmeTheme} from './arkme-theme.js'
 import {tr,useArkmeLocale} from './locale.js'
 import {teamDirectoryPreferences,teamEntryHidden,teamEntryPinned,teamEntryKey,teamFolderEntryKey,useTeamDirectoryPreferences,type TeamEntryTarget} from './team-directory-preferences.js'
 import {readTeamDirectory,subscribeTeamDirectory} from './team-conversation-directory.js'
+import {openedTeamConversations} from './team-opened-conversations.js'
 
 /** One server cursor owns the mixed stream. Client rows are presentation only. */
 export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChannel,selectedKey,onBack}:{accountKey:string;teamRef:string;channel?:TeamChannel|undefined;selectedKey?:string|undefined;onBack():void}) {
@@ -35,7 +36,9 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
   // Delegated group bodies enter only through a currently authorized mixed page.
   const cachedCustomers:TeamWorkspaceEntry[]=privateDirectory.items.filter(c=>c.side==='team'&&c.channel.jotmoId===channel?.jotmoId)
     .map(conversation=>({kind:'customer',key:conversation.key,activityAt:conversation.updatedAt,conversation}))
-  const allRows=[...new Map([...pins,...pinRows,...(page?rows:cachedCustomers)].map(row=>[row.kind==='customer'?`customer:${row.conversation.key}`:`group:${row.source.sourceKey}`,row])).values()]
+  const openedCustomers:TeamWorkspaceEntry[]=openedTeamConversations.read(accountKey).filter(c=>c.channel.jotmoId===channel?.jotmoId)
+    .map(conversation=>({kind:'customer',key:conversation.key,activityAt:conversation.updatedAt,conversation}))
+  const allRows=[...new Map([...openedCustomers,...pins,...pinRows,...(page?rows:cachedCustomers)].map(row=>[row.kind==='customer'?`customer:${row.conversation.key}`:`group:${row.source.sourceKey}`,row])).values()]
     .filter(row=>teamDirectoryPreferences.canPresentTarget(accountKey,targetFor(row)))
     .sort((a,b)=>Number(teamEntryPinned(preferences,targetFor(b)))-Number(teamEntryPinned(preferences,targetFor(a)))||b.activityAt-a.activityAt||(a.key<b.key?1:a.key>b.key?-1:0))
   const visibleRows=allRows.filter(row=>!teamEntryHidden(preferences,targetFor(row))),removed=allRows.filter(row=>teamEntryHidden(preferences,targetFor(row)))
@@ -90,6 +93,15 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
     if((!page&&!allRows.length)||!channel||restored.current||!scroll.current)return
     scroll.current.scrollTop=arkmeUi.readTeamDirectoryScroll(scope);restored.current=true
   },[page,scope,allRows.length])
+  useLayoutEffect(()=>{
+    if(!selectedKey||!scroll.current||!channel)return
+    const selected=[...scroll.current.querySelectorAll<HTMLElement>('[data-team-conversation-key],[data-team-group-source-key]')]
+      .find(row=>(row.dataset.teamConversationKey??row.dataset.teamGroupSourceKey)===selectedKey)
+    if(!selected)return
+    const container=scroll.current.getBoundingClientRect(),row=selected.getBoundingClientRect()
+    if(row.top<container.top)scroll.current.scrollTop-=container.top-row.top
+    else if(row.bottom>container.bottom)scroll.current.scrollTop+=row.bottom-container.bottom
+  },[scope,selectedKey,page,JSON.stringify(visibleRows.map(row=>row.kind==='customer'?row.conversation.key:row.source.sourceKey))])
   useEffect(()=>{
     if(!page?.hasMore||!page.complete||loading||error||!sentinel.current||!scroll.current||typeof IntersectionObserver==='undefined')return
     const observer=new IntersectionObserver(entries=>{if(entries.some(entry=>entry.isIntersecting))void load(true)},{root:scroll.current,rootMargin:'160px'})
@@ -119,7 +131,7 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
 
 function TeamWorkspaceGroupRow({accountKey,target,selected}:{accountKey:string;target:Extract<TeamEntryTarget,{kind:'group'}>;selected:boolean}) {
   const actions=useTeamConversationEntryActions(accountKey,target),source=target.source
-  return <><button type="button" role="treeitem" aria-selected={selected} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} style={{...styles.chatRow,...(selected?{background:arkmeTheme.active}:{}),...actions.rowStyle}} onClick={()=>{void actions.open(()=>arkmeUi.selectSource(source))}}>
+  return <><button type="button" role="treeitem" aria-selected={selected} data-team-group-source-key={source.sourceKey} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} style={{...styles.chatRow,...(selected?{background:arkmeTheme.active}:{}),...actions.rowStyle}} onClick={()=>{void actions.open(()=>arkmeUi.selectSource(source))}}>
     <span style={styles.sourceAvatarWrap}><ArkmeSourceAvatar kind="group" groupAvatar={source.groupAvatar} avatarRefs={source.avatarRefs} size={38}/>{source.unreadCount>0&&<span style={styles.mentionUnread}>{source.unreadCount>99?'99+':source.unreadCount}</span>}</span>
     <span data-arkme-conversation-content style={styles.chatContent}><span style={styles.chatTop}><span style={styles.entryName}>{source.displayName}</span><ArkmeTopicTagBadge label={tr('群聊')} truncate/><span style={{...styles.chatTime,marginLeft:'auto'}}>{conversationTimeLabel(source.activeAtMillis)}</span></span><span style={styles.chatBottom}><span style={styles.preview}>{source.latestPreview||tr('代表团队参与群聊')}</span></span></span>
     {actions.pinned&&<ArkmePinnedCorner/>}{actions.feedback}

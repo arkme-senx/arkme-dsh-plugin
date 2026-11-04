@@ -3484,7 +3484,7 @@ export class ChatService {
         409,
       )
     }
-    const scope = JSON.stringify([session.userId, chatSessionUid, String(parentRecordOwnerUserId), parentRecordUid, reference.relationUid, reference.sourceSequence])
+    const scope = JSON.stringify([session.userId, chatSessionUid, String(parentRecordOwnerUserId), parentRecordUid, reference.relationUid, reference.sourceSequence, ...(source.groupDelegation ? [await this.source.sourceScopeKey(source)] : [])])
     let after: Record<string, unknown> | undefined
  let privateAfter = '', privateVersion = '', privateSupported = false, privateDone = false, savedPrivateTotal = 0, publicDone = false, publicTotal = 0
     if (options.pageCursor) {
@@ -3507,7 +3507,7 @@ export class ChatService {
         session, signal,
       )
       signal?.throwIfAborted()
-      privateSupported = data.private_thought_reply_protocol === 1
+      privateSupported = !source.groupDelegation && data.private_thought_reply_protocol === 1
       total = Math.max(total, integerLikeValue(data.total))
       for (const child of listValue(data.children)) {
         const projected = chatExtensionTreeItemFromData(child, parentRecordUid)
