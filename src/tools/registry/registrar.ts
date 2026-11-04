@@ -33,7 +33,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_team_notification_policy_set',
   'arkme_team_entry_preference_change',
   'arkme_reactions_write',
-  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply', 'arkme_world_sound_write',
+  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply', 'arkme_world_sound_write', 'arkme_world_suggestions_change',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
@@ -104,6 +104,11 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_world_suggestions_change') {
+    const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
+    return request.action === 'create' ? `是否分析最近 ${Number(request.days)} 天的本人快记，生成仅自己可见的分享建议？模型分析会使用当前账号的模型额度，不会自动公开内容。`
+      : request.action === 'cancel' ? '是否停止这次分享建议分析？已发生的模型用量不受影响。' : '是否将这条分享建议设为暂不分享？原文会保留。'
+  }
   if (name === 'arkme_world_sound_write') {
     const request = JSON.parse(String(args.request_json)) as { action?: string }
     return request.action === 'management'

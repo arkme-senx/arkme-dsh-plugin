@@ -1,5 +1,6 @@
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { WorldSubscribeButton, WorldSubscriptionEntry } from './WorldSubscriptions.js'
+import { WorldSuggestionsEntry } from './WorldSuggestions.js'
 import { TeamWorldActivity } from './TeamWorldActivity.js'
 import { WorldTeamBadge } from './WorldTeamBadge.js'
 import { worldSoundPlayback } from './world-sound-playback.js'
@@ -1408,6 +1409,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}{tr("的世界")}</h1><p style={styles.subtitle}>{tr("TA 公开分享的内容")}</p></div>
         </div>}
       <div style={styles.headerActions}>
+        {scope === 'mine' && !publicTab && target === undefined && <WorldSuggestionsEntry />}
         {target ? <WorldSubscribeButton target={{ kind: 'person', userId: target.userId }} /> : <WorldSubscriptionEntry />}
         {scope === 'mine' && !publicTab && target === undefined && <ArkmeActionMenu open={more} label={tr('我的世界操作')} onClose={() => setMore(false)} align="end"
           anchor={<button type="button" style={styles.iconButton} aria-label={tr('更多世界操作')} onClick={() => setMore(value => !value)}><DotsThree size={20} /></button>}
@@ -1625,7 +1627,7 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
         controller.signal.throwIfAborted(); applyTeamReceipt(result); return
       }
       await requirePhoneForSocialAction('发布到世界', controller.signal)
-      if (origin && (!origin.kind || origin.kind === 'record')) {
+      if (origin && (!origin.kind || origin.kind === 'record' || origin.kind === 'suggestion')) {
         const result = await callArkme<ArkmeWorldPublishResult>('world.publications', { action: 'publish-source', accountKey, origin, version: sourceState.snapshot?.version }, controller.signal)
         controller.signal.throwIfAborted()
         if (!result.worldPublished) throw new Error(result.error ?? '发布未完成，请重试')
