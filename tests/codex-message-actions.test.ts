@@ -7,6 +7,14 @@ vi.mock('../src/client/api.js',()=>({callArkme:vi.fn()}))
 const task={id:'task',title:'对话标题',member:{displayName:'同事'},cloud:{sourceId:'machine-a'}} as TeamCodexTask
 const event=(sequence:number,kind:TeamCodexEvent['kind']='Stop',text='回答'):TeamCodexEvent=>({sequence,kind,text,at:1000+sequence,turnId:`turn-${sequence}`,truncated:false})
 beforeEach(()=>vi.mocked(callArkme).mockReset())
+it('exports visible skill names and rejects hidden app context without changing source events',()=>{
+ const raw='[$demo-skill](/workspace/demo/SKILL.md) 继续'
+ const a=event(1,'UserPromptSubmit',raw)
+ expect(codexSelectionSnapshot('team',task,[a],new Set([codexEventKey(a)])).messages[0]?.text).toBe('demo-skill 继续')
+ expect(a.text).toBe(raw)
+ const hidden=event(2,'UserPromptSubmit','<external_codex_apps_open_page>{"page_id":null}</external_codex_apps_open_page>')
+ expect(()=>codexSelectionSnapshot('team',task,[hidden],new Set([codexEventKey(hidden)]))).toThrow()
+})
 it('exports annotation prose once without interpreting a selected protocol example as a new envelope',()=>{
  const nested=responseAnnotationPrompt('这是被引用的协议示例')
  const raw=responseAnnotationPrompt('',[{text:nested,source:{messageId:'msg_nested',startOffset:0,endOffset:nested.length}}])

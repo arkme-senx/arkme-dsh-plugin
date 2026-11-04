@@ -22,7 +22,7 @@ const expectedPublicMethods = [
   'dataExport', 'dataExportRangePreview', 'dataExportSaved',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
-  'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldCommentNotifications',
+  'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
@@ -32,7 +32,7 @@ const expectedPublicMethods = [
   'forwardSelectedText', 'forwardWorldRecord', 'localWorldReactions', 'memberWorldTarget', 'personRecordSources', 'personRecordsCapabilities', 'personRecordsPage', 'prepareNoteWorldReactions', 'prepareWorldReactions', 'shareWorldRecord', 'worldArkoPublishSource', 'worldMessagePublishSource', 'worldPublishSource', 'worldReactions',
   'deviceLockStatus', 'lockDevice', 'requestDeviceUnlock',
   'sourceLocalMarkCapabilities', 'sourceLocalMarks', 'changeSourceLocalMark',
-  'nativeAnnotations', 'setNativeAnnotationSource',
+  'nativeAnnotations', 'setNativeAnnotationSource', 'setNativeAnnotationAccess', 'setNativeAnnotationHistorySync',
   'nativeLocalMarkCapabilities', 'nativeLocalMarks', 'changeNativeLocalMark',
   'sourceUnderlineCapabilities', 'sourceUnderlines', 'changeSourceUnderline',
   'conversationActivityRead', 'conversationActivityParticipants', 'conversationActivityMessages', 'conversationActivitySource',
@@ -221,7 +221,7 @@ function publicMethodNames(path: string): string[] {
   const service = file.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'ArkmeService')
   if (service === undefined || !ts.isClassDeclaration(service)) throw new Error('ArkmeService class not found')
   return service.members
-    .filter((member): member is ts.MethodDeclaration => ts.isMethodDeclaration(member))
+    .filter((member): member is ts.MethodDeclaration => ts.isMethodDeclaration(member) && member.body !== undefined)
     .filter(member => !member.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.PrivateKeyword))
     .map(member => member.name.getText(file))
     .sort()

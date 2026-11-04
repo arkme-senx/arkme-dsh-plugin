@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 
+vi.mock('../src/client/harness-account-sessions.js', () => ({ useAccountSessionCatalog: () => ({ rows: [] }) }))
 vi.mock('../src/sdk/index.js', () => ({ callArkme: vi.fn(async () => ({ nodes: [], complete: false, online: false })) }))
 import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 import { installProjectedConversation } from '../src/client/harness-projected-conversation.js'
@@ -41,8 +42,10 @@ it('shadows only remote content, preserving native header/composer entries and r
   expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.view.chat.conversation.chat.flow')).toHaveLength(1)
   expect(slots.entriesOfSlot('arkme.projectedHistory.conversation.view.chat.conversation.chat.flow.default.conversation.chat.node')).toHaveLength(1)
   surface.setAttribute('data-arkme-source-writable', 'true'); await Promise.resolve()
+  expect(slots.entriesOfSlot('conversation.session')[0]).not.toBe(original)
+  surface.setAttribute('data-arkme-native-history-ready', 'true'); await Promise.resolve()
   expect(slots.entriesOfSlot('conversation.session')[0]).toBe(original)
-  surface.setAttribute('data-arkme-source-writable', 'false'); await Promise.resolve()
+  surface.setAttribute('data-arkme-native-history-ready', 'false'); await Promise.resolve()
   expect(slots.entriesOfSlot('conversation.session')[0]).not.toBe(original)
   select('local')
   expect(slots.entriesOfSlot('conversation.session')[0]).toBe(original)
@@ -76,5 +79,34 @@ it('does not let a projected file path or fork action reach the local Host', asy
     await expect(rendered.openFile('/source/project.txt')).rejects.toThrow('所属实例或电脑')
     expect(rendered.forkAt).toBeUndefined()
     expect(openFile).not.toHaveBeenCalled(); expect(forkAt).not.toHaveBeenCalled()
+  } finally { act(() => root.unmount()); stop() }
+})
+
+it('publishes displayed cloud readiness to the header independently of a failed native follow, including empty histories and disposal', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const { callArkme } = await import('../src/sdk/index.js')
+  const { SessionHistoryStatus } = await import('../src/client/harness-session-summary.js')
+  let complete!: (page: any) => void
+  vi.mocked(callArkme).mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+  const slots = new SlotCore(), register = slots.register.bind(slots) as any
+  register({ name: 'root', children: { 'conversation.session': { kind: 'single', scope: 'session' } } }, () => null)
+  register({ name: 'conversation.session', children: { 'conversation.view': { kind: 'list', scope: 'session' } } }, () => null)
+  const id = 'arkme:runtime:remote', state = { byId: { [id]: { id, retainedBy: { mainView: 1 } } } }
+  const surface = document.createElement('section'), container = document.createElement('div')
+  surface.setAttribute('data-arkme-history-state', 'loading')
+  const stop = installProjectedConversation({ slots, sessions: { list: { getSnapshot: () => state, subscribe: () => () => {} }, subagentAddress: () => undefined } } as any, surface)
+  const root = createRoot(container), header = createElement(SessionHistoryStatus, { surface, t: ((key: string) => key) as never })
+  try {
+    await act(async () => root.render(createElement('div', {}, header,
+      createElement(slots.entriesOfSlot('conversation.session')[0]!.component as any,
+        { sessionId: id, useSession: (select: any) => select({}), renderSlot: () => null }))))
+    expect(container.textContent).toBe('historyLoading')
+    await act(async () => complete({ nodes: [], complete: true, online: false }))
+    expect(container.textContent).toBe('')
+    await act(async () => surface.setAttribute('data-arkme-history-state', 'error'))
+    expect(container.textContent).toBe('')
+    await act(async () => root.render(header))
+    expect(surface.hasAttribute('data-arkme-projected-history-state')).toBe(false)
+    expect(container.textContent).toBe('historyError')
   } finally { act(() => root.unmount()); stop() }
 })

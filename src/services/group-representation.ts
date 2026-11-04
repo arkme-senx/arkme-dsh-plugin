@@ -34,3 +34,11 @@ export class GroupRepresentationCodec {
 export function requireFrozenTeamSendTime(input: import('../team-group-contract.js').TeamRepresentationSendOptions): void {
   if(input.representation !== undefined && (!Number.isSafeInteger(input.sendAtMillis) || Number(input.sendAtMillis) <= 0))throw new ArkmePluginError('team-identity-send-time-required','代表发言必须携带首次发送时间；内容已保留',false,400)
 }
+
+/** Read-only public label. Never constructs a Team reference or authorization selection. */
+export function readTeamRepresentationDisplay(raw: unknown): import('../team-group-contract.js').TeamRepresentationDisplay | undefined {
+  if (raw === undefined || raw === null) return undefined
+  const value = objectValue(raw), name = stringValue(value.name), jotmoId = stringValue(value.jotmo_id)
+  if (!name.trim() || !jotmoId.trim()) throw new ArkmePluginError('team-representation-display-invalid', '团队展示信息无效，请刷新后重试', true, 502)
+  return { name, jotmoId }
+}

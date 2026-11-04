@@ -634,12 +634,19 @@ export class ArkmeService {
   async teamWorld(input: import('./team-world-contract.js').TeamWorldRequest, signal?: AbortSignal) { return this.teamWorldOwner.execute(input, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (operation === 'team.app.world.view') {
+      signal?.throwIfAborted()
+      if (params.includeMemberTeam !== undefined && typeof params.includeMemberTeam !== 'boolean') throw new ArkmePluginError('team-world-invalid', '团队世界请求无效', false, 400)
       await this.teamApp.assertViewer(params.expectedAccountKey)
       const context = await this.teamWorld({ action: 'context', accountKey: String(params.expectedAccountKey), jotmoId: String(params.jotmoId) }, signal) as import('./team-world-contract.js').TeamWorldContext
       const session = await this.runtime.requireSession(), teamID = await this.teamApp.worldTeamID(context.teamRef, session.userId)
-      const teams = await this.teamApp.execute('team.app.teams', { expectedAccountKey: params.expectedAccountKey }, signal) as import('./types.js').ArkmeTeam[]
+      const teams = params.includeMemberTeam === false || !context.capabilities.publish ? []
+        : await this.teamApp.execute('team.app.teams', { expectedAccountKey: params.expectedAccountKey }, signal) as import('./types.js').ArkmeTeam[]
+      signal?.throwIfAborted()
+      const feed = await this.world.listMixedFeed({ teamID, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(signal ? { signal } : {}) })
       const memberTeam = context.capabilities.publish ? teams.find(t => t.jotmoId === context.jotmoId) : undefined
-      return { state: 'ready', context, team: { name: context.name, jotmoId: context.jotmoId, ...(memberTeam ? { avatar: memberTeam.avatar } : {}) }, ...(memberTeam ? { memberTeam } : {}), feed: await this.world.listMixedFeed({ teamID, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(signal ? { signal } : {}) }) } satisfies import('./team-world-contract.js').TeamWorldView
+      signal?.throwIfAborted()
+      await this.teamApp.assertViewer(params.expectedAccountKey)
+      return { state: 'ready', context, team: { name: context.name, jotmoId: context.jotmoId, ...(memberTeam ? { avatar: memberTeam.avatar } : {}) }, ...(memberTeam ? { memberTeam } : {}), feed } satisfies import('./team-world-contract.js').TeamWorldView
     }
     if (['team.app.send.enqueue' , 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
       await this.teamApp.assertViewer(params.expectedAccountKey)
@@ -1316,6 +1323,12 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   setNativeAnnotationSource(source: NativeAnnotationSource, runtime?: () => string | undefined) { this.nativeAnnotationService.source = source; this.nativeAnnotationService.sourceRuntime = runtime }
+  setNativeAnnotationHistorySync(resolver: NonNullable<NativeAnnotationsService['historySync']>) { this.nativeAnnotationService.historySync = resolver }
+  setNativeAnnotationAccess(resolve: NonNullable<NativeAnnotationsService['resolveTarget']>, source: NativeAnnotationSource, publish: NonNullable<NativeAnnotationsService['publishSource']>) {
+    this.nativeAnnotationService.resolveTarget = resolve
+    this.nativeAnnotationService.source = source
+    this.nativeAnnotationService.publishSource = publish
+  }
   nativeAnnotations(request: NativeAnnotationRequest, signal?: AbortSignal) { return this.nativeAnnotationService.execute(request, signal) }
 
   async dshRemoteGet<T>(path: string, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemoteGet<T>(path, signal) }
@@ -1398,6 +1411,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
 arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
+        recordingVoiceTriggersV2: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,
@@ -1457,6 +1471,7 @@ arkoImagesV1:true,
         arkoThoughtContinuationsV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
+        worldReactionArchiveVersionsV1: true,
         teamWorldV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
@@ -1685,9 +1700,9 @@ arkoImagesV1:true,
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
-  /** @internal Built-in loopback UI; detection and exactly-once note writes are Audio-owner capabilities. */
+  /** UI, Tools and SDK share the account-scoped Audio candidate owner. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
-    return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingSpeakerCorrectionItems(query, signal)).request(action, input, signal)
+    return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingVoiceSourceItems(query, signal)).request(action, input, signal)
   }
   async recordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingComparison(dateStamp, signal) }
   async recordingForwardCapabilities(signal?: AbortSignal) { return await this.recording.recordingForwardCapabilities(signal) }
@@ -2262,7 +2277,13 @@ arkoImagesV1:true,
   async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
   async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
   async privateGroupContext(input: PrivateGroupRequest, signal?: AbortSignal) { return await this.privateGroupCreate.readContext(input, signal) }
-  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.person(scope, target, signal) }
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<import('./identity-share-contract.js').IdentityPersonProfile>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, includeAccountName: boolean): Promise<import('./identity-share-contract.js').IdentityPersonProfile>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, options: import('./identity-share-contract.js').PersonProfileReadOptions): Promise<import('./identity-share-contract.js').IdentityPersonProfile | null>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal, options?: boolean | import('./identity-share-contract.js').PersonProfileReadOptions) {
+    if (typeof options === 'boolean') return await this.identityShare.person(scope, target, signal, options)
+    return options === undefined ? await this.identityShare.person(scope, target, signal) : await this.identityShare.person(scope, target, signal, options)
+  }
   async identityShareLink(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.link(scope, target, signal) }
   async identityShareRead(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.read(scope, url, signal) }
   async identityShareOpen(scope: string, url: string, expectedUserId?: number, signal?: AbortSignal) { return await this.identityShare.open(scope, url, expectedUserId, signal) }
@@ -2915,6 +2936,9 @@ arkoImagesV1:true,
   }
 
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
+  async worldReactionVersions(input: import('./world-reaction-contract.js').WorldReactionVersionsRequest, signal?: AbortSignal) {
+    return new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).versions(input, signal)
+  }
   async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal) {
     return await new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).prepare(accountKey, recordRefs, signal)
   }

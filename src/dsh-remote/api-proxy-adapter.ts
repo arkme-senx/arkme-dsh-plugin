@@ -64,6 +64,7 @@ interface DshRemoteWorkspaceInventory {
 }
 
 interface SessionsApiLike {
+  modelState?(request: { rpcId: string; payload: { sessionId: string } }): Promise<RpcResponse<{ next?: unknown; lastUsed?: unknown }>>
   rename?(request: { rpcId: string; payload: { sessionId: string; title: string } }): Promise<RpcResponse<{ title: string; seq: number }>>
   list?(request: { rpcId: string; payload: { cursor?: string } }): Promise<RpcResponse<{ items: Array<{
     sessionId: string
@@ -367,7 +368,7 @@ export class DshApiProxyAdapter {
       && typeof this.api.sessions?.selectModel === 'function') result.push('session.create.model')
     if (this.hasModelCatalog()) result.push('model.list')
     if (typeof this.api.sessions?.models === 'function'
-      || (typeof this.api.sessions?.list === 'function'
+      || ((typeof this.api.sessions?.modelState === 'function' || typeof this.api.sessions?.list === 'function')
         && typeof this.api.sessions?.modelCatalog === 'function')) result.push('session.model.get')
     if (typeof this.api.sessions?.selectModel === 'function') result.push('session.model.select')
     if (typeof this.api.sessions?.history === 'function') result.push('session.history', 'session.history.compact')
@@ -609,6 +610,14 @@ export class DshApiProxyAdapter {
   }
 
   async sessionModel(input: { sessionId: string }): Promise<{ current: DshRemoteModelSelection; supportsImages?: boolean }> {
+    if (this.api.sessions?.modelState) {
+      const state = unwrap(await this.api.sessions.modelState({ rpcId: rpcId('remote-session-model'), payload: input }))
+      const current = modelSelection(state.next, 'modelSelection.next')
+        ?? modelSelection(state.lastUsed, 'modelSelection.lastUsed')
+        ?? modelSelection((await this.modelCatalog()).default, 'modelCatalog.default')
+      if (!current) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', 'DSH 未返回当前或默认模型')
+      return { current, ...await this.imageSupport(current) }
+    }
     await this.requireSession(input.sessionId, false)
     const legacyModels = this.api.sessions?.models
     if (typeof legacyModels === 'function') {

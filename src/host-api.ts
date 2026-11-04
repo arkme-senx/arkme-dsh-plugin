@@ -1591,7 +1591,19 @@ export async function dispatchArkmeHostOperation(
     case 'identity.person.read':
     case 'identity.share.link': {
       const scope = stringParam(params, 'accountScope'), kind = stringParam(params, 'kind')
-      const read = operation === 'identity.person.read' ? service.identityPersonProfile.bind(service) : service.identityShareLink.bind(service)
+      const read = (scope: string, target: import('./identity-share-contract.js').IdentityShareTarget, signal?: AbortSignal) => {
+        if (operation !== 'identity.person.read') return service.identityShareLink(scope, target, signal)
+        const includeAccountName = params.includeAccountName === undefined ? undefined : requiredBooleanParam(params, 'includeAccountName')
+        for (const key of ['cacheOnly', 'forceRefresh']) if (params[key] !== undefined && typeof params[key] !== 'boolean') throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项无效', false, 400)
+        if (params.cacheOnly === true && params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+        if (includeAccountName === false) {
+          if (params.cacheOnly === true || params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+          return service.identityPersonProfile(scope, target, signal, false)
+        }
+        if (includeAccountName === true && params.cacheOnly === undefined && params.forceRefresh === undefined) return service.identityPersonProfile(scope, target, signal, true)
+        return params.cacheOnly === undefined && params.forceRefresh === undefined ? service.identityPersonProfile(scope, target, signal)
+          : service.identityPersonProfile(scope, target, signal, { cacheOnly: params.cacheOnly === true, forceRefresh: params.forceRefresh === true })
+      }
       if (kind === 'self') return await read(scope, { kind }, requestSignal)
       if (kind === 'person') return await read(scope, { kind, userId: numberParam(params, 'userId', 0) }, requestSignal)
       if (kind === 'contact') return await read(scope, { kind, contactRef: stringParam(params, 'contactRef') }, requestSignal)
@@ -3024,6 +3036,7 @@ export async function dispatchArkmeHostOperation(
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'reactions': return await service.reactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
     case 'team.world': return await service.teamWorld(params as unknown as import('./team-world-contract.js').TeamWorldRequest, requestSignal)
+    case 'world.reactions.versions': return await service.worldReactionVersions(params as unknown as import('./world-reaction-contract.js').WorldReactionVersionsRequest, requestSignal)
     case 'world.reactions.archive': return await service.worldReactionArchive(params as unknown as import('./world-reaction-contract.js').WorldReactionArchiveRequest, requestSignal)
     case 'world.reactions': return await service.worldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
     case 'world.reactions.local': return await service.localWorldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)

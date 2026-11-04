@@ -2,7 +2,7 @@ import { thoughtReplyFromWire } from '../thought-reply.js'
 import { recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { snapshotDateLabel, snapshotMovement, snapshotWeatherText, snapshotPositionLabel } from '../record-snapshot-presentation.js'
 import {requireFrozenTeamSendTime} from './group-representation.js'
-import {GroupRepresentationCodec} from './group-representation.js'
+import {GroupRepresentationCodec, readTeamRepresentationDisplay} from './group-representation.js'
 import type {TeamRepresentationSelection} from '../team-group-contract.js'
 
 import { commonGroupChanges } from './common-group-service.js'
@@ -210,6 +210,7 @@ interface ArkmeMessageActionRefPayload {
 }
 
 interface ArkmeSentMessageActionInput {
+  representation?: unknown
   sourceKind: 'chat_relation' | 'record'
   sourceOwnerRef: string
   recordUid: string
@@ -770,6 +771,7 @@ function messageCopyLinkSnapshotItemFromData(value: unknown): ArkmeMessageCopyLi
   const recordUid = stringValue(data.record_uid ?? data.recordUid ?? data.uid).trim()
   const item = {
     ...(recordUid === '' ? {} : { recordUid }),
+    ...(data.representation == null ? {} : { representation: readTeamRepresentationDisplay(data.representation)! }),
     sourceKind: stringValue(data.source_kind),
     senderDisplayName: stringValue(data.sender_display_name),
     senderAvatarUrl: stringValue(data.sender_avatar_url),
@@ -815,6 +817,7 @@ function messageCopyLinkPresentationNodesFromData(
     if (kind === 'forward_bundle') {
       return {
         kind: 'forward_bundle',
+        ...(data.representation == null ? {} : { representation: readTeamRepresentationDisplay(data.representation)! }),
         title: stringValue(data.title),
         commentText: stringValue(data.comment_text),
         createdAtMillis: integerLikeValue(data.created_at),
@@ -931,6 +934,7 @@ function chatExtensionTreeItemFromData(
     ...(recordOwnerUserId === 0 ? {} : { recordOwnerUserId }),
     level: 2,
     sourceKind: 'record_extension',
+    ...(relation.representation == null ? {} : { representation: readTeamRepresentationDisplay(relation.representation)! }),
     senderDisplayName,
     senderAvatarUrl: firstTextValue(relation, ['sender_avatar_url', 'senderAvatarUrl', 'avatar_ref', 'avatarRef'])
       || firstTextValue(payload, ['sender_avatar_url', 'senderAvatarUrl', 'avatar_ref', 'avatarRef']),
@@ -2148,15 +2152,43 @@ export class ChatService {
     }
   }
 
+  private async requireActiveMemberTarget(chatSessionUid: string, targetUserId: RecordOwnerId, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/members/by-user-ids',
+      { chat_session_uid: chatSessionUid, user_ids: [targetUserId], active_only: true, include_stats: false },
+      session, signal, { lane: 'interactive-read', bypassCache: true },
+    )
+    signal?.throwIfAborted()
+    const raw = listValue(data.items).map(objectValue)
+    if (stringValue(data.chat_session_uid) !== chatSessionUid || !Array.isArray(data.items) || raw.length > 1
+      || raw.some(member => String(recordOwnerId(member.user_id)) !== String(targetUserId) || chatMemberStatus(member.status) !== 'active')) {
+      throw new ArkmePluginError('member-target-invalid-response', '成员身份返回异常，请重试', true, 502)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('chat-member-account-changed', '账号已切换，请重新打开用户卡片', false, 409)
+    signal?.throwIfAborted()
+    if (!raw.length) throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
+  }
+
+  /** Local identity resolution for already-cached public display data. Never authorizes an action. */
+  async cachedMemberPersonId(sourceRef: string, memberRef: string, signal?: AbortSignal): Promise<RecordOwnerId> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('chat-members-source-invalid', '聊天成员来源无效', false, 400)
+    const target = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('chat-member-account-changed', '账号已切换，请重新打开用户卡片', false, 409)
+    return target.targetUserId
+  }
+
   async memberWorldTarget(sourceRef: string, memberRef: string, signal?: AbortSignal): Promise<{ userId: RecordOwnerId }> {
     const session = await this.runtime.requireSession()
     signal?.throwIfAborted()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('chat-members-source-invalid', '仅支持从聊天成员查看世界', false, 400)
     const reference = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
-    const members = await this.rawChatMembers(source.ownerRef, true, session, signal)
-    signal?.throwIfAborted()
-    if (!members.some(member => recordOwnerId(member.user_id) === reference.targetUserId)) throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
+    await this.requireActiveMemberTarget(source.ownerRef, reference.targetUserId, session, signal)
     return { userId: reference.targetUserId }
   }
 
@@ -2174,12 +2206,9 @@ export class ChatService {
     if (reference.targetUserId === session.userId) {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
-    const rawMembers = await this.rawChatMembers(source.ownerRef, true, session, options.signal)
-    const memberIsActive = rawMembers.some(item => recordOwnerId(item.user_id) === reference.targetUserId)
-    if (!memberIsActive) {
-      throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
-    }
+    await this.requireActiveMemberTarget(source.ownerRef, reference.targetUserId, session, options.signal)
     return await this.openPrivateChatFromUser(reference.targetUserId, {
+      expectedViewerUserId: session.userId,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
   }
@@ -4073,10 +4102,12 @@ nextPublic = next
       if ((options.quote !== undefined || options.representation !== undefined || options.thoughtReplyRef || options.privateThoughtReplyRef) && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '消息提交结果需要核对：服务端没有确认引用内容，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
+      const representation = await new GroupRepresentationCodec(this.runtime).snapshot(data.representation, session.userId)
       const extension = await this.hydrateUploadedExtension({
         ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
  ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
- recordUid: createdRecordUid,
+        recordUid: createdRecordUid,
+        ...(representation === undefined ? {} : { representation: { name: representation.name, jotmoId: representation.jotmoId } }),
         parentRecordUid: stringValue(data.reply_to_record_uid) || reference.recordUid,
         recordOwnerUserId: session.userId,
         level: extensionLevel,
@@ -4095,7 +4126,8 @@ nextPublic = next
       return {
         ...(thoughtReplyFromWire(data.thought_reply) ? { thoughtReply:thoughtReplyFromWire(data.thought_reply)! } : {}),
  ...(data.visibility==='user' && typeof data.private_reply_ref==='string' ? {privateThoughtReply:true,privateThoughtReplyRef:data.private_reply_ref} : {}),
- recordUid: createdRecordUid,
+        recordUid: createdRecordUid,
+        ...(representation === undefined ? {} : { representation }),
         parentRecordUid: stringValue(data.reply_to_record_uid) || reference.recordUid,
         relationUid,
         ...(sequence > 0 ? { sequence } : {}),
@@ -4503,27 +4535,14 @@ nextPublic = next
       }
       this.validateForwardReferences(references)
       const recordUid = options.recordUid?.trim() || randomUUID()
-      const title = references.length === 1 ? '转发快记' : `转发 ${String(references.length)} 条快记`
-      const contentPayload = {
-        payload_kind: 1,
-        schema_version: 1,
-        text_state: 1,
-        forward_records: {
-          render_kind: 'forward_records',
-          source_type: 'quick_records',
-          title: '转发快记',
-          source_record_uids: references.map(reference => reference.recordUid).filter(recordUid => recordUid.trim() !== ''),
-          created_at: Date.now(),
-          summary_lines: references.slice(0, 3).map(reference =>
-            `${reference.senderName}: ${reference.textContent.trim() || reference.title.trim() || '非文本内容'}`,
-          ),
-          items: references.map(reference => this.forwardPayloadItem(reference)),
-        },
-      }
       const appendCommentWarning = async (sent: ArkmeSourceSendResult): Promise<ArkmeSourceSendResult> => {
         if (commentText === '') return sent
         try {
+          const hex = createHash('sha256').update(`dsh-arkme:forward-comment:${recordUid}`).digest('hex')
+          const commentRecordUid = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-8${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`
           await this.sendSourceText(targetSourceRef, commentText, {
+            recordUid: commentRecordUid,
+            expectedUserId: session.userId,
             ...(options.signal === undefined ? {} : { signal: options.signal }),
           })
           return sent
@@ -4554,7 +4573,9 @@ nextPublic = next
         )
         const sequence = numberValue(data.seq ?? data.sequence)
         this.realtime.scheduleChatSessionProjection(targetSource.ownerRef, sequence)
+        const representation = await new GroupRepresentationCodec(this.runtime).snapshot(data.representation,session.userId)
         return {
+          ...(representation === undefined ? {} : { representation }),
           sourceRef: targetSourceRef,
           itemUid: stringValue(data.record_uid).trim() || recordUid,
           status: numberValue(data.audit_status ?? data.status) || 1,
@@ -4562,7 +4583,8 @@ nextPublic = next
           localState: 'synced',
         }
       }
-      if (references.some(reference => reference.displayKind === 1 || reference.templateKind === 8)) {
+      const containsArticle = references.some(reference => reference.displayKind === 1 || reference.templateKind === 8)
+      if (containsArticle) {
         let capability: Record<string, unknown>
         try { capability = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/forward/capability', {}, session, options.signal, { lane: 'interactive-read', bypassCache: true }) }
         catch (error) {
@@ -4573,57 +4595,21 @@ nextPublic = next
         if (capability.protocol_version !== 1 || capability.nested_display_kind !== true || capability.article_snapshot !== true) {
           throw new ArkmePluginError('article-forward-unavailable', '服务端暂不支持保留完整长文副本，请升级后重试', false, 501)
         }
-        const data = await this.record.createPersonalRecord<Record<string, unknown>>(
-          targetSource.kind === 'topic' ? '/api/v1/topics/records/article-forward/create' : '/api/v1/records/article-forward/create', {
-            record_uid: recordUid,
-            ...(targetSource.kind === 'topic' ? { topic_uid: targetSource.ownerRef } : {}),
-            send_at: options.sendAtMillis ?? Date.now(),
-            sources: references.map(reference => ({ record_uid: reference.recordUid, record_owner_user_id: reference.recordOwnerUserId,
-              ...(reference.sourceKind === 'chat_relation' ? { chat_session_uid: reference.chatSessionUid, relation_uid: reference.relationUid } : {}),
-            })),
-          }, session, options.signal,
-        )
-        if (data.accepted !== true || data.record_uid !== recordUid) throw new ArkmePluginError('article-forward-outcome-unknown', '长文转发结果待确认，请用同一请求重试', true, 502)
-        try { await this.realtime.invalidateRecordProjection({ contentOnly: true }) } catch { /* Accepted write remains successful if local refresh fails. */ }
-        return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: recordUid, status: numberValue(data.status), localState: 'synced' })
       }
-      if (targetSource.kind === 'topic') {
-        const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
-        const data = await this.record.createPersonalRecord<Record<string, unknown>>(
-          '/api/v1/topics/records/create',
-          {
-            topic_uid: targetSource.ownerRef,
-            record_uid: recordUid,
-            template_kind: 1,
-            title: '',
-            text_content: title,
-            ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
-            content_payload: contentPayload,
-            send_at: Date.now(),
-          },
-          session,
-          options.signal,
-        )
-        await this.realtime.invalidateRecordProjection({ contentOnly: true })
-        return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: stringValue(data.record_uid).trim() || recordUid, status: numberValue(data.status), localState: 'synced' })
-      }
-      const senderSnapshot = await this.profile.recordSenderSnapshot?.(session)
       const data = await this.record.createPersonalRecord<Record<string, unknown>>(
-        '/api/v1/records/create',
-        {
+        targetSource.kind === 'topic' ? `/api/v1/topics/records/${containsArticle ? 'article-forward' : 'source-forward'}/create` : `/api/v1/records/${containsArticle ? 'article-forward' : 'source-forward'}/create`, {
           record_uid: recordUid,
-          template_kind: 1,
-          title: '',
-          text_content: title,
-          ...(senderSnapshot === undefined ? {} : { sender_snapshot: senderSnapshot }),
-          content_payload: contentPayload,
-          send_at: Date.now(),
-        },
-        session,
-        options.signal,
+          ...(targetSource.kind === 'topic' ? { topic_uid: targetSource.ownerRef } : {}),
+          send_at: options.sendAtMillis ?? Date.now(),
+          sources: references.map(reference => ({ record_uid: reference.recordUid,
+            ...(reference.sourceKind==='record' ? {record_owner_user_id:session.userId} : {}),
+            ...(reference.sourceKind === 'chat_relation' ? { chat_session_uid: reference.chatSessionUid, relation_uid: reference.relationUid } : {}),
+          })),
+        }, session, options.signal,
       )
-      await this.realtime.invalidateRecordProjection({ contentOnly: true })
-      return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: stringValue(data.record_uid).trim() || recordUid, status: numberValue(data.status), localState: 'synced' })
+      if (data.accepted !== true || data.record_uid !== recordUid) throw new ArkmePluginError('message-forward-outcome-unknown', '转发结果待确认，请用同一请求重试', true, 502)
+      try { await this.realtime.invalidateRecordProjection({ contentOnly: true }) } catch { /* Accepted write remains successful if local refresh fails. */ }
+      return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: recordUid, status: numberValue(data.status), localState: 'synced' })
     }
   
   async sendSourceText(
@@ -5126,6 +5112,7 @@ nextPublic = next
       }, session, {
         sourceKind: 'chat_relation',
         sourceOwnerRef: chatSessionUid,
+        representation: result.representation,
         recordUid,
         relationUid: stringValue(result.rel_uid ?? result.relUid).trim() || relationUid,
         title: '',
@@ -5332,6 +5319,7 @@ nextPublic = next
       }, session, {
         sourceKind: 'chat_relation',
         sourceOwnerRef: source.ownerRef,
+        representation: result.representation,
         recordUid,
         relationUid: stringValue(result.rel_uid ?? result.relUid).trim() || relationUid,
         title,
@@ -5488,12 +5476,14 @@ nextPublic = next
         send_at: options.sendAtMillis ?? Date.now(),
       }, session, options.signal,
     )
+    const representation = await new GroupRepresentationCodec(this.runtime).snapshot(result.representation, session.userId)
     return {
       sourceRef,
       itemUid: stringValue(result.record_uid).trim() || recordUid,
       status: numberValue(result.audit_status ?? result.status),
       sequence: numberValue(result.seq),
       localState: 'synced',
+      ...(representation === undefined ? {} : { representation }),
     }
   }
   
@@ -5505,24 +5495,22 @@ nextPublic = next
     const expected=await new GroupRepresentationCodec(this.runtime).selection(input.content.representation,session.userId)
     const actual=objectValue(result.representation)
     if(expected?Object.entries(expected).some(([key,value])=>actual[key]!==value):result.representation!==undefined&&result.representation!==null)throw new ArkmePluginError('team-identity-receipt-conflict','该发送标识已接受另一身份，请核对原消息',false,409)
-    return {sourceRef:input.sourceRef,itemUid:input.recordUid,status:numberValue(result.audit_status),sequence:numberValue(result.seq),localState:'synced'}
+    const representation=await new GroupRepresentationCodec(this.runtime).snapshot(result.representation,session.userId)
+    return {sourceRef:input.sourceRef,itemUid:input.recordUid,status:numberValue(result.audit_status),sequence:numberValue(result.seq),localState:'synced',...(representation===undefined?{}:{representation})}
   }
   async confirmLongArticlePublication(sourceRef: string, input: import('../types.js').ArkmeLongArticlePublishInput, userId: number, signal?: AbortSignal): Promise<ArkmeSourceSendResult> {
     const session = await this.runtime.requireSession()
     if (session.userId !== userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
     const source = await this.source.openSourceRef(sourceRef, userId)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') return { sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' }
-    const page = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chat/timeline/around', {
-      chat_session_uid: source.ownerRef, record_uid: input.recordUid, record_owner_user_id: userId, before_limit: 1, after_limit: 1,
-    }, session, signal, { lane: 'interactive-read', bypassCache: true })
-    if (stringValue(page.chat_session_uid) !== source.ownerRef) throw new ArkmePluginError('long-article-outcome-unknown', '长文发送结果待确认，草稿已保留', false, 409)
-    const item = [...(Array.isArray(page.items) ? page.items : []), page.anchor].map(objectValue).find(value => {
-      const relation = objectValue(value.relation)
-      return relation.rel_uid === input.relationUid && relation.record_uid === input.recordUid && Number(relation.record_owner_user_id) === userId
-    })
-    if (!item) throw new ArkmePluginError('long-article-outcome-unknown', '长文已保存，聊天发送结果待确认，草稿已保留', false, 409)
-    return { sourceRef, itemUid: input.recordUid, status: Number(objectValue(item.record).status ?? 0), sequence: Number(objectValue(item.relation).seq ?? 0), localState: 'synced' }
+    const confirmed = await this.confirmSourceSend({
+      sourceRef, recordUid: input.recordUid, relationUid: input.relationUid, fileRefs: [],
+      content: {textContent: input.textContent, ...(input.representation === undefined ? {} : {representation: input.representation})},
+    }, signal)
+    if (!confirmed) throw new ArkmePluginError('long-article-outcome-unknown', '长文已保存，聊天发送结果待确认，草稿已保留', false, 409)
+    return confirmed
   }
+
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal, actionRef?: string): Promise<ArkmeLongArticleDetail> {
     if (!actionRef) return await this.withLongArticleActions(await this.record.longArticleDetail(sourceRef, itemUid, signal))
     const session = await this.runtime.requireSession()
@@ -5556,8 +5544,10 @@ nextPublic = next
     const editDurationMillis = Math.max(0, numberValue(core.edit_duration_millis))
     const contentBlocks = this.media.richContentBlocks(raw, session.userId)
     const signingKey = await this.runtime.stateStore.uniqueCode()
+    const representation = await new GroupRepresentationCodec(this.runtime).snapshot(relation.representation, session.userId)
     const actionItem: ArkmeTimelineItem = {
       ...this.record.recordTimelineItemFromRaw({ record_core: core }, session.userId), contentBlocks,
+      ...(representation ? { representation } : {}),
       senderName: reference.senderName, isMe: reference.senderUserId === session.userId,
       recordOwnerUserId: reference.recordOwnerUserId,
       messageActionRef: this.sealMessageActionRef(this.messageActionRefPayload({ ...reference,
@@ -7360,8 +7350,11 @@ nextPublic = next
     }))
     try {
       const signingKey = await this.runtime.stateStore.uniqueCode()
+      const representation = input.sourceKind === 'chat_relation'
+        ? await new GroupRepresentationCodec(this.runtime).snapshot(input.representation, session.userId) : undefined
       const withAction: ArkmeSourceSendResult = {
         ...sent,
+        ...(representation === undefined ? {} : { representation }),
         messageActionRef: this.sealMessageActionRef(this.messageActionRefPayload({
           sourceKind: input.sourceKind,
           userId: session.userId,
@@ -7538,27 +7531,6 @@ nextPublic = next
     return result
   }
 
-  private forwardPayloadItem(reference: ArkmeMessageActionRefPayload): Record<string, unknown> {
-    return {
-      record_uid: reference.recordUid,
-      ...(reference.recordOwnerUserId !== 0 ? { owner_id: reference.recordOwnerUserId } : {}),
-      ...(reference.relationUid === '' ? {} : { source_rel_uid: reference.relationUid }),
-      ...(reference.chatSessionUid === '' ? {} : { source_chat_session_uid: reference.chatSessionUid }),
-      ...(reference.sourceSequence > 0 ? { source_seq: reference.sourceSequence } : {}),
-      source_sender_user_id: reference.senderUserId,
-      source_display_name: reference.senderName,
-      owner_name: reference.senderName,
-      send_at: reference.sendAtMillis,
-      title: reference.title,
-      text: reference.textContent,
-      text_format: reference.textFormat ?? 'plain',
-      template_kind: reference.templateKind,
-      image_count: reference.imageCount,
-      voice_count: reference.voiceCount,
-      file_count: reference.fileCount,
-      file_names: reference.fileNames,
-    }
-  }
 
   private forwardClientRequestId(targetChatSessionUid: string, references: readonly ArkmeMessageActionRefPayload[], sendAtMillis: number): string {
     const sourceIdentity = references.map(reference => reference.sourceKind === 'chat_relation'

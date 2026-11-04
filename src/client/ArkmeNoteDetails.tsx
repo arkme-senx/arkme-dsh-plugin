@@ -1,6 +1,7 @@
+import { NoteWorldReactionArchive } from './NoteWorldReactionArchive.js'
 import { detailExtensionSends, useDetailExtensionSends, DetailExtensionSendStatus, type DetailExtensionSend } from './detail-extension-send.js'
 import { readDetailExtensionPages } from './detail-extension-pages.js'
-import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
+import {TeamRepresentationBadge, TeamRepresentationAvatar} from './TeamRepresentationBadge.js'
 import { arkmeExtensionDetailListStyles } from './extension-detail-list-styles.js'
 import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
 import { useMessageQuoteThreads } from './MessageQuoteThreads.js'
@@ -753,7 +754,7 @@ function DetailExtensionContext({
         data-arkme-note-extension-item={extension.recordUid}
         onClick={event => { if (canReply && !pendingSend && detailReplyClickAllowed(event)) onSelect(extension) }}
         onKeyDown={event => { if (canReply && !pendingSend) activateDetailReplyKey(event, () => onSelect(extension)) }}>
-        <DetailExtensionAvatar author={author} size={nested ? 28 : 32} />
+        <TeamRepresentationAvatar value={extension.representation}><DetailExtensionAvatar author={author} size={nested ? 28 : 32} /></TeamRepresentationAvatar>
         <div style={styles.extensionContextBody}>
           <div style={styles.extensionContextHead}>
             <span style={styles.extensionContextName}>{author.name}{extension.privateThoughtReply && <span style={{ fontSize:11, fontWeight:400, color:arkmeTheme.tertiary, marginLeft:8 }}>{tr('仅自己可见')}</span>}</span>
@@ -1128,9 +1129,9 @@ export function ArkmeTimelineDetailDrawer({
     onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter} footerHidden={historyOpen}
     headerContent={historyOpen ? undefined : <ArkmeMessageDetailAuthor at={item.sendAtMillis} bot={item.senderKind === 'bot'}
       name={item.senderKind === 'bot' ? <ArkmeBotSenderName name={authorName} detail /> : authorName}
-      avatar={<ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
+      avatar={<TeamRepresentationAvatar value={item.representation}><ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
         {...(roleAvatarFallback === undefined ? {} : { fallback: roleAvatarFallback })}
-        size={40} label={tr("作者头像")} />} /> }
+        size={40} label={tr("作者头像")} /></TeamRepresentationAvatar>} /> }
     {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' }
       : onBackToExtension === undefined ? {} : { onBack: onBackToExtension, backLabel: tr('返回延展快记') })}>
     {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef}
@@ -1163,6 +1164,7 @@ export function ArkmeTimelineDetailDrawer({
       {canOpenTopic && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
     </button>}
     {sourceBadge}
+    {personalSource && item.isMe && normalizedSourceRef && messageActionRef && <NoteWorldReactionArchive sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} />}
     <style>{`.arkme-edit-history-entry { background: transparent; } .arkme-edit-history-entry:hover { background: ${arkmeTheme.hover}; }`}</style>
     {item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button data-arkme-feedback="neutral"
       type="button" aria-label={tr("已编辑")} className="arkme-edit-history-entry" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 32, marginTop: 5, padding: 0, border: 0, borderRadius: 4, color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}
@@ -1210,10 +1212,11 @@ export function ArkmeTimelineDetailDrawer({
   </ArkmeDetailShell>
 }
 
-function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, segment = false, children }: {
+function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, representation, segment = false, children }: {
   name: string; time: string; avatarRef?: string | undefined; avatarKind?: 'deepseek' | undefined
   senderUserId?: number | undefined
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
+  representation?: Pick<import('../team-group-contract.js').TeamRepresentationSnapshot, 'name' | 'jotmoId'> | undefined
   segment?: boolean; children: ReactNode
 }) {
   return <div style={styles.row} {...(segment ? { 'data-arkme-forward-segment': 'true' } : {})}>
@@ -1222,7 +1225,7 @@ function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onP
       : <ForwardSenderAvatar name={name} avatarRef={avatarRef} senderUserId={senderUserId}
         onPrivateChatOpened={onPrivateChatOpened} segment={segment} />}
     <div style={styles.content}>
-      <div style={styles.meta}><span style={styles.name}>{name}</span><span style={styles.time}>{time}</span></div>
+      <div style={styles.meta}><span style={styles.name}>{name}</span>{representation && <TeamRepresentationBadge value={representation} />}<span style={styles.time}>{time}</span></div>
       {children}
     </div>
   </div>
@@ -1347,10 +1350,8 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     const hasRecordBody = segments.length === 0 || hasDistinctText || (value.contentBlocks?.length ?? 0) > 0
     return <div key={index} style={styles.rows}>
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKind={value.avatarKind}
-        senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened}
+        senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened} representation={value.sourceTeam}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
-        {value.sourceTeam&&<TeamRepresentationBadge value={value.sourceTeam}/>}
-        {value.originTeam&&<div style={{fontSize:11}}>原始内容来源：<TeamRepresentationBadge value={value.originTeam}/></div>}
         {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
           <ArkmeRichText text={value.title} presentation="preview" />
         </h3>}

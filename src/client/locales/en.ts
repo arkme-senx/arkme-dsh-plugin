@@ -88,6 +88,17 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
 自动使用额度|Automatic allowance usage
+录音时说「帮我记一下」和要记的内容，上传后保存为快记，必要时由你确认。仅处理开启后新上传的录音，使用 AI 额度。|While recording, say “帮我记一下” followed by your note. After upload, it is saved as a note, with your confirmation when needed. Only recordings newly uploaded after enabling are processed. Uses AI allowance.
+自动分析录音与聊天内容，识别相关的线下交流。开启后会分析历史录音和聊天内容，运行时消耗 AI 额度。|Automatically analyze recordings and chats to identify related in-person conversations. Enabling this also analyzes historical recordings and chats and uses AI allowance.
+自动整理个人档案|Automatically organize my profile
+自动识别安排|Automatically recognize plans
+自动分析目标|Automatically analyze goals
+录音口令记事|Voice-command notes
+在私聊和群聊消息下方提供建议，仅你可见。|Offers suggestions beneath private and group chat messages, visible only to you.
+在聊天中回看相关的线下交流，仅你可见。|Revisit related in-person conversations from your chats, visible only to you.
+阅读新快记，有想法时在快记下方回应你。|Reads new notes and responds beneath them when it has an insight.
+开启后会自动使用 AI 额度。|Uses AI allowance automatically when enabled.
+持续更新个人档案。首次开启会分析所选来源的历史材料。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources.
 目标|Goals
 自动识别设置|Automatic recognition settings
 开启功能|Enable feature
@@ -110,8 +121,13 @@ AI 自动分析|Automatic AI analysis
 快记建议|Note suggestions
 个人档案|Personal profile
 根据开启后的新材料自动更新目标。|Automatically update goals using new material after opt-in.
+录音语音触发|Recording voice triggers
+确认保存当前内容|Confirm saving the displayed content
+内容边界待确认，仅保存当前显示的文字。请试听核对后保存。|The content boundary is uncertain. Only the displayed text will be saved. Listen and verify before saving.
+原文或原音已更新，这条旧识别记录无法保存。请查看当前录音，或忽略此记录。|The transcript or audio has changed, so this old candidate cannot be saved. Review the current recording or ignore this candidate.
+上下文超出处理范围，仅保留可核验的原音范围，无法生成完整记事。|The context exceeds the processing limit. Only the verifiable source audio range is retained; a complete note could not be produced.
+录音日历「更多 → 语音触发」|Recording calendar → More → Voice triggers
 从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
-持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
 自动 AI|Automatic AI
 当天录音实体|Entities from this recording day
 实体|Entities

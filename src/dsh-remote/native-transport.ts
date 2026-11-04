@@ -6,6 +6,7 @@ import { DshRemoteError } from './errors.js'
 import { SharedReadGroup } from '../shared-read-group.js'
 
 type RecordValue = Record<string, unknown>
+export const NATIVE_SESSION_READ_ENDPOINTS = ['session/page', 'messageFeedback/list', 'schedule/catalog', 'schedule/list', 'schedule/history'] as const
 export function nativeRecord(value: unknown): RecordValue {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new DshRemoteError('REMOTE_REQUEST_INVALID', '原生传输数据无效')
   return value as RecordValue

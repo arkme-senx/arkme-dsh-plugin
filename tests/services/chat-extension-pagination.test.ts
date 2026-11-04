@@ -67,3 +67,32 @@ it('carries the signed continuation and cancellation from the SDK through the Ho
   await expect(sdk.sourceMessageExtensionPage('source', 'action', { cursor: 'signed-page', signal: controller.signal })).resolves.toEqual(result)
   expect(service.sourceMessageExtensionContext).toHaveBeenCalledExactlyOnceWith('source', 'action', { paginated: true, pageCursor: 'signed-page', signal: controller.signal })
 })
+
+it('keeps each extension occurrence Team display through pagination without inheriting the parent or origin', async () => {
+  const first = child(0), personal = child(1), other = child(2)
+  Object.assign(first.item.relation, { representation: { team_id: '7', name: '团队7', jotmo_id: 'team_7', membership_revision: 3 } })
+  Object.assign(personal.item.record.payload, { origin_representation: { team_id: '7', name: '原文团队', jotmo_id: 'origin' } })
+  Object.assign(other.item.relation, { representation: { team_id: '8', name: '团队8', jotmo_id: 'team_8' } })
+  const { chat } = fixture(body => body.after_cursor ? { children: [other], has_more: false } : { children: [first, personal], has_more: true, next_after_cursor: after(1) })
+  const result = await chat.sourceMessageExtensionContext('source', 'action')
+  expect(result.extensions.find(x => x.recordUid === 'child-0')?.representation).toEqual({ name: '团队7', jotmoId: 'team_7' })
+  expect(result.extensions.find(x => x.recordUid === 'child-1')?.representation).toBeUndefined()
+  expect(result.extensions.find(x => x.recordUid === 'child-2')?.representation).toEqual({ name: '团队8', jotmoId: 'team_8' })
+})
+
+it('passes only the public Team label through the existing copy-link Host owner', async () => {
+  const chat = Object.create(ChatService.prototype) as ChatService
+  Object.assign(chat, { runtime: { requireSession: async () => ({ userId: 42 }), authenticatedChatPost: async () => ({
+    sid: 'U2HQgn1RhPJZaFmx', access_mode: 'link_read_only', items: [
+      { sender_display_name: '作者', text_content: '团队发言', send_at: 1787733600000, template_kind: 1,
+        representation: { name: '团队7', jotmo_id: 'team_7', team_id: '7', membership_revision: 3 } },
+      { sender_display_name: '作者', text_content: '个人转发', send_at: 1787733600000, template_kind: 1,
+        origin_representation: { name: '原文团队', jotmo_id: 'origin' } },
+    ], presentation: [{ kind: 'forward_bundle', title: '转发', sender_display_name: '作者', representation: { name: '团队8', jotmo_id: 'team_8' }, children: [{kind: 'item', item_index: 0}, {kind: 'item', item_index: 1}] }],
+  }) } })
+  const value = await chat.resolveMessageCopyLink('U2HQgn1RhPJZaFmx')
+  expect(value.items[0]?.representation).toEqual({ name: '团队7', jotmoId: 'team_7' })
+  expect(value.items[1]?.representation).toBeUndefined()
+  expect(value.presentation?.[0]).toMatchObject({ representation: { name: '团队8', jotmoId: 'team_8' } })
+  expect(JSON.stringify(value)).not.toMatch(/team_id|membership_revision|teamRef/)
+})

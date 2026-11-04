@@ -3,10 +3,10 @@ import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer } from 'ws'
 import type { DshAccountSessions } from './account-sessions.js'
 import { DshRemoteError, asDshRemoteError } from './errors.js'
-import { nativeRecord } from './native-transport.js'
+import { nativeRecord, NATIVE_SESSION_READ_ENDPOINTS } from './native-transport.js'
 import { DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES } from './types.js'
 
-/** Multiplex native subscription pulls outside the browser's HTTP/1 connection pool. */
+/** Multiplex native reads outside the browser's HTTP/1 connection pool. */
 export class DshNativeSocket {
   private readonly server = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024, perMessageDeflate: false })
   private readonly waiting = new Set<WebSocket>()
@@ -31,16 +31,19 @@ export class DshNativeSocket {
     } catch { /* Missing and opaque origins cannot open a native carrier. */ }
     if (!allowed || this.server.clients.size >= 64) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); return }
     this.server.handleUpgrade(req, socket, head, client => {
+      const lifetime = new AbortController()
       const requests = new Map<string, AbortController>()
       client.on('error', () => client.terminate())
       client.on('pong', () => this.waiting.delete(client))
-      client.on('close', () => { this.waiting.delete(client); for (const request of requests.values()) request.abort() })
+      client.on('close', () => { lifetime.abort(); this.waiting.delete(client); for (const request of requests.values()) request.abort() })
       const send = (value: unknown) => {
         if (client.readyState !== WebSocket.OPEN) return
         const frame = JSON.stringify(value)
         if (client.bufferedAmount + Buffer.byteLength(frame) > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) client.close(1009, 'Native response limit')
         else client.send(frame)
       }
+      void this.directory()?.observeHistorySync?.(event => send({ event: 'history-sync', ...event }), lifetime.signal)
+        .catch(() => client.close(1008, 'History scope closed'))
       client.on('message', async data => {
         let id: string | undefined, controller: AbortController | undefined
         try {
@@ -51,7 +54,10 @@ export class DshNativeSocket {
           if (requests.has(id)) { client.close(1008, 'Duplicate native request'); return }
           if (this.pending >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '原生订阅请求数量超限')
           const params = nativeRecord(message.params), body = nativeRecord(params.body)
-          if (body.mode !== 'pull' && body.mode !== 'close') throw new DshRemoteError('REMOTE_REQUEST_INVALID', '订阅通道不接受普通调用')
+          if (body.mode !== 'pull' && body.mode !== 'close'
+            && !(body.mode === 'call' && NATIVE_SESSION_READ_ENDPOINTS.includes(body.endpoint as typeof NATIVE_SESSION_READ_ENDPOINTS[number]))) {
+            throw new DshRemoteError('REMOTE_REQUEST_INVALID', '原生读取通道不接受写操作')
+          }
           const directory = this.directory()
           if (!directory) throw new DshRemoteError('REMOTE_LOGIN_REQUIRED', '请先登录')
           controller = new AbortController(); requests.set(id, controller); this.pending++

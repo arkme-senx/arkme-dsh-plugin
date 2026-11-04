@@ -6,6 +6,7 @@ import { useSelectedMessageSearch } from './message-selection-search.js'
 import { createNativeTextMarkTransport } from './harness-text-marks.js'
 import { insertNativeQuote, observeNativeTextTargets, nativeTextRows, type NativeTextInputActions } from './harness-text-selection.js'
 import type { NativeChat } from './harness-native-selection.js'
+import { publishNativeAnnotationInvalidation } from './native-annotation-invalidation.js'
 
 /** Rendered inside the native iframe, so selection/highlights share its document. */
 export function HarnessTextSelection({ sessionId, chat, doc, inputActions }: {
@@ -32,6 +33,18 @@ function NativeTextSurface({ sessionId, chat, doc, inputActions, account }: {
   const sourceRef = JSON.stringify(['dsh-native', account.id, sessionId])
   const transport = useMemo(() => createNativeTextMarkTransport(account.scope), [account.scope, sessionId])
   const marks = useMessageUnderlines(`${account.scope}:${sessionId}`, sourceRef, account.id, transport)
+  useEffect(() => {
+    const surface = doc.defaultView?.frameElement?.parentElement
+    if (!surface) return
+    let state = surface.getAttribute('data-arkme-history-sync')
+    const observer = new MutationObserver(() => {
+      const next = surface.getAttribute('data-arkme-history-sync')
+      if (next !== state && next === 'complete') publishNativeAnnotationInvalidation(account.scope, surface.ownerDocument.defaultView ?? undefined)
+      state = next
+    })
+    observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-history-sync'] })
+    return () => observer.disconnect()
+  }, [doc, account.scope, sessionId])
   const [query, setQuery] = useState<string>()
   const getRows = useCallback(() => nativeTextRows(doc, chat).map(row => row.row), [doc, chat.nodes])
   const getViewport = useCallback(() => {

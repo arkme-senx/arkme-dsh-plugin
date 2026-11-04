@@ -147,6 +147,7 @@ export interface ArkmeRemoteRealtimeHostOptions {
   realtime: DshRemoteRealtimeTransport
   nativeTransport?: DshNativeTransport
   sessionChannel?: {
+    readable?: (runtime: string, session: string) => boolean
     recover?: (runtime: string, session: string, body: Record<string, unknown>, signal: AbortSignal) => Promise<void>
     epoch: (runtime: string, session: string) => number | undefined
     native: (runtime: string, session: string, body: Record<string, unknown>, signal: AbortSignal) => Promise<unknown>
@@ -162,6 +163,7 @@ export interface ArkmeRemoteRealtimeHostOptions {
     callbacks: { onError: (error: unknown, sessionRef?: string) => void; onFinalized: (sessionRef: string) => void },
   ) => DshRemoteTurnUploadOutbox
   readRecoveryProof?: (session: string, through: number, signal: AbortSignal) => Promise<ContentProof>
+  captureHistory?: (sessionRef: string, signal: AbortSignal) => Promise<boolean>
   sessionPersistence?: DshRemoteSessionPersistenceLike
   now?: () => number
   yieldToEventLoop?: () => Promise<void>
@@ -896,6 +898,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
       const failure = this.historyObjectBackfillFailures.get(sessionRef)
       if (failure?.revision === revision && failure.nextAttemptAt > now) continue
       try {
+        if (await this.options.captureHistory?.(sessionRef, signal)) continue
         const fromSeq = outbox.historyResumeSeq(sessionRef)
         if (fromSeq === 0) await outbox.restoreHistoryReceipts(sessionRef, signal)
         const source = await this.readHistorySource(persistence, sessionRef, fromSeq, signal)
@@ -1369,7 +1372,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     const lastSeq = entries.at(-1)!.event.seq
     const ownershipMs = performance.now() - prepareStarted
     const captureStarted = performance.now()
-    if (this.turnUpload !== undefined) {
+    const captured = await this.options.captureHistory?.(sessionRef, this.projectionController.signal)
+    if (!captured && this.turnUpload !== undefined) {
       try { await this.turnUpload.capture(sessionRef, entries) }
       catch (error) {
         if (!this.historyOwnerMatches(accountId, runtime)) return
@@ -2049,7 +2053,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         return { duplicate: false, value: await this.options.apiProxy.models() }
       case 'session.model.get': {
         const sessionId = stringBody(request.body, 'session_ref')
-        await this.requireSessionOwnership(this.accountId!, sessionId)
+        if (await this.options.sessionOwnership.ownerAccountId(sessionId) !== this.accountId) await this.requireSessionOwnership(this.accountId!, sessionId)
         return { duplicate: false, value: await this.options.apiProxy.sessionModel({ sessionId }) }
       }
       case 'session.list': {
@@ -2066,7 +2070,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
         const beforeSeq = optionalPositive(request.body, 'before_seq')
         const limit = optionalPositive(request.body, 'limit')
         const sessionId = stringBody(request.body, 'session_ref')
-        await this.requireSessionOwnership(this.accountId!, sessionId)
+        if (await this.options.sessionOwnership.ownerAccountId(sessionId) !== this.accountId) await this.requireSessionOwnership(this.accountId!, sessionId)
         const history = await this.options.apiProxy.history({
           sessionId,
           ...(beforeSeq === undefined ? {} : { beforeSeq }),
