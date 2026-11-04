@@ -1,4 +1,5 @@
-.device-dialog { --device-muted: var(--dsw-alias-label-secondary, #777c86); --device-line: var(--dsw-alias-border-l2, #e8e9ec); width: min(596px, calc(100vw - 32px)); max-height: calc(100dvh - 84px); padding: 0; border: 1px solid var(--device-line); border-radius: 20px; background: var(--dsw-alias-bg-layer-1, #f8f9fa); color: var(--dsw-alias-label-primary, #17191c); box-shadow: 0 24px 80px #0003; overflow: hidden; }
+.device-dialog, .device-dialog * { box-sizing: border-box; }
+.device-dialog { --device-muted: var(--dsw-alias-label-secondary, #777c86); --device-line: var(--dsw-alias-border-l2, #e8e9ec); width: min(596px, calc(100vw - 32px)); max-height: calc(100dvh - 84px); padding: 0; border: 1px solid var(--device-line); border-radius: 20px; background: var(--dsw-alias-bg-layer-1, #f8f9fa); color: var(--dsw-alias-label-primary, #17191c); font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", system-ui, sans-serif; font-size: 14px; box-shadow: 0 24px 80px #0003; overflow: hidden; }
 .device-dialog[open] { display: flex; flex-direction: column; }
 .device-dialog::backdrop { background: rgba(26, 30, 40, .26); }
 .device-header { display: flex; align-items: center; gap: 8px; flex: none; padding: 21px 22px; border-bottom: 1px solid var(--device-line); background: var(--dsw-alias-bg-base, #fff); }

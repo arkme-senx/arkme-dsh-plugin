@@ -34,3 +34,9 @@ Host/SDK/Tools/UI 有单元和 jsdom 测试；同源真实 HTTP 边界与打包�
 扩展接口仅将带 `session_ended` 的 403 当成会话失效；普通业务 403 不触发退出。明确失效后只尝试一次刷新，刷新再次拒绝时通过既有会话 owner 清理当前凭据并提示“登录已失效，请重新登录”。网络/503 保留凭据，旧请求不得清掉后来登录的会话。
 
 本轮 136 项插件相关自动化及 2 项内存会话接真实 TEST HTTP 检查通过；不等同真实 DSH 或原生凭据清理验收。最新跨仓回归、部署、性能及边界见 `/Users/apple/hehs/task-artifacts/login-devices-regression-20261104/凭据兼容与撤销回归.md`。未全量启用、未生产发布。
+
+## 实际客户端样式修复（2026-11-04）
+
+设备管理 CSS 必须经 `installArkmeRedesignStyles` 的既有插件生命周期内联安装。DSH Browser module 加载 client factory，不自动加载打包器提取的独立 CSS；预览工具正常显示不代表真实客户端会加载。body portal 自身持有字体与 border-box 规则，不依赖预览页的全局 reset。
+
+新增实际样式安装/布局/卸载回归，4 个相关测试文件共 15 项通过，完整 build 通过；修复包已装入独立 TEST 客户端并打开真实设备管理弹窗核对，登录保持。当前账号 3016 返回空列表、countComplete=false，因此此次实际画面验证覆盖空态布局，不代替有设备/退出确认/深色/小窗口完整验收。

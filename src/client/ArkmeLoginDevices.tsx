@@ -15,7 +15,6 @@ import type { LoginDevice, LoginDevicePage, LoginEventPage, DeviceConfirmation, 
 import { callArkme } from './api.js'
 import { tr, arkmeIntlLocale, useArkmeLocale } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
-import './login-devices.css'
 
 const request = <T extends LoginDeviceResult>(input: LoginDeviceRequest, signal?: AbortSignal) => callArkme<T>('account.devices', input, signal)
 const date = (at: number | null) => at ? new Date(at).toLocaleString(arkmeIntlLocale()) : tr('活跃时间暂不可用')
