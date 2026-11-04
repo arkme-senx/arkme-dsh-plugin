@@ -24,7 +24,7 @@ beforeEach(()=>{
    current.revision++;current.userBody=op.endsWith('.reset')?null:i.body;current.effectiveBody=current.userBody??current.officialBody
    return{accountScope:scope,conflict:false,current:{...current}}
   }
-  if(op==='arko.replies.page')return{accountScope:scope,items:[{key:'cloud-501',scene:'record_auto',resultKind:'root',source,item:{itemUid:'note',sendAtMillis:200,isMe:true},thought:{id:'one',recordUid:'note',content:'云端完整范围的回复',biz:1}}]}
+  if(op==='arko.replies.page')return{accountScope:scope,items:[{key:'cloud-501',sourceOrderAtMillis:200,scene:'record_auto',resultKind:'root',source,item:{itemUid:'note',sendAtMillis:200,isMe:true},thought:{id:'one',recordUid:'note',content:'云端完整范围的回复',biz:1}}]}
   throw Error(`unexpected ${op}`)
  })
  host=document.createElement('div');document.body.append(host);root=createRoot(host)

@@ -71,8 +71,8 @@ export async function readReplyHistory(runtime: ServiceRuntime, source: SourceSe
     const actionRef = await chat.arkoReplyHistoryActionRef(target.sourceRef, { recordUid: r.record_uid, recordOwnerUserId: owner, senderUserId: sender,
       relationUid: r.source_kind === 'chat' ? itemUid : '', sendAtMillis: r.navigation_at, sequence: Number(r.seq ?? 0) }, signal)
     const biz = r.scene === 'record_mention' || r.scene.endsWith('_mention') ? 2 : 1
-    page.items.push({ key: r.key, scene: r.scene, resultKind: r.result_kind as 'root' | 'continuation', source: target,
-      item: { itemUid, sendAtMillis: r.source_order_at, isMe: sender === recordOwnerId(a.session.userId), recordVersion: r.source_version, recordOwnerUserId: owner, messageActionRef: actionRef,
+    page.items.push({ sourceOrderAtMillis: r.source_order_at, key: r.key, scene: r.scene, resultKind: r.result_kind as 'root' | 'continuation', source: target,
+      item: { itemUid, sendAtMillis: r.navigation_at, isMe: sender === recordOwnerId(a.session.userId), recordVersion: r.source_version, recordOwnerUserId: owner, messageActionRef: actionRef,
         ...(r.source_kind === 'chat' ? { timelineItemKey: await source.chatTimelineItemKey(a.session.userId, String(r.chat_session_uid), itemUid) } : {}) },
       thought: { id: r.key, recordUid: itemUid, biz, content: r.content, sourceVersion: r.source_version, generation: r.generation, status: 'ready',
         ...(typeof r.reply_target_ref === 'string' && r.reply_target_ref.length <= 4096 ? { replyTargetRef: r.reply_target_ref } : {}) } })

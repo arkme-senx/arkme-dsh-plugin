@@ -21,7 +21,7 @@ it('old providers fail before a setting write or history query',async()=>{
  expect(fetch.mock.calls).toHaveLength(2)
 })
 it('Tools expose bounded reads and a revision-bound explicitly granted write',async()=>{
- const owner={arkoReplyPrompts:vi.fn(async()=>({accountScope:'test:11',items})),saveArkoReplyPrompt:vi.fn(async()=>({accountScope:'test:11',conflict:false,current:{...items[0],revision:1}})),arkoRepliesPage:vi.fn(async()=>({accountScope:'test:11',items:[{key:'one',scene:'record_auto',resultKind:'root',source:{sourceRef:'opaque-source'},item:{messageActionRef:'opaque-action',sendAtMillis:100},thought:{content:'字'.repeat(9000)}}],nextCursor:'opaque-next'}))}
+ const owner={arkoReplyPrompts:vi.fn(async()=>({accountScope:'test:11',items})),saveArkoReplyPrompt:vi.fn(async()=>({accountScope:'test:11',conflict:false,current:{...items[0],revision:1}})),arkoRepliesPage:vi.fn(async()=>({accountScope:'test:11',items:[{key:'one',sourceOrderAtMillis:100,scene:'record_auto',resultKind:'root',source:{sourceRef:'opaque-source'},item:{messageActionRef:'opaque-action',sendAtMillis:100},thought:{content:'字'.repeat(9000)}}],nextCursor:'opaque-next'}))}
  const tools=createArkmeCoreToolDefinitions(owner as never),exec={callId:'one',signal:new AbortController().signal} as never
  const read=tools.find(t=>t.name==='arkme_arko_reply_prompts')!,page=tools.find(t=>t.name==='arkme_arko_replies')!,save=tools.find(t=>t.name==='arkme_set_arko_reply_prompt')!
  const metadata=String(await read.execute({},exec));expect(metadata).toContain('bodyRunes');expect(metadata).not.toContain('effectiveBody')

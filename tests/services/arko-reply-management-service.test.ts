@@ -25,3 +25,10 @@ it('seals authorized history facts in Host and never guesses navigation time',as
  f.post.mockResolvedValue({items:[{...row,navigation_at:0}]});await expect(readReplyHistory(f.runtime,source as never,chat as never,{},'test:11')).rejects.toThrow('暂时无法读取')
  f.post.mockResolvedValue({items:[{...row,scene:'group_mention'}]});await expect(readReplyHistory(f.runtime,source as never,chat as never,{},'test:11')).rejects.toThrow('暂时无法读取')
 })
+
+it('continuation navigation keeps the root anchor separate from result ordering time',async()=>{
+ const f=fixture(),source={selfTarget:vi.fn(async()=>({kind:'send_to_self',sourceRef:'self',displayName:'self'}))},chat={arkoReplyHistoryActionRef:vi.fn(async()=> 'opaque-action')}
+ f.post.mockResolvedValue({items:[{key:'reply:one',scene:'record_mention',result_kind:'continuation',source_kind:'record',source_owner_user_id:11,source_sender_user_id:11,record_uid:'root',source_version:2,source_order_at:900,navigation_at:100,generation:10,content:'continuation'}]})
+ const page=await readReplyHistory(f.runtime,source as never,chat as never,{},'test:11')
+ expect(page.items[0]?.item.sendAtMillis).toBe(100)
+})
