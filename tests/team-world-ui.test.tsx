@@ -105,7 +105,8 @@ it('uses a separate team page and guides members to their existing content when 
   mock.call.mockImplementation(async operation => operation === 'team.app.world.view' ? { state: 'ready', team, memberTeam: team, context: { teamRef: team.teamRef, jotmoId: team.jotmoId, name: team.name, capabilities: { publish: true, manage: true, feedback: true, reply: true } }, feed: { items: [], hasMore: false } } : [team])
   await mount(<TeamWorldSurface accountKey="test:42" target={team} actorName="小林" onBack={close} />)
   expect(document.body.textContent).toContain('即我的世界')
-  expect(document.body.textContent).toContain('团队内容页面将在后续版本提供。')
+  expect(document.body.textContent).toContain('这个团队还没有公开内容')
+  expect(document.body.textContent).not.toContain('团队内容页面将在后续版本提供。')
   expect(mock.call.mock.calls.some(([op]) => ['world.user', 'world.mine', 'world.feed'].includes(op))).toBe(false)
   await act(async () => button('发布').click())
   expect(document.getElementById('world-publish-guide-title')?.textContent).toBe('把你发过的内容分享给世界')
@@ -206,4 +207,21 @@ it('offers every member team and submits the chosen team identity', async () => 
   await act(async () => button('发布').click())
   expect(mock.call.mock.calls.find(([op, p]) => op === 'team.world' && p.action === 'submit')?.[1]).toMatchObject({ teamRef: 'member-team', change: 'publish', expectedRevision: 0 })
   expect(mock.text).not.toHaveBeenCalled(); expect(published).toHaveBeenCalledOnce()
+})
+it('revalidates loaded team pages on focus without losing pagination or issuing personal feed reads', async () => {
+  let pagingCallback: IntersectionObserverCallback | undefined
+  vi.stubGlobal('IntersectionObserver',class {
+    constructor(private callback: IntersectionObserverCallback){}
+    observe(el:Element){if(el.hasAttribute('data-world-load-more-sentinel'))pagingCallback=this.callback}
+    disconnect(){}
+  })
+  const first = { recordRef:'one',authorName:'即我',textContent:'第一页正文',headline:'',tags:[],templateKind:0,imageRefs:[],imageCount:0,videoCount:0,voiceCount:0,extendCount:0,createdAtMillis:1,publishedAtMillis:1 }
+  const second = {...first,recordRef:'two',textContent:'第二页正文'}
+  mock.call.mockImplementation(async (op,input)=>op==='team.app.world.view'?{state:'ready',team,context:{teamRef:team.teamRef,jotmoId:team.jotmoId,name:team.name,capabilities:{}},feed:{items:[first],hasMore:true,nextCursor:'next'}}:op==='team.world'?{items:[second],hasMore:false}:op==='world.reactions.prepare'?{items:[],unavailableRecordRefs:[]}:{})
+  await mount(<TeamWorldSurface accountKey="test:42" target={team} onBack={close}/>)
+  await act(async()=>pagingCallback!([{isIntersecting:true}] as IntersectionObserverEntry[],{} as IntersectionObserver))
+  await act(async()=>window.dispatchEvent(new Event('focus')))
+  expect(document.body.textContent).toContain('第一页正文');expect(document.body.textContent).toContain('第二页正文')
+  expect(mock.call.mock.calls.filter(([op,input])=>op==='team.world'&&input.action==='feed')).toHaveLength(2)
+  expect(mock.call.mock.calls.some(([op])=>['world.feed','world.mine','world.user'].includes(op))).toBe(false)
 })

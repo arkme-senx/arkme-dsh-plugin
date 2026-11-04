@@ -3024,6 +3024,7 @@ export async function dispatchArkmeHostOperation(
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'reactions': return await service.reactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
     case 'team.world': return await service.teamWorld(params as unknown as import('./team-world-contract.js').TeamWorldRequest, requestSignal)
+    case 'world.reactions.versions': return await service.worldReactionVersions(params as unknown as import('./world-reaction-contract.js').WorldReactionVersionsRequest, requestSignal)
     case 'world.reactions.archive': return await service.worldReactionArchive(params as unknown as import('./world-reaction-contract.js').WorldReactionArchiveRequest, requestSignal)
     case 'world.reactions': return await service.worldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
     case 'world.reactions.local': return await service.localWorldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)

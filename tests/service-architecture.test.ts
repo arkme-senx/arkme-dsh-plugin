@@ -22,7 +22,7 @@ const expectedPublicMethods = [
   'dataExport', 'dataExportRangePreview', 'dataExportSaved',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
-  'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldCommentNotifications',
+  'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',

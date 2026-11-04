@@ -2838,6 +2838,11 @@ export class ArkmeSdk {
     return this.call('world.reactions.from-note', { accountKey, sourceRef, messageActionRef }, signal)
   }
 
+  async worldReactionVersions(input: import('../world-reaction-contract.js').WorldReactionVersionsRequest, signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionVersionsPage> {
+    if ((await this.capabilities(signal)).features.worldReactionArchiveVersionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持历史世界版本归档，请升级', retryable: false })
+    return await this.call('world.reactions.versions', { ...input }, signal)
+  }
+
   async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionContextPage> {
     await this.requireWorldReactions(signal)
     return await this.call('world.reactions.prepare', { accountKey, recordRefs }, signal)
@@ -3382,3 +3387,5 @@ export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditM
 export type { WorldReactionRequest, WorldReactionResponse, WorldReactionArchiveRequest, WorldReactionContext, WorldReactionContextPage, WorldReactionHistoryEvent, WorldReactionHistoryPage, WorldReactionNotificationPage } from '../world-reaction-contract.js'
 
 export type { TeamWorldRequest, TeamWorldResponse, TeamWorldContext, TeamWorldCapabilities, TeamWorldOriginal, TeamWorldReceipt, TeamWorldFeedback, TeamWorldFeedbackTarget, TeamWorldActivity, TeamWorldPreview } from '../team-world-contract.js'
+
+export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '../world-reaction-contract.js'

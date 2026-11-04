@@ -3,6 +3,7 @@ import type { ArkmeWorldAuthorLabel, ArkmeWorldFeedItem } from '../types.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
 import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
+import { WorldPublisherAttribution } from './ArkmeWorldSurface.js'
 import { callArkme } from './api.js'
 import { invalidateWorldImages } from './world-image-cache.js'
 import { worldReactionContexts } from './world-reactions.js'
@@ -101,7 +102,8 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
     headerContent={<ArkmeMessageDetailAuthor
       avatar={authorAction ? <button type="button" style={authorButton} aria-label={tr('查看{v0}的用户卡片', { v0: item.authorName })} onClick={authorAction}>{avatar}</button> : avatar}
       name={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>{authorAction ? <button type="button" style={authorButton} onClick={authorAction}>{item.authorName}</button> : item.authorName}<ArkmeMembershipBadge memberType={item.memberType} /></span>}
-      at={item.publishedAtMillis || item.createdAtMillis} />}
+      at={item.publishedAtMillis || item.createdAtMillis}
+      timeSuffix={item.teamAuthor && item.publisher?.name ? <WorldPublisherAttribution item={item} /> : undefined} />}
     onPointerDownOutside={event => {
       if (!(event.target instanceof Element)) return
       // Card clicks switch this panel. Portaled menus, previews and author cards

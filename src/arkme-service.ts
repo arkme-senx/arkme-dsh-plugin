@@ -1464,6 +1464,7 @@ arkoImagesV1:true,
         arkoThoughtContinuationsV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
+        worldReactionArchiveVersionsV1: true,
         teamWorldV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
@@ -2922,6 +2923,9 @@ arkoImagesV1:true,
   }
 
   async favoriteStickers(signal?: AbortSignal): Promise<ArkmeFavoriteStickerList> { return await this.chat.favoriteStickers(signal) }
+  async worldReactionVersions(input: import('./world-reaction-contract.js').WorldReactionVersionsRequest, signal?: AbortSignal) {
+    return new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).versions(input, signal)
+  }
   async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal) {
     return await new WorldReactionService(this.runtime, ref => this.world.reactionTarget(ref)).prepare(accountKey, recordRefs, signal)
   }

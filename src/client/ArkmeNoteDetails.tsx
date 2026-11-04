@@ -1,3 +1,4 @@
+import { NoteWorldReactionArchive } from './NoteWorldReactionArchive.js'
 import { detailExtensionSends, useDetailExtensionSends, DetailExtensionSendStatus, type DetailExtensionSend } from './detail-extension-send.js'
 import { readDetailExtensionPages } from './detail-extension-pages.js'
 import {TeamRepresentationBadge, TeamRepresentationAvatar} from './TeamRepresentationBadge.js'
@@ -1163,6 +1164,7 @@ export function ArkmeTimelineDetailDrawer({
       {canOpenTopic && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
     </button>}
     {sourceBadge}
+    {personalSource && item.isMe && normalizedSourceRef && messageActionRef && <NoteWorldReactionArchive sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} />}
     <style>{`.arkme-edit-history-entry { background: transparent; } .arkme-edit-history-entry:hover { background: ${arkmeTheme.hover}; }`}</style>
     {item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button data-arkme-feedback="neutral"
       type="button" aria-label={tr("已编辑")} className="arkme-edit-history-entry" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 32, marginTop: 5, padding: 0, border: 0, borderRadius: 4, color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}

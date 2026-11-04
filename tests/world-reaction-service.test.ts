@@ -96,3 +96,22 @@ it('exposes a separate sealed navigation reference through the common World noti
  expect(page.items[0]?.target.worldRecordRef).not.toBe(page.items[0]?.recordRef)
  expect(JSON.stringify(page)).not.toContain('record_uid')
 })
+
+it('pages archive versions with account/original-bound cursors and refuses mixed scope echoes', async () => {
+ const {owner,post}=setup()
+ const current=(await owner.prepare('test:7',['opaque'])).items[0]!.target
+ const wire=await owner.resolve(current)
+ post.mockResolvedValue({contract:WORLD_REACTION_CONTRACT,items:[{...wire,content_revision:'old-a'},{...wire,content_revision:'old-b'}],after_revision:'old-b',has_more:true} as never)
+ const page=await owner.versions({accountKey:'test:7',target:current,limit:2})
+ expect(page.items).toHaveLength(2);expect(page.hasMore).toBe(true)
+ expect(JSON.stringify(page)).not.toMatch(/old-a|old-b|world-only|record_uid/)
+ post.mockResolvedValue({contract:WORLD_REACTION_CONTRACT,items:[{...wire,content_revision:'old-c'}],after_revision:'old-c',has_more:false} as never)
+ await owner.versions({accountKey:'test:7',target:current,limit:2,cursor:page.nextCursor})
+ expect(post.mock.calls.at(-1)?.[1]).toMatchObject({after_revision:'old-b',limit:2,target:wire})
+ const other=await owner.reference({...wire,record_uid:'other'})
+ await expect(owner.versions({accountKey:'test:7',target:other,cursor:page.nextCursor})).rejects.toThrow()
+ post.mockResolvedValue({contract:WORLD_REACTION_CONTRACT,items:[{...wire,record_uid:'other',content_revision:'old-d'}],has_more:false} as never)
+ await expect(owner.versions({accountKey:'test:7',target:current})).rejects.toThrow()
+ await expect(owner.versions({accountKey:'test:8',target:current})).rejects.toThrow('账号')
+ await expect(owner.versions({accountKey:'test:7',target:current,limit:21})).rejects.toThrow()
+})

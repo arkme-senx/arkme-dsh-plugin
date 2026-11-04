@@ -1623,6 +1623,8 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-contact-profile-main { display: grid; grid-template-columns: 72px minmax(0, 1fr); align-items: start; gap: 24px; padding-bottom: 30px; }
 /* Harness applies superellipse corners globally; avatar silhouettes stay circular. */
 [data-arkme-avatar], [data-arkme-avatar] *, .arkme-contact-profile-avatar { corner-shape: round; }
+/* Follow rendered feedback, including async refresh and permission removal, without duplicating its state. */
+[data-world-record-ref]:not(:has(> footer [data-arkme-message-reactions], > [data-world-team-comments] [data-world-comment-level])) > [data-world-feedback-heading] { display: none; }
 .arkme-contact-profile-avatar { width: 72px; height: 72px; display: grid; place-items: center; overflow: hidden; border-radius: 50%; }
 .arkme-contact-profile-identity { min-width: 0; display: grid; gap: 10px; }
 .arkme-contact-profile-name { margin: 0; color: var(--dsw-alias-label-primary, #17191c); overflow-wrap: anywhere; font-size: 22px; line-height: 30px; font-weight: 600; }
