@@ -1,3 +1,4 @@
+import { WorldSubscribeButton } from './WorldSubscriptions.js'
 import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import type { TeamPublicCard } from '../team-group-contract.js'
@@ -73,6 +74,7 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
         </div></div>}
         {card.description&&<p style={styles.hint}>{card.description}</p>}
         <div style={{ ...styles.contact, gap: 12 }}>
+          {card.contact.state !== 'unavailable' && <WorldSubscribeButton target={{ kind: 'team', jotmoId: card.jotmoId }} />}
           <button type="button" style={styles.link} onClick={() => { onClose(); arkmeUi.showTeamWorld({ name: card.name, jotmoId: card.jotmoId, avatar: card.avatar }) }}>{tr('团队的世界')}</button>
           {!inCurrentConversation && <button type="button" disabled={card.navigation?.kind!=='inbox'&&(card.contact.state === 'disabled'||card.contact.state==='unavailable')} style={styles.link} onClick={contact}>{tr(card.navigation?.kind==='inbox'?'查看团队对话':'联系团队')}</button>}
         </div>

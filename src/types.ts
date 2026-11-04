@@ -4679,6 +4679,7 @@ export type ArkmePluginOperation =
   | 'world.notification-sources'
   | 'world.comment-notifications'
   | 'world.notification-target'
+  | 'world.subscriptions'
   | 'world.interactions.summary'
   | 'world.interactions.mark-viewed'
   | 'world.interactions.create-text'
