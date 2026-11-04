@@ -116,7 +116,7 @@ try{
  const detail=await host.messageSnapshotDetail(delegated,replyItem.messageActionRef);assert.equal(detail.textContent,uiText)
  proof.reply={item:replyItem,detail}
  const accepted=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:childRecordUid,rel_uid:childRelationUid,record_owner_user_id:13},4);assert.equal(accepted.item.relation.sender_user_id,13);assert.equal(accepted.item.relation.representation.team_id,'7')
- await approve({relationUid:childRelationUid});await page.screenshot({path:join(capture,'native-delegated-reply.png')})
+ await approve({relationUid:childRelationUid});await page.getByText('暂时无法读取线下交流，请重试。',{exact:true}).waitFor({state:'hidden'});await page.screenshot({path:join(capture,'native-delegated-reply.png')})
  const currentCards=await host.executeTeamApp('team.app.sources.cards',{conversationRef:colleagueCustomer.conversation.ref});assert(currentCards.items[0])
  proof.occurrences=await until(()=>host.executeTeamApp('team.app.sources.occurrences',{conversationRef:colleagueCustomer.conversation.ref,cardRef:currentCards.items[0].ref}),v=>v.items.length===2,'exact customer occurrence after represented reply')
  const events=await ownerPost('team','/fixture/events',{});assert.equal(events.filter(e=>e.kind==='team.message.changed').length,0,'group interactions cannot create private message notifications')

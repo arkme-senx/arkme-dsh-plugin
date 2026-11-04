@@ -105,3 +105,11 @@ it('pages pending cards without a second entry and removes the banner after conf
   expect(r.toJSON()).toBeNull()
   await act(async () => r.unmount())
 })
+
+it('does not request personal associations in a delegated group',async()=>{
+ fixture()
+ let r!:ReactTestRenderer
+ await act(async()=>{r=create(<OfflineContextCandidates source={{...source,kind:'group_chat',accessKind:'team_delegation'}} items={[]} onChanged={()=>{}}/>)})
+ expect(r.toJSON()).toBeNull();expect(api.offlineContext).not.toHaveBeenCalled()
+ await act(async()=>r.unmount())
+})
