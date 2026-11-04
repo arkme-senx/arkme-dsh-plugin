@@ -1,16 +1,17 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import type { ArkmeThoughtContinuation, ArkmeThoughtContinuationPage } from '../thought-continuation.js'
+import type { ArkmeThoughtContinuation } from '../thought-continuation.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { arkmeAuthStore } from './auth-store.js'
 import type { DetailExtensionSend } from './detail-extension-send.js'
 import { isArkmeTransientReadFailure } from './read-retry.js'
+import { appendThoughtContinuationPage, readThoughtContinuationWindow, type ThoughtContinuationWindow } from './thought-continuation-window.js'
 
 /** One mounted detail owns one cancellable poll, suspended while hidden.
  * The backend job continues independently of the browser lifetime. */
 export function useThoughtContinuations(sourceRef: string | undefined, actionRef: string | undefined, tasks: readonly DetailExtensionSend[]) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
-  const [state, setState] = useState<{ scope: string; key: string; items: ArkmeThoughtContinuation[]; supported: boolean; cursor?: string; error?: string }>({ scope: '', key: '', items: [], supported: false })
+  const [state, setState] = useState<{ scope: string; key: string; items: ArkmeThoughtContinuation[]; supported: boolean; cursor?: string; error?: string; window?: ThoughtContinuationWindow }>({ scope: '', key: '', items: [], supported: false })
   const [revision, setRevision] = useState(0)
   const retry = useRef<(id: string) => Promise<void>>(async () => {})
   const more = useRef<() => void>(() => {})
@@ -37,29 +38,26 @@ export function useThoughtContinuations(sourceRef: string | undefined, actionRef
     let timer: ReturnType<typeof setTimeout> | undefined, inFlight = false, active = true, polls = 0
     let supported = previous?.supported ?? true
     let items: ArkmeThoughtContinuation[] = previous?.items ?? [], cursor: string | undefined = previous?.cursor
+    let loadedWindow = previous?.window
     const visible = () => typeof document === 'undefined' || document.visibilityState !== 'hidden'
-    const publish = (page: ArkmeThoughtContinuationPage, append = false) => {
+    const publish = (page: ThoughtContinuationWindow) => {
       if (!active || signal.aborted || page.accountScope !== scope) return
       supported = page.supported
-      const byId = new Map((append ? items : []).map(item => [item.id, item]))
-      for (const item of page.items) byId.set(item.id, item)
-      // Head refresh replaces older pages so revoked content cannot survive
-      // through a local merge. Explicit pagination revalidates each page.
-      items = [...byId.values()].slice(-60); cursor = page.nextCursor
+      loadedWindow = page; items = page.items; cursor = page.nextCursor
       for (const item of items) if (item.status !== 'generating') pending.current.ids.delete(item.replyRecordUid)
-      setState({ scope, key, items, supported: page.supported, ...(cursor ? { cursor } : {}) })
+      setState({ scope, key, items, supported, window: loadedWindow, ...(cursor ? { cursor } : {}) })
     }
     const fail = (error: unknown, fallback: string) => {
       if (!active || signal.aborted) return
       const code = error && typeof error === 'object'
         ? (error as { body?: { code?: unknown }; code?: unknown }).body?.code ?? (error as { code?: unknown }).code : undefined
       if (code === 'CAPABILITY_UNSUPPORTED') {
-        supported = false; items = []; cursor = undefined
+        supported = false; items = []; cursor = undefined; loadedWindow = undefined
         setState({ scope, key, items, supported: false })
         return
       }
-      if (!isArkmeTransientReadFailure(error)) { items = []; cursor = undefined; pending.current.ids.clear(); supported = false }
-      setState({ scope, key, items, supported, ...(cursor ? { cursor } : {}),
+      if (!isArkmeTransientReadFailure(error)) { items = []; cursor = undefined; loadedWindow = undefined; pending.current.ids.clear(); supported = false }
+      setState({ scope, key, items, supported, ...(loadedWindow ? { window: loadedWindow } : {}), ...(cursor ? { cursor } : {}),
         error: error instanceof Error ? error.message : fallback })
     }
     const schedule = (force = false) => {
@@ -72,16 +70,24 @@ export function useThoughtContinuations(sourceRef: string | undefined, actionRef
       if (inFlight || !visible() || !active) return
       inFlight = true; polls++
       try {
-        const page = await sdk.sourceMessageThoughtContinuations(sourceRef, actionRef, { ...(after ? { cursor: after } : {}), signal })
-        publish(page, !!after)
+        const load = (cursor?: string) => {
+          if (!visible()) throw new DOMException('View hidden', 'AbortError')
+          return sdk.sourceMessageThoughtContinuations(sourceRef, actionRef, { ...(cursor ? { cursor } : {}), signal })
+        }
+        publish(after ? appendThoughtContinuationPage(loadedWindow, await load(after), after, scope)
+          : await readThoughtContinuationWindow({ scope, previous: loadedWindow, read: load, signal }))
       } catch (error) {
-        fail(error, 'Arko 回复暂时无法读取')
+        if (visible()) fail(error, 'Arko 回复暂时无法读取')
       } finally { inFlight = false; schedule() }
     }
     retry.current = async id => {
       if (inFlight || !active || !visible()) return
       inFlight = true; setRetryingId(id)
-      try { publish(await sdk.retrySourceMessageThoughtContinuation(sourceRef, actionRef, id, signal)) }
+      try {
+        const firstPage = await sdk.retrySourceMessageThoughtContinuation(sourceRef, actionRef, id, signal)
+        publish(await readThoughtContinuationWindow({ scope, previous: loadedWindow, firstPage, signal,
+          read: cursor => sdk.sourceMessageThoughtContinuations(sourceRef, actionRef, { ...(cursor ? { cursor } : {}), signal }) }))
+      }
       catch (error) { fail(error, 'Arko 回复重试失败') }
       finally { inFlight = false; if (active) setRetryingId(undefined); schedule(true) }
     }

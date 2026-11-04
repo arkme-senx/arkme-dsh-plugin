@@ -66,6 +66,7 @@ import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from '../src/client
 import { ArkmeClientError } from '../src/client/api.js'
 import { usePersonalNoteDetail } from '../src/client/use-personal-note-detail.js'
 import { RecordThoughtsProvider } from '../src/client/RecordThoughts.js'
+import { MessageQuoteThreadsProvider, useMessageQuoteThreads } from '../src/client/MessageQuoteThreads.js'
 import { invalidateMessageQuoteSources } from '../src/client/message-quote-invalidations.js'
 
 const timelineItem: ArkmeTimelineItem = {
@@ -1904,4 +1905,101 @@ describe('normal timeline related quick note drawer', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': 'detail.png，第 1 个附件' })).toHaveLength(0)
     expect(renderer.root.findByType(ArkmeRichComposerInput).props.value).toBe('')
   })
+
+  it('keeps all loaded comment pages mounted throughout a background refresh', async () => {
+    const extension = (recordUid: string) => ({ recordUid, parentRecordUid: timelineItem.itemUid, level: 2,
+      sourceKind: 'record_extension', senderDisplayName: '作者', title: '', textContent: recordUid, sendAtMillis: 100,
+      templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] })
+    const head = { parentRecordUid: timelineItem.itemUid, extensionCount: 2, extensions: [extension('head')], nextCursor: 'next' }
+    const tail = { parentRecordUid: timelineItem.itemUid, extensionCount: 2, extensions: [extension('older')] }
+    let refresh = false, finish!: (value: unknown) => void
+    mocks.callArkme.mockImplementation(async (op: string, params: Record<string, unknown>) => {
+      if (op === 'source.related-quick-notes.from-message') return relatedList
+      if (op === 'source.message-extension.context') return !params.pageCursor ? head : refresh ? new Promise(resolve => { finish = resolve }) : tail
+      return { features: { markdownQuickNotes: false } }
+    })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={timelineItem} sourceRef="source" sourceIdentityKey="stable" sourceKind="send_to_self" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}}/>) })
+    const count = () => view.root.findAll(node => !!node.props['data-arkme-note-extension-item']).length
+    const before = count(); refresh = true
+    await act(async () => invalidateMessageQuoteSources('stable'))
+    const during = count()
+    await act(async () => finish(tail))
+    const after = count()
+
+    expect([before,during,after]).toEqual([2,2,2])
+  })
+
+  it('does not reapply a comment jump after the reader scrolls and related notes arrive', async () => {
+    let finish!: (value: unknown) => void, store: ReturnType<typeof useMessageQuoteThreads>['store']
+    mocks.callArkme.mockImplementation(async (op: string) => {
+      if (op === 'source.related-quick-notes.from-message') return new Promise(resolve => { finish = resolve })
+      if (op === 'source.message-extension.context') return { parentRecordUid: timelineItem.itemUid, extensionCount: 0, extensions: [] }
+      return { features: { markdownQuickNotes: false } }
+    })
+    const frames: Array<() => void> = []
+    vi.stubGlobal('requestAnimationFrame', (fn: () => void) => { frames.push(fn); return frames.length })
+    vi.stubGlobal('cancelAnimationFrame', () => {})
+    const body = { scrollTop: 0, getBoundingClientRect: () => ({top:0}), querySelector: () => ({getBoundingClientRect: () => ({top:400-body.scrollTop})}) }
+    function Capture() { store=useMessageQuoteThreads().store; return null }
+    await act(async () => { create(<MessageQuoteThreadsProvider scope="test:11:self" sourceRef="source" chat={false} items={[timelineItem]} onOpenComments={() => {}}><Capture/><ArkmeTimelineDetailDrawer item={timelineItem} sourceRef="source" sourceKind="send_to_self" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}}/></MessageQuoteThreadsProvider>, { createNodeMock: el => el.type === 'div' && el.props.style?.padding === '24px 22px' ? body : null }) })
+    await act(async () => store!.requestComments(timelineItem))
+    await act(async () => { for (const fn of frames.splice(0)) fn() })
+    const clicked = body.scrollTop
+    body.scrollTop=50
+    await act(async () => finish(relatedList))
+    await act(async () => { for (const fn of frames.splice(0)) fn() })
+
+    expect([clicked,body.scrollTop]).toEqual([388,50])
+  })
+
+
+  it('restarts an interrupted background refresh instead of resuming its stale prior cursor', async () => {
+    const extension = (recordUid: string) => ({ recordUid, parentRecordUid: timelineItem.itemUid, level: 2,
+      sourceKind: 'record_extension', senderDisplayName: '作者', title: '', textContent: recordUid, sendAtMillis: 100,
+      templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] })
+    let phase = 0
+    const cursors: string[] = []
+    mocks.callArkme.mockImplementation(async (op: string, params: Record<string, unknown>) => {
+      if (op === 'source.related-quick-notes.from-message') return relatedList
+      if (op === 'source.message-extension.context') {
+        cursors.push(String(params.pageCursor ?? 'head'))
+        if (!params.pageCursor) return { parentRecordUid: timelineItem.itemUid, extensionCount: 2, extensions: [extension('head')], nextCursor: phase === 0 ? 'old-cursor' : 'new-cursor' }
+        if (phase === 0) throw new Error('Initial page interrupted')
+        if (phase === 1) throw new TypeError('Failed to fetch')
+        return { parentRecordUid: timelineItem.itemUid, extensionCount: 2, extensions: [extension('older')] }
+      }
+      return { features: { markdownQuickNotes: false } }
+    })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={timelineItem} sourceRef="source" sourceIdentityKey="stable" sourceKind="send_to_self" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}}/>) })
+    phase = 1
+    await act(async () => invalidateMessageQuoteSources('stable'))
+    expect(view.root.findAllByProps({ 'data-arkme-note-extension-item': 'head' })).toHaveLength(1)
+    phase = 2
+    await act(async () => view.root.findAll(node => node.type === 'button' && node.children.includes('重试'))[0]!.props.onClick())
+    expect(cursors).toEqual(['head','old-cursor','head','new-cursor','head','new-cursor'])
+    expect(view.root.findAllByProps({ 'data-arkme-note-extension-item': 'older' })).toHaveLength(1)
+  })
+
+  it('clears retained comments when a later page explicitly denies a background refresh', async () => {
+    const child = { recordUid:'comment',parentRecordUid:timelineItem.itemUid,level:2,sourceKind:'record_extension',senderDisplayName:'作者',title:'',textContent:'已有评论',sendAtMillis:100,templateKind:1,displayKind:0,officialMark:0,mediaItems:[] }
+    let denied = false
+    mocks.callArkme.mockImplementation(async (op: string, params: Record<string,unknown>) => {
+      if (op === 'source.related-quick-notes.from-message') return relatedList
+      if (op === 'source.message-extension.context') {
+        if (params.pageCursor) throw Object.assign(new Error('Access denied'),{body:{retryable:false}})
+        return {parentRecordUid:timelineItem.itemUid,extensionCount:1,extensions:[child],...(denied?{nextCursor:'next'}:{})}
+      }
+      return {features:{markdownQuickNotes:false}}
+    })
+    let view!: ReactTestRenderer
+    await act(async()=>{view=create(<ArkmeTimelineDetailDrawer item={timelineItem} sourceRef="source" sourceIdentityKey="stable" sourceKind="send_to_self" showOriginal={false} onClose={()=>{}} onToggleOriginal={()=>{}}/>)})
+    expect(view.root.findAllByProps({'data-arkme-note-extension-item':'comment'})).toHaveLength(1)
+    denied=true
+    await act(async()=>invalidateMessageQuoteSources('stable'))
+    expect(view.root.findAllByProps({'data-arkme-note-extension-item':'comment'})).toHaveLength(0)
+    expect(JSON.stringify(view.toJSON())).toContain('Access denied')
+  })
+
 })

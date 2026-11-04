@@ -42,6 +42,15 @@ it('respects scrolling up while a layout update is pending', () => {
   height += 300; resize(); flush()
   expect(pane.scrollTop).toBe(650)
 })
+it('accepts deliberate comment navigation before a pending layout restoration runs', () => {
+  pane.scrollTop = 0
+  const anchor = observeDetailScrollAnchor(pane); stop = anchor
+  resize()
+  pane.scrollTop = 650
+  anchor.rebase()
+  flush()
+  expect(pane.scrollTop).toBe(650)
+})
 it('does not scroll to the bottom merely because the detail first loads', () => {
   pane.scrollTop = 0; stop = observeDetailScrollAnchor(pane)
   resize(); flush()

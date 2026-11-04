@@ -5,11 +5,12 @@ interface DetailAnchor {
   key?: string
   offset?: number
 }
+type DetailScrollAnchor = (() => void) & { rebase(): void }
 
 /** One mounted detail owns its viewport. DOM/status refreshes never own focus. */
-export function observeDetailScrollAnchor(pane: HTMLElement): () => void {
+export function observeDetailScrollAnchor(pane: HTMLElement): DetailScrollAnchor {
   if (!pane.style || typeof pane.querySelectorAll !== 'function' || typeof pane.getBoundingClientRect !== 'function'
-    || typeof MutationObserver === 'undefined') return () => {}
+    || typeof MutationObserver === 'undefined') return Object.assign(() => {}, { rebase: () => {} })
   const attribute = 'data-arkme-detail-scroll-anchor'
   const previousOverflowAnchor = pane.style.overflowAnchor
   pane.style.overflowAnchor = 'none'
@@ -62,11 +63,11 @@ export function observeDetailScrollAnchor(pane: HTMLElement): () => void {
   mutations.observe(pane, { childList: true, characterData: true, subtree: true })
   pane.addEventListener('scroll', onScroll, { passive: true })
   pane.addEventListener('load', schedule, true)
-  return () => {
+  return Object.assign(() => {
     active = false
     if (frame !== undefined) cancelAnimationFrame(frame)
     mutations.disconnect(); resize?.disconnect(); observed.clear()
     pane.removeEventListener('scroll', onScroll); pane.removeEventListener('load', schedule, true)
     if (pane.style.overflowAnchor === 'none') pane.style.overflowAnchor = previousOverflowAnchor
-  }
+  }, { rebase: () => { appliedTop = undefined; anchor = capture() } })
 }

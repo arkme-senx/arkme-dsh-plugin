@@ -576,7 +576,7 @@ export function arkmeTimelineDetailSenderText(item: ArkmeTimelineItem, members: 
 type ArkmeDetailExtensionLoadState =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'success'; context: ArkmeSourceMessageExtensionContext; pageError?: string }
+  | { kind: 'success'; context: ArkmeSourceMessageExtensionContext; pageError?: string; retryFromStart?: boolean }
   | { kind: 'error'; message: string }
 
 function detailExtensionSenderName(item: ArkmeMessageCopyLinkExtensionItem): string {
@@ -745,7 +745,9 @@ function DetailExtensionContext({
   return <section style={styles.extensionContext} aria-label={tr("快记延展列表")}>
     {extensionCount > 0 && <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{continuations.nextCursor ? '+' : ''}{tr("条延展")}</div>}
     <div style={styles.extensionContextList}>
-      <RecordThoughtContent item={rootItem} embedded selectedThoughtId={selectedThoughtId} onReply={canReply ? onReplyThought : undefined}/>
+      {thoughtReplies.hasContent && <div data-arkme-detail-scroll-anchor="original-thought">
+        <RecordThoughtContent item={rootItem} embedded selectedThoughtId={selectedThoughtId} onReply={canReply ? onReplyThought : undefined}/>
+      </div>}
       {orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
       const author = detailExtensionAuthor(extension, personalSource, currentSelfProfile, sourceKind, conversationMembers)
       const timelineItem = detailExtensionTimelineItem(extension, author)
@@ -882,6 +884,7 @@ export function ArkmeTimelineDetailDrawer({
   const [replyFocusRevision, setReplyFocusRevision] = useState(0)
   const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const scrollAnchorRef = useRef<ReturnType<typeof observeDetailScrollAnchor>>()
   const quoteThreads = useMessageQuoteThreads()
   const commentJump = useRef('')
   const scrollTopByViewRef = useRef<Record<ArkmeRelatedDrawerView, number>>({
@@ -907,7 +910,9 @@ export function ArkmeTimelineDetailDrawer({
   const historyOpen = editHistoryTarget === historyTarget && messageActionRef !== ''
   useLayoutEffect(() => {
     if (historyOpen || relatedView !== 'source-detail' || !bodyRef.current) return
-    return observeDetailScrollAnchor(bodyRef.current)
+    const anchor = observeDetailScrollAnchor(bodyRef.current)
+    scrollAnchorRef.current = anchor
+    return () => { anchor(); if (scrollAnchorRef.current === anchor) scrollAnchorRef.current = undefined }
   }, [replyScopeKey, historyOpen, relatedView])
   const quickNoteDetailsSupported = item.quickNoteDetailsSupported !== false
   const extensionParent = extensionState.kind === 'success'
@@ -943,9 +948,10 @@ export function ArkmeTimelineDetailDrawer({
     setExtensionState(current => current.kind === 'success' ? current : { kind: 'loading' })
     const retained = extensionStateRef.current
     const retainedContext = retained.kind === 'success' && retained.context.parentRecordUid === item.itemUid ? retained.context : undefined
+    const atomic = retainedContext !== undefined && resume === undefined
     let published = resume
     if (resume) setExtensionState({ kind: 'success', context: resume })
-    void readDetailExtensionPages({ parentRecordUid: item.itemUid, signal: controller.signal, initial: resume,
+    void readDetailExtensionPages({ parentRecordUid: item.itemUid, signal: controller.signal, initial: resume, atomic,
       loadPage: pageCursor => callArkme<ArkmeSourceMessageExtensionContext>('source.message-extension.context', {
         sourceRef: normalizedSourceRef, messageActionRef, paginated: true, ...(pageCursor ? { pageCursor } : {}),
       }, controller.signal),
@@ -957,8 +963,9 @@ export function ArkmeTimelineDetailDrawer({
     }).catch(error => {
       if (controller.signal.aborted || extensionAbortRef.current !== controller) return
       const message = relatedQuickNoteErrorMessage(error, published ? '更多延展加载失败' : '延展加载失败')
-      const visible = published ?? (isArkmeTransientReadFailure(error) ? retainedContext : undefined)
-      setExtensionState(visible ? { kind: 'success', context: visible, pageError: message } : { kind: 'error', message })
+      const visible = atomic ? isArkmeTransientReadFailure(error) ? retainedContext : undefined
+        : published ?? (isArkmeTransientReadFailure(error) ? retainedContext : undefined)
+      setExtensionState(visible ? { kind: 'success', context: visible, pageError: message, retryFromStart: atomic } : { kind: 'error', message })
     })
   }, [item.itemUid, messageActionRef, normalizedSourceRef, quickNoteDetailsSupported])
   useEffect(() => {
@@ -977,9 +984,10 @@ export function ArkmeTimelineDetailDrawer({
       const body = bodyRef.current, target = body?.querySelector<HTMLElement>('[data-arkme-note-extension-count]')
       if (!body || !target) return
       body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 12
-      // Related-note content can arrive after the extension tree and shift this
-      // section down. Align again after that layout settles, within this body only.
-      if (relatedState.kind !== 'loading' && relatedState.kind !== 'idle') commentJump.current = key
+      scrollAnchorRef.current?.rebase()
+      // One click owns one alignment. The viewport anchor handles late layout;
+      // a delayed related-note response must never override subsequent user scrolling.
+      commentJump.current = key
     })
     return () => cancelAnimationFrame(frame)
   }, [quoteThreads.revision, quoteThreads.store, item, historyOpen, extensionState, relatedState.kind])
@@ -1216,7 +1224,7 @@ export function ArkmeTimelineDetailDrawer({
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       onMentionClick={openMentionMemberProfile}
       isMentionClickable={mentionOpensMemberProfile}
-      onRetry={() => loadExtensionContext(extensionState.kind === 'success' && extensionState.context.nextCursor ? extensionState.context : undefined)}
+      onRetry={() => loadExtensionContext(extensionState.kind === 'success' && !extensionState.retryFromStart && extensionState.context.nextCursor ? extensionState.context : undefined)}
       canReply={canExtend && !messageCreationBlocked}
       selectedThoughtId={replyTarget?.kind === 'thought' ? replyTarget.thought.id : undefined}
       onReplyThought={thought => selectReply({ kind: 'thought', thought })}

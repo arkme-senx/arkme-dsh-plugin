@@ -19,7 +19,7 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 function App({ source = 'source', tasks = [] }: { source?: string; tasks?: unknown[] }) {
   const state = useThoughtContinuations(source, 'signed-action', tasks as never)
-  return <div data-pending={state.pendingReplyRecordUids.join(',')}>{state.items.map(row => <p key={row.id}>{row.status}:{row.content}</p>)}{state.error}<button onClick={() => state.retry(item.id)}>retry</button></div>
+  return <div data-pending={state.pendingReplyRecordUids.join(',')}>{state.items.map(row => <p key={row.id}>{row.status}:{row.content}</p>)}{state.error}<button onClick={() => state.retry(item.id)}>retry</button><button onClick={state.loadMore}>more</button><button onClick={state.refresh}>refresh</button></div>
 }
 it('polls one mounted detail, stops on ready and cancels everything on unmount', async () => {
   await act(async () => root.render(<App/>))
@@ -120,4 +120,43 @@ it('recognizes the public SDK unsupported error envelope', async () => {
   expect(host.querySelector('p')).toBeNull()
   await act(async () => vi.advanceTimersByTimeAsync(30000))
   expect(mocks.read).toHaveBeenCalledTimes(2)
+})
+
+it('revalidates expanded reply pages together without removing the older DOM during polling or focus', async () => {
+  const older = { ...item, id: 'b'.repeat(64), replyRecordUid: 'older-human', status: 'ready', content: 'older answer' }
+  const head = { ...page(), nextCursor: 'older-cursor' }, tail = { ...page(), items: [older] }
+  let slow = false, finish!: (value: unknown) => void
+  mocks.read.mockImplementation(async (_s, _a, options) => options.cursor
+    ? slow ? new Promise(resolve => { finish = resolve }) : tail : head)
+  await act(async () => root.render(<App/>))
+  await act(async () => (host.querySelectorAll('button')[1] as HTMLButtonElement).click())
+  const rows = host.querySelectorAll('p'), olderNode = rows[1]
+  expect(rows).toHaveLength(2)
+  slow = true
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(host.querySelectorAll('p')).toHaveLength(2)
+  expect(host.querySelectorAll('p')[1]).toBe(olderNode)
+  await act(async () => finish(tail))
+  expect(host.querySelectorAll('p')[1]).toBe(olderNode)
+  slow = false
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(host.querySelectorAll('p')[1]).toBe(olderNode)
+  expect(mocks.read.mock.calls.map(call => call[2].cursor ?? 'head')).toEqual(['head', 'older-cursor', 'head', 'older-cursor', 'head', 'older-cursor'])
+})
+
+it('keeps the whole expanded window on transient later-page failure and clears it on owner denial', async () => {
+  const older = { ...item, id: 'b'.repeat(64), replyRecordUid: 'older-human', status: 'ready', content: 'older answer' }
+  const head = { ...page(), nextCursor: 'older-cursor' }, tail = { ...page(), items: [older] }
+  let failure: unknown
+  mocks.read.mockImplementation(async (_s, _a, options) => { if (options.cursor && failure) throw failure; return options.cursor ? tail : head })
+  await act(async () => root.render(<App/>))
+  await act(async () => (host.querySelectorAll('button')[1] as HTMLButtonElement).click())
+  failure = new TypeError('Failed to fetch')
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(host.querySelectorAll('p')).toHaveLength(2)
+  expect(host.textContent).toContain('Failed to fetch')
+  failure = Object.assign(new Error('Access denied'), { body: { retryable: false } })
+  await act(async () => vi.advanceTimersByTimeAsync(3000))
+  expect(host.querySelectorAll('p')).toHaveLength(0)
+  expect(host.textContent).toContain('Access denied')
 })
