@@ -47,8 +47,8 @@ describe('complete reverse extension summary', () => {
     expect(readExtensionSummaryBatch(data, ['action'])[0]?.summary).toMatchObject({ complete: false, commentCount: 0, anchors: [] })
   })
   it('uses signed exact occurrences and only the batch owner endpoint', async () => {
-    const post = vi.fn(async () => wire()), service = Object.create(ChatService.prototype) as ChatService
-    Object.assign(service, { runtime: { requireSession: async () => ({ userId: 7 }), authenticatedChatPost: post },
+    const post = vi.fn(async (..._args: unknown[]) => wire()), service = Object.create(ChatService.prototype) as ChatService
+    Object.assign(service, { runtime: { requireSession: async () => ({ userId: 7 }), authenticatedChatPost: post, runCompositeOwnerRead: async (_route: string, _params: unknown, read: (signal?: AbortSignal) => Promise<unknown>, signal?: AbortSignal) => read(signal) },
       source: { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }) },
       openMessageActionRef: vi.fn(async () => ({ chatSessionUid: 'chat', recordOwnerUserId: 8, recordUid: 'source', relationUid: 'source-rel', sourceSequence: 1 })) })
     await expect(service.sourceMessageExtensionSummaries('signed-source', ['action'])).resolves.toMatchObject([{ actionRef: 'action', summary: { commentCount: 125 } }])
@@ -57,4 +57,17 @@ describe('complete reverse extension summary', () => {
     await expect(service.sourceMessageExtensionSummaries('source', ['action'])).rejects.toMatchObject({ code: 'extension-summary-occurrence-invalid' })
     expect(post).toHaveBeenCalledTimes(1)
   })
+})
+
+it('maps different signed list/detail snapshots to one exact backend occurrence', async () => {
+  const post = vi.fn(async (..._args: unknown[]) => wire()), service = Object.create(ChatService.prototype) as ChatService
+  Object.assign(service, { runtime: { requireSession: async () => ({ userId: 7 }), authenticatedChatPost: post,
+    runCompositeOwnerRead: async (_route: string, _params: unknown, read: (signal?: AbortSignal) => Promise<unknown>, signal?: AbortSignal) => read(signal) },
+    source: { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }) },
+    openMessageActionRef: async () => ({ chatSessionUid: 'chat', recordOwnerUserId: 8, recordUid: 'source', relationUid: 'source-rel', sourceSequence: 1 }) })
+  const rows = await service.sourceMessageExtensionSummaries('signed-source', ['list-snapshot', 'detail-snapshot'])
+  expect(rows.map(row => row.actionRef)).toEqual(['list-snapshot', 'detail-snapshot'])
+  expect(rows.map(row => row.summary.commentCount)).toEqual([125, 125])
+  expect(post.mock.calls[0]?.[1]).toMatchObject({ targets: [{ record_owner_user_id: 8, record_uid: 'source', relation_uid: 'source-rel', sequence: 1 }] })
+  expect((post.mock.calls[0]?.[1] as { targets: unknown[] }).targets).toHaveLength(1)
 })

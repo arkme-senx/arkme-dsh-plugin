@@ -2635,9 +2635,14 @@ export class ArkmeSdk {
   }
 
   async sourceMessageExtensionSummaries(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<import('../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]> {
-    if ((await this.capabilities(signal)).features.messageExtensionSummariesV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持完整评论汇总，请升级', retryable: false })
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.messageExtensionSummariesV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持完整评论汇总，请升级', retryable: false })
     if (!sourceRef.trim() || !actionRefs.length || actionRefs.length > 40 || actionRefs.some(ref => !ref.trim())) throw new TypeError('Expected authorized source and message action references')
-    return this.call('source.message-extension.summaries', { sourceRef, actionRefs }, signal)
+    scoped.throwIfAborted()
+    const result = await this.call<import('../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]>('source.message-extension.summaries', { sourceRef, actionRefs }, scoped)
+    scoped.throwIfAborted()
+    return result
   }
 
   async sourceMessageExtensionContext(

@@ -621,6 +621,7 @@ export class ServiceRuntime {
       '/api/v1/dsh-remote/desktops/list', '/api/v1/dsh-remote/sessions/account-list', '/api/v1/dsh-remote/workspaces/list',
     ]).has(path)) return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
+      '/api/v1/chats/extensions/summaries/batch',
       '/api/v1/chats/members/records/aggregate', '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
     if (baseUrl === this.config.recordBaseUrl && new Set([
