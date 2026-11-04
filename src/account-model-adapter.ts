@@ -29,12 +29,12 @@ export class AccountModelAdapter extends LlmAdapter {
   providerInfo(provider: string) { return { id:provider, name: '自提供模型', description: '账号绑定 API，可在即我设置中管理' } }
   retryPolicy() { return retry }
   async listModels(): Promise<readonly LlmModelInfo[]> {
-    try { const data = await this.owner.accountModels(await this.owner.currentScope()); return data.models.filter(model => !model.disabled && model.execution === 'cloud' && model.capabilities.stream).map(info) } catch { return [] }
+    try { const data = await this.owner.accountModels(await this.owner.currentScope()); return data.models.filter(model => !model.disabled && model.execution === 'cloud' && model.capabilities.stream && model.capabilities.tools).map(info) } catch { return [] }
   }
   private async selected(id: string, signal?: AbortSignal): Promise<{ model: AccountModel; scope: string }> {
     const scope = await this.owner.currentScope(), data = await this.owner.accountModels(scope, signal)
     const model = data.models.find(model => model.route === id && !model.disabled && model.execution === 'cloud')
-    if (!model || !data.enabled) throw new LlmError('账号模型不可用，请到即我设置检查绑定', 'MODEL_UNAVAILABLE')
+    if (!model || !data.enabled || !model.capabilities.tools || !model.capabilities.stream) throw new LlmError('账号模型不可用，请到即我设置检查绑定', 'MODEL_UNAVAILABLE')
     return { model, scope }
   }
   async resolveModel(_provider: string, id: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo> { return info((await this.selected(id, signal)).model) }
