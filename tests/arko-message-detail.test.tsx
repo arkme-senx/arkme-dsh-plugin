@@ -1,5 +1,6 @@
-import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 // @vitest-environment jsdom
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
+import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -26,6 +27,7 @@ async function menuAction(label: string) {
 }
 const detail = () => host.querySelector('[role="dialog"][aria-label="消息详情"]')
 beforeEach(async () => {
+ arkoTimelineMemory.clear()
   arkoModelCache.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('requestAnimationFrame', () => 0)
