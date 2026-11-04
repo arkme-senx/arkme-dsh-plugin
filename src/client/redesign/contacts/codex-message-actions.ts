@@ -5,7 +5,7 @@ import { codexPromptDisplayText } from '../../../team-codex-prompt-text.js'
 import { codexImageSafeText } from '../../../team-codex-image-text.js'
 
 export const codexEventKey = (event: TeamCodexEvent) => event.eventId ?? `${event.turnId}:${event.kind}:${event.sequence}`
-export const codexSelectable = (event: TeamCodexEvent) => event.kind !== 'Interrupt' && !event.truncated && !!event.text.trim()
+export const codexSelectable = (event: TeamCodexEvent) => event.kind !== 'Interrupt' && !event.truncated && !!(event.kind==='UserPromptSubmit'?codexPromptDisplayText(event.text):event.text).trim()
 export interface CodexSelectionSnapshot extends NativeChatSelectionSnapshot { taskTitle: string; inputName: string; versions?:Record<string,number> }
 export function codexSelectionSnapshot(teamRef: string, task: TeamCodexTask, events: TeamCodexEvent[], keys: Set<string>): CodexSelectionSnapshot {
   if (!keys.size || keys.size > 100) throw new Error('请选择 1 至 100 条消息')

@@ -1,4 +1,55 @@
 import { readCodexResponseAnnotations, codexResponseAnnotationText, type CodexResponseAnnotations } from './team-codex-response-annotations.js'
+import { unified } from 'unified'
+import remarkParse from 'remark-parse'
+
+const skillName = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+const skillFile = /^(?:\/|[A-Za-z]:[\\/]|file:\/\/\/)(?:[^\r\n<>]*[\\/])?SKILL\.md$/
+const withinContextLimit = (text:string) => text.length <= 1024*1024 && new TextEncoder().encode(text).byteLength <= 1024*1024
+
+/** Recognize complete app messages, never quoted examples or mixed user prose. */
+function hiddenAppContext(text:string):boolean {
+  const value=text.trim()
+  if (!value.startsWith('<external_codex_apps_open_page>') && !value.startsWith('<skill>')) return false
+  if (!withinContextLimit(value)) return false
+  const page=/^<external_codex_apps_open_page>\s*([\s\S]*?)\s*<\/external_codex_apps_open_page>$/.exec(value)
+  if(page)try{
+    const data:unknown=JSON.parse(page[1]!)
+    if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).length!==1||!('page_id' in data))return false
+    return data.page_id===null||typeof data.page_id==='string'&&data.page_id.length>0&&new TextEncoder().encode(data.page_id).byteLength<=512
+  }catch{return false}
+  const skill=/^<skill>\r?\n<name>([^\r\n<>]+)<\/name>\r?\n<path>([^\r\n<>]+)<\/path>\r?\n([\s\S]*)\r?\n<\/skill>$/.exec(value)
+  return !!skill&&skillName.test(skill[1]!)&&skillFile.test(skill[2]!)
+    &&skill[3]!.replace(/\r\n/g,'\n').startsWith(`---\nname: ${skill[1]}\n`)
+}
+
+export interface CodexSkillMention { name:string; start:number; end:number }
+type MarkdownNode={type:string;url?:string;title?:string|null;value?:string;children?:MarkdownNode[];position?:{start:{offset?:number};end:{offset?:number}}}
+/** Destinations identify mentions only; no local path is opened or sent to the browser. */
+export function codexSkillPresentation(input:string):{text:string;skills?:CodexSkillMention[]} {
+  if(!input.includes('[$')||!input.includes('SKILL.md')||!withinContextLimit(input))return {text:input}
+  const links:{start:number;end:number;name:string}[]=[]
+  let root:MarkdownNode
+  try{root=unified().use(remarkParse).parse(input) as MarkdownNode}catch{return {text:input}}
+  const pending=[root]
+  while(pending.length){
+    const node=pending.pop()!
+    if(node.type==='blockquote')continue
+    const label=node.children?.length===1&&node.children[0]!.type==='text'?node.children[0]!.value:undefined
+    const start=node.position?.start.offset,end=node.position?.end.offset
+    if(node.type==='link'&&!node.title&&node.url&&skillFile.test(node.url)&&label?.startsWith('$')&&skillName.test(label.slice(1))
+      &&start!==undefined&&end!==undefined&&input.startsWith(`[${label}](`,start))links.push({start,end,name:label.slice(1)})
+    for(const child of node.children??[])pending.push(child)
+  }
+  if(!links.length||links.length>100)return {text:input}
+  let text='',offset=0
+  const skills:CodexSkillMention[]=[]
+  for(const link of links.sort((a,b)=>a.start-b.start)){
+    text+=input.slice(offset,link.start)
+    skills.push({name:link.name,start:text.length,end:text.length+link.name.length})
+    text+=link.name;offset=link.end
+  }
+  return {text:text+input.slice(offset),skills}
+}
 
 /** Only the generated all-image attachment envelope; ordinary file prose stays intact. */
 function imageAttachmentPromptText(input:string):string {
@@ -37,17 +88,18 @@ function browserPromptText(text: string): string {
 }
 
 export interface CodexQuestionReply { question: string; answer: string }
-export interface CodexPromptPresentation { text: string; replies?: CodexQuestionReply[]; responseAnnotations?: CodexResponseAnnotations }
+export interface CodexPromptPresentation { text: string; replies?: CodexQuestionReply[]; responseAnnotations?: CodexResponseAnnotations;skills?:CodexSkillMention[];hidden?:true }
 
 /** Recognize only a complete, known generated reply envelope. Quoted examples,
  * malformed payloads and ordinary user prose must not be interpreted as metadata. */
 export function codexPromptPresentation(raw: string): CodexPromptPresentation {
   const text = browserPromptText(imageAttachmentPromptText(raw))
   if (text.length > 1024 * 1024) return { text }
+  if (hiddenAppContext(text)) return { text:'',hidden:true }
   const responseAnnotations = readCodexResponseAnnotations(text)
-  if (responseAnnotations) return { text: codexResponseAnnotationText(responseAnnotations), responseAnnotations }
+  if (responseAnnotations) return { text: codexResponseAnnotationText({...responseAnnotations,request:codexSkillPresentation(responseAnnotations.request).text}), responseAnnotations }
   const envelope = /^\s*<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>\s*$/.exec(text)
-  if (!envelope) return { text }
+  if (!envelope) return codexSkillPresentation(text)
   try {
     const items: unknown = JSON.parse(envelope[1]!)
     if (!Array.isArray(items) || !items.length || items.length > 100) return { text }
@@ -70,7 +122,7 @@ export function codexPromptPresentation(raw: string): CodexPromptPresentation {
 export function codexPromptText(text: string): string {
   const prompt = codexPromptPresentation(text)
   // The collected body retains annotation metadata; only its display projection is plain text.
-  return prompt.responseAnnotations ? browserPromptText(imageAttachmentPromptText(text)) : prompt.text
+  return prompt.responseAnnotations || prompt.skills || prompt.hidden ? browserPromptText(imageAttachmentPromptText(text)) : prompt.text
 }
 
 export const codexPromptDisplayText = (text: string): string => codexPromptPresentation(text).text

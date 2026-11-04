@@ -1909,6 +1909,7 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-codex-message[data-event-kind="Progress"] .arkme-codex-message-meta { margin-top:2px; min-height:26px; }
 .arkme-codex-message.is-user { max-width:86%; width:fit-content; margin-left:auto; padding:0; }
 .arkme-codex-user-text { width:fit-content; max-width:100%; box-sizing:border-box; margin-left:auto; padding:12px 16px; border-radius:18px; white-space:pre-wrap; background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4179e8) 10%,var(--dsw-alias-bg-layer-1,#fff)); }
+.arkme-codex-skill { color:var(--dsw-alias-state-business-primary,#4179e8); background:color-mix(in srgb,var(--dsw-alias-state-business-primary,#4179e8) 10%,transparent); padding:1px 4px; border-radius:4px; font-weight:500; overflow-wrap:anywhere; box-decoration-break:clone; }
 .arkme-codex-message.is-user:has(.arkme-codex-question-replies) { background:transparent; padding:0; }
 .arkme-codex-question-replies { display:grid; gap:12px; }
 .arkme-codex-question-reply { min-width:0; border:1px solid var(--arkme-line); border-radius:14px; padding:14px 16px 10px; background:var(--dsw-alias-bg-layer-1,#fff); }
