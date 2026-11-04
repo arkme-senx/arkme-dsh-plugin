@@ -3,9 +3,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ArkmeSourceItem } from '../src/types.js'
-const mock = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), manage: vi.fn() }))
+const mock = vi.hoisted(() => ({ call: vi.fn(), navigate: vi.fn(), manage: vi.fn(), prepare: vi.fn(), play: vi.fn(), cancel: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 vi.mock('../src/client/ui-controller.js', () => ({ arkmeUi: { showConversationTarget: mock.navigate, showArrangements: mock.manage } }))
+vi.mock('../src/client/arrangement-completion-sound.js', () => ({ prepareArrangementCompletionSound: mock.prepare }))
 import { ArkmeConversationArrangements } from '../src/client/ArkmeConversationArrangements.js'
 const source = { sourceRef: 'source-a', sourceKey: 'chat-a', kind: 'group_chat', displayName: '硬件项目组' } as ArkmeSourceItem
 const item = { id: 'event-a', relatedRef: 'personal-ref', arrangementRef: 'owned-ref', title: '周五15:00到研发会议室和李工确认样机', description: '带测试结果', status: 'following',
@@ -14,6 +15,7 @@ const item = { id: 'event-a', relatedRef: 'personal-ref', arrangementRef: 'owned
 let root: Root, host: HTMLDivElement
 beforeEach(() => {
   vi.useFakeTimers(); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); mock.call.mockReset(); mock.navigate.mockReset(); mock.manage.mockReset()
+  localStorage.clear(); mock.play.mockReset(); mock.cancel.mockReset(); mock.prepare.mockReset().mockImplementation(() => ({ play: mock.play, cancel: mock.cancel }))
   host = document.createElement('div'); host.setAttribute('data-arkme-active-conversation-identity', 'chat-a'); document.body.append(host)
   root = createRoot(host)
   mock.call.mockImplementation(async (operation: string) => operation.endsWith('.detail') ? item
@@ -165,8 +167,10 @@ it.each(['identified', 'following'])('completes once and undoes to the original 
   expect(document.querySelector('[aria-modal="true"]')).toBeNull()
   expect(host.querySelectorAll('article')).toHaveLength(0)
   expect(record.status).toBe('completed')
+  expect(mock.prepare).toHaveBeenCalledTimes(1); expect(mock.play).toHaveBeenCalledTimes(1)
   await click('已完成'); expect(host.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('true')
   await click('撤销'); expect(record.status).toBe(status)
+  expect(mock.prepare).toHaveBeenCalledTimes(1); expect(mock.play).toHaveBeenCalledTimes(1)
   expect(mock.call.mock.calls.filter(([op]) => op === 'arrangements.mutate').map(([, args]) => args.intent)).toEqual(status === 'identified' ? ['complete', 'cancel-complete', 'cancel-follow'] : ['complete', 'cancel-complete'])
 })
 
@@ -176,11 +180,15 @@ it('guards repeated completion and ignores an account switch before a pending re
   mock.call.mockImplementation(() => new Promise(done => { resolve = done }))
   const checkbox = host.querySelector<HTMLButtonElement>('article [role="checkbox"]')!
   await act(async () => { checkbox.click(); checkbox.click() })
+  expect(checkbox.getAttribute('aria-checked')).toBe('true'); expect(checkbox.disabled).toBe(true)
+  expect(host.querySelector('article')?.getAttribute('data-completed')).toBe('true')
+  expect(mock.prepare).toHaveBeenCalledTimes(1); expect(mock.play).not.toHaveBeenCalled()
   expect(mock.call.mock.calls.filter(([op]) => op === 'arrangements.detail')).toHaveLength(1)
   await render('prod:13')
   await act(async () => resolve(item))
   expect(mock.call.mock.calls.filter(([op]) => op === 'arrangements.mutate')).toHaveLength(0)
   expect(host.querySelector('article')).toBeNull()
+  expect(mock.cancel).toHaveBeenCalledTimes(1); expect(mock.play).not.toHaveBeenCalled()
 })
 
 it('keeps the item on an uncertain mutation and never replays the write', async () => {
@@ -192,6 +200,9 @@ it('keeps the item on an uncertain mutation and never replays the write', async 
   })
   await act(async () => host.querySelector<HTMLButtonElement>('article [role="checkbox"]')!.click())
   expect(host.querySelectorAll('article')).toHaveLength(1)
+  expect(host.querySelector('[role="checkbox"]')?.getAttribute('aria-checked')).toBe('false')
+  expect(host.querySelector('article')?.getAttribute('data-completed')).toBe('false')
+  expect(mock.cancel).toHaveBeenCalledTimes(1); expect(mock.play).not.toHaveBeenCalled()
   expect(host.querySelector('[role="alert"]')?.textContent).toContain('未能确认安排状态')
   expect(host.textContent).not.toContain('撤销')
   expect(mock.call.mock.calls.filter(([op]) => op === 'arrangements.mutate')).toHaveLength(1)

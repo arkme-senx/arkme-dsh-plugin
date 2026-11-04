@@ -2,12 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
-import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import { Circle } from '@phosphor-icons/react/dist/icons/Circle'
-import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle'
 import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeArrangementItem, ArkmeSourceItem } from '../types.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
+import { ArkmeArrangementCompletionControl, arrangementCompletionChecked } from './ArkmeArrangementCompletionControl.js'
 import { ArkmeRelatedArrangementDialog } from './ArkmeRelatedArrangementDialog.js'
 import { useRelatedArrangementActions } from './use-related-arrangement-actions.js'
 import { useConversationArrangements } from './use-conversation-arrangements.js'
@@ -30,7 +28,7 @@ function ConversationArrangements({ source, accountScope, active, refreshRevisio
   const button = useRef<HTMLButtonElement>(null)
   const [selected, setSelected] = useState<string>(), [latestItem, setLatestItem] = useState<ArkmeArrangementItem>()
   const [now, setNow] = useState(Date.now)
-  const actions = useRelatedArrangementActions(active, item => { data.updateItem(item); setLatestItem(item) },
+  const actions = useRelatedArrangementActions(active, accountScope, item => { data.updateItem(item); setLatestItem(item) },
     ref => { data.removeItem(ref); if (selected === ref) setSelected(undefined) })
   const data = useConversationArrangements(source.conversationRef ?? source.sourceRef, active, refreshRevision, !!selected || !!actions.pending)
   useEffect(() => { setHost(button.current?.closest('[data-arkme-active-conversation-identity]') ?? null) }, [])
@@ -94,25 +92,22 @@ function ConversationArrangements({ source, accountScope, active, refreshRevisio
           const date = time(item.dueAtMillis)
           const overdue = !!date && item.status !== 'completed' && item.dueAtMillis! < now
           const working = actions.pending === item.arrangementRef
-          return <article key={item.id}>
-          <button type="button" className="arkme-related-arrangement-complete" role="checkbox" aria-checked={item.status === 'completed'}
-            aria-label={tr(item.status === 'completed' ? '取消完成：{title}' : '完成：{title}', { title: item.title })}
-            disabled={!item.arrangementRef || item.status === 'unknown' || !!actions.pending || data.loading} aria-busy={working}
-            onClick={() => { if (item.arrangementRef) void actions.toggleComplete({ arrangementRef: item.arrangementRef, status: item.status }) }}>
-            {working ? <ArrowClockwise className="arkme-related-arrangements-spinning" size={20} aria-hidden />
-              : item.status === 'completed' ? <CheckCircle size={20} weight="fill" aria-hidden /> : <Circle size={20} aria-hidden />}
-          </button>
+          const phase = working ? actions.phase : undefined
+          return <article key={item.id} className="arkme-arrangement-completion-row" data-completed={arrangementCompletionChecked(item.status, phase)}>
+          <span className="arkme-related-arrangement-completion-slot"><ArkmeArrangementCompletionControl title={item.title} status={item.status} phase={phase}
+            disabled={!item.arrangementRef || !!actions.pending || data.loading} busy={working}
+            onToggle={() => { if (item.arrangementRef) void actions.toggleComplete({ arrangementRef: item.arrangementRef, status: item.status }) }} /></span>
           <button type="button" className="arkme-related-arrangement-row" disabled={!item.arrangementRef}
             aria-label={item.title || tr('未命名安排')} onClick={() => { if (item.arrangementRef) { setLatestItem(undefined); setSelected(item.arrangementRef) } }}>
-            <span className="arkme-related-arrangement-title">{item.title || tr('未命名安排')}</span>
-            {(date || item.status === 'following' || item.status === 'unknown') && <span className="arkme-related-arrangement-meta">
+            <span className="arkme-related-arrangement-heading"><span className="arkme-related-arrangement-title arkme-arrangement-completion-title">{item.title || tr('未命名安排')}</span>
               {date && <time dateTime={new Date(item.dueAtMillis!).toISOString()} data-overdue={overdue} title={overdue ? tr('已过期') : undefined}
                 aria-label={overdue ? `${date}，${tr('已过期')}` : undefined}>{date}</time>}
+            </span>
+            {(item.status === 'following' || item.status === 'unknown') && <span className="arkme-related-arrangement-meta">
               {item.status === 'following' && <span className="arkme-related-arrangement-status">{tr('跟进中')}</span>}
               {item.status === 'unknown' && <span>{tr('状态未知')}</span>}
             </span>}
             {normalize(item.description) && normalize(item.description) !== normalize(item.title) && <span className="arkme-related-arrangement-description">{item.description}</span>}
-            {item.arrangementRef && <CaretRight className="arkme-related-arrangement-chevron" size={15} aria-hidden />}
           </button>
         </article>})}
         {data.error && data.failedKind === 'more' && <div className="arkme-related-arrangements-error" role="alert"><span>{data.error}</span>
