@@ -270,10 +270,11 @@ export default class LocalSessionRuntime {
     if (!identity && this.identities && address !== runtimeRef) identity = await this.identities.resolve(runtimeRef, sessionRef, signal)
     if (persistence && (!await persistence.stat(SessionId(sessionRef), { signal }) || identity && address !== identity.runtimeRef)) {
       let found = await persistence.discover({ accountId: this.accountId!, environment: this.config.environment,
-        ...identity ?? { runtimeRef, sessionRef } }, signal, address === runtimeRef)
+        ...identity ?? { runtimeRef, sessionRef } }, signal, address === runtimeRef, 'registered')
       if (!found && this.identities) {
         identity = await this.identities.resolve(runtimeRef, sessionRef, signal)
-        if (identity.previousRuntimeRefs.length) found = await persistence.discover({ accountId: this.accountId!, environment: this.config.environment, ...identity }, signal)
+        const source = await this.identities.source(identity, signal)
+        found = await persistence.discover({ accountId: this.accountId!, environment: this.config.environment, ...source }, signal)
       }
       await this.authorize(); signal.throwIfAborted()
       if (found) {

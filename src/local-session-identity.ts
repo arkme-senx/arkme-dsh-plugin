@@ -9,8 +9,39 @@ const valid = (value: unknown): value is string => typeof value === 'string' && 
 export class LocalSessionIdentity {
   private readonly values = new Map<string, SessionIdentity>()
   private readonly reads = new SharedReadGroup<SessionIdentity>()
+  private readonly profileReads = new SharedReadGroup<void>()
+  private readonly profiles = new Map<string, string>()
+  private profilesExpire = 0
   constructor(private readonly request: DshRemoteHttpRequester) {}
-  close(): void { this.reads.clear(); this.values.clear() }
+  close(): void { this.reads.clear(); this.profileReads.clear(); this.values.clear(); this.profiles.clear(); this.profilesExpire = 0 }
+
+  /** A scoped Profile survives runtime re-registration. This is source evidence,
+   * not permission to merge cloud runtime addresses or claim a journal. */
+  async source(identity: SessionIdentity, signal: AbortSignal): Promise<SessionIdentity & { sourceProfileRef?: string }> {
+    signal.throwIfAborted()
+    if (Date.now() >= this.profilesExpire) await this.profileReads.run('source-profiles', async (shared, current) => {
+      const response = await this.request.post('/api/v1/dsh-remote/desktops/list', {}, shared)
+      const profiles = new Map<string, string>()
+      if (!Array.isArray(response.desktops)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '实例来源目录无效')
+      for (const desktop of response.desktops) {
+        if (!desktop || !Array.isArray(desktop.runtimes)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '实例来源目录无效')
+        for (const view of desktop.runtimes) {
+          const row = view?.runtime
+          if (!valid(row?.runtime_ref) || !valid(row?.profile_ref)) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '实例来源身份无效')
+          if (profiles.has(row.runtime_ref) && profiles.get(row.runtime_ref) !== row.profile_ref) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '实例来源身份冲突')
+          if (!profiles.has(row.runtime_ref) && profiles.size >= 512) throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '实例来源目录超过上限')
+          profiles.set(row.runtime_ref, row.profile_ref)
+        }
+      }
+      if (current()) {
+        this.profiles.clear(); for (const [runtime, profile] of profiles) this.profiles.set(runtime, profile)
+        this.profilesExpire = Date.now() + 30_000
+      }
+    }, signal)
+    signal.throwIfAborted()
+    const profile = this.profiles.get(identity.runtimeRef)
+    return { ...identity, ...(profile ? { sourceProfileRef: profile } : {}) }
+  }
   known(runtime: string, session: string): SessionIdentity | undefined {
     const value = this.values.get(session)
     return value && (value.runtimeRef === runtime || value.previousRuntimeRefs.includes(runtime)) ? value : undefined

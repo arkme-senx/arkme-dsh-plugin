@@ -9,17 +9,22 @@ import LocalSessionAttachments from '../src/local-session-attachments.js'
 import { expect, it } from 'vitest'
 import * as localHistory from '../src/local-session-persistence.js'
 import { localHistoryAccountRef } from '../src/local-session-discovery.js'
+import { DshRemoteSessionOwnershipStore } from '../src/dsh-remote/session-ownership-store.js'
 
-it('reads the old journal without a writer, then continues at the same physical store after release', async () => {
+it.each(['inventory', 'ownership'])('reads through %s without a writer, then continues at the same physical store after release', async evidence => {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'arkme old native history ')))
   const oldHome = join(home, 'old app', 'Arkme Harness', 'dsh-containers', 'scope_abc', 'dsh')
   const currentHome = join(home, 'current app', 'dsh'), source = new Context(), current = new Context()
-  const id = SessionId('old-conversation'), identity = { accountId: '42', environment: 'prod' as const, runtimeRef: 'old-runtime', sessionRef: id }
+  const id = SessionId('old-conversation'), identity = { accountId: '42', environment: 'prod' as const, runtimeRef: 'old-runtime', sessionRef: id, ...(evidence === 'ownership' ? { sourceProfileRef: 'web:scope_abc' } : {}) }
   try {
     await mkdir(oldHome, { recursive: true }); await mkdir(currentHome, { recursive: true })
     await writeFile(join(home, 'old app', 'Arkme Harness', 'dsh-account-scopes.json'), JSON.stringify({ version: 1, activeContainerRef: 'scope_abc', accounts: { [localHistoryAccountRef('42')]: 'scope_abc' }, containers: { scope_abc: { createdAtMillis: 1, updatedAtMillis: 1, owner: { kind: 'account', accountRef: localHistoryAccountRef('42') } } } }))
     const state = join(oldHome, 'arkme-self', 'prod', 'dsh-remote'); await mkdir(state, { recursive: true })
     await writeFile(join(state, 'runtime-state.json'), JSON.stringify({ schemaVersion: 2, accounts: { '42': { runtimes: { web: { runtimeRef: identity.runtimeRef } }, projections: { web: { sessions: [{ sessionRef: id }] } } } } }))
+    if (evidence === 'ownership') {
+      await writeFile(join(state, 'runtime-state.json'), JSON.stringify({ schemaVersion: 2, accounts: { '42': { runtimes: { 'web:scope_abc': { runtimeRef: 'rotated' } }, projections: {} } } }))
+      await new DshRemoteSessionOwnershipStore(join(oldHome, 'arkme-self/prod'), 'web:scope_abc').claimUnownedAndListOwned({ accountId: '42', sessionRefs: [id], origin: 'existing-at-login' })
+    }
     await source.plugin(jsonl, { root: join(oldHome, 'sessions') })
     const writer = await source.sessionPersistence.create({ version: SESSION_FORMAT_VERSION, id, cwd: home, createdAt: 1, isSeeded: false })
     await writer.append([{ type: 'permission/preset', seq: 0, time: 1, data: { preset: 'workspace-write' } }])

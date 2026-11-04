@@ -431,7 +431,7 @@ it('uses the same canonical address for legacy discovery, handoff routing and re
   })
   try {
     expect(await runtime.discover('canonical', 'session', new AbortController().signal)).toBe(true)
-    expect(discover).toHaveBeenCalledWith(expect.objectContaining({ runtimeRef: 'canonical', previousRuntimeRefs: ['old'], accountId: '42' }), expect.any(AbortSignal), false)
+    expect(discover).toHaveBeenCalledWith(expect.objectContaining({ runtimeRef: 'canonical', previousRuntimeRefs: ['old'], accountId: '42' }), expect.any(AbortSignal), false, 'registered')
     expect(runtime.hasSession('old', 'session')).toBe(true); expect(runtime.channelEpoch('canonical', 'session')).toBe(-1)
     expect(store.address('session')).toBe('canonical'); expect(store.read('session')).toEqual(writer)
     expect(enqueue).toHaveBeenCalledWith('canonical', 'session')
@@ -449,4 +449,26 @@ it('uses the same canonical address for legacy discovery, handoff routing and re
   }
   await expect((LocalSessionRuntime.prototype as any).acquire.call(runtime, 'same', new AbortController().signal)).rejects.toBe(error)
   expect(publishExecution).not.toHaveBeenCalled()
+})
+
+it('recovers a rotated source through authenticated Profile evidence and keeps the original cloud address', async () => {
+  const { LocalSessionIdentity } = await import('../src/local-session-identity.js')
+  const root = mkdtempSync(join(tmpdir(), 'arkme-profile-owner-')), store = new LocalSessionOwnership(root, { environment: 'prod', accountId: '42' })
+  const identities = new LocalSessionIdentity({ post: async path => path.endsWith('/desktops/list')
+    ? { desktops: [{ runtimes: [{ runtime: { runtime_ref: 'original', profile_ref: 'web:scope_abc' } }] }] }
+    : { canonical_identity: true, runtime_ref: 'original', session_ref: 'session' } })
+  const discover = vi.fn(async identity => identity.sourceProfileRef === 'web:scope_abc'), enqueue = vi.fn(async () => {})
+  const runtime = Object.assign(Object.create(LocalSessionRuntime.prototype) as LocalSessionRuntime, {
+    start: async () => {}, authorize: async () => {}, accountId: '42', config: { environment: 'prod' }, identities,
+    ownership: store, repair: { enqueue }, ctx: { get: () => ({ stat: async () => undefined, discover, isDiscovered: () => true }), logger: { warn: vi.fn() } },
+  })
+  try {
+    expect(await runtime.discover('original', 'session', new AbortController().signal)).toBe(true)
+    expect(discover.mock.calls[0]).toEqual([expect.objectContaining({ runtimeRef: 'original' }), expect.any(AbortSignal), false, 'registered'])
+    expect(discover.mock.calls[1]).toEqual([expect.objectContaining({ sourceProfileRef: 'web:scope_abc' }), expect.any(AbortSignal)])
+    expect(store.address('session')).toBe('original'); expect(store.read('session')).toBeUndefined()
+    expect(enqueue).toHaveBeenCalledWith('original', 'session')
+    expect(runtime.hasSession('rotated', 'session')).toBe(false)
+    expect(runtime.sessionAccess('original', 'session')).toMatchObject({ execution: 'unclaimed', submit: 'handoff' })
+  } finally { identities.close(); store.close(); rmSync(root, { recursive: true }) }
 })
