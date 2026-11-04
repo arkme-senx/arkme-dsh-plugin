@@ -65,12 +65,20 @@ export function useConversationArrangements(sourceRef: string, active: boolean, 
     return () => { clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('arkme-arrangement-occurrences-changed', refresh) }
   }, [active])
   useEffect(() => () => { request.current?.abort() }, [])
-  const updateItem = (item: ArkmeArrangementItem, previousRef = item.arrangementRef) => setState(previous => ({ ...previous, items: previous.items.map(row => {
-    if (row.arrangementRef !== previousRef) return row
-    const { dueAtMillis: _oldTime, ...rest } = row
-    return { ...rest, arrangementRef: item.arrangementRef, title: item.title, description: item.description, status: item.status,
-      ...(item.dueAtMillis === undefined ? {} : { dueAtMillis: item.dueAtMillis }) }
-  }).filter((row, index, items) => items.findIndex(peer => peer.arrangementRef === row.arrangementRef) === index) }))
-  const removeItem = (ref: string) => setState(previous => ({ ...previous, items: previous.items.filter(row => row.arrangementRef !== ref) }))
+  // A confirmed local change supersedes every earlier page request, even after
+  // the completion dialog closes and background refresh is no longer paused.
+  const updateItem = (item: ArkmeArrangementItem, previousRef = item.arrangementRef) => {
+    request.current?.abort()
+    setState(previous => ({ ...previous, loading: false, loadKind: null, failedKind: null, error: '', items: previous.items.map(row => {
+      if (row.arrangementRef !== previousRef) return row
+      const { dueAtMillis: _oldTime, ...rest } = row
+      return { ...rest, arrangementRef: item.arrangementRef, title: item.title, description: item.description, status: item.status,
+        ...(item.dueAtMillis === undefined ? {} : { dueAtMillis: item.dueAtMillis }) }
+    }).filter((row, index, items) => items.findIndex(peer => peer.arrangementRef === row.arrangementRef) === index) }))
+  }
+  const removeItem = (ref: string) => {
+    request.current?.abort()
+    setState(previous => ({ ...previous, loading: false, loadKind: null, failedKind: null, error: '', items: previous.items.filter(row => row.arrangementRef !== ref) }))
+  }
   return { ...state, refresh: () => { explicitRefresh.current = true; setRevision(n => n + 1) }, loadMore: () => load(true), retry: () => load(current.current.failedKind === 'more'), updateItem, removeItem }
 }

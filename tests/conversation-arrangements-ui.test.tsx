@@ -9,6 +9,8 @@ vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 vi.mock('../src/client/ui-controller.js', () => ({ arkmeUi: { showConversationTarget: mock.navigate, showArrangements: mock.manage } }))
 vi.mock('../src/client/arrangement-completion-sound.js', () => ({ prepareArrangementCompletionSound: mock.prepare }))
 import { ArkmeConversationArrangements } from '../src/client/ArkmeConversationArrangements.js'
+import { useConversationArrangements } from '../src/client/use-conversation-arrangements.js'
+import { useRelatedArrangementActions } from '../src/client/use-related-arrangement-actions.js'
 const source = { sourceRef: 'source-a', sourceKey: 'chat-a', kind: 'group_chat', displayName: '硬件项目组' } as ArkmeSourceItem
 const item = { id: 'event-a', relatedRef: 'personal-ref', arrangementRef: 'owned-ref', title: '周五15:00到研发会议室和李工确认样机', description: '带测试结果', status: 'following',
   reminderEnabled: false, reminderState: '', createdAtMillis: 1000, updatedAtMillis: 1000,
@@ -241,4 +243,99 @@ it('keeps multiple loaded pages on background refresh and starts over only on ma
   await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="刷新相关安排"]')!.click())
   await act(async () => { await vi.advanceTimersByTimeAsync(260) })
   expect(host.querySelectorAll('article')).toHaveLength(1)
+})
+
+
+it('a refresh started before completion cannot restore its old unfinished snapshot afterward', async () => {
+  let record = {...item, status:'identified'}
+  let listCalls = 0
+  let releaseRefresh!: (value:unknown) => void, releaseWrite!: (value:unknown) => void
+  mock.call.mockImplementation(async (operation:string) => {
+    if (operation === 'arrangements.conversation.list') {
+      listCalls++
+      if (listCalls === 2) return await new Promise(resolve => { releaseRefresh=resolve })
+      return {items:[{...record}],hasMore:false,nextCursor:''}
+    }
+    if (operation === 'arrangements.detail') return {...record}
+    if (operation === 'arrangements.mutate') return await new Promise(resolve => { releaseWrite=resolve })
+    throw Error('unexpected isolated operation')
+  })
+  let exposed!: {actions: ReturnType<typeof useRelatedArrangementActions>; data: ReturnType<typeof useConversationArrangements>}
+  function CompletionProbe() {
+    const actions = useRelatedArrangementActions(true, 'isolated-audit', next => data.updateItem(next), ref => data.removeItem(ref))
+    const data = useConversationArrangements('source-a', true, 0, !!actions.pending)
+    exposed={actions,data}
+    return <div>{data.items[0]?.status}</div>
+  }
+  await act(async () => { root.render(<CompletionProbe/>) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(260) })
+  expect(exposed.data.items[0]?.status).toBe('identified')
+  await act(async () => { exposed.data.refresh() })
+  await act(async () => { await vi.advanceTimersByTimeAsync(260) })
+  expect(releaseRefresh).toBeTypeOf('function')
+  let transition!: Promise<boolean>
+  await act(async () => { transition=exposed.actions.toggleComplete(record) })
+  expect(releaseWrite).toBeTypeOf('function')
+  record={...record,status:'completed'}
+  await act(async () => { releaseWrite({outcome:'confirmed',item:{...record}}); await transition })
+  expect(exposed.data.items[0]?.status).toBe('completed')
+  await act(async () => { releaseRefresh({items:[{...item,status:'identified'}],hasMore:false,nextCursor:''}) })
+  expect(exposed.data.items[0]?.status).toBe('completed')
+})
+
+
+it('actual detail completion survives an older list response after closing the dialog', async () => {
+  let record = {...item,status:'identified',updatedAtMillis:1000}
+  let listCalls = 0, writes = 0
+  let releaseRefresh!: (value:unknown) => void, releaseWrite!: (value:unknown) => void
+  mock.call.mockImplementation(async (operation:string) => {
+    if (operation === 'arrangements.conversation.list') {
+      listCalls++
+      if (listCalls === 2) return await new Promise(resolve => { releaseRefresh=resolve })
+      return {items:[{...record}],hasMore:false,nextCursor:''}
+    }
+    if (operation === 'arrangements.detail') return {...record}
+    if (operation === 'arrangements.mutate') { writes++; return await new Promise(resolve => { releaseWrite=resolve }) }
+    if (operation === 'arrangements.occurrences.events') return {state:'ready',events:[]}
+    return {}
+  })
+  await render(); await click('相关安排')
+  await act(async () => { window.dispatchEvent(new Event('focus')) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(260) })
+  expect(releaseRefresh).toBeTypeOf('function')
+  await click('周五15:00')
+  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="安排操作"]')!.click())
+  const action = document.querySelector<HTMLButtonElement>('[role="menuitem"][aria-label="完成安排"]')!
+  expect(action).not.toBeNull(); expect(action.disabled).toBe(false)
+  await act(async () => action.click())
+  expect(releaseWrite).toBeTypeOf('function')
+  record={...record,status:'completed',updatedAtMillis:2000}
+  await act(async () => { releaseWrite({outcome:'confirmed',item:{...record}}) })
+  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭安排详情"]')!.click())
+  expect(host.querySelector('article')).toBeNull()
+  await act(async () => { releaseRefresh({items:[{...item,status:'identified'}],hasMore:false,nextCursor:''}) })
+  expect(record.status).toBe('completed'); expect(writes).toBe(1)
+  expect(host.querySelector('article')).toBeNull()
+})
+
+
+it('does not resurrect a removed item from an older response and keeps the next-page cursor usable', async () => {
+  let data!: ReturnType<typeof useConversationArrangements>, release!: (value:unknown) => void
+  let reads = 0
+  mock.call.mockImplementation(async () => {
+    if (++reads === 2) return await new Promise(resolve => { release=resolve })
+    return {items:[item],hasMore:true,nextCursor:'next-page'}
+  })
+  function Probe() { data=useConversationArrangements('source-a',true,0); return null }
+  await act(async () => { root.render(<Probe/>) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(260) })
+  await act(async () => { data.refresh() })
+  await act(async () => { await vi.advanceTimersByTimeAsync(260) })
+  expect(data.loading).toBe(true)
+  await act(async () => { data.removeItem(item.arrangementRef) })
+  expect(data.items).toHaveLength(0); expect(data.loading).toBe(false)
+  expect(data.hasMore).toBe(true); expect(data.nextCursor).toBe('next-page'); expect(data.loadedPages).toBe(1)
+  await act(async () => { release({items:[item],hasMore:false,nextCursor:''}) })
+  expect(data.items).toHaveLength(0); expect(data.hasMore).toBe(true); expect(data.nextCursor).toBe('next-page')
+  expect(reads).toBe(2)
 })

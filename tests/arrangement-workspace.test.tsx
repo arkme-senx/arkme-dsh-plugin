@@ -55,7 +55,8 @@ it('gives immediate check feedback, plays only after confirmed completion, then 
   expect(mocks.play).toHaveBeenCalledTimes(1)
   expect(button('撤销').props.disabled).toBe(false)
   expect(root!.root.findAllByProps({'data-arrangement-task':'one'})).toHaveLength(0)
-  mocks.call.mockImplementation(async op => op === 'arrangements.mutate' ? {item:item('one',{updatedAtMillis:now+1}),outcome:'confirmed'} : {})
+  mocks.call.mockImplementation(async op => op === 'arrangements.detail' ? item('one',{status:'completed',updatedAtMillis:now})
+    : op === 'arrangements.mutate' ? {item:item('one',{updatedAtMillis:now+1}),outcome:'confirmed'} : {})
   await act(async () => { button('撤销').props.onClick(); await tick() })
   expect(task('one')).toBeTruthy()
   expect(mocks.call).toHaveBeenCalledWith('arrangements.mutate', {arrangementRef:'one',intent:'cancel-complete'}, expect.any(AbortSignal))
@@ -134,6 +135,7 @@ it('retains already-loaded rows when the next page fails', async () => {
 })
 it('adjusts an offset after completion so the next page does not skip a task', async () => {
   mocks.call.mockImplementation(async (op,params) => {
+    if (op === 'arrangements.detail') return item(params.arrangementRef)
     if (op === 'arrangements.mutate') return {item:item('r0',{status:'completed'}),outcome:'confirmed'}
     if (params.status !== 'following') return {items:[],total:0,hasMore:false}
     if (params.offset > 0) return {items:[item('last')],total:50,hasMore:false}
@@ -161,4 +163,24 @@ it('cancels old account reads and never reuses another account list', async () =
   expect(signal?.aborted).toBe(true)
   await act(async () => { finish({items:[item('private-old-account')],total:1,hasMore:false}); await tick() })
   expect(JSON.stringify(root!.toJSON())).not.toContain('private-old-account')
+})
+
+
+it('workspace undo restores identified state rather than silently moving it to following', async () => {
+  let current = item('one', { status: 'identified' })
+  mocks.call.mockImplementation(async (op,params) => {
+    if (op === 'arrangements.detail') return {...current}
+    if (op === 'arrangements.mutate') {
+      current = {...current, status: params.intent === 'complete' ? 'completed' : params.intent === 'cancel-complete' ? 'following' : 'identified'}
+      return {outcome:'confirmed',item:{...current}}
+    }
+    const rows = params.status === current.status ? [{...current}] : []
+    return {items:rows,total:rows.length,hasMore:false}
+  })
+  await mount()
+  await act(async () => { checkbox().props.onClick(); await tick() })
+  expect(current.status).toBe('completed')
+  await act(async () => { button('撤销').props.onClick(); await tick() })
+  expect(current.status).toBe('identified')
+  expect(mocks.call.mock.calls.filter(c => c[0] === 'arrangements.mutate').map(c => c[1].intent)).toEqual(['complete','cancel-complete','cancel-follow'])
 })

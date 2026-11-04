@@ -16,6 +16,7 @@ import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeArrangementRecognition } from './ArkmeArrangementRecognition.js'
 import { useArrangementWorkspace } from './use-arrangement-workspace.js'
 import { useArrangementCompletion } from './use-arrangement-completion.js'
+import { readArrangementForTransition, type ArrangementColumn } from './arrangement-board-model.js'
 import { ArkmeArrangementCompletionControl, arrangementCompletionChecked } from './ArkmeArrangementCompletionControl.js'
 import { arrangementViews, arrangementViewLabels, nextArrangementMidnight, type ArrangementView, type ArrangementWorkspaceItem } from './arrangement-workspace-model.js'
 
@@ -54,7 +55,7 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
   type Pending = 'completing' | 'restoring' | 'deleting' | 'reminder'
   const [pending, setPending] = useState(new Map<string, Pending>())
   const writes = useRef(new Set<string>())
-  const [notice, setNotice] = useState<{ text: string; undo?: ArkmeArrangementItem; error?: boolean }>()
+  const [notice, setNotice] = useState<{ text: string; undo?: { item: ArkmeArrangementItem; status: ArrangementColumn }; error?: boolean }>()
   const completion = useArrangementCompletion(accountScope)
   const { sound, setSound } = completion
   const [deleting, setDeleting] = useState<ArkmeArrangementItem>()
@@ -82,18 +83,20 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
     latestData.current.updateItem(item)
     setSelected(previous => previous?.arrangementRef === item.arrangementRef ? item : previous)
   }
-  async function toggleComplete(item: ArkmeArrangementItem) {
+  async function toggleComplete(item: ArkmeArrangementItem, target?: ArrangementColumn) {
     const signal = lifetime.current?.signal
     if (!signal || writes.current.has(item.arrangementRef) || item.status === 'unknown') return
-    const completing = item.status !== 'completed'
+    const targetStatus = target ?? (item.status !== 'completed' ? 'completed' : 'following')
+    const completing = targetStatus === 'completed'
     writes.current.add(item.arrangementRef); markPending(item.arrangementRef, completing ? 'completing' : 'restoring'); setNotice(undefined)
     try {
-      const { result } = await completion.transition(item, completing ? 'completed' : 'following', signal)
+      const { previous, result } = await completion.transition(s => readArrangementForTransition(item.arrangementRef, s), targetStatus, signal)
       if (signal.aborted) return
       latestData.current.updateItem(result)
       setSelected(undefined)
       writes.current.delete(item.arrangementRef); markPending(item.arrangementRef)
-      setNotice({ text: tr(completing ? '已完成' : '已恢复为未完成'), ...(completing ? { undo: result } : {}) })
+      setNotice({ text: tr(completing ? '已完成' : '已恢复为未完成'),
+        ...(completing && previous.status !== 'completed' ? { undo: { item: result, status: previous.status as ArrangementColumn } } : {}) })
     } catch {
       if (!signal.aborted) {
         writes.current.delete(item.arrangementRef); markPending(item.arrangementRef)
@@ -173,7 +176,7 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
         </>}
       </div>
       {notice && <div className="arkme-arrangement-feedback" role={notice.error ? 'alert' : 'status'}><span>{notice.text}</span>
-        {notice.undo && <button type="button" disabled={pending.has(notice.undo.arrangementRef)} onClick={() => { void toggleComplete(notice.undo!) }}>{tr('撤销')}</button>}
+        {notice.undo && <button type="button" disabled={pending.has(notice.undo.item.arrangementRef)} onClick={() => { void toggleComplete(notice.undo!.item, notice.undo!.status) }}>{tr('撤销')}</button>}
         <button type="button" aria-label={tr('关闭提示')} onClick={() => setNotice(undefined)}><X size={14} /></button></div>}
       {!!data.rows.length && <footer>{data.total === undefined ? tr('已加载 {count} 项', { count: data.rows.length }) : tr('已加载 {count} / {total} 项', { count: data.rows.length, total: data.total })}</footer>}
     </section>

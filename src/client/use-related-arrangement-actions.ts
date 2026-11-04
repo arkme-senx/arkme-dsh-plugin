@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeArrangementItem, ArkmeArrangementMutationResult, ArkmeArrangementReminderToggleResult } from '../types.js'
 import { callArkme } from './api.js'
-import type { ArrangementColumn } from './arrangement-board-model.js'
+import { readArrangementForTransition, type ArrangementColumn } from './arrangement-board-model.js'
 import type { ArrangementCompletionPhase } from './ArkmeArrangementCompletionControl.js'
 import { useArrangementCompletion } from './use-arrangement-completion.js'
-import { withArkmeReadDeadline } from './read-deadline.js'
 import { tr } from './locale.js'
 
 type Target = Pick<ArkmeArrangementItem, 'arrangementRef' | 'status'>
@@ -30,14 +29,8 @@ export function useRelatedArrangementActions(active: boolean, accountScope: stri
     catch { if (!signal.aborted) setNotice({ text: tr('未能确认安排状态，请刷新后重试'), error: true }); return false }
     finally { if (!signal.aborted) { writing.current = false; setPending(''); setPhase(undefined) } }
   }
-  async function read(ref: string, signal: AbortSignal) {
-    const item = await withArkmeReadDeadline(s => callArkme<ArkmeArrangementItem>('arrangements.detail', { arrangementRef: ref }, s), signal)
-    signal.throwIfAborted()
-    if (item.arrangementRef !== ref || item.status === 'unknown') throw new Error('安排已变化，请刷新后操作')
-    return item
-  }
   const transition = (target: Target, status: ArrangementColumn, allowUndo: boolean) => run(target.arrangementRef, async signal => {
-    const { previous, result } = await completion.transition(s => read(target.arrangementRef, s), status, signal)
+    const { previous, result } = await completion.transition(s => readArrangementForTransition(target.arrangementRef, s), status, signal)
     signal.throwIfAborted(); latest.current.apply(result)
     setNotice({ text: tr(status === 'completed' ? '已完成' : '已恢复为未完成'),
       ...(allowUndo && previous.status !== status ? { undo: { item: result, status: previous.status as ArrangementColumn } } : {}) })
