@@ -113,6 +113,16 @@ it('uses a separate team page and guides members to their existing content when 
   expect(editor()).toBeNull()
 })
 
+it('shows public team content before optional member presentation resolves', async () => {
+  const post = { recordRef: 'public-team-post', authorName: team.name, teamAuthor: { jotmoId: team.jotmoId, name: team.name }, headline: '', textContent: '团队公开正文', tags: [], templateKind: 0, createdAtMillis: 1, publishedAtMillis: 1, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0, extendCount: 0 }
+  mock.call.mockImplementation(async operation => operation === 'team.app.world.view' ? { state: 'ready', team, context: { teamRef: team.teamRef, jotmoId: team.jotmoId, name: team.name, capabilities: { publish: true, manage: false, feedback: false, reply: true } }, feed: { items: [post], hasMore: false } } : operation === 'team.app.teams' ? new Promise(() => {}) : { items: [], unavailableRecordRefs: [] })
+  await mount(<TeamWorldSurface accountKey="test:42" target={team} onBack={close} />)
+  expect(document.body.textContent).toContain('团队公开正文')
+  expect(document.querySelector('[data-world-team-badge]')?.textContent).toContain('团队')
+  expect(document.body.textContent).not.toContain('正在加载团队世界')
+  expect(mock.call).toHaveBeenCalledWith('team.app.world.view', { expectedAccountKey: 'test:42', jotmoId: team.jotmoId, includeMemberTeam: false }, expect.any(AbortSignal))
+})
+
 it('offers the same team World navigation from public cards including the current team conversation', async () => {
   const navigate = vi.spyOn(arkmeUi, 'showTeamWorld')
   await mount(<TeamPublicCardDialog accountKey="test:42" jotmoId="our_team" onClose={close}
