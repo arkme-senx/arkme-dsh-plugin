@@ -26,12 +26,22 @@ export function ArkmeModelCatalogDialog({ scope, onClose, returnFocusRef }: { sc
   const dialog = useRef<HTMLDialogElement>(null), id = useId()
   useModalLayer(dialog, true, onClose)
   useLayoutEffect(suspendArkmeVisibleReadIntent, [])
-  const [revision,setRevision] = useState(0), [search,setSearch] = useState(''), [scene,setScene] = useState<CatalogScene>('all')
-  const [result,setResult] = useState<{scope:string;revision:number;value?:UnifiedModelCatalog;error?:unknown}>()
   useEffect(() => {
     const element = dialog.current; element?.showModal(); element?.querySelector<HTMLElement>('[data-modal-autofocus]')?.focus({preventScroll:true})
     return () => { element?.close(); queueMicrotask(() => { if(returnFocusRef?.current?.isConnected) returnFocusRef.current.focus({preventScroll:true}) }) }
   },[returnFocusRef])
+  return createPortal(<dialog ref={dialog} role="dialog" aria-modal="true" aria-labelledby={id} className="arkme-model-catalog-dialog" data-arkme-notification-blocking-overlay="true"
+    onCancel={event=>{event.preventDefault();event.stopPropagation();onClose()}} onKeyDown={event=>event.stopPropagation()}
+    onClick={event=>{if(event.target!==event.currentTarget)return;const rect=event.currentTarget.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)onClose()}}>
+    <ArkmeOfficialModels scope={scope} onClose={onClose} titleId={id}/>
+  </dialog>,document.body)
+}
+
+/** Shared read-only directory for the unified settings page and legacy modal. */
+export function ArkmeOfficialModels({scope,onClose,titleId}:{scope:string;onClose?:()=>void;titleId?:string}) {
+  useArkmeLocale()
+  const [revision,setRevision] = useState(0), [search,setSearch] = useState(''), [scene,setScene] = useState<CatalogScene>('all')
+  const [result,setResult] = useState<{scope:string;revision:number;value?:UnifiedModelCatalog;error?:unknown}>()
   useEffect(() => {
     const controller = new AbortController()
     void callArkme<UnifiedModelCatalog>('models.directory',{expectedAccountScope:scope,officialOnly:true},controller.signal).then(value => {
@@ -43,12 +53,10 @@ export function ArkmeModelCatalogDialog({ scope, onClose, returnFocusRef }: { sc
   const current = result?.scope===scope && result.revision===revision ? result : undefined
   const data=current?.value, models=useMemo(()=>officialCatalogModels(data?.models??[]),[data])
   const visible=filterCatalogModels(models,scene,search), loading=!current, refresh=()=>setRevision(value=>value+1)
-  return createPortal(<dialog ref={dialog} role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} className="arkme-model-catalog-dialog" data-arkme-notification-blocking-overlay="true"
-    onCancel={event=>{event.preventDefault();event.stopPropagation();onClose()}} onKeyDown={event=>event.stopPropagation()}
-    onClick={event=>{if(event.target!==event.currentTarget)return;const rect=event.currentTarget.getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)onClose()}}>
+  return <div className="arkme-model-catalog-panel">
     <style>{css}</style>
-    <header className="arkme-model-catalog-header"><div><h2 id={`${id}-title`}>{tr('即我可用模型')}</h2><p>{tr('查看官方模型，可在对应功能中选用')}</p></div>
-      <div><button type="button" aria-label={tr('刷新模型目录')} disabled={loading} onClick={refresh}><ArrowClockwise size={18}/></button><button type="button" aria-label={tr('关闭模型目录')} onClick={onClose}><X size={20}/></button></div>
+    <header className="arkme-model-catalog-header"><div><h2 id={titleId}>{tr('即我可用模型')}</h2><p>{tr('查看官方模型，可在对应功能中选用')}</p></div>
+      <div><button type="button" aria-label={tr('刷新模型目录')} disabled={loading} onClick={refresh}><ArrowClockwise size={18}/></button>{onClose && <button type="button" aria-label={tr('关闭模型目录')} onClick={onClose}><X size={20}/></button>}</div>
     </header>
     <div className="arkme-model-catalog-toolbar"><input type="search" aria-label={tr('搜索模型名称或提供方')} placeholder={tr('搜索模型名称或提供方')} value={search} onChange={event=>setSearch(event.target.value)} data-modal-autofocus />
       <div role="group" aria-label={tr('筛选模型适用场景')}>{catalogScenes.map(([value,label])=><button type="button" key={value} aria-pressed={value===scene} onClick={()=>setScene(value)}>{tr(label)}</button>)}</div>
@@ -68,5 +76,5 @@ export function ArkmeModelCatalogDialog({ scope, onClose, returnFocusRef }: { sc
       </>}
     </div>
     <footer>{tr('模型目录会随官方开放情况更新')}{data&&<span>{tr('读取于 {v0}',{v0:new Intl.DateTimeFormat(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'}).format(data.observedAt)})}</span>}</footer>
-  </dialog>,document.body)
+  </div>
 }

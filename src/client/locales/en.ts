@@ -2255,4 +2255,11 @@ Arko 对话|Arko conversations
 录音时间轴|Recording timeline
 快记分析|Note analysis
 聊天分析|Chat analysis
+登录后查看模型设置|Sign in to view model settings
+管理模型，查看各功能可用的模型与费用|Manage models and review availability and pricing by feature
+模型来源|Model source
+即我官方|Arkme official
+自提供模型|Custom models
+自提供模型配置|Custom model configuration
+配置保存在当前服务，同一服务的客户端共用；不会自动同步至其他服务。|Configuration is shared by clients connected to this service. It does not sync automatically to other services.
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

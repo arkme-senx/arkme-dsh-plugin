@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { ArkmeAccountUsage, ArkmeAccountUsageDetails, ArkmeAccountUsageDialog, formatCompactTokens, formatUsageBytes, formatUsageSeconds, usageLevel } from '../src/client/ArkmeAccountUsage.js'
 import { installArkmeRedesignStyles } from '../src/client/redesign/styles.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { connectArkmeLocale } from '../src/client/locale.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -38,12 +39,16 @@ async function openGiftDetails() {
 const retry = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '重试')!
 
 describe('account points and independent usage', () => {
-  it('opens official available models lazily from the AI points area and cancels on close',async()=>{
-    await render();expect(mocks.call.mock.calls.some(call=>call[0]==='models.directory')).toBe(false)
-    let signal:AbortSignal|undefined;mocks.call.mockImplementation((operation,params,next)=>{if(operation==='models.directory'){signal=next;return Promise.resolve({accountScope:params.expectedAccountScope,observedAt:Date.now(),models:[],failures:[]})}throw new Error('unexpected read')})
-    const trigger=host.querySelector<HTMLButtonElement>('.arkme-models-disclosure')!;await act(async()=>{trigger.focus();trigger.click()})
-    expect(document.querySelector('dialog.arkme-model-catalog-dialog[open]')).not.toBeNull();expect(mocks.call.mock.calls.at(-1)?.[1]).toEqual({expectedAccountScope:'prod:11',officialOnly:true})
-    await act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="关闭模型目录"]')!.click());expect(signal?.aborted).toBe(true);expect(document.activeElement).toBe(trigger)
+  it('routes available models to the unified settings entrance without opening a second dialog',async()=>{
+    await render()
+    const open=vi.fn(), unbind=arkmeUi.bindSettingsOpener(open)
+    try {
+      const trigger=host.querySelector<HTMLButtonElement>('.arkme-models-disclosure')!
+      await act(async()=>trigger.click())
+      expect(open).toHaveBeenCalledExactlyOnceWith('arkme-models')
+      expect(document.querySelector('dialog.arkme-model-catalog-dialog')).toBeNull()
+      expect(mocks.call.mock.calls.some(call=>call[0]==='models.directory')).toBe(false)
+    } finally { unbind() }
   })
   it('toggles gift details, dismisses outside or Escape, and stays inside the owning modal', async () => {
     const onClose = vi.fn()
