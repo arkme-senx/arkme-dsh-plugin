@@ -34,7 +34,7 @@ it('keeps public contact disabled but allows current members to enter inbox',asy
  call.mockResolvedValue({...card,contact:{state:'disabled'},navigation:{kind:'none'}})
  await mount();expect(button('联系团队').disabled).toBe(true)
  call.mockResolvedValue({...card,contact:{state:'disabled'},navigation:{kind:'inbox',teamRef:'opaque'}})
- await mount('prod:91');await act(async()=>button('进入团队收件箱').click())
+ await mount('prod:91');await act(async()=>button('查看团队对话').click())
  expect(open).toHaveBeenCalledExactlyOnceWith({kind:'team',teamRef:'opaque'})
 })
 
