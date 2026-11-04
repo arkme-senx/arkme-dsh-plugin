@@ -33,7 +33,7 @@ function fixture() {
     team_id: '9223372036854775800',
     team_name: '团队',
     content_uid: 'original',
-    publication_uid: 'team-world-uid',
+    publication_uid: 'team-world-' + 'a'.repeat(64),
     revision: 3,
     public_requested: true,
     deleted: false,
@@ -127,7 +127,7 @@ it('rechecks the World principal and grants a management entry only to its curre
   ).resolves.toEqual({ publications: [] })
   expect(f.teams.publicationLink).not.toHaveBeenCalled()
   f.world.publicationPrincipal.mockResolvedValue({
-    uid: 'team-world-uid',
+    uid: 'team-world-' + 'a'.repeat(64),
     owner: 0,
     team: '9223372036854775800',
     viewer: 8,
@@ -136,7 +136,7 @@ it('rechecks the World principal and grants a management entry only to its curre
     publications: WorldPublication[]
   }
   expect(out.publications[0]).toMatchObject({ kind: 'team', canUnpublish: true })
-  expect(f.teams.publicationLink).toHaveBeenCalledWith('9223372036854775800', 'team-world-uid', undefined)
+  expect(f.teams.publicationLink).toHaveBeenCalledWith('9223372036854775800', 'team-world-' + 'a'.repeat(64), undefined)
 })
 it('does not turn unavailable linkage into a private result and rejects tampered capabilities', async () => {
   const f = fixture()
@@ -151,4 +151,13 @@ it('does not turn unavailable linkage into a private result and rejects tampered
     }),
   ).rejects.toThrow()
   expect(f.world.unpublishExisting).not.toHaveBeenCalled()
+})
+
+it('accepts public-only team links without manufacturing private management capabilities', async () => {
+ const f=fixture();f.teams.sourcePublicationLinks.mockResolvedValue([{source_uid:'original-uid',team_id:'9223372036854775800',team_name:'团队',publication_uid:'team-world-'+ 'a'.repeat(64),public_requested:true,can_manage:false}] as never)
+ const out=await f.service.execute({action:'sources',accountKey:'test:8',targets}) as {items:{publications:WorldPublication[]}[]}
+ const team=out.items[0]!.publications.find(v=>v.kind==='team')!
+ expect(team).toMatchObject({requested:true,canUnpublish:false})
+ await expect(f.service.execute({action:'unpublish',accountKey:'test:8',publicationRef:team.ref,requestUid:'fixed-request-1234'})).rejects.toThrow()
+ expect(f.teams.unpublishLink).not.toHaveBeenCalled()
 })

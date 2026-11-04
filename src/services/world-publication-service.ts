@@ -36,6 +36,11 @@ export class WorldPublicationService {
       canUnpublish: requested,
     })
     const team = async (v: Record<string, unknown>): Promise<WorldPublication> => {
+      if (!recordOwnerId(v.team_id) || typeof v.publication_uid !== 'string' || !/^team-world-[0-9a-f]{64}$/.test(v.publication_uid) || typeof v.can_manage !== 'boolean') throw invalid()
+      if (v.can_manage === false) {
+        if (v.public_requested !== true || v.pending === true || v.deleted === true) throw invalid()
+        return { key: await key('team', v.publication_uid), ref: await seal({ kind: 'team-public', uid: v.publication_uid }), kind: 'team', label: typeof v.team_name === 'string' && v.team_name ? v.team_name : '团队世界', requested: true, pending: false, canUnpublish: false }
+      }
       if (
         !recordOwnerId(v.team_id) ||
         typeof v.content_uid !== 'string' ||
@@ -46,7 +51,7 @@ export class WorldPublicationService {
       )
         throw invalid()
       return {
-        key: await key('team', JSON.stringify([recordOwnerId(v.team_id), v.content_uid])),
+        key: await key('team', String(v.publication_uid)),
         ref: await seal({
           kind: 'team',
           link: { team_id: recordOwnerId(v.team_id), content_uid: v.content_uid, revision: v.revision },
