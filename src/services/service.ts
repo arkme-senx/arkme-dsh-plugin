@@ -37,6 +37,7 @@ export interface StateStore extends RecentEmojiStore {
  teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>
  retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>
 
+  teamInternalGroup?(scope: string, teamId: string, change?: {put: import('../team-internal-group-contract.js').TeamInternalGroupAttempt}|{ack: string}): Promise<import('../team-internal-group-contract.js').TeamInternalGroupAttempt|undefined>
   teamMemberAddition?(scope: string, teamId: string, change?: {put: import('../team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}): Promise<import('../team-member-add-contract.js').TeamMemberAdditionAttempt | undefined>
   teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
@@ -1287,8 +1288,14 @@ export class ServiceRuntime {
     return await this.authenticatedMediaStream('record', path, { ...options, body })
   }
 
+  async authenticatedRecordSourceStream(body: Record<string, unknown>, options: {
+    expectedUserId: number; range?: string; signal?: AbortSignal; method?: 'GET'|'HEAD'
+  }): Promise<Response> {
+    return this.authenticatedMediaStream('record', '/api/v1/content/source-stream', {...options, body, sourceStream:true})
+  }
+
   private async authenticatedMediaStream(service: 'audio' | 'record', path: string, options: {
-    expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>
+    expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>; sourceStream?: true
   }): Promise<Response> {
     const session = await this.requireSession()
     const opening = new AbortController()
@@ -1305,12 +1312,13 @@ export class ServiceRuntime {
   }
 
   private async openMediaStream(service: 'audio' | 'record', path: string, options: {
-    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>
+    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>; sourceStream?: true
   }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
     const base = new URL(service === 'audio' ? this.config.audioBaseUrl : this.config.recordBaseUrl)
     const url = new URL(path, base)
     if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin
       || url.username !== '' || url.password !== '' || url.hash !== ''
+      || (options.sourceStream && (service !== 'record' || path !== '/api/v1/content/source-stream'))
       || (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0))) {
       throw new ArkmePluginError('media-path-invalid', '媒体请求路径无效', false, 400)
     }
@@ -1337,7 +1345,7 @@ export class ServiceRuntime {
       return await this.fetchImpl(url, {
         method: options.body === undefined ? options.method ?? 'GET' : 'POST',
         headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.range === undefined ? {} : { Range: options.range }), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        ...(options.body === undefined ? {} : { body: options.sourceStream ? stringifyOwnerJson(options.body) : JSON.stringify(options.body) }),
         redirect: 'error', signal,
       })
     }
@@ -1371,7 +1379,7 @@ export class ServiceRuntime {
       // Binary endpoints can return the same JSON error envelope as other
       // service APIs. Preserve it for the business owner, without allowing an
       // unbounded body or bypassing the opening deadline/account fence.
-      if (mime === 'application/json' && response.body !== null) {
+      if (mime === 'application/json' && response.body !== null && !(options.sourceStream && response.headers.has('content-disposition'))) {
         const reader = response.body.getReader()
         const chunks: Uint8Array[] = []
         let size = 0
@@ -1404,7 +1412,7 @@ export class ServiceRuntime {
       }
       if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length <= 0
         || (options.maxBytes !== undefined && length > options.maxBytes)
-        || !(service === 'audio' ? ['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'] : ['image/png', 'image/jpeg', 'image/webp']).includes(mime)
+        || !(options.sourceStream ? /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/u.test(mime) && response.headers.has('content-disposition') : (service === 'audio' ? ['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'] : ['image/png', 'image/jpeg', 'image/webp']).includes(mime))
         || (options.method !== 'HEAD' && response.body === null)) throw invalid()
       if (response.status === 206) {
         const returned = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')
@@ -1417,7 +1425,7 @@ export class ServiceRuntime {
           || start !== wantedStart || end !== wantedEnd || end < start || end >= total || length !== end - start + 1) throw invalid()
       }
       const headers = new Headers({ 'content-type': mime, 'content-length': String(length), 'cache-control': 'private, no-store', 'accept-ranges': 'bytes' })
-      for (const name of ['content-range', 'etag']) {
+      for (const name of ['content-range', 'etag', 'content-security-policy', 'content-disposition']) {
         const value = response.headers.get(name)
         if (value !== null) headers.set(name, value)
       }

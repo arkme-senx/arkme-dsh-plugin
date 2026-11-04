@@ -6014,7 +6014,7 @@ nextPublic = next
     fallbackCreatedAtMillis: number,
   ): Promise<ArkmeTimelineItem['forwardRecords'] | undefined> {
     return await projectForwardRecordsWithAvatars(this.media.recordContentPayload(raw), viewerUserId,
-      fallbackCreatedAtMillis, this.media, this.profile)
+      fallbackCreatedAtMillis, this.media, this.profile, raw)
   }
 
   chatSharedRecordingPreview(raw: unknown): ArkmeTimelineItem['sharedRecording'] | undefined {
@@ -6912,7 +6912,7 @@ nextPublic = next
       const aiPolish = this.aiPolish.timelineAiPolish(record, payload)
       const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
       const forwardRecords = options.basicPresentation
-        ? projectForwardRecordsPreview(this.media.recordContentPayload(item), session.userId, sendAtMillis, this.media)
+        ? projectForwardRecordsPreview(this.media.recordContentPayload(item), session.userId, sendAtMillis, this.media, undefined, item)
         : await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis)
       const sharedRecording = this.withSharedRecordingDetailRef(this.chatSharedRecordingPreview(item), {
         viewerUserId: session.userId,

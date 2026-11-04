@@ -167,17 +167,17 @@ describe('group settings menu', () => {
     mocks.callArkme.mockImplementation(async operation => operation === 'group.settings'
       ? { target: source, selfRole: 'owner', selfStatus: 'active', canRename: true, canDissolve: true, canLeave: false, messageDnd: false }
       : operation === 'team.app.teams' ? [{ teamRef: 'team-ref', jotmoId: 'team', name: '团队', currentUserRole: 'owner' }]
-      : operation === 'source.ai-polish.settings' ? aiSettings : { state: 'backend_pending' })
+      : operation === 'source.ai-polish.settings' ? aiSettings : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false,requiresClientUpgrade:true})
     await act(async () => { renderer = create(controls(source)) })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
     await openManagement()
     await act(async () => { menuItem('关联为团队内部群').props.onClick() })
-    expect(JSON.stringify(renderer!.toJSON())).toContain('需新增、移出的成员和历史消息可见范围')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('检查后会展示成员、角色、历史消息和客户端升级的影响')
     const prepare = renderer!.root.findAllByType('button').find(node => node.children.includes('查看关联影响'))!
     await act(async () => { prepare.props.onClick() })
     expect(mocks.callArkme.mock.calls.find(([op]) => op === 'team.app.internal-group.prepare')?.[1])
       .toMatchObject({ mode: 'link', sourceRef: source.sourceRef, teamRef: 'team-ref', expectedAccountKey: 'test:42' })
-    expect(JSON.stringify(renderer!.toJSON())).toContain('尚未关联团队')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('原群保留成员已有的合法历史权限不变')
     expect(mocks.callArkme.mock.calls.some(([op]) => ['group.members.add', 'group.members.remove'].includes(op))).toBe(false)
   })
 

@@ -17,7 +17,7 @@ export type TeamAppOperation = `team.app.${
   | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'visitor.world-target' | 'person.world-target' | 'people.remarks' | 'outbound.open'
   | 'group.context' | 'group.join' | 'group.directory'
-  | 'internal-group.prepare'
+  | 'internal-group.prepare' | 'internal-group.confirm' | 'internal-group.prepare-original' | 'internal-group.recover' | 'internal-group.ack'
   | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
   | 'world.view'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'

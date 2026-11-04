@@ -1,3 +1,4 @@
+export type {TeamInternalGroupRequest, TeamInternalGroupResult, TeamInternalGroupPreview, TeamInternalGroupPort} from '../team-internal-group-contract.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
@@ -1011,6 +1012,15 @@ export class ArkmeSdk {
   /** teamRef is the current account's getTeamProfile().profileRef, never an OpenAPI reference.
    * After applying a completed result, acknowledge its UID. On uncertain transport use recover/retry.
    */
+  async teamInternalGroup(request: import('../team-internal-group-contract.js').TeamInternalGroupRequest, signal?: AbortSignal): Promise<import('../team-internal-group-contract.js').TeamInternalGroupResult> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    signal.throwIfAborted()
+    if ((await this.capabilities(signal)).features.teamInternalGroupsV1 !== true) throw new Error('当前 Provider 不支持团队内部群')
+    signal.throwIfAborted()
+    const result = await this.call<import('../team-internal-group-contract.js').TeamInternalGroupResult>('team.internal-group', {request}, signal)
+    signal.throwIfAborted()
+    return result
+  }
   async teamMemberManagement(request: import('../team-member-add-contract.js').TeamMemberManagementRequest, signal?: AbortSignal): Promise<import('../team-member-add-contract.js').TeamMemberManagementResult> {
     if ((await this.capabilities(signal)).features.teamMemberManagementV1 !== true) throw new Error('当前 Provider 不支持批量添加团队成员')
     return this.call('team.members.manage', {request}, signal)

@@ -1615,6 +1615,7 @@ arkoImagesV1?:true
     teamGroupRepresentation?: 1
     teamProfiles?: true
     teamMemberManagementV1?: true
+    teamInternalGroupsV1?: true
     teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -4493,6 +4494,7 @@ export type ArkmePluginOperation =
   | 'team.entries.list' | 'team.entries.query' | 'team.entries.change'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.members.manage'
+  | 'team.internal-group'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'

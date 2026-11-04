@@ -38,6 +38,7 @@ export interface ArkmeCancellationCompletion {
 interface PersistedState {
   recordingVoiceDrafts?: unknown
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
+  teamInternalGroups?: unknown
   teamMemberAdditions?: unknown
   recordingToolBatches?: unknown
   recordingImportStrategiesByAccount?: unknown
@@ -404,6 +405,7 @@ function parseState(raw: string): PersistedState {
     recordingImportStrategiesByAccount: source.recordingImportStrategiesByAccount,
     dayReviewPending: source.dayReviewPending ?? {},
     teamMemberAdditions: source.teamMemberAdditions,
+    teamInternalGroups: source.teamInternalGroups,
     recordingVoiceDrafts: source.recordingVoiceDrafts,
   }
 }
@@ -563,6 +565,26 @@ export class ArkmeStateStore {
   async arkoFileRefs(userId: number): Promise<string[]> {
     return this.read(state => Object.values(this.arkoTurns(state, userId))
       .flatMap(value => value.turn.images?.map(file => file.fileRef) ?? []))
+  }
+
+  async teamInternalGroup(scope: string, teamId: string, change?: {put: import('./team-internal-group-contract.js').TeamInternalGroupAttempt}|{ack: string}) {
+    type Attempt = import('./team-internal-group-contract.js').TeamInternalGroupAttempt
+    const access = (state: PersistedState) => {
+      const raw = state.teamInternalGroups ?? {}
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('内部群请求恢复记录损坏，原记录已保留')
+      const values = raw as Record<string, Attempt>, key = JSON.stringify([scope, teamId])
+      const previous = values[key]
+      if (change && 'put' in change) {
+        if (previous && JSON.stringify(previous) !== JSON.stringify(change.put)) throw new Error('请先核对原内部群请求的结果')
+        values[key] = structuredClone(change.put)
+      } else if (change && previous?.requestUid === change.ack) delete values[key]
+      state.teamInternalGroups = values
+      return structuredClone(values[key])
+    }
+    if (!change) return this.read(access)
+    let result: Attempt|undefined
+    await this.update(state => { result = access(state) })
+    return result
   }
 
   async teamMemberAddition(scope: string, teamId: string, change?: {put: import('./team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}) {

@@ -555,6 +555,11 @@ export class ArkmeService {
     this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision(),change:{kind:'team.notification-policy.changed'}})
     return value
   }
+  async teamInternalGroup(request: import('./team-internal-group-contract.js').TeamInternalGroupRequest, signal?: AbortSignal): Promise<import('./team-internal-group-contract.js').TeamInternalGroupResult> {
+    if (!request || !['prepare','prepare-original','confirm','recover','ack'].includes(request.action)) throw new ArkmePluginError('internal-group-invalid','内部群请求无效',false,400)
+    const {action, ...params} = request
+    return await this.teamApp.execute(`team.app.internal-group.${action}`, params, signal) as import('./team-internal-group-contract.js').TeamInternalGroupResult
+  }
   async teamMemberManagement(request: import('./team-member-add-contract.js').TeamMemberManagementRequest, signal?: AbortSignal): Promise<import('./team-member-add-contract.js').TeamMemberManagementResult> {
     if (!request || !['candidates','add','recover','retry','ack'].includes(request.action)) throw new ArkmePluginError('team-member-request-invalid','成员管理请求无效',false,400)
     const {action, ...params} = request
@@ -1420,6 +1425,7 @@ arkoImagesV1:true,
         teamGroupRepresentation: 1,
         teamProfiles: true,
         teamMemberManagementV1: true,
+        teamInternalGroupsV1: true,
         teamExternalChats: true,
         teamMessageExtensions: 1,
         teamMessageInteractions: 1,
