@@ -314,8 +314,9 @@ export class ArkmeUiController {
   showTeamWorld(target: TeamWorldTarget): void {
     const jotmoId = target.jotmoId.trim(), name = target.name.trim()
     if (!jotmoId || jotmoId.length > 128 || !name) throw new TypeError('团队世界身份无效')
-    this.showWorld()
-    this.publish({ ...this.state, worldTeamTarget: { ...target, jotmoId, name } })
+    if (this.state.mode !== 'world') this.showWorld()
+    const { worldTarget: _target, ...rest } = this.state
+    this.publish({ ...rest, worldTeamTarget: { ...target, jotmoId, name } })
   }
 
   backFromWorld(): void {
@@ -324,10 +325,20 @@ export class ArkmeUiController {
       this.showContacts()
       return
     }
+    if (this.state.mode === 'world' && this.state.worldTeamTarget) {
+      const { worldTeamTarget: _team, ...rest } = this.state
+      this.publish(rest)
+      return
+    }
     const target = this.state.worldTarget
     if (this.state.mode === 'world' && target !== undefined && 'contactRef' in target) {
       arkmeContactsTab.select({ kind: 'contact', contactRef: target.contactRef })
       this.showContacts()
+      return
+    }
+    if (this.state.mode === 'world' && target) {
+      const { worldTarget: _target, ...rest } = this.state
+      this.publish(rest)
       return
     }
     this.showWorld()

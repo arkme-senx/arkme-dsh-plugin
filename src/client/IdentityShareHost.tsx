@@ -4,7 +4,6 @@ import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { identityShareTarget } from '../identity-share-link.js'
 import { identityPersonCards } from './identity-person-card-client.js'
-import { openTeamOutbound } from './team-outbound.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 import { identityShareAccountScope, identityShareUi } from './identity-share-ui.js'
@@ -66,10 +65,8 @@ function IdentityPersonCard({ accountScope, url, displayName }: { accountScope: 
     copyUrl={url} refreshing={loading} refreshError={refreshError}
     person={card} pending={!card} loading={!card && loading} accountName={target?.id ?? ''}
     hideSend={card?.isSelf === true && conversationWindowRequested()} copyLinkTarget={card ? { kind: 'person', userId: card.userId } : undefined} busy={busy} error={error}
-    onContactAsTeam={card && !card.isSelf && !conversationWindowRequested() ? () => {
-      if (accountScope !== identityShareAccountScope()) return
-      openTeamOutbound({ accountKey: accountScope, person: { recipient: { kind: 'profile-link', url, expectedUserId: card.userId }, displayName: card.displayName, ...(card.avatarRef ? { avatarRef: card.avatarRef } : {}) } })
-      identityShareUi.close()
+    teamContact={card && !card.isSelf && !conversationWindowRequested() ? {
+      accountKey: accountScope, person: { recipient: { kind: 'profile-link', url, expectedUserId: card.userId }, displayName: card.displayName, ...(card.avatarRef ? { avatarRef: card.avatarRef } : {}) },
     } : undefined}
     browserUrl={url} onRefresh={() => { if (refreshLocked.current || locked.current || accountScope !== identityShareAccountScope()) return; refreshLocked.current = true; setLoading(true); setRevision(value => value + 1) }} onClose={identityShareUi.close} onSend={submit} />
 }

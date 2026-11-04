@@ -63,4 +63,3 @@ const items = raw.map(value => {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || new Set(items.map(item => item.requestUid)).size !== items.length || groupPointsConsumption(items).length > limit) return invalid()
   return items
 }
-

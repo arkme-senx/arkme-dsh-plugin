@@ -24,6 +24,51 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 模型能力及费用以对应场景为准，实际费用按用量结算。|Capabilities and pricing vary by use case. Charges are based on actual usage.
 模型目录会随官方开放情况更新|The catalog updates as official models become available
 读取于 {v0}|Read at {v0}
+选择导出文件夹|Choose export folder
+更换导出文件夹|Change export folder
+将快记与原文件直接保存到本地文件夹。|Save notes and original files directly to a local folder.
+已选择文件夹|Folder selected
+选择文件夹失败|Could not choose a folder
+导出文件夹|Export folder
+选择文件夹|Choose folder
+正在选择…|Choosing…
+先建立完整备份|Create a complete backup first
+增量进度读取失败|Could not read incremental progress
+尚未建立完整备份|No complete backup yet
+自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。|Save new, changed and removed content, including backdated records. Incremental exports are unlimited and do not use the full export allowance.
+当前离线，将导出上次完整保存的本地副本。|You are offline. The last complete local copy will be exported.
+复用本地备份，仅同步变化，不占用全量导出次数。|Reuse the local backup and sync changes without using the full export allowance.
+日期与全部导出共用原有云端导出额度；本地已有原文件会优先复用。|Date and full cloud exports share the existing allowance. Locally saved originals are reused first.
+数据截至：|Data as of:
+以上为所选范围的本地已保存数量，完成同步后更新。|These are locally saved counts for the selected range. They update after syncing.
+请先在所选文件夹建立完整备份，再使用增量。|Create a complete backup in the selected folder before using incremental export.
+当前服务尚未支持文件夹导出，请更新后重试。|This server does not support folder export yet. Update and retry.
+包含图片、语音等原文件|Include original images, audio and other files
+原文件|Original files
+不含隐私锁定内容。导出成功后自动保存增量进度。|Privacy-locked content is excluded. Incremental progress is saved automatically after a successful export.
+正在写入本地文件夹|Writing to the local folder
+导出已取消，已下载的原文件保留供重试。|Export canceled. Downloaded originals are kept for retry.
+已导出到本地文件夹|Exported to the local folder
+内容与原文件已保存，无需另行下载。|Content and originals are saved. No separate download is needed.
+继续导出|Export again
+内容已保存，导出额度确认暂未完成，请勿重复发起云端全量导出。|Content is saved, but allowance confirmation is pending. Do not start another full cloud export.
+增量同步不限次数|Unlimited incremental syncs
+云端全量及日期导出沿用原有额度|Full and date cloud exports use the existing allowance
+导出到文件夹|Export to folder
+确认导出到所选文件夹？|Export to the selected folder?
+将保存所选内容及原文件，成功后使用一次云端导出额度。取消或失败不扣次数。|Save the selected content and originals. A successful export uses one cloud export allowance. Cancellation or failure does not use it.
+选择导出日期|Choose export dates
+查看 Arko 回复建议|View Arko suggestions
+Arko 回复建议|Arko suggestions
+正在帮你想一句更合适的话…|Thinking of a suitable response…
+暂未获得回复建议|No suggestion is available yet
+查看建议|View suggestions
+展开查看|View more
+关闭建议|Close suggestions
+重新读取|Reload
+为什么这样建议|Why this suggestion
+建议暂时无法更新|Suggestions could not be refreshed
+当前输入框暂不可用|The composer is currently unavailable
 导出日期范围|Export date range
 保存确认失败，请重试。|Could not confirm the saved backup. Please retry.
 上次成功保存：|Last successfully saved:
@@ -1951,6 +1996,7 @@ ICP备案号|ICP registration
 正在同步设备录音状态…|Syncing device recording status…
 设备录音状态暂未启用|Device recording status is not enabled yet
 同步暂时失败，正在重试|Sync failed temporarily. Retrying
+连接暂时不畅，正在重试…|Connection interrupted. Retrying…
 暂无设备上报录音状态|No devices are reporting recording status
 已暂停|Paused
 已中断|Interrupted

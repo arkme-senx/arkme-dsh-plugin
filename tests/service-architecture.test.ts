@@ -22,7 +22,7 @@ const expectedPublicMethods = [
   'dataExport', 'dataExportRangePreview', 'dataExportSaved',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
-  'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
+  'worldPublications', 'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
@@ -98,7 +98,7 @@ const expectedPublicMethods = [
   'previewRecordingSpeakerCorrection', 'recordingSpeakerEvidenceQuery', 'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
   'importRecordingFiles', 'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
   'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'arkoProfile',
-  'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage', 'arkoMessages', 'arkoSearch', 'arkoContext', 'arkoExport',
+  'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage', 'arkoInteractions', 'arkoInteractionOpen', 'arkoTimelineCache', 'arkoMessages', 'arkoSearch', 'arkoContext', 'arkoExport',
   'arkoPendingTurns', 'arkoPrepareTurn', 'arkoAcknowledgeTurn',
   'arkoLocalMarkCapabilities', 'arkoLocalMarks', 'changeArkoLocalMark',
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiLetterUnread', 'listAiLetters', 'markAiLettersRead', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
@@ -162,6 +162,7 @@ const expectedServiceFiles = [
   'recording-voice-trigger-service.ts',
   'record-export-service.ts', 'record-export-range-service.ts',
   'team-world-service.ts',
+  'world-publication-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
   'personal-keyword-service.ts',
   'device-control-realtime.ts', 'device-lock-service.ts',
@@ -203,7 +204,7 @@ const expectedServiceFiles = [
   'recording-tool-workflow.ts',
   'recording-import-upload-retry.ts', 'recording-forward-gateway.ts', 'search-service.ts', 'self-role-service.ts',
   'media-service.ts', 'world-service.ts', 'arrangement-service.ts', 'arrangement-source-recovery.ts', 'arrangement-source-service.ts', 'conversation-arrangement-service.ts', 'wechat-service.ts',
-  'arko-service.ts', 'arko-lifecycle.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
+  'arko-service.ts', 'arko-timeline-service.ts', 'arko-lifecycle.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'calendar-day-review-service.ts',
   'people-service.ts',
@@ -221,7 +222,7 @@ function publicMethodNames(path: string): string[] {
   const service = file.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'ArkmeService')
   if (service === undefined || !ts.isClassDeclaration(service)) throw new Error('ArkmeService class not found')
   return service.members
-    .filter((member): member is ts.MethodDeclaration => ts.isMethodDeclaration(member))
+    .filter((member): member is ts.MethodDeclaration => ts.isMethodDeclaration(member) && member.body !== undefined)
     .filter(member => !member.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.PrivateKeyword))
     .map(member => member.name.getText(file))
     .sort()
