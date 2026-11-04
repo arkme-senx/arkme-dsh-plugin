@@ -1,8 +1,8 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { tr, useArkmeLocale } from './locale.js'
 import { arkmeTheme as colors } from './arkme-theme.js'
 import type { ModelChoice } from '../model-directory.js'
@@ -95,7 +95,7 @@ export function AnalysisModelDialog({ ariaLabel, initialValue, options, onClose,
     onApply={async model => { if (!model.recording) return false; onConfirm(model.recording); return true }}/>
   const dialog = <div style={styles.modelBackdrop} role="presentation" onKeyDown={event => { if (event.key === 'Escape') onClose() }} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section role="dialog" aria-modal="true" aria-label={ariaLabel} style={styles.modelDialog}>
-      <header style={styles.modelDialogHeader}><h2 style={styles.modelDialogTitle}>{tr("选择模型")}</h2><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.modelDialogClose} onClick={onClose}><X size={20} aria-hidden /></button></header>
+      <header style={styles.modelDialogHeader}><h2 style={styles.modelDialogTitle}>{tr("选择模型")}</h2><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.modelDialogClose} onClick={onClose} /></header>
       <div style={styles.modelField}><span style={styles.modelFieldLabel}>{tr("模型：")}</span><AnalysisDropdown autoFocus ariaLabel={tr("选择生成模型")} value={routeKey} options={options} width={280} variant="model" onChange={setRouteKey} /></div>
       <footer style={styles.modelDialogActions}><button data-arkme-feedback="neutral" type="button" style={styles.modelDialogButton} onClick={onClose}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" disabled={routeKey === ''} style={{ ...styles.modelDialogButton, background: colors.primaryAction, color: colors.onPrimaryAction, borderColor: 'transparent', ...(routeKey === '' ? { opacity: .5, cursor: 'default' } : {}) }} onClick={() => { onConfirm(routeKey) }}>{tr("确认")}</button></footer>
     </section>

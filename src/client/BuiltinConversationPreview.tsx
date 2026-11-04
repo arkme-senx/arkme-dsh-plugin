@@ -1,6 +1,6 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import type { ArkmeArkoHistoryItem, ArkmeArkoHistoryPage, ArkmeSourceItem, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage } from '../types.js'
 import type { DshAccountSession, DshAccountSessionHistory, DshAccountSessionPage, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
@@ -155,7 +155,7 @@ export function BuiltinConversationPreview({ kind, name, selfSource, onClose }: 
         {session && <button style={button} aria-label={tr('返回任务列表')} onClick={() => setSession(undefined)}><ArrowLeft size={18} /></button>}
         <strong style={{ minWidth: 0, fontSize: 16, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{session?.title || name}</strong>
         <span style={{ flex: 'none', borderRadius: 99, background: arkmeTheme.subtle, color: arkmeTheme.secondary, padding: '3px 8px', fontSize: 11 }}>{tr('预览中')}</span>
-        <button style={{ ...button, marginLeft: 'auto', color: arkmeTheme.secondary }} aria-label={tr('关闭聊天预览')} onClick={onClose}><X size={20} /></button>
+        <ArkmeCloseButton style={{ ...button, marginLeft: 'auto', color: arkmeTheme.secondary }} aria-label={tr('关闭聊天预览')} onClick={onClose} />
       </header>
       {kind === 'self' && (selfSource ? <><div style={{ padding: '8px 16px', color: arkmeTheme.secondary, fontSize: 12 }}>{selfSource.kind === 'send_to_self' ? tr('全部') : selfSource.displayName}</div><SelfPreview key={selfSource.sourceRef} source={selfSource} /></> : <p role="status" style={status}>{tr('发给自己暂不可用，请稍后重试')}</p>)}
       {kind === 'arko' && <ArkoPreview name={name} />}

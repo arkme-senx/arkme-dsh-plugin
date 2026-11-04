@@ -1,10 +1,10 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { formatAiPoints, nanoCnyToPoints, pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
 import { ArkmePointsHistoryDialog } from './ArkmePointsHistoryDialog.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeAccountRecordingUsage, ArkmeAccountStorageUsage, ArkmeAccountVoiceUsage } from '../account-usage.js'
 import { callArkme } from './api.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
@@ -295,7 +295,7 @@ export function ArkmeAccountUsageDialog({ accountScope, onViewMembership, onClos
       const rect = event.currentTarget.getBoundingClientRect()
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose()
     }}>
-    <button type="button" autoFocus className="arkme-usage-close" aria-label={tr("关闭用量与额度详情")} onClick={onClose}><X size={18} aria-hidden /></button>
+    <ArkmeCloseButton type="button" autoFocus className="arkme-usage-close" aria-label={tr("关闭用量与额度详情")} onClick={onClose} />
     <ArkmeAccountUsageDetails accountScope={accountScope} onViewMembership={onViewMembership} />
   </dialog>, document.body)
 }

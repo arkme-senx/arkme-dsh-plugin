@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeSourceItem } from '../types.js'
@@ -112,7 +113,7 @@ export function PublicSocialDirectory({ accountScope, mode, currentUserId, profi
         </article>)}
         {hasMore && <button type="button" style={s.button} disabled={loading} onClick={() => load(cursor)}>{tr(loading ? '加载中…' : '加载更多')}</button>}
       </div>
-      {(selectedGroup || selectedPerson) && <aside style={s.detail} aria-label={tr('公开资料详情')}><button type="button" style={{ ...s.button, float: 'right' }} onClick={() => setSelected(undefined)} aria-label={tr('关闭详情')}>×</button>
+      {(selectedGroup || selectedPerson) && <aside style={s.detail} aria-label={tr('公开资料详情')}><ArkmeCloseButton type="button" style={{ ...s.button, float: 'right' }} onClick={() => setSelected(undefined)} aria-label={tr('关闭详情')} />
         {selectedGroup ? <><h2 style={s.name}>{selectedGroup.title}</h2><p style={s.description}>{selectedGroup.introduction || tr('暂无群介绍')}</p><p style={s.secondary}>{tr(selectedGroup.joinMode === 2 ? '加入此群需要审批' : '此群允许直接加入')}</p>{groupAction(selectedGroup)}{selectedGroup.joinRequest?.status === 1 && <p style={s.secondary}>{tr('申请正在等待审批，刷新后可查看最新状态。')}</p>}</> : selectedPerson && <><h2 style={s.name}>{selectedPerson.displayName || tr('即我用户')}</h2><p style={s.description}>{selectedPerson.introduction || tr('愿意认识新朋友')}</p><div style={s.actions}>{onOpenWorld && <button type="button" style={s.button} onClick={() => onOpenWorld(selectedPerson)}>{tr('看看 TA 的世界')}</button>}{personAction(selectedPerson)}<IdentityCopyLinkButton accountScope={accountScope} target={{ kind: 'person', userId: selectedPerson.userId }} label="复制个人链接" /></div></>}
       </aside>}
     </div>

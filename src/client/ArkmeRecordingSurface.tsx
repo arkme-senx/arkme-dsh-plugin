@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { RecordingComparisonMenu } from './recordings/RecordingComparisonMenu.js'
 import { RecordingVoiceTriggerEntry } from './recordings/RecordingVoiceTriggers.js'
 import { RecordingProcessingVersion } from './recordings/RecordingProcessingVersion.js'
@@ -39,7 +40,6 @@ import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/icons/ArrowCounterClockwise'
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Fingerprint } from '@phosphor-icons/react/dist/icons/Fingerprint'
 import { RecognizedSpeakerEntry } from './recordings/RecognizedSpeakerEntry.js'
@@ -601,7 +601,7 @@ function RecordingTimelineDetailDialog({ event, onClose }: { event: ArkmeRecordi
           <h2 id={titleId} style={styles.timelineDetailTitle}>{event.title || tr("时间轴记录")}</h2>
           {(event.timeRange !== '' || event.durationText !== undefined) && <p style={styles.timelineDetailRange}>{event.timeRange || tr("时间未标注")}{event.durationText !== undefined && event.durationText !== '' ? ` · ${event.durationText}` : ''}</p>}
         </div>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.timelineDetailClose} onClick={onClose}><X size={18} aria-hidden /></button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.timelineDetailClose} onClick={onClose} />
       </header>
       <div style={styles.timelineDetailBody}>
         {event.description !== '' && <section style={styles.timelineDetailSection}>

@@ -32,12 +32,21 @@ beforeEach(async () => {
   localStorage.clear(); mocks.call.mockReset(); mocks.stage.mockReset()
   mocks.policy.mockReset().mockResolvedValue({maxAttachments:9,maxImageBytes:1024,maxFileBytes:2048})
   mocks.stage.mockImplementation(()=>new Promise((resolve,reject)=>{finish=resolve;fail=reject}))
-  mocks.call.mockImplementation(async (op:string, params:any)=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}
+  mocks.call.mockImplementation(async (op:string, params:any)=>op==='arrangements.conversation.recognition.get'
+    ?{accountScope:params.expectedAccountScope,enabled:true,version:0,enabledAt:0,effectiveEnabled:true,blockedReason:''}
+    :op==='arrangements.conversation.list'?{items:[],hasMore:false,nextCursor:''}
+    :op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}
     :op==='team.app.send.enqueue'?{...params,taskRef:'task',conversationKey:'key',createdAtMillis:Date.now(),state:'queued',files:[local],attempts:0,nextAttemptAt:0}:[])
   host=document.createElement('div');document.body.append(host);root=createRoot(host)
   await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" onChanged={()=>{}} /></>))
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
+it('places related arrangements above the team composer and hides it while editing',async()=>{
+  const shortcuts=host.querySelector<HTMLElement>('[data-arkme-composer-shortcuts]')!
+  expect(shortcuts).not.toBeNull();expect(shortcuts.textContent).toContain('相关安排');expect(shortcuts.hidden).toBe(false)
+  await act(async()=>editor().focus());expect(shortcuts.hidden).toBe(true)
+  await act(async()=>host.querySelector<HTMLButtonElement>('[data-outside]')!.focus());expect(shortcuts.hidden).toBe(false)
+})
 it('keeps existing composer tools before dictation, with the microphone directly after screenshot',()=>{
   const tools=[...host.querySelectorAll<HTMLButtonElement>('[data-arkme-composer-footer="tools"] button')].map(button=>button.getAttribute('aria-label'))
   const screenshot=tools.indexOf('截屏'), microphone=tools.indexOf('语音输入')

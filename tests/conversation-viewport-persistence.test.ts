@@ -102,3 +102,24 @@ it('coalesces scroll writes, caps saved sources and tolerates corrupt or unavail
   expect(blocked.getViewport('A')?.stickToBottom).toBe(true)
   vi.restoreAllMocks()
 })
+
+it('keeps the latest reading position in memory but waits for scroll idle before storage I/O', () => {
+  vi.useFakeTimers()
+  const setItem = vi.fn()
+  const storage = new ConversationViewportPersistence(() => ({ setItem, getItem: () => null, length: 0 }) as unknown as Storage)
+  try {
+    storage.setScope('test:1')
+    for (let n = 0; n < 20; n++) {
+      storage.storeViewport('A', { scrollTop: n * 10, stickToBottom: false })
+      vi.advanceTimersByTime(100)
+    }
+    expect(storage.getViewport('A')?.scrollTop).toBe(190)
+    expect(setItem).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(150)
+    expect(setItem).toHaveBeenCalledTimes(1)
+    storage.storeViewport('A', { scrollTop: 201, stickToBottom: false })
+    storage.setScope('test:2')
+    expect(setItem).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(setItem.mock.calls[1]![1]).account).toBe('test:1')
+  } finally { storage.flush(); vi.useRealTimers() }
+})

@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { FunnelSimple } from '@phosphor-icons/react/dist/icons/FunnelSimple'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { locationSources, type LocationBounds, type LocationMarker, type LocationSource, type LocationViewport } from '../location-search.js'
 import { ArkmeLocationSearchMap } from './ArkmeLocationSearchMap.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -58,7 +58,7 @@ export function ArkmeLocationMapFrame(props: {
       {!props.selectedKey && <div className="arkme-location-summary" role="status">{props.summary}</div>}
       {props.selectedKey && <aside className="arkme-location-records" aria-label={tr('该地点的记录')} tabIndex={-1} ref={panel}>
         <header><div><strong>{props.recordTitle || tr('该地点的记录')}</strong><small>{tr('{count} 条位置记录', { count: String(props.recordCount ?? 0) })}</small></div>
-          <button type="button" aria-label={tr('关闭地点记录')} title={tr('关闭地点记录')} onClick={props.onCloseRecords}><X size={18} aria-hidden /></button></header>
+          <ArkmeCloseButton type="button" aria-label={tr('关闭地点记录')} title={tr('关闭地点记录')} onClick={props.onCloseRecords} /></header>
         {props.children}
       </aside>}
     </div>

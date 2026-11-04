@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeComposerResource, ArkmeComposerResourcePage } from '../types.js'
 import { callArkme } from './api.js'
@@ -73,7 +74,7 @@ export function ArkmeComposerResourcePicker({ kind, accountKey, userId, limit, e
         }
       }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '20px 24px 12px' }}><h2 style={{ fontSize: 19, margin: 0, flex: 1 }}>{title}</h2>
-        <button type="button" aria-label={tr('关闭{v0}', { v0: title })} style={button} onClick={onClose}>×</button></header>
+        <ArkmeCloseButton type="button" aria-label={tr('关闭{v0}', { v0: title })} style={button} onClick={onClose} /></header>
       <input ref={search} aria-label={tr('搜索我的{v0}', { v0: title })} placeholder={tr('搜索我的{v0}', { v0: title })} value={query} onChange={event => setQuery(event.target.value)}
         style={{ margin: '0 24px 16px', padding: 10, border: `1px solid ${theme.border}`, borderRadius: 10, background: theme.input, color: theme.text, font: 'inherit' }} />
       <div style={{ overflowY: 'auto', minHeight: 0, flex: 1, padding: '0 24px 16px' }}>

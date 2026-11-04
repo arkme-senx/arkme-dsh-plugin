@@ -379,7 +379,7 @@ describe('recording import dialog behavior', () => {
   )
 
   it('matches the desktop modal chrome with the upload-dialog close control', () => {
-    expect(renderer.root.findAllByProps({ 'aria-label': '关闭上传文件' })).toHaveLength(1)
+    expect(renderer.root.findAll(node => node.type === 'button' && node.props['aria-label'] === '关闭上传文件')).toHaveLength(1)
     expect(renderer.root.findByType('dialog').props.style).toMatchObject({ border: 0, outline: 'none' })
   })
 

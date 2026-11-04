@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { arkmeEmojiPlainText } from '../arkme-emoji-text.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -179,7 +180,7 @@ export function ArkmeMessageReportDialog<TResult = ArkmeMessageReportResult>({
     onMouseDown={event => { if (event.target === event.currentTarget) close() }}
   >
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-message-report-title" style={styles.dialog}>
-      <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭举报")} style={{ ...styles.close, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close}>×</button>
+      <ArkmeCloseButton data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭举报")} style={{ ...styles.close, ...(submitting ? styles.disabled : {}) }} disabled={submitting} onClick={close} />
       <header style={styles.header}>
         <h2 id="arkme-message-report-title" style={styles.title}>{tr("举报和反馈")}</h2>
         <p style={styles.subtitle}>{tr("你的反馈可以帮助我们持续优化，Arkme 会及时处理。")}</p>
