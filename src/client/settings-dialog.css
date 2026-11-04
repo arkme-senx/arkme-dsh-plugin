@@ -94,3 +94,5 @@
 .arkme-model-settings .arkme-model-catalog-body { padding:12px 0 16px; }
 .arkme-model-settings .arkme-model-catalog-panel footer { padding:12px 0 0; }
 .arkme-model-settings-frame { width:100%; border:0; flex:1; min-height:360px; background:transparent; color-scheme:inherit; }
+
+.arkme-model-settings-tabs{overflow-x:auto;gap:18px}.arkme-model-settings-tabs button{white-space:nowrap;font-size:13px}.arkme-model-settings-account{overflow:auto;min-height:0;flex:1}.arkme-model-settings-custom:not([hidden]){flex:none!important;min-height:360px}.arkme-model-settings:has(.arkme-model-settings-custom:not([hidden])){overflow:auto}.arkme-model-settings:has(.arkme-model-settings-custom:not([hidden]))>.arkme-model-settings-account{flex:none;overflow:visible}.arkme-model-settings-custom .arkme-model-settings-frame{height:480px;min-height:360px;flex:none}.arkme-model-settings-custom>.arkme-model-settings-scope{margin-top:24px;padding-top:18px;border-top:1px solid var(--dsw-alias-border-l2,#e1e3e6)}

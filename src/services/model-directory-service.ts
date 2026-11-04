@@ -5,6 +5,7 @@ import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js
 import { publishedModelChoices } from './model-directory-contract.js'
 
 export interface ModelDirectoryReaders {
+  account?: ((signal?: AbortSignal)=>Promise<import('../account-models.js').AccountModelSettings>) | undefined
   dsh?: (() => Promise<DshRemoteModelCatalog>) | undefined
   arko(signal?: AbortSignal): Promise<ArkmeArkoModelCatalog>
   recording(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig>
@@ -27,12 +28,14 @@ export class ModelDirectoryService {
       ] })) : Promise.reject(new Error('模型目录正在连接，请稍后刷新')),
       this.readers.arko(signal).then(value => ({ models: arkoModelChoices(value), failures: [] })),
       this.readers.recording(signal).then(value => ({ models: recordingModelChoices(value), failures: [] })),
+      ...(!officialOnly && this.readers.account ? [this.readers.account(signal).then(value=>({models:value.models.filter(model=>!model.disabled).map(model=>({id:JSON.stringify(['account',model.uid]),origin:'user-provided' as const,name:model.name,identifier:model.route,channel:model.execution==='cloud'?'账号绑定 API':'本机连接器',billing:'provider-account' as const,exploreRouteKey:model.route,images:model.capabilities.images,
+        ...(model.capabilities.stream?{dsh:model.execution==='cloud'?{provider:'arkme-user-api',model:model.route}:{provider:model.host_provider!,model:model.model_key}}:{}),...(model.capabilities.tools?{arko:model.route}:{}),recording:model.route})),failures:[]}))] : []),
       ...(this.readers.explore ? [this.readers.explore(signal)] : []),
     ])
     signal?.throwIfAborted()
     const current = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${current.userId}` !== scope) throw new ArkmePluginError('model-directory-account-changed', '账号已切换，请重新读取模型', false, 409)
-    const sources = [officialOnly ? 'DSH 对话' : 'DSH', 'Arko', '录音', officialOnly ? '识别与分析' : '探索'], models = [], failures = []
+    const sources = [officialOnly ? 'DSH 对话' : 'DSH', 'Arko', '录音', ...(!officialOnly && this.readers.account ? ['账号模型'] : []), officialOnly ? '识别与分析' : '探索'], models = [], failures = []
     for (const [index, item] of result.entries()) {
       if (item.status === 'fulfilled') { models.push(item.value.models); failures.push(...item.value.failures) }
       else failures.push({ source: sources[index]!, message: item.reason instanceof Error ? item.reason.message : '目录读取失败，请重试' })

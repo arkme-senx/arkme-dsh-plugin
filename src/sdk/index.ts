@@ -2637,6 +2637,9 @@ export class ArkmeSdk {
     return this.call('source.message-extension.capabilities', { sourceRef }, signal)
   }
 
+  async accountModels(expectedAccountScope:string,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{return this.call('models.account.query',{expectedAccountScope},signal)}
+  async saveAccountModel(expectedAccountScope:string,input:import('../account-models.js').AccountModelSave,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{return this.call('models.account.save',{expectedAccountScope,input},signal)}
+  async accountModelUsage(expectedAccountScope:string,query:import('../account-models.js').ModelUsageQuery,signal?:AbortSignal):Promise<import('../account-models.js').ModelUsagePage>{return this.call('models.usage.query',{expectedAccountScope,query},signal)}
   async modelDirectory(expectedAccountScope: string, signal?: AbortSignal, options?: { officialOnly?: boolean }): Promise<import('../model-directory.js').UnifiedModelCatalog> {
     return this.call('models.directory', { expectedAccountScope, ...(options?.officialOnly === true ? { officialOnly: true } : {}) }, signal)
   }

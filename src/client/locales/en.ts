@@ -109,6 +109,7 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 左侧「安排」|Plans in the left navigation
 「探索 → 目标」|Explore → Goals
 开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
+开启后自动处理，按模型使用偏好调用。官方模型消耗积分，自提供模型使用提供方账号额度。|Automatic processing follows your model preferences. Official models use Arkme points; your models use the provider account allowance.
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
 自动使用额度|Automatic allowance usage

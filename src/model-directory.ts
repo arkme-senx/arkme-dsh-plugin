@@ -50,14 +50,14 @@ export function dshModelChoices(catalog: DshRemoteModelCatalog): ModelChoice[] {
 }
 export function arkoModelChoices(catalog: ArkmeArkoModelCatalog): ModelChoice[] {
   return catalog.options.map(model => ({ id: JSON.stringify(['arko', model.routeKey]), name: model.displayName,
-    origin: 'official',
+    origin: model.provider==='user-api'?'user-provided':'official',
     channel: model.provider === 'managed-ai' ? 'Arkme 托管' : model.provider, identifier: model.routeKey,
-    billingByScene: { arko: model.provider === 'managed-ai' ? 'arkme-points' : 'unknown' },
+    billingByScene: { arko: model.provider === 'managed-ai' ? 'arkme-points' : model.provider==='user-api'?'provider-account':'unknown' },
     ...(model.costDescription ? { pricing: model.costDescription } : {}), ...(model.imageInput ? { images: true } : {}), arko: model.routeKey }))
 }
 export function recordingModelChoices(catalog: ArkmeRecordingSummaryModelConfig): ModelChoice[] {
   return catalog.options.map(model => ({ id: JSON.stringify(['recording', model.routeKey]), name: model.displayName,
-    origin: 'official', billingByScene: { recording: 'unknown' },
+    origin: model.provider==='user-api'?'user-provided':'official', billingByScene: { recording: model.provider==='user-api'?'provider-account':'unknown' },
     channel: model.provider === 'dashscope' ? '百炼' : model.provider, identifier: model.modelKey, recording: model.routeKey }))
 }
 export function modelSceneBilling(model: ModelChoice, scene: ModelScene): ModelBilling {
@@ -69,8 +69,9 @@ export function mergeModelChoices(...lists: readonly (readonly ModelChoice[])[])
   const result = new Map<string, ModelChoice>()
   for (const models of lists) for (const model of models) {
     const route = model.exploreRouteKey
-    const owner = route ? [...result.values()].find(existing => existing.origin === model.origin && (existing.arko === route || existing.recording === route || existing.exploreRouteKey === route)) : undefined
+    const owner = route ? [...result.values()].find(existing => existing.origin === model.origin && (existing.arko === route || existing.recording === route || existing.exploreRouteKey === route || existing.dsh?.model === route)) : undefined
     if (owner && route) result.set(owner.id, { ...owner,
+ ...(model.origin==='user-provided'?{...(model.dsh?{dsh:model.dsh}:{}),...(model.arko?{arko:model.arko}:{}),...(model.recording?{recording:model.recording}:{})}:{}),
       ...(owner.channel === '分析模型' ? { channel: model.channel } : {}),
       ...(!owner.billing && model.billing ? { billing: model.billing } : {}),
       ...(owner.billingByScene || model.billingByScene ? { billingByScene: { ...owner.billingByScene, ...model.billingByScene } } : {}),

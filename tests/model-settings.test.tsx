@@ -20,7 +20,7 @@ it('defaults to official and loads the original Host model configuration only on
   await act(async () => tab('自提供模型').click())
   const frame = host.querySelector('iframe')!
   expect(frame.getAttribute('src')).toBe('/arkme-self/harness-frame?arkme-harness-embed=1&arkme-model-settings=1')
-  expect(host.textContent).toContain('不会自动同步至其他服务')
+  expect(host.textContent).toContain('需要跨场景使用时，请在上方绑定本机连接器')
   await act(async () => tab('即我官方').click())
   expect(frame.closest('[role="tabpanel"]')?.hasAttribute('hidden')).toBe(true)
   await act(async () => tab('自提供模型').click())
