@@ -12,9 +12,9 @@ Only version 1 establishes creation facts. Missing historical capture is not fil
 
 | Surface | Existing owner and entry | Verification |
 | --- | --- | --- |
-| UI | History cards, version pagination and each card's memory snapshot menu | Service/UI tests and an isolated browser fixture using the production components; pagination, exact selection, failed read/retry and measured-zero display |
+| UI | History cards, version pagination and each card's memory snapshot menu | Service/UI tests, an isolated browser fixture, and the original menu/composer/save/history/snapshot components connected through Host HTTP to real Chat/Record/Mongo; pagination, exact selection, failed read/retry and measured-zero display |
 | Tools | `arkme_record_history`, normal read grant, opaque source/message action refs | Registered official DSH session discovers and invokes the packed Tool; unauthenticated denial and private output redaction |
 | SDK | `recordEditHistory` and `recordRevisionSnapshot`; `recordEditHistoryV1` capability | External consumer compiles against the installed public package and verifies cursor/exact identity, zero, cancellation and unsupported Provider |
 | Host | One `RecordEditHistoryService`, existing account/source reference checks and Chat snapshot projection | Exact identity, order, privacy and account-switch tests; real isolated Mongo transaction tests in Record |
 
-The DSH and browser acceptance adapters supply synthetic reads without credentials or production writes. They verify transport, registration and presentation, while the isolated Mongo tests verify persistence and concurrency. No collection, index, product configuration or rollout switch is added.
+The official DSH and standalone browser mechanism adapters supply synthetic reads without production credentials or writes. The cross-repository acceptance in `record-edit-history-acceptance.md` additionally connects the original edit/history UI and Host to real authenticated isolated Chat/Record/Mongo owners. Directory shell and profile identity remain synthetic; edit acceptance, revisions and visibility checks use the actual business owners. No collection, index, product configuration or rollout switch is added.
