@@ -13,3 +13,14 @@
 - 抽屉移至页面浮层并使用独立宽度偏好，实测405px；通知名单直接进入订阅我的。
 
 证据位于本机 artifacts/world-subscriptions-20261104。生产基线候选需重新部署 TEST 验证，Runtime 应在全部 World 实例升级之后发布。
+
+## 2026-11-05 开发分支合入验证
+
+同步 dev `0e699e5dd61c695ec7dec075ee90cffe1fcc1898`，保留统一模型的 AccountModelService 与世界订阅的 WorldSubscriptionService，并补齐服务和公开门面架构清单。
+
+- 类型检查、插件构建及存储 worker 验证通过；20个相关测试文件共252项用例通过。按 CI 的4路并发运行，统一模型冷加载用例单独17项也通过。
+- 沿用3180端口、原 Profile 和浏览器目录，TEST 账号3017实际打开订阅管理并切换我订阅的/订阅我的，服务端数据读取正常；生产登录命名空间未复制或修改。
+- World 后端开发候选已通过 MR #47 合入 develop `3eeebafcbf3d173487663617595f63d9276b5c87`，此前全量 race 268项通过。
+- 生产尝试 #49 的新增接口因登录会话协议尚未在生产登录后端发布而返回503，已由 #50 回滚恢复旧镜像 #48。生产推广等待鉴权兼容方案确认；本次合入 dev 不激活 Runtime。
+
+本轮证据位于本机 artifacts/world-subscriptions-dev-merge-20261105。

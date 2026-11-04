@@ -28,7 +28,7 @@ const writes = () => mocks.call.mock.calls.filter(([op]) => op === 'account.capa
 
 it('requires human billing consent, carries the observed version, and closes directly', async () => {
   await render(); expect(writes()).toHaveLength(0)
-  expect(host.querySelector('.arkme-automatic-ai > p')?.textContent).toBe('开启后自动分析，消耗 AI 额度。')
+  expect(host.querySelector('.arkme-automatic-ai > p')?.textContent).toBe('开启后自动处理，按模型使用偏好调用。官方模型消耗积分，自提供模型使用提供方账号额度。')
   expect(host.querySelector('details')).toBeNull()
   const toggle = host.querySelector('[role="switch"]')!
   const guidance = document.getElementById(toggle.getAttribute('aria-describedby')!)!

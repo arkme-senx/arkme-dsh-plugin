@@ -4,6 +4,7 @@ import type { TeamHistoryAction, TeamHistoryOptions } from '../team-history-cont
 import { GroupRepresentationCodec } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
+import { readTeamFeatureLinks, teamFeatureLinkId, MAX_TEAM_FEATURE_LINKS, type TeamFeatureLinks } from '../team-feature-links-contract.js'
 import { TeamEntryPreferenceService, teamEntryCloudKey } from './team-entry-preference-service.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
@@ -50,6 +51,10 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  feature_links_forbidden: '仅团队所有者或管理员可管理团队入口',
+  invalid_feature_links: '请检查入口名称和网址',
+  feature_links_request_conflict: '重试内容已变化，请重新加载团队入口',
+  feature_links_version_conflict: '团队入口已被其他人修改，请重新加载后核对',
   snapshot_expired: '历史内容已变化或结果已过期，请重新查询', cursor_invalid: '历史分页已失效，请重新查询', cancelled: '导出已取消',
   invalid_recipient: '请选择当前可联系的团队外部真人用户',
   external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
@@ -566,6 +571,19 @@ export class TeamAppService {
             ...(forwardRecords ? {forwardRecords} : {}), ...(sharedRecording ? {sharedRecording} : {}) }
         }))
         return { items, hasMore: data.has_more === true, beforeSeq: num(data.next_before_seq), mediaUrls }
+      }
+      case 'team.app.feature-links.get':
+      case 'team.app.feature-links.save': {
+        const id = await teamID(), save = operation === 'team.app.feature-links.save'
+        const items = save ? readTeamFeatureLinks(p.items) : undefined
+        if (save && (!items || !Number.isSafeInteger(p.expectedRevision) || Number(p.expectedRevision) < 0 || !teamFeatureLinkId(p.requestUid))) throw invalid()
+        const data = await post(`feature-links/${save ? 'save' : 'get'}`, { team_id: id,
+          ...(save ? { expected_revision: p.expectedRevision, request_uid: p.requestUid, items } : {}) }, !save)
+        const rows = readTeamFeatureLinks(data.items)
+        if (data.schema_version !== 1 || !Number.isSafeInteger(data.revision) || Number(data.revision) < 0
+          || typeof data.can_manage !== 'boolean' || data.max_items !== MAX_TEAM_FEATURE_LINKS || !rows
+          || save && data.revision !== Number(p.expectedRevision) + 1) throw invalid()
+        return { schemaVersion: 1, revision: Number(data.revision), canManage: data.can_manage, maxItems: MAX_TEAM_FEATURE_LINKS, items: rows } satisfies TeamFeatureLinks
       }
       case 'team.app.profile.get':return await this.profile((await post('profile/get',{team_id:await teamID()},true)).team,actor)
       case 'team.app.profile.status':return await this.profileResult(await post('profile/update/status',{team_id:await teamID(),request_uid:str(p.requestUid)},true),actor)

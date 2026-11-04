@@ -1,5 +1,6 @@
 import { formatAiPoints, nanoCnyToPoints, pointsUnits, type ArkmeAiPointsAccount } from '../ai-points.js'
-import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
+import { ArkmePointsHistoryDialog } from './ArkmePointsHistoryDialog.js'
+import { arkmeUi } from './ui-controller.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, getArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -163,7 +164,7 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
   useArkmeLocale()
   const [revision, setRevision] = useState(0)
   const [pointsOpen, setPointsOpen] = useState(false), [storageOpen, setStorageOpen] = useState(false)
-  const pointsId = useId(), storageId = useId()
+  const pointsTrigger = useRef<HTMLButtonElement>(null), storageId = useId()
   const points = useUsage<ArkmeAiPointsAccount>('account.points.query', accountScope, revision + creditsRevision)
   const storage = useUsage<ArkmeAccountStorageUsage>('account.usage.storage', accountScope, revision)
   const voice = useUsage<ArkmeAccountVoiceUsage>('account.usage.voice', accountScope, revision)
@@ -185,8 +186,9 @@ function UsageDetailsContent({ accountScope, onViewMembership, onRecharge, credi
           {' · '}{tr('充值 {v0}', { v0: formatWholePoints(points.value.purchasedPoints) })}
         </span></p>
       </>}
-      <button type="button" className="arkme-points-disclosure" aria-expanded={pointsOpen} aria-controls={pointsId} onClick={() => setPointsOpen(value => !value)}>{tr('消费记录')} <span aria-hidden>{pointsOpen ? '⌄' : '›'}</span></button>
-      {pointsOpen && <div id={pointsId}><ArkmePointsConsumption key={accountScope} scope={accountScope} revision={revision + creditsRevision} /></div>}
+      <div className="arkme-points-links"><button type="button" className="arkme-models-disclosure" onClick={()=>arkmeUi.openDshSettings('arkme-models')}>{tr('可用模型')} <span aria-hidden>›</span></button>
+      <button ref={pointsTrigger} type="button" className="arkme-points-disclosure" aria-haspopup="dialog" onClick={() => setPointsOpen(true)}>{tr('消费记录')} <span aria-hidden>›</span></button></div>
+      {pointsOpen && <ArkmePointsHistoryDialog key={accountScope} scope={accountScope} revision={revision + creditsRevision} onClose={() => setPointsOpen(false)} returnFocusRef={pointsTrigger} />}
     </div>
     <div className="arkme-usage-metric" data-usage-level={storageLevel} aria-live="polite">
       <div className="arkme-usage-label"><strong>{tr("云端存储")}</strong><span className="arkme-usage-label-actions">
