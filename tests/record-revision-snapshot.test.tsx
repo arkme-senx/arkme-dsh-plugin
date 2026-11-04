@@ -86,6 +86,14 @@ describe('revision-bound memory snapshots', () => {
     expect(f.runtime.authenticatedPost).toHaveBeenCalledExactlyOnceWith('/api/v1/records/location/context/get',
       { record_uid: 'note', revision_uid: 'old' }, expect.anything(), undefined, expect.anything())
   })
+  it('does not attribute retained ambient content to an edit without its capture', async () => {
+    const f = hostFixture()
+    const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'unknown', version: 3,
+      edit_at: 1700000000000, content_payload: { media_refs: [{ file_asset_uid: 'retained-audio', content_file_role: 4 }] } }, target)
+    expect(detail.backgroundSound).toBe('unknown')
+    expect(detail.backgroundSoundPlayback).toBeUndefined()
+    expect(f.media.hydrateRecordSnapshotMediaPage).not.toHaveBeenCalled()
+  })
   it('keeps absent historical device and duration data unknown', async () => {
     const f = hostFixture()
     const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'old', edit_at: 1700000000000, text_content: '旧版' }, target)

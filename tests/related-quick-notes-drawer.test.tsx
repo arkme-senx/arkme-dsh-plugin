@@ -269,7 +269,7 @@ describe('normal timeline related quick note drawer', () => {
       expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'record.app.detail')).toHaveLength(1)
       await act(async () => view.root.findByProps({ 'aria-label': '已编辑' }).props.onClick())
       expect(mocks.callArkme).toHaveBeenCalledWith('source.record-edit-history', {
-        sourceRef, messageActionRef: timelineItem.messageActionRef, cursorEditAt: 0,
+        sourceRef, messageActionRef: timelineItem.messageActionRef, cursorVersion: 0,
       }, expect.any(AbortSignal))
       expect(view.root.findByProps({ 'aria-label': '编辑记录' })).toBeDefined()
     } finally { act(() => view.unmount()) }

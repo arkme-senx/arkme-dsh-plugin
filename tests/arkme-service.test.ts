@@ -241,7 +241,7 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetcher = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => json({ code: 200, data: { items: [{
-      revision_uid: 'rev-old', record_uid: 'record-1', revision_type: 1, edit_at: 1712990001000, text_content: 'old text',
+      revision_uid: 'rev-old', record_uid: 'record-1', revision_type: 1, version: 2, edit_at: 1712990001000, text_content: 'old text',
       content_payload: { media_refs: [{ file_asset_uid: 'old-image', sort_order: 0 }] },
       media_display_items: [{ file_asset_uid: 'old-image', file_kind: 1, file_name: 'old.png', preview_url: 'https://media.test/old.png' }],
     }], has_more: false } }))

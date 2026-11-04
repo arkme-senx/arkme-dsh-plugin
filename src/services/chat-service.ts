@@ -6421,7 +6421,8 @@ nextPublic = next
       : perEditDuration !== undefined ? 'complete' : editDuration === undefined ? 'not-recorded' : 'partial',
       ...(original && duration !== undefined ? { recordDurationMillis: duration } : {}),
       ...(perEditDuration === undefined ? {} : { editDurationMillis: perEditDuration }),
-      ...(Object.keys(context).length ? {} : { captureUnavailable: '该版本未记录设备等环境信息' }) }
+      ...(Object.keys(context).length ? {} : { captureUnavailable: '该版本未记录设备等环境信息' }),
+      ...(!original && Object.keys(context).length === 0 ? { backgroundSound: 'unknown' as const } : {}) }
     const revisionUid = stringValue(snapshot.revision_uid)
     const locationContext = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/location/context/get', {
       record_uid: target.recordUid, revision_uid: revisionUid,

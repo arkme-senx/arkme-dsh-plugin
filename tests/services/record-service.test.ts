@@ -181,7 +181,7 @@ describe('RecordService', () => {
         if (path === '/api/v1/records/update') {
           return {
             record_core: { ...structuredClone(originalCore), title: '新标题', text_content: '新正文', version: 8 },
-            revision_uid: 'revision-1',
+            revision_uid: body.revision_uid,
           }
         }
         throw new Error(`unexpected path: ${path}`)
@@ -205,7 +205,7 @@ describe('RecordService', () => {
     })
 
     await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({
-      status: 'committed', itemUid: 'record-1', version: 8, revisionUid: 'revision-1',
+      status: 'committed', itemUid: 'record-1', version: 8, revisionUid: expect.any(String),
     })
     expect(calls.map(call => call.path)).toEqual([
       '/api/v1/records/detail', '/api/v1/records/detail', '/api/v1/records/update',
@@ -220,7 +220,7 @@ describe('RecordService', () => {
           duration_sec: 7, file_name: '示例.mp4',
         }],
       },
-      record_duration_millis: 3_200, edit_duration_millis: 800, version: 7,
+      record_duration_millis: 3_200, edit_duration_known: false, revision_uid: expect.any(String), version: 7,
     })
     await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
@@ -244,7 +244,7 @@ describe('RecordService', () => {
         if (path === '/api/v1/records/detail') return { record_core: structuredClone(originalCore) }
         if (path === '/api/v1/records/update') {
           updateBody = structuredClone(body)
-          return { record_core: { ...originalCore, ...body, version: 2 }, revision_uid: 'revision-1' }
+          return { record_core: { ...originalCore, ...body, version: 2 }, revision_uid: body.revision_uid }
         }
         throw new Error(`unexpected path: ${path}`)
       },
@@ -411,10 +411,10 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
         if (path === '/api/v1/records/update') {
           updateCalls += 1
-          return { record_core: { record_uid: 'record-1', version: version + 1 }, revision_uid: 'revision-1' }
+          return { record_core: { record_uid: 'record-1', version: version + 1 }, revision_uid: body.revision_uid }
         }
         return { record_core: {
           record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42, origin_kind: 1, template_kind: 1,
@@ -470,7 +470,7 @@ describe('RecordService', () => {
     expect(updateCalls).toBe(0)
   })
 
-  it('reconciles an unknown write outcome from owner detail without replaying the update', async () => {
+  it('reconciles an unknown write by its accepted revision after a later edit without replay', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-reconcile-'))
     const stateStore = new ArkmeStateStore(root)
     let detailReads = 0
@@ -478,7 +478,8 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
+        if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: true, accepted_version: 8, current_version: 9 }
         if (path === '/api/v1/records/update') {
           updateCalls += 1
           throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })
@@ -501,7 +502,7 @@ describe('RecordService', () => {
 
     await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({ status: 'committed', version: 8 })
     expect(updateCalls).toBe(1)
-    expect(detailReads).toBe(3)
+    expect(detailReads).toBe(2)
     await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
 
@@ -516,7 +517,8 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
+        if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: false, accepted_version: 0, current_version: current.version }
         if (path === '/api/v1/records/update') {
           updateCalls += 1
           throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })

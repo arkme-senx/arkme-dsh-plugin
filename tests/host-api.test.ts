@@ -1806,7 +1806,7 @@ it('routes long article images and durable draft metadata without trusting prepa
   const service = fakeService()
   const signal = new AbortController().signal
   await dispatchArkmeHostOperation(service as never, 'source.record-edit-history', {
-    sourceRef: 'source', messageActionRef: 'action', cursorEditAt: 100, recordUid: 'forged', userId: 999,
+    sourceRef: 'source', messageActionRef: 'action', cursorVersion: 100, recordUid: 'forged', userId: 999,
   }, undefined, undefined, undefined, undefined, signal)
   expect(service.recordEditHistoryPage).toHaveBeenCalledWith('source', 'action', 100, signal)
  })
