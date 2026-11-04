@@ -6,11 +6,23 @@ const skillName = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const skillFile = /^(?:\/|[A-Za-z]:[\\/]|file:\/\/\/)(?:[^\r\n<>]*[\\/])?SKILL\.md$/
 const withinContextLimit = (text:string) => text.length <= 1024*1024 && new TextEncoder().encode(text).byteLength <= 1024*1024
 
+const agentsHeader = '# AGENTS.md instructions for '
+const agentsContext = /^# AGENTS\.md instructions for (?:\/|[A-Za-z]:[\\/]|\\\\)[^\r\n]*\r?\n(?:[ \t]*\r?\n)*<INSTRUCTIONS>\r?\n[\s\S]+?\r?\n<\/INSTRUCTIONS>(?=\r?\n|$)/
+const environmentContext = /^<environment_context>\r?\n[ \t]*<cwd>[^<>\r\n]+<\/cwd>\r?\n[ \t]*<shell>[^<>\r\n]+<\/shell>\r?\n(?:[ \t]*<(current_date|timezone|approval_policy|sandbox_mode|network_access)>[^<>\r\n]*<\/\1>\r?\n)*(?:[ \t]*<filesystem><workspace_roots>[^\r\n]*<\/workspace_roots><permission_profile\b[^<>\r\n]*>[^\r\n]*<\/permission_profile><\/filesystem>\r?\n)?<\/environment_context>$/
+
 /** Recognize complete app messages, never quoted examples or mixed user prose. */
 function hiddenAppContext(text:string):boolean {
   const value=text.trim()
-  if (!value.startsWith('<external_codex_apps_open_page>') && !value.startsWith('<skill>')) return false
+  if (!value.startsWith('<external_codex_apps_open_page>') && !value.startsWith('<skill>')
+    && !value.startsWith(agentsHeader) && !value.startsWith('<environment_context>')) return false
   if (!withinContextLimit(value)) return false
+  if (value.startsWith(agentsHeader)) {
+    const instructions = agentsContext.exec(value)
+    if (!instructions) return false
+    const remainder = value.slice(instructions[0].length).trim()
+    return !remainder || environmentContext.test(remainder)
+  }
+  if (value.startsWith('<environment_context>')) return environmentContext.test(value)
   const page=/^<external_codex_apps_open_page>\s*([\s\S]*?)\s*<\/external_codex_apps_open_page>$/.exec(value)
   if(page)try{
     const data:unknown=JSON.parse(page[1]!)

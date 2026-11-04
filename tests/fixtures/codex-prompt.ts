@@ -18,3 +18,5 @@ ${JSON.stringify(rows)}
 
 ## My request:
 ${request}`
+export const agentsContext = '# AGENTS.md instructions for /workspace/demo\n\n<INSTRUCTIONS>\nUse the repository tests.\n</INSTRUCTIONS>'
+export const environmentContext = '<environment_context>\n  <cwd>/workspace/demo</cwd>\n  <shell>zsh</shell>\n  <current_date>2026-01-01</current_date>\n  <timezone>UTC</timezone>\n  <filesystem><workspace_roots><root>/workspace/demo</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>\n</environment_context>'
