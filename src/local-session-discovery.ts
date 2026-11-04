@@ -5,12 +5,12 @@ import { securePrivateDirectory, securePrivateFile } from './private-filesystem.
 import { SharedReadGroup } from './shared-read-group.js'
 
 type Json = Record<string, unknown>
-export type LocalHistoryIdentity = { accountId: string; environment: 'test' | 'prod'; runtimeRef: string; sessionRef: string; previousRuntimeRefs?: readonly string[] }
+export type LocalHistoryIdentity = { accountId: string; environment: 'test' | 'prod'; runtimeRef: string; sessionRef: string; previousRuntimeRefs?: readonly string[]; sourceProfileRef?: string }
 /** Host-only location. Never serialize this into Browser, SDK or Tool output. */
 export type LocalHistorySource = { dshHome: string; runtimeRef: string; sessionRef: string }
 export type DiscoveryLimits = { directories: number; depth: number; sources: number; jsonBytes: number }
 const DEFAULT_LIMITS: DiscoveryLimits = { directories: 25_000, depth: 10, sources: 256, jsonBytes: 4 * 1024 * 1024 }
-const SKIP = new Set(['node_modules', 'vendor', 'Pods', 'build', 'dist', 'target', 'Cache', 'Caches', 'Code Cache', 'GPUCache', 'DerivedData', 'runtime-manager', 'runtime-data-transactions', 'codex-backups', 'backups', 'sessions', 'attachments'])
+const SKIP = new Set(['node_modules', 'vendor', 'Pods', 'build', 'dist', 'target', 'Cache', 'Caches', 'Code Cache', 'GPUCache', 'DerivedData', 'runtime-manager', 'runtime-data-transactions', 'codex-backups', 'backups', 'sessions', 'attachments', 'dsh-containers'])
 const object = (value: unknown): Json => value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {}
 const missing = (error: unknown) => !!error && typeof error === 'object' && 'code' in error && ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(String(error.code))
 const validRef = (ref: string) => /^[A-Za-z0-9_.:-]{1,256}$/.test(ref) && ref !== '.' && ref !== '..'
@@ -117,6 +117,10 @@ export class LocalSessionDiscovery {
   }
 
   private async containers(root: string, signal: AbortSignal): Promise<void> {
+    // Account containers can coexist with the pre-container journal layout.
+    for (const legacy of [root, join(root, 'dsh')]) {
+      if (await this.safeDirectory(join(legacy, 'arkme-self'))) await this.remember(legacy)
+    }
     const registry = await this.json(join(root, 'dsh-account-scopes.json'))
     if (registry?.version !== 1) return
     for (const [ref, value] of Object.entries(object(registry.containers))) {
@@ -128,6 +132,31 @@ export class LocalSessionDiscovery {
         this.known.add(home)
       }
     }
+  }
+
+  private async remember(home: string): Promise<void> {
+    const path = await this.safeDirectory(home)
+    if (!path) return
+    if (this.known.size >= this.limits.sources && !this.known.has(path)) { this.limited = true; return }
+    this.known.add(path)
+  }
+
+  private scopedProfile(home: string, profile: string): boolean {
+    const scope = basename(dirname(home))
+    return basename(home) === 'dsh' && /^scope_[A-Za-z0-9_-]{3,120}$/.test(scope)
+      && profile.endsWith(`:${scope}`)
+  }
+
+  private async ownsSession(home: string, identity: LocalHistoryIdentity): Promise<boolean> {
+    const profile = identity.sourceProfileRef
+    if (!profile || !this.scopedProfile(home, profile)) return false
+    const key = createHash('sha256').update(`dsh-remote-session-ownership-v1\n${profile}`).digest('base64url')
+    const directory = join(home, 'arkme-self', identity.environment, 'dsh-remote', 'session-ownership')
+    if (!await this.safeDirectory(directory)) return false
+    const state = await this.json(join(directory, `${key}.json`)), owner = object(object(state?.sessions)[identity.sessionRef])
+    return state?.schemaVersion === 1 && state.profileRef === profile && owner.ownerAccountId === identity.accountId
+      && Number.isSafeInteger(owner.claimedAtMillis) && Number(owner.claimedAtMillis) > 0
+      && ['existing-at-login', 'observed-while-active', 'remote-create'].includes(String(owner.origin))
   }
 
   private async scan(signal: AbortSignal, maxDepth: number): Promise<void> {
@@ -148,6 +177,25 @@ export class LocalSessionDiscovery {
       const path = resolve(root)
       if (path === resolve(this.options.userHome) || await this.safeDirectory(path)) enqueue({ path, depth: 0 })
     }
+    // The shell already supplies platform data roots. Search their siblings for
+    // alternate app names; on macOS also inspect only the app-data leaf of each sandbox.
+    for (const root of this.options.dataRoots) {
+      const parent = await this.safeDirectory(dirname(root))
+      if (parent) enqueue({ path: parent, depth: 0, applicationData: true })
+    }
+    const containers = await this.safeDirectory(join(this.options.userHome, 'Library', 'Containers'))
+    if (containers) {
+      let count = 0
+      try {
+        for await (const entry of await opendir(containers)) {
+          signal.throwIfAborted()
+          if (++count > this.limits.directories) { this.limited = true; break }
+          if (!entry.isDirectory() || entry.isSymbolicLink()) continue
+          const path = await this.safeDirectory(join(containers, entry.name, 'Data', 'Library', 'Application Support'))
+          if (path) enqueue({ path, depth: 0, applicationData: true })
+        }
+      } catch (error) { if (!missing(error)) throw error }
+    }
     while (pending.length && inspected < this.limits.directories) {
       signal.throwIfAborted()
       // Spend the I/O budget on registered application layouts before ordinary directories.
@@ -163,7 +211,11 @@ export class LocalSessionDiscovery {
         catch (error) { if (missing(error)) return; throw error }
         if (entries.some(entry => entry.name === 'dsh-account-scopes.json' && entry.isFile())) {
           const registry = await this.json(join(path, 'dsh-account-scopes.json'))
-          if (registry?.version === 1) { await this.containers(path, signal); return }
+          if (registry?.version === 1) await this.containers(path, signal)
+        }
+        if (entries.some(entry => entry.name === 'arkme-self' && entry.isDirectory() && !entry.isSymbolicLink())) {
+          await this.remember(path)
+          return
         }
         if (depth >= maxDepth) return
         const repository = entries.some(entry => entry.name === '.git')
@@ -191,7 +243,9 @@ export class LocalSessionDiscovery {
       const owner = object(registeredContainer(registry, basename(dirname(home)))?.owner)
       if (owner.kind !== 'account' || owner.accountRef !== localHistoryAccountRef(identity.accountId)) return
     }
-    const state = await this.json(join(home, 'arkme-self', identity.environment, 'dsh-remote', 'runtime-state.json'))
+    const directory = await this.safeDirectory(join(home, 'arkme-self', identity.environment, 'dsh-remote'))
+    if (!directory) return
+    const state = await this.json(join(directory, 'runtime-state.json'))
     return state?.schemaVersion === 2 ? object(object(state.accounts)[identity.accountId]) : undefined
   }
 
@@ -204,6 +258,13 @@ export class LocalSessionDiscovery {
         for (const home of this.known) {
           const account = await this.sourceAccount(home, identity, shared)
           if (!account) continue
+          for (const profile of Object.keys(object(account.runtimes))) {
+            if (!this.scopedProfile(home, profile)) continue
+            const key = JSON.stringify(['profile', profile])
+            if (!entries.has(key) && entries.size >= 10_000) { this.limited = true; continue }
+            const homes = entries.get(key) ?? new Set<string>()
+            homes.add(home); entries.set(key, homes)
+          }
           for (const [profile, inventory] of Object.entries(object(account.projections))) {
             const runtime = object(object(account.runtimes)[profile]).runtimeRef
             if (typeof runtime !== 'string' || !validRef(runtime)) continue
@@ -238,6 +299,15 @@ export class LocalSessionDiscovery {
         if (Array.isArray(sessions) && sessions.some(row => object(row).sessionRef === identity.sessionRef)) { matches.push({ dshHome: home, runtimeRef: runtime, sessionRef: identity.sessionRef }); break }
       }
     }
+    // Mutable runtime projections are discovery hints. Permanent account ownership
+    // plus an authenticated scoped Profile can recover a missing/rotated projection.
+    if (identity.sourceProfileRef) for (const home of this.inventories.get(scope)?.entries.get(JSON.stringify(['profile', identity.sourceProfileRef])) ?? []) {
+      signal.throwIfAborted()
+      if (matches.some(source => source.dshHome === home)) continue
+      if (await this.sourceAccount(home, identity, signal) && await this.ownsSession(home, identity)) {
+        matches.push({ dshHome: home, runtimeRef: identity.runtimeRef, sessionRef: identity.sessionRef })
+      }
+    }
     signal.throwIfAborted()
     return matches
   }
@@ -251,16 +321,16 @@ export class LocalSessionDiscovery {
     }, signal)
   }
 
-  async find(identity: LocalHistoryIdentity, signal: AbortSignal): Promise<LocalHistorySource[]> {
+  async find(identity: LocalHistoryIdentity, signal: AbortSignal, scope: 'registered' | 'all' = 'all'): Promise<LocalHistorySource[]> {
     localHistoryAccountRef(identity.accountId)
-    if (!['test', 'prod'].includes(identity.environment) || !validRef(identity.runtimeRef) || !validRef(identity.sessionRef) || (identity.previousRuntimeRefs?.length ?? 0) > 256 || identity.previousRuntimeRefs?.some(ref => !validRef(ref))) throw new Error('本机历史查询身份无效')
+    if (!['test', 'prod'].includes(identity.environment) || !validRef(identity.runtimeRef) || !validRef(identity.sessionRef) || (identity.previousRuntimeRefs?.length ?? 0) > 256 || identity.previousRuntimeRefs?.some(ref => !validRef(ref)) || identity.sourceProfileRef !== undefined && !validRef(identity.sourceProfileRef)) throw new Error('本机历史查询身份无效')
     if (Date.now() >= this.knownCheckedAt) await this.flights.run('registered-locations', async (shared, current) => {
       await this.registered(shared)
       for (const root of this.options.dataRoots) if (await this.safeDirectory(root)) await this.containers(root, shared)
       if (current()) this.knownCheckedAt = Date.now() + 5_000
     }, signal)
     let found = await this.matches(identity, signal)
-    if (found.length) return found
+    if (found.length || scope === 'registered') return found
     // Inventory work belongs to the discovery scope, not each missing session.
     // Exhaustion is incomplete coverage; it must not block an existing cloud read.
     await this.prepare(signal)

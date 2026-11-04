@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -151,5 +151,78 @@ it('finds a server-verified former runtime while retaining the physical provenan
   expect(await discovery.find({ ...canonical, previousRuntimeRefs: ['unrelated'] }, signal())).toEqual([])
   const duplicate = await instance('duplicate'); await discovery.register(duplicate.dshHome, signal())
   expect(await discovery.find({ ...canonical, previousRuntimeRefs: [identity.runtimeRef] }, signal())).toHaveLength(2)
+  discovery.close()
+})
+
+it('discovers legacy homes beside containers, nested apps, and plain Harness homes', async () => {
+  const { home, options, instance } = await fixture(), old = await instance('app')
+  const state = await readFile(join(old.dshHome, 'arkme-self/prod/dsh-remote/runtime-state.json'))
+  const legacy = join(old.root, 'dsh'), plain = join(home, 'artifacts', 'clean profile')
+  for (const root of [legacy, plain]) {
+    await mkdir(join(root, 'arkme-self/prod/dsh-remote'), { recursive: true })
+    await writeFile(join(root, 'arkme-self/prod/dsh-remote/runtime-state.json'), state)
+  }
+  const nested = await instance('app/Arkme Harness')
+  const discovery = new LocalSessionDiscovery({ ...options, dataRoots: [old.root] })
+  await discovery.prepare(signal())
+  expect((await discovery.find(identity, signal())).map(row => row.dshHome).sort())
+    .toEqual([old.dshHome, legacy, plain, nested.dshHome].sort())
+  discovery.close()
+})
+
+it('discovers sibling app names and sandbox app-data leaves without traversing Library contents', async () => {
+  const { home, options, instance } = await fixture()
+  const branded = await instance('Library/Application Support/Alternate App')
+  const sandbox = await instance('Library/Containers/example.app/Data/Library/Application Support')
+  await instance('Library/Containers/example.app/Data/Documents/fixture')
+  await instance('Library/Private Documents/fixture')
+  const discovery = new LocalSessionDiscovery({ ...options, dataRoots: [join(home, 'Library/Application Support/Arkme Harness')] })
+  expect((await discovery.find(identity, signal())).map(row => row.dshHome).sort()).toEqual([branded.dshHome, sandbox.dshHome].sort())
+  discovery.close()
+})
+
+it.each([false, true])('uses immutable scoped ownership after runtime rotation or missing projection (%s)', async missingProjection => {
+  const { options, instance } = await fixture(), old = await instance('old')
+  const { DshRemoteSessionOwnershipStore } = await import('../src/dsh-remote/session-ownership-store.js')
+  const profile = 'web:scope_abc', directory = join(old.dshHome, 'arkme-self/prod')
+  await new DshRemoteSessionOwnershipStore(directory, profile).claimUnownedAndListOwned({ accountId: '42', sessionRefs: [identity.sessionRef], origin: 'existing-at-login' })
+  const path = join(directory, 'dsh-remote/runtime-state.json')
+  await writeFile(path, JSON.stringify({ schemaVersion: 2, accounts: { '42': {
+    runtimes: { [profile]: { runtimeRef: 'new-runtime' } }, projections: missingProjection ? {} : { [profile]: { sessions: [{ sessionRef: identity.sessionRef }] } },
+  } } }))
+  const discovery = new LocalSessionDiscovery(options)
+  expect(await discovery.find(identity, signal())).toEqual([])
+  expect(await discovery.find({ ...identity, sourceProfileRef: profile }, signal())).toEqual([{ dshHome: old.dshHome, runtimeRef: identity.runtimeRef, sessionRef: identity.sessionRef }])
+  expect(await discovery.find({ ...identity, sourceProfileRef: 'web:scope_other' }, signal())).toEqual([])
+  expect(await discovery.find({ ...identity, sourceProfileRef: profile, accountId: '43' }, signal())).toEqual([])
+  expect(await discovery.find({ ...identity, sourceProfileRef: profile, environment: 'test' }, signal())).toEqual([])
+  expect(await discovery.find({ ...identity, sourceProfileRef: profile, sessionRef: 'unowned' }, signal())).toEqual([])
+  // Cached location hints never cache permission, including after ownership file removal.
+  await rm(join(directory, 'dsh-remote/session-ownership'), { recursive: true })
+  expect(await discovery.find({ ...identity, sourceProfileRef: profile }, signal())).toEqual([])
+  discovery.close()
+})
+
+
+it.skipIf(process.platform === 'win32')('keeps ordinary sources usable when sandbox enumeration is denied', async () => {
+  const { home, options, instance } = await fixture(), old = await instance('old')
+  const containers = join(home, 'Library', 'Containers')
+  await mkdir(containers, { recursive: true }); await chmod(containers, 0)
+  const discovery = new LocalSessionDiscovery(options)
+  try { expect(await discovery.find(identity, signal())).toEqual([{ dshHome: old.dshHome, runtimeRef: identity.runtimeRef, sessionRef: identity.sessionRef }]) }
+  finally { discovery.close(); await chmod(containers, 0o700) }
+})
+
+it('checks registered scoped ownership before spending the legacy scan budget', async () => {
+  const { options, instance } = await fixture(), old = await instance('old')
+  const profile = 'web:scope_abc', directory = join(old.dshHome, 'arkme-self/prod')
+  const { DshRemoteSessionOwnershipStore } = await import('../src/dsh-remote/session-ownership-store.js')
+  await new DshRemoteSessionOwnershipStore(directory, profile).claimUnownedAndListOwned({ accountId: '42', sessionRefs: [identity.sessionRef], origin: 'existing-at-login' })
+  await writeFile(join(directory, 'dsh-remote/runtime-state.json'), JSON.stringify({ schemaVersion: 2, accounts: { '42': { runtimes: { [profile]: { runtimeRef: 'rotated' } }, projections: {} } } }))
+  const discovery = new LocalSessionDiscovery({ ...options, dataRoots: [old.root] })
+  const prepare = vi.spyOn(discovery, 'prepare')
+  expect(await discovery.find(identity, signal(), 'registered')).toEqual([])
+  expect(await discovery.find({ ...identity, sourceProfileRef: profile }, signal())).toHaveLength(1)
+  expect(prepare).not.toHaveBeenCalled(); expect(discovery.inventoryState).toBe('idle')
   discovery.close()
 })

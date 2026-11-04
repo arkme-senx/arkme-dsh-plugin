@@ -38,21 +38,21 @@ export class LocalHistoryPersistence extends SessionPersistence {
     }, 'arkme: local history native stores')
   }
 
-  async discover(identity: LocalHistoryIdentity, signal: AbortSignal, sharedAlias = false): Promise<boolean> {
+  async discover(identity: LocalHistoryIdentity, signal: AbortSignal, sharedAlias = false, scope: 'registered' | 'all' = 'all'): Promise<boolean> {
     signal.throwIfAborted()
     const id = identity.sessionRef, known = this.sources.get(id)
     if (known) {
       if (known.identity.accountId !== identity.accountId || known.identity.environment !== identity.environment || known.source.runtimeRef !== identity.runtimeRef && !identity.previousRuntimeRefs?.includes(known.source.runtimeRef)) throw new Error('本机会话来源冲突，未接管历史')
       return true
     }
-    return this.reads.run(JSON.stringify([identity, sharedAlias]), async shared => {
+    return this.reads.run(JSON.stringify([identity, sharedAlias, scope]), async shared => {
       // An existing account-scoped coordinator alias is the provenance for
       // logs already moved by the previous shared-store implementation.
       const sharedHome = this.config.sharedRoot
       const sharedBackend = sharedAlias && sharedHome ? await this.mounted(join(sharedHome, 'sessions')) : undefined
       const hasShared = sharedBackend && await sharedBackend.persistence.stat(SessionId(id), { signal: shared })
       const found = hasShared ? [{ dshHome: sharedHome!, runtimeRef: identity.runtimeRef, sessionRef: id }]
-        : (await this.discovery.find(identity, shared)).filter(source => resolve(source.dshHome) !== resolve(this.config.dshHome))
+        : (await this.discovery.find(identity, shared, scope)).filter(source => resolve(source.dshHome) !== resolve(this.config.dshHome))
       if (!found.length) return false
       if (found.length !== 1 || await this.primary.persistence.stat(SessionId(id), { signal: shared })) throw new Error('本机存在多个同标识历史副本，未自动选择或接管')
       if (this.sources.size >= 256) throw new Error('本机历史打开数量已达上限，请重启后重试')
