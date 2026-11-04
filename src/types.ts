@@ -4672,6 +4672,8 @@ export type ArkmePluginOperation =
   | 'arrangements.source.open'
   | 'arrangements.source.read'
   | 'arrangements.conversation.list'
+  | 'arrangements.conversation.recognition.get'
+  | 'arrangements.conversation.recognition.set'
   | 'arrangements.conversation.detail'
   | 'arrangements.mutate'
   | 'arrangements.create'

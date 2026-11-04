@@ -16,6 +16,33 @@ export class ConversationArrangementService {
     private readonly arrangement: Pick<ArrangementService, 'ownedArrangementReference'>,
     private readonly team?: Pick<TeamAppService, 'resolveConversation'>) {}
 
+  async recognition(accountScope: string, sourceRef: string, teamConversationRef: string, change?: { enabled: boolean; version: number }, signal?: AbortSignal): Promise<import('../conversation-recognition.js').ConversationRecognitionSetting> {
+    if (!!sourceRef === !!teamConversationRef) throw invalid()
+    const session = await this.runtime.requireSession()
+    if (accountScope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('conversation-recognition-account', '账号已切换，请重新打开', false, 409)
+    const team = teamConversationRef && this.team ? await this.team.resolveConversation(teamConversationRef, session.userId) : undefined
+    if (teamConversationRef && !team) throw unavailable()
+    const source = team ? undefined : await this.source.openSourceRef(sourceRef, session.userId)
+    if (source && !['private_chat', 'group_chat'].includes(source.kind)) throw invalid()
+    if (change && (typeof change.enabled !== 'boolean' || !Number.isSafeInteger(change.version) || change.version < 0)) throw invalid()
+    const scope = team ? { team_conversation_uid: team.conversation_uid, team_side: team.side } : { chat_session_uid: source!.ownerRef }
+    let raw: Record<string, unknown>
+    try {
+      raw = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(`/api/v1/arrangements/recognition/conversation/${change ? 'set' : 'get'}`,
+        { ...scope, ...(change ? { enabled: change.enabled, expected_version: change.version } : {}) }, session, signal, { lane: change ? 'write' : 'interactive-read', bypassCache: true })
+    } catch (error) {
+      if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? 0)) throw new ArkmePluginError('conversation-recognition-unavailable', '当前服务尚未支持按对话设置安排识别，请更新服务后重试', false, 503)
+      throw error
+    }
+    if (raw.state === 'conflict') throw new ArkmePluginError('conversation-recognition-conflict', '开关已在其他设备更改，请重新读取后重试', false, 409)
+    if (raw.user_id !== session.userId || Object.entries(scope).some(([key, value]) => raw[key] !== value)
+      || typeof raw.enabled !== 'boolean' || !Number.isSafeInteger(raw.version) || Number(raw.version) < 0
+      || !Number.isSafeInteger(raw.enabled_at) || Number(raw.enabled_at) < 0 || typeof raw.effective_enabled !== 'boolean' || typeof raw.blocked_reason !== 'string') throw invalid()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('conversation-recognition-account', '账号已切换，请重新打开', false, 409)
+    return { accountScope, enabled: raw.enabled, version: Number(raw.version), enabledAt: Number(raw.enabled_at), effectiveEnabled: raw.effective_enabled, blockedReason: raw.blocked_reason }
+  }
+
   async read(sourceRef: string, cursor: string, relatedRef?: string, signal?: AbortSignal, teamConversationRef?: string): Promise<ArkmeConversationArrangementPage | ArkmeConversationArrangement> {
     if (!!sourceRef === !!teamConversationRef) throw new ArkmePluginError('conversation-arrangement-scope', '请选择一个有效对话', false, 400)
     const session = await this.runtime.requireSession()

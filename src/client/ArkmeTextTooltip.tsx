@@ -7,7 +7,7 @@ export function ArkmeTextTooltip({ anchor, id, text, onClose, kind }: {
   anchor: HTMLElement
   id: string
   text: string
-  kind: 'attachment' | 'membership'
+  kind: 'attachment' | 'membership' | 'help'
   onClose(): void
 }) {
   const ref = useRef<HTMLDivElement>(null)

@@ -1,3 +1,5 @@
+import { useConversationRecognitionAction } from './ConversationRecognitionControl.js'
+import { ConversationSettingSwitch } from './ConversationSettingSwitch.js'
 import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
@@ -927,24 +929,7 @@ export function InviteCollaboratorsDialog(props: {
 }
 
 export function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
-  return <span
-    role="switch"
-    aria-label={tr("消息免打扰")}
-    aria-checked={props.checked}
-    aria-disabled={props.busy || undefined}
-    style={{
-      ...styles.switch,
-      background: props.checked ? colors.primary : arkmeTheme.active,
-      opacity: props.busy ? .55 : 1,
-      justifyContent: 'flex-start',
-    }}
-    onClick={(event?: { stopPropagation(): void }) => {
-      event?.stopPropagation()
-      if (!props.busy) props.onChange(!props.checked)
-    }}
-  >
-    <span style={{ ...styles.switchThumb, transform: props.checked ? 'translateX(18px)' : 'translateX(0)' }} />
-  </span>
+  return <ConversationSettingSwitch label={tr('消息免打扰')} {...props} />
 }
 
 const initialAiPolishMessage: ArkmeGroupAiPolishThreadMessage = {
@@ -1205,6 +1190,7 @@ function GroupAiPolishPanel(props: {
 }
 
 function GroupSettingsMenu(props: {
+  accountScope: string | undefined
   source: ArkmeSourceItem
   open: boolean
   buttonRef: RefObject<HTMLButtonElement>
@@ -1229,6 +1215,7 @@ function GroupSettingsMenu(props: {
   exportProcessed: number
 }) {
   useArkmeLocale()
+  const recognitionAction = useConversationRecognitionAction(props.accountScope ?? '', props.source.conversationRef ?? props.source.sourceRef, 'chat', props.open)
   const [snapshot, setSnapshot] = useState<ArkmeGroupSettingsSnapshot>()
   const [managementOpen, setManagementOpen] = useState(false)
   const managementFocusRef = useRef<HTMLSpanElement>(null)
@@ -1367,6 +1354,8 @@ function GroupSettingsMenu(props: {
   }
   const entries: MenuEntry[] = [
     { type: 'label', id: 'personal-label', text: '个人设置' },
+    { id: recognitionAction.id, label: recognitionAction.label, icon: recognitionAction.icon, disabled: recognitionAction.disabled === true },
+    ...(recognitionAction.error ? [{ id: 'recognition-error', label: <span role="status">{recognitionAction.error}</span>, disabled: true }] : []),
     { id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> },
   ]
   if (props.onPublicSettingsOpen) entries.push({ id: 'public-settings', label: '公开与展示', icon: <ClientIcon src={icons.members} size={16} /> })
@@ -1438,6 +1427,7 @@ function GroupSettingsMenu(props: {
     items={managementOpen ? managementEntries : entries}
     onClose={close}
     onSelect={id => {
+      if (id === recognitionAction.id) { recognitionAction.invoke(); return }
       if (id === 'management') { if (effective.canRename || canManage) setManagementOpen(true); return }
       if (id === 'back') { setManagementOpen(false); return }
       if (id === 'export') { close(); props.onExport(); return }
@@ -1796,6 +1786,7 @@ export function ArkmeGroupChatControls(props: {
     <div style={styles.headerActions}>
       <ArkmeConversationHeaderIconButton label={tr("查看群成员")} onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
       <GroupSettingsMenu
+        accountScope={props.accountScope}
         key={JSON.stringify([props.accountScope, props.source.sourceRef])}
         source={props.source}
         open={settingsOpen}

@@ -12,6 +12,7 @@ import { useRelatedArrangementActions } from './use-related-arrangement-actions.
 import { useConversationArrangements } from './use-conversation-arrangements.js'
 import { arkmeIntlLocale, tr } from './locale.js'
 import css from './conversation-arrangements.css?inline'
+import { useConversationRecognition } from './use-conversation-recognition.js'
 
 function time(value?: number) {
   return value && Number.isFinite(new Date(value).getTime())
@@ -34,6 +35,8 @@ export function ArkmeConversationArrangements(props: Props) {
 function ConversationArrangements({ reference, displayName, scope, accountScope, active, refreshRevision }: {
   reference: string; displayName: string; scope: 'chat' | 'team'; accountScope: string; active: boolean; refreshRevision: number
 }) {
+  const recognition = useConversationRecognition(accountScope, reference, scope, active)
+  const enabled = recognition.value?.enabled ?? Boolean(recognition.error)
   const [open, setOpen] = useState(false)
   const [completed, setCompleted] = useState(false)
   const [host, setHost] = useState<Element | null>(null)
@@ -42,9 +45,9 @@ function ConversationArrangements({ reference, displayName, scope, accountScope,
   const [now, setNow] = useState(Date.now)
   const actions = useRelatedArrangementActions(active, accountScope, item => { data.updateItem(item); setLatestItem(item) },
     ref => { data.removeItem(ref); if (selected === ref) setSelected(undefined) })
-  const data = useConversationArrangements(reference, active, refreshRevision, !!selected || !!actions.pending, scope)
-  useEffect(() => { setHost(button.current?.closest('[data-arkme-active-conversation-identity]') ?? null) }, [])
-  useEffect(() => { if (!active) { setOpen(false); setSelected(undefined) } }, [active])
+  const data = useConversationArrangements(reference, active && enabled, refreshRevision, !!selected || !!actions.pending, scope)
+  useEffect(() => { setHost(button.current?.closest('[data-arkme-active-conversation-identity]') ?? null) }, [enabled])
+  useEffect(() => { if (!active || !enabled) { setOpen(false); setSelected(undefined) } }, [active, enabled])
   useEffect(() => {
     if (!active || !open) return
     const tick = () => setNow(Date.now()); tick()
@@ -63,6 +66,7 @@ function ConversationArrangements({ reference, displayName, scope, accountScope,
     {actions.notice.undo && <button type="button" disabled={!!actions.pending} onClick={() => { void actions.undo() }}>{tr('撤销')}</button>}
     <button type="button" aria-label={tr('关闭提示')} onClick={actions.dismissNotice}><X size={14} /></button>
   </div>
+  if (!enabled) return null
   return <>
     <style>{css}</style>
     <button ref={button} type="button" className="arkme-related-arrangements-entry" aria-haspopup="dialog" aria-expanded={open}

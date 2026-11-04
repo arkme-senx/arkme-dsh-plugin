@@ -70,7 +70,8 @@ it('clears the previous account before starting a new read', async () => {
   await render('prod:13'); expect(host.textContent).not.toContain(item.title); expect(host.querySelector('[role="dialog"]')).toBeNull()
 })
 it('deduplicates another page and never calls a partial page an empty conversation', async () => {
-  mock.call.mockResolvedValueOnce({ items: [], hasMore: true, nextCursor: 'page-2' }).mockResolvedValueOnce({ items: [item, item], hasMore: false, nextCursor: '' })
+  let listReads = 0
+  mock.call.mockImplementation(async operation => operation === 'arrangements.conversation.recognition.get' ? {accountScope:'prod:12',enabled:true,version:0,enabledAt:0,effectiveEnabled:true,blockedReason:''} : ++listReads === 1 ? { items: [], hasMore: true, nextCursor: 'page-2' } : { items: [item, item], hasMore: false, nextCursor: '' })
   await render(); await click('相关安排'); expect(host.textContent).toContain('可以继续加载')
   await click('加载更多'); expect(host.querySelectorAll('article')).toHaveLength(1)
 })

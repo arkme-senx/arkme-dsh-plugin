@@ -99,3 +99,32 @@ describe('conversation arrangements provider boundary', () => {
     await expect(service.read('source', '', result.items[0]!.relatedRef)).rejects.toMatchObject({ code: 'conversation-arrangement-invalid' })
   })
 })
+
+describe('personal conversation recognition setting boundary', () => {
+  const setting = { user_id: 12, chat_session_uid: 'chat-a', enabled: false, version: 1, enabled_at: 0, effective_enabled: false, blocked_reason: '已关闭' }
+  it('saves only the authenticated conversation and version, without forwarding raw IDs', async () => {
+    const {service,runtime}=fixture(); runtime.authenticatedIntelligentPost.mockResolvedValue(setting)
+    expect(await service.recognition('production:12','opaque-source','',{enabled:false,version:0})).toEqual({accountScope:'production:12',enabled:false,version:1,enabledAt:0,effectiveEnabled:false,blockedReason:'已关闭'})
+    expect(runtime.authenticatedIntelligentPost.mock.calls[0]?.[1]).toEqual({chat_session_uid:'chat-a',enabled:false,expected_version:0})
+  })
+  it.each(['team','external'] as const)('keeps the %s side isolated',async side=>{
+    const {service,runtime,team,source}=fixture(); team.resolveConversation.mockResolvedValue({conversation_uid:'team-a',side})
+    runtime.authenticatedIntelligentPost.mockResolvedValue({...setting,chat_session_uid:undefined,team_conversation_uid:'team-a',team_side:side})
+    await service.recognition('production:12','','team-ref')
+    expect(source.openSourceRef).not.toHaveBeenCalled()
+    expect(runtime.authenticatedIntelligentPost.mock.calls[0]?.[1]).toEqual({team_conversation_uid:'team-a',team_side:side})
+  })
+  it('rejects another account before IO and rejects mismatched readbacks',async()=>{
+    const {service,runtime}=fixture()
+    await expect(service.recognition('production:99','source','')).rejects.toMatchObject({code:'conversation-recognition-account'})
+    expect(runtime.authenticatedIntelligentPost).not.toHaveBeenCalled()
+    runtime.authenticatedIntelligentPost.mockResolvedValue({...setting,user_id:99})
+    await expect(service.recognition('production:12','source','')).rejects.toThrow()
+    runtime.authenticatedIntelligentPost.mockResolvedValue({...setting,chat_session_uid:'another-chat'})
+    await expect(service.recognition('production:12','source','')).rejects.toThrow()
+  })
+  it('surfaces a version conflict instead of claiming a successful save',async()=>{
+    const {service,runtime}=fixture(); runtime.authenticatedIntelligentPost.mockResolvedValue({state:'conflict'})
+    await expect(service.recognition('production:12','source','',{enabled:false,version:0})).rejects.toMatchObject({code:'conversation-recognition-conflict'})
+  })
+})
