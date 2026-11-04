@@ -2411,13 +2411,18 @@ export class RecordingService {
       await current(); return { accountScope, section }
     }
     if (input.action !== 'continue' || !/^[0-9a-f]{24}$/.test(input.versionId)) throw new ArkmePluginError('recording-analysis-invalid', '录音分析任务无效', false, 400)
-    const day = this.recordingDayStart(input.dateStamp)
+    this.validateRecordingWindow(input.window)
+    // This is an existing owner's frozen day, which may belong to a different
+    // civil timezone. Never reinterpret it as the Host's local midnight.
+    const dateStamp = input.window?.dateStamp ?? input.dateStamp
+    if (!Number.isSafeInteger(dateStamp) || !Number.isFinite(new Date(dateStamp).getTime())) throw new ArkmePluginError('recording-date-invalid', '录音任务日期无效', false, 400)
+    const window = input.window ?? { dateStamp, endStamp: dateStamp + 86400_000 }
     await current()
-    const result = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/summary/continue', { summary_id: input.versionId, kind: input.kind === 'timeline' ? 1 : 2, date_stamp: day.getTime() }, session, signal, { lane: 'write', bypassCache: true })
+    const result = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/summary/continue', { summary_id: input.versionId, kind: input.kind === 'timeline' ? 1 : 2, date_stamp: dateStamp }, session, signal, { lane: 'write', bypassCache: true })
     await current()
     if (result.accepted !== true || result.summary_id !== input.versionId) throw new ArkmePluginError('recording-analysis-not-accepted', '当前任务尚未接受继续，请刷新状态', true, 409)
     try {
-      const section = await this.recordingProjectionWithSession(day.getTime(), input.kind, session, signal)
+      const section = await this.recordingProjectionWithSession(dateStamp, input.kind, session, signal, window)
       await current(); return { accountScope, section }
     } catch (error) {
       await current()
@@ -2430,7 +2435,7 @@ export class RecordingService {
     kind: ArkmeRecordingProjectionKind,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    window?: ArkmeRecordingWindow,
+    window?: Pick<ArkmeRecordingWindow, 'dateStamp' | 'endStamp'>,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
     const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)

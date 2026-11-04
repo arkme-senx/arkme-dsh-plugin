@@ -1430,8 +1430,14 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     setGeneratingKinds(current => ({ ...current, [kind]: true }))
     setGenerationErrors(current => { const next = { ...current }; delete next[kind]; return next })
     try {
-      const result = await callArkme<import('../recording-analysis-contract.js').RecordingAnalysisResult>('recordings.analysis', { action: 'continue', kind, dateStamp: selectedDate.getTime(), versionId: version.id, accountScope: entityAccount }, controller.signal)
-      if (!controller.signal.aborted && 'section' in result) setDay(current => current?.dateStamp === selectedDate.getTime() ? { ...current, [kind]: result.section } : current)
+      const result = await callArkme<import('../recording-analysis-contract.js').RecordingAnalysisResult>('recordings.analysis', { action: 'continue', kind, dateStamp: selectedDate.getTime(), versionId: version.id, accountScope: entityAccount, ...(notificationWindow ? {window:notificationWindow} : {}) }, controller.signal)
+      if (!controller.signal.aborted && 'section' in result) {
+        const section = result.section
+        setDay(current => current?.dateStamp === selectedDate.getTime() ? { ...current, [kind]: section } : current)
+        const selectedId = section.items.find(item => item.selectable)?.id ?? ''
+        if (kind === 'summary') setSummaryVersionId(selectedId)
+        else setTimelineVersionId(selectedId)
+      }
     } catch (error) {
       if (!controller.signal.aborted) setGenerationErrors(current => ({ ...current, [kind]: errorMessage(error) }))
     } finally {

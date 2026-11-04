@@ -28,7 +28,7 @@ const command = defineArkmeCoreToolModule({
         offeringRevisionId: { type: 'string', required: true },
         publicModelCode: { type: 'string', required: true },
       } },
-      date_stamp: { type: 'number', description: 'Local day start in milliseconds, required for generate/continue.' },
+      date_stamp: { type: 'number', description: 'Generate: local day start in milliseconds. Continue: exact original task date stamp from its owner, without timezone conversion. Required for both.' },
       version_id: { type: 'string', description: 'Exact failed version ID, required only for continue.' },
     },
     output: TEXT_OUTPUT,

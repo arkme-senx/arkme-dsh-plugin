@@ -81,7 +81,7 @@ export function modelAvailable(model: ModelChoice, scene: ModelScene): boolean {
 }
 export function unavailableLabel(model: ModelChoice, scene: ModelScene): string {
   const reason = model.availabilityByScene?.[scene]?.reason
-  return ({model_not_priced:'此模型尚未配置报价',model_price_ambiguous:'此模型报价无法确认',catalog_unavailable:'模型目录暂不可用',adapter_unavailable:'此模型暂不可用',business_not_opened:'此场景尚未开放'} as Record<string,string>)[reason ?? ''] ?? '此场景支持情况待确认'
+  return ({model_not_priced:'此模型尚未配置报价',model_price_ambiguous:'此模型报价无法确认',catalog_unavailable:'模型目录暂不可用',adapter_unavailable:'此模型暂不可用',business_not_opened:'此场景尚未开放',fixed_model_policy:'此场景按固定模型自动运行，暂不支持切换'} as Record<string,string>)[reason ?? ''] ?? '此场景支持情况待确认'
 }
 export function modelSceneBilling(model: ModelChoice, scene: ModelScene): ModelBilling {
   if (!sceneReference(model, scene)) return 'unknown'
