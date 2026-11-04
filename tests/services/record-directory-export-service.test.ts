@@ -73,7 +73,7 @@ async function fixture() {
     const destinationRef = picked.destinationRef!;
     const preview = async (selection: any = all) => service.preview('test:11', selection, 1, destinationRef);
     const run = async (selection: any = all) => { const p = await preview(selection); return service.run({ expectedAccountScope: 'test:11', confirmed: true, orderKind: 1, selection, previewUid: p.previewUid!, destinationRef }); };
-    return { root, service, post, fetchImpl, run, preview, destinationRef, version: () => version, finished: () => finished, change: () => { changed = true; }, loseSaved: () => { lostSaved = true; }, offline: () => { offline = true; }, switchUser: () => { user = 12; } };
+    return { root, runtime, service, post, fetchImpl, run, preview, destinationRef, version: () => version, finished: () => finished, change: () => { changed = true; }, loseSaved: () => { lostSaved = true; }, offline: () => { offline = true; }, switchUser: () => { user = 12; } };
 }
 it('writes a readable folder and automatically confirms exactly one complete backup', async () => {
     const f = await fixture(), r = await f.run();
@@ -175,5 +175,16 @@ it('does not acknowledge a recovered date export whose original file was changed
     await writeFile(join(f.root, '即我备份-test-11', imagePath), new Uint8Array([9, 9, 9]));
     await expect(f.preview()).rejects.toThrow('被修改');
     expect(f.version()).toBe(0);
+    expect(f.finished()).toBe(1);
+});
+it('does not treat an equal checkpoint version from a different device as the selected folder baseline', async () => {
+    const f = await fixture();
+    await f.run();
+    const other = new RecordDirectoryExportService({ ...f.runtime, stateStore: { uniqueCode: async () => f.root + 'other-device' } } as never);
+    other.attach(async () => f.root);
+    const picked = await other.pick('test:11');
+    const preview = await other.preview('test:11', { ...all, mode: 'incremental' }, 1, picked.destinationRef);
+    expect(preview).toMatchObject({ canExport: false, baselineRequired: true });
+    expect((await other.preview('test:11', all, 1, picked.destinationRef)).localReplica).not.toBe(true);
     expect(f.finished()).toBe(1);
 });

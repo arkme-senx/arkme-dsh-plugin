@@ -8,7 +8,7 @@
 
 ## 成本和本地数据
 
-- 增量不调用旧 Premium check/pre/finish，不占用云端全量额度，也没有导出次数限制。首次必须在所选目录建立完整备份；不能凭另一目录或旧 ZIP 的设备进度假装已有基线。
+- 增量不调用旧 Premium check/pre/finish，不占用云端全量额度，也没有导出次数限制。首次必须在所选目录建立完整备份；不能凭另一目录或旧 ZIP 的设备进度假装已有基线；本地索引绑定环境/账号/设备/附件策略，不能只比较可能碰巧相同的版本号。
 - 云端全部与按日期仍共用原有全量额度，避免分段日期绕过限制。
 - 目录已有完整副本且与服务器备份链一致时，全部/日期先同步增量，再从本地筛选、排版，不再消耗全量次数；无网络时可以输出上次完整本地副本，并显示数据截止时间。权限类业务错误不触发离线降级。
 - 正常使用时下载的受信任图片/语音原文件与导出共用 OriginalFileStore；按环境、账号、OSS 对象路径去重，签名轮换不改变身份，缩略图不能冒充原文件。缓存只有读到 EOF、长度和 SHA-256 校验、fsync 和原子重命名后才可复用。缓存可回收，上限每账号 64 GiB，不能当永久完整备份。
@@ -33,9 +33,9 @@ prepare 仅在 reuse_attachments=true 时增加 file_refs.backup_path、source_p
 
 ## 验证与未完成范围
 
-配套源码：插件 bade6aaec2fdaf1f413c99ef351523129c9872c9，基于 dev efe2c3a3；Record 34123080b326937237cf8fb31762be96f4886205，基于 develop d88a0dfc。
+配套源码：插件最终功能 09fad3d2f418edec29ee28917f55e98dac1e090e（含原功能 bade6aae），基于 dev efe2c3a3；Record 34123080b326937237cf8fb31762be96f4886205，基于 develop d88a0dfc。
 
-- 插件相关 13 文件、329 项回归通过，覆盖 Host、SDK、媒体、原文件、目录、UI、旧 ZIP 兼容、取消和账号隔离。依赖按当前 pnpm-lock 在独立 node_modules 装配后，类型检查、声明、双格式打包、Local Session Profile 及执行入口校验再次通过；329 项再次通过。Node v24.14.0，pnpm v11.7.0。
+- 插件相关 13 文件、330 项回归通过，覆盖 Host、SDK、媒体、原文件、目录、UI、旧 ZIP 兼容、取消和账号隔离。依赖按当前 pnpm-lock 在独立 node_modules 装配后，类型检查、声明、双格式打包、Local Session Profile 及执行入口校验再次通过；330 项再次通过。Node v24.14.0，pnpm v11.7.0。
 - Record 49 项顶层专项通过，0 跳过；真实 MongoDB 7.0.15 隔离副本集，race、架构与路由合同检查、真实 Go HTTP→插件目录写入/自动 saved、旧 ZIP→saved 均执行。Premium 为隔离 gate，未消耗生产额度。
 - 80 MiB 正文夹具通过有界批次准备；2 GiB 仅验证制品身份接受，不代表实际下载 2 GiB。不是生产性能承诺。
 - 浏览器实际点击和落盘使用隔离账号 10001，验证三 tab、日历、目录保存、成功状态及本地重排版；390px 日历仍在视口内。原生选择器由测试适配器代替，不能称为安装客户端原生验收。
@@ -46,3 +46,5 @@ prepare 仅在 reuse_attachments=true 时增加 file_refs.backup_path、source_p
 先 Record 后端，待所有节点支持 policy_version=3，再发布插件。TEST Job：https://jenkins.senguo.me/view/jotmo/job/TEST_jotmo-record-backend/ 。PROD Job：https://jenkins.senguo.me/view/jotmo/job/PROD_jotmo-record-backend/ 。按 jotmo-meta README 第 8 节，正式服由批准人手动执行，并记录构建号和 smoke；不能把本地测试视为线上发布成功。
 
 回滚时选择上一成功 Jenkins 构建的 Git commit/分支重新执行同环境流水线，确认能力响应和既有导出正常；插件回滚到上一个成功发布版本。新字段和新增索引保留，禁止为回滚删除已保存链或用户本地文件。旧后端会拒绝新目录协议；恢复新后端后可继续读取已保存链。上线前必须补齐真实客户端/Premium 验收、备份目录丢失/磁盘满/掉线测试，以及云端滚动节点兼容观察。
+
+最终设备绑定回归见 /tmp/arkme-export-folder-device-tests.log（330/330）及 /tmp/arkme-export-folder-device-build.log。远端通过 GitHub Git Data API 保存，因提交元数据不同提交 SHA 不同，发布时核对源码树必须与本地一致。插件 PR #1139 为草稿，Record MR #495 指向 develop；没有合并或发布。浏览器控制后续也无法操作隔离页，未补取最终新代码截图，保留此前隔离交互截图，不把它当原生客户端证明。

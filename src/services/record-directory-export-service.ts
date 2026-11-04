@@ -70,10 +70,16 @@ export class RecordDirectoryExportService {
             store.close();
         }
     }
+    private async chainIdentity(scope: string, attachments: boolean) {
+        const session = await this.ranges.session(scope);
+        return createHash('sha256').update(`${session.userId}:${await this.ranges.device(scope)}:${attachments}`).digest('hex');
+    }
     private async recover(scope: string, store: BackupDirectoryStore, signal?: AbortSignal) {
         const meta = store.meta();
         if (!meta?.pending)
             return;
+        if (meta.chainUid !== await this.chainIdentity(scope, meta.attachments))
+            throw backupFailure('待确认备份属于其他设备，请在原设备恢复或选择新的文件夹。');
         const pending = meta.pending;
         if (typeof pending.document !== 'string' || !/^[^/\\]+\.md$/.test(pending.document))
             throw backupFailure('上次备份的本地凭据无效');
@@ -108,7 +114,7 @@ export class RecordDirectoryExportService {
         else if (!['generated', 'generated-unconfirmed', 'saved'].includes(String(status.status)))
             throw backupFailure('上次备份正在确认，请稍后重试；已写入的文件仍保留');
         const response = await this.ranges.post(scope, 'saved', { preview_uid: pending.uid, artifact_sha256: pending.digest, artifact_size: pending.size, user_confirmed_saved: true }, signal);
-        store.setMeta({ ...meta, version: Number(response.version), savedAtMillis: Number(response.saved_at), pending: undefined });
+        store.setMeta(pending.mode === 'dates' ? { ...meta, pending: undefined } : { ...meta, version: Number(response.version), savedAtMillis: Number(response.saved_at), pending: undefined });
     }
     async preview(scope: string, raw: unknown, order: 1 | 2, destinationRef?: string, signal?: AbortSignal): Promise<ArkmeRangeExportPreview> {
         const selection = exportSelection(raw);
@@ -123,7 +129,7 @@ export class RecordDirectoryExportService {
             }
             await this.recover(scope, store, signal);
             const meta = store.meta();
-            if (!meta?.version || meta.attachments !== selection.includeAttachments) {
+            if (!meta?.version || meta.attachments !== selection.includeAttachments || meta.chainUid !== await this.chainIdentity(scope, selection.includeAttachments)) {
                 const preview = await this.ranges.preview(scope, selection, order, signal);
                 return selection.mode === 'incremental' ? baselineMissing(preview) : preview;
             }
@@ -177,7 +183,7 @@ export class RecordDirectoryExportService {
                 throw backupFailure('导出预览已失效，请刷新后重试');
             let requested = selection, previewUid = options.previewUid;
             if (local) {
-                if (store.meta()?.version !== local.version)
+                if (store.meta()?.version !== local.version || store.meta()?.chainUid !== await this.chainIdentity(scope, selection.includeAttachments))
                     throw backupFailure('本地备份已变化，请刷新');
                 requested = { mode: 'incremental', timeZone: selection.timeZone, includeAttachments: selection.includeAttachments };
                 previewUid = local.preview!.previewUid!;
@@ -190,7 +196,7 @@ export class RecordDirectoryExportService {
                 const expected = wireExportSelection(requested, options.orderKind);
                 if (start.status !== 'started' || Object.entries(expected).some(([k, v]) => start!.selection?.[k] !== v) || start.reuse_attachments !== true)
                     throw backupFailure('后端目录导出协议暂不可用，请升级后重试');
-                if (requested.mode === 'incremental' && (store.meta()?.version !== Number(start.base_version) || store.meta()?.attachments !== requested.includeAttachments))
+                if (requested.mode === 'incremental' && (store.meta()?.version !== Number(start.base_version) || store.meta()?.attachments !== requested.includeAttachments || store.meta()?.chainUid !== await this.chainIdentity(scope, requested.includeAttachments)))
                     throw backupFailure('此文件夹没有对应的完整备份，请选择原文件夹或先导出全部');
                 let after = 0;
                 const seen = new Set<string>(), removed = new Set<string>();
@@ -271,20 +277,21 @@ export class RecordDirectoryExportService {
             const digest = createHash('sha256').update(receipt).digest('hex'), size = output.size + output.attachmentBytes + Buffer.byteLength(receipt);
             await atomicWrite(output.path + '.json', receipt);
             let meta = store.meta() ?? { scope, version: 0, attachments: selection.includeAttachments, savedAtMillis: 0 };
+            const chainUid = await this.chainIdentity(scope, selection.includeAttachments);
             if (start) {
-                const pending = { uid, digest, size, document: output.path.split('/').at(-1), documentHash: output.sha256, documentSize: output.size };
+                const pending = { uid, digest, size, mode: requested.mode, document: output.path.split('/').at(-1), documentHash: output.sha256, documentSize: output.size };
                 if (requested.mode === 'dates') {
-                    store.setMeta({ ...meta, pending });
+                    store.setMeta({ ...meta, chainUid, pending });
                     store.discard(job);
                 }
                 else {
-                    meta = { ...meta, attachments: selection.includeAttachments, pending };
+                    meta = { ...meta, attachments: selection.includeAttachments, chainUid, pending };
                     store.commit(job, requested.mode, meta);
                 }
                 finishAttempted = true;
                 const finish = await this.ranges.post(scope, 'finish', { preview_uid: uid, success: true, artifact_sha256: digest, artifact_size: size }, signal);
                 const saved = await this.ranges.post(scope, 'saved', { preview_uid: uid, artifact_sha256: digest, artifact_size: size, user_confirmed_saved: true }, signal);
-                meta = { ...meta, version: Number(saved.version), savedAtMillis: Number(saved.saved_at), pending: undefined };
+                meta = requested.mode === 'dates' ? { ...meta, pending: undefined } : { ...meta, version: Number(saved.version), savedAtMillis: Number(saved.saved_at), pending: undefined };
                 store.setMeta(meta);
                 completed = true;
                 return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: output.path.split('/').at(-1)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: finish.quota_finalized === true, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
