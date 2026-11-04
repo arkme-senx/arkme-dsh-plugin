@@ -38,6 +38,13 @@ async function openGiftDetails() {
 const retry = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '重试')!
 
 describe('account points and independent usage', () => {
+  it('opens official available models lazily from the AI points area and cancels on close',async()=>{
+    await render();expect(mocks.call.mock.calls.some(call=>call[0]==='models.directory')).toBe(false)
+    let signal:AbortSignal|undefined;mocks.call.mockImplementation((operation,params,next)=>{if(operation==='models.directory'){signal=next;return Promise.resolve({accountScope:params.expectedAccountScope,observedAt:Date.now(),models:[],failures:[]})}throw new Error('unexpected read')})
+    const trigger=host.querySelector<HTMLButtonElement>('.arkme-models-disclosure')!;await act(async()=>{trigger.focus();trigger.click()})
+    expect(document.querySelector('dialog.arkme-model-catalog-dialog[open]')).not.toBeNull();expect(mocks.call.mock.calls.at(-1)?.[1]).toEqual({expectedAccountScope:'prod:11',officialOnly:true})
+    await act(async()=>document.querySelector<HTMLButtonElement>('[aria-label="关闭模型目录"]')!.click());expect(signal?.aborted).toBe(true);expect(document.activeElement).toBe(trigger)
+  })
   it('toggles gift details, dismisses outside or Escape, and stays inside the owning modal', async () => {
     const onClose = vi.fn()
     await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={onClose} />))

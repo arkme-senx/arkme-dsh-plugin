@@ -472,10 +472,10 @@ export class ArkmeService {
   async retrySourceMessageThoughtContinuation(sourceRef: string, messageActionRef: string, id: string, signal?: AbortSignal) {
     return this.sourceMessageThoughtContinuations(sourceRef, messageActionRef, { retryId: id }, signal)
   }
-  async modelDirectory(expectedScope: string, signal?: AbortSignal) {
+  async modelDirectory(expectedScope: string, signal?: AbortSignal, officialOnly = false) {
     return new ModelDirectoryService(this.runtime, { dsh: this.modelDirectoryReader,
       arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
-      explore: signal => this.explore.modelDirectory(expectedScope, signal) }).read(expectedScope, signal)
+      explore: signal => this.explore.modelDirectory(expectedScope, signal) }).read(expectedScope, signal, officialOnly)
   }
   private readonly aiVideo: AiVideoService
   private readonly aiLetter: AiLetterService

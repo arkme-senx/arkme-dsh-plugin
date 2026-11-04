@@ -16,6 +16,7 @@ export interface ModelChoice {
   offeringRevision?: string
   supplierCode?: string
   pricing?: string
+  pointPricing?: { cacheMissInputPerThousand: string; cacheHitInputPerThousand: string; outputPerThousand: string }
   billing?: ModelBilling
   /** A shared route can have different billing contracts in different scenes. */
   billingByScene?: Partial<Record<ModelScene, ModelBilling>>

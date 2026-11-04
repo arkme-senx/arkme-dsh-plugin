@@ -2637,8 +2637,8 @@ export class ArkmeSdk {
     return this.call('source.message-extension.capabilities', { sourceRef }, signal)
   }
 
-  async modelDirectory(expectedAccountScope: string, signal?: AbortSignal): Promise<import('../model-directory.js').UnifiedModelCatalog> {
-    return this.call('models.directory', { expectedAccountScope }, signal)
+  async modelDirectory(expectedAccountScope: string, signal?: AbortSignal, options?: { officialOnly?: boolean }): Promise<import('../model-directory.js').UnifiedModelCatalog> {
+    return this.call('models.directory', { expectedAccountScope, ...(options?.officialOnly === true ? { officialOnly: true } : {}) }, signal)
   }
 
   async sourceMessageExtensionContext(

@@ -1,5 +1,29 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+可用模型|Available models
+即我可用模型|Arkme models
+查看官方模型，可在对应功能中选用|Explore official models to use in the corresponding features
+刷新模型目录|Refresh model catalog
+关闭模型目录|Close model catalog
+搜索模型名称或提供方|Search models or providers
+筛选模型适用场景|Filter by use case
+正在读取官方模型…|Loading official models…
+暂时无法读取模型目录|Could not load the model catalog
+部分场景暂时无法读取，已展示可确认的模型。|Some use cases are unavailable. Verified models are shown.
+共 {v0} 个模型|{v0} models
+没有找到匹配的模型|No matching models
+该场景暂未提供可用模型|No models available for this use case
+查看 {v0} 的能力与费用|View capabilities and pricing for {v0}
+能力与费用|Capabilities and pricing
+识别与分析|Recognition and analysis
+使用 AI 积分|Uses AI points
+计费信息待确认|Billing not confirmed
+每 1,000 Token，单位：积分|AI points per 1,000 tokens
+缓存输入|Cached input
+该场景的计费详情暂未提供|Pricing details are not available for this use case
+模型能力及费用以对应场景为准，实际费用按用量结算。|Capabilities and pricing vary by use case. Charges are based on actual usage.
+模型目录会随官方开放情况更新|The catalog updates as official models become available
+读取于 {v0}|Read at {v0}
 导出日期范围|Export date range
 保存确认失败，请重试。|Could not confirm the saved backup. Please retry.
 上次成功保存：|Last successfully saved:

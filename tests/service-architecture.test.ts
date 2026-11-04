@@ -156,7 +156,7 @@ const expectedServiceFiles = [
   'private-group-create-service.ts',
   'chat-thought-service.ts', 'record-thought-service.ts', 'thought-realtime-service.ts', 'thought-continuation-service.ts',
   'public-social-service.ts',
-  'model-directory-service.ts',
+  'model-directory-contract.ts', 'model-directory-service.ts',
   'composer-document.ts',
   'conversation-location-service.ts',
   'recording-voice-trigger-service.ts',
