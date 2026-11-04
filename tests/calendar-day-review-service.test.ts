@@ -179,3 +179,37 @@ it('model discovery uses the day-review owner and enforces the response scope', 
   f.post.mockResolvedValueOnce({...capability,model_selection_v1:true}).mockResolvedValueOnce({...envelope,date:'2026-10-14',default_code:'deepseek-v4-flash',models:[]})
   await expect(f.service.models(query)).rejects.toThrow('格式不完整')
 })
+
+
+describe('unified calendar model protocol', () => {
+ const requestId = '00000000-0000-4000-8000-000000000000'
+ const alias = 'user-api/019a4c10-0000-7000-8000-000000000001'
+ const route = `${alias}/019a4c10-0000-7000-8000-000000000002`
+ const request = { ...query, requestId, sourceKinds: ['self'], modelRoute: route }
+ const receipt = { request_id: requestId, job_id: 'job', source_kinds: ['self'], outputs: ['summary', 'timeline'], prompt_config: defaultConfig, reuse_result_id: '', model_route: route }
+ const response = { ...idle, job: { id: 'job', status: 'queued' }, submission: receipt }
+ const enhanced = {...capability, unified_models_v1: true}
+ it('rejects unsupported services before storing or submitting a route', async () => {
+   const f = fixture()
+   await expect(f.service.create(request)).rejects.toThrow('尚不支持此模型')
+   expect(f.post).toHaveBeenCalledTimes(1)
+   expect(await f.runtime.stateStore.readDayReviewPending(query.accountScope, JSON.stringify([query.bucketDate,query.timezone]))).toBeUndefined()
+ })
+ it('submits and acknowledges the exact version route for both outputs', async () => {
+   const f = fixture(); f.post.mockResolvedValueOnce(enhanced).mockResolvedValueOnce(response)
+   await expect(f.service.create(request)).resolves.toMatchObject({job:{id:'job'}})
+   expect(f.post).toHaveBeenLastCalledWith('/api/v1/day-review/create', expect.objectContaining({model_route:route,outputs:['summary','timeline']}), expect.any(Object), undefined, expect.any(Object))
+   expect((f.post.mock.calls.at(-1)?.[1] as object)).not.toHaveProperty('model_code')
+ })
+ it('retains an unknown acknowledgement and refuses retry after server downgrade', async () => {
+   const f = fixture(); f.post.mockResolvedValueOnce(enhanced).mockResolvedValueOnce({...response,submission:{...receipt,model_route:'managed-ai/other'}})
+   await expect(f.service.create(request)).rejects.toThrow()
+   f.post.mockResolvedValueOnce(capability)
+   await expect(f.service.create(request)).rejects.toThrow('尚不支持此模型')
+   expect(f.post.mock.calls.filter(c=>c[0].endsWith('/create'))).toHaveLength(1)
+ })
+ it.each([alias, 'user-api/' + '-'.repeat(36) + '/' + '-'.repeat(36), 'managed-ai/Bad', 'https://example.com'])('rejects malformed/unfrozen route %s before IO', async modelRoute => {
+   const f=fixture(); await expect(f.service.create({...request,modelRoute})).rejects.toThrow('选择无效')
+   expect(f.post).not.toHaveBeenCalled()
+ })
+})

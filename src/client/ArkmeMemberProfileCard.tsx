@@ -1,3 +1,4 @@
+import { WorldSubscribeButton } from './WorldSubscriptions.js'
 import { PUBLIC_PERSON_FRESH_MS } from '../public-person-cache.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ArkmeConversationMemberItem, ArkmeGroupAvatarFallback } from '../types.js'
@@ -143,6 +144,6 @@ export function ArkmeMemberProfileCard(props: {
     refreshing={props.refreshing ?? profileRefreshing} refreshError={props.refreshError ?? profileRefreshError}
     busy={props.busy} closeWhileBusy={props.closeWhileBusy === true || worldBusy && !props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
     hideSend={props.hideSend} error={error || props.error} onClose={props.onClose} onSend={() => { if (scope === identityShareAccountScope()) props.onSend() }}
-    teamContact={teamContact} onContactAsTeam={props.onContactAsTeam} onWorld={() => { void world() }} browserUrl={props.browserUrl}
+    subscription={person && !person.isSelf ? <WorldSubscribeButton target={{ kind: 'person', userId: person.userId }} /> : undefined} teamContact={teamContact} onContactAsTeam={props.onContactAsTeam} onWorld={() => { void world() }} browserUrl={props.browserUrl}
     onRefresh={props.onRefresh ?? (target ? () => { if (profileReadBusy.current) return; profileReadBusy.current = true; setProfileRefreshing(true); setError(''); setRevision(value => value + 1) } : undefined)} />
 }
