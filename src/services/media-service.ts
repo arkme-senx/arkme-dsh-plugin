@@ -999,9 +999,10 @@ export class MediaService {
           trustedSignedImageUrl(this.runtime.config.environment, avatarUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
         )
       } catch (error) {
-        if (cachedAvatarUrl === undefined || cachedAvatarUrl !== avatarUrl) throw error
-        this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
-        const refreshedUrl = (await this.profile.publicProfilesByUserIds([reference.targetUserId], session, signal))
+        signal?.throwIfAborted()
+        if (!(error instanceof ArkmePluginError) || !['image-download-failed', 'image-download-timeout'].includes(error.code)) throw error
+        await this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
+        const refreshedUrl = (await this.profile.publicProfileSummariesByUserIds([reference.targetUserId], session, signal, 0))
           .get(reference.targetUserId)?.avatarUrl
         if (refreshedUrl === undefined) throw error
         return await this.downloadSignedImage(

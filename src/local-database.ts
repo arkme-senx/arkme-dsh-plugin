@@ -1,3 +1,4 @@
+import { publicPersonSnapshot, PUBLIC_PERSON_MAX_ENTRIES, type PublicPersonSnapshot } from './public-person-cache.js'
 import {readRecordExcerpt,type RecordExcerpt} from './record-excerpt.js'
 import { changeLocalTranscript, type LocalTranscriptEntry, type LocalTranscriptChange } from './local-transcript-state.js'
 import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
@@ -184,6 +185,12 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         data BLOB NOT NULL, touched_at INTEGER NOT NULL,
         PRIMARY KEY(user_id, image_ref)
       );
+      CREATE TABLE IF NOT EXISTS public_person_cache (
+        environment TEXT NOT NULL, viewer_id INTEGER NOT NULL, target_id INTEGER NOT NULL,
+        payload TEXT NOT NULL, updated_at_millis INTEGER NOT NULL,
+        PRIMARY KEY(environment, viewer_id, target_id)
+      );
+      CREATE INDEX IF NOT EXISTS public_person_cache_age ON public_person_cache(environment, viewer_id, updated_at_millis DESC);
       CREATE TABLE IF NOT EXISTS conversation_member_cache (
         user_id INTEGER NOT NULL,
         group_key TEXT NOT NULL,
@@ -676,6 +683,44 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       cachedAtMillis: row?.updated_at_millis ?? 0,
       revision: await this.revision(userId),
     }
+  }
+
+  async clearPublicPeople(environment: string, viewer: number, target?: number): Promise<void> {
+    if (target === undefined) this.database.prepare('DELETE FROM public_person_cache WHERE environment=? AND viewer_id=?').run(environment, viewer)
+    else this.database.prepare('DELETE FROM public_person_cache WHERE environment=? AND viewer_id=? AND target_id=?').run(environment, viewer, target)
+  }
+
+  async cachedPublicPerson(environment: string, viewer: number, target: number): Promise<PublicPersonSnapshot | undefined> {
+    const row = this.database.prepare('SELECT payload FROM public_person_cache WHERE environment = ? AND viewer_id = ? AND target_id = ?').get(environment, viewer, target) as { payload: string } | undefined
+    if (!row) return
+    try {
+      const value = Buffer.byteLength(row.payload) <= 8192 ? publicPersonSnapshot(JSON.parse(row.payload), target) : undefined
+      if (value) return value
+    } catch { /* Corrupt cache is a miss, never a blocked profile. */ }
+    this.database.prepare('DELETE FROM public_person_cache WHERE environment=? AND viewer_id=? AND target_id=? AND payload=?').run(environment, viewer, target, row.payload)
+    return undefined
+  }
+
+  async cachePublicPeople(environment: string, viewer: number, entries: readonly PublicPersonSnapshot[], missing: readonly number[], observedAt: number): Promise<void> {
+    if (!['prod', 'test'].includes(environment) || !Number.isSafeInteger(viewer) || viewer <= 0 || entries.length + missing.length > 50 || !Number.isSafeInteger(observedAt)) return
+    const values = entries.flatMap(entry => {
+      const value = publicPersonSnapshot(entry, entry?.profile?.userId)
+      if (!value) return []
+      const payload = JSON.stringify(value)
+      return Buffer.byteLength(payload) <= 8192 ? [{ value, payload }] : []
+    })
+    this.database.exec('BEGIN IMMEDIATE')
+    try {
+      const upsert = this.database.prepare(`INSERT INTO public_person_cache(environment, viewer_id, target_id, payload, updated_at_millis) VALUES(?, ?, ?, ?, ?)
+        ON CONFLICT(environment, viewer_id, target_id) DO UPDATE SET payload=excluded.payload, updated_at_millis=excluded.updated_at_millis WHERE excluded.updated_at_millis >= public_person_cache.updated_at_millis`)
+      for (const { value, payload } of values) upsert.run(environment, viewer, value.profile.userId, payload, value.updatedAtMillis)
+      const remove = this.database.prepare('DELETE FROM public_person_cache WHERE environment=? AND viewer_id=? AND target_id=? AND updated_at_millis<=?')
+      for (const id of missing) if (Number.isSafeInteger(id) && id > 0) remove.run(environment, viewer, id, observedAt)
+      this.database.prepare(`DELETE FROM public_person_cache WHERE environment=? AND viewer_id=? AND target_id NOT IN
+        (SELECT target_id FROM public_person_cache WHERE environment=? AND viewer_id=? ORDER BY updated_at_millis DESC, target_id LIMIT ?)`)
+        .run(environment, viewer, environment, viewer, PUBLIC_PERSON_MAX_ENTRIES)
+      this.database.exec('COMMIT')
+    } catch (error) { this.database.exec('ROLLBACK'); throw error }
   }
 
   async cachedConversationMembers(userId: number, group: string): Promise<ArkmeConversationMemberCache | undefined> {
