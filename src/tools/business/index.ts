@@ -7,6 +7,7 @@ import {teamMemberTools} from './contacts/team-members.js'
 import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
 import { teamEntryTools } from './contacts/team-entries.js'
 import { teamWorldReadTool, teamWorldWriteTool } from './world/team-world.js'
+import {worldSoundReadTool,worldSoundWriteTool} from './world/sound-excerpts.js'
 import { worldReplyTool } from './world/reply.js'
 import { worldReactionReadTool, worldReactionWriteTool } from './world/reactions.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
@@ -111,6 +112,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...botToolModules,
   worldRecentToolModule,
   worldReactionReadTool, worldReactionWriteTool, teamWorldReadTool, teamWorldWriteTool, worldReplyTool,
+  worldSoundReadTool,worldSoundWriteTool,
   worldMineToolModule,
   worldUserToolModule,
   worldVoiceprintSocialContextToolModule,

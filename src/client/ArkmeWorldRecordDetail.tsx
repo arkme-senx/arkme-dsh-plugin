@@ -1,4 +1,5 @@
 import { WorldPublicationActions } from './WorldPublicationControls.js'
+import {WorldSoundPublicationAction} from './WorldSoundPublicationAction.js'
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeWorldAuthorLabel, ArkmeWorldFeedItem } from '../types.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
@@ -101,7 +102,7 @@ export function ArkmeWorldRecordDetail({ item: seed, onClose, onOpenAuthor, rend
   const avatar = renderAvatar(item)
   return <ArkmeDetailShell title="" label={tr('世界动态详情')} closeLabel={tr('关闭动态详情')} resizeLabel={tr('调整动态详情宽度')}
     style={{ top: 0 }} widthPreferenceKey="arkme:world-detail-width:v1" onClose={onClose}
-    headerActions={<WorldPublicationActions target={{recordRef:seed.recordRef}} onUnpublished={onClose}/>}
+    headerActions={seed.soundExcerpt?<WorldSoundPublicationAction recordRef={seed.recordRef} onWithdrawn={onClose}/>:<WorldPublicationActions target={{recordRef:seed.recordRef}} onUnpublished={onClose}/>}
     headerContent={<ArkmeMessageDetailAuthor
       avatar={authorAction ? <button type="button" style={authorButton} aria-label={tr('查看{v0}的用户卡片', { v0: item.authorName })} onClick={authorAction}>{avatar}</button> : avatar}
       name={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>{authorAction ? <button type="button" style={authorButton} onClick={authorAction}>{item.authorName}</button> : item.authorName}{item.teamAuthor ? <WorldTeamBadge /> : <ArkmeMembershipBadge memberType={item.memberType} />}</span>}
