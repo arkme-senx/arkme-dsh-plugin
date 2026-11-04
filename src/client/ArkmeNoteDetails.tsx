@@ -1,3 +1,4 @@
+import {useGroupTeamMentions} from './use-group-team-mentions.js'
 import { NoteWorldReactionArchive } from './NoteWorldReactionArchive.js'
 import { detailExtensionSends, useDetailExtensionSends, DetailExtensionSendStatus, type DetailExtensionSend } from './detail-extension-send.js'
 import { readDetailExtensionPages } from './detail-extension-pages.js'
@@ -295,16 +296,17 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     }
   }, [targetKey])
   useEffect(() => { setMentionTrigger(undefined) }, [accountKey, sourceKind, sourceRef])
+  const mentionTeams=useGroupTeamMentions(accountKey??'',sourceKind==='group_chat'?sourceRef:undefined,mentionTrigger!==undefined)
   const mentionCandidates = useMemo((): ArkmeMentionCandidate[] => {
     if (!mentionsEnabled || mentionTrigger === undefined) return []
     if (sourceKind === 'group_chat') {
-      return arkmeGroupMentionCandidates(mentionTrigger.query, mentionBots.group, activeConversationMembers)
+      return arkmeGroupMentionCandidates(mentionTrigger.query, mentionBots.group, activeConversationMembers,mentionTeams.items)
     }
     if (sourceKind === 'private_chat') {
       return arkmePrivateMentionCandidates(mentionTrigger.query, mentionBots.private)
     }
     return []
-  }, [activeConversationMembers, mentionBots.group, mentionTrigger, mentionsEnabled, mentionBots.private, sourceKind])
+  }, [activeConversationMembers, mentionBots.group, mentionTrigger, mentionsEnabled, mentionBots.private, sourceKind,mentionTeams.items])
   const mentionSession = useMentionSuggestions(JSON.stringify([accountKey, sourceIdentityKey ?? sourceRef, targetKey]), mentionTrigger, mentionCandidates, mentionBots.loading || (!mentionBots.ready && !mentionBots.error))
   const focusComposerAt = useCallback((caret: number) => {
     const schedule = typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function'
@@ -340,7 +342,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
       ? { all: true as const }
       : candidate.kind === 'bot'
         ? { botRef: candidate.botRef }
-        : { mentionRef: candidate.mentionRef }
+        :candidate.kind==='team'?{teamMentionRef:candidate.teamMentionRef}: { mentionRef: candidate.mentionRef }
     const displayName = candidate.kind === 'member' ? candidate.mentionDisplayName ?? candidate.displayName : candidate.displayName
     const inserted = insertArkmeComposerMentionToken(
       { text: textRef.current, mentions: mentionsRef.current, emojis: emojisRef.current },
@@ -414,7 +416,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
         ...(replyTarget?.kind === 'extension' && replyTarget.item.privateThoughtReplyRef ? { privateThoughtReplyRef: replyTarget.item.privateThoughtReplyRef } : {}),
         parent: parentItem, messageActionRef, recordUid, relationUid, textContent: serializedDraft.text,
         textFormat: serializedDraft.textFormat,
-        humanMentions: detailHumanMentionInputs(serializedDraft.mentions), botMentions: detailBotMentionInputs(serializedDraft.mentions), fileRefs,
+        teamMentions:serializedDraft.mentions.flatMap(m=>m.teamMentionRef?[{teamMentionRef:m.teamMentionRef,startIndex:m.startIndex,length:m.length}]:[]),humanMentions: detailHumanMentionInputs(serializedDraft.mentions), botMentions: detailBotMentionInputs(serializedDraft.mentions), fileRefs,
         ...(role && selfRoleSelection ? { role: { userId: selfRoleSelection.userId, roleId: role.roleId } } : {}),
         extension: { recordUid, parentRecordUid: parentRecordUid ?? rootRecordUid, level: extensionLevel,
           ...(replyTarget?.kind === 'thought' ? { thoughtReply: { thoughtId:replyTarget.thought.id, recordUid:rootRecordUid,

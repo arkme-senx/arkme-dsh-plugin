@@ -79,3 +79,20 @@ it('seals pagination cursors rather than exposing internal user/entry keys', asy
   await f.service.execute('team.app.entries.list', { cursor: page.nextCursor }, 11, 'test', post)
   expect(post).toHaveBeenLastCalledWith('entry-preferences/list', { cursor: raw, limit: 100 }, true)
 })
+
+it('keeps v1 isolated while workspace group commands persist exact stable identities and accept source-only visibility changes',async()=>{
+  const f=fixture(),entry={entry_kind:'team_group',team_id:folder.team_id,group_uid:'group-uid'},target={kind:'group',ref:'group-pref'}
+  f.refs.open.mockResolvedValue({team_id:folder.team_id,group_uid:'group-uid'} as never)
+  let dismissed=true
+  const post=vi.fn(async()=>({schema_version:2,items:[{...row({version:1,activity_seq:10,dismissed}),entry}],has_more:false}))
+  const first=await f.service.execute('team.app.entries.query',{scope:'workspace',entries:[target]},11,'test',post)
+  expect(first.schemaVersion).toBe(2)
+  expect(post).toHaveBeenLastCalledWith('entry-preferences/v2/query',{entries:[entry]},true)
+  expect(first.items[0]?.target.kind).toBe('group')
+  expect(JSON.stringify(first)).not.toContain('group-uid')
+  dismissed=false
+  await f.service.execute('team.app.entries.query',{scope:'workspace',entries:[target]},11,'test',post)
+  expect((await f.service.execute('team.app.entries.cached',{scope:'workspace'},11,'test',post)).items[0]?.dismissed).toBe(false)
+  expect((await f.service.execute('team.app.entries.cached',{},11,'test',post)).items).toEqual([])
+  expect(f.disk.has('test:11:workspace')).toBe(true)
+})

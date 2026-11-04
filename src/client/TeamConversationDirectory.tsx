@@ -1,4 +1,5 @@
 import { TeamEntryRemovalList } from './TeamEntryRemovalFeedback.js'
+import {TeamWorkspaceDirectory} from './TeamWorkspaceDirectory.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import type { TeamChannel } from '../team-app-contract.js'
@@ -27,9 +28,9 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
   const actions = useTeamConversationEntryActions(accountKey, { kind: 'folder', group })
   const { latest, channel } = group
   const unread = group.attentionUnread
-  const preview = latest.preview?.status === 'available'
+  const preview = latest?.preview?.status === 'available'
     ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
-    : latest.preview ? tr('内容暂不可用') : ''
+    : latest?.preview ? tr('内容暂不可用') : ''
   return <><button type="button" role="treeitem" aria-selected={selected} data-team-folder={channel.jotmoId}
     className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}
     style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }}>
@@ -41,10 +42,10 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
     <span data-arkme-conversation-content style={styles.chatContent}>
       <span style={styles.chatTop}>
         <span style={styles.entryName}>{channel.name}</span><ArkmeTopicTagBadge label={tr('团队')} selected={selected} truncate />
-        <span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{conversationTimeLabel(latest.updatedAt)}</span>
+        <span style={{ ...styles.chatTime, marginLeft: 'auto' }}>{conversationTimeLabel(group.activeAt??latest?.updatedAt??0)}</span>
       </span>
       <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText
-        text={`${latest.visitor?.nickname ?? tr('用户')}：${preview}`} presentation="preview" emojiSize={20} /></span></span>
+        text={group.preview!==undefined?group.preview||tr('团队群聊'):`${latest?.visitor?.nickname ?? tr('用户')}：${preview}`} presentation="preview" emojiSize={20} /></span></span>
     </span>
     {actions.feedback}
   </button>{actions.overlays}</>
@@ -54,6 +55,11 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
 export function TeamConversationDirectory({ accountKey, folder, selectedKey, onBack }: {
   accountKey: string; folder: NonNullable<ArkmeUiState['teamDirectory']>; selectedKey?: string; onBack(): void
 }) {
+  const teamRef=folder.teamRef??folder.channel?.teamRef
+  if(teamRef)return <TeamWorkspaceDirectory key={JSON.stringify([accountKey,folder.channel?.jotmoId??teamRef])} accountKey={accountKey} teamRef={teamRef} channel={folder.channel} selectedKey={selectedKey} onBack={onBack}/>
+  return <TeamConversationRootDirectory accountKey={accountKey} folder={folder} selectedKey={selectedKey} onBack={onBack}/>
+}
+function TeamConversationRootDirectory({accountKey,folder,selectedKey,onBack}:{accountKey:string;folder:NonNullable<ArkmeUiState['teamDirectory']>;selectedKey?:string|undefined;onBack():void}) {
   useArkmeLocale()
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
   const [error, setError] = useState(''), [attempt, setAttempt] = useState(0)
@@ -73,7 +79,7 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
       .catch(e => { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : tr('暂时无法打开团队，请重试')) })
     return () => controller.abort()
   }, [accountKey, folder.teamRef, channel, attempt])
-  const groups = groupTeamConversations(directory.items, directory.hasLoaded && !directory.hasMore && !directory.error)
+  const groups = groupTeamConversations(directory.items, directory.hasLoaded && !directory.hasMore && !directory.error&&!directory.foldersError,directory.workspaceFolders)
   const items = channel ? groups.find(group => group.key === channel.jotmoId)?.conversations ?? [] : []
   const visibleItems = items.filter(c => !teamEntryHidden(preferences, { kind: 'conversation', conversation: c }))
     .sort((a, b) => Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: b })) - Number(teamEntryPinned(preferences, { kind: 'conversation', conversation: a }))
@@ -122,8 +128,8 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
             {rows => rows.map(target => target.kind === 'conversation'
               ? <TeamConversationRow key={target.conversation.key} accountKey={accountKey} conversation={target.conversation} showTeamName={false} selected={selectedKey===target.conversation.key} role="treeitem"
                   onClick={() => openTeamMessages({kind:'conversation',conversation:target.conversation})} />
-              : <TeamConversationGroupRow key={target.group.key} accountKey={accountKey} group={target.group}
-                  onClick={() => openTeamMessages({kind:'team',teamRef:target.group.channel.teamRef,channel:target.group.channel})} />)}
+              : target.kind==='folder'?<TeamConversationGroupRow key={target.group.key} accountKey={accountKey} group={target.group}
+                  onClick={() => openTeamMessages({kind:'team',teamRef:target.group.channel.teamRef,channel:target.group.channel})} />:null)}
           </TeamEntryRemovalList>
         </div>
         {channel && removedItems.length > 0 && <div>

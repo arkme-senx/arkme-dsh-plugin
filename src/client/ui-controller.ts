@@ -14,6 +14,7 @@ function sameSelectedSource(left: ArkmeSourceItem | undefined, right: ArkmeSourc
   if (left === undefined || right === undefined) return left === right
   return left.sourceRef === right.sourceRef && left.sourceKey === right.sourceKey
     && left.kind === right.kind && left.displayName === right.displayName
+    && left.accessKind===right.accessKind && left.teamWorkspace?.ref===right.teamWorkspace?.ref && left.teamWorkspace?.jotmoId===right.teamWorkspace?.jotmoId
     && left.peerMemberType === right.peerMemberType
     && left.latestPreview === right.latestPreview && left.activeAtMillis === right.activeAtMillis
     && left.unreadCount === right.unreadCount && left.hasUnreadMention === right.hasUnreadMention
@@ -465,7 +466,7 @@ export class ArkmeUiController {
   }
 
   resolveTeamDirectory(teamRef: string, channel: TeamChannel): void {
-    if (this.state.mode !== 'team' || this.state.teamDirectory?.teamRef !== teamRef) return
+    if ((this.state.mode !== 'team' && !(this.state.mode==='source'&&this.state.selectedSource?.accessKind==='team_delegation')) || this.state.teamDirectory?.teamRef !== teamRef) return
     const remembered = this.lastTeamConversations.get(channel.jotmoId)
     const intent = this.state.teamIntent
     if (remembered && intent?.kind === 'team' && intent.teamRef === teamRef) {
@@ -563,12 +564,18 @@ export class ArkmeUiController {
     this.publish(rest)
   }
 
-  selectSource(source: ArkmeSourceItem): void {
+  selectSource(source: ArkmeSourceItem,focusComposer=false): void {
     this.leaveContacts()
     this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
     const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'source', selectedSource: source })
+    const teamDirectory=this.directoryForSource(source)
+    this.publish({ ...rest, mode: 'source', selectedSource: source,...(teamDirectory?{teamDirectory}:{}),...(focusComposer?{composerFocusRevision:(this.state.composerFocusRevision??0)+1}:{}) })
+  }
+
+  private directoryForSource(source:ArkmeSourceItem):ArkmeUiState['teamDirectory'] {
+    if(source.accessKind!=='team_delegation'||!source.teamWorkspace)return undefined
+    return this.state.teamDirectory?.channel?.jotmoId===source.teamWorkspace.jotmoId?this.state.teamDirectory:{teamRef:source.teamWorkspace.ref}
   }
 
   updateSelectedSourceProjection(source: ArkmeSourceItem): boolean {
@@ -603,6 +610,7 @@ export class ArkmeUiController {
       ...rest,
       mode: 'source',
       selectedSource: source,
+      ...(this.directoryForSource(source)?{teamDirectory:this.directoryForSource(source)!}:{}),
       notificationActivationRevision: ++this.notificationActivationRevision,
     })
   }
@@ -626,6 +634,8 @@ export class ArkmeUiController {
       mode: 'source',
       selectedSource: source,
       conversationTarget: {
+        // The source frame retains the team directory while the original group
+        // is shown in the ordinary conversation pane.
         revision: ++this.conversationTargetRevision,
         transientHighlight,
         ...(openDetail ? { openDetail: true } : {}),
@@ -638,6 +648,7 @@ export class ArkmeUiController {
           ? { recordOwnerUserId: recordOwnerId(recordOwnerUserId) }
           : {}),
       },
+      ...(this.directoryForSource(source)?{teamDirectory:this.directoryForSource(source)!}:{}),
     })
   }
 
@@ -648,7 +659,10 @@ export class ArkmeUiController {
   }
 
   private publish(next: ArkmeUiState): void {
-    if (next.mode !== 'team') { const { teamIntent: _intent, teamDirectory: _directory, ...rest } = next; next = rest }
+    if (next.mode !== 'team') {
+      const {teamIntent:_intent,teamDirectory,...rest}=next
+      next={...rest,...(next.mode==='source'&&next.selectedSource?.accessKind==='team_delegation'&&next.selectedSource.teamWorkspace&&teamDirectory?{teamDirectory}:{})}
+    }
     if (next.mode !== 'world') {
       const { worldInitialScope: _scope, worldNavigationRevision: _revision, worldTeamTarget: _team, ...rest } = next
       next = rest

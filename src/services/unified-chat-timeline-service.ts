@@ -15,12 +15,12 @@ import type { InterwovenService } from './interwoven-service.js'
 import type { SourceService } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 
-const ROUTE = '/api/v1/chat/timeline/unified/v2'
+const ROUTE = '/api/v1/chat/timeline/unified/v3'
 function invalid(): ArkmePluginError { return new ArkmePluginError('chat-timeline-contract-invalid', '时间线响应不完整，请重试', true, 502) }
 
 export function parseUnifiedTimelineResponse(raw: unknown, sessionUid: string) {
   const data = objectValue(raw)
-  if (data.protocol_version !== 2 || data.chat_session_uid !== sessionUid || !Array.isArray(data.timeline_items)
+  if (data.protocol_version !== 3 || data.chat_session_uid !== sessionUid || !Array.isArray(data.timeline_items)
     || data.timeline_items.length > 100 || !Array.isArray(data.sources) || typeof data.complete !== 'boolean'
     || typeof data.has_more !== 'boolean' || typeof data.older_has_more !== 'boolean' || typeof data.newer_has_more !== 'boolean'
     || typeof data.window_token !== 'string' || !data.window_token) throw invalid()
@@ -56,7 +56,7 @@ export class UnifiedChatTimelineService {
   private storageRetryAt = 0
   private storageFailures = 0
   private invalidateAll = 0
-  private readonly knownSources = new Map<string, { scope: string; userId: number; revision: number; refreshRevision: number }>()
+  private readonly knownSources = new Map<string, { scope: string; canonical?:string; userId: number; revision: number; refreshRevision: number }>()
   private readonly pendingInvalidations = new Map<string, TimelineCacheCommand>()
   private invalidating: Promise<void> | undefined
   private readonly unsubscribe: (() => void) | undefined
@@ -114,6 +114,9 @@ export class UnifiedChatTimelineService {
   /** Directory arrivals request catch-up; they do not revoke a confirmed snapshot. */
   async refreshKnownWindows(): Promise<void> {
     for (const sourceKey of [...this.knownSources.keys()]) await this.refreshHint(sourceKey)
+  }
+  audienceAliases(sourceKey:string):string[] {
+    return [...this.knownSources].flatMap(([key,state])=>state.canonical===sourceKey&&key!==sourceKey?[key]:[])
   }
 
   async refreshHint(sourceKey: string): Promise<void> {
@@ -219,16 +222,16 @@ export class UnifiedChatTimelineService {
     }
     const key = await this.runtime.stateStore.uniqueCode()
     if (this.disposed || this.epoch !== epoch) throw new ArkmePluginError('chat-timeline-stale', '账号状态已变化', false, 409)
-    const codec = new TimelineTokenCodec(key, JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef]))
-    const scope = JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef])
     const sourceItem = await this.source.sourceItem(source)
+    const scope = JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef,...(source.groupDelegation?[sourceItem.sourceKey]:[])])
+    const codec = new TimelineTokenCodec(key,scope)
     const sourceKey = sourceItem.sourceKey ?? sourceRef
-    const state = this.knownSources.get(sourceKey) ?? { scope, userId: session.userId, revision: 0, refreshRevision: 0 }
+    const state = this.knownSources.get(sourceKey) ?? { scope,...(source.groupDelegation?{canonical:await this.source.chatDirectorySourceKey(session.userId,source.ownerRef)}:{}), userId: session.userId, revision: 0, refreshRevision: 0 }
     this.knownSources.delete(sourceKey); this.knownSources.set(sourceKey, state)
     while (this.knownSources.size > 512) this.knownSources.delete(this.knownSources.keys().next().value!)
     const revision = state.revision
     const refreshRevision = state.refreshRevision
-    const requestKey = createHmac('sha256', key).update('projection:6\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
+    const requestKey = createHmac('sha256', key).update('projection:7\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
     const invalidating = this.invalidating
     if (invalidating) await new Promise<void>((resolve, reject) => {
       const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
@@ -243,8 +246,13 @@ export class UnifiedChatTimelineService {
       signal.throwIfAborted()
       const currentSession = await this.runtime.requireSession()
       if (this.disposed || this.epoch !== epoch || state.revision !== revision || currentSession.userId !== session.userId || currentSession.refreshToken !== session.refreshToken) throw new ArkmePluginError('chat-timeline-stale', '账号或会话状态已变化，请重试', true, 409)
+      if(source.groupDelegation) {
+        const access=objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/team-group/access',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true,chatAccessRef:source.groupDelegation.accessRef}))
+        if(access.state!=='ready'||access.access_kind!=='team_delegation'||objectValue(access.representation).group_membership_uid!==source.groupDelegation.groupMembershipUid||objectValue(access.representation).group_membership_revision!==source.groupDelegation.groupMembershipRevision)throw invalid()
+      }
     }
     if (query.cacheOnly) {
+      await assertCurrent()
       let cached: ArkmeTimelinePage | undefined
       try { cached = cache ? await this.callStorage<ArkmeTimelinePage | undefined>(cache, { kind: 'read', scope, request: requestKey,
         ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
@@ -287,13 +295,14 @@ export class UnifiedChatTimelineService {
     const body = { chat_session_uid: source.ownerRef, mode, limit: pageQuery.limit ?? 40,
       ...(pageQuery.cursor ? { cursor: codec.open(pageQuery.cursor, mode) } : {}),
       ...(pageQuery.windowTokens ? { window_tokens: pageQuery.windowTokens.map(token => codec.open(token, 'window')) } : {}),
-      ...(mode === 'around' && pageQuery.systemRef ? systemTimelineAnchorCodec(key, this.runtime.config.environment, session.userId, source.ownerRef).open(pageQuery.systemRef) : {}),
+      ...(mode === 'around' && pageQuery.systemRef ? systemTimelineAnchorCodec(key, this.runtime.config.environment, session.userId, source.ownerRef, source.groupDelegation ? sourceItem.sourceKey : undefined).open(pageQuery.systemRef) : {}),
       ...(mode === 'around' && pageQuery.contextRef ? { anchor_source: 'offline_context', anchor_id: await this.offlineContexts?.timelineAnchor(pageQuery.contextRef, source.ownerRef) } : {}),
       ...(mode === 'around' && pageQuery.messageRef ? await this.offlineContexts?.messageAnchor(pageQuery.messageRef, source.ownerRef) : {}),
       ...(mode === 'around' && !pageQuery.systemRef && !pageQuery.contextRef && !pageQuery.messageRef ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
     let raw: unknown
     try {
       raw = await this.runtime.authenticatedChatPost(ROUTE, body, session, signal, {
+        ...(source.groupDelegation?{chatAccessRef:source.groupDelegation.accessRef}:{}),
         lane: background || mode === 'refresh' ? 'background-read' : 'interactive-read', key: `unified-timeline:${JSON.stringify(body)}`, cancelWhenUnobserved: true,
       })
     } catch (error) {
@@ -364,6 +373,10 @@ export class UnifiedChatTimelineService {
         if (join) { projected.push({ ...order, kind: 'member-join', item: join }); continue }
         projected.push({ ...order, kind: 'notice', text: event.kind === 'group_invite' ? '群聊已创建'
           : '群成员加入了群聊' })
+      } else if(event.source==='team_membership') {
+        const labels:Record<string,string>={joined:'加入了群聊',left:'退出了群聊',removed:'已被移出群聊'}
+        if(payload.chat_session_uid!==source.ownerRef||!stringValue(payload.team_name)||!labels[String(payload.kind)])throw invalid()
+        projected.push({...order,kind:'notice',text:`${stringValue(payload.team_name)}团队${labels[String(payload.kind)]}`})
       } else if (event.source === 'ai_polish') {
         const actor = stringValue(payload.actor_display_name_snapshot)
         const rule = stringValue(payload.rule_name) || stringValue(payload.rule_text)

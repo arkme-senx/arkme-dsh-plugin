@@ -14,6 +14,23 @@ it('checks provider support before querying identity facts',async()=>{const fetc
 
 it('registers both read capabilities in the production catalog',()=>{expect(arkmeToolCatalog.toolNamesFor('business')).toEqual(expect.arrayContaining(['arkme_group_identities','arkme_team_public_card']))})
 
+it('uses the same typed Host owner for group commands and workspace reads, with capability discovery',async()=>{
+ const service={providerCapabilities:()=>({contractVersion:1,features:{teamGroupWorkspace:1}}),executeTeamApp:vi.fn(async(operation)=>({operation}))}
+ const sdk=new ArkmeSdk({fetchImpl:async(_url,init)=>{const{operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params)}))}})
+ const request={operation:'command' as const,command:{action:'join' as const,sourceRef:'source',teamRef:'team',requestUid:'same-attempt',expectedRevision:0}}
+ await sdk.teamGroups(request);await sdk.teamWorkspace({operation:'folders'});await sdk.teamWorkspace({operation:'cards',conversationRef:'customer'})
+ expect(service.executeTeamApp).toHaveBeenCalledWith('team.app.group.request',{request},undefined)
+ expect(service.executeTeamApp).toHaveBeenCalledWith('team.app.workspace.request',{request:{operation:'cards',conversationRef:'customer'}},undefined)
+ expect(arkmeToolCatalog.toolNamesFor('business')).toEqual(expect.arrayContaining(['arkme_team_groups_read','arkme_team_groups_change','arkme_team_workspace']))
+})
+
+it('does not invoke a group write when the provider does not advertise the contract',async()=>{
+ const fetchImpl=vi.fn(async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{}}}))) as typeof fetch
+ const sdk=new ArkmeSdk({fetchImpl})
+ await expect(sdk.teamGroups({operation:'status',requestUid:'old-attempt'})).rejects.toThrow('不支持')
+ expect(fetchImpl).toHaveBeenCalledOnce()
+})
+
 it('SDK extension forwards the same frozen Team selection into the existing Host owner', async () => {
  const selection={teamRef:'opaque',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}
  const service={extendSourceMessage:vi.fn(async()=>({localState:'synced',representation:{name:'团队',jotmoId:'team'}}))}

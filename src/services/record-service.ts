@@ -65,6 +65,8 @@ import type { ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeRecordSourceReader {
+  sourceScopeKey(source:ArkmeSourceRefPayload):Promise<string>
+  authorizeGroupDelegation(source:ArkmeSourceRefPayload,session:ArkmeSessionCredentials,signal?:AbortSignal):Promise<void>
   openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload>
 }
 
@@ -344,7 +346,7 @@ export class RecordService {
     onReeditCommitted?: () => Promise<void>,
     private readonly resolveReeditMentions?: (
       source: ArkmeSourceRefPayload, text: string, humans: ArkmeHumanMentionInput[], bots: ArkmeBotMentionInput[],
-      session: ArkmeSessionCredentials, textFormat: 'plain' | 'markdown',
+      session: ArkmeSessionCredentials, textFormat: 'plain' | 'markdown',teams?:import('../types.js').ArkmeTeamMentionInput[],
     ) => Promise<ResolvedMentions>,
     private readonly currentSenderSnapshot?: (session: ArkmeSessionCredentials) => Promise<{ avatar?: string; nickname?: string } | undefined>,
     private readonly forwardProfiles?: Pick<ProfileService, 'sealProfileImageRef'>,
@@ -520,8 +522,8 @@ export class RecordService {
 
   private reeditMentionResolver(owner: RecordReeditOwnerSnapshot, text: string, session: ArkmeSessionCredentials): NewMentionResolver | undefined {
     const resolve = this.resolveReeditMentions
-    return resolve === undefined ? undefined : (humans, bots) => resolve(
-      owner.source, text, humans, bots, session, arkmeRecordTextFormat(owner.contentPayload),
+    return resolve === undefined ? undefined : (humans, bots,teams) => resolve(
+      owner.source, text, humans, bots, session, arkmeRecordTextFormat(owner.contentPayload),teams,
     )
   }
 
@@ -848,6 +850,7 @@ export class RecordService {
     return await atWrite(expectedCommittedFingerprint, owner, async () => {
       if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('record-reedit-account-changed', '账号已切换，请恢复编辑后重新确认', false, 409)
       this.assertReeditActive()
+      if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session)
       try {
         const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/records/update', body, session, undefined, { trackWriteOutcome: true },
@@ -949,11 +952,13 @@ export class RecordService {
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const uid = itemUid.trim()
     if (uid === '') throw new ArkmePluginError('long-article-item-invalid', '长文记录标识无效', false)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/detail', { record_uid: uid }, session, signal,
     )
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const core = objectValue(data.record_core)
     const recordUid = stringValue(core.record_uid).trim()
     const templateKind = numberValue(core.template_kind)
@@ -1021,6 +1026,7 @@ export class RecordService {
       || !Number.isSafeInteger(input.version) || input.version <= 0 || input.version !== detail.version) {
       throw new ArkmePluginError('long-article-update-invalid', '长文内容或版本无效，请刷新后重试', false, 409)
     }
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session)
     try {
     await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/update', {
       record_uid: detail.itemUid,
@@ -1146,6 +1152,7 @@ export class RecordService {
   }
 
   private async recordReeditSourceIdentityKey(source: ArkmeSourceRefPayload): Promise<string> {
+    if(source.groupDelegation)return `arkme-record-reedit-source-v1.${createHmac('sha256',await this.runtime.stateStore.uniqueCode()).update(JSON.stringify(['delegated-reedit',this.runtime.config.environment,source.userId,await this.source.sourceScopeKey(source)])).digest('base64url')}`
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`record-reedit-source-v1:${String(source.userId)}:${source.kind}:${source.ownerRef}`)
       .digest('base64url')
@@ -1184,9 +1191,11 @@ export class RecordService {
     signal?: AbortSignal,
   ): Promise<RecordReeditOwnerSnapshot> {
     const source = openedSource ?? await this.source.openSourceRef(sourceRef, session.userId)
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/detail', { record_uid: itemUid }, session, signal,
     )
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const core = objectValue(data.record_core)
     if (stringValue(core.record_uid).trim() !== itemUid) {
       throw new ArkmePluginError('record-reedit-not-found', '未找到可重新编辑的快记', false, 404)

@@ -19,12 +19,14 @@ export interface ArkmeRecordToolPort {
     beforeMillis?: number
   }): Promise<ArkmeCachedQueryResult>
   searchRemote(options: {
+    sourceRef?: string
     query: string
     limit: number
     cursor?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult>
   searchScene(options: {
+    sourceRef?: string
     scene: ArkmeSearchSceneKind
     articleScope?: import('../../types.js').ArkmeLongArticleBrowseScope
     limit: number

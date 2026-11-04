@@ -1196,11 +1196,11 @@ export function ArkmeNavigation({
     ], arkmeComposerDraftStore, authenticated ? auth?.userId : undefined)
   }, [auth?.environment, auth?.userId, authenticated, conversationProjection, botDirectoryPreferences, privateInteractionDirectory.rows, chatDirectory.projection?.removedSourceKeys, draftRevision])
   const mergedRows = mergeTeamDirectoryRows(rootConversationRows, teamDirectory.items,
-    teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)
+    teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error&&!teamDirectory.foldersError, teamPreferences,teamDirectory.workspaceFolders)
   const targetForTeamRow = (row: (typeof mergedRows)[number]): TeamEntryTarget | undefined => row.kind === 'team-folder'
     ? { kind: 'folder', group: row.group } : row.kind === 'team' ? { kind: 'conversation', conversation: row.conversation } : undefined
   const teamTargets: TeamEntryTarget[] = [
-    ...groupTeamConversations(teamDirectory.items).map(group => ({ kind: 'folder' as const, group })),
+    ...groupTeamConversations(teamDirectory.items,true,teamDirectory.workspaceFolders).map(group => ({ kind: 'folder' as const, group })),
     ...teamDirectory.items.map(conversation => ({ kind: 'conversation' as const, conversation })),
   ]
   const teamActivity = teamRemovalEvidence(currentAccountKey ?? '', teamTargets)
@@ -2214,9 +2214,9 @@ export function ArkmeNavigation({
     ><ArkmeMark size={20} /></button></div>
   }
 
-  if (authenticated && ui.mode === 'team' && ui.teamDirectory && currentAccountKey) return <ConversationActionFeedbackContext.Provider value={setDirectoryActionFeedback}><TeamConversationDirectory
+  if (authenticated && (ui.mode === 'team'||ui.mode==='source'&&ui.selectedSource?.accessKind==='team_delegation') && ui.teamDirectory && currentAccountKey) return <ConversationActionFeedbackContext.Provider value={setDirectoryActionFeedback}><TeamConversationDirectory
     accountKey={currentAccountKey} folder={ui.teamDirectory}
-    {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : {})}
+    {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : ui.mode==='source'&&ui.selectedSource?.sourceKey?{selectedKey:ui.selectedSource.sourceKey}:{})}
     onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />{directoryActionFeedback}</ConversationActionFeedbackContext.Provider>
 
   return <ConversationActionFeedbackContext.Provider value={setDirectoryActionFeedback}><TeamEntryRemovalContext.Provider value={teamRemovals}><section
@@ -2417,6 +2417,7 @@ export function ArkmeNavigation({
       }}
       onClose={closeGlobalSearch}
     />, document.body)}
+    {teamDirectory.foldersError && <div role="alert" style={styles.status}>{tr(teamDirectory.foldersError)} <button type="button" onClick={()=>{if(currentAccountKey)void refreshTeamDirectory(currentAccountKey)}}>{tr('重试')}</button></div>}
     {cloudPreferenceError && (teamDirectory.items.length > 0 || Object.keys(teamPreferences).length > 0) && <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{cloudPreferenceError} <button type="button" onClick={() => { if (currentAccountKey) { teamDirectoryPreferences.acknowledgeNotice(currentAccountKey); void teamDirectoryPreferences.hydrate(currentAccountKey, true).catch(() => {}) } }}>{tr('刷新核对')}</button></div>}
     {localPreferenceError && <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{localPreferenceError} <button type="button" onClick={() => { if (currentAccountKey) void localDirectoryPreferences.hydrate(currentAccountKey, true).catch(() => {}) }}>{tr('刷新核对')}</button></div>}
     {builtinActions.overlays}

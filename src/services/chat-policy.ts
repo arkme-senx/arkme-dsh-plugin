@@ -23,10 +23,12 @@ export async function patchChatPolicy(
   chatSessionUid: string,
   patch: ChatPolicyPatch,
   signal?: AbortSignal,
+  chatAccessRef?:string,
 ): Promise<ChatPolicySnapshot> {
   signal?.throwIfAborted()
   const updated = await runtime.authenticatedChatPost<ChatPolicySnapshot>(
     '/api/v1/chats/policy/update', { chat_session_uid: chatSessionUid, patch }, session, signal,
+    ...(chatAccessRef?[{chatAccessRef,bypassCache:true,cacheMs:0}] as const:[] as const),
   )
   signal?.throwIfAborted()
   if ((await runtime.requireSession()).userId !== session.userId) {

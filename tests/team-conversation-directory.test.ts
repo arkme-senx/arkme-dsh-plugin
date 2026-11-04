@@ -26,7 +26,7 @@ it('a failure on one side preserves known rows and allows the other side to refr
   })
   await refreshTeamDirectory('a')
   expect(readTeamDirectory('a').items.map(c => c.updatedAt)).toEqual([3, 1])
-  expect(mock.mock.calls.every(([op]) => op === 'team.app.conversations' || op.startsWith('team.app.entries.'))).toBe(true)
+  expect(mock.mock.calls.every(([op]) => op === 'team.app.conversations' || op==='team.app.workspace.request' || op.startsWith('team.app.entries.'))).toBe(true)
 })
 it('account switch discards late responses from the old account', async () => {
   let resolve!: (value: unknown) => void
@@ -261,4 +261,28 @@ it('a changed off-page pin cannot regain its old preview on a receipt or failed 
   await refreshTeamDirectory('changed-pin', false, true)
   expect(readTeamDirectory('changed-pin').items[0]!.unread).toBe(0)
   expect(readTeamDirectory('changed-pin').items[0]!.preview?.text).toBe('')
+})
+
+it('uses real group-only folders and merges later group activity without inventing a private conversation',()=>{
+ const folder={channel,activityAt:50,preview:'小王 [售后]：收到',unread:2,groupCount:1,hasPublished:true,groups:[{sourceKey:'canonical-group',unread:2,lastSeq:12}]}
+ const groups=groupTeamConversations([],true,[folder])
+ expect(groups).toHaveLength(1)
+ expect(groups[0]).toMatchObject({conversations:[],unread:2,activeAt:50,preview:folder.preview,hasPublished:true})
+ expect(groups[0]!.latest).toBeUndefined()
+ const merged=groupTeamConversations([item('team',10)],true,[folder])
+ expect(merged).toHaveLength(1);expect(merged[0]).toMatchObject({unread:3,activeAt:50,preview:folder.preview})
+ const rows=mergeTeamDirectoryRows([{activeAtMillis:20,pinned:false}],[],true,{},[folder])
+ expect(rows[0]).toMatchObject({kind:'team-folder',activeAtMillis:50})
+})
+
+it('publishes group-only folders independently and drops their body on a failed fresh authority read',async()=>{
+ const folder={channel,activityAt:50,preview:'已批准群消息',unread:2,groupCount:1,hasPublished:true,groups:[{sourceKey:'canonical-group',unread:2,lastSeq:12}]}
+ mock.mockImplementation(async(operation,{side})=>operation==='team.app.workspace.request'?[folder]:{items:side?[item(side)]:[],hasMore:false})
+ stops.push(startTeamDirectory('folders-only'))
+ await vi.waitFor(()=>expect(readTeamDirectory('folders-only').workspaceFolders).toEqual([folder]))
+ mock.mockImplementation(async(operation,{side})=>{if(operation==='team.app.workspace.request')throw new Error('来源权限暂时无法确认');return {items:side?[item(side)]:[],hasMore:false}})
+ await refreshTeamDirectory('folders-only')
+ expect(readTeamDirectory('folders-only').workspaceFolders).toEqual([])
+ expect(readTeamDirectory('folders-only').items).toHaveLength(2)
+ expect(readTeamDirectory('folders-only').foldersError).toBe('来源权限暂时无法确认')
 })

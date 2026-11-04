@@ -131,3 +131,11 @@ it('keeps the form after creation failure and ignores a late creation response a
   await act(async () => resolve({ teamRef: 'stale-team' }))
   expect(navigate).not.toHaveBeenCalled(); expect(changed).not.toHaveBeenCalled()
 })
+
+it('uses the exact Team reference for group participants when the public handle has changed',async()=>{
+ call.mockResolvedValue({...card,jotmoId:'new_team'})
+ await act(async()=>root.render(<TeamPublicCardDialog accountKey="prod:90" teamRef="exact-team-reference" jotmoId="old_team" onClose={close}/>))
+ expect(call.mock.calls[0]![1]).toEqual({expectedAccountKey:'prod:90',jotmoId:'old_team',teamRef:'exact-team-reference'})
+ expect(document.body.textContent).toContain('@new_team')
+ expect(button('联系团队').disabled).toBe(false)
+})

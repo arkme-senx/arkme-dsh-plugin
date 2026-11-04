@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { ArkmeStateStore } from '../../src/state-store.js'
+import type {ArkmeSourceRefPayload} from '../../src/services/source-service.js'
 import { RecordService } from '../../src/services/record-service.js'
 import { ArkmeService } from '../../src/arkme-service.js'
 import { MediaService } from '../../src/services/media-service.js'
@@ -60,6 +61,8 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
   }
   const mediaService = new MediaService(runtime as never, {} as never, {} as never, { recordUid: raw => (raw as any).record_core?.record_uid ?? '' })
   const sourceReader = {
+    async sourceScopeKey(source:ArkmeSourceRefPayload) {const d=source.groupDelegation;return JSON.stringify([source.userId,source.kind,source.ownerRef,d?.teamId,d?.membershipKind,d?.membershipRevision,d?.groupMembershipUid,d?.groupMembershipRevision])},
+    authorizeGroupDelegation:vi.fn(async(_source:ArkmeSourceRefPayload,_session:unknown,_signal?:AbortSignal)=>{}),
     async openSourceRef() { return { version: 1 as const, userId: 42, kind: 'default_category' as const, ownerRef: 'uncategorized', displayName: '未分类' } },
   }
   const restart = (freshState = false) => new RecordService((freshState ? { ...runtime, stateStore: new ArkmeStateStore(root) } : runtime) as never, mediaService, sourceReader, undefined, files, onCommitted)
@@ -1478,4 +1481,23 @@ describe('Record attachment re-edit', () => {
     await expect(x.service.commitRecordReedit(p)).resolves.toMatchObject({ status: 'committed', version: 8 })
     expect(x.update).toHaveBeenCalledTimes(1)
   })
+})
+
+it('keeps same-record drafts separate for two teams and a new admission, and blocks revoked owner reads',async()=>{
+ const x=await setup({origin_kind:4,origin_container_ref:'group'})
+ const sources:Record<string,ArkmeSourceRefPayload>={}
+ const frame={accessRef:'opaque-current-access',teamId:'42',membershipKind:'member' as const,membershipRevision:7,groupMembershipUid:'admission-A',groupMembershipRevision:1,visibleFromSeq:9}
+ for(const [key,delegation] of Object.entries({'source-A':frame,'source-B':{...frame,teamId:'43'},'source-A-rejoin':{...frame,groupMembershipUid:'admission-A2',groupMembershipRevision:3}}))sources[key]={version:1,userId:42,kind:'group_chat',ownerRef:'group',displayName:'群',groupDelegation:delegation}
+ vi.spyOn(x.sourceReader,'openSourceRef').mockImplementation(async(sourceRef?:string)=>sources[sourceRef??''] as never)
+ try {
+  await x.service.saveRecordReeditDraft({sourceRef:'source-A',itemUid:'r1',newText:'A的草稿',expectedVersion:7})
+  expect((await x.service.recordReeditEditor('source-B','r1')).draft).toBeUndefined()
+  expect((await x.service.recordReeditEditor('source-A-rejoin','r1')).draft).toBeUndefined()
+  expect((await x.service.recordReeditEditor('source-A','r1')).draft?.textContent).toBe('A的草稿')
+  x.sourceReader.authorizeGroupDelegation.mockRejectedValue(new Error('当前代理资格已失效'))
+  const ownerRead=vi.spyOn(x.runtime,'authenticatedPost')
+  await expect(x.service.recordReeditEditor('source-B','r1')).rejects.toThrow('当前代理资格已失效')
+  expect(ownerRead).not.toHaveBeenCalled()
+  expect(x.writes).toEqual([])
+ } finally {x.service.dispose();await rm(x.root,{recursive:true,force:true})}
 })

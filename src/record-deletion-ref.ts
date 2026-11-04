@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { ArkmePluginError } from './services/service.js'
 export interface RecordDeletionReference {
+  audienceKey?:string
   userId: number
   sourceKind: 'private_chat' | 'group_chat' | 'send_to_self' | 'default_category' | 'topic'
   sourceOwnerRef: string
@@ -25,17 +26,18 @@ export function openRecordDeletionRef(value: string, key: string): RecordDeletio
   if (!ref || !Number.isSafeInteger(ref.userId) || ref.userId <= 0 || !Number.isSafeInteger(ref.recordVersion) || ref.recordVersion <= 0
     || !['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'].includes(ref.sourceKind)
     || typeof ref.sourceOwnerRef !== 'string' || !ref.sourceOwnerRef.trim() || typeof ref.recordUid !== 'string' || !ref.recordUid.trim()) throw invalid()
+  if(ref.audienceKey!==undefined&&(typeof ref.audienceKey!=='string'||!ref.audienceKey||ref.audienceKey.length>256))throw invalid()
   return ref
 }
 
 /** Only authoritative Record snapshots can grant deletion; missing versions never fall back to a relation version. */
 export function recordDeletionCapability(input: {
   userId: number; sourceKind: string; sourceOwnerRef: string; recordUid: string
-  recordVersion: number; recordOwnerUserId: number; isMe: boolean; status: number
+  recordVersion: number; recordOwnerUserId: number; isMe: boolean; status: number; audienceKey?:string
 }, key: string): { recordDeletionRef?: string } {
   if (!input.isMe || input.recordOwnerUserId !== input.userId || input.status !== 1 || !input.recordUid.trim()
     || !Number.isSafeInteger(input.recordVersion) || input.recordVersion <= 0
     || !['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'].includes(input.sourceKind)) return {}
-  return { recordDeletionRef: sealRecordDeletionRef({ userId: input.userId, sourceKind: input.sourceKind as RecordDeletionReference['sourceKind'],
+  return { recordDeletionRef: sealRecordDeletionRef({ ...(input.audienceKey?{audienceKey:input.audienceKey}:{}),userId: input.userId, sourceKind: input.sourceKind as RecordDeletionReference['sourceKind'],
     sourceOwnerRef: input.sourceOwnerRef, recordUid: input.recordUid, recordVersion: input.recordVersion }, key) }
 }

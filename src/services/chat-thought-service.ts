@@ -1,7 +1,7 @@
 import type { ArkmeRecordThought, ArkmeRecordThoughts, ArkmeThoughtDisplay } from '../record-thought-contract.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 
-type Target = { kind: 'owned' | 'chat'; viewerUserId: number; recordUid: string; chatSessionUid?: string; relationUid?: string }
+type Target = { kind: 'owned' | 'chat'; viewerUserId: number; recordUid: string; chatSessionUid?: string; relationUid?: string; chatAccessRef?: string }
 type Resolve = (sourceRef: string, actionRef: string) => Promise<Target>
 const text = (value: unknown, max = 16_384): string => typeof value === 'string' ? value.slice(0, max).trim() : ''
 const texts = (value: unknown, max: number): string[] => Array.isArray(value) ? value.slice(0, max).map(item => text(item)).filter(Boolean) : []
@@ -31,13 +31,13 @@ export async function readChatThoughts(runtime: ServiceRuntime, expectedScope: s
   const targets = await Promise.all([...new Set(input as string[])].map(ref => resolve(sourceRef, ref)))
   signal?.throwIfAborted()
   if (!targets.length) return { accountScope: scope, items: [] }
-  const chatSessionUid = targets[0]?.chatSessionUid
-  if (!chatSessionUid || targets.some(target => target.kind !== 'chat' || target.viewerUserId !== session.userId || target.chatSessionUid !== chatSessionUid || !target.relationUid || !target.recordUid))
+  const chatSessionUid = targets[0]?.chatSessionUid, chatAccessRef = targets[0]?.chatAccessRef
+  if (!chatSessionUid || targets.some(target => target.kind !== 'chat' || target.viewerUserId !== session.userId || target.chatSessionUid !== chatSessionUid || target.chatAccessRef !== chatAccessRef || !target.relationUid || !target.recordUid))
     throw new ArkmePluginError('chat-thought-query-invalid', '想法查询的消息范围无效', false, 403)
   if (`${runtime.config.environment}:${(await runtime.requireSession()).userId}` !== scope) throw changed()
   const relations = new Map(targets.map(target => [target.relationUid!, target.recordUid]))
   const result = await runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/chat-thought/list',
-    { chat_session_uid: chatSessionUid, rel_uids: [...relations.keys()] }, session, signal, { lane: 'background-read', publishServiceCooldown: false })
+    { chat_session_uid: chatSessionUid, rel_uids: [...relations.keys()] }, session, signal, { lane: 'background-read', publishServiceCooldown: false, ...(chatAccessRef ? {chatAccessRef,cacheMs:0,bypassCache:true} : {}) })
   signal?.throwIfAborted()
   if (`${runtime.config.environment}:${(await runtime.requireSession()).userId}` !== scope) throw changed()
   if (!Array.isArray(result.items)) throw new ArkmePluginError('chat-thought-response-invalid', '想法暂时无法读取，请稍后重试', true)

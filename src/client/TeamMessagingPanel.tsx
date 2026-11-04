@@ -1,4 +1,5 @@
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
+import {TeamGroupSourceCards} from './TeamGroupSourceCards.js'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
 import { ArkmeArticlePicker } from './ArkmeArticlePicker.js'
@@ -244,7 +245,7 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   }, [accountKey, intent, attempt])
   if (selected) return <div className="team-message-panel">
     <TeamConversationPane key={`${accountKey}:${selected.side}:${selected.key}`} accountKey={accountKey} conversation={selected}
-      onChanged={() => { void refreshTeamDirectory(accountKey) }}
+      onChanged={() => { invalidateTeamMessages(accountKey) }}
       onReadChanged={() => { void refreshTeamDirectory(accountKey, false, true) }}
       onAccessLost={() => { discardTeamDirectory(accountKey, selected); arkmeUi.forgetTeamConversation(selected.channel) }} />
   </div>
@@ -304,6 +305,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [contentPicker, setContentPicker] = useState<'document' | 'file' | 'gallery'>()
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
+  const [privateComposerEnabled,setPrivateComposerEnabled]=useState(false),privateOpenRequest=useRef('')
   const [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false)
   const draftAttachments = draft.attachments ?? (draft.localFiles ?? []).map(localFile => ({ localFile }))
   const uploading = arkmeAttachmentsPending(draftAttachments)
@@ -432,6 +434,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }, [receiptStore])
   const replyBack=useRef<{ref:string;key:string}>()
   const refresh = useCallback(async (beforeSeq = 0, replace = false) => {
+    if(conversation.sourceOnly&&!privateComposerEnabled) {
+      const empty:TeamTimeline={conversation,messages:[],hasMore:false,beforeSeq:0}
+      latest.current=empty;setTimeline(empty);return empty
+    }
     const token = ++generation.current
     const windowBefore = historyWindow.current
     try {
@@ -460,7 +466,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       if (!windowBefore && beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
     } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old); if (inaccessible(e)) { revokeAccess(); receiptStore.dispose() } } }
-  }, [conversation.ref, receiptStore, revokeAccess])
+  }, [conversation.ref, receiptStore, revokeAccess,privateComposerEnabled])
   const returnToLatest = async () => {
     if (historyWindow.current) {
       const previousWindow = historyWindow.current
@@ -949,7 +955,21 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     chooseReply(message)
     if (!keepDetail) setDetailKey(undefined)
   }
-  const conversationComposer = (defaultReply?: TeamMessage, detailReady = true) => <div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
+  const openPrivateComposer=async()=>{
+    if(busy)return
+    privateOpenRequest.current ||= crypto.randomUUID()
+    setBusy(true);setError('')
+    try {
+      const result=await callArkme<import('../team-outbound-contract.js').TeamOutboundOpenResult>('team.app.outbound.open',{expectedAccountKey:accountKey,teamRef:conversation.channel.teamRef,recipient:{kind:'team-customer',conversationRef:conversation.ref},requestUid:privateOpenRequest.current},ctrl.current.signal)
+      if(ctrl.current.signal.aborted)return
+      if(result.state!=='ready'||result.conversation.key!==conversation.key)throw new Error(tr('私信入口返回异常，请重试'))
+      const next={conversation:result.conversation,messages:latest.current?.messages??[],hasMore:false,beforeSeq:0};latest.current=next;setTimeline(next);setPrivateComposerEnabled(true)
+    }catch(e){if(!ctrl.current.signal.aborted)setError(errorText(e))}
+    finally{if(!ctrl.current.signal.aborted)setBusy(false)}
+  }
+  const conversationComposer = (defaultReply?: TeamMessage, detailReady = true) => conversation.sourceOnly&&!privateComposerEnabled
+    ?<div className="arkme-conversation-composer" style={composerLayout.composer}><p>{tr('此客户来自群聊互动，回复请使用上方来源群卡片。')}</p><button type="button" disabled={busy} onClick={()=>{void openPrivateComposer()}}>{tr('改为私信此用户')}</button></div>
+    :<div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
       onDrop={event => { if (event.dataTransfer.files.length && !editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked) { event.preventDefault(); selectFiles(event.dataTransfer.files) } }}
       style={{...composerLayout.composer, flexDirection: 'column', ...(selection.ids ? { display: 'none' } : {})}} data-team-composer={editing ? 'reedit' : 'message'}>
       <ArkmeComposerInfoRow destination={current.side === 'team' ? `${current.visitor?.nickname ?? tr('用户')}（${current.channel.name}）` : current.channel.name} focused={composerFocused && !editing}>
@@ -1112,6 +1132,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         onLocate={locateVisitorRecord}/>
 
     </header>
+    {conversation.side==='team'&&<TeamGroupSourceCards key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation}/>}
     {Boolean(quoteNavigation.notice || replyBack.current) && <div role="status">{quoteNavigation.notice}
       {replyBack.current && <button type="button" onClick={()=>{const back=replyBack.current!;replyBack.current=undefined;quoteNavigation.clear();void locateMessage(back.ref,back.key)}}>{tr('返回回复位置')}</button>}
     </div>}

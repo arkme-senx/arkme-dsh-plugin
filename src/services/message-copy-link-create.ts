@@ -3,10 +3,11 @@ import type { ArkmeMessageCopyLinkResult } from '../types.js'
 import { ArkmePluginError, stringValue, type ServiceRuntime } from './service.js'
 
 /** All sources enter Chat's existing permission, snapshot and content-audit pipeline. */
-export async function createMessageCopyLink(runtime: ServiceRuntime, sources: readonly object[], session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeMessageCopyLinkResult> {
+export async function createMessageCopyLink(runtime: ServiceRuntime, sources: readonly object[], session: ArkmeSessionCredentials, signal?: AbortSignal, chatAccessRef?: string): Promise<ArkmeMessageCopyLinkResult> {
   signal?.throwIfAborted()
   const data = await runtime.authenticatedChatPost<Record<string, unknown>>(
     '/api/v1/chats/messages/copy-link/get-or-create', { sources }, session, signal,
+    ...(chatAccessRef ? [{chatAccessRef}] : []),
   )
   const sid = stringValue(data.sid).trim(), url = stringValue(data.url).trim()
   if (sid === '' || !/^https?:\/\//i.test(url)) {

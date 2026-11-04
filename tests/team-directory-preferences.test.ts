@@ -184,3 +184,20 @@ it('a slow reconciliation in one account does not block another account', async 
   await read
   expect(teamEntryPinned(f.store.read('a'), direct)).toBe(false)
 })
+
+it('accepts ordered workspace projections with unchanged private sequence and restores a group independently of private pins',async()=>{
+  const f=fixture(),original=f.transport.getMockImplementation()!
+  let dismissed=true
+  f.transport.mockImplementation(async(op,p)=>{
+    const response=await original(op,p)
+    return {...response,schemaVersion:2,items:response.items.map(row=>({...row,activitySeq:0,version:2,dismissed}))}
+  })
+  await f.store.reconcile('workspace',[conversation],new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('workspace'),direct)).toBe(true)
+  dismissed=false
+  await f.store.reconcile('workspace',[conversation],new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('workspace'),direct)).toBe(false)
+  dismissed=true // A source withdrawal removes the new activity without increasing the preference version.
+  await f.store.reconcile('workspace',[conversation],new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('workspace'),direct)).toBe(true)
+})

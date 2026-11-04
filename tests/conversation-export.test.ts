@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import type { ArkmeSourceItem, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage } from '../src/types.js'
 import {
@@ -19,6 +19,14 @@ function item(uid: string, sendAtMillis: number, overrides: Partial<ArkmeTimelin
 }
 
 describe('conversation Markdown export', () => {
+  it('rejects the whole export when the current source is revoked between pages',async()=>{
+    const delegated={...source,sourceRef:'frozen-team-source',kind:'group_chat' as const,accessKind:'team_delegation' as const}
+    const read=vi.fn().mockResolvedValueOnce({source:delegated,items:[item('authorized',100)],hasMore:true,nextCursor:{itemUid:'authorized',sendAtMillis:100}}).mockRejectedValueOnce(new Error('team_group_forbidden'))
+    const download=vi.fn()
+    await expect(collectArkmeConversationExportItems(read).then(download)).rejects.toThrow('team_group_forbidden')
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(download).not.toHaveBeenCalled()
+  })
   it('keeps long-running export feedback non-blocking', () => {
     const sidebarSource = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     expect(sidebarSource).toContain('data-arkme-conversation-export-progress="true"')

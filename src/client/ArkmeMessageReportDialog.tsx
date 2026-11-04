@@ -85,14 +85,16 @@ export function arkmeCanReportTimelineMessage(
   return source?.kind === 'group_chat' && !item.isMe && (item.messageRef?.trim() ?? '') !== ''
 }
 
-export interface MessageReportSubmission { messageRef:string;reportType:ArkmeMessageReportType;reason?:string;requestUid:string }
+export interface MessageReportSubmission { sourceRef?:string;messageRef:string;reportType:ArkmeMessageReportType;reason?:string;requestUid:string }
 export function ArkmeMessageReportDialog<TResult = ArkmeMessageReportResult>({
   item,
+  sourceRef,
   onClose,
   onSubmitted,
   submitReport,
 }: {
   item: ArkmeTimelineItem
+  sourceRef?:string
   onClose: () => void
   onSubmitted: (result: TResult) => void
   submitReport?: (input:MessageReportSubmission,signal:AbortSignal)=>Promise<TResult>
@@ -157,7 +159,7 @@ export function ArkmeMessageReportDialog<TResult = ArkmeMessageReportResult>({
     setError('')
     let result: TResult | undefined
     try {
-      const input={messageRef,reportType,...(normalizedReason===''?{}:{reason:normalizedReason}),requestUid}
+      const input={messageRef,reportType,...(sourceRef===undefined?{}:{sourceRef}),...(normalizedReason===''?{}:{reason:normalizedReason}),requestUid}
       result=submitReport ? await submitReport(input,controller.signal) : await callArkme<TResult>('source.message-report',input,controller.signal)
     } catch (caught) {
       if (mountedRef.current) {
@@ -170,7 +172,7 @@ export function ArkmeMessageReportDialog<TResult = ArkmeMessageReportResult>({
       if (mountedRef.current) setSubmitting(false)
     }
     if (result !== undefined && mountedRef.current) onSubmittedRef.current(result)
-  }, [canSubmit, item.messageRef, normalizedReason, reportType, requestUid,submitReport])
+  }, [canSubmit, item.messageRef, normalizedReason, reportType, requestUid,submitReport,sourceRef])
 
   const preview = item.textContent.trim() || item.title.trim() || '非文本消息'
   const dialog = <div
