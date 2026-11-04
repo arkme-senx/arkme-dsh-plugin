@@ -34,3 +34,21 @@ it('has bounded admission and isolates synchronous memory by exact account scope
  expect(memory.get('prod:11')).toBeUndefined();memory.clear();expect(memory.get('test:11')).toBeUndefined()
  expect(parseArkoTimelineCache({})).toBeUndefined()
 })
+it.each([false,true])('rebases trimmed cache boundaries without retaining an obsolete cursor (had cursor=%s)',async hadCursor=>{
+ const raw={...snapshot(),messages:Array.from({length:2050},(_,i)=>({...snapshot().messages[0]!,id:`history:${i+1}`,createdAtMillis:i+1})),
+  interactions:Array.from({length:450},(_,i)=>({interactionKey:`i${i+1}`,interactionRef:`r${i+1}`,occurredAtMillis:i+1,sourceName:'self',kind:'self' as const,summary:'synthetic',suggestion:false})),
+  historyCursor:hadCursor?'before-first-loaded':undefined,interactionCursor:hadCursor?'before-first-interaction':undefined}
+ const parsed=parseArkoTimelineCache(raw)!
+ expect(parsed).toMatchObject({historyBeforeMillis:52,interactionBeforeMillis:52})
+ expect(parsed.messages[0]?.id).toBe('history:51');expect(parsed.interactions[0]?.interactionKey).toBe('i51')
+ expect(parsed.historyCursor).toBeUndefined();expect(parsed.interactionCursor).toBeUndefined()
+ expect(parseArkoTimelineCache(parsed)).toEqual(parsed)
+ const dir=await mkdtemp(join(tmpdir(),'arko-trim-'));dirs.push(dir)
+ await new ArkoTimelineCacheStore(dir).access('test:11',raw)
+ expect(await new ArkoTimelineCacheStore(dir).access('test:11')).toEqual(parsed)
+})
+it('keeps same-time clipping inclusive and rejects malformed resume boundaries',()=>{
+ const raw={...snapshot(),messages:Array.from({length:2001},(_,i)=>({...snapshot().messages[0]!,id:`h${i}`,createdAtMillis:1000}))}
+ expect(parseArkoTimelineCache(raw)).toMatchObject({historyBeforeMillis:1001})
+ expect(parseArkoTimelineCache({...snapshot(),historyBeforeMillis:-1})).toBeUndefined()
+})

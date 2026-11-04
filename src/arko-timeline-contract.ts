@@ -22,6 +22,10 @@ export interface ArkmeArkoInteractionTarget {
 export interface ArkmeArkoTimelineCache {
   schemaVersion: 1; savedAtMillis: number; messages: ArkoTimelineMessage[]; interactions: ArkmeArkoInteraction[]
   session?: ArkmeArkoSession; historyCursor?: string; interactionCursor?: string
+  /** Retained-window boundary. History cursors require this filter on every page. */
+  historyBeforeMillis?: number
+  /** First earlier interaction read after cache truncation; its cursor carries the filter. */
+  interactionBeforeMillis?: number
   viewport?: { scrollTop: number; followTail: boolean; anchorId?: string; anchorOffset?: number }
 }
 export interface ArkmeArkoTimelinePort {

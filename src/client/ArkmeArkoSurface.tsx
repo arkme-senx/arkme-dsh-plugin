@@ -462,6 +462,7 @@ export function ArkmeArkoSurface() {
   }, [])
   const [interactions, setInteractions] = useState<ArkmeArkoInteraction[]>(initialTimeline.current?.interactions ?? [])
   const [interactionCursor, setInteractionCursor] = useState<string | undefined>(initialTimeline.current?.interactionCursor)
+  const [interactionBeforeMillis, setInteractionBeforeMillis] = useState<number | undefined>(initialTimeline.current?.interactionBeforeMillis)
   const [interactionError, setInteractionError] = useState('')
   const mergeInteractions = (old: ArkmeArkoInteraction[], page: ArkmeArkoInteractionPage) => {
     const removed = new Set(page.removedKeys)
@@ -514,12 +515,14 @@ export function ArkmeArkoSurface() {
   }, [locationTarget, historyWindow])
   useEffect(() => { setHistoryWindow(undefined); setWindowError(undefined); setWindowLoading(false); setLocationTarget(undefined); followTailRef.current = arkoTimelineMemory.get(accountKey)?.viewport?.followTail ?? true }, [accountKey])
   const [historyCursor, setHistoryCursor] = useState<string | undefined>(initialTimeline.current?.historyCursor)
+  const [historyBeforeMillis, setHistoryBeforeMillis] = useState<number | undefined>(initialTimeline.current?.historyBeforeMillis)
   const [historyError, setHistoryError] = useState('')
   const [loading, setLoading] = useState(!initialTimeline.current)
   const [historyLoading, setHistoryLoading] = useState(false)
   const timelineSnapshot = useRef<ArkmeArkoTimelineCache>()
   const committedTimeline: ArkmeArkoTimelineCache = { schemaVersion: 1, savedAtMillis: Date.now(), messages, interactions,
-    ...(session ? { session } : {}), ...(historyCursor ? { historyCursor } : {}), ...(interactionCursor ? { interactionCursor } : {}) }
+    ...(session ? { session } : {}), ...(historyCursor ? { historyCursor } : {}), ...(interactionCursor ? { interactionCursor } : {}),
+    ...(historyBeforeMillis ? { historyBeforeMillis } : {}), ...(interactionBeforeMillis ? { interactionBeforeMillis } : {}) }
   const restoredTimelineScope = useRef<string>()
   const [viewportAnchor, setViewportAnchor] = useState<string | undefined>(initialTimeline.current?.viewport?.anchorId)
   const restoreTimelineViewport = useRef(initialTimeline.current?.viewport)
@@ -529,6 +532,7 @@ export function ArkmeArkoSurface() {
     const cached = arkoTimelineMemory.get(accountKey)
     setMessages(cached?.messages ?? []); setInteractions(cached?.interactions ?? []); setSession(cached?.session)
     setHistoryCursor(cached?.historyCursor); setInteractionCursor(cached?.interactionCursor); setInteractionError('')
+    setHistoryBeforeMillis(cached?.historyBeforeMillis); setInteractionBeforeMillis(cached?.interactionBeforeMillis)
     setViewportAnchor(cached?.viewport?.anchorId)
     restoreTimelineViewport.current = cached?.viewport
     followTailRef.current = cached?.viewport?.followTail ?? true
@@ -566,7 +570,7 @@ export function ArkmeArkoSurface() {
       void callArkme('arko.timeline.cache', { accountScope: accountKey, value: snapshot }).catch(() => undefined)
     }, 700)
     return () => clearTimeout(timer)
-  }, [accountKey, messages, interactions, historyCursor, interactionCursor, session])
+  }, [accountKey, messages, interactions, historyCursor, interactionCursor, historyBeforeMillis, interactionBeforeMillis, session])
   const bottomVisibility = useScrollBottomVisibility(bodyRef, recordsRef, !loading, visibleMessages)
   const measureBottom = useRef(bottomVisibility.measure)
   measureBottom.current = bottomVisibility.measure
@@ -779,6 +783,7 @@ export function ArkmeArkoSurface() {
           arkoTimelineMemory.set(accountKey, cached)
           setMessages(cached.messages); setInteractions(cached.interactions); setSession(cached.session)
           setHistoryCursor(cached.historyCursor); setInteractionCursor(cached.interactionCursor)
+          setHistoryBeforeMillis(cached.historyBeforeMillis); setInteractionBeforeMillis(cached.interactionBeforeMillis)
           setViewportAnchor(cached.viewport?.anchorId); restoreTimelineViewport.current = cached.viewport; followTailRef.current = cached.viewport?.followTail ?? true
           setLoading(false)
         }
@@ -795,7 +800,7 @@ export function ArkmeArkoSurface() {
           if (controller.signal.aborted) return
           if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
           setMessages(current => mergeHistory(current, page.items)); setLoading(false)
-          if (!cached) setHistoryCursor(first.nextCursor)
+          if (!cached?.messages.length) { setHistoryCursor(first.nextCursor); setHistoryBeforeMillis(undefined) }
           else if (page.items.length) scrollToBottom()
           cursor = latestAt > 0 && page.hasMore ? page.nextCursor : undefined
           if (cursor) { if (visited.has(cursor) || visited.size >= 100) throw new Error('Arko history cursor did not advance'); visited.add(cursor)
@@ -989,18 +994,20 @@ export function ArkmeArkoSurface() {
   }, [activeRun, profileUserId, scrollToBottom])
 
   const loadEarlier = useCallback(async () => {
-    if (historyCursor === undefined && interactionCursor === undefined || historyLoadInFlightRef.current) return
+    if (!historyCursor && !historyBeforeMillis && !interactionCursor && !interactionBeforeMillis || historyLoadInFlightRef.current) return
     historyLoadInFlightRef.current = true
     setHistoryLoading(true)
     const controller = new AbortController(); historyController.current = controller
     try {
       const expired = (error: unknown) => error instanceof ArkmeClientError && error.body.code === 'arkme-code-1001'
-      const messageRead = historyCursor ? callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50, cursor: historyCursor }, controller.signal).catch(caught => {
+      let messageBoundary = historyBeforeMillis
+      const messageRead = historyCursor || messageBoundary ? callArkme<ArkmeArkoMessagePage>('arko.messages', { limit: 50, ...(historyCursor ? {cursor:historyCursor} : {}), ...(messageBoundary ? {endAtMillis:messageBoundary} : {}) }, controller.signal).catch(caught => {
         if (!expired(caught)) throw caught
         const oldest = Math.min(...messages.map(item=>item.orderAtMillis??item.createdAtMillis??Infinity))
-        return callArkme<ArkmeArkoMessagePage>('arko.messages', {limit:50,...(Number.isFinite(oldest)?{endAtMillis:oldest+1}:{})},controller.signal)
+        messageBoundary = Number.isFinite(oldest) ? oldest+1 : undefined
+        return callArkme<ArkmeArkoMessagePage>('arko.messages', {limit:50,...(messageBoundary?{endAtMillis:messageBoundary}:{})},controller.signal)
       }) : Promise.resolve(undefined)
-      const interactionRead = interactionCursor ? readInteractions({ limit: 20, cursor: interactionCursor }, controller.signal).catch(caught => {
+      const interactionRead = interactionCursor || interactionBeforeMillis ? readInteractions({ limit: 20, ...(interactionCursor ? {cursor:interactionCursor} : {}), ...(!interactionCursor && interactionBeforeMillis ? {beforeMillis:interactionBeforeMillis} : {}) }, controller.signal).catch(caught => {
         if (!expired(caught)) throw caught
         const oldest = Math.min(...interactions.map(item=>item.occurredAtMillis))
         return readInteractions({limit:20,...(Number.isFinite(oldest)?{beforeMillis:oldest+1}:{})},controller.signal)
@@ -1010,8 +1017,8 @@ export function ArkmeArkoSurface() {
       const interactionPage=interactionResult.status==='fulfilled'?interactionResult.value:undefined
       if (controller.signal.aborted) return
       if (!historyViewRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
-      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor) }
-      if (interactionPage && interactionPage.accountScope === accountKey) { setInteractions(current => mergeInteractions(current, interactionPage)); setInteractionCursor(interactionPage.nextCursor) }
+      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor); setHistoryBeforeMillis(page.hasMore ? messageBoundary : undefined) }
+      if (interactionPage && interactionPage.accountScope === accountKey) { setInteractions(current => mergeInteractions(current, interactionPage)); setInteractionCursor(interactionPage.nextCursor); setInteractionBeforeMillis(undefined) }
       if(messageResult.status==='rejected') throw messageResult.reason
       if(interactionResult.status==='rejected') throw interactionResult.reason
       setHistoryError('')
@@ -1022,19 +1029,19 @@ export function ArkmeArkoSurface() {
       historyLoadInFlightRef.current = false
       setHistoryLoading(false)
     }
-  }, [historyCursor, interactionCursor, accountKey, messages, interactions, readInteractions])
+  }, [historyCursor, interactionCursor, historyBeforeMillis, interactionBeforeMillis, accountKey, messages, interactions, readInteractions])
 
   useEffect(() => {
     const root = bodyRef.current
     const sentinel = historySentinelRef.current
-    if (historyWindow !== undefined || loading || historyLoading || historyError !== '' || root === null || sentinel === null || historyCursor === undefined && interactionCursor === undefined) return
+    if (historyWindow !== undefined || loading || historyLoading || historyError !== '' || root === null || sentinel === null || !historyCursor && !historyBeforeMillis && !interactionCursor && !interactionBeforeMillis) return
     const observer = new IntersectionObserver(entries => {
       if (entries[0]?.isIntersecting !== true || historyLoadInFlightRef.current) return
       void loadEarlier()
     }, { root, rootMargin: '120px 0px 0px' })
     observer.observe(sentinel)
     return () => { observer.disconnect() }
-  }, [historyError, historyLoading, historyCursor, interactionCursor, loadEarlier, loading, historyWindow])
+  }, [historyError, historyLoading, historyCursor, interactionCursor, historyBeforeMillis, interactionBeforeMillis, loadEarlier, loading, historyWindow])
 
   const pageWindow = async (direction: 'asc' | 'desc') => {
     const current = historyWindow
@@ -1068,7 +1075,7 @@ export function ArkmeArkoSurface() {
       const controller = new AbortController(); windowController.current = controller
       const page = await readLatestArkoMessages(controller.signal)
       controller.signal.throwIfAborted()
-      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor) }
+      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor); setHistoryBeforeMillis(undefined) }
 
       setHistoryError('')
       // The historical DOM is still mounted here. Own the next layout before
@@ -1093,7 +1100,7 @@ export function ArkmeArkoSurface() {
     try {
       const page = await readLatestArkoMessages(controller.signal)
       if (controller.signal.aborted) return
-      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor) }
+      if (page) { setMessages(current => mergeHistory(current, page.items)); setHistoryCursor(page.nextCursor); setHistoryBeforeMillis(undefined) }
 
       scrollToBottom()
       if (session !== undefined) {
@@ -1450,7 +1457,7 @@ export function ArkmeArkoSurface() {
       {interactionError && <div role="status" style={{ ...styles.notice, fontSize: 12 }}>
         {tr('互动记录暂未同步，已加载内容仍可查看。')}
         <button type="button" style={styles.retryButton} onClick={() => {
-          void callArkme<ArkmeArkoInteractionPage>('arko.interactions', { limit: 20 }).then(page => { if (page.accountScope === accountKey) { setInteractions(current => mergeInteractions(current, page)); setInteractionCursor(page.nextCursor); setInteractionError('') } }).catch(() => undefined)
+          void callArkme<ArkmeArkoInteractionPage>('arko.interactions', { limit: 20 }).then(page => { if (page.accountScope === accountKey) { setInteractions(current => mergeInteractions(current, page)); setInteractionCursor(page.nextCursor); setInteractionBeforeMillis(undefined); setInteractionError('') } }).catch(() => undefined)
         }}>{tr('重试')}</button>
       </div>}
       {pendingTurn !== undefined && !sending && activeRun === undefined && <div style={{ ...styles.notice, ...styles.feedbackRow }}>

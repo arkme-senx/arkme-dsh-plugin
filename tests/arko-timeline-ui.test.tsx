@@ -62,3 +62,58 @@ it('runs every warm history page through the real Host query validator',async()=
   expect(host.textContent).not.toContain('历史查询参数无效')
  }finally{await act(async()=>root.unmount());host.remove();service.dispose();runtime.dispose()}
 })
+it('resumes both clipped streams and repeats the history time filter with its cursor',async()=>{
+ const observers:Array<{callback:(entries:unknown[])=>void;options:any;active:boolean}>=[]
+ vi.stubGlobal('IntersectionObserver',class{
+  entry:{callback:(entries:unknown[])=>void;options:any;active:boolean}
+  constructor(callback:(entries:unknown[])=>void,options:any){this.entry={callback,options,active:true};observers.push(this.entry)}
+  observe(){} disconnect(){this.entry.active=false}
+ })
+ const ready={...cache(),historyCursor:undefined,interactionCursor:undefined,historyBeforeMillis:1001,interactionBeforeMillis:2001}
+ arkoTimelineMemory.set('test:10001',ready)
+ let historyPages=0,interactionPages=0
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  const p=params as any
+  if(method==='arko.messages'){
+   if(p?.startAtMillis)return {items:[],hasMore:false,scanned:0,consistency:'live'} as never
+   const more=++historyPages===1
+   return {items:[],hasMore:more,...(more?{nextCursor:'history-page-2'}:{}),scanned:0,consistency:'live'} as never
+  }
+  if(method==='arko.interactions'){
+   const older=p?.beforeMillis||p?.cursor==='interaction-page-2',more=older&&++interactionPages===1
+   return {accountScope:'test:10001',items:[],removedKeys:[],hasMore:more,...(more?{nextCursor:'interaction-page-2'}:{})} as never
+  }
+  if(method==='arko.session')return ready.session as never
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ const earlier=()=>{const o=observers.filter(x=>x.active&&x.options?.rootMargin==='120px 0px 0px').at(-1);expect(o).toBeDefined();o!.callback([{isIntersecting:true}])}
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  await act(async()=>earlier())
+  await act(async()=>vi.advanceTimersByTimeAsync(700))
+  expect(arkoTimelineMemory.get('test:10001')).toMatchObject({historyCursor:'history-page-2',historyBeforeMillis:1001,interactionCursor:'interaction-page-2'})
+  expect(arkoTimelineMemory.get('test:10001')?.interactionBeforeMillis).toBeUndefined()
+  await act(async()=>earlier())
+  expect(vi.mocked(callArkme).mock.calls.filter(([m,p])=>m==='arko.messages'&&!(p as any)?.startAtMillis).map(x=>x[1])).toEqual([{limit:50,endAtMillis:1001},{limit:50,cursor:'history-page-2',endAtMillis:1001}])
+  expect(vi.mocked(callArkme).mock.calls.filter(([m,p])=>m==='arko.interactions'&&((p as any)?.beforeMillis||(p as any)?.cursor)).map(x=>x[1])).toEqual([{limit:20,beforeMillis:2001},{limit:20,cursor:'interaction-page-2'}])
+  expect(host.textContent).toContain('已加载的普通聊天');expect(host.textContent).toContain('已加载的互动')
+ }finally{await act(async()=>root.unmount());host.remove()}
+ expect(arkoTimelineMemory.get('test:10001')?.historyBeforeMillis).toBeUndefined()
+ expect(arkoTimelineMemory.get('test:10001')?.interactionBeforeMillis).toBeUndefined()
+})
+
+it('keeps the first history cursor when a restored cache contains only interactions',async()=>{
+ arkoTimelineMemory.set('test:10001',{...cache(),messages:[],historyCursor:undefined})
+ vi.mocked(callArkme).mockImplementation(async(method)=>{
+  if(method==='arko.messages')return {items:[{messageId:2,sessionId:88,role:'assistant',text:'最新聊天',reasoning:'',createdAtMillis:3000,status:1,createdRecordUids:[]}],hasMore:true,nextCursor:'first-older-page',scanned:1,consistency:'live'} as never
+  if(method==='arko.session')return cache().session as never
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  expect(host.textContent).toContain('最新聊天');expect(host.textContent).toContain('已加载的互动')
+ }finally{await act(async()=>root.unmount());host.remove()}
+ expect(arkoTimelineMemory.get('test:10001')?.historyCursor).toBe('first-older-page')
+})
