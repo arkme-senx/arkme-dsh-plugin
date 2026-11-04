@@ -734,3 +734,77 @@ it.each(['exited', 'live'] as const)('opens a queued prompt only after proving i
     expect((host as any).pending.size).toBe(0)
   } finally { cancel.abort(); client.close(); host.close(); liveHost.close() }
 })
+
+it.each([0, -3])('serves verified readonly history independently of execution epoch %s', async epoch => {
+  const listeners = new Set<(payload: any, metadata: any) => void>()
+  const transport = {
+    subscribeDisconnect: () => () => {},
+    subscribe: async ({ onEvent }: any) => { listeners.add(onEvent); return () => { listeners.delete(onEvent) } },
+    publish: async ({ payload, direction }: any) => {
+      for (const listener of [...listeners]) listener(payload, { senderRole: direction === 'request' ? 'controller' : 'host' })
+      return { sequence: 1 }
+    },
+  } as unknown as DshRemoteRealtimeTransport
+  const native = vi.fn(async () => ({ ok: true, value: { records: [], hasMore: false } }))
+  const host = new DshSessionChannelHost({ transport, target: { runtimeRef: 'current', hostProfileRef: 'p', hostClientRef: 'c', hostLeaseGeneration: 1 },
+    epoch: () => epoch, readable: (runtime, session) => runtime === 'original' && session === 'old', native, failed: vi.fn() })
+  const client = new DshSessionChannelClient(transport, async () => {}, vi.fn())
+  try {
+    await host.start()
+    const body = { mode: 'call', endpoint: 'session/page', payload: { args: { request: { address: { kind: 'session', sessionId: 'old' }, throughSeq: 0 } } } }
+    expect(await client.request({ runtimeRef: 'original', sessionRef: 'old' }, body, 'read-only', AbortSignal.timeout(1000))).toMatchObject({ ok: true })
+    expect(native).toHaveBeenCalledOnce()
+    const write = { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'old', mode: 'queue', requestId: 'once', content: [{ type: 'text', text: 'hello' }] } } } }
+    await expect(client.request({ runtimeRef: 'original', sessionRef: 'old' }, write, 'write', AbortSignal.timeout(50))).rejects.toBeDefined()
+    expect(native).toHaveBeenCalledOnce()
+  } finally { client.close(); host.close() }
+})
+
+it.each(['read', 'send'])('discovers a never-opened local session on the first remote %s', async operation => {
+  const listeners = new Set<(payload: any, metadata: any) => void>()
+  const transport = {
+    subscribeDisconnect: () => () => {},
+    subscribe: async ({ onEvent }: any) => { listeners.add(onEvent); return () => { listeners.delete(onEvent) } },
+    publish: async ({ payload, direction }: any) => {
+      for (const listener of [...listeners]) listener(payload, { senderRole: direction === 'request' ? 'controller' : 'host' })
+      return { sequence: 1 }
+    },
+  } as unknown as DshRemoteRealtimeTransport
+  let known = false, epoch = 0
+  const recover = vi.fn(async () => { known = true; if (operation === 'send') epoch = 1 })
+  const native = vi.fn(async () => ({ ok: true, value: { accepted: true } }))
+  const host = new DshSessionChannelHost({ transport, target: { runtimeRef: 'current', hostProfileRef: 'p', hostClientRef: 'c', hostLeaseGeneration: 1 },
+    epoch: () => known ? epoch : undefined, readable: () => known, recover, native, failed: vi.fn() })
+  const client = new DshSessionChannelClient(transport, async () => {}, vi.fn())
+  try {
+    await host.start()
+    const body = operation === 'read'
+      ? { mode: 'call', endpoint: 'session/page', payload: { args: { request: { address: { kind: 'session', sessionId: 'old' }, throughSeq: 0 } } } }
+      : { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'old', mode: 'queue', requestId: 'once', content: [{ type: 'text', text: 'hello' }] } } } }
+    expect(await client.request({ runtimeRef: 'original', sessionRef: 'old' }, body, 'first-remote-once', AbortSignal.timeout(1000))).toMatchObject({ ok: true })
+    expect(recover).toHaveBeenCalledOnce(); expect(native).toHaveBeenCalledOnce()
+    expect(epoch).toBe(operation === 'read' ? 0 : 1)
+  } finally { client.close(); host.close() }
+})
+
+it('returns a known source takeover failure without acknowledging or replaying the write', async () => {
+  const listeners = new Set<(payload: any, metadata: any) => void>()
+  const transport = {
+    subscribeDisconnect: () => () => {},
+    subscribe: async ({ onEvent }: any) => { listeners.add(onEvent); return () => { listeners.delete(onEvent) } },
+    publish: async ({ payload, direction }: any) => {
+      for (const listener of [...listeners]) listener(payload, { senderRole: direction === 'request' ? 'controller' : 'host' })
+      return { sequence: 1 }
+    },
+  } as unknown as DshRemoteRealtimeTransport
+  const native = vi.fn(), recover = vi.fn(async () => { throw new DshRemoteError('SESSION_STATE_CHANGED', 'writer locked') })
+  const host = new DshSessionChannelHost({ transport, target: { runtimeRef: 'current', hostProfileRef: 'p', hostClientRef: 'c', hostLeaseGeneration: 1 },
+    epoch: () => 0, readable: () => true, recover, native, failed: vi.fn() })
+  const client = new DshSessionChannelClient(transport, async () => {}, vi.fn())
+  try {
+    await host.start()
+    const body = { mode: 'call', endpoint: 'session/prompt', payload: { args: { request: { sessionId: 'old', mode: 'queue', requestId: 'once', content: [{ type: 'text', text: 'hello' }] } } } }
+    await expect(client.request({ runtimeRef: 'original', sessionRef: 'old' }, body, 'takeover-failure', AbortSignal.timeout(1000))).rejects.toMatchObject({ code: 'SESSION_STATE_CHANGED' })
+    expect(recover).toHaveBeenCalledOnce(); expect(native).not.toHaveBeenCalled()
+  } finally { client.close(); host.close() }
+})

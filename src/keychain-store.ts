@@ -72,9 +72,7 @@ export class ArkmeKeychainStore implements ArkmeSessionStore {
 
   async write(session: ArkmeSessionCredentials): Promise<void> {
     this.requireMacOS()
-    this.cached = { ...session }
-    this.loaded = true
-    const payload = JSON.stringify(this.cached)
+    const payload = JSON.stringify(session)
     const persist = async (): Promise<void> => {
       await execFileAsync('/usr/bin/security', [
         'add-generic-password',
@@ -86,9 +84,11 @@ export class ArkmeKeychainStore implements ArkmeSessionStore {
     }
     const next = this.persistence.then(persist, persist)
     this.persistence = next.catch(() => undefined)
-    void next.catch(() => {
-      console.warn('dsh-arkme: Keychain persistence failed; the in-memory session remains active')
-    })
+    // Account-scope commit can restart the Host immediately after this resolves.
+    try { await next }
+    catch { throw new Error('无法保存 Arkme 登录凭据，请重试登录') }
+    this.cached = { ...session }
+    this.loaded = true
   }
 
   async delete(): Promise<void> {

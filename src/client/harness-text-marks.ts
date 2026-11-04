@@ -24,8 +24,6 @@ export function createNativeTextMarkTransport(accountScope?: string): MessageMar
   const combine = (local: MessageUnderlineSnapshot, remote: NativeAnnotationSnapshot): MessageUnderlineSnapshot => ({ ...remote, revision: local.revision + remote.revision, items: [...local.items, ...remote.items] })
   const context = async (sourceRef: string, ref: string, signal: AbortSignal) => {
     const parsed = sourceTarget(sourceRef, ref)
-    const cached = contextByRef.get(ref)
-    if (cached) return cached
     const rows = await cloud<NativeAnnotationContext[]>({ action: 'contexts', targets: [parsed.target] }, signal)
     const value = rows[0]
     if (rows.length !== 1 || !value) throw new Error('显示正文与来源投影不一致，暂未同步此标记')
@@ -61,7 +59,7 @@ export function createNativeTextMarkTransport(accountScope?: string): MessageMar
             const code = value.body?.code ?? value.code ?? ''
             if (!/SOURCE_NOT_READY|source-not-ready|CAPABILITY_UNSUPPORTED/u.test(code)) throw error
             const row = local.find(item => item.actionRef === ref)
-            if (row) result.push({ actionRef: ref, snapshot: { ...row.snapshot, syncNotice: '来源文字尚未同步；保留已有本机标记' } })
+            if (row) result.push({ actionRef: ref, snapshot: { ...row.snapshot, syncNotice: error instanceof Error ? error.message : '来源文字尚未同步；保留已有本机标记' } })
           }
         }
         const cloudChunk = chunk.filter(ref => !result.some(row => row.actionRef === ref))

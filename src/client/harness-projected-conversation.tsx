@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { StoredEntry } from '@deepseek-ai/dsh-client-ui-slots'
 import { tr } from './locale.js'
 import { callArkme } from '../sdk/index.js'
+import { useAccountSessionCatalog } from './harness-account-sessions.js'
 import { harnessSessions } from './harness-session-state.js'
 import { createProjectedHistory, type ProjectedHistorySnapshot } from './harness-projected-history.js'
 import type { DshAccountSessionHistory } from '../dsh-remote/account-session-types.js'
@@ -58,13 +59,20 @@ function mirrorMessages(ctx: Context, source: string, target: string): () => voi
 }
 
 /** Keep the native session view area: it stretches the transcript and anchors the composer below it. */
-function ProjectedConversation({ Native, ...props }: Props & { Native: ComponentType<Props> }) {
+function ProjectedConversation({ Native, surface, ...props }: Props & { Native: ComponentType<Props>; surface: Element }) {
   const id = String(props.sessionId), parts = id.split(':')
   const runtimeRef = decodeURIComponent(parts[1] ?? ''), sessionRef = decodeURIComponent(parts[2] ?? '')
+  const catalog = useAccountSessionCatalog(surface)
+  const revision = catalog.rows.find(row => row.runtimeRef === runtimeRef && row.sessionRef === sessionRef)?.historyRevision
   const history = useMemo(() => createProjectedHistory((cursor, signal) => callArkme<DshAccountSessionHistory>(
-    'remote.session.read', { runtimeRef, sessionRef, source: 'cloud', ...(cursor ? { cursor } : {}) }, signal)), [runtimeRef, sessionRef])
+    'remote.session.read', { runtimeRef, sessionRef, source: 'cloud', ...(cursor ? { cursor } : {}) }, signal)), [runtimeRef, sessionRef, revision])
   const state = useSyncExternalStore(history.subscribe, history.getSnapshot)
   useEffect(() => { void history.load(); return () => history.dispose() }, [history])
+  useEffect(() => {
+    // The displayed cloud projection owns readiness while native follow is unavailable.
+    surface.setAttribute('data-arkme-projected-history-state', state.openState === 'error' && state.chat.order.length ? 'refresh-error' : state.openState)
+    return () => surface.removeAttribute('data-arkme-projected-history-state')
+  }, [surface, state.openState, state.chat.order.length])
   const adapted = projectedProps(props, state, history.load)
   return <History.Provider value={{ state, load: history.load }}><Native {...adapted} view="chat"
     renderSlot={(name, owner, options) => props.renderSlot(`${PREFIX}${name}`, owner, options)} /></History.Provider>
@@ -81,7 +89,7 @@ export function installProjectedConversation(ctx: Context, surface: Element): ()
     if (updating) return
     const id = sessions.list.getSnapshot().current
     const active = id?.startsWith('arkme:') && surface.getAttribute('data-arkme-visible') !== 'false'
-      && surface.getAttribute('data-arkme-source-writable') !== 'true'
+      && surface.getAttribute('data-arkme-native-history-ready') !== 'true'
     const native = slots.entries('conversation.session').find(entry => (entry.options.priority ?? 0) >= 0)
     if (active && installedFor === id && installedNative === native && remove) return
     updating = true
@@ -94,7 +102,7 @@ export function installProjectedConversation(ctx: Context, surface: Element): ()
       const register = slots.register.bind(slots) as (options: object, component: unknown) => () => void
       const removeView = register({ name: 'conversation.session', priority: -100, store: native.store, inject: native.inject, locale: native.locale,
         children: Object.fromEntries(children.map(name => [`${PREFIX}${name}`, native.children![name]])) },
-      (props: Props) => <ProjectedConversation key={String(props.sessionId)} {...props} Native={Native} />)
+      (props: Props) => <ProjectedConversation key={String(props.sessionId)} {...props} Native={Native} surface={surface} />)
       const stopMessages = mirrorMessages(ctx, 'conversation.view', `${PREFIX}conversation.view`)
       installedFor = id; installedNative = native
       remove = () => { stopMessages(); removeView() }
@@ -102,7 +110,7 @@ export function installProjectedConversation(ctx: Context, surface: Element): ()
   }
   const stops = [sessions.list.subscribe(sync), slots.subscribe('conversation.view', sync), slots.subscribe('conversation.session', sync)]
   const observer = new MutationObserver(sync)
-  observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-source-writable'] })
+  observer.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-native-history-ready'] })
   sync()
   return () => { stops.forEach(stop => stop()); observer.disconnect(); remove?.() }
 }

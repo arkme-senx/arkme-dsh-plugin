@@ -17,7 +17,7 @@ const unavailable = () => new DshRemoteError('CAPABILITY_UNSUPPORTED', '云端�
 // miss. History progress invalidates content; display metadata does not.
 function cacheRevision(row: Record<string, unknown>): string | undefined {
   if (typeof row.history_revision !== 'string' || !row.history_revision) return
-  return JSON.stringify(['cloud-history-v2', row.history_revision, row.history_storage_version, row.projection_as_of_seq, row.last_event_seq, row.history_complete_through_seq, row.turn_projection_as_of_seq, row.turn_projection_complete_through_seq])
+  return JSON.stringify(['cloud-history-v2', row.history_revision, row.native_history_format, row.native_history_through_seq, row.history_storage_version, row.projection_as_of_seq, row.last_event_seq, row.history_complete_through_seq, row.turn_projection_as_of_seq, row.turn_projection_complete_through_seq])
 }
 function cacheGeneration(row: Record<string, unknown>): string | undefined {
   return cacheRevision(row) === undefined ? undefined : JSON.stringify([row.history_revision, row.history_storage_version])
@@ -80,9 +80,28 @@ export class DshCloudNativeTransport {
     throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端会话目录分页未完成')
   }
 
-  private async history(runtime: string, session: string, signal: AbortSignal, through?: number, before?: number, turnObjects = false): Promise<{ page: NativeHistoryPage; complete: boolean }> {
+  private async history(runtime: string, session: string, signal: AbortSignal, through?: number, before?: number, turnObjects = false, formatVersion?: number): Promise<{ page: NativeHistoryPage; complete: boolean; header?: Record<string, unknown> }> {
     signal = AbortSignal.any([signal, AbortSignal.timeout(30_000)])
     const identity = { runtime_ref: runtime, session_ref: session }
+    if (formatVersion === 4) {
+      let header: Record<string, unknown> | undefined, completeThrough: number | undefined
+      const previous = async (beforeSeq?: number): Promise<NativeHistoryPage> => {
+        const value = await this.request.post(`${BASE}/session-history/format-read`, { ...identity, format_version: 4, ...(beforeSeq === undefined ? {} : { before_seq: beforeSeq }) }, signal)
+        const metadata = object(value.header)
+        if (value.ready !== true || metadata.id !== session || metadata.version !== 4 || !Array.isArray(value.entries) || value.entries.length > 100
+          || !Number.isSafeInteger(value.through_seq) || Number(value.through_seq) < -1) throw unavailable()
+        if (header && (!isDeepStrictEqual(header, metadata) || completeThrough !== value.through_seq)) throw new DshRemoteError('REMOTE_PROJECTION_CONFLICT', '历史版本发生变化，请重试', true)
+        header = metadata; completeThrough = Number(value.through_seq)
+        const records = value.entries.map(nativeHistoryRecord)
+        if (records.some((record, i) => beforeSeq !== undefined && record.event.seq >= beforeSeq || i > 0 && record.event.seq !== records[i - 1]!.event.seq + 1)) throw unavailable()
+        if (value.next_cursor !== undefined && value.next_cursor !== records[0]?.event.seq) throw unavailable()
+        return { records, hasMore: value.next_cursor !== undefined }
+      }
+      const cut = Math.min(before ?? Infinity, through === undefined ? Infinity : through + 1)
+      const page = await readFiveTurns(await previous(Number.isFinite(cut) ? cut : undefined), previous)
+      if (Buffer.byteLength(JSON.stringify(page)) > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) throw unavailable()
+      return { page, complete: true, ...(header ? { header } : {}) }
+    }
     let emptyRawIncomplete = false, rawComplete = false
     const rawPage = async (beforeSeq?: number): Promise<NativeHistoryPage> => {
       signal.throwIfAborted()
@@ -185,10 +204,13 @@ export class DshCloudNativeTransport {
       const revision = cacheRevision(row), snapshot = key ? cache?.store.snapshot(key) : undefined
       const through = endpoint === 'session/page' ? Number(request.throughSeq) : undefined
       const before = request.beforeSeq === undefined ? undefined : Number(request.beforeSeq)
-      const expectedCursor = Math.max(Number(row.projection_as_of_seq ?? -1), Number(row.last_event_seq ?? -1), Number(row.history_complete_through_seq ?? -1))
+      const formatVersion = row.native_history_format === 4 ? 4 : undefined
+      const expectedCursor = formatVersion === 4 ? Number(row.native_history_through_seq) : Math.max(Number(row.projection_as_of_seq ?? -1), Number(row.last_event_seq ?? -1), Number(row.history_complete_through_seq ?? -1))
       const cached = key && revision && snapshot?.cloudRevision === revision && Number(snapshot.cursor) >= expectedCursor && (Number(snapshot.cursor) >= 0 || snapshot.cloudVerifiedComplete === true)
         ? cache?.store.page(key, through ?? Number(snapshot.cursor), before) : undefined
-      const fetched = cached ? undefined : await this.history(runtime, session, signal, through, before, row.history_storage_version === 'oss_turn_v1')
+      const rawComplete = typeof row.history_complete_through_seq === 'number' && row.history_complete_through_seq >= expectedCursor && row.history_complete_through_seq >= -1
+      const useTurns = row.history_storage_version === 'oss_turn_v1' && !rawComplete
+      const fetched = cached ? undefined : await this.history(runtime, session, signal, through, before, useTurns, formatVersion)
       const page = cached ?? fetched!.page
       signal.throwIfAborted()
       if (!cached && revision) {
@@ -203,14 +225,14 @@ export class DshCloudNativeTransport {
       }
       const cursor = page.records.at(-1)?.event.seq ?? -1
       if (cursor < expectedCursor) throw unavailable()
-      const complete = row.history_storage_version === 'oss_turn_v1' ? row.turn_projection_complete_through_seq : row.history_complete_through_seq
+      const complete = formatVersion === 4 ? row.native_history_through_seq : useTurns ? row.turn_projection_complete_through_seq : row.history_complete_through_seq
       const replacesHistory = cursor < Number(snapshot?.cursor ?? -1) || (!!snapshot && snapshot.cloudGeneration !== cacheGeneration(row))
       const verifiedComplete = typeof complete === 'number' && Number.isSafeInteger(complete) && complete >= cursor && complete >= -1
         || complete === undefined && (fetched?.complete === true || !!cached && snapshot?.cloudVerifiedComplete === true)
       if ((cursor === -1 || replacesHistory) && !verifiedComplete) throw unavailable()
       const displayRevision = metadataRevision(row)
       frame = { type: 'snapshot', cloudVerifiedComplete: verifiedComplete, cloudRevision: revision, cloudGeneration: cacheGeneration(row), cloudMetadataRevision: displayRevision,
-        header: { version: 3, id: session, createdAt: Number(row.created_at ?? (cached ? object(snapshot?.header).createdAt : undefined) ?? row.source_updated_at), isSeeded: false }, cursor, ...page,
+        header: fetched?.header ?? (formatVersion === 4 && snapshot?.header ? snapshot.header : { version: 3, id: session, createdAt: Number(row.created_at ?? (cached ? object(snapshot?.header).createdAt : undefined) ?? row.source_updated_at), isSeeded: false }), cursor, ...page,
         projections: { asOfSeq: cursor, values: { title: row.title || null } }, assistantStream: { revision: 0 } }
       // A warm open must not replay the event INSERT loop. Metadata-only changes
       // replace just the small snapshot, preserving every cached older page.

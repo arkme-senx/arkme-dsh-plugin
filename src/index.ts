@@ -601,6 +601,13 @@ export function apply(ctx: Context, config: Config): void {
       } catch { /* An unreadable guest profile is claimed whole rather than silently discarded. */ }
       return true
     })
+    const localSessions = apiCtx.get('arkmeLocalSessions')
+    if (localSessions) service.setNativeAnnotationHistorySync((runtime, session, signal) => localSessions.annotationHistorySync(runtime, session, signal))
+    if (localSessions) service.setNativeAnnotationAccess(
+      (target, signal) => localSessions.resolveAnnotationTarget(target, signal),
+      (target, signal) => localSessions.annotationSource(target, signal),
+      (body, signal) => localSessions.cloud.post('/api/v1/dsh-remote/annotations/source-context', body, signal),
+    )
     // The default-off feature must not construct platform credential stores,
     // open DSH muxes or otherwise affect the existing Arkme plugin lifecycle.
     if (!config.dshRemoteFeatureEnabled) return
@@ -627,7 +634,6 @@ export function apply(ctx: Context, config: Config): void {
     const secretBroker = new DshRemoteRuntimeSecretBroker(createArkmeSecureValueStore(
       `${config.keychainServicePrefix}.${config.environment}.dsh-remote-desktop`,
     ))
-    const localSessions = apiCtx.get('arkmeLocalSessions')
     const controlPlane = new DshRemoteHttpControlPlane({
       post: async (path, body, signal) => localSessions
         ? await localSessions.cloud.post(path, body, signal)
@@ -646,7 +652,8 @@ export function apply(ctx: Context, config: Config): void {
       sessionOwnership,
       controlPlane,
       realtime, apiProxy, ...(nativeTransport ? { nativeTransport } : {}),
-      ...(localSessions ? { sessionChannel: {
+      ...(localSessions ? { captureHistory: (sessionRef, signal) => localSessions.captureHistory(sessionRef, signal), sessionChannel: {
+        readable: (runtime: string, session: string) => localSessions.hasSession(runtime, session),
         recover: (runtime: string, session: string, body: Record<string, unknown>, signal: AbortSignal) => localSessions.recoverChannel(runtime, session, body, signal),
         canonicalRuntime: (session: string) => localSessions.canonicalRuntime(session),
         ledgerForAccount: (_account: string, key: Buffer) => new DshRemoteCommandLedger(localSessions.commandLedgerDirectory, key),
@@ -699,7 +706,7 @@ export function apply(ctx: Context, config: Config): void {
     try { historyCache = new DshNativeHistoryCache(join(stateDirectory, 'dsh-remote', 'native-cache', config.environment)) }
     catch { ctx.logger.warn('dsh-arkme: local remote-history cache unavailable') }
     const directory = new DshAccountSessions({
-      ...(localSessions ? { localNative: (params: Record<string, unknown>, signal: AbortSignal) => localSessions.carrier(params, signal), localSession: (runtime: string, session: string) => localSessions.hasSession(runtime, session) } : {}),
+      ...(localSessions ? { observeLocalHistorySync: (notify, signal) => localSessions.observeHistorySync(notify, signal), observeLocalIdentity: row => { localSessions.identities.observe(row) }, localNative: (params: Record<string, unknown>, signal: AbortSignal) => localSessions.carrier(params, signal), localSession: (runtime: string, session: string) => localSessions.hasSession(runtime, session), localAccess: (runtime: string, session: string) => localSessions.sessionAccess(runtime, session) } : {}),
       ...(historyCache ? { historyCache } : {}),
       onCacheError: () => ctx.logger.warn('dsh-arkme: local remote-history cache read/write failed'),
       request: { post: async (path, body, signal) => await service.dshRemotePost<Record<string, unknown>>(path, body, signal) },
@@ -734,10 +741,10 @@ export function apply(ctx: Context, config: Config): void {
       let lifecycleTail: Promise<void> = Promise.resolve()
       const reconcile = () => {
         directory.close()
-        if (!service.accountScope.ready()) host.cancelPendingConnection()
+        if (!service.accountScope.ready()) { host.cancelPendingConnection(); localSessions?.cancelHistoryRepair() }
         lifecycleTail = lifecycleTail.then(
-          async () => { if (service.accountScope.ready()) { await localSessions?.start(); await host.start() } else await host.suspend() },
-          async () => { if (service.accountScope.ready()) { await localSessions?.start(); await host.start() } else await host.suspend() },
+          async () => { if (service.accountScope.ready()) { await localSessions?.start(); await localSessions?.enableHistoryRepair(); await host.start() } else { await localSessions?.suspendHistoryRepair(); await host.suspend() } },
+          async () => { if (service.accountScope.ready()) { await localSessions?.start(); await localSessions?.enableHistoryRepair(); await host.start() } else { await localSessions?.suspendHistoryRepair(); await host.suspend() } },
         )
       }
       const unsubscribe = service.accountScope.subscribe(reconcile)
@@ -750,6 +757,7 @@ export function apply(ctx: Context, config: Config): void {
         historyCache?.close()
         if (accountSessions === directory) accountSessions = undefined
         if (remoteHost === host) remoteHost = undefined
+        await localSessions?.suspendHistoryRepair()
         await host.stop()
         await diagnostics.close()
       }
