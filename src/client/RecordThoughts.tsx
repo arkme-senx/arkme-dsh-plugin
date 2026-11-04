@@ -1,6 +1,4 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
-import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
 import type { ArkmeTimelineItem, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
@@ -14,6 +12,7 @@ import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { arkmeExtensionDetailListStyles as replyStyles } from './extension-detail-list-styles.js'
 import { activateDetailReplyKey, detailReplyClickAllowed } from './detail-reply-interaction.js'
 import { ArkoChatSuggestionDialog, ArkoChatSuggestionEntry } from './ArkoChatSuggestion.js'
+import { ArkoThoughtEntryButton } from './ArkoThoughtEntryButton.js'
 
 const Context = createContext<{ openSuggestion(item: RecordItem, id: string): void; store: RecordThoughtStore; chat: boolean; accountScope: string; source?: ArkmeSourceItem | undefined; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined } | null>(null)
 const empty: RecordThoughtState = Object.freeze({ items: [], loading: false, error: '' })
@@ -86,11 +85,6 @@ export function useRecordThoughtReplySummary(item: RecordItem) {
   const count = thoughts.filter(thought => !state.chat || thought.scene !== 5).length
   return { count, hasContent: thoughts.length > 0 || !!state.error }
 }
-function title(thought: ArkmeRecordThought): string {
-  if (thought.scene === 3 || thought.scene === 4) return 'Arko · 私密想法'
-  if (thought.scene === 5) return 'Arko · 回复建议'
-  return thought.biz === 2 ? 'Arko · 回应' : 'Arko有想法'
-}
 function ThoughtState({ thought, onFill, onRetry, retrying, continuation, refreshError, onRefresh }: { thought: ArkmeRecordThought; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined; onRetry?: (() => void) | undefined; retrying?: boolean | undefined; continuation?: boolean; refreshError?: string | undefined; onRefresh?: (() => void) | undefined }) {
   if (continuation && refreshError && thought.status !== 'ready') return <span role="status" title={refreshError}
     style={{ display: 'flex', alignItems: 'center', minHeight: 20, lineHeight: '20px', gap: 8, color: arkmeTheme.tertiary, fontSize: 12 }}>
@@ -104,34 +98,32 @@ function ThoughtState({ thought, onFill, onRetry, retrying, continuation, refres
   return null
 }
 export function RecordThoughtEntry({ item, onOpen }: { item: RecordItem; onOpen(): void }) {
-  const state = useThought(item), thoughts = visibleThoughts(state.items)
+  const state = useThought(item)
+  return <RecordThoughtEntryView state={state} onOpen={onOpen}/>
+}
+function RecordThoughtEntryView({ state, onOpen }: { state: ReturnType<typeof useThought>; onOpen(): void }) {
+  const thoughts = visibleThoughts(state.items)
   if (!thoughts.length) return null
   if (!state.chat) {
     if (thoughts.every(item => item.status === 'generating' || item.status === 'failed')) return <div data-arkme-record-thought-entry style={{ padding: '5px 0' }}>{thoughts.map(thought => <ThoughtState key={thought.id} thought={thought} onFill={state.onFill}/>)}</div>
     const manual = thoughts.every(item => item.biz === 2)
-    return <button type="button" data-arkme-record-thought-entry aria-label={tr(manual ? '查看 Arko 的回应' : '查看 Arko 的想法')}
-      style={{ display: 'flex', alignItems: 'center', gap: 4, alignSelf: 'flex-start', border: 0, background: 'transparent', padding: '5px 0', color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}
-      onClick={event => { event.stopPropagation(); onOpen() }}>
-      <Sparkle size={14} aria-hidden/>{tr(manual ? 'Arko · 回应' : 'Arko有想法')}<CaretRight size={12} aria-hidden/>
-    </button>
+    return <ArkoThoughtEntryButton record ariaLabel={manual ? '查看 Arko 的回应' : '查看 Arko 的想法'} onOpen={onOpen}/>
   }
-  return <div data-arkme-record-thought-entry style={{ alignSelf: thoughts.some(thought => thought.scene === 5) ? 'stretch' : 'flex-start', minWidth: 0, paddingTop: 4 }}>
+  return <div data-arkme-record-thought-entry style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '0 12px', alignSelf: 'flex-start', minWidth: 0 }}>
     {thoughts.map(thought => thought.scene === 5 ? <ArkoChatSuggestionEntry key={thought.id} thought={thought} onOpen={() => state.openSuggestion(thought.id)}/> : <div key={`${thought.id}:${thought.generation}`}>
       {thought.status === 'generating' || thought.status === 'failed' ? <ThoughtState thought={thought} onFill={state.onFill}/> : <>
-        <button type="button" style={{ ...buttonStyle, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 0', color: arkmeTheme.tertiary }}
-          aria-label={`${tr(thought.biz === 2 ? '查看 Arko 的回应' : '查看 Arko 的想法')}${thought.visibility === 'user' ? ` · ${tr('仅你可见')}` : ''}`} onClick={event => { event.stopPropagation(); state.focus(); onOpen() }}>
-          <Sparkle size={14} aria-hidden/>{tr(title(thought))}{thought.visibility === 'user' && <span> · {tr('仅你可见')}</span>}<CaretRight size={12} aria-hidden/>
-        </button>
+        <ArkoThoughtEntryButton ariaLabel={thought.biz === 2 ? '查看 Arko 的回应' : '查看 Arko 的想法'}
+          privateOnly={thought.visibility === 'user'} onOpen={() => { state.focus(); onOpen() }}/>
       </>}
     </div>)}
   </div>
 }
-/** Keep the self-note entry inside its own bubble; empty notes retain inline timestamps. */
+/** One subscription and footer owner for self, private-chat and group-chat bubbles. */
 export function RecordThoughtMessageFooter({ item, onOpen, children }: { item: RecordItem; onOpen(): void; children: ReactNode }) {
   const state = useThought(item)
-  if (state.chat || !visibleThoughts(state.items).length) return <>{children}</>
+  if (!visibleThoughts(state.items).length) return <>{children}</>
   return <div data-arkme-thought-message-footer style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', flexWrap: 'wrap', gap: '4px 12px', marginTop: 4, minWidth: 0 }}>
-    <RecordThoughtEntry item={item} onOpen={onOpen}/>
+    <RecordThoughtEntryView state={state} onOpen={onOpen}/>
     <div data-arkme-thought-message-meta style={{ minWidth: 0, marginLeft: 'auto' }}>{children}</div>
   </div>
 }

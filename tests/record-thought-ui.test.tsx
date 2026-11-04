@@ -274,7 +274,8 @@ it('closes advice on definitive owner rejection and does not reopen it after rec
   expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
   expect(host.textContent).not.toContain('建议一')
   await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat' })); await load()
-  expect(host.textContent).toContain('建议一')
+  expect(host.querySelector('[data-arkme-chat-suggestion-entry]')).not.toBeNull()
+  expect(host.textContent).not.toContain('建议一')
   expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
 })
 it('removes invalidated advice immediately and does not reopen it when a workspace is re-enabled', async () => {
@@ -327,7 +328,8 @@ it('separates group-public replies from private whispers and hides invalidated p
     <RecordThoughtEntry item={{ ...item, messageActionRef: 'signed' }} onOpen={() => {}}/>
     <RecordThoughtContent item={{ ...item, messageActionRef: 'signed' }}/>
   </RecordThoughtsProvider>)); await load()
-  expect(host.textContent).toContain('Arko · 回应'); expect(host.textContent).toContain('Arko · 私密想法')
+  expect(host.querySelectorAll('[data-arkme-thought-entry-button]')).toHaveLength(2)
+  expect([...host.querySelectorAll('[data-arkme-thought-entry-button]')].every(entry => entry.textContent?.startsWith('Arko有想法'))).toBe(true)
   expect(host.textContent).toContain('公开回答'); expect(host.textContent).toContain('私人分析'); expect(host.textContent).not.toContain('旧建议')
   expect(host.querySelectorAll('[data-arkme-record-thought-entry] button')[0]?.textContent).not.toContain('仅你可见')
   expect(host.querySelectorAll('[data-arkme-record-thought-entry] button')[1]?.textContent).toContain('仅你可见')
@@ -380,4 +382,61 @@ it('keeps generating thought state inside the bubble footer without presenting a
   </RecordThoughtsProvider>)); await load()
   expect(host.querySelector('[data-arkme-thought-message-footer] [role="status"]')?.textContent).toContain('Arko 正在思考')
   expect(host.querySelector('[data-arkme-thought-message-footer] button')).toBeNull()
+})
+
+it.each([
+  { source: 'self', chat: false, scene: 1, biz: 1, visibility: 'user', isMe: true },
+  { source: 'private', chat: true, scene: 4, biz: 2, visibility: 'user', isMe: false },
+  { source: 'group', chat: true, scene: 2, biz: 2, visibility: 'members', isMe: true },
+])('shares the in-bubble footer and activation for $source thoughts', async ({ source, chat, scene, biz, visibility, isMe }) => {
+  const open = vi.fn(), bubbleClick = vi.fn(), record = { ...item, isMe, messageActionRef: 'signed' }
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'one', recordUid: 'note', content: '私有正文不在入口展开', scene, biz, visibility, status: 'ready' }] })
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" enabled chat={chat} sourceRef={source}>
+    <div className="arkme-timed-bubble" onClick={bubbleClick}><p>消息正文</p>
+      <RecordThoughtMessageFooter item={record} onOpen={open}><ArkmeMessageTimestamp at={item.sendAtMillis}/></RecordThoughtMessageFooter>
+    </div>
+  </RecordThoughtsProvider>)); await load()
+  const footer = host.querySelector('[data-arkme-thought-message-footer]')!
+  const entry = footer.querySelector<HTMLButtonElement>('[data-arkme-thought-entry-button]')!
+  expect(entry.textContent).toContain('Arko有想法')
+  expect(entry.closest('.arkme-timed-bubble')).not.toBeNull()
+  expect(footer.querySelectorAll('time')).toHaveLength(1)
+  expect(host.textContent).not.toContain('私有正文不在入口展开')
+  if (chat) expect(entry.textContent?.includes('仅你可见')).toBe(visibility === 'user')
+  await act(async () => entry.click())
+  expect(open).toHaveBeenCalledOnce(); expect(bubbleClick).not.toHaveBeenCalled()
+  await load(); expect(mocks.callArkme).toHaveBeenCalledOnce()
+})
+
+it('keeps chat reply suggestions in the shared footer without leaking a preview or opening message details', async () => {
+  const open = vi.fn(), fill = vi.fn(), record = { ...item, isMe: false, messageActionRef: 'signed' }
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="private" chat enabled onFill={fill}>
+    <div className="arkme-timed-bubble" onClick={open}><p>对方消息</p>
+      <RecordThoughtMessageFooter item={record} onOpen={open}><ArkmeMessageTimestamp at={item.sendAtMillis}/></RecordThoughtMessageFooter>
+    </div>
+  </RecordThoughtsProvider>)); await load()
+  const entry = host.querySelector<HTMLButtonElement>('[data-arkme-chat-suggestion-entry]')!
+  expect(entry.closest('[data-arkme-thought-message-footer]')?.parentElement?.className).toBe('arkme-timed-bubble')
+  expect(entry.hasAttribute('data-arkme-thought-entry-button')).toBe(true)
+  expect(host.textContent).not.toContain('建议一'); expect(host.textContent).not.toContain('确认时间')
+  await act(async () => entry.click())
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')?.textContent).toContain('建议一')
+  expect(open).not.toHaveBeenCalled()
+  await act(async () => adviceAction('填入输入框').click())
+  expect(fill).toHaveBeenCalledExactlyOnceWith('建议一')
+  expect(mocks.callArkme).toHaveBeenCalledOnce()
+})
+
+it('drops a chat footer immediately when its source is no longer readable', async () => {
+  const render = (enabled: boolean) => root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="group" chat enabled={enabled}>
+    <div className="arkme-timed-bubble"><RecordThoughtMessageFooter item={{ ...item, messageActionRef: 'signed' }} onOpen={() => {}}>
+      <ArkmeMessageTimestamp at={item.sendAtMillis}/>
+    </RecordThoughtMessageFooter></div>
+  </RecordThoughtsProvider>)
+  await act(async () => render(true)); await load()
+  expect(host.querySelector('[data-arkme-thought-message-footer]')).not.toBeNull()
+  await act(async () => render(false))
+  expect(host.querySelector('[data-arkme-thought-message-footer]')).toBeNull()
+  expect(host.querySelector('.arkme-timed-bubble > time')).not.toBeNull()
 })

@@ -1,11 +1,11 @@
 import { useId, useState, type ReactNode, type CSSProperties } from 'react'
-import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
 import type { ArkmeRecordThought } from '../record-thought-contract.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { ArkmeMarkdownBody } from './ArkmeMarkdownBody.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
 import { tr } from './locale.js'
+import { ArkoThoughtEntryButton } from './ArkoThoughtEntryButton.js'
 
 /** Candidate switching is presentation only; it never starts another AI request. */
 export function chatSuggestionQueue(thought: ArkmeRecordThought): string[] {
@@ -18,30 +18,13 @@ export function chatSuggestionQueue(thought: ArkmeRecordThought): string[] {
   if (!unique.size && thought.content.trim()) unique.set(thought.content.trim().replace(/\s+/g, ' '), thought.content.trim())
   return [...unique.values()]
 }
-const ellipsis: CSSProperties = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 const action: CSSProperties = { border: `1px solid ${theme.border}`, background: theme.elevated, color: theme.text,
   borderRadius: 8, padding: '7px 12px', font: 'inherit', fontSize: 12, cursor: 'pointer' }
 
 export function ArkoChatSuggestionEntry({ thought, onOpen }: { thought: ArkmeRecordThought; onOpen(): void }) {
-  const headline = thought.display?.headline.trim(), suggestion = chatSuggestionQueue(thought)[0]
   const pending = thought.status === 'generating', failed = thought.status === 'failed'
-  return <button type="button" data-arkme-chat-suggestion-entry aria-label={tr('查看 Arko 回复建议')}
-    onClick={event => { event.stopPropagation(); onOpen() }}
-    style={{ display: 'block', width: 'min(420px, 100%)', maxWidth: '100%', margin: '6px auto 2px', padding: '4px 12px 6px',
-      border: 0, background: 'transparent', color: theme.secondary, textAlign: 'left', font: 'inherit', cursor: 'pointer', lineHeight: 1.65 }}>
-    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, marginBottom: 4, color: theme.tertiary, fontSize: 12 }}>
-      <span aria-hidden style={{ flex: 1, height: 1, background: `linear-gradient(to right, transparent, ${theme.border})` }}/>
-      <Sparkle size={12} aria-hidden/><span>{tr(pending ? 'Arko 正在思考…' : 'Arko有想法')}</span>
-      <span aria-hidden style={{ flex: 1, height: 1, background: `linear-gradient(to left, transparent, ${theme.border})` }}/>
-    </span>
-    {!pending && headline && <span data-arkme-chat-suggestion-headline style={{ ...ellipsis, fontSize: 12 }}>{headline}</span>}
-    <span style={{ display: 'flex', alignItems: 'baseline', gap: 10, fontSize: 12 }}>
-      <span data-arkme-chat-suggestion-preview style={{ ...ellipsis, flex: 1 }}>
-        {pending ? tr('正在帮你想一句更合适的话…') : failed ? tr('暂未获得回复建议') : suggestion ? `“${suggestion}”` : tr('查看建议')}
-      </span>
-      <span style={{ flex: 'none', color: theme.tertiary }}>{tr('展开查看')} ›</span>
-    </span>
-  </button>
+  return <ArkoThoughtEntryButton suggestion privateOnly ariaLabel="查看 Arko 回复建议" onOpen={onOpen}
+    label={pending ? 'Arko 正在思考…' : failed ? '暂未获得回复建议' : 'Arko有想法'}/>
 }
 
 export function ArkoChatSuggestionDialog({ thought, scopeKey, loading, error, analysis, onRetry, onFill, onClose }: {
