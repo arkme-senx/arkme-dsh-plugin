@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { RecordingSearchRow } from './recordings/RecordingSearchRow.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -5,7 +6,6 @@ import { hasEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeAiVideoListItem, ArkmeAiVideoListResult, ArkmeFileAssetDisplayItem,
   ArkmeImageSearchItem, ArkmeImageSearchResult,
@@ -764,7 +764,7 @@ function ArkmeSearchSurfaceBody({
           <input autoFocus style={styles.input} value={query} placeholder={tr("搜索对话、快记或消息")} aria-label={tr("搜索")} onChange={event => setQuery(event.target.value)} />
           {query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label={tr("清空搜索")} style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}
         </div>
-        {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭全局搜索")} style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}
+        {onClose !== undefined && <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭全局搜索")} style={styles.close} onClick={onClose} />}
       </div>
       {!hasQuery ? <div style={{ ...styles.scroll, ...(variant === 'dialog' ? styles.dialogScroll : {}) }}>
         {history.length > 0 && <section style={styles.section} aria-label={tr("搜索历史")}>
@@ -781,7 +781,7 @@ function ArkmeSearchSurfaceBody({
         <div style={styles.quickTopRow}>
           <button data-arkme-feedback="neutral" type="button" aria-label={tr("返回搜索")} title={tr("返回搜索")} style={styles.back} onClick={leaveQuick}><img src={`${assetRoot}/arrow_left.svg`} alt="" width={20} height={20} /></button>
           {quick === 'long_article' || quick === 'link' ? <h2 style={{ ...styles.sectionTitle, flex: 1 }}>{quick === 'link' ? tr("外部链接") : tr("长文")}</h2> : <div style={styles.quickSearch}><MagnifyingGlass size={20} color="#a3a7af" aria-hidden /><input autoFocus style={styles.quickInput} value={query} placeholder={tr("搜索快记")} aria-label={tr("搜索快记")} onChange={event => setQuery(event.target.value)} />{query !== '' && <button data-arkme-feedback="neutral" type="button" aria-label={tr("清空搜索")} style={styles.clear} onClick={() => setQuery('')}><img src={`${assetRoot}/icon_close_round_bold.svg`} alt="" width={16} height={16} /></button>}</div>}
-          {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭全局搜索")} style={styles.close} onClick={onClose}><X size={21} aria-hidden /></button>}
+          {onClose !== undefined && <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭全局搜索")} style={styles.close} onClick={onClose} />}
         </div>
         <div style={styles.tabs}>{hasQuery
           ? <button data-arkme-feedback="neutral" type="button" style={{ ...styles.tab, ...styles.tabActive }}>{tr("搜索快记")}<span style={styles.indicator} /></button>

@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
@@ -16,7 +17,6 @@ import { AppleLogo } from '@phosphor-icons/react/AppleLogo'
 import { GoogleLogo } from '@phosphor-icons/react/GoogleLogo'
 import { DeviceMobile } from '@phosphor-icons/react/DeviceMobile'
 import { EnvelopeSimple } from '@phosphor-icons/react/EnvelopeSimple'
-import { X } from '@phosphor-icons/react/X'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot,
@@ -304,7 +304,7 @@ function SettingsDialog({
     <section className="arkme-account-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={event => { event.stopPropagation() }}>
       <header>
         <h3>{title}</h3>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose}><X size={20} aria-hidden /></button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose} />
       </header>
       {children}
     </section>

@@ -246,3 +246,18 @@ describe('conversation viewport ownership', () => {
     expect(arkmeConversationViewport(body, true)).toMatchObject({ stickToBottom: false, anchorId: 'message:A-25' })
   })
 })
+
+it('reuses a surviving visible row rather than scanning preceding rows on every small scroll', () => {
+  render(); scroll(2000)
+  const body = host.firstElementChild as HTMLDivElement
+  const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+  bounds.mockClear()
+  for (let index = 0; index < 200; index++) scroll(2000 + index / 10)
+  // One viewport + one retained row per event, independent of earlier history.
+  expect(bounds).toHaveBeenCalledTimes(400)
+  expect(store.getViewport('A')?.anchorId).toBe('message:A-20')
+  expect(store.getViewport('A')?.scrollTop).toBe(2019.9)
+  const anchor = body.querySelector('[data-arkme-conversation-row="message:A-20"]')!
+  anchor.remove()
+  expect(arkmeConversationViewport(body).anchorId).toBe('message:A-21')
+})

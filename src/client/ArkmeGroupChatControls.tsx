@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmePeoplePickerSearch } from './ArkmePeoplePickerSearch.js'
 import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -17,7 +18,7 @@ import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Prohibit } from '@phosphor-icons/react/dist/icons/Prohibit'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
-import { X } from '@phosphor-icons/react/dist/icons/X'
+import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import qrcode from 'qrcode-generator'
 import type {
@@ -910,7 +911,7 @@ export function InviteCollaboratorsDialog(props: {
   }
   return <div style={styles.dialogScrim} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) props.onClose() }}>
     <section style={{ ...styles.dialog, width: 420 }} role="dialog" aria-modal="true" aria-label={tr("邀请协作者")}>
-      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>{tr("邀请协作者")}</h3><span style={{ flex: 1 }} /><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose}><CloseGlyph /></button></div>
+      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>{tr("邀请协作者")}</h3><span style={{ flex: 1 }} /><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose} /></div>
       <div style={{ height: 10 }} />
       <div style={{ width: 264, margin: '0 auto', padding: '16px 16px 14px', borderRadius: 18, background: colors.panel, boxSizing: 'border-box', boxShadow: '0 10px 22px rgba(0,0,0,.08)' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}><Avatar imageRef={props.source.avatarRef} size={32} /><div style={{ marginLeft: 10, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview?.title ?? props.source.displayName}</div><div style={{ marginTop: 2, fontSize: 12, color: colors.secondary }}>{tr("发起人：")}{preview?.inviterDisplayName ?? 'Arkme'}</div></div></div>
@@ -1122,7 +1123,7 @@ function GroupAiPolishPanel(props: {
           style={{ ...styles.aiApplyButton, opacity: canApply ? 1 : .32, cursor: canApply ? 'pointer' : 'default' }}
           disabled={!canApply}
           onClick={() => { void applyRule() }}
-        >{busy ? tr("处理中") : '应用规则'}</button> : <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 AI 润色设置")} style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose}><X size={18} /></button>}
+        >{busy ? tr("处理中") : '应用规则'}</button> : <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 AI 润色设置")} style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose} />}
       </div>
       {view === 'rules' ? <div style={styles.aiBody}>
         {loading && settings === undefined ? <div style={styles.loading}>{tr("正在读取 AI 润色设置…")}</div> : null}
@@ -1222,6 +1223,7 @@ function GroupSettingsMenu(props: {
   onError: (message: string) => void
   onExport: () => void
   onLocation?: () => void
+  onOfflineContext?: () => void
   exportBusy: boolean
   exportProcessed: number
 }) {
@@ -1409,6 +1411,7 @@ function GroupSettingsMenu(props: {
   entries.push(
     { type: 'separator', id: 'export-separator' },
     { type: 'label', id: 'export-label', text: '聊天记录' },
+    ...(props.onOfflineContext ? [{ id: 'offline-context', label: tr('线下交流'), icon: <Waveform size={20} aria-hidden /> }] : []),
     ...(props.onLocation ? [{ id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden /> }] : []),
     { id: 'export', label: props.exportBusy
       ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
@@ -1438,6 +1441,7 @@ function GroupSettingsMenu(props: {
       if (id === 'management') { if (effective.canRename || canManage) setManagementOpen(true); return }
       if (id === 'back') { setManagementOpen(false); return }
       if (id === 'export') { close(); props.onExport(); return }
+      if (id === 'offline-context') { close(); props.onOfflineContext?.(); return }
       if (id === 'location') { close(); props.onLocation?.(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
       if (id === 'public-settings') { close(); props.onPublicSettingsOpen?.(); return }
@@ -1721,6 +1725,7 @@ export function ArkmeGroupChatControls(props: {
   onError: (message: string) => void
   onExport?: () => void
   onLocation?: () => void
+  onOfflineContext?: () => void
   exportBusy?: boolean
   exportProcessed?: number
 } & GroupBotActions) {
@@ -1817,6 +1822,7 @@ export function ArkmeGroupChatControls(props: {
         onError={reportError}
         onExport={() => { props.onExport?.() }}
         {...(props.onLocation ? { onLocation: props.onLocation } : {})}
+        {...(props.onOfflineContext ? { onOfflineContext: props.onOfflineContext } : {})}
         exportBusy={props.exportBusy === true}
         exportProcessed={props.exportProcessed ?? 0}
       />

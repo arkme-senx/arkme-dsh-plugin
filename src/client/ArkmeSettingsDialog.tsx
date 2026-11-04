@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Context } from '@deepseek-ai/cordis'
@@ -11,7 +12,6 @@ import { ChartBar } from '@phosphor-icons/react/ChartBar'
 import { Database } from '@phosphor-icons/react/Database'
 import { Gear } from '@phosphor-icons/react/Gear'
 import { Info } from '@phosphor-icons/react/Info'
-import { X } from '@phosphor-icons/react/X'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
 import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
@@ -69,8 +69,8 @@ export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect, m
         data-arkme-feedback="neutral" aria-current={section === item.id ? 'page' : undefined}
         data-modal-autofocus={section === item.id ? '' : undefined} onClick={() => onSelect(item.id)}><Icon size={20} aria-hidden /><span>{tr(item.label)}</span></button>)}</div></nav>
       <div className="arkme-settings-main">
-        <div className="arkme-settings-toolbar"><button type="button" className="arkme-settings-close" aria-label={tr('关闭')}
-          data-arkme-feedback="neutral" onClick={onClose}><X size={20} aria-hidden /></button></div>
+        <div className="arkme-settings-toolbar"><ArkmeCloseButton type="button" className="arkme-settings-close" aria-label={tr('关闭')}
+          data-arkme-feedback="neutral" onClick={onClose} /></div>
         <div className="arkme-settings-dialog-content" ref={content}>
         {section === 'arkme-account' && <ArkmeSettingsSurface />}
         {section === 'arkme-models' && <ArkmeModelSettings initialTab={modelTab} />}

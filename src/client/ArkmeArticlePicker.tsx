@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -138,7 +139,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, composition, onClose, on
               .catch(caught => { if (mounted.current) setOpenError(caught instanceof Error ? caught.message : '无法打开文档编辑器') })
               .finally(() => { if (mounted.current) setOpening(false) })
           }}>{tr("＋新建文档")}</button>
-          <button type="button" style={styles.button} aria-label={tr("关闭即我文档")} onClick={close}>×</button></header>
+          <ArkmeCloseButton type="button" style={styles.button} aria-label={tr("关闭即我文档")} onClick={close} /></header>
         <input ref={search} style={styles.search} value={query} aria-label={tr("搜索我的文档")} placeholder={tr("搜索我的文档")} onChange={event => setQuery(event.target.value)} />
         <div style={styles.list}>
           {page?.items.map(item => <div key={item.recordUid} data-arkme-article-choice={item.recordUid} style={{ ...styles.row, background: selected === item.recordUid ? theme.accentSoft : theme.base }}>

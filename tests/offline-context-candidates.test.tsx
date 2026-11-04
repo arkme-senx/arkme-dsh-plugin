@@ -105,3 +105,24 @@ it('pages pending cards without a second entry and removes the banner after conf
   expect(r.toJSON()).toBeNull()
   await act(async () => r.unmount())
 })
+
+it('loads candidate management only after its directory opens and keeps removed entries out of chat history', async () => {
+  const { OfflineContextDirectory } = await import('../src/client/offline-context/OfflineContextDirectory.js')
+  fixture()
+  let r!: ReactTestRenderer
+  const close = vi.fn()
+  const view = (open: boolean) => open ? <OfflineContextDirectory source={source} items={[]} onClose={close} onChanged={() => {}} /> : null
+  try {
+    await act(async () => { r = create(view(false)) })
+    expect(api.offlineContext).not.toHaveBeenCalled()
+    await act(async () => r.update(view(true)))
+    expect(r.root.findAllByType(OfflineContextPending)).toHaveLength(0)
+    expect(r.root.findAllByType('article')).toHaveLength(1)
+    expect(api.offlineContext).toHaveBeenCalledWith({ operation: 'list', sourceRef: 'chat-a', state: 'suggested' }, expect.any(AbortSignal))
+    await act(async () => r.root.findAllByProps({ role: 'tab' })[1]!.props.onClick())
+    expect(api.offlineContext).toHaveBeenCalledWith({ operation: 'list', sourceRef: 'chat-a', state: 'dismissed' }, expect.any(AbortSignal))
+    await act(async () => r.root.findByProps({ 'aria-label': '关闭线下交流' }).props.onClick())
+    expect(close).toHaveBeenCalledOnce()
+    expect(api.offlineContext.mock.calls.some(([input]) => input.operation === 'command')).toBe(false)
+  } finally { await act(async () => r.unmount()) }
+})

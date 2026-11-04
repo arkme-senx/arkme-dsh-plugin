@@ -1,8 +1,8 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from '../locale.js'
 import { useEffect, useId, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/icons/ArrowCounterClockwise'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
@@ -154,7 +154,7 @@ export function ArkmeRecordingMobileGuideDialog({ onClose, returnFocusRef }: {
     <style>{recordingMobileGuideStyles}</style>
     <section ref={dialogRef} className="guide-dialog" role="dialog" aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-description ${id}-note`}>
       <header className="guide-header"><h2 id={`${id}-title`}>{tr("在手机上开启全天候录音")}</h2>
-        <button ref={closeRef} type="button" className="guide-close" aria-label={tr("关闭录音引导")} onClick={onClose}><X size={18} /></button>
+        <ArkmeCloseButton ref={closeRef} type="button" className="guide-close" aria-label={tr("关闭录音引导")} onClick={onClose} />
       </header>
       <p id={`${id}-description`} className="guide-description">{tr("打开手机即我，登录同一账号")}</p>
       {reducedMotion ? <StaticGuide /> : <>

@@ -87,14 +87,16 @@ function TimelineChunk({ id, mounted, estimate, register, measured, children }: 
   measured(height: number): void; children: ReactNode[]
 }) {
   const element = useRef<HTMLLIElement | null>(null)
-  const [height, setHeight] = useState(estimate)
+  const height = useRef(estimate)
   const measureRef = useRef(measured); measureRef.current = measured
   useLayoutEffect(() => {
     const node = element.current
     if (!mounted || !node) return
     const measure = () => {
       const value = node.getBoundingClientRect().height
-      if (value > 0) { setHeight(value); measureRef.current(value) }
+      // A mounted chunk has no fixed height. Retain its measured spacer size
+      // without scheduling an extra React commit for every media resize.
+      if (value > 0) { height.current = value; measureRef.current(value) }
     }
     measure()
     if (typeof ResizeObserver === 'undefined') return
@@ -102,7 +104,7 @@ function TimelineChunk({ id, mounted, estimate, register, measured, children }: 
     return () => observer.disconnect()
   }, [mounted])
   return <li ref={node => { element.current = node; register(node) }} data-arkme-timeline-chunk={id}
-    aria-hidden={!mounted || undefined} style={{ listStyle: 'none', flex: 'none', ...(mounted ? {} : { height }) }}>
+    aria-hidden={!mounted || undefined} style={{ listStyle: 'none', flex: 'none', ...(mounted ? {} : { height: height.current }) }}>
     {mounted && <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}>{children}</ul>}
   </li>
 }
