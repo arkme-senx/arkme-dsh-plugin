@@ -35,6 +35,7 @@ describe('edit history view', () => {
     const content = view.root.findByType(ArkmeMessageContent).props
     expect(content.presentation).toBe('detail')
     expect(content.item.itemUid).toBe('revision-only')
+    expect(content.item.senderName).toBe('未记录')
     expect(content.item.messageActionRef).toBeUndefined()
     expect(content.sourceRef).toBeUndefined()
     expect(view.root.findByProps({ 'data-arkme-history-latest': true }).props.style.fontSize).toBe(10)

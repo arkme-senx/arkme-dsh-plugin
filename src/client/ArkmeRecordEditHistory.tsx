@@ -116,7 +116,7 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
               event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); setMenu({ revision, x: rect.left + 20, y: rect.top + 20 })
             } }}
             style={{ minWidth: 0, width: 'calc(100% - 42px)', minHeight: 42, boxSizing: 'border-box', padding: 12, borderRadius: mine ? '12px 4px 12px 12px' : '4px 12px 12px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, background: mine ? arkmeTheme.messageOwn : arkmeTheme.messageOther, overflowWrap: 'anywhere' }}>
-            <ArkmeRecordRevisionDiff revision={revision} previous={page.items[index + 1]} orderUncertain={revision.version === undefined && page.items[index - 1]?.editAtMillis === revision.editAtMillis} hasMore={page.hasMore} senderName={author?.senderName ?? ''} mine={mine} />
+            <ArkmeRecordRevisionDiff revision={revision} previous={page.items[index + 1]} orderUncertain={revision.version === undefined && page.items[index - 1]?.editAtMillis === revision.editAtMillis} hasMore={page.hasMore} senderName={revision.senderName || tr('未记录')} mine={mine} />
           </div>
         </div>
       </section>)}
