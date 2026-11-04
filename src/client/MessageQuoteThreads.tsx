@@ -1,3 +1,4 @@
+import { WorldPublicationBadge } from './WorldPublicationControls.js'
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import type { ArkmeTimelineItem } from '../types.js'
@@ -38,10 +39,10 @@ export function MessageQuoteThreadBadge({ item }: { item: ArkmeTimelineItem }) {
   </button>
 }
 
-export function MessageQuoteThreadTimestamp({ item }: { item: ArkmeTimelineItem }) {
+export function MessageQuoteThreadTimestamp({ item, sourceRef }: { item: ArkmeTimelineItem; sourceRef?: string | undefined }) {
   const value = useMessageQuoteThreads()
-  if (!value.store?.thread(item).count) return <ArkmeMessageTimestamp at={item.sendAtMillis}/>
-  return <span style={{ float: 'right', display: 'inline-flex', alignItems: 'center' }}><ArkmeMessageTimestamp at={item.sendAtMillis}/><MessageQuoteThreadBadge item={item}/></span>
+  const target = item.isMe && item.quickNoteDetailsSupported !== false && sourceRef && item.messageActionRef ? {source:{sourceRef,messageActionRef:item.messageActionRef,itemUid:item.itemUid}} : undefined
+  return <span style={{ float: 'right', display: 'inline-flex', alignItems: 'center' }}><ArkmeMessageTimestamp at={item.sendAtMillis}/><WorldPublicationBadge target={target}/>{!!value.store?.thread(item).count && <MessageQuoteThreadBadge item={item}/>}</span>
 }
 
 function MessageQuoteUnderlines({ store, sourceRef }: { store: MessageQuoteThreadStore; sourceRef?: string | undefined }) {

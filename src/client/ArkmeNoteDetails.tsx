@@ -1,3 +1,4 @@
+import { WorldPublicationBadge, WorldPublicationActions } from './WorldPublicationControls.js'
 import { NoteWorldReactionArchive } from './NoteWorldReactionArchive.js'
 import { detailExtensionSends, useDetailExtensionSends, DetailExtensionSendStatus, type DetailExtensionSend } from './detail-extension-send.js'
 import { readDetailExtensionPages } from './detail-extension-pages.js'
@@ -1059,6 +1060,7 @@ export function ArkmeTimelineDetailDrawer({
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined ? item.aiPolish.polishedText : item.textContent
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
   const personalSource = sourceKind === 'send_to_self' || sourceKind === 'topic' || sourceKind === 'default_category'
+  const publicationTarget = item.isMe && quickNoteDetailsSupported && (personalSource || sourceKind === 'private_chat' || sourceKind === 'group_chat') && normalizedSourceRef && messageActionRef ? { source: { sourceRef: normalizedSourceRef, messageActionRef, itemUid: item.itemUid } } : undefined
   const privateOwnCurrentName = sourceKind === 'private_chat' && item.isMe && item.senderKind !== 'bot'
     && currentSelfProfile !== undefined
   const currentNameFallback = personalSource && item.isMe && item.avatarSnapshot === true
@@ -1127,7 +1129,9 @@ export function ArkmeTimelineDetailDrawer({
   }
   return <ArkmeDetailShell title={historyOpen ? tr("编辑记录") : tr("快记详情")} label={historyOpen ? tr("编辑记录") : tr("快记详情")}
     onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter} footerHidden={historyOpen}
-    headerContent={historyOpen ? undefined : <ArkmeMessageDetailAuthor at={item.sendAtMillis} bot={item.senderKind === 'bot'}
+    headerActions={!historyOpen && publicationTarget ? <WorldPublicationActions target={publicationTarget}/> : undefined}
+    headerContent={historyOpen ? undefined : <ArkmeMessageDetailAuthor at={item.sendAtMillis}
+      timeSuffix={publicationTarget ? <WorldPublicationBadge target={publicationTarget}/> : undefined} bot={item.senderKind === 'bot'}
       name={item.senderKind === 'bot' ? <ArkmeBotSenderName name={authorName} detail /> : authorName}
       avatar={<TeamRepresentationAvatar value={item.representation}><ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
         {...(roleAvatarFallback === undefined ? {} : { fallback: roleAvatarFallback })}
