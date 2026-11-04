@@ -1,3 +1,4 @@
+export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
 export type { ArkmeThoughtContinuation, ArkmeThoughtContinuationPage } from '../thought-continuation.js'
@@ -95,6 +96,7 @@ import type { DshDirectoryDelta } from '../dsh-remote/account-session-directory.
 export type { DshDirectoryDelta, DshDirectorySession } from '../dsh-remote/account-session-directory.js'
 import type { DshAccountSessionCommandOptions, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
 export type { DshAccountSessionCommandOptions, DshAccountSessionOperation, DshAccountSession, DshAccountSessionPage, DshAccountSessionHistory, DshAccountSessionCursor, DshSessionHistoryCursor } from '../dsh-remote/account-session-types.js'
+export type { HistorySyncStatus, HistorySyncState } from '../local-history-cloud-repair.js'
 import type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveSetInput, ArkmeArchiveSetResult } from '../archive-contract.js'
 export type { ArkmeArchivePage, ArkmeArchiveState, ArkmeArchiveEntry, ArkmeArchiveSetInput, ArkmeArchiveSetResult, ArkmeArchivePort } from '../archive-contract.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
@@ -902,6 +904,26 @@ export class ArkmeSdk {
       throw new Error(`Unsupported Arkme provider contract version ${String(capabilities.contractVersion)}`)
     }
     return capabilities
+  }
+
+  private async requireRecordingVoice(signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.recordingVoiceTriggersV2 !== true) throw new Error('当前 Provider 不支持录音语音触发 v2')
+  }
+  async voiceTriggerSettings(expectedAccountScope: string, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceSettings> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers', { action: 'settings', accountKey: expectedAccountScope }, signal)
+  }
+  async voiceTriggerPage(expectedAccountScope: string, cursor?: string, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoicePage> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers', { action: 'page', accountKey: expectedAccountScope, ...(cursor ? { cursor } : {}) }, signal)
+  }
+  async voiceTriggerDetail(expectedAccountScope: string, candidateRef: string, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceDetail> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers', { action: 'detail', accountKey: expectedAccountScope, candidateRef }, signal)
+  }
+  /** Rules do not enable the separate ongoing AI-usage authorization. */
+  async setVoiceTriggerRules(expectedAccountScope: string, input: { rules: import('../recording-voice-trigger-contract.js').RecordingVoiceRule[]; revision: number; localRevision: number }, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceSettings> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers.rules.set', { accountKey: expectedAccountScope, ...input }, signal)
+  }
+  async decideVoiceTrigger(expectedAccountScope: string, input: { candidateRef: string; decision: 'save' | 'ignore'; confirmedRange?: boolean }, signal?: AbortSignal): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceCandidate> {
+    await this.requireRecordingVoice(signal); return this.call('recordings.voice-triggers.decide', { accountKey: expectedAccountScope, ...input }, signal)
   }
 
   async automaticCapabilities(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeCapabilitySettings> {
@@ -2669,7 +2691,7 @@ export class ArkmeSdk {
     sourceRef: string,
     messageActionRef: string,
     textContent: string,
-    options: { recordUid?: string; relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
+    options: { representation?: TeamRepresentationSelection; sendAtMillis?: number; recordUid?: string; relationUid?: string; parentRecordUid?: string; thoughtReplyRef?: string; privateThoughtReplyRef?: string; quote?: import('../message-quote.js').ArkmeMessageQuote; fileRefs?: readonly string[]; signal?: AbortSignal } = {},
   ): Promise<ArkmeSourceMessageExtendResult> {
     if (options.thoughtReplyRef || options.privateThoughtReplyRef) await this.requireThoughtReplyProvider(options.signal)
     if (options.quote !== undefined) await this.requireMessageTextAnchors(options.signal)
@@ -2680,6 +2702,8 @@ export class ArkmeSdk {
     if (fileRefs.length > 9) throw new TypeError('Arkme source message extension accepts at most 9 attachments')
     return await this.call<ArkmeSourceMessageExtendResult>('source.message-extension.extend', {
       sourceRef, messageActionRef, textContent,
+      ...(options.representation === undefined ? {} : { representation: options.representation }),
+      ...(options.sendAtMillis === undefined ? {} : { sendAtMillis: options.sendAtMillis }),
       recordUid: options.recordUid ?? crypto.randomUUID(),
       relationUid: options.relationUid ?? crypto.randomUUID(),
       ...(options.parentRecordUid?.trim() ? { parentRecordUid: options.parentRecordUid.trim() } : {}),
@@ -2824,6 +2848,11 @@ export class ArkmeSdk {
   async prepareNoteWorldReactions(accountKey: string, sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionContextPage> {
     await this.requireWorldReactions(signal)
     return this.call('world.reactions.from-note', { accountKey, sourceRef, messageActionRef }, signal)
+  }
+
+  async worldReactionVersions(input: import('../world-reaction-contract.js').WorldReactionVersionsRequest, signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionVersionsPage> {
+    if ((await this.capabilities(signal)).features.worldReactionArchiveVersionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持历史世界版本归档，请升级', retryable: false })
+    return await this.call('world.reactions.versions', { ...input }, signal)
   }
 
   async prepareWorldReactions(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionContextPage> {
@@ -3363,7 +3392,7 @@ export type {TeamExtensionOptions,TeamExtensionPage} from '../team-message-contr
 
 export type {TeamMention} from '../team-app-contract.js'
 
-export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot} from '../team-group-contract.js'
+export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot,TeamRepresentationDisplay} from '../team-group-contract.js'
 
 export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'
 export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditMetadata,TeamEditReceipt,TeamEditCommand} from '../team-snapshot-contract.js'
@@ -3372,3 +3401,4 @@ export type { WorldReactionRequest, WorldReactionResponse, WorldReactionArchiveR
 export type { TeamWorldRequest, TeamWorldResponse, TeamWorldContext, TeamWorldCapabilities, TeamWorldOriginal, TeamWorldReceipt, TeamWorldFeedback, TeamWorldFeedbackTarget, TeamWorldActivity, TeamWorldPreview } from '../team-world-contract.js'
 
 export type { ArkmeArkoInteraction, ArkmeArkoInteractionQuery, ArkmeArkoInteractionPage, ArkmeArkoInteractionTarget, ArkmeArkoTimelineCache, ArkmeArkoTimelinePort } from '../arko-timeline-contract.js'
+export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '../world-reaction-contract.js'

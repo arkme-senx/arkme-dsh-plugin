@@ -1,5 +1,5 @@
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { authorizedStorageURL } from './profile-image.js'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import type { TeamWorldRequest, TeamWorldReceipt, TeamWorldOriginal, TeamWorldContext, TeamWorldPreview } from '../team-world-contract.js'
@@ -207,7 +207,14 @@ export class TeamWorldService {
         const names = await this.ports.actorNames([...new Set(feedback.map(r => positive(r.actor_user_id)))], signal)
         const summaries = await previews(feedback.map(r => ({ team_id: teamID, content_uid: id(r.content_uid), ...(r.kind === 'reaction' ? { event_uid: id(r.event_uid) } : {}) })))
         const comments = feedback.flatMap((r, i) => r.kind === 'comment' && summaries[i]?.preview ? [{ row: r, ancestorUID: id(summaries[i]!.wire.publication_uid) }] : [])
-        const commentValues = await this.ports.publicPreviews(comments.map(({ row, ancestorUID }) => ({ recordUID: id(row.event_uid), ancestorUID })), signal)
+        const publicationUIDs = [...new Set(summaries.filter(value => value.preview).map(value => id(value.wire.publication_uid)))]
+        const [commentValues, publications] = await Promise.all([
+          this.ports.publicPreviews(comments.map(({ row, ancestorUID }) => ({ recordUID: id(row.event_uid), ancestorUID })), signal),
+          this.ports.publicPreviews(publicationUIDs.map(recordUID => ({ recordUID, ancestorUID: '' })), signal),
+        ])
+        if (publications.length !== publicationUIDs.length) throw invalid()
+        const byPublication = new Map(publicationUIDs.map((uid, index) => [uid, publications[index]]))
+        const identitySecret = await this.runtime.stateStore.uniqueCode()
         if (commentValues.length !== comments.length) throw invalid()
         const byComment = new Map(comments.map(({ row }, i) => [id(row.event_uid), commentValues[i]]))
         // One capability per original within this bounded response. Randomized
@@ -230,7 +237,7 @@ export class TeamWorldService {
             if (typeof expression.text !== 'string' || ['emoji','hand','color'].some(k => expression[k] !== undefined && typeof expression[k] !== 'string')) throw invalid()
             reaction = { active: event.active, expression: { text: expression.text, ...(expression.emoji ? { emoji: str(expression.emoji) } : {}), ...(expression.hand ? { hand: str(expression.hand) } : {}), ...(expression.color ? { color: str(expression.color) } : {}) } }
           }
-          return { key: await this.seal('feedback-key', actor, { id: id(r.id) }), sequence: positive(r.sequence), contentRef: await contentRefs.get(id(r.content_uid))!, kind: r.kind, isMe: positive(r.actor_user_id) === actor, actorName: names.get(positive(r.actor_user_id)) ?? '', preview: summary.preview, ...(byComment.get(id(r.event_uid)) ? { comment: byComment.get(id(r.event_uid)) } : {}), ...(reaction ? { reaction } : {}), at: positive(r.at), eventRef: await this.seal('feedback-event', actor, { team: teamID, content: id(r.content_uid), kind: r.kind, event: id(r.event_uid), context: id(r.context_uid), revision: id(r.content_revision) }) }
+          return { contentKey: createHmac('sha256', identitySecret).update(JSON.stringify([this.runtime.config.environment, actor, teamID, id(r.content_uid)])).digest('hex'), ...(byPublication.get(id(summary.wire.publication_uid)) ? { publication: byPublication.get(id(summary.wire.publication_uid)) } : {}), key: await this.seal('feedback-key', actor, { id: id(r.id) }), sequence: positive(r.sequence), contentRef: await contentRefs.get(id(r.content_uid))!, kind: r.kind, isMe: positive(r.actor_user_id) === actor, actorName: names.get(positive(r.actor_user_id)) ?? '', preview: summary.preview, ...(byComment.get(id(r.event_uid)) ? { comment: byComment.get(id(r.event_uid)) } : {}), ...(reaction ? { reaction } : {}), at: positive(r.at), eventRef: await this.seal('feedback-event', actor, { team: teamID, content: id(r.content_uid), kind: r.kind, event: id(r.event_uid), context: id(r.context_uid), revision: id(r.content_revision) }) }
         })), hasMore: v.has_more === true, afterSequence: nonnegative(v.after_sequence), seenThrough: nonnegative(v.seen_through), offeredThrough: nonnegative(v.offered_through) }; break
       }
       case 'feedback-read': {

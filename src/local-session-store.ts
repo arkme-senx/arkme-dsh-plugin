@@ -5,8 +5,48 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { securePrivateDirectory } from './private-filesystem.js'
 import { LocalSessionOwnership } from './local-session-ownership.js'
+import { parse, stringify } from 'yaml'
+import type { LocalHistoryPersistenceConfig } from './local-session-persistence.js'
 
 type LocalSessionScope = { root: string; accountRef: string; environment: 'test' | 'prod'; dshVersion: string }
+
+/** Automatic history discovery keeps each original journal in place. This
+ * composition deliberately does not call the legacy move-based preparation. */
+export function localHistoryProfilePatch(input: LocalSessionScope & {
+  pluginDir: string; basePatch: string; history: LocalHistoryPersistenceConfig
+}): string {
+  if (!['test', 'prod'].includes(input.environment) || input.dshVersion !== '0.2.1-rc.2'
+    || !isAbsolute(input.root) || !/^[a-f0-9]{64}$/.test(input.accountRef)) throw new Error('本机历史需要匹配账号与 DSH 0.2.1-rc.2')
+  const value: unknown = parse(input.basePatch)
+  if (!Array.isArray(value)) throw new Error('当前 Profile 配置无法安全扩展')
+  let primaryRoot: string | undefined
+  const owned = new Set(['arkme-local-sessions', 'arkme-local-history', 'arkme-local-attachments', 'arkme-gateway-browser'])
+  const attachmentConfig = value.filter(row => row?.id === 'attachment-local').reduce((config, row) => ({ ...config, ...row.config }), {})
+  if (attachmentConfig.dshHome && ![input.history.dshHome, input.root].some(home => resolve(home) === resolve(attachmentConfig.dshHome))) throw new Error('当前 Profile 使用自定义附件存储，请保留原配置后再启用本机历史')
+  const previous = value.flatMap(row => {
+    if (!row || typeof row !== 'object') throw new Error('当前 Profile 配置无效')
+    if (row.id === 'session-persistence-jsonl' && row.config?.root
+      && resolve(row.config.root) !== resolve(input.history.dshHome, 'sessions')) {
+      if (resolve(row.config.root) !== resolve(input.root, 'sessions')) throw new Error('当前 Profile 使用自定义会话存储，请保留原配置后再启用本机历史')
+      primaryRoot = resolve(row.config.root)
+    }
+    if (['agent', 'typert-gateway', 'session-persistence-jsonl', 'attachment-local'].includes(row.id) && row.disabled === true) return []
+    if (!Array.isArray(row.insert)) return [row]
+    const insert = row.insert.filter((entry: { id?: string }) => !owned.has(entry.id ?? ''))
+    return insert.length ? [{ ...row, insert }] : []
+  })
+  const module = (name: string) => pathToFileURL(join(input.pluginDir, 'lib', `${name}.js`)).href
+  return stringify([...previous,
+    ...['agent', 'typert-gateway', 'session-persistence-jsonl'].map(id => ({ id, disabled: true })),
+    { id: 'attachment-local', disabled: true, config: attachmentConfig },
+    { insert: [
+      { id: 'arkme-local-history', name: module('local-session-persistence'), config: { ...input.history, sharedRoot: input.root, ...(primaryRoot ? { primaryRoot } : {}) } },
+      { id: 'arkme-local-attachments', name: module('local-session-attachments'), config: { ...attachmentConfig, dshHome: input.root } },
+      { id: 'arkme-local-sessions', name: module('local-session/index'), config: { root: input.root, accountRef: input.accountRef, environment: input.environment } },
+      { id: 'arkme-gateway-browser', name: module('local-session/gateway-browser/index') },
+    ] },
+  ])
+}
 
 function assertSupportedScope(input: LocalSessionScope): void {
   if (input.environment !== 'test' || input.dshVersion !== '0.2.1-rc.2') throw new Error('本机接管需要测试环境与 DSH 0.2.1-rc.2')

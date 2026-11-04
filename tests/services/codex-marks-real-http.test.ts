@@ -77,6 +77,25 @@ it.skipIf(!contract)('uses actual Team HTTP+Mongo for two devices, admin-private
  const verified=await a.owner.prepareExport('contract',ready.task_id,ready.source_id,steeringSnapshot)
  expect(verified.messages[0]).toMatchObject({text:'追加图片说明',role:'user',createdAtMillis:401})
  await expect(admin.owner.prepareExport('contract',ready.task_id,ready.source_id,steeringSnapshot)).rejects.toThrow()
+ const skill:TeamCodexEvent={...input,eventId:'skill-input',turnId:'skill-input',sequence:5,at:500,text:'[$demo-skill](/workspace/skills/demo-skill/SKILL.md) 继续检查'}
+ const skillText=codexPromptDisplayText(skill.text),skillCanonical=normalizeQuoteText(skillText)
+ expect(skillText).toBe('demo-skill 继续检查')
+ const skillDetail=await a.post<{text:string}>(101,'/api/v1/team-codex/events/detail',{source_id:ready.source_id,task_id:ready.task_id,event_id:skill.eventId},AbortSignal.timeout(5000))
+ expect(skillDetail.text).toBe(skillText)
+ const skillSnapshot=codexSelectionSnapshot('contract',annotatedTask,[skill],new Set([codexEventKey(skill)]))
+ expect((await a.owner.prepareExport('contract',ready.task_id,ready.source_id,skillSnapshot)).messages[0]!.text).toBe(skillText)
+ const skillDigest=createHash('sha256').update(quoteSourceContent({textContent:skillCanonical,textFormat:'plain'})).digest('hex')
+ const skillAnchor:ArkmeMessageQuote={version:1,projection:'arkme-text-v1',sourceDigest:skillDigest,start:0,end:4,text:'demo',prefix:'',suffix:skillCanonical.slice(4,36)}
+ const skillRef=(ref:string)=>JSON.stringify([ref,'skill-input',skillCanonical])
+ expect((await a.owner.changeCloudMark(a.sourceRef,skillRef(a.sourceRef),{kind:'add',operationId:randomUUID(),baseRevision:0,anchor:skillAnchor}))?.items).toHaveLength(1)
+ expect((await b.owner.cloudMarks(b.sourceRef,[skillRef(b.sourceRef)]))![0]!.snapshot.items).toHaveLength(1)
+ expect((await admin.owner.cloudMarks(admin.sourceRef,[skillRef(admin.sourceRef)]))![0]!.snapshot.items).toEqual([])
+ for(const id of ['page-context','skill-context']){
+  const hiddenDetail=await a.post<{text:string}>(101,'/api/v1/team-codex/events/detail',{source_id:ready.source_id,task_id:ready.task_id,event_id:id},AbortSignal.timeout(5000))
+  expect(hiddenDetail.text).toBe('')
+  const forged={...skillSnapshot,messages:[{...skillSnapshot.messages[0]!,key:id,text:'Instructions are not user prose.'}]}
+  await expect(a.owner.prepareExport('contract',ready.task_id,ready.source_id,forged)).rejects.toThrow()
+ }
  a.setUser(22);await expect(a.owner.cloudMarks(a.sourceRef,[a.ref('legacy')])).rejects.toThrow()
  await writeFile(join(contract!,'done'),'passed')
 },90000)

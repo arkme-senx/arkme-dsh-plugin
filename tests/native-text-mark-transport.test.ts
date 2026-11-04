@@ -6,6 +6,25 @@ const source = JSON.stringify(['dsh-native', 42, 'arkme:runtime:session'])
 const ref = JSON.stringify([source, 'key', '正文', { eventSeq: 2, role: 'user' }])
 const mark = (id: string) => ({ id, mine: true, actorId: 42, actorName: '你', anchor: {}, state: 'available' })
 beforeEach(() => { call.mockReset() })
+it('keeps local marks while repair is pending and clears its notice on the existing refresh path after cloud acknowledgement', async () => {
+  const transport = createNativeTextMarkTransport(), signal = new AbortController().signal
+  let ready = false
+  call.mockImplementation(async (op, args) => {
+    if (op === 'native-chat.local-mark.list') return [{ actionRef: ref, snapshot: { revision: 1, accessible: true, items: [mark('local:old')] } }]
+    if (args.request.action === 'capabilities') return { supported: true, maxLength: 2000 }
+    if (args.request.action === 'contexts') {
+      if (!ready) throw Object.assign(new Error('本机历史待同步到云端'), { code: 'native-annotation-source-not-ready' })
+      return [{ messageRef: 'cloud-source', canonicalText: '正文' }]
+    }
+    return [{ messageRef: 'cloud-source', revision: 0, accessible: true, items: [] }]
+  })
+  await transport.capabilities(source, signal)
+  const pending = (await transport.list(source, [ref], signal))[0]!.snapshot
+  expect(pending.items.map(item => item.id)).toEqual(['local:old']); expect(pending.syncNotice).toContain('待同步')
+  ready = true
+  const confirmed = (await transport.list(source, [ref], signal))[0]!.snapshot
+  expect(confirmed.syncNotice).toBeUndefined(); expect(confirmed.items.map(item => item.id)).toEqual(['local:old'])
+})
 it('keeps cloud marks when removing a legacy local mark and orders both owner revisions', async () => {
   const transport = createNativeTextMarkTransport()
   let local = { revision: 1, accessible: true, items: [mark('local:old')] }

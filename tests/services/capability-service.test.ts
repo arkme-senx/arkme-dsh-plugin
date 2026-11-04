@@ -7,7 +7,10 @@ function fixture() {
   let userId = 1
   const state = row()
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
-    if (path.endsWith('/query')) return [{ ...state }]
+    if (path.endsWith('/query')) {
+      expect(body).toEqual({ catalog_version: 2 })
+      return [{ ...state }]
+    }
     if (state.version !== body.expected_version) throw new Error('conflict')
     if (state.enabled !== body.enabled) { state.version++; state.enabled = body.enabled as boolean; state.enabled_at = state.enabled ? 1 : 0 }
     return { ...state }
@@ -103,19 +106,19 @@ describe('automatic capability owner', () => {
   })
 })
 
-it('offline context uses the existing consent/version owner without activating personal profile', async () => {
-  const state = { key: 'offline_context', title: '线下交流关联', enabled: false, version: 0, enabled_at: 0 }
+it.each(['offline_context', 'recording_voice_trigger'] as const)('%s uses the existing consent/version owner without activating personal profile', async key => {
+  const state = { key, title: key === 'offline_context' ? '线下交流关联' : '录音语音触发', enabled: false, version: 0, enabled_at: 0 }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/query')) return [state]
-    expect(body.key).toBe('offline_context')
+    expect(body.key).toBe(key)
     Object.assign(state, { enabled: body.enabled, version: state.version + 1, enabled_at: body.enabled ? 100 : 0 })
     return { ...state }
   })
   const service = new CapabilityService({ config: { environment: 'prod' }, requireSession: async () => ({ userId: 1 }), authenticatedPost: post } as never)
-  expect((await service.query('prod:1')).settings[0]).toMatchObject({ key: 'offline_context', enabled: false })
-  await expect(service.update({ key: 'offline_context', enabled: true, expectedVersion: 0, billingConsent: false }, 'prod:1')).rejects.toThrow()
+  expect((await service.query('prod:1')).settings[0]).toMatchObject({ key, enabled: false })
+  await expect(service.update({ key, enabled: true, expectedVersion: 0, billingConsent: false }, 'prod:1')).rejects.toThrow()
   expect(state.enabled).toBe(false)
-  await service.update({ key: 'offline_context', enabled: true, expectedVersion: 0, billingConsent: true }, 'prod:1')
+  await service.update({ key, enabled: true, expectedVersion: 0, billingConsent: true }, 'prod:1')
   expect(state.enabled).toBe(true)
   expect(post.mock.calls.every(([path]) => path.startsWith('/api/v1/settings/capabilities/'))).toBe(true)
 })

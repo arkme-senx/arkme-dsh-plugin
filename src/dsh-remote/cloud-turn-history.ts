@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { createGunzip } from 'node:zlib'
+import { setImmediate as yieldNow } from 'node:timers/promises'
 import { DshRemoteError } from './errors.js'
 import type { DshRemoteHttpRequester } from './control-plane.js'
 import { REMOTE_HISTORY_TURNS, type NativeHistoryPage, type NativeHistoryRecord } from './native-history.js'
@@ -69,73 +70,106 @@ export async function readCloudTurnHistory(
   const records: NativeHistoryRecord[] = []
   for (const item of selected.reverse()) {
     if (item.compressed_bytes > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES || item.event_count > 50_000) throw tooLarge()
-    signal.throwIfAborted()
-    const grant = await request.post(`${BASE}/read`, { ...identity, object_ref: item.object_ref }, signal)
-    let url: URL
-    try { url = new URL(String(grant.download_url)) } catch { throw invalid() }
-    if (grant.object_ref !== item.object_ref || !Number.isSafeInteger(grant.expires_at) || Number(grant.expires_at) <= Date.now()
-      || url.protocol !== 'https:' || url.username || url.password || url.hash) throw invalid()
-    const headers = new Headers()
-    for (const [name, value] of Object.entries(object(grant.download_headers ?? {}))) {
-      if (!/^[a-z0-9-]{1,64}$/i.test(name) || typeof value !== 'string' || /[\r\n]/.test(value)
-        || ['authorization', 'cookie', 'host', 'proxy-authorization', 'accept-encoding'].includes(name.toLowerCase())) throw invalid()
-      headers.set(name, value)
-    }
-    // OSS stores a gzip file, not an HTTP content-encoded representation.
-    headers.set('accept-encoding', 'identity')
-    const chunks: Buffer[] = []
-    let bytes = 0, decodedBytes = 0
-    const hash = createHash('sha256')
-    try {
-      const response = await fetch(url, { method: 'GET', headers, redirect: 'error', credentials: 'omit', signal })
-      if (!response.ok || !response.body) {
-        await response.body?.cancel()
-        throw new DshRemoteError('REMOTE_NETWORK_UNAVAILABLE', '云端历史下载失败', true)
-      }
-      const length = response.headers.get('content-length')
-      if (length !== null && Number(length) !== item.compressed_bytes) { await response.body.cancel(); throw invalid() }
-      await pipeline(
-        Readable.fromWeb(response.body as import('node:stream/web').ReadableStream<Uint8Array>),
-        async function* (source) {
-          for await (const chunk of source) {
-            bytes += chunk.length
-            if (bytes > item.compressed_bytes) throw invalid()
-            hash.update(chunk)
-            yield chunk
-          }
-        },
-        createGunzip(),
-        async source => {
-          for await (const chunk of source) {
-            decodedBytes += chunk.length
-            if (decodedBytes > remaining) throw tooLarge()
-            chunks.push(chunk as Buffer)
-          }
-        },
-        { signal },
-      )
-    } catch (error) {
-      signal.throwIfAborted()
-      if (error instanceof DshRemoteError) throw error
-      throw new DshRemoteError('REMOTE_STORAGE_FAILED', '云端历史下载或解压失败', true)
-    }
-    signal.throwIfAborted()
-    if (bytes !== item.compressed_bytes || hash.digest('hex') !== item.content_sha256) throw invalid()
+    const { entries, decodedBytes } = await readTurnObject(request, identity, item, signal, remaining, record)
     remaining -= decodedBytes
-    let value: Record<string, unknown>
-    try { value = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))) } catch { throw invalid() }
-    const turn = object(value.turn)
-    if (value.schema !== 'dsh.turn.v1' || turn.turn_ref !== item.turn_ref || turn.start_seq !== item.start_seq
-      || turn.end_seq !== item.end_seq || turn.status !== item.status || !Array.isArray(value.events)
-      || value.events.length !== item.event_count || object(value.integrity).event_count !== item.event_count) throw invalid()
-    const entries = value.events.map(record)
-    if (entries[0]?.event.seq !== item.start_seq || entries.at(-1)?.event.seq !== item.end_seq
-      || entries[0]?.event.type !== 'turn/start'
-      || entries.some((entry, i) => i > 0 && (entry.event.seq !== entries[i - 1]!.event.seq + 1 || entry.event.type === 'turn/start'))) {
-      throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '云端原始历史不完整，需要源电脑补齐')
-    }
     records.push(...entries.filter(entry => before === undefined || entry.event.seq < before))
     if (records.length > 50_000) throw tooLarge()
   }
   return { records, hasMore: (records[0]?.event.seq ?? 0) > 0 }
+}
+
+/** Background identity validation visits one verified object at a time, without retaining a UI page. */
+export async function visitCloudTurnHistory(request: DshRemoteHttpRequester, identity: Identity, signal: AbortSignal, record: (entry: unknown) => NativeHistoryRecord): Promise<void> {
+  let cursor: string | undefined, lastStart = Infinity
+  for (let page = 0; page < 50; page++) {
+    signal.throwIfAborted()
+    const value = await request.post(`${BASE}/list`, { ...identity, limit: 100, ...(cursor === undefined ? {} : { cursor }) }, signal)
+    const items = value.items === null ? [] : value.items
+    if (!Array.isArray(items) || items.length > 100 || !items.length && Number(value.committed_turn_count ?? 0) > 0) throw invalid()
+    const more = value.has_more === true
+    if (more !== (typeof value.next_cursor === 'string' && value.next_cursor.length > 0)
+      || more && (!items.length || value.next_cursor === cursor)) throw invalid()
+    for (const raw of items) {
+      const item = parseTurnObjectIndex(raw)
+      if (item.end_seq >= lastStart) throw invalid()
+      lastStart = item.start_seq
+      await readTurnObject(request, identity, item, signal, DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES, record)
+    }
+    if (!more) return
+    cursor = String(value.next_cursor)
+  }
+  throw new DshRemoteError('REMOTE_INVALID_RESPONSE', '云端历史索引分页过多')
+}
+
+async function readTurnObject(request: DshRemoteHttpRequester, identity: Identity, item: Index, signal: AbortSignal, remaining: number, record: (entry: unknown) => NativeHistoryRecord) {
+  if (item.compressed_bytes > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) throw tooLarge()
+  signal.throwIfAborted()
+  const grant = await request.post(`${BASE}/read`, { ...identity, object_ref: item.object_ref }, signal)
+  let url: URL
+  try { url = new URL(String(grant.download_url)) } catch { throw invalid() }
+  if (grant.object_ref !== item.object_ref || !Number.isSafeInteger(grant.expires_at) || Number(grant.expires_at) <= Date.now()
+    || url.protocol !== 'https:' || url.username || url.password || url.hash) throw invalid()
+  const headers = new Headers()
+  for (const [name, value] of Object.entries(object(grant.download_headers ?? {}))) {
+    if (!/^[a-z0-9-]{1,64}$/i.test(name) || typeof value !== 'string' || /[\r\n]/.test(value)
+      || ['authorization', 'cookie', 'host', 'proxy-authorization', 'accept-encoding'].includes(name.toLowerCase())) throw invalid()
+    headers.set(name, value)
+  }
+  // OSS stores a gzip file, not an HTTP content-encoded representation.
+  headers.set('accept-encoding', 'identity')
+  const chunks: Buffer[] = []
+  let bytes = 0, decodedBytes = 0
+  const hash = createHash('sha256')
+  try {
+    const response = await fetch(url, { method: 'GET', headers, redirect: 'error', credentials: 'omit', signal })
+    if (!response.ok || !response.body) {
+      await response.body?.cancel()
+      throw new DshRemoteError('REMOTE_NETWORK_UNAVAILABLE', '云端历史下载失败', true)
+    }
+    const length = response.headers.get('content-length')
+    if (length !== null && Number(length) !== item.compressed_bytes) { await response.body.cancel(); throw invalid() }
+    await pipeline(
+      Readable.fromWeb(response.body as import('node:stream/web').ReadableStream<Uint8Array>),
+      async function* (source) {
+        for await (const chunk of source) {
+          bytes += chunk.length
+          if (bytes > item.compressed_bytes) throw invalid()
+          hash.update(chunk)
+          yield chunk
+        }
+      },
+      createGunzip(),
+      async source => {
+        for await (const chunk of source) {
+          decodedBytes += chunk.length
+          if (decodedBytes > remaining) throw tooLarge()
+          chunks.push(chunk as Buffer)
+        }
+      },
+      { signal },
+    )
+  } catch (error) {
+    signal.throwIfAborted()
+    if (error instanceof DshRemoteError) throw error
+    throw new DshRemoteError('REMOTE_STORAGE_FAILED', '云端历史下载或解压失败', true)
+  }
+  signal.throwIfAborted()
+  if (bytes !== item.compressed_bytes || hash.digest('hex') !== item.content_sha256) throw invalid()
+  let value: Record<string, unknown>
+  try { value = object(JSON.parse(Buffer.concat(chunks).toString('utf8'))) } catch { throw invalid() }
+  const turn = object(value.turn)
+  if (value.schema !== 'dsh.turn.v1' || turn.turn_ref !== item.turn_ref || turn.start_seq !== item.start_seq
+    || turn.end_seq !== item.end_seq || turn.status !== item.status || !Array.isArray(value.events)
+    || value.events.length !== item.event_count || object(value.integrity).event_count !== item.event_count) throw invalid()
+  const entries: NativeHistoryRecord[] = []
+  for (let i = 0; i < value.events.length; i++) {
+    entries.push(record(value.events[i]))
+    if (i % 100 === 0) await yieldNow(undefined, { signal })
+  }
+  if (entries[0]?.event.seq !== item.start_seq || entries.at(-1)?.event.seq !== item.end_seq
+    || entries[0]?.event.type !== 'turn/start'
+    || entries.some((entry, i) => i > 0 && (entry.event.seq !== entries[i - 1]!.event.seq + 1 || entry.event.type === 'turn/start'))) {
+    throw new DshRemoteError('CAPABILITY_UNSUPPORTED', '云端原始历史不完整，需要源电脑补齐')
+  }
+  return { entries, decodedBytes }
 }

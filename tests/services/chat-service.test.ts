@@ -14,7 +14,6 @@ import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateSt
 import { SourceService } from '../../src/services/source-service.js'
 import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 import { createArkmeSdk } from '../../src/sdk/index.js'
-import { assertRecordForwardInput } from '../fixtures/record-forward-input.js'
 import { createArkmeCoreToolDefinitions } from '../../src/tools/index.js'
 
 const config: ArkmeServiceConfig = {
@@ -295,15 +294,15 @@ describe('ChatService', () => {
     expect((await chat.chatTimelineItems({ items: [raw] }, session, 'chat', 'private_chat'))[0]?.conversationPreview).toBe(answered)
   })
 
-  it.each(['send_to_self', 'default_category', 'topic'] as const)('uses the strict Record write contract and preserves Markdown when forwarding to %s', async targetKind => {
+  it.each(['send_to_self', 'default_category', 'topic'] as const)('submits only authoritative source selectors when forwarding to %s', async targetKind => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
     const runtime = {
       config: { maxTextLength: 20_000 },
       requireSession: vi.fn(async () => session),
       stateStore: { uniqueCode: vi.fn(async () => 'snapshot-test-signing-key') },
       authenticatedPost: vi.fn(async (_path: string, body: Record<string, unknown>) => {
-        assertRecordForwardInput(body)
-        return { record_uid: 'forwarded', status: 1 }
+        expect(body).not.toHaveProperty('content_payload')
+        return { accepted:true,record_uid:body.record_uid,status:1 }
       }),
     }
     const source = { openSourceRef: vi.fn(async (ref: string) => ({
@@ -316,12 +315,25 @@ describe('ChatService', () => {
     const actionRef = snapshotActionRef({ textContent: '    code\n', textFormat: 'markdown' })
     await chat.forwardSourceMessages('source', [actionRef], { targetSourceRef: 'target' })
     expect(runtime.authenticatedPost).toHaveBeenCalledWith(
-      targetKind === 'topic' ? '/api/v1/topics/records/create' : '/api/v1/records/create',
-      expect.objectContaining({ content_payload: expect.objectContaining({
-        forward_records: expect.objectContaining({ items: [expect.objectContaining({ text: '    code\n', text_format: 'markdown' })] }),
-      }) }), session, undefined,
+      targetKind === 'topic' ? '/api/v1/topics/records/source-forward/create' : '/api/v1/records/source-forward/create',
+      expect.objectContaining({sources:[{record_uid:'record-snapshot-1',chat_session_uid:'chat-1',relation_uid:'rel-snapshot-1'}]}), session, undefined,
     )
   })
+
+  it('retries a personal forward comment with the original identity and account',async()=>{
+    const session={userId:42};
+    const runtime={config:{maxTextLength:20000},requireSession:async()=>session,stateStore:{uniqueCode:async()=> 'snapshot-test-signing-key'}};
+    const source={openSourceRef:async(ref:string)=>({kind:ref==='source'?'private_chat':'send_to_self',ownerRef:ref==='source'?'chat-1':'self'})};
+    const record={createPersonalRecord:vi.fn(async()=>({accepted:true,record_uid:'stable-copy',status:1}))};
+    const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,record as never,{} as never,{} as never,{} as never,{invalidateRecordProjection:async()=>{}} as never);
+    const comment=vi.spyOn(chat,'sendSourceText').mockResolvedValue({sourceRef:'target',itemUid:'comment',status:1,localState:'synced'});
+    const options={targetSourceRef:'target',recordUid:'stable-copy',commentText:'固定附言'};
+    await chat.forwardSourceMessages('source',[snapshotActionRef()],options);
+    await chat.forwardSourceMessages('source',[snapshotActionRef()],options);
+    expect(comment.mock.calls[0]?.[2]?.recordUid).toBe(comment.mock.calls[1]?.[2]?.recordUid);
+    expect(comment.mock.calls[0]?.[2]?.recordUid).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-8[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+    expect(comment.mock.calls[0]?.[2]?.expectedUserId).toBe(42);
+  });
 
   it('does not open a departed member private chat under an account changed after event authorization', async () => {
     const runtime = {
@@ -3315,8 +3327,8 @@ describe('ChatService', () => {
     'uses the public profile identity instead of the group member name %j when opening a private chat',
     async groupMemberName => {
       const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
-      const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
-        ? { items: [{ user_id: 7, status: 1, remark: '', display_name_snapshot: groupMemberName }] }
+      const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/by-user-ids'
+        ? { chat_session_uid: 'group-1', items: [{ user_id: 7, status: 1, remark: '', display_name_snapshot: groupMemberName }] }
         : {
             session: { chat_session_uid: 'private-1', last_active_at: 1_700_000_000_000, last_seq: 0 },
             unread_snapshot: { unread_count: 0, session_last_seq: 0 },
@@ -3420,8 +3432,8 @@ describe('ChatService', () => {
       unreadCount: 3,
       latestSequence: 9,
     }
-    const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
-      ? { items: [{ user_id: 7, status: 1, remark: '我的备注', display_name_snapshot: '群内昵称' }] }
+    const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/by-user-ids'
+      ? { chat_session_uid: 'group-1', items: [{ user_id: 7, status: 1, remark: '我的备注', display_name_snapshot: '群内昵称' }] }
       : {
           session: { chat_session_uid: 'private-existing', last_active_at: 1_700_000_000_500, last_seq: 9 },
           unread_snapshot: { unread_count: 3, session_last_seq: 9 },
@@ -3472,7 +3484,7 @@ describe('ChatService', () => {
     { name: 'member from another chat', targetUserId: 7, memberChatSessionUid: 'group-2', members: [{ user_id: 7 }], code: 'chat-member-ref-invalid' },
   ])('rejects $name before creating a private chat', async ({ targetUserId, memberChatSessionUid, members, code }) => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
-    const authenticatedChatPost = vi.fn(async () => ({ items: members }))
+    const authenticatedChatPost = vi.fn(async () => ({ chat_session_uid: 'group-1', items: members }))
     const runtime = {
       stateStore: { uniqueCode: vi.fn(async () => 'member-signing-key') },
       requireSession: vi.fn(async () => session),
@@ -3673,14 +3685,54 @@ it('preserves long article identity and remaps all forwarded image nodes to snap
   expect(JSON.stringify(item)).not.toContain('secret-')
 })
 
-it('confirms article delivery only for the exact chat relation and record owner', async () => {
-  let relationUid='other-relation'
-  const runtime={requireSession:async()=>({userId:42}),authenticatedChatPost:async()=>({chat_session_uid:'chat',anchor:{relation:{rel_uid:relationUid,record_uid:'article',record_owner_user_id:42,seq:9},record:{status:1}}})}
-  const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'private_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+it('confirms long article with the sender-only exact receipt after group read access is lost', async () => {
+  let accepted = false
+  const runtime = {
+    requireSession: async () => ({userId:42}),
+    stateStore: {uniqueCode:async()=> 'receipt-test-key'},
+    authenticatedChatPost: vi.fn(async (path:string, body:unknown) => {
+      expect(path).toBe('/api/v1/chats/records/receipt/get')
+      expect(body).toEqual({chat_session_uid:'chat',record_uid:'article',rel_uid:'expected-relation'})
+      return {accepted,seq:9,audit_status:1}
+    }),
+  }
+  const chat = new ChatService(runtime as never,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
   const input={title:'article',textContent:'text',recordUid:'article',relationUid:'expected-relation'}
   await expect(chat.confirmLongArticlePublication('source',input,42)).rejects.toMatchObject({code:'long-article-outcome-unknown'})
-  relationUid='expected-relation'
+  accepted=true
   await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9,localState:'synced'})
+})
+
+it('projects the accepted Team snapshot on a native send receipt without trusting the selection label', async () => {
+  const { GroupRepresentationCodec } = await import('../../src/services/group-representation.js')
+  const raw = { team_id: '7', membership_kind: 'member', membership_revision: 3, group_join_at: 9, name: '服务端团队', jotmo_id: 'team' }
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const runtime = { config, stateStore: { uniqueCode: async () => 'accepted-team-key' },
+    authenticatedChatPost: vi.fn(async () => ({ record_uid: 'record', rel_uid: 'rel', audit_status: 1, seq: 7, representation: raw })) }
+  const codec = new GroupRepresentationCodec(runtime as never)
+  const { name: _name, jotmoId: _id, ...selection } = (await codec.snapshot({ ...raw, name: '点击时的旧团队名' }, 42))!
+  const chat = new ChatService(runtime as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+    { scheduleChatSessionProjection: vi.fn() } as never)
+  const result = await chat.sendChatSourceTextRaw('source', 'group', '正文', 'record', 'rel', session,
+    undefined, undefined, undefined, { representation: selection, sendAtMillis: 123 })
+  expect(result.representation).toMatchObject({ name: '服务端团队', jotmoId: 'team', membershipRevision: 3 })
+  expect(await codec.selection(result.representation && { teamRef: result.representation.teamRef, membershipKind: result.representation.membershipKind,
+    membershipRevision: result.representation.membershipRevision, groupJoinAt: result.representation.groupJoinAt }, 42)).toMatchObject({ team_id: '7' })
+  expect(JSON.stringify(result)).not.toContain('team_id')
+})
+
+it('checks the frozen team identity when confirming a long article receipt', async () => {
+ const {GroupRepresentationCodec}=await import('../../src/services/group-representation.js')
+ const raw={team_id:'9223372036854775807',membership_kind:'member',membership_revision:3,group_join_at:9,name:'团队',jotmo_id:'team'}
+ let acceptedRepresentation={...raw}
+ const runtime={requireSession:async()=>({userId:42}),stateStore:{uniqueCode:async()=> 'team-article-receipt'},authenticatedChatPost:async()=>({accepted:true,seq:9,representation:acceptedRepresentation})}
+ const codec=new GroupRepresentationCodec(runtime as never),snapshot=(await codec.snapshot(raw,42))!
+ const {name:_name,jotmoId:_jotmo,...representation}=snapshot
+ const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+ const input={title:'article',textContent:'text',recordUid:'article',relationUid:'relation',representation}
+ await expect(chat.confirmLongArticlePublication('source',input,42)).resolves.toMatchObject({itemUid:'article',sequence:9,representation:{name:'团队',jotmoId:'team'}})
+ acceptedRepresentation={...raw,membership_revision:4}
+ await expect(chat.confirmLongArticlePublication('source',input,42)).rejects.toMatchObject({code:'team-identity-receipt-conflict'})
 })
 
 
@@ -3717,6 +3769,17 @@ describe('received Markdown long article detail', () => {
     }, expect.anything(), undefined, { lane: 'interactive-read', bypassCache: true })
     expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
     expect(x.media.richContentBlocks).toHaveBeenCalledWith(x.raw, 42)
+  })
+  it('keeps only this relation attribution in the received article action item', async () => {
+    const x = fixture('group_chat')
+    const accepted = { team_id: '7', membership_kind: 'member', membership_revision: 3, group_join_at: 9, name: '发送团队', jotmo_id: 'team_7' }
+    Object.assign(x.raw.relation, { representation: accepted })
+    Object.assign(x.raw.record.payload, { origin_representation: { ...accepted, name: '内容来源团队', team_id: '8', jotmo_id: 'team_8' } })
+    const value = await x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)
+    expect(value.actionItem?.representation).toMatchObject({ name: '发送团队', jotmoId: 'team_7', membershipRevision: 3 })
+    delete (x.raw.relation as Record<string, unknown>).representation
+    const personal = await x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)
+    expect(personal.actionItem?.representation).toBeUndefined()
   })
   it('rejects a different record before requesting the backend', async () => {
     const x = fixture()
@@ -3793,9 +3856,9 @@ it.each(['private_chat', 'group_chat'])('exports received notes through authoriz
 })
 
 describe('chat member world target', () => {
-  function fixture(kind='group_chat', userId=42, members:unknown[]=[{user_id:7}]) {
+  function fixture(kind='group_chat', userId=42, members:unknown[]=[{user_id:7,status:1}]) {
     const session={userId,accessToken:'fixture',refreshToken:'fixture'}
-    const read=vi.fn(async()=>({items:members}))
+    const read=vi.fn(async()=>({chat_session_uid:'chat',items:members}))
     const runtime={stateStore:{uniqueCode:async()=> 'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:read}
     const source={openSourceRef:vi.fn(async()=>({kind,ownerRef:'chat'}))}
     const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
@@ -3804,7 +3867,7 @@ describe('chat member world target', () => {
   it.each(['group_chat','private_chat'])('resolves %s member by viewer/session-bound reference only after a fresh membership check', async kind=>{
     const {chat,read,session}=fixture(kind), signal=new AbortController().signal
     await expect(chat.memberWorldTarget('source',chatMemberRef(42,'chat',7),signal)).resolves.toEqual({userId:7})
-    expect(read).toHaveBeenCalledWith('/api/v1/chats/members/list',{chat_session_uid:'chat',active_only:true},session,signal)
+    expect(read).toHaveBeenCalledWith('/api/v1/chats/members/by-user-ids',{chat_session_uid:'chat',user_ids:[7],active_only:true,include_stats:false},session,signal,{lane:'interactive-read',bypassCache:true})
     expect(read).toHaveBeenCalledOnce()
   })
   it('rejects cross-account, cross-conversation, tampered, removed and unsupported members', async()=>{
@@ -3859,7 +3922,7 @@ it.each(['send_to_self','default_category','topic'] as const)('forwards articles
  const action=snapshotActionRef({displayKind:1,templateKind:2,textContent:'old truncated preview',imageCount:1})
  const result=await service.forwardSourceMessages('source',[action],{targetSourceRef:'target',recordUid:'article-copy',sendAtMillis:123})
  expect(result.itemUid).toBe('article-copy')
- expect(createPersonalRecord).toHaveBeenCalledWith(kind==='topic'?'/api/v1/topics/records/article-forward/create':'/api/v1/records/article-forward/create',expect.objectContaining({record_uid:'article-copy',send_at:123,sources:[{record_uid:'record-snapshot-1',record_owner_user_id:42,chat_session_uid:'chat-1',relation_uid:'rel-snapshot-1'}]}),session,undefined)
+ expect(createPersonalRecord).toHaveBeenCalledWith(kind==='topic'?'/api/v1/topics/records/article-forward/create':'/api/v1/records/article-forward/create',expect.objectContaining({record_uid:'article-copy',send_at:123,sources:[{record_uid:'record-snapshot-1',chat_session_uid:'chat-1',relation_uid:'rel-snapshot-1'}]}),session,undefined)
  expect(JSON.stringify(createPersonalRecord.mock.calls)).not.toContain('old truncated preview')
  authenticatedPost.mockResolvedValueOnce({protocol_version:0} as never)
  await expect(service.forwardSourceMessages('source',[action],{targetSourceRef:'target',recordUid:'another'})).rejects.toMatchObject({code:'article-forward-unavailable'})

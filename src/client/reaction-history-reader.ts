@@ -2,8 +2,9 @@ import type { ReactionHistoryEvent, ReactionHistoryPage } from '../reaction-cont
 import { callArkme } from './api.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 
-type Stream = { pending: ReactionHistoryEvent[]; done: boolean; before_at?: number | undefined; before_id?: string | undefined }
-export type CombinedReactionHistoryPage = { items: ReactionHistoryEvent[]; has_more: boolean; streams: Stream[] }
+type HistoryItem = ReactionHistoryEvent & Partial<Pick<import('../world-reaction-contract.js').WorldReactionHistoryEvent, 'target' | 'state'>>
+type Stream = { pending: HistoryItem[]; done: boolean; before_at?: number | undefined; before_id?: string | undefined }
+export type CombinedReactionHistoryPage = { items: HistoryItem[]; has_more: boolean; streams: Stream[] }
 
 /** Merge bounded pages; each owner keeps its own cursor, including equal timestamps. */
 export async function readReactionHistory(accountKey: string, start_at: number, end_at: number, signal: AbortSignal,
@@ -20,7 +21,7 @@ export async function readReactionHistory(accountKey: string, start_at: number, 
     return { pending: page.items.map(item => index === 0 ? item : { ...item, event_uid: `world:${item.event_uid}`, source_kind: 'world' }),
       done: !page.has_more, before_at: page.before_at, before_id: page.before_id }
   }))
-  const items: ReactionHistoryEvent[] = []
+  const items: HistoryItem[] = []
   while (items.length < 100) {
     // Refill an exhausted unfinished stream on the next page before exposing older rows.
     if (streams.some(stream => !stream.pending.length && !stream.done)) break

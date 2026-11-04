@@ -23,6 +23,8 @@ export interface DshDirectorySession extends Record<string, unknown> {
   deleted_at?: number
   /** Added only by the local authenticated Host's journal lookup. */
   localTakeover?: boolean
+  localAvailable?: boolean
+  localAccess?: import('./account-session-types.js').LocalSessionAccess
 }
 
 export interface DshDirectoryDelta { version: 1; sessions: DshDirectorySession[] }

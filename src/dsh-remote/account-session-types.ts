@@ -32,10 +32,22 @@ export interface DshAccountSession {
   sameDesktop: boolean
   runtimeName: string
   presence: 'online' | 'offline' | 'unknown'
+  /** Registered in this Runtime; localAvailable separately describes physical access. */
   local: boolean
-  /** Verified against this Host's account-scoped journal, never desktop names. */
+  /** Readable on this computer; independent of execution ownership. */
+  localAvailable?: boolean
+  localAccess?: LocalSessionAccess
+  /** @deprecated Compatibility routing alias. This never proves a completed takeover. */
   localTakeover?: boolean
   executorRuntimeRef?: string
+}
+export interface LocalSessionAccess {
+  runtimeRef: string
+  sessionRef: string
+  readHistory: boolean
+  annotate: boolean
+  execution: 'current' | 'peer' | 'unclaimed' | 'transferring'
+  submit: 'direct' | 'route-or-handoff' | 'handoff'
 }
 export interface DshAccountSessionPage {
   contractVersion: 1
@@ -47,8 +59,11 @@ export interface DshAccountSessionPage {
   localRuntime?: { desktopName: string; runtimeName: string }
   localRuntimeRef?: string
 }
-export interface DshSessionHistoryCursor { source: 'host' | 'cloud'; before: number }
+export interface DshSessionHistoryCursor { source: 'host' | 'cloud' | 'cloud-raw' | 'cloud-format' | 'local'; before: number; through?: number }
 export interface DshAccountSessionHistory {
+  historySync?: import('../local-history-cloud-repair.js').HistorySyncStatus
+  /** Verified same-user local journal; independent of cloud/source liveness. */
+  local?: boolean
   nodes: DshRemoteTimelineNode[]
   nextCursor?: DshSessionHistoryCursor
   complete: boolean

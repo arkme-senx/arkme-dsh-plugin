@@ -4,13 +4,22 @@ import { callArkme } from './api.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 
-const capabilityLocations: Record<ArkmeCapabilitySetting['key'], string> = {
+const capabilityTitles: Partial<Record<ArkmeCapabilitySetting['key'], string>> = {
+  personal_profile: '自动整理个人档案',
+  arrangement_recognition: '自动识别安排',
+  goal_insight: '自动分析目标',
+  recording_voice_trigger: '录音口令记事',
+}
+
+// Dedicated pages use their real entry; contextual automation explains its effect.
+const capabilityGuidance: Record<ArkmeCapabilitySetting['key'], string> = {
   personal_profile: '「探索 → 个人档案」',
-  record_thought: '发给自己的消息下方或详情',
-  chat_thought: '私聊、群聊的消息下方或详情',
+  record_thought: '阅读新快记，有想法时在快记下方回应你。',
+  chat_thought: '在私聊和群聊消息下方提供建议，仅你可见。',
   arrangement_recognition: '左侧「安排」',
-  offline_context: '聊天中的线下交流关联',
+  offline_context: '在聊天中回看相关的线下交流，仅你可见。',
   goal_insight: '「探索 → 目标」',
+  recording_voice_trigger: '录音日历「更多 → 语音触发」',
 }
 
 export function ArkmeAutomaticAiSettings({ accountScope, only, title = '自动使用额度', compact = false }: { accountScope: string; only?: readonly ArkmeCapabilitySetting['key'][]; title?: string; compact?: boolean }) {
@@ -69,24 +78,21 @@ export function ArkmeAutomaticAiSettings({ accountScope, only, title = '自动�
   }
   const visibleSettings = loadedScope === accountScope ? settings?.filter(item => !only || only.includes(item.key)) : undefined
   const profile = visibleSettings?.find(item => item.key === 'personal_profile' && item.enabled)
-  const settingLabel = (setting: ArkmeCapabilitySetting) => tr(only && setting.key === 'record_thought' ? compact ? '快记里的想法' : '快记想法' : only && setting.key === 'chat_thought' ? compact ? '聊天中的建议' : '聊天自动回复' : setting.title.replaceAll('阿森', 'Arko'))
+  const settingLabel = (setting: ArkmeCapabilitySetting) => tr(capabilityTitles[setting.key] ?? (only && setting.key === 'record_thought' ? compact ? '快记里的想法' : '快记想法' : only && setting.key === 'chat_thought' ? '聊天中的建议' : setting.title.replaceAll('阿森', 'Arko')))
   return <section className="arkme-automatic-ai" aria-label={tr(title)}>
     <h3>{tr(title)}</h3>
-    <p>{tr(compact ? '开启后会使用 AI 额度，聊天建议包含私聊和群聊。' : '开启后自动分析，消耗 AI 额度。')}</p>
+    <p>{tr(compact ? '开启后会自动使用 AI 额度。' : '开启后自动分析，消耗 AI 额度。')}</p>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">{tr('正在读取设置…')}</p>}
     {!loading && !settings && <button type="button" onClick={() => { setError(''); void reload() }}>{tr('重新加载')}</button>}
     {visibleSettings?.map(setting => <div className="arkme-automatic-ai-row" key={setting.key}>
-      <span>{settingLabel(setting)}</span>
-      <button className="arkme-automatic-ai-switch" type="button" role="switch" aria-label={settingLabel(setting)} aria-checked={setting.enabled} disabled={loading || saving}
+      <span><span>{settingLabel(setting)}</span><small id={`${titleId}-${setting.key}-guidance`}>{tr(capabilityGuidance[setting.key])}</small></span>
+      <button className="arkme-automatic-ai-switch" type="button" role="switch" aria-label={settingLabel(setting)} aria-describedby={`${titleId}-${setting.key}-guidance`} aria-checked={setting.enabled} disabled={loading || saving}
         onClick={() => setting.enabled ? void save(setting, false) : setConfirm(setting)}><span aria-hidden="true" /></button>
     </div>)}
-    {!compact && <details className="arkme-automatic-ai-help"><summary>{tr('使用说明')}</summary>
-      {visibleSettings?.map(setting => <p key={setting.key}><strong>{tr(setting.title.replaceAll('阿森', 'Arko'))}</strong>：{tr(capabilityLocations[setting.key])}</p>)}
-    </details>}
     {retryProfile && profile && !loading && <button type="button" disabled={saving} onClick={() => { void save(profile, true) }}>{tr('个人档案已授权，重试启动分析')}</button>}
-    {confirm && loadedScope === accountScope && <ArkmeConfirmDialog titleId={titleId} title={tr('开启功能')} busy={saving} onClose={() => setConfirm(undefined)}
-      description={<>{tr(confirm.title.replaceAll('阿森', 'Arko'))}：{tr(automaticCapabilityDescriptions[confirm.key])}</>}
+    {confirm && loadedScope === accountScope && <ArkmeConfirmDialog titleId={titleId} title={settingLabel(confirm)} busy={saving} onClose={() => setConfirm(undefined)}
+      description={tr(automaticCapabilityDescriptions[confirm.key])}
       confirmLabel={tr('同意并开启')} busyLabel={tr('正在开启…')} onConfirm={() => { void save(confirm, true) }} />}
   </section>
 }

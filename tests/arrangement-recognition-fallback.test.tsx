@@ -18,7 +18,7 @@ it('can authorize and disable recognition independently of an unavailable model-
   })
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)
-  const toggle = () => document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="安排"]')!
+  const toggle = () => document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="自动识别安排"]')!
   const writes = () => api.mock.calls.filter(([operation]) => operation === 'account.capabilities.update')
   try {
     await act(async () => root.render(<ArkmeArrangementRecognitionSettings accountScope="test:42" onClose={() => {}} />))

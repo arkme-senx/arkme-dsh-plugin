@@ -1,5 +1,7 @@
 import type { SessionControlFrame } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { DshAccountSession } from './dsh-remote/account-session-types.js'
+import { NATIVE_SESSION_READ_ENDPOINTS } from './dsh-remote/native-transport.js'
+import { SharedReadGroup } from './shared-read-group.js'
 
 export interface HarnessNativeDirectory {
   publish(rows: readonly DshAccountSession[], localRuntimeRef?: string): void
@@ -11,12 +13,16 @@ export interface HarnessNativeDirectory {
 export type HarnessNativeWindow = Window & { __ARKME_NATIVE_DIRECTORY__?: HarnessNativeDirectory }
 
 /** One native client per account. Routing identities never enter stored source journals. */
-function installNativeTransport(route: string): void {
+function installNativeTransport(route: string, ReadGroup: typeof SharedReadGroup, readEndpoints: readonly string[]): void {
   if (new URLSearchParams(window.location.search).get('arkme-harness-embed') !== '1') return
   const surface = window.frameElement?.parentElement
   if (!surface?.getAttribute('data-arkme-account-id')) return
   const lifetime = new AbortController()
-  const sourcesStatus = new Map<string, { writable: boolean; blocked: boolean; epoch: number; observed: number }>()
+  const nativeReads = new ReadGroup<unknown>()
+  let viewReads = new AbortController()
+  const cancelViewReads = () => { viewReads.abort(); viewReads = new AbortController() }
+  const sourcesStatus = new Map<string, { writable: boolean; historyReady: boolean; blocked: boolean; epoch: number; observed: number }>()
+  const historySync = new Map<string, { state: string; revision: number }>()
   let requestSequence = 0
   let selected: string | undefined
   let selectionKnown = false, selectionChanged = new AbortController()
@@ -24,7 +30,7 @@ function installNativeTransport(route: string): void {
   const identity = (runtime: string, id: string) => localIdentities.has(`${runtime}:${id}`) ? id : `arkme:${encodeURIComponent(runtime)}:${encodeURIComponent(id)}`
   const split = (id: unknown): { runtime: string; id: string } | undefined => {
     if (typeof id !== 'string') return
-    if (!id.startsWith('arkme:')) { const row = [...rows.values()].find(row => row.localTakeover && row.local && row.sessionRef === id); return row ? { runtime: row.runtimeRef, id } : undefined }
+    if (!id.startsWith('arkme:')) { const row = [...rows.values()].find(row => (row.localAvailable ?? row.localTakeover) && row.local && row.sessionRef === id); return row ? { runtime: row.runtimeRef, id } : undefined }
     const parts = id.split(':')
     if (parts.length !== 3) throw new Error('会话来源标识无效')
     const runtime = decodeURIComponent(parts[1]!), value = decodeURIComponent(parts[2]!)
@@ -33,7 +39,12 @@ function installNativeTransport(route: string): void {
   }
   const sourceId = (runtime: string, session: string) => JSON.stringify([runtime, session])
   const canWrite = (id: unknown) => { const source = split(id); return !source || sourcesStatus.get(sourceId(source.runtime, source.id))?.writable === true }
-  const availability = () => surface.setAttribute('data-arkme-source-writable', String(canWrite(selected)))
+  const availability = () => {
+    showHistorySync()
+    surface.setAttribute('data-arkme-source-writable', String(canWrite(selected)))
+    const target = split(selected)
+    surface.setAttribute('data-arkme-native-history-ready', String(!target || sourcesStatus.get(sourceId(target.runtime, target.id))?.historyReady === true))
+  }
   const scheduleFailure = (id: string | undefined, code?: string) => {
     if (id !== selected) return
     if (code) surface.setAttribute('data-arkme-schedule-error', code)
@@ -41,10 +52,12 @@ function installNativeTransport(route: string): void {
   }
   type Json = Record<string, any>
   const rows = new Map<string, DshAccountSession>()
-  const available = (row: DshAccountSession) => row.capabilities.includes('session.native.channel') || row.presence === 'online' && row.capabilities.includes('session.native')
+  // Protocol support does not prove an offline session has a reader.
+  const available = (row: DshAccountSession) => (row.localAvailable ?? row.localTakeover) === true
+    || row.presence === 'online' && (row.capabilities.includes('session.native.channel') || row.capabilities.includes('session.native'))
   const recoveryChanged = (old: DshAccountSession, row: DshAccountSession) => old.presence !== row.presence
     || old.capabilities.join() !== row.capabilities.join() || old.executorRuntimeRef !== row.executorRuntimeRef
-    || old.localTakeover !== row.localTakeover || old.contentRevision !== row.contentRevision || old.historyRevision !== row.historyRevision
+    || (old.localAvailable ?? old.localTakeover) !== (row.localAvailable ?? row.localTakeover) || old.contentRevision !== row.contentRevision || old.historyRevision !== row.historyRevision
     || old.updatedAt !== row.updatedAt || old.projectionAsOfSeq !== row.projectionAsOfSeq || old.directoryVersion?.join() !== row.directoryVersion?.join()
   const summary = (row: DshAccountSession) => ({ sessionId: identity(row.runtimeRef, row.sessionRef), updatedAt: row.updatedAt,
     running: row.running, blank: row.blank, projections: { kind: 'cached', asOfSeq: row.projectionAsOfSeq ?? -1, values: { title: row.title || null } } })
@@ -71,7 +84,20 @@ function installNativeTransport(route: string): void {
   const emit = (frame: Json) => { for (const queue of events) queue.push(frame) }
   const control = (frame: Json) => { for (const queue of controls) queue.push(frame) }
   const rebaselineControls = () => { for (const queue of controls) queue.restart() }
+  const historyState = (runtime: string, session: string | undefined, state?: string) => {
+    const target = split(selected)
+    if (target?.runtime !== runtime || target.id !== session) return
+    if (state) surface.setAttribute('data-arkme-history-state', state)
+    else surface.removeAttribute?.('data-arkme-history-state')
+  }
+  const showHistorySync = () => {
+    const target = split(selected), state = target && historySync.get(sourceId(target.runtime, target.id))?.state
+    if (state) surface.setAttribute('data-arkme-history-sync', state)
+    else surface.removeAttribute?.('data-arkme-history-sync')
+  }
   const changeSelection = () => {
+    surface.removeAttribute?.('data-arkme-history-state')
+    showHistorySync()
     const previous = selectionChanged; selectionChanged = new AbortController(); previous.abort()
     for (const key of sources.keys()) releaseUnusedSource(key)
   }
@@ -81,6 +107,7 @@ function installNativeTransport(route: string): void {
   const redirect = (canonical: DshAccountSession) => {
     const target = canonical.local ? canonical.sessionRef : identity(canonical.runtimeRef, canonical.sessionRef)
     if (target === selected) return
+    cancelViewReads()
     selected = target
     scheduleFailure(selected); emit({ type: 'emit', event: 'schedule/changed', args: [] })
     const doc = surface.ownerDocument
@@ -157,12 +184,12 @@ function installNativeTransport(route: string): void {
       localIdentities.clear()
       for (const row of incoming) if (row.local) localIdentities.add(`${row.runtimeRef}:${row.sessionRef}`)
       localRuntimeRef = runtimeRef
-      const next = new Map(incoming.filter(row => (!row.local || row.localTakeover) && !row.archived && row.origin !== 'subagent').map(row => [identity(row.runtimeRef, row.sessionRef), row]))
+      const next = new Map(incoming.filter(row => (!row.local || (row.localAvailable ?? row.localTakeover)) && !row.archived && row.origin !== 'subagent').map(row => [identity(row.runtimeRef, row.sessionRef), row]))
       for (const id of rows.keys()) if (!next.has(id)) emit({ type: 'emit', event: 'api-session/removed', args: [id] })
       for (const [id, row] of next) {
         const old = rows.get(id)
         const key = sourceId(row.runtimeRef, row.sessionRef), status = sourcesStatus.get(key)
-        if (!status) sourcesStatus.set(key, { writable: available(row), blocked: false, epoch: 0, observed: 0 })
+        if (!status) sourcesStatus.set(key, { writable: available(row), historyReady: false, blocked: false, epoch: 0, observed: 0 })
         else if (!old || recoveryChanged(old, row)) {
           // Directory changes are recovery hints, not proof of an executor.
           // Wake the selected journal once; only its Host response restores writes.
@@ -207,8 +234,10 @@ function installNativeTransport(route: string): void {
     writable: canWrite,
     select(id: string | undefined) {
       if (selectionKnown && selected === id) return
+      cancelViewReads()
       const previous = split(selected), next = split(id), known = selectionKnown
       selected = id; selectionKnown = true
+      if (id) connect()
       if (id && folded.has(id) && preferred(folded.get(id)!) !== id) redirect(folded.get(id)!)
       else if (id && hiddenRemote.has(id)) redirect({ ...rows.get(id)!, local: true })
       const source = split(selected), status = source && sourcesStatus.get(sourceId(source.runtime, source.id))
@@ -231,30 +260,47 @@ function installNativeTransport(route: string): void {
   const isCarrierFailure = (error: any) => error?.dshRemoteStreamFailure?.kind === 'carrier'
   let socket: WebSocket | undefined
   const pending = new Map<string, { frame: string; resolve(value: unknown): void; reject(error: Error): void; stop(): void }>()
-  const streamRequest = (params: object, signal: AbortSignal) => new Promise<unknown>((resolve, reject) => {
-    signal.throwIfAborted()
-    if (pending.size >= 64) throw new Error('原生订阅请求数量超限')
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined, reconnectAttempts = 0
+  const connect = () => {
+    if (lifetime.signal.aborted) return
+    clearTimeout(reconnectTimer)
     if (!socket || socket.readyState > WebSocket.OPEN) {
       for (const item of pending.values()) { item.stop(); item.reject(carrierFailure('原生远程连接已断开')) }
       pending.clear()
+      historySync.clear(); showHistorySync()
       const next = socket = new WebSocket(`${route}/native-streams`)
       const closed = () => {
         if (socket !== next) return
         socket = undefined
         for (const item of pending.values()) { item.stop(); item.reject(carrierFailure('原生远程连接已断开')) }
         pending.clear()
+        if (!lifetime.signal.aborted && selected && reconnectAttempts < 6) reconnectTimer = setTimeout(connect, Math.min(30_000, 500 * 2 ** reconnectAttempts++))
       }
-      next.onopen = () => { if (socket !== next) return; for (const item of pending.values()) next.send(item.frame) }
+      next.onopen = () => { if (socket !== next) return; reconnectAttempts = 0; for (const item of pending.values()) next.send(item.frame) }
       next.onerror = () => { closed(); next.close() }
-      next.onclose = closed
+      next.onclose = event => { if (event?.code === 1008 || event?.code === 1009) reconnectAttempts = 6; closed() }
       next.onmessage = event => {
         try {
-          const result = JSON.parse(String(event.data)) as { id: string }
+          const result = JSON.parse(String(event.data)) as Json
+          if (result.event === 'history-sync') {
+            if (socket !== next || typeof result.runtimeRef !== 'string' || typeof result.sessionRef !== 'string'
+              || !Number.isSafeInteger(result.revision) || !['pending', 'syncing', 'complete', 'conflict', 'unsupported', 'failed'].includes(result.status?.state)) return
+            const key = sourceId(result.runtimeRef, result.sessionRef)
+            if ((historySync.get(key)?.revision ?? -1) >= result.revision) return
+            if (!historySync.has(key) && historySync.size >= 256) historySync.delete(historySync.keys().next().value!)
+            historySync.set(key, { state: result.status.state, revision: result.revision }); showHistorySync()
+            return
+          }
           const item = pending.get(result.id)
           if (item) { pending.delete(result.id); item.stop(); item.resolve(result) }
         } catch { closed(); next.close() }
       }
     }
+  }
+  const streamRequest = (params: object, signal: AbortSignal) => new Promise<unknown>((resolve, reject) => {
+    signal.throwIfAborted()
+    if (pending.size >= 64) throw new Error('原生订阅请求数量超限')
+    connect()
     const id = crypto.randomUUID()
     const abort = () => {
       pending.delete(id)
@@ -263,7 +309,7 @@ function installNativeTransport(route: string): void {
     }
     const item = { frame: JSON.stringify({ id, params }), resolve, reject, stop: () => signal.removeEventListener('abort', abort) }
     pending.set(id, item); signal.addEventListener('abort', abort, { once: true })
-    if (socket.readyState === WebSocket.OPEN) socket.send(item.frame)
+    if (socket?.readyState === WebSocket.OPEN) socket.send(item.frame)
   })
   const request = async (runtimeRef: string, body: object, signal?: AbortSignal, sessionRef?: string) => {
     const scoped = signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal
@@ -272,11 +318,11 @@ function installNativeTransport(route: string): void {
     const key = session && sourceId(runtimeRef, session)
     const tracksStatus = (body as Json).mode !== 'close'
     let status = key && tracksStatus ? sourcesStatus.get(key) : undefined
-    if (key && tracksStatus && !status) { status = { writable: false, blocked: false, epoch: 0, observed: 0 }; sourcesStatus.set(key, status) }
+    if (key && tracksStatus && !status) { status = { writable: false, historyReady: false, blocked: false, epoch: 0, observed: 0 }; sourcesStatus.set(key, status) }
     const epoch = status?.epoch, sequence = ++requestSequence
     const params = { runtimeRef, body, requestRef: crypto.randomUUID(), ...(session ? { sessionRef: session } : {}) }
     let result: { ok: boolean; value: unknown; error?: { message?: string; code?: string; retryable?: boolean } }
-    if (['pull', 'close'].includes(String((body as { mode?: string }).mode))) {
+    if (['pull', 'close'].includes(String((body as Json).mode)) || (body as Json).mode === 'call' && readEndpoints.includes((body as Json).endpoint)) {
       result = await streamRequest(params, scoped) as typeof result
     } else {
       const response = await fetch(route, {
@@ -288,11 +334,12 @@ function installNativeTransport(route: string): void {
     }
     scoped.throwIfAborted()
     if (!result.ok) throw remoteFailure(result.error)
-    const value = result.value as { sourceWritable?: boolean }
+    const value = result.value as { sourceWritable?: boolean; historySync?: { state?: string }; items?: Json[]; ok?: boolean; value?: Json }
     if (key && status && sourcesStatus.get(key) === status && status.epoch === epoch && sequence > status.observed
       && (body as Json).mode !== 'close' && value.sourceWritable !== undefined) {
       const changed = status.blocked !== !value.sourceWritable, writableChanged = status.writable !== value.sourceWritable
       status.observed = sequence; status.writable = value.sourceWritable; status.blocked = !value.sourceWritable
+      if (!value.sourceWritable) status.historyReady = false
       availability()
       if ((changed || writableChanged) && (!selectionKnown || selected === identity(runtimeRef, session!))) {
         // Pause all streams of this source on authoritative read-only fallback.
@@ -300,6 +347,13 @@ function installNativeTransport(route: string): void {
         if (changed) changeSelection()
         scheduleFailure(selected); emit({ type: 'emit', event: 'schedule/changed', args: [] })
       }
+    }
+    if (key && status && sourcesStatus.get(key) === status && status.epoch === epoch && !status.blocked && value.sourceWritable === true) {
+      const address = (body as Json).payload?.args?.request?.address
+      const snapshot = value.items?.some(frame => frame.type === 'snapshot' && frame.header?.id === session)
+      const page = (body as Json).endpoint === 'session/page' && address?.kind === 'session' && address.sessionId === session
+        && value.ok === true && Array.isArray(value.value?.records)
+      if (snapshot || page) { status.historyReady = true; availability() }
     }
     return result.value
   }
@@ -405,9 +459,10 @@ function installNativeTransport(route: string): void {
     while (true) {
       signal.throwIfAborted()
       const current = split(selected), changed = selectionChanged.signal
-      const row = sessionRef ? rows.get(identity(runtime, sessionRef)) : undefined
       const blocked = sessionRef && sourcesStatus.get(sourceId(runtime, sessionRef))?.blocked
-      if (!blocked && (!row || available(row)) && (!selectionKnown || current?.runtime === runtime && current.id === sessionRef)) return changed
+      // An offline creator may still have a readable journal on this computer.
+      // Only the Host response can park the selected source after local discovery.
+      if (!blocked && (!selectionKnown || current?.runtime === runtime && current.id === sessionRef)) return changed
       await new Promise<void>((resolve, reject) => {
         const stop = () => { changed.removeEventListener('abort', wake); signal.removeEventListener('abort', cancel) }
         const wake = () => { stop(); resolve() }
@@ -554,18 +609,27 @@ function installNativeTransport(route: string): void {
       const endpoint = message.method
       // Phase one: only actions with complete per-session routing are admitted.
       const source = target.sessionRef ? rows.get(identity(target.runtime, target.sessionRef)) : undefined
-      const stable = source?.capabilities.includes('session.native.channel') || source?.localTakeover === true
-      const reads = ['session/page', 'messageFeedback/list', 'schedule/catalog', 'schedule/list', 'schedule/history']
+      const stable = source?.capabilities.includes('session.native.channel') || (source?.localAvailable ?? source?.localTakeover) === true
+      const reads = readEndpoints
       const writes = ['session/prompt', 'session/cancel', 'session/updateQueue', 'session/attachment', '$events/result']
       const allowed = stable
         ? [...reads, ...writes, 'session/rename', 'session/selectModel', 'messageFeedback/put', 'messageFeedback/delete', 'sessionFeedback/record', 'workspace/archiveSession', 'schedule/update', 'schedule/delete']
         : [...reads, ...(target.sessionRef && sourcesStatus.get(sourceId(target.runtime, target.sessionRef))?.writable === true ? writes : [])]
       let result: any
       if (!allowed.includes(endpoint)) result = failure('此操作暂需在会话所属电脑执行')
+      else if (schedule && reads.includes(endpoint) && !canWrite(identity(target.runtime, target.sessionRef ?? split(selected)?.id ?? ''))) {
+        result = { ok: false, error: { code: 'RUNTIME_OFFLINE', message: '源实例尚未连接，提醒暂不可读取', details: {} } }
+      }
       else {
-        try { result = await request(target.runtime, { mode: 'call', endpoint, payload: target.payload }, init.signal ?? undefined, target.sessionRef) }
+        const readSignal = reads.includes(endpoint) ? AbortSignal.any([viewReads.signal, lifetime.signal, ...(init.signal ? [init.signal] : [])]) : undefined
+        const body = { mode: 'call', endpoint, payload: target.payload }
+        try {
+          result = readSignal && endpoint !== 'session/page' ? await nativeReads.run(JSON.stringify([target.runtime, target.sessionRef ?? split(selected)?.id, body]),
+            signal => request(target.runtime!, body, signal, target.sessionRef), readSignal)
+            : await request(target.runtime, body, readSignal ?? init.signal ?? undefined, target.sessionRef)
+        }
         catch (error) {
-          if (!schedule || init.signal?.aborted) throw error
+          if (!schedule || init.signal?.aborted || readSignal?.aborted) throw error
           result = { ok: false, error: { code: (error as { code?: string }).code ?? 'REMOTE_TRANSPORT_FAILED', message: '提醒暂时无法读取，请重试', details: {} } }
         }
       }
@@ -591,11 +655,12 @@ function installNativeTransport(route: string): void {
           const active = AbortSignal.any([scoped, selection])
           const { key, release } = retainSource(target.runtime, target.sessionRef, active)
           let delivered = false
+          historyState(target.runtime, target.sessionRef, 'loading')
           try {
             for await (const frame of remoteStream(target.runtime, endpoint, target.payload, active, target.sessionRef, key)) {
-              delivered = true; yield nativeFrame(target.runtime, frame)
+              delivered = true; historyState(target.runtime, target.sessionRef); yield nativeFrame(target.runtime, frame)
             }
-          } catch (error) { scoped.throwIfAborted(); if (!selection.aborted) throw error }
+          } catch (error) { scoped.throwIfAborted(); if (!selection.aborted) { historyState(target.runtime, target.sessionRef, 'error'); throw error } }
           finally { release() }
           if (selection.aborted) {
             if (!delivered) continue // No journal baseline was exposed; keep the same generation waiting.
@@ -639,7 +704,7 @@ function installNativeTransport(route: string): void {
     },
   }
   Object.assign(window, { __DSH_TRANSPORT__: hooks })
-  window.addEventListener('pagehide', () => { lifetime.abort(); socket?.close(); localSocket?.close(); for (const source of sources.values()) { clearTimeout(source.releaseTimer); source.abort.abort() }; sources.clear(); sourcesStatus.clear(); rows.clear(); localRows.clear(); folded.clear(); hiddenRemote.clear() }, { once: true })
+  window.addEventListener('pagehide', () => { lifetime.abort(); clearTimeout(reconnectTimer); historySync.clear(); nativeReads.clear(); socket?.close(); localSocket?.close(); for (const source of sources.values()) { clearTimeout(source.releaseTimer); source.abort.abort() }; sources.clear(); sourcesStatus.clear(); rows.clear(); localRows.clear(); folded.clear(); hiddenRemote.clear() }, { once: true })
 }
 
-export const harnessNativeTransportScript = (route: string): string => `(${installNativeTransport.toString()})(${JSON.stringify(route)});`
+export const harnessNativeTransportScript = (route: string): string => `(${installNativeTransport.toString()})(${JSON.stringify(route)}, ${SharedReadGroup.toString()}, ${JSON.stringify(NATIVE_SESSION_READ_ENDPOINTS)});`

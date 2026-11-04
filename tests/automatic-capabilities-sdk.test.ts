@@ -14,7 +14,7 @@ it('SDK and Host share one account and version contract', async () => {
     return new Response(JSON.stringify({ ok: true, value }))
   } })
   await sdk.automaticCapabilities('prod:7')
-  const input = { key: 'record_thought' as const, enabled: true, expectedVersion: 2, billingConsent: true }
+  const input = { key: 'recording_voice_trigger' as const, enabled: true, expectedVersion: 2, billingConsent: true }
   await sdk.updateAutomaticCapability('prod:7', input)
   expect(owner.automaticCapabilities).toHaveBeenCalledWith('prod:7', undefined)
   expect(owner.updateAutomaticCapability).toHaveBeenCalledWith(input, 'prod:7', undefined)

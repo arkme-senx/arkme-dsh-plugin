@@ -21,3 +21,6 @@ export interface WorldReactionContextPage {
   items: WorldReactionContext[]
   unavailableRecordRefs: string[]
 }
+
+export interface WorldReactionVersionsRequest { accountKey: string; target: ReactionTargetRef; cursor?: string; limit?: number }
+export interface WorldReactionVersionsPage { items: ReactionTargetRef[]; hasMore: boolean; nextCursor?: string }

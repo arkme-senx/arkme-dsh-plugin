@@ -258,6 +258,22 @@ describe('normal timeline related quick note drawer', () => {
     } finally { if (view) act(() => view.unmount()); vi.useRealTimers() }
   })
 
+  it('keeps accepted Team identity on detail and each reply using the existing avatar marker', async () => {
+    const rep = { name: '接待团队', jotmoId: 'team' }
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.message-extension.context'
+      ? { parentRecordUid: timelineItem.itemUid, extensionCount: 2, extensions: [true, false].map((represented, i) => ({
+          recordUid: `reply-${i}`, parentRecordUid: timelineItem.itemUid, level: 2, sourceKind: 'record_extension',
+          senderDisplayName: '真人作者', title: '', textContent: '延展', sendAtMillis: 100,
+          templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [], ...(represented ? { representation: rep } : {}),
+        })) }
+      : { total: 0, items: [], recallMode: 'embedding' })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, representation: { ...rep, teamRef: 'ref', membershipKind: 'member', membershipRevision: 3, groupJoinAt: 9 } }} sourceRef="source" sourceKind="group_chat" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+    expect(view.root.findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(2)
+    expect(view.root.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(0)
+    expect(view.root.findByProps({ 'data-arkme-note-extension-item': 'reply-1' }).findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(0)
+  })
+
   it.each(['send_to_self', 'topic', 'default_category'] as const)('loads the same edited detail and history from %s despite incomplete list metadata', async sourceKind => {
     const sourceRef = `${sourceKind}-source`
     const preview = { ...timelineItem, isMe: true, recordVersion: 2, updateAtMillis: 0,

@@ -1587,6 +1587,7 @@ export interface ArkmeProviderCapabilities {
 arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
+    recordingVoiceTriggersV2?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -1656,6 +1657,7 @@ arkoImagesV1?:true
     arkoThoughtContinuationsV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
+    worldReactionArchiveVersionsV1?: true
     teamWorldV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
@@ -2738,6 +2740,7 @@ export interface ArkmeSourceMessageExtendResult {
   privateThoughtReplyRef?: string
   privateThoughtReply?: boolean
 
+  representation?: TeamRepresentationSnapshot
   recordUid: string
   parentRecordUid: string
   relationUid?: string
@@ -2763,6 +2766,8 @@ export interface ArkmeMessageCopyLinkStructuredContent {
 }
 
 export interface ArkmeMessageCopyLinkSnapshotItem {
+  /** Accepted publication display only; never a Team membership or send selection. */
+  representation?: import('./team-group-contract.js').TeamRepresentationDisplay
   recordUid?: string
   sourceKind?: string
   senderDisplayName: string
@@ -2787,6 +2792,7 @@ export type ArkmeMessageCopyLinkPresentationNode =
   | { kind: 'item'; itemIndex: number }
   | {
     kind: 'forward_bundle'
+    representation?: import('./team-group-contract.js').TeamRepresentationDisplay
     title: string
     commentText: string
     createdAtMillis: number
@@ -2921,6 +2927,8 @@ export interface ArkmeInterwovenDetail {
 }
 
 export interface ArkmeSourceSendResult {
+  /** Server-accepted publication identity; never inferred from the current composer. */
+  representation?: TeamRepresentationSnapshot
   sourceRef: string
   itemUid: string
   /** Host-signed reference for immediate actions before timeline convergence. */
@@ -4647,6 +4655,7 @@ export type ArkmePluginOperation =
   | 'chat.official-author.private.open'
   | 'world.voiceprint.availability'
   | 'team.world'
+  | 'world.reactions.versions'
   | 'world.reactions.archive'
   | 'world.reactions.from-note'
   | 'world.reactions.prepare'
