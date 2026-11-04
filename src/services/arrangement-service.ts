@@ -5,6 +5,7 @@ import type {
   ArrangementOccurrenceResponse,
 } from '../arrangement-occurrence.js'
 import type { ArrangementRecognitionSettings, ArrangementRecognitionInspection } from "../arrangement-recognition.js"
+import { isArrangementRecognitionSource } from "../arrangement-recognition.js"
 import { arrangementEvidence, projectEvidence, type ArrangementEvidenceData } from '../arrangement-provenance.js'
 import { ArrangementSourceRecovery } from './arrangement-source-recovery.js'
 import { parseArrangementBoardCachePages, type ArkmeArrangementBoardCache } from '../arrangement-board-cache.js'
@@ -275,9 +276,7 @@ export class ArrangementService {
       throw new ArkmePluginError('invalid-params', '缺少安排引用', false, 400)
     if (
       action === 'settings/set' &&
-      !['default', 'note', 'private', 'group', 'audio', 'call', 'manual', 'other'].includes(
-        input.source ?? '',
-      )
+      !isArrangementRecognitionSource(input.source)
     )
       throw new ArkmePluginError('invalid-params', '识别来源无效', false, 400)
     let raw: Record<string, unknown>
