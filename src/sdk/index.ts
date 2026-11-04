@@ -659,8 +659,8 @@ export class ArkmeSdk {
     if(options.destinationRef && (result.kind!=='directory'||result.directoryRef!==options.destinationRef||!Number.isSafeInteger(result.count)||result.count<0))throw new ArkmeClientError({code:'local-response-invalid',message:'目录导出响应无效',retryable:false})
     return result
   }
-  async pickRecordExportDirectory(expectedAccountScope:string,signal?:AbortSignal):Promise<{accountScope:string;canceled:boolean;destinationRef?:string;displayName?:string}>{
-    const value=await this.call<{accountScope:string;canceled:boolean;destinationRef?:string;displayName?:string}>('data.export.directory.pick',{expectedAccountScope},signal)
+  async pickRecordExportDirectory(expectedAccountScope:string,signal?:AbortSignal):Promise<{accountScope:string;canceled:boolean;destinationRef?:string;displayName?:string;displayPath?:string}>{
+    const value=await this.call<{accountScope:string;canceled:boolean;destinationRef?:string;displayName?:string;displayPath?:string}>('data.export.directory.pick',{expectedAccountScope},signal)
     if(value.accountScope!==expectedAccountScope||typeof value.canceled!=='boolean')throw new ArkmeClientError({code:'local-response-invalid',message:'目录选择响应无效',retryable:false})
     return value
   }

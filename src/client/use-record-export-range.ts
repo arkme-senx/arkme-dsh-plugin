@@ -8,7 +8,8 @@ import { recordExportDateError, type RecordExportDates, type RecordExportRangeKi
 export function useRecordExportRange(scope: string, supported: boolean, mode: RecordExportRangeKind, dates: RecordExportDates, includeAttachments: boolean, order: 1 | 2, destinationRef?:string) {
   const selection = useMemo<ArkmeExportSelection>(() => ({ mode, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', includeAttachments,
     ...(mode === 'dates' ? { startDate: dates.start, endDate: dates.end } : {}) }), [mode, dates.start, dates.end, includeAttachments])
-  const key = JSON.stringify([scope, selection, order, destinationRef])
+  const [revision, setRevision] = useState(0)
+  const key = JSON.stringify([scope, selection, order, destinationRef, revision])
   const [state, setState] = useState<{ key: string; preview?: ArkmeRangeExportPreview; error?: string }>({ key: '' })
   const valid = mode !== 'dates' || !recordExportDateError(dates)
   useEffect(() => {
@@ -24,7 +25,7 @@ export function useRecordExportRange(scope: string, supported: boolean, mode: Re
     }, 500)
     return () => { clearTimeout(timer); controller.abort(); sdk?.dispose() }
   }, [scope, supported, valid, key, selection, order, destinationRef])
-  return { selection, preview: supported && state.key === key ? state.preview : undefined,
+  return { selection, refresh: () => setRevision(value => value + 1), preview: supported && state.key === key ? state.preview : undefined,
     error: supported && state.key === key ? state.error : undefined,
     loading: supported && valid && (state.key !== key || !state.preview && !state.error) }
 }

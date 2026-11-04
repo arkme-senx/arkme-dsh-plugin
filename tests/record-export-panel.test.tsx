@@ -23,3 +23,18 @@ it('drops directory selection and aborts an active export on account change', as
 it('retains the confirmed counts while writing instead of flashing empty statistics',async()=>{
  mock.run.mockImplementation(()=>new Promise(()=>{}));await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await settle();await act(async()=>button('导出到文件夹').click());expect(host.querySelector('.arkme-export-summary')?.textContent).toContain('2条快记');expect(host.querySelector('.arkme-export-summary')?.textContent).not.toContain('—');
 })
+
+it('keeps the selected folder next to the export action with its complete local location available',async()=>{
+ mock.pick.mockResolvedValue({accountScope:'test:11',canceled:false,destinationRef:'selected',displayName:'一个很长的备份文件夹名称',displayPath:'/本机目录/一个很长的备份文件夹名称'});
+ await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await settle();
+ const folder=host.querySelector('[aria-label="更换导出文件夹"]') as HTMLButtonElement;
+ expect(folder.title).toBe('/本机目录/一个很长的备份文件夹名称');expect(folder.parentElement).toBe(button('导出到文件夹').parentElement);expect(host.querySelector('.arkme-export-options')?.contains(folder)).toBe(false);expect(host.querySelectorAll('[aria-label="更换导出文件夹"]')).toHaveLength(1);expect(host.querySelector('.arkme-export-summary')?.textContent).toBe('2条快记1张图片0段语音');
+});
+
+it('uses a newly prepared plan after a failed export instead of retrying the stale confirmation',async()=>{
+ let plan=0;let rejectRun!:(e:Error)=>void;mock.preview.mockImplementation(async()=>({...preview,previewUid:'plan-'+(++plan)}));mock.run.mockImplementation(()=>new Promise((_resolve,reject)=>{rejectRun=reject}));
+ await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await settle();await act(async()=>button('导出到文件夹').click());const first=mock.run.mock.calls[0][0].previewUid;await act(async()=>rejectRun(new Error('temporary failure')));await settle();await act(async()=>button('导出到文件夹').click());expect(plan).toBeGreaterThan(1);expect(mock.run.mock.calls[1][0].previewUid).not.toBe(first);expect(mock.run.mock.calls[1][0].previewUid).toBe('plan-'+plan);
+});
+it('keeps controls locked while cancellation is waiting for the active operation to settle',async()=>{
+ let rejectRun!:(e:Error)=>void;mock.run.mockImplementation(()=>new Promise((_resolve,reject)=>{rejectRun=reject}));await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await settle();await act(async()=>button('导出到文件夹').click());await act(async()=>button('取消导出').click());expect(button('全部').disabled).toBe(true);await act(async()=>rejectRun(new Error('canceled')));await settle();expect(button('全部').disabled).toBe(false);
+});

@@ -1,11 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
-import { mkdir, open, readFile, rename, unlink, lstat, statfs, readdir } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, unlink, lstat, statfs } from 'node:fs/promises';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { Readable } from 'node:stream';
 import { ArkmePluginError, type ServiceRuntime } from './service.js';
-const reservedBytes = new Map<string, number>();
+import { OriginalFileCapacity } from './original-file-capacity.js';
 export const ORIGINAL_MAX_BYTES = 64 * 1024 ** 3;
 const validKey = /^[a-f0-9]{64}$/;
 export interface OriginalFile {
@@ -69,39 +69,6 @@ export class OriginalFileStore {
             return undefined;
         }
     }
-    private async trim(directory: string, incoming: number, keep: string) {
-        const rows: Array<{
-            path: string;
-            key: string;
-            size: number;
-            at: number;
-        }> = [];
-        let total = 0;
-        for (const name of await readdir(directory)) {
-            if (!/^[a-f0-9]{64}\.blob$/.test(name))
-                continue;
-            const path = join(directory, name), stat = await lstat(path);
-            if (!stat.isFile())
-                continue;
-            total += stat.size;
-            rows.push({ path, key: name.slice(0, 64), size: stat.size, at: stat.mtimeMs });
-        }
-        rows.sort((a, b) => a.at - b.at);
-        for (const row of rows) {
-            if (total + incoming <= ORIGINAL_MAX_BYTES)
-                break;
-            if (row.key === keep)
-                continue;
-            try {
-                await unlink(row.path);
-                await unlink(join(directory, row.key + '.json')).catch(() => { });
-                total -= row.size;
-            }
-            catch { }
-        }
-        if (total + incoming > ORIGINAL_MAX_BYTES)
-            throw new Error('original cache capacity reached');
-    }
     response(file: OriginalFile, mime: string): Response {
         return new Response(Readable.toWeb(createReadStream(file.path)) as ReadableStream<Uint8Array>, { headers: { 'Content-Type': mime, 'Content-Length': String(file.size) } });
     }
@@ -116,29 +83,26 @@ export class OriginalFileStore {
             return response;
         if (declared <= 0)
             return response;
-        for (;;) {
-            const prior = reservedBytes.get(dir) ?? 0;
-            await this.trim(dir, declared + prior, key);
-            if ((reservedBytes.get(dir) ?? 0) === prior) {
-                reservedBytes.set(dir, prior + declared);
-                break;
-            }
-        }
-        let reservation = true;
-        const release = () => { if (!reservation)
-            return; reservation = false; const remaining = (reservedBytes.get(dir) ?? declared) - declared; if (remaining > 0)
-            reservedBytes.set(dir, remaining);
-        else
-            reservedBytes.delete(dir); };
-        const partial = join(dir, `${key}.${randomUUID()}.partial`), file = await open(partial, 'wx', 0o600).catch(error => { release(); throw error; });
+        const reservation = await new OriginalFileCapacity(dir, ORIGINAL_MAX_BYTES).reserve(declared, `${key}.blob`);
+        const partial = join(dir, `${key}.${randomUUID()}.partial`), file = await open(partial, 'wx', 0o600).catch(async (error) => { await reservation.release(); throw error; });
         const reader = response.body.getReader(), hash = createHash('sha256');
         let size = 0, closed = false, caching = true;
         let tempMeta: string | undefined;
-        const discard = async () => { release(); if (!closed) {
-            closed = true;
-            await file.close().catch(() => { });
-        } await unlink(partial).catch(() => { }); if (tempMeta)
-            await unlink(tempMeta).catch(() => { }); };
+        const discard = async () => {
+            signal?.removeEventListener('abort', abort);
+            await reservation.release();
+            if (!closed) {
+                closed = true;
+                await file.close().catch(() => { });
+            }
+            await unlink(partial).catch(() => { });
+            if (tempMeta)
+                await unlink(tempMeta).catch(() => { });
+        };
+        const abort = () => { void reader.cancel().catch(() => { }).finally(discard).catch(() => { }); };
+        signal?.addEventListener('abort', abort, { once: true });
+        if (signal?.aborted)
+            abort();
         const stream = new ReadableStream<Uint8Array>({
             async pull(controller) {
                 try {
@@ -181,15 +145,22 @@ export class OriginalFileStore {
                         finally {
                             await m.close();
                         }
-                        await rename(partial, path);
-                        await rename(tempMeta, meta);
+                        await reservation.publish(async (account) => {
+                            signal?.throwIfAborted();
+                            const prior = await lstat(path).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT')
+                                throw error; return undefined; });
+                            await rename(partial, path);
+                            account(size - (prior?.isFile() ? prior.size : 0));
+                            await rename(tempMeta!, meta);
+                        });
                     }
                     catch {
                         // Ordinary media reads must not fail because an optional
                         // cache write hit ENOSPC or the filesystem disappeared.
                         await discard();
                     }
-                    release();
+                    await reservation.release();
+                    signal?.removeEventListener('abort', abort);
                     controller.close();
                 }
                 catch (error) {

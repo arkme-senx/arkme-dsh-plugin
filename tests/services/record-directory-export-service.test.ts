@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -37,7 +37,7 @@ async function fixture() {
             return p;
         }
         if (path.endsWith('/page'))
-            return { items: p.record_count ? [item()] : [], removed_uids: [], next_index: p.record_count, has_more: false };
+            return { items: p.record_count ? [{ ...item(), file_refs: p.selection.include_attachments ? item().file_refs : [] }] : [], removed_uids: [], next_index: p.record_count, has_more: false };
         if (path.endsWith('/batch-sign'))
             return { items: [{ ...baseFile, method: 'GET', url: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/original.png?Signature=rotating', headers: {} }] };
         if (path.endsWith('/finish')) {
@@ -56,9 +56,11 @@ async function fixture() {
             }
             ;
             if (p.status !== 'saved') {
-                version++;
+                if (p.selection.mode !== 'dates') {
+                    version++;
+                    changed = false;
+                }
                 p.status = 'saved';
-                changed = false;
             }
             ;
             return { version, saved_at: 1000 + version };
@@ -187,4 +189,82 @@ it('does not treat an equal checkpoint version from a different device as the se
     expect(preview).toMatchObject({ canExport: false, baselineRequired: true });
     expect((await other.preview('test:11', all, 1, picked.destinationRef)).localReplica).not.toBe(true);
     expect(f.finished()).toBe(1);
+});
+it('preserves the original folder initialization error and releases the owner for a later export', async () => {
+    const f = await fixture(), p = await f.preview(), dir = join(f.root, '即我备份-test-11');
+    await mkdir(dir);
+    await writeFile(join(dir, '.arkme-backup.json'), JSON.stringify({ schema: 1, scope: 'test:12' }));
+    const options = { expectedAccountScope: 'test:11', confirmed: true, orderKind: 1, selection: all, previewUid: p.previewUid!, destinationRef: f.destinationRef } as const;
+    await expect(f.service.run(options)).rejects.toThrow('不属于当前账号');
+    await writeFile(join(dir, '.arkme-backup.json'), JSON.stringify({ schema: 1, scope: 'test:11' }));
+    const result = await f.service.run(options);
+    expect(result.count).toBe(1);
+    expect(f.version()).toBe(1);
+});
+it('persists an accepted start with a lost response and reconciles that exact task after service restart', async () => {
+    const f = await fixture(), original = f.post.getMockImplementation()!;
+    let lose = true, statusOffline = true;
+    let accepted = '';
+    f.post.mockImplementation(async (path, body) => { if (path.endsWith('/start') && lose) {
+        lose = false;
+        accepted = body.preview_uid;
+        await original(path, body);
+        throw new TypeError('start response lost');
+    } if (path.endsWith('/status') && statusOffline)
+        throw new TypeError('temporarily offline'); return original(path, body); });
+    await expect(f.run()).rejects.toThrow('未完成');
+    statusOffline = false;
+    const restarted = new RecordDirectoryExportService(f.runtime as never);
+    restarted.attach(async () => f.root);
+    const directory = await restarted.pick('test:11');
+    const p = await restarted.preview('test:11', all, 1, directory.destinationRef);
+    expect(f.post.mock.calls.filter(([path, body]) => path.endsWith('/finish') && body.preview_uid === accepted && body.success === false)).toHaveLength(1);
+    const result = await restarted.run({ expectedAccountScope: 'test:11', confirmed: true, selection: all, orderKind: 1, destinationRef: directory.destinationRef!, previewUid: p.previewUid! });
+    expect(result.count).toBe(1);
+    expect(f.finished()).toBe(1);
+    expect(f.version()).toBe(1);
+});
+it('does not start a second task while an interrupted start is still being confirmed', async () => {
+    const f = await fixture(), original = f.post.getMockImplementation()!;
+    let lose = true, starting = true;
+    f.post.mockImplementation(async (path, body) => { if (path.endsWith('/start') && lose) {
+        lose = false;
+        await original(path, body);
+        throw new TypeError('start response lost');
+    } if (path.endsWith('/status') && starting)
+        return { ...await original(path, body), status: 'starting' }; return original(path, body); });
+    await expect(f.run()).rejects.toBeDefined();
+    await expect(f.preview()).rejects.toThrow('正在确认');
+    expect(f.post.mock.calls.filter(([path]) => path.endsWith('/start'))).toHaveLength(1);
+    starting = false;
+    expect((await f.run()).count).toBe(1);
+});
+it('recovers a lost finish response by confirming saved bytes without repeating the quota finish', async () => {
+    const f = await fixture(), original = f.post.getMockImplementation()!;
+    let lose = true;
+    f.post.mockImplementation(async (path, body) => { const response = await original(path, body); if (path.endsWith('/finish') && body.success && lose) {
+        lose = false;
+        throw new TypeError('finish response lost');
+    } return response; });
+    await expect(f.run()).rejects.toBeDefined();
+    expect(f.finished()).toBe(1);
+    expect((await f.preview()).localReplica).toBe(true);
+    expect(f.finished()).toBe(1);
+    expect(f.version()).toBe(1);
+});
+it('keeps quota uncertainty visible after successful saved recovery and local repacking', async () => {
+    const f = await fixture(), original = f.post.getMockImplementation()!;
+    f.post.mockImplementation(async (path, body) => { const value = await original(path, body); return path.endsWith('/finish') && body.success ? { ...value, quota_finalized: false } : value; });
+    f.loseSaved();
+    await expect(f.run()).rejects.toBeDefined();
+    expect((await f.run()).quotaFinalized).toBe(false);
+    expect(f.finished()).toBe(1);
+});
+it('recovers a date export with another attachment option without changing the complete folder baseline', async () => {
+    const f = await fixture();
+    await f.run();
+    f.loseSaved();
+    await expect(f.run({ ...all, mode: 'dates', includeAttachments: false, startDate: '2026-11-04', endDate: '2026-11-04' })).rejects.toBeDefined();
+    expect((await f.preview()).localReplica).toBe(true);
+    expect(f.version()).toBe(1);
 });

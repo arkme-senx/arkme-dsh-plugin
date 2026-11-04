@@ -45,7 +45,7 @@ export class RecordDirectoryExportService {
         if (!stat.isDirectory())
             throw backupFailure('请选择文件夹');
         const value: Target = { scope, path: actual, dev: stat.dev, ino: stat.ino, expires: Date.now() + 24 * 60 * 60000 };
-        return { accountScope: scope, canceled: false as const, destinationRef: await this.codec.seal('arkme-export-directory-v1', value), displayName: basename(actual) };
+        return { accountScope: scope, canceled: false as const, destinationRef: await this.codec.seal('arkme-export-directory-v1', value), displayName: basename(actual), displayPath: actual };
     }
     private async target(scope: string, ref: string) {
         await this.ranges.session(scope);
@@ -74,11 +74,28 @@ export class RecordDirectoryExportService {
         const session = await this.ranges.session(scope);
         return createHash('sha256').update(`${session.userId}:${await this.ranges.device(scope)}:${attachments}`).digest('hex');
     }
+    private async recoverStart(scope: string, store: BackupDirectoryStore, signal?: AbortSignal) {
+        const meta = store.meta(), pending = meta?.pendingStart;
+        if (!meta || !pending || meta.pending)
+            return;
+        if (typeof pending.uid !== 'string' || !pending.uid || pending.uid.length > 100 || pending.chainUid !== await this.chainIdentity(scope, pending.attachments))
+            throw backupFailure('待恢复导出属于其他设备或凭据无效，请在原设备恢复。');
+        const status = await this.ranges.post(scope, 'status', { preview_uid: pending.uid }, signal, true);
+        let quotaPending = meta.quotaPending === true;
+        if (status.status === 'started') {
+            const finish = await this.ranges.post(scope, 'finish', { preview_uid: pending.uid, success: false, artifact_sha256: '', artifact_size: 0 }, signal);
+            quotaPending ||= finish.quota_finalized !== true;
+        }
+        else if (!['ready', 'failed', 'superseded', 'unavailable'].includes(String(status.status))) {
+            throw backupFailure('上次导出正在确认状态，请稍后重试；不会重复使用导出额度。');
+        }
+        store.setMeta({ ...meta, quotaPending, pendingStart: undefined });
+    }
     private async recover(scope: string, store: BackupDirectoryStore, signal?: AbortSignal) {
         const meta = store.meta();
         if (!meta?.pending)
             return;
-        if (meta.chainUid !== await this.chainIdentity(scope, meta.attachments))
+        if ((meta.pending.chainUid ?? meta.chainUid) !== await this.chainIdentity(scope, typeof meta.pending.attachments === 'boolean' ? meta.pending.attachments : meta.attachments))
             throw backupFailure('待确认备份属于其他设备，请在原设备恢复或选择新的文件夹。');
         const pending = meta.pending;
         if (typeof pending.document !== 'string' || !/^[^/\\]+\.md$/.test(pending.document))
@@ -109,12 +126,15 @@ export class RecordDirectoryExportService {
         if (receiptFile.size + document.size + attachmentBytes !== pending.size)
             throw backupFailure('上次备份不完整');
         const status = await this.ranges.post(scope, 'status', { preview_uid: pending.uid }, signal, true);
-        if (status.status === 'started')
-            await this.ranges.post(scope, 'finish', { preview_uid: pending.uid, success: true, artifact_sha256: pending.digest, artifact_size: pending.size }, signal);
+        let quotaPending = meta.quotaPending === true || status.quota_pending === true || status.status === 'generated-unconfirmed';
+        if (status.status === 'started') {
+            const finish = await this.ranges.post(scope, 'finish', { preview_uid: pending.uid, success: true, artifact_sha256: pending.digest, artifact_size: pending.size }, signal);
+            quotaPending ||= finish.quota_finalized !== true;
+        }
         else if (!['generated', 'generated-unconfirmed', 'saved'].includes(String(status.status)))
             throw backupFailure('上次备份正在确认，请稍后重试；已写入的文件仍保留');
         const response = await this.ranges.post(scope, 'saved', { preview_uid: pending.uid, artifact_sha256: pending.digest, artifact_size: pending.size, user_confirmed_saved: true }, signal);
-        store.setMeta(pending.mode === 'dates' ? { ...meta, pending: undefined } : { ...meta, version: Number(response.version), savedAtMillis: Number(response.saved_at), pending: undefined });
+        store.setMeta(pending.mode === 'dates' ? { ...meta, quotaPending, pendingStart: undefined, pending: undefined } : { ...meta, quotaPending, pendingStart: undefined, version: Number(response.version), savedAtMillis: Number(response.saved_at), pending: undefined });
     }
     async preview(scope: string, raw: unknown, order: 1 | 2, destinationRef?: string, signal?: AbortSignal): Promise<ArkmeRangeExportPreview> {
         const selection = exportSelection(raw);
@@ -127,6 +147,7 @@ export class RecordDirectoryExportService {
                 const preview = await this.ranges.preview(scope, selection, order, signal);
                 return selection.mode === 'incremental' ? baselineMissing(preview) : preview;
             }
+            await this.recoverStart(scope, store, signal);
             await this.recover(scope, store, signal);
             const meta = store.meta();
             if (!meta?.version || meta.attachments !== selection.includeAttachments || meta.chainUid !== await this.chainIdentity(scope, selection.includeAttachments)) {
@@ -172,9 +193,10 @@ export class RecordDirectoryExportService {
         const controller = new AbortController();
         this.controller = controller;
         const signal = AbortSignal.any([controller.signal, ...(parent ? [parent] : [])]), timer = setTimeout(() => controller.abort(), 90 * 60000);
-        let uid = '', finishAttempted = false, completed = false;
+        let uid = '', finishAttempted = false, completed = false, failed = false;
         try {
             await store.open(true);
+            await this.recoverStart(scope, store, signal);
             await this.recover(scope, store, signal);
             const local = this.previews.get(options.previewUid);
             if (local && (local.scope !== scope || local.destinationRef !== options.destinationRef || JSON.stringify(local.selection) !== JSON.stringify(selection) || local.order !== options.orderKind))
@@ -191,10 +213,12 @@ export class RecordDirectoryExportService {
             const hasChanges = !local || local.preview!.recordCount + local.preview!.removedCount > 0;
             let start: Record<string, any> | undefined, count = 0;
             if (hasChanges) {
-                start = await this.ranges.post(scope, 'start', { preview_uid: previewUid }, signal);
-                uid = String(start.preview_uid);
+                uid = previewUid;
+                const previous = store.meta() ?? { scope, version: 0, attachments: selection.includeAttachments, savedAtMillis: 0 };
+                store.setMeta({ ...previous, pendingStart: { uid, attachments: requested.includeAttachments, chainUid: await this.chainIdentity(scope, requested.includeAttachments) } });
+                start = await this.ranges.post(scope, 'start', { preview_uid: uid }, signal);
                 const expected = wireExportSelection(requested, options.orderKind);
-                if (start.status !== 'started' || Object.entries(expected).some(([k, v]) => start!.selection?.[k] !== v) || start.reuse_attachments !== true)
+                if (start.preview_uid !== uid || start.status !== 'started' || Object.entries(expected).some(([k, v]) => start!.selection?.[k] !== v) || start.reuse_attachments !== true)
                     throw backupFailure('后端目录导出协议暂不可用，请升级后重试');
                 if (requested.mode === 'incremental' && (store.meta()?.version !== Number(start.base_version) || store.meta()?.attachments !== requested.includeAttachments || store.meta()?.chainUid !== await this.chainIdentity(scope, requested.includeAttachments)))
                     throw backupFailure('此文件夹没有对应的完整备份，请选择原文件夹或先导出全部');
@@ -279,29 +303,32 @@ export class RecordDirectoryExportService {
             let meta = store.meta() ?? { scope, version: 0, attachments: selection.includeAttachments, savedAtMillis: 0 };
             const chainUid = await this.chainIdentity(scope, selection.includeAttachments);
             if (start) {
-                const pending = { uid, digest, size, mode: requested.mode, document: output.path.split('/').at(-1), documentHash: output.sha256, documentSize: output.size };
+                const pending = { uid, digest, size, mode: requested.mode, chainUid, attachments: requested.includeAttachments, document: output.path.split('/').at(-1), documentHash: output.sha256, documentSize: output.size };
                 if (requested.mode === 'dates') {
-                    store.setMeta({ ...meta, chainUid, pending });
+                    store.setMeta({ ...meta, pendingStart: undefined, pending });
                     store.discard(job);
                 }
                 else {
-                    meta = { ...meta, attachments: selection.includeAttachments, chainUid, pending };
+                    meta = { ...meta, attachments: selection.includeAttachments, chainUid, pendingStart: undefined, pending };
                     store.commit(job, requested.mode, meta);
                 }
                 finishAttempted = true;
                 const finish = await this.ranges.post(scope, 'finish', { preview_uid: uid, success: true, artifact_sha256: digest, artifact_size: size }, signal);
+                meta = { ...(store.meta() ?? meta), quotaPending: meta.quotaPending === true || finish.quota_finalized !== true };
+                store.setMeta(meta);
                 const saved = await this.ranges.post(scope, 'saved', { preview_uid: uid, artifact_sha256: digest, artifact_size: size, user_confirmed_saved: true }, signal);
                 meta = requested.mode === 'dates' ? { ...meta, pending: undefined } : { ...meta, version: Number(saved.version), savedAtMillis: Number(saved.saved_at), pending: undefined };
                 store.setMeta(meta);
                 completed = true;
-                return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: output.path.split('/').at(-1)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: finish.quota_finalized === true, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
+                return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: output.path.split('/').at(-1)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: !meta.quotaPending, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
             }
             completed = true;
-            return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: output.path.split('/').at(-1)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: true, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
+            return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: output.path.split('/').at(-1)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: !meta.quotaPending, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
         }
         catch (error) {
+            failed = true;
             if (uid && !finishAttempted) {
-                await this.ranges.post(scope, 'finish', { preview_uid: uid, success: false, artifact_sha256: '', artifact_size: 0 }, AbortSignal.timeout(10000)).catch(() => { });
+                await this.recoverStart(scope, store, AbortSignal.timeout(10000)).catch(() => { });
             }
             if (error instanceof ArkmePluginError)
                 throw error;
@@ -309,11 +336,29 @@ export class RecordDirectoryExportService {
         }
         finally {
             clearTimeout(timer);
-            if (!completed && !finishAttempted)
-                store.discard(job);
-            store.close();
-            this.previews.delete(options.previewUid);
-            this.controller = undefined;
+            let cleanupError: unknown;
+            try {
+                if (!completed && !finishAttempted && store.isOpen)
+                    store.discard(job);
+            }
+            catch (error) {
+                cleanupError = error;
+            }
+            finally {
+                try {
+                    store.close();
+                }
+                catch (error) {
+                    cleanupError ??= error;
+                }
+                finally {
+                    this.previews.delete(options.previewUid);
+                    this.controller = undefined;
+                }
+            }
+            // Cleanup cannot mask a failure or strand the execution owner.
+            if (cleanupError && !failed)
+                throw new ArkmePluginError('directory-cleanup-failed', '备份已保存，但关闭本地索引失败，请重新打开导出页面。', true, 502);
         }
     }
 }

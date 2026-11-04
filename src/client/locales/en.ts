@@ -1,5 +1,7 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+选择导出文件夹|Choose export folder
+更换导出文件夹|Change export folder
 将快记与原文件直接保存到本地文件夹。|Save notes and original files directly to a local folder.
 已选择文件夹|Folder selected
 选择文件夹失败|Could not choose a folder

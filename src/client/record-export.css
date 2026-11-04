@@ -5,11 +5,11 @@
 .arkme-export-intro p { color: var(--export-muted); margin: 0; font-size: 13px; }
 .arkme-record-export .arkme-export-refresh { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border: 0; border-radius: 8px; background: transparent; color: var(--export-muted); }
 .arkme-record-export .arkme-export-refresh:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #00000008); }
-.arkme-export-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 24px 0; border: 1px solid var(--export-line); border-radius: 12px; background: var(--dsw-alias-bg-layer-1, #f8f9fa); }
-.arkme-export-summary > div { display: flex; flex-direction: column; gap: 5px; padding: 0 24px; min-width: 0; }
-.arkme-export-summary > div + div { border-left: 1px solid var(--export-line); }
-.arkme-export-summary strong { font-size: 28px; line-height: 1.2; font-weight: 550; letter-spacing: -.6px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.arkme-export-summary span { color: var(--export-muted); font-size: 12px; }
+.arkme-export-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 0; min-height: 22px; margin: 12px 0 8px; color: var(--export-muted); font-size: 13px; line-height: 22px; }
+.arkme-export-summary-item { display: inline-flex; align-items: baseline; white-space: nowrap; }
+.arkme-export-summary-item + .arkme-export-summary-item::before { content: '·'; margin: 0 10px; color: var(--export-muted); }
+.arkme-export-summary strong { color: var(--dsw-alias-label-primary, #17191c); font-size: inherit; font-weight: 550; font-variant-numeric: tabular-nums; margin-inline-end: 4px; }
+.arkme-export-summary span { font-size: inherit; }
 .arkme-export-options { margin-top: 16px; }
 .arkme-export-option { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 64px; padding: 12px 0; border-bottom: 1px solid var(--export-line); box-sizing: border-box; }
 .arkme-export-option > span:first-child { flex: none; font-weight: 500; }
@@ -43,7 +43,7 @@
 .arkme-export-order input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .arkme-export-order label:has(input:focus-visible) { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 1px; }
 .arkme-export-order label:has(input:disabled) { cursor: default; opacity: .6; }
-.arkme-export-footer { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 28px; }
+.arkme-export-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 20px; }
 .arkme-export-footer p, .arkme-export-footer small { margin: 0; color: var(--export-muted); font-size: 11px; }
 .arkme-export-footer small { display: block; margin-top: 4px; }
 .arkme-record-export .arkme-export-primary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; box-sizing: border-box; padding: 8px 15px; flex: none; border: 0; border-radius: 9px; background: var(--dsw-alias-button-primary-fill, #17191c); color: var(--dsw-alias-label-primary-inverted, #fff); text-decoration: none; font-size: 13px; line-height: 20px; }
@@ -76,8 +76,6 @@
 .arkme-export-refresh .is-spinning { animation: arkme-export-refresh 1s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .arkme-export-refresh .is-spinning { animation: none; } }
 @container (max-width: 400px) {
-  .arkme-export-summary > div { padding: 0 14px; }
-  .arkme-export-summary strong { font-size: 24px; }
   .arkme-export-file { flex-wrap: wrap; }
   .arkme-export-file > a { margin-left: auto; }
   .arkme-export-option { gap: 10px; }
@@ -107,3 +105,8 @@
 .arkme-export-calendar footer button {background:var(--dsw-alias-button-primary-fill,#17191c);color:var(--dsw-alias-label-primary-inverted,#fff);padding:6px 12px}
 
 .arkme-record-export .arkme-settings-link {border:0;background:transparent;color:var(--dsw-alias-state-business-primary,#3964fe);font:inherit;font-size:12px;padding:4px 0;cursor:pointer}
+
+.arkme-export-footer > .arkme-export-folder { flex: 1 1 150px; min-width: 0; max-width: 100%; min-height: 36px; text-align: left; }
+.arkme-export-folder > svg { flex: none; }
+.arkme-export-folder > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arkme-record-export .arkme-export-cancel { flex: none; min-height: 36px; padding: 8px 12px; border: 1px solid var(--export-line); border-radius: 9px; font: inherit; font-size: 13px; color: inherit; background: transparent; }

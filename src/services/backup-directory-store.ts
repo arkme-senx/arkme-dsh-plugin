@@ -70,6 +70,8 @@ export interface BackupMeta {
     attachments: boolean;
     savedAtMillis: number;
     pending?: Record<string, any> | undefined;
+    pendingStart?: {uid:string;attachments:boolean;chainUid:string} | undefined;
+    quotaPending?: boolean;
 }
 /** The chosen folder is an output replica, not a path submitted by a browser.
  * Only fixed names under an attested real directory are used. */
@@ -129,7 +131,8 @@ export class BackupDirectoryStore {
         this.db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS metadata(id INTEGER PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE IF NOT EXISTS records(uid TEXT PRIMARY KEY,send_at INTEGER NOT NULL,payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS record_date ON records(send_at,uid); CREATE TABLE IF NOT EXISTS staged(job TEXT NOT NULL,uid TEXT NOT NULL,send_at INTEGER NOT NULL,payload TEXT,PRIMARY KEY(job,uid)); CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY,size INTEGER NOT NULL,sha256 TEXT NOT NULL);');
         return true;
     }
-    close() { this.db?.close(); this.db = undefined; }
+    close() { const db=this.db;this.db=undefined;db?.close(); }
+    get isOpen(){return this.db!==undefined;}
     meta(): BackupMeta | undefined { const row = this.db?.prepare('SELECT value FROM metadata WHERE id=1').get(); return row ? JSON.parse(String(row.value)) : undefined; }
     setMeta(meta: BackupMeta) {
         if (meta.scope !== this.scope)
