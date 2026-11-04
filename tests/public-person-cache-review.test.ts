@@ -214,6 +214,27 @@ it('a forced read advances beyond a persisted logical timestamp after service re
   } finally { clock.mockRestore() }
 }))
 
+it.each(['main', 'projection'])('does not join a pre-refresh coordinated request in the %s pool', async pool => databaseTest(async db => {
+  const replies: ((value: Response) => void)[] = []
+  const fetchImpl: typeof fetch = async () => new Promise(done => { replies.push(done) })
+  const runtime = new ServiceRuntime({ environment: 'test', authBaseUrl: 'https://auth.test', requestTimeoutMs: 1000 } as ArkmeServiceConfig,
+    { read: async () => session, write: async () => {}, delete: async () => {} }, db, fetchImpl)
+  const coordinated = vi.spyOn(runtime, 'authenticatedAuthPost'), target = new ProfileService(runtime)
+  const load = (maxAge?: number) => pool === 'projection'
+    ? runtime.runBackgroundMessageProjection(() => target.publicProfileSummariesByUserIds([7], session, undefined, maxAge))
+    : target.publicProfileSummariesByUserIds([7], session, undefined, maxAge)
+  const old = load()
+  await vi.waitFor(() => expect(replies).toHaveLength(1))
+  const fresh = load(0)
+  await vi.waitFor(() => expect(coordinated).toHaveBeenCalledTimes(2))
+  replies[0]!(new Response(JSON.stringify({ code: 200, data: { items: [profile('old')] } })))
+  await old
+  await vi.waitFor(() => expect(replies).toHaveLength(2))
+  replies[1]!(new Response(JSON.stringify({ code: 200, data: { items: [profile('new')] } })))
+  expect((await fresh).get(7)?.nickname).toBe('new')
+  expect((await db.cachedPublicPerson('test', 42, 7))?.profile.nickname).toBe('new')
+}))
+
 it.each(['main', 'projection'].flatMap(pool => ['target', 'viewer', 'all'].map(invalidation => ({ pool, invalidation }))))('starts a fresh coordinated request after $invalidation invalidation in $pool pool', async ({ pool, invalidation }) => databaseTest(async db => {
   const replies: ((value: Response) => void)[] = []
   const fetchImpl: typeof fetch = async () => new Promise(done => { replies.push(done) })

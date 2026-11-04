@@ -47,7 +47,7 @@ export class IdentityShareService {
       if (!Number.isSafeInteger(target.userId) || target.userId <= 0) throw invalid()
       userId = target.userId
     } else if (target.kind === 'contact') userId = await this.contacts.resolveTeamRecipient(target.contactRef, signal)
-    else if (target.kind === 'author') userId = (await this.world.worldAuthorFromRef(target.authorRef, true)).userId
+    else if (target.kind === 'author') userId = (await this.world.worldAuthorFromRef(target.authorRef, true, { labels: false, ...(signal ? { signal } : {}) })).userId
     else if (target.kind === 'member') userId = (await this.chat.memberWorldTarget(target.sourceRef, target.memberRef, signal)).userId
     else if (target.kind === 'member-event') userId = (await this.chat.memberEvents.worldTarget(target.sourceRef, target.eventId, signal)).userId
     else if (target.kind === 'team-person') {
@@ -66,8 +66,16 @@ export class IdentityShareService {
     return userId
   }
   async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<IdentityPersonProfile>
+  async person(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, includeAccountName: boolean): Promise<IdentityPersonProfile>
   async person(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, options: PersonProfileReadOptions): Promise<IdentityPersonProfile | null>
-  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal, options: PersonProfileReadOptions = {}): Promise<IdentityPersonProfile | null> {
+  async person(scope: string, target: IdentityShareTarget, signal?: AbortSignal, options: boolean | PersonProfileReadOptions = {}): Promise<IdentityPersonProfile | null> {
+    if (options === false) {
+      // World navigation needs the verified identity, without optional public decoration.
+      const userId = await this.personId(scope, target, signal), session = await this.session(scope, signal)
+      if (typeof userId !== 'number') throw new ArkmePluginError('world-user-id-unsupported', '当前世界接口暂不支持此用户标识', false, 501)
+      return { userId, isSelf: userId === session.userId }
+    }
+    if (options === true) options = {}
     const owner = await this.session(scope, signal)
     let userId: RecordOwnerId
     if (options.cacheOnly) {

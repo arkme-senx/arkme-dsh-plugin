@@ -72,7 +72,6 @@ export function ArkmeMemberProfileCard(props: {
   const key = `${scope}:${targetKey}`
   const person = props.person ?? (resolved?.key === key ? resolved.person : undefined)
   const target = props.copyLinkTarget
-  const readPerson = (signal: AbortSignal) => callArkme<IdentityPersonProfile>('identity.person.read', { accountScope: scope, ...target }, signal)
   useEffect(() => {
     profileReadBusy.current = false; setProfileRefreshing(false); setProfileRefreshError('')
     if (!scope || scope !== issuedScope.current || !target || props.person) return
@@ -114,9 +113,10 @@ export function ArkmeMemberProfileCard(props: {
     // and use the same portable profile destination as a shared-link card.
     const child = conversationWindowRequested()
     try {
+      // The optional account handle and viewer labels must not hold navigation.
       const current = target?.kind === 'member'
         ? await callArkme<{ userId: number }>('chat.member.world-target', { sourceRef: target.sourceRef, memberRef: target.memberRef }, controller.signal)
-        : person ?? await readPerson(controller.signal)
+        : person ?? await callArkme<IdentityPersonProfile>('identity.person.read', { accountScope: scope, ...target, includeAccountName: false }, controller.signal)
       if (controller.signal.aborted || scope !== identityShareAccountScope()) { return }
       if (typeof current.userId !== 'number' || !Number.isSafeInteger(current.userId) || current.userId <= 0) throw new Error(tr('当前世界接口暂不支持此用户标识'))
       if (child) {
@@ -141,7 +141,7 @@ export function ArkmeMemberProfileCard(props: {
     accountName={person?.accountName ?? props.accountName} isSelf={person?.isSelf ?? props.member.isSelf} avatarRef={props.member.avatarRef ?? person?.avatarRef} avatarFallback={props.member.avatarFallback ?? person?.avatarFallback}
     imagePort={props.imagePort} imageKey={props.imageKey} accountScope={scope} copyLinkTarget={target} copyUrl={props.copyUrl}
     refreshing={props.refreshing ?? profileRefreshing} refreshError={props.refreshError ?? profileRefreshError}
-    busy={props.busy} closeWhileBusy={props.closeWhileBusy === true} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
+    busy={props.busy} closeWhileBusy={props.closeWhileBusy === true || worldBusy && !props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
     hideSend={props.hideSend} error={error || props.error} onClose={props.onClose} onSend={() => { if (scope === identityShareAccountScope()) props.onSend() }}
     teamContact={teamContact} onContactAsTeam={props.onContactAsTeam} onWorld={() => { void world() }} browserUrl={props.browserUrl}
     onRefresh={props.onRefresh ?? (target ? () => { if (profileReadBusy.current) return; profileReadBusy.current = true; setProfileRefreshing(true); setError(''); setRevision(value => value + 1) } : undefined)} />

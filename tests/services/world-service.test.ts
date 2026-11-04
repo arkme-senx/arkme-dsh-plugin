@@ -21,6 +21,22 @@ function mixedPerson(item: Record<string, unknown>) {
 }
 
 describe('WorldService', () => {
+  it('resolves an issued author for navigation without viewer-label scans while retaining reference fences', async () => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    const runtime = new ServiceRuntime(config, { async read() { return session }, async write() {}, async delete() {} }, { async uniqueCode() { return 'navigation-ref-secret' } } as StateStore,
+      async () => new Response(JSON.stringify({ code: 200, data: { items: [mixedPerson({ record_uid: 'public-navigation', user_id: 7, nick_name: '公开名称', text_content: '公开内容' })], has_more: false } })))
+    const labels = { privateDisplayNamesByUserIds: vi.fn(() => new Promise<Map<number, string>>(() => {})) }
+    const world = new WorldService(runtime, {} as never, {} as never, {} as never, labels)
+    const page = await world.listWorldFeed(), ref = page.items[0]!.authorRef!
+    await expect(world.worldAuthorFromRef(ref, true, { labels: false })).resolves.toEqual({ userId: 7, displayName: '公开名称' })
+    expect(labels.privateDisplayNamesByUserIds).not.toHaveBeenCalled()
+    await expect(world.worldAuthorFromRef(ref + 'tampered', true, { labels: false })).rejects.toBeInstanceOf(Error)
+    const controller = new AbortController(); controller.abort()
+    await expect(world.worldAuthorFromRef(ref, true, { labels: false, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    session.userId = 99
+    await expect(world.worldAuthorFromRef(ref, true, { labels: false })).rejects.toBeInstanceOf(Error)
+    world.dispose()
+  })
   it('leaves the Team Open write budget available after a burst of interaction reads', async () => {
     vi.useFakeTimers()
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }

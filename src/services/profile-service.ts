@@ -665,6 +665,10 @@ export class ProfileService {
         if (batch.length === 0) continue
         const startedAtMillis = Math.max(Date.now(), this.publicReadStamp + 1)
         this.publicReadStamp = startedAtMillis
+        // A forced read must not reuse a request dispatched before the refresh.
+        // Detach transport flights without discarding the retained display or
+        // cancelling existing consumers; timestamp checks still fence old results.
+        if (maxAgeMillis <= 0) this.detachPublicRequests(session.userId)
         const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
           '/api/v1/auth/get-public-users-by-ids',
           { user_ids: batch },

@@ -1593,8 +1593,14 @@ export async function dispatchArkmeHostOperation(
       const scope = stringParam(params, 'accountScope'), kind = stringParam(params, 'kind')
       const read = (scope: string, target: import('./identity-share-contract.js').IdentityShareTarget, signal?: AbortSignal) => {
         if (operation !== 'identity.person.read') return service.identityShareLink(scope, target, signal)
+        const includeAccountName = params.includeAccountName === undefined ? undefined : requiredBooleanParam(params, 'includeAccountName')
         for (const key of ['cacheOnly', 'forceRefresh']) if (params[key] !== undefined && typeof params[key] !== 'boolean') throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项无效', false, 400)
         if (params.cacheOnly === true && params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+        if (includeAccountName === false) {
+          if (params.cacheOnly === true || params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+          return service.identityPersonProfile(scope, target, signal, false)
+        }
+        if (includeAccountName === true && params.cacheOnly === undefined && params.forceRefresh === undefined) return service.identityPersonProfile(scope, target, signal, true)
         return params.cacheOnly === undefined && params.forceRefresh === undefined ? service.identityPersonProfile(scope, target, signal)
           : service.identityPersonProfile(scope, target, signal, { cacheOnly: params.cacheOnly === true, forceRefresh: params.forceRefresh === true })
       }

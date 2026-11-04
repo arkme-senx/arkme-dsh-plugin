@@ -41,3 +41,13 @@
 本轮仅本地提交，未推送、合并或发布。回滚本轮修复恢复原行为；既有新增缓存表可由旧版本忽略，不需要删除聊天、录音或账号数据。上线前仍需完成上述尚未覆盖的验收范围，并按 feature → dev → master 集成。
 
 证据目录：`/Users/tison/arkme/.codex-artifacts/public-person-cache-20261104/`。
+
+## PR #1142 集成复核
+
+同步 `dev` 的世界导航改动时，同时保留 `includeAccountName: false` 轻量身份读取和缓存探测/强制刷新。轻量读取不访问公开资料或私人标签；与缓存探测或强制刷新组合的矛盾参数在 Host 边界拒绝，旧三参数接口保持兼容。成员世界入口继续执行目标成员的即时身份校验。
+
+自动审查指出强制刷新仍可能加入刷新前的网络 flight。使用真实 `ServiceRuntime` 请求协调器和独立 SQLite，在普通池、后台消息池各增加一个回归：旧请求已发出时调用强制刷新，修复前均只有一次上游请求而失败。最终在每批强制读取派发前分离现有公开资料 flight；保留现有消费者和展示缓存，继续通过读取时间戳防止旧结果覆盖。修复后两项均确认产生新请求并持久化新资料。
+
+最终集成回归：30 个文件、1314 项通过、1 项已有可选线协议实样测试跳过。`pnpm run build`、类型生成、Windows helper 校验、SQLite worker commit/read/close 及 `git diff --check` 通过。证据在 `/Users/tison/arkme/.codex-artifacts/team-profile-dev-pr-20261104/` 的 `forced-refresh-before-fix.log`、`forced-refresh-after-fix.log`、`dev-integration-final-regression.log` 和 `dev-integration-final-build.log`。
+
+本节为本地集成与隔离回归结果；真实账号交互证据仍对应上述验收记录中的代码版本，不能视为最新集成版本、已安装客户端或部署后行为的完整验收。PR 目标为 `dev`，不发布 `master`。

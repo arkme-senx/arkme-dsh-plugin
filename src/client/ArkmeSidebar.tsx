@@ -8752,12 +8752,11 @@ export function ArkmeSurface({
           />
           : ui.mode === 'statistics' ? <StatisticsSurface key={`statistics:${auth?.environment}:${auth?.userId}:${ui.statisticsMonth ?? ''}`} accountScope={`${auth?.environment}:${auth?.userId}`} initialMonth={ui.statisticsMonth} />
           : ui.mode === 'explore' ? <ExploreSurface key={`explore:${auth?.environment}:${auth?.userId}:${ui.exploreModule}`} module={ui.exploreModule ?? 'profile'} accountScope={`${auth?.environment}:${auth?.userId}`} />
-          : ui.mode === 'world' && ui.worldTeamTarget && authenticatedAccountKey ? <TeamWorldSurface
-            accountKey={authenticatedAccountKey} target={ui.worldTeamTarget}
-            actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
-            onBack={() => arkmeUi.backFromWorld()} />
-          : ui.mode === 'world' ? <ArkmeWorldSurface
+          : ui.mode === 'world' ? <>
+          <div style={{ display: ui.worldTeamTarget ? 'none' : 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+          <ArkmeWorldSurface
             accountScope={authenticatedAccountKey}
+            active={!ui.worldTeamTarget}
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
             initialScope={ui.worldInitialScope ?? 'all'}
             actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
@@ -8767,6 +8766,12 @@ export function ArkmeSurface({
             onBackToWorld={() => { arkmeUi.backFromWorld() }}
             onSourceActivated={activateSource}
           />
+          </div>
+          {ui.worldTeamTarget && authenticatedAccountKey && <TeamWorldSurface
+            accountKey={authenticatedAccountKey} target={ui.worldTeamTarget}
+            actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
+            onBack={() => arkmeUi.backFromWorld()} />}
+          </>
           : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface
             {...(ui.searchTarget === undefined ? {} : {
               initialQuery: ui.searchTarget.query,
