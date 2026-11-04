@@ -42,6 +42,24 @@ describe('portable person and group links', () => {
     await expect(dispatchArkmeHostOperation(facade, 'identity.person.read', { accountScope: scope, kind: 'author', authorRef: 'issued', includeAccountName: 'false' })).rejects.toBeInstanceOf(Error)
     expect(read).toHaveBeenCalledOnce()
   })
+  it('rejects lightweight reads combined with cache probes or refresh without dispatching a lookup', async () => {
+    const read = vi.fn(), facade = { identityPersonProfile: read } as never
+    const target = { accountScope: scope, kind: 'person', userId: 8, includeAccountName: false }
+    for (const options of [{ cacheOnly: true }, { forceRefresh: true }]) {
+      await expect(dispatchArkmeHostOperation(facade, 'identity.person.read', { ...target, ...options })).rejects.toMatchObject({ code: 'identity-profile-options-invalid' })
+    }
+    expect(read).not.toHaveBeenCalled()
+    await dispatchArkmeHostOperation(facade, 'identity.person.read', { ...target, cacheOnly: false, forceRefresh: false })
+    expect(read).toHaveBeenCalledWith(scope, { kind: 'person', userId: 8 }, undefined, false)
+  })
+  it('keeps explicit decorated reads compatible with public cache options', async () => {
+    const f = fixture()
+    await expect(f.service.person(scope, { kind: 'person', userId: 8 }, undefined, true)).resolves.toMatchObject({ userId: 8, accountName: 'linshare' })
+    expect(f.profile.publicProfileSummariesByUserIds).toHaveBeenCalledOnce()
+    const read = vi.fn(), facade = { identityPersonProfile: read } as never
+    await dispatchArkmeHostOperation(facade, 'identity.person.read', { accountScope: scope, kind: 'person', userId: 8, includeAccountName: true, cacheOnly: true })
+    expect(read).toHaveBeenCalledWith(scope, { kind: 'person', userId: 8 }, undefined, { cacheOnly: true, forceRefresh: false })
+  })
   it('resolves a world target without requiring a shareable handle or creating a conversation', async () => {
     const f = fixture()
     f.profile.publicProfileSummariesByUserIds.mockResolvedValue(new Map())

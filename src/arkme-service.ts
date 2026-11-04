@@ -2277,7 +2277,13 @@ arkoImagesV1:true,
   async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
   async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
   async privateGroupContext(input: PrivateGroupRequest, signal?: AbortSignal) { return await this.privateGroupCreate.readContext(input, signal) }
-  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal, includeAccountName = true) { return await this.identityShare.person(scope, target, signal, includeAccountName) }
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<import('./identity-share-contract.js').IdentityPersonProfile>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, includeAccountName: boolean): Promise<import('./identity-share-contract.js').IdentityPersonProfile>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, options: import('./identity-share-contract.js').PersonProfileReadOptions): Promise<import('./identity-share-contract.js').IdentityPersonProfile | null>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal, options?: boolean | import('./identity-share-contract.js').PersonProfileReadOptions) {
+    if (typeof options === 'boolean') return await this.identityShare.person(scope, target, signal, options)
+    return options === undefined ? await this.identityShare.person(scope, target, signal) : await this.identityShare.person(scope, target, signal, options)
+  }
   async identityShareLink(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.link(scope, target, signal) }
   async identityShareRead(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.read(scope, url, signal) }
   async identityShareOpen(scope: string, url: string, expectedUserId?: number, signal?: AbortSignal) { return await this.identityShare.open(scope, url, expectedUserId, signal) }
