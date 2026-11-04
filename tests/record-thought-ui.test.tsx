@@ -4,7 +4,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
-import { RecordThoughtEntry, RecordThoughtContent, RecordThoughtMessageFooter, RecordThoughtsProvider } from '../src/client/RecordThoughts.js'
+import { RecordThoughtEntry, RecordThoughtContent, RecordThoughtMessageFooter, RecordThoughtsProvider, useRecordThoughtReplySummary } from '../src/client/RecordThoughts.js'
+import { publishThoughtInvalidation } from '../src/client/thought-invalidations.js'
+import { chatSuggestionQueue } from '../src/client/ArkoChatSuggestion.js'
 import { ArkmeMessageTimestamp } from '../src/client/ArkmeMessageTimestamp.js'
 const item = { itemUid: 'note', sendAtMillis: 1, isMe: true, version: 1 }
 let root: Root, host: HTMLDivElement
@@ -138,20 +140,121 @@ it.each(['generating', 'failed'] as const)('retains the Arko author and %s state
   expect(host.querySelector('[data-arkme-thought-reply]')?.getAttribute('role')).toBeNull()
 })
 
-it('shows private chat suggestions beneath received messages and cycles candidates locally without sending', async () => {
+it('opens private chat advice in a dedicated dialog with one locally switchable candidate', async () => {
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ id: 'suggestion', recordUid: 'note', content: '建议一', biz: 1, scene: 5, visibility: 'user', status: 'ready', generation: 1,
     display: { headline: '确认时间', context: '正在约定见面', warnings: [], suggestions: [{ style: '自然', items: ['建议一', '建议二'] }] } }] })
-  const fill = vi.fn(), record = { ...item, isMe: false, messageActionRef: 'signed' }
+  const fill = vi.fn(), normalDetail = vi.fn(), reply = vi.fn(), record = { ...item, isMe: false, messageActionRef: 'signed' }
   await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="chat-source" chat enabled onFill={fill}>
-    <RecordThoughtEntry item={record} onOpen={() => {}}/><RecordThoughtContent item={record}/>
+    <RecordThoughtEntry item={record} onOpen={normalDetail}/><RecordThoughtContent item={record} onReply={reply}/>
   </RecordThoughtsProvider>)); await load()
   expect(mocks.callArkme.mock.calls[0]!.slice(0, 2)).toEqual(['chat.thoughts.query', { expectedAccountScope: 'production:42', sourceRef: 'chat-source', messageActionRefs: ['signed'] }])
-  expect(host.textContent).toContain('仅你可见'); expect(host.textContent).toContain('正在约定见面')
-  const preview = host.querySelector('[data-arkme-thought-suggestion]')!
-  await act(async () => [...preview.querySelectorAll('button')].find(button => button.textContent === '换一句')!.click())
-  expect(preview.textContent).toContain('建议二')
-  await act(async () => [...preview.querySelectorAll('button')].find(button => button.textContent === '填入输入框')!.click())
-  expect(fill).toHaveBeenCalledExactlyOnceWith('建议二'); expect(mocks.callArkme).toHaveBeenCalledOnce()
+  expect(host.textContent).toContain('Arko有想法')
+  expect(host.textContent).not.toContain('填入输入框')
+  expect(host.textContent).not.toContain('换一句')
+  expect(host.querySelector('[data-arkme-thought-reply="suggestion"]')).toBeNull()
+  expect(host.querySelector('[data-arkme-thought-reply-count]')).toBeNull()
+  const entry=host.querySelector<HTMLButtonElement>('[data-arkme-chat-suggestion-entry]')!
+  await act(async()=>entry.click())
+  const dialog=document.querySelector<HTMLElement>('[data-arkme-chat-suggestion-dialog]')!
+  expect(dialog).not.toBeNull();expect(normalDetail).not.toHaveBeenCalled();expect(reply).not.toHaveBeenCalled()
+  expect(dialog.textContent).toContain('建议一');expect(dialog.textContent).not.toContain('建议二')
+  expect(dialog.querySelector('details')?.open).toBe(false)
+  const action=(text:string)=>[...dialog.querySelectorAll('button')].find(button=>button.textContent===text)!
+  await act(async()=>action('换一句').click())
+  expect(dialog.textContent).toContain('建议二');expect(dialog.textContent).not.toContain('建议一')
+  expect(mocks.callArkme).toHaveBeenCalledOnce()
+  await act(async()=>action('填入输入框').click())
+  expect(fill).toHaveBeenCalledExactlyOnceWith('建议二')
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+})
+
+it('closes an open advice dialog on account/source replacement', async () => {
+  const advice={id:'advice',recordUid:'note',content:'只属于原账号的建议',biz:1,scene:5,status:'ready'}
+  mocks.callArkme.mockResolvedValue({accountScope:'production:42',items:[advice]})
+  const render=(scope='production:42',source='first')=><RecordThoughtsProvider accountScope={scope} sourceRef={source} chat enabled><RecordThoughtEntry item={{...item,messageActionRef:'signed'}} onOpen={()=>{}}/></RecordThoughtsProvider>
+  await act(async()=>root.render(render()));await load()
+  await act(async()=>host.querySelector<HTMLButtonElement>('[data-arkme-chat-suggestion-entry]')!.click())
+  expect(document.body.textContent).toContain('只属于原账号的建议')
+  await act(async()=>root.render(render('production:99','second')))
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+  expect(document.body.textContent).not.toContain('只属于原账号的建议')
+})
+
+const advice = { id: 'advice', recordUid: 'note', content: '建议一', biz: 1 as const, scene: 5 as const, status: 'ready' as const, generation: 1,
+  display: { headline: '确认时间', context: '对话背景', warnings: [], suggestions: [{ style: '自然', items: ['建议一', '建议二'] }] } }
+function AdviceApp({ enabled = true, onFill }: { enabled?: boolean; onFill?: (text: string) => void }) {
+  return <RecordThoughtsProvider accountScope="production:42" sourceRef="chat" sourceKey="chat" chat enabled={enabled} onFill={onFill}>
+    <RecordThoughtContent item={{ ...item, messageActionRef: 'signed', timelineItemKey: 'chat-note' }}/>
+  </RecordThoughtsProvider>
+}
+const openAdvice = () => act(async () => host.querySelector<HTMLButtonElement>('[data-arkme-chat-suggestion-entry]')!.click())
+const adviceAction = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('[data-arkme-chat-suggestion-dialog] button')].find(button => button.textContent === text)!
+it('uses the same dialog from details and preserves its selected candidate, analysis and focus across background recovery', async () => {
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })
+  await act(async () => root.render(<AdviceApp onFill={vi.fn()}/>)); await load(); await openAdvice()
+  const dialog = document.querySelector<HTMLElement>('[data-arkme-chat-suggestion-dialog]')!
+  const analysis = dialog.querySelector('details')!
+  const fill = adviceAction('填入输入框'); fill.focus()
+  const tab = new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true })
+  await act(async () => fill.dispatchEvent(tab))
+  expect(tab.defaultPrevented).toBe(false) // The following analysis summary is keyboard reachable.
+  analysis.open = true
+  const change = adviceAction('换一句'); change.focus()
+  await act(async () => change.click())
+  mocks.callArkme.mockRejectedValueOnce(Error('offline'))
+  await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat' })); await load()
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBe(dialog)
+  expect(dialog.textContent).toContain('建议二'); expect(analysis.open).toBe(true)
+  expect(document.activeElement).toBe(change)
+  expect(dialog.textContent).toContain('建议暂时无法更新')
+  await act(async () => adviceAction('重试').click()); await load()
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBe(dialog)
+  expect(dialog.textContent).toContain('建议二'); expect(analysis.open).toBe(true)
+  expect(dialog.textContent).not.toContain('建议暂时无法更新')
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [{ ...advice, generation: 2 }] })
+  await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat' })); await load()
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBe(dialog)
+  expect(dialog.textContent).toContain('建议一'); expect(dialog.textContent).not.toContain('建议二')
+})
+it('removes invalidated advice immediately and does not reopen it when a workspace is re-enabled', async () => {
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })
+  await act(async () => root.render(<AdviceApp/>)); await load(); await openAdvice()
+  expect(adviceAction('填入输入框').disabled).toBe(true)
+  await act(async () => adviceAction('填入输入框').click())
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).not.toBeNull()
+  await act(async () => publishThoughtInvalidation({ accountScope: 'production:42', sourceKey: 'chat', timelineItemKey: 'chat-note', clear: true }))
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+  await load(); expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+  await openAdvice()
+  await act(async () => root.render(<AdviceApp enabled={false}/>))
+  await act(async () => root.render(<AdviceApp/>)); await load()
+  expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+})
+it('counts actual Arko replies independently of private draft suggestions', async () => {
+  function Summary() { const summary = useRecordThoughtReplySummary({ ...item, messageActionRef: 'signed' }); return <output>{JSON.stringify(summary)}</output> }
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice, { ...advice, id: 'reply', scene: 2, biz: 2 }] })
+  await act(async () => root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="chat" chat enabled><Summary/></RecordThoughtsProvider>)); await load()
+  expect(host.textContent).toBe('{"count":1,"hasContent":true}')
+})
+it('restores the entry on dismissal but respects focus transferred to the composer when filling', async () => {
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [advice] })
+  const editor = document.createElement('textarea'); document.body.append(editor)
+  try {
+    await act(async () => root.render(<AdviceApp onFill={() => editor.focus()}/>)); await load()
+    const entry = host.querySelector<HTMLButtonElement>('[data-arkme-chat-suggestion-entry]')!
+    entry.focus(); await openAdvice()
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })))
+    expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+    expect(document.activeElement).toBe(entry)
+    await openAdvice()
+    await act(async () => adviceAction('填入输入框').click())
+    expect(document.querySelector('[data-arkme-chat-suggestion-dialog]')).toBeNull()
+    expect(document.activeElement).toBe(editor)
+  } finally { editor.remove() }
+})
+it('normalizes duplicate candidates and falls back to legacy content when structured advice is empty', () => {
+  expect(chatSuggestionQueue({ ...advice, display: { ...advice.display, suggestions: [{ style: '', items: ['  建议 一 ', '建议\n一', '', '建议二'] }] } })).toEqual(['建议 一', '建议二'])
+  expect(chatSuggestionQueue({ ...advice, content: '  旧版建议  ', display: { ...advice.display, suggestions: [{ style: '', items: ['  ', '\n'] }] } })).toEqual(['旧版建议'])
 })
 it('separates group-public replies from private whispers and hides invalidated projections', async () => {
   mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [

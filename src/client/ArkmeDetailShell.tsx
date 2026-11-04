@@ -56,6 +56,8 @@ export function ArkmeDetailShell({ open = true, className, style, bodyStyle, clo
     if (!open || !listensOutside) return
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0 || !(event.target instanceof Node) || panelRef.current?.contains(event.target)) return
+      // A shared modal owns its panel and backdrop; dismiss only that layer.
+      if (event.target instanceof Element && event.target.closest('[data-arkme-confirm-dialog-backdrop]')) return
       outsideRef.current?.(event)
     }
     document.addEventListener('pointerdown', onPointerDown, true)

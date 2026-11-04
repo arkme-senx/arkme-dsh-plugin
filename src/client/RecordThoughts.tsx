@@ -13,8 +13,9 @@ import { subscribeThoughtInvalidation } from './thought-invalidations.js'
 import { ArkmeArkoAvatar } from './ArkmeArkoAvatar.js'
 import { arkmeExtensionDetailListStyles as replyStyles } from './extension-detail-list-styles.js'
 import { activateDetailReplyKey, detailReplyClickAllowed } from './detail-reply-interaction.js'
+import { ArkoChatSuggestionDialog, ArkoChatSuggestionEntry } from './ArkoChatSuggestion.js'
 
-const Context = createContext<{ store: RecordThoughtStore; chat: boolean; accountScope: string; source?: ArkmeSourceItem | undefined; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined } | null>(null)
+const Context = createContext<{ openSuggestion(item: RecordItem, id: string): void; store: RecordThoughtStore; chat: boolean; accountScope: string; source?: ArkmeSourceItem | undefined; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined } | null>(null)
 const empty: RecordThoughtState = Object.freeze({ items: [], loading: false, error: '' })
 const noSubscribe = () => () => {}
 type RecordItem = Pick<ArkmeTimelineItem, 'itemUid' | 'sendAtMillis' | 'isMe' | 'recordVersion' | 'version' | 'messageActionRef' | 'timelineItemKey'> & Partial<Pick<ArkmeTimelineItem, 'textContent' | 'recordOwnerUserId'>> & { localState?: 'synced' | 'pending' | 'failed' }
@@ -25,6 +26,11 @@ export function RecordThoughtsProvider({ accountScope, enabled, sourceRef, sourc
 }) {
   useEffect(() => arkoReplyHistory.activate(accountScope), [accountScope])
   const chatRef = chat ? sourceRef : undefined
+  const dialogScope = JSON.stringify([accountScope, sourceKey ?? sourceRef, enabled, chat])
+  const [suggestion, setSuggestion] = useState<{ scope: string; item: RecordItem; id: string }>()
+  const openSuggestion = useCallback((item: RecordItem, id: string) => setSuggestion({ scope: dialogScope, item, id }), [dialogScope])
+  const closeSuggestion = useCallback(() => setSuggestion(undefined), [])
+  useEffect(closeSuggestion, [dialogScope, closeSuggestion])
   const store = useMemo(() => new RecordThoughtStore(accountScope ?? '', (scope, recordUids, signal, messageActionRefs) =>
     callArkme<ArkmeRecordThoughts>(chatRef ? 'chat.thoughts.query' : 'record.thoughts.query',
       chatRef ? { expectedAccountScope: scope, sourceRef: chatRef, messageActionRefs } : { expectedAccountScope: scope, recordUids }, signal, { priority: 'background' })), [accountScope, chatRef])
@@ -42,8 +48,11 @@ export function RecordThoughtsProvider({ accountScope, enabled, sourceRef, sourc
     return () => { store.setActive(false); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('focus', focus) }
   }, [store, enabled, accountScope])
   useEffect(() => () => store.dispose(), [store])
-  const context = useMemo(() => enabled && accountScope ? { store, chat, onFill, source, accountScope } : null, [enabled, accountScope, store, chat, onFill, source])
-  return <Context.Provider value={context}>{children}</Context.Provider>
+  const context = useMemo(() => enabled && accountScope ? { store, chat, onFill, source, accountScope, openSuggestion } : null, [enabled, accountScope, store, chat, onFill, source, openSuggestion])
+  return <Context.Provider value={context}>{children}
+    {context && suggestion?.scope === dialogScope && <ChatSuggestionSelection key={`${dialogScope}:${suggestion.item.itemUid}:${suggestion.id}`}
+      item={suggestion.item} id={suggestion.id} scopeKey={dialogScope} onClose={closeSuggestion}/>}
+  </Context.Provider>
 }
 function useThought(item: RecordItem) {
   const context = useContext(Context)
@@ -57,18 +66,15 @@ function useThought(item: RecordItem) {
     arkoReplyHistory.observeItem(context.accountScope, context.source, item)
     if (state.loaded && !state.loading && !state.error) arkoReplyHistory.observe(context.accountScope, context.source, item, state.items)
   }, [context?.accountScope, context?.source, store, item, state.loaded, state.loading, state.error, state.items])
-  return { ...state, chat: context?.chat === true, onFill: context?.onFill, retry: () => store?.refresh(item.itemUid), focus: () => store?.requestFocus(item.itemUid), takeFocus: () => store?.takeFocus(item.itemUid) }
+  return { ...state, chat: context?.chat === true, onFill: context?.onFill, openSuggestion: (id: string) => context?.openSuggestion(item, id), retry: () => store?.refresh(item.itemUid), focus: () => store?.requestFocus(item.itemUid), takeFocus: () => store?.takeFocus(item.itemUid) }
 }
 const buttonStyle = { border: 0, background: 'transparent', padding: 0, color: arkmeTheme.accent, font: 'inherit', fontSize: 12, cursor: 'pointer' } as const
 const visibleThoughts = (items: readonly ArkmeRecordThought[]) => items.filter(item => item.status !== 'invalidated')
 /** Share the existing account-scoped read when composing human and Arko replies. */
 export function useRecordThoughtReplySummary(item: RecordItem) {
-  const state = useThought(item), count = visibleThoughts(state.items).length
-  return { count, hasContent: count > 0 || !!state.error }
-}
-const suggestions = (thought: ArkmeRecordThought) => {
-  const candidates = thought.display?.suggestions.flatMap(group => group.items) ?? []
-  return [...new Set(candidates.length ? candidates : thought.content ? [thought.content] : [])]
+  const state = useThought(item), thoughts = visibleThoughts(state.items)
+  const count = thoughts.filter(thought => !state.chat || thought.scene !== 5).length
+  return { count, hasContent: thoughts.length > 0 || !!state.error }
 }
 function title(thought: ArkmeRecordThought): string {
   if (thought.scene === 3 || thought.scene === 4) return 'Arko · 私密想法'
@@ -87,18 +93,6 @@ function ThoughtState({ thought, onFill, onRetry, retrying, continuation, refres
   </span>
   return null
 }
-function SuggestionPreview({ thought, onFill }: { thought: ArkmeRecordThought; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined }) {
-  const queue = suggestions(thought), [index, setIndex] = useState(0)
-  const current = queue[index % Math.max(1, queue.length)]
-  if (!current) return null
-  return <div data-arkme-thought-suggestion style={{ padding: '2px 0 4px 18px', maxWidth: 440, fontSize: 13, color: arkmeTheme.secondary, lineHeight: 1.6 }}>
-    <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{current}</div>
-    <div style={{ display: 'flex', gap: 16, marginTop: 5 }}>
-      {onFill && <button type="button" style={buttonStyle} onClick={event => { event.stopPropagation(); onFill(current) }}>{tr('填入输入框')}</button>}
-      {queue.length > 1 && <button type="button" style={buttonStyle} onClick={event => { event.stopPropagation(); setIndex(value => value + 1) }}>{tr('换一句')}</button>}
-    </div>
-  </div>
-}
 export function RecordThoughtEntry({ item, onOpen }: { item: RecordItem; onOpen(): void }) {
   const state = useThought(item), thoughts = visibleThoughts(state.items)
   if (!thoughts.length) return null
@@ -111,14 +105,13 @@ export function RecordThoughtEntry({ item, onOpen }: { item: RecordItem; onOpen(
       <Sparkle size={14} aria-hidden/>{tr(manual ? 'Arko · 回应' : 'Arko有想法')}<CaretRight size={12} aria-hidden/>
     </button>
   }
-  return <div data-arkme-record-thought-entry style={{ alignSelf: 'flex-start', minWidth: 0, paddingTop: 4 }}>
-    {thoughts.map(thought => <div key={`${thought.id}:${thought.generation}`}>
+  return <div data-arkme-record-thought-entry style={{ alignSelf: thoughts.some(thought => thought.scene === 5) ? 'stretch' : 'flex-start', minWidth: 0, paddingTop: 4 }}>
+    {thoughts.map(thought => thought.scene === 5 ? <ArkoChatSuggestionEntry key={thought.id} thought={thought} onOpen={() => state.openSuggestion(thought.id)}/> : <div key={`${thought.id}:${thought.generation}`}>
       {thought.status === 'generating' || thought.status === 'failed' ? <ThoughtState thought={thought} onFill={state.onFill}/> : <>
         <button type="button" style={{ ...buttonStyle, display: 'flex', alignItems: 'center', gap: 4, padding: '4px 0', color: arkmeTheme.tertiary }}
           aria-label={`${tr(thought.biz === 2 ? '查看 Arko 的回应' : '查看 Arko 的想法')}${thought.visibility === 'user' ? ` · ${tr('仅你可见')}` : ''}`} onClick={event => { event.stopPropagation(); state.focus(); onOpen() }}>
           <Sparkle size={14} aria-hidden/>{tr(title(thought))}{thought.visibility === 'user' && <span> · {tr('仅你可见')}</span>}<CaretRight size={12} aria-hidden/>
         </button>
-        {thought.scene === 5 && <SuggestionPreview thought={thought} onFill={state.onFill}/>}
       </>}
     </div>)}
   </div>
@@ -132,27 +125,42 @@ export function RecordThoughtMessageFooter({ item, onOpen, children }: { item: R
     <div data-arkme-thought-message-meta style={{ minWidth: 0, marginLeft: 'auto' }}>{children}</div>
   </div>
 }
-function ThoughtAnalysis({ thought }: { thought: ArkmeRecordThought }) {
+function ThoughtAnalysis({ thought, headline = true, warnings = true }: { thought: ArkmeRecordThought; headline?: boolean; warnings?: boolean }) {
   const display = thought.display
   if (!display) return null
   const rows = [['当前对话', display.context], ['对方的表达', display.surface], ['可能的想法', display.underlying], ['情绪', display.emotion],
     ['回应期待', display.expectation], ['我的沟通进展', display.lastAction], ['建议下一步', display.suggestedNext], ['建议语气', display.tone]]
   return <div data-arkme-thought-analysis style={{ fontSize: 13, lineHeight: 1.7, color: arkmeTheme.secondary }}>
-    {display.headline && <p style={{ margin: '0 0 12px', color: arkmeTheme.text }}>{display.headline}</p>}
+    {headline && display.headline && <p style={{ margin: '0 0 12px', color: arkmeTheme.text }}>{display.headline}</p>}
     {rows.map(([label, value]) => value ? <div key={label} style={{ marginBottom: 9 }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr(label!)}</div><div style={{ whiteSpace: 'pre-wrap' }}>{value}</div></div> : null)}
-    {display.warnings.length > 0 && <div style={{ margin: '10px 0' }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('需要留意')}</div>{display.warnings.map((warning, index) => <div key={index}>{warning}</div>)}</div>}
+    {warnings && display.warnings.length > 0 && <div style={{ margin: '10px 0' }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('需要留意')}</div>{display.warnings.map((warning, index) => <div key={index}>{warning}</div>)}</div>}
   </div>
+}
+function ChatSuggestionSelection({ item, id, scopeKey, onClose }: { item: RecordItem; id: string; scopeKey: string; onClose(): void }) {
+  const state = useThought(item), thought = visibleThoughts(state.items).find(row => row.id === id && row.scene === 5)
+  useEffect(() => { if (!thought) onClose() }, [thought, onClose])
+  if (!thought) return null
+  const display = thought.display
+  const hasAnalysis = display && [display.context, display.surface, display.underlying, display.emotion,
+    display.expectation, display.lastAction, display.suggestedNext, display.tone].some(Boolean)
+  return <ArkoChatSuggestionDialog thought={thought} scopeKey={scopeKey} loading={state.loading} error={state.error}
+    analysis={hasAnalysis ? <ThoughtAnalysis thought={thought} headline={false} warnings={false}/> : undefined}
+    onRetry={state.retry} onClose={onClose}
+    onFill={state.onFill ? text => { onClose(); state.onFill?.(text) } : undefined}/>
 }
 export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId, items, onRetry, retryingId, refreshError, onRefresh }: {
   item: RecordItem; embedded?: boolean; onReply?: ((thought: ArkmeRecordThought) => void) | undefined; selectedThoughtId?: string | undefined
   items?: readonly ArkmeRecordThought[] | undefined; onRetry?: ((thought: ArkmeRecordThought) => void) | undefined; retryingId?: string | undefined
   refreshError?: string | undefined; onRefresh?: (() => void) | undefined
 }) {
-  const state = useThought(item), thoughts = visibleThoughts(items ?? state.items)
+  const state = useThought(item), allThoughts = visibleThoughts(items ?? state.items)
+  const advice = items === undefined && state.chat ? allThoughts.filter(thought => thought.scene === 5) : []
+  const thoughts = allThoughts.filter(thought => !advice.includes(thought))
   const section = useRef<HTMLElement>(null)
   useEffect(() => { if (items === undefined && thoughts.length && state.takeFocus()) section.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' }) }, [item.itemUid, state.items, state.focusRevision, items])
-  if (!thoughts.length && (items !== undefined || !state.error)) return null
-  return <section ref={section} aria-label={tr('Arko 的想法')} data-arkme-record-thought-content
+  if (!allThoughts.length && (items !== undefined || !state.error)) return null
+  return <>{advice.map(thought => <ArkoChatSuggestionEntry key={thought.id} thought={thought} onOpen={() => state.openSuggestion(thought.id)}/>)}
+    {(thoughts.length > 0 || state.error && !advice.length) && <section ref={section} aria-label={tr('Arko 的想法')} data-arkme-record-thought-content
     style={{ ...(embedded ? {} : replyStyles.extensionContext), minWidth: 0 }}>
     {!embedded && thoughts.length > 0 && <div data-arkme-thought-reply-count style={replyStyles.extensionContextTitle}>{tr('共')}{thoughts.length}{tr('条延展')}</div>}
     <div style={replyStyles.extensionContextList}>{thoughts.map(thought => {
@@ -185,5 +193,5 @@ export function RecordThoughtContent({ item, embedded = false, onReply, selected
     {items === undefined && state.error && <div role="status" style={{ fontSize: 12, color: arkmeTheme.tertiary }}>{tr(state.error)}
       <button type="button" disabled={state.loading} onClick={state.retry} style={{ ...buttonStyle, marginLeft: 8 }}>{tr('重试')}</button>
     </div>}
-  </section>
+  </section>}</>
 }

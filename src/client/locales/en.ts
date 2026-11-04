@@ -1,5 +1,16 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+查看 Arko 回复建议|View Arko suggestions
+Arko 回复建议|Arko suggestions
+正在帮你想一句更合适的话…|Thinking of a suitable response…
+暂未获得回复建议|No suggestion is available yet
+查看建议|View suggestions
+展开查看|View more
+关闭建议|Close suggestions
+重新读取|Reload
+为什么这样建议|Why this suggestion
+建议暂时无法更新|Suggestions could not be refreshed
+当前输入框暂不可用|The composer is currently unavailable
 导出日期范围|Export date range
 保存确认失败，请重试。|Could not confirm the saved backup. Please retry.
 上次成功保存：|Last successfully saved:
