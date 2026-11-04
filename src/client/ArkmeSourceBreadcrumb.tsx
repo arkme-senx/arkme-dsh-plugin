@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeArchiveStatus, useArchiveMutation } from './ArkmeArchive.js'
 import { Archive } from '@phosphor-icons/react/dist/icons/Archive'
@@ -897,7 +898,7 @@ export function ArkmeSourceBreadcrumb({
       externalRequestRef.current?.checkPointer(event.relatedTarget, { x: event.clientX, y: event.clientY })
     }}>
       {assignment && <div style={styles.pickerHeader}><span id="arkme-record-topic-assignment-title" style={{ flex: 1 }}>{tr("指定主题 · 已选")} {assignment.count} {tr("条")}</span>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭指定主题")} disabled={assignment.busy} style={styles.topicToggle} onClick={assignment.onClose}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭指定主题")} disabled={assignment.busy} style={styles.topicToggle} onClick={assignment.onClose} />
       </div>}
       {!assignment && selectedPath.length > 0 && <div aria-label={tr("当前主题路径")} title={label} style={styles.currentPath}>{tr("当前：")}{label}</div>}
       <label style={styles.search}>

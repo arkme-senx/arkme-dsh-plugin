@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeArrangementRestore } from './ArkmeArrangementRestore.js'
 import { ArkmeArrangementSources } from './ArkmeArrangementSources.js'
 import { useOccurrenceReviewCount } from './use-arrangement-occurrences.js'
@@ -275,7 +276,7 @@ function ArrangementDetailPane({ accountScope, onSettings, onApplied, onRedirect
             { id: 'delete', label: tr('删除'), danger: true, disabled: actionDisabled,
               onSelect: () => selectAction(() => onDelete(current)) },
           ]} />}
-        <button type="button" aria-label={tr('关闭安排详情')} onClick={onClose}><X size={20} /></button>
+        <ArkmeCloseButton type="button" aria-label={tr('关闭安排详情')} onClick={onClose} />
       </div>
     </header>
     <div className="arkme-arrangement-detail-scroll">

@@ -1,9 +1,9 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { VideoCamera } from '@phosphor-icons/react/dist/icons/VideoCamera'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeOutgoingCallMediaType, ArkmeShareCallLink } from '../outgoing-call-contract.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -101,7 +101,7 @@ export function ArkmeCallInviteDialog({ onBack, onClose }: { onBack(): void; onC
       <header style={styles.header}>
         <button type="button" style={styles.icon} aria-label={tr("返回联系人选择")} onClick={onBack}><ArrowLeft size={17} /></button>
         <h3 style={styles.title}>{title}</h3>
-        <button type="button" style={styles.icon} aria-label={tr("关闭通话邀请")} onClick={onClose}><X size={18} /></button>
+        <ArkmeCloseButton type="button" style={styles.icon} aria-label={tr("关闭通话邀请")} onClick={onClose} />
       </header>
       {link === undefined ? <>
         <p style={styles.copy}>{tr("生成邀请链接，分享给对方后，对方可向你发起通话。")}</p>

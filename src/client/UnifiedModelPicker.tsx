@@ -1,9 +1,9 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { formatAiPoints, pointsUnits } from '../ai-points.js'
 import { mergeModelChoices, modelSceneBilling, type ModelChoice, type ModelScene, type ModelOrigin } from '../model-directory.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
@@ -141,7 +141,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
           <strong id={title}>{tr(view === 'usage' ? 'Arkme 积分与用量' : view === 'pricing' ? '计费详情' : '选择模型')}
             {view === 'models' && <span className="arkme-unified-model-scope" title={tr(scopeLabel)}> · {tr(scopeLabel)}</span>}
           </strong>
-          <button type="button" aria-label={tr('关闭模型面板')} onClick={onClose}><X size={18}/></button>
+          <ArkmeCloseButton type="button" aria-label={tr('关闭模型面板')} onClick={onClose} />
         </header>
         {view === 'models' ? <>
           <div className="arkme-unified-model-list" role="group" aria-label={tr('全部已接入模型')} aria-busy={applying}>

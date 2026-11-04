@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeRecordingArrangementPage } from '../../types.js'
 import { callArkme } from '../api.js'
 import { ArkmeArrangementContent } from '../ArkmeArrangementContent.js'
@@ -91,7 +91,7 @@ function RecordingArrangementDrawer({ dateStamp, page, loading, error, expanded,
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
       }
     }}>
-      <header><h2>{tr('识别安排')}</h2><button ref={close} type="button" aria-label={tr('关闭')} onClick={onClose}><X size={20} aria-hidden /></button></header>
+      <header><h2>{tr('识别安排')}</h2><ArkmeCloseButton ref={close} type="button" aria-label={tr('关闭')} onClick={onClose} /></header>
       <div className="arkme-recording-arrangements-body">
         <p className="arkme-recording-arrangements-date">{date}</p>
         <p>{tr('由当天录音总结识别，与安排板块保持同步。')}</p>

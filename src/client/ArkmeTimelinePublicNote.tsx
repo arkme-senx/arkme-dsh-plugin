@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeWorldFeedItem } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { WorldCard } from './ArkmeWorldSurface.js'
@@ -68,7 +68,7 @@ function PublicNoteDialog({ recordRef, onClose }: { recordRef: string; onClose()
         }
       }}>
       <header style={{ display: 'flex', alignItems: 'center', padding: '12px 20px', borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}>
-        <strong>{tr('公开快记')}</strong><button type="button" aria-label={tr('关闭公开快记详情')} onClick={onClose} style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: arkmeTheme.text, padding: 6, cursor: 'pointer' }}><X size={20} /></button>
+        <strong>{tr('公开快记')}</strong><ArkmeCloseButton type="button" aria-label={tr('关闭公开快记详情')} onClick={onClose} style={{ marginLeft: 'auto', border: 0, background: 'transparent', color: arkmeTheme.text, padding: 6, cursor: 'pointer' }} />
       </header>
       {error ? <div role="alert" style={{ padding: 24 }}>{error}<button type="button" onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button></div>
         : item === undefined ? <div role="status" style={{ padding: 24 }}>{tr('正在加载公开快记…')}</div>
