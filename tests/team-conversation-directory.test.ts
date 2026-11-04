@@ -6,8 +6,9 @@ const mock = vi.hoisted(() => vi.fn())
 vi.mock('../src/client/api.js', () => ({ callArkme: mock }))
 import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
 import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
+import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
 let stops: Array<() => void> = []
-afterEach(() => { stops.forEach(stop => stop()); stops = []; mock.mockReset(); vi.restoreAllMocks() })
+afterEach(() => { stops.forEach(stop => stop()); stops = []; openedTeamConversations.reset(); mock.mockReset(); vi.restoreAllMocks() })
 const channel = { teamRef: 'ref', name: '团队', jotmoId: 'team_id', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
 const item = (side: 'team' | 'external', time = 1): TeamConversation => ({ ref: `${side}-ref`, key: `${side}-key`, channel, side, lastSeq: 1, latestTeamReplySeq: 0, myReadSeq: 0, unread: 1, needsReply: true, blocked: false, revision: 1, updatedAt: time })
 it('merges Team rows only in presentation and preserves pinned rows and ordinary identities', () => {
@@ -285,4 +286,91 @@ it('publishes group-only folders independently and drops their body on a failed 
  expect(readTeamDirectory('folders-only').workspaceFolders).toEqual([])
  expect(readTeamDirectory('folders-only').items).toHaveLength(2)
  expect(readTeamDirectory('folders-only').foldersError).toBe('来源权限暂时无法确认')
+})
+
+it('a confirmed contact is visible during a pending list read and survives an absent server row', async () => {
+  const empty = { ...item('team', 50), lastSeq: 0, unread: 0 }
+  let release!: (value: unknown) => void
+  mock.mockReturnValue(new Promise(resolve => { release = resolve }))
+  stops.push(startTeamDirectory('new-contact'))
+  openedTeamConversations.retain('new-contact', empty)
+  expect(readTeamDirectory('new-contact')).toMatchObject({ loading: true, items: [empty] })
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  invalidateTeamMessages('new-contact')
+  release({ items: [], hasMore: false })
+  await vi.waitFor(() => expect(readTeamDirectory('new-contact').loading).toBe(false))
+  expect(readTeamDirectory('new-contact').items).toHaveLength(1)
+  expect(readTeamDirectory('new-contact').items[0]).toMatchObject({ key: empty.key, lastSeq: 0, unread: 0 })
+  await refreshTeamDirectory('new-contact')
+  expect(readTeamDirectory('new-contact').items).toHaveLength(1)
+})
+
+it('first publication replaces the opened row once, and a stale reopen cannot roll back its message or read state', async () => {
+  const empty = { ...item('team', 5), lastSeq: 0, unread: 0 }
+  openedTeamConversations.retain('publication', empty)
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  stops.push(startTeamDirectory('publication'))
+  await vi.waitFor(() => expect(readTeamDirectory('publication').hasLoaded).toBe(true))
+  const published = { ...empty, lastSeq: 2, myReadSeq: 2, unread: 0, revision: 3, updatedAt: 10, preview: { status: 'available', text: '首条真实消息', hasMedia: false } }
+  mock.mockImplementation(async (_, p) => ({ items: p.side === 'team' ? [published] : [], hasMore: false }))
+  await refreshTeamDirectory('publication')
+  openedTeamConversations.retain('publication', { ...empty, updatedAt: 50 })
+  expect(readTeamDirectory('publication').items).toEqual([expect.objectContaining(published)])
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  await refreshTeamDirectory('publication')
+  expect(readTeamDirectory('publication').items).toEqual([expect.objectContaining(published)])
+})
+
+it('opened off-page rows share receipt, revocation and recall authority with ordinary rows', async () => {
+  const c = { ...item('team'), preview: { status: 'available', text: '须撤回的摘要', hasMedia: false } }
+  openedTeamConversations.retain('opened-authority', c)
+  let accessible = true, offline = false
+  mock.mockImplementation(async (op) => {
+    if (op === 'team.app.read-states') return [{ key: c.key, accessible, lastSeq: 1, myReadSeq: 1, unread: 0 }]
+    if (offline) throw new Error('offline')
+    return { items: [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('opened-authority'))
+  await vi.waitFor(() => expect(readTeamDirectory('opened-authority').hasLoaded).toBe(true))
+  await refreshTeamDirectory('opened-authority', false, true)
+  expect(readTeamDirectory('opened-authority').items[0]?.unread).toBe(0)
+  offline = true
+  invalidateTeamMessages('opened-authority', false, { kind: 'team.message.changed', conversationKeys: [c.key] })
+  await vi.waitFor(() => expect(readTeamDirectory('opened-authority').loading).toBe(false))
+  expect(readTeamDirectory('opened-authority').items[0]?.preview?.text).toBe('')
+  accessible = false
+  await refreshTeamDirectory('opened-authority', false, true)
+  expect(readTeamDirectory('opened-authority').items).toEqual([])
+  expect(openedTeamConversations.read('opened-authority')).toEqual([])
+})
+
+it('preference authority and channel revocation remove retained contacts too', async () => {
+  const c = { ...item('team'), lastSeq: 0, unread: 0 }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([])
+  vi.spyOn(teamDirectoryPreferences, 'canPresent').mockReturnValue(false)
+  openedTeamConversations.retain('denied-open', c)
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  stops.push(startTeamDirectory('denied-open'))
+  await vi.waitFor(() => expect(openedTeamConversations.read('denied-open')).toEqual([]))
+  expect(readTeamDirectory('denied-open').items).toEqual([])
+  openedTeamConversations.retain('denied-open', c)
+  discardTeamDirectory('denied-open', c)
+  expect(readTeamDirectory('denied-open').items).toEqual([])
+  expect(openedTeamConversations.read('denied-open')).toEqual([])
+})
+
+it('clears opened contacts on account or provider reset and ignores an old owner cleanup', async () => {
+  const c = { ...item('team'), lastSeq: 0, unread: 0 }
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  const stopOld = startTeamDirectory('opened-old'); stops.push(stopOld)
+  openedTeamConversations.retain('opened-old', c)
+  stops.push(startTeamDirectory('opened-new'))
+  expect(openedTeamConversations.read('opened-old')).toEqual([])
+  openedTeamConversations.retain('opened-new', c)
+  stopOld()
+  expect(readTeamDirectory('opened-new').items).toEqual([expect.objectContaining(c)])
+  openedTeamConversations.reset()
+  expect(readTeamDirectory('opened-new').items).toEqual([])
 })

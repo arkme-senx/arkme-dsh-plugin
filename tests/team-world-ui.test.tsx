@@ -113,6 +113,16 @@ it('uses a separate team page and guides members to their existing content when 
   expect(editor()).toBeNull()
 })
 
+it('shows public team content before optional member presentation resolves', async () => {
+  const post = { recordRef: 'public-team-post', authorName: team.name, teamAuthor: { jotmoId: team.jotmoId, name: team.name }, headline: '', textContent: '团队公开正文', tags: [], templateKind: 0, createdAtMillis: 1, publishedAtMillis: 1, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0, extendCount: 0 }
+  mock.call.mockImplementation(async operation => operation === 'team.app.world.view' ? { state: 'ready', team, context: { teamRef: team.teamRef, jotmoId: team.jotmoId, name: team.name, capabilities: { publish: true, manage: false, feedback: false, reply: true } }, feed: { items: [post], hasMore: false } } : operation === 'team.app.teams' ? new Promise(() => {}) : { items: [], unavailableRecordRefs: [] })
+  await mount(<TeamWorldSurface accountKey="test:42" target={team} onBack={close} />)
+  expect(document.body.textContent).toContain('团队公开正文')
+  expect(document.querySelector('[data-world-team-badge]')?.textContent).toContain('团队')
+  expect(document.body.textContent).not.toContain('正在加载团队世界')
+  expect(mock.call).toHaveBeenCalledWith('team.app.world.view', { expectedAccountKey: 'test:42', jotmoId: team.jotmoId, includeMemberTeam: false }, expect.any(AbortSignal))
+})
+
 it('offers the same team World navigation from public cards including the current team conversation', async () => {
   const navigate = vi.spyOn(arkmeUi, 'showTeamWorld')
   await mount(<TeamPublicCardDialog accountKey="test:42" jotmoId="our_team" onClose={close}
@@ -122,19 +132,20 @@ it('offers the same team World navigation from public cards including the curren
   expect(close).toHaveBeenCalledTimes(1)
 })
 
-it('prefills committed source text and existing assets without uploading or changing the source', async () => {
-  mock.call.mockImplementation(async operation => operation === 'team.app.teams' ? [team] : {
+it('publishes the verified original after identity selection without an editor or a copy write', async () => {
+  mock.call.mockImplementation(async (operation, params) => operation === 'team.app.teams' ? [team] : operation === 'world.publications' ? { worldPublished: true, visibility: 'visible' } : {
     sourceRef: 'self', itemUid: 'note', version: 7, title: '产品更新', textContent: '完整正文', sendAtMillis: 1,
     attachments: [{ asset: { fileAssetUid: 'existing-image', fileName: 'existing.png', mimeType: 'image/png', fileKind: 1, size: 12 }, block: { kind: 'image', mediaRef: 'image-ref' } }],
   })
   await mount(<PublishDialog origin={{ sourceRef: 'self', itemUid: 'note' }} onClose={close} onPublished={published} />)
-  expect(editor().textContent).toBe('产品更新\n\n完整正文')
-  expect(document.activeElement).toBe(editor())
-  expect(document.querySelectorAll('[data-arkme-attachment-tile]')).toHaveLength(1)
+  expect(document.querySelector('[role="dialog"][aria-label="选择发布身份"]')).not.toBeNull()
+  expect(editor()).toBeNull()
+  expect(document.querySelector('input[type="file"]')).toBeNull()
+  expect(document.querySelector('input[type="radio"]:checked')).not.toBeNull()
   await act(async () => button('发布').click())
-  expect(mock.files).toHaveBeenCalledWith(expect.objectContaining({ textContent: '产品更新\n\n完整正文', fileAssets: [expect.objectContaining({ fileAssetUid: 'existing-image' })] }), expect.any(AbortSignal))
-  expect(mock.upload).not.toHaveBeenCalled()
-  expect(mock.call.mock.calls.every(([op]) => ['team.app.teams', 'world.source-draft'].includes(op))).toBe(true)
+  expect(mock.call).toHaveBeenCalledWith('world.publications', { action: 'publish-source', accountKey: 'test:42', origin: { sourceRef: 'self', itemUid: 'note' }, version: 7 }, expect.any(AbortSignal))
+  expect(mock.upload).not.toHaveBeenCalled(); expect(mock.files).not.toHaveBeenCalled(); expect(mock.text).not.toHaveBeenCalled()
+  expect(published).toHaveBeenCalledOnce()
 })
 
 it('only offers World publication for actionable owned personal records', () => {
@@ -147,16 +158,16 @@ it('only offers World publication for actionable owned personal records', () => 
   expect(canPublishSelfNote(self, { ...note, isMe: false })).toBe(false)
 })
 
-it('blocks unsupported source media until explicitly removed from the publication copy', async () => {
+it('blocks unsupported source media without offering to edit or drop the attachment', async () => {
   mock.call.mockImplementation(async operation => operation === 'team.app.teams' ? [team] : {
     sourceRef: 'self', itemUid: 'note', version: 7, title: '', textContent: '语音转写', sendAtMillis: 1,
     attachments: [{ asset: { fileAssetUid: 'voice-asset', fileName: 'voice.mp3', mimeType: 'audio/mpeg', fileKind: 2, size: 12 } }],
   })
   await mount(<PublishDialog origin={{ sourceRef: 'self', itemUid: 'note' }} onClose={close} onPublished={published} />)
   expect(button('发布').disabled).toBe(true)
-  expect(document.body.textContent).toContain('原快记不受影响')
-  await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="移除voice.mp3"]')!.click())
-  expect(button('发布').disabled).toBe(false)
+  expect(document.body.textContent).toContain('当前无法完整发布')
+  expect(document.querySelector('[aria-label="移除voice.mp3"]')).toBeNull()
+  expect(editor()).toBeNull()
   expect(mock.text).not.toHaveBeenCalled()
 })
 
@@ -182,14 +193,14 @@ it('loads the canonical Arko user message and its image through the separate own
     attachments: [{ selection: { fileAssetUid: 'image' }, asset: { fileAssetUid: 'image', fileName: 'image.png', mimeType: 'image/png', size: 10, fileKind: 1 } }] })
   await mount(<PublishDialog origin={{ kind: 'arko', sourceRef: 'arko:88', itemUid: 'history:101', sessionId: 88, messageId: 101 }} onClose={close} onPublished={published}/>)
   expect(mock.call).toHaveBeenCalledWith('world.arko-source-draft', { sessionId: 88, messageId: 101 }, expect.any(AbortSignal))
-  expect(editor().textContent).toBe('我的提问')
+  expect(editor()).toBeNull()
   await act(async () => button('发布').click())
   expect(mock.files).toHaveBeenCalledWith(expect.objectContaining({ textContent: '我的提问', fileAssets: [expect.objectContaining({ fileAssetUid: 'image' })] }), expect.any(AbortSignal))
 })
 it('keeps native attachments explicit instead of silently publishing only text', async () => {
   await mount(<PublishDialog origin={{ kind: 'local', sourceRef: 'dsh:s1', itemUid: 'input', sourceLabel: 'DSH', textContent: '我的提问', sendAtMillis: 1, hasAttachments: true }} onClose={close} onPublished={published}/>)
-  expect(editor().textContent).toBe('我的提问')
-  expect(document.body.textContent).toContain('原消息附件')
+  expect(editor()).toBeNull()
+  expect(document.body.textContent).toContain('当前无法完整发布')
   await act(async () => button('发布').click())
   expect(mock.text).not.toHaveBeenCalled(); expect(mock.files).not.toHaveBeenCalled()
 })
@@ -224,4 +235,23 @@ it('revalidates loaded team pages on focus without losing pagination or issuing 
   expect(document.body.textContent).toContain('第一页正文');expect(document.body.textContent).toContain('第二页正文')
   expect(mock.call.mock.calls.filter(([op,input])=>op==='team.world'&&input.action==='feed')).toHaveLength(2)
   expect(mock.call.mock.calls.some(([op])=>['world.feed','world.mine','world.user'].includes(op))).toBe(false)
+})
+
+it('allows an identity-only pending command to confirm its original receipt after current team role loss', async () => {
+  let submitted = false
+  mock.call.mockImplementation(async (op, input) => {
+    if (op === 'team.app.teams') return submitted ? [] : [team]
+    if (op === 'world.source-draft') return { sourceRef: 'self', itemUid: 'note', version: 7, title: '', textContent: '团队原消息', sendAtMillis: 1, attachments: [] }
+    if (input.action === 'source') return { sourceRef: 'source-proof' }
+    if (!submitted) { submitted = true; throw new Error('结果未知') }
+    return { pending: false, result: { visibility: 'published' } }
+  })
+  await mount(<PublishDialog origin={{sourceRef:'self',itemUid:'note'}} onClose={close} onPublished={published}/>)
+  await act(async () => document.querySelectorAll<HTMLInputElement>('input[type="radio"]')[1]!.click())
+  await act(async () => button('发布').click())
+  await act(async () => window.dispatchEvent(new Event('focus')))
+  expect(button('确认发布结果').disabled).toBe(false)
+  await act(async () => button('确认发布结果').click())
+  const writes = mock.call.mock.calls.filter(([op, p]) => op === 'team.world' && p.action === 'submit')
+  expect(writes).toHaveLength(2); expect(writes[0]![1]).toEqual(writes[1]![1]); expect(published).toHaveBeenCalledOnce()
 })

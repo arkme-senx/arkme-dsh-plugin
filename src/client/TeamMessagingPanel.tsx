@@ -160,10 +160,11 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
   conversation: TeamConversation; accountKey?: string; selected?: boolean; showTeamName?: boolean; role?: 'treeitem'; onClick(): void
 }) {
   const actions = useTeamConversationEntryActions(accountKey, { kind: 'conversation', conversation: c })
-  const preview = c.preview?.status === 'available'
+  const emptyPreview = c.lastSeq === 0 && (!c.preview || c.preview.status === 'unavailable' && !c.preview.text && !c.preview.templateKind && !c.preview.hasMedia)
+  const preview = emptyPreview ? tr('尚未发送消息') : c.preview?.status === 'available'
     ? c.preview.text || (c.preview.templateKind === 3 ? tr('[语音]') : c.preview.hasMedia ? tr('[附件]') : '')
     : c.preview ? tr('内容暂不可用') : ''
-  return <><button className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-team-side={c.side} type="button" role={role}
+  return <><button className="team-conversation-row" data-team-conversation-key={c.key} data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-team-side={c.side} type="button" role={role}
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
     style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
     {actions.pinned && <ArkmePinnedCorner />}

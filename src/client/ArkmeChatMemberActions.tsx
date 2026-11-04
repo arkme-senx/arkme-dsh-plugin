@@ -1,3 +1,4 @@
+import type { MemberActionTarget } from './member-interaction.js'
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
@@ -201,7 +202,7 @@ export function ArkmeMemberRecordCountLabel({ label, count }: { label: string; c
 }
 
 export function ArkmeMemberActionMenu(props: {
-  member: ArkmeConversationMemberItem
+  member: MemberActionTarget
   sourceKind: ArkmeSourceItem['kind']
   position: ArkmeMemberMenuPosition
   hoverAnchor?: HTMLElement | undefined
@@ -211,22 +212,28 @@ export function ArkmeMemberActionMenu(props: {
   onWorld?: (() => void) | undefined
   onRecords: (mode: ArkmeConversationMemberRecordMode) => void
   canRemove?: boolean
+  loading?: boolean
+  canMention?: boolean
+  error?: string
+  onRetry?(): void
   onRemove?: () => void
   onClose: () => void
 }) {
+  const canMention = props.canMention !== false && Boolean(props.member.mentionRef && props.member.mentionDisplayName)
   const ownerLabel = props.member.isSelf ? '看我的快记' : '看TA的快记'
   const mentionedLabel = props.member.isSelf ? '@我的快记' : '@TA的快记'
-  const countLabel = (label: string, count: number) => <ArkmeMemberRecordCountLabel
+  const countLabel = (label: string, count: number | undefined) => <ArkmeMemberRecordCountLabel
     label={label} count={props.member.statsKnown === false ? undefined : count} />
   return <ArkmeActionMenu label={tr("{v0} 的成员操作", { v0: props.member.displayName })}
     hoverAnchor={props.hoverAnchor} align={props.hoverSide === 'left' ? 'end' : 'start'}
     autoFocus={props.hoverAnchor === undefined}
     point={{ x: props.position.left, y: props.position.top }} onClose={props.onClose} actions={[
-      !props.member.isSelf && props.sourceKind === 'group_chat' && { id: 'mention', label: `@${props.member.displayName}`, onSelect: props.onMention },
+      !props.member.isSelf && props.sourceKind === 'group_chat' && { id: 'mention', label: canMention ? `@${props.member.displayName}` : props.loading ? tr('正在确认 @{name} 的身份…', { name: props.member.displayName }) : tr('@{name} 暂不可用', { name: props.member.displayName }), disabled: !canMention, onSelect: props.onMention },
       !props.member.isSelf && props.sourceKind === 'group_chat' && props.onPrivateChat !== undefined && { id: 'private-chat', label: tr('私聊'), onSelect: props.onPrivateChat },
       !props.member.isSelf && props.onWorld !== undefined && { id: 'world', label: tr('TA的世界'), onSelect: props.onWorld },
       props.sourceKind === 'group_chat' && { id: 'mentioned-records', label: countLabel(mentionedLabel, props.member.mentionCount), onSelect: () => props.onRecords('mentioned') },
       { id: 'owner-records', label: countLabel(ownerLabel, props.member.recordCount), onSelect: () => props.onRecords('owner') },
+      Boolean(props.error) && { id: 'retry-member', label: tr('成员资料读取失败，重试'), onSelect: () => props.onRetry?.() },
       props.canRemove === true && props.onRemove !== undefined && { id: 'remove', label: '移出群聊', danger: true, onSelect: props.onRemove },
     ]} />
 }
@@ -299,10 +306,10 @@ export function ArkmeGroupMemberRemoveDialog(props: {
 export { ArkmeMemberProfileCard, arkmeMemberProfileNames, type ArkmeMemberProfileIdentity } from './ArkmeMemberProfileCard.js'
 
 export function arkmeMemberRecordTotal(
-  member: ArkmeConversationMemberItem,
+  member: MemberActionTarget,
   mode: ArkmeConversationMemberRecordMode,
 ): number {
-  return Math.max(0, Math.trunc(mode === 'mentioned' ? member.mentionCount : member.recordCount))
+  return Math.max(0, Math.trunc((mode === 'mentioned' ? member.mentionCount : member.recordCount) ?? 0))
 }
 
 export function formatArkmeMemberRecordTime(timestamp: number, nowMillis = Date.now()): string {
@@ -357,7 +364,7 @@ interface MemberRecordsPanelProps {
   sourceName?: string | undefined
   source?: ArkmeSourceItem | undefined
   accountKey?: string | undefined
-  member: ArkmeConversationMemberItem
+  member: MemberActionTarget
   mode: ArkmeConversationMemberRecordMode
   onClose: () => void
   onOpenOrigin?: ((item: ArkmeTimelineItem, source?: ArkmeSourceItem) => void) | undefined

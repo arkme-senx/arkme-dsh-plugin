@@ -347,6 +347,7 @@ describe('registerArkmeTools', () => {
       'arkme_team_join',
       'arkme_group_create',
       'arkme_group_rename',
+      'arkme_arko_interactions', 'arkme_arko_interaction_open', 'arkme_arko_timeline_cache',
       'arkme_arko_lifecycle', 'arkme_arko_change_lifecycle',
       'arkme_arko_models','arkme_arko_pending',
       'arkme_arko_profile',

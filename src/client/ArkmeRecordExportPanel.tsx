@@ -1,176 +1,128 @@
-import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple'
-import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
-import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle'
-import { FileZip } from '@phosphor-icons/react/dist/icons/FileZip'
-import exportCss from './record-export.css?inline'
-import { useEffect, useId, useRef, useState } from 'react'
-import type { ArkmeExportPreflight, ArkmeRangeExportPreview, ArkmeRecordExport } from '../data-management.js'
-import { createArkmeSdk } from '../sdk/index.js'
-import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
-import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
-import { legacyRecordExportAvailable, recordExportDateError, recordExportDatePreset, type RecordExportDatePreset, type RecordExportRangeKind } from './record-export-selection.js'
-import { useRecordExportRange } from './use-record-export-range.js'
-
-const RANGE_BACKEND_NOTICE = '后端接口开发中，开发完成后此功能完整可用。'
-
-export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRefresh }: { scope: string; preflight: ArkmeExportPreflight | undefined; loading?: boolean; onRefresh?: () => void }) {
-  useArkmeLocale()
-  const [order, setOrder] = useState<1 | 2>(1)
-  const [range, setRange] = useState<RecordExportRangeKind>('all')
-  const [dates, setDates] = useState(() => recordExportDatePreset('month'))
-  const [includeAttachments, setIncludeAttachments] = useState(true)
-  const [confirm, setConfirm] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [count, setCount] = useState(0)
-  const [error, setError] = useState('')
-  const [result, setResult] = useState<ArkmeRecordExport>()
-  const [taskSnapshot, setTaskSnapshot] = useState<{ scope: string; rangeSupported: boolean; statistics: ArkmeExportPreflight | ArkmeRangeExportPreview; preview?: ArkmeRangeExportPreview }>()
-  const [downloadRequested, setDownloadRequested] = useState(false)
-  const [saveConfirm, setSaveConfirm] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const manualRange = useRef(false)
-  const defaultApplied = useRef(false)
-  const saveController = useRef<AbortController>()
-  const controller = useRef<AbortController>()
-  const id = useId()
-  const legacyAvailable = legacyRecordExportAvailable(range, includeAttachments)
-  const dateError = range === 'dates' ? recordExportDateError(dates) : ''
-  const scopedPreflight = preflight?.accountScope === scope ? preflight : undefined
-  const retained = taskSnapshot?.scope === scope ? taskSnapshot : undefined
-  const liveRangeSupported = scopedPreflight?.rangeExportV2 !== undefined
-  const rangeSupported = retained?.rangeSupported ?? liveRangeSupported
-  const rangeState = useRecordExportRange(scope, liveRangeSupported && !retained, range, dates, includeAttachments, order)
-  const preview = retained ? retained.preview : rangeState.preview
-  const available = rangeSupported || legacyAvailable
-  const statistics = retained?.statistics ?? (rangeSupported ? preview?.previewUid ? preview : undefined : scopedPreflight)
-  const decision = preview ?? scopedPreflight
-  const savedAtMillis = preview?.savedAtMillis || scopedPreflight?.rangeExportV2?.savedAtMillis
-  const empty = statistics !== undefined && statistics.recordCount + (preview?.removedCount ?? 0) === 0
-  const canRun = available && !!statistics?.canExport && !empty && !loading && !rangeState.loading && (!rangeSupported || !!preview?.previewUid && !preview.baselineRequired)
-  const locked = busy || confirm || !!result || saving
-  useEffect(() => {
-    controller.current = undefined; saveController.current = undefined
-    defaultApplied.current = false; manualRange.current = false
-    setResult(undefined); setTaskSnapshot(undefined); setBusy(false); setSaving(false); setSaved(false); setSaveConfirm(false); setConfirm(false); setError(''); setDownloadRequested(false)
-    return () => { controller.current?.abort(); saveController.current?.abort() }
-  }, [scope])
-  useEffect(() => {
-    if (!scopedPreflight || defaultApplied.current) return
-    defaultApplied.current = true
-    if (!manualRange.current && scopedPreflight.rangeExportV2 && scopedPreflight.rangeExportV2.chainVersion > 0) setRange('incremental')
-  }, [scopedPreflight])
-  const run = async () => {
-    // The legacy protocol cannot filter. Never silently turn a range request
-    // into a quota-consuming full export, even after a stale confirmation.
-    if (controller.current || !canRun || !statistics) return
-    const current = new AbortController(), sdk = createArkmeSdk()
-    controller.current = current
-    setTaskSnapshot({ scope, rangeSupported, statistics, ...(preview ? { preview } : {}) })
-    setConfirm(false); setBusy(true); setError(''); setCount(0); setResult(undefined)
-    try {
-      const value = await sdk.exportRecords({ expectedAccountScope: scope, orderKind: order, confirmed: true,
-        ...(rangeSupported ? { selection: rangeState.selection, previewUid: preview!.previewUid } : {}) }, current.signal,
-        progress => { if (!current.signal.aborted) setCount(progress.count) })
-      if (!current.signal.aborted) setResult(value)
-    } catch (caught) {
-      if (!current.signal.aborted) { setTaskSnapshot(undefined); setError(caught instanceof Error ? caught.message : tr('导出失败，请重试')) }
-    } finally {
-      sdk.dispose()
-      if (controller.current === current) { controller.current = undefined; if (!current.signal.aborted) setBusy(false) }
+import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple';
+import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise';
+import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle';
+import { FolderOpen } from '@phosphor-icons/react/dist/icons/FolderOpen';
+import { useEffect, useRef, useState } from 'react';
+import exportCss from './record-export.css?inline';
+import type { ArkmeExportPreflight, ArkmeRecordExport, ArkmeRangeExportPreview } from '../data-management.js';
+import { createArkmeSdk } from '../sdk/index.js';
+import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js';
+import { ArkmeExportDateRange } from './ArkmeExportDateRange.js';
+import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js';
+import { recordExportDatePreset, type RecordExportRangeKind } from './record-export-selection.js';
+import { useRecordExportRange } from './use-record-export-range.js';
+export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRefresh }: {
+    scope: string;
+    preflight: ArkmeExportPreflight | undefined;
+    loading?: boolean;
+    onRefresh?: () => void;
+}) {
+    useArkmeLocale();
+    const [range, setRange] = useState<RecordExportRangeKind>('incremental'), [dates, setDates] = useState(() => recordExportDatePreset('week')), [attachments, setAttachments] = useState(true), [order, setOrder] = useState<1 | 2>(1);
+    const [destination, setDestination] = useState<{
+        ref: string;
+        name: string;
+        path?: string;
+    }>(), [picking, setPicking] = useState(false), [busy, setBusy] = useState(false), [confirm, setConfirm] = useState(false), [count, setCount] = useState(0), [error, setError] = useState(''), [result, setResult] = useState<ArkmeRecordExport>();
+    const [taskPreview, setTaskPreview] = useState<ArkmeRangeExportPreview>();
+    const controller = useRef<AbortController>(), pickController = useRef<AbortController>(), generation = useRef(0);
+    const current = preflight?.accountScope === scope ? preflight : undefined;
+    const state = useRecordExportRange(scope, (!!current?.rangeExportV2 || !!destination) && !busy && !result, range, dates, attachments, order, destination?.ref);
+    const preview = taskPreview ?? state.preview, locked = busy || picking || confirm;
+    const canRun = !!destination && preview?.canExport === true && preview.folderSupported === true && !preview.baselineRequired && !!preview.previewUid && (preview.recordCount + preview.removedCount > 0 || preview.countsPending === true) && !state.loading && !loading;
+    const savedAt = preview?.savedAtMillis || current?.rangeExportV2?.savedAtMillis || 0;
+    useEffect(() => { generation.current++; controller.current?.abort(); controller.current = undefined; pickController.current?.abort(); pickController.current = undefined; setDestination(undefined); setResult(undefined); setError(''); setBusy(false); setPicking(false); setConfirm(false); setRange('incremental'); return () => { generation.current++; controller.current?.abort(); pickController.current?.abort(); }; }, [scope]);
+    useEffect(() => { setTaskPreview(undefined); setResult(undefined); }, [range, dates, attachments, order, destination, scope]);
+    async function pick() {
+        if (locked)
+            return;
+        const g = generation.current, sdk = createArkmeSdk(), ctrl = new AbortController();
+        pickController.current = ctrl;
+        setPicking(true);
+        setError('');
+        try {
+            const selected = await sdk.pickRecordExportDirectory(scope, ctrl.signal);
+            if (g === generation.current && !ctrl.signal.aborted && !selected.canceled && selected.destinationRef)
+                setDestination({ ref: selected.destinationRef, name: selected.displayName || tr('已选择文件夹'), ...(selected.displayPath ? { path: selected.displayPath } : {}) });
+        }
+        catch (e) {
+            if (g === generation.current && !ctrl.signal.aborted)
+                setError(e instanceof Error ? e.message : tr('选择文件夹失败'));
+        }
+        finally {
+            sdk.dispose();
+            if (g === generation.current) {
+                setPicking(false);
+                pickController.current = undefined;
+            }
+        }
     }
-  }
-  const cancel = () => {
-    controller.current?.abort(); controller.current = undefined
-    setBusy(false); setTaskSnapshot(undefined); setError(tr('导出已取消，未完成的备份已清理。'))
-  }
-  const confirmSaved = async () => {
-    if (!result?.savedConfirmationRef || saveController.current) return
-    const current = new AbortController(), sdk = createArkmeSdk(); saveController.current = current
-    setSaving(true); setError('')
-    try {
-      await sdk.confirmRecordExportSaved(scope, result.savedConfirmationRef, current.signal)
-      if (!current.signal.aborted) { setSaved(true); setSaveConfirm(false) }
-    } catch (caught) { if (!current.signal.aborted) setError(caught instanceof Error ? caught.message : tr('保存确认失败，请重试。')) }
-    finally { sdk.dispose(); if (saveController.current === current) { saveController.current = undefined; if (!current.signal.aborted) setSaving(false) } }
-  }
-  return <div className="arkme-record-export" aria-busy={busy || !retained && loading}>
-    <style>{exportCss}</style>
-    <div className="arkme-export-intro">
-      <p>{tr('将快记与附件保存到本地，随时查看。')}</p>
-      {onRefresh && <button type="button" className="arkme-export-refresh" disabled={loading || locked} onClick={onRefresh} aria-label={tr('刷新导出信息')} title={tr('刷新导出信息')}><ArrowClockwise size={17} className={loading && !retained ? 'is-spinning' : ''} aria-hidden /></button>}
-    </div>
-    <div className="arkme-export-option arkme-export-range">
-      <label htmlFor={`${id}-range`}>{tr('导出范围')}</label>
-      <select id={`${id}-range`} value={range} disabled={locked} onChange={event => { manualRange.current = true; setRange(event.target.value as RecordExportRangeKind); setError('') }}>
-        <option value="all">{tr('全部')}</option><option value="dates">{tr('按日期')}</option><option value="incremental">{tr('增量')}</option>
-      </select>
-    </div>
-    {range === 'dates' && <div className="arkme-export-dates" aria-label={tr('导出日期范围')}>
-      <div className="arkme-export-date-inputs">
-        <label>{tr('开始日期')}<input type="date" value={dates.start} disabled={locked} aria-invalid={!!dateError} aria-describedby={dateError ? `${id}-dates-error` : `${id}-dates-help`} onInput={event => { const start = event.currentTarget.value; setDates(value => ({ ...value, start })) }} onChange={event => setDates(value => ({ ...value, start: event.target.value }))} /></label>
-        <span aria-hidden>—</span>
-        <label>{tr('结束日期')}<input type="date" value={dates.end} disabled={locked} aria-invalid={!!dateError} aria-describedby={dateError ? `${id}-dates-error` : `${id}-dates-help`} onInput={event => { const end = event.currentTarget.value; setDates(value => ({ ...value, end })) }} onChange={event => setDates(value => ({ ...value, end: event.target.value }))} /></label>
-      </div>
-      <div className="arkme-export-presets" aria-label={tr('快捷日期')}>
-        {([['week', '最近7天'], ['month', '本月'], ['last-month', '上月']] as const).map(([preset, label]) => <button type="button" key={preset} disabled={locked} onClick={() => setDates(recordExportDatePreset(preset as RecordExportDatePreset))}>{tr(label)}</button>)}
-      </div>
-      <p id={`${id}-dates-help`}>{tr('按记录显示日期筛选，包含结束日期全天。')}</p>
-      {dateError && <p id={`${id}-dates-error`} className="arkme-export-error" role="alert">{tr(dateError)}</p>}
-    </div>}
-    {range === 'incremental' && <div className="arkme-export-incremental" aria-label={tr('增量导出说明')}>
-      <strong>{rangeSupported ? savedAtMillis ? <>{tr('上次成功保存：')}{new Date(savedAtMillis).toLocaleString(arkmeIntlLocale())}</> : preview?.baselineRequired ? tr('先保存一份完整备份') : tr('正在读取增量进度…') : tr('增量进度尚未接通')}</strong>
-      <p>{tr(rangeSupported ? '自动选择上次成功保存后新增和修改的内容，包括补录的旧日期记录。' : '接通后自动选择上次成功保存后新增和修改的内容，包括补录的旧日期记录。')}</p>
-      <p>{tr('首次需要建立完整备份；取消或保存失败不会推进进度。增量包需与此前备份一起保留。')}</p>
-    </div>}
-    {available ? <div className="arkme-export-summary" aria-label={tr('备份内容')}>
-      {[{ label: '条快记', count: statistics?.recordCount }, { label: '张图片', count: statistics?.imageCount }, { label: '段语音', count: statistics?.voiceCount }].map(item => <div key={item.label}>
-        <strong>{item.count === undefined ? '—' : item.count.toLocaleString(arkmeIntlLocale())}</strong><span>{tr(item.label)}</span>
-      </div>)}
-    </div> : <p className="arkme-export-pending-count">{tr('接通后将显示本次范围的记录和附件数量。')}</p>}
-    {rangeState.loading && <p className="arkme-export-notice" role="status">{tr('正在统计本次导出范围…')}</p>}
-    {rangeState.error && <p className="arkme-export-error" role="alert">{rangeState.error}</p>}
-    {preview?.baselineRequired && <p className="arkme-export-notice" role="status">{tr('请先完成一次全部导出并确认保存，再使用增量。')} <button type="button" className="arkme-settings-link" onClick={() => setRange('all')}>{tr('选择全部')}</button></p>}
-    {range === 'incremental' && preview?.previewUid && !preview.baselineRequired && <p className="arkme-export-notice">{tr('新增 {v0} 条 · 更新 {v1} 条 · 移除 {v2} 条', { v0: preview.newCount, v1: preview.updatedCount, v2: preview.removedCount })}</p>}
-    <div className="arkme-export-options">
-      <div className="arkme-export-option"><label htmlFor={`${id}-attachments`}>{tr('附件')}</label><label className="arkme-export-attachments"><input id={`${id}-attachments`} type="checkbox" checked={includeAttachments} disabled={locked} onChange={event => { setIncludeAttachments(event.target.checked); setError('') }} />{tr('包含图片、语音等附件')}</label></div>
-      <div className="arkme-export-option"><span>{tr('备份格式')}</span><span className="arkme-export-format"><FileZip size={18} aria-hidden /> ZIP <span>· Markdown / {tr('附件')}</span></span></div>
-      <div className="arkme-export-option"><span id="arkme-export-order-label">{tr('记录顺序')}</span>
-        <div className="arkme-export-order" role="radiogroup" aria-labelledby="arkme-export-order-label">
-          {([1, 2] as const).map(value => <label key={value} className={order === value ? 'is-selected' : ''}>
-            <input type="radio" name={`${id}-order`} value={value} checked={order === value} disabled={locked} onChange={() => setOrder(value)} />
-            <span>{tr(value === 1 ? '从新到旧' : '从旧到新')}</span>
-          </label>)}
-        </div>
-      </div>
-    </div>
-    <p className="arkme-export-notice">{tr('不含隐私锁定内容。')}</p>
-    {!available && <p id={`${id}-backend-notice`} className="arkme-export-notice" role="status">{tr(RANGE_BACKEND_NOTICE)} {tr('当前仍可选择全部内容并包含附件进行导出。')}</p>}
-    {available && !retained && decision && !decision.canExport && !preview?.baselineRequired && <p className="arkme-export-notice" role="status">{decision.message || tr('当前暂不满足导出条件，请稍后重试。')}</p>}
-    {available && empty && !preview?.baselineRequired && <p className="arkme-export-notice" role="status">{tr(range === 'incremental' ? '暂无新增或更新内容。' : '暂无可导出的记录。')}</p>}
-    {error && <p role="alert" className="arkme-export-error">{error}</p>}
-    {busy ? <div className="arkme-export-progress" role="status" aria-live="polite">
-      <div><span>{tr('正在生成备份')}</span><span>{tr('已读取 {v0} 条', { v0: count })}</span></div>
-      <progress aria-label={tr('导出进度')} max={100} value={statistics?.recordCount ? Math.min(97, count / statistics.recordCount * 100) : undefined} />
-      <div className="arkme-export-progress-footer"><small>{tr('请保持此页面打开')}</small><button type="button" onClick={cancel}>{tr('取消导出')}</button></div>
-    </div> : result ? <div className="arkme-export-result" role="status">
-      <div className="arkme-export-result-title"><CheckCircle size={20} weight="fill" aria-hidden /><strong>{tr('备份已就绪')}</strong><span>{tr('共 {v0} 条快记', { v0: result.count })}</span></div>
-      <div className="arkme-export-file"><FileZip size={26} aria-hidden /><div><strong title={result.fileName}>{result.fileName}</strong><small>{tr('下载链接 1 小时内有效')}</small></div>
-        <a className="arkme-export-primary" href={createArkmeSdk().localFileUrl(result.fileRef, true)} download={result.fileName} onClick={() => setDownloadRequested(true)}><DownloadSimple size={16} aria-hidden />{tr('下载备份')}</a>
-      </div>
-      {result.savedConfirmationRef && <div className="arkme-export-save-confirm">
-        <p>{saved ? tr(result.rangeMode === 'dates' ? '已确认保存，日期导出不会改变增量进度。' : '已确认保存，下次将自动选择增量。') : tr('文件完整保存后，请确认保存；取消下载请勿确认。')}</p>
-        {!saved && <button type="button" className="arkme-export-primary" disabled={!downloadRequested || saving} onClick={() => setSaveConfirm(true)}>{tr('我已保存')}</button>}
-      </div>}
-      {!result.quotaFinalized && <p className="arkme-export-notice" role="alert">{tr('备份可正常下载，但导出次数确认暂未完成，请勿重复创建备份。')}</p>}
-    </div> : <div className="arkme-export-footer">
-      <div><p>{available ? tr('确认导出后将使用导出额度') : tr('接通前不会创建导出任务或使用额度。')}</p>{available && scopedPreflight && scopedPreflight.latestAtMillis > 0 && <small>{tr('最近生成备份：')}{new Date(scopedPreflight.latestAtMillis).toLocaleDateString(arkmeIntlLocale())}</small>}</div>
-      <button type="button" className="arkme-export-primary" disabled={!canRun || !!dateError} aria-describedby={!available ? `${id}-backend-notice` : undefined} onClick={() => { if (canRun) setConfirm(true) }}><DownloadSimple size={16} aria-hidden />{tr('导出备份')}</button>
-    </div>}
-    {confirm && <ArkmeConfirmDialog titleId="arkme-record-export-confirm" title={tr(rangeSupported ? '确认导出所选内容？' : '确认导出完整备份？')}
-      description={tr(rangeSupported ? '将按当前范围生成备份，并使用导出额度。' : '将导出全部非隐私锁定快记及其附件，并使用导出额度。')}
-      confirmLabel={tr('确认导出')} busyLabel={tr('正在导出…')} busy={false} error=""
-      onClose={() => setConfirm(false)} onConfirm={() => { void run() }} />}
-    {saveConfirm && <ArkmeConfirmDialog titleId={`${id}-save-confirm`} title={tr('确认文件已完整保存？')} description={tr('只有文件已完整保存到你的电脑后才确认。仅生成备份或取消下载，不应更新增量进度。')} confirmLabel={tr('确认已保存')} busyLabel={tr('正在更新进度…')} busy={saving} error={error} onClose={() => { if (!saving) setSaveConfirm(false) }} onConfirm={() => { void confirmSaved() }} />}
-  </div>
+    async function run() {
+        if (!canRun || !destination || controller.current)
+            return;
+        const ctrl = new AbortController(), sdk = createArkmeSdk(), g = generation.current;
+        controller.current = ctrl;
+        setTaskPreview(preview);
+        setBusy(true);
+        setConfirm(false);
+        setCount(0);
+        setError('');
+        try {
+            const value = await sdk.exportRecords({ expectedAccountScope: scope, confirmed: true, orderKind: order, selection: state.selection, previewUid: preview!.previewUid!, destinationRef: destination.ref }, ctrl.signal, v => {
+                if (g === generation.current && !ctrl.signal.aborted)
+                    setCount(v.count);
+            });
+            if (g === generation.current && !ctrl.signal.aborted)
+                setResult(value);
+        }
+        catch (e) {
+            if (g === generation.current) {
+                setTaskPreview(undefined);
+                state.refresh();
+                if (!ctrl.signal.aborted)
+                    setError(e instanceof Error ? e.message : tr('导出失败，请重试'));
+            }
+        }
+        finally {
+            sdk.dispose();
+            if (g === generation.current) {
+                controller.current = undefined;
+                setBusy(false);
+            }
+        }
+    }
+    const switchRange = (value: RecordExportRangeKind) => { setRange(value); setResult(undefined); setError(''); };
+    return <div className="arkme-record-export" aria-busy={busy || loading}>
+ <style>{exportCss}</style>
+ <div className="arkme-export-intro"><p>{tr('将快记与原文件直接保存到本地文件夹。')}</p>{onRefresh && <button type="button" className="arkme-export-refresh" disabled={locked || loading} title={tr('刷新导出信息')} aria-label={tr('刷新导出信息')} onClick={onRefresh}><ArrowClockwise size={17} aria-hidden/></button>}</div>
+ <div className="arkme-export-range-row"><div role="tablist" aria-label={tr('导出范围')} className="arkme-export-tabs">{(['incremental', 'dates', 'all'] as const).map((value, index) => <button type="button" role="tab" key={value} aria-selected={range === value} disabled={locked} onClick={() => switchRange(value)} onKeyDown={event => {
+                if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+                    event.preventDefault();
+                    const next = (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
+                    switchRange((['incremental', 'dates', 'all'] as const)[next]!);
+                    (event.currentTarget.parentElement?.children[next] as HTMLButtonElement)?.focus();
+                }
+            }}>{tr(value === 'incremental' ? '增量' : value === 'dates' ? '按日期' : '全部')}</button>)}</div>{range === 'dates' && <ArkmeExportDateRange value={dates} disabled={locked} onChange={setDates}/>}</div>
+ {range === 'incremental' && <div className="arkme-export-incremental"><strong>{savedAt ? tr('上次成功保存：') + new Date(savedAt).toLocaleString(arkmeIntlLocale()) : preview?.baselineRequired ? tr('先建立完整备份') : state.loading ? tr('正在读取增量进度…') : state.error ? tr('增量进度读取失败') : tr('尚未建立完整备份')}</strong><p>{tr('自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。')}</p></div>}
+ {range === 'dates' && <p className="arkme-export-notice">{tr('按记录显示日期筛选，包含结束日期全天。')}</p>}
+ {range !== 'incremental' && <p className="arkme-export-notice">{tr(preview?.localSnapshotOnly ? '当前离线，将导出上次完整保存的本地副本。' : preview?.localReplica ? '复用本地备份，仅同步变化，不占用全量导出次数。' : '日期与全部导出共用原有云端导出额度；本地已有原文件会优先复用。')}</p>}
+ {preview?.localSnapshotOnly && savedAt > 0 && <p className="arkme-export-notice">{tr('数据截至：')}{new Date(savedAt).toLocaleString(arkmeIntlLocale())}</p>}
+ <div className="arkme-export-summary" aria-label={tr('备份内容')}>{[{ label: '条快记', value: preview?.previewUid ? preview.recordCount : undefined }, { label: '张图片', value: preview?.previewUid ? preview.imageCount : undefined }, { label: '段语音', value: preview?.previewUid ? preview.voiceCount : undefined }].map(v => <span className="arkme-export-summary-item" key={v.label}><strong>{v.value === undefined ? '—' : v.value.toLocaleString(arkmeIntlLocale())}</strong><span>{tr(v.label)}</span></span>)}</div>
+ {preview?.countsPending && <p className="arkme-export-notice">{tr('以上为所选范围的本地已保存数量，完成同步后更新。')}</p>}
+ {state.loading && <p className="arkme-export-notice" role="status">{tr('正在统计本次导出范围…')}</p>}
+ {state.error && <p className="arkme-export-error" role="alert">{state.error}</p>}
+ {preview?.baselineRequired && <p className="arkme-export-notice">{tr('请先在所选文件夹建立完整备份，再使用增量。')} <button type="button" className="arkme-settings-link" disabled={locked} onClick={() => switchRange('all')}>{tr('选择全部')}</button></p>}
+ {preview && preview.folderSupported !== true && <p className="arkme-export-notice">{tr("当前服务尚未支持文件夹导出，请更新后重试。")}</p>}
+    {preview && !preview.canExport && !preview.baselineRequired && <p className="arkme-export-notice" role="status">{preview.message || tr('当前暂不满足导出条件，请稍后重试。')}</p>}
+ {preview?.previewUid && preview.recordCount + preview.removedCount === 0 && !preview.countsPending && <p className="arkme-export-notice">{tr('暂无新增或更新内容。')}</p>}
+ <div className="arkme-export-options"><div className="arkme-export-option"><span>{tr('附件')}</span><label className="arkme-export-attachments"><input type="checkbox" checked={attachments} disabled={locked} onChange={event => { setAttachments(event.target.checked); setResult(undefined); }}/>{tr('包含图片、语音等原文件')}</label></div><div className="arkme-export-option"><span>{tr('备份格式')}</span><span className="arkme-export-format">Markdown / {tr('原文件')}</span></div><div className="arkme-export-option"><span>{tr('记录顺序')}</span><div className="arkme-export-order" role="radiogroup" aria-label={tr('记录顺序')}>{([1, 2] as const).map(value => <label key={value} className={order === value ? 'is-selected' : ''}><input type="radio" checked={order === value} name={`order-${scope}`} disabled={locked} onChange={() => setOrder(value)}/><span>{tr(value === 1 ? '从新到旧' : '从旧到新')}</span></label>)}</div></div></div>
+ <p className="arkme-export-notice">{tr('不含隐私锁定内容。导出成功后自动保存增量进度。')}</p>
+ {error && <p role="alert" className="arkme-export-error">{error}</p>}
+ {busy && <div className="arkme-export-progress" role="status"><div><span>{tr('正在写入本地文件夹')}</span><span>{tr('已处理 {v0} 条', { v0: count })}</span></div><progress aria-label={tr('导出进度')} max={100} value={preview?.recordCount ? Math.min(97, count / (preview.localReplica ? Math.max(1, preview.newCount + preview.updatedCount) : preview.recordCount) * 100) : undefined}/></div>}
+ {result ? <div className="arkme-export-result" role="status"><div className="arkme-export-result-title"><CheckCircle size={20} weight="fill" aria-hidden/><strong>{tr('已导出到本地文件夹')}</strong><span>{tr('共 {v0} 条快记', { v0: result.count })}</span></div><div className="arkme-export-file"><FolderOpen size={26} aria-hidden/><div><strong>{destination?.name}</strong><small>{tr('内容与原文件已保存，无需另行下载。')}</small></div><button type="button" className="arkme-export-primary" onClick={() => { const sdk = createArkmeSdk(); void sdk.openRecordExportDirectory(scope, result.directoryRef!).catch(e => setError(e.message)).finally(() => sdk.dispose()); }}>{tr('打开文件夹')}</button></div><button type="button" className="arkme-settings-link" onClick={() => { setResult(undefined); setTaskPreview(undefined); onRefresh?.(); }}>{tr('继续导出')}</button>{!result.quotaFinalized && <p className="arkme-export-notice">{tr('内容已保存，导出额度确认暂未完成，请勿重复发起云端全量导出。')}</p>}</div> : <div className="arkme-export-footer"><button type="button" className="arkme-export-folder" aria-label={tr(destination ? '更换导出文件夹' : '选择导出文件夹')} title={destination?.path || destination?.name || tr('选择文件夹')} disabled={locked} onClick={() => void pick()}><FolderOpen size={17} aria-hidden/><span>{picking ? tr('正在选择…') : destination?.name || tr('选择文件夹')}</span></button>{busy ? <button type="button" className="arkme-export-cancel" onClick={() => { controller.current?.abort(); setError(tr('导出已取消，已下载的原文件保留供重试。')); }}>{tr('取消导出')}</button> : <button type="button" className="arkme-export-primary" disabled={!canRun || locked} onClick={() => { if (range === 'incremental' || preview?.localReplica)
+        void run();
+    else
+        setConfirm(true); }}><DownloadSimple size={16} aria-hidden/>{tr('导出到文件夹')}</button>}</div>}
+ {confirm && <ArkmeConfirmDialog titleId="arkme-export-folder-confirm" title={tr('确认导出到所选文件夹？')} description={tr('将保存所选内容及原文件，成功后使用一次云端导出额度。取消或失败不扣次数。')} confirmLabel={tr('确认导出')} busyLabel={tr('正在导出…')} busy={false} error="" onClose={() => setConfirm(false)} onConfirm={() => void run()}/>}
+ </div>;
 }

@@ -6,7 +6,7 @@ type Resolve = (sourceRef: string, actionRef: string) => Promise<Target>
 const text = (value: unknown, max = 16_384): string => typeof value === 'string' ? value.slice(0, max).trim() : ''
 const texts = (value: unknown, max: number): string[] => Array.isArray(value) ? value.slice(0, max).map(item => text(item)).filter(Boolean) : []
 
-function displayView(raw: unknown): ArkmeThoughtDisplay | undefined {
+export function displayView(raw: unknown): ArkmeThoughtDisplay | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const display = objectValue(raw), meaning = objectValue(display.unified_meaning), context = objectValue(meaning.context_understanding)
   const intent = objectValue(meaning.their_intent), position = objectValue(meaning.my_position), risk = objectValue(meaning.risk_factors)

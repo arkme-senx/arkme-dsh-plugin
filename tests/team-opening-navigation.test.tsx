@@ -147,7 +147,9 @@ it('returns to the same team after replying, switches visitors and keeps each dr
     throw new Error(op)
   })
   const click = async (label: string) => {
-    const target = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label') === label || node.textContent?.includes(label))
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')]
+    const target = buttons.find(node => node.getAttribute('aria-label') === label || node.textContent === label)
+      ?? buttons.find(node => node.textContent?.includes(label))
     expect(target, label).toBeDefined()
     await act(async () => { target!.click(); await tick() })
   }

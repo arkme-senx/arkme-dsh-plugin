@@ -1297,6 +1297,57 @@ export class WorldService {
     }
   }
 
+  /** Existing owner-verified source: publish it without creating or overwriting a private Record. */
+  async publishExistingSource(source: import('../world-publish-source.js').WorldPublishSourceDraft, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeWorldPublishResult> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) throw new ArkmePluginError('world-account-changed', '账号已变化', false, 409)
+    const profile = (await this.profile.refreshProfile()).profile
+    if (!profile?.contact.phoneMasked) throw new ArkmePluginError('world-phone-required', '请先绑定手机号', false, 403)
+    const text = [source.title.trim(), source.textContent].filter(Boolean).join('\n\n').trim()
+    const assets = source.attachments.map(value => value.asset)
+    if ((!text && !assets.length) || text.length > 2000 || assets.length > ARKME_WORLD_PUBLISH_MAX_IMAGES
+      || source.attachments.some(v => v.unavailable || !v.asset || v.asset.fileKind !== 1 || !v.asset.mimeType.startsWith('image/') || v.asset.size <= 0 || v.asset.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)) {
+      throw new ArkmePluginError('world-source-unsupported', '原消息无法完整公开，请检查内容或附件', false, 400)
+    }
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-account-changed', '账号已变化', false, 409)
+    signal?.throwIfAborted()
+    const published = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      assets.length ? '/api/v1/public-record/publish-with-file-assets' : '/api/v1/public-record/publish', {
+        record_uid: source.itemUid, content: text, text_content: text, tags: worldTags(text), original_topic_id: 0,
+        created_at: source.sendAtMillis, nick_name: profile.nickname || profile.displayName, avatar: profile.avatarRef, template_kind: 1,
+        ...(assets.length ? { file_assets: assets.map((asset, i) => ({ file_asset_uid: asset!.fileAssetUid, media_type: 'image', file_kind: 1, sort_order: i })) } : {}),
+      }, session, signal)
+    return worldPublicationResult(Math.trunc(numberValue(published.check_status)))
+  }
+  async publicationStatuses(uids: string[], signal?: AbortSignal): Promise<ReadonlyMap<string, boolean>> {
+    if (uids.length > 50) throw new ArkmePluginError('world-status-invalid', '查询数量过多', false, 400)
+    if (!uids.length) return new Map()
+    const data = await this.runtime.post<Record<string, unknown>>(this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/status-batch', { record_uids: uids }, undefined, [200], signal, false, { lane: 'background-read', service: 'world', bypassCache: true })
+    const values = listValue(data.items).map(objectValue)
+    if (values.length !== uids.length || values.some((v, i) => v.record_uid !== uids[i] || typeof v.is_public !== 'boolean')) throw new ArkmePluginError('world-status-invalid', '公开状态返回不完整，请重试', true, 502)
+    return new Map(values.map(v => [String(v.record_uid), v.is_public === true]))
+  }
+  async publicationPrincipal(recordRef: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const uid = (await this.reactionTarget(recordRef)).record_uid!
+    const raw = await this.runtime.post<Record<string, unknown>>(this.runtime.config.worldBaseUrl, '/api/public/v1/world/read', { record_uid: uid }, undefined, [200], signal)
+    if (raw.record_uid !== uid) throw new ArkmePluginError('world-status-invalid', '公开内容不匹配', false, 502)
+    const principal = objectValue(raw.principal)
+    if (principal.kind === 'team') {
+      const team = recordOwnerId(principal.team_id)
+      if (!team || principal.user_id) throw new ArkmePluginError('world-status-invalid', '团队公开身份无效', false, 502)
+      return { uid, owner: 0 as RecordOwnerId, team, viewer: session.userId }
+    }
+    if (principal.kind !== undefined && principal.kind !== 'person') throw new ArkmePluginError('world-status-invalid', '公开身份无效', false, 502)
+    return { uid, owner: recordOwnerId(principal.kind === 'person' ? principal.user_id : raw.user_id), team: 0 as RecordOwnerId, viewer: session.userId }
+  }
+  async unpublishExisting(uid: string, expectedUserId: number, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) throw new ArkmePluginError('world-account-changed', '账号已变化', false, 409)
+    await this.runtime.authenticatedWorldPost('/api/v1/public-record/unpublish', { record_uid: uid }, session, signal)
+  }
+
   async publishWorldText(input: ArkmeWorldPublishTextInput): Promise<ArkmeWorldPublishResult> {
     const session = await this.runtime.requireSession()
     const clientMutationId = input.clientMutationId.trim()
@@ -1754,16 +1805,19 @@ export class WorldService {
   }
 
   /** Resolve an opaque World author reference only inside the trusted Provider. */
-  async worldAuthorFromRef(recordRef: string, allowSelf = false): Promise<{ userId: number; displayName: string }> {
+  async worldAuthorFromRef(recordRef: string, allowSelf = false, options: { labels?: boolean; signal?: AbortSignal } = {}): Promise<{ userId: number; displayName: string }> {
+    options.signal?.throwIfAborted()
     const session = await this.runtime.requireSession()
+    options.signal?.throwIfAborted()
     const entry = this.openWorldRecordRef(recordRef, session.userId)
     const userId = entry.ownerUserId ?? 0
     if (!Number.isSafeInteger(userId) || userId <= 0 || (!allowSelf && userId === session.userId)) {
       throw new ArkmePluginError('world-author-target-invalid', '无法确认这位用户，请刷新世界后重试', false, 403)
     }
-    const labels = this.viewerLabels === undefined
+    const labels = options.labels === false || this.viewerLabels === undefined
       ? new Map<number, string>()
-      : await this.viewerLabels.privateDisplayNamesByUserIds([userId]).catch(() => new Map<number, string>())
+      : await this.viewerLabels.privateDisplayNamesByUserIds([userId], { ...(options.signal ? { signal: options.signal } : {}) }).catch(() => new Map<number, string>())
+    options.signal?.throwIfAborted()
     return { userId, displayName: labels.get(userId) ?? entry.authorName ?? 'Arkme用户' }
   }
 

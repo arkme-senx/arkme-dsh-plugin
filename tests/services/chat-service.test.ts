@@ -3327,8 +3327,8 @@ describe('ChatService', () => {
     'uses the public profile identity instead of the group member name %j when opening a private chat',
     async groupMemberName => {
       const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
-      const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
-        ? { items: [{ user_id: 7, status: 1, remark: '', display_name_snapshot: groupMemberName }] }
+      const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/by-user-ids'
+        ? { chat_session_uid: 'group-1', items: [{ user_id: 7, status: 1, remark: '', display_name_snapshot: groupMemberName }] }
         : {
             session: { chat_session_uid: 'private-1', last_active_at: 1_700_000_000_000, last_seq: 0 },
             unread_snapshot: { unread_count: 0, session_last_seq: 0 },
@@ -3432,8 +3432,8 @@ describe('ChatService', () => {
       unreadCount: 3,
       latestSequence: 9,
     }
-    const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/list'
-      ? { items: [{ user_id: 7, status: 1, remark: '我的备注', display_name_snapshot: '群内昵称' }] }
+    const authenticatedChatPost = vi.fn(async (path: string) => path === '/api/v1/chats/members/by-user-ids'
+      ? { chat_session_uid: 'group-1', items: [{ user_id: 7, status: 1, remark: '我的备注', display_name_snapshot: '群内昵称' }] }
       : {
           session: { chat_session_uid: 'private-existing', last_active_at: 1_700_000_000_500, last_seq: 9 },
           unread_snapshot: { unread_count: 3, session_last_seq: 9 },
@@ -3484,7 +3484,7 @@ describe('ChatService', () => {
     { name: 'member from another chat', targetUserId: 7, memberChatSessionUid: 'group-2', members: [{ user_id: 7 }], code: 'chat-member-ref-invalid' },
   ])('rejects $name before creating a private chat', async ({ targetUserId, memberChatSessionUid, members, code }) => {
     const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
-    const authenticatedChatPost = vi.fn(async () => ({ items: members }))
+    const authenticatedChatPost = vi.fn(async () => ({ chat_session_uid: 'group-1', items: members }))
     const runtime = {
       stateStore: { uniqueCode: vi.fn(async () => 'member-signing-key') },
       requireSession: vi.fn(async () => session),
@@ -3882,9 +3882,9 @@ it.each(['private_chat', 'group_chat'])('exports received notes through authoriz
 })
 
 describe('chat member world target', () => {
-  function fixture(kind='group_chat', userId=42, members:unknown[]=[{user_id:7}]) {
+  function fixture(kind='group_chat', userId=42, members:unknown[]=[{user_id:7,status:1}]) {
     const session={userId,accessToken:'fixture',refreshToken:'fixture'}
-    const read=vi.fn(async()=>({items:members}))
+    const read=vi.fn(async()=>({chat_session_uid:'chat',items:members}))
     const runtime={stateStore:{uniqueCode:async()=> 'member-signing-key'},requireSession:async()=>session,authenticatedChatPost:read}
     const source={openSourceRef:vi.fn(async()=>({kind,ownerRef:'chat'}))}
     const chat=new ChatService(runtime as never,source as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
@@ -3893,7 +3893,7 @@ describe('chat member world target', () => {
   it.each(['group_chat','private_chat'])('resolves %s member by viewer/session-bound reference only after a fresh membership check', async kind=>{
     const {chat,read,session}=fixture(kind), signal=new AbortController().signal
     await expect(chat.memberWorldTarget('source',chatMemberRef(42,'chat',7),signal)).resolves.toEqual({userId:7})
-    expect(read).toHaveBeenCalledWith('/api/v1/chats/members/list',{chat_session_uid:'chat',active_only:true},session,signal)
+    expect(read).toHaveBeenCalledWith('/api/v1/chats/members/by-user-ids',{chat_session_uid:'chat',user_ids:[7],active_only:true,include_stats:false},session,signal,{lane:'interactive-read',bypassCache:true})
     expect(read).toHaveBeenCalledOnce()
   })
   it('rejects cross-account, cross-conversation, tampered, removed and unsupported members', async()=>{

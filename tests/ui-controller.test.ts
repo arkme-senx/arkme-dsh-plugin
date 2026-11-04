@@ -29,6 +29,20 @@ describe('ArkmeUiController', () => {
     expect(controller.getSnapshot()).toMatchObject({mode:'source',teamDirectory:{channel},selectedSource:source})
     controller.closeTeamDirectory()
     expect(controller.getSnapshot().teamDirectory).toBeUndefined()
+})
+
+  it('returns from personal and team worlds without replacing the original world page', () => {
+    const controller = new ArkmeUiController()
+    controller.showWorld('mine')
+    const revision = controller.getSnapshot().worldNavigationRevision
+    controller.showUserWorld({ userId: 17, displayName: '个人' })
+    controller.backFromWorld()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'world', worldInitialScope: 'mine', worldNavigationRevision: revision })
+    expect(controller.getSnapshot().worldTarget).toBeUndefined()
+    controller.showTeamWorld({ name: '团队', jotmoId: 'our_team' })
+    controller.backFromWorld()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'world', worldInitialScope: 'mine', worldNavigationRevision: revision })
+    expect(controller.getSnapshot().worldTeamTarget).toBeUndefined()
   })
   it('keeps team and personal World targets separate and restores a team detail entry', () => {
     const controller = new ArkmeUiController()

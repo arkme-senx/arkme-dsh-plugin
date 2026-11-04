@@ -652,7 +652,9 @@ export class ArkmeChatDirectoryStore {
     for (let attempt = 0; ; attempt += 1) {
       if (generation !== this.generation) return undefined
       try {
-        return await this.loadPage(cursor, force)
+        const page = await this.loadPage(cursor, force)
+        if (!page || !Array.isArray(page.items) || typeof page.hasMore !== 'boolean') throw new Error('目录返回异常，请重试')
+        return page
       } catch (error) {
         if (generation !== this.generation) return undefined
         const delay = ROOT_READ_RETRY_DELAYS_MS[attempt]

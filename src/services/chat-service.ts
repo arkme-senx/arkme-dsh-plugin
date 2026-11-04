@@ -2183,15 +2183,43 @@ export class ChatService {
     }
   }
 
+  private async requireActiveMemberTarget(source: ArkmeSourceRefPayload, targetUserId: RecordOwnerId, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted()
+    const data = await this.sourceChatPost<Record<string, unknown>>(source,
+      '/api/v1/chats/members/by-user-ids',
+      { chat_session_uid: source.ownerRef, user_ids: [targetUserId], active_only: true, include_stats: false },
+      session, signal, { lane: 'interactive-read', bypassCache: true },
+    )
+    signal?.throwIfAborted()
+    const raw = listValue(data.items).map(objectValue)
+    if (stringValue(data.chat_session_uid) !== source.ownerRef || !Array.isArray(data.items) || raw.length > 1
+      || raw.some(member => String(recordOwnerId(member.user_id)) !== String(targetUserId) || chatMemberStatus(member.status) !== 'active')) {
+      throw new ArkmePluginError('member-target-invalid-response', '成员身份返回异常，请重试', true, 502)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('chat-member-account-changed', '账号已切换，请重新打开用户卡片', false, 409)
+    signal?.throwIfAborted()
+    if (!raw.length) throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
+  }
+
+  /** Local identity resolution for already-cached public display data. Never authorizes an action. */
+  async cachedMemberPersonId(sourceRef: string, memberRef: string, signal?: AbortSignal): Promise<RecordOwnerId> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('chat-members-source-invalid', '聊天成员来源无效', false, 400)
+    const target = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('chat-member-account-changed', '账号已切换，请重新打开用户卡片', false, 409)
+    return target.targetUserId
+  }
+
   async memberWorldTarget(sourceRef: string, memberRef: string, signal?: AbortSignal): Promise<{ userId: RecordOwnerId }> {
     const session = await this.runtime.requireSession()
     signal?.throwIfAborted()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('chat-members-source-invalid', '仅支持从聊天成员查看世界', false, 400)
     const reference = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
-    const members = await this.rawChatMembers(source, true, session, signal)
-    signal?.throwIfAborted()
-    if (!members.some(member => recordOwnerId(member.user_id) === reference.targetUserId)) throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
+    await this.requireActiveMemberTarget(source, reference.targetUserId, session, signal)
     return { userId: reference.targetUserId }
   }
 
@@ -2209,12 +2237,9 @@ export class ChatService {
     if (reference.targetUserId === session.userId) {
       throw new ArkmePluginError('private-chat-self-invalid', '不能给自己发起私聊', false, 409)
     }
-    const rawMembers = await this.rawChatMembers(source, true, session, options.signal)
-    const memberIsActive = rawMembers.some(item => recordOwnerId(item.user_id) === reference.targetUserId)
-    if (!memberIsActive) {
-      throw new ArkmePluginError('chat-member-ref-stale', '该成员已不属于当前会话，请刷新后重试', false, 409)
-    }
+    await this.requireActiveMemberTarget(source, reference.targetUserId, session, options.signal)
     return await this.openPrivateChatFromUser(reference.targetUserId, {
+      expectedViewerUserId: session.userId,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
   }
