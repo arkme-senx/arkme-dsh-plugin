@@ -2,8 +2,9 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { DeepSeekHarnessRow } from '../src/client/ArkmeVirtualWorkspace.js'
+import { DeepSeekHarnessRow, CodexDirectoryRow } from '../src/client/ArkmeVirtualWorkspace.js'
 import { HARNESS_ACTIVITY_ATTRIBUTE, HARNESS_ACTIVITY_EVENT } from '../src/client/harness-activity.js'
+import { conversationTimeLabel } from '../src/client/conversation-directory-presentation.js'
 
 let host: HTMLDivElement
 let root: Root
@@ -96,4 +97,31 @@ it.each(['running', 'pending', 'unread'])('preserves %s attention ahead of the i
   await render()
   expect(line('[data-arkme-harness-destination]')).not.toBe('最近对话')
   expect(host.querySelector('[data-arkme-harness-badge]')?.textContent).toBe('1')
+})
+
+it('shows the same source time as ordinary conversations without changing selection on activity updates', async () => {
+  const at = Date.now() - 60_000
+  activity({ latestAtMillis: at, recent: { id: 'recent', title: '最近对话' } })
+  await render()
+  expect(host.querySelector('time')?.dateTime).toBe(new Date(at).toISOString())
+  expect(host.querySelector('time')?.textContent).toBe(conversationTimeLabel(at))
+  await act(async () => activity({ latestAtMillis: at + 1000, running: [{ id: 'recent', title: '最近对话' }] }))
+  expect(host.querySelector('time')?.dateTime).toBe(new Date(at+1000).toISOString())
+  expect(row().getAttribute('aria-selected')).toBe('false')
+  await act(async () => { root.render(<DeepSeekHarnessRow selected={false} hoverEnabled={false} accountScope="acct-2" onClick={vi.fn()} />) })
+  expect(host.querySelector('time')).toBeNull()
+})
+
+it('uses all Codex source events for time while retaining the active-task preview and row click', async () => {
+  const at = Date.now() - 1000, click = vi.fn()
+  const member = { userRef:'11', displayName:'自己', role:'member' as const, joinedAtMillis:1 }
+  await act(async () => { root.render(<CodexDirectoryRow selected snapshot={{complete:true,checkedAt:Date.now(),tasks:[
+    { id:'running', title:'进行中的任务', status:'active', state:'working', updatedAt:at-1000,eventCount:1,member },
+    { id:'latest', title:'最近完成的任务',status:'active',state:'finished',updatedAt:at,eventCount:2,member },
+  ]}} onClick={click} />) })
+  expect(host.querySelector('time')?.dateTime).toBe(new Date(at).toISOString())
+  expect(host.querySelector('time')?.textContent).toBe(conversationTimeLabel(at))
+  expect(line('[data-codex-activity]')).toContain('进行中的任务')
+  await act(async () => { row().click() })
+  expect(click).toHaveBeenCalledOnce()
 })
