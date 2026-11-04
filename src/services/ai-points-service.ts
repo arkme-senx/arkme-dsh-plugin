@@ -28,7 +28,7 @@ export function parseAiPointsAccount(raw: Record<string, unknown>, accountScope:
   return result
 }
 
-export function parseAiPointsPage(raw: Record<string, unknown>, accountScope: string, month: string): ArkmeAiPointsPage {
+export function parseAiPointsPage(raw: Record<string, unknown>, accountScope: string, month: string, limit = 20): ArkmeAiPointsPage {
   unit(raw)
   if (raw.month !== month || !Array.isArray(raw.items)) return invalid()
   const nextBeforeId = raw.next_before_id === '' ? '' : integerString(raw.next_before_id)
@@ -53,7 +53,8 @@ export function parseAiPointsPage(raw: Record<string, unknown>, accountScope: st
         tokens: { cacheHitInput: integerString(tokens.cache_hit_input), cacheMissInput: integerString(tokens.cache_miss_input), output: integerString(tokens.output) } }
     }),
   }
-  if (new Set(result.items.map(item => item.requestUid)).size !== result.items.length || groupPointsConsumption(result.items).length > 20) return invalid()
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100
+    || new Set(result.items.map(item => item.requestUid)).size !== result.items.length || groupPointsConsumption(result.items).length > limit) return invalid()
   return result
 }
 
@@ -74,10 +75,12 @@ export class AiPointsService {
     return parseAiPointsAccount(raw, scope)
   }
   async consumption(query: ArkmeAiPointsQuery, expectedScope?: string, signal?: AbortSignal): Promise<ArkmeAiPointsPage> {
-    if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(query.month) || (query.beforeId !== undefined && !/^[1-9]\d*$/.test(query.beforeId))) throw new ArkmePluginError('ai-points-query-invalid', '请选择有效月份', false, 400)
+    const limit = query.limit ?? 20
+    if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(query.month) || (query.beforeId !== undefined && !/^[1-9]\d*$/.test(query.beforeId))
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new ArkmePluginError('ai-points-query-invalid', '请选择有效月份和分页范围', false, 400)
     const { session, scope } = await this.session(expectedScope)
-    const raw = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/managed-ai/points/consumption/query', { month: query.month, before_id: query.beforeId ?? '', limit: 20 }, session, signal, { lane: 'interactive-read', bypassCache: true })
+    const raw = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/managed-ai/points/consumption/query', { month: query.month, before_id: query.beforeId ?? '', limit }, session, signal, { lane: 'interactive-read', bypassCache: true })
     await this.session(scope)
-    return parseAiPointsPage(raw, scope, query.month)
+    return parseAiPointsPage(raw, scope, query.month, limit)
   }
 }

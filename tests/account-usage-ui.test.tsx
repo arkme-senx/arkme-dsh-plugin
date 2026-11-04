@@ -135,13 +135,15 @@ describe('account points and independent usage', () => {
     expect(mocks.call.mock.calls.some(call => call[0] === 'account.points.consumption')).toBe(false)
     let signal: AbortSignal | undefined
     mocks.call.mockImplementation((_operation, _params, value) => { signal = value; return new Promise(() => {}) })
-    const toggle = () => host.querySelector<HTMLButtonElement>('[aria-controls][aria-expanded]')!
+    const toggle = () => host.querySelector<HTMLButtonElement>('.arkme-points-disclosure')!
     await act(async () => toggle().click())
-    expect(host.querySelector('[data-usage-detail="points"]')).not.toBeNull()
+    expect(document.querySelector('dialog.arkme-points-history-dialog[open]')).not.toBeNull()
+    expect(host.querySelector('.arkme-points-history-dialog')).toBeNull()
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('统计')
     expect(mocks.call.mock.calls.at(-1)?.[0]).toBe('account.points.consumption')
-    await act(async () => toggle().click())
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭消费记录"]')!.click())
     expect(signal?.aborted).toBe(true)
-    expect(host.querySelector('[data-usage-detail="points"]')).toBeNull()
+    expect(document.querySelector('.arkme-points-history-dialog')).toBeNull()
   })
   it('shows one point unit and distinct funding, retaining storage and voice units', async () => {
     await render()
@@ -154,7 +156,7 @@ describe('account points and independent usage', () => {
     expect(host.textContent).not.toContain('优先使用')
     expect(host.textContent).not.toContain('1 元 = 100 积分')
     expect(host.querySelector('[data-usage-kind="ai-points"] .arkme-usage-label')?.textContent).not.toContain('消费记录')
-    expect(host.querySelector('.arkme-points-disclosure')?.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('.arkme-points-disclosure')?.getAttribute('aria-haspopup')).toBe('dialog')
     expect(host.textContent).not.toMatch(/暂占|使用中/)
     expect(host.textContent).toContain('已用 1 GB / 共 10 GB')
     expect(host.textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')

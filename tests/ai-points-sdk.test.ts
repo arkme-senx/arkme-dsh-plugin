@@ -17,7 +17,8 @@ it('shares the Host owner and account scope across SDK point queries and support
   } })
   await expect(sdk.aiPointsAccount('prod:7', signal)).resolves.toMatchObject({ availablePoints: '1.0000001' })
   await sdk.aiPointsConsumption('prod:7', { month: '2026-09', beforeId: '123' }, signal)
-  expect(calls).toEqual([['prod:7', undefined], [{ month: '2026-09', beforeId: '123' }, 'prod:7', undefined]])
+  await sdk.aiPointsConsumption('prod:7', { month: '2026-09', limit: 100 }, signal)
+  expect(calls).toEqual([['prod:7', undefined], [{ month: '2026-09', beforeId: '123' }, 'prod:7', undefined], [{ month: '2026-09', limit: 100 }, 'prod:7', undefined]])
 })
 
 it('fails capability discovery explicitly when connected to a provider without points', async () => {
