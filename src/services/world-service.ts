@@ -416,6 +416,17 @@ export class WorldService {
     return out.map(item => item ?? undefined)
   }
 
+  /** Project already visibility-checked public DTOs without duplicating identifiers. */
+  async projectSubscriptionPublications(values: unknown[], signal?: AbortSignal): Promise<ArkmeWorldFeedItem[]> {
+    if (values.length > 50) throw new ArkmePluginError('world-preview-invalid', '预览数量过多', false, 400)
+    const epoch = this.epoch, session = await this.runtime.requireSession(), raw = values.map(v => this.mixedItem(v))
+    const avatars = await this.resolveWorldAvatarUrls(raw, session, signal)
+    const out = await Promise.all(raw.map(v => this.worldFeedItem(v, session.userId, avatars, signal)))
+    signal?.throwIfAborted()
+    if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId || out.some(v => !v)) throw new ArkmePluginError('world-preview-invalid', '预览内容已变化，请刷新', true, 409)
+    return out as ArkmeWorldFeedItem[]
+  }
+
   async readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem> {
     const epoch = this.epoch
     const session = await this.runtime.requireSession()

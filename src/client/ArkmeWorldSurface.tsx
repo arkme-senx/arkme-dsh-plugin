@@ -1,3 +1,4 @@
+import { WorldSubscribeButton, WorldSubscriptionEntry } from './WorldSubscriptions.js'
 import { TeamWorldActivity } from './TeamWorldActivity.js'
 import { WorldTeamBadge } from './WorldTeamBadge.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
@@ -1398,6 +1399,7 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}{tr("的世界")}</h1><p style={styles.subtitle}>{tr("TA 公开分享的内容")}</p></div>
         </div>}
       <div style={styles.headerActions}>
+        {target ? <WorldSubscribeButton target={{ kind: 'person', userId: target.userId }} /> : <WorldSubscriptionEntry />}
         {scope === 'mine' && !publicTab && target === undefined && <ArkmeActionMenu open={more} label={tr('我的世界操作')} onClose={() => setMore(false)} align="end"
           anchor={<button type="button" style={styles.iconButton} aria-label={tr('更多世界操作')} onClick={() => setMore(value => !value)}><DotsThree size={20} /></button>}
           actions={[{ id: 'team-activity', label: tr('我的团队操作'), onSelect: () => { setMore(false); setActivity(true) } }]} />}
