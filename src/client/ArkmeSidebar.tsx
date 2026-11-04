@@ -1,3 +1,6 @@
+import { MessageAvatar } from './MessageAvatar.js'
+export { MessageAvatar } from './MessageAvatar.js'
+import { messageMemberTarget, useMemberInteraction, type MemberActionTarget } from './member-interaction.js'
 import { identityShareUi } from './identity-share-ui.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
@@ -38,7 +41,7 @@ import { StatisticsSurface } from './statistics/StatisticsSurface.js'
 import { SelfConversationStatistics } from './statistics/SelfConversationStatistics.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
 import { MessageQuoteThreadsProvider, MessageQuoteThreadTimestamp } from './MessageQuoteThreads.js'
-import { RecordThoughtContent, RecordThoughtEntry, RecordThoughtMessageFooter, RecordThoughtsProvider } from './RecordThoughts.js'
+import { RecordThoughtContent, RecordThoughtMessageFooter, RecordThoughtsProvider } from './RecordThoughts.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { removeUnifiedTimelineItems, UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
 import { ConversationReadAckQueue } from './conversation-read-ack-queue.js'
@@ -133,7 +136,6 @@ import {
   type CSSProperties, type ReactNode, type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { openTeamOutbound } from './team-outbound.js'
 import {
   IconCheckOutlineMedium, IconLoadingOutlineMedium, IconWarningOutlineMedium, IconPaperclipOutlineMedium, IconEditOutlineMedium, Toast,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -503,7 +505,6 @@ const MESSAGE_ACTION_NOTICE_MS = 1_800
 const FORWARD_TARGET_LIMIT = 80
 const MAX_FORWARD_TARGET_SELECTION = 5
 
-const ARKME_MESSAGE_AVATAR_SIZE = 34
 
 const styles: Record<string, CSSProperties> = {
   surface: {
@@ -1379,80 +1380,6 @@ export function arkmeSourceShowsMessageAvatars(source: ArkmeSourceItem | undefin
   if (source === undefined) return false
   return isArkmeSelfWorkspaceSource(source) || source.kind === 'private_chat' || source.kind === 'group_chat'
 }
-
-export function MessageAvatar(props: {
-  senderKind?: 'human' | 'bot' | undefined
-  avatarRef?: string
-  fallback?: ArkmeGroupAvatarFallback
-  label?: string
-  member?: ArkmeConversationMemberItem
-  profileEnabled: boolean
-  hoverEnabled?: boolean | undefined
-  onOpen: (member: ArkmeConversationMemberItem) => void
-  onContextMenu: (member: ArkmeConversationMemberItem, anchorRect: DOMRect) => void
-  onHover?: ((member: ArkmeConversationMemberItem, anchor: HTMLElement) => void) | undefined
-  bot?: ArkmeBotAvatarIdentity | undefined
-  onBotHover?: ((bot: ArkmeBotAvatarIdentity, anchor: HTMLElement) => void) | undefined
-  onBotMenu?: ((bot: ArkmeBotAvatarIdentity, anchorRect: DOMRect) => void) | undefined
-  onBotOpen?: ((bot: ArkmeBotAvatarIdentity) => void) | undefined
-}) {
-  const member = props.member
-  const avatar = <ArkmeUserAvatar senderKind={props.senderKind} {...(props.avatarRef === undefined ? {} : { avatarRef: props.avatarRef })}
-    {...(props.fallback === undefined ? {} : { fallback: props.fallback })}
-    size={ARKME_MESSAGE_AVATAR_SIZE} label={props.label ?? tr("消息头像")} />
-  if (member === undefined) {
-    const bot = props.bot
-    if (bot === undefined) return <span data-arkme-message-avatar="true" style={styles.messageAvatar} aria-hidden>{avatar}</span>
-    return <button
-    type="button" data-arkme-message-avatar="true" data-arkme-bot-avatar={bot.itemUid}
-    style={{ ...styles.messageAvatar, padding: 0, border: 0, cursor: 'pointer' }}
-    aria-label={tr('查看 {v0} 的 Bot 资料', { v0: bot.name })}
-    onClick={event => {
-      event.stopPropagation()
-      props.onBotOpen?.(bot)
-    }}
-    onPointerEnter={event => {
-      if (event.pointerType === 'mouse' && event.buttons === 0) props.onBotHover?.(bot, event.currentTarget)
-    }}
-    onKeyDown={event => {
-      if (event.key !== 'ArrowDown') return
-      event.preventDefault()
-      props.onBotMenu?.(bot, event.currentTarget.getBoundingClientRect())
-    }}
-    onContextMenu={event => {
-      event.preventDefault()
-      event.stopPropagation()
-      props.onBotMenu?.(bot, event.currentTarget.getBoundingClientRect())
-    }}
-  >{avatar}</button>
-  }
-  return <button
-    type="button"
-    data-arkme-message-avatar="true"
-    style={{ ...styles.messageAvatar, padding: 0, border: 0, cursor: props.profileEnabled ? 'pointer' : 'default' }}
-    aria-label={props.profileEnabled
-      ? member.isSelf ? '查看我的用户卡片' : tr("查看 {v0}", { v0: member.displayName })
-      : `${member.displayName} 的消息头像`}
-    onClick={event => {
-      event.stopPropagation()
-      if (props.profileEnabled) props.onOpen(member)
-    }}
-    onPointerEnter={event => {
-      if ((props.hoverEnabled ?? props.profileEnabled) && event.pointerType === 'mouse' && event.buttons === 0) props.onHover?.(member, event.currentTarget)
-    }}
-    onKeyDown={event => {
-      if (event.key !== 'ArrowDown') return
-      event.preventDefault()
-      props.onContextMenu(member, event.currentTarget.getBoundingClientRect())
-    }}
-    onContextMenu={event => {
-      event.preventDefault()
-      event.stopPropagation()
-      props.onContextMenu(member, event.currentTarget.getBoundingClientRect())
-    }}
-  >{avatar}</button>
-}
-
 
 export function ArkmeMemberJoinNotice(props: {
   rowId: string
@@ -2599,7 +2526,7 @@ export function ArkmeSurface({
     setHashTagMemory({ ...(authenticatedAccountKey === undefined ? {} : { accountKey: authenticatedAccountKey }), items: [] })
   }, [authenticatedAccountKey])
   const [memberMenu, setMemberMenu] = useState<{
-    member: ArkmeConversationMemberItem
+    member: MemberActionTarget
     position: ArkmeMemberMenuPosition
     hoverAnchor?: HTMLElement
     hoverSide?: 'left' | 'right'
@@ -2689,12 +2616,12 @@ export function ArkmeSurface({
     message: string
     targets: ArkmeSourceItem[]
   }>()
-  const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
+  const [memberProfile, setMemberProfile] = useState<MemberActionTarget>()
   const [memberEventProfile, setMemberEventProfile] = useState<{ scope:string; event:ArkmeMemberEvent }>()
   const [memberEventWindowRevision, setMemberEventWindowRevision] = useState(0)
   const [memberRemovalTarget, setMemberRemovalTarget] = useState<ArkmeConversationMemberItem>()
   const [memberRecords, setMemberRecords] = useState<{
-    member: ArkmeConversationMemberItem
+    member: MemberActionTarget
     mode: ArkmeConversationMemberRecordMode
   }>()
   const loadedBotRecords = useMemo(() => botRecords === undefined || timelineStateKey !== conversationKey
@@ -2704,6 +2631,7 @@ export function ArkmeSurface({
   useEffect(() => () => { memberWorldAbortRef.current?.abort(); memberWorldAbortRef.current = undefined }, [activeConversation, authenticatedAccountKey, conversationKey])
   const privateChatAbortRef = useRef<AbortController>()
   const [privateChatBusy, setPrivateChatBusy] = useState(false)
+  const [memberContactError, setMemberContactError] = useState('')
 
   useEffect(() => {
     privateChatAbortRef.current?.abort()
@@ -2717,7 +2645,8 @@ export function ArkmeSurface({
   const closeMemberProfile = useCallback(() => {
     privateChatAbortRef.current?.abort()
     privateChatAbortRef.current = undefined
-    setPrivateChatBusy(false)
+    setPrivateChatBusy(false); setMemberContactError('')
+    setMessageActionStatus(old => old === tr('正在打开私聊…') ? '' : old)
     setMemberProfile(undefined)
   }, [])
 
@@ -5809,6 +5738,11 @@ export function ArkmeSurface({
     () => new Map(conversationMembers.map(member => [member.memberRef, member])),
     [conversationMembers],
   )
+  const selectedMemberTarget = memberProfile ?? memberMenu?.member
+  const memberInteraction = useMemberInteraction(authenticatedAccountKey, activeConversation ? source : undefined,
+    selectedMemberTarget, selectedMemberTarget ? conversationMemberByRef.get(selectedMemberTarget.memberRef) : undefined)
+  const visibleMemberProfile = memberProfile ? memberInteraction.target ?? memberProfile : undefined
+  const visibleMemberMenu = memberMenu ? memberInteraction.target ?? memberMenu.member : undefined
   const localReactionActors = useMemo(() => {
     const names = new Map<string, { displayName: string; avatarRef?: string }>()
     for (const item of items) if (item.memberRef && !item.selfRole && item.senderKind !== 'bot') {
@@ -5909,7 +5843,7 @@ export function ArkmeSurface({
       setMessageActionStatus(errorMessage(caught) || '暂时无法打开 Bot 对话')
     })
   }, [])
-  const openMemberHover = useCallback((member: ArkmeConversationMemberItem, anchor: HTMLElement, preferredSide?: 'left') => {
+  const openMemberHover = useCallback((member: MemberActionTarget, anchor: HTMLElement, preferredSide?: 'left') => {
     if ((source?.kind !== 'group_chat' && (source?.kind !== 'private_chat' || member.isSelf)) || !anchor.isConnected || document.querySelector('[aria-modal="true"]')) return
     const rect = anchor.getBoundingClientRect()
     const host = panelRef.current?.getBoundingClientRect()
@@ -5921,7 +5855,7 @@ export function ArkmeSurface({
       position: { left: side === 'left' ? rect.left - 4 : rect.right + 4, top: rect.top - 4, placement: 'below' },
     })
   }, [source?.kind])
-  const openMemberMenu = useCallback((member: ArkmeConversationMemberItem, anchorRect: DOMRect) => {
+  const openMemberMenu = useCallback((member: MemberActionTarget, anchorRect: DOMRect) => {
     const host = panelRef.current
     if (host === null || source === undefined) return
     setMemberProfile(undefined)
@@ -5933,7 +5867,8 @@ export function ArkmeSurface({
       position: { left: anchorRect.left, top: anchorRect.bottom, placement: 'below' },
     })
   }, [groupSelfRole, source])
-  const openMemberProfile = useCallback((member: ArkmeConversationMemberItem) => {
+  const openMemberProfile = useCallback((member: MemberActionTarget) => {
+    setMemberContactError('')
     if (source?.kind !== 'group_chat') return
     setMemberMenu(undefined)
     setBotMenu(undefined)
@@ -5951,7 +5886,7 @@ export function ArkmeSurface({
     if (member === undefined) return
     openMemberProfile(member)
   }, [conversationMembers, openMemberProfile, source?.kind])
-  const openMemberRecords = useCallback((member: ArkmeConversationMemberItem, mode: ArkmeConversationMemberRecordMode) => {
+  const openMemberRecords = useCallback((member: MemberActionTarget, mode: ArkmeConversationMemberRecordMode) => {
     setMemberMenu(undefined)
     setMemberEventProfile(undefined)
     setMemberProfile(undefined)
@@ -6022,7 +5957,7 @@ export function ArkmeSurface({
     focusEditedComposer(inserted.caretIndex)
   }, [activeRecordReeditComposer, setRecordReeditComposer, focusEditedComposer])
   const insertMemberMentionAt = useCallback((
-    member: ArkmeConversationMemberItem,
+    member: MemberActionTarget,
     selectionStart: number,
     selectionEnd = selectionStart,
   ) => {
@@ -6059,7 +5994,7 @@ export function ArkmeSurface({
     if (caretIndex === undefined) return
     focusEditedComposer(caretIndex)
   }, [busy, composerDraftKey, draft, focusEditedComposer, syncComposerUserInput])
-  const insertMemberMention = useCallback((member: ArkmeConversationMemberItem) => {
+  const insertMemberMention = useCallback((member: MemberActionTarget) => {
     const textarea = textareaRef.current
     const start = textarea?.selectionStart ?? draft.length
     const end = textarea?.selectionEnd ?? start
@@ -6082,7 +6017,7 @@ export function ArkmeSurface({
   }, [activeRecordReeditComposer, composerDraftKey, composerMentionsEnabled, draft.length,
     focusEditedComposer, insertReeditMentionAt, syncComposerUserInput])
   const fillThoughtSuggestion = useCallback((text: string, mentionAsen?: boolean) => {
-    if (!composerDraftKey || directAdmission.blocked || activeRecordReeditComposer) return
+    if (!composerDraftKey || directAdmission.blocked || activeRecordReeditComposer || archiveReadOnly) return
     const current = arkmeComposerDraftStore.get(composerDraftKey).text
     syncComposerUserInput(true)
     let cursor: number | undefined
@@ -6094,7 +6029,7 @@ export function ArkmeSurface({
     }
     setDrawer(undefined); setDetailBackStack([]); pendingExtensionParentDetailRef.current = undefined
     if (cursor !== undefined) focusEditedComposer(cursor)
-  }, [composerDraftKey, directAdmission.blocked, activeRecordReeditComposer, syncComposerUserInput, focusEditedComposer])
+  }, [composerDraftKey, directAdmission.blocked, activeRecordReeditComposer, archiveReadOnly, syncComposerUserInput, focusEditedComposer])
   const insertMentionCandidate = useCallback((member: ArkmeMentionCandidate) => {
     if (mentionTrigger === undefined) return
     if (activeRecordReeditComposer !== undefined && member.kind !== 'member') {
@@ -6211,23 +6146,25 @@ export function ArkmeSurface({
     }
     return sendToSelfSource
   }, [aggregateSource, authenticatedUserId])
-  const openWorldForMember = useCallback((member: ArkmeConversationMemberItem) => {
+  const openWorldForMember = useCallback((member: MemberActionTarget) => {
     if (!source || member.isSelf || !authenticatedAccountKey) return
     memberWorldAbortRef.current?.abort()
     const controller = new AbortController()
     memberWorldAbortRef.current = controller
     setMemberMenu(undefined)
-    setError('')
+    setError(''); setMessageActionStatus(tr('正在打开TA的世界…'))
     void callArkme<{ userId: number }>('chat.member.world-target', { sourceRef: source.sourceRef, memberRef: member.memberRef }, controller.signal)
       .then(result => {
         if (controller.signal.aborted || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== authenticatedAccountKey) return
+        if (typeof result.userId !== 'number' || !Number.isSafeInteger(result.userId) || result.userId <= 0) throw new Error(tr('当前世界接口暂不支持此用户标识'))
         arkmeUi.showUserWorld({ userId: result.userId, displayName: member.displayName, ...(member.avatarRef ? { avatarRef: member.avatarRef } : {}) })
       })
       .catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught) || '暂时无法打开TA的世界') })
-      .finally(() => { if (memberWorldAbortRef.current === controller) memberWorldAbortRef.current = undefined })
+      .finally(() => { if (memberWorldAbortRef.current === controller) { memberWorldAbortRef.current = undefined; setMessageActionStatus(old => old === tr('正在打开TA的世界…') ? '' : old) } })
   }, [authenticatedAccountKey, source])
-  const openPrivateChatForMember = useCallback((member: ArkmeConversationMemberItem) => {
+  const openPrivateChatForMember = useCallback((member: MemberActionTarget) => {
     if (source === undefined || privateChatBusy || privateChatAbortRef.current !== undefined) return
+    setMemberContactError(''); setMessageActionStatus(tr('正在打开私聊…'))
     setPrivateChatBusy(true)
     setMemberMenu(undefined)
     setError('')
@@ -6241,11 +6178,11 @@ export function ArkmeSurface({
           setMemberRecords(undefined)
           activateSource(result)
         })
-        .catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught)) })
+        .catch(caught => { if (!controller.signal.aborted) { setMemberContactError(errorMessage(caught)); setError(errorMessage(caught)) } })
         .finally(() => {
           if (privateChatAbortRef.current !== controller) return
           privateChatAbortRef.current = undefined
-          setPrivateChatBusy(false)
+          setPrivateChatBusy(false); setMessageActionStatus(old => old === tr('正在打开私聊…') ? '' : old)
         })
       return
     }
@@ -6261,11 +6198,11 @@ export function ArkmeSurface({
         setMemberRecords(undefined)
         activateSource(result.source)
       })
-      .catch(caught => { if (!controller.signal.aborted) setError(errorMessage(caught)) })
+      .catch(caught => { if (!controller.signal.aborted) { setMemberContactError(errorMessage(caught)); setError(errorMessage(caught)) } })
       .finally(() => {
         if (privateChatAbortRef.current !== controller) return
         privateChatAbortRef.current = undefined
-        setPrivateChatBusy(false)
+        setPrivateChatBusy(false); setMessageActionStatus(old => old === tr('正在打开私聊…') ? '' : old)
       })
   }, [activateSource, privateChatBusy, resolveSendToSelfSource, source])
   useEffect(() => {
@@ -8111,9 +8048,9 @@ export function ArkmeSurface({
                 const avatarRef = selfWorkspace
                   ? arkmePersonalAvatarRef(item, avatarProfile)
                   : arkmeTimelineAvatarRef(item, avatarProfile)
-                const messageMember = item.memberRef === undefined
+                const messageMember = messageMemberTarget(item, item.memberRef === undefined
                   ? (item.isMe ? selfConversationMember : undefined)
-                  : conversationMemberByRef.get(item.memberRef)
+                  : conversationMemberByRef.get(item.memberRef))
                 const messageHeader = presentationIsMe || source.kind === 'private_chat' ? null : <ArkmeTimelineMessageHeader
                   item={item}
                   {...(selfProfile === undefined ? {} : { profile: selfProfile })}
@@ -8126,7 +8063,7 @@ export function ArkmeSurface({
                 const isStructuredMessageCard = isForwardMessageCard || isSharedRecordingCard
                 const isExtensionMessage = !isSharedRecordingCard && item.extensionParent !== undefined
                 const personalMessageAvatar = showMessageAvatars && !isSharedRecordingCard
-                  ? <MessageAvatar senderKind={item.senderKind}
+                  ? <MessageAvatar senderKind={item.senderKind} label={arkmeTimelineSenderName(item, selfProfile)}
                     {...(avatarRef === undefined ? {} : { avatarRef })}
                     {...(roleFallback === undefined ? {} : { fallback: roleFallback, label: `${role?.name ?? ''}的角色头像` })}
                     {...(messageMember === undefined ? {} : { member: messageMember })}
@@ -8297,7 +8234,7 @@ export function ArkmeSurface({
                               {job.state === 'failed' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.openRecordReedit(item) }}>{tr("恢复编辑")}</button>}
                               {job.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.refreshReedits(true).catch(caught => setError(errorMessage(caught))) }}>{tr("核对结果")}</button>}
                             </div>)}
-                            {selfWorkspace && activeSelectMode === undefined
+                            {(selfWorkspace || sourceIsChat) && activeSelectMode === undefined
                               ? <RecordThoughtMessageFooter item={item} onOpen={openMessageDetail}>{messageTimestamp}</RecordThoughtMessageFooter>
                               : messageTimestamp}
                           </div>
@@ -8350,7 +8287,6 @@ export function ArkmeSurface({
                             {fileSendStatus}
                             {textSendStatus}
                             {topicBadge}
-                            {sourceIsChat && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={openMessageDetail} />}
                           </>
                           return <div
                             data-arkme-extension-message-cluster="true"
@@ -8383,7 +8319,6 @@ export function ArkmeSurface({
                                 {fileSendStatus}
                                 {textSendStatus}
                                 {topicBadge}
-                                {sourceIsChat && activeSelectMode === undefined && <RecordThoughtEntry item={item} onOpen={openMessageDetail} />}
                               </div>
                             </div>
                           </div>
@@ -8815,12 +8750,11 @@ export function ArkmeSurface({
           />
           : ui.mode === 'statistics' ? <StatisticsSurface key={`statistics:${auth?.environment}:${auth?.userId}:${ui.statisticsMonth ?? ''}`} accountScope={`${auth?.environment}:${auth?.userId}`} initialMonth={ui.statisticsMonth} />
           : ui.mode === 'explore' ? <ExploreSurface key={`explore:${auth?.environment}:${auth?.userId}:${ui.exploreModule}`} module={ui.exploreModule ?? 'profile'} accountScope={`${auth?.environment}:${auth?.userId}`} />
-          : ui.mode === 'world' && ui.worldTeamTarget && authenticatedAccountKey ? <TeamWorldSurface
-            accountKey={authenticatedAccountKey} target={ui.worldTeamTarget}
-            actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
-            onBack={() => arkmeUi.backFromWorld()} />
-          : ui.mode === 'world' ? <ArkmeWorldSurface
+          : ui.mode === 'world' ? <>
+          <div style={{ display: ui.worldTeamTarget ? 'none' : 'flex', flex: 1, minHeight: 0, minWidth: 0 }}>
+          <ArkmeWorldSurface
             accountScope={authenticatedAccountKey}
+            active={!ui.worldTeamTarget}
             key={`world:${auth?.environment}:${auth?.userId}:${ui.worldNavigationRevision ?? 0}:${ui.worldInteractionRef ?? ''}`}
             initialScope={ui.worldInitialScope ?? 'all'}
             actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
@@ -8830,6 +8764,12 @@ export function ArkmeSurface({
             onBackToWorld={() => { arkmeUi.backFromWorld() }}
             onSourceActivated={activateSource}
           />
+          </div>
+          {ui.worldTeamTarget && authenticatedAccountKey && <TeamWorldSurface
+            accountKey={authenticatedAccountKey} target={ui.worldTeamTarget}
+            actorName={selfProfile?.displayName || selfProfile?.nickname || '我'} actorAvatarRef={selfProfile?.avatarRef}
+            onBack={() => arkmeUi.backFromWorld()} />}
+          </>
           : ui.mode === 'search' ? <div style={styles.utilityBody}><ArkmeSearchSurface
             {...(ui.searchTarget === undefined ? {} : {
               initialQuery: ui.searchTarget.query,
@@ -9463,18 +9403,20 @@ export function ArkmeSurface({
           }}
           onClose={closeMessageSnapshot}
         />}
-        {activeConversation && source !== undefined && memberMenu !== undefined && <ArkmeMemberActionMenu
-          member={memberMenu.member}
+        {activeConversation && source !== undefined && memberMenu !== undefined && visibleMemberMenu !== undefined && <ArkmeMemberActionMenu
+          member={visibleMemberMenu}
           sourceKind={source.kind}
           position={memberMenu.position}
           hoverAnchor={memberMenu.hoverAnchor}
           hoverSide={memberMenu.hoverSide}
-          onMention={() => { insertMemberMention(memberMenu.member) }}
-          onPrivateChat={() => { openPrivateChatForMember(memberMenu.member) }}
-          onWorld={() => { openWorldForMember(memberMenu.member) }}
-          onRecords={mode => { openMemberRecords(memberMenu.member, mode) }}
-          canRemove={source.kind === 'group_chat' && groupSelfRole === 'owner' && !memberMenu.member.isSelf && !memberMenu.member.isOwner}
-          onRemove={() => { setMemberRemovalTarget(memberMenu.member); closeMemberMenu() }}
+          onMention={() => { insertMemberMention(visibleMemberMenu) }}
+          onPrivateChat={() => { openPrivateChatForMember(visibleMemberMenu) }}
+          onWorld={() => { openWorldForMember(visibleMemberMenu) }}
+          onRecords={mode => { openMemberRecords(visibleMemberMenu, mode) }}
+          canRemove={source.kind === 'group_chat' && groupSelfRole === 'owner' && memberInteraction.member?.status === 'active' && !visibleMemberMenu.isSelf && memberInteraction.member?.isOwner === false}
+          onRemove={() => { if (memberInteraction.member) setMemberRemovalTarget(memberInteraction.member); closeMemberMenu() }}
+          canMention={composerDraftKey !== undefined && composerMentionsEnabled}
+          loading={memberInteraction.loading} error={memberInteraction.error} onRetry={memberInteraction.retry}
           onClose={closeMemberMenu}
         />}
         {activeConversation && source?.kind === 'group_chat' && authenticatedAccountKey !== undefined && botMenu !== undefined && <ArkmeBotAvatarActionMenu
@@ -9514,19 +9456,20 @@ export function ArkmeSurface({
             showMessageActionStatus(result.joinRestricted ? '已移出群聊，并禁止再次加入' : '已移出群聊')
           }}
         />}
-        {activeConversation && memberProfile !== undefined && <ArkmeMemberProfileCard
-          copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : source ? { kind: 'member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef } : undefined}
-          member={memberProfile}
+        {activeConversation && visibleMemberProfile !== undefined && <ArkmeMemberProfileCard
+          copyLinkTarget={visibleMemberProfile.isSelf ? { kind: 'self' } : source ? { kind: 'member', sourceRef: source.sourceRef, memberRef: visibleMemberProfile.memberRef } : undefined}
+          member={visibleMemberProfile}
           showTopicNickname={source?.kind === 'group_chat'}
           busy={privateChatBusy}
+          error={memberContactError || undefined}
+          closeWhileBusy
           onClose={closeMemberProfile}
-          onSend={() => { openPrivateChatForMember(memberProfile) }}
-          onContactAsTeam={!conversationWindowRequested() && !memberProfile.isSelf && source && authenticatedAccountKey ? () => {
-            closeMemberProfile()
-            openTeamOutbound({ accountKey: authenticatedAccountKey, person: {
-              recipient: { kind: 'chat-member', sourceRef: source.sourceRef, memberRef: memberProfile.memberRef },
-              displayName: memberProfile.displayName, avatarRef: memberProfile.avatarRef,
-            } })
+          onSend={() => { openPrivateChatForMember(visibleMemberProfile) }}
+          teamContact={!conversationWindowRequested() && !visibleMemberProfile.isSelf && source && authenticatedAccountKey ? {
+            accountKey: authenticatedAccountKey, person: {
+              recipient: { kind: 'chat-member', sourceRef: source.sourceRef, memberRef: visibleMemberProfile.memberRef },
+              displayName: visibleMemberProfile.displayName, avatarRef: visibleMemberProfile.avatarRef,
+            },
           } : undefined}
         />}
         {activeConversation && source !== undefined && authenticatedAccountKey !== undefined && botProfile !== undefined && <ArkmeBotAvatarProfileCard
@@ -9786,7 +9729,8 @@ export function ArkmeSurface({
 
   return (
     <RecordThoughtsProvider accountScope={authenticatedAccountKey} enabled={active && activeConversation && authenticated && (isArkmeSelfWorkspaceSource(source) || sourceIsChat)}
-      chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey} onFill={fillThoughtSuggestion}>
+      chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey}
+      onFill={composerTextDisabled || activeRecordReeditComposer || archiveReadOnly ? undefined : fillThoughtSuggestion}>
       <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={active && activeConversation ? source?.sourceRef : undefined}
         chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
         {surfaceContent}

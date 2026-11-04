@@ -44,6 +44,13 @@ function detail() { return host.querySelector<HTMLElement>('[aria-label="世界�
 async function click(element: HTMLElement) { await act(async () => element.click()) }
 
 describe('World public detail interactions', () => {
+  it('identifies a team in both its feed card and detail header', async () => {
+    const teamPost = { ...first, authorRef: undefined, authorName: '即我', teamAuthor: { jotmoId: 'arkme_cn', name: '即我' } } as ArkmeWorldFeedItem
+    await render([teamPost])
+    expect(card(first.recordRef).querySelector('[data-world-team-badge]')?.textContent).toContain('团队')
+    await click(card(first.recordRef).querySelector('p')!)
+    expect(detail()!.querySelector('header [data-world-team-badge]')?.textContent).toContain('团队')
+  })
   it('opens immediately, reuses the author/resize shell, and preserves feed geometry and comment drafts during revalidation', async () => {
     await render()
     const feedCard = card(first.recordRef), scroll = feedCard.parentElement!.parentElement!

@@ -1593,7 +1593,19 @@ export async function dispatchArkmeHostOperation(
     case 'identity.person.read':
     case 'identity.share.link': {
       const scope = stringParam(params, 'accountScope'), kind = stringParam(params, 'kind')
-      const read = operation === 'identity.person.read' ? service.identityPersonProfile.bind(service) : service.identityShareLink.bind(service)
+      const read = (scope: string, target: import('./identity-share-contract.js').IdentityShareTarget, signal?: AbortSignal) => {
+        if (operation !== 'identity.person.read') return service.identityShareLink(scope, target, signal)
+        const includeAccountName = params.includeAccountName === undefined ? undefined : requiredBooleanParam(params, 'includeAccountName')
+        for (const key of ['cacheOnly', 'forceRefresh']) if (params[key] !== undefined && typeof params[key] !== 'boolean') throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项无效', false, 400)
+        if (params.cacheOnly === true && params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+        if (includeAccountName === false) {
+          if (params.cacheOnly === true || params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+          return service.identityPersonProfile(scope, target, signal, false)
+        }
+        if (includeAccountName === true && params.cacheOnly === undefined && params.forceRefresh === undefined) return service.identityPersonProfile(scope, target, signal, true)
+        return params.cacheOnly === undefined && params.forceRefresh === undefined ? service.identityPersonProfile(scope, target, signal)
+          : service.identityPersonProfile(scope, target, signal, { cacheOnly: params.cacheOnly === true, forceRefresh: params.forceRefresh === true })
+      }
       if (kind === 'self') return await read(scope, { kind }, requestSignal)
       if (kind === 'person') return await read(scope, { kind, userId: numberParam(params, 'userId', 0) }, requestSignal)
       if (kind === 'contact') return await read(scope, { kind, contactRef: stringParam(params, 'contactRef') }, requestSignal)
@@ -2039,6 +2051,9 @@ export async function dispatchArkmeHostOperation(
     case 'arko.lifecycle.query': return await service.arkoLifecycle(stringListParam(params, 'messageRefs'), requestSignal)
     case 'arko.lifecycle.change': return await service.arkoChangeLifecycle(params as unknown as import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, requestSignal)
     case 'arko.deleted': return await service.arkoRecentlyDeleted(stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'arko.interactions': return service.arkoInteractions(params as import('./arko-timeline-contract.js').ArkmeArkoInteractionQuery, requestSignal)
+    case 'arko.interaction.open': return service.arkoInteractionOpen(stringParam(params, 'interactionRef'), requestSignal)
+    case 'arko.timeline.cache': return (await service.arkoTimelineCache(stringParam(params, 'accountScope'), params?.value as import('./arko-timeline-contract.js').ArkmeArkoTimelineCache | undefined)) ?? null
     case 'arko.messages': return await service.arkoMessages(arkoHistoryQueryParams(params), requestSignal)
     case 'arko.search': return await service.arkoSearch({ ...arkoHistoryQueryParams(params), keyword: stringParam(params, 'keyword') }, requestSignal)
     case 'arko.context': return await service.arkoContext({ messageRef: stringParam(params, 'messageRef'),

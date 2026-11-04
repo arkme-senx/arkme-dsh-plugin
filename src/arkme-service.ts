@@ -136,6 +136,7 @@ import {
 } from './world-voiceprint-copy.js'
 import { AiVideoService } from './services/ai-video-service.js'
 import { AiLetterService } from './services/ai-letter-service.js'
+import { ArkoTimelineService } from './services/arko-timeline-service.js'
 import { ArkoService } from './services/arko-service.js'
 import { ArrangementSourceService } from './services/arrangement-source-service.js'
 import { ArrangementService } from './services/arrangement-service.js'
@@ -516,6 +517,7 @@ export class ArkmeService {
   private readonly world: WorldService
   private readonly directoryExport: RecordDirectoryExportService
   private readonly recordExport: RecordExportService
+  private readonly arkoTimeline: ArkoTimelineService
   private readonly arko: ArkoService
   private readonly group: GroupService
   private readonly publicSocial: PublicSocialService
@@ -636,12 +638,19 @@ export class ArkmeService {
   async teamWorld(input: import('./team-world-contract.js').TeamWorldRequest, signal?: AbortSignal) { return this.teamWorldOwner.execute(input, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (operation === 'team.app.world.view') {
+      signal?.throwIfAborted()
+      if (params.includeMemberTeam !== undefined && typeof params.includeMemberTeam !== 'boolean') throw new ArkmePluginError('team-world-invalid', '团队世界请求无效', false, 400)
       await this.teamApp.assertViewer(params.expectedAccountKey)
       const context = await this.teamWorld({ action: 'context', accountKey: String(params.expectedAccountKey), jotmoId: String(params.jotmoId) }, signal) as import('./team-world-contract.js').TeamWorldContext
       const session = await this.runtime.requireSession(), teamID = await this.teamApp.worldTeamID(context.teamRef, session.userId)
-      const teams = await this.teamApp.execute('team.app.teams', { expectedAccountKey: params.expectedAccountKey }, signal) as import('./types.js').ArkmeTeam[]
+      const teams = params.includeMemberTeam === false || !context.capabilities.publish ? []
+        : await this.teamApp.execute('team.app.teams', { expectedAccountKey: params.expectedAccountKey }, signal) as import('./types.js').ArkmeTeam[]
+      signal?.throwIfAborted()
+      const feed = await this.world.listMixedFeed({ teamID, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(signal ? { signal } : {}) })
       const memberTeam = context.capabilities.publish ? teams.find(t => t.jotmoId === context.jotmoId) : undefined
-      return { state: 'ready', context, team: { name: context.name, jotmoId: context.jotmoId, ...(memberTeam ? { avatar: memberTeam.avatar } : {}) }, ...(memberTeam ? { memberTeam } : {}), feed: await this.world.listMixedFeed({ teamID, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(signal ? { signal } : {}) }) } satisfies import('./team-world-contract.js').TeamWorldView
+      signal?.throwIfAborted()
+      await this.teamApp.assertViewer(params.expectedAccountKey)
+      return { state: 'ready', context, team: { name: context.name, jotmoId: context.jotmoId, ...(memberTeam ? { avatar: memberTeam.avatar } : {}) }, ...(memberTeam ? { memberTeam } : {}), feed } satisfies import('./team-world-contract.js').TeamWorldView
     }
     if (['team.app.send.enqueue' , 'team.app.send.tasks', 'team.app.send.retry-task', 'team.app.send.cancel-task'].includes(operation)) {
       await this.teamApp.assertViewer(params.expectedAccountKey)
@@ -883,6 +892,7 @@ export class ArkmeService {
         return { kind: 'record', record_uid: source.itemUid, version: source.version }
       },
     })
+    this.arkoTimeline = new ArkoTimelineService(this.runtime, this.source)
     this.arko = new ArkoService(this.runtime, this.profile, this.messageActions, {
       read: async ref => { const file=(await this.filesOwner().files()).find(file=>file.fileRef===ref);if (!file) throw new ArkmePluginError('file-ref-invalid','图片引用无效或不属于当前账号',false);return {file} },
 withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,userId,persist),
@@ -1418,7 +1428,7 @@ arkoImagesV1:true,
         localFirstDirectory: true,
         topicHomeVisibility: true,
         arkoLifecycleV1: true,
-        arkoHistoryReadsV1: true,
+        arkoHistoryReadsV1: true, arkoInteractionTimelineV1: true,
         recordExportV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
@@ -1828,6 +1838,9 @@ arkoImagesV1:true,
   async arkoLifecycle(refs: readonly string[] = [], signal?: AbortSignal) { return this.arko.arkoLifecycle(refs, signal) }
   async arkoChangeLifecycle(command: import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, signal?: AbortSignal) { return this.arko.arkoChangeLifecycle(command, signal) }
   async arkoRecentlyDeleted(cursor?: string, signal?: AbortSignal) { return this.arko.arkoRecentlyDeleted(cursor, signal) }
+  async arkoInteractions(query?: import('./arko-timeline-contract.js').ArkmeArkoInteractionQuery, signal?: AbortSignal) { return this.arkoTimeline.arkoInteractions(query, signal) }
+  async arkoInteractionOpen(ref: string, signal?: AbortSignal) { return this.arkoTimeline.arkoInteractionOpen(ref, signal) }
+  async arkoTimelineCache(scope: string, value?: import('./arko-timeline-contract.js').ArkmeArkoTimelineCache) { return this.arkoTimeline.arkoTimelineCache(scope, value) }
   async arkoMessages(query: ArkmeArkoHistoryQuery = {}, signal?: AbortSignal) {
     const { userId } = await this.runtime.requireSession()
     const page = await this.arko.arkoMessages(query, signal)
@@ -2276,7 +2289,13 @@ arkoImagesV1:true,
   async joinPublicGroup(uid: string, requestUid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.joinGroup(uid, requestUid, scope, signal) }
   async openPublicGroup(uid: string, scope: string, signal?: AbortSignal) { return await this.publicSocial.openGroup(uid, scope, signal) }
   async privateGroupContext(input: PrivateGroupRequest, signal?: AbortSignal) { return await this.privateGroupCreate.readContext(input, signal) }
-  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.person(scope, target, signal) }
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal): Promise<import('./identity-share-contract.js').IdentityPersonProfile>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, includeAccountName: boolean): Promise<import('./identity-share-contract.js').IdentityPersonProfile>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal: AbortSignal | undefined, options: import('./identity-share-contract.js').PersonProfileReadOptions): Promise<import('./identity-share-contract.js').IdentityPersonProfile | null>
+  async identityPersonProfile(scope: string, target: IdentityShareTarget, signal?: AbortSignal, options?: boolean | import('./identity-share-contract.js').PersonProfileReadOptions) {
+    if (typeof options === 'boolean') return await this.identityShare.person(scope, target, signal, options)
+    return options === undefined ? await this.identityShare.person(scope, target, signal) : await this.identityShare.person(scope, target, signal, options)
+  }
   async identityShareLink(scope: string, target: IdentityShareTarget, signal?: AbortSignal) { return await this.identityShare.link(scope, target, signal) }
   async identityShareRead(scope: string, url: string, signal?: AbortSignal) { return await this.identityShare.read(scope, url, signal) }
   async identityShareOpen(scope: string, url: string, expectedUserId?: number, signal?: AbortSignal) { return await this.identityShare.open(scope, url, expectedUserId, signal) }

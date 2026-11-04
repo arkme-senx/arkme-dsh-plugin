@@ -34,6 +34,17 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 确认导出到所选文件夹？|Export to the selected folder?
 将保存所选内容及原文件，成功后使用一次云端导出额度。取消或失败不扣次数。|Save the selected content and originals. A successful export uses one cloud export allowance. Cancellation or failure does not use it.
 选择导出日期|Choose export dates
+查看 Arko 回复建议|View Arko suggestions
+Arko 回复建议|Arko suggestions
+正在帮你想一句更合适的话…|Thinking of a suitable response…
+暂未获得回复建议|No suggestion is available yet
+查看建议|View suggestions
+展开查看|View more
+关闭建议|Close suggestions
+重新读取|Reload
+为什么这样建议|Why this suggestion
+建议暂时无法更新|Suggestions could not be refreshed
+当前输入框暂不可用|The composer is currently unavailable
 导出日期范围|Export date range
 保存确认失败，请重试。|Could not confirm the saved backup. Please retry.
 上次成功保存：|Last successfully saved:
@@ -1960,6 +1971,7 @@ ICP备案号|ICP registration
 正在同步设备录音状态…|Syncing device recording status…
 设备录音状态暂未启用|Device recording status is not enabled yet
 同步暂时失败，正在重试|Sync failed temporarily. Retrying
+连接暂时不畅，正在重试…|Connection interrupted. Retrying…
 暂无设备上报录音状态|No devices are reporting recording status
 已暂停|Paused
 已中断|Interrupted
