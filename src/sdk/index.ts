@@ -3194,13 +3194,23 @@ export class ArkmeSdk {
   }
 
   async recordEditHistory(sourceRef: string, messageActionRef: string, cursorVersion = 0, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordEditHistoryPage> {
-    if ((await this.capabilities(signal)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑历史，请升级', retryable: false })
-    return await this.call('source.record-edit-history', { sourceRef, messageActionRef, cursorVersion }, signal)
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑历史，请升级', retryable: false })
+    scoped.throwIfAborted()
+    const result = await this.call<import('../record-edit-history.js').ArkmeRecordEditHistoryPage>('source.record-edit-history', { sourceRef, messageActionRef, cursorVersion }, scoped)
+    scoped.throwIfAborted()
+    return result
   }
 
   async recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot> {
-    if ((await this.capabilities(signal)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑快照，请升级', retryable: false })
-    return await this.call('source.record-revision-snapshot', { sourceRef, messageActionRef, revisionUid }, signal)
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑快照，请升级', retryable: false })
+    scoped.throwIfAborted()
+    const result = await this.call<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot>('source.record-revision-snapshot', { sourceRef, messageActionRef, revisionUid }, scoped)
+    scoped.throwIfAborted()
+    return result
   }
 
   async createText(
