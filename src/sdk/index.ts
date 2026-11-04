@@ -1,3 +1,4 @@
+export type { ArkmeRecordEditHistoryPage, ArkmeRecordRevision, ArkmeRecordRevisionSnapshot } from '../record-edit-history.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
@@ -3190,6 +3191,16 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
     }, options.signal)
+  }
+
+  async recordEditHistory(sourceRef: string, messageActionRef: string, cursorVersion = 0, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordEditHistoryPage> {
+    if ((await this.capabilities(signal)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑历史，请升级', retryable: false })
+    return await this.call('source.record-edit-history', { sourceRef, messageActionRef, cursorVersion }, signal)
+  }
+
+  async recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot> {
+    if ((await this.capabilities(signal)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑快照，请升级', retryable: false })
+    return await this.call('source.record-revision-snapshot', { sourceRef, messageActionRef, revisionUid }, signal)
   }
 
   async createText(

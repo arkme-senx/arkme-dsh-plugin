@@ -6398,12 +6398,13 @@ nextPublic = next
     return this.hydratedMessageSnapshotDetail(reference, session, options, chatRaw)
   }
 
-  async projectRecordRevisionSnapshot(snapshot: Record<string, unknown>, target: import('./record-edit-history-service.js').RecordEditHistoryTarget, signal?: AbortSignal, previous?: Record<string, unknown>): Promise<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot> {
+  async projectRecordRevisionSnapshot(snapshot: Record<string, unknown>, target: import('./record-edit-history-service.js').RecordEditHistoryTarget, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot> {
     const session = await this.runtime.requireSession()
     if (session.userId !== target.viewerUserId || snapshot.record_uid !== target.recordUid) {
       throw new ArkmePluginError('record-edit-history-invalid', '记忆快照与当前消息不一致', false, 403)
     }
-    const context = objectValue(snapshot.edit_capture_context ?? snapshot.capture_context)
+    const original = snapshot.version === 1
+    const context = objectValue(snapshot.edit_capture_context ?? (original ? snapshot.capture_context : undefined))
     const raw = { ...snapshot, record_uid: target.recordUid, capture_context: context,
       send_at: snapshot.edit_at, update_at: snapshot.edit_at, status: 1,
       extra: objectValue(snapshot.template_extra ?? snapshot.extra),
@@ -6414,11 +6415,7 @@ nextPublic = next
     // Missing historical metadata never falls back to the current Record.
     const duration = nonNegativeNumberValue(snapshot.record_duration_millis, snapshot.cost_mill_sec)
     const editDuration = nonNegativeNumberValue(snapshot.edit_duration_millis, snapshot.incr_cost_mill_sec)
-    const original = snapshot.revision_type === 5 || snapshot.version === 1
-    const priorEditDuration = nonNegativeNumberValue(previous?.edit_duration_millis, previous?.incr_cost_mill_sec)
-    const comparable = previous && Number(previous.edit_at) < Number(snapshot.edit_at)
-    const perEditDuration = !original && comparable && editDuration !== undefined && priorEditDuration !== undefined && editDuration >= priorEditDuration
-      ? editDuration - priorEditDuration : undefined
+    const perEditDuration = !original && snapshot.edit_duration_known === true ? editDuration : undefined
     const { recordDurationMillis: _recordDuration, editDurationMillis: _editDuration, ...metadata } = detail
     detail = { ...metadata, durationState: original ? duration === undefined ? 'not-recorded' : 'complete'
       : perEditDuration !== undefined ? 'complete' : editDuration === undefined ? 'not-recorded' : 'partial',
@@ -6447,7 +6444,7 @@ nextPublic = next
     }
     const revisionAtMillis = nonNegativeNumberValue(snapshot.edit_at)
     const captureAtMillis = nonNegativeNumberValue(context.captured_at)
-    const completeAtMillis = captureAtMillis && revisionAtMillis && captureAtMillis <= revisionAtMillis ? captureAtMillis : revisionAtMillis
+    const completeAtMillis = captureAtMillis && captureAtMillis > 0 ? captureAtMillis : revisionAtMillis
     const versionDuration = original ? duration : perEditDuration
     const recordedStart = original ? nonNegativeNumberValue(snapshot.record_started_at) : undefined
     // An edit timestamp establishes completion, not when typing began.
@@ -6457,7 +6454,7 @@ nextPublic = next
     detail = { ...versionDetail, ...(startAtMillis === undefined ? {} : { startAtMillis }),
       ...(completeAtMillis && completeAtMillis > 0 ? { completeAtMillis } : {}) }
     const nativeRefs = this.media.recordBackgroundSoundRefs(raw)
-    const refs = snapshotBackgroundMediaAssets(snapshotBackgroundValuesFromChatRaw(raw)).map(asset => ({
+    const refs = (original || Object.keys(context).length > 0 ? snapshotBackgroundMediaAssets(snapshotBackgroundValuesFromChatRaw(raw)) : []).map(asset => ({
       ...nativeRefs.find(ref => ref.file_asset_uid === asset.fileAssetUid),
       file_asset_uid: asset.fileAssetUid, content_file_role: 4, sort_order: asset.sortOrder,
     }))
@@ -6482,14 +6479,14 @@ nextPublic = next
     let cursor = 0
     for (;;) {
       const page = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/revisions/query',
-        {record_uid:recordUid,limit:100,...(cursor ? {cursor_edit_at:cursor} : {})},session,signal)
+        {record_uid:recordUid,limit:50,cursor_version:cursor},session,signal)
       if (typeof page.record_uid === 'string' && page.record_uid !== recordUid) throw new ArkmePluginError('message-snapshot-detail-mismatch','快记创建环境身份不一致',false,502)
       for (const row of listValue(page.items)) {
         const item = objectValue(row)
         if (typeof item.record_uid === 'string' && item.record_uid !== recordUid) throw new ArkmePluginError('message-snapshot-detail-mismatch','快记创建环境身份不一致',false,502)
         if (item.version === 1) return item
       }
-      const next = numberValue(page.next_cursor_edit_at)
+      const next = numberValue(page.next_cursor_version)
       if (page.has_more !== true || next <= 0 || cursor > 0 && next >= cursor) return undefined
       cursor = next
     }
