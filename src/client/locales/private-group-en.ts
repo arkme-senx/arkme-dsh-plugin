@@ -3,6 +3,7 @@ export const privateGroupEnglish: Record<string, string> = Object.fromEntries(`
 仅显示我在此对话中的安排|Only my arrangements in this conversation
 刷新相关安排|Refresh related arrangements
 安排状态|Arrangement status
+已过期|Overdue
 已加载{count}条|{count} loaded
 刷新失败，保留上次结果|Refresh failed. Showing previous results
 正在读取相关安排…|Loading related arrangements…
