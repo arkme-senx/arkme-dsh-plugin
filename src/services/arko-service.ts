@@ -1,3 +1,4 @@
+import { executionMetadata } from '../model-execution.js'
 import { ArkoLifecycle } from './arko-lifecycle.js'
 import type { ArkmeArkoLifecycleCommand } from '../arko-lifecycle-contract.js'
 import { join } from 'node:path'
@@ -123,6 +124,7 @@ function arkoModelOptionFromData(value: unknown): ArkmeArkoModelOption {
     displayName,
     provider,
     description,
+    ...executionMetadata({...data, available:true}),
     costDescription: stringValue(data.cost_description),
     recommended: booleanValue(data.recommended),
     selected: booleanValue(data.selected),

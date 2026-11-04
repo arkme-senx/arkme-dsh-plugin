@@ -838,6 +838,11 @@ export class ArkmeSdk {
     return page
   }
 
+  async recordingAnalysis(input: import('../recording-analysis-contract.js').RecordingAnalysisInput, signal?: AbortSignal): Promise<import('../recording-analysis-contract.js').RecordingAnalysisResult> {
+    if ((await this.capabilities(signal)).features.recordingAnalysisV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持录音模型执行与原任务继续，请升级', retryable: false })
+    return this.call('recordings.analysis', input, signal)
+  }
+
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
     if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
     return this.call('recordings.workflow', { operation: 'capabilities' }, signal)
@@ -3436,3 +3441,6 @@ export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '..
 
 export type { WorldPublication, WorldPublicationRequest, WorldPublicationResponse, WorldPublicationSourceTarget } from '../world-publication-contract.js'
 export type {WorldSoundSegment,WorldSoundExcerpt,WorldSoundSelection,WorldSoundRequest,WorldSoundPrepared,WorldSoundReceipt,WorldSoundResponse} from '../world-sound-contract.js'
+export type { RecordingAnalysisInput, RecordingAnalysisResult } from '../recording-analysis-contract.js'
+
+export type { ModelBinding, ModelExecutionMetadata } from '../model-execution.js'

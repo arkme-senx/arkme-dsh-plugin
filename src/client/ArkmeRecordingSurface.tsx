@@ -219,6 +219,9 @@ export function ArkmeRecordingEmptyState({ recorded = false }: { recorded?: bool
 
 function recordingGenerationFailureMessage(error: string): string {
   switch (error) {
+    case 'insufficient_balance': return tr('AI 额度不足，充值后可继续本任务，已完成阶段不会重复扣费。')
+    case 'balance_reserved': return tr('AI 额度正被其他任务使用，请稍后继续本任务。')
+    case 'model_not_priced': return tr('所选模型暂时没有可用报价，请选择模型生成新版本。')
     case 'llm_request_failed': return tr('模型请求失败，请稍后重试或选择其他模型。')
     case 'llm_request_timeout':
     case 'generation_recovery_timeout': return tr('模型生成超时，请重试或选择其他模型。')
@@ -232,13 +235,14 @@ function recordingGenerationFailureMessage(error: string): string {
   }
 }
 
-export function ArkmeRecordingAnalysisEmptyState({ kind, state, onGenerate, modelLoading = false, modelName = '', failureReason = '' }: {
+export function ArkmeRecordingAnalysisEmptyState({ kind, state, onGenerate, modelLoading = false, modelName = '', failureReason = '', onContinue }: {
   kind: 'summary' | 'timeline'
   state: 'empty' | 'processing' | 'failed'
   onGenerate(): void
   modelLoading?: boolean
   modelName?: string
   failureReason?: string
+  onContinue?: (() => void) | undefined
 }) {
   const label = kind === 'summary'
     ? state === 'processing' ? '生成总结中...' : state === 'failed' ? '总结生成失败，' : '暂无总结内容，'
@@ -247,8 +251,9 @@ export function ArkmeRecordingAnalysisEmptyState({ kind, state, onGenerate, mode
     <img src={recordingEmptyIllustration} width={186} height={133} alt="" style={styles.emptyDayIllustration} />
     <span style={styles.analysisEmptyMessage}>{state === 'failed' ? recordingGenerationFailureMessage(failureReason) : label}</span>
     {modelName !== '' && <span style={{ color: colors.tertiary, fontSize: 12 }}>{tr('模型：')}{modelName}</span>}
+    {state === 'failed' && onContinue && <button type="button" style={styles.analysisGenerateButton} onClick={onContinue}>{tr('继续本任务')}</button>}
     {state !== 'processing' && <button data-arkme-feedback="neutral" type="button" style={styles.analysisGenerateButton} disabled={modelLoading} onClick={onGenerate}>
-      {modelLoading ? tr('正在读取模型…') : state === 'failed' ? tr('选择模型并重试') : kind === 'summary' ? tr("点击生成总结") : tr("点击生成时间轴")}
+      {modelLoading ? tr('正在读取模型…') : state === 'failed' ? tr('选择模型并生成新版本') : kind === 'summary' ? tr("点击生成总结") : tr("点击生成时间轴")}
     </button>}
   </div>
 }
@@ -499,11 +504,12 @@ function reconcileRecordingVersionId(currentId: string, versions: readonly Arkme
     : versions.find(version => version.selectable)?.id ?? ''
 }
 
-function SectionState({ section, loading, kind = 'transcript', onGenerate = () => {}, analysisVersion, modelName = '', modelLoading = false }: {
+function SectionState({ section, loading, kind = 'transcript', onGenerate = () => {}, analysisVersion, modelName = '', modelLoading = false, onContinue }: {
   section: ArkmeRecordingSection<unknown> | undefined
   loading: boolean
   kind?: 'transcript' | 'summary' | 'timeline'
   onGenerate?(): void
+  onContinue?: (() => void) | undefined
   analysisVersion?: ArkmeRecordingVersion | undefined
   modelName?: string
   modelLoading?: boolean
@@ -512,7 +518,7 @@ function SectionState({ section, loading, kind = 'transcript', onGenerate = () =
   if (section === undefined) return <div style={styles.status}>{tr("暂无数据")}</div>
   if (kind !== 'transcript' && (section.state === 'empty' || section.state === 'processing' || section.state === 'failed')) {
     return <ArkmeRecordingAnalysisEmptyState kind={kind} state={section.state} onGenerate={onGenerate}
-      modelLoading={modelLoading} modelName={section.state === 'empty' ? modelName : analysisVersion?.modelDisplayName ?? ''} failureReason={analysisVersion?.error ?? ''} />
+      onContinue={analysisVersion?.continuationAvailable ? onContinue : undefined} modelLoading={modelLoading} modelName={section.state === 'empty' ? modelName : analysisVersion?.modelDisplayName ?? ''} failureReason={analysisVersion?.error ?? ''} />
   }
   const message = section.message || (section.state === 'empty' ? '暂无已生成内容' : '读取失败')
   return section.state === 'error'
@@ -520,11 +526,12 @@ function SectionState({ section, loading, kind = 'transcript', onGenerate = () =
     : <div style={styles.status}>{message}</div>
 }
 
-function StatusBanner({ section }: { section: ArkmeRecordingSection<ArkmeRecordingVersion> }) {
+function StatusBanner({ section, onContinue }: { section: ArkmeRecordingSection<ArkmeRecordingVersion>; onContinue?: (() => void) | undefined }) {
   if (section.state !== 'processing' && section.state !== 'failed') return null
   return <div style={styles.banner}>{section.state === 'failed' ? <>
     {recordingGenerationFailureMessage(section.items[0]?.error ?? '')}
     {section.items[0]?.modelDisplayName && <> {tr('模型：')}{section.items[0].modelDisplayName}</>}
+    {section.items[0]?.continuationAvailable && onContinue && <button type="button" onClick={onContinue}>{tr('继续本任务')}</button>}
   </> : section.message}</div>
 }
 
@@ -573,7 +580,7 @@ function RecordingModelDialog({ kind, config, onClose, onConfirm }: {
     ? config.effectiveRouteKey : config.options[0]?.routeKey ?? ''
   return <AnalysisModelDialog ariaLabel={`选择${kind === 'summary' ? tr("总结") : tr("时间轴")}生成模型`}
     initialValue={initial} options={config.options.map(option => ({ value: option.routeKey, label: option.displayName }))}
-    unifiedModels={recordingModelChoices(config)} onClose={onClose} onConfirm={onConfirm} />
+    modelScene={kind === 'timeline' ? 'recording-timeline' : 'recording-summary'} unifiedModels={recordingModelChoices(config,kind)} onClose={onClose} onConfirm={onConfirm} />
 }
 
 function RecordingTimelineDetailDialog({ event, onClose }: { event: ArkmeRecordingTimelineEvent; onClose(): void }) {
@@ -785,6 +792,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const generationAbortRef = useRef<Partial<Record<ArkmeRecordingProjectionKind, AbortController>>>({})
   const modelConfigAbortRef = useRef<AbortController>()
   const [modelConfig, setModelConfig] = useState<RecordingModelConfigState>({ state: 'loading' })
+  const [modelConfigKind, setModelConfigKind] = useState<ArkmeRecordingProjectionKind>('summary')
   const [modelDialogKind, setModelDialogKind] = useState<ArkmeRecordingProjectionKind>()
   const [timelineDetailEvent, setTimelineDetailEvent] = useState<ArkmeRecordingTimelineEvent>()
   const [editingSpeaker, setEditingSpeaker] = useState<{ item: ArkmeRecordingWorkbenchItem; anchor: RecordingSpeakerPopoverAnchor; initialBatchUpdate: boolean; initialReview?: boolean }>()
@@ -912,7 +920,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     modelConfigAbortRef.current?.abort()
     modelConfigAbortRef.current = controller
     setModelConfig({ state: 'loading' })
-    void callArkme<ArkmeRecordingSummaryModelConfig>('recordings.summary-model-config', undefined, controller.signal)
+    const kind = dialogKind ?? 'summary'
+    setModelConfigKind(kind)
+    void callArkme<ArkmeRecordingSummaryModelConfig>('recordings.summary-model-config', { kind }, controller.signal)
       .then(value => {
         if (controller.signal.aborted) return
         setModelConfig({ state: 'ready', value })
@@ -1378,10 +1388,12 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     })
     try {
       const routeKey = requestedRouteKey.trim()
+      const selectedModel = modelConfig.state === 'ready' ? modelConfig.value.options.find(option => option.routeKey === routeKey) : undefined
+      if (!selectedModel?.binding || selectedModel.available !== true) throw new Error('模型目录已更新，请刷新后重新确认')
       if (routeKey !== '' && modelConfig.state === 'ready' && routeKey !== modelConfig.value.effectiveRouteKey) {
         const updated = await callArkme<ArkmeRecordingSummaryModelRouteUpdate>(
-          'recordings.summary-model-config.set',
-          { routeKey },
+          'recordings.analysis',
+          { action:'select',accountScope:entityAccount,routeKey,kind },
           controller.signal,
         )
         if (controller.signal.aborted) return
@@ -1390,16 +1402,36 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
           value: { ...current.value, effectiveRouteKey: updated.effectiveRouteKey, personalRouteKey: updated.effectiveRouteKey },
         })
       }
-      const section = await callArkme<ArkmeRecordingSection<ArkmeRecordingVersion>>(
-        'recordings.generate',
-        { dateStamp, kind, ...(routeKey === '' ? {} : { routeKey }), ...(notificationWindow ? { window: notificationWindow } : {}) },
+      const result = await callArkme<{accountScope:string; section:ArkmeRecordingSection<ArkmeRecordingVersion>}>(
+        'recordings.analysis',
+        { action:'generate', accountScope:entityAccount, dateStamp, kind, routeKey, ...(selectedModel?.binding ? {binding:selectedModel.binding} : {}), ...(notificationWindow ? { window: notificationWindow } : {}) },
         controller.signal,
       )
+      const section = result.section
       if (controller.signal.aborted) return
       setDay(current => current?.dateStamp === dateStamp ? { ...current, [kind]: section } : current)
       const firstVersionId = section.items.find(version => version.selectable)?.id ?? ''
       if (kind === 'summary') setSummaryVersionId(firstVersionId)
       else setTimelineVersionId(firstVersionId)
+    } catch (error) {
+      if (!controller.signal.aborted) setGenerationErrors(current => ({ ...current, [kind]: errorMessage(error) }))
+    } finally {
+      if (generationAbortRef.current[kind] === controller) {
+        delete generationAbortRef.current[kind]
+        setGeneratingKinds(current => ({ ...current, [kind]: false }))
+      }
+    }
+  }
+
+  const continueRecording = async (kind: ArkmeRecordingProjectionKind, version: ArkmeRecordingVersion | undefined) => {
+    if (!version?.continuationAvailable || generationAbortRef.current[kind]) return
+    const controller = new AbortController()
+    generationAbortRef.current[kind] = controller
+    setGeneratingKinds(current => ({ ...current, [kind]: true }))
+    setGenerationErrors(current => { const next = { ...current }; delete next[kind]; return next })
+    try {
+      const result = await callArkme<import('../recording-analysis-contract.js').RecordingAnalysisResult>('recordings.analysis', { action: 'continue', kind, dateStamp: selectedDate.getTime(), versionId: version.id, accountScope: entityAccount }, controller.signal)
+      if (!controller.signal.aborted && 'section' in result) setDay(current => current?.dateStamp === selectedDate.getTime() ? { ...current, [kind]: result.section } : current)
     } catch (error) {
       if (!controller.signal.aborted) setGenerationErrors(current => ({ ...current, [kind]: errorMessage(error) }))
     } finally {
@@ -1417,7 +1449,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       delete next[kind]
       return next
     })
-    if (modelConfig.state === 'ready' && modelConfig.value.options.length > 0) {
+    if (modelConfigKind === kind && modelConfig.state === 'ready' && modelConfig.value.options.length > 0) {
       setModelDialogKind(kind)
       return
     }
@@ -1537,14 +1569,15 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         loading={projectionLoading('summary')}
         kind="summary"
         analysisVersion={section?.items[0]}
-        modelName={configuredModelName}
+        modelName={modelConfigKind === 'summary' ? configuredModelName : ''}
         modelLoading={modelConfig.state === 'loading'}
+        onContinue={() => { void continueRecording('summary', section?.items[0]) }}
         onGenerate={() => { openModelDialog('summary') }}
       />
     </>
     return <>
       {sourceNotice}
-      <StatusBanner section={section} />
+      <StatusBanner section={section} onContinue={() => { void continueRecording('summary', section.items[0]) }} />
       <ArkmeMarkdownBody text={selectedSummary.content} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.75 }} />
     </>
   }
@@ -1563,14 +1596,15 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         loading={projectionLoading('timeline')}
         kind="timeline"
         analysisVersion={section?.items[0]}
-        modelName={configuredModelName}
+        modelName={modelConfigKind === 'timeline' ? configuredModelName : ''}
         modelLoading={modelConfig.state === 'loading'}
+        onContinue={() => { void continueRecording('timeline', section?.items[0]) }}
         onGenerate={() => { openModelDialog('timeline') }}
       />
     </>
     return <>
       {sourceNotice}
-      <StatusBanner section={section} />
+      <StatusBanner section={section} onContinue={() => { void continueRecording('timeline', section.items[0]) }} />
       <RecordingTimelineEvents events={selectedTimeline.timelineEvents} onOpen={setTimelineDetailEvent} />
     </>
   }
