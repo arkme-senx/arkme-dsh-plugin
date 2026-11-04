@@ -1,5 +1,6 @@
 import type { TranscriptViewPort } from '../transcript-view-contract.js'
 export type { TranscriptViewTarget,TranscriptViewReference,TranscriptViewSourceReference,TranscriptViewCommand,TranscriptViewReadItem,TranscriptViewSnapshot,PersonalTranscriptEntry,TranscriptViewReceipt,TranscriptViewSavedPage } from '../transcript-view-contract.js'
+export type * from '../arko-reply-contract.js'
 export type {ArkmeTeamMentionInput} from '../types.js'
 export type { ArkmeMessageExtensionSummary, ArkmeMessageExtensionSummaryItem } from '../message-extension-summary.js'
 export { GROUP_AI_POLISH_MEMBERSHIP_REQUIRED, isGroupAiPolishMembershipRequired } from '../group-ai-polish-access.js'
@@ -2743,6 +2744,12 @@ export class ArkmeSdk {
       sourceRef, messageActionRef,
     }, signal)
   }
+
+  private async requireReplyManagement(signal?: AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.arkoReplyManagementV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持云端回复管理，请升级',retryable:false})}
+  async arkoReplyPrompts(expectedScope?:string,signal?:AbortSignal):Promise<import('../arko-reply-contract.js').ArkoReplyPromptBook>{await this.requireReplyManagement(signal);return this.call('arko.reply-prompts.get',{...(expectedScope?{expectedAccountScope:expectedScope}:{})},signal)}
+  async saveArkoReplyPrompt(input:import('../arko-reply-contract.js').ArkoReplyPromptWrite,expectedScope:string,signal?:AbortSignal):Promise<import('../arko-reply-contract.js').ArkoReplyPromptResult>{await this.requireReplyManagement(signal);return this.call('arko.reply-prompts.save',{input,expectedAccountScope:expectedScope},signal)}
+  async resetArkoReplyPrompt(input:import('../arko-reply-contract.js').ArkoReplyPromptWrite,expectedScope:string,signal?:AbortSignal):Promise<import('../arko-reply-contract.js').ArkoReplyPromptResult>{await this.requireReplyManagement(signal);return this.call('arko.reply-prompts.reset',{input,expectedAccountScope:expectedScope},signal)}
+  async arkoRepliesPage(query:import('../arko-reply-contract.js').ArkoReplyHistoryQuery,expectedScope?:string,signal?:AbortSignal):Promise<import('../arko-reply-contract.js').ArkoReplyHistoryPage>{await this.requireReplyManagement(signal);return this.call('arko.replies.page',{query,...(expectedScope?{expectedAccountScope:expectedScope}:{})},signal)}
 
   private async requireThoughtReplyProvider(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.arkoThoughtRepliesV1 !== true) {

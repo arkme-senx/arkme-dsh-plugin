@@ -21,8 +21,10 @@ export async function readRecordThoughts(runtime: ServiceRuntime, expectedScope:
     if (typeof row.record_uid !== 'string' || !requested.has(row.record_uid)
       || typeof row.id !== 'string' || !row.id || row.id.length > 256
       || typeof row.content !== 'string' || !row.content.trim() || row.content.length > 131_072
-      || (row.biz !== 1 && row.biz !== 2)) continue
-    const item: ArkmeRecordThought = { id: row.id, recordUid: row.record_uid, content: row.content, biz: row.biz, ...(Number.isSafeInteger(row.generation) && Number(row.generation)>0 ? { generation:Number(row.generation) } : {}), ...(typeof row.reply_target_ref === 'string' && row.reply_target_ref.length <= 4096 && row.reply_target_ref ? { replyTargetRef: row.reply_target_ref } : {}) }
+      || (row.biz !== 1 && row.biz !== 2)
+      || !Number.isSafeInteger(row.source_version) || Number(row.source_version)<=0
+      || !Number.isSafeInteger(row.current_source_version) || Number(row.current_source_version)<Number(row.source_version)) continue
+    const item: ArkmeRecordThought = { sourceVersion:Number(row.source_version),currentSourceVersion:Number(row.current_source_version),id: row.id, recordUid: row.record_uid, content: row.content, biz: row.biz, ...(Number.isSafeInteger(row.generation) && Number(row.generation)>0 ? { generation:Number(row.generation) } : {}), ...(typeof row.reply_target_ref === 'string' && row.reply_target_ref.length <= 4096 && row.reply_target_ref ? { replyTargetRef: row.reply_target_ref } : {}) }
     items.set(JSON.stringify([item.recordUid, item.biz, item.id]), item)
   }
   return { accountScope: scope, items: [...items.values()].sort((a, b) => a.biz - b.biz || a.id.localeCompare(b.id)) }

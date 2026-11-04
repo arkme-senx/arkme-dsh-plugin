@@ -1979,6 +1979,16 @@ export class ChatService {
     return result
   }
 
+  /** Routing references for an already owner-authorized Intelligent history page.
+   * This private Host input never comes from Browser/SDK caller-supplied IDs. */
+  async arkoReplyHistoryActionRef(sourceRef: string, input: { recordUid: string; recordOwnerUserId: RecordOwnerId; senderUserId: RecordOwnerId; relationUid: string; sendAtMillis: number; sequence: number }, signal?: AbortSignal): Promise<string> {
+    const session=await this.runtime.requireSession(), source=await this.source.openSourceRef(sourceRef,session.userId)
+    const chat=source.kind==='private_chat'||source.kind==='group_chat'
+    if (!input.recordUid || !Number.isSafeInteger(input.sendAtMillis) || input.sendAtMillis<=0 || (chat && !input.relationUid) || (!chat && input.recordOwnerUserId!==recordOwnerId(session.userId))) throw new ArkmePluginError('arko-reply-source-invalid','回复来源无效',false,403)
+    signal?.throwIfAborted()
+    return this.sealMessageActionRef(this.messageActionRefPayload({sourceKind:chat?'chat_relation':'record',userId:session.userId,sourceOwnerRef:source.ownerRef,chatSessionUid:chat?source.ownerRef:'',relationUid:input.relationUid,recordOwnerUserId:input.recordOwnerUserId,recordUid:input.recordUid,senderUserId:input.senderUserId,senderName:'',title:'',textContent:'',sendAtMillis:input.sendAtMillis,sourceSequence:input.sequence,templateKind:1,displayKind:0}),await this.runtime.stateStore.uniqueCode())
+  }
+
   /** Seal only an owner-authorized article source returned by Record's library. */
   async articleSearchActionRef(raw: Record<string, unknown>, sourceRef: string, signal?: AbortSignal): Promise<string> {
     const session = await this.runtime.requireSession()

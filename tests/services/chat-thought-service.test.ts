@@ -5,11 +5,11 @@ const scope = 'production:42'
 function fixture() {
   const requireSession = vi.fn(async () => ({ userId: 42 }))
   const rows: unknown[] = [
-    { chat_session_uid: 'chat', rel_uid: 'rel', scene: 2, visibility: 2, status: 2, generation: 1, content: '公开回应' },
-    { chat_session_uid: 'chat', rel_uid: 'rel', scene: 3, visibility: 1, status: 2, generation: 2, content: '本人私密分析' },
-    { chat_session_uid: 'other', rel_uid: 'rel', scene: 3, visibility: 1, status: 2, generation: 1, content: '越界结果' },
-    { chat_session_uid: 'chat', rel_uid: 'foreign', scene: 3, visibility: 1, status: 2, generation: 1, content: '越界消息' },
-    { chat_session_uid: 'chat', rel_uid: 'rel', scene: 3, visibility: 2, status: 2, generation: 9, content: '错误可见域' },
+    {source_version:1,chat_session_uid: 'chat', rel_uid: 'rel', scene: 2, visibility: 2, status: 2, generation: 1, content: '公开回应' },
+    {source_version:1,chat_session_uid: 'chat', rel_uid: 'rel', scene: 3, visibility: 1, status: 2, generation: 2, content: '本人私密分析' },
+    {source_version:1,chat_session_uid: 'other', rel_uid: 'rel', scene: 3, visibility: 1, status: 2, generation: 1, content: '越界结果' },
+    {source_version:1,chat_session_uid: 'chat', rel_uid: 'foreign', scene: 3, visibility: 1, status: 2, generation: 1, content: '越界消息' },
+    {source_version:1,chat_session_uid: 'chat', rel_uid: 'rel', scene: 3, visibility: 2, status: 2, generation: 9, content: '错误可见域' },
   ]
   const post = vi.fn(async () => ({ items: rows }))
   const resolve = vi.fn(async () => ({ kind: 'chat' as const, viewerUserId: 42, recordUid: 'record', chatSessionUid: 'chat', relationUid: 'rel' }))
@@ -26,11 +26,11 @@ it('resolves signed references and returns separate public and user-only documen
 })
 it('retains current lifecycle status and only the newest generation for each scene', async () => {
   const f = fixture(); f.rows.splice(0, f.rows.length,
-    ...[2, 1].map(generation => ({ chat_session_uid: 'chat', rel_uid: 'rel', scene: 5, visibility: 1, status: generation === 2 ? 4 : 2, generation, content: '旧建议' })))
+    ...[2, 1].map(generation => ({source_version:1,chat_session_uid: 'chat', rel_uid: 'rel', scene: 5, visibility: 1, status: generation === 2 ? 4 : 2, generation, content: '旧建议' })))
   expect((await readChatThoughts(f.runtime, scope, 'source', ['signed'], f.resolve)).items).toMatchObject([{ status: 'invalidated', generation: 2 }])
 })
 it('projects the full structured analysis and bounded suggestion groups without private owner fields', async () => {
-  const f = fixture(); f.rows.splice(0, f.rows.length, { chat_session_uid: 'chat', rel_uid: 'rel', scene: 5, visibility: 1, status: 2, generation: 1,
+  const f = fixture(); f.rows.splice(0, f.rows.length, {source_version:1,chat_session_uid: 'chat', rel_uid: 'rel', scene: 5, visibility: 1, status: 2, generation: 1,
     display: { headline: '等待确认', internal_secret: 'secret', unified_meaning: { context_understanding: { summary: '讨论计划' }, their_intent: { underlying: '可能希望得到确认', emotion: { primary: '期待' } }, risk_factors: { warnings: ['先核实时间'] } }, suggestions: [{ style_title: '自然', items: ['收到，我确认一下。', '好的，稍后回复你。'] }] } })
   const result = await readChatThoughts(f.runtime, scope, 'source', ['signed'], f.resolve)
   expect(result.items[0]?.display).toMatchObject({ context: '讨论计划', underlying: '可能希望得到确认', emotion: '期待', warnings: ['先核实时间'], suggestions: [{ style: '自然', items: ['收到，我确认一下。', '好的，稍后回复你。'] }] })

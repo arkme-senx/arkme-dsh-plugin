@@ -62,6 +62,7 @@ import { teamCodexPost, teamCodexBytes } from './services/team-codex-transport.j
 import { AiPointsService } from './services/ai-points-service.js'
 import { ModelDirectoryService } from './services/model-directory-service.js'
 import { ThoughtRealtimeService } from './services/thought-realtime-service.js'
+import {readReplyPrompts,writeReplyPrompt,readReplyHistory} from './services/arko-reply-management-service.js'
 import { readRecordThoughts } from './services/record-thought-service.js'
 import type { ArkmeAiPointsQuery } from './ai-points.js'
 import type { ArkmeAiPointsStatisticsQuery, ArkmeAiPointsRangeQuery } from './ai-points-statistics.js'
@@ -435,6 +436,10 @@ export class ArkmeService {
     this.thoughtRealtime ??= new ThoughtRealtimeService(this.runtime, this.source, event => this.realtime.emitChatClientEvent({ ...event, revision: this.realtime.nextChatClientRevision() }))
     this.thoughtRealtime.start()
   }
+  arkoReplyPrompts(expectedScope?:string,signal?:AbortSignal){return readReplyPrompts(this.runtime,expectedScope,signal)}
+  saveArkoReplyPrompt(input:import('./arko-reply-contract.js').ArkoReplyPromptWrite,expectedScope:string,signal?:AbortSignal){return writeReplyPrompt(this.runtime,input,expectedScope,false,signal)}
+  resetArkoReplyPrompt(input:import('./arko-reply-contract.js').ArkoReplyPromptWrite,expectedScope:string,signal?:AbortSignal){return writeReplyPrompt(this.runtime,input,expectedScope,true,signal)}
+  arkoRepliesPage(query:import('./arko-reply-contract.js').ArkoReplyHistoryQuery,expectedScope?:string,signal?:AbortSignal){return readReplyHistory(this.runtime,this.source,this.chat,query,expectedScope,signal)}
   async recordThoughts(expectedScope: string, recordUids: unknown, signal?: AbortSignal) {
     const result = await readRecordThoughts(this.runtime, expectedScope, recordUids, signal)
     this.startThoughtRealtime()
@@ -1534,6 +1539,7 @@ recordingAnalysisV1: true,
         messageExtensionSummariesV1: true,
         arkoThoughtRepliesV1: true,
         arkoThoughtContinuationsV1: true,
+ arkoReplyManagementV1: true,
         recordEditHistoryV1: true,
         reactionsV1: true,
         worldReactionsV1: true,

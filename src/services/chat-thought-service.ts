@@ -46,11 +46,11 @@ export async function readChatThoughts(runtime: ServiceRuntime, expectedScope: s
     const row = objectValue(raw), recordUid = relations.get(text(row.rel_uid, 256)), scene = row.scene, status = row.status, generation = row.generation
     if (row.chat_session_uid !== chatSessionUid || !recordUid || ![1, 2, 3, 4, 5].includes(scene as number)
       || ![1, 2, 3, 4].includes(status as number) || !Number.isSafeInteger(generation) || (generation as number) < 1
-      || row.visibility !== (scene === 2 ? 2 : 1)) continue
+      || row.visibility !== (scene === 2 ? 2 : 1) || !Number.isSafeInteger(row.source_version) || Number(row.source_version)<=0) continue
     const id = `${recordUid}:${String(scene)}`, previous = items.get(id)
     if (previous && previous.generation! >= (generation as number)) continue
     const display = displayView(row.display)
-    items.set(id, { id, recordUid, biz: (scene as number) <= 3 ? 2 : 1, scene: scene as 1 | 2 | 3 | 4 | 5,
+    items.set(id, { sourceVersion:Number(row.source_version),currentSourceVersion:Number(row.source_version),id, recordUid, biz: (scene as number) <= 3 ? 2 : 1, scene: scene as 1 | 2 | 3 | 4 | 5,
       visibility: scene === 2 ? 'members' : 'user', status: (['generating', 'ready', 'failed', 'invalidated'] as const)[(status as number) - 1]!,
       ...(typeof row.reply_target_ref === 'string' && row.reply_target_ref.length <= 4096 && row.reply_target_ref ? { replyTargetRef: row.reply_target_ref } : {}), generation: generation as number, content: text(row.content, 131_072), ...(display ? { display } : {}) })
   }

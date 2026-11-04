@@ -1,5 +1,7 @@
 /** Existing private-record thoughts. Reading never starts an AI generation. */
 export interface ArkmeRecordThought {
+  sourceVersion?: number
+  currentSourceVersion?: number
   replyTargetRef?: string
   id: string
   recordUid: string
@@ -35,6 +37,7 @@ export interface ArkmeRecordThoughts {
 }
 
 export interface ArkmeThoughtStreamUpdate {
+  sourceVersion?: number
   recordUid: string
   streamId: string
   biz: 1 | 2

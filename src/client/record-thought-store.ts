@@ -8,7 +8,6 @@ type Reader = (scope: string, recordUids: string[], signal: AbortSignal, actionR
 
 /** One visible self workspace owns batches; list entries and details share results. */
 export class RecordThoughtStore {
-  private outdatedLegacy = new Map<string, Set<string>>()
   private ephemeral = new Map<string, { item: ArkmeRecordThought; at: number; bytes: number }>()
   private invalidationEpochs = new Map<string, number>()
   private states = new Map<string, RecordThoughtState>()
@@ -31,9 +30,6 @@ export class RecordThoughtStore {
     const watch = this.watchers.get(uid) ?? { listeners: new Set(), sentAt, version }
     const changed = this.versions.get(uid) !== version
     if (changed && this.versions.has(uid)) {
-      const signatures = this.outdatedLegacy.get(uid) ?? new Set<string>()
-      for (const item of this.get(uid).items) if (item.scene === undefined) signatures.add(JSON.stringify([item.id, item.biz, item.content]))
-      this.outdatedLegacy.set(uid, signatures)
       this.publish(uid, { items: [], loading: false, error: '', ...(this.get(uid).rejected ? { rejected: true } : {}) }); this.ephemeral.delete(uid)
     }
     this.versions.set(uid, version)
@@ -64,6 +60,7 @@ export class RecordThoughtStore {
   applyStream(update: ArkmeThoughtStreamUpdate): void {
     const uid = update.recordUid
     if (!this.active || !this.watchers.has(uid) || this.get(uid).rejected) return
+    if (!Number.isSafeInteger(update.sourceVersion) || update.sourceVersion!<=0 || update.sourceVersion !== this.versions.get(uid)) { if(update.phase!=='generating') this.refresh(uid); return }
     const previous = this.ephemeral.get(uid)
     // A reconnect may resume in the middle. Never append a duplicated or missing range.
     const bytes = new TextEncoder().encode(update.delta).length
@@ -71,7 +68,7 @@ export class RecordThoughtStore {
     if (previous?.item.id === update.streamId && !update.delta && update.phase === 'generating') return
     if (update.phase !== 'failed' && update.contentBytes > 0 && update.contentBytes !== (previous?.item.id === update.streamId ? previous.bytes : 0) + bytes) { this.refresh(uid); return }
     const content = `${previous?.item.id === update.streamId ? previous.item.content : ''}${update.delta}`.slice(0, 131_072)
-    const item: ArkmeRecordThought = { id: update.streamId, recordUid: uid, content, biz: update.biz, status: update.phase }
+    const item: ArkmeRecordThought = {sourceVersion:update.sourceVersion!,currentSourceVersion:update.sourceVersion!,id: update.streamId, recordUid: uid, content, biz: update.biz, status: update.phase }
     this.ephemeral.set(uid, { item, at: Date.now(), bytes: update.contentBytes || new TextEncoder().encode(content).length })
     this.publish(uid, { ...this.get(uid), items: [...this.get(uid).items.filter(item => item.biz !== update.biz), item], error: '' })
     if (update.phase !== 'generating') this.refresh(uid)
@@ -94,7 +91,7 @@ export class RecordThoughtStore {
     if (this.focusUid !== uid) return false
     this.focusUid = undefined; return true
   }
-  dispose(): void { this.active = false; this.stop(); this.watchers.clear(); this.states.clear(); this.readAt.clear(); this.versions.clear(); this.ephemeral.clear(); this.invalidationEpochs.clear(); this.outdatedLegacy.clear() }
+  dispose(): void { this.active = false; this.stop(); this.watchers.clear(); this.states.clear(); this.readAt.clear(); this.versions.clear(); this.ephemeral.clear(); this.invalidationEpochs.clear() }
   private publish(uid: string, state: RecordThoughtState) {
     this.states.set(uid, state)
     this.watchers.get(uid)?.listeners.forEach(listener => listener())
@@ -136,9 +133,9 @@ export class RecordThoughtStore {
       for (const uid of uids) {
         if (versions.get(uid) !== this.versions.get(uid) || epochs.get(uid) !== this.invalidationEpochs.get(uid) || this.pending.has(uid)) continue
         this.readAt.set(uid, Date.now())
-        let items = result.items.filter(item => item.recordUid === uid && (item.scene !== undefined || !this.outdatedLegacy.get(uid)?.has(JSON.stringify([item.id, item.biz, item.content]))))
+        let items = result.items.filter(item => item.recordUid === uid && Number.isSafeInteger(item.sourceVersion) && item.sourceVersion!>0 && Number.isSafeInteger(item.currentSourceVersion) && item.currentSourceVersion===this.versions.get(uid) && item.sourceVersion!<=item.currentSourceVersion!)
         const ephemeral = this.ephemeral.get(uid)
-        if (ephemeral && !items.some(item => item.biz === ephemeral.item.biz) && Date.now() - ephemeral.at < 30_000) items = [...items, ephemeral.item]
+        if (ephemeral && ephemeral.item.status==='generating' && ephemeral.item.sourceVersion===this.versions.get(uid) && !items.some(item => item.biz === ephemeral.item.biz) && Date.now() - ephemeral.at < 30_000) items = [...items, ephemeral.item]
         else this.ephemeral.delete(uid)
         this.publish(uid, { items, loaded: true, loading: false, error: '' })
       }
@@ -156,7 +153,7 @@ export class RecordThoughtStore {
         if (this.pending.size) this.queue([])
         else this.schedulePoll()
         // Keep only a bounded, memory-only history when moving between topics.
-        for (const uid of this.states.keys()) if (this.states.size > 500 && !this.watchers.has(uid)) { this.states.delete(uid); this.readAt.delete(uid); this.versions.delete(uid); this.ephemeral.delete(uid); this.invalidationEpochs.delete(uid); this.outdatedLegacy.delete(uid) }
+        for (const uid of this.states.keys()) if (this.states.size > 500 && !this.watchers.has(uid)) { this.states.delete(uid); this.readAt.delete(uid); this.versions.delete(uid); this.ephemeral.delete(uid); this.invalidationEpochs.delete(uid) }
       }
     }
   }

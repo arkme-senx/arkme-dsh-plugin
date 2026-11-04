@@ -5,10 +5,10 @@ import type { ServiceRuntime } from '../../src/services/service.js'
 function fixture() {
   const requireSession = vi.fn(async () => ({ userId: 42 }))
   const post = vi.fn(async () => ({ thought_ls: [
-    { id: 'a', record_uid: 'note', content: '**可以试试**', biz: 1 },
-    { id: 'b', record_uid: 'note', content: '主动回应', biz: 2 },
-    { id: 'a', record_uid: 'note', content: '**可以试试**', biz: 1 },
-    { id: 'foreign', record_uid: 'not-requested', content: '不能返回', biz: 1 },
+    {source_version:1,current_source_version:1,id: 'a', record_uid: 'note', content: '**可以试试**', biz: 1 },
+    {source_version:1,current_source_version:1,id: 'b', record_uid: 'note', content: '主动回应', biz: 2 },
+    {source_version:1,current_source_version:1,id: 'a', record_uid: 'note', content: '**可以试试**', biz: 1 },
+    {source_version:1,current_source_version:1,id: 'foreign', record_uid: 'not-requested', content: '不能返回', biz: 1 },
   ] }))
   const runtime = { config: { environment: 'production' }, requireSession, authenticatedIntelligentPost: post } as unknown as ServiceRuntime
   return { runtime, requireSession, post }
@@ -19,7 +19,7 @@ it('reads existing private thoughts in a bounded background batch and preserves 
   expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/v1/thought/get-private-by-ruids', { ruids: ['note'] }, { userId: 42 }, signal,
     { lane: 'background-read', publishServiceCooldown: false })
   expect(result).toEqual({ accountScope: 'production:42', items: [
-    { id: 'a', recordUid: 'note', content: '**可以试试**', biz: 1 }, { id: 'b', recordUid: 'note', content: '主动回应', biz: 2 },
+    {sourceVersion:1,currentSourceVersion:1,id: 'a', recordUid: 'note', content: '**可以试试**', biz: 1 }, {sourceVersion:1,currentSourceVersion:1,id: 'b', recordUid: 'note', content: '主动回应', biz: 2 },
   ] })
 })
 it('rejects foreign account scopes and malformed or oversized queries before a remote read', async () => {

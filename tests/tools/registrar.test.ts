@@ -374,6 +374,7 @@ describe('registerArkmeTools', () => {
       'arkme_ai_points_statistics','arkme_ai_points_consumption_range',
       'arkme_account_models','arkme_account_model_binding','arkme_account_model_usage','arkme_account_model_preference','arkme_account_model_disable',
       'arkme_automatic_ai_settings', 'arkme_disable_automatic_ai',
+      'arkme_arko_reply_prompts', 'arkme_arko_replies', 'arkme_set_arko_reply_prompt',
       'arkme_background_sound_status',
       'arkme_background_sound_disable',
       'arkme_id_set',

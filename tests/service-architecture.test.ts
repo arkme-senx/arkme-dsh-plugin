@@ -9,6 +9,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const expectedPublicMethods = [
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
+  'arkoReplyPrompts', 'saveArkoReplyPrompt', 'resetArkoReplyPrompt', 'arkoRepliesPage',
   'recordingFileStorage', 'recordingAnalysis',
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
@@ -157,6 +158,7 @@ const expectedPublicMethods = [
 
 const expectedServiceFiles = [
   'transcript-view-service.ts',
+  'arko-reply-management-service.ts',
   'progressive-attachments.ts',
   'account-model-service.ts', 'model-usage-contract.ts',
   'identity-share-service.ts',

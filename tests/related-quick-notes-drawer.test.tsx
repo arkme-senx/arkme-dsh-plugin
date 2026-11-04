@@ -71,6 +71,7 @@ import { invalidateMessageQuoteSources } from '../src/client/message-quote-inval
 
 const timelineItem: ArkmeTimelineItem = {
   itemUid: 'record-source',
+  recordVersion: 1,
   messageActionRef: 'opaque-action',
   senderName: '小林',
   isMe: false,
@@ -124,7 +125,7 @@ describe('normal timeline related quick note drawer', () => {
     vi.useFakeTimers()
     let finish!: (value: unknown) => void
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'record.thoughts.query') return { accountScope:'test:11',items:[{id:'real-thought',recordUid:timelineItem.itemUid,content:'Arko 的原始建议',biz:1,generation:7,replyTargetRef:'owner-signed-target'}] }
+      if (operation === 'record.thoughts.query') return { accountScope:'test:11',items:[{id:'real-thought',recordUid:timelineItem.itemUid,content:'Arko 的原始建议',biz:1,generation:7, sourceVersion: 1, currentSourceVersion: 1,replyTargetRef:'owner-signed-target'}] }
       if (operation === 'source.related-quick-notes.from-message') return relatedList
       if (operation === 'source.message-extension.context') return { parentRecordUid:timelineItem.itemUid,extensionCount:0,extensions:[] }
       if (operation === 'source.message-extension.extend') return await new Promise(resolve => { finish=resolve })
@@ -156,7 +157,7 @@ describe('normal timeline related quick note drawer', () => {
       templateKind: 1, displayKind: 0, officialMark: 0, mediaItems: [] })
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
       if (operation === 'record.thoughts.query') return { accountScope: 'test:11', items: [
-        { id: 'thought-not-a-record', recordUid: timelineItem.itemUid, content: 'Arko的想法', biz: 1 },
+        { id: 'thought-not-a-record', recordUid: timelineItem.itemUid, content: 'Arko的想法', biz: 1, sourceVersion: 1, currentSourceVersion: 1 },
       ] }
       if (operation === 'source.related-quick-notes.from-message') return relatedList
       if (operation === 'source.message-extension.context') return { parentRecordUid: timelineItem.itemUid, extensionCount: 2,
@@ -206,7 +207,7 @@ describe('normal timeline related quick note drawer', () => {
     vi.useFakeTimers()
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'record.thoughts.query') return { accountScope: 'test:11', items: [
-        { id: 'arko-reply', recordUid: timelineItem.itemUid, content: '**Arko答复**', biz: 1 },
+        { id: 'arko-reply', recordUid: timelineItem.itemUid, content: '**Arko答复**', biz: 1, sourceVersion: 1, currentSourceVersion: 1 },
       ] }
       if (operation === 'source.related-quick-notes.from-message') return relatedList
       if (operation === 'source.message-extension.context') return { parentRecordUid: timelineItem.itemUid, extensionCount: 1,
@@ -238,7 +239,7 @@ describe('normal timeline related quick note drawer', () => {
     vi.useFakeTimers()
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'record.thoughts.query') return { accountScope: 'test:11', items: [
-        { id: 'arko-reply', recordUid: timelineItem.itemUid, content: '已完成的回复', biz: 1 },
+        { id: 'arko-reply', recordUid: timelineItem.itemUid, content: '已完成的回复', biz: 1, sourceVersion: 1, currentSourceVersion: 1 },
       ] }
       if (operation === 'source.related-quick-notes.from-message') return relatedList
       if (operation === 'source.message-extension.context') throw new Error('延展暂时无法读取')

@@ -1,3 +1,4 @@
+import { arkoReplyToolModules } from './arko-replies.js'
 import { deviceLockToolModules } from './device-lock.js'
 import { automaticCapabilityToolModules } from './automatic-capabilities.js'
 import { accountModelToolModules } from './models.js'
@@ -13,6 +14,7 @@ export const accountBusinessToolModules: readonly ArkmeToolModule[] = [
   ...aiPointsToolModules,
   ...accountModelToolModules,
   ...automaticCapabilityToolModules,
+  ...arkoReplyToolModules,
   ...backgroundSoundPreferenceToolModules,
   setArkmeIdToolModule,
 ]

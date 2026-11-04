@@ -1668,6 +1668,7 @@ recordingAnalysisV1?: true
     messageExtensionSummariesV1?: true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
+    arkoReplyManagementV1?: true
     recordEditHistoryV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
@@ -4403,6 +4404,10 @@ export type ArkmeChatClientEvent = {
 
 export type ArkmePluginOperation =
   | import('./local-recorder/contract.js').LocalRecorderOperation
+  | 'arko.reply-prompts.get'
+  | 'arko.reply-prompts.save'
+  | 'arko.reply-prompts.reset'
+  | 'arko.replies.page'
   | 'source.record-edit-history'
   | 'source.record-revision-snapshot'
   | 'record.thoughts.query'
