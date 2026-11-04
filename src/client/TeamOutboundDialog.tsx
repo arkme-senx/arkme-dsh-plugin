@@ -1,4 +1,4 @@
-import { openTeamEntryMessages } from './team-entry-navigation.js'
+import { openConfirmedTeamContact } from './team-entry-navigation.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
@@ -9,7 +9,6 @@ import { ArkmePeoplePickerSearch } from './ArkmePeoplePickerSearch.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
-import { invalidateTeamMessages } from './team-messaging-events.js'
 import { chooseContactTeam, contactTeamError, openTeamContact, rememberContactTeam, teamContactTeams } from './team-contact.js'
 import { subscribeTeamOutbound, type TeamOutboundIntent, type TeamOutboundPerson } from './team-outbound.js'
 import { loadMoreTeamOutboundContacts, observeTeamOutboundAccount, teamOutboundContacts } from './team-outbound-contacts.js'
@@ -158,8 +157,9 @@ export function TeamOutboundDialog({ intent, onClose }: { intent: TeamOutboundIn
     try {
       const conversation = await openTeamContact({ accountKey: intent.accountKey, person }, team, requestUid.current, c.signal)
       if (c.signal.aborted || !mounted.current) return
+      if (!openConfirmedTeamContact(intent.accountKey, conversation)) throw new Error(tr('登录账号已变化，请重新打开此窗口'))
       rememberContactTeam(intent.accountKey, team)
-      invalidateTeamMessages(intent.accountKey); onClose(); openTeamEntryMessages({ kind: 'conversation', conversation })
+      onClose()
     } catch (e) { if (!c.signal.aborted) setError(contactTeamError(e, team)) }
     finally { requests.current.delete(c); opening.current = false; if (!c.signal.aborted && mounted.current) setBusy(false) }
   }

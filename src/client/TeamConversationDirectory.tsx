@@ -27,7 +27,8 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
   const actions = useTeamConversationEntryActions(accountKey, { kind: 'folder', group })
   const { latest, channel } = group
   const unread = group.attentionUnread
-  const preview = latest.preview?.status === 'available'
+  const emptyPreview = latest.lastSeq === 0 && (!latest.preview || latest.preview.status === 'unavailable' && !latest.preview.text && !latest.preview.templateKind && !latest.preview.hasMedia)
+  const preview = emptyPreview ? tr('尚未发送消息') : latest.preview?.status === 'available'
     ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
     : latest.preview ? tr('内容暂不可用') : ''
   return <><button type="button" role="treeitem" aria-selected={selected} data-team-folder={channel.jotmoId}
@@ -90,6 +91,15 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
     scroll.current.scrollTop = arkmeUi.readTeamDirectoryScroll(scope)
     restoredScope.current = scope
   }, [scope, resolving, directory.hasLoaded])
+  useLayoutEffect(() => {
+    if (!selectedKey || !scroll.current || resolving) return
+    const selected = [...scroll.current.querySelectorAll<HTMLElement>('[data-team-conversation-key]')]
+      .find(row => row.dataset.teamConversationKey === selectedKey)
+    if (!selected) return
+    const container = scroll.current.getBoundingClientRect(), row = selected.getBoundingClientRect()
+    if (row.top < container.top) scroll.current.scrollTop -= container.top - row.top
+    else if (row.bottom > container.bottom) scroll.current.scrollTop += row.bottom - container.bottom
+  }, [scope, resolving, selectedKey, directory.hasLoaded, JSON.stringify(visibleItems.map(c => c.key))])
   useEffect(() => {
     if (resolving || directory.loading || directory.error || !directory.hasMore) return
     // A selected team's first conversation may be beyond the global first page.
