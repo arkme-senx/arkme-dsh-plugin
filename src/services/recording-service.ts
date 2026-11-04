@@ -339,6 +339,12 @@ export class RecordingService {
     return result
   }
 
+  async soundExcerptSelection(itemRefs: string[]): Promise<import('../world-sound-contract.js').WorldSoundOwnerSelection> {
+    if(!Array.isArray(itemRefs)||itemRefs.some(ref=>typeof ref!=='string'||ref.length>16384))throw new ArkmePluginError('world-sound-invalid','录音选段无效',false,400)
+    const {selection}=await this.recordingCommandSelection(itemRefs)
+    return {source:'recording',session_id:selection.sessionId,segments:selection.segments.map(s=>({child_id:s.childId,asr_item_index:s.asrItemIndex,transcript_source:s.transcriptSource}))}
+  }
+
   private async recordingCommandSelection(itemRefs: readonly string[]) {
     if (itemRefs.length === 0 || itemRefs.length > RECORDING_FORWARD_MAX_SEGMENTS) throw new ArkmePluginError('recording-forward-selection-invalid', '请选择 1 至 150 个录音片段', false, 400)
     const session = await this.runtime.requireSession()
