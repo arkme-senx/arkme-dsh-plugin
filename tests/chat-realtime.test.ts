@@ -121,6 +121,18 @@ describe('Arkme Chat realtime', () => {
       .toMatchObject({ latestSequence: 9 })
   })
 
+  it('preserves distinct int64 Bot sender identities from numeric and string SSE fields', () => {
+    for (const id of ['9007199254740992', '9007199254740993', '9223372036854775807']) {
+      const raw = JSON.stringify({ ...chatHint, sender_user_id: id })
+      expect(decodeArkmeChatReceiveDataLine(`data: ${raw}`)?.senderUserId).toBe(id)
+      expect(decodeArkmeChatReceiveDataLine(`data: ${raw.replace(`"${id}"`, id)}`)?.senderUserId).toBe(id)
+    }
+    for (const value of ['9223372036854775808', '0', '-1', '1.5']) {
+      expect(decodeArkmeChatReceiveDataLine(`data: ${JSON.stringify({ ...chatHint, sender_user_id: value })}`)).toBeUndefined()
+    }
+    expect(decodeArkmeChatReceiveDataLine(`data: ${JSON.stringify({ ...chatHint, latest_seq: '9007199254740993' })}`)).toBeUndefined()
+  })
+
   it('decodes only metadata-only projection invalidations', () => {
     expect(decodeArkmeProjectionInvalidatedDataLine(`data: ${JSON.stringify(recordProjectionHint)}`)).toEqual({
       eventUid: 'projection-event-1', projection: 'record', eventAtMillis: 123457,
