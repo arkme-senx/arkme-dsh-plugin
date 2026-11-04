@@ -1600,6 +1600,7 @@ arkoImagesV1?:true
     arkoLifecycleV1?: true
     recordExportV1?: true
     arkoHistoryReadsV1?: true
+    arkoInteractionTimelineV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
@@ -4642,6 +4643,7 @@ export type ArkmePluginOperation =
   | 'user.arkme-id.set'
   | 'image.read'
   | 'images.list'
+  | 'world.publications'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'
@@ -4895,6 +4897,9 @@ export type ArkmePluginOperation =
   | 'arko.lifecycle.query'
   | 'arko.lifecycle.change'
   | 'arko.deleted'
+  | 'arko.interactions'
+  | 'arko.interaction.open'
+  | 'arko.timeline.cache'
   | 'arko.messages'
   | 'arko.search'
   | 'arko.context'

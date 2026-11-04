@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -46,6 +47,7 @@ async function resized() {
   await act(async () => { for (const observer of resize) observer.callback([], {} as ResizeObserver) })
 }
 beforeEach(() => {
+ arkoTimelineMemory.clear()
   frames = []; resize = []; intersections = []; growth = 0
   scrollIntoView = vi.fn()
   Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })

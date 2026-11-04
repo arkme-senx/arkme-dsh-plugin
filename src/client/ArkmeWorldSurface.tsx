@@ -1,5 +1,6 @@
 import { TeamWorldActivity } from './TeamWorldActivity.js'
 import { WorldTeamBadge } from './WorldTeamBadge.js'
+import { WorldPublishIdentityDialog } from './WorldPublishIdentityDialog.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { ArkmeSelfRoleMenu } from './ArkmeSelfRoleMenu.js'
@@ -1327,6 +1328,11 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
   onLoadMore?(): void
 }) {
   useArkmeLocale()
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.addEventListener('arkme-world-publications-changed', onRefresh)
+    return () => window.removeEventListener('arkme-world-publications-changed', onRefresh)
+  }, [onRefresh])
   const [activity, setActivity] = useState(false), [more, setMore] = useState(false)
   const detailContext = `${publicTab ?? scope}:${target?.userId ?? ''}:${target && 'contactRef' in target ? target.contactRef : ''}`
   const [detailSelection, setDetailSelection] = useState<{ context: string; item: ArkmeWorldFeedItem }>()
@@ -1516,13 +1522,13 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     if (!origin) return
     const controller = new AbortController()
     setSourceState({ loading: true })
-    const blockedAttachment: import('../record-reedit-contract.js').ArkmeRecordReeditAttachmentView = { selection: { fileAssetUid: 'unsupported-source-attachment' }, asset: { fileAssetUid: 'unsupported-source-attachment', fileName: tr('原消息附件（暂不支持公开，请移除后仅发布正文）'), mimeType: 'application/octet-stream', fileKind: 4 as const, size: 0 }, unavailable: true }
+    const blockedAttachment: import('../record-reedit-contract.js').ArkmeRecordReeditAttachmentView = { selection: { fileAssetUid: 'unsupported-source-attachment' }, asset: { fileAssetUid: 'unsupported-source-attachment', fileName: tr('原消息附件（暂不支持公开）'), mimeType: 'application/octet-stream', fileKind: 4 as const, size: 0 }, unavailable: true }
     const local = origin.kind === 'local'
-    const read: Promise<WorldPublishSourceDraft> = local ? Promise.resolve({ ...origin, version: 1, title: '', attachments: origin.hasAttachments ? [blockedAttachment] : [] })
-      : origin.kind === 'arko' ? callArkme<Omit<WorldPublishSourceDraft, 'sourceRef' | 'itemUid' | 'version' | 'title'>>('world.arko-source-draft', { sessionId: origin.sessionId, messageId: origin.messageId }, controller.signal).then(value => ({ ...value, sourceRef: origin.sourceRef, itemUid: origin.itemUid, version: 1, title: '', sourceLabel: 'Arko' }))
-      : origin.kind === 'action' ? callArkme<{ textContent: string; sendAtMillis: number }>('world.message-source-draft', { conversationRef: origin.sourceRef, actionRef: origin.actionRef }, controller.signal).then(value => ({ ...value, sourceRef: origin.sourceRef, itemUid: origin.itemUid, version: 1, title: '', sourceLabel: tr('Bot 对话'), attachments: origin.hasAttachments ? [blockedAttachment] : [] }))
-      : callArkme<WorldPublishSourceDraft>('world.source-draft', { ...origin }, controller.signal)
-    void read.then(snapshot => {
+    const read = (signal: AbortSignal): Promise<WorldPublishSourceDraft> => local ? Promise.resolve({ ...origin, version: 1, title: '', attachments: origin.hasAttachments ? [blockedAttachment] : [] })
+      : origin.kind === 'arko' ? callArkme<Omit<WorldPublishSourceDraft, 'sourceRef' | 'itemUid' | 'version' | 'title'>>('world.arko-source-draft', { sessionId: origin.sessionId, messageId: origin.messageId }, signal).then(value => ({ ...value, sourceRef: origin.sourceRef, itemUid: origin.itemUid, version: 1, title: '', sourceLabel: 'Arko' }))
+      : origin.kind === 'action' ? callArkme<{ textContent: string; sendAtMillis: number }>('world.message-source-draft', { conversationRef: origin.sourceRef, actionRef: origin.actionRef }, signal).then(value => ({ ...value, sourceRef: origin.sourceRef, itemUid: origin.itemUid, version: 1, title: '', sourceLabel: tr('Bot 对话'), attachments: origin.hasAttachments ? [blockedAttachment] : [] }))
+      : callArkme<WorldPublishSourceDraft>('world.source-draft', { ...origin }, signal)
+    void withArkmeReadDeadline(read, controller.signal).then(snapshot => {
       if (controller.signal.aborted) return
       if (snapshot.itemUid !== origin.itemUid || snapshot.sourceRef !== origin.sourceRef || !Number.isSafeInteger(snapshot.version) || snapshot.version <= 0 || !Array.isArray(snapshot.attachments)) throw new Error(tr('原内容返回异常，请重试'))
       setText([snapshot.title.trim(), snapshot.textContent].filter(Boolean).join('\n\n'))
@@ -1561,6 +1567,7 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     if (result.result.visibility === 'rejected') { setMessage(tr('内容审核未通过，团队原件已保存。')); resetMutationId(); return }
     if (!['published','pending'].includes(result.result.visibility)) { setMessage(tr('团队原件已保存，当前未公开。')); resetMutationId(); return }
     resetMutationId()
+    window.dispatchEvent(new Event('arkme-world-publications-changed'))
     onPublished({ recordSaved: true, recordState: 'synced', worldPublished: true, visibility: result.result.visibility === 'pending' ? 'pending_review' : 'visible', checkStatus: result.result.visibility === 'pending' ? 1 : 2, retryable: false })
     onClose()
   }
@@ -1613,6 +1620,13 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
         controller.signal.throwIfAborted(); applyTeamReceipt(result); return
       }
       await requirePhoneForSocialAction('发布到世界', controller.signal)
+      if (origin && (!origin.kind || origin.kind === 'record')) {
+        const result = await callArkme<ArkmeWorldPublishResult>('world.publications', { action: 'publish-source', accountKey, origin, version: sourceState.snapshot?.version }, controller.signal)
+        controller.signal.throwIfAborted()
+        if (!result.worldPublished) throw new Error(result.error ?? '发布未完成，请重试')
+        window.dispatchEvent(new Event('arkme-world-publications-changed'))
+        onPublished(result); onClose(); return
+      }
       setSending(true)
       setMessage(attachments.length > 0 ? '正在上传图片…' : '正在发布…')
       const assets = await withTimeout(Promise.all(attachments.map(async item => {
@@ -1668,6 +1682,13 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
   const destination = publisher.selected
     ? tr('发布到{v0}的世界 · 由{v1}发布', { v0: publisher.displayTeam?.name ?? tr('团队'), v1: actorName ?? tr('我') })
     : tr('发布到世界')
+  if (origin) return <WorldPublishIdentityDialog publisher={publisher} actorName={actorName} actorAvatarRef={actorAvatarRef}
+    busy={sending} pending={teamPending} loading={sourceState.loading} error={sourceState.error} message={message}
+    blockedReason={attachments.some(worldPublishAttachmentBlocked) ? tr('原消息包含暂不支持公开的附件，当前无法完整发布。')
+      : text.length > 2000 || attachments.length > ARKME_WORLD_PUBLISH_MAX_IMAGES ? tr('原消息超出世界发布限制，当前无法完整发布。') : undefined}
+    onRetry={() => { setMessage(''); setSourceRevision(value => value + 1) }}
+    onSelect={id => { if (sending || teamPending) return; publisher.select(id); resetMutationId(); setMessage('') }}
+    onClose={onClose} onPublish={() => { void submit() }} />
   return <div role="dialog" aria-modal="true" aria-label={tr('发世界')} style={styles.modalBackdrop} onMouseDown={event => { if (event.target === event.currentTarget && !sending) onClose() }}>
     <section style={{ ...styles.modal, width: 'min(640px, 100%)', maxHeight: 'calc(100vh - 48px)', padding: 20, borderRadius: 16 }} data-world-publish-dialog="shared-self">
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
