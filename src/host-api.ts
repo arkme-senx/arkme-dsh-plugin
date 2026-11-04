@@ -1018,7 +1018,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
-      if (['data.export', 'data.export.saved'].includes(request.operation) && origin === undefined) throw new ArkmePluginError('origin-required', '导出必须从当前页面确认后发起', false, 403)
+      if (['data.export', 'data.export.saved', 'data.export.directory.pick', 'data.export.directory.open'].includes(request.operation) && origin === undefined) throw new ArkmePluginError('origin-required', '导出必须从当前页面确认后发起', false, 403)
       if (['arko.ask', 'arko.pending.prepare', 'arko.pending.acknowledge'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'Arko 输入必须由当前 DSH 页面发起', false, 403)
       }
@@ -1423,11 +1423,13 @@ export async function dispatchArkmeHostOperation(
       operationUid: stringParam(params, 'operationUid'), bizCode: numberParam(params, 'bizCode', -1),
     }, requestSignal)
     case 'data.deleted': return await service.dataDeletedRecords(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'data.export.directory.pick': return await service.dataExportDirectoryPick(stringParam(params,'expectedAccountScope'),requestSignal)
+    case 'data.export.directory.open': return await service.dataExportDirectoryOpen(stringParam(params,'expectedAccountScope'),stringParam(params,'destinationRef'),requestSignal)
     case 'data.export': return await service.dataExport(recordExportOptions(params), requestSignal)
     case 'data.export.preflight': return await service.dataExportPreflight(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'data.export.range.preview': {
       if (![1, 2].includes(params.orderKind as number)) throw new ArkmePluginError('record-export-range-invalid', '记录顺序无效', false, 400)
-      return await service.dataExportRangePreview(stringParam(params, 'expectedAccountScope'), exportSelection(params.selection), params.orderKind as 1 | 2, requestSignal)
+      return await service.dataExportRangePreview(stringParam(params, 'expectedAccountScope'), exportSelection(params.selection), params.orderKind as 1 | 2, requestSignal, typeof params.destinationRef==='string'?params.destinationRef:undefined)
     }
     case 'data.export.saved': {
       if (params.confirmed !== true) throw new ArkmePluginError('record-export-confirmation-required', '请确认已保存这份备份', false, 400)
@@ -3520,5 +3522,6 @@ function recordExportOptions(params: Record<string, unknown>): import('./data-ma
   if (params.confirmed !== true || ![1, 2].includes(params.orderKind as number)) throw new ArkmePluginError('record-export-confirmation-required', '请确认后再导出', false, 400)
   if (params.previewUid !== undefined && params.selection === undefined) throw new ArkmePluginError('record-export-range-invalid', '缺少导出范围', false, 400)
   return { expectedAccountScope: stringParam(params, 'expectedAccountScope'), confirmed: true, orderKind: params.orderKind as 1 | 2,
+    ...(params.destinationRef === undefined ? {} : {destinationRef: stringParam(params,'destinationRef')}),
     ...(params.selection === undefined ? {} : { selection: exportSelection(params.selection), previewUid: stringParam(params, 'previewUid') }) }
 }

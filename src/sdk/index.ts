@@ -656,11 +656,18 @@ export class ArkmeSdk {
     if ((await this.capabilities(scoped)).features.recordExportV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前版本不支持完整导出，请升级', retryable: false })
     const result = await this.exportWithProgress<ArkmeRecordExport>('data.export', { ...options }, scoped, onProgress)
     if (result.accountScope !== options.expectedAccountScope || typeof result.quotaFinalized !== 'boolean') throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出响应无效', retryable: false })
+    if(options.destinationRef && (result.kind!=='directory'||result.directoryRef!==options.destinationRef||!Number.isSafeInteger(result.count)||result.count<0))throw new ArkmeClientError({code:'local-response-invalid',message:'目录导出响应无效',retryable:false})
     return result
   }
-  async previewRecordExport(expectedAccountScope: string, selection: ArkmeExportSelection, orderKind: 1 | 2, signal?: AbortSignal): Promise<ArkmeRangeExportPreview> {
+  async pickRecordExportDirectory(expectedAccountScope:string,signal?:AbortSignal):Promise<{accountScope:string;canceled:boolean;destinationRef?:string;displayName?:string}>{
+    const value=await this.call<{accountScope:string;canceled:boolean;destinationRef?:string;displayName?:string}>('data.export.directory.pick',{expectedAccountScope},signal)
+    if(value.accountScope!==expectedAccountScope||typeof value.canceled!=='boolean')throw new ArkmeClientError({code:'local-response-invalid',message:'目录选择响应无效',retryable:false})
+    return value
+  }
+  async openRecordExportDirectory(expectedAccountScope:string,destinationRef:string,signal?:AbortSignal){return this.call('data.export.directory.open',{expectedAccountScope,destinationRef},signal)}
+  async previewRecordExport(expectedAccountScope: string, selection: ArkmeExportSelection, orderKind: 1 | 2, signal?: AbortSignal, destinationRef?:string): Promise<ArkmeRangeExportPreview> {
     const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
-    const result = await this.call<ArkmeRangeExportPreview>('data.export.range.preview', { expectedAccountScope, selection, orderKind }, scoped)
+    const result = await this.call<ArkmeRangeExportPreview>('data.export.range.preview', { expectedAccountScope, selection, orderKind, ...(destinationRef?{destinationRef}:{}) }, scoped)
     if (result.accountScope !== expectedAccountScope || result.supported !== true) throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出范围响应无效', retryable: false })
     return result
   }

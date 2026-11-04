@@ -1,186 +1,25 @@
 // @vitest-environment jsdom
-import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { ArkmeRecordExportPanel } from '../src/client/ArkmeRecordExportPanel.js'
-const mock = vi.hoisted(() => ({ run: vi.fn(), dispose: vi.fn(), preview: vi.fn(), saved: vi.fn() }))
-vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ exportRecords: mock.run, dispose: mock.dispose, previewRecordExport: mock.preview, confirmRecordExportSaved: mock.saved, localFileUrl: () => '/local.zip' }) }))
-let host: HTMLDivElement, root: Root
-const preflight = { accountScope: 'test:11', canExport: true, recordCount: 2, imageCount: 1, voiceCount: 1, message: '', latestAtMillis: 0 }
-const button = (label: string) => [...document.querySelectorAll('button')].find(node => node.textContent === label)!
-const chooseRange = async (range: string) => act(async () => {
-  const select = host.querySelector('select')!
-  select.value = range; select.dispatchEvent(new Event('change', { bubbles: true }))
-})
-beforeEach(() => { (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; host = document.createElement('div'); document.body.append(host); root = createRoot(host); mock.run.mockReset(); mock.dispose.mockReset() })
-afterEach(async () => { await act(async () => root.unmount()); host.remove() })
-it('requires confirmation, reports progress, and offers the finished ZIP without starting another export', async () => {
-  let finish!: (value: unknown) => void
-  mock.run.mockImplementation(async (_options, _signal, notify) => { notify({ count: 1 }); return new Promise(resolve => { finish = resolve }) })
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight} />))
-  await act(async () => button('导出备份').click())
-  expect(mock.run).not.toHaveBeenCalled()
-  await act(async () => button('确认导出').click())
-  expect(host.textContent).toContain('已读取 1 条')
-  expect(mock.run.mock.calls[0]![0]).toEqual({ expectedAccountScope: 'test:11', orderKind: 1, confirmed: true })
-  await act(async () => finish({ accountScope: 'test:11', count: 2, fileRef: 'ref', fileName: 'backup.zip', quotaFinalized: false }))
-  expect(host.querySelector('a')?.download).toBe('backup.zip')
-  expect(host.textContent).toContain('请勿重复创建备份')
-  expect(mock.dispose).toHaveBeenCalledOnce()
-})
-it('cancels at the source on leaving the page and suppresses late success', async () => {
-  let signal!: AbortSignal
-  mock.run.mockImplementation((_options, current) => { signal = current; return new Promise(() => {}) })
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight} />))
-  await act(async () => button('导出备份').click())
-  await act(async () => button('确认导出').click())
-  await act(async () => root.render(<div />))
-  expect(signal.aborted).toBe(true)
-})
-it('blocks export when preflight disallows it', async () => {
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, canExport: false }} />))
-  expect(button('导出备份').disabled).toBe(true)
-  expect(mock.run).not.toHaveBeenCalled()
-})
-it('allows date selection and presets, hides all-record counts, and never falls back to a full export', async () => {
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight} />))
-  await chooseRange('dates')
-  expect(host.querySelector('.arkme-export-summary')).toBeNull()
-  expect(host.textContent).toContain('后端接口开发中，开发完成后此功能完整可用。')
-  expect(host.textContent).toContain('接通前不会创建导出任务或使用额度。')
-  const inputs = host.querySelectorAll<HTMLInputElement>('input[type=date]')
-  await act(async () => button('上月').click())
-  const now = new Date(), lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0)
-  expect(inputs[0]!.value.endsWith('-01')).toBe(true)
-  expect(inputs[1]!.value.endsWith(`-${String(lastMonthEnd.getDate()).padStart(2, '0')}`)).toBe(true)
-  expect(button('导出备份').disabled).toBe(true)
-  await act(async () => button('导出备份').click())
-  expect(mock.run).not.toHaveBeenCalled()
-  await chooseRange('all')
-  expect(host.querySelector('.arkme-export-summary')).not.toBeNull()
-  expect(button('导出备份').disabled).toBe(false)
-})
-it('does not interpret the old ZIP finish timestamp as a saved incremental checkpoint', async () => {
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, latestAtMillis: 1793691000000 }} />))
-  expect(host.textContent).toContain('最近生成备份：')
-  await chooseRange('incremental')
-  expect(host.textContent).toContain('增量进度尚未接通')
-  expect(host.textContent).toContain('补录的旧日期记录')
-  expect(host.textContent).not.toContain('最近生成备份：')
-  expect(host.querySelector('.arkme-export-summary')).toBeNull()
-  expect(button('导出备份').disabled).toBe(true)
-  expect(mock.run).not.toHaveBeenCalled()
-})
-it('validates native date input events immediately instead of leaving the displayed values ahead of state', async () => {
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight} />))
-  await chooseRange('dates')
-  const inputs = host.querySelectorAll<HTMLInputElement>('input[type=date]')
-  await act(async () => {
-    inputs[0]!.value = '2026-11-04'; inputs[0]!.dispatchEvent(new Event('input', { bubbles: true }))
-    inputs[1]!.value = '2026-11-03'; inputs[1]!.dispatchEvent(new Event('input', { bubbles: true }))
-  })
-  expect(host.textContent).toContain('结束日期不能早于开始日期。')
-  expect(inputs[0]!.getAttribute('aria-invalid')).toBe('true')
-  await act(async () => button('最近7天').click())
-  expect(host.textContent).not.toContain('结束日期不能早于开始日期。')
-  expect(inputs[0]!.getAttribute('aria-invalid')).toBe('false')
-})
-it('does not let a text-only choice silently include every attachment', async () => {
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight} />))
-  await act(async () => host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click())
-  expect(button('导出备份').disabled).toBe(true)
-  expect(host.querySelector('.arkme-export-summary')).toBeNull()
-  expect(mock.run).not.toHaveBeenCalled()
-  await act(async () => host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click())
-  expect(button('导出备份').disabled).toBe(false)
-})
-it('does not execute with another account preflight or when there are no records', async () => {
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:12" preflight={preflight} />))
-  expect(button('导出备份').disabled).toBe(true)
-  expect(host.querySelector('.arkme-export-summary')?.textContent).toContain('—')
-  await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, recordCount: 0 }} />))
-  expect(button('导出备份').disabled).toBe(true)
-  expect(host.textContent).toContain('暂无可导出的记录。')
-})
-it('defaults to incremental with a saved baseline, and never acknowledges merely clicking download', async () => {
-  vi.useFakeTimers()
-  try {
-    mock.preview.mockResolvedValue({ accountScope: 'test:11', supported: true, canExport: true, baselineRequired: false, recordCount: 1, imageCount: 0, voiceCount: 0, newCount: 1, updatedCount: 0, removedCount: 0, chainVersion: 1, savedAtMillis: 1000, previewUid: 'plan', selectionFingerprint: 'a'.repeat(64) })
-    mock.run.mockResolvedValue({ accountScope: 'test:11', count: 1, fileRef: 'file', fileName: 'range.zip', quotaFinalized: true, savedConfirmationRef: 'sealed', rangeMode: 'incremental' })
-    mock.saved.mockResolvedValue({ accountScope: 'test:11', chainVersion: 2, savedAtMillis: 2000 })
-    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 1, savedAtMillis: 1000 } }} />))
-    expect(host.querySelector('select')!.value).toBe('incremental')
-    expect(button('导出备份').disabled).toBe(true)
-    await act(async () => vi.advanceTimersByTimeAsync(501))
-    await act(async () => button('导出备份').click())
-    await act(async () => button('确认导出').click())
-    expect(mock.run.mock.calls.at(-1)![0]).toMatchObject({ previewUid: 'plan', selection: { mode: 'incremental' } })
-    expect(button('我已保存').disabled).toBe(true)
-    await act(async () => { const link = host.querySelector('a')!; link.addEventListener('click', event => event.preventDefault()); link.click() })
-    expect(mock.saved).not.toHaveBeenCalled()
-    await act(async () => button('我已保存').click())
-    expect(mock.saved).not.toHaveBeenCalled()
-    await act(async () => button('确认已保存').click())
-    expect(mock.saved).toHaveBeenCalledWith('test:11', 'sealed', expect.any(AbortSignal))
-    expect(host.textContent).toContain('已确认保存，下次将自动选择增量。')
-  } finally { vi.useRealTimers() }
-})
-it('discards a late range response after switching the selected range', async () => {
-  vi.useFakeTimers()
-  try {
-    let finish!: (value: unknown) => void
-    mock.preview.mockImplementationOnce(() => new Promise(resolve => { finish = resolve })).mockResolvedValue({ accountScope: 'test:11', supported: true, canExport: false, baselineRequired: true, recordCount: 0, imageCount: 0, voiceCount: 0, removedCount: 0 })
-    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 0, savedAtMillis: 0 } }} />))
-    await act(async () => vi.advanceTimersByTimeAsync(501))
-    await chooseRange('incremental')
-    await act(async () => finish({ accountScope: 'test:11', canExport: true, recordCount: 999, previewUid: 'old' }))
-    expect(button('导出备份').disabled).toBe(true)
-    expect(host.textContent).not.toContain('999')
-    await act(async () => vi.advanceTimersByTimeAsync(501))
-    expect(host.textContent).toContain('请先完成一次全部导出并确认保存，再使用增量。')
-  } finally { vi.useRealTimers() }
-})
-it('keeps completed statistics through parent refreshes and saving, then reloads the baseline after reopening', async () => {
-  vi.useFakeTimers()
-  try {
-    const refresh = vi.fn()
-    const ready = { accountScope: 'test:11', supported: true, canExport: true, baselineRequired: false, recordCount: 5, imageCount: 2, voiceCount: 1, newCount: 4, updatedCount: 1, removedCount: 0, chainVersion: 1, savedAtMillis: 1000, previewUid: 'freeze-plan', selectionFingerprint: 'a'.repeat(64) }
-    mock.preview.mockResolvedValue(ready)
-    mock.run.mockResolvedValue({ accountScope: 'test:11', count: 5, fileRef: 'file', fileName: 'range.zip', quotaFinalized: true, savedConfirmationRef: 'sealed', rangeMode: 'incremental' })
-    mock.saved.mockResolvedValue({ accountScope: 'test:11', chainVersion: 2, savedAtMillis: 2000 })
-    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 1, savedAtMillis: 1000 } }} onRefresh={refresh} />))
-    await act(async () => vi.advanceTimersByTimeAsync(501))
-    await act(async () => button('导出备份').click())
-    await act(async () => button('确认导出').click())
-    const previewCalls = mock.preview.mock.calls.length
-    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={undefined} loading onRefresh={refresh} />))
-    expect(host.querySelector('.arkme-export-summary')?.textContent).toContain('5条快记2张图片1段语音')
-    expect(host.textContent).not.toContain('后端接口开发中')
-    expect(host.querySelector('[aria-label="刷新导出信息"]')?.hasAttribute('disabled')).toBe(true)
-    await act(async () => { const link = host.querySelector('a')!; link.addEventListener('click', event => event.preventDefault()); link.click() })
-    await act(async () => button('我已保存').click())
-    await act(async () => button('确认已保存').click())
-    expect(refresh).not.toHaveBeenCalled()
-    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, canExport: false, recordCount: 0, rangeExportV2: { chainVersion: 2, savedAtMillis: 2000 } }} onRefresh={refresh} />))
-    await act(async () => vi.advanceTimersByTimeAsync(501))
-    expect(host.querySelector('.arkme-export-summary')?.textContent).toContain('5条快记2张图片1段语音')
-    expect(host.textContent).toContain('新增 4 条 · 更新 1 条 · 移除 0 条')
-    expect(mock.preview.mock.calls.length).toBe(previewCalls)
-    await act(async () => root.render(<div />))
-    mock.preview.mockResolvedValue({ ...ready, recordCount: 0, imageCount: 0, voiceCount: 0, newCount: 0, updatedCount: 0, chainVersion: 2, savedAtMillis: 2000 })
-    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 2, savedAtMillis: 2000 } }} />))
-    await act(async () => vi.advanceTimersByTimeAsync(501))
-    expect(host.querySelector('.arkme-export-summary')?.textContent).toContain('0条快记0张图片0段语音')
-    expect(host.textContent).toContain('暂无新增或更新内容。')
-    expect(button('导出备份').disabled).toBe(true)
-    await act(async () => root.render(<div />))
-    mock.preview.mockResolvedValue({ ...ready, canExport: false, previewUid: undefined, recordCount: 0, chainVersion: 0, savedAtMillis: 0, message: '导出次数已达上限' })
-    await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 2, savedAtMillis: 2000 } }} />))
-    await act(async () => vi.advanceTimersByTimeAsync(501))
-    expect(host.textContent).toContain('上次成功保存：')
-    expect(host.textContent).toContain('导出次数已达上限')
-    expect(host.textContent).not.toContain('正在读取增量进度')
-    expect(host.textContent).not.toContain('暂无新增或更新内容。')
-    expect(host.querySelector('.arkme-export-summary')?.textContent).toContain('—条快记—张图片—段语音')
-  } finally { vi.useRealTimers() }
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { ArkmeRecordExportPanel } from '../src/client/ArkmeRecordExportPanel.js';
+const mock = vi.hoisted(() => ({ run: vi.fn(), dispose: vi.fn(), preview: vi.fn(), pick: vi.fn(), open: vi.fn() }));
+vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ exportRecords: mock.run, dispose: mock.dispose, previewRecordExport: mock.preview, pickRecordExportDirectory: mock.pick, openRecordExportDirectory: mock.open }) }));
+let root: Root, host: HTMLDivElement;
+const preflight = { accountScope: 'test:11', canExport: true, recordCount: 0, imageCount: 0, voiceCount: 0, message: '', latestAtMillis: 0, rangeExportV2: { chainVersion: 1, savedAtMillis: 1000 } };
+const preview = { accountScope: 'test:11', supported: true, folderSupported: true, canExport: true, baselineRequired: false, recordCount: 2, imageCount: 1, voiceCount: 0, newCount: 1, updatedCount: 1, removedCount: 0, chainVersion: 1, savedAtMillis: 1000, previewUid: 'plan', selectionFingerprint: 'a'.repeat(64) };
+const button = (label: string) => [...document.querySelectorAll('button')].find(b => b.textContent === label)!;
+const settle = () => act(async () => { await vi.advanceTimersByTimeAsync(501); });
+beforeEach(() => { vi.useFakeTimers(); (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true; host = document.createElement('div'); document.body.append(host); root = createRoot(host); for (const fn of Object.values(mock))
+    fn.mockReset(); mock.preview.mockResolvedValue(preview); mock.pick.mockResolvedValue({ accountScope: 'test:11', canceled: false, destinationRef: 'selected', displayName: '备份目录' }); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); });
+it('always exposes three tabs and defaults to incremental before any baseline exists', async () => { await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>)); expect([...host.querySelectorAll('[role=tab]')].map(b => b.textContent)).toEqual(['增量', '按日期', '全部']); expect(button('增量').getAttribute('aria-selected')).toBe('true'); expect(host.querySelector('select')).toBeNull(); expect(button('导出到文件夹').disabled).toBe(true); });
+it('opens a calendar only after selecting dates and clicking the date control', async () => { await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>)); await act(async () => button('按日期').click()); expect(document.querySelector('[aria-label="导出日期范围"]')).toBeNull(); await act(async () => (host.querySelector('[aria-label="选择导出日期"]') as HTMLButtonElement).click()); expect(document.querySelector('[role=dialog]')).not.toBeNull(); await act(async () => button('上月').click()); await act(async () => button('确定').click()); expect(document.querySelector('[role=dialog]')).toBeNull(); expect(host.querySelector('input[type=date]')).toBeNull(); await settle(); expect(mock.preview.mock.calls.at(-1)?.[1].mode).toBe('dates'); });
+it('writes directly to a selected folder and never offers a ZIP or manual saved confirmation', async () => { mock.run.mockResolvedValue({ accountScope: 'test:11', kind: 'directory', directoryRef: 'selected', fileRef: '', fileName: '内容.md', size: 100, count: 2, quotaFinalized: true, savedAtMillis: 2000 }); await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>)); await act(async () => button('选择文件夹').click()); await settle(); await act(async () => button('导出到文件夹').click()); expect(mock.run).toHaveBeenCalledWith(expect.objectContaining({ destinationRef: 'selected', selection: expect.objectContaining({ mode: 'incremental' }) }), expect.any(AbortSignal), expect.any(Function)); expect(host.textContent).toContain('已导出到本地文件夹'); expect(host.textContent).not.toContain('我已保存'); expect(host.querySelector('a[download]')).toBeNull(); mock.open.mockResolvedValue(undefined); await act(async () => button('打开文件夹').click()); expect(mock.open).toHaveBeenCalledWith('test:11', 'selected'); });
+it('keeps full/date quota messages out of incremental and clears indefinite loading on failure', async () => { mock.preview.mockRejectedValue(new Error('网络暂不可用')); await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 0, savedAtMillis: 0 } }}/>)); await settle(); expect(host.textContent).toContain('增量进度读取失败'); expect(host.textContent).not.toContain('正在读取增量进度…'); expect(host.textContent).toContain('网络暂不可用'); expect(host.textContent).toContain('增量不限次数'); });
+it('requires a complete backup in the selected folder and offers the full tab without silently starting it', async () => { mock.preview.mockResolvedValue({ ...preview, canExport: false, baselineRequired: true, previewUid: undefined, chainVersion: 0, savedAtMillis: 0 }); await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={{ ...preflight, rangeExportV2: { chainVersion: 0, savedAtMillis: 0 } }}/>)); await settle(); expect(host.textContent).toContain('先建立完整备份'); await act(async () => button('选择全部').click()); expect(button('全部').getAttribute('aria-selected')).toBe('true'); expect(mock.run).not.toHaveBeenCalled(); });
+it('drops directory selection and aborts an active export on account change', async () => { let signal!: AbortSignal; mock.run.mockImplementation((_v, s) => { signal = s; return new Promise(() => { }); }); await act(async () => root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>)); await act(async () => button('选择文件夹').click()); await settle(); await act(async () => button('导出到文件夹').click()); await act(async () => root.render(<ArkmeRecordExportPanel scope="test:12" preflight={undefined}/>)); expect(signal.aborted).toBe(true); expect(host.textContent).not.toContain('备份目录'); expect(button('导出到文件夹').disabled).toBe(true); });
+
+it('retains the confirmed counts while writing instead of flashing empty statistics',async()=>{
+ mock.run.mockImplementation(()=>new Promise(()=>{}));await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await settle();await act(async()=>button('导出到文件夹').click());expect(host.querySelector('.arkme-export-summary')?.textContent).toContain('2条快记');expect(host.querySelector('.arkme-export-summary')?.textContent).not.toContain('—');
 })

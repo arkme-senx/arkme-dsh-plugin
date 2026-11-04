@@ -39,7 +39,7 @@
 .arkme-export-format > span { color: var(--export-muted); }
 .arkme-export-order { display: flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
 .arkme-export-order label { position: relative; border-radius: 7px; padding: 5px 12px; color: var(--export-muted); cursor: pointer; font-size: 12px; white-space: nowrap; }
-.arkme-export-order label.is-selected { color: var(--dsw-alias-label-primary, #17191c); background: var(--dsw-alias-bg-layer-3, #fff); box-shadow: 0 1px 3px #0000000c; }
+.arkme-export-order label.is-selected { color: var(--dsw-alias-label-primary, #17191c); background: var(--dsw-alias-bg-base, #fff); box-shadow: 0 1px 3px #0000000c; }
 .arkme-export-order input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .arkme-export-order label:has(input:focus-visible) { outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe); outline-offset: 1px; }
 .arkme-export-order label:has(input:disabled) { cursor: default; opacity: .6; }
@@ -87,3 +87,23 @@
   .arkme-export-footer { flex-wrap: wrap; }
   .arkme-export-footer > button { margin-left: auto; }
 }
+.arkme-export-range-row { display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;min-height:50px;margin-bottom:12px }
+.arkme-export-tabs { display:flex;gap:3px;padding:3px;border-radius:10px;background:var(--dsw-alias-bg-layer-2,#f1f2f4) }
+.arkme-record-export .arkme-export-tabs button { border:0;background:transparent;color:var(--export-muted);font:inherit;font-size:13px;padding:7px 16px;border-radius:8px;white-space:nowrap }
+.arkme-record-export .arkme-export-tabs [aria-selected="true"] {background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#17191c);box-shadow:0 1px 4px #00000010}
+.arkme-export-date-trigger,.arkme-export-folder {display:inline-flex;align-items:center;gap:7px;border:1px solid var(--export-line);background:transparent;color:inherit;border-radius:8px;padding:8px 10px;font:inherit;font-size:12px;max-width:100%;overflow-wrap:anywhere}
+.arkme-export-calendar {box-sizing:border-box;width:308px;max-width:calc(100vw - 16px);padding:14px;border:1px solid var(--dsw-alias-border-l2,#e1e3e6);border-radius:14px;background:var(--dsw-alias-bg-base,#fff);color:var(--dsw-alias-label-primary,#17191c);box-shadow:0 10px 36px #00000028;font:13px -apple-system,BlinkMacSystemFont,sans-serif}
+.arkme-export-calendar header,.arkme-export-calendar footer {display:flex;align-items:center;justify-content:space-between;gap:8px}
+.arkme-export-calendar button {cursor:pointer;font:inherit;color:inherit;border:0;background:transparent;border-radius:7px;padding:6px}
+.arkme-export-calendar button:hover {background:var(--dsw-alias-interactive-bg-hover,#00000008)}
+.arkme-export-calendar-grid {display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px;margin:12px 0}
+.arkme-export-calendar-grid span,.arkme-export-calendar-grid button {display:grid;place-items:center;min-height:32px;padding:0;text-align:center;font-variant-numeric:tabular-nums}
+.arkme-export-calendar-grid span {color:var(--dsw-alias-label-secondary,#68707c);font-size:11px}
+.arkme-export-calendar-grid [data-outside="true"] {opacity:.4}
+.arkme-export-calendar-grid [data-between="true"] {background:var(--dsw-alias-interactive-bg-hover,#eef2fa)}
+.arkme-export-calendar-grid .is-selected {background:var(--dsw-alias-button-primary-fill,#17191c);color:var(--dsw-alias-label-primary-inverted,#fff);opacity:1}
+.arkme-export-calendar footer {border-top:1px solid var(--dsw-alias-border-l2,#e1e3e6);padding-top:10px}
+.arkme-export-calendar footer small {font-size:10px;color:var(--dsw-alias-label-secondary,#68707c)}
+.arkme-export-calendar footer button {background:var(--dsw-alias-button-primary-fill,#17191c);color:var(--dsw-alias-label-primary-inverted,#fff);padding:6px 12px}
+
+.arkme-record-export .arkme-settings-link {border:0;background:transparent;color:var(--dsw-alias-state-business-primary,#3964fe);font:inherit;font-size:12px;padding:4px 0;cursor:pointer}

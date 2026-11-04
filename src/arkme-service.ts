@@ -1,3 +1,4 @@
+import { RecordDirectoryExportService } from './services/record-directory-export-service.js'
 import{readSelectedTextNoteQuote}from'./selected-text-note.js'
 import { ConversationArrangementService } from "./services/conversation-arrangement-service.js"
 import { prepareComposerDocument, type ComposerDocumentInput } from './services/composer-document.js'
@@ -513,6 +514,7 @@ export class ArkmeService {
   private readonly botConversation: BotConversationService
   private readonly outgoingCall: OutgoingCallService
   private readonly world: WorldService
+  private readonly directoryExport: RecordDirectoryExportService
   private readonly recordExport: RecordExportService
   private readonly arko: ArkoService
   private readonly group: GroupService
@@ -854,6 +856,7 @@ export class ArkmeService {
       this.source,
     )
     this.recordExport = new RecordExportService(this.runtime)
+    this.directoryExport = new RecordDirectoryExportService(this.runtime)
     this.teamWorldOwner = new TeamWorldService(this.runtime, {
       publicPreviews: (refs, signal) => this.world.readPublicPreviews(refs, signal),
       actorNames: async (ids, signal) => {
@@ -1092,9 +1095,12 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async accountTokenUsageOperations(scope: string, query: ArkmeTokenUsageQuery, signal?: AbortSignal) { return await new AccountUsageDetailsService(this.runtime).operations(scope, query, signal) }
   async accountTokenUsageCalls(scope: string, query: ArkmeTokenUsageQuery, signal?: AbortSignal) { return await new AccountUsageDetailsService(this.runtime).calls(scope, query, signal) }
   async dataDeletedRecords(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).deleted(scope, signal) }
-  async dataExport(options: import('./data-management.js').ArkmeRecordExportOptions, signal?: AbortSignal, progress?: (value: import('./data-management.js').ArkmeRecordExportProgress) => void) { return this.recordExport.run(options, signal, progress) }
+  async dataExport(options: import('./data-management.js').ArkmeRecordExportOptions, signal?: AbortSignal, progress?: (value: import('./data-management.js').ArkmeRecordExportProgress) => void) { return options.destinationRef ? this.directoryExport.run(options,signal,progress) : this.recordExport.run(options, signal, progress) }
   async dataExportPreflight(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).exportPreflight(scope, signal) }
-  async dataExportRangePreview(scope: string, selection: unknown, order: 1 | 2, signal?: AbortSignal) { return this.recordExport.preview(scope, selection, order, signal) }
+  async dataExportRangePreview(scope: string, selection: unknown, order: 1 | 2, signal?: AbortSignal, destinationRef?:string) { return destinationRef ? this.directoryExport.preview(scope,selection,order,destinationRef,signal) : this.recordExport.preview(scope,selection,order,signal) }
+  attachExportDirectoryPicker(picker:(signal:AbortSignal)=>Promise<string|null>){this.directoryExport.attach(picker,async(path,signal)=>{if(!this.localFileOpener)throw new Error('当前宿主无法打开文件夹');await this.localFileOpener(path,signal)})}
+  async dataExportDirectoryPick(scope:string,signal?:AbortSignal){return this.directoryExport.pick(scope,signal)}
+  async dataExportDirectoryOpen(scope:string,ref:string,signal?:AbortSignal){return this.directoryExport.open(scope,ref,signal)}
   async dataExportSaved(scope: string, ref: string, signal?: AbortSignal) { return this.recordExport.confirmSaved(scope, ref, signal) }
   async dataRecoverRecord(scope: string, recordUid: string, version: number) { return await new DataManagementService(this.runtime).recover(scope, recordUid, version) }
   async backgroundSoundPreference(signal?: AbortSignal) { return await this.backgroundSoundPreferenceOwner.preference(signal) }
@@ -1103,7 +1109,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   private clearAccountState(userIds: readonly number[]): void {
-    this.recordExport.dispose()
+    this.recordExport.dispose(); this.directoryExport.dispose()
     this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
     this.messageSync.reset()
@@ -1575,7 +1581,7 @@ arkoImagesV1:true,
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
-    this.recordExport.dispose()
+    this.recordExport.dispose(); this.directoryExport.dispose()
     this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
     this.messageSync.dispose()
