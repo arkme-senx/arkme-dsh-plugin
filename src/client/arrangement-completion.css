@@ -1,0 +1,10 @@
+.arkme-arrangement-checkbox.arkme-arrangement-completion-control { width:28px; height:28px; flex:0 0 28px; display:grid; place-items:center; border:0; border-radius:5px; padding:0; margin:-3px -5px 0; background:transparent; cursor:pointer; }
+.arkme-arrangement-checkbox-icon { display:block; flex:none; color:color-mix(in srgb,var(--dsw-alias-label-primary,#17191c) 58%,var(--dsw-alias-bg-base,#fff)); }
+.arkme-arrangement-completion-control:hover .arkme-arrangement-checkbox-icon,
+.arkme-arrangement-completion-control:focus-visible .arkme-arrangement-checkbox-icon,
+.arkme-arrangement-completion-control[aria-checked=true] .arkme-arrangement-checkbox-icon { color:#477dec; }
+.arkme-arrangement-completion-control:not(:disabled):hover { background:var(--dsw-alias-interactive-bg-hover,rgba(38,49,72,.06)); }
+.arkme-arrangement-completion-control:focus-visible { outline:2px solid #467af0; outline-offset:2px; }
+.arkme-arrangement-completion-control:disabled { cursor:default; opacity:.5; }
+.arkme-arrangement-completion-control[aria-busy=true] { opacity:.7; }
+.arkme-arrangement-completion-row[data-completed=true] .arkme-arrangement-completion-title { text-decoration:line-through; color:var(--dsw-alias-label-secondary,#777c85); }

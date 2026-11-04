@@ -925,7 +925,7 @@ describe('record re-edit attachment UI', () => {
     snapshot = baseline()
     const storage = new Map<string, string>()
     const storageApi = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => { storage.set(key, value) }, removeItem: (key: string) => { storage.delete(key) } }
-    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, innerHeight: 900, localStorage: storageApi, sessionStorage: storageApi })
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, innerHeight: 900, localStorage: storageApi, sessionStorage: storageApi })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
     arkmeComposerDraftStore.clearAccount(42)
