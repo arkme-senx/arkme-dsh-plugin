@@ -1924,7 +1924,8 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
   const [actionMessage, setActionMessage] = useState<string>()
   const [targetView, setTargetView] = useState<ArkmeWorldViewState>(() => loadingState())
   const loadControllers = useRef<Partial<Record<WorldScope | 'target', AbortController>>>({})
-  const authorLabelControllers = useRef(new Set<AbortController>())
+  const pendingAuthorLabels = useRef(new Map<string, { owner: string; refs: Set<string> }>())
+  const [authorLabelsRevision, bumpAuthorLabelsRevision] = useState(0)
   const audioRef = useRef<HTMLAudioElement>()
   const voiceprintControllerRef = useRef<AbortController>()
   const voiceprintAudioRefsRef = useRef(new Set<HTMLAudioElement>())
@@ -1950,18 +1951,29 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     })
   }, [])
 
-  const hydrateViewerAuthorLabels = useCallback((items: readonly ArkmeWorldFeedItem[], signal: AbortSignal) => {
-    const refs = items.filter(item => !item.teamAuthor).map(item => item.authorRef ?? item.recordRef)
-    if (!refs.length) return
+  const queueAuthorLabels = useCallback((slot: string, owner: string, items: readonly ArkmeWorldFeedItem[], replace: boolean) => {
+    let pending = pendingAuthorLabels.current.get(slot)
+    if (replace || pending?.owner !== owner) {
+      pending = { owner, refs: new Set() }
+      pendingAuthorLabels.current.set(slot, pending)
+    }
+    for (const item of items) if (!item.teamAuthor) pending!.refs.add(item.authorRef ?? item.recordRef)
+    bumpAuthorLabelsRevision(value => value + 1)
+  }, [])
+  const feedVisible = active && !profileGroupView && (target !== undefined || !publicTab)
+  const authorLabelSlot = target ? 'target' : notificationTarget ? 'notification' : scope
+  const authorLabelOwner = target ? String(target.userId) : notificationTarget ?? scope
+  useEffect(() => {
+    const pending = pendingAuthorLabels.current.get(authorLabelSlot)
+    if (!feedVisible || !pending?.refs.size || pending.owner !== authorLabelOwner) return
     const controller = new AbortController()
-    authorLabelControllers.current.add(controller)
-    void hydrateWorldAuthorLabels(refs, AbortSignal.any([signal, controller.signal]), applyViewerAuthorLabels).catch(() => {})
-      .finally(() => { authorLabelControllers.current.delete(controller) })
-  }, [applyViewerAuthorLabels])
-  useEffect(() => () => {
-    for (const controller of authorLabelControllers.current) controller.abort()
-    authorLabelControllers.current.clear()
-  }, [scope, target?.userId, publicTab, active])
+    void hydrateWorldAuthorLabels([...pending.refs], controller.signal, labels => {
+      if (pendingAuthorLabels.current.get(authorLabelSlot) !== pending) return
+      for (const label of labels) pending.refs.delete(label.authorRef)
+      applyViewerAuthorLabels(labels)
+    }).catch(() => {})
+    return () => controller.abort()
+  }, [feedVisible, authorLabelSlot, authorLabelOwner, authorLabelsRevision, applyViewerAuthorLabels])
 
   const stopVoiceprintMedia = () => {
     voiceprintControllerRef.current?.abort()
@@ -2004,7 +2016,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
         const hasMore = page.hasMore && (target === 'mine' ? page.nextOffset !== undefined && page.nextOffset > Number(position) : !!page.nextCursor && page.nextCursor !== position)
         return { ...current, [target]: { status: items.length === 0 ? 'empty' : 'success', items, hasMore, ...(hasMore ? target === 'mine' ? { nextOffset: page.nextOffset } : { nextCursor: page.nextCursor } : {}) } }
       })
-      hydrateViewerAuthorLabels(page.items, controller.signal)
+      queueAuthorLabels(target, target, page.items, position === 0)
     }).catch(error => {
       if (controller.signal.aborted) return
       setLoaded(current => ({ ...current, [target]: true }))
@@ -2021,7 +2033,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     }).finally(() => {
       if (loadControllers.current[target] === controller) delete loadControllers.current[target]
     })
-  }, [hydrateViewerAuthorLabels])
+  }, [queueAuthorLabels])
 
   const loadUser = useCallback((profile: ArkmeWorldViewTarget, offset = 0, preserveItems = false) => {
     loadControllers.current.target?.abort()
@@ -2043,7 +2055,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
           const hasMore = page.hasMore && page.nextOffset !== undefined && page.nextOffset > offset
           return { status: items.length === 0 ? 'empty' : 'success', items, hasMore, ...(hasMore ? { nextOffset: page.nextOffset } : {}) }
         })
-        hydrateViewerAuthorLabels(page.items, controller.signal)
+        queueAuthorLabels('target', String(profile.userId), page.items, offset === 0)
       }).finally(() => {
         if (loadControllers.current.target === controller) delete loadControllers.current.target
       })
@@ -2056,7 +2068,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
             : { status: 'error', items: [], message }
         })
       })
-  }, [hydrateViewerAuthorLabels])
+  }, [queueAuthorLabels])
 
   const loadNotification = useCallback(() => {
     if (!notificationTarget) return
@@ -2070,21 +2082,21 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
       setLoaded(current => ({ ...current, all: true }))
       setNotificationFocus(value.path.at(-1)?.interactionRef)
       setInteractionRecordRef(value.root.recordRef)
-      hydrateViewerAuthorLabels([value.root], controller.signal)
+      queueAuthorLabels('notification', notificationTarget, [value.root], true)
     }).catch(error => {
       if (!controller.signal.aborted) setViews(current => ({ ...current, all: { status: 'error', items: [], message: messageOf(error, tr('这条世界动态或评论已不可查看')) } }))
     })
     return () => controller.abort()
-  }, [notificationTarget, hydrateViewerAuthorLabels])
+  }, [notificationTarget, queueAuthorLabels])
   useEffect(loadNotification, [loadNotification])
-  useEffect(() => { if (!publicTab && !profileGroupView && !notificationTarget && target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target, notificationTarget, publicTab, profileGroupView])
+  useEffect(() => { if (active && !publicTab && !profileGroupView && !notificationTarget && target === undefined && !loaded[scope]) load(scope) }, [load, loaded, scope, target, notificationTarget, publicTab, profileGroupView, active])
   useEffect(() => {
-    if (target === undefined) return
+    if (!active || target === undefined) return
     setInteractionRecordRef(undefined)
     setActionMessage(undefined)
     loadUser(target)
     return () => { loadControllers.current.target?.abort() }
-  }, [loadUser, target?.userId, target !== undefined && 'contactRef' in target ? target.contactRef : undefined])
+  }, [loadUser, target?.userId, target !== undefined && 'contactRef' in target ? target.contactRef : undefined, active])
   useEffect(() => () => {
     for (const controller of Object.values(loadControllers.current)) controller?.abort()
     loadControllers.current = {}
@@ -2103,7 +2115,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     voiceprintAudioUrlsRef.current.clear()
   }, [])
   useEffect(() => {
-    if (state.status !== 'success' || state.items.length === 0) return
+    if (!feedVisible || state.status !== 'success' || state.items.length === 0) return
     const pendingRefs = pendingWorldVoiceprintRecordRefs(state.items, resolvedVoiceprintRefsRef.current)
     if (pendingRefs.length === 0) return
     const controller = new AbortController()
@@ -2121,7 +2133,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
       }
     })().catch(() => {})
     return () => { controller.abort() }
-  }, [state.items, state.status, voiceprintAvailabilityRevision])
+  }, [state.items, state.status, voiceprintAvailabilityRevision, feedVisible])
 
   const refresh = () => {
     if (publicTab && target === undefined) { setDirectoryRevisions(current => ({ ...current, [publicTab]: current[publicTab] + 1 })); return }

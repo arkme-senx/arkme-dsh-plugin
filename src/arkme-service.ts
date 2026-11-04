@@ -639,10 +639,10 @@ export class ArkmeService {
       await this.teamApp.assertViewer(params.expectedAccountKey)
       const context = await this.teamWorld({ action: 'context', accountKey: String(params.expectedAccountKey), jotmoId: String(params.jotmoId) }, signal) as import('./team-world-contract.js').TeamWorldContext
       const session = await this.runtime.requireSession(), teamID = await this.teamApp.worldTeamID(context.teamRef, session.userId)
-      const [feed, teams] = await Promise.all([
-        this.world.listMixedFeed({ teamID, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(signal ? { signal } : {}) }),
-        params.includeMemberTeam === false || !context.capabilities.publish ? [] : this.teamApp.execute('team.app.teams', { expectedAccountKey: params.expectedAccountKey }, signal) as Promise<import('./types.js').ArkmeTeam[]>,
-      ])
+      const teams = params.includeMemberTeam === false || !context.capabilities.publish ? []
+        : await this.teamApp.execute('team.app.teams', { expectedAccountKey: params.expectedAccountKey }, signal) as import('./types.js').ArkmeTeam[]
+      signal?.throwIfAborted()
+      const feed = await this.world.listMixedFeed({ teamID, ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(signal ? { signal } : {}) })
       const memberTeam = context.capabilities.publish ? teams.find(t => t.jotmoId === context.jotmoId) : undefined
       signal?.throwIfAborted()
       await this.teamApp.assertViewer(params.expectedAccountKey)

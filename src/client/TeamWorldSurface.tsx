@@ -94,7 +94,7 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
     return () => controller.abort()
   }, [accountKey, target.jotmoId, revision])
   useEffect(() => { window.addEventListener('focus', refresh); window.addEventListener('arkme-reaction-policy-changed', refresh); return () => { window.removeEventListener('focus', refresh); window.removeEventListener('arkme-reaction-policy-changed', refresh) } }, [refresh])
-  const team = state.value?.team ?? target
+  const team = { ...target, ...state.value?.team }
   const capabilities = state.value?.context.capabilities
   return <main ref={scrollRoot} aria-label={tr('团队的世界')} style={{ display: 'flex', flex: 1, minHeight: 0, overflowY: 'auto', background: arkmeTheme.base }}>
     <section style={{ width: '100%', maxWidth: 640, minWidth: 0, borderRight: `1px solid ${arkmeTheme.borderSoft}`, boxSizing: 'border-box' }}>

@@ -61,6 +61,26 @@ describe('desktop public social interactions', () => {
     await act(async () => button('公开群聊').props.onClick())
     expect(signal.aborted).toBe(true)
   })
+  it('defers late feed decoration until that feed becomes visible again', async () => {
+    let finish!: (value: unknown) => void
+    const post = { recordRef: 'late-post', authorRef: 'late-author', authorName: '公开昵称', headline: '', textContent: '迟到正文', tags: [], templateKind: 0, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0, extendCount: 0 }
+    mocks.call.mockImplementation(async (op: string) => op === 'world.feed' ? new Promise(resolve => { finish = resolve }) : op === 'world.author-labels' ? [{ authorRef: 'late-author', authorName: '本机备注' }] : { items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface accountScope="test:1001" currentUserId={1001} />) })
+    await act(async () => button('公开群聊').props.onClick())
+    await act(async () => finish({ items: [post], hasMore: false }))
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.author-labels')).toHaveLength(0)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.voiceprint.availability')).toHaveLength(0)
+    await act(async () => button('世界').props.onClick())
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.author-labels')).toHaveLength(1)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('本机备注')
+  })
+  it('does not start feed work behind the team page and starts it when returning', async () => {
+    mocks.call.mockResolvedValue({ items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface active={false} accountScope="test:1001" currentUserId={1001} />) })
+    expect(mocks.call).not.toHaveBeenCalled()
+    await act(async () => renderer!.update(<ArkmeWorldSurface active accountScope="test:1001" currentUserId={1001} />))
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.feed')).toHaveLength(1)
+  })
   it('prevents duplicate joins and reuses the request identity after an uncertain failure', async () => {
     let reject!: (error: Error) => void
     const activated = vi.fn()

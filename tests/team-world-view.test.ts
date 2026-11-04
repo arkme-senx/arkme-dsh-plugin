@@ -29,6 +29,25 @@ it('preserves the member-team response for existing callers', async () => {
   expect(f.teams).toHaveBeenCalledWith('team.app.teams', { expectedAccountKey: 'test:42' }, undefined)
 })
 
+it('does not leave public work running after an existing caller fails member lookup', async () => {
+  const f = fixture()
+  f.teams.mockRejectedValue(new Error('member-directory-unavailable'))
+  f.view.world.listMixedFeed.mockImplementation(() => new Promise(() => {}))
+  await expect(f.read()).rejects.toThrow('member-directory-unavailable')
+  expect(f.view.world.listMixedFeed).not.toHaveBeenCalled()
+})
+
+it('does not start a feed after cancellation during member lookup', async () => {
+  const f = fixture(), controller = new AbortController()
+  let finish!: (value: unknown) => void
+  f.teams.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  const request = f.read(undefined, controller.signal)
+  await vi.waitFor(() => expect(f.teams).toHaveBeenCalledOnce())
+  controller.abort(); finish([])
+  await expect(request).rejects.toMatchObject({ name: 'AbortError' })
+  expect(f.view.world.listMixedFeed).not.toHaveBeenCalled()
+})
+
 it('fences an account switch before returning public content with member capabilities', async () => {
   const f = fixture()
   f.view.world.listMixedFeed.mockImplementation(async () => { f.switchAccount(); return f.feed })
