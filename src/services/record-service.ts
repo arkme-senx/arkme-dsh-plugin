@@ -1353,7 +1353,7 @@ export class RecordService {
     const currentVersion = Number(data.current_version)
     if (data.accepted === false && Number.isSafeInteger(currentVersion) && currentVersion > context.baseVersion) throw new ArkmePluginError('record-reedit-conflict', '快记内容已变化，草稿已保留，请检查后重新确认', false, 409)
     const version = Number(data.accepted_version)
-    if (data.accepted !== true || !Number.isSafeInteger(version) || version !== context.baseVersion + 1 || version > currentVersion) throw new ArkmePluginError('record-reedit-outcome-unknown', '提交结果待确认，草稿已保留，请勿重复提交', false, 409)
+    if (data.accepted !== true || !Number.isSafeInteger(currentVersion) || !Number.isSafeInteger(version) || version !== context.baseVersion + 1 || version > currentVersion) throw new ArkmePluginError('record-reedit-outcome-unknown', '提交结果待确认，草稿已保留，请勿重复提交', false, 409)
     return { status: 'committed', itemUid: context.itemUid, version, revisionUid, projectionState: 'pending' }
   }
 

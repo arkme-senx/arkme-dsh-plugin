@@ -25,11 +25,10 @@ function hostFixture() {
   return { chat, runtime, media, switchAccount: () => { userId = 43 } }
 }
 describe('revision-bound memory snapshots', () => {
-  it('reports the per-edit increment rather than adding creation time to cumulative edit time', async () => {
+  it('reads the known single-edit fact without subtracting adjacent revisions', async () => {
     const f = hostFixture()
     const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'edit', revision_type: 1, version: 3,
-      edit_at: 1700000001000, text_content: '新版', record_duration_millis: 1000, edit_duration_millis: 5000 }, target, undefined,
-      { edit_at: 1700000000000, record_duration_millis: 1000, edit_duration_millis: 2000 })
+      edit_at: 1700000001000, text_content: '新版', record_duration_millis: 1000, edit_duration_known: true, edit_duration_millis: 3000 }, target)
     expect(detail.durationState).toBe('complete')
     expect(detail.recordDurationMillis).toBeUndefined()
     expect(detail.editDurationMillis).toBe(3000)
@@ -40,10 +39,21 @@ describe('revision-bound memory snapshots', () => {
     expect(unknown.editDurationMillis).toBeUndefined()
   })
 
+  it('distinguishes measured zero and later original-type baselines from creation', async () => {
+    const f = hostFixture()
+    const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'zero', revision_type: 5, version: 4,
+      edit_at: 1000, edit_duration_known: true, edit_duration_millis: 0, record_duration_millis: 900,
+      edit_capture_context: { captured_at: 2000 } }, target)
+    expect(detail.durationState).toBe('complete')
+    expect(detail.editDurationMillis).toBe(0)
+    expect(detail.recordDurationMillis).toBeUndefined()
+    expect(detail.completeAtMillis).toBe(2000)
+    expect(detail.startAtMillis).toBe(2000)
+  })
   it('resolves ambient playback from the historical assets instead of current-message media', async () => {
     const f = hostFixture()
     f.media.richContentBlocks.mockReturnValue([{ mediaRef: 'historical-audio', kind: 'audio' }] as never)
-    const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'original', revision_type: 5,
+    const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'original', revision_type: 5, version: 1,
       edit_at: 1700000000000, text_content: '旧版', record_duration_millis: 4000,
       content_payload: { media_refs: [{ file_asset_uid: 'old-audio', content_file_role: 4 }], background_sound_amplitudes: [0.4] } }, target)
     expect(detail.backgroundSoundPlayback).toMatchObject({ mediaRefs: ['historical-audio'], amplitudes: [0.4], durationSeconds: 4 })
@@ -58,7 +68,7 @@ describe('revision-bound memory snapshots', () => {
       downloadUrl: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/old-audio.m4a',
     }] as never)
     const chat = new ChatService(runtime as never, {} as never, {} as never, media, {} as never, {} as never, {} as never, {} as never, {} as never)
-    const raw = { record_uid: 'note', revision_uid: 'old', revision_type: 5, edit_at: 1700000000000, text_content: '旧版',
+    const raw = { record_uid: 'note', revision_uid: 'old', revision_type: 5, version: 1, edit_at: 1700000000000, text_content: '旧版',
       content_payload: { media_refs: [{ file_asset_uid: 'old-audio', content_file_role: 4 },
         { file_asset_uid: 'ordinary-attachment', content_file_role: 1 }] } }
     expect(media.recordBackgroundSoundRefs(raw)).toHaveLength(1)
@@ -69,9 +79,8 @@ describe('revision-bound memory snapshots', () => {
   it('uses the selected revision environment and duration without reading current Record detail', async () => {
     const f = hostFixture()
     const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'old', edit_at: 1700000000000,
-      text_content: '旧版正文', edit_duration_millis: 3200,
-      edit_capture_context: { schema_version: 1, captured_at: 1700000000000, client_name: '旧设备', electric: 0, network_name: '旧网络' } }, target, undefined,
-      { edit_at: 1699999999000, edit_duration_millis: 0 })
+      text_content: '旧版正文', edit_duration_known: true, edit_duration_millis: 3200,
+      edit_capture_context: { schema_version: 1, captured_at: 1700000000000, client_name: '旧设备', electric: 0, network_name: '旧网络' } }, target)
     expect(detail).toMatchObject({ revisionUid: 'old', textContent: '旧版正文', editDurationMillis: 3200,
       captureContext: { clientName: '旧设备', electric: 0, networkName: '旧网络' } })
     expect(f.runtime.authenticatedPost).toHaveBeenCalledExactlyOnceWith('/api/v1/records/location/context/get',
@@ -104,12 +113,12 @@ describe('revision-bound memory snapshots', () => {
     expect(detail.locationCapture).toMatchObject({ latitude: 30.1, longitude: 114.2 })
     expect(detail.locationLabel).toContain('当时地点')
   })
-  it('ignores lifecycle metadata that falls after the historical revision', async () => {
+  it('keeps the human capture clock independent of server revision time', async () => {
     const f = hostFixture()
-    const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'old', revision_type: 5,
+    const detail = await f.chat.projectRecordRevisionSnapshot({ record_uid: 'note', revision_uid: 'old', revision_type: 5, version: 1,
       edit_at: 1700000000000, record_started_at: 1700000001000, capture_context: { schema_version: 1, captured_at: 1700000001000 }, text_content: '旧版' }, target)
-    expect(detail.startAtMillis).toBeUndefined()
-    expect(detail.completeAtMillis).toBe(1700000000000)
+    expect(detail.startAtMillis).toBe(1700000001000)
+    expect(detail.completeAtMillis).toBe(1700000001000)
   })
   it('rejects a mismatched message, location revision, or account change', async () => {
     const raw = { record_uid: 'note', revision_uid: 'old', edit_at: 1700000000000, text_content: '旧版' }

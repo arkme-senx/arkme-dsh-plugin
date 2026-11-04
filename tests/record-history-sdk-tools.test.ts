@@ -20,7 +20,7 @@ it('shares the exact revision and version cursor Host owner through the public S
 })
 it('fails clearly for a Provider without the history capability', async () => {
   const sdk = createArkmeSdk({ fetchImpl: async () => new Response(JSON.stringify({ ok: true, value: { contractVersion: 1, features: {} } })) })
-  await expect(sdk.recordEditHistory('source', 'action')).rejects.toMatchObject({ code: 'CAPABILITY_UNSUPPORTED' })
+  await expect(sdk.recordEditHistory('source', 'action')).rejects.toMatchObject({ body: { code: 'CAPABILITY_UNSUPPORTED' } })
 })
 it('registers a read-only history Tool and strips private device, location and audio details', async () => {
   const owner = { recordRevisionSnapshot: vi.fn(async () => ({ revisionUid: 'r', textContent: 'historical', durationState: 'complete', editDurationMillis: 0,
