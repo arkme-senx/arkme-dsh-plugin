@@ -1316,6 +1316,12 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   setNativeAnnotationSource(source: NativeAnnotationSource, runtime?: () => string | undefined) { this.nativeAnnotationService.source = source; this.nativeAnnotationService.sourceRuntime = runtime }
+  setNativeAnnotationHistorySync(resolver: NonNullable<NativeAnnotationsService['historySync']>) { this.nativeAnnotationService.historySync = resolver }
+  setNativeAnnotationAccess(resolve: NonNullable<NativeAnnotationsService['resolveTarget']>, source: NativeAnnotationSource, publish: NonNullable<NativeAnnotationsService['publishSource']>) {
+    this.nativeAnnotationService.resolveTarget = resolve
+    this.nativeAnnotationService.source = source
+    this.nativeAnnotationService.publishSource = publish
+  }
   nativeAnnotations(request: NativeAnnotationRequest, signal?: AbortSignal) { return this.nativeAnnotationService.execute(request, signal) }
 
   async dshRemoteGet<T>(path: string, signal?: AbortSignal): Promise<T> { return await this.runtime.authenticatedDshRemoteGet<T>(path, signal) }

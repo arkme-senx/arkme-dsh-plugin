@@ -3,11 +3,23 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { act, createElement, useSyncExternalStore } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import type { ClientContext, UseProjection } from '@deepseek-ai/dsh-client-runtime/client'
-import { installHarnessSessionSummary, SessionTurnCount } from '../src/client/harness-session-summary.js'
+import { installHarnessSessionSummary, SessionTurnCount, SessionHistoryStatus } from '../src/client/harness-session-summary.js'
 
 let root: Root | undefined
 afterEach(() => { if (root) act(() => root!.unmount()); root = undefined; document.body.replaceChildren() })
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+
+it('observes the Host repair status without launching another uploader or confusing it with history loading', async () => {
+  const surface = document.createElement('div'), container = document.createElement('div'); document.body.append(surface, container)
+  root = createRoot(container)
+  act(() => root!.render(createElement(SessionHistoryStatus, { surface, t: ((key: string) => key) as never })))
+  await act(async () => { surface.setAttribute('data-arkme-history-sync', 'pending') })
+  expect(container.querySelector('button')?.textContent).toBe('syncPending ⓘ')
+  await act(async () => { surface.setAttribute('data-arkme-history-sync', 'complete') })
+  expect(container.textContent).toBe('')
+  await act(async () => { surface.setAttribute('data-arkme-history-state', 'error') })
+  expect(container.textContent).toBe('historyError')
+})
 
 it('follows the current session projection, including updates and missing data, without counting visible messages or tool steps', () => {
   const listeners = new Set<() => void>()
@@ -55,4 +67,26 @@ it('contributes through the public session slot and removes only its own contrib
   dispose()
   expect(removeSlot).toHaveBeenCalledOnce()
   expect(removeLocale).toHaveBeenCalledOnce()
+})
+
+
+it('uses the displayed native history to distinguish reconnects from initial loading and explains sync pauses', async () => {
+  const surface = document.createElement('div'), container = document.createElement('div'); document.body.append(surface, container)
+  root = createRoot(container)
+  const t = ((key: string) => key) as never
+  const useChat = ((selector: (value: unknown) => unknown) => selector({ order: ['visible-message'] })) as never
+  surface.setAttribute('data-arkme-history-state', 'loading')
+  act(() => root!.render(createElement(SessionHistoryStatus, { surface, t, useChat })))
+  expect(container.textContent).toBe('')
+  await act(async () => { surface.setAttribute('data-arkme-history-sync', 'conflict') })
+  expect(container.querySelector('button')?.textContent).toBe('syncConflict ⓘ')
+  await act(async () => container.querySelector('button')!.click())
+  expect(document.querySelector('[data-arkme-history-tooltip]')?.textContent).toBe('syncConflictDetails')
+  expect(container.querySelector('[role="tooltip"]')).toBeNull() // Portal escapes the clipped native header.
+  await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })))
+  expect(document.querySelector('[role="tooltip"]')).toBeNull()
+  expect(container.querySelector('[data-arkme-history-sync-status]')?.style.marginInlineStart).toBe('8px')
+  await act(async () => { surface.setAttribute('data-arkme-history-state', 'error') })
+  expect(container.querySelector('button')?.textContent).toBe('historyRefreshError ⓘ')
+  expect(container.querySelector('[role="alert"]')).toBeNull()
 })

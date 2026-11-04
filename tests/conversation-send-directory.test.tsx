@@ -14,6 +14,9 @@ import { ArkmeRecordInputCaptureOwner } from '../src/client/record-input-capture
 import { NATIVE_FORWARD_ENTRY, type NativeForwardWindow, type NativeForwardResult } from '../src/client/native-forward-entry.js'
 import { ArkmeActionMenu } from '../src/client/ArkmeDshMenu.js'
 import { ArkmeArticlePicker } from '../src/client/ArkmeArticlePicker.js'
+import { ArkmeLongArticleDialog } from '../src/client/ArkmeLongArticleDialog.js'
+import { TeamGroupIdentityPicker } from '../src/client/TeamGroupControls.js'
+import { longArticleWindowBridge } from '../src/client/long-article-window.js'
 import { composerArticleKey, composerArticleStore } from '../src/client/composer-article-store.js'
 import { ArkmeSelfCalendarPopover } from '../src/client/ArkmeCalendarSurface.js'
 import { ArkmeCalendarNavigationStatus } from '../src/client/ArkmeCalendarNavigationStatus.js'
@@ -2113,6 +2116,31 @@ describe('conversation send directory projection', () => {
     })
   })
 
+  it.each([true, false])('keeps the current document picker flow and frozen Team draft with native available=%s', async native => {
+    activeSource = group
+    arkmeUi.selectSource(group)
+    const composition = { draftScope: 'stable-team-7', representation: { teamRef: 'frozen-team-7', membershipKind: 'member', membershipRevision: 3, groupJoinAt: 9 } }
+    let nativeTarget: any
+    const open = vi.fn(async (target: any) => { nativeTarget = { accountKey: target.accountKey, sourceKey: target.sourceKey, sourceRef: target.sourceRef, displayName: target.displayName }; return true })
+    vi.stubGlobal('arkmeLongArticle', native ? { version: 2, open, account: async () => true, context: async () => nativeTarget, onCreated: () => () => {} } : undefined)
+    vi.stubGlobal('document', { body: {}, activeElement: null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => operation === 'search.scene' ? { items: [], hasMore: false } : base(operation, params, signal))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    act(() => renderer!.root.findByType(TeamGroupIdentityPicker).props.onSelect({ team: { key: composition.draftScope, jotmoId: 'team_7', name: '接待' }, selection: composition.representation }))
+    act(() => renderer!.root.findByProps({ 'aria-label': '添加内容', 'aria-haspopup': 'menu' }).props.onClick())
+    const add = renderer!.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '添加内容')!.props.actions.find((action: { id: string }) => action.id === 'article')
+    expect(add.label).toBe('即我文档')
+    act(() => add.onSelect())
+    const picker = renderer!.root.findByType(ArkmeArticlePicker)
+    expect(picker.props.composition).toEqual(composition)
+    const draftKey = `${arkmeSourceComposerDraftKey(42, group)!}:team:${composition.draftScope}`
+    expect(picker.props.draftScope).toBe(`composer:${composerArticleKey('test:42', draftKey)}`)
+    expect(picker.props.onCreate).toBeUndefined()
+    expect(renderer!.root.findAllByType(ArkmeLongArticleDialog)).toHaveLength(0)
+    expect(open).not.toHaveBeenCalled()
+  })
+
   it.each([target, group].flatMap(selectedSource => ['inactive', 'switch'].map(exit => ({ selectedSource, exit, kind: selectedSource.kind }))))('preserves pending articles and text/files in $kind through picker exit via $exit', async ({ selectedSource, exit }) => {
     activeSource = selectedSource
     arkmeUi.selectSource(selectedSource)
@@ -4077,6 +4105,74 @@ describe('conversation send directory projection', () => {
     expect(messageLine.props.style).toMatchObject({
       gridColumn: '2', minWidth: 0, justifySelf: 'center', justifyContent: 'center', marginBottom: 0,
     })
+  })
+
+  it('uses the existing recording title row when the card has no personal avatar', async () => {
+    activeSource = group
+    arkmeUi.selectSource(group)
+    timeline = [{ itemUid: 'represented-recording', senderName: '本人', isMe: true,
+      sendAtMillis: 1, title: '', textContent: '', status: 1,
+      representation: { name: '接待', jotmoId: 'team', teamRef: 'sealed', membershipKind: 'member', membershipRevision: 3, groupJoinAt: 9 },
+      sharedRecording: { sourceDigest: 'digest', sharedByUserId: 42, sharedAtMillis: 1,
+        displayAtMillis: 1, endAtMillis: 60_001, timeRangeText: '10:00 - 10:01', title: '项目沟通', summary: '摘要',
+        transcriptAvailable: true, participants: [] } }]
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'represented-recording' })
+    expect(row.findAllByProps({ 'data-arkme-message-avatar': 'true' })).toHaveLength(0)
+    expect(row.findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(0)
+    expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+    const card = row.findByProps({ 'data-arkme-shared-recording-card': 'true' })
+    expect(card.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(1)
+  })
+
+  it.each([false, true])('keeps accepted Team identity on the existing personal avatar extension=%s', async extension => {
+    activeSource = group
+    arkmeUi.selectSource(group)
+    const representation = { name: '接待团队', jotmoId: 'team', teamRef: 'sealed-team', membershipKind: 'member' as const, membershipRevision: 3, groupJoinAt: 9 }
+    timeline = ['接待团队', '设计团队'].map((name, index) => ({
+      itemUid: `own-team-${index}`, senderName: '真实本人', isMe: true,
+      sendAtMillis: index + 1, title: '', textContent: '代表发言', status: 1,
+      representation: { ...representation, name },
+      ...(extension ? { extensionParentRecordUid: 'parent', extensionParent: {
+        itemUid: 'parent', senderName: '原作者', title: '', textContent: '原消息',
+        recordOwnerUserId: 8, sequence: 1, sendAtMillis: 1,
+      } } : {}),
+    }))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    for (const [index, name] of ['接待团队', '设计团队'].entries()) {
+      const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': `own-team-${index}` })
+      expect(row.findAllByType(ArkmeTimelineMessageHeader)).toHaveLength(0)
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(0)
+      const markers = row.findAllByProps({ 'data-arkme-team-representation': 'marker' })
+      expect(markers).toHaveLength(1)
+      expect(markers[0]!.props.title).toContain(name)
+      expect(row.findAllByProps({ 'data-arkme-message-avatar': 'true' })).toHaveLength(1)
+    }
+  })
+
+  it('keeps per-message identity without adding a Team header or grouping rule', async () => {
+    activeSource = group
+    arkmeUi.selectSource(group)
+    const representation = { name: '接待团队', jotmoId: 'team', teamRef: 'sealed-team', membershipKind: 'member' as const, membershipRevision: 3, groupJoinAt: 9 }
+    const at = new Date(2026, 10, 2, 10).getTime()
+    timeline = [
+      { representation }, { representation: { ...representation, teamRef: 'another-randomized-ref' } },
+      {}, { representation }, { representation, isMe: false, memberRef: 'other' },
+      { representation, isMe: false, memberRef: 'other' },
+      { representation, isMe: false, memberRef: 'someone-else' },
+      { representation, sendAtMillis: at + 6 * 60_000 },
+      { representation: { ...representation, jotmoId: 'design', name: '设计团队' }, sendAtMillis: at + 6 * 60_000 + 1 },
+    ].map((extra, i) => ({ itemUid: `grouped-${i}`, senderName: '发言人', isMe: true,
+      sendAtMillis: at + i, title: '', textContent: `正文${i}`, status: 1, ...extra }))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    for (const [index, markers] of [1, 1, 0, 1, 1, 1, 1, 1, 1].entries()) {
+      const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': `grouped-${index}` })
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'label' })).toHaveLength(0)
+      expect(row.findAllByProps({ 'data-arkme-team-representation': 'marker' })).toHaveLength(markers)
+      expect(renderedText(row)).toContain(`正文${index}`)
+      if (index !== 2) expect(row.props['aria-description']).toContain('代表')
+      expect(renderedText(row)).not.toContain('代表 · ')
+    }
   })
 
   it('hides the own sender header but retains the original time inside the message bubble', async () => {
