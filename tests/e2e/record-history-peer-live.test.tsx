@@ -17,8 +17,8 @@ import { createArkmeHostApi } from '../../src/host-api.js'
 import { createArkmeSdk } from '../../src/sdk/index.js'
 import { createArkmeCoreToolDefinitions } from '../../src/tools/index.js'
 import { ArkmeRecordEditHistory } from '../../src/client/ArkmeRecordEditHistory.js'
+import { arkmeRecordTextFormat } from '../../src/markdown.js'
 
-vi.mock('../../src/client/ArkmeRichContent.js', () => ({ ArkmeMessageContent: ({ item }: { item: { textContent: string } }) => <p>{item.textContent}</p> }))
 const ready = process.env.JOTMO_HISTORY_CHAT_READY
 it.skipIf(!ready)('peer history UI → public SDK/Host → Chat → Record → Mongo → version review → retry/pagination', async () => {
  const chatUrl = readFileSync(ready!, 'utf8'), f = JSON.parse(readFileSync(ready! + '.json', 'utf8'))
@@ -30,7 +30,14 @@ it.skipIf(!ready)('peer history UI → public SDK/Host → Chat → Record → M
  const source = new SourceService(runtime, {} as never, {} as never)
  const media = new MediaService(runtime, {} as never, {} as never, {} as never)
  const chat = new ChatService(runtime, source, {} as never, media, {} as never, {} as never, {} as never, {} as never, {} as never)
- const history = new RecordEditHistoryService(runtime, { projectPage: async snapshots => snapshots.map(snapshot => ({ title: String(snapshot.title ?? ''), textContent: String(snapshot.text_content), contentBlocks: [] })) })
+ const history = new RecordEditHistoryService(runtime, { projectPage: async (snapshots, target, signal) => {
+  const pages = await media.hydrateRecordSnapshotMediaPage(snapshots, session, target.kind === 'chat' ? target : undefined, signal)
+  return snapshots.map((snapshot, index) => {
+   const contentBlocks = media.richContentBlocks(snapshot, session.userId, pages[index])
+   return { title: String(snapshot.title ?? ''), textContent: String(snapshot.text_content), textFormat: arkmeRecordTextFormat(snapshot), contentBlocks,
+    ...(media.recordMediaUnavailable(snapshot, contentBlocks) ? { mediaUnavailable: true } : {}) }
+  })
+ } })
  const owner = { config, runtime, chat, recordEditHistory: history, relatedRecording: { isEnabled: () => false } }
  const facade = { ...owner, providerCapabilities: ArkmeService.prototype.providerCapabilities,
  recordEditHistoryPage: ArkmeService.prototype.recordEditHistoryPage.bind(owner as never), recordRevisionSnapshot: ArkmeService.prototype.recordRevisionSnapshot.bind(owner as never) }
