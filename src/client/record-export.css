@@ -55,6 +55,7 @@
 .arkme-export-progress > div { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .arkme-export-progress > div > span:last-child { color: var(--export-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .arkme-export-progress progress { appearance: none; display: block; width: 100%; height: 4px; margin: 14px 0 10px; border: 0; border-radius: 9px; overflow: hidden; background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
+.arkme-export-progress progress:indeterminate { appearance: auto; }
 .arkme-export-progress progress::-webkit-progress-bar { background: var(--dsw-alias-bg-layer-2, #f3f4f6); }
 .arkme-export-progress progress::-webkit-progress-value { background: var(--dsw-alias-button-primary-fill, #17191c); border-radius: 9px; }
 .arkme-export-progress progress::-moz-progress-bar { background: var(--dsw-alias-button-primary-fill, #17191c); }
