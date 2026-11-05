@@ -11,6 +11,8 @@ import { quoteCanonicalText } from '../src/message-quote.js'
 import { selectedTextNoteHeader, selectedTextNoteWireText, selectedTextNotePresentation, selectedTextForwardWireText, type SelectedTextNoteQuote } from '../src/selected-text-note.js'
 import { registerLocalSnapshotForward } from '../src/client/local-snapshot-forward.js'
 import { callArkme } from '../src/client/api.js'
+import { ExcerptOriginal } from '../src/client/ExcerptOriginal.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 const quote: SelectedTextNoteQuote = { version: 1, sourceLabel: '群聊 · 产品讨论', senderName: '同事', sourceAtMillis: 1000, text: '引用文字\n第二行' }
 let root: Root, host: HTMLDivElement
@@ -70,4 +72,20 @@ it.each(['', '自己的附言'])('renders a forwarded quotation and optional com
   expect(quoteDomProjection(host).text).toBe(quoteCanonicalText({ textContent: wire }))
   expect(host.textContent).not.toContain('我的笔记')
   if (!noteText) expect(host.textContent).not.toContain('附言')
+})
+
+it('closes original content and aborts its read when the saved occurrence or account changes', async () => {
+  arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:11} as never)
+  vi.mocked(callArkme).mockResolvedValue({title:'原文',text:'只属于当前账号的内容'})
+  await act(async()=>root.render(<ExcerptOriginal recordUid="same" sourceRef="source-1" messageActionRef="occurrence-1"/>))
+  await act(async()=>host.querySelector('button')!.click())
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('只属于当前账号的内容')
+  const signal=vi.mocked(callArkme).mock.calls[0]?.[2]
+  await act(async()=>root.render(<ExcerptOriginal recordUid="same" sourceRef="source-2" messageActionRef="occurrence-2"/>))
+  expect(signal?.aborted).toBe(true)
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async()=>host.querySelector('button')!.click())
+  expect(vi.mocked(callArkme).mock.calls[1]?.[1]).toEqual({recordUid:'same',sourceRef:'source-2',messageActionRef:'occurrence-2'})
+  await act(async()=>arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:22} as never))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
 })

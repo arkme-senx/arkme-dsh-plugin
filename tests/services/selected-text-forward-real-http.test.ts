@@ -36,6 +36,23 @@ it.skipIf(!dir)('sends four target kinds through the actual Host owner, Record/C
     expect(detail.item.record.payload.content_payload.excerpt).toMatchObject({kind:'forward',source_selection:quote.sourceSelection});expect(detail.item.record.payload.text_content).toContain(quote.text)
    }
   }
+  // A recipient must authorize the saved chat occurrence independently of the source.
+  const recipientSource=await (recipient as any).source.sealSourceRef(22,'private_chat',chat.private,'隔离私聊')
+  const occurrence=async(command:any)=>{
+    const owner=(recipient as any).chat
+    const key=await (recipient as any).runtime.stateStore.uniqueCode()
+    const action=owner.sealMessageActionRef(owner.messageActionRefPayload({sourceKind:'chat_relation',userId:22,sourceOwnerRef:chat.private,chatSessionUid:chat.private,relationUid:command.relationUid,recordOwnerUserId:11,recordUid:command.recordUid,senderUserId:11,senderName:'作者',title:'',textContent:'',sendAtMillis:command.sendAtMillis,templateKind:1,displayKind:0}),key)
+    return {sourceRef:recipientSource,messageActionRef:action}
+  }
+  const firstChat=commands[2]!,privateItem=await rawPost(chat.url,'/api/v1/chats/records/detail',{chat_session_uid:chat.private,record_uid:firstChat.recordUid,record_owner_user_id:11,rel_uid:firstChat.relationUid},ready.token_other)
+  await expect(recipient.excerptOriginal(firstChat.recordUid,undefined,await occurrence(firstChat))).rejects.toThrow(/失效|无权/)
+  const originalBody=privateItem.item.record.payload.text_content as string,sourceStart=originalBody.indexOf(quote.text)
+  const sharedQuote={...quote,source:{kind:'record' as const,owner_user_id:11,record_uid:firstChat.recordUid,chat_session_uid:chat.private,relation_uid:firstChat.relationUid},sourceSelection:{...quote.sourceSelection,source_digest:createHash('sha256').update(quoteSourceContent({textContent:originalBody,textFormat:'plain'})).digest('hex'),start:sourceStart,end:sourceStart+quote.text.length}}
+  const sharedCommand={...firstChat,recordUid:randomUUID(),relationUid:randomUUID(),sendAtMillis:Date.now(),quote:sharedQuote}
+  await a.forwardSelectedText(sharedCommand)
+  const sharedOccurrence=await occurrence(sharedCommand)
+  expect((await recipient.excerptOriginal(sharedCommand.recordUid,undefined,sharedOccurrence)).selection).toEqual({start:sourceStart,end:sourceStart+quote.text.length})
+  await expect(recipient.excerptOriginal(original,undefined,sharedOccurrence)).rejects.toThrow(/身份不匹配/)
   const own=commands[0]!,saved=await b.personalRecordDetail(own.recordUid);expect((await b.excerptOriginal(own.recordUid)).selection).toEqual({start,end:start+5})
   // Editing only the comment is a CAS owner mutation. Replaying create must keep it.
   await rawPost(ready.url,'/api/v1/records/update',{record_uid:own.recordUid,version:1,title:'',text_content:saved.textContent+'\n\n附言\n后来附言',template_kind:1})
@@ -46,6 +63,6 @@ it.skipIf(!dir)('sends four target kinds through the actual Host owner, Record/C
   await rawPost(ready.url,'/api/v1/records/update',{record_uid:original,version:1,title:'',text_content:originalText+'编辑',template_kind:1})
   await expect(b.excerptOriginal(own.recordUid)).rejects.toThrow(/变化/)
   expect((await b.personalRecordDetail(own.recordUid)).localSelfQuote?.quote.text).toBe(quote.text)
-  await writeFile(join(dir!,'forward-passed.json'),JSON.stringify({targets:4,independentClients:3,trace}));
+  await writeFile(join(dir!,'forward-passed.json'),JSON.stringify({targets:4,independentClients:3,recipientOccurrence:true,sharedOriginal:true,trace}));
  }finally{for(const c of clients){c.service.dispose();c.db.close()}for(const root of roots)await rm(root,{recursive:true,force:true})}
 },180000)

@@ -1,4 +1,4 @@
-import {useEffect,useRef,useState,useSyncExternalStore} from 'react'
+import {useLayoutEffect,useEffect,useRef,useState,useSyncExternalStore} from 'react'
 import {createPortal} from 'react-dom'
 import type {RecordExcerptOriginal} from '../record-excerpt.js'
 import {tr,useArkmeLocale} from './locale.js'
@@ -16,7 +16,7 @@ export function ExcerptOriginal({recordUid,sourceRef,messageActionRef}:{recordUi
  const account=auth?.status==='authenticated'?`${auth.environment}:${auth.userId}`:''
  const [open,setOpen]=useState(false),[result,setResult]=useState<RecordExcerptOriginal>(),[error,setError]=useState(''),[busy,setBusy]=useState(false)
  const request=useRef<AbortController>(),panel=useRef<HTMLDivElement>(null),opener=useRef<HTMLButtonElement>(null)
- useEffect(()=>{request.current?.abort();wasOpen.current=false;setOpen(false);setResult(undefined);setError('');setBusy(false);return()=>request.current?.abort()},[account,recordUid])
+ useLayoutEffect(()=>{request.current?.abort();wasOpen.current=false;setOpen(false);setResult(undefined);setError('');setBusy(false);return()=>request.current?.abort()},[account,recordUid,sourceRef,messageActionRef])
  useEffect(()=>{if(open)panel.current?.querySelector<HTMLButtonElement>('button')?.focus();else if(wasOpen.current)opener.current?.focus();wasOpen.current=open},[open])
  const close=()=>{request.current?.abort();setOpen(false);setResult(undefined);setError('');setBusy(false)}
  const load=async()=>{
