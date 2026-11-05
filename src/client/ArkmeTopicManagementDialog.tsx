@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -79,7 +80,7 @@ export function ArkmeTopicDialogFrame({
     <section role="dialog" aria-modal="true" aria-label={title} style={styles.dialog}>
       <div style={styles.header}>
         <h2 style={styles.title}>{title}</h2>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.close} disabled={submitting} onClick={onCancel}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.close} disabled={submitting} onClick={onCancel} />
       </div>
       {children}
     </section>

@@ -25,6 +25,7 @@ it('validates range selection and requires an explicit saved confirmation before
  const signal=new AbortController().signal
  await dispatchArkmeHostOperation(service,'data.export.range.preview',{expectedAccountScope:'prod:11',selection,orderKind:1},undefined,undefined,undefined,undefined,signal)
  expect(service.dataExportRangePreview).toHaveBeenCalledWith('prod:11',selection,1,signal,undefined)
+
  await dispatchArkmeHostOperation(service,'data.export.range.preview',{expectedAccountScope:'prod:11',selection,orderKind:1,destinationRef:'account-bound-folder'},undefined,undefined,undefined,undefined,signal)
  expect(service.dataExportRangePreview).toHaveBeenLastCalledWith('prod:11',selection,1,signal,'account-bound-folder')
  await expect(dispatchArkmeHostOperation(service,'data.export.saved',{expectedAccountScope:'prod:11',confirmationRef:'sealed'})).rejects.toMatchObject({code:'record-export-confirmation-required'})

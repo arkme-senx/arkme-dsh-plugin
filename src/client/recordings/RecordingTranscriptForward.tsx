@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { requireDirectMessageSendAllowed } from '../direct-message-admission.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { arkmeSourceAllowsUserWrite } from '../../topic-policy.js'
@@ -170,7 +171,7 @@ export function RecordingTranscriptForward({ attempt, onClose, onComplete, maxCo
     <header style={{ height: 54, flex: 'none', display: 'grid', gridTemplateColumns: '54px 1fr 54px', alignItems: 'center' }}>
       {directory === 'send_to_self' ? <RecordingTranscriptButton aria-label={tr("返回转发对象")} onClick={() => { setDirectory('root') }} style={{ border: 0, background: 'transparent', display: 'grid', placeItems: 'center' }}><CaretLeft size={20} /></RecordingTranscriptButton> : <span />}
       <strong style={{ fontSize: 16, textAlign: 'center', fontWeight: 600 }}>{directory === 'root' ? tr("转发给") : tr("发给自己")}</strong>
-      <RecordingTranscriptButton ref={closeButton} aria-label={tr("关闭录音转发")} onClick={onClose} style={{ border: 0, background: 'transparent', display: 'grid', placeItems: 'center', color: colors.tertiary }}><X size={20} /></RecordingTranscriptButton>
+      <ArkmeCloseButton ref={closeButton} aria-label={tr("关闭录音转发")} onClick={onClose} style={{ border: 0, background: 'transparent', display: 'grid', placeItems: 'center', color: colors.tertiary }} />
     </header>
     <div style={{ margin: '4px 18px 12px', height: 38, flex: 'none', position: 'relative' }}>
       <span style={{ position: 'absolute', left: 13, top: 10, color: colors.caption }}><RecordingDesktopIcon name="search" size={17} /></span>

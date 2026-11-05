@@ -1,4 +1,5 @@
 import type { TeamChannel, TeamConversation } from '../team-app-contract.js'
+import { ARKME_DSH_INPUT_TOPIC_KIND, isArkmeDSHInputTopic } from '../topic-policy.js'
 import type { TeamWorldTarget } from '../team-world-contract.js'
 import type { ExploreModule } from '../explore-contract.js'
 import type { TeamMessageIntent } from './team-messaging-events.js'
@@ -637,6 +638,13 @@ export class ArkmeUiController {
     this.leaveContacts()
     const normalizedItemUid = itemUid.trim()
     if (normalizedItemUid === '') throw new TypeError('会话消息定位标识不能为空')
+    // Search targets may omit metadata already confirmed by the content owner.
+    // Reopening the same identity must not temporarily restore a write composer.
+    const previous = this.state.selectedSource
+    if (source.kind === 'topic' && source.topicKind === undefined && previous !== undefined && isArkmeDSHInputTopic(previous)
+      && arkmeSourceIdentityKey(previous) === arkmeSourceIdentityKey(source)) {
+      source = { ...source, topicKind: ARKME_DSH_INPUT_TOPIC_KIND }
+    }
     this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
     const { calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state

@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import {TeamGroupSourceCards} from './TeamGroupSourceCards.js'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
@@ -34,6 +35,7 @@ import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
+import { ArkmeConversationArrangements } from './ArkmeConversationArrangements.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
 import { ArkmeMessageSnapshotDialog } from './ArkmeMessageSnapshotDialog.js'
 import { useTeamMessageSelection } from './use-team-message-selection.js'
@@ -974,7 +976,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     :<div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
       onDrop={event => { if (event.dataTransfer.files.length && !editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked) { event.preventDefault(); selectFiles(event.dataTransfer.files) } }}
       style={{...composerLayout.composer, flexDirection: 'column', ...(selection.ids ? { display: 'none' } : {})}} data-team-composer={editing ? 'reedit' : 'message'}>
-      <ArkmeComposerInfoRow destination={current.side === 'team' ? `${current.visitor?.nickname ?? tr('用户')}（${current.channel.name}）` : current.channel.name} focused={composerFocused && !editing}>
+      <ArkmeComposerInfoRow destination={current.side === 'team' ? `${current.visitor?.nickname ?? tr('用户')}（${current.channel.name}）` : current.channel.name} focused={composerFocused}
+        shortcuts={!editing && detailReady ? <ArkmeConversationArrangements teamConversation={current} accountScope={accountKey} active refreshRevision={current.revision} /> : undefined}>
         <ArkmeComposerInputStats active visible={composerFocused || !!richDraft.text || !!draft.localFiles?.length || !!draft.assets.length}
           textLength={Array.from(richDraft.text).length} startedAtMillis={validTeamDraftStart(editing ? editing.startedAtMillis : draft.startedAtMillis)}
           showsInputTime={showsInputTime} onToggle={() => setShowsInputTime(!showsInputTime)} />
@@ -1077,7 +1080,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         {!editing && <ArkmeBackgroundSoundWaveform owner={recordCapture} draftKey={recordDraftKey} />}
       </ArkmeComposerCard>
     </div>
-  return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
+  return <section ref={paneHost} className="team-conversation-pane" data-arkme-active-conversation-identity={`team:${conversation.side}:${conversation.key}`} style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
     {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version} revision={forwardAttempt.messages[0].revision}>{readable=><TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
     {copyLinkNotice&&<div role="status">{copyLinkNotice}</div>}
@@ -1147,7 +1150,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     {(selection.status || selection.error) && <div role={selection.error ? 'alert' : 'status'} style={{ padding: '8px 16px', color: selection.error ? arkmeTheme.danger : arkmeTheme.secondary, fontSize: 12 }}>
       {selection.status} {selection.error}
       {selection.error && <button type="button" disabled={selection.busy} onClick={() => { void recover() }}>{tr('刷新核对')}</button>}
-      {!selection.busy && <button type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus}>×</button>}
+      {!selection.busy && <ArkmeCloseButton type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus} />}
     </div>}
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
     <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current); bottomVisibility.measure() }} aria-label={tr("团队消息记录")}>

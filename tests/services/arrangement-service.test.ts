@@ -94,6 +94,20 @@ it('discards recognition configuration returned after an account switch', async 
   runtime=deletedService(() => {runtime.switchAccount();return {contract_version:1,sources:[],models:[],revision:'r'}})
   await expect(runtime.service.recognitionRequest('settings/get','test:42',{})).rejects.toMatchObject({code:'arrangement-account-changed'})
 })
+it('saves the Team model through the authenticated host and uses the server readback', async () => {
+  const {service,fetchImpl}=deletedService((path,body)=>{
+    expect(path).toBe('https://intelligent.test/api/v1/arrangements/recognition/settings/set')
+    expect(body).toEqual({source:'team',route_key:'dashscope/qwen3.8-flash'})
+    return {contract_version:1,revision:'saved-team-policy',sources:[{source:'team',label:'团队对话',personal_route_key:'dashscope/qwen3.8-flash',effective_route_key:'dashscope/qwen3.8-flash',inherited:false,prompts:[],rules:[],pipeline:[]}],models:[]}
+  })
+  await expect(service.recognitionRequest('settings/set','test:42',{source:'team',routeKey:'dashscope/qwen3.8-flash'})).resolves.toMatchObject({accountScope:'test:42',revision:'saved-team-policy',sources:[{source:'team',effective_route_key:'dashscope/qwen3.8-flash'}]})
+  expect(fetchImpl).toHaveBeenCalledOnce()
+})
+it.each(['unknown','constructor','__proto__','toString'])('rejects unsupported recognition source %s before cloud IO', async source => {
+  const {service,fetchImpl}=deletedService(()=>({}))
+  await expect(service.recognitionRequest('settings/set','test:42',{source,routeKey:'dashscope/qwen-flash'})).rejects.toMatchObject({code:'invalid-params'})
+  expect(fetchImpl).not.toHaveBeenCalled()
+})
 it('does not project internal owner IDs from a recognition trace',async () => {
   const {service}=deletedService(path => path.endsWith('/list') ? {list:[{uid:'secret-owner',status:1}],total:1} : {state:'ready',trace:{id:'trace',route_key:'dashscope/qwen-flash',rules:[],pipeline:[],record_uids:['private-record'],outcomes:[{uid:'secret-owner',title:'title',description:'',due_at:0}]}})
   const ref=(await service.listArrangements()).items[0]!.arrangementRef

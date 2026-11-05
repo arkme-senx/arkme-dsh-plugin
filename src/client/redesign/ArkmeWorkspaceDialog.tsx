@@ -1,10 +1,10 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from '../locale.js'
 import { useEffect, useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/ArrowLeft'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { Folder } from '@phosphor-icons/react/Folder'
 import { House } from '@phosphor-icons/react/House'
-import { X } from '@phosphor-icons/react/X'
 import type { DirectoryListing } from '@deepseek-ai/dsh-host-directory-picker/types'
 
 export function ArkmeWorkspaceDialog({
@@ -53,7 +53,7 @@ export function ArkmeWorkspaceDialog({
     <section className="arkme-workspace-dialog" role="dialog" aria-modal="true" aria-labelledby="arkme-workspace-dialog-title">
       <header>
         <div><span>{tr("任务工作区")}</span><h2 id="arkme-workspace-dialog-title">{tr("选择 Agent 要处理的目录")}</h2></div>
-        <button type="button" aria-label={tr("关闭工作区选择")} disabled={busy} onClick={onCancel}><X size={18} /></button>
+        <ArkmeCloseButton type="button" aria-label={tr("关闭工作区选择")} disabled={busy} onClick={onCancel} />
       </header>
       <nav aria-label={tr("目录路径")}>
         {(listing?.crumbs ?? []).map((crumb, index) => <span key={crumb.path}>

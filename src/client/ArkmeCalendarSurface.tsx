@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
@@ -6,7 +7,6 @@ import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeCalendarBucketDay,
   ArkmeCalendarDayRecordPage,
@@ -931,7 +931,7 @@ function ArkmeCalendarSurfaceBody({
           <h2 style={styles.recordsTitle}>{selectedDayLabel(selectedDate, today)}</h2>
           <button data-arkme-feedback="neutral" type="button" aria-label={tr("刷新当天快记")} disabled={recordsLoading} style={{ ...styles.iconButton, width: 'auto', fontSize: 12 }}
             onClick={() => arkmeCalendarInvalidations.publish({ dateKey: selectedDateKey })}>{tr("刷新")}</button>
-          <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭当天内容")} title={tr("关闭")} style={styles.iconButton} onClick={() => { setDetailsOpen(false); setSelectedRecord(undefined) }}><X size={20} aria-hidden /></button>
+          <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭当天内容")} title={tr("关闭")} style={styles.iconButton} onClick={() => { setDetailsOpen(false); setSelectedRecord(undefined) }} />
         </header>
         {recordsError !== '' && <div style={{ ...styles.status, ...styles.error }} role="alert">{recordsError}</div>}
         {recordsError === '' && recordsLoading && records !== undefined && <div style={styles.loadingStatus} role="status">{tr("正在更新…")}</div>}

@@ -1,3 +1,4 @@
+import type { WorldSubscriptionNotice, WorldSubscriptionNoticePage } from '../world-subscription-contract.js'
 import { recordingNotifications, useRecordingNotifications } from './recording-notification-store.js'
 import { recordingNoticeTitle, recordingNoticePreview } from './ArkmeRecordingNotificationDetail.js'
 import type { RecordingWorkflowNotice } from '../recording-workflow-contract.js'
@@ -28,7 +29,7 @@ import { reactionNotifications } from './reaction-notifications.js'
 import { expressionLabel } from './reaction-expression.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 
-export type ArkmeNotificationKind = 'official' | 'arrangement' | 'reaction' | 'world' | 'ai' | 'recording'
+export type ArkmeNotificationKind = 'official' | 'arrangement' | 'reaction' | 'world' | 'ai' | 'recording' | 'subscription'
 
 export interface ArkmeNotificationItem {
   id: string
@@ -43,6 +44,7 @@ export interface ArkmeNotificationItem {
   worldReaction?: WorldReactionNotificationPage['items'][number]
   recording?: RecordingWorkflowNotice
   aiLetter?: ArkmeAiLetterItem
+  subscription?: WorldSubscriptionNotice
   worldInteractionRef?: string
 }
 
@@ -58,6 +60,11 @@ interface NotificationSnapshot {
   worldUnreadCount: number
   worldSeenThroughSequence: number
   worldError: string | undefined
+  subscriptionItems: ArkmeNotificationItem[]
+  subscriptionUnreadCount: number
+  subscriptionCursor: string | undefined
+  subscriptionLoading: boolean
+  subscriptionError: string | undefined
   aiItems: ArkmeNotificationItem[]
   aiUnreadCount: number
   aiLatestUnread: ArkmeAiLetterItem | undefined
@@ -76,6 +83,11 @@ const EMPTY_SNAPSHOT: NotificationSnapshot = {
   worldUnreadCount: 0,
   worldSeenThroughSequence: 0,
   worldError: undefined,
+  subscriptionItems: [],
+  subscriptionUnreadCount: 0,
+  subscriptionCursor: undefined,
+  subscriptionLoading: false,
+  subscriptionError: undefined,
   aiItems: [],
   aiUnreadCount: 0,
   aiLatestUnread: undefined,
@@ -163,12 +175,68 @@ function aiLetterItem(item: ArkmeAiLetterItem): ArkmeNotificationItem {
   }
 }
 
+export function subscriptionItem(item: WorldSubscriptionNotice): ArkmeNotificationItem {
+  const title = item.kind === 'publication' ? tr('{v0}发布了新内容', { v0: item.subject.name })
+    : item.subject.kind === 'team' ? tr('{v0}订阅了{v1}', { v0: item.actor.name, v1: item.subject.name }) : tr('{v0}订阅了你', { v0: item.actor.name })
+  return { id: `subscription:${item.id}`, kind: 'subscription', title,
+    preview: item.kind === 'subscriber' ? tr('查看订阅者，或发起联系') : item.publication ? compactText(item.publication.textContent || item.publication.headline || tr('点击查看公开内容')) : tr('这条内容已不可查看'),
+    atMillis: item.at, unread: item.unread, subscription: item }
+}
+
 class ArkmeNotificationStore {
   private snapshot: NotificationSnapshot = EMPTY_SNAPSHOT
   private listeners = new Set<() => void>()
   private controller: AbortController | undefined
   private inflight: Promise<void> | undefined
   private worldReadRevision = 0
+  private subscriptionRequest?: AbortController
+  private subscriptionFlight: Promise<void> | undefined
+  private subscriptionReads = new Map<string, number>()
+  private subscriptionReadRevision = 0
+  private pollingClients = new Set<symbol>()
+  private subscriptionTimer: ReturnType<typeof setInterval> | undefined
+
+  acquireSubscriptions = (scope: string) => {
+    const token = Symbol(); this.pollingClients.add(token)
+    void this.refreshSubscriptions(scope)
+    if (!this.subscriptionTimer) this.subscriptionTimer = setInterval(() => { if (typeof document === 'undefined' || document.visibilityState !== 'hidden') void this.refreshSubscriptions(accountScope()) }, 30_000)
+    return () => { this.pollingClients.delete(token); if (!this.pollingClients.size && this.subscriptionTimer) { clearInterval(this.subscriptionTimer); this.subscriptionTimer = undefined } }
+  }
+
+  async refreshSubscriptions(scope = accountScope(), more = false): Promise<void> {
+    if (!scope || scope !== accountScope() || this.snapshot.scope !== scope) return
+    if (this.subscriptionFlight && !this.subscriptionRequest?.signal.aborted) return this.subscriptionFlight
+    const cursor = more ? this.snapshot.subscriptionCursor : undefined
+    if (more && !cursor) return
+    this.subscriptionRequest?.abort(); const controller = new AbortController(); this.subscriptionRequest = controller
+    const readRevision = this.subscriptionReadRevision
+    this.publish({ ...this.snapshot, subscriptionLoading: true, subscriptionError: undefined })
+    const operation = (async () => {
+      try {
+        const page = await callArkme<WorldSubscriptionNoticePage>('world.subscriptions', { accountKey: scope, action: 'notifications', ...(cursor ? { cursor } : {}) }, controller.signal, { priority: 'background' })
+        if (controller.signal.aborted || this.snapshot.scope !== scope || accountScope() !== scope) return
+        const rows = page.items.map(row => subscriptionItem({ ...row, unread: row.unread && row.sequence > (this.subscriptionReads.get(row.scopeKey) ?? 0) }))
+        const items = more ? [...this.snapshot.subscriptionItems, ...rows].filter((r, i, all) => all.findIndex(x => x.id === r.id) === i).slice(-300) : rows
+        this.publish({ ...this.snapshot, subscriptionItems: items, subscriptionUnreadCount: more || readRevision !== this.subscriptionReadRevision ? this.snapshot.subscriptionUnreadCount : page.unreadCount, subscriptionCursor: page.nextCursor, subscriptionLoading: false })
+      } catch (e) {
+        if (!controller.signal.aborted && this.snapshot.scope === scope && accountScope() === scope) this.publish({ ...this.snapshot, subscriptionItems: [], subscriptionUnreadCount: 0, subscriptionCursor: undefined, subscriptionLoading: false, subscriptionError: e instanceof Error ? e.message : tr('订阅通知暂时不可用') })
+      }
+    })()
+    this.subscriptionFlight = operation
+    try { await operation } finally { if (this.subscriptionFlight === operation) this.subscriptionFlight = undefined }
+  }
+
+  async markSubscriptionsRead(rows: WorldSubscriptionNotice[], scope: string, signal: AbortSignal): Promise<void> {
+    if (!rows.length || scope !== accountScope() || this.snapshot.scope !== scope) return
+    await callArkme('world.subscriptions', { accountKey: scope, action: 'read', readRefs: rows.map(row => row.readRef) }, signal)
+    if (signal.aborted || scope !== accountScope() || this.snapshot.scope !== scope) return
+    for (const row of rows) this.subscriptionReads.set(row.scopeKey, Math.max(row.sequence, this.subscriptionReads.get(row.scopeKey) ?? 0))
+    this.subscriptionReadRevision++
+    this.publish({ ...this.snapshot, subscriptionItems: this.snapshot.subscriptionItems.map(row => row.subscription && row.subscription.sequence <= (this.subscriptionReads.get(row.subscription.scopeKey) ?? 0) ? { ...row, unread: false } : row) })
+    await this.subscriptionFlight
+    await this.refreshSubscriptions(scope)
+  }
+
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener)
@@ -184,6 +252,7 @@ class ArkmeNotificationStore {
 
   async refresh(scope = accountScope()): Promise<void> {
     if (scope === undefined) {
+      this.subscriptionRequest?.abort(); this.subscriptionFlight = undefined; this.subscriptionReads.clear()
       this.controller?.abort()
       this.controller = undefined
       this.inflight = undefined
@@ -191,6 +260,7 @@ class ArkmeNotificationStore {
       return
     }
     if (this.snapshot.scope === scope && this.inflight !== undefined) return this.inflight
+    if (this.snapshot.scope !== scope) { this.subscriptionRequest?.abort(); this.subscriptionFlight = undefined; this.subscriptionReads.clear() }
     this.controller?.abort()
     const controller = new AbortController()
     this.controller = controller
@@ -359,33 +429,35 @@ function useNotificationItems(): {
   useEffect(() => {
     const release = scope === undefined ? undefined : reactionNotifications.acquireHistory(scope)
     void arkmeNotificationStore.refresh(scope)
-    const refreshOnFocus = () => { void arkmeNotificationStore.refresh(scope); void reactionNotifications.refreshHistory() }
+    const releaseSubscriptions = scope ? arkmeNotificationStore.acquireSubscriptions(scope) : undefined
+    const refreshOnFocus = () => { void arkmeNotificationStore.refreshSubscriptions(scope); void arkmeNotificationStore.refresh(scope); void reactionNotifications.refreshHistory() }
     window.addEventListener('focus', refreshOnFocus)
-    return () => { release?.(); window.removeEventListener('focus', refreshOnFocus) }
+    return () => { release?.(); releaseSubscriptions?.(); window.removeEventListener('focus', refreshOnFocus) }
   }, [scope])
   const reactionItems = useMemo(() => scope === undefined ? [] : reactionNotifications.forHistory(scope), [reactionRevision, scope])
   const items = useMemo(() => [
     ...official.items.map(item => ({ id: `official:${item.id}`, kind: 'official' as const, title: item.title, preview: item.summary, atMillis: item.publishedAtMillis, unread: item.readAtMillis === 0 })),
     ...recording.items.map(item => ({ id: `recording:${item.id}`, kind: 'recording' as const, title: recordingNoticeTitle(item), preview: recordingNoticePreview(item), atMillis: item.atMillis, unread: item.readAtMillis === 0, recording: item })),
     ...snapshot.arrangementItems.map(arrangementItem),
+    ...snapshot.subscriptionItems,
     ...snapshot.worldItems,
     ...snapshot.worldReactionItems,
     ...snapshot.aiItems,
     ...reactionItems.map(reactionItem),
-  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, reactionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems, snapshot.worldReactionItems])
+  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, reactionItems, snapshot.subscriptionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems, snapshot.worldReactionItems])
   return { scope, snapshot, official, recording, reactionItems, items }
 }
 
 export function useArkmeNotificationSummary(): { ready: boolean; hasNotifications: boolean; unreadCount: number; preview: string; atMillis: number } {
   const { items, snapshot, official, recording } = useNotificationItems()
-  const unread = items.filter(item => item.kind !== 'official' && item.kind !== 'recording' && item.unread)
+  const unread = items.filter(item => item.kind !== 'official' && item.kind !== 'recording' && item.kind !== 'subscription' && item.unread)
   const officialLatest = official.summary.latest
   let latest = officialLatest !== undefined && officialLatest.publishedAtMillis > (items[0]?.atMillis ?? 0) ? { title: officialLatest.title, preview: officialLatest.summary, atMillis: officialLatest.publishedAtMillis } : items[0]
   if (recording.latest && recording.latest.atMillis > (latest?.atMillis ?? 0)) latest = { title: recordingNoticeTitle(recording.latest), preview: recordingNoticePreview(recording.latest), atMillis: recording.latest.atMillis }
   return {
     ready: snapshot.scope !== undefined && (snapshot.ready || official.ready || recording.ready),
     hasNotifications: recording.total > 0 || official.summary.total > 0 || items.length > 0 || snapshot.worldUnreadCount > 0 || snapshot.aiUnreadCount > 0,
-    unreadCount: recording.unreadCount + official.summary.unreadCount + unread.length + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
+    unreadCount: recording.unreadCount + official.summary.unreadCount + unread.length + snapshot.subscriptionUnreadCount + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
     preview: latest === undefined ? tr('官方、安排和互动通知') : `${latest.title}：${compactText(latest.preview)}`,
     atMillis: latest?.atMillis ?? 0,
   }
@@ -397,13 +469,14 @@ function notificationKindLabel(kind: ArkmeNotificationKind): string {
     case 'official': return tr('官方')
     case 'arrangement': return tr('安排')
     case 'reaction': return tr('表态')
+    case 'subscription': return tr('订阅')
     case 'world': return tr('世界')
     case 'ai': return tr('AI 来信')
   }
 }
 
 const notificationFilterKinds: readonly (ArkmeNotificationKind | 'all')[] = [
-  'all', 'official', 'arrangement', 'reaction', 'world', 'ai', 'recording',
+  'all', 'official', 'arrangement', 'reaction', 'world', 'subscription', 'ai', 'recording',
 ]
 
 function notificationFilterLabel(kind: ArkmeNotificationKind | 'all'): string {
@@ -457,6 +530,11 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
         finally { keys.forEach(key => pending.current.delete(key)) }
       })())
     }
+    const subscriptionRows = visible.flatMap(item => item.subscription && item.unread ? [item.subscription] : [])
+    const newestByScope = new Map<string, WorldSubscriptionNotice>()
+    for (const row of subscriptionRows) if (row.sequence > (newestByScope.get(row.scopeKey)?.sequence ?? 0)) newestByScope.set(row.scopeKey, row)
+    const subscriptionBatch = [...newestByScope.values()]
+    submit(subscriptionBatch.map(row => `subscription:${row.id}`), () => arkmeNotificationStore.markSubscriptionsRead(subscriptionBatch, scope, signal))
     const recordingRows = visible.flatMap(item => item.unread && item.recording ? [item.recording] : [])
     submit(recordingRows.map(item => `recording:${item.id}:${item.sequence}`), () => recordingNotifications.read(scope, recordingRows))
     const officialRows = visible.filter(item => item.kind === 'official' && item.unread)
@@ -493,7 +571,12 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     if (preview || accountScope() !== scope) return
     setBusyId(item.id); setActionError('')
     try {
-      if (item.worldReaction) {
+      if (item.subscription) {
+        const row = item.subscription
+        if (row.kind === 'publication') { if (!row.publication) throw new Error(tr('这条内容已不可查看')); arkmeUi.showWorldInteraction(row.publication.recordRef) }
+        else arkmeUi.showUserWorld({ userId: row.actor.userId, displayName: row.actor.name })
+      }
+      else if (item.worldReaction) {
         if (!item.worldReaction.recordRef) throw new Error(tr('这条世界内容暂时无法打开，请刷新通知'))
         arkmeUi.showWorldInteraction(item.worldReaction.recordRef)
       }
@@ -543,12 +626,14 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     {official.error && (activeKind === 'all' || activeKind === 'official') && <div role="status" className="arkme-notification-status">{tr('官方通知暂时不可用')} <button onClick={() => { void officialNotifications.refresh() }}>{tr('重试')}</button></div>}
     {snapshot.error && (activeKind === 'all' || activeKind === 'arrangement') && <div role="alert" className="arkme-notification-status">{snapshot.error}</div>}
     {snapshot.worldError && (activeKind === 'all' || activeKind === 'world' || activeKind === 'reaction') && <div role="status" className="arkme-notification-status">{tr('世界互动暂时无法加载')}</div>}
+    {snapshot.subscriptionError && (activeKind === 'all' || activeKind === 'subscription') && <div role="status" className="arkme-notification-status">{snapshot.subscriptionError} <button type="button" disabled={snapshot.subscriptionLoading} onClick={() => { void arkmeNotificationStore.refreshSubscriptions(scope) }}>{tr('重试')}</button></div>}
     {snapshot.aiError && (activeKind === 'all' || activeKind === 'ai') && <div role="status" className="arkme-notification-status">{tr('AI 来信暂时无法加载')}</div>}
     {filterLoading && filteredItems.length === 0 && <div role="status" className="arkme-notification-status">{tr('正在加载通知…')}</div>}
     <div className="arkme-notification-body">
       <div ref={listRef} className="arkme-notification-scroll" onScroll={scroll.onScroll}>
         <div className="arkme-notification-messages">
           <div className="arkme-notification-history">
+            {(activeKind === 'subscription' || activeKind === 'all') && snapshot.subscriptionCursor && <button type="button" className="arkme-notification-link" disabled={snapshot.subscriptionLoading} onClick={() => { void arkmeNotificationStore.refreshSubscriptions(scope, true) }}>{tr('加载更多订阅通知')}</button>}
             {(activeKind === 'recording' || activeKind === 'all') && recording.nextCursor && <button type="button" className="arkme-notification-link" disabled={recording.loading} onClick={() => { void recordingNotifications.refresh(true) }}>{tr('加载更多录音通知')}</button>}
             {(activeKind === 'official' || activeKind === 'all') && official.nextCursor && <button type="button" className="arkme-notification-link" disabled={official.foregroundLoading} onClick={() => { void officialNotifications.more() }}>{tr('加载更多官方通知')}</button>}
           </div>

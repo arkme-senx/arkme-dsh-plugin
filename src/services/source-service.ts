@@ -5,7 +5,7 @@ import { SharedReadGroup } from '../shared-read-group.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
 import { readTopicRecordPage } from './topic-record-page.js'
-import { readTopicMetadata } from './topic-metadata.js'
+import { readTopicMetadata, type TopicMetadata } from './topic-metadata.js'
 import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -904,6 +904,33 @@ export class SourceService {
       sourceRef: await this.sealSourceRef(session.userId, 'topic', topic.ownerRef, title),
       displayName: title,
     }
+  }
+
+  /** Resolve the hidden system destination without loading its records or directory. */
+  async hiddenTopicSource(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem | null> {
+    const session = await this.runtime.requireSession()
+    const topic = await this.openSourceRef(sourceRef, session.userId)
+    if (topic.kind !== 'topic') return null
+    let metadata: TopicMetadata
+    try {
+      metadata = await readTopicMetadata(this.runtime, session, topic.ownerRef, signal)
+    } catch (error) {
+      signal?.throwIfAborted()
+      if (error instanceof ArkmePluginError && (!error.retryable || error.httpStatus === 403 || error.httpStatus === 404)) return null
+      throw error
+    }
+    signal?.throwIfAborted()
+    if (metadata.topicKind !== ARKME_DSH_INPUT_TOPIC_KIND || metadata.privacyState === 2) return null
+    const source = {
+      ...await this.sourceItem(topic),
+      topicKind: metadata.topicKind,
+      displayName: arkmeTopicDisplayName(topic.displayName, metadata.topicKind),
+    }
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) {
+      throw new ArkmePluginError('source-account-changed', '账号已切换，请重新打开主题', true, 409)
+    }
+    return source
   }
 
   /** Reuse the record owner's topic policy, without replaying title/privacy defaults. */

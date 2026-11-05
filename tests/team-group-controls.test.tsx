@@ -10,8 +10,14 @@ import {subscribeTeamWorkspaceChanges} from '../src/client/team-messaging-events
 import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext } from '../src/team-group-contract.js'
 import type { ArkmeSourceItem, ArkmeTeam } from '../src/types.js'
 
-const { call } = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: call }))
+const { call, subscriptionState } = vi.hoisted(() => ({ call: vi.fn(), subscriptionState: vi.fn() }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: any[]) => {
+  if (operation === 'world.subscriptions' && args[0]?.action === 'state') {
+    const auth = arkmeAuthStore.getSnapshot().auth
+    return subscriptionState(...args, auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : '')
+  }
+  return call(operation, ...args)
+} }))
 const selection={teamRef:'sealed-team',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}
 const teams: Array<ArkmeTeam & {representation:typeof selection}> = [{representation:selection, teamRef: 'sealed-team', jotmoId: 'our_team', name: '即我', currentUserRole: 'member', createdAtMillis: 1, updatedAtMillis: 1 }]
 const joinContext={state:'ready',teams:teams.map(team=>({...team,key:'stable-team-key',joined:false,revision:0}))}
@@ -45,11 +51,22 @@ function button(text: string) {
 const click = async (label: string) => act(async () => button(label).click())
 function deferred() { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 beforeEach(() => {
+  subscriptionState.mockReset().mockResolvedValue({ subscribed: false })
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); call.mockReset();localStorage.clear()
   call.mockImplementation(async operation => operation === 'team.app.group.context' ? eligible : operation==='team.app.group.join-context'?joinContext:{state:'pending',accessStatus:'unavailable'})
+
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+afterEach(async () => {
+  await act(async () => root.unmount())
+  for (const [params, signal, account] of subscriptionState.mock.calls) {
+    expect(account).not.toBe('')
+    expect(params).toMatchObject({ accountKey: account, action: 'state' })
+    expect(signal).toBeInstanceOf(AbortSignal)
+  }
+  expect(call.mock.calls.filter(([op]) => op === 'world.subscriptions')).toHaveLength(0)
+  host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals()
+})
 
 it('requires an explicit team choice and does not add a personal member or fabricate a joined team', async () => {
   await mount(<TeamGroupJoinPanel accountKey="prod:90" source={source} />)

@@ -1,10 +1,10 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { TeamConversation, TeamTimeline } from '../team-app-contract.js'
 import { TeamMessageContent } from './TeamMessageContent.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
 import { callArkme } from './api.js'
@@ -64,7 +64,7 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
         <strong style={{ fontSize: 16, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{title}</strong>
         {current && <TeamVisitorMembership conversation={current} />}
         <span style={{ flex: 'none', borderRadius: 99, background: arkmeTheme.subtle, color: arkmeTheme.secondary, padding: '3px 8px', fontSize: 11 }}>预览中</span>
-        <button style={{ ...button, marginLeft: 'auto', color: arkmeTheme.secondary }} aria-label="关闭聊天预览" onClick={onClose}><X size={18} /></button>
+        <ArkmeCloseButton style={{ ...button, marginLeft: 'auto', color: arkmeTheme.secondary }} aria-label="关闭聊天预览" onClick={onClose} />
       </header>
       {conversation ? <TeamPreviewMessages key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation} onConversation={setLoadedConversation} />
         : <div aria-label="团队对话预览列表" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 16px' }}>

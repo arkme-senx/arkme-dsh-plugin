@@ -161,3 +161,15 @@ it('accepts public-only team links without manufacturing private management capa
  await expect(f.service.execute({action:'unpublish',accountKey:'test:8',publicationRef:team.ref,requestUid:'fixed-request-1234'})).rejects.toThrow()
  expect(f.teams.unpublishLink).not.toHaveBeenCalled()
 })
+it('resolves a private suggestion through its versioned owner before reusing original publication', async () => {
+  const f = fixture()
+  const resolve = vi.fn(async () => f.source)
+  const service = new WorldPublicationService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 8 }), stateStore: { uniqueCode: async () => 'key' } } as never, f.record as never, f.chat as never, f.world as never, f.teams as never, resolve)
+  const origin = { kind: 'suggestion' as const, sourceRef: 'opaque-suggestion', itemUid: 'candidate-key' }
+  await service.execute({ action: 'publish-source', accountKey: 'test:8', origin, version: 7 })
+  expect(resolve).toHaveBeenCalledWith(origin, 'test:8', undefined)
+  expect(f.record.worldPublishSource).not.toHaveBeenCalled()
+  expect(f.world.publishExistingSource).toHaveBeenCalledWith(f.source, 8, undefined)
+  await expect(service.execute({ action: 'publish-source', accountKey: 'test:8', origin, version: 6 })).rejects.toMatchObject({ code: 'world-source-changed' })
+  expect(f.world.publishExistingSource).toHaveBeenCalledOnce()
+})

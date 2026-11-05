@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, type ReactNode } from 'react'
@@ -173,7 +174,7 @@ export function ArkmeMessageSnapshotDialog({ item, detail, previewText, metadata
   return createPortal(
     <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section role="dialog" aria-modal="true" aria-label={tr("快记详情")} style={styles.dialog}>
-        <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭快记详情")} style={styles.close} onClick={onClose}><X size={22} weight="bold" /></button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭快记详情")} style={styles.close} onClick={onClose} />
         <div style={styles.body}><ArkmeMessageSnapshotDialogContent {...(onRetry?{onRetry}:{})} item={item} historical={historical} {...(previewText === undefined ? {} : { previewText })} metadataUnavailable={metadataUnavailable} createdAtMillis={createdAtMillis} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
       </section>
     </div>,

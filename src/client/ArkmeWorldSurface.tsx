@@ -1,5 +1,9 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
+import { WorldSubscribeButton, WorldSubscriptionEntry } from './WorldSubscriptions.js'
+import { WorldSuggestionsEntry } from './WorldSuggestions.js'
 import { TeamWorldActivity } from './TeamWorldActivity.js'
 import { WorldTeamBadge } from './WorldTeamBadge.js'
+import { worldSoundPlayback } from './world-sound-playback.js'
 import { WorldPublishIdentityDialog } from './WorldPublishIdentityDialog.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
@@ -24,7 +28,6 @@ import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { SpinnerGap } from '@phosphor-icons/react/dist/icons/SpinnerGap'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeImagePayload,
   ArkmeOpenPrivateChatResult,
@@ -55,6 +58,8 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { requirePhoneForSocialAction, isSocialBindingRequired } from './social-action-guard.js'
 import { arkmeAuthStore } from './auth-store.js'
+import {WorldSoundCard} from './WorldSoundCard.js'
+import {WorldSoundPublicationAction} from './WorldSoundPublicationAction.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { ArkmeExtensionAvatar } from './ArkmeExtensionAvatar.js'
@@ -666,9 +671,7 @@ export function WorldImagePreviewDialog({ item, previewIndex, onClose, onSelect,
 
   return <div role="dialog" aria-modal="true" aria-label={tr("世界图片预览")} style={styles.previewBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section style={styles.previewModal}>
-      <button data-arkme-feedback="neutral" type="button" style={styles.previewClose} aria-label={tr("关闭图片预览")} title={tr("关闭")} onClick={onClose}>
-        <X size={16} weight="bold" aria-hidden />
-      </button>
+      <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.previewClose} aria-label={tr("关闭图片预览")} title={tr("关闭")} onClick={onClose} />
       <div style={styles.previewStage}>
         <div
           ref={viewportRef}
@@ -1153,6 +1156,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
     return () => { window.removeEventListener('keydown', closeOnEscape) }
   }, [previewIndex])
   if (reactionUnavailable) return <article style={styles.card} data-world-record-ref={item.recordRef}><p role="status" style={styles.subtitle}>{tr('这条内容已更新或不再公开，请刷新世界')}</p></article>
+  if(item.soundExcerpt&&item.soundStatus&&item.soundStatus!=='published')return <article style={styles.card} data-world-record-ref={item.recordRef}><header style={{display:'flex',justifyContent:'space-between',alignItems:'center',gap:10,marginBottom:16}}><span>{item.authorName}</span><WorldSoundPublicationAction recordRef={item.recordRef} onWithdrawn={()=>setReactionUnavailable(true)}/></header><WorldSoundCard recordRef={item.recordRef} excerpt={item.soundExcerpt} status={item.soundStatus}/></article>
   return <article style={{ ...styles.card, ...(detail ? { padding: 0, border: 0, borderRadius: 0, background: 'transparent' } : {}), ...(selected ? { borderColor: arkmeTheme.accent } : {}) }} data-world-record-ref={item.recordRef}
     data-world-detail-open={selected || undefined} data-world-detail-content={detail || undefined}
     {...(onOpenDetail === undefined ? {} : { tabIndex: 0, 'aria-label': tr('{v0}的世界动态', { v0: item.authorName }),
@@ -1176,13 +1180,13 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
             ? <strong style={styles.author}>{item.authorName}</strong>
             : <button data-arkme-feedback="neutral" type="button" style={styles.authorButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><strong style={styles.author}>{item.authorName}</strong></button>}
           {item.teamAuthor ? <WorldTeamBadge /> : <WorldMembershipBadge memberType={item.memberType} />}
-          {playable
+          {playable && !item.soundExcerpt
             ? <button data-arkme-feedback="neutral" data-arkme-feedback-selected={voiceprintActive} type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintPlayable, ...(voiceprintActive ? styles.voiceprintActive : {}) }} title={voiceprintLoading ? '正在生成声纹，点击停止' : voiceprintActive ? '停止播放声纹' : '播放声纹'} aria-label={voiceprintLoading ? tr("正在生成{v0}的声纹，点击停止", { v0: item.authorName }) : voiceprintActive ? tr("停止播放{v0}的声纹", { v0: item.authorName }) : tr("播放{v0}的声纹", { v0: item.authorName })} aria-busy={voiceprintLoading || undefined} onClick={() => { onToggleVoiceprint(item.recordRef) }}>
               {voiceprintLoading
                 ? <SpinnerGap className="arkme-icon-spin" size={15} weight="bold" />
                 : <SpeakerHigh size={16} weight="light" />}
             </button>
-            : onInviteVoiceprint === undefined || item.teamAuthor ? null : <button data-arkme-feedback="neutral" type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title={tr("邀请开启声纹")} aria-label={tr("邀请{v0}开启声纹", { v0: item.authorName })} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
+            : onInviteVoiceprint === undefined || item.teamAuthor || item.soundExcerpt ? null : <button data-arkme-feedback="neutral" type="button" style={{ ...styles.voiceprintButton, ...styles.voiceprintInvite }} title={tr("邀请开启声纹")} aria-label={tr("邀请{v0}开启声纹", { v0: item.authorName })} data-world-voiceprint-invite-icon="microphone" onClick={() => { onInviteVoiceprint(item) }}>
               <Microphone size={17} weight="light" />
             </button>}
         </span>
@@ -1193,8 +1197,9 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
       </span>
       {!item.teamAuthor && <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>}
     </header>}
-    {item.headline !== '' && <h2 style={styles.headline}><ArkmeRichText text={item.headline} presentation="preview" /></h2>}
-    {textContent.trim() !== '' && (detail ? <div style={{ ...styles.text, marginTop: 0 }}><WorldLinkText text={textContent} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></div> : <WorldCollapsibleText
+    {item.soundExcerpt&&<WorldSoundCard recordRef={item.recordRef} excerpt={item.soundExcerpt} detail={!!detail}/>}
+    {!item.soundExcerpt&&item.headline !== '' && <h2 style={styles.headline}><ArkmeRichText text={item.headline} presentation="preview" /></h2>}
+    {!item.soundExcerpt&&textContent.trim() !== '' && (detail ? <div style={{ ...styles.text, marginTop: 0 }}><WorldLinkText text={textContent} {...(extensionShareLink === undefined ? {} : { extensionShareLink })} /></div> : <WorldCollapsibleText
       recordRef={item.recordRef}
       authorName={item.authorName}
       textContent={textContent}
@@ -1404,6 +1409,8 @@ export function ArkmeWorldContent({ state, scope, target, catalogOwnerUserId, ca
           <div style={styles.targetTitle}><h1 style={styles.heading}>{target.displayName}{tr("的世界")}</h1><p style={styles.subtitle}>{tr("TA 公开分享的内容")}</p></div>
         </div>}
       <div style={styles.headerActions}>
+        {scope === 'mine' && !publicTab && target === undefined && <WorldSuggestionsEntry />}
+        {target ? <WorldSubscribeButton target={{ kind: 'person', userId: target.userId }} /> : <WorldSubscriptionEntry />}
         {scope === 'mine' && !publicTab && target === undefined && <ArkmeActionMenu open={more} label={tr('我的世界操作')} onClose={() => setMore(false)} align="end"
           anchor={<button type="button" style={styles.iconButton} aria-label={tr('更多世界操作')} onClick={() => setMore(value => !value)}><DotsThree size={20} /></button>}
           actions={[{ id: 'team-activity', label: tr('我的团队操作'), onSelect: () => { setMore(false); setActivity(true) } }]} />}
@@ -1620,7 +1627,7 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
         controller.signal.throwIfAborted(); applyTeamReceipt(result); return
       }
       await requirePhoneForSocialAction('发布到世界', controller.signal)
-      if (origin && (!origin.kind || origin.kind === 'record')) {
+      if (origin && (!origin.kind || origin.kind === 'record' || origin.kind === 'suggestion')) {
         const result = await callArkme<ArkmeWorldPublishResult>('world.publications', { action: 'publish-source', accountKey, origin, version: sourceState.snapshot?.version }, controller.signal)
         controller.signal.throwIfAborted()
         if (!result.worldPublished) throw new Error(result.error ?? '发布未完成，请重试')
@@ -1693,7 +1700,7 @@ function ScopedPublishDialog({ onClose, onPublished, initialTeam, actorName, act
     <section style={{ ...styles.modal, width: 'min(640px, 100%)', maxHeight: 'calc(100vh - 48px)', padding: 20, borderRadius: 16 }} data-world-publish-dialog="shared-self">
       <header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <h2 style={{ margin: 0, fontSize: 16 }}>{tr('发世界')}</h2>
-        <button type="button" style={styles.publishClose} disabled={sending} aria-label={tr('关闭发布窗口')} onClick={onClose}><X size={18} /></button>
+        <ArkmeCloseButton type="button" style={styles.publishClose} disabled={sending} aria-label={tr('关闭发布窗口')} onClick={onClose} />
       </header>
       {origin && <p style={{ margin: '0 0 8px', fontSize: 11, color: arkmeTheme.secondary }}>{tr('来自{v0} · 发布副本', { v0: sourceState.snapshot?.sourceLabel ?? worldPublishSourceLabel(origin) })}</p>}
       {sourceState.loading && <p role="status">{tr('正在读取原内容…')}</p>}
@@ -2013,8 +2020,14 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     audioRef.current = undefined
   }
   useEffect(() => {
-    if (!active) { voiceprintTokenRef.current += 1; stopVoiceprintMedia(); setVoiceprintRecordRef(undefined); setVoiceprintLoadingRecordRef(undefined) }
+    if (!active) { worldSoundPlayback.stop(); voiceprintTokenRef.current += 1; stopVoiceprintMedia(); setVoiceprintRecordRef(undefined); setVoiceprintLoadingRecordRef(undefined) }
   }, [active])
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const stop = () => { voiceprintTokenRef.current += 1; stopVoiceprintMedia(); setVoiceprintRecordRef(undefined); setVoiceprintLoadingRecordRef(undefined) }
+    window.addEventListener('arkme-world-sound-started', stop)
+    return () => window.removeEventListener('arkme-world-sound-started', stop)
+  }, [])
 
   const load = useCallback((target: WorldScope, position: number | string = 0, preserveItems = false) => {
     loadControllers.current[target]?.abort()
@@ -2200,6 +2213,7 @@ export function ArkmeWorldSurface({ notificationRef, target, initialScope = 'all
     } finally { setAuthorCardBusy(false) }
   }
   const toggleVoiceprint = async (recordRef: string) => {
+    worldSoundPlayback.stop()
     if (voiceprintRecordRef === recordRef) {
       voiceprintTokenRef.current += 1
       stopVoiceprintMedia()

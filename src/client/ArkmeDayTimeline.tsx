@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { callArkme } from './api.js'
 import { expressionIdentity } from './reaction-expression.js'
@@ -10,7 +11,6 @@ import type { ReactionExpression, ReactionOriginalMessage } from '../reaction-co
 import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ArkmeDayRecap, DayRecordingReview } from './ArkmeDayRecap.js'
 import type { DayRecapGenerator } from './day-recap-input.js'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Info } from '@phosphor-icons/react/dist/icons/Info'
 import { ArkmeCalendarLunarDate } from './ArkmeCalendarLunarDate.js'
@@ -265,7 +265,7 @@ function DayTimelineContent({ data: { activities: data, reactions: reactionData 
 
       {reactionDetail && <aside className="arkme-day-detail" aria-label={tr("活动详情")}>
         <header><h3>{reactionDetail.event.sourceName || reactionDetail.event.source}</h3>
-          <button type="button" aria-label={tr("关闭活动详情")} className="arkme-day-icon" onClick={() => { onDetailChange?.(); setSelectedId(undefined) }}><X size={18} aria-hidden /></button>
+          <ArkmeCloseButton type="button" aria-label={tr("关闭活动详情")} className="arkme-day-icon" onClick={() => { onDetailChange?.(); setSelectedId(undefined) }} />
         </header>
         <article className="arkme-day-message">
           <div>{reactionDetail.event.authorName || tr('原消息')}{reactionDetail.event.originalMessage && <> · <DayActivityTimestamp at={reactionDetail.event.originalMessage.sendAtMillis} timezone={query.timezone} /></>}</div>
@@ -282,7 +282,7 @@ function DayTimelineContent({ data: { activities: data, reactions: reactionData 
       </aside>}
       {selected && <aside className="arkme-day-detail" aria-label={tr("活动详情")}>
         <header><h3>{detail.page?.access === 'restricted' || detail.error ? tr("活动详情") : dayActivityTitle(selected)}</h3>
-          <button type="button" aria-label={tr("关闭活动详情")} className="arkme-day-icon" onClick={() => { onDetailChange?.(); setLocationRequestedId(undefined); setSelectedId(undefined) }}><X size={18} aria-hidden /></button>
+          <ArkmeCloseButton type="button" aria-label={tr("关闭活动详情")} className="arkme-day-icon" onClick={() => { onDetailChange?.(); setLocationRequestedId(undefined); setSelectedId(undefined) }} />
         </header>
         {detail.loading && <p className="arkme-day-status" role="status">{tr("正在加载原始记录…")}</p>}
         {detail.error && <div className="arkme-day-status" role="alert">{detail.error}<button type="button" onClick={detail.retry}>{tr("重试详情")}</button></div>}

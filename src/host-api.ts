@@ -1019,7 +1019,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'recordings.import.strategies.register' && (!isLoopback(req.socket.remoteAddress) || origin === undefined)) {
         throw new ArkmePluginError('origin-required', '录音导入策略登记必须从本机页面发起', false, 403)
       }
-      if (['arrangements.occurrences.reviews.decide','arrangements.occurrences.history.preview','arrangements.occurrences.history.apply','arrangements.recognition.settings.set', 'arrangements.recognition.preview', 'arrangements.recognition.apply', 'recordings.voice-triggers.rules.set', 'recordings.voice-triggers.decide', 'recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'codex.copy-link', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['arrangements.conversation.recognition.set','arrangements.occurrences.reviews.decide','arrangements.occurrences.history.preview','arrangements.occurrences.history.apply','arrangements.recognition.settings.set', 'arrangements.recognition.preview', 'arrangements.recognition.apply', 'recordings.voice-triggers.rules.set', 'recordings.voice-triggers.decide', 'recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'codex.copy-link', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
@@ -2278,8 +2278,14 @@ export async function dispatchArkmeHostOperation(
         boardVersion: stringParam(params, 'boardVersion'), requestId: stringParam(params, 'requestId'),
       })
     }
-    case 'arrangements.conversation.list': return service.conversationArrangements(stringParam(params, 'sourceRef'), stringParam(params, 'cursor'), requestSignal)
-    case 'arrangements.conversation.detail': return service.conversationArrangementDetail(stringParam(params, 'sourceRef'), stringParam(params, 'relatedRef'), requestSignal)
+    case 'arrangements.conversation.recognition.get':
+    case 'arrangements.conversation.recognition.set': {
+      const write = operation.endsWith('.set')
+      if (write && (typeof params.enabled !== 'boolean' || !Number.isSafeInteger(params.expectedVersion) || Number(params.expectedVersion) < 0)) throw new ArkmePluginError('invalid-params', '安排识别开关参数无效', false, 400)
+      return service.conversationArrangementRecognition(stringParam(params, 'expectedAccountScope'), stringParam(params, 'sourceRef'), stringParam(params, 'teamConversationRef'), write ? { enabled: params.enabled as boolean, version: Number(params.expectedVersion) } : undefined, requestSignal)
+    }
+    case 'arrangements.conversation.list': return service.conversationArrangements(stringParam(params, 'sourceRef'), stringParam(params, 'cursor'), requestSignal, stringParam(params, 'teamConversationRef'))
+    case 'arrangements.conversation.detail': return service.conversationArrangementDetail(stringParam(params, 'sourceRef'), stringParam(params, 'relatedRef'), requestSignal, stringParam(params, 'teamConversationRef'))
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
@@ -2308,6 +2314,9 @@ export async function dispatchArkmeHostOperation(
     }
     case 'arrangements.reminders.mark-all-read': return await service.markAllArrangementRemindersRead()
     case 'arrangements.reminders.clear': return await service.clearArrangementReminders()
+    case 'world.sound-excerpts':return await service.worldSoundExcerpts(params as unknown as import('./world-sound-contract.js').WorldSoundRequest,requestSignal)
+    case 'world.suggestions': return await service.worldSuggestions(params as unknown as import('./world-suggestions-contract.js').WorldSuggestionsRequest, requestSignal)
+    case 'world.subscriptions': return await service.worldSubscriptions(params as unknown as import('./world-subscription-contract.js').WorldSubscriptionRequest, requestSignal)
     case 'world.publications': return await service.worldPublications(params as unknown as import('./world-publication-contract.js').WorldPublicationRequest, requestSignal)
     case 'world.record.read': return await service.readWorldRecord(stringParam(params, 'recordRef'), requestSignal)
     case 'world.share': return await service.shareWorldRecord(stringParam(params, 'recordRef'), numberParam(params, 'expectedUserId', 0), requestSignal)
@@ -2394,7 +2403,9 @@ export async function dispatchArkmeHostOperation(
     }
     case 'world.arko-source-draft': return await service.worldArkoPublishSource(numberParam(params, 'sessionId', 0), numberParam(params, 'messageId', 0), requestSignal)
     case 'world.message-source-draft': return await service.worldMessagePublishSource(stringParam(params, 'conversationRef'), stringParam(params, 'actionRef'), requestSignal)
-    case 'world.source-draft': return await service.worldPublishSource(stringParam(params, 'sourceRef'), stringParam(params, 'itemUid'), requestSignal)
+    case 'world.source-draft': return params.kind === 'suggestion'
+      ? await service.worldSuggestionDraft(params as unknown as import('./world-publish-source.js').WorldPublishOrigin, requestSignal)
+      : await service.worldPublishSource(stringParam(params, 'sourceRef'), stringParam(params, 'itemUid'), requestSignal)
     case 'world.publish-text': {
       if (params.publisher !== undefined || params.teamRef !== undefined) throw new ArkmePluginError('world-publisher-unsupported', '团队发布接口开发中，不能改为个人发布', false, 409)
       return await service.publishWorldText({
@@ -2432,6 +2443,7 @@ export async function dispatchArkmeHostOperation(
       }
       return service.setArchiveState({ sourceRef: stringParam(params, 'sourceRef'), selfArchived: params.selfArchived, expectedRevision: Number(params.expectedRevision) }, requestSignal)
     }
+    case 'topic.hidden-source': return await service.hiddenTopicSource(stringParam(params, 'sourceRef'), requestSignal)
     case 'topic.home-visibility': {
       if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
         throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)

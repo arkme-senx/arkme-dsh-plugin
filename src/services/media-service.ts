@@ -66,7 +66,8 @@ export interface ArkmeMediaDescriptor {
 }
 
 export interface ArkmeChatMediaSource {accessRef:string;chatSessionUid:string;relationUid:string;recordOwnerUserId:RecordOwnerId;recordUid:string;version:number;audienceKey:string}
-type MediaSource = { remoteUrl: string; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;recordingClip?:never}
+type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;worldSound?:never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;worldSound?:never;recordingClip?:never}
+
 type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
 type IssuableMediaDescriptor = Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'> & MediaSource
 
@@ -530,7 +531,8 @@ export class MediaService {
       || url.port !== '' || url.hash !== ''
       || !(allowedSignedImageHost(this.runtime.config.environment, url.hostname)
         || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
-        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname))) {
+        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname)
+        || descriptor.worldSound === true && this.worldSoundMediaURL(url.toString()) !== undefined)) {
       throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
     }
     const key = this.runtime.config.fileStateDirectory && descriptor.purpose === 'original' ? originalFileKey(this.runtime.config.environment,session.userId,url) : undefined
@@ -565,6 +567,28 @@ export class MediaService {
       fileName: worldVoiceprintFileName(mimeType),
       size: 0,
     })
+  }
+
+  private worldSoundMediaURL(raw: string): URL | undefined {
+    try {
+      const url = new URL(raw), origin = new URL(this.runtime.config.worldBaseUrl)
+      if (url.protocol !== 'https:' || url.origin !== origin.origin || url.port || url.username || url.password || url.hash
+        || url.pathname !== '/api/public/v1/public-record/media' || url.searchParams.get('kind') !== 'sound'
+        || !/^[a-f0-9]{64}$/.test(url.searchParams.get('version') ?? '')
+        || !/^world-sound-[a-f0-9]{64}$/.test(url.searchParams.get('record_uid') ?? '')
+        || !/^\d{1,3}$/.test(url.searchParams.get('index') ?? '') || Number(url.searchParams.get('index')) >= 150
+        || [...url.searchParams.keys()].length !== 4) return undefined
+      return url
+    } catch { return undefined }
+  }
+
+  issueWorldSoundMediaRef(viewerUserId: number, raw: string, expected: { recordUID: string; index: number }): string {
+    const url = this.worldSoundMediaURL(raw)
+    if (!url || url.searchParams.get('record_uid') !== expected.recordUID || url.searchParams.get('index') !== String(expected.index)) {
+      throw new ArkmePluginError('world-sound-media-invalid', '声音摘录地址无效', false, 502)
+    }
+    // The World proxy supplies the actual audio MIME, including call formats.
+    return this.issueMediaRef(viewerUserId, { remoteUrl: url.toString(), worldSound: true, mimeType: 'application/octet-stream', fileName: '声音摘录', size: 0 })
   }
 
   async issueUnmarkedSpeakerMediaRef(
