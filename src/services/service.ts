@@ -33,6 +33,7 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+ transcriptViewAttempt?(scope:string,key:string,value?:import("../transcript-view-contract.js").TranscriptViewAttempt|null):Promise<import("../transcript-view-contract.js").TranscriptViewAttempt|undefined>
   recordingVoiceDraft?(scope: string, change?: import('../recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceDraft>
  teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>
  retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>
@@ -41,7 +42,7 @@ export interface StateStore extends RecentEmojiStore {
   teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
-  localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
+  localTranscriptEntries?(account: string, scope: string, ids: string[]): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
 arkoPendingTurns(userId:number):Promise<import('../arko-turn-contract.js').ArkmeArkoPendingTurn[]>
 arkoTurn(userId:number,uid:string):Promise<import('../arko-turn-contract.js').ArkmeArkoStoredTurn|undefined>
 prepareArkoTurn(userId:number,turn:import('../arko-turn-contract.js').ArkmeArkoPendingTurn,request?:Record<string,unknown>):Promise<void>

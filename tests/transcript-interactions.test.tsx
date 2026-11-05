@@ -1,9 +1,12 @@
+import {applyMessageTextReplacement,resolveMessageTextReplacement} from '../src/client/message-text-replacement.js'
+import type {PersonalTranscriptEntry,TranscriptViewCommand} from '../src/transcript-view-contract.js'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { changeLocalTranscript, type LocalTranscriptChange, type LocalTranscriptEntry } from '../src/local-transcript-state.js'
+import { changeLocalTranscript } from './helpers/legacy-transcript-owner.js'
+import type { LocalTranscriptEntry } from '../src/local-transcript-state.js'
 import { quoteSourceContent } from '../src/message-quote.js'
 import { useTranscriptInteractions } from '../src/client/TranscriptInteractions.js'
 import { ArkmeMessageTextSelectionToolbar, registeredMessageTargets } from '../src/client/ArkmeMessageTextSelection.js'
@@ -17,7 +20,7 @@ let root:Root,host:HTMLDivElement
 const stored=new Map<string,LocalTranscriptEntry>()
 const original='重复词，重复词。'
 function Fixture({text=original,scope='recording:123',enabled=true,omitFirst=false,playable=true}:{text?:string;scope?:string;enabled?:boolean;omitFirst?:boolean;playable?:boolean}) {
- const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].filter(row=>!omitFirst||row.id!=='one')
+ const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].map(row=>({...row,sourceVersion:createHash('sha256').update(row.text).digest('hex'),viewRef:JSON.stringify({scope,id:row.id,text:row.text})})).filter(row=>!omitFirst||row.id!=='one')
  const actions=useTranscriptInteractions({scope,rows,enabled,onPlay:mocks.play})
  return <><ArkmeMessageTextSelectionToolbar replySourceRef="ordinary-chat" />{actions.host}
  {rows.map(row=><article key={row.id} onContextMenu={e=>actions.contextMenu(row,e)}>{actions.checkbox(row)}{actions.renderText(row)}</article>)}{actions.controls}</>
@@ -37,9 +40,18 @@ beforeEach(()=>{
  Range.prototype.getClientRects=()=>[new DOMRect(50,100,180,20)] as unknown as DOMRectList
  Element.prototype.scrollIntoView=vi.fn()
  stored.clear();mocks.copy.mockReset().mockResolvedValue(undefined);mocks.play.mockReset()
- mocks.call.mockReset().mockImplementation(async(op:string,p:{scope:string;ids?:string[];id?:string;change?:LocalTranscriptChange})=>{
-  if(op==='transcript.local.change'){const key=p.scope+':'+p.id;stored.set(key,changeLocalTranscript(stored.get(key),p.change!,11))}
-  return Object.fromEntries((p.ids??[p.id!]).flatMap(id=>{const entry=stored.get(p.scope+':'+id);return entry?[[id,entry]]:[]}))
+ mocks.call.mockReset().mockImplementation(async(op:string,p:any)=>{
+  if(op==='transcript.views.capabilities')return {supported:true,protocol_version:1}
+  const project=(ref:string):PersonalTranscriptEntry=>{const r=JSON.parse(ref),entry=stored.get(r.scope+':'+r.id)??{revision:0,original:r.text,text:r.text,marks:[]},changed=entry.original!==r.text;return {...entry,text:changed?r.text:entry.text,original:r.text,originalVersion:createHash('sha256').update(r.text).digest('hex'),originalDigest:'a'.repeat(64),originalChanged:changed}}
+  if(op==='transcript.views.read')return Object.fromEntries(p.items.map((item:any)=>[item.id,project(item.ref)]))
+  if(op==='transcript.views.saved')return {historical:true,items:[],next_cursor:''}
+  if(op==='transcript.views.change'){
+   const row=JSON.parse(p.ref),key=row.scope+':'+row.id,c=p.command as TranscriptViewCommand,previous=stored.get(key),current=project(p.ref)
+   const mark=c.action==='add_mark'?{kind:'add' as const,operationId:c.operation_id,anchor:c.anchor!}:c.action==='remove_mark'?{kind:'remove' as const,operationId:c.operation_id,annotationId:c.annotation_id!}:undefined
+   const text=c.action==='replace'?applyMessageTextReplacement(current.text,resolveMessageTextReplacement({textContent:current.text,textFormat:'plain'},c.anchor!),c.replacement!).text:undefined
+   stored.set(key,changeLocalTranscript(previous,{id:row.id,original:row.text,expectedRevision:c.expected_revision,...(text===undefined?{}:{text}),...(mark?{mark}:{}),...(c.action==='restore'?{restore:true}:{})},11));return project(p.ref)
+  }
+  throw new Error('Unexpected '+op)
  })
  host=document.createElement('div');document.body.append(host);root=createRoot(host)
 })
@@ -56,9 +68,9 @@ it('replaces just the second occurrence, restores after remount, and can restore
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
  await act(async()=>root.unmount());root=createRoot(host);await act(async()=>root.render(<Fixture/>))
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
- await click('本机更正 · 恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+ await click('个人更正 · 恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
-it('saves marks locally and cancels the same mark without changing text',async()=>{
+it('saves private marks in the cloud and cancels the same mark without changing text',async()=>{
  await act(async()=>root.render(<Fixture/>));await select();await click('标记')
  expect(stored.get('recording:123:one')?.marks[0]?.anchor).toMatchObject({text:'重复词',start:4,end:7})
  await select();await click('✓ 取消标记');expect(stored.get('recording:123:one')?.marks).toEqual([])
@@ -66,7 +78,7 @@ it('saves marks locally and cancels the same mark without changing text',async()
 })
 it('retains replacement input on failed save and does not alter the displayed transcript',async()=>{
  await act(async()=>root.render(<Fixture/>));await select();await click('替换');await input('新词')
- const normal=mocks.call.getMockImplementation()!;mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.local.change')throw new Error('磁盘已满');return normal(op,p)})
+ const normal=mocks.call.getMockImplementation()!;mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.change')throw new Error('磁盘已满');return normal(op,p)})
  await click('替换');expect(document.querySelector('textarea')?.value).toBe('新词');expect(document.querySelector('[role="alert"]')?.textContent).toBe('磁盘已满')
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
@@ -114,4 +126,10 @@ it('keeps the partial-selection toolbar ahead of the block menu',async()=>{
  await act(async()=>host.querySelector('[data-arkme-text-selection]')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:50,clientY:50})))
  expect(document.querySelector('[aria-label="选中文字操作"]')).not.toBeNull()
  expect(document.querySelector('[role="menu"]')).toBeNull()
+})
+it('drops the private wording when the Host reports an account change before the auth store rerenders',async()=>{
+ await act(async()=>root.render(<Fixture/>));await select();await click('替换');await input('私人新词');await click('替换');expect(host.textContent).toContain('私人新词')
+ const normal=mocks.call.getMockImplementation()!;mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('账号已变化'),{body:{code:'transcript-account-changed',httpStatus:409}});return normal(op,p)})
+ await act(async()=>{document.getSelection()?.removeAllRanges();window.dispatchEvent(new Event('focus'))})
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })

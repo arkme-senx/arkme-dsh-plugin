@@ -1,3 +1,5 @@
+import type { TranscriptViewPort } from '../transcript-view-contract.js'
+export type { TranscriptViewTarget,TranscriptViewReference,TranscriptViewSourceReference,TranscriptViewCommand,TranscriptViewReadItem,TranscriptViewSnapshot,PersonalTranscriptEntry,TranscriptViewReceipt,TranscriptViewSavedPage } from '../transcript-view-contract.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
@@ -586,6 +588,23 @@ export class ArkmeSdk {
   async openRealtimeDictation(options: RealtimeDictationOptions): Promise<RealtimeDictationHandle> {
     await this.requireRealtimeDictation(options.signal)
     return await connectRealtimeDictation(this.route, options)
+  }
+
+  private async requireTranscriptViews(signal?:AbortSignal) {
+    if((await this.capabilities(signal)).features.personalTranscriptViewsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持跨设备个人转写更正，请升级',retryable:false})
+  }
+  async transcriptViewCapabilities(signal?:AbortSignal):ReturnType<TranscriptViewPort['transcriptViewCapabilities']> {await this.requireTranscriptViews(signal);return this.call('transcript.views.capabilities',{},signal)}
+  async readTranscriptViews(accountKey:string,scope:string,items:Parameters<TranscriptViewPort['readTranscriptViews']>[2],signal?:AbortSignal):ReturnType<TranscriptViewPort['readTranscriptViews']>{await this.requireTranscriptViews(signal);return this.call('transcript.views.read',{accountKey,scope,items},signal)}
+  async changeTranscriptView(accountKey:string,ref:string,command:Parameters<TranscriptViewPort['changeTranscriptView']>[2],signal?:AbortSignal):ReturnType<TranscriptViewPort['changeTranscriptView']>{await this.requireTranscriptViews(signal);return this.call('transcript.views.change',{accountKey,ref,command},signal)}
+  async transcriptViewReceipt(accountKey:string,operationId:string,signal?:AbortSignal):ReturnType<TranscriptViewPort['transcriptViewReceipt']>{await this.requireTranscriptViews(signal);return this.call('transcript.views.receipt',{accountKey,operationId},signal)}
+  async savedTranscriptViews(accountKey:string,ref:string,after?:string,signal?:AbortSignal):ReturnType<TranscriptViewPort['savedTranscriptViews']>{await this.requireTranscriptViews(signal);return this.call('transcript.views.saved',{accountKey,ref,after},signal)}
+  async importLocalTranscriptView(accountKey:string,scope:string,item:Parameters<TranscriptViewPort['importLocalTranscriptView']>[2],operationId:string,signal?:AbortSignal):ReturnType<TranscriptViewPort['importLocalTranscriptView']>{await this.requireTranscriptViews(signal);return this.call('transcript.views.import',{accountKey,scope,item,operationId},signal)}
+  observeTranscriptViews(accountKey:string,scope:string,items:Parameters<TranscriptViewPort['readTranscriptViews']>[2],onChange:(entries:Awaited<ReturnType<TranscriptViewPort['readTranscriptViews']>>)=>void,onError:(error:unknown)=>void,signal?:AbortSignal):()=>void {
+    const controller=new AbortController(),scoped=AbortSignal.any([controller.signal,this.requestLifetime.signal,...(signal?[signal]:[])])
+    let timer:ReturnType<typeof setTimeout>|undefined
+    const snapshots:Awaited<ReturnType<TranscriptViewPort['readTranscriptViews']>>={}
+    const read=async()=>{try{const watched=items.map(item=>({...item,...(snapshots[item.id]?{knownRevision:snapshots[item.id]!.revision,knownOriginalVersion:snapshots[item.id]!.originalVersion,...(snapshots[item.id]!.pendingCommand?{knownPendingOperationId:snapshots[item.id]!.pendingCommand!.operation_id}:{})}:{})}));const entries=await this.readTranscriptViews(accountKey,scope,watched,scoped);if(!scoped.aborted){Object.assign(snapshots,entries);if(Object.keys(entries).length||!items.length)onChange({...snapshots})}}catch(error){if(!scoped.aborted)onError(error)}finally{if(!scoped.aborted)timer=setTimeout(()=>{void read()},15000)}}
+    const dispose=()=>{if(timer)clearTimeout(timer);controller.abort()};scoped.addEventListener('abort',()=>{if(timer)clearTimeout(timer)},{once:true});if(!scoped.aborted)void read();return dispose
   }
 
   async nativeAnnotationCapabilities(signal?: AbortSignal): Promise<NativeAnnotationCapabilities> { return await this.call('native-chat.annotations', { request: { action: 'capabilities' } }, signal) }

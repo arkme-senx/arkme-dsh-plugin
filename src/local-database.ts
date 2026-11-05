@@ -1,6 +1,6 @@
 import { publicPersonSnapshot, PUBLIC_PERSON_MAX_ENTRIES, type PublicPersonSnapshot } from './public-person-cache.js'
 import {readRecordExcerpt,type RecordExcerpt} from './record-excerpt.js'
-import { changeLocalTranscript, type LocalTranscriptEntry, type LocalTranscriptChange } from './local-transcript-state.js'
+import type { LocalTranscriptEntry } from './local-transcript-state.js'
 import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
 import { LocalMessageMarkStore } from './local-message-marks.js'
 import { LocalSelfNoteQuotes } from './local-self-note-quotes.js'
@@ -335,6 +335,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     await this.operationalState.writeCancellationCompletion(completion)
   }
 
+  async transcriptViewAttempt(...args: Parameters<ArkmeStateStore['transcriptViewAttempt']>) {return this.operationalState.transcriptViewAttempt(...args)}
   async readOfflineContextJournal(scope: string) {
     return await this.operationalState.readOfflineContextJournal(scope)
   }
@@ -1278,15 +1279,11 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return this.readRecentEmojiIds(accountKey)
   }
 
-  async localTranscriptEntries(account: string, scope: string, ids: string[], change?: LocalTranscriptChange): Promise<Record<string, LocalTranscriptEntry>> {
+  async localTranscriptEntries(account: string, scope: string, ids: string[]): Promise<Record<string, LocalTranscriptEntry>> {
     const read = (id: string): LocalTranscriptEntry | undefined => {
       const row = this.database.prepare('SELECT payload FROM local_transcript_edits WHERE account_key=? AND scope=? AND item_id=?').get(account, scope, id) as { payload: string } | undefined
       return row ? JSON.parse(row.payload) as LocalTranscriptEntry : undefined
     }
-    if (change) this.transaction(() => {
-      const entry = changeLocalTranscript(read(change.id), change, Number(account.split(':').at(-1)))
-      this.database.prepare('INSERT OR REPLACE INTO local_transcript_edits(account_key,scope,item_id,payload) VALUES (?,?,?,?)').run(account, scope, change.id, JSON.stringify(entry))
-    })
     const result: Record<string, LocalTranscriptEntry> = Object.create(null)
     for (const id of ids) { const entry = read(id); if (entry) result[id] = entry }
     return result
