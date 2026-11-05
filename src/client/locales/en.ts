@@ -301,7 +301,12 @@ AI 自动分析|Automatic AI analysis
 我发送的位置|Locations I sent
 发给我的位置|Locations sent to me
 群聊中的位置|Locations in group chats
-历史录音来源尚不完整，当前仅显示已确认的安排。|Historical recording links are incomplete. Only confirmed plans are shown.
+部分历史安排无法确认来源日期，当前仅显示已确认属于当天的安排。|Some historical plans have no confirmed source date. Only plans confirmed for this day are shown.
+部分总结尚未完成安排识别，当前仅显示已确认的安排。|Plan recognition is incomplete for some summaries. Only confirmed plans are shown.
+当天暂无可用于核对识别结果的已完成总结。|No completed summary is available to verify plan recognition for this day.
+部分总结暂不可核验，尚不能确认当天安排已全部识别。|Some summaries cannot be verified yet. Complete plan recognition for this day is not confirmed.
+部分安排的原总结暂不可核验，当前仅显示已确认的安排。|The original summaries for some plans cannot be verified yet. Only confirmed plans are shown.
+当天录音安排的识别完整性尚未确认，当前仅显示已确认的安排。|Complete plan recognition for this day is not confirmed. Only confirmed plans are shown.
 识别安排|Detected plans
 查看当天录音识别的安排|View plans detected from this day's recordings
 当天录音识别的安排|Plans from this day's recordings
