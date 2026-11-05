@@ -37,3 +37,25 @@ it('prepares the source once before opening the existing picker and keeps time s
  expect(vi.mocked(callArkme).mock.calls.map(([op])=>op)).toEqual(['selected-text.prepare','selected-text.forward'])
  expect(vi.mocked(callArkme).mock.calls[1]![1]!.sendAtMillis).toBeGreaterThan(0)
 })
+
+it('keeps nested source identity and exact selection independent from previews and failed dispatches', async () => {
+  vi.mocked(callArkme).mockReset()
+  const input = { ...quote, source: { kind: 'record' as const, owner_user_id: 11, record_uid: 'original' }, sourceSelection: { projection: 'arkme-text-v1' as const, source_digest: 'a'.repeat(64), start: 3, end: 3 + quote.text.length } }
+  const expected = structuredClone(input)
+  const content = selectedTextForwardContent('test:11', input), signal = new AbortController().signal
+  input.source.record_uid = 'changed-input'
+  if (content.preview.quote!.source!.kind === 'record') content.preview.quote!.source!.record_uid = 'changed-preview'
+  content.preview.quote!.sourceSelection!.start = 0
+  vi.mocked(callArkme).mockImplementationOnce(async (_op, params) => {
+    expect(params!.quote).toEqual(expected)
+    const sent = params!.quote as typeof input
+    sent.source.record_uid = 'changed-dispatch'
+    sent.sourceSelection.end = 1
+    throw new Error('timeout')
+  }).mockImplementationOnce(async (_op, params) => {
+    expect(params!.quote).toEqual(expected)
+    return { itemUid: params!.recordUid, localState: 'synced' }
+  })
+  await expect(content.delivery.send(chat, '', signal)).rejects.toThrow('timeout')
+  await content.delivery.send(chat, '', signal)
+})

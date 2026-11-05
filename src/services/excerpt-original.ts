@@ -33,8 +33,8 @@ export async function readExcerptOriginal(runtime:ServiceRuntime,raw:unknown,rea
       }
       case 'codex_event':{
         const data=obj(await runtime.authenticatedTeamPost('/api/v1/team-codex/events/detail',{source_id:s.source_id,task_id:s.task_id,event_id:s.event_id},session,scoped,true))
-        if(typeof data.text!=='string')throw unavailable()
-        return {title:'Codex 原文',text:normalizeQuoteText(data.text),at:Number(data.at)||0}
+        if(typeof data.text!=='string'||data.text_format!=='plain'&&data.text_format!=='markdown')throw unavailable()
+        return {title:'Codex 原文',text:quoteCanonicalText({textContent:data.text,textFormat:data.text_format}),textFormat:'plain',at:Number(data.at)||0}
       }
       case 'team_message':{
         const data=obj(await runtime.authenticatedTeamPost('/api/v1/team/conversations/timeline/locate',{conversation_uid:s.team_conversation_uid,message_uid:s.team_message_uid,side:s.side??'team',limit:1},session,scoped,true))
@@ -47,7 +47,7 @@ export async function readExcerptOriginal(runtime:ServiceRuntime,raw:unknown,rea
       case 'call_segment':return readers.call(s.call_uid,s.segment_uid,scoped)
       case 'dsh_message':{
         if(!s.role)throw unavailable()
-        const data=obj(await runtime.authenticatedDshRemotePost('/api/v1/dsh-remote/messages/selection-context',{targets:[{runtime_ref:s.runtime_ref,session_ref:s.session_ref,event_seq:s.event_seq,role:s.role}]},session,scoped))
+        const data=obj(await runtime.authenticatedDshRemotePost('/api/v1/dsh-remote/messages/selection-context',{prefer_format_version:4,targets:[{runtime_ref:s.runtime_ref,session_ref:s.session_ref,event_seq:s.event_seq,role:s.role}]},session,scoped))
         const row=Array.isArray(data.items)&&data.items.length===1?obj(data.items[0]):{}
         if(row.runtime_ref!==s.runtime_ref||row.session_ref!==s.session_ref||row.event_seq!==s.event_seq||row.role!==s.role||typeof row.canonical_text!=='string')throw unavailable()
         return {title:'DeepSeek Harness 原文',text:row.canonical_text}

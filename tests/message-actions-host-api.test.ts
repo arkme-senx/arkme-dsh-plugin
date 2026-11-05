@@ -229,7 +229,7 @@ it('rejects a foreign origin for native copy-link before service access', async 
 
 it('passes selected text forwarding through the bounded owner API and carries the abort signal', async () => {
   const forwardSelectedText = vi.fn(async () => ({ itemUid: 'sent' })), signal = new AbortController().signal
-  const params = { expectedAccountKey: 'prod:42', targetSourceRef: 'opaque-target', recordUid: 'record', relationUid: 'relation', commentText: '', quote: { version: 1, text: 'selected' } }
+  const params = { expectedAccountKey: 'prod:42', targetSourceRef: 'opaque-target', recordUid: 'record', relationUid: 'relation', sendAtMillis: 1700000000000, commentText: '', quote: { version: 1, text: 'selected' } }
   await dispatchArkmeHostOperation({ forwardSelectedText } as unknown as ArkmeService, 'selected-text.forward', params, undefined, undefined, undefined, undefined, signal)
   expect(forwardSelectedText).toHaveBeenCalledWith(params, signal)
 })
