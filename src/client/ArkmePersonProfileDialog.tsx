@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useId, useState } from 'react'
 import { XIcon } from '@phosphor-icons/react/dist/csr/X'
 import { GlobeHemisphereWestIcon } from '@phosphor-icons/react/dist/csr/GlobeHemisphereWest'
@@ -40,8 +41,8 @@ export function ArkmePersonProfileDialog(props: {
     title={tr('{v0} 的用户卡片', { v0: props.displayName })} busy={busy || Boolean(props.worldBusy)} closeWhileBusy={props.closeWhileBusy === true}
     onClose={props.onClose} dialogStyle={{ width: 'min(390px, 100%)', borderRadius: 18 }}>
     <div className="arkme-person-card" data-arkme-member-profile data-arkme-person-profile="unified" data-arkme-person-profile-ready={props.pending ? undefined : "true"} aria-busy={props.pending || undefined}>
-      <button type="button" className="arkme-person-icon arkme-person-close" aria-label={tr('关闭')}
-        disabled={(busy || props.worldBusy) && !props.closeWhileBusy} onClick={props.onClose}><XIcon size={18} aria-hidden /></button>
+      <ArkmeCloseButton type="button" className="arkme-person-icon arkme-person-close" aria-label={tr('关闭')}
+        disabled={(busy || props.worldBusy) && !props.closeWhileBusy} onClick={props.onClose} />
       <header className="arkme-person-identity">
         <ArkmeUserAvatar avatarRef={props.avatarRef} {...(props.avatarFallback ? { fallback: props.avatarFallback } : {})}
           {...(props.imagePort ? { imagePort: props.imagePort } : {})} imageKey={props.imageKey}

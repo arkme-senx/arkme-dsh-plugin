@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { RecordingImportQueue } from '../../recording-import-queue.js'
 import { recordingImportBatchID, type RecordingImportBatch } from '../../recording-workflow-contract.js'
@@ -1717,7 +1718,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       close(true)
     }} onClick={event => { if (event.target === event.currentTarget) close(true) }}>
       {pickerToast && <div role="alert" data-arkme-recording-picker-toast style={{ ...styles.backgroundNotice, bottom: 24 }}>{tr(pickerToast.message)}</div>}
-      {history === undefined ? <><header style={styles.header}><h2 style={styles.title}>{tr("上传文件")}</h2><span style={styles.footerActions}><button data-arkme-feedback="neutral" type="button" style={styles.historyButton} onClick={openHistory}>{tr("已完成")}<CaretRight size={8} aria-hidden /></button><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭上传文件")} style={styles.iconButton} onClick={() => { close(true) }}><X size={16} aria-hidden /></button></span></header>
+      {history === undefined ? <><header style={styles.header}><h2 style={styles.title}>{tr("上传文件")}</h2><span style={styles.footerActions}><button data-arkme-feedback="neutral" type="button" style={styles.historyButton} onClick={openHistory}>{tr("已完成")}<CaretRight size={8} aria-hidden /></button><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭上传文件")} style={styles.iconButton} onClick={() => { close(true) }} /></span></header>
       <div style={styles.body}>
         <>
           {queueNotice && <div role="status" style={{ padding: '0 24px 8px', color: desktop.secondary, fontSize: 12 }}>{queueNotice}</div>}
@@ -1749,7 +1750,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
         : submittingRows.length > 0 ? tr('导入队列 · 正在上传 {v0} 个 · 排队 {v1} 个，可继续添加文件。', { v0: String(submittingRows.filter(row => (row.uploadStartedAtMillis ?? 0) > 0).length), v1: String(submittingRows.filter(row => (row.uploadStartedAtMillis ?? 0) === 0).length) }) : workflowNotice}</p>}
       <footer style={styles.footer}><span style={styles.selection}><span style={styles.checkboxSlot}>{selectableRows.length > 0 && <input style={styles.checkbox} aria-label={tr("全选")} type="checkbox" disabled={pending} checked={selectedRows.length === selectableRows.length} onChange={event => { publishRows(current => current.map(row => row.submitting ? row : { ...row, selected: event.target.checked })) }} />}</span><span>{tr("共")}{rows.length + visibleJobs.length}{tr("个文件")}{selectedRows.length > 0 ? tr("，已选择{v0}个", { v0: String(selectedRows.length) }) : ''}</span></span><span style={styles.footerActions}><button data-arkme-feedback="primary" type="button" style={{ ...styles.primaryButton, ...(importDisabled ? { borderColor: arkmeTheme.subtle, background: arkmeTheme.subtle, color: desktop.tertiary, cursor: 'default' } : {}) }} disabled={importDisabled} onClick={() => { void submitRows() }}><UploadSimple size={16} aria-hidden />{tr("导入")}</button></span></footer>
       </> : <section style={styles.historyDialog} aria-label={tr("已完成录音导入")}>
-        <header style={styles.header}><h2 style={styles.historyTitle}><span>{tr("已完成")}</span>{history.total !== undefined && <span style={styles.historyTotal}>（{history.total}）</span>}</h2><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭已完成")} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined); setStatusDetails(undefined); setHistory(undefined) }}><X size={16} aria-hidden /></button></header>
+        <header style={styles.header}><h2 style={styles.historyTitle}><span>{tr("已完成")}</span>{history.total !== undefined && <span style={styles.historyTotal}>（{history.total}）</span>}</h2><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭已完成")} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined); setStatusDetails(undefined); setHistory(undefined) }} /></header>
         <div style={styles.historyBody} aria-label={tr("已完成任务内容")}>
           {history.loading && history.items.length === 0
             ? <div style={styles.historyEmpty} aria-label={tr("正在读取已完成任务")}><span data-arkme-recording-history-spinner="large" style={styles.historySpinner} /></div>
@@ -1790,7 +1791,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
         const progressRows = processingSource.rows
         return <div role="presentation" style={{ position: 'fixed', zIndex: 7, inset: 0 }} onMouseDown={event => { if (event.target === event.currentTarget) setProcessingDetails(undefined) }}>
           <section aria-label={tr("{v0}处理耗时详情", { v0: processingSource.fileName })} style={{ ...styles.detailsPopover, left: processingDetails.left, top: processingDetails.top, width: processingDetails.width }}>
-            <div style={styles.detailsTitle}><span>{tr("处理耗时")}</span><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 {v0}处理耗时详情", { v0: processingSource.fileName })} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined) }}><X size={12} aria-hidden /></button></div>
+            <div style={styles.detailsTitle}><span>{tr("处理耗时")}</span><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 {v0}处理耗时详情", { v0: processingSource.fileName })} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined) }} /></div>
             <div style={{ ...styles.detailsGrid, ...styles.detailsHeader }}>
               <span style={styles.detailsPhaseCell}>{tr("阶段 / 模型")}</span><span style={styles.detailsCell}>{tr("状态")}</span><span style={styles.detailsCell}>{tr("开始时间")}</span><span style={styles.detailsCell}>{tr("结束时间")}</span><span style={styles.detailsCell}>{tr("用户耗时")}</span><span style={styles.detailsCell}>{tr("模型耗时")}</span><span style={styles.detailsCell}>{tr("关系 / 说明")}</span>
             </div>
