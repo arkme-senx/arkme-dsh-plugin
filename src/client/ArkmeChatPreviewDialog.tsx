@@ -1,10 +1,10 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { OfflineContextConnected } from './offline-context/OfflineContextConnected.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { ArkmeTimelinePublicNote } from './ArkmeTimelinePublicNote.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { Fragment, useEffect, useLayoutEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeSourceItem } from '../types.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
@@ -112,7 +112,7 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
         <ArkmeDirectorySourceAvatar source={source} size={28} />
         <strong style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 16 }}>{source.displayName}</strong>
         <span style={{ flex: 'none', padding: '3px 8px', borderRadius: 99, background: arkmeTheme.subtle, color: arkmeTheme.secondary, fontSize: 11 }}>{tr("预览中")}</span>
-        <button type="button" style={{ ...button, marginLeft: 'auto' }} aria-label={tr("关闭聊天预览")} onClick={onClose}><X size={20} /></button>
+        <ArkmeCloseButton type="button" style={{ ...button, marginLeft: 'auto' }} aria-label={tr("关闭聊天预览")} onClick={onClose} />
       </header>
       {timeline.error !== '' && <div role="alert" style={status}>{timeline.error}<button type="button" style={button} disabled={timeline.loading} onClick={() => { void timeline.retry() }}>{tr("重试")}</button></div>}
       <div ref={body} aria-label={tr("预览消息列表")} style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px 16px' }}

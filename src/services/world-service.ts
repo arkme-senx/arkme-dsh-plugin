@@ -1,4 +1,5 @@
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
+import {worldSoundProjection} from './world-sound-service.js'
 import { TimelineTokenCodec } from './timeline-token.js'
 import { localWorldReactionTarget } from './world-local-reaction-service.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
@@ -52,6 +53,7 @@ export interface ArkmeWorldViewerLabelReader {
 }
 
 export interface ArkmeWorldMediaReader {
+  issueWorldSoundMediaRef?(viewerUserId:number,raw:string,expected:{recordUID:string;index:number}):string
   issueWorldVoiceprintMediaRef(viewerUserId: number, input: { remoteUrl: string; mimeType: string }): string
   downloadSignedImage(signedUrl: URL, byteLimit: number, signal?: AbortSignal, scope?: string): Promise<ArkmeImageBytes>
 }
@@ -414,6 +416,17 @@ export class WorldService {
     signal?.throwIfAborted()
     if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
     return out.map(item => item ?? undefined)
+  }
+
+  /** Project already visibility-checked public DTOs without duplicating identifiers. */
+  async projectSubscriptionPublications(values: unknown[], signal?: AbortSignal): Promise<ArkmeWorldFeedItem[]> {
+    if (values.length > 50) throw new ArkmePluginError('world-preview-invalid', '预览数量过多', false, 400)
+    const epoch = this.epoch, session = await this.runtime.requireSession(), raw = values.map(v => this.mixedItem(v))
+    const avatars = await this.resolveWorldAvatarUrls(raw, session, signal)
+    const out = await Promise.all(raw.map(v => this.worldFeedItem(v, session.userId, avatars, signal)))
+    signal?.throwIfAborted()
+    if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId || out.some(v => !v)) throw new ArkmePluginError('world-preview-invalid', '预览内容已变化，请刷新', true, 409)
+    return out as ArkmeWorldFeedItem[]
   }
 
   async readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem> {
@@ -1297,6 +1310,57 @@ export class WorldService {
     }
   }
 
+  /** Existing owner-verified source: publish it without creating or overwriting a private Record. */
+  async publishExistingSource(source: import('../world-publish-source.js').WorldPublishSourceDraft, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeWorldPublishResult> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) throw new ArkmePluginError('world-account-changed', '账号已变化', false, 409)
+    const profile = (await this.profile.refreshProfile()).profile
+    if (!profile?.contact.phoneMasked) throw new ArkmePluginError('world-phone-required', '请先绑定手机号', false, 403)
+    const text = [source.title.trim(), source.textContent].filter(Boolean).join('\n\n').trim()
+    const assets = source.attachments.map(value => value.asset)
+    if ((!text && !assets.length) || text.length > 2000 || assets.length > ARKME_WORLD_PUBLISH_MAX_IMAGES
+      || source.attachments.some(v => v.unavailable || !v.asset || v.asset.fileKind !== 1 || !v.asset.mimeType.startsWith('image/') || v.asset.size <= 0 || v.asset.size > ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES)) {
+      throw new ArkmePluginError('world-source-unsupported', '原消息无法完整公开，请检查内容或附件', false, 400)
+    }
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('world-account-changed', '账号已变化', false, 409)
+    signal?.throwIfAborted()
+    const published = await this.runtime.authenticatedWorldPost<Record<string, unknown>>(
+      assets.length ? '/api/v1/public-record/publish-with-file-assets' : '/api/v1/public-record/publish', {
+        record_uid: source.itemUid, content: text, text_content: text, tags: worldTags(text), original_topic_id: 0,
+        created_at: source.sendAtMillis, nick_name: profile.nickname || profile.displayName, avatar: profile.avatarRef, template_kind: 1,
+        ...(assets.length ? { file_assets: assets.map((asset, i) => ({ file_asset_uid: asset!.fileAssetUid, media_type: 'image', file_kind: 1, sort_order: i })) } : {}),
+      }, session, signal)
+    return worldPublicationResult(Math.trunc(numberValue(published.check_status)))
+  }
+  async publicationStatuses(uids: string[], signal?: AbortSignal): Promise<ReadonlyMap<string, boolean>> {
+    if (uids.length > 50) throw new ArkmePluginError('world-status-invalid', '查询数量过多', false, 400)
+    if (!uids.length) return new Map()
+    const data = await this.runtime.post<Record<string, unknown>>(this.runtime.config.worldBaseUrl, '/api/public/v1/public-record/status-batch', { record_uids: uids }, undefined, [200], signal, false, { lane: 'background-read', service: 'world', bypassCache: true })
+    const values = listValue(data.items).map(objectValue)
+    if (values.length !== uids.length || values.some((v, i) => v.record_uid !== uids[i] || typeof v.is_public !== 'boolean')) throw new ArkmePluginError('world-status-invalid', '公开状态返回不完整，请重试', true, 502)
+    return new Map(values.map(v => [String(v.record_uid), v.is_public === true]))
+  }
+  async publicationPrincipal(recordRef: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const uid = (await this.reactionTarget(recordRef)).record_uid!
+    const raw = await this.runtime.post<Record<string, unknown>>(this.runtime.config.worldBaseUrl, '/api/public/v1/world/read', { record_uid: uid }, undefined, [200], signal)
+    if (raw.record_uid !== uid) throw new ArkmePluginError('world-status-invalid', '公开内容不匹配', false, 502)
+    const principal = objectValue(raw.principal)
+    if (principal.kind === 'team') {
+      const team = recordOwnerId(principal.team_id)
+      if (!team || principal.user_id) throw new ArkmePluginError('world-status-invalid', '团队公开身份无效', false, 502)
+      return { uid, owner: 0 as RecordOwnerId, team, viewer: session.userId }
+    }
+    if (principal.kind !== undefined && principal.kind !== 'person') throw new ArkmePluginError('world-status-invalid', '公开身份无效', false, 502)
+    return { uid, owner: recordOwnerId(principal.kind === 'person' ? principal.user_id : raw.user_id), team: 0 as RecordOwnerId, viewer: session.userId }
+  }
+  async unpublishExisting(uid: string, expectedUserId: number, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== expectedUserId) throw new ArkmePluginError('world-account-changed', '账号已变化', false, 409)
+    await this.runtime.authenticatedWorldPost('/api/v1/public-record/unpublish', { record_uid: uid }, session, signal)
+  }
+
   async publishWorldText(input: ArkmeWorldPublishTextInput): Promise<ArkmeWorldPublishResult> {
     const session = await this.runtime.requireSession()
     const clientMutationId = input.clientMutationId.trim()
@@ -1455,6 +1519,7 @@ export class WorldService {
       })
     return {
       recordRef,
+      ...(recordType==='sound_excerpt'?{recordType:'sound_excerpt' as const,soundExcerpt:this.soundExcerpt(item.sound_excerpt,viewerUserId,recordUid),soundStatus:item.is_public===false?'withdrawn' as const:[2,3].includes(Number(item.check_status))?'published' as const:Number(item.check_status)===4?'rejected' as const:'pending' as const}:{}),
       ...(item.team_author ? { publisher: await this.publicPublisher(item, viewerUserId, resolvedAvatars) } : {}),
       ...(item.team_author ? { teamAuthor: objectValue(item.team_author) as { jotmoId: string; name: string } } : {}),
       localReactionTarget: await localWorldReactionTarget(this.runtime, viewerUserId, recordUid, createHash('sha256').update(JSON.stringify({ headline, textContent, templateKind: item.template_kind,
@@ -1712,6 +1777,12 @@ export class WorldService {
       videoCount,
       voiceCount,
     }
+  }
+
+  private soundExcerpt(raw:unknown,viewer:number,recordUID:string):import('../world-sound-contract.js').WorldSoundExcerpt{
+    const excerpt=worldSoundProjection(raw),rows=listValue(objectValue(raw).segments)
+    if(!this.media?.issueWorldSoundMediaRef)throw new ArkmePluginError('world-sound-unsupported','当前运行环境不支持声音摘录',false,409)
+    return {...excerpt,segments:excerpt.segments.map((s,i)=>({...s,audioUrl:`${this.runtime.config.routePath}/media?ref=${encodeURIComponent(this.media!.issueWorldSoundMediaRef!(viewer,stringValue(objectValue(rows[i]).audio_url),{recordUID,index:i}))}`}))}
   }
 
   private async worldRecordRef(

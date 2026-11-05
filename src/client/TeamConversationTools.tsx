@@ -25,6 +25,7 @@ import type { TeamHistoryResponse } from '../team-history-contract.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr } from './locale.js'
+import { useConversationRecognitionAction } from './ConversationRecognitionControl.js'
 
 type Panel = 'calendar' | 'search' | 'analysis' | 'menu'
 const button: CSSProperties = { border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', padding: '5px 8px', font: 'inherit', fontSize: 12 }
@@ -37,6 +38,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   resolveIdentity(identity: TeamIdentity): TeamIdentity; getReadingDate(): string | undefined
 }) {
   const [open, setOpen] = useState<Panel>()
+  const recognitionAction = useConversationRecognitionAction(accountKey, conversation.ref, 'team', open === 'menu')
   const input = useRef<HTMLInputElement>(null)
   const calendar = useRef<HTMLButtonElement>(null), search = useRef<HTMLButtonElement>(null), analysis = useRef<HTMLButtonElement>(null), menu = useRef<HTMLButtonElement>(null)
   const lifetime=useRef(new AbortController()),reader=useRef<AbortController>()
@@ -154,6 +156,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     <ArkmeConversationHeaderIconButton label={tr('对话分析')} buttonRef={analysis} hasPopup="dialog" expanded={open === 'analysis'} onClick={() => toggle('analysis')}><ChartBar size={22}/></ArkmeConversationHeaderIconButton>
     <ArkmePrivateCallMenu displayName={title} personalIdentity busy={privateBusy} onStart={mediaType => void openPrivate(mediaType)}/>
     <ConversationActionsMenu anchor={menu} label={tr('更多团队对话操作')} trigger={{ open: open === 'menu', onOpenChange: value => value ? toggle('menu') : setOpen(undefined) }} onClose={() => setOpen(undefined)} items={[
+      recognitionAction,
       {
         id: 'message-dnd', label: tr('消息免打扰'), icon: <BellSlash size={20} aria-hidden />,
         keepOpenOnSelect: true,

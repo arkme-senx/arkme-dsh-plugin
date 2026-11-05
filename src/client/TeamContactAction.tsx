@@ -3,8 +3,7 @@ import { UsersIcon } from '@phosphor-icons/react/dist/csr/Users'
 import { CaretDownIcon } from '@phosphor-icons/react/dist/csr/CaretDown'
 import { useResource } from './use-resource.js'
 import { chooseContactTeam, contactTeamError, openTeamContact, rememberContactTeam, teamContactTeams, type TeamContactContext } from './team-contact.js'
-import { invalidateTeamMessages } from './team-messaging-events.js'
-import { openTeamEntryMessages } from './team-entry-navigation.js'
+import { openConfirmedTeamContact } from './team-entry-navigation.js'
 import { tr } from './locale.js'
 
 /** Contact and switch identity in the existing card, without opening another dialog. */
@@ -31,9 +30,9 @@ export function TeamContactAction({ context, disabled = false, onOpened, onBusyC
     try {
       const conversation = await openTeamContact(context, team, request.current.uid, controller.signal)
       if (controller.signal.aborted || currentKey.current !== key) return
+      if (!openConfirmedTeamContact(context.accountKey, conversation)) throw new Error(tr('登录账号已变化，请重新打开此窗口'))
       rememberContactTeam(context.accountKey, team)
-      invalidateTeamMessages(context.accountKey); onOpened?.()
-      openTeamEntryMessages({ kind: 'conversation', conversation })
+      onOpened?.()
     } catch (reason) { if (!controller.signal.aborted && currentKey.current === key) setError(contactTeamError(reason, team)) }
     finally { if (pending.current === controller) { pending.current = undefined; if (!controller.signal.aborted) setBusy(false) } }
   }

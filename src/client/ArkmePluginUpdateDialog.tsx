@@ -1,6 +1,6 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmePluginUpdateInstallSnapshot, ArkmePluginUpdateStatus } from '../types.js'
 
 export interface ArkmePluginUpdateDialogProps {
@@ -99,8 +99,8 @@ export function ArkmePluginUpdateDialog({
           <h2 id="arkme-plugin-update-title" style={styles.title}>{tr("发现插件新版本")}</h2>
           <p style={styles.version}>{tr("当前 v")}{status.installedVersion} {tr("→ 最新 v")}{status.latestVersion ?? '…'}</p>
         </div>
-        <button type="button" style={{ ...styles.closeButton, ...(actionBusy ? { opacity: 0.5, cursor: 'default' } : {}) }}
-          aria-label={tr("关闭插件更新")} disabled={actionBusy} onClick={onDismiss}><X size={18} /></button>
+        <ArkmeCloseButton type="button" style={{ ...styles.closeButton, ...(actionBusy ? { opacity: 0.5, cursor: 'default' } : {}) }}
+          aria-label={tr("关闭插件更新")} disabled={actionBusy} onClick={onDismiss} />
       </div>
       <div style={styles.notes}>
         <h3 style={styles.notesTitle}>{tr("更新说明")}</h3>

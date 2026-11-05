@@ -81,7 +81,7 @@ export function ArkmeAutomaticAiSettings({ accountScope, only, title = '自动�
   const settingLabel = (setting: ArkmeCapabilitySetting) => tr(capabilityTitles[setting.key] ?? (only && setting.key === 'record_thought' ? compact ? '快记里的想法' : '快记想法' : only && setting.key === 'chat_thought' ? '聊天中的建议' : setting.title.replaceAll('阿森', 'Arko')))
   return <section className="arkme-automatic-ai" aria-label={tr(title)}>
     <h3>{tr(title)}</h3>
-    <p>{tr(compact ? '开启后会自动使用 AI 额度。' : '开启后自动分析，消耗 AI 额度。')}</p>
+    <p>{tr('开启后自动处理，按模型使用偏好调用。官方模型消耗积分，自提供模型使用提供方账号额度。')}</p>
     {error && <p role="alert">{error}</p>}
     {loading && <p role="status">{tr('正在读取设置…')}</p>}
     {!loading && !settings && <button type="button" onClick={() => { setError(''); void reload() }}>{tr('重新加载')}</button>}

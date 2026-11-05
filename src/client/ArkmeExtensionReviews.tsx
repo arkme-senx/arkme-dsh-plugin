@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -314,7 +315,7 @@ export function ArkmeExtensionReplyListDialog({ root, onClose, onReply }: {
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-extension-replies-title" style={styles.threadDialog}>
       <header style={styles.threadHeader}>
         <h3 id="arkme-extension-replies-title" style={styles.composerTitle}>{tr("评论回复")}</h3>
-        <button data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label={tr("关闭回复列表")} onClick={onClose}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label={tr("关闭回复列表")} onClick={onClose} />
       </header>
       <div style={styles.threadBody}>
         <div style={styles.threadOriginal}>

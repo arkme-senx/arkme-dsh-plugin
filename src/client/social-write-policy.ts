@@ -2,6 +2,8 @@
  * deleting and personal recording/AI operations retain their existing rules. */
 export function socialWriteAction(operation: string, params?: Record<string, unknown>): string | undefined {
   switch (operation) {
+    case 'world.sound-excerpts':return params?.action==='publish'?'发布声音到世界':undefined
+    case 'world.publications': return params?.action === 'publish-source' ? '发布到世界' : undefined
     case 'world.publish-text': case 'world.publish-file-assets': return '发布到世界'
     case 'world.interactions.create-text': return '发表评论或回复'
     case 'related-recordings.share': return '共享录音'

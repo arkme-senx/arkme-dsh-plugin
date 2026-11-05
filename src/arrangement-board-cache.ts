@@ -50,7 +50,7 @@ export function parseArrangementBoardCachePages(value: unknown): ArkmeArrangemen
           const e = object(raw)
           keys(e, ['id','kind','role','text','canOpen','readOnExpand','sourceDate','createdAtMillis','unavailableReason'])
           text(e.id,512); text(e.text,200000)
-          if (!['record','audio_summary','call','input','voice_input','agent','manual'].includes(e.kind as string) || !['initial','supplement','related'].includes(e.role as string) || typeof e.canOpen !== 'boolean') fail()
+          if (!['record','team_message','audio_summary','call','input','voice_input','agent','manual'].includes(e.kind as string) || !['initial','supplement','related'].includes(e.role as string) || typeof e.canOpen !== 'boolean') fail()
           if (e.readOnExpand !== undefined && typeof e.readOnExpand !== 'boolean') fail()
           if (e.createdAtMillis !== undefined) integer(e.createdAtMillis)
           if (e.sourceDate !== undefined && (typeof e.sourceDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(e.sourceDate))) fail()

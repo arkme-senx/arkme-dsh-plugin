@@ -4,6 +4,7 @@ import type { TeamHistoryAction, TeamHistoryOptions } from '../team-history-cont
 import { GroupRepresentationCodec } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
+import { readTeamFeatureLinks, teamFeatureLinkId, MAX_TEAM_FEATURE_LINKS, type TeamFeatureLinks } from '../team-feature-links-contract.js'
 import { TeamEntryPreferenceService, teamEntryCloudKey } from './team-entry-preference-service.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
@@ -50,6 +51,10 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  feature_links_forbidden: '仅团队所有者或管理员可管理团队入口',
+  invalid_feature_links: '请检查入口名称和网址',
+  feature_links_request_conflict: '重试内容已变化，请重新加载团队入口',
+  feature_links_version_conflict: '团队入口已被其他人修改，请重新加载后核对',
   snapshot_expired: '历史内容已变化或结果已过期，请重新查询', cursor_invalid: '历史分页已失效，请重新查询', cancelled: '导出已取消',
   invalid_recipient: '请选择当前可联系的团队外部真人用户',
   external_chat_not_accessible: '这段对外私聊已不可访问，请检查共享状态与团队资格',
@@ -131,6 +136,26 @@ export class TeamAppService {
     const value=await this.open('conversation',ref,actor)
     if(!str(value.conversation_uid)||!['team','external'].includes(str(value.side)))throw invalid()
     return {conversation_uid:str(value.conversation_uid),side:value.side as TeamSide}
+  }
+  async arrangementSource(uid: string, messageUid: string, side: string, version: number, signal?: AbortSignal): Promise<{conversation:TeamConversation;message:TeamMessage}> {
+    if (!uid || !messageUid || !['team','external'].includes(side) || !Number.isSafeInteger(version) || version <= 0) throw invalid()
+    const session = await this.runtime.requireSession(), actor = session.userId
+    const context = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/context', {conversation_uid:uid}, session, signal, true))
+    if (context.conversation_uid !== uid) throw invalid()
+    if (context.side !== side) {
+      const policy=obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/notification-policy/get',{conversation_uid:uid,side},session,signal,true))
+      if(typeof policy.muted!=='boolean'||!Number.isSafeInteger(policy.policy_version)||Number(policy.policy_version)<0||!Number.isSafeInteger(policy.notify_after_seq)||Number(policy.notify_after_seq)<0)throw invalid()
+    }
+    const data = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/timeline/locate', {conversation_uid:uid,side,message_uid:messageUid,limit:1}, session, signal, true))
+    const raw = list(data.messages).find(row => row.message_uid === messageUid)
+    if (obj(data.conversation).conversation_uid !== uid || obj(data.conversation).side !== side || !raw || raw.state !== 'published' || obj(raw.record).status !== 'available' || obj(raw.record).version !== version) {
+      throw new ArkmePluginError('arrangement-source-unavailable','原团队消息已变化或当前无权查看',false,404)
+    }
+    const result = {conversation:await this.conversation(data.conversation,actor),message:await this.message(raw,actor,{conversation_uid:uid,side})}
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== actor || current.refreshToken !== session.refreshToken) throw invalid()
+    return result
   }
   async resolveMessageSelection(conversationRef:string,selections:unknown,actor:number):Promise<{conversation_uid:string;message_uid:string;side:TeamSide;expected_record_version:number}[]>{
     const context=await this.resolveConversation(conversationRef,actor)
@@ -566,6 +591,19 @@ export class TeamAppService {
             ...(forwardRecords ? {forwardRecords} : {}), ...(sharedRecording ? {sharedRecording} : {}) }
         }))
         return { items, hasMore: data.has_more === true, beforeSeq: num(data.next_before_seq), mediaUrls }
+      }
+      case 'team.app.feature-links.get':
+      case 'team.app.feature-links.save': {
+        const id = await teamID(), save = operation === 'team.app.feature-links.save'
+        const items = save ? readTeamFeatureLinks(p.items) : undefined
+        if (save && (!items || !Number.isSafeInteger(p.expectedRevision) || Number(p.expectedRevision) < 0 || !teamFeatureLinkId(p.requestUid))) throw invalid()
+        const data = await post(`feature-links/${save ? 'save' : 'get'}`, { team_id: id,
+          ...(save ? { expected_revision: p.expectedRevision, request_uid: p.requestUid, items } : {}) }, !save)
+        const rows = readTeamFeatureLinks(data.items)
+        if (data.schema_version !== 1 || !Number.isSafeInteger(data.revision) || Number(data.revision) < 0
+          || typeof data.can_manage !== 'boolean' || data.max_items !== MAX_TEAM_FEATURE_LINKS || !rows
+          || save && data.revision !== Number(p.expectedRevision) + 1) throw invalid()
+        return { schemaVersion: 1, revision: Number(data.revision), canManage: data.can_manage, maxItems: MAX_TEAM_FEATURE_LINKS, items: rows } satisfies TeamFeatureLinks
       }
       case 'team.app.profile.get':return await this.profile((await post('profile/get',{team_id:await teamID()},true)).team,actor)
       case 'team.app.profile.status':return await this.profileResult(await post('profile/update/status',{team_id:await teamID(),request_uid:str(p.requestUid)},true),actor)

@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { reactionNotifications } from './reaction-notifications.js'
 import { useVisibleReactionNotification } from './ArkmeReactionNotification.js'
 import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -259,7 +260,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
     {(currentGroupPage?.has_more ?? snapshot?.has_more) && <button type="button" disabled={groupBusy} style={button} onClick={() => void loadGroups()}>更多表态</button>}
     {groupError && <div role="alert">{groupError}</div>}
     {actorKey && snapshot?.actors_visible && actorScope.current === viewScope && <div role="region" aria-label="表态者" style={{ flexBasis: '100%', padding: 6, border: `1px solid ${c.border}`, borderRadius: 6 }}>
-      <button type="button" aria-label="关闭表态者" style={button} onClick={() => { actorAbort.current?.abort(); setActorKey(undefined); setActorBusy(false) }}>×</button>
+      <ArkmeCloseButton type="button" aria-label="关闭表态者" style={button} onClick={() => { actorAbort.current?.abort(); setActorKey(undefined); setActorBusy(false) }} />
       {actors?.items.map(actorIdentity).map(actor => <button type="button" key={actor.userId} aria-label={`查看${actor.displayName}的资料`} className={highlight?.rows.some(notice => notice.actorUserId === actor.userId && notice.selections.some(selection => selection.key === actorKey)) ? 'arkme-new-reaction' : undefined} style={{ ...button, margin: 6 }} onPointerEnter={() => warmActorAvatar(actor)} onFocus={() => warmActorAvatar(actor)} onClick={event => { event.stopPropagation(); setProfileActor(actor) }}>{actor.displayName}</button>)}
       {actorBusy && <span role="status">加载中…</span>}
       {actorError && <button type="button" style={button} onClick={() => void loadActors(actorKey)}>{actorError} · 重试</button>}

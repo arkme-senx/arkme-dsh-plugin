@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { formatAiPoints, nanoCnyToPoints } from '../ai-points.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import {
@@ -132,7 +133,7 @@ export function ArkmeRechargeDialogView(props: ArkmeRechargeDialogViewProps) {
           <h2>{tr("积分充值")}</h2>
           <p>{tr("APP 与 Arkme 3.0 共用积分，充值到账后即可使用")}</p>
         </div>
-        <button type="button" aria-label={tr("关闭充值弹窗")} onClick={props.onClose}>×</button>
+        <ArkmeCloseButton type="button" aria-label={tr("关闭充值弹窗")} onClick={props.onClose} />
       </header>
 
       <div className="arkme-billing-dialog-body">
@@ -268,7 +269,7 @@ export function ArkmePaymentDialog(props: ArkmePaymentDialogProps) {
           <h2 id="arkme-payment-dialog-title">{title}</h2>
           <p>{tr("订单号：")}{props.order.orderId}</p>
         </div>
-        <button type="button" aria-label={tr("关闭支付弹窗")} onClick={props.onClose}>×</button>
+        <ArkmeCloseButton type="button" aria-label={tr("关闭支付弹窗")} onClick={props.onClose} />
       </header>
       <div className={`arkme-billing-payment-content is-${screen}`}>
         {statusProblem && <>

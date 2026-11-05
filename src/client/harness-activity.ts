@@ -1,9 +1,12 @@
 /** Display-only account-scoped summary. Official sessions remain the source of running/pending state. */
+import { conversationActivityAtMillis } from './conversation-directory-order.js'
 export const HARNESS_ACTIVITY_ATTRIBUTE = 'data-arkme-harness-activity'
 export const HARNESS_ACTIVITY_EVENT = 'arkme:harness-activity'
 export interface HarnessActivityItem { id: string; title: string }
 export interface HarnessActivity {
   scope: string
+  /** Native source activity, never the time this summary was read or published. */
+  latestAtMillis?: number
   /** The native selection is also the destination of the Arkme entry. Null means a new conversation. */
   current?: HarnessActivityItem | null
   /** Latest real root conversation by native activity time, independent of selection. */
@@ -30,6 +33,7 @@ export class HarnessActivityTracker {
   private previous = new Map<string, { active: boolean; completed: boolean }>()
   private readonly key: string
   private persisted = ''
+  private latestAtMillis = 0
 
   constructor(readonly scope: string, private readonly storage?: StorageFace) {
     this.key = `arkme.harness.unviewed.v1:${scope}`
@@ -42,6 +46,7 @@ export class HarnessActivityTracker {
 
   update(list: ActivityList, archived: readonly string[], pending: PendingInteractions | undefined, visibleSession?: string): HarnessActivity {
     const result: HarnessActivity = { scope: this.scope, running: [], unread: [], pending: [] }
+    if (this.latestAtMillis) result.latestAtMillis = this.latestAtMillis
     if (list.phase !== 'ready') return result
     const current = list.current === undefined ? undefined : list.byId[list.current]
     if (current) result.current = { id: current.id, title: current.blank ? '新会话' : current.displayTitle || '未命名对话' }
@@ -58,6 +63,9 @@ export class HarnessActivityTracker {
       if (!recent || activityTime(session) > activityTime(recent)) recent = session
     }
     if (recent) result.recent = { id: recent.id, title: recent.displayTitle || '未命名对话' }
+    this.latestAtMillis = conversationActivityAtMillis(recent?.updatedAt)
+    if (this.latestAtMillis) result.latestAtMillis = this.latestAtMillis
+    else delete result.latestAtMillis
     for (const session of Object.values(list.byId)) {
       let root: ActivitySession | undefined = session
       const seen = new Set<string>()
@@ -98,6 +106,7 @@ export function parseHarnessActivity(raw: string | null, scope: string | undefin
     const value: unknown = JSON.parse(raw)
     if (typeof value !== 'object' || value === null || !('scope' in value) || value.scope !== scope) return
     const record = value as Record<string, unknown>
+    if (record.latestAtMillis !== undefined && conversationActivityAtMillis(record.latestAtMillis as number) === 0) return
     const isItem = (item: unknown): item is HarnessActivityItem => typeof item === 'object' && item !== null && 'id' in item && typeof item.id === 'string' && 'title' in item && typeof item.title === 'string'
     if (record.current !== undefined && record.current !== null && !isItem(record.current)) return
     if (record.recent !== undefined && !isItem(record.recent)) return

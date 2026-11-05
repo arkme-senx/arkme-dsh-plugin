@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import type { SettingsLauncherOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { SettingsLauncherOwnerProps, SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
+import { HARNESS_MODELS_SETTINGS_OPEN } from '../harness-embed-contract.js'
 
 export const HARNESS_SETTINGS_OPEN = 'arkme:harness-settings-open'
 export const HARNESS_SETTINGS_READY = 'data-arkme-harness-settings-ready'
@@ -19,8 +20,23 @@ function SettingsLauncher({ openSettings }: SettingsLauncherOwnerProps) {
   return null
 }
 
+function ModelsRedirect({ close }: SettingsSectionOwnerProps) {
+  useEffect(() => {
+    const surface = window.frameElement?.parentElement
+    const accountScope = surface?.getAttribute('data-arkme-account-scope')
+    if (!accountScope || window.parent === window) return
+    close()
+    window.parent.document.dispatchEvent(new CustomEvent(HARNESS_MODELS_SETTINGS_OPEN, { detail: { accountScope } }))
+  }, [close])
+  return null
+}
+
 export function installHarnessSettings(ctx: Context): () => void {
   const disposers = [
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section', id: 'models', priority: -100, order: 10,
+      label: () => ctx.locale.getSnapshot().active === 'en' ? 'Models ↗' : '模型 ↗',
+    }, ModelsRedirect)),
     ctx.slots.inject('settings.launcher', () => ctx.slots.register({
       name: 'settings.launcher', priority: -100,
     }, SettingsLauncher)),

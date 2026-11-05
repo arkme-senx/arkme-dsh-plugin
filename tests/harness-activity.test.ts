@@ -94,3 +94,20 @@ it('keeps catalog order for ties or missing timestamps and omits recent when the
   expect(tracker.update(list([session('blank', { blank: true })]), [], undefined).recent).toBeUndefined()
   expect(tracker.update({ ...list([session('a')]), phase: 'pending' }, [], undefined).recent).toBeUndefined()
 })
+
+it('publishes source activity without letting selection, status or transient refresh clocks advance it', () => {
+  const tracker = new HarnessActivityTracker('prod:42')
+  const rows = [session('old', { updatedAt: 100 }), session('recent', { updatedAt: 200 }),
+    session('blank', { blank: true, updatedAt: 400 }), session('archived', { updatedAt: 500 }),
+    session('child', { origin: 'subagent', parentId: 'old', updatedAt: 600 })]
+  expect(tracker.update(list(rows, 'old'), ['archived'], undefined).latestAtMillis).toBe(200)
+  expect(tracker.update(list(rows.map(row => ({ ...row, running: true })), 'recent'), ['archived'], undefined).latestAtMillis).toBe(200)
+  expect(tracker.update({ ...list([]), phase: 'pending' }, [], undefined).latestAtMillis).toBe(200)
+  expect(tracker.update(list([session('old', { updatedAt: 300 })]), [], undefined).latestAtMillis).toBe(300)
+  expect(tracker.update(list([]), [], undefined).latestAtMillis).toBeUndefined()
+  expect(new HarnessActivityTracker('prod:43').update({ ...list([]), phase: 'pending' }, [], undefined).latestAtMillis).toBeUndefined()
+})
+
+it.each([0, -1, NaN, Infinity, 8_640_000_000_000_001, '200'])('rejects invalid bridge activity %s', value => {
+  expect(parseHarnessActivity(JSON.stringify({ scope: 'prod:42', running: [], pending: [], unread: [], latestAtMillis: value }), 'prod:42')).toBeUndefined()
+})

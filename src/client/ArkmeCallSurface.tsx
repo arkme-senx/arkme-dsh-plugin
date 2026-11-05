@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeCallShareControls } from './ArkmeCallShareControls.js'
 import { ArkmeCallDetailContent } from './ArkmeCallDetailContent.js'
@@ -9,7 +10,6 @@ import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Link } from '@phosphor-icons/react/dist/icons/Link'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
@@ -1322,7 +1322,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
         <section style={styles.picker} role="dialog" aria-modal={tour.current === 1 ? undefined : true} aria-label={tr("选择通话联系人")} data-arkme-call-tour-dialog={tour.current === 1 ? 'true' : undefined}>
           <header style={styles.pickerHeader}>
             <h3 style={styles.pickerTitle}>{tr("发起通话")}</h3>
-            <button data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label={tr("关闭联系人选择")} onClick={closePicker}><X size={17} /></button>
+            <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label={tr("关闭联系人选择")} onClick={closePicker} />
           </header>
           <label className="arkme-call-picker-search" style={styles.pickerSearch}>
             <MagnifyingGlass size={16} />
@@ -1412,7 +1412,7 @@ export function ArkmeCallSurface({ active = true, initialPickerOpen = false, pre
               <strong style={styles.pickerName}>{typeTarget.displayName}</strong>
 	              <small style={styles.pickerSub}>{targetSubtitle(typeTarget)}</small>
             </span>
-            <button data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label={tr("关闭通话方式选择")} onClick={() => { setTypeTarget(undefined) }}><X size={16} /></button>
+            <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.closeButton} aria-label={tr("关闭通话方式选择")} onClick={() => { setTypeTarget(undefined) }} />
           </header>
           <button data-arkme-feedback="neutral"
             type="button"

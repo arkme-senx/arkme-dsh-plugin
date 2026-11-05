@@ -7,6 +7,23 @@ const child = (index: number): ArkmeMessageCopyLinkExtensionItem => ({ recordUid
 const page = (extensions: ArkmeMessageCopyLinkExtensionItem[], nextCursor?: string): ArkmeSourceMessageExtensionContext => ({
   parentRecordUid: 'parent', extensionCount: 125, extensions, ...(nextCursor ? { nextCursor } : {}) })
 describe('progressive detail comment pages', () => {
+  it('publishes one completed background snapshot and publishes nothing on a later-page failure', async () => {
+    let finish!: (page: ArkmeSourceMessageExtensionContext) => void
+    const loadPage = vi.fn(async (cursor?: string) => cursor ? await new Promise<ArkmeSourceMessageExtensionContext>(resolve => { finish = resolve }) : page([child(0)], 'next'))
+    const onPage = vi.fn()
+    const pending = readDetailExtensionPages({ parentRecordUid: 'parent', loadPage, onPage, signal: new AbortController().signal, atomic: true })
+    await vi.waitFor(() => expect(loadPage).toHaveBeenCalledWith('next'))
+    expect(onPage).not.toHaveBeenCalled()
+    finish(page([child(1)])); await pending
+    expect(onPage).toHaveBeenCalledTimes(1)
+    expect(onPage.mock.calls[0]![0].extensions).toHaveLength(2)
+    onPage.mockClear()
+    await expect(readDetailExtensionPages({ parentRecordUid: 'parent', loadPage: async cursor => {
+      if (cursor) throw new TypeError('Failed to fetch')
+      return page([child(0)], 'next')
+    }, onPage, signal: new AbortController().signal, atomic: true })).rejects.toThrow('Failed to fetch')
+    expect(onPage).not.toHaveBeenCalled()
+  })
   it('publishes 100 comments before the next read completes, deduplicates overlap, and preserves the last-page quotation', async () => {
     let finish!: (page: ArkmeSourceMessageExtensionContext) => void
     const loadPage = vi.fn(async (cursor?: string) => cursor ? await new Promise<ArkmeSourceMessageExtensionContext>(resolve => { finish = resolve }) : page(Array.from({ length: 100 }, (_, index) => child(index)), 'cursor-a'))

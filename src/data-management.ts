@@ -37,6 +37,11 @@ export interface ArkmeRangeExportPreview {
   accountScope: string
   supported: boolean
   canExport: boolean
+  folderSupported?: boolean
+  localReplica?: boolean
+  localSnapshotOnly?: boolean
+  /** Local counts are exact for the saved replica; pending changes are not counted until written. */
+  countsPending?: boolean
   baselineRequired: boolean
   message: string
   previewUid?: string
@@ -54,14 +59,18 @@ export interface ArkmeRangeExportPreview {
 export interface ArkmeRecordExportOptions {
   expectedAccountScope: string
   orderKind: 1 | 2
-  /** Creating an export consumes the server's export allowance. */
+  /** Required confirmation; only cloud all/date exports consume the existing allowance. */
   confirmed: true
   selection?: ArkmeExportSelection
   previewUid?: string
+  destinationRef?: string
 }
 export interface ArkmeRecordExportProgress { count: number }
 export interface ArkmeRecordExport {
   accountScope: string
+  kind?: 'directory'
+  directoryRef?: string
+  savedAtMillis?: number
   fileRef: string
   fileName: string
   size: number
