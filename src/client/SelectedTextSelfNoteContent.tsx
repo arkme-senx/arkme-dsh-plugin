@@ -6,7 +6,7 @@ import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeTheme } from './arkme-theme.js'
 
 /** Keep DOM prose in exactly the persisted order so selection anchors and edits remain correct. */
-export function SelectedTextSelfNoteContent({ value, detail = false, recordUid }: { value: SelectedTextNotePresentation; detail?: boolean; recordUid?:string }) {
+export function SelectedTextSelfNoteContent({ value, detail = false, recordUid,sourceRef,messageActionRef }: { value: SelectedTextNotePresentation; detail?: boolean; recordUid?:string;sourceRef?:string;messageActionRef?:string }) {
   useArkmeLocale()
   const [expanded, setExpanded] = useState(detail)
   const prose = useRef<HTMLDivElement>(null), [clipped, setClipped] = useState(false)
@@ -23,7 +23,7 @@ export function SelectedTextSelfNoteContent({ value, detail = false, recordUid }
       <div data-arkme-quote-prose style={{ color: arkmeTheme.secondary, whiteSpace: 'pre-wrap' }}>{value.header}</div>
       <div ref={prose} data-arkme-quote-prose style={{ marginTop: 4, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: expanded ? undefined : 2, overflow: 'hidden' }}><ArkmeRichText text={value.quote.text} linkLabelMode="raw" /></div>
       {(clipped || expanded || value.quote.text.length > 90 || value.quote.text.includes('\n')) && <button type="button" onClick={e => { e.stopPropagation(); setExpanded(v => !v) }} style={{ padding: 0, border: 0, font: 'inherit', color: arkmeTheme.tertiary, background: 'transparent', cursor: 'pointer' }}>{tr(expanded ? '收起引用' : '展开引用')}</button>}
-      {value.storage==='cloud'&&value.quote.source&&recordUid&&<ExcerptOriginal recordUid={recordUid}/>}
+      {value.storage==='cloud'&&value.quote.source&&recordUid&&<ExcerptOriginal recordUid={recordUid} {...(sourceRef&&messageActionRef?{sourceRef,messageActionRef}:{})}/>}
     </div>
     {value.noteText && <div data-arkme-quote-prose style={{ color: arkmeTheme.secondary, fontSize: 11 }}>{tr(value.kind === 'forward' ? '附言' : '我的笔记')}</div>}
     {value.noteText && <div data-arkme-quote-prose style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}><ArkmeRichText text={value.noteText} linkLabelMode="raw" /></div>}

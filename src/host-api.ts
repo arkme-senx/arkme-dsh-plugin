@@ -2827,12 +2827,13 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'selected-text.prepare': return await service.prepareSelectedText({expectedAccountKey:stringParam(params,'expectedAccountKey'),quote:params.quote},requestSignal)
     case 'selected-text.forward': return await service.forwardSelectedText({
       expectedAccountKey: stringParam(params, 'expectedAccountKey'), targetSourceRef: stringParam(params, 'targetSourceRef'),
       recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
-      commentText: stringParam(params, 'commentText'), quote: params.quote,
+      commentText: stringParam(params, 'commentText'), quote: params.quote, sendAtMillis:numberParam(params,'sendAtMillis',0),
     }, requestSignal)
-    case 'excerpt.original': return await service.excerptOriginal(stringParam(params,'recordUid'),requestSignal)
+    case 'excerpt.original': return await service.excerptOriginal(stringParam(params,'recordUid'),requestSignal,params.sourceRef&&params.messageActionRef?{sourceRef:stringParam(params,'sourceRef'),messageActionRef:stringParam(params,'messageActionRef')}:undefined)
     case 'self-note.quote.send': return await service.sendQuotedSelfNote({
       expectedAccountKey: stringParam(params, 'expectedAccountKey'), recordUid: stringParam(params, 'recordUid'),
       noteText: stringParam(params, 'noteText'), quote: params.quote,

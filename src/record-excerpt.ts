@@ -9,7 +9,18 @@ export type RecordExcerptSource =
   | { kind:'dsh_message'; runtime_ref:string; session_ref:string; event_seq:number; role?:'user'|'assistant' }
   | { kind:'recording_segment'; recording_uid:string; segment_uid:string }
   | { kind:'call_segment'; call_uid:string; segment_uid:string }
+export interface RecordExcerptSelection {
+ projection:'arkme-text-v1';source_digest:string;start:number;end:number;record_version?:number
+}
+export function readExcerptSelection(raw:unknown,quote:string):RecordExcerptSelection|undefined {
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))return undefined
+ const p=raw as RecordExcerptSelection
+ if(Object.keys(p).some(k=>!['projection','source_digest','start','end','record_version'].includes(k))||p.projection!=='arkme-text-v1'||!/^[a-f0-9]{64}$/.test(p.source_digest)||!Number.isSafeInteger(p.start)||!Number.isSafeInteger(p.end)||p.start<0||p.end<=p.start||p.end>1000000||p.end-p.start!==quote.trim().replace(/\s+/gu,' ').length||p.record_version!==undefined&&(!Number.isSafeInteger(p.record_version)||p.record_version<0))return undefined
+ return {projection:p.projection,source_digest:p.source_digest,start:p.start,end:p.end,...(p.record_version===undefined?{}:{record_version:p.record_version})}
+}
 export interface RecordExcerpt {
+ kind?:'forward';source_selection?:RecordExcerptSelection
+
   schema_version:1; header_end:number; quote_start:number; quote_end:number; note_start:number; frozen_digest:string
   source?:RecordExcerptSource
 }
@@ -31,13 +42,16 @@ export function readRecordExcerpt(raw:unknown,text:string):RecordExcerpt|undefin
   const offsets=[p.header_end,p.quote_start,p.quote_end,p.note_start]
   if(p.schema_version!==1||offsets.some(n=>!Number.isSafeInteger(n)||n<0||n>text.length||n>0&&n<text.length&&/[\uDC00-\uDFFF]/.test(text[n]!))||p.header_end<1||p.quote_start<p.header_end||p.quote_end<=p.quote_start||p.quote_end-p.quote_start>2000||p.note_start<p.quote_end||!/^[a-f0-9]{64}$/.test(p.frozen_digest))return undefined
   const source=readExcerptSource(p.source);if(p.source!==undefined&&!source)return undefined
-  return {schema_version:1,header_end:p.header_end,quote_start:p.quote_start,quote_end:p.quote_end,note_start:p.note_start,frozen_digest:p.frozen_digest,...(source?{source}:{})}
+ if(p.kind!==undefined&&p.kind!=='forward')return undefined
+ const selection=readExcerptSelection(p.source_selection,text.slice(p.quote_start,p.quote_end));if(p.source_selection!==undefined&&!selection)return undefined
+ if(p.kind==='forward'&&(text.slice(p.header_end,p.quote_start)!=='\n'||(p.note_start===text.length? p.note_start!==p.quote_end : text.slice(p.quote_end,p.note_start)!=='\n\n附言\n')))return undefined
+  return {...(p.kind?{kind:p.kind}:{}),...(selection?{source_selection:selection}:{}),schema_version:1,header_end:p.header_end,quote_start:p.quote_start,quote_end:p.quote_end,note_start:p.note_start,frozen_digest:p.frozen_digest,...(source?{source}:{})}
 }
 export function recordExcerptPresentation(raw:unknown,text:string):SelectedTextNotePresentation|undefined {
   const p=readRecordExcerpt(raw,text);if(!p)return undefined
   const header=text.slice(0,p.header_end)
   // Display uses the frozen canonical header, never inferred identity or timestamps.
-  return {quote:{version:1,sourceLabel:header.split('\n')[0]?.replace(/^引用 · /,'')||'摘录',senderName:'原作者',sourceAtMillis:0,text:text.slice(p.quote_start,p.quote_end),...(p.source?{source:p.source}:{})},header,noteText:text.slice(p.note_start),storage:'cloud'}
+  return {quote:{version:1,sourceLabel:header.split('\n')[0]?.replace(/^引用 · /,'')||'摘录',senderName:'原作者',sourceAtMillis:0,text:text.slice(p.quote_start,p.quote_end),...(p.source?{source:p.source}:{}),...(p.source_selection?{sourceSelection:p.source_selection}:{})},header,noteText:text.slice(p.note_start),storage:'cloud',...(p.kind?{kind:p.kind}:{}),}
 }
 
-export interface RecordExcerptOriginal { title:string; text:string; at?:number }
+export interface RecordExcerptOriginal { title:string; text:string; at?:number; textFormat?:'plain'|'markdown'; recordVersion?:number; selection?:{start:number;end:number} }

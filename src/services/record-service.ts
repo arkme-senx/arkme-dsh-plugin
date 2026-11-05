@@ -255,7 +255,11 @@ function recordReeditContentPayloadForWrite(
     else output.mention_metadata = mentions.metadata
   }
   if (nextText !== currentText) {
-    const hashTags = arkmeHashTagPayload(nextText)
+    const excerpt=readRecordExcerpt(contentPayload?.excerpt,currentText)
+    const ownStart=excerpt?.kind==='forward'
+      ? excerpt.quote_end+(nextText.slice(excerpt.quote_end).startsWith('\n\n附言\n')?'\n\n附言\n'.length:0)
+      : excerpt?.note_start??0
+    const hashTags = arkmeHashTagPayload(nextText.slice(ownStart)).map(tag=>({...tag,start_index:tag.start_index+ownStart}))
     if (hashTags.length > 0) output.hash_tags = hashTags
     else delete output.hash_tags
   }
@@ -1603,7 +1607,7 @@ export class RecordService {
   async createText(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number } = {},
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
     if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
@@ -1631,7 +1635,7 @@ export class RecordService {
       if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt))throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
       return this.sendPending(session,previous)
     }
-    const now = Date.now()
+    const now = options.sendAtMillis ?? Date.now()
     const recordDurationMillis = Math.max(0, Math.trunc(options.recordDurationMillis ?? 0))
     const captureContext = normalizedRecordCaptureContext(options.captureContext)
     const pending: ArkmePendingWrite = {
@@ -1651,7 +1655,7 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
       const result = await this.createText(recordUid, textContent, options)

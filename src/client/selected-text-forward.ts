@@ -13,11 +13,12 @@ export function selectedTextForwardContent(accountKey: string, quote: SelectedTe
       return callArkme<ArkmeSourceSendResult>('selected-text.forward', {
         expectedAccountKey: accountKey, targetSourceRef: target.sourceRef,
         recordUid: identity.recordUid, relationUid: identity.commentRecordUid,
-        quote: { ...frozen }, commentText,
+        quote: { ...frozen }, commentText,sendAtMillis:identity.sendAtMillis,
       }, signal)
     }),
   }
 }
-export function forwardSelectedText(accountKey: string, quote: SelectedTextNoteQuote, signal: AbortSignal) {
-  return openLocalSnapshotForward(selectedTextForwardContent(accountKey, quote), signal)
+export async function forwardSelectedText(accountKey: string, quote: SelectedTextNoteQuote, signal: AbortSignal) {
+  const prepared=await callArkme<SelectedTextNoteQuote>('selected-text.prepare',{expectedAccountKey:accountKey,quote},signal)
+  return openLocalSnapshotForward(selectedTextForwardContent(accountKey, prepared), signal)
 }
