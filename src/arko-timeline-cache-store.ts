@@ -33,8 +33,10 @@ export class ArkoTimelineCacheStore {
           const previous = JSON.parse(await file.readFile('utf8'))
           if (previous.scope === scope && previous.value?.savedAtMillis > incoming.savedAtMillis) return parseArkoTimelineCache(previous.value)
         } } catch {} finally { await file.close() }
+        const serialized = JSON.stringify({ scope, value: incoming })
+        if (Buffer.byteLength(serialized, 'utf8') > ARKO_TIMELINE_CACHE_MAX_BYTES) throw new Error('Arko 缓存内容无效或超过容量')
         temporary = `${path}.${randomUUID()}.tmp`
-        await writeFile(temporary, JSON.stringify({ scope, value: incoming }), { mode: 0o600, flag: 'wx' })
+        await writeFile(temporary, serialized, { mode: 0o600, flag: 'wx' })
         await securePrivateFile(temporary); await rename(temporary, path)
         return incoming
       } finally { if (temporary) await unlink(temporary).catch(() => undefined) }

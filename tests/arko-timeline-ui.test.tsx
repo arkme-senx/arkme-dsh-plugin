@@ -262,3 +262,64 @@ it('rediscovers an older result that became readable again inside a restored win
   expect(host.textContent).toContain('范围下界');expect(host.textContent).toContain('范围上界')
  }finally{await act(async()=>root.unmount());host.remove()}
 })
+
+it('restores the earliest interaction after revocation removes the visible window floor',async()=>{
+ const snapshot=cache(),floor={...snapshot.interactions[0]!,interactionKey:'floor',interactionRef:'floor-ref',occurredAtMillis:1000,summary:'最早自动结果'},ceiling={...snapshot.interactions[0]!,interactionKey:'ceiling',interactionRef:'ceiling-ref',occurredAtMillis:3000,summary:'较新主动结果'}
+ snapshot.interactions=[floor,ceiling];arkoTimelineMemory.set('test:10001',snapshot)
+ let denied=false
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.interactions'){
+   const p=params as any,selected=p?.knownRefs as string[]|undefined
+   return {accountScope:'test:10001',items:!selected&&!denied&&(p?.afterMillis??0)<=1000?[floor]:[],hasMore:false,removedKeys:denied&&selected?.includes('floor-ref')?['floor']:[],...(!selected?{oldestScannedAtMillis:1000}:{})} as never
+  }
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  denied=true;await act(async()=>{publishThoughtInvalidation({accountScope:'test:10001'});await vi.advanceTimersByTimeAsync(300)})
+  expect(host.querySelector('[data-arko-interaction="floor"]')).toBeNull()
+  expect(host.textContent).toContain('较新主动结果')
+  denied=false;await act(async()=>{publishThoughtInvalidation({accountScope:'test:10001'});await vi.advanceTimersByTimeAsync(300)})
+  expect(host.textContent).toContain('最早自动结果')
+ }finally{await act(async()=>root.unmount());host.remove()}
+})
+
+it('continues the retained physical window after every visible interaction was removed',async()=>{
+ arkoTimelineMemory.set('test:10001',{...cache(),interactions:[],interactionStartMillis:1000})
+ const restored={...cache().interactions[0]!,interactionKey:'restored',interactionRef:'restored-ref',occurredAtMillis:1000,summary:'空窗口内恢复的历史结果'}
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.interactions')return (params as any)?.cursor
+   ? {accountScope:'test:10001',items:[restored],hasMore:false,removedKeys:[],oldestScannedAtMillis:1000} as never
+   : {accountScope:'test:10001',items:[],hasMore:true,nextCursor:'older-physical',removedKeys:[],oldestScannedAtMillis:2000} as never
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  expect(host.textContent).toContain('空窗口内恢复的历史结果')
+  expect(vi.mocked(callArkme).mock.calls.filter(([m])=>m==='arko.interactions').map(row=>row[1])).toEqual([{afterMillis:1000,limit:20},{cursor:'older-physical',limit:20}])
+ }finally{await act(async()=>root.unmount());host.remove()}
+ expect(arkoTimelineMemory.get('test:10001')?.interactionStartMillis).toBe(1000)
+})
+
+it('remembers a denied physical tail on cold entry and discovers it when access is enabled',async()=>{
+ let enabled=false
+ const row=cache().interactions[0]!,manual={...row,interactionKey:'manual',interactionRef:'manual-ref',occurredAtMillis:3000,summary:'当前主动结果'},automatic={...row,interactionKey:'auto',interactionRef:'auto-ref',occurredAtMillis:1000,summary:'冷进入时不可见的自动结果'}
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.timeline.cache')return undefined as never
+  if(method==='arko.messages')return {items:[],hasMore:false,scanned:0,consistency:'live'} as never
+  if(method==='arko.interactions'){
+   const p=params as any
+   return {accountScope:'test:10001',items:p?.knownRefs?[]:enabled?(p?.afterMillis??0)<=1000?[automatic]:[]:[manual],hasMore:false,removedKeys:[],...(!p?.knownRefs?{oldestScannedAtMillis:1000}:{})} as never
+  }
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  expect(host.textContent).not.toContain('冷进入时不可见的自动结果')
+  enabled=true;await act(async()=>{publishThoughtInvalidation({accountScope:'test:10001'});await vi.advanceTimersByTimeAsync(300)})
+  expect(host.textContent).toContain('当前主动结果');expect(host.textContent).toContain('冷进入时不可见的自动结果')
+ }finally{await act(async()=>root.unmount());host.remove()}
+})

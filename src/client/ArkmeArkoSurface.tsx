@@ -455,6 +455,7 @@ export function ArkmeArkoSurface() {
   }, [accountKey])
   const [messages, setMessages] = useState<ArkoMessage[]>(initialTimeline.current?.messages ?? [])
   const interactionReadQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const [interactionStartMillis, setInteractionStartMillis] = useState(initialTimeline.current?.interactionStartMillis)
   const retryInteractionAccess = useRef<(() => void) | undefined>(undefined)
   const [verifiedInteractions, setVerifiedInteractions] = useState<ReadonlyMap<string,string>>(new Map())
   const interactionAccessGeneration = useRef(0)
@@ -465,6 +466,10 @@ export function ArkmeArkoSurface() {
       const page=await callArkme<ArkmeArkoInteractionPage>('arko.interactions',{...query},signal)
       signal.throwIfAborted()
       if(generation!==interactionAccessGeneration.current||page.accountScope!==accountKey) throw new Error(tr('互动权限已变化，请重试'))
+      if (!query.knownRefs && page.oldestScannedAtMillis !== undefined) {
+        const at = page.oldestScannedAtMillis
+        setInteractionStartMillis(current => Math.min(current ?? at, at))
+      }
       const removed=new Set(page.removedKeys),refs=new Set(query.knownRefs)
       const proven=(timelineSnapshot.current?.interactions??[]).filter(item=>refs.has(item.interactionRef)&&!removed.has(item.interactionKey))
       setVerifiedInteractions(current=>new Map([...current,...proven.map(item=>[item.interactionKey,item.interactionRef] as const),...page.items.map(item=>[item.interactionKey,item.interactionRef] as const)].filter(([key])=>!removed.has(key))))
@@ -538,7 +543,8 @@ export function ArkmeArkoSurface() {
   const timelineSnapshot = useRef<ArkmeArkoTimelineCache>()
   const committedTimeline: ArkmeArkoTimelineCache = { schemaVersion: 2, savedAtMillis: Date.now(), messages, interactions,
     ...(session ? { session } : {}), ...(historyCursor ? { historyCursor } : {}), ...(interactionCursor ? { interactionCursor } : {}),
-    ...(historyBeforeMillis ? { historyBeforeMillis } : {}), ...(interactionBeforeMillis ? { interactionBeforeMillis } : {}) }
+    ...(historyBeforeMillis ? { historyBeforeMillis } : {}), ...(interactionBeforeMillis ? { interactionBeforeMillis } : {}),
+    ...(interactionStartMillis ? {interactionStartMillis} : {}) }
   const restoredTimelineScope = useRef<string>()
   const [viewportAnchor, setViewportAnchor] = useState<string | undefined>(initialTimeline.current?.viewport?.anchorId)
   const restoreTimelineViewport = useRef(initialTimeline.current?.viewport)
@@ -550,6 +556,7 @@ export function ArkmeArkoSurface() {
     setMessages(cached?.messages ?? []); setInteractions(cached?.interactions ?? []); setSession(cached?.session)
     setHistoryCursor(cached?.historyCursor); setInteractionCursor(cached?.interactionCursor); setInteractionError('')
     setHistoryBeforeMillis(cached?.historyBeforeMillis); setInteractionBeforeMillis(cached?.interactionBeforeMillis)
+    setInteractionStartMillis(cached?.interactionStartMillis)
     setViewportAnchor(cached?.viewport?.anchorId)
     restoreTimelineViewport.current = cached?.viewport
     followTailRef.current = cached?.viewport?.followTail ?? true
@@ -587,7 +594,7 @@ export function ArkmeArkoSurface() {
       void callArkme('arko.timeline.cache', { accountScope: accountKey, value: snapshot }).catch(() => undefined)
     }, 700)
     return () => clearTimeout(timer)
-  }, [accountKey, messages, interactions, historyCursor, interactionCursor, historyBeforeMillis, interactionBeforeMillis, session])
+  }, [accountKey, messages, interactions, historyCursor, interactionCursor, historyBeforeMillis, interactionBeforeMillis, interactionStartMillis, session])
   const bottomVisibility = useScrollBottomVisibility(bodyRef, recordsRef, !loading, visibleMessages)
   const measureBottom = useRef(bottomVisibility.measure)
   measureBottom.current = bottomVisibility.measure
@@ -801,6 +808,7 @@ export function ArkmeArkoSurface() {
           setMessages(cached.messages); setInteractions(cached.interactions); setSession(cached.session)
           setHistoryCursor(cached.historyCursor); setInteractionCursor(cached.interactionCursor)
           setHistoryBeforeMillis(cached.historyBeforeMillis); setInteractionBeforeMillis(cached.interactionBeforeMillis)
+          setInteractionStartMillis(cached.interactionStartMillis)
           setViewportAnchor(cached.viewport?.anchorId); restoreTimelineViewport.current = cached.viewport; followTailRef.current = cached.viewport?.followTail ?? true
           setLoading(false)
         }
@@ -834,7 +842,7 @@ export function ArkmeArkoSurface() {
       const userRead = callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async value => value.profile ? value : callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)).then(value => { if (!controller.signal.aborted) setUserProfile(value.profile) })
       // External records load independently; slow owner authorization cannot block direct chat.
       const interactionRead = (async () => {
-        const after = cached?.interactions.length ? Math.min(...cached.interactions.map(item => item.occurredAtMillis)) : 0
+        const after = cached?.interactionStartMillis ?? (cached?.interactions.length ? Math.min(...cached.interactions.map(item => item.occurredAtMillis)) : 0)
         const observedRefs=cached?.interactions.slice(-400).map(item=>item.interactionRef)
         let cursor: string | undefined
         const visited = new Set<string>()
@@ -843,7 +851,7 @@ export function ArkmeArkoSurface() {
           if (controller.signal.aborted || page.accountScope !== accountKey) return
           if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
           setInteractions(current => mergeInteractions(current, page))
-          if (!cached?.interactions.length) { setInteractionCursor(page.nextCursor); break }
+          if (!cached?.interactions.length && !cached?.interactionStartMillis) { setInteractionCursor(page.nextCursor); break }
           cursor = page.hasMore ? page.nextCursor : undefined
           if (cursor) { if (visited.has(cursor)) throw new Error('Arko interaction cursor did not advance'); visited.add(cursor) }
         } while (cursor)
@@ -869,8 +877,10 @@ export function ArkmeArkoSurface() {
       inFlight = true; dirty = false
       const verify = revalidate; revalidate = false
       try {
+        const windowStart = timelineSnapshot.current?.interactionStartMillis
         const loaded = timelineSnapshot.current?.interactions ?? []
-        const after = loaded.length ? (verify ? Math.min(...loaded.map(item=>item.occurredAtMillis)) : Math.max(...loaded.map(item=>item.occurredAtMillis))) : 0
+        const after = verify ? windowStart ?? (loaded.length ? Math.min(...loaded.map(item=>item.occurredAtMillis)) : 0)
+          : loaded.length ? Math.max(...loaded.map(item=>item.occurredAtMillis)) : windowStart ?? 0
         const observedRefs=verify ? loaded.slice(-400).map(item=>item.interactionRef) : undefined
         let cursor: string | undefined; const seen = new Set<string>()
         do {
@@ -878,7 +888,7 @@ export function ArkmeArkoSurface() {
           if (controller.signal.aborted || page.accountScope !== accountKey) return
           if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
           setInteractions(current => mergeInteractions(current,page))
-          if (!loaded.length) { setInteractionCursor(page.nextCursor); break }
+          if (!loaded.length && !windowStart) { setInteractionCursor(page.nextCursor); break }
           cursor = page.hasMore ? page.nextCursor : undefined
           if (cursor) { if (seen.has(cursor)) throw new Error('Arko interaction cursor did not advance'); seen.add(cursor) }
         } while (cursor)

@@ -41,14 +41,24 @@ it.skipIf(!directory)('runs the existing UI through Host, JWT/Gin, SQL/Mongo and
  try{
   page=await browser.newPage({viewport:{width:1200,height:850}})
   page.on('pageerror',error=>errors.push(String(error.stack??error)))
+  const setCapability=async(enabled:boolean,version:number)=>{
+   const response=await fetch(ready.url+'/api/v1/settings/capabilities/update',{method:'POST',headers:{Authorization:`Bearer ${ready.token11}`,'Content-Type':'application/json'},body:JSON.stringify({key:'chat_thought',enabled,expected_version:version})})
+   const result=await response.json() as {code:number};expect(result.code).toBe(0)
+  }
+  await setCapability(false,1)
   await page.goto(vite.resolvedUrls!.local[0]!)
   await page.getByText('普通直接聊天仍可用',{exact:true}).waitFor()
+  await page.waitForFunction(()=>document.querySelectorAll('[data-arko-interaction]').length===7)
+  expect(await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).count()).toBe(0)
+  await setCapability(true,2)
+  await page.evaluate(()=>(window as any).hpkRecheck())
   await page.waitForFunction(()=>document.querySelectorAll('[data-arko-interaction]').length===9)
   const results=['automatic reply','manual reply','scene-1 完成结果','scene-2 完成结果','scene-3 完成结果','scene-4 完成结果','Agent 精确完成结果','正式续答完成结果']
   for(const text of results){
    const row=page.locator('[data-arko-interaction]').filter({hasText:text})
    await row.locator('button').first().click()
    await page.locator('[data-arkme-thought-reply]').filter({hasText:text}).first().waitFor({timeout:15000})
+   if(text==='scene-3 完成结果')expect(await page.evaluate(()=>(window as any).hpkActualSourceItem.recordOwnerUserId)).toBe('9007199254740993')
    expect(await page.locator('[data-arkme-chat-suggestion-dialog]').count()).toBe(0)
    await page.getByRole('button',{name:'关闭详情',exact:true}).last().click()
   }
@@ -57,12 +67,11 @@ it.skipIf(!directory)('runs the existing UI through Host, JWT/Gin, SQL/Mongo and
   await page.getByRole('button',{name:'填入输入框',exact:true}).click()
   expect(await page.evaluate(()=>String((window as any).hpkDraft()))).toContain('scene-5 完成结果')
   const settings=async(enabled:boolean,version:number)=>{
-   const response=await fetch(ready.url+'/api/v1/settings/capabilities/update',{method:'POST',headers:{Authorization:`Bearer ${ready.token11}`,'Content-Type':'application/json'},body:JSON.stringify({key:'chat_thought',enabled,expected_version:version})})
-   const result=await response.json() as {code:number};expect(result.code).toBe(0)
+   await setCapability(enabled,version)
    await page.evaluate(()=>(window as any).hpkRecheck())
   }
-  await settings(false,1);await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).waitFor({state:'detached'})
-  await settings(true,2);await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).waitFor()
+  await settings(false,3);await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).waitFor({state:'detached'})
+  await settings(true,4);await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).waitFor()
   // Exercise actual browser connectivity before changing the source owners.
   const height=await page.locator('[data-arko-interaction]').first().evaluate(node=>node.getBoundingClientRect().height)
   await page.context().setOffline(true)
@@ -92,7 +101,7 @@ it.skipIf(!directory)('runs the existing UI through Host, JWT/Gin, SQL/Mongo and
   // World, Bot and account-avatar services are outside this isolated stack.
   const auxiliaryFailures=errors.filter(error=>/^\[(world\.|bots\.list|group\.bots)/.test(error))
   expect(errors.filter(error=>!auxiliaryFailures.includes(error))).toEqual([])
-  const report={productionUi:true,productionHostDispatch:true,realJwtGin:true,realMongoMySQL:true,realRecordChatOwners:true,exactResults:results,suggestionUsesExistingDialog:true,fillDraftWithoutSend:true,capabilityDisableReenable:true,offlineGeometryAndSummaryGate:true,reconnectReauthorized:true,sourceEditRevokesPersonalAndContinuation:true,membershipRevokesChatAndAgent:true,staleReferencesDenied:true,modelCalls:0,operations:calls.map(row=>row.operation),auxiliaryFailures,businessErrors:[]}
+  const report={productionUi:true,productionHostDispatch:true,realJwtGin:true,realMongoMySQL:true,realRecordChatOwners:true,exactResults:results,suggestionUsesExistingDialog:true,fillDraftWithoutSend:true,capabilityDisableReenable:true,coldDeniedPhysicalTailRestored:true,earliestRemovedResultRestored:true,exactWideBotOwner:true,offlineGeometryAndSummaryGate:true,reconnectReauthorized:true,sourceEditRevokesPersonalAndContinuation:true,membershipRevokesChatAndAgent:true,staleReferencesDenied:true,modelCalls:0,operations:calls.map(row=>row.operation),auxiliaryFailures,businessErrors:[]}
   await writeFile(join(dir,'browser-evidence.json'),JSON.stringify(report,null,2)+'\n')
   await page.screenshot({path:join(dir,'browser-final.png'),fullPage:true})
  }catch(error){await writeFile(join(dir,'browser-errors.json'),JSON.stringify({errors,calls,dom:await page?.locator('body').innerText().catch(()=>''),html:await page?.content().catch(()=>'')},null,2)+'\n');throw error}

@@ -1,5 +1,6 @@
 import type { ArkmeArkoSession, ArkmeContentBlock, ArkmeSourceItem } from './types.js'
 import type { ArkmeRecordThought } from './record-thought-contract.js'
+import type { RecordOwnerId } from './record-owner-id.js'
 
 export interface ArkoTimelineMessage {
   messageRef?: string; lifecycleVersion?: number; localMarkRef?: string
@@ -20,9 +21,13 @@ export interface ArkmeArkoInteractionQuery {
   /** Conditional-read hints for a range page; never selectors or access grants. */
   observedRefs?: string[]
 }
-export interface ArkmeArkoInteractionPage { accountScope: string; items: ArkmeArkoInteraction[]; hasMore: boolean; nextCursor?: string; removedKeys: string[] }
+export interface ArkmeArkoInteractionPage {
+  accountScope: string; items: ArkmeArkoInteraction[]; hasMore: boolean; nextCursor?: string; removedKeys: string[]
+  /** Oldest physical candidate scanned, including rows denied by current access. */
+  oldestScannedAtMillis?: number
+}
 export interface ArkmeArkoInteractionTarget {
-  accountScope: string; source: ArkmeSourceItem; itemUid: string; occurredAtMillis: number; sourceAtMillis?: number; recordOwnerUserId: number
+  accountScope: string; source: ArkmeSourceItem; itemUid: string; occurredAtMillis: number; sourceAtMillis?: number; recordOwnerUserId: RecordOwnerId
   interactionKey: string; suggestion?: boolean; replyId?: string; thought?: ArkmeRecordThought
 }
 export interface ArkmeArkoTimelineCache {
@@ -32,6 +37,8 @@ export interface ArkmeArkoTimelineCache {
   historyBeforeMillis?: number
   /** First earlier interaction read after cache truncation; its cursor carries the filter. */
   interactionBeforeMillis?: number
+  /** Lower bound of the retained physical window, independent of visible rows. */
+  interactionStartMillis?: number
   viewport?: { scrollTop: number; followTail: boolean; anchorId?: string; anchorOffset?: number }
 }
 export interface ArkmeArkoTimelinePort {

@@ -23,6 +23,9 @@ export function parseArkoTimelineCache(value: unknown): ArkmeArkoTimelineCache |
   }
   const historyBeforeMillis = messagesClipped ? boundary(messages.map(x => x.orderAtMillis ?? x.createdAtMillis)) : raw.historyBeforeMillis
   const interactionBeforeMillis = interactionsClipped ? boundary(interactions.map(x => x.occurredAtMillis)) : raw.interactionBeforeMillis
+  if (raw.interactionStartMillis !== undefined && (!Number.isSafeInteger(raw.interactionStartMillis) || raw.interactionStartMillis <= 0)) return
+  const oldestInteraction = Math.min(...interactions.map(x => x.occurredAtMillis))
+  const interactionStartMillis = interactionsClipped ? oldestInteraction : Math.min(raw.interactionStartMillis ?? Infinity, oldestInteraction)
   if (messagesClipped && historyBeforeMillis === undefined || interactionsClipped && interactionBeforeMillis === undefined
     || [historyBeforeMillis, interactionBeforeMillis].some(x => x !== undefined && (!Number.isSafeInteger(x) || x <= 0))) return
   const result: ArkmeArkoTimelineCache = { schemaVersion: 2, savedAtMillis: raw.savedAtMillis, messages, interactions,
@@ -31,6 +34,7 @@ export function parseArkoTimelineCache(value: unknown): ArkmeArkoTimelineCache |
     ...(!interactionsClipped && typeof raw.interactionCursor === 'string' && raw.interactionCursor.length <= 16384 ? { interactionCursor: raw.interactionCursor } : {}),
     ...(historyBeforeMillis === undefined ? {} : { historyBeforeMillis }),
     ...(interactionBeforeMillis === undefined ? {} : { interactionBeforeMillis }),
+    ...(Number.isFinite(interactionStartMillis) ? { interactionStartMillis } : {}),
     ...(raw.viewport && Number.isFinite(raw.viewport.scrollTop) && raw.viewport.scrollTop >= 0 && typeof raw.viewport.followTail === 'boolean' ? { viewport: raw.viewport } : {}),
   }
   if (new TextEncoder().encode(JSON.stringify(result)).byteLength > ARKO_TIMELINE_CACHE_MAX_BYTES) return
