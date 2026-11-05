@@ -90,7 +90,7 @@ describe('registerArkmeTools', () => {
     const run = (id: string, input = args) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_recording_analysis', arguments: input, agent, signal: new AbortController().signal })
     const prepared = JSON.stringify(await run('prepare'))
     expect(prepared).toContain('confirmation_required')
-    expect(prepared).toContain(action === 'select' ? '不会开始生成或扣除' : 'AI 积分')
+    expect(prepared).toContain(action === 'select' ? '不会开始生成或扣除' : action === 'continue' ? '沿用原版本的计费方式' : 'AI 积分')
     expect(recordingAnalysis).not.toHaveBeenCalled()
     events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
     expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required')

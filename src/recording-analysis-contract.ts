@@ -3,7 +3,7 @@ import type { ArkmeRecordingProjectionKind, ArkmeRecordingSummaryModelConfig, Ar
 export type RecordingAnalysisInput =
   | { action: 'models'; kind: ArkmeRecordingProjectionKind }
   | { action: 'select'; kind: ArkmeRecordingProjectionKind; accountScope: string; routeKey: string }
-  | { action: 'generate'; kind: ArkmeRecordingProjectionKind; accountScope: string; routeKey: string; dateStamp: number; binding: ModelBinding; window?: import('./types.js').ArkmeRecordingWindow }
+  | { action: 'generate'; kind: ArkmeRecordingProjectionKind; accountScope: string; routeKey: string; dateStamp: number; binding?: ModelBinding; window?: import('./types.js').ArkmeRecordingWindow }
   | { action: 'continue'; kind: ArkmeRecordingProjectionKind; accountScope: string; versionId: string; dateStamp: number; window?: import('./types.js').ArkmeRecordingWindow }
 export type RecordingAnalysisResult = { accountScope: string } & (
   | { config: ArkmeRecordingSummaryModelConfig }

@@ -447,7 +447,7 @@ export class ExploreService {
         await this.requireAnalysis(module,session,signal)
         const settings=await this.settings('events',signal,{part:'models',expectedAccountScope:`${this.runtime.config.environment}:${session.userId}`})
         const selected=settings.models.find(model=>model.selected)
-        if(!selected?.routeKey || !selected.binding || selected.available!==true)throw missing()
+        if(!selected?.routeKey || (selected.provider!=='user-api'&&!selected.binding) || selected.available!==true)throw missing()
         await this.guard(session,epoch,signal)
         const receipt=await this.runtime.authenticatedIntelligentPost<Doc>('/api/v1/event-model/retry',{route_key:selected.routeKey},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
         if(receipt.accepted===false)throw new ArkmePluginError('explore-event-not-accepted',text(receipt.message)||'整理任务尚未接受，请刷新状态',true,409)
@@ -496,7 +496,10 @@ export class ExploreService {
     const config=module==='anniversaries'?doc(raw.config):raw,current=first(config.effective_route_key,config.active_route_key,config.current_route_key)
     const routes=[...new Map(list(config.items??config.allowed_route_options).filter(x=>typeof x.route_key==='string'&&x.route_key.trim()&&x.route_key.length<=256).map(x=>[x.route_key,x])).values()]
     const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),accountScope,
-      models:await Promise.all(routes.map(async x=>({key:await this.key(session,'model',module,x.route_key),ref:await this.seal(session,{kind:'model',module,route:x.route_key,...(executionMetadata(module==='events'?x.execution:x).binding?{binding:executionMetadata(module==='events'?x.execution:x).binding}:{})}),routeKey:text(x.route_key),label:first(x.display_name,x.model_key),selected:x.route_key===current,...(text(x.provider)?{provider:text(x.provider)}:{}),...executionMetadata(module==='events'?x.execution:x)}))),sources}
+      models:await Promise.all(routes.map(async x=>{
+        const metadata=executionMetadata(module==='events'?{...doc(x.execution),provider:x.provider}:x)
+        return {key:await this.key(session,'model',module,x.route_key),ref:await this.seal(session,{kind:'model',module,route:x.route_key,...(metadata.binding?{binding:metadata.binding}:{})}),routeKey:text(x.route_key),label:first(x.display_name,x.model_key),selected:x.route_key===current,...(text(x.provider)?{provider:text(x.provider)}:{}),...metadata}
+      })),sources}
     await this.guard(session,epoch,signal);return result
   }
   async saveSettings(input: Doc, signal?: AbortSignal): Promise<{saved:true;message?:string;settings?:ExploreSettings}> {

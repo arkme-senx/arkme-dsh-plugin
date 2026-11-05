@@ -3,6 +3,8 @@ import { ModelDirectoryService } from '../../src/services/model-directory-servic
 import { mergeModelChoices, dshModelChoices, arkoModelChoices, modelSceneBilling } from '../../src/model-directory.js'
 import { exploreModelChoices } from '../../src/explore-models.js'
 import { publishedModelChoices } from '../../src/services/model-directory-contract.js'
+import { createArkmeSdk } from '../../src/sdk/index.js'
+import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 function fixture() {
   const session = { userId: 42 }
   const runtime = { config: { environment: 'production' }, requireSession: async () => session }
@@ -83,7 +85,6 @@ it('projects existing managed catalog revisions and supplier identity without ex
 })
 
 it('forwards model directory reads and cancellation through the SDK and Host without accepting a caller user ID', async () => {
-  const { createArkmeSdk } = await import('../../src/sdk/index.js'), { dispatchArkmeHostOperation } = await import('../../src/host-api.js')
   const value = { accountScope: 'production:42', observedAt: 1, models: [], failures: [] }, signal = new AbortController().signal
   const service = { modelDirectory: vi.fn(async () => value) }
   const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {

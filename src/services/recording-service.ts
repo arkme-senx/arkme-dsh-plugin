@@ -2406,7 +2406,12 @@ export class RecordingService {
     }
     if (input.action === 'generate') {
       if (typeof input.routeKey !== 'string' || input.routeKey.trim() === '') throw new ArkmePluginError('recording-analysis-invalid', '请明确选择模型', false, 400)
-      if (!executionMetadata({ binding: input.binding && bindingWire(input.binding), available: true }).binding) throw new ArkmePluginError('recording-analysis-invalid', '请重新读取模型目录并确认模型版本', false, 400)
+      if (!executionMetadata({ binding: input.binding && bindingWire(input.binding), available: true }).binding) {
+        if (input.binding !== undefined || !input.routeKey.startsWith('user-api/')) throw new ArkmePluginError('recording-analysis-invalid', '请重新读取模型目录并确认模型版本', false, 400)
+        const config = await this.recordingSummaryModelConfig(signal, input.kind)
+        await current()
+        if (!config.options.some(model => model.routeKey === input.routeKey && model.provider === 'user-api' && model.available === true)) throw new ArkmePluginError('recording-analysis-invalid', '请重新读取模型目录并确认模型版本', false, 400)
+      }
       const section = await this.generateRecordingProjection(input.dateStamp, input.kind, input.routeKey, signal, input.window, input.binding, accountScope)
       await current(); return { accountScope, section }
     }

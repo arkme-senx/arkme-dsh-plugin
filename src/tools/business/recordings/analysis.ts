@@ -17,13 +17,13 @@ const command = defineArkmeCoreToolModule({
   meta: { id: 'business.recordings.analysis-command.v1', toolName: 'arkme_recording_analysis', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
   create: ports => defineTool({
     name: 'arkme_recording_analysis',
-    description: 'Only on explicit user instruction: select a future recording model, generate a NEW paid version, or CONTINUE the exact failed version with its frozen input/model and paid results. Uses existing AI points. Never regenerate just to poll or retry a network read. Model changes require generate. Never infer accountScope or versionId.',
+    description: 'Only on explicit user instruction: select a future recording model, generate a NEW version, or CONTINUE the exact failed version with its frozen input/model and paid results. Official models use AI points; account-provided models use the bound supplier account. Never regenerate just to poll or retry a network read. Model changes require generate. Never infer accountScope or versionId.',
     parameters: {
       action: { type: 'string', enum: ['select', 'generate', 'continue'], required: true },
       kind: { type: 'string', enum: ['summary', 'timeline'], required: true },
       account_scope: { type: 'string', required: true },
       route_key: { type: 'string', description: 'Exact route from models, required for select/generate.' },
-      model_binding: { type: 'object', additionalProperties: false, description: 'Generate only: unchanged binding of the selected option returned by models. Never infer its identifiers.', properties: {
+      model_binding: { type: 'object', additionalProperties: false, description: 'Official-model generate only: unchanged binding of the selected option returned by models. Account-provided user-api routes do not use a points offering. Never infer identifiers.', properties: {
         catalogReleaseId: { type: 'string', required: true },
         offeringRevisionId: { type: 'string', required: true },
         publicModelCode: { type: 'string', required: true },
@@ -41,8 +41,8 @@ const command = defineArkmeCoreToolModule({
       if (args.date_stamp === undefined) throw new Error('generate/continue requires date_stamp')
       if (args.action === 'generate') {
         if (!args.route_key) throw new Error('generate requires route_key')
-        if (!args.model_binding) throw new Error('generate requires model_binding from models')
-        return taggedJSON('录音新版本', await ports.recordingAnalysis({ ...base, action: 'generate', routeKey: args.route_key, dateStamp: args.date_stamp, binding: args.model_binding }, exec.signal))
+        if (!args.model_binding && !args.route_key.startsWith('user-api/')) throw new Error('generate requires model_binding from models')
+        return taggedJSON('录音新版本', await ports.recordingAnalysis({ ...base, action: 'generate', routeKey: args.route_key, dateStamp: args.date_stamp, ...(args.model_binding ? { binding: args.model_binding } : {}) }, exec.signal))
       }
       if (!args.version_id) throw new Error('continue requires version_id')
       return taggedJSON('录音原任务继续', await ports.recordingAnalysis({ ...base, action: 'continue', versionId: args.version_id, dateStamp: args.date_stamp }, exec.signal))

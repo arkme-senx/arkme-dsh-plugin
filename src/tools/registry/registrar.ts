@@ -114,8 +114,9 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_recording_analysis') {
     const scene = args.kind === 'timeline' ? '录音时间线' : '录音总结'
     if (args.action === 'select') return `是否保存${scene}的后续生成模型偏好？这不会开始生成或扣除 AI 积分。`
-    if (args.action === 'continue') return `是否继续刚才选定的${scene}失败版本？保留原输入、模型和已完成的付费步骤，后续模型用量使用当前账号的 AI 积分。`
-    return `是否使用刚才选定的模型生成新的${scene}版本？模型用量使用当前账号的 AI 积分。`
+    if (args.action === 'continue') return `是否继续刚才选定的${scene}失败版本？保留原输入、模型和已完成的付费步骤，后续模型用量沿用原版本的计费方式。`
+    const billing = String(args.route_key).startsWith('user-api/') ? '模型费用由你绑定的供应商账户结算。' : '模型用量使用当前账号的 AI 积分。'
+    return `是否使用刚才选定的模型生成新的${scene}版本？${billing}`
   }
   if (name === 'arkme_thought_reply') return `是否按原想法的可见范围发送这条回复：“${cleanArgument(args.text, 120)}”？私密续帖仅你可见。`
   if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'

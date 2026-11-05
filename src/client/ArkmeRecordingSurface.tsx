@@ -1389,7 +1389,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     try {
       const routeKey = requestedRouteKey.trim()
       const selectedModel = modelConfig.state === 'ready' ? modelConfig.value.options.find(option => option.routeKey === routeKey) : undefined
-      if (!selectedModel?.binding || selectedModel.available !== true) throw new Error('模型目录已更新，请刷新后重新确认')
+      if (!selectedModel || selectedModel.available !== true || (selectedModel.provider !== 'user-api' && !selectedModel.binding)) throw new Error('模型目录已更新，请刷新后重新确认')
       if (routeKey !== '' && modelConfig.state === 'ready' && routeKey !== modelConfig.value.effectiveRouteKey) {
         const updated = await callArkme<ArkmeRecordingSummaryModelRouteUpdate>(
           'recordings.analysis',

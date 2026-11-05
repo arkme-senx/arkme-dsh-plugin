@@ -66,6 +66,22 @@ describe('recording summary and timeline generation', () => {
     vi.restoreAllMocks()
   })
 
+  it('generates a scene-approved account model without fabricating an official points binding', async () => {
+    const routeKey = 'user-api/019a4c10-0000-7000-8000-000000000001'
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => operation === 'recordings.summary-model-config'
+      ? { defaultRouteKey: routeKey, effectiveRouteKey: routeKey, options: [{ routeKey, provider: 'user-api', modelKey: 'own', displayName: '自己的模型', available: true }] }
+      : original(operation, params, signal))
+    await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />); await tick() })
+    await act(async () => { button(renderer, '总结').props.onClick(); await tick() })
+    await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick() })
+    await act(async () => { button(renderer, '确认并生成').props.onClick(); await tick() })
+    const requests = mocks.callArkme.mock.calls.filter(([operation, params]) => operation === 'recordings.analysis' && params?.action === 'generate')
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.[1]).toMatchObject({ routeKey, kind: 'summary' })
+    expect(requests[0]?.[1]).not.toHaveProperty('binding')
+  })
+
   it('polls received transcript work independently of incomplete capture and completed analysis', async () => {
     vi.useFakeTimers()
     const original = mocks.callArkme.getMockImplementation()!

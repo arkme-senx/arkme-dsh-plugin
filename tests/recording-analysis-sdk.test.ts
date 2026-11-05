@@ -12,6 +12,8 @@ it('detects old providers and exposes exact scene and frozen-task commands throu
  const binding = { catalogReleaseId: '11', offeringRevisionId: '22', publicModelCode: 'selected' }
  await sdk.recordingAnalysis({ action: 'generate', kind: 'timeline', accountScope: 'test:42', routeKey: 'dashscope/selected', dateStamp: 1790006400000, binding })
  expect(calls).toContainEqual({ operation: 'recordings.analysis', params: { action: 'generate', kind: 'timeline', accountScope: 'test:42', routeKey: 'dashscope/selected', dateStamp: 1790006400000, binding } })
+ await sdk.recordingAnalysis({ action: 'generate', kind: 'summary', accountScope: 'test:42', routeKey: 'user-api/owned', dateStamp: 1790006400000 })
+ expect(calls).toContainEqual({ operation: 'recordings.analysis', params: { action: 'generate', kind: 'summary', accountScope: 'test:42', routeKey: 'user-api/owned', dateStamp: 1790006400000 } })
  await sdk.recordingAnalysis({ action: 'continue', kind: 'timeline', accountScope: 'test:42', dateStamp: 1790006400000, versionId: '0123456789abcdef01234567' })
  expect(calls).toContainEqual({ operation: 'recordings.analysis', params: { action: 'continue', kind: 'timeline', accountScope: 'test:42', dateStamp: 1790006400000, versionId: '0123456789abcdef01234567' } })
  const fetchImpl = vi.fn(async () => success({ contractVersion: 1, features: {} }))

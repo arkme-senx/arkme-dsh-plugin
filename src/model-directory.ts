@@ -58,6 +58,7 @@ export function arkoModelChoices(catalog: ArkmeArkoModelCatalog): ModelChoice[] 
     channel: model.provider === 'managed-ai' ? 'Arkme 托管' : model.provider, identifier: model.routeKey,
     billingByScene: { arko: model.provider === 'managed-ai' ? 'arkme-points' : model.provider === 'user-api' ? 'provider-account' : 'unknown' },
     ...(model.binding ? {catalogRevision:model.binding.catalogReleaseId,offeringRevision:model.binding.offeringRevisionId} : {}),
+    ...(model.provider === 'user-api' ? { exploreRouteKey: model.routeKey } : {}),
     ...(model.supplierCode ? {supplierCode:model.supplierCode} : {}),
     ...(model.costDescription ? { pricing: model.costDescription } : {}), ...(model.imageInput ? { images: true } : {}), arko: model.routeKey }))
 }
@@ -66,6 +67,7 @@ export function recordingModelChoices(catalog: ArkmeRecordingSummaryModelConfig,
   return catalog.options.map(model => ({ id: publishedChoiceId(model.binding, [scene, model.routeKey]), name: model.displayName,
     origin: model.provider === 'user-api' ? 'user-provided' : 'official', billingByScene: { [scene]: model.provider === 'user-api' ? 'provider-account' : model.binding ? 'arkme-points' : 'unknown' },
     availabilityByScene: { [scene]: { available: model.available === true, ...(model.unavailableReason ? { reason: model.unavailableReason } : {}) } },
+    ...(model.provider === 'user-api' ? { exploreRouteKey: model.routeKey } : {}),
     ...(model.binding ? { catalogRevision: model.binding.catalogReleaseId, offeringRevision: model.binding.offeringRevisionId } : {}),
     ...(model.supplierCode ? { supplierCode: model.supplierCode } : {}), ...(model.costDescription ? { pricing: model.costDescription } : {}),
     channel: model.provider === 'dashscope' ? '百炼' : model.provider, identifier: model.binding?.publicModelCode ?? model.modelKey, recording: model.routeKey }))
@@ -84,15 +86,22 @@ export function unavailableLabel(model: ModelChoice, scene: ModelScene): string 
   return ({model_not_priced:'此模型尚未配置报价',model_price_ambiguous:'此模型报价无法确认',catalog_unavailable:'模型目录暂不可用',adapter_unavailable:'此模型暂不可用',business_not_opened:'此场景尚未开放',fixed_model_policy:'此场景按固定模型自动运行，暂不支持切换'} as Record<string,string>)[reason ?? ''] ?? '此场景支持情况待确认'
 }
 export function modelSceneBilling(model: ModelChoice, scene: ModelScene): ModelBilling {
-  if (!sceneReference(model, scene)) return 'unknown'
+  if (!sceneReference(model, scene) && !model.availabilityByScene?.[scene]) return 'unknown'
   return model.billingByScene?.[scene] ?? model.billing ?? 'unknown'
 }
 /** Only stable source identities deduplicate entries. Similar names are not route mappings. */
 export function mergeModelChoices(...lists: readonly (readonly ModelChoice[])[]): ModelChoice[] {
   const result = new Map<string, ModelChoice>()
   for (const models of lists) for (const model of models) {
-    const existing = result.get(model.id)
-    result.set(model.id, { ...existing, ...model,
+    // Published offerings join only by the complete immutable identity. The
+    // independent account/calendar owners also publish exact route aliases.
+    const route = model.exploreRouteKey
+    const existing = result.get(model.id) ?? (route && (model.origin === 'user-provided' || model.dayReview)
+      ? [...result.values()].find(owner => owner.origin === model.origin &&
+        (owner.arko === route || owner.recording === route || owner.exploreRouteKey === route || owner.dsh?.model === route))
+      : undefined)
+    const id = existing?.id ?? model.id
+    result.set(id, { ...existing, ...model, id,
       ...(existing?.billingByScene || model.billingByScene ? { billingByScene: { ...existing?.billingByScene, ...model.billingByScene } } : {}),
       ...(existing?.referencesByScene || model.referencesByScene ? { referencesByScene: { ...existing?.referencesByScene, ...model.referencesByScene } } : {}),
       ...(existing?.availabilityByScene || model.availabilityByScene ? { availabilityByScene: { ...existing?.availabilityByScene, ...model.availabilityByScene } } : {}) })

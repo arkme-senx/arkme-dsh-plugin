@@ -2840,6 +2840,38 @@ it('requires the published model binding before recording generation reads mater
  expect(post).not.toHaveBeenCalled()
 })
 
+it.each([{provider:'user-api',available:true,allowed:true},{provider:'user-api',available:false,allowed:false},{provider:'dashscope',available:true,allowed:false}])('accepts an unbound account route only when its scene owner confirms user-api execution ($provider/$available)', async ({provider,available,allowed}) => {
+ const routeKey='user-api/019a4c10-0000-7000-8000-000000000001'
+ const post=vi.fn(async()=>({allowed_route_options:[{route_key:routeKey,provider,available}]}))
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId:11,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:post}
+ const service=new RecordingService(runtime as never,dependencies())
+ const generate=vi.spyOn(service,'generateRecordingProjection').mockResolvedValue({state:'processing',items:[]})
+ try {
+  const request=service.recordingAnalysis({action:'generate',kind:'timeline',accountScope:'test:11',routeKey,dateStamp:0} as never)
+  if(allowed) {
+   await expect(request).resolves.toMatchObject({accountScope:'test:11',section:{state:'processing'}})
+   expect(generate).toHaveBeenCalledExactlyOnceWith(0,'timeline',routeKey,undefined,undefined,undefined,'test:11')
+  } else {
+   await expect(request).rejects.toMatchObject({code:'recording-analysis-invalid'})
+   expect(generate).not.toHaveBeenCalled()
+  }
+ } finally {service.dispose()}
+})
+
+it('rejects account-model generation when the account changes during the catalog read',async()=>{
+ let userId=11
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:async()=>{
+  userId=22
+  return {allowed_route_options:[{route_key:'user-api/owned',provider:'user-api'}]}
+ }}
+ const service=new RecordingService(runtime as never,dependencies())
+ const generate=vi.spyOn(service,'generateRecordingProjection')
+ try {
+  await expect(service.recordingAnalysis({action:'generate',kind:'summary',accountScope:'test:11',routeKey:'user-api/owned',dateStamp:0})).rejects.toMatchObject({code:'recording-analysis-account-changed'})
+  expect(generate).not.toHaveBeenCalled()
+ } finally {service.dispose()}
+})
+
 it.each(['select','generate'] as const)('recording %s never writes to an account that changed between owner and adapter',async action=>{
  let reads=0
  const post=vi.fn()

@@ -11,6 +11,12 @@ const doc = (v: unknown): Record<string, unknown> => v !== null && typeof v === 
 const safe = (v: unknown) => typeof v === 'string' && v.length <= 256 && !/[\u0000-\u001f\u007f]/.test(v) ? v : ''
 export function executionMetadata(raw: unknown): ModelExecutionMetadata {
   const item = doc(raw), binding = doc(item.binding ?? item.model_binding)
+  // Account-provided routes are authorized by their scene catalog and billed by
+  // that account's supplier, independently of the published points catalog.
+  if (item.provider === 'user-api') {
+    const available = item.available === undefined || item.available === true
+    return { available, ...(available ? {} : { unavailableReason: safe(item.unavailable_reason) || 'adapter_unavailable' }) }
+  }
   const release = safe(binding.catalog_release_id), revision = safe(binding.offering_revision_id), code = safe(binding.public_model_code)
   const valid = /^[1-9][0-9]*$/.test(release) && /^[1-9][0-9]*$/.test(revision) && !!code
   return { ...(valid ? { binding: { catalogReleaseId: release, offeringRevisionId: revision, publicModelCode: code } } : {}),

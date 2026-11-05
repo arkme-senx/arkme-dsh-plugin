@@ -5,7 +5,7 @@ import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { formatAiPoints, pointsUnits } from '../ai-points.js'
-import { mergeModelChoices, modelSceneBilling, modelAvailable, unavailableLabel, type ModelChoice, type ModelScene, type ModelOrigin } from '../model-directory.js'
+import { mergeModelChoices, modelSceneBilling, modelAvailable, sceneReference, unavailableLabel, type ModelChoice, type ModelScene, type ModelOrigin } from '../model-directory.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { ThinkingEffortSlider } from './ThinkingEffortSlider.js'
@@ -34,7 +34,11 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   const choices = mergeModelChoices(data.catalog?.models ?? [], localModels)
   const resolveId = (id: string) => {
     const local = localModels.find(model => model.id === id)
-    return choices.find(model => model.id === (local?.id ?? id) || !!local?.dayReview && model.dayReview === local.dayReview)?.id ?? id
+    const reference = local && sceneReference(local, scene)
+    return choices.find(model => model.id === id || local?.origin === model.origin && (
+      ((scene === 'dayReview' || local.origin === 'user-provided') && typeof reference === 'string' && sceneReference(model, scene) === reference)
+      || (scene === 'dsh' && local.dsh && model.dsh?.provider === local.dsh.provider && model.dsh.model === local.dsh.model)
+    ))?.id ?? id
   }
   const selected = choices.find(model => model.id === resolveId(selectedId))
   const requiresConfirmation = scene.startsWith('recording-') || scene.startsWith('explore-') || scene === 'dayReview'
