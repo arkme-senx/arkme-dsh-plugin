@@ -1,6 +1,6 @@
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
-import type { ArkmeArchiveState } from '../archive-contract.js'
+import { retainedTopicSelection } from './retained-topic-selection.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
@@ -223,12 +223,13 @@ export function ArkmeTopicDirectoryPopover({
       } else if (reconciliation.status === 'invalid') {
         // Directory absence is not deletion: an archived UID remains a valid
         // content destination, and must not clear the open scene or its draft.
-        const states = currentSelected?.kind === 'topic'
-          ? await withArkmeReadDeadline(signal => callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [currentSelected.sourceRef] }, signal), controller.signal)
-          : []
+        const retained = currentSelected === undefined ? undefined
+          : await withArkmeReadDeadline(signal => retainedTopicSelection(currentSelected, signal), controller.signal)
         if (controller.signal.aborted || selectedSourceRef.current?.sourceRef !== currentSelected?.sourceRef) return
-        if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) {
-          persist(loaded, currentSelected!.sourceRef)
+        if (retained !== undefined) {
+          selectedSourceRef.current = retained
+          if (retained !== currentSelected) onSelectionRefreshed(retained)
+          persist(loaded, retained.sourceRef)
         } else {
           selectedSourceRef.current = undefined
           onSelectionInvalidated()

@@ -1,5 +1,6 @@
 import {describe,it,expect,vi} from 'vitest'
 import {WorldSoundPlayback} from '../src/client/world-sound-playback.js'
+import {ArkmePluginError} from '../src/services/service.js'
 import {worldSoundProjection,WorldSoundService} from '../src/services/world-sound-service.js'
 import type {WorldSoundExcerpt} from '../src/world-sound-contract.js'
 const excerpt:WorldSoundExcerpt={source:'recording',revision:'a'.repeat(64),durationMillis:3000,segments:[{text:'第一段',speaker:'说话人 1',offsetMillis:0,durationMillis:1000,omittedBefore:false,audioUrl:'/media/a'},{text:'另一段',speaker:'说话人 2',offsetMillis:1000,durationMillis:2000,omittedBefore:true,audioUrl:'/media/b'}]}
@@ -38,3 +39,18 @@ describe('sound contracts and account isolation',()=>{
   await expect(service.execute({accountKey:'test:2',action:'capabilities'})).rejects.toThrow();expect(source).not.toHaveBeenCalled()
  })
 })
+
+describe('frontend-first deployment readiness',()=>{
+ it.each([404,501,503])('missing service %i stops before reading private source and can recover on retry',async status=>{
+  const post=vi.fn().mockRejectedValueOnce(new ArkmePluginError('upstream','unavailable',false,status)).mockResolvedValueOnce({version:1,recording:true,call:false}).mockResolvedValueOnce({source:'recording',revision:'b'.repeat(64),duration_ms:10,segments:[{text:'original',speaker:'speaker',offset_ms:0,duration_ms:10,omitted_before:false}]});
+  const source=vi.fn().mockResolvedValue({source:'recording',session_id:'private',segments:[]});
+  const runtime={config:{environment:'test'},stateStore:{uniqueCode:async()=> 'secret'},requireSession:async()=>({userId:1}),authenticatedWorldPost:post} as never;
+  const service=new WorldSoundService(runtime,{recording:source,call:source,team:source,recordUID:source,recordRef:source});const request={accountKey:'test:1',action:'prepare' as const,selection:{kind:'recording' as const,itemRefs:['selected']}};
+  await expect(service.execute(request)).rejects.toMatchObject({message:expect.stringContaining('内容尚未发布')});expect(source).not.toHaveBeenCalled();
+  await expect(service.execute(request)).resolves.toMatchObject({excerpt:{source:'recording'}});expect(source).toHaveBeenCalledTimes(1);
+ });
+ it('keeps authentication failures distinct from missing capabilities',async()=>{
+  const error=new ArkmePluginError('unauthorized','请重新登录',false,401);const source=vi.fn();const runtime={config:{environment:'test'},stateStore:{uniqueCode:async()=> 'secret'},requireSession:async()=>({userId:1}),authenticatedWorldPost:vi.fn().mockRejectedValue(error)} as never;
+  const service=new WorldSoundService(runtime,{recording:source,call:source,team:source,recordUID:source,recordRef:source});await expect(service.execute({accountKey:'test:1',action:'capabilities'})).rejects.toBe(error);
+ });
+});

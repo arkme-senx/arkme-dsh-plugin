@@ -32,13 +32,22 @@ export class WorldSoundService {
     if(!input||input.accountKey!==account)throw invalid()
     const post=async(path:string,body:Record<string,unknown>,write=false)=>{
       try{return obj(await this.runtime.authenticatedWorldPost(`/api/v1/world/sound-excerpts/${path}`,body,session,signal,{lane:write?'write':'interactive-read',bypassCache:true,cacheMs:0,...(write?{requestTimeoutMs:160_000}:{})}))}
-      catch(error){if(error instanceof ArkmePluginError&&(error.httpStatus===404||error.upstreamStatus===404)){if(path==='capabilities')return {version:1,recording:false,call:false};throw new ArkmePluginError('world-sound-server-upgrade-required','声音摘录服务尚未就绪，请稍后再试',true,503,{cause:error})};throw error}
+      catch(error){
+        if(error instanceof ArkmePluginError&&[404,501,503].includes(error.upstreamStatus??error.httpStatus)){
+          if(path==='capabilities')return {version:1,recording:false,call:false}
+          throw new ArkmePluginError('world-sound-server-upgrade-required',write?'暂未确认公开操作结果，请重试核对本次操作':'声音分享服务尚未接通，请稍后再试',true,503,{cause:error})
+        }
+        throw error
+      }
     }
     let result:unknown
     if(input.action==='capabilities'){
       const v=await post('capabilities',{});if(v.version!==1||typeof v.recording!=='boolean'||typeof v.call!=='boolean')throw invalid();result={version:1,recording:v.recording,call:v.call}
     }else if(input.action==='prepare'){
       const s=input.selection;if(!s||!['recording','call'].includes(s.kind))throw invalid()
+      const capability=await post('capabilities',{})
+      if(capability.version!==1||typeof capability.recording!=='boolean'||typeof capability.call!=='boolean')throw invalid()
+      if(capability[s.kind]!==true)throw new ArkmePluginError('world-sound-server-upgrade-required','声音分享服务尚未接通，内容尚未发布。请稍后再试',true,503)
       const selection=s.kind==='recording'?await this.ports.recording(s.itemRefs):await this.ports.call(s.callRef,s.segmentIds)
       const data=await post('preview',selection as unknown as Record<string,unknown>),excerpt=worldSoundProjection(data)
       if(excerpt.source!==s.kind)throw invalid()

@@ -59,7 +59,7 @@ function ScopedSubscribeButton({ account, target, initialSubscribed }: { account
   if (self) return null
   return <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }} data-world-subscribe>
     {active ? <ArkmeActionMenu open={more} label={tr('订阅操作')} onClose={() => setMore(false)} align="end" anchor={<button type="button" style={small} aria-expanded={more} disabled={busy} onClick={() => setMore(v => !v)}>{tr(busy ? '处理中…' : '已订阅 ▾')}</button>} actions={[{ id: 'unsubscribe', label: tr('取消订阅'), onSelect: () => { void change(false) } }]} />
-      : <button type="button" style={small} disabled={busy || active === undefined} onClick={() => { void change(true) }}>{tr(busy ? '处理中…' : active === undefined ? '读取订阅…' : '＋订阅')}</button>}
+      : <button type="button" style={small} disabled={busy || active === undefined && !error} onClick={() => { if (active === undefined) setRevision(v => v + 1); else void change(true) }}>{tr(busy ? '处理中…' : active === undefined && !error ? '读取订阅…' : '＋订阅')}</button>}
     {error && <small role="alert" style={{ color: arkmeTheme.secondary }}>{error} <button type="button" style={small} disabled={busy} onClick={() => command.current ? void change(command.current.active) : setRevision(v => v + 1)}>{tr('重试')}</button></small>}
   </span>
 }
