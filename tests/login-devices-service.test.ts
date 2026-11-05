@@ -20,6 +20,19 @@ function fixture() {
   return { service, credentials, row, read, write, list, prepare, advance: () => { clock += 6 * 60_000 } }
 }
 describe('login device Host owner', () => {
+  it('bypasses server display caches briefly after successful or ambiguous writes', async () => {
+    for (const failure of [false, true]) {
+      const f = fixture(), p = await f.prepare()
+      expect(f.read.mock.lastCall?.[1].fresh).toBeUndefined()
+      if (failure) f.write.mockRejectedValue(new Error('lost acknowledgement'))
+      await f.service.execute({ action: 'confirm', accountScope: p.accountScope, ticket: p.ticket })
+      await f.list()
+      expect(f.read.mock.lastCall?.[1].fresh).toBe(true)
+      f.advance()
+      await f.list()
+      expect(f.read.mock.lastCall?.[1].fresh).toBeUndefined()
+    }
+  })
   it('forget requires confirmed revocation, tracks cleanup and rejects self removal', async () => {
     const f = fixture()
     const p = await f.service.execute({ action: 'prepare', accountScope: 'test:7', ref: (await f.list()).items[0]!.ref, kind: 'forget' }) as DeviceConfirmation

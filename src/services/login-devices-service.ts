@@ -21,6 +21,7 @@ function text(raw: unknown, max = 512): string {
 export class LoginDevicesService {
   constructor(private readonly runtime: ServiceRuntime, private readonly now = Date.now) {}
   private refKey: Promise<Buffer> | undefined
+  private freshListsUntil = 0
   private key() {
     return this.refKey ??= this.runtime.stateStore.uniqueCode().then(secret => createHash('sha256').update('login-devices:v1:').update(secret).digest()).catch(error => { this.refKey = undefined; throw error })
   }
@@ -57,6 +58,7 @@ export class LoginDevicesService {
     const requestScope = this.runtime.requestScope(session.userId), readPrefix = `login-devices:${login}:`
     const check = async () => { if (binding(await this.session(scope)) !== login) throw new ArkmePluginError('login-devices-account-changed', '登录状态已变化，请重新打开设备管理', false, 409) }
     const read = async (path: string, body: Record<string, unknown>) => {
+      if ((path === 'list' || path === 'trusted') && this.freshListsUntil > this.now()) body = { ...body, fresh: true }
       const revision = this.runtime.readRevision(requestScope)
       const raw = await this.runtime.authenticatedAuthReadPost<unknown>(`/api/v1/login-devices/${path}`, body, session, signal, {
         key: `${readPrefix}${path}:${JSON.stringify(body)}`, cacheMs: 0, failureCooldownMs: 0, cancelWhenUnobserved: true,
@@ -71,7 +73,11 @@ export class LoginDevicesService {
         const raw = await this.runtime.authenticatedAuthPost<unknown>(`/api/v1/login-devices/${path}`, body, session, signal)
         await check()
         return object(raw)
-      } finally { this.runtime.invalidateKey(requestScope, readPrefix) }
+      } finally {
+        // Cover the owner's five-second display cache and a bounded in-flight fill, including unknown write outcomes.
+        this.freshListsUntil = Math.max(this.freshListsUntil, this.now() + 10_000)
+        this.runtime.invalidateKey(requestScope, readPrefix)
+      }
     }
     switch (request.action) {
       case 'list': case 'trusted': {
