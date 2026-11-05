@@ -38,3 +38,50 @@ it('uses a newly prepared plan after a failed export instead of retrying the sta
 it('keeps controls locked while cancellation is waiting for the active operation to settle',async()=>{
  let rejectRun!:(e:Error)=>void;mock.run.mockImplementation(()=>new Promise((_resolve,reject)=>{rejectRun=reject}));await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await settle();await act(async()=>button('导出到文件夹').click());await act(async()=>button('取消导出').click());expect(button('全部').disabled).toBe(true);await act(async()=>rejectRun(new Error('canceled')));await settle();expect(button('全部').disabled).toBe(false);
 });
+
+it('requests a directory preview immediately and retains display counts while revalidating a folder or returning tab', async () => {
+ await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));
+ expect(mock.preview).toHaveBeenCalledTimes(1);
+ expect(mock.preview.mock.calls[0][5]).toEqual({directory:true,refresh:false});
+ await act(async()=>button('全部').click());
+ await act(async()=>button('增量').click());
+ let resolve!: (p: typeof preview)=>void;
+ mock.preview.mockImplementation(()=>new Promise(r=>{resolve=r}));
+ await act(async()=>button('选择文件夹').click());
+ expect(host.querySelector('.arkme-export-summary')?.textContent).toBe('2条快记1张图片0段语音');
+ expect(button('导出到文件夹').disabled).toBe(true);
+ await act(async()=>resolve(preview));
+ expect(button('导出到文件夹').disabled).toBe(false);
+});
+it('explicit refresh bypasses prepared plans and an old account cannot repaint the new account',async()=>{
+ const refresh=vi.fn();await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight} onRefresh={refresh}/>));
+ await act(async()=> (host.querySelector('[aria-label="刷新导出信息"]') as HTMLButtonElement).click());
+ expect(mock.preview.mock.calls.at(-1)?.[5]).toEqual({directory:true,refresh:true});expect(refresh).toHaveBeenCalledTimes(1);
+ let resolve!:(p:typeof preview)=>void;mock.preview.mockImplementation(()=>new Promise(r=>{resolve=r}));
+ await act(async()=>button('全部').click());
+ await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:12" preflight={undefined}/>));
+ await act(async()=>resolve(preview));
+ expect(host.querySelector('.arkme-export-summary')?.textContent).not.toContain('2条快记');
+});
+
+it('shows actual phases without invented percentages for local repacks and deletion-only syncs',async()=>{
+ mock.preview.mockResolvedValue({...preview,recordCount:0,newCount:0,updatedCount:0,removedCount:2});
+ let notify!:(v:{count:number;phase?:string})=>void;
+ let resolve!:(v:unknown)=>void;
+ mock.run.mockImplementation((_o,_s,p)=>{notify=p;return new Promise(r=>{resolve=r})});
+ await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await act(async()=>button('导出到文件夹').click());
+ expect(host.textContent).toContain('正在准备导出');
+ for(const [phase,label] of [['syncing','正在同步快记和原文件'],['writing','正在生成并校验备份文件'],['confirming','正在确认备份已保存']]){
+  await act(async()=>notify({count:0,phase}));expect(host.textContent).toContain(label);
+  expect(host.querySelector('progress')?.hasAttribute('value')).toBe(false);
+  expect(host.textContent).not.toContain('已导出到本地文件夹');
+ }
+ await act(async()=>resolve({accountScope:'test:11',kind:'directory',directoryRef:'selected',fileRef:'',fileName:'内容.md',size:10,count:0,quotaFinalized:true}));
+ expect(host.querySelector('progress')).toBeNull();expect(host.textContent).toContain('共 0 条快记');
+});
+it('reports cancellation as pending until the request settles without claiming owner cleanup completed',async()=>{
+ let reject!:(e:Error)=>void;mock.run.mockImplementation(()=>new Promise((_r,j)=>{reject=j}));
+ await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await act(async()=>button('导出到文件夹').click());
+ await act(async()=>button('取消导出').click());expect(host.textContent).toContain('正在取消导出');expect(button('取消导出').disabled).toBe(true);expect(host.textContent).not.toContain('取消请求已发出');
+ await act(async()=>reject(new Error('aborted')));expect(host.textContent).toContain('取消请求已发出，已保存内容保留');expect(host.querySelector('progress')).toBeNull();
+});
