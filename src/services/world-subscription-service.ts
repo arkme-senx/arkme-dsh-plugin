@@ -26,7 +26,15 @@ export class WorldSubscriptionService {
     const session = await this.runtime.requireSession(), account = `${this.runtime.config.environment}:${session.userId}`
     if (input.accountKey !== account) throw new ArkmePluginError('world-subscription-account-changed', '账号已变化，请重新打开', false, 409)
     const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), account)
-    const post = async (path: string, body: Record<string, unknown>) => obj(await this.runtime.authenticatedWorldPost(`/api/v1/world/subscriptions/${path}`, body, session, signal, { bypassCache: true, cacheMs: 0, lane: 'interactive-read' }))
+    const post = async (path: string, body: Record<string, unknown>) => {
+      try { return obj(await this.runtime.authenticatedWorldPost(`/api/v1/world/subscriptions/${path}`, body, session, signal, { bypassCache: true, cacheMs: 0, lane: 'interactive-read' })) }
+      catch (error) {
+        if (error instanceof ArkmePluginError && [404, 501, 503].includes(error.upstreamStatus ?? error.httpStatus)) {
+          throw new ArkmePluginError('world-subscription-unavailable', path === 'set' || path === 'notifications/read' ? '暂未确认订阅操作结果，请重试核对本次操作' : '订阅服务尚未接通，请稍后再试', true, 503, { cause: error })
+        }
+        throw error
+      }
+    }
     const resolve = async (target: WorldSubscriptionTarget | WorldSubscriptionSubject): Promise<Principal> => {
       if (!target || typeof target !== 'object') throw invalid()
       if ('id' in target) return principal({ kind: target.kind, id: target.id })
