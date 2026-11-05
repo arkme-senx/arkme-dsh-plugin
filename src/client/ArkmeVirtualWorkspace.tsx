@@ -24,7 +24,7 @@ import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { directorySearchLayout } from './directory-search-layout.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
-import type { ArkmeArchiveState } from '../archive-contract.js'
+import { retainedTopicSelection } from './retained-topic-selection.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useHarnessActivity } from './use-harness-activity.js'
 import { useCodexEntryAvailability } from './redesign/contacts/use-codex-entry-availability.js'
@@ -1391,14 +1391,13 @@ export function ArkmeNavigation({
       const uiSnapshot = arkmeUi.getSnapshot()
       const selected = uiSnapshot.mode === 'source' ? uiSnapshot.selectedSource : undefined
       const cachedSelected = cacheRef.current === undefined ? undefined : cachedSelectedSource(cacheRef.current)
-      let archivedSelection: ArkmeSourceItem | undefined
+      let retainedSelection: ArkmeSourceItem | undefined
       if (next === 'send_to_self' && selected?.kind === 'topic' && reconcileSelectedSource(selected, loaded) === undefined) {
-        const states = await callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [selected.sourceRef] }, controller.signal)
+        retainedSelection = await retainedTopicSelection(selected, controller.signal)
         if (controller.signal.aborted || arkmeUi.getSnapshot().selectedSource?.sourceRef !== selected.sourceRef) return
-        if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) archivedSelection = selected
       }
       const restored = activeRef.current && uiSnapshot.mode === 'source'
-        ? reconcileSelectedSource(selected ?? cachedSelected, loaded) ?? archivedSelection
+        ? reconcileSelectedSource(selected ?? cachedSelected, loaded) ?? retainedSelection
           ?? (next === 'send_to_self' ? loaded.find(source => source.kind === 'send_to_self') : undefined)
         : undefined
       if (restored !== undefined && !arkmeUi.updateSelectedSourceProjection(restored)) arkmeUi.selectSource(restored)

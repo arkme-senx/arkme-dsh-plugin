@@ -23,7 +23,7 @@ import { identifyTimelineSender, botDisplayName, type BotDisplayProfiles, type B
 import { RuntimeBotDisplayProfilesReader, botDisplaySnapshot } from './chat-sender-display-reader.js'
 import { recordDeletionCapability } from '../record-deletion-ref.js'
 import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
-import { arkmeTopicDisplayName } from '../topic-policy.js'
+import { arkmeTopicDisplayName, isArkmeDSHInputTopic, ARKME_DSH_INPUT_TOPIC_KIND } from '../topic-policy.js'
 import { CallHistoryService } from './call-history-service.js'
 import { patchChatPolicy, readChatPolicy } from './chat-policy.js'
 import { readTopicMetadata } from './topic-metadata.js'
@@ -2405,7 +2405,7 @@ export class ChatService {
       }
       let filtered = false
       for (const raw of page.records) {
-        if (isDshAgentInputRawRecord(raw) || arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(this.record.recordUid(raw))) {
+        if ((!isArkmeDSHInputTopic(topic) && isDshAgentInputRawRecord(raw)) || arkmePrivacyLockedRecord(raw) || lockedRecordUids.has(this.record.recordUid(raw))) {
           filtered = true
           continue
         }
@@ -2596,11 +2596,16 @@ export class ChatService {
         }
         const exactTopicSource = async (): Promise<ArkmeSourceItem[]> => [{
           ...await this.source.sourceItem(source),
+          topicKind: metadata.topicKind,
           topicHierarchyKey: typeof this.source.topicHierarchyKey === 'function'
             ? await this.source.topicHierarchyKey(session.userId, source.ownerRef)
             : sourceRef,
         }]
-        const subtreeSourcesPromise = typeof this.source.topicSubtreeSources === 'function'
+        // System DSH archives are absent from the personal directory. Only
+        // authoritative metadata may opt their exact source into archive reads.
+        const subtreeSourcesPromise = metadata.topicKind === ARKME_DSH_INPUT_TOPIC_KIND
+          ? exactTopicSource()
+          : typeof this.source.topicSubtreeSources === 'function'
           ? this.source.topicSubtreeSources(sourceRef, options.signal).catch(async cause => {
             if (options.signal?.aborted === true) throw cause
             return await exactTopicSource()
