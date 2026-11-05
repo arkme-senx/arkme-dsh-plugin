@@ -1,4 +1,7 @@
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
+import { ImageSquare } from '@phosphor-icons/react/dist/icons/ImageSquare'
+import { VideoCamera } from '@phosphor-icons/react/dist/icons/VideoCamera'
+import { WarningCircle } from '@phosphor-icons/react/dist/icons/WarningCircle'
 import { TeamRepresentationBadge } from './TeamRepresentationBadge.js'
 import { useMessageTextSelectionTarget, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
 import { SelectedTextSelfNoteContent } from './SelectedTextSelfNoteContent.js'
@@ -262,7 +265,15 @@ function mediaAttemptUrl(block: ArkmeContentBlock, attempt: number, resolvedUrl?
 function UploadProgress({ block }: { block: ArkmeContentBlock }) {
   if (block.uploadProgress === undefined || block.uploadProgress.phase === 'ready') return null
   const percent = Math.floor(arkmeVisibleUploadFraction(block.uploadProgress) * 100)
-  return <span role="progressbar" aria-label={`上传 ${block.fileName}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.38)', color: '#fff', borderRadius: 8, fontSize: 12, pointerEvents: 'none' }}><span style={{ width: 36, height: 36, borderRadius: '50%', border: '2px solid rgba(255,255,255,.8)', display: 'grid', placeItems: 'center' }}>{percent}%</span></span>
+  return <span role="progressbar" aria-label={`上传 ${block.fileName}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.38)', color: '#fff', borderRadius: 8, pointerEvents: 'none' }}>
+    <span style={{ position: 'relative', width: 36, height: 36, display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+      <svg viewBox="0 0 36 36" width="36" height="36" aria-hidden style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
+        <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="3" />
+        <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="3" pathLength="100" strokeDasharray={`${percent} 100`} strokeLinecap="round" />
+      </svg>
+      {percent}%
+    </span>
+  </span>
 }
 
 function durationLabel(durationSec?: number): string {
@@ -421,6 +432,7 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
     data-arkme-media-columns={columns}
   >
     {blocks.map(block => {
+      if (block.attachmentState && !block.localFileRef) return <PendingAttachmentCard key={block.attachmentUid} block={block} />
       const failure = failures.get(block.mediaRef)
       if (failure !== undefined) return <VisualMediaFallback key={`${block.mediaRef}:${String(block.sortOrder)}`} block={block} failure={failure} style={tileStyle} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
       const dimensions = block.kind === 'image' ? imageSize(block) : undefined
@@ -461,7 +473,38 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
   </div>
 }
 
-export function ArkmeFileCard({ alwaysPreview = false, block, fallback = false, onOpen, previewOpen = false }: { alwaysPreview?: boolean; block: ArkmeContentBlock; fallback?: boolean; onOpen?: (block: ArkmeContentBlock) => void; previewOpen?: boolean }) {
+function PendingAttachmentCard({ block }: { block: ArkmeContentBlock }) {
+  const failed = block.attachmentState === 'failed'
+  const label = tr(failed ? '附件上传失败' : '附件上传中')
+  const visual = block.kind === 'image' || block.kind === 'video'
+  const Icon = failed ? WarningCircle : block.kind === 'video' ? VideoCamera : ImageSquare
+  if (visual) return <div role="status" aria-label={`${block.fileName} · ${label}`} title={block.fileName} data-arkme-pending-attachment={block.kind}
+    style={{ ...styles.mediaTile, minWidth: 0, cursor: 'default', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 6, color: failed ? arkmeTheme.danger : arkmeTheme.tertiary }}>
+    {failed ? <Icon size={24} weight="light" aria-hidden /> : <span className="arkme-pending-attachment-ring" role="progressbar" aria-label={`${block.fileName} · ${label}`}>
+      <svg viewBox="0 0 36 36" aria-hidden>
+        <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="2" opacity=".18" />
+        <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="2" pathLength="100" strokeDasharray="28 100" strokeLinecap="round" />
+      </svg>
+      <Icon size={16} weight="light" aria-hidden />
+    </span>}
+    <span style={{ fontSize: 10, lineHeight: '14px', whiteSpace: 'nowrap' }}>{tr(failed ? '上传失败' : '上传中')}</span>
+  </div>
+  return <div role="status" aria-label={`${block.fileName} · ${label}`} data-arkme-pending-attachment={block.kind}
+    style={{ ...styles.file, width: 240 }}>
+    <span style={styles.fileIconBox}><ArkmeFileIcon fileName={block.fileName} mimeType={block.mimeType} /></span>
+    <span style={{ minWidth: 0, flex: 1 }}>
+      <span style={styles.fileName} title={block.fileName}>{block.fileName}</span>
+      <span style={{ display: 'block', fontSize: 11, lineHeight: '16px', color: failed ? arkmeTheme.danger : arkmeTheme.tertiary }}>{arkmeFileSize(block.size)} · {tr(failed ? '上传失败' : '上传中')}</span>
+      {!failed && <span className="arkme-pending-attachment-bar" role="progressbar" aria-label={`${block.fileName} · ${label}`} />}
+    </span>
+  </div>
+}
+
+export function ArkmeFileCard(props: { alwaysPreview?: boolean; block: ArkmeContentBlock; fallback?: boolean; onOpen?: (block: ArkmeContentBlock) => void; previewOpen?: boolean }) {
+  return props.block.attachmentState && !props.block.localFileRef ? <PendingAttachmentCard block={props.block} /> : <ReadyFileCard {...props} />
+}
+
+function ReadyFileCard({ alwaysPreview = false, block, fallback = false, onOpen, previewOpen = false }: { alwaysPreview?: boolean; block: ArkmeContentBlock; fallback?: boolean; onOpen?: (block: ArkmeContentBlock) => void; previewOpen?: boolean }) {
   useArkmeLocale()
   const [open, setOpen] = useState(false)
   const [opening, setOpening] = useState(false)
@@ -1104,13 +1147,13 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   // A voice note's single audio owns its transcript even with photos/files.
   // Generic attachments and ambiguous multi-audio notes retain their order.
   const isVoiceNote = item.templateKind === 3 || item.templateKind === 4
-  const audioBlocks = blocks.filter(block => block.kind === 'audio')
+  const audioBlocks = blocks.filter(block => block.kind === 'audio' && (!block.attachmentState || block.localFileRef))
   const inlineVoice = !isArticle && audioBlocks.length === 1
     && (isVoiceNote || (item.templateKind === undefined && blocks.length === 1)) ? audioBlocks[0] : undefined
   const renderVoice = (block: ArkmeContentBlock, withTranscript = false) => <ArkmeVoiceContent
     key={block.mediaRef}
     sourceKey={`${sourceRef ?? ''}:${item.itemUid}:${block.fileAssetUid ?? block.mediaRef}`}
-    src={mediaUrl(block) ?? arkmeVoiceMediaUrl(block.mediaRef)}
+    src={block.localFileRef === undefined ? mediaUrl(block) ?? arkmeVoiceMediaUrl(block.mediaRef) : arkmeLocalFileUrl(block.localFileRef)}
     durationSeconds={block.durationSec ?? (isVoiceNote && item.recordDurationMillis !== undefined ? item.recordDurationMillis / 1000 : undefined)}
     downloadName={block.fileName}
     collapsible={withTranscript && presentation !== 'detail' && collapseText && shouldCollapseText(text)}
@@ -1132,6 +1175,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
         <MediaGallery blocks={row} failures={failures} retryVersions={retryVersions} onOpen={openPreview} onFailure={markFailed} onRetry={retryMedia} onOpenAsFile={openAsFile} />
       </div>
     }
+    if (row.attachmentState && !row.localFileRef) return <PendingAttachmentCard key={row.attachmentUid} block={row} />
     const failure = failures.get(row.mediaRef)
     if (failure !== undefined) return <VisualMediaFallback key={row.mediaRef} block={row} failure={failure} onRetry={() => { retryMedia(row) }} onOpenAsFile={() => { openAsFile(row) }} {...(styles.sticker === undefined ? {} : { style: styles.sticker })} />
     if (row.renderRole === 3 && row.kind === 'image') return <img
@@ -1146,7 +1190,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
       onError={() => { markFailed(row, arkmeCanInlineLocalFile(row.mimeType, row.fileName) ? 'retryable' : 'unsupported') }}
     />
     if (row.kind === 'audio') return renderVoice(row)
-    return <ArkmeFileCard key={row.mediaRef} block={row} alwaysPreview={sessionAttachmentPreview && attachmentPreviewBridge()?.version === 1} onOpen={openPreview} previewOpen={previewBlock?.mediaRef === row.mediaRef} />
+    return <ArkmeFileCard key={row.attachmentUid ?? row.mediaRef} block={row} alwaysPreview={sessionAttachmentPreview && attachmentPreviewBridge()?.version === 1} onOpen={openPreview} previewOpen={previewBlock?.mediaRef === row.mediaRef} />
   })
 
   return <>
