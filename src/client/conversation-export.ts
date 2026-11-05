@@ -1,3 +1,4 @@
+import { exportTopicMarkdown } from '../record-export-topic.js'
 import { tr } from './locale.js'
 import type {
   ArkmeSourceItem, ArkmeSourceList, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
@@ -104,14 +105,6 @@ function durationLabel(seconds: number | undefined): string {
   return `${pad(minutes)}:${pad(remainder)}`
 }
 
-function topicPathForItem(item: ArkmeTimelineItem, topics: readonly ArkmeSourceItem[]): string {
-  const topic = item.selfTopic
-  if (topic === undefined) return ''
-  const source = topics.find(candidate => candidate.topicHierarchyKey === topic.topicHierarchyKey)
-  if (source === undefined) return topic.title?.trim() ?? ''
-  return arkmeTopicPathNames(source, topics).join(' / ') || topic.title?.trim() || source.displayName
-}
-
 export function arkmeConversationExportScopeLabel(
   source: ArkmeSourceItem,
   topics: readonly ArkmeSourceItem[] = [],
@@ -136,8 +129,9 @@ export function arkmeConversationExportFileName(
   return `${scope}-${arkmeConversationExportTimestamp(exportedAt)}.md`
 }
 
-function markdownForItem(item: ArkmeTimelineItem, topics: readonly ArkmeSourceItem[]): string {
+function markdownForItem(item: ArkmeTimelineItem): string {
   const lines: string[] = [`### ${localTime(new Date(item.sendAtMillis))} · ${escapePlainMarkdown(`${item.senderName || '未知发送者'}${item.representation?` · 代表${item.representation.name}`:''}`)}`, '']
+  if (item.selfTopic?.topicHierarchyKey.trim()) lines.push(exportTopicMarkdown(item.selfTopic.title).trimEnd(), '')
   const title = item.title.trim()
   if (title !== '' && title !== item.textContent.trim()) lines.push(`**标题：** ${escapePlainMarkdown(title)}`, '')
   const blocks = [...(item.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
@@ -160,8 +154,6 @@ function markdownForItem(item: ArkmeTimelineItem, topics: readonly ArkmeSourceIt
     lines.push(`- ${kind}：${escapePlainMarkdown(block.fileName || '未命名文件')}${duration}`)
   }
   if (item.mediaUnavailable === true) lines.push('- 媒体：部分附件当前不可用')
-  const topicPath = topicPathForItem(item, topics)
-  if (topicPath !== '') lines.push(`- 主题：${escapePlainMarkdown(topicPath)}`)
   lines.push('', '---', '')
   return lines.join('\n')
 }
@@ -191,7 +183,7 @@ export function arkmeConversationExportMarkdown(input: {
       currentDate = date
       lines.push(`## ${date}`, '')
     }
-    lines.push(markdownForItem(item, topics))
+    lines.push(markdownForItem(item))
   }
   if (input.items.length === 0) lines.push('当前范围内没有可导出的内容。', '')
   return `${lines.join('\n').trimEnd()}\n`

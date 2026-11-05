@@ -155,6 +155,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'progressive-attachments.ts',
   'account-model-service.ts',
   'identity-share-service.ts',
   'arrangement-occurrence-contract.ts', 'service-error.ts',

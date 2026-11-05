@@ -1,3 +1,4 @@
+import { readTopicMetadata } from './topic-metadata.js'
 import { thoughtReplyFromWire } from '../thought-reply.js'
 import { readRecordExcerpt, recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { projectForwardRecordsPreview, projectForwardRecordsWithAvatars } from '../forward-records-presentation.js'
@@ -60,13 +61,14 @@ import type {
 import { arkmeHashTagContentPayload, arkmeHashTagPayload } from '../hashtag.js'
 import { projectRecordRecordingForward } from '../recording-forward-presentation.js'
 import { MediaService } from './media-service.js'
-import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
+import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import type { ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeRecordSourceReader {
   sourceScopeKey(source:ArkmeSourceRefPayload):Promise<string>
   authorizeGroupDelegation(source:ArkmeSourceRefPayload,session:ArkmeSessionCredentials,signal?:AbortSignal):Promise<void>
+  topicHierarchyKey(userId: number, topicUid: string): Promise<string>
   openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload>
 }
 
@@ -981,8 +983,15 @@ export class RecordService {
     })()
     const recordDurationMillis = Math.max(0, Math.trunc(numberValue(core.record_duration_millis)))
     const editDurationMillis = Math.max(0, Math.trunc(numberValue(core.edit_duration_millis)))
+    const topic = objectValue(data.topic_core), topicUid = stringValue(topic.topic_uid).trim()
+    const personalTopic = numberValue(core.owner_user_id) === session.userId
+      && source.kind !== 'private_chat' && source.kind !== 'group_chat'
+      && topicUid && !arkmePrivacyLockedTopic(data)
+    const metadata = personalTopic ? await readTopicMetadata(this.runtime, session, topicUid, signal) : undefined
+    const selfTopic = metadata?.topicKind === 1 && metadata.privacyState === 1
+      ? { topicHierarchyKey: await this.source.topicHierarchyKey(session.userId, topicUid), title: stringValue(topic.title) } : undefined
     return {
-      actionItem: { ...this.recordTimelineItemFromRaw(data, session.userId), contentBlocks,
+      actionItem: { ...this.recordTimelineItemFromRaw(data, session.userId, { selfTopic }), contentBlocks,
         recordOwnerUserId: numberValue(core.owner_user_id) },
       ...(numberValue(core.create_at ?? core.created_at) > 0 ? { createdAtMillis: numberValue(core.create_at ?? core.created_at) } : {}),
       sourceRef,

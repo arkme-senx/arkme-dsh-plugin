@@ -1,7 +1,10 @@
-import type { ArkmeContentBlock } from '../types.js'
+import { exportTopicMarkdown, exportTopicTitle } from '../record-export-topic.js'
+import type { ArkmeContentBlock, ArkmeTimelineSelfTopic } from '../types.js'
 import { arkmeEscapeMarkdownText, arkmeMarkdownTree } from '../markdown.js'
 
 export interface ArticleExportContent {
+  selfTopic?: ArkmeTimelineSelfTopic | undefined
+  sendAtMillis?: number | undefined
   title: string; textContent: string; textFormat?: 'plain' | 'markdown' | undefined
   contentBlocks?: ArkmeContentBlock[] | undefined
 }
@@ -64,7 +67,9 @@ export function articleExportBlocks(article: ArticleExportContent): ArticleExpor
 
 export function articleExportMarkdown(article: ArticleExportContent): string {
   const title = arkmeEscapeMarkdownText(article.title || '无标题长文').replace(/\r?\n/gu, ' ')
-  return `# ${title}\n\n${article.textFormat === 'markdown' ? article.textContent : arkmeEscapeMarkdownText(article.textContent)}\n`
+  const time = article.sendAtMillis === undefined ? '' : `${new Date(article.sendAtMillis).toLocaleString()}\n\n`
+  const topic = article.selfTopic?.topicHierarchyKey.trim() ? exportTopicMarkdown(article.selfTopic.title) : ''
+  return `# ${title}\n\n${time}${topic}${article.textFormat === 'markdown' ? article.textContent : arkmeEscapeMarkdownText(article.textContent)}\n`
 }
 export function downloadArticleBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob), anchor = document.createElement('a')
@@ -114,7 +119,10 @@ export async function exportArticleImages(article: ArticleExportContent, signal:
     if (height + paint.height > ARTICLE_IMAGE_PAGE_HEIGHT - PAD - 24 && pages.at(-1)!.length > 0) { pages.push([]); height = PAD + 30 }
     pages.at(-1)!.push(paint); height += paint.height
   }
-  const allBlocks: ArticleExportBlock[] = [{ kind: 'text', runs: [{ text: article.title || '无标题长文', bold: true }], size: 27, gap: 26 }, ...articleExportBlocks(article)]
+  const allBlocks: ArticleExportBlock[] = [{ kind: 'text', runs: [{ text: article.title || '无标题长文', bold: true }], size: 27, gap: 26 }]
+  if (article.sendAtMillis !== undefined) allBlocks.push({ kind: 'text', runs: [{ text: new Date(article.sendAtMillis).toLocaleString() }], size: 14, gap: 14 })
+  if (article.selfTopic?.topicHierarchyKey.trim()) allBlocks.push({ kind: 'text', runs: [{ text: `主题：${exportTopicTitle(article.selfTopic.title)}` }], size: 14, gap: 14 })
+  allBlocks.push(...articleExportBlocks(article))
   const images = new Map<string, HTMLImageElement>()
   for (const [index, block] of allBlocks.entries()) {
     signal.throwIfAborted(); progress(`正在排版 ${index + 1}/${allBlocks.length}…`)

@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
-import { RecordDirectoryExportService } from '../../src/services/record-directory-export-service.js';
+import { backupDocumentName, RecordDirectoryExportService } from '../../src/services/record-directory-export-service.js';
 import { wireExportSelection } from '../../src/services/record-export-range-service.js';
 const roots: string[] = [];
 afterEach(async () => {
@@ -11,13 +11,13 @@ afterEach(async () => {
 });
 const all = { mode: 'all', timeZone: 'UTC', includeAttachments: true } as const;
 const imagePath = 'pic/' + 'a'.repeat(64) + '.png';
-async function fixture() {
+async function fixture(topic?: unknown) {
     const root = await mkdtemp(join(tmpdir(), 'arkme-directory-'));
     roots.push(root);
     let user = 11, version = 0, next = 0, changed = false, lostSaved = false, finished = 0, offline = false;
     const plans = new Map<string, any>();
     const baseFile = { file_asset_uid: 'asset', file_uid: 'file', file_kind: 1, mime_type: 'image/png', size: 3, suggested_name: 'image.png', backup_path: imagePath };
-    const item = () => ({ record_uid: 'r1', version: changed ? 2 : 1, send_at: Date.UTC(2026, 10, 4, 1), title: '标题', text: changed ? '修改之后' : '正文', file_refs: [{ ...baseFile, reuse: changed }] });
+    const item = () => ({ record_uid: 'r1', version: changed ? 2 : 1, send_at: Date.UTC(2026, 10, 4, 1), topic_core: topic, title: '标题', text: changed ? '修改之后' : '正文', file_refs: [{ ...baseFile, reuse: changed }] });
     const post = vi.fn(async (path: string, body: any) => {
         if (path.endsWith('/capabilities'))
             return { protocol_version: 2, date_range: true, incremental: true, explicit_saved_confirmation: true, attachment_reuse: true, incremental_no_quota: true, policy_version: 3 };
@@ -75,7 +75,7 @@ async function fixture() {
     const destinationRef = picked.destinationRef!;
     const preview = async (selection: any = all) => service.preview('test:11', selection, 1, destinationRef);
     const run = async (selection: any = all) => { const p = await preview(selection); return service.run({ expectedAccountScope: 'test:11', confirmed: true, orderKind: 1, selection, previewUid: p.previewUid!, destinationRef }); };
-    return { root, runtime, service, post, fetchImpl, run, preview, destinationRef, version: () => version, finished: () => finished, change: () => { changed = true; }, loseSaved: () => { lostSaved = true; }, offline: () => { offline = true; }, switchUser: () => { user = 12; } };
+    return { root, runtime, service, post, fetchImpl, run, preview, destinationRef, version: () => version, finished: () => finished, change: () => { changed = true; }, setTopic: (value: unknown) => { topic = value; changed = true; }, loseSaved: () => { lostSaved = true; }, offline: () => { offline = true; }, switchUser: () => { user = 12; } };
 }
 it('writes a readable folder and automatically confirms exactly one complete backup', async () => {
     const f = await fixture(), r = await f.run();
@@ -267,4 +267,33 @@ it('recovers a date export with another attachment option without changing the c
     await expect(f.run({ ...all, mode: 'dates', includeAttachments: false, startDate: '2026-11-04', endDate: '2026-11-04' })).rejects.toBeDefined();
     expect((await f.preview()).localReplica).toBe(true);
     expect(f.version()).toBe(1);
+});
+
+it.each([true, false])('retains current topic names across full, dates, delta and offline exports; attachments=%s', async includeAttachments => {
+    const f = await fixture({ topic_uid: 'topic', title: '旧名' }), selection = { ...all, includeAttachments };
+    const content = async (r: { fileName: string }) => readFile(join(f.root, '即我备份-test-11', r.fileName), 'utf8');
+    expect(await content(await f.run(selection))).toContain('主题：旧名\n\n标题\n\n正文');
+    f.setTopic({ topic_uid: 'topic', title: '改名 <&> [x]\n# line' });
+    const updated = await content(await f.run({ ...selection, mode: 'incremental' }));
+    expect(updated).toContain('主题：改名 &lt;&amp;&gt; \\[x\\] \\# line');
+    expect(updated).not.toContain('旧名');
+    expect(await content(await f.run({ ...selection, mode: 'dates', startDate: '2026-11-04', endDate: '2026-11-04' }))).toContain('主题：改名');
+    f.setTopic({ topic_uid: 'other', title: '' });
+    expect(await content(await f.run({ ...selection, mode: 'incremental' }))).toContain('主题：未命名主题');
+    f.setTopic(undefined);
+    expect(await content(await f.run({ ...selection, mode: 'incremental' }))).not.toContain('主题：');
+    f.offline();
+    expect(await content(await f.run(selection))).not.toContain('主题：');
+    expect(f.fetchImpl).toHaveBeenCalledTimes(includeAttachments ? 1 : 0);
+});
+
+it('accepts legacy Windows receipt names only inside the original backup root', () => {
+    const root = 'C:\\Backup Folder\\即我备份-test-11';
+    expect(backupDocumentName(root, '导出.md')).toBe('导出.md');
+    expect(backupDocumentName(root, root + '\\导出.md')).toBe('导出.md');
+    for (const value of ['C:\\other\\导出.md', 'D:\\Backup Folder\\即我备份-test-11\\导出.md',
+        '..\\导出.md', 'sub\\导出.md', 'bad:stream.md', 'bad\0.md', 1]) {
+        expect(() => backupDocumentName(root, value)).toThrow('凭据无效');
+    }
+    expect(() => backupDocumentName('/tmp/backup', '/tmp/backup/导出.md')).toThrow('凭据无效');
 });

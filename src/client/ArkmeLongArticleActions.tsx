@@ -105,7 +105,8 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     const timeout = setTimeout(() => controller.abort(), 120_000)
     setMenu(undefined); setBusy(true); setError(''); setProgress('正在准备导出…'); setPanel('images'); setImages([])
     try {
-      const article = await prepare() ?? detail ?? snapshot ?? { title: '', textContent: '' }
+      const current = await prepare() ?? detail
+      const article: ArticleExportContent = current ? { ...current, selfTopic: current.actionItem?.selfTopic } : snapshot ?? { title: '', textContent: '' }
       if (kind === 'md') {
         const blob = await exportArticleMarkdown(article, controller.signal); assertAccount(); controller.signal.throwIfAborted()
         downloadArticleBlob(blob, `${articleExportFileName(article.title)}.md`); setPanel(undefined)

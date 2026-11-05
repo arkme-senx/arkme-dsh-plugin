@@ -49,7 +49,7 @@ describe('conversation Markdown export', () => {
     expect(progress).toEqual([2, 3])
   })
 
-  it('exports complete topic paths plus voice duration and transcription', () => {
+  it('exports current primary topic names plus voice duration and transcription', () => {
     const parent: ArkmeSourceItem = {
       sourceRef: 'parent', topicHierarchyKey: 'parent-key', kind: 'topic', displayName: '想写/可写的文章', activeAtMillis: 0, unreadCount: 0,
     }
@@ -64,7 +64,8 @@ describe('conversation Markdown export', () => {
     })] })
     expect(markdown).toContain('- 语音：语音\\.m4a · 时长：00:16')
     expect(markdown).toContain('**转写内容：**\n\n先完成再完美。')
-    expect(markdown).toContain('- 主题：想写/可写的文章 / 自我表达与自我实现')
+    expect(markdown).toContain('主题：自我表达与自我实现\n\n- 类型：语音')
+    expect(markdown).not.toContain('主题：想写/可写的文章')
     expect(arkmeConversationExportFileName(source, exportedAt, [parent, child])).toBe('发给自己-全部-20260916-144530.md')
   })
 
@@ -76,4 +77,15 @@ describe('conversation Markdown export', () => {
     expect(markdown).toContain('时长：00:31')
     expect(markdown).toContain('暂无转写内容')
   })
+})
+
+it.each(['send_to_self', 'default_category', 'topic', 'private_chat', 'group_chat'] as const)('uses only current visible topic metadata for %s exports', kind => {
+  const markdown = arkmeConversationExportMarkdown({ source: { ...source, kind }, exportedAt: new Date(0),
+    topics: [{ ...source, kind: 'topic', topicHierarchyKey: 'topic', displayName: '过期缓存' }],
+    items: [item('a', 1, { textContent: '正文', selfTopic: { topicHierarchyKey: 'topic', title: '新名称 <&> [x]\n# next' } }),
+      item('b', 2, { selfTopic: { topicHierarchyKey: 'empty', title: '  ' } }), item('c', 3)] })
+  expect(markdown).toContain('主题：新名称 &lt;&amp;&gt; \\[x\\] \\# next\n\n正文')
+  expect(markdown).toContain('主题：未命名主题')
+  expect(markdown.match(/主题：/g)).toHaveLength(2)
+  expect(markdown).not.toContain('主题：过期缓存')
 })

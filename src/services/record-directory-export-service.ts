@@ -1,12 +1,24 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { lstat, realpath, readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
+import { basename, win32 } from 'node:path';
 import { EncryptedReferenceCodec } from '../encrypted-reference.js';
 import type { ArkmeExportSelection, ArkmeRangeExportPreview, ArkmeRecordExport, ArkmeRecordExportOptions, ArkmeRecordExportProgress } from '../data-management.js';
 import { ArkmePluginError, type ServiceRuntime } from './service.js';
 import { RecordExportRangeService, exportSelection, wireExportSelection } from './record-export-range-service.js';
 import { OriginalFileStore } from './original-file-store.js';
 import { BackupDirectoryStore, atomicWrite, backupFailure, object, hashFile } from './backup-directory-store.js';
+// Older Windows receipts stored an absolute path; resolve only the original root,
+// without rewriting the receipt whose digest was already acknowledged remotely.
+export function backupDocumentName(root: string, value: unknown): string {
+    if (typeof value !== 'string')
+        throw backupFailure('上次备份的本地凭据无效');
+    let name = value;
+    if (win32.isAbsolute(root) && win32.isAbsolute(value) && win32.dirname(value) === win32.normalize(root))
+        name = win32.basename(value);
+    if (!/^[^/\\:\0]+\.md$/.test(name))
+        throw backupFailure('上次备份的本地凭据无效');
+    return name;
+}
 interface Target {
     scope: string;
     path: string;
@@ -98,12 +110,11 @@ export class RecordDirectoryExportService {
         if ((meta.pending.chainUid ?? meta.chainUid) !== await this.chainIdentity(scope, typeof meta.pending.attachments === 'boolean' ? meta.pending.attachments : meta.attachments))
             throw backupFailure('待确认备份属于其他设备，请在原设备恢复或选择新的文件夹。');
         const pending = meta.pending;
-        if (typeof pending.document !== 'string' || !/^[^/\\]+\.md$/.test(pending.document))
-            throw backupFailure('上次备份的本地凭据无效');
-        const document = await hashFile(store.root + '/' + pending.document);
+        const documentName = backupDocumentName(store.root, pending.document);
+        const document = await hashFile(store.root + '/' + documentName);
         if (document.sha256 !== pending.documentHash || document.size !== pending.documentSize)
             throw backupFailure('上次备份文件被修改，不能确认增量进度');
-        const receiptPath = store.root + '/' + pending.document + '.json';
+        const receiptPath = store.root + '/' + documentName + '.json';
         const receiptFile = await hashFile(receiptPath);
         if (receiptFile.sha256 !== pending.digest || receiptFile.size > 32 * 1024 * 1024)
             throw backupFailure('上次备份的保存凭据无效');
@@ -297,13 +308,13 @@ export class RecordDirectoryExportService {
             const output = await store.writeReadable(job, options.orderKind, 0, Number.MAX_SAFE_INTEGER, start ? requested.mode : undefined, selection.mode === 'dates' ? { start: selection.startDate!, end: selection.endDate!, timeZone: selection.timeZone } : undefined, signal);
             await this.ranges.session(scope);
             signal.throwIfAborted();
-            const receipt = JSON.stringify({ schema: 1, scope, preview_uid: uid, document: output.path.split('/').at(-1), sha256: output.sha256, size: output.size, records: output.count, files_digest: output.filesDigest, attachment_bytes: output.attachmentBytes, files: output.files });
+            const receipt = JSON.stringify({ schema: 1, scope, preview_uid: uid, document: basename(output.path), sha256: output.sha256, size: output.size, records: output.count, files_digest: output.filesDigest, attachment_bytes: output.attachmentBytes, files: output.files });
             const digest = createHash('sha256').update(receipt).digest('hex'), size = output.size + output.attachmentBytes + Buffer.byteLength(receipt);
             await atomicWrite(output.path + '.json', receipt);
             let meta = store.meta() ?? { scope, version: 0, attachments: selection.includeAttachments, savedAtMillis: 0 };
             const chainUid = await this.chainIdentity(scope, selection.includeAttachments);
             if (start) {
-                const pending = { uid, digest, size, mode: requested.mode, chainUid, attachments: requested.includeAttachments, document: output.path.split('/').at(-1), documentHash: output.sha256, documentSize: output.size };
+                const pending = { uid, digest, size, mode: requested.mode, chainUid, attachments: requested.includeAttachments, document: basename(output.path), documentHash: output.sha256, documentSize: output.size };
                 if (requested.mode === 'dates') {
                     store.setMeta({ ...meta, pendingStart: undefined, pending });
                     store.discard(job);
@@ -320,10 +331,10 @@ export class RecordDirectoryExportService {
                 meta = requested.mode === 'dates' ? { ...meta, pending: undefined } : { ...meta, version: Number(saved.version), savedAtMillis: Number(saved.saved_at), pending: undefined };
                 store.setMeta(meta);
                 completed = true;
-                return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: output.path.split('/').at(-1)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: !meta.quotaPending, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
+                return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: basename(output.path)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: !meta.quotaPending, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
             }
             completed = true;
-            return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: output.path.split('/').at(-1)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: !meta.quotaPending, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
+            return { accountScope: scope, kind: 'directory', directoryRef: options.destinationRef, fileRef: '', fileName: basename(output.path)!, size, expiresAtMillis: 0, count: output.count, quotaFinalized: !meta.quotaPending, rangeMode: selection.mode, savedAtMillis: meta.savedAtMillis };
         }
         catch (error) {
             failed = true;

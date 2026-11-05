@@ -1,3 +1,4 @@
+import type { PendingAttachment } from './progressive-attachments.js'
 import { thoughtReplyFromWire } from '../thought-reply.js'
 import { recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { snapshotDateLabel, snapshotMovement, snapshotWeatherText, snapshotPositionLabel } from '../record-snapshot-presentation.js'
@@ -5220,7 +5221,7 @@ nextPublic = next
   async sendSourceRich(
       sourceRef: string,
       input: ArkmeRichSendInput,
-      options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal; sendAtMillis?: number } = {},
+      options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal; sendAtMillis?: number; pendingAttachments?: PendingAttachment[]; attachmentOrder?: string[]; backgroundAmplitudes?: number[] } = {},
     ): Promise<ArkmeSourceSendResult> {
     requireFrozenTeamSendTime(input)
       if (this.runtime.config.richMediaSendEnabled === false) {
@@ -5235,6 +5236,11 @@ nextPublic = next
       const title = input.title?.trim() ?? ''
       const textContent = input.textFormat === 'markdown' ? (input.textContent ?? '') : (input.textContent?.trim() ?? '')
       const assets = input.assets ?? []
+      const pending = options.pendingAttachments ?? []
+      const mediaCount = assets.length + pending.length
+      if (pending.length && (input.displayKind === 1 || pending.some(file => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(file.attachmentUid) || file.generation !== 1
+        || !Number.isSafeInteger(file.size) || file.size <= 0 || !file.fileName || /[\/\\\x00\r\n]/.test(file.fileName) || ![1, 2, 3, 4].includes(file.fileKind)
+        || (file.fileKind === 2) !== (file.backgroundSound === true)))) throw new ArkmePluginError('attachment-metadata-invalid', '附件占位参数无效', false, 400)
       const backgroundSound = arkmeRichBackgroundSound(input.backgroundSound)
       const displayKind = input.displayKind === 1 ? 1 : 0
       const longArticle = displayKind === 1
@@ -5243,8 +5249,8 @@ nextPublic = next
       const recordDurationMillis = Math.max(0, Math.trunc(input.recordDurationMillis ?? (longArticle ? thinkingDurationMillis : 0)))
       const captureContext = input.captureContext === undefined ? undefined : arkmeRecordCaptureContextPayload(input.captureContext)
       if (title.length > (longArticle ? 100 : 500) || textContent.length > maxContentLength
-        || (!longArticle && assets.length + (backgroundSound?.assets.length ?? 0) > 20)
-        || (textContent === '' && title === '' && assets.length === 0)) {
+        || (!longArticle && mediaCount + (backgroundSound?.assets.length ?? 0) > 20)
+        || (textContent === '' && title === '' && mediaCount === 0)) {
         throw new ArkmePluginError('rich-content-invalid', '富内容为空、过长或附件数量超限', false)
       }
       if (longArticle && (title === '' || textContent === '')) {
@@ -5266,7 +5272,7 @@ nextPublic = next
       }
       const recordUid = options.recordUid?.trim() || randomUUID()
       const relationUid = options.relationUid?.trim() || randomUUID()
-      const templateKind = assets.length === 0 ? 1 : 2
+      const templateKind = mediaCount === 0 ? 1 : 2
       let mentionPayload: Record<string, unknown> | undefined
       if ((input.humanMentions?.length ?? 0) > 0 || (input.botMentions?.length ?? 0) > 0 || (input.teamMentions?.length??0)>0) {
         if (((input.humanMentions?.length ?? 0) > 0 || (input.teamMentions?.length??0)>0) && source.kind !== 'group_chat') {
@@ -5281,11 +5287,23 @@ nextPublic = next
           options.signal, input.textFormat,input.teamMentions,
         )
       }
-      const contentPayload = arkmeRichContentPayload(
+      let contentPayload = arkmeRichContentPayload(
         { ...input, assets, ...(backgroundSound === undefined ? {} : { backgroundSound }) },
         textContent,
         mentionPayload,
       )
+      if (pending.length) {
+        const order = new Map((options.attachmentOrder ?? assets.map(asset => asset.fileAssetUid)).map((key, index) => [key, index]))
+        const refs = [
+          ...listValue(contentPayload?.media_refs).map(objectValue).map(ref => ({ ...ref, sort_order: order.get(stringValue(ref.file_asset_uid)) ?? numberValue(ref.sort_order) })),
+          ...pending.map(file => ({ file_asset_uid: '', file_name: file.fileName, content_file_role: file.backgroundSound ? 4 : 1,
+            ...(file.backgroundSound ? { binding_type: 4 } : {}), render_role: 1, sort_order: file.sortOrder,
+            upload: { attachment_uid: file.attachmentUid, generation: file.generation, state: 'pending', kind: file.fileKind, size: file.size } })),
+        ].sort((a, b) => a.sort_order - b.sort_order).map((ref, index) => ({ ...ref, sort_order: index }))
+        contentPayload = { schema_version: 1, text_state: textContent === '' ? 3 : 1, ...contentPayload, payload_kind: 2, media_refs: refs,
+          ...(options.backgroundAmplitudes?.length ? { background_sound_amplitudes: options.backgroundAmplitudes } : {}),
+        }
+      }
       const sendAtMillis = options.sendAtMillis ?? input.sendAtMillis ?? Date.now()
       const senderSnapshot = source.kind === 'send_to_self' || source.kind === 'default_category' || source.kind === 'topic'
         ? await this.profile.recordSenderSnapshot?.(session) : undefined
