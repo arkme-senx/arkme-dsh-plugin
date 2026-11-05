@@ -17,8 +17,9 @@ integration('isolated OpenClaw reconciliation profile', () => {
         })
       },
     })
-    await expect(adapter.inspect({ agentId: 'arkme-bot-alpha', accountId: 'arkme-bot-alpha' })).resolves.toEqual({
-      channel: true, agent: true, account: true, binding: true,
+    const gatewayUrl = process.env.ARKME_OPENCLAW_GATEWAY_URL?.trim() || 'ws://127.0.0.1:9/ws/v1/bot/gateway'
+    await expect(adapter.inspect({ agentId: 'arkme-bot-alpha', accountId: 'arkme-bot-alpha', gatewayUrl })).resolves.toEqual({
+      channel: true, agent: true, account: true, accountGateway: true, binding: true,
     })
   }, 120_000)
 })
