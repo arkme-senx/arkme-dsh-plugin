@@ -239,3 +239,17 @@ it('binds queued private commands to their original protocol when workspace beco
   await store.pin('b', direct, true)
   expect(transport.mock.calls.at(-1)![1].scope).toBeUndefined()
 })
+
+it('restores a confirmed zero-message contact and its folder but never promotes a passive relationship', async () => {
+  const { store, rows, transport } = fixture()
+  const empty = { ...conversation, memberInitiated: true, lastSeq: 0, unread: 0, needsReply: false }
+  rows.set('team-ref', snapshot('folder', {dismissed:true,activitySeq:0}))
+  rows.set('conversation-ref', snapshot('conversation', {dismissed:true,activitySeq:0}))
+  await store.restoreNavigation('a', async () => ({kind:'conversation',conversation:empty}))
+  expect(teamEntryHidden(store.read('a'),{kind:'conversation',conversation:empty})).toBe(false)
+  expect(teamEntryHidden(store.read('a'),{kind:'folder',group:groupTeamConversations([empty])[0]!})).toBe(false)
+  const writes=transport.mock.calls.filter(([op])=>op.endsWith('.change')).length
+  await store.restoreNavigation('a',async()=>({kind:'conversation',conversation:{...empty,memberInitiated:false}}))
+  expect(transport.mock.calls.filter(([op])=>op.endsWith('.change'))).toHaveLength(writes)
+  expect(empty.unread).toBe(0);expect(empty.lastSeq).toBe(0)
+})

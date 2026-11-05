@@ -24,7 +24,7 @@ const actor=liveTeam?4:99001001,target=liveTeam?3:99001002,teamID=liveTeam?7:42,
 const token=id=>{const body=[{alg:'HS256',typ:'JWT'},{user_id:id,client_id:1,iss:'jotmo',exp:Math.floor(Date.now()/1000)+3600}].map(v=>Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');return body+'.'+createHmac('sha256','team-interaction-isolated-stack').update(body).digest('base64url')}
 const ownerPost=async(path,body,id=actor)=>{const r=await fetch(liveTeam+'/api/v1/team/'+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token(id)},body:JSON.stringify(body)});const v=await r.json();assert.equal(v.code,200,JSON.stringify(v));return v.data}
 const channel={team_id:42,name:'主动接待验收团队',jotmo_id:'reception_team',public_ref:'a'.repeat(32),enabled:true,revision:1,can_manage:false,can_pause:false,avatar:{mode:'default',key:'team'}}
-const conversation={conversation_uid:'11111111-1111-4111-8111-111111111111',channel,side:'team',external_user_id:String(target),visitor:{user_id:String(target),nickname:'待联系客户',kind:'person',account_state:'active',member_type:'svip'},last_seq:0,my_read_seq:0,unread:0,revision:0}
+const conversation={conversation_uid:'11111111-1111-4111-8111-111111111111',channel,side:'team',external_user_id:String(target),visitor:{user_id:String(target),nickname:'待联系客户',kind:'person',account_state:'active',member_type:'svip'},member_initiated:true,last_seq:0,my_read_seq:0,unread:0,revision:1,updated_at:100}
 let ctx,shutdown,browser,page,holdNextOpen=false,observeHeldOpen,releaseHeldOpen,openDeadline
 const pauseOpeningResponse=async path=>{
  if(!path.endsWith('/conversations/open-by-member')||!holdNextOpen)return
@@ -86,15 +86,15 @@ try{
   await page.locator('.arkme-team-detail').getByRole('button',{name:'团队消息通道',exact:true}).click()
   await page.getByRole('dialog',{name:/团队消息通道/}).getByRole('button',{name:'查看团队对话',exact:true}).click()
   await page.getByRole('button',{name:'联系用户',exact:true}).click()
-  const dialog=page.getByRole('dialog',{name:'以团队联系',exact:true})
-  await dialog.getByRole('textbox',{name:'查找联系用户'}).fill('customer_one');await dialog.getByRole('button',{name:'精确查找',exact:true}).click()
-  await dialog.getByText('待联系客户',{exact:true}).waitFor()
+  const dialog=page.getByRole('dialog',{name:'联系用户',exact:true})
+  await dialog.getByRole('textbox',{name:'查找联系用户'}).fill('customer_one');await dialog.getByRole('textbox',{name:'查找联系用户'}).press('Enter')
+  await dialog.getByText('待联系客户',{exact:true}).click()
   return dialog
  }
  let dialog=await enterReception()
  if(!liveTeam){
   channel.enabled=false
-  await dialog.getByRole('button',{name:'开始团队私信',exact:true}).click()
+  await dialog.getByRole('button',{name:'发起会话',exact:true}).click()
   await dialog.getByRole('alert').getByText(`请团队所有者开启：联系人 → 团队 → ${channel.name} → 团队消息通道 → 接收外部消息`,{exact:true}).waitFor()
   await dialog.getByText('待联系客户',{exact:true}).waitFor()
   assert.equal(calls.filter(c=>c.path.endsWith('/message-channel/configure')).length,0)
@@ -104,16 +104,16 @@ try{
  await page.screenshot({path:join(capture,'selection.png')})
  const openCount=calls.filter(c=>c.path.endsWith('/open-by-member')).length
  const accepted=new Promise(resolve=>{observeHeldOpen=resolve});holdNextOpen=true
- await dialog.getByRole('button',{name:'开始团队私信',exact:true}).click()
+ await dialog.getByRole('button',{name:'发起会话',exact:true}).click()
  await Promise.race([accepted,new Promise((_,reject)=>{openDeadline=setTimeout(()=>reject(new Error('opening did not reach upstream')),15000)})]);clearTimeout(openDeadline)
- await dialog.getByRole('button',{name:'关闭以团队联系',exact:true}).click();await dialog.waitFor({state:'hidden'})
+ await dialog.getByRole('button',{name:'关闭',exact:true}).click();await dialog.waitFor({state:'hidden'})
  releaseHeldOpen();releaseHeldOpen=undefined
  await page.reload();await page.getByRole('button',{name:'联系人',exact:true}).waitFor()
- assert.equal(await page.getByRole('dialog',{name:'以团队联系',exact:true}).count(),0)
+ assert.equal(await page.getByRole('dialog',{name:'联系用户',exact:true}).count(),0)
  assert.equal(calls.filter(c=>c.path.endsWith('/open-by-member')).length,openCount+1)
  await page.screenshot({path:join(capture,'reloaded-without-popup.png')})
  dialog=await enterReception()
- await dialog.getByRole('button',{name:'开始团队私信',exact:true}).click()
+ await dialog.getByRole('button',{name:'发起会话',exact:true}).click()
  const pane=page.locator('.team-conversation-pane');await pane.waitFor();await pane.getByText(liveTeam?'用户3':'待联系客户',{exact:true}).first().waitFor()
  await page.screenshot({path:join(capture,'empty-reception.png')})
  if(!liveTeam)assert.equal(calls.filter(c=>/messages\/send$|records\/send$|create-private$/.test(c.path)).length,0)
@@ -121,6 +121,17 @@ try{
   const opened=await ownerPost('conversations/open-by-member',{team_id:teamID,external_user_id:String(target)})
   const uid=opened.conversation.conversation_uid
   assert.equal(opened.conversation.last_seq,0)
+  assert.equal(opened.conversation.member_initiated,true)
+  for(const member of [actor,11]) {
+    const directory=await ownerPost('conversations/list',{side:'team',team_id:teamID,limit:30},member)
+    assert.equal(directory.items.filter(c=>c.conversation_uid===uid&&c.member_initiated&&c.last_seq===0&&c.unread===0).length,1,'another authorized device must discover the same empty contact')
+  }
+  // A full browser reload discards all current-window retained rows.
+  await page.reload();await page.getByRole('button',{name:'联系人',exact:true}).waitFor()
+  await enterReception().then(dialog=>dialog.getByRole('button',{name:'关闭',exact:true}).click())
+  const directoryRow=page.locator('[data-team-conversation-key]').filter({hasText:'用户3'})
+  await directoryRow.first().waitFor({timeout:30000})
+  await directoryRow.first().click();await pane.waitFor()
   assert.equal((await ownerPost('conversations/list',{side:'external',limit:30},target)).items.some(c=>c.conversation_uid===uid),false)
   const text='主动接待真实首发 '+randomUUID()
   await pane.getByRole('textbox',{name:'团队消息内容',exact:true}).fill(text)
