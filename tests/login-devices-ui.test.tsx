@@ -21,14 +21,51 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
 describe('confirmed login devices UI', () => {
+  it('explains that forgetting signs out the target and requires verification', async () => {
+    mocks.call.mockImplementation(async (_op, input) => input.action === 'prepare' ? { accountScope: 'test:7', kind: 'forget', name: '工作电脑', ticket: 'forget-ticket', expiresAt: Date.now() + 300000 } : page)
+    await render()
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent?.startsWith('常用设备管理'))!.click())
+    expect(document.body.textContent).toContain('移除常用设备会同时退出该设备的登录')
+    await act(async () => button('编辑').click())
+    await act(async () => button('移除').click())
+    expect(document.body.textContent).toContain('此设备将退出登录并取消信任')
+    expect(document.body.textContent).not.toMatch(/当前登录不会退出|不会退出当前登录/)
+    expect(mocks.call.mock.calls.some(c => c[1].action === 'confirm')).toBe(false)
+  })
   it('keeps the approved layout and removed copy absent; unknown count is not zero', async () => {
     await render()
     expect(document.body.textContent).toContain('工作电脑')
-    expect(document.body.textContent).toContain('状态待确认')
+    expect(document.querySelector('.device-status')?.textContent).toBe('未知')
     expect(document.body.textContent).toContain('活跃时间暂不可用')
     expect(document.body.textContent).not.toMatch(/常见问题|macOS|登录状态与实时在线状态分别显示|0 台设备/)
     await act(async () => root.render(<LoginDeviceEntry accountScope="test:7" onOpen={() => {}} />))
     expect(host.textContent).toBe('登录设备管理')
+  })
+  it('hides unidentified credentials in login and trusted lists without hiding known devices with unknown presence', async () => {
+    mocks.call.mockResolvedValue({ ...page, countComplete: true, total: 4, items: [
+      device,
+      { ...device, id: 'legacy', ref: 'legacy', name: '设备', platform: 'unknown' },
+      { ...device, id: 'named', ref: 'named', name: '我的旧电脑', platform: '' },
+      { ...device, id: 'typed', ref: 'typed', name: '设备', platform: 'windows' },
+    ] })
+    await render()
+    expect([...document.querySelectorAll('.device-name strong')].map(e => e.textContent)).toEqual(['工作电脑', '设备', '我的旧电脑'])
+    expect(document.querySelector('.device-summary')).toBeNull()
+    await act(async () => [...document.querySelectorAll('button')].find(b => b.textContent?.startsWith('常用设备管理'))!.click())
+    expect(document.querySelectorAll('.device-row')).toHaveLength(3)
+    expect(mocks.call.mock.calls.every(c => ['list', 'trusted'].includes(c[1].action))).toBe(true)
+    await act(async () => root.render(<LoginDeviceEntry accountScope="test:7" onOpen={() => {}} />))
+    expect(host.textContent).toBe('登录设备管理')
+  })
+  it('shows the empty state for unidentified rows and keeps pagination available', async () => {
+    mocks.call.mockImplementation(async (_op, input) => input.cursor === 'next'
+      ? page : { ...page, items: [{ ...device, name: '设备', platform: '' }], cursor: 'next' })
+    await render()
+    expect(document.querySelectorAll('.device-row')).toHaveLength(0)
+    expect(document.body.textContent).toContain('暂无可显示的设备')
+    await act(async () => button('下一页').click())
+    expect(document.querySelector('.device-name strong')?.textContent).toBe('工作电脑')
+    expect(mocks.call.mock.calls.every(c => c[1].action === 'list')).toBe(true)
   })
   it('does not write before confirmation and does not double-submit', async () => {
     mocks.call.mockImplementation(async (_op, input) => input.action === 'prepare' ? { accountScope: 'test:7', kind: 'logout', name: '工作电脑', ticket: 'ticket', expiresAt: Date.now() + 300000 } : page)

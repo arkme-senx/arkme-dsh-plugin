@@ -89,7 +89,7 @@ export class LoginDevicesService {
             name: text(d.name, 120), platform: text(d.platform, 32), isCurrent: d.is_current,
             presence: d.presence === 'online' || d.presence === 'offline' ? d.presence : 'unknown',
             lastActiveAt: d.last_active_at ? integer(d.last_active_at) : null,
-            canLogout: capabilities.logout === true && !d.is_current, canForget: capabilities.trusted === true,
+            canLogout: capabilities.logout === true && !d.is_current, canForget: capabilities.trusted === true && !d.is_current,
             notificationsSupported: d.notifications_supported === true,
           }
         }))
@@ -108,7 +108,7 @@ export class LoginDevicesService {
       case 'prepare': {
         if (request.kind !== 'logout' && request.kind !== 'forget') throw invalid()
         const d = await this.open(refScope, 'device', request.ref)
-        if (request.kind === 'logout' && d.current) throw invalid()
+        if (d.current) throw invalid()
         const ticket = await this.seal(refScope, 'ticket', { ...d, kind: request.kind, request_id: randomUUID() }, 5 * 60_000)
         return { accountScope: scope, ticket, kind: request.kind, name: text(d.name, 120), expiresAt: this.now() + 5 * 60_000 }
       }
@@ -120,10 +120,10 @@ export class LoginDevicesService {
           if (raw && raw.found !== false) {
             const receipt = object(raw.operation)
             if (receipt.request_id !== d.request_id || receipt.kind !== d.kind || integer(receipt.revision) !== integer(d.revision) + 1) throw invalid()
-            applied = d.kind !== 'logout' || raw.credential_revoked === true
+            applied = raw.credential_revoked === true
           }
           return { accountScope: scope, ticket: request.ticket, kind: d.kind as 'logout' | 'forget', state: applied ? 'applied' : 'unknown',
-            cleanup: d.kind === 'forget' ? 'not-applicable' : raw?.cleanup_state === 'complete' ? 'complete' : 'pending' }
+            cleanup: raw?.cleanup_state === 'complete' ? 'complete' : 'pending' }
         }
         if (request.action === 'operation') return result(await read('operation', { client_id: d.client_id, request_id: d.request_id }))
         try { return result(await write(d.kind, { client_id: d.client_id, session_ref: d.session_ref, revision: d.revision, request_id: d.request_id })) }

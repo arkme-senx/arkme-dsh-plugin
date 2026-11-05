@@ -20,6 +20,8 @@ const request = <T extends LoginDeviceResult>(input: LoginDeviceRequest, signal?
 const date = (at: number | null) => at ? new Date(at).toLocaleString(arkmeIntlLocale()) : tr('活跃时间暂不可用')
 const mobile = (d: LoginDevice) => d.platform === 'ios' || d.platform === 'android'
 const computer = (d: LoginDevice) => ['macos', 'windows', 'linux'].includes(d.platform)
+const identifiable = (d: LoginDevice) => mobile(d) || computer(d) || d.platform === 'web'
+  || !['', '设备', '未知设备', '未知', 'device', 'unknown'].includes(d.name.trim().toLowerCase())
 // Retain ten requested pages; returning to the first page restores newer history.
 const maxVisibleEvents = 500
 function DeviceIcon({ device }: { device: LoginDevice }) { return <span className="device-icon">{mobile(device) ? <DeviceMobile size={25} /> : computer(device) ? <Desktop size={25} /> : <Devices size={25} />}</span> }
@@ -37,7 +39,7 @@ function Dialog({ label, onClose, children, className = '', returnFocusRef }: { 
 export function LoginDeviceEntry({ accountScope, onOpen }: { accountScope: string; onOpen: () => void }) {
   const [summary, setSummary] = useState<LoginDevicePage>()
   useEffect(() => { const controller = new AbortController(); void request<LoginDevicePage>({ action: 'list', accountScope }, controller.signal).then(value => { if (!controller.signal.aborted && value.accountScope === accountScope) setSummary(value) }).catch(() => undefined); return () => controller.abort() }, [accountScope])
-  return <button type="button" className="device-profile-entry" onClick={onOpen}><Devices size={19} /><span><strong>{summary?.accountScope === accountScope && summary.countComplete ? tr('已在{count}台设备上登录', { count: summary.total }) : tr('登录设备管理')}</strong></span><CaretRight size={15} /></button>
+  return <button type="button" className="device-profile-entry" onClick={onOpen}><Devices size={19} /><span><strong>{summary?.accountScope === accountScope && summary.countComplete && summary.items.every(identifiable) ? tr('已在{count}台设备上登录', { count: summary.total }) : tr('登录设备管理')}</strong></span><CaretRight size={15} /></button>
 }
 function Notifications({ accountScope, device }: { accountScope: string; device: LoginDevice }) {
   const [value, setValue] = useState<DeviceNotifications>(), [busy, setBusy] = useState(false), [error, setError] = useState(''), [revision, setRevision] = useState(0)
@@ -80,6 +82,7 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
   }, [accountScope, page, cursor, refresh])
   const value = result?.page === page && result.value.accountScope === accountScope && (result.cursor === cursor || page === 'events') ? result.value : undefined
   const devices = value && 'total' in value ? value : undefined, events = value && 'coverageStart' in value ? value : undefined
+  const visibleDevices = devices?.items.filter(identifiable) ?? []
   const title = tr(page === 'trusted' ? '常用设备管理' : page === 'events' ? '登录日志' : '登录设备管理')
   const navigate = (next: typeof page) => { setPage(next); setCursor(undefined); setEditing(false); setExpanded(undefined); setFeedback('') }
   const reload = () => { setCursor(undefined); setRefresh(v => v + 1) }
@@ -94,7 +97,7 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
   const applyResult = (operation: DeviceOperation) => {
     if (operation.state === 'unknown') { setPending(operation); setFeedback(tr('请求结果待确认，请重新核实。')); return }
     setPending(undefined); setConfirmation(undefined)
-    setFeedback(tr(operation.kind === 'forget' ? '已移除常用设备，下次登录需要重新验证。' : operation.cleanup === 'complete' ? '设备已退出登录。' : '登录权限已撤销；设备再次联网时完成退出。'))
+    setFeedback(tr(operation.kind === 'forget' ? '已移除常用设备并撤销登录权限，再次登录需要验证。' : operation.cleanup === 'complete' ? '设备已退出登录。' : '登录权限已撤销；设备再次联网时完成退出。'))
     reload(); queueMicrotask(() => heading.current?.focus())
   }
   const submit = async (reconcile = false) => {
@@ -121,13 +124,13 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
       {failed && <div className="device-feedback" role="status">{tr('暂时无法刷新，请检查网络后重试。')}{devices && <span> {tr('上次读取：{time}', { time: date(devices.observedAt) })}</span>} <button onClick={reload}>{tr('重新加载')}</button></div>}
       {!value && <div className="device-empty"><Devices size={36} /><h3>{tr(loading ? '读取中…' : '暂时无法读取设备列表')}</h3>{!loading && <p>{tr('这不代表你的设备已退出登录。')}</p>}</div>}
       {devices && <>
-        {page === 'list' && devices.countComplete && <div className="device-summary"><span>{tr('{count} 台设备已登录', { count: devices.total })}</span></div>}
-        {page === 'trusted' && <p className="device-explanation">{tr('这些设备已通过登录验证。移除后，下次登录需要重新验证；不会退出当前登录，也不会删除聊天记录。')}</p>}
-        {devices.items.length === 0 && <div className="device-empty"><Devices size={36} /><h3>{tr('暂无可显示的设备')}</h3></div>}
+        {page === 'list' && devices.countComplete && visibleDevices.length === devices.items.length && <div className="device-summary"><span>{tr('{count} 台设备已登录', { count: devices.total })}</span></div>}
+        {page === 'trusted' && <p className="device-explanation">{tr('移除常用设备会同时退出该设备的登录，再次登录需要验证；云端聊天记录会保留。')}</p>}
+        {visibleDevices.length === 0 && <div className="device-empty"><Devices size={36} /><h3>{tr('暂无可显示的设备')}</h3></div>}
         {(page === 'trusted' ? ['all'] : ['computer', 'phone', 'other']).map(group => {
-          const rows = devices.items.filter(d => group === 'all' || (group === 'phone' ? mobile(d) : group === 'computer' ? computer(d) : !mobile(d) && !computer(d))).sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0) || a.id.localeCompare(b.id))
+          const rows = visibleDevices.filter(d => group === 'all' || (group === 'phone' ? mobile(d) : group === 'computer' ? computer(d) : !mobile(d) && !computer(d))).sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0) || a.id.localeCompare(b.id))
           return rows.length > 0 && <section className="device-section" key={group}>{group !== 'all' && <h3>{tr(group === 'phone' ? '手机与平板' : group === 'computer' ? '电脑' : '其他设备')}</h3>}<div className="device-card">{rows.map(d => <div className="device-row-wrap" key={d.id}>
-            <div className="device-row"><DeviceIcon device={d} /><div className="device-info"><div className="device-name"><strong>{d.name}</strong>{page === 'list' && <span className={`device-status ${d.presence === 'online' ? 'online' : ''}`}>{tr(d.presence === 'online' ? '在线' : d.presence === 'offline' ? '离线' : '状态待确认')}</span>}</div><small>{d.lastActiveAt ? tr('上次活跃：{time}', { time: date(d.lastActiveAt) }) : tr('活跃时间暂不可用')}</small></div>
+            <div className="device-row"><DeviceIcon device={d} /><div className="device-info"><div className="device-name"><strong>{d.name}</strong>{page === 'list' && <span className={`device-status ${d.presence === 'online' ? 'online' : ''}`}>{tr(d.presence === 'online' ? '在线' : d.presence === 'offline' ? '离线' : '未知')}</span>}</div><small>{d.lastActiveAt ? tr('上次活跃：{time}', { time: date(d.lastActiveAt) }) : tr('活跃时间暂不可用')}</small></div>
             {page === 'trusted' && editing ? <button className="device-text-button danger" disabled={busy || !!pending || !d.canForget} onClick={() => void prepare(d, 'forget')}>{tr('移除')}</button> : d.isCurrent ? <span className="device-current">{tr('本机')}</span> : page === 'list' && <button className="device-text-button" disabled={busy || !!pending || !d.canLogout} onClick={() => void prepare(d, 'logout')}>{tr('退出登录')}</button>}</div>
             {page === 'list' && mobile(d) && <><button className="device-expand" aria-expanded={expanded === d.ref} onClick={() => setExpanded(expanded === d.ref ? undefined : d.ref)}>{tr('通知设置')} <CaretDown size={14} style={{ transform: expanded === d.ref ? 'rotate(180deg)' : undefined }} /></button>{expanded === d.ref && <Notifications accountScope={accountScope} device={d} />}</>}
           </div>)}</div></section>
@@ -140,7 +143,7 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
     </div>
     <footer className="device-footer"><span>{tr(page === 'list' ? '仅展示当前账号的设备' : '登录安全 · 即我')}</span></footer>
     {confirmation && <Dialog label={tr(confirmation.kind === 'logout' ? '退出设备登录确认' : '移除常用设备确认')} className="device-confirm" returnFocusRef={heading} onClose={() => { if (!busy) setConfirmation(undefined) }}>
-      <span className="confirm-symbol"><WarningCircle size={28} /></span><h2>{tr(confirmation.kind === 'logout' ? '退出这台设备的登录？' : '移除这台常用设备？')}</h2><p className="confirm-target">{confirmation.name}</p><p>{tr(confirmation.kind === 'logout' ? '此设备将无法继续访问你的账号，需要重新登录。离线设备再次联网时完成退出，云端聊天记录会保留。' : '此设备下次登录需要重新进行安全验证。当前登录不会退出，聊天记录会保留。')}</p>
+      <span className="confirm-symbol"><WarningCircle size={28} /></span><h2>{tr(confirmation.kind === 'logout' ? '退出这台设备的登录？' : '移除这台常用设备？')}</h2><p className="confirm-target">{confirmation.name}</p><p>{tr(confirmation.kind === 'logout' ? '此设备将无法继续访问你的账号，需要重新登录。离线设备再次联网时完成退出，云端聊天记录会保留。' : '此设备将退出登录并取消信任，再次登录需要验证码、扫码或授权验证。离线设备再次联网时完成退出，云端聊天记录会保留。')}</p>
       {feedback && <p role="status">{feedback}</p>}<div className="confirm-actions"><button autoFocus disabled={busy} onClick={() => setConfirmation(undefined)}>{tr('取消')}</button><button disabled={busy} className="danger-primary" onClick={() => void submit(!!pending)}>{tr(busy ? '正在处理…' : pending ? '重新核实' : confirmation.kind === 'logout' ? '确认退出' : '确认移除')}</button></div>
     </Dialog>}
   </Dialog>

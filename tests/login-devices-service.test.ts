@@ -20,6 +20,18 @@ function fixture() {
   return { service, credentials, row, read, write, list, prepare, advance: () => { clock += 6 * 60_000 } }
 }
 describe('login device Host owner', () => {
+  it('forget requires confirmed revocation, tracks cleanup and rejects self removal', async () => {
+    const f = fixture()
+    const p = await f.service.execute({ action: 'prepare', accountScope: 'test:7', ref: (await f.list()).items[0]!.ref, kind: 'forget' }) as DeviceConfirmation
+    f.write.mockImplementation(async (_path, body) => ({ operation: { request_id: body.request_id, kind: 'forget', revision: 5 }, credential_revoked: false, cleanup_state: 'not-applicable' }))
+    expect(await f.service.execute({ action: 'confirm', accountScope: 'test:7', ticket: p.ticket })).toMatchObject({ state: 'unknown', cleanup: 'pending' })
+    f.write.mockImplementation(async (_path, body) => ({ operation: { request_id: body.request_id, kind: 'forget', revision: 5 }, credential_revoked: true, cleanup_state: 'complete' }))
+    expect(await f.service.execute({ action: 'confirm', accountScope: 'test:7', ticket: p.ticket })).toMatchObject({ state: 'applied', cleanup: 'complete' })
+    f.row.is_current = true
+    const self = (await f.list()).items[0]!
+    expect(self.canForget).toBe(false)
+    await expect(f.service.execute({ action: 'prepare', accountScope: 'test:7', ref: self.ref, kind: 'forget' })).rejects.toThrow()
+  })
   it('projects safe fields and does not confuse incomplete inventory with count', async () => {
     const f = fixture(), p = await f.list()
     expect(p.countComplete).toBe(false)

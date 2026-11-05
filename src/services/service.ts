@@ -761,6 +761,9 @@ export class ServiceRuntime {
         body: multipart ? body : stringifyOwnerJson(body),
         signal: controller.signal,
       })
+      if (path === '/api/public/v1/auth/login-by-pwd' && response.headers.get('X-Jotmo-Auth-Failure') === 'device_verification_required') {
+        throw new ArkmePluginError('device-verification-required', '此设备已取消信任，请使用验证码、扫码或授权方式重新登录', false, 403)
+      }
       if (response.status === 401 || (response.status === 403 && (!preserveForbiddenError || response.headers.get('X-Jotmo-Auth-Failure') === 'session_ended'))) {
         throw new ArkmePluginError(`auth-http-${response.status}`, 'Arkme 登录凭据已失效', false, response.status)
       }
