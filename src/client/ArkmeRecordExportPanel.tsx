@@ -95,14 +95,14 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
     return <div className="arkme-record-export" aria-busy={busy || loading || state.loading}>
  <style>{exportCss}</style>
  <div className="arkme-export-intro"><p>{tr('将快记与原文件直接保存到本地文件夹。')}</p>{onRefresh && <button type="button" className="arkme-export-refresh" disabled={locked || loading} title={tr('刷新导出信息')} aria-label={tr('刷新导出信息')} onClick={() => { state.refresh(); onRefresh(); }}><ArrowClockwise size={17} aria-hidden/></button>}</div>
- <div className="arkme-export-range-row"><div role="tablist" aria-label={tr('导出范围')} className="arkme-export-tabs">{(['incremental', 'dates', 'all'] as const).map((value, index) => <button type="button" role="tab" key={value} aria-selected={range === value} disabled={locked} onClick={() => switchRange(value)} onKeyDown={event => {
+ <div className="arkme-export-range-row"><span className="arkme-export-range-label">{tr('导出范围')}</span><div role="tablist" aria-label={tr('导出范围')} className="arkme-export-tabs">{(['incremental', 'dates', 'all'] as const).map((value, index) => <button type="button" role="tab" key={value} aria-selected={range === value} disabled={locked} onClick={() => switchRange(value)} onKeyDown={event => {
                 if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
                     event.preventDefault();
                     const next = (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
                     switchRange((['incremental', 'dates', 'all'] as const)[next]!);
                     (event.currentTarget.parentElement?.children[next] as HTMLButtonElement)?.focus();
                 }
-            }}>{tr(value === 'incremental' ? '增量' : value === 'dates' ? '按日期' : '全部')}</button>)}</div>{range === 'dates' && <ArkmeExportDateRange value={dates} disabled={locked} onChange={setDates}/>}</div>
+            }}>{tr(value === 'incremental' ? '增量导出' : value === 'dates' ? '按日期导出' : '全部导出')}</button>)}</div>{range === 'dates' && <ArkmeExportDateRange value={dates} disabled={locked} onChange={setDates}/>}</div>
  {range === 'incremental' && <div className="arkme-export-incremental"><strong>{savedAt ? tr('上次成功保存：') + new Date(savedAt).toLocaleString(arkmeIntlLocale()) : preview?.baselineRequired ? tr('先建立完整备份') : state.loading ? tr('正在读取增量进度…') : state.error ? tr('增量进度读取失败') : tr('尚未建立完整备份')}</strong><p>{tr('自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。')}</p></div>}
  {range === 'dates' && <p className="arkme-export-notice">{tr('按记录显示日期筛选，包含结束日期全天。')}</p>}
  {range !== 'incremental' && <p className="arkme-export-notice">{tr(preview?.localSnapshotOnly ? '当前离线，将导出上次完整保存的本地副本。' : preview?.localReplica ? '复用本地备份，仅同步变化，不占用全量导出次数。' : '日期与全部导出共用原有云端导出额度；本地已有原文件会优先复用。')}</p>}
