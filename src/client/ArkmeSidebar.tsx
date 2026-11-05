@@ -657,6 +657,7 @@ const styles: Record<string, CSSProperties> = {
   text: arkmeConversationMessageLayout.text,
   meta: arkmeConversationMessageLayout.meta,
   polishMeta: { minHeight: 14, marginBottom: 2, color: colors.secondary, fontSize: 10, lineHeight: '14px', display: 'flex', gap: 8, alignItems: 'center' },
+  fileTaskAction: { border: 0, padding: '2px 6px', borderRadius: 4, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', whiteSpace: 'nowrap' },
   retry: { border: 0, padding: 0, background: 'transparent', color: arkmeTheme.danger, cursor: 'pointer', fontSize: 11 },
   notice: { alignSelf: 'center', maxWidth: 520, padding: '8px 12px 0', color: colors.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   memberJoinNotice: { alignSelf: 'center', width: '100%', boxSizing: 'border-box', color: arkmeTheme.caption, textAlign: 'center' },
@@ -8254,16 +8255,21 @@ export function ArkmeSurface({
                               : messageTimestamp}
                           </div>
                           const fileSendStatus = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task)).map(task => <ArkmeSendTaskStatus label={tr('附件发送状态')} key={task.taskRef} state={task.state} own={presentationIsMe}>
-                              {task.error ?? (task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}
-                              {task.state === 'failed' && task.retryable !== false && !directAdmission.blocked && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(timelineActions.current.refreshFiles).catch(caught => setError(errorMessage(caught))) }}>{tr("重试")}</button>}
-                              {task.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { timelineActions.current.refreshFiles(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>{tr("核对发送结果")}</button>}
-                              {(task.state === 'failed' || task.state === 'uncertain') && <>{' '}<button data-arkme-feedback="danger" type="button" aria-label={tr("清除发送记录")} onClick={event => {
+                              <div style={{ display: 'inline-flex', alignItems: 'baseline', justifyContent: presentationIsMe ? 'flex-end' : 'flex-start', flexWrap: 'wrap', gap: '2px 6px' }}>
+                                {task.error ? <details style={{ maxWidth: '100%', textAlign: 'left' }}>
+                                  <summary style={{ cursor: 'pointer', color: task.state === 'failed' ? arkmeTheme.danger : arkmeTheme.secondary }}>{tr(task.state === 'uncertain' ? '发送结果待确认' : task.result && task.delivery === 'progressive' ? '附件上传失败，消息已发送' : '发送失败')}</summary>
+                                  <span style={{ display: 'block', maxWidth: 320, marginTop: 4 }}>{task.error}</span>
+                                </details> : <span>{tr(task.state === 'sending' ? '正在发送…' : task.state === 'queued' ? '等待上传' : '正在上传')}</span>}
+                              {task.state === 'failed' && task.retryable !== false && !directAdmission.blocked && <button data-arkme-feedback="neutral" type="button" style={styles.fileTaskAction} onClick={event => { event.stopPropagation(); void callArkme('files.send.retry', { taskRef: task.taskRef }).then(timelineActions.current.refreshFiles).catch(caught => setError(errorMessage(caught))) }}>{tr("重试")}</button>}
+                              {task.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.fileTaskAction} onClick={event => { event.stopPropagation(); void callArkme<ArkmeFileSendTask>('files.send.reconcile', { taskRef: task.taskRef }).then(value => { timelineActions.current.refreshFiles(); if (value.state === 'uncertain') setError('最近的会话记录还无法确认发送结果，请先核对原会话，不要重复发送') }).catch(caught => setError(errorMessage(caught))) }}>{tr("核对发送结果")}</button>}
+                              {(task.state === 'failed' || task.state === 'uncertain') && <>{' '}<button data-arkme-feedback="danger" type="button" style={{ ...styles.fileTaskAction, color: arkmeTheme.tertiary }} aria-label={tr("清除发送记录")} onClick={event => {
                                 event.stopPropagation()
                                 if (task.state === 'uncertain' && !window.confirm('发送结果仍未确认。清除记录不会撤回可能已发送的消息，是否继续？')) return
                                 void callArkme('files.send.discard', { taskRef: task.taskRef })
                                   .then(timelineActions.current.refreshFiles)
                                   .catch(caught => setError(errorMessage(caught)))
                               }}>{tr("清除")}</button></>}
+                              </div>
                             </ArkmeSendTaskStatus>)
                           const sendFailure = conversationMessageSendFailure(item)
                           const textSendStatus = sendFailure && <ArkmeSendTaskStatus label={tr('消息发送状态')} state={sendFailure.state} own={presentationIsMe}>
