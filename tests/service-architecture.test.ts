@@ -86,6 +86,7 @@ const expectedPublicMethods = [
   'dispose', 'requestStats', 'resolveManagedAccessCredential', 'cachedProfile', 'publicAvatarPresentationsByArkmeIds', 'publicAvatarPresentationsByUserIds', 'extensionAuthors', 'listExtensionReviews',
   'backgroundSoundPreference', 'updateBackgroundSoundPreference',
   'topicHomeVisibility',
+  'hiddenTopicSource',
   'resolveLinkMetadata', 'resolveSharePreview',
   'searchContact', 'addContact', 'joinContactTeam',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
