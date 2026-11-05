@@ -374,3 +374,41 @@ it('clears opened contacts on account or provider reset and ignores an old owner
   openedTeamConversations.reset()
   expect(readTeamDirectory('opened-new').items).toEqual([])
 })
+
+it('keeps the ordinary directory and private preference protocol when workspace routes are absent', async () => {
+  mock.mockImplementation(async (operation, p) => {
+    if (operation === 'team.app.workspace.request') throw Object.assign(new Error('unsupported'), { body: { code: 'team-workspace-unsupported' } })
+    if (operation.startsWith('team.app.entries.')) return { schemaVersion: 1, items: [], hasMore: false }
+    return { items: [item(p.side)], hasMore: false }
+  })
+  stops.push(startTeamDirectory('legacy-backend'))
+  await vi.waitFor(() => expect(readTeamDirectory('legacy-backend').hasLoaded).toBe(true))
+  expect(readTeamDirectory('legacy-backend')).toMatchObject({ workspaceSupported: false, items: expect.any(Array) })
+  expect(readTeamDirectory('legacy-backend').items).toHaveLength(2)
+  expect(readTeamDirectory('legacy-backend').foldersError).toBeUndefined()
+  await vi.waitFor(() => expect(mock.mock.calls.some(([op]) => op === 'team.app.entries.list')).toBe(true))
+  expect(mock.mock.calls.filter(([op]) => op.startsWith('team.app.entries.')).every(([,p]) => !p.scope)).toBe(true)
+})
+it('keeps real workspace failures visible instead of pretending the old server was detected', async () => {
+  mock.mockImplementation(async (operation, p) => {
+    if (operation === 'team.app.workspace.request') throw Object.assign(new Error('denied'), { body: { code: 'team-not_accessible' } })
+    return { items: p.side ? [item(p.side)] : [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('denied-backend'))
+  await vi.waitFor(() => expect(readTeamDirectory('denied-backend').hasLoaded).toBe(true))
+  expect(readTeamDirectory('denied-backend').workspaceSupported).toBeUndefined()
+  expect(readTeamDirectory('denied-backend').foldersError).toBe('denied')
+})
+
+it('publishes existing private rows while the optional workspace discovery is still pending',async()=>{
+ let resolve!:(value:unknown)=>void
+ const workspace=new Promise(ok=>{resolve=ok})
+ mock.mockImplementation(async(op,p)=>op==='team.app.workspace.request'?workspace:op.startsWith('team.app.entries.')?{schemaVersion:1,items:[],hasMore:false}:{items:[item(p.side)],hasMore:false})
+ stops.push(startTeamDirectory('slow-workspace'))
+ await vi.waitFor(()=>expect(readTeamDirectory('slow-workspace').hasLoaded).toBe(true))
+ expect(readTeamDirectory('slow-workspace').items).toHaveLength(2)
+ expect(readTeamDirectory('slow-workspace').workspaceSupported).toBeUndefined()
+ resolve([])
+ await vi.waitFor(()=>expect(readTeamDirectory('slow-workspace').workspaceSupported).toBe(true))
+ expect(readTeamDirectory('slow-workspace').items).toHaveLength(2)
+})

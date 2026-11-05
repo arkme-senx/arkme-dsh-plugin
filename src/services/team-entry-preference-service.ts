@@ -63,6 +63,12 @@ export class TeamEntryPreferenceService {
     const storage = this.storage.teamEntryPreferenceState?.bind(this.storage)
     if (!storage) throw new ArkmePluginError('team-entry-storage-unavailable', '入口同步存储暂不可用', true, 503)
     const workspace=p.scope==='workspace',protocol=workspace?2:1
+    // Commands created under the published private-entry protocol retain their
+    // endpoint and idempotency key when the workspace becomes available.
+    if (workspace && !operation.endsWith('.cached')) {
+      const privateState = object(await storage(account))
+      if (Object.keys(object(privateState.pending)).length) await this.run('team.app.entries.list', {}, actor, account, post)
+    }
     const storeAccount=workspace?`${account}:workspace`:account
     const upstream:Post=(path,body,read)=>post(workspace&&path!=='entry-preferences/import'?path.replace('entry-preferences/','entry-preferences/v2/'):path,body,read)
     const raw = object(await storage(storeAccount)), saved: Saved = { snapshots: {}, pending: {} }

@@ -8,7 +8,7 @@ import type { TeamChannel, TeamConversation, TeamPage, TeamSide, TeamConversatio
 import { teamDirectoryPreferences, teamEntryHidden, teamEntryPinned, type TeamDirectoryPreferences } from './team-directory-preferences.js'
 import { openedTeamConversations, mergeOpenedTeamConversation } from './team-opened-conversations.js'
 
-type Snapshot = { workspaceFolders:TeamWorkspaceFolder[]; foldersError?:string; items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
+type Snapshot = { workspaceSupported?:boolean; workspaceFolders:TeamWorkspaceFolder[]; foldersError?:string; items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
 const empty: Snapshot = Object.freeze({ workspaceFolders:[], items: [], hasMore: false, loading: false, hasLoaded: false })
 const listeners = new Set<() => void>()
 let account = '', snapshot = empty, request: ((more?: boolean, readStateOnly?: boolean) => Promise<void>) | undefined
@@ -47,13 +47,26 @@ export function startTeamDirectory(key: string): () => void {
     const token = revision
     if (!readStateOnly) { snapshot = { ...snapshot, loading: true }; emit() }
     let failure: string | undefined, accessLost = false
-    const foldersRead=(async()=>{
+    void(async()=>{
       if(more||readStateOnly)return
       try {
         const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,request:{operation:'folders'}},controller.signal)
         if(!Array.isArray(value))throw new Error('团队群文件夹暂时无法刷新')
-        if(!controller.signal.aborted&&account===key&&token===revision){const {foldersError:_,...current}=snapshot;snapshot={...current,workspaceFolders:value}}
-      } catch(e) {if(!controller.signal.aborted&&account===key&&token===revision)snapshot={...snapshot,workspaceFolders:[],foldersError:e instanceof Error?e.message:'团队群文件夹暂时无法刷新'}}
+        if(!controller.signal.aborted&&account===key&&token===revision){const {foldersError:_,...current}=snapshot;snapshot={...current,workspaceSupported:true,workspaceFolders:value};teamDirectoryPreferences.setWorkspaceAvailable(key,true)}
+      } catch(e) {
+        if(!controller.signal.aborted&&account===key&&token===revision) {
+          if ((e as {body?:{code?:string}})?.body?.code === 'team-workspace-unsupported') {
+            const {foldersError:_,...current}=snapshot
+            snapshot={...current,workspaceSupported:false,workspaceFolders:[]}
+            teamDirectoryPreferences.setWorkspaceAvailable(key,false)
+          } else snapshot={...snapshot,workspaceFolders:[],foldersError:e instanceof Error?e.message:'团队群文件夹暂时无法刷新'}
+        }
+      } finally {
+        if(!controller.signal.aborted&&account===key&&token===revision&&snapshot.hasLoaded) {
+          emit()
+          void teamDirectoryPreferences.hydrate(key,true).then(()=>teamDirectoryPreferences.reconcile(key,itemsNow(),controller.signal)).catch(()=>{})
+        }
+      }
     })()
     await Promise.all((['team', 'external'] as const).map(async side => {
       const previous = pages.get(side)
@@ -113,12 +126,11 @@ export function startTeamDirectory(key: string): () => void {
         }
       }
     }))
-    await foldersRead
     running = false
     if (controller.signal.aborted || account !== key) return
     if (accessLost) ++revision
     const items = itemsNow()
-    snapshot = { workspaceFolders:snapshot.workspaceFolders,...(snapshot.foldersError?{foldersError:snapshot.foldersError}:{}),items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
+    snapshot = { ...(snapshot.workspaceSupported===undefined?{}:{workspaceSupported:snapshot.workspaceSupported}),workspaceFolders:snapshot.workspaceFolders,...(snapshot.foldersError?{foldersError:snapshot.foldersError}:{}),items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
     if (!readStateOnly && token === revision) {
       // Optional preference IO runs after publishing ordinary directory rows.
       void (async () => {

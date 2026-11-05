@@ -18,18 +18,32 @@ export const teamEntryConversations = (target: TeamEntryTarget) => target.kind==
 export const teamEntryHidden = (preferences: TeamDirectoryPreferences, target: TeamEntryTarget) => preferences[teamEntryKey(target)]?.dismissed === true
 export const teamEntryPinned = (preferences: TeamDirectoryPreferences, target: TeamEntryTarget) => preferences[teamEntryKey(target)]?.pinned === true
 type Transport = (operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal) => Promise<TeamEntryPreferencePage>
-type State = { saved: Map<string, TeamEntryPreferenceSnapshot>; aliases: Map<string, string>; optimistic: Map<string, { token: number; value: Preference }>; view: TeamDirectoryPreferences; queue: Promise<unknown>; loading?: Promise<void> | undefined; loaded: boolean; error: string; notice: string }
+type State = { workspace: boolean; saved: Map<string, TeamEntryPreferenceSnapshot>; aliases: Map<string, string>; optimistic: Map<string, { token: number; value: Preference }>; view: TeamDirectoryPreferences; queue: Promise<unknown>; loading?: Promise<void> | undefined; loaded: boolean; error: string; notice: string }
 
 /** Server snapshots decide visibility. Browser memory only projects pending explicit user commands. */
 export class TeamDirectoryPreferenceStore {
   private states = new Map<string, State>()
   private listeners = new Set<() => void>()
   private token = 0
+  private workspaceAccounts = new Set<string>()
+  setWorkspaceAvailable(account: string, available: boolean) {
+    if (this.workspaceAccounts.has(account) === available) return
+    const previous = this.state(account)
+    if (available) this.workspaceAccounts.add(account); else this.workspaceAccounts.delete(account)
+    const next = this.state(account)
+    // Availability changes presentation scope, never the order of user commands.
+    next.queue = Promise.allSettled([next.queue, previous.queue]).then(() => {})
+    this.publish(next)
+  }
+  private send(state: State, operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal) {
+    return this.transport(operation, { ...params, ...(state.workspace ? { scope: 'workspace' } : {}) }, signal)
+  }
   constructor(private transport: Transport, private operationId = () => crypto.randomUUID()) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private state(account: string) {
-    let state = this.states.get(account)
-    if (!state) { state = { saved: new Map(), aliases: new Map(), optimistic: new Map(), view: empty, queue: Promise.resolve(), loaded: false, error: '', notice: '' }; this.states.set(account, state) }
+    const workspace = this.workspaceAccounts.has(account), scope = JSON.stringify([account, workspace])
+    let state = this.states.get(scope)
+    if (!state) { state = { workspace, saved: new Map(), aliases: new Map(), optimistic: new Map(), view: empty, queue: Promise.resolve(), loaded: false, error: '', notice: '' }; this.states.set(scope, state) }
     return state
   }
   read = (account: string): TeamDirectoryPreferences => account ? this.state(account).view : empty
@@ -74,11 +88,11 @@ export class TeamDirectoryPreferenceStore {
     if (state.loading) return state.loading
     if (state.loaded && !force) return Promise.resolve()
     const run = state.queue.catch(() => {}).then(async () => {
-      if (!state.loaded) this.accept(state, await this.transport('team.app.entries.cached', { expectedAccountKey: account }))
+      if (!state.loaded) this.accept(state, await this.send(state, 'team.app.entries.cached', { expectedAccountKey: account }))
       let cursor: string | undefined
       const seen = new Set<string>()
       do {
-        const page = await this.transport('team.app.entries.list', { expectedAccountKey: account, ...(cursor ? { cursor } : {}) })
+        const page = await this.send(state, 'team.app.entries.list', { expectedAccountKey: account, ...(cursor ? { cursor } : {}) })
         this.accept(state, page)
         if (page.hasMore && (!page.nextCursor || seen.has(page.nextCursor))) throw new Error('入口偏好分页异常')
         cursor = page.hasMore ? page.nextCursor : undefined
@@ -138,15 +152,15 @@ export class TeamDirectoryPreferenceStore {
         if (!entries.length) return
         params = { entries: entries.map(e => e.ref), expectedAccountKey: account }
         // Recheck before a new explicit command. The Host replays any persisted response-loss command first.
-        this.accept(state, await this.transport('team.app.entries.query', params, signal), entries.map(e => e.key))
+        this.accept(state, await this.send(state, 'team.app.entries.query', params, signal), entries.map(e => e.key))
         signal?.throwIfAborted()
         const chosen = action === 'restore' ? entries.filter(e => state.saved.get(state.aliases.get(e.key) ?? e.key)?.dismissed) : entries
         if (!chosen.length) return
         const changes = chosen.map(e => ({ target: e.ref, action, expectedVersion: state.saved.get(state.aliases.get(e.key) ?? e.key)?.version ?? 0 }))
-        this.accept(state, await this.transport('team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }, signal))
+        this.accept(state, await this.send(state, 'team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }, signal))
       } catch (error) {
         if (signal?.aborted) return
-        if (params) try { this.accept(state, await this.transport('team.app.entries.query', params, signal), entries.map(e => e.key)) } catch { /* Durable Host command remains frozen for reconnect. */ }
+        if (params) try { this.accept(state, await this.send(state, 'team.app.entries.query', params, signal), entries.map(e => e.key)) } catch { /* Durable Host command remains frozen for reconnect. */ }
         state.error = '入口设置同步未确认，请重试'
         throw error
       } finally {
@@ -176,7 +190,7 @@ export class TeamDirectoryPreferenceStore {
       // Queue one batch at a time, allowing user commands between large pages.
       const run = state.queue.catch(() => {}).then(async () => {
         signal.throwIfAborted()
-        const page = await this.transport('team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
+        const page = await this.send(state, 'team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
         signal.throwIfAborted(); this.accept(state, page, batch.map(e => e[0]))
       })
       state.queue = run
@@ -195,7 +209,7 @@ export class TeamDirectoryPreferenceStore {
     return state.saved.get(state.aliases.get(key)??key)?.accessible!==false && teamEntryConversations(target).every(c=>this.canPresent(account,c))
   }
 }
-export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) => callArkme(operation, {...params,scope:'workspace'}, signal))
+export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) => callArkme(operation, params, signal))
 export function useTeamDirectoryPreferences(account: string) {
   useEffect(() => { if (account) void localDirectoryPreferences.hydrate(account).catch(() => {}).then(() => teamDirectoryPreferences.hydrate(account)).catch(() => {}) }, [account])
   return useSyncExternalStore(teamDirectoryPreferences.subscribe, () => teamDirectoryPreferences.read(account), () => empty)

@@ -284,6 +284,7 @@ export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets' | 'mention
       media_refs: draft.assets.map((f, index) => ({ file_asset_uid: f.fileAssetUid, render_role: 1, sort_order: index, file_name: f.fileName })) } } : {}) }
 }
 export function TeamConversationPane({ conversation, accountKey, onChanged, onReadChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onChanged(): void; onReadChanged?(): void; onAccessLost?(): void }) {
+  const workspace = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
   useArkmeLocale()
   const [markScope,setMarkScope]=useState<'local'|'team'|'conversation'>('local')
   const markTransport=useMemo(()=>markScope==='local'?teamMessageMarkTransport:teamSharedMarkTransport(markScope),[markScope])
@@ -1133,7 +1134,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         onLocate={locateVisitorRecord}/>
 
     </header>
-    {conversation.side==='team'&&<TeamGroupSourceCards key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation}/>}
+    {conversation.side==='team'&&(workspace.workspaceSupported===true||conversation.sourceOnly||conversation.hasGroupSources)&&<TeamGroupSourceCards key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation}/>}
     {Boolean(quoteNavigation.notice || replyBack.current) && <div role="status">{quoteNavigation.notice}
       {replyBack.current && <button type="button" onClick={()=>{const back=replyBack.current!;replyBack.current=undefined;quoteNavigation.clear();void locateMessage(back.ref,back.key)}}>{tr('返回回复位置')}</button>}
     </div>}

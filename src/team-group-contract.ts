@@ -34,7 +34,7 @@ export interface TeamGroupIdentity {team:ArkmeTeam;selection:TeamRepresentationS
 export interface TeamRepresentationSendOptions {representation?:TeamRepresentationSelection;sendAtMillis?:number}
 
 export interface TeamGroupJoinContext {
-  state:'ready'
+  state:'ready' | 'backend_pending'
   teams:Array<ArkmeTeam & {key:string;joined:boolean;revision:number}>
 }
 export type TeamGroupCommandAction = 'join'|'leave'|'remove'|'approve'|'reject'

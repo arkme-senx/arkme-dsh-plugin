@@ -27,7 +27,7 @@ function useTeamGroupContext<T extends TeamGroupContext|TeamGroupJoinContext=Tea
     void callArkme<T>(mode==='join'?'team.app.group.join-context':'team.app.group.context', { expectedAccountKey: accountKey, sourceRef }, controller.signal)
       .then(value => {
         if (controller.signal.aborted) return
-        if (value.state!=='ready' || !Array.isArray(value.teams)||mode==='join'&&value.teams.some(t=>!t.key||!t.teamRef||!t.jotmoId)) throw new Error(tr('团队状态返回异常，请重试'))
+        if (!['ready','backend_pending'].includes(value.state) || !Array.isArray(value.teams)||mode==='join'&&value.teams.some(t=>!t.key||!t.teamRef||!t.jotmoId)) throw new Error(tr('团队状态返回异常，请重试'))
         setState({ scope, value })
       }).catch(error => { if (!controller.signal.aborted) setState({ scope, error: errorText(error) }) })
     return () => controller.abort()
@@ -116,7 +116,8 @@ function ScopedTeamGroupJoinPanel({ accountKey, source }: { accountKey: string; 
       <p style={styles.hint}>{tr('个人历史消息不会自动共享；加入需要群聊与团队双方的权限校验。')}</p>
       {!context.value && !context.error && <p role="status">{tr('正在加载我的团队…')}</p>}
       {context.error && <p role="alert">{context.error} <button style={styles.link} onClick={context.retry}>{tr('重试')}</button></p>}
-      {context.value && <>
+      {context.value?.state==='backend_pending' && <TeamGroupPendingNotice />}
+      {context.value?.state==='ready' && <>
         <div role="radiogroup" aria-label={tr('选择加入群聊的团队')}>{teams.map(value => <button type="button" role="radio" aria-checked={selected === value.jotmoId}
           key={value.jotmoId} disabled={busy} onClick={() => choose(value)}
           style={{ ...styles.team, background: selected === value.jotmoId ? arkmeTheme.active : 'transparent' }}>

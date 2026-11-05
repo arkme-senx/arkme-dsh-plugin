@@ -1362,3 +1362,17 @@ it('approves the exact permanent admission identity rather than the applicants r
  expect(JSON.stringify(page)).not.toContain('permanent-admission')
  await expect(f.service.execute('team.app.group.command',{sourceRef:'group-ref',teamRef:page.items[0]!.teamRef,admissionRef:page.items[0]!.admissionRef,expectedRevision:2,requestUid:'manager-request',action:'approve'})).resolves.toMatchObject({state:'joined'})
 })
+
+// A plugin may reach existing accounts before these server routes are deployed.
+it('reports absent Team group routes without granting access or issuing a write', async () => {
+  const f = fixture(() => new Response('404 page not found', { status: 404 }))
+  await expect(f.service.execute('team.app.group.join-context', { sourceRef: 'group' })).resolves.toEqual({ state: 'backend_pending', teams: [] })
+  await expect(f.service.execute('team.app.group.participants', { sourceRef: 'group' })).rejects.toMatchObject({ code: 'team-group-backend-pending' })
+  await expect(f.service.execute('team.app.workspace.folders', {})).rejects.toMatchObject({ code: 'team-workspace-unsupported' })
+  expect(f.requests.every(r => /context|participants|workspace\/folders/.test(r.path))).toBe(true)
+})
+it.each([403,500])('does not hide HTTP %s as a missing workspace or group capability', async status => {
+  const f = fixture(() => new Response('failed', { status }))
+  await expect(f.service.execute('team.app.group.join-context', { sourceRef: 'group' })).rejects.not.toMatchObject({ code: 'team-group-backend-pending' })
+  await expect(f.service.execute('team.app.workspace.folders', {})).rejects.not.toMatchObject({ code: 'team-workspace-unsupported' })
+})

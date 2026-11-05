@@ -27,3 +27,17 @@ export async function verifyInstalledTeamWorkspace(fetchImpl:typeof fetch,person
     return {sourceRef:group.source.sourceRef,teamRef:context.teams[0].teamRef}
   } finally {sdk.dispose()}
 }
+
+export async function verifyInstalledOldBackend(fetchImpl:typeof fetch,personalSourceRef:string) {
+ const sdk=new ArkmeSdk({fetchImpl})
+ try {
+  const context=await sdk.teamGroups({operation:'join-context',sourceRef:personalSourceRef}) as TeamGroupJoinContext
+  assert(context.state==='backend_pending'&&context.teams.length===0,'server pending grants no admission')
+  const timeline=await sdk.readSource(personalSourceRef,{limit:20})
+  assert(timeline.source.accessKind!=='team_delegation','existing personal scope')
+  let code=''
+  try{await sdk.teamWorkspace({operation:'folders'})}catch(error){code=String((error as {body?:{code?:string}}).body?.code)}
+  assert(code==='team-workspace-unsupported','missing backend workspace is explicit')
+  return {context:context.state,timelineItems:timeline.items.length,workspace:code}
+ }finally{sdk.dispose()}
+}

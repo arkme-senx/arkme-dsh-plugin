@@ -1,3 +1,4 @@
+import { isBackendRouteUnavailable } from './service-error.js'
 import {TeamMemberAddition} from './team-member-addition.js'
 import { teamHistoryOperation, teamHistoryChunk, type TeamHistoryAdapter } from './team-history-service.js'
 import type { TeamHistoryAction, TeamHistoryOptions } from '../team-history-contract.js'
@@ -433,7 +434,14 @@ export class TeamAppService {
     }
     const post = async (path: string, body: Record<string, unknown> = {}, read = false,wire:{stringIdFields?:readonly string[]}={}): Promise<Record<string, unknown>> => {
       await assertAccount()
-      const result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read,wire)
+      let result: unknown
+      try { result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read,wire) }
+      catch (error) {
+        if (read && /^(workspace|group-sources)\//.test(path) && isBackendRouteUnavailable(error)) {
+          throw new ArkmePluginError('team-workspace-unsupported', '服务端尚未提供团队群工作区', false, 501)
+        }
+        throw error
+      }
       await assertAccount()
       return obj(result)
     }
@@ -462,11 +470,23 @@ export class TeamAppService {
     const source = operation==='team.app.group.directory'||operation==='team.app.group.status' ? undefined
       : await this.contacts?.openSourceRef?.(str(p.sourceRef),actor)
     if (source && source.kind!=='group_chat' || !source && operation!=='team.app.group.directory'&&operation!=='team.app.group.status') throw invalid()
-    const call=async(path:string,body:Record<string,unknown>,read=true)=>obj(await this.runtime.authenticatedChatPost(`/api/v1/chats/team-group/${path}`,body,session,signal,
-      {lane:read?'interactive-read':'write',bypassCache:true,stringIdFields:['team_id'],...(source?.groupDelegation?{chatAccessRef:source.groupDelegation.accessRef}:{})}))
+    const call = async (path: string, body: Record<string, unknown>, read = true) => {
+      try {
+        return obj(await this.runtime.authenticatedChatPost(`/api/v1/chats/team-group/${path}`, body, session, signal,
+          { lane: read ? 'interactive-read' : 'write', bypassCache: true, stringIdFields: ['team_id'], ...(source?.groupDelegation ? { chatAccessRef: source.groupDelegation.accessRef } : {}) }))
+      } catch (error) {
+        if (isBackendRouteUnavailable(error)) throw new ArkmePluginError('team-group-backend-pending', '服务端尚未提供团队入群能力', false, 501)
+        throw error
+      }
+    }
     const group=source?.ownerRef
     if(operation==='team.app.group.join-context') {
-      const raw=await call('context',{chat_session_uid:group})
+      let raw: Record<string, unknown>
+      try { raw = await call('context', { chat_session_uid: group }) }
+      catch (error) {
+        if (error instanceof ArkmePluginError && error.code === 'team-group-backend-pending') return { state: 'backend_pending', teams: [] } satisfies TeamGroupJoinContext
+        throw error
+      }
       if(raw.state!=='ready'||!Array.isArray(raw.teams)||!Array.isArray(raw.team_memberships))throw invalid()
       const memberships=new Map(list(raw.team_memberships).map(m=>[str(m.team_id),m]))
       const teams=await Promise.all(list(raw.teams).map(async t=>{

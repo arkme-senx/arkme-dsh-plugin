@@ -57,7 +57,9 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
   accountKey: string; folder: NonNullable<ArkmeUiState['teamDirectory']>; selectedKey?: string; onBack(): void
 }) {
   const teamRef=folder.teamRef??folder.channel?.teamRef
-  if(teamRef)return <TeamWorkspaceDirectory key={JSON.stringify([accountKey,folder.channel?.jotmoId??teamRef])} accountKey={accountKey} teamRef={teamRef} channel={folder.channel} selectedKey={selectedKey} onBack={onBack}/>
+  const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
+  if(teamRef&&!directory.hasLoaded&&directory.workspaceSupported===undefined)return <p className="team-empty" role="status">{tr('正在加载团队对话…')}</p>
+  if(teamRef&&directory.workspaceSupported===true)return <TeamWorkspaceDirectory key={JSON.stringify([accountKey,folder.channel?.jotmoId??teamRef])} accountKey={accountKey} teamRef={teamRef} channel={folder.channel} selectedKey={selectedKey} onBack={onBack}/>
   return <TeamConversationRootDirectory accountKey={accountKey} folder={folder} selectedKey={selectedKey} onBack={onBack}/>
 }
 function TeamConversationRootDirectory({accountKey,folder,selectedKey,onBack}:{accountKey:string;folder:NonNullable<ArkmeUiState['teamDirectory']>;selectedKey?:string|undefined;onBack():void}) {

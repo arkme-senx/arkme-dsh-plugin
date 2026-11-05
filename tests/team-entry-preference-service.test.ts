@@ -96,3 +96,18 @@ it('keeps v1 isolated while workspace group commands persist exact stable identi
   expect((await f.service.execute('team.app.entries.cached',{},11,'test',post)).items).toEqual([])
   expect(f.disk.has('test:11:workspace')).toBe(true)
 })
+
+it('replays a persisted private command at its original endpoint before reading the new workspace', async () => {
+ const f=fixture(),operationId=randomUUID()
+ const command={operationId,changes:[{target,action:'pin',expectedVersion:0}]}
+ const post=vi.fn(async()=>{throw new Error('response lost')})
+ await expect(f.service.execute('team.app.entries.change',command,11,'test',post)).rejects.toThrow('response lost')
+ const frozen=(f.disk.get('test:11') as any).pending[operationId]
+ post.mockImplementation(async(path,body)=>path.startsWith('entry-preferences/v2/')?{...data({pinned:true,version:1}),schema_version:2}:data({pinned:true,version:1}))
+ post.mockClear()
+ const result=await f.service.execute('team.app.entries.list',{scope:'workspace'},11,'test',post)
+ expect(post.mock.calls.map(([path])=>path)).toEqual(['entry-preferences/change','entry-preferences/list','entry-preferences/v2/list'])
+ expect(post.mock.calls[0]![1]).toEqual(frozen)
+ expect((f.disk.get('test:11') as any).pending).toEqual({})
+ expect(result.schemaVersion).toBe(2)
+})

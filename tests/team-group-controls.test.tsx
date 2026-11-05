@@ -232,3 +232,11 @@ it('restores the same join intent after the panel closes, source refs rotate and
   const last=call.mock.calls.filter(([op])=>op==='team.app.group.join').at(-1)![1]
   expect(last).toMatchObject({requestUid:first.requestUid,expectedRevision:first.expectedRevision,sourceRef:'rotated-ref'})
 })
+
+it('retains the colleague pending notice and disables admission when the server is not ready', async () => {
+  call.mockResolvedValue({ state: 'backend_pending', teams: [] })
+  await mount(<TeamGroupJoinPanel accountKey="test:90" source={source} />)
+  expect(host.textContent).toContain(TEAM_GROUP_PENDING_TEXT)
+  expect(host.querySelector('button')?.disabled).toBe(true)
+  expect(call.mock.calls.map(([op]) => op)).toEqual(['team.app.group.join-context'])
+})

@@ -3,6 +3,7 @@ import {act} from 'react'
 import {createRoot,type Root} from 'react-dom/client'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {TeamWorkspaceDirectory} from '../src/client/TeamWorkspaceDirectory.js'
+import {teamDirectoryPreferences} from '../src/client/team-directory-preferences.js'
 import {arkmeUi} from '../src/client/ui-controller.js'
 import type {TeamChannel,TeamConversation} from '../src/team-app-contract.js'
 import type {TeamWorkspacePage} from '../src/team-group-contract.js'
@@ -18,7 +19,7 @@ beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);call.mockReset();
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals()})
 const group={kind:'group_chat' as const,sourceRef:'encrypted-source',sourceKey:'team-scope',accessKind:'team_delegation' as const,displayName:'客户群',activeAtMillis:300,unreadCount:0}
 const page:TeamWorkspacePage={items:[{kind:'group',key:'group',activityAt:300,source:group,entryKey:'group-pref',entryRef:'group-pref-ref'},{kind:'customer',key:'customer-a',activityAt:200,conversation:customer('hidden',200)},{kind:'customer',key:'customer-b',activityAt:100,conversation:customer('ordinary',100)}],hasMore:false,complete:true,resetRequired:false,unavailableSources:[]}
-async function mount(){await act(async()=>root.render(<TeamWorkspaceDirectory accountKey="test:90" teamRef={channel.teamRef} channel={channel} onBack={()=>{}}/>))}
+async function mount(){teamDirectoryPreferences.setWorkspaceAvailable('test:90',true);await act(async()=>root.render(<TeamWorkspaceDirectory accountKey="test:90" teamRef={channel.teamRef} channel={channel} onBack={()=>{}}/>))}
 
 it('keeps private customer dismissal and pins outside the current page in the same mixed team directory',async()=>{
   prefs.hidden={pinned:false,dismissed:true};prefs.deep={pinned:true,dismissed:false};legacy.items=[customer('deep',1)]

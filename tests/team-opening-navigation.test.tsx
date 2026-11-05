@@ -99,6 +99,7 @@ it('keeps an opened empty member inbox stable while focus refresh waits for the 
     if (op === 'team.app.official') return channel
     if (op === 'team.app.open') return { channel, openInbox: true }
     if (op === 'team.app.attention') return { team: false, external: false, applications: false }
+    if (op === 'team.app.workspace.request') return []
     if (op === 'team.app.workspace') {
       if(phase==='initial')return initial.then(()=>workspacePage([]))
       if(phase==='refresh')return refresh.then(()=>workspacePage([]))
@@ -134,6 +135,7 @@ it('returns to the same team after replying, switches visitors and keeps each dr
   mocks.call.mockImplementation(async (op: string, params: { side?: string; conversationRef?: string; clientUid?: string; content?: { text_content: string } }) => {
     if (op === 'team.app.attention') return {team: false, external: false, applications: false}
     if (op === 'team.app.channel') return {...channel, teamRef:'fresh-encrypted-channel-reference'}
+    if (op === 'team.app.workspace.request') return []
     if (op === 'team.app.workspace') return workspacePage([first,second])
     if (op === 'team.app.conversations') return {items: params.side === 'team' ? [first, second, elsewhere] : [], hasMore: false}
     if (op === 'team.app.timeline') return {conversation: params.conversationRef === first.ref ? first : second, messages: params.conversationRef === first.ref ? messages : [], hasMore: false, beforeSeq: 0}
@@ -193,6 +195,7 @@ it('opens the selected team directly when it is outside the global private page 
   const target: TeamConversation={key:'late-visitor',ref:'late-visitor',side:'team',channel,visitor:{nickname:'后页访客'},lastSeq:3,latestTeamReplySeq:0,myReadSeq:0,unread:3,needsReply:true,blocked:false,revision:1,updatedAt:10}
   mocks.call.mockImplementation(async (op:string,params:{side?:string;cursor?:string})=>{
     if(op==='team.app.attention') return {team:false,external:false,applications:false}
+    if(op==='team.app.workspace.request')return []
     if(op==='team.app.workspace')return workspacePage([target])
     if(op==='team.app.conversations') return params.side==='external'?{items:[],hasMore:false}:params.cursor?{items:[target],hasMore:false}:{items:[],hasMore:true,nextCursor:'page2'}
     throw new Error(op)
@@ -211,6 +214,7 @@ it('background list reorder and failure retain selection, scroll and readable ca
   mocks.call.mockImplementation(async(op:string,params:{side?:string})=>{
     if(op==='team.app.attention')return {team:false,external:false,applications:false}
     if(op==='team.app.conversations') {if(failed)throw new Error('暂时离线');return {items:params.side==='team'?rows:[],hasMore:false}}
+    if(op==='team.app.workspace.request')return []
     if(op==='team.app.workspace'){if(failed)throw new Error('暂时离线');return workspacePage(rows)}
     if(op==='team.app.timeline')return {conversation:first,messages:[],hasMore:false,beforeSeq:0}
     return []
@@ -231,4 +235,22 @@ it('background list reorder and failure retain selection, scroll and readable ca
   await act(async()=>{openTeamMessages({kind:'team',teamRef:channel.teamRef,channel});await tick()})
   expect(host.querySelector<HTMLDivElement>('[data-arkme-overlay-scroll-viewport]')?.scrollTop).toBe(120)
   expect(arkmeUi.getSnapshot().teamIntent).toMatchObject({kind:'conversation',conversation:{key:'a'}})
+})
+
+it('uses the original paged private directory when the workspace server route is absent',async()=>{
+ const channel={teamRef:'old-team',name:'旧团队',jotmoId:'old-team',publicRef:'',link:'',enabled:true,revision:1,canManage:false}
+ const target:TeamConversation={key:'old-visitor',ref:'old-visitor',side:'team',channel,visitor:{nickname:'旧版访客'},lastSeq:3,latestTeamReplySeq:0,myReadSeq:0,unread:3,needsReply:true,blocked:false,revision:1,updatedAt:10}
+ mocks.call.mockImplementation(async(op:string,p:{side?:string;cursor?:string})=>{
+  if(op==='team.app.workspace.request')throw Object.assign(new Error('unsupported'),{body:{code:'team-workspace-unsupported'}})
+  if(op==='team.app.attention')return {team:false,external:false,applications:false}
+  if(op.startsWith('team.app.entries.'))return {schemaVersion:1,items:[],hasMore:false}
+  if(op==='team.app.conversations')return p.side==='external'?{items:[],hasMore:false}:p.cursor?{items:[target],hasMore:false}:{items:[],hasMore:true,nextCursor:'old-page-2'}
+  throw new Error(op)
+ })
+ await act(async()=>{root.render(<Workspace/>);openTeamMessages({kind:'team',teamRef:channel.teamRef,channel});await tick()})
+ await act(async()=>{await tick()})
+ expect(host.textContent).toContain('旧版访客')
+ expect(host.textContent).not.toContain('unsupported')
+ expect(mocks.call.mock.calls.some(([op,p])=>op==='team.app.conversations'&&p.cursor==='old-page-2')).toBe(true)
+ expect(mocks.call.mock.calls.some(([op])=>op==='team.app.workspace')).toBe(false)
 })

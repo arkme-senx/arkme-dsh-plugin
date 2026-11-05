@@ -1,3 +1,4 @@
+import {verifyOldTeamBackend} from './team-group-old-backend-assertions.mjs'
 // Immutable installed plugin -> official DSH UI/Tools/SDK -> real Chat/Team/Record.
 // External account identity, moderation and blob providers stay isolated test seams.
 import assert from 'node:assert/strict'
@@ -38,7 +39,7 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
    for(const key of ['content-type','x-chat-access-ref','range','if-range','if-match','if-none-match'])if(request.headers[key])headers[key]=request.headers[key]
    const result=await fetch(owners[owner]+request.url,{method:request.method,headers,...(request.method==='GET'||request.method==='HEAD'?{}:{body:bytes})})
    const outgoing={};for(const key of ['content-type','content-range','content-length','etag','accept-ranges'])if(result.headers.has(key))outgoing[key]=result.headers.get(key)
-   const resultBytes=Buffer.from(await result.arrayBuffer());if(path.endsWith('/extensions/children/create'))call.result=JSON.parse(resultBytes.toString());response.writeHead(result.status,outgoing);response.end(resultBytes);return
+   const resultBytes=Buffer.from(await result.arrayBuffer());if(path.endsWith('/extensions/children/create')||path.endsWith('/conversations/messages/send'))call.result=JSON.parse(resultBytes.toString());response.writeHead(result.status,outgoing);response.end(resultBytes);return
   }
   let data={items:[],users:[],has_more:false}
   if(path.endsWith('/the-best-api-for-testing')){actor=Number(input.user_id);data={access_token:token(actor),refresh_token:'isolated-stack'}}
@@ -56,6 +57,9 @@ try{
  const login=async id=>{await host.logout();assert.equal((await host.testLogin(id)).status,'authenticated')}
  const personal=async()=>{const source=(await host.listSources('root')).items.find(v=>v.kind==='group_chat');assert(source);return source}
  const approve=async sent=>{await ownerPost('record','/fixture/complete',{});await ownerPost('chat','/fixture/audit-pass',{rel_uid:sent.relationUid,version:1})}
+ if(process.env.ARKME_E2E_BACKEND_ORDER==='old') {
+  await verifyOldTeamBackend({host,ctx,login,personal,ownerPost,approve,calls,capture,home,profile,repo,chromium,createToolResultMessage})
+ } else {
  await login(2);const customerSource=await personal()
  const oldText=`入群前不可见 ${randomUUID()}`,oldRel=randomUUID(),old=await host.sendSourceText(customerSource.sourceRef,oldText,{recordUid:randomUUID(),relationUid:oldRel});await approve({relationUid:oldRel})
  await login(4);const source=await personal()
@@ -125,5 +129,6 @@ try{
  await login(4);assert.notEqual((await host.readSource((await personal()).sourceRef)).source.accessKind,'team_delegation','independent human membership survives organization revocation')
  assert.equal(calls.filter(c=>/conversations\/open|message-channel/.test(c.path)||c.path==='/api/v1/records/detail').length,0,'source cards never open a DM or use personal Record fallback')
  await writeFile(join(capture,'proof.json'),JSON.stringify(proof,null,2));console.log(JSON.stringify({acceptance:'team-group-workspace-native-stack',owners:'real Chat/Team/Record HTTP+Mongo+Completion+Rabbit',ui:'admission/customer card/delegated original-group reply',sdk:'external compiled installed public SDK',tools:'official DSH real session discovery/read',boundary:'floor, non-human-membership, exact author, revocation, no private customer message',externalSeams:'account identity, blob, moderation and SSE transport only'}))
+ }
 }catch(error){console.error(error);await mkdir(capture,{recursive:true});if(error?.stdout)console.error(String(error.stdout));if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}
 finally{await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await browser?.close();for(const stream of streams)stream.end();await ctx?.get('arkmeData')?.logout();await shutdown?.shutdown(process.exitCode||0);api.closeAllConnections();await new Promise(r=>api.close(r))}

@@ -472,7 +472,7 @@ export function GroupMembersDrawer(props: {
       {snapshot.error !== undefined && <button data-arkme-feedback="neutral" type="button" role="alert" style={styles.restrictionRetry}
         onClick={() => { if (props.accountScope !== undefined) void arkmeConversationMembers.ensure(props.accountScope, props.source, true) }}
       >{snapshot.error}{tr("，点击重试")}</button>}
-      {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 && bots.ready && bots.items.length === 0 && teams.ready && teams.items.length===0 ? <div style={styles.empty}>{tr("暂无群成员")}</div> : null}
+      {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 && bots.ready && bots.items.length === 0 && (teams.ready||teams.unavailable) && teams.items.length===0 ? <div style={styles.empty}>{tr("暂无群成员")}</div> : null}
       {items.map(member => <GroupMemberRow key={member.memberRef} member={member}
         onMemberOpen={props.onMemberOpen} onMemberContextMenu={props.onMemberContextMenu} onMemberHover={props.onMemberHover} />)}
       {bots.items.map(bot => <GroupBotRow key={bot.directoryKey || bot.botRef} bot={bot}
