@@ -1,3 +1,4 @@
+import { changeTeamGovernance } from './team-governance.js'
 import {TeamInternalGroups} from './team-internal-groups.js'
 import {TeamMemberAddition} from './team-member-addition.js'
 import { teamHistoryOperation, teamHistoryChunk, type TeamHistoryAdapter } from './team-history-service.js'
@@ -699,7 +700,7 @@ export class TeamAppService {
             avatarState = 'unavailable'
           }
         }
-        return { team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
+        return { team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canManageRoles:data.can_manage_roles===true, canTransferOwnership:data.can_transfer_ownership===true, canDissolve:data.can_dissolve===true, canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
           ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
             key: await this.key(`member:${String(id)}:${recordOwnerId(v.user_id)}`, actor),
@@ -710,6 +711,27 @@ export class TeamAppService {
             codexSync: readTeamMemberCodexSync(v.codex_sync),
           }))),
         } satisfies TeamMembers
+      }
+      case 'team.app.governance.state': {
+        const id = await teamID(), member = p.userRef ? await this.open('member', p.userRef, actor) : undefined
+        if (member && String(member.team_id) !== String(id)) throw invalid()
+        const state = await post('governance/state', {team_id:String(id), ...(member ? {target_user_id:String(member.user_id)} : {})}, true)
+        if (typeof state.team_active !== 'boolean' || typeof state.dissolving !== 'boolean' || !Number.isSafeInteger(state.membership_revision)) throw invalid()
+        const currentRole = (value:unknown) => value === 1 ? 'owner' as const : value === 2 ? 'admin' as const : value === 3 ? 'member' as const : undefined
+        return {active:state.team_active, dissolving:state.dissolving, membershipRevision:Number(state.membership_revision),
+          ...(currentRole(state.actor_role) ? {actorRole:currentRole(state.actor_role)} : {}),
+          ...(currentRole(state.target_role) ? {targetRole:currentRole(state.target_role)} : {})}
+      }
+      case 'team.app.governance.role': case 'team.app.governance.transfer': case 'team.app.governance.dissolve': {
+        const kind = operation === 'team.app.governance.role' ? 'role' : operation === 'team.app.governance.transfer' ? 'transfer' : 'dissolve'
+        const member = kind === 'dissolve' ? undefined : await this.open('member', p.userRef, actor)
+        const id = await teamID()
+        if (member && String(member.team_id) !== String(id)) throw invalid()
+        return await changeTeamGovernance((path, body) => post(path,body,path==='governance/state'), {
+          kind, teamID:id, ...(member ? {targetID:member.user_id}:{}),
+          revision:Number(p.expectedMembershipRevision),
+          ...(kind === 'role' ? {role:p.role as 'admin'|'member'}:{}),
+        })
       }
       case 'team.app.member.remove': {
         const ref = await this.open('member', p.userRef, actor)
@@ -784,7 +806,11 @@ export class TeamAppService {
         const source=await this.contacts.openSourceRef(str(p.sourceRef),actor)
         if(source.kind!=='group_chat')throw invalid()
         const raw=await this.runtime.authenticatedChatPost<Record<string,unknown>>('/api/v1/chats/group-identity/context',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true})
-        if(raw.state!=='ready'||raw.membership_policy!=='independent'||!Number.isSafeInteger(raw.group_join_at)||!Array.isArray(raw.teams))throw invalid()
+        if(raw.state!=='ready'||!['independent','team_roster'].includes(str(raw.membership_policy))||!Number.isSafeInteger(raw.group_join_at)||!Array.isArray(raw.teams))throw invalid()
+        if(raw.membership_policy==='team_roster') {
+          if(raw.teams.length!==0)throw invalid()
+          return {state:'ready',membershipPolicy:'team_roster',groupJoinAt:num(raw.group_join_at),teams:[]} satisfies TeamGroupContext
+        }
         const codec=new GroupRepresentationCodec(this.runtime)
         const teams=await Promise.all(list(raw.teams).map(async candidate=>{
           const snapshot=await codec.snapshot({...candidate,group_join_at:raw.group_join_at},actor)

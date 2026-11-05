@@ -19,7 +19,9 @@ const index = { loading: false, error: '', retry: vi.fn(), value: {
     { bucketDate: '2026-09-01', count: 3, hasRecords: true, protectedCount: 0 },
   ],
 } }
-const months = () => [...host.querySelectorAll<HTMLElement>('[data-calendar-month]')]
+// Month sections are direct scroll children. Avoid walking every day cell
+// whenever jsdom asks the geometry fixture for a month position.
+const months = () => [...scroller().children].filter((node): node is HTMLElement => node instanceof HTMLElement && node.hasAttribute('data-calendar-month'))
 const monthKeys = () => months().map(el => el.dataset.calendarMonth)
 const visibleMonth = () => visibleCalendarMonth(host)
 const scroller = () => host.querySelector<HTMLDivElement>('[data-arkme-calendar-months]')!

@@ -1,3 +1,4 @@
+import type {TeamGovernancePort} from '../../team-governance-contract.js'
 import type {TeamInternalGroupPort} from '../../team-internal-group-contract.js'
 import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
 import type { PublicSocialPort } from '../../public-social-contract.js'
@@ -42,6 +43,7 @@ export interface ArkmeCoreToolPorts extends
   ArkmeRecordExportPort,
   TeamMemberManagementPort,
   TeamInternalGroupPort,
+  TeamGovernancePort,
   TeamHistoryPort,
   TeamMessagePort,
   ArkmeDeviceLockPort,

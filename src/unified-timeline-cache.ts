@@ -188,8 +188,16 @@ export class UnifiedTimelineCache {
       }
       this.remove(scope, request)
       this.prepare('INSERT INTO pages VALUES (?,?,?,?,?,?)').run(scope, request, metadata, ticket, ticket, options.latest ? 1 : 0)
-      const content = this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,?,?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET payload=excluded.payload,version=excluded.version,ticket=max(contents.ticket,excluded.ticket)
-        WHERE excluded.version>contents.version OR excluded.ticket>=contents.ticket AND (excluded.version>=contents.version OR excluded.version=0 AND json_extract(excluded.payload,'$.contentStatus')='unavailable')`)
+      // Approved occurrence versions are independent of personal Record versions.
+      // Preserve that authority through unavailable bodies as well as cached edits.
+      const content = this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,?,?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET payload=CASE
+          WHEN json_extract(excluded.payload,'$.contentStatus')='unavailable' AND json_extract(contents.payload,'$.item.sourceSnapshot')=1
+          THEN json_set(excluded.payload,'$.item.sourceSnapshot',json('true')) ELSE excluded.payload END,
+        version=excluded.version,ticket=max(contents.ticket,excluded.ticket)
+        WHERE excluded.ticket>=contents.ticket AND json_extract(excluded.payload,'$.contentStatus')='unavailable'
+          OR coalesce(json_extract(excluded.payload,'$.item.sourceSnapshot'),0)>coalesce(json_extract(contents.payload,'$.item.sourceSnapshot'),0)
+          OR coalesce(json_extract(excluded.payload,'$.item.sourceSnapshot'),0)=coalesce(json_extract(contents.payload,'$.item.sourceSnapshot'),0)
+            AND (excluded.version>contents.version OR excluded.ticket>=contents.ticket AND excluded.version>=contents.version)`)
       const entry = this.prepare('INSERT INTO entries VALUES (?,?,?,?,?)')
       const sourceStates = new Map(this.prepare('SELECT source,retired_ticket,status FROM sources WHERE scope=?').all(scope).map(row => [String(row.source), row]))
       window.events.forEach((event, ordinal) => {

@@ -111,3 +111,10 @@ it('confirms the original operation and target when recovery starts from another
  await click('确认关联')
  expect(call.mock.calls.at(-1)![1]).toMatchObject({previewRef:'sealed-preview'})
 })
+
+it('notifies its source owner when a link is ready, before waiting for the user to close it',async()=>{
+ const ready=vi.fn(),close=vi.fn()
+ call.mockImplementation(async op=>op==='team.app.teams'?[team]:{state:'ready',requestUid:'linked'})
+ await mount(<TeamInternalGroupDialog accountKey="prod:90" target={{mode:'link',source}} onReady={ready} onClose={close}/>)
+ expect(ready).toHaveBeenCalledOnce();expect(close).not.toHaveBeenCalled()
+})

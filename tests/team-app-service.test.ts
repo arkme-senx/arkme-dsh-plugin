@@ -91,6 +91,12 @@ describe('team group frontend handoff boundary', () => {
     expect(f.requests.slice(1).every(v => v.path === '/api/v1/team/list-mine')).toBe(true)
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
   })
+  it('treats a roster group as a ready self-only context without delegated teams',async()=>{
+    const f=fixture(()=>({state:'ready',membership_policy:'team_roster',group_join_at:9,teams:[]}))
+    expect(await f.service.execute('team.app.group.context',{sourceRef:'sealed-group',expectedAccountKey:'test:90'}))
+      .toEqual({state:'ready',membershipPolicy:'team_roster',groupJoinAt:9,teams:[]})
+    expect(f.requests.map(v=>v.path)).toEqual(['/api/v1/chats/group-identity/context'])
+  })
   it('rejects an invalid source, non-group source, missing idempotency key and changed account', async () => {
     const f = fixture(() => ({ teams: [member] }))
     f.contacts.openSourceRef.mockRejectedValueOnce(new Error('invalid source'))

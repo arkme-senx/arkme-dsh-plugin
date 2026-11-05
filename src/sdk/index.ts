@@ -1,3 +1,4 @@
+export type {TeamGovernancePort, TeamGovernanceRequest, TeamGovernanceState, TeamGovernanceMembers, TeamGovernanceResult} from '../team-governance-contract.js'
 export type {TeamInternalGroupRequest, TeamInternalGroupResult, TeamInternalGroupPreview, TeamInternalGroupPort} from '../team-internal-group-contract.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
@@ -1035,6 +1036,20 @@ export class ArkmeSdk {
   }
   async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
+  }
+  /** Read App Team authority with its own opaque member references and current revision. */
+  async teamGovernanceMembers(teamRef: string, pageCursor?: string, signal?: AbortSignal): Promise<import('../team-governance-contract.js').TeamGovernanceMembers> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])]); signal.throwIfAborted()
+    if ((await this.capabilities(signal)).features.teamGovernanceV1 !== true) throw new Error('当前 Provider 不支持团队管理')
+    const result = await this.call<import('../team-governance-contract.js').TeamGovernanceMembers>('team.governance.members', {teamRef, ...(pageCursor ? {pageCursor} : {})}, signal)
+    signal.throwIfAborted(); return result
+  }
+  /** Confirm the exact latest roster revision and human-approved target. Lost replies use state, never automatic replay. */
+  async teamGovernance(request: import('../team-governance-contract.js').TeamGovernanceRequest, signal?: AbortSignal): Promise<import('../team-governance-contract.js').TeamGovernanceState> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])]); signal.throwIfAborted()
+    if ((await this.capabilities(signal)).features.teamGovernanceV1 !== true) throw new Error('当前 Provider 不支持团队管理')
+    const result = await this.call<import('../team-governance-contract.js').TeamGovernanceState>('team.governance', {request}, signal)
+    signal.throwIfAborted(); return result
   }
   /** teamRef is the current account's getTeamProfile().profileRef, never an OpenAPI reference.
    * After applying a completed result, acknowledge its UID. On uncertain transport use recover/prepare-original.

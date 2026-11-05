@@ -16,6 +16,15 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('SourceService', () => {
+  it('carries irreversible roster authority in the directory and detail projection',async()=>{
+    const bundle={...joinedBundle(),session:{...joinedBundle().session,membership_policy:'team_roster'}}
+    const session={userId:1,accessToken:'access',refreshToken:'refresh'}
+    const runtime={config,requireSession:async()=>session,authenticatedChatPost:vi.fn(async()=>({items:[bundle],has_more:false})),stateStore:{uniqueCode:async()=>'test-key'}} as unknown as ServiceRuntime
+    const service=new SourceService(runtime,{} as ProfileService,{} as never)
+    const listed=(await service.listSources('root',{refresh:true,firstPaint:true})).items[0]!
+    expect(listed.teamRosterManaged).toBe(true)
+    expect((await service.chatSourceFromBundle({...bundle,session:{...bundle.session,membership_policy:''}},session,listed,[])).teamRosterManaged).toBe(true)
+  })
   it('uses the same latest activity for first paint and detail refresh without extra roster reads', async () => {
     const bundle = joinedBundle()
     const session = { userId: 1, accessToken: 'access', refreshToken: 'refresh' }

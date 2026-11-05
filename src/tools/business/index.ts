@@ -1,3 +1,4 @@
+import {teamGovernanceTools} from './contacts/team-governance.js'
 import {teamInternalGroupTools} from './contacts/team-internal-groups.js'
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
@@ -94,6 +95,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...teamProfileTools,
   ...teamMemberTools,
   ...teamInternalGroupTools,
+  ...teamGovernanceTools,
   ...teamExternalChatTools,
   ...teamMessageTools,
   ...codexWorkRecordTools,

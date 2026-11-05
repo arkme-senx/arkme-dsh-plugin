@@ -25,8 +25,9 @@ const day = (marked: boolean, pending = false): ArkmeRecordingDay => ({
   summary: { state: pending ? 'processing' : 'empty', items: [] }, timeline: { state: 'empty', items: [] },
 })
 
-// Rendering and editing 1,442 transcript rows can exceed the default 5s on shared CI runners.
-describe('speaker update in a long recording transcript', { timeout: 15_000 }, () => {
+// This is a 1,442-row interaction stress fixture, not a wall-clock performance assertion.
+// Fake timers verify feedback/poll timing; allow bounded CPU time on shared runners.
+describe('speaker update in a long recording transcript', { timeout: 60_000 }, () => {
   let renderer: ReactTestRenderer
   let initial: ArkmeRecordingDay, updated: ArkmeRecordingDay
   let reads: number, resolvePoll: (value: ArkmeRecordingDay) => void

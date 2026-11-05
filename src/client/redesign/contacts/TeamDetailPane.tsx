@@ -1,3 +1,6 @@
+import {arkmeChatDirectory} from '../../chat-directory-store.js'
+import { TeamGovernanceDialog } from './TeamGovernanceDialog.js'
+import type { TeamGovernanceIntent } from '../../../team-app-contract.js'
 import { openTeamEntryMessages } from '../../team-entry-navigation.js'
 import {TeamExternalChats} from '../../TeamExternalChats.js'
 import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
@@ -72,6 +75,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
   useEffect(() => () => navigationRef.current?.abort(), [])
   const [removing, setRemoving] = useState('')
   const [confirmLeave, setConfirmLeave] = useState(false)
+  const [governance,setGovernance]=useState<TeamGovernanceIntent>()
   const [confirmRemoval, setConfirmRemoval] = useState<{ userRef: string; name: string }>()
   const generationRef = useRef(0)
   const controllerRef = useRef<AbortController>()
@@ -361,12 +365,15 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
               <strong>{member.displayName}</strong>
               <small>{memberIdentity(member)}</small>
             </span>
-            <span className="arkme-team-member-actions"><span className="arkme-team-member-role" data-team-member-role={member.role}>
+            <span className={`arkme-team-member-actions${page.canManageRoles?' has-governance':''}`}><span className="arkme-team-member-role" data-team-member-role={member.role}>
               {ROLE_LABELS[member.role]}
             </span>
             <TeamMemberCodexEntry sync={member.codexSync} name={member.displayName} identityAvailable={!!member.jotmoId}
               busy={codexBusy} onOpen={() => { void openCodex(member) }} onRetry={() => refreshMemberSync(member)} />
-            {member.canRemove && <button type="button" className="arkme-team-action" disabled={!!removing} onClick={() => { setConfirmRemoval({ userRef: member.userRef, name: member.displayName }) }}>{tr('移除')}</button>}</span>
+            {member.canRemove && <button type="button" className="arkme-team-action" disabled={!!removing} onClick={() => { setConfirmRemoval({ userRef: member.userRef, name: member.displayName }) }}>{tr('移除')}</button>}
+            {page.canManageRoles && member.canRemove && <><button type="button" className="arkme-team-action" onClick={()=>setGovernance({kind:'role',teamRef:page.team.teamRef,userRef:member.userRef,name:member.displayName,role:member.role==='admin'?'member':'admin',revision:page.membershipRevision})}>{tr(member.role==='admin'?'取消管理员':'设为管理员')}</button>
+            {page.canTransferOwnership && <button type="button" className="arkme-team-action" onClick={()=>setGovernance({kind:'transfer',teamRef:page.team.teamRef,userRef:member.userRef,name:member.displayName,revision:page.membershipRevision})}>{tr('转让团队')}</button>}</>}
+</span>
           </div>)}
           {state.message !== undefined && <div className="arkme-team-member-more-error" role="alert">{state.message}</div>}
           {page.hasMore && page.nextPageCursor !== undefined && <button
@@ -390,10 +397,15 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       onClose={() => setMessageChannelOpen(false)} onChanged={() => { void load(undefined, true) }}
       onViewConversations={() => { setMessageChannelOpen(false); openTeamEntryMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
 
-    {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onClose={() => setInternalGroupOpen(false)} />}
+    {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onReady={() => {void arkmeChatDirectory.refreshRoot({force:true}).catch(()=>undefined)}} onClose={() => setInternalGroupOpen(false)} />}
     {/* A fresh directory read may reseal the same team. Keep this open command scoped to its original reference. */}
     {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey) }} onClose={() => setMemberAdditionRef(undefined)} />}
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
+      {page.canDissolve && <button type="button" className="arkme-team-action" onClick={()=>setGovernance({kind:'dissolve',teamRef:page.team.teamRef,revision:page.membershipRevision})}>{tr('解散团队')}</button>}
+      {governance && <TeamGovernanceDialog accountKey={accountKey} teamName={page.team.name} intent={governance} onClose={()=>setGovernance(undefined)} onComplete={result=>{
+        setGovernance(undefined);arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey)
+        if(!result.active){arkmeContactsTab.clear()}else{void load()}
+      }}/>}
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>
         <button disabled={!!removing} onClick={() => { void leaveTeam() }}>{tr('确认退出')}</button>

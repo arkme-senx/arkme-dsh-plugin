@@ -1704,6 +1704,7 @@ export function ArkmeGroupChatControls(props: {
   source: ArkmeSourceItem
   overlayHostRef: RefObject<HTMLElement>
   onSourceProjectionUpdated: (source: ArkmeSourceItem) => void
+  onInternalGroupReady?: () => void
   onMembershipChanged: (target: ArkmeGroupActionTarget) => void
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
   onMemberOpen: (member: ArkmeConversationMemberItem) => void
@@ -1818,7 +1819,7 @@ export function ArkmeGroupChatControls(props: {
         exportProcessed={props.exportProcessed ?? 0}
       />
     </div>
-    {internalGroupOpen && props.accountScope && <TeamInternalGroupDialog accountKey={props.accountScope} target={{ mode: 'link', source: props.source }}
+    {internalGroupOpen && props.accountScope && <TeamInternalGroupDialog accountKey={props.accountScope} target={{ mode: 'link', source: props.source }} {...(props.onInternalGroupReady ? {onReady:props.onInternalGroupReady} : {})}
       onClose={() => { setInternalGroupOpen(false); settingsButtonRef.current?.focus({ preventScroll: true }) }} />}
     {overlayHost !== null && createPortal(<>
       <GroupAiPolishPanel

@@ -20,6 +20,7 @@ export type TeamAppOperation = `team.app.${
   | 'group.context' | 'group.join' | 'group.directory'
   | 'internal-group.prepare' | 'internal-group.confirm' | 'internal-group.prepare-original' | 'internal-group.recover' | 'internal-group.ack'
   | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
+  | 'governance.state' | 'governance.role' | 'governance.transfer' | 'governance.dissolve'
   | 'world.view'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
@@ -86,6 +87,7 @@ export interface TeamReceipts {
   members: TeamReceiptMember[]
 }
 export interface TeamMembers {
+  canManageRoles?:boolean; canTransferOwnership?:boolean; canDissolve?:boolean
   membershipRevision: number; canAddMembers: boolean
   team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
   /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
@@ -124,3 +126,10 @@ export interface TeamMessageChangeHint {
   messageKey?: string
   conversationKeys?: string[]
 }
+
+/** Only Team facts are returned; raw organization/user identifiers stay Host-side. */
+export type { TeamGovernanceResult } from './team-governance-contract.js'
+export type TeamGovernanceIntent =
+ | {kind:'role';teamRef:string;userRef:string;name:string;role:'admin'|'member';revision:number}
+ | {kind:'transfer';teamRef:string;userRef:string;name:string;revision:number}
+ | {kind:'dissolve';teamRef:string;revision:number}

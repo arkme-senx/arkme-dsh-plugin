@@ -7,13 +7,13 @@ import {tr, useArkmeLocale} from './locale.js'
 import {TeamFeatureDialog} from './redesign/contacts/TeamFeatureDialog.js'
 
 type Target = {mode:'create';teamJotmoId:string}|{mode:'link';source:ArkmeSourceItem}
-type Props = {accountKey:string;target:Target;onClose():void}
+type Props = {accountKey:string;target:Target;onClose():void;onReady?():void}
 const errorText = (e:unknown) => e instanceof Error ? e.message : tr('加载失败，请重试')
 const roleName = {owner:'群主',admin:'管理员',member:'成员'} as const
 export function TeamInternalGroupDialog(p:Props) {
   return <ScopedDialog key={JSON.stringify([p.accountKey,p.target.mode,p.target.mode==='create'?p.target.teamJotmoId:p.target.source.sourceRef])} {...p}/>
 }
-function ScopedDialog({accountKey,target,onClose}:Props) {
+function ScopedDialog({accountKey,target,onClose,onReady}:Props) {
   useArkmeLocale()
   const [teams,setTeams]=useState<ArkmeTeam[]>(),[teamId,setTeamId]=useState(''),[name,setName]=useState('')
   const [loadError,setLoadError]=useState(''),[error,setError]=useState(''),[revision,setRevision]=useState(0)
@@ -49,6 +49,7 @@ function ScopedDialog({accountKey,target,onClose}:Props) {
       if(c.signal.aborted)return
       if(!value||!['preview','none','acknowledged','unresolved','activating','ready','archived','rejected'].includes(value.state))throw new Error(tr('内部群状态返回异常，请重试'))
       if(action==='ack'&&value.state==='acknowledged'){onClose();return}
+      if(value.state==='ready')onReady?.()
       if('requestUid'in value)requestUid.current=value.requestUid
       setResult(value.state==='none'?undefined:value);setRecovered(true)
     }catch(e){if(!c.signal.aborted)setError(errorText(e))}

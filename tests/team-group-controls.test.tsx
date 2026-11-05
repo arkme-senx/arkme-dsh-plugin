@@ -219,3 +219,20 @@ it('Team marker keyboard activation does not also select its enclosing extension
   await act(async () => marker.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
   expect(onRowKeyDown).toHaveBeenCalledTimes(1)
 })
+
+it('retires delegated-identity errors and requests when the same group becomes Team managed', async () => {
+  call.mockRejectedValueOnce(new Error('identity unavailable'))
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" />)
+  expect(host.textContent).toContain('团队身份暂不可用')
+  const calls = call.mock.calls.length
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" teamRosterManaged />)
+  expect(host.textContent).toBe('')
+  expect(call.mock.calls).toHaveLength(calls)
+  const pending = deferred(); call.mockReturnValueOnce(pending.promise)
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="another-ref" />)
+  const signal = call.mock.calls.at(-1)![2] as AbortSignal
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="another-ref" teamRosterManaged />)
+  expect(signal.aborted).toBe(true)
+  await act(async () => pending.resolve(eligible))
+  expect(host.textContent).toBe('')
+})

@@ -95,6 +95,31 @@ describe('canonical events and commit fences', () => {
       expect(store.read('scope', 'initial')?.cache?.stale).toBe(true)
     } finally { store.close() }
   })
+  it('replaces a personal body with the approved occurrence and fences late personal responses across restart', () => {
+    let { path, store } = setup()
+    const message = (version: number, textContent: string, sourceSnapshot = false): ArkmeTimelinePage => {
+      const value = page(); value.unified!.events = [{ ...value.unified!.events[0]!, source: 'messages', kind: 'message',
+        item: { itemUid: 'record', timelineItemKey: 'relation', recordVersion: version, textContent,
+          ...(sourceSnapshot ? { sourceSnapshot: true } : {}) } as never }]; return value
+    }
+    try {
+      store.write('scope', 'initial', message(2, 'personal v2'))
+      store.write('scope', 'linked', message(1, 'approved v1', true))
+      expect(store.read('scope', 'initial')?.items[0]).toMatchObject({textContent:'approved v1',sourceSnapshot:true})
+      store.close(); store = new UnifiedTimelineCache(path)
+      store.write('scope', 'late', message(3, 'personal v3'))
+      expect(store.read('scope', 'late')?.items[0]?.textContent).toBe('approved v1')
+      store.write('scope', 'source-edit', message(2, 'approved v2', true))
+      store.write('scope', 'old-source', message(1, 'approved v1', true))
+      expect(store.read('scope', 'initial')?.items[0]?.textContent).toBe('approved v2')
+      // An authoritative unavailable occurrence still removes an approved body.
+      const unavailable = message(0, 'unavailable'); unavailable.unified!.events[0]!.contentStatus = 'unavailable'
+      store.write('scope', 'unavailable', unavailable)
+      expect(store.read('scope', 'initial')?.unified?.events[0]?.contentStatus).toBe('unavailable')
+      store.write('scope', 'late-personal-after-unavailable', message(4, 'personal v4'))
+      expect(store.read('scope', 'initial')?.unified?.events[0]?.contentStatus).toBe('unavailable')
+    } finally { store.close() }
+  })
   it('keeps coverage tokens window-local while hydrating shared updated bodies and gaps', () => {
     const { store } = setup()
     try {

@@ -4,7 +4,7 @@ import type { ArkmeTeam } from './types.js'
 export interface TeamGroupContext {
   state: 'ready' | 'backend_pending'
   teams: Array<ArkmeTeam & { representation?: TeamRepresentationSelection }>
-  /** Unknown on current backend; a future roster binding suppresses identity choice. */
+  /** Current Chat authority; a roster binding suppresses identity choice. */
   groupJoinAt?: number
   membershipPolicy?: 'independent' | 'team_roster' | 'unknown'
 }

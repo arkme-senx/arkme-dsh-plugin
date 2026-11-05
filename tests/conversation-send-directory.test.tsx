@@ -1862,7 +1862,8 @@ describe('conversation send directory projection', () => {
     const mounted=renderer!.root.findAll(node=>typeof node.type==='string' && node.props['data-arkme-message-item-uid']!==undefined).length
     process.stdout.write('INPUT_RENDER_METRICS '+JSON.stringify({rowCount,mounted,keystrokes:20,commits,renderTotalMs:durations.reduce((a,b)=>a+b,0),renderMaxMs:Math.max(...durations),hostCalls:mocks.callArkme.mock.calls.map(x=>x[0])})+'\n')
     expect(row.props.children).toBe(originalChildren); expect(mounted).toBe(rowCount);expect(commits).toBeGreaterThanOrEqual(20)
-  })
+  // This is a mounted-row/commit isolation contract, not a 5-second host CPU benchmark.
+  }, 60_000)
   it.each([target, group, sendToSelf])('preserves input duration when consuming the $kind composer', async selectedSource => {
     activeSource = selectedSource
     arkmeUi.selectSource(selectedSource)

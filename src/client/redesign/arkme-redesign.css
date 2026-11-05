@@ -2410,3 +2410,8 @@ body[data-ds-dark-theme] .arkme-cancellation-dialog .arkme-account-dialog-action
 /* Internal groups share the Team dialog; only their compact impact view differs. */
 .arkme-contact-remark-dialog.arkme-internal-group-dialog { width:min(560px,100%); }
 .arkme-internal-group-dialog .arkme-team-sync-body p { margin:0; }
+
+.arkme-team-member-actions.has-governance { max-width: 320px; }
+@container arkme-team-detail (max-width: 480px) {
+  .arkme-team-member-actions.has-governance { grid-column: 2 / -1; justify-self: stretch; max-width: none; justify-content: flex-start; }
+}

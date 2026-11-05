@@ -1620,6 +1620,7 @@ arkoImagesV1?:true
     teamProfiles?: true
     teamMemberManagementV1?: true
     teamInternalGroupsV1?: true
+    teamGovernanceV1?: true
     teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -1885,6 +1886,8 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  /** Irreversible Team roster authority for this group, observed from Chat. */
+  teamRosterManaged?: true
   /** Viewer-visible private counterpart nickname, independent of the preferred remark. */
   privateNickname?: string
   /** Record-owned topic container kind; never a chat kind or creation source. */
@@ -2157,6 +2160,8 @@ export interface ArkmeTimelineMentionTarget {
 }
 
 export interface ArkmeTimelineItem {
+  /** Authorized occurrence body; independent of a newer personal Record. */
+  sourceSnapshot?: true
   thoughtReply?: import('./thought-reply.js').ArkmeThoughtReplySnapshot
   privateThoughtReplyRef?: string
   privateThoughtReply?: boolean
@@ -4500,6 +4505,8 @@ export type ArkmePluginOperation =
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.members.manage'
   | 'team.internal-group'
+  | 'team.governance'
+  | 'team.governance.members'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'

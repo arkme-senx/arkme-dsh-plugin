@@ -30,17 +30,20 @@ export function mergeConversationMessages(current: ArkmeTimelineItem[], incoming
   const map = new Map<string, PresentedMessage>(current.map(item => [identity(item), item]))
   for (const item of incoming) {
     const key = identity(item)
-    const previous = map.get(key) ?? map.get(item.itemUid)
+    const found = map.get(key) ?? map.get(item.itemUid)
+    // An ordinary/personal snapshot is not a newer version of an approved occurrence.
+    if (found?.sourceSnapshot === true && item.sourceSnapshot !== true && found.status === 1 && item.status === 1) continue
+    const previous = item.sourceSnapshot === true && found?.sourceSnapshot !== true ? undefined : found
     const version = item.recordVersion ?? item.version ?? 0
     const previousVersion = previous?.recordVersion ?? previous?.version ?? 0
     // Live deltas and reads may arrive out of order. Keep the authoritative
     // record snapshot and its matching action reference together.
     if (previous?.status === 1 && item.status === 1 && version > 0 && previousVersion > 0
       && previousVersion > version) continue
-    if (previous && identity(previous) !== key) map.delete(identity(previous))
+    if (found && identity(found) !== key) map.delete(identity(found))
     map.set(key, {
       ...retainPartialTimelineMedia(previous, item),
-      ...messagePresentation(previous ?? item),
+      ...messagePresentation(found ?? item),
       [sendFailure]: item.status === 1 ? undefined : sendFailure in item ? conversationMessageSendFailure(item)
         : previous ? conversationMessageSendFailure(previous) : undefined,
       ...(previous?.aiPolish !== undefined && item.aiPolish === undefined ? { aiPolish: previous.aiPolish } : {}),
@@ -257,4 +260,9 @@ export class ArkmeConversationMessageMergeOwner extends ConfirmedSendRetentionOw
   private prune(now: number): void {
     for (const [key, entry] of this.submissions) if (!entry.pending && entry.expiresAtMillis <= now) this.submissions.delete(key)
   }
+}
+
+/** Cache visibility follows observed source authority, without erasing personal/global records. */
+export function conversationMessagesForSource(items: ArkmeTimelineItem[], teamRosterManaged: boolean): ArkmeTimelineItem[] {
+  return teamRosterManaged ? items.filter(item=>item.sourceSnapshot === true) : items
 }
