@@ -455,11 +455,27 @@ export function ArkmeArkoSurface() {
   }, [accountKey])
   const [messages, setMessages] = useState<ArkoMessage[]>(initialTimeline.current?.messages ?? [])
   const interactionReadQueue = useRef<Promise<unknown>>(Promise.resolve())
+  const retryInteractionAccess = useRef<(() => void) | undefined>(undefined)
+  const [verifiedInteractions, setVerifiedInteractions] = useState<ReadonlyMap<string,string>>(new Map())
+  const interactionAccessGeneration = useRef(0)
   const readInteractions = useCallback((query: import('../arko-timeline-contract.js').ArkmeArkoInteractionQuery, signal: AbortSignal) => {
-    const task = interactionReadQueue.current.catch(() => undefined).then(() => { signal.throwIfAborted(); return callArkme<ArkmeArkoInteractionPage>('arko.interactions', { ...query }, signal) })
-    interactionReadQueue.current = task
+    const generation=interactionAccessGeneration.current
+    const task=interactionReadQueue.current.catch(()=>undefined).then(async()=>{
+      signal.throwIfAborted()
+      const page=await callArkme<ArkmeArkoInteractionPage>('arko.interactions',{...query},signal)
+      signal.throwIfAborted()
+      if(generation!==interactionAccessGeneration.current||page.accountScope!==accountKey) throw new Error(tr('互动权限已变化，请重试'))
+      const removed=new Set(page.removedKeys),refs=new Set(query.knownRefs)
+      const proven=(timelineSnapshot.current?.interactions??[]).filter(item=>refs.has(item.interactionRef)&&!removed.has(item.interactionKey))
+      setVerifiedInteractions(current=>new Map([...current,...proven.map(item=>[item.interactionKey,item.interactionRef] as const),...page.items.map(item=>[item.interactionKey,item.interactionRef] as const)].filter(([key])=>!removed.has(key))))
+      return page
+    }).catch(error=>{
+      if(generation===interactionAccessGeneration.current&&!signal.aborted)setVerifiedInteractions(new Map())
+      throw error
+    })
+    interactionReadQueue.current=task
     return task
-  }, [])
+  }, [accountKey])
   const [interactions, setInteractions] = useState<ArkmeArkoInteraction[]>(initialTimeline.current?.interactions ?? [])
   const [interactionCursor, setInteractionCursor] = useState<string | undefined>(initialTimeline.current?.interactionCursor)
   const [interactionBeforeMillis, setInteractionBeforeMillis] = useState<number | undefined>(initialTimeline.current?.interactionBeforeMillis)
@@ -520,7 +536,7 @@ export function ArkmeArkoSurface() {
   const [loading, setLoading] = useState(!initialTimeline.current)
   const [historyLoading, setHistoryLoading] = useState(false)
   const timelineSnapshot = useRef<ArkmeArkoTimelineCache>()
-  const committedTimeline: ArkmeArkoTimelineCache = { schemaVersion: 1, savedAtMillis: Date.now(), messages, interactions,
+  const committedTimeline: ArkmeArkoTimelineCache = { schemaVersion: 2, savedAtMillis: Date.now(), messages, interactions,
     ...(session ? { session } : {}), ...(historyCursor ? { historyCursor } : {}), ...(interactionCursor ? { interactionCursor } : {}),
     ...(historyBeforeMillis ? { historyBeforeMillis } : {}), ...(interactionBeforeMillis ? { interactionBeforeMillis } : {}) }
   const restoredTimelineScope = useRef<string>()
@@ -529,6 +545,7 @@ export function ArkmeArkoSurface() {
   useLayoutEffect(() => {
     if (restoredTimelineScope.current === accountKey) return
     restoredTimelineScope.current = accountKey
+    interactionAccessGeneration.current++; setVerifiedInteractions(new Map())
     const cached = arkoTimelineMemory.get(accountKey)
     setMessages(cached?.messages ?? []); setInteractions(cached?.interactions ?? []); setSession(cached?.session)
     setHistoryCursor(cached?.historyCursor); setInteractionCursor(cached?.interactionCursor); setInteractionError('')
@@ -875,12 +892,19 @@ export function ArkmeArkoSurface() {
     }
     const unsubscribe=subscribeThoughtInvalidation(change=>{
       if(change.accountScope!==accountKey || change.stream && change.stream.phase==='generating') return
-      dirty=true; revalidate ||= change.clear===true
+      dirty=true; revalidate=true
+      interactionAccessGeneration.current++; setVerifiedInteractions(new Map())
       if(timer) clearTimeout(timer); timer=setTimeout(()=>{void refresh()},250)
     })
-    const onVisible=()=>{if(dirty&&document.visibilityState!=='hidden')void refresh()}
-    document.addEventListener('visibilitychange',onVisible)
-    return()=>{controller.abort();unsubscribe();if(timer)clearTimeout(timer);document.removeEventListener('visibilitychange',onVisible)}
+    const onVisible=()=>{
+      interactionAccessGeneration.current++;setVerifiedInteractions(new Map());dirty=true;revalidate=true
+      if(document.visibilityState!=='hidden'&&(typeof navigator==='undefined'||navigator.onLine!==false))void refresh()
+    }
+    const focusTarget=typeof window==='undefined' ? undefined : window
+    retryInteractionAccess.current=onVisible
+    document.addEventListener('visibilitychange',onVisible);focusTarget?.addEventListener('focus',onVisible)
+    focusTarget?.addEventListener('offline',onVisible);focusTarget?.addEventListener('online',onVisible)
+    return()=>{controller.abort();unsubscribe();if(timer)clearTimeout(timer);document.removeEventListener('visibilitychange',onVisible);focusTarget?.removeEventListener('focus',onVisible);focusTarget?.removeEventListener('offline',onVisible);focusTarget?.removeEventListener('online',onVisible);if(retryInteractionAccess.current===onVisible)retryInteractionAccess.current=undefined}
   },[accountKey,readInteractions])
 
   const lifecycleHistoryRef = useRef({ accountKey, generation: lifecycleGeneration, allMessages, historyWindow })
@@ -1455,9 +1479,9 @@ export function ArkmeArkoSurface() {
         </button>
       </div>}
       {interactionError && <div role="status" style={{ ...styles.notice, fontSize: 12 }}>
-        {tr('互动记录暂未同步，已加载内容仍可查看。')}
+        {tr('互动权限暂未复核，联网后可重试。')}
         <button type="button" style={styles.retryButton} onClick={() => {
-          void callArkme<ArkmeArkoInteractionPage>('arko.interactions', { limit: 20 }).then(page => { if (page.accountScope === accountKey) { setInteractions(current => mergeInteractions(current, page)); setInteractionCursor(page.nextCursor); setInteractionBeforeMillis(undefined); setInteractionError('') } }).catch(() => undefined)
+          retryInteractionAccess.current?.()
         }}>{tr('重试')}</button>
       </div>}
       {pendingTurn !== undefined && !sending && activeRun === undefined && <div style={{ ...styles.notice, ...styles.feedbackRow }}>
@@ -1471,7 +1495,7 @@ export function ArkmeArkoSurface() {
         <WindowedTimelineRows scrollport={bodyRef} rowIds={timelineRows.map(row=>({id:row.key}))} anchorId={locationTarget!==undefined ? `history:${locationTarget}` : viewportAnchor}>
         {timelineRows.map((row, index) => {
           const startsDay = (row.kind==='interaction'||row.message.role!=='divider') && (index===0 || dayKey(timelineRows[index-1]!.at)!==dayKey(row.at))
-          if (row.kind === 'interaction') return <Fragment key={row.key}>{startsDay && <li style={arkmeConversationMessageLayout.date}><ArkmeConversationDate at={row.at}/></li>}<ArkoInteractionRow item={row.interaction} scope={accountKey!}/></Fragment>
+          if (row.kind === 'interaction') return <Fragment key={row.key}>{startsDay && <li style={arkmeConversationMessageLayout.date}><ArkmeConversationDate at={row.at}/></li>}<ArkoInteractionRow item={row.interaction} scope={accountKey!} verified={verifiedInteractions.get(row.interaction.interactionKey)===row.interaction.interactionRef}/></Fragment>
           const item = row.message
           const previousRow = timelineRows[index - 1]
           const previous = previousRow?.kind === 'message' ? previousRow.message : undefined

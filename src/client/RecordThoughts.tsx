@@ -1,3 +1,6 @@
+import { arkoInteractionJump } from './arko-interaction-jump.js'
+import { recordOwnerId } from '../record-owner-id.js'
+import { arkmeSourceIdentityKey } from './source-identity.js'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
 import type { ArkmeTimelineItem, ArkmeSourceItem } from '../types.js'
@@ -80,8 +83,27 @@ function useThought(item: RecordItem) {
 const buttonStyle = { border: 0, background: 'transparent', padding: 0, color: arkmeTheme.accent, font: 'inherit', fontSize: 12, cursor: 'pointer' } as const
 const visibleThoughts = (items: readonly ArkmeRecordThought[]) => items.filter(item => item.status !== 'invalidated')
 /** Share the existing account-scoped read when composing human and Arko replies. */
+function useSelectedInteractionThought(item: RecordItem) {
+  const context=useContext(Context)
+  const jump=useSyncExternalStore(arkoInteractionJump.subscribe,arkoInteractionJump.snapshot,arkoInteractionJump.snapshot)
+  const sourceKey=context?.source ? arkmeSourceIdentityKey(context.source) : undefined
+  const owner=recordOwnerId(item.recordOwnerUserId ?? (!context?.chat||item.isMe ? context?.accountScope.split(':')[1] : undefined))
+  const matches=(request: typeof jump)=>request?.scope===context?.accountScope && request?.rootUid===item.itemUid && request?.sourceKey===sourceKey && String(request?.recordOwnerUserId)===String(owner)
+  const [retained,setRetained]=useState<typeof jump>()
+  const selected=matches(jump) ? jump : undefined
+  useEffect(()=>{if(selected?.thought)setRetained(selected)},[selected])
+  useEffect(()=>{
+    const clear=()=>{setRetained(undefined);if(jump && jump.scope===context?.accountScope)arkoInteractionJump.consume(jump.revision)}
+    const unsubscribe=subscribeThoughtInvalidation(change=>{if(change.accountScope===context?.accountScope)clear()})
+    const focusTarget=typeof window==='undefined' ? undefined : window
+    focusTarget?.addEventListener('focus',clear)
+    return()=>{unsubscribe();focusTarget?.removeEventListener('focus',clear)}
+  },[context?.accountScope,jump])
+  return selected?.thought ?? (matches(retained) ? retained?.thought : undefined)
+}
 export function useRecordThoughtReplySummary(item: RecordItem) {
-  const state = useThought(item), thoughts = visibleThoughts(state.items)
+  const state = useThought(item), selected=useSelectedInteractionThought(item)
+  const thoughts=visibleThoughts(selected ? [selected,...state.items.filter(row=>row.id!==selected.id)] : state.items)
   const count = thoughts.filter(thought => !state.chat || thought.scene !== 5).length
   return { count, hasContent: thoughts.length > 0 || !!state.error }
 }
@@ -155,7 +177,10 @@ export function RecordThoughtContent({ item, embedded = false, onReply, selected
   items?: readonly ArkmeRecordThought[] | undefined; onRetry?: ((thought: ArkmeRecordThought) => void) | undefined; retryingId?: string | undefined
   refreshError?: string | undefined; onRefresh?: (() => void) | undefined
 }) {
-  const state = useThought(item), allThoughts = visibleThoughts(items ?? state.items)
+  const state = useThought(item)
+  const selectedInteraction=useSelectedInteractionThought(item)
+  const override=items===undefined ? selectedInteraction : undefined
+  const allThoughts = visibleThoughts(items ?? (override ? [override,...state.items.filter(row=>row.id!==override.id)] : state.items))
   const advice = items === undefined && state.chat ? allThoughts.filter(thought => thought.scene === 5) : []
   const thoughts = allThoughts.filter(thought => !advice.includes(thought))
   const section = useRef<HTMLElement>(null)
@@ -166,7 +191,7 @@ export function RecordThoughtContent({ item, embedded = false, onReply, selected
     style={{ ...(embedded ? {} : replyStyles.extensionContext), minWidth: 0 }}>
     {!embedded && thoughts.length > 0 && <div data-arkme-thought-reply-count style={replyStyles.extensionContextTitle}>{tr('共')}{thoughts.length}{tr('条延展')}</div>}
     <div style={replyStyles.extensionContextList}>{thoughts.map(thought => {
-      const reply = onReply && thought.status !== 'generating' && thought.status !== 'failed' ? () => onReply(thought) : undefined
+      const reply = onReply && (thought !== override || !!thought.replyTargetRef) && thought.status !== 'generating' && thought.status !== 'failed' ? () => onReply(thought) : undefined
       return <div key={thought.id} data-arkme-thought-reply={thought.id}
       role={reply ? 'button' : undefined} tabIndex={reply ? 0 : undefined} aria-label={reply ? tr('回复 Arko') : undefined}
       aria-pressed={reply ? thought.id === selectedThoughtId : undefined}

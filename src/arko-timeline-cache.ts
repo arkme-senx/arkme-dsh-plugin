@@ -6,7 +6,7 @@ export const ARKO_TIMELINE_CACHE_MAX_INTERACTIONS = 400
 export function parseArkoTimelineCache(value: unknown): ArkmeArkoTimelineCache | undefined {
   if (!value || typeof value !== 'object') return
   const raw = value as ArkmeArkoTimelineCache
-  if (raw.schemaVersion !== 1 || !Number.isSafeInteger(raw.savedAtMillis) || raw.savedAtMillis <= 0
+  if (raw.schemaVersion !== 2 || !Number.isSafeInteger(raw.savedAtMillis) || raw.savedAtMillis <= 0
     || !Array.isArray(raw.messages) || !Array.isArray(raw.interactions) || raw.messages.length > 20000 || raw.interactions.length > 4000) return
   const validMessage = (x: ArkmeArkoTimelineCache['messages'][number]) => x && typeof x.id === 'string' && x.id.length <= 512
     && ['user','assistant','divider'].includes(x.role) && typeof x.text === 'string' && x.text.length <= 262144 && ['done','error','sending'].includes(x.status)
@@ -25,7 +25,7 @@ export function parseArkoTimelineCache(value: unknown): ArkmeArkoTimelineCache |
   const interactionBeforeMillis = interactionsClipped ? boundary(interactions.map(x => x.occurredAtMillis)) : raw.interactionBeforeMillis
   if (messagesClipped && historyBeforeMillis === undefined || interactionsClipped && interactionBeforeMillis === undefined
     || [historyBeforeMillis, interactionBeforeMillis].some(x => x !== undefined && (!Number.isSafeInteger(x) || x <= 0))) return
-  const result: ArkmeArkoTimelineCache = { schemaVersion: 1, savedAtMillis: raw.savedAtMillis, messages, interactions,
+  const result: ArkmeArkoTimelineCache = { schemaVersion: 2, savedAtMillis: raw.savedAtMillis, messages, interactions,
     ...(raw.session && Number.isSafeInteger(raw.session.sessionId) && raw.session.sessionId > 0 ? { session: raw.session } : {}),
     ...(!messagesClipped && typeof raw.historyCursor === 'string' && raw.historyCursor.length <= 16384 ? { historyCursor: raw.historyCursor } : {}),
     ...(!interactionsClipped && typeof raw.interactionCursor === 'string' && raw.interactionCursor.length <= 16384 ? { interactionCursor: raw.interactionCursor } : {}),

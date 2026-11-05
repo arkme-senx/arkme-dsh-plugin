@@ -17,7 +17,7 @@ async function setup(handler:(body:any,path:string)=>Promise<Response>){
  const uniqueCode=vi.fn(async()=>'unique-synthetic-profile')
  const fetch=vi.fn(async(url:unknown,init?:RequestInit)=>handler(JSON.parse(String(init?.body)),String(url)))
  const runtime=new ServiceRuntime({...config,fileStateDirectory:directory},{async read(){return credentials},async write(value){credentials=value},async delete(){credentials=undefined}},{uniqueCode} as StateStore,fetch)
- const source={selfTarget:vi.fn(async()=>({sourceRef:'opaque-self',kind:'send_to_self',displayName:'发给自己'})),cachedChatSource:vi.fn(()=>undefined),sourceItem:vi.fn(),setChatSource:vi.fn()} as unknown as SourceService
+ const source={selfTarget:vi.fn(async()=>({sourceRef:'opaque-self',kind:'send_to_self',displayName:'发给自己'})),cachedChatSource:vi.fn(()=>undefined),sourceItem:vi.fn(),setChatSource:vi.fn(),chatSourceFromBundle:vi.fn(async()=>({sourceRef:'opaque-chat',kind:'private_chat',displayName:'私聊'}))} as unknown as SourceService
  const service=new ArkoTimelineService(runtime,source);cleanups.push(async()=>{runtime.dispose();await rm(directory,{recursive:true,force:true})});return{service,runtime,fetch,uniqueCode}
 }
 it('projects only opaque account-bound interaction identities and revalidates original access on open',async()=>{
@@ -25,7 +25,7 @@ it('projects only opaque account-bound interaction identities and revalidates or
  const page=await service.arkoInteractions();expect(page.accountScope).toBe('test:7');expect(JSON.stringify(page)).not.toContain('source-record');expect(JSON.stringify(page)).not.toContain(id);expect(page.items[0]?.summary).toBe('想法摘要');expect(page.items[0]?.suggestion).toBe(false)
  expect(uniqueCode).toHaveBeenCalledTimes(1)
  const target=await service.arkoInteractionOpen(page.items[0]!.interactionRef)
- expect(target.itemUid).toBe('source-record');expect(target.source.kind).toBe('send_to_self');expect(target.thought).toBeUndefined()
+ expect(target.itemUid).toBe('source-record');expect(target.source.kind).toBe('send_to_self');expect(target.thought).toMatchObject({id:id.slice(2),biz:1,content:wire.content})
  expect(fetch.mock.calls.length).toBe(2)
  await expect(service.arkoInteractionOpen(page.items[0]!.interactionRef+'x')).rejects.toMatchObject({code:'arko-interaction-unavailable'})
  expect(fetch.mock.calls.length).toBe(2)
@@ -44,4 +44,21 @@ it('maps explicit revocation to stable keys and does not turn malformed pages or
  const page=await service.arkoInteractions();mode='revoke';const revoked=await service.arkoInteractions({knownRefs:[page.items[0]!.interactionRef]});expect(revoked.removedKeys).toEqual([page.items[0]!.interactionKey])
  mode='bad';await expect(service.arkoInteractions()).rejects.toMatchObject({code:'arko-interaction-unavailable'})
  await expect(service.arkoInteractions({limit:21})).rejects.toThrow();await expect(service.arkoInteractions({},AbortSignal.abort())).rejects.toThrow()
+})
+
+it('passes encrypted observed revisions for unchanged cache proofs',async()=>{
+ let request:any
+ const {service}=await setup(async body=>{request=body;return response({items:body.ids?[]:[{...wire,revision:'1:2:1000'}],has_more:false,removed_ids:[]})})
+ const first=await service.arkoInteractions()
+ await service.arkoInteractions({knownRefs:[first.items[0]!.interactionRef]})
+ expect(request).toMatchObject({ids:[id],known_revisions:{[id]:'1:2:1000'}})
+ expect(JSON.stringify(first)).not.toContain('1:2:1000')
+})
+it.each([1,2,4,5,6])('preserves completed chat scene %s and only opens scene 5 as a suggestion',async scene=>{
+ const chat={...wire,id:'c:000000000000000000000002',kind:'chat',chat_session_uid:'chat',scene,record_version:1,generation:3,navigation_at:500}
+ const {service}=await setup(async(_body,path)=>path.includes('display-snapshots')?response({items:[{session:{chat_session_uid:'chat'}}]}):response({items:[chat],has_more:false,removed_ids:[]}))
+ const page=await service.arkoInteractions();const target=await service.arkoInteractionOpen(page.items[0]!.interactionRef)
+ expect(page.items[0]!.suggestion).toBe(scene===5);expect(target.suggestion).toBe(scene===5)
+ expect(target.thought?.biz).toBe([1,2,6].includes(scene)?2:1)
+ expect(target.occurredAtMillis).toBe(1000);expect(target.sourceAtMillis).toBe(500)
 })

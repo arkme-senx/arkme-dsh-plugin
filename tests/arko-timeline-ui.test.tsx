@@ -3,19 +3,21 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeEach,afterEach,it,expect,vi } from 'vitest'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
+import { ArkoInteractionRow } from '../src/client/ArkoInteractionRow.js'
 import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { publishThoughtInvalidation } from '../src/client/thought-invalidations.js'
 import { callArkme } from '../src/client/api.js'
 import type { ArkmeArkoTimelineCache } from '../src/arko-timeline-contract.js'
 vi.mock('../src/client/api.js',async original=>({...await original<typeof import('../src/client/api.js')>(),callArkme:vi.fn()}))
-const cache = ():ArkmeArkoTimelineCache=>({schemaVersion:1,savedAtMillis:Date.now(),messages:[{id:'history:1',messageId:1,sessionId:88,role:'user',text:'已加载的普通聊天',status:'done',createdAtMillis:1000}],interactions:[{interactionKey:'thought-1',interactionRef:'opaque',occurredAtMillis:2000,kind:'self',sourceName:'复盘',summary:'已加载的互动',suggestion:false}],session:{sessionId:88,name:'Arko',created:false},historyCursor:'old-chat-page',interactionCursor:'old-interaction-page',viewport:{scrollTop:123,followTail:false}})
+const cache = ():ArkmeArkoTimelineCache=>({schemaVersion:2,savedAtMillis:Date.now(),messages:[{id:'history:1',messageId:1,sessionId:88,role:'user',text:'已加载的普通聊天',status:'done',createdAtMillis:1000}],interactions:[{interactionKey:'thought-1',interactionRef:'opaque',occurredAtMillis:2000,kind:'self',sourceName:'复盘',summary:'已加载的互动',suggestion:false}],session:{sessionId:88,name:'Arko',created:false},historyCursor:'old-chat-page',interactionCursor:'old-interaction-page',viewport:{scrollTop:123,followTail:false}})
 beforeEach(()=>{arkoTimelineMemory.clear();vi.useFakeTimers();vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('IntersectionObserver',class { observe(){} disconnect(){} });vi.stubGlobal('requestAnimationFrame',()=>0);vi.stubGlobal('cancelAnimationFrame',vi.fn());arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:10001})})
 afterEach(()=>{arkoTimelineMemory.clear();vi.useRealTimers();vi.unstubAllGlobals();vi.clearAllMocks()})
 it('paints both ready streams while cloud reads are pending and preserves loaded cursors on return',async()=>{
  arkoTimelineMemory.set('test:10001',cache())
  vi.mocked(callArkme).mockImplementation(async(method)=>{if(method==='arko.timeline.cache')return undefined as never;return new Promise(()=>{}) as never})
  const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
- try{await act(async()=>root.render(<ArkmeArkoSurface/>));expect(host.textContent).toContain('已加载的普通聊天');expect(host.textContent).toContain('已加载的互动');expect(host.textContent).not.toContain('正在恢复会话')
+ try{await act(async()=>root.render(<ArkmeArkoSurface/>));expect(host.textContent).toContain('已加载的普通聊天');expect(host.textContent).not.toContain('已加载的互动');expect(host.textContent).not.toContain('正在恢复会话')
  expect(vi.mocked(callArkme).mock.calls.find(([m])=>m==='arko.messages')?.[1]).toEqual({startAtMillis:1000,direction:'asc',limit:50})
  expect(vi.mocked(callArkme).mock.calls.find(([m,p])=>m==='arko.interactions'&&!(p as any)?.knownRefs)?.[1]).toEqual({limit:20,afterMillis:2000})
  }finally{await act(async()=>root.unmount());host.remove()}
@@ -58,7 +60,7 @@ it('runs every warm history page through the real Host query validator',async()=
   // Real Host validation rejects 100 before HTTP; both cursor pages must reach it.
   await act(async()=>{await vi.waitFor(()=>expect(wireBodies).toHaveLength(2))})
   expect(wireBodies).toEqual([{limit:50,direction:'asc',start_at:1000},{limit:50,direction:'asc',cursor:'next-warm-page',start_at:1000}])
-  expect(host.textContent).toContain('已加载的普通聊天');expect(host.textContent).toContain('已加载的互动')
+  expect(host.textContent).toContain('已加载的普通聊天');expect(host.textContent).not.toContain('已加载的互动')
   expect(host.textContent).not.toContain('历史查询参数无效')
  }finally{await act(async()=>root.unmount());host.remove();service.dispose();runtime.dispose()}
 })
@@ -113,7 +115,130 @@ it('keeps the first history cursor when a restored cache contains only interacti
  const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
  try{
   await act(async()=>root.render(<ArkmeArkoSurface/>))
-  expect(host.textContent).toContain('最新聊天');expect(host.textContent).toContain('已加载的互动')
+  expect(host.textContent).toContain('最新聊天');expect(host.textContent).not.toContain('已加载的互动')
  }finally{await act(async()=>root.unmount());host.remove()}
  expect(arkoTimelineMemory.get('test:10001')?.historyCursor).toBe('first-older-page')
+})
+
+it('hides warm sensitive text until proof, rechecks ordinary invalidation, and fences a late proof',async()=>{
+ arkoTimelineMemory.set('test:10001',cache())
+ const proofs:Array<(page:unknown)=>void>=[]
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.interactions'&&(params as any)?.knownRefs)return new Promise(resolve=>proofs.push(resolve)) as never
+  if(method==='arko.interactions')return {accountScope:'test:10001',items:[],removedKeys:[],hasMore:false} as never
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ const page={accountScope:'test:10001',items:[],removedKeys:[],hasMore:false}
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  expect(host.textContent).not.toContain('复盘');expect(host.textContent).not.toContain('已加载的互动')
+  expect(host.querySelector('[data-arko-interaction="thought-1"]')).not.toBeNull()
+  await act(async()=>proofs.shift()?.(page));expect(host.textContent).toContain('已加载的互动')
+  await act(async()=>publishThoughtInvalidation({accountScope:'test:10001'}))
+  expect(host.textContent).not.toContain('已加载的互动')
+  await act(async()=>vi.advanceTimersByTimeAsync(300))
+  expect(proofs.length).toBe(1)
+  await act(async()=>publishThoughtInvalidation({accountScope:'test:10001',clear:true}))
+  await act(async()=>proofs.shift()?.(page))
+  expect(host.textContent).not.toContain('已加载的互动')
+  await act(async()=>vi.advanceTimersByTimeAsync(300))
+  await act(async()=>proofs.shift()?.({...page,removedKeys:['thought-1']}))
+  expect(host.querySelector('[data-arko-interaction="thought-1"]')).toBeNull()
+ }finally{await act(async()=>root.unmount());host.remove()}
+ expect(arkoTimelineMemory.get('test:10001')?.interactions).toEqual([])
+})
+
+it('replaces a changed result under the same identity and verifies its new reference on retry',async()=>{
+ arkoTimelineMemory.set('test:10001',cache())
+ const proofs:Array<(page:unknown)=>void>=[]
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.interactions'&&(params as any)?.knownRefs)return new Promise(resolve=>proofs.push(resolve)) as never
+  if(method==='arko.interactions')return {accountScope:'test:10001',items:[],removedKeys:[],hasMore:false} as never
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ const page={accountScope:'test:10001',items:[],removedKeys:[],hasMore:false}
+ const updated={...cache().interactions[0]!,interactionRef:'new-result-reference',summary:'新的已授权结果'}
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  await act(async()=>proofs.shift()?.({...page,items:[updated]}))
+  expect(host.textContent).toContain('新的已授权结果');expect(host.textContent).not.toContain('已加载的互动')
+  await act(async()=>window.dispatchEvent(new Event('focus')))
+  expect(host.textContent).not.toContain('新的已授权结果')
+  const query=vi.mocked(callArkme).mock.calls.filter(([method,params])=>method==='arko.interactions'&&(params as any)?.knownRefs).at(-1)
+  expect(query?.[1]).toEqual({knownRefs:['new-result-reference']})
+  await act(async()=>proofs.shift()?.(page))
+  expect(host.textContent).toContain('新的已授权结果');expect(host.textContent).not.toContain('已加载的互动')
+ }finally{await act(async()=>root.unmount());host.remove()}
+})
+
+it('hides an already verified cache on disconnect and rechecks it after reconnect',async()=>{
+ arkoTimelineMemory.set('test:10001',cache())
+ const proofs:Array<(page:unknown)=>void>=[]
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.interactions'&&(params as any)?.knownRefs)return new Promise(resolve=>proofs.push(resolve)) as never
+  if(method==='arko.interactions')return {accountScope:'test:10001',items:[],removedKeys:[],hasMore:false} as never
+  return new Promise(()=>{}) as never
+ })
+ const online=vi.spyOn(window.navigator,'onLine','get').mockReturnValue(true)
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ const page={accountScope:'test:10001',items:[],removedKeys:[],hasMore:false}
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  await act(async()=>proofs.shift()?.(page));expect(host.textContent).toContain('已加载的互动')
+  online.mockReturnValue(false)
+  await act(async()=>window.dispatchEvent(new Event('offline')))
+  expect(host.textContent).not.toContain('已加载的互动');expect(host.textContent).not.toContain('复盘')
+  expect(host.querySelector('[data-arko-interaction="thought-1"]')).not.toBeNull()
+  expect(host.textContent).toContain('已加载的普通聊天');expect(proofs).toHaveLength(0)
+  online.mockReturnValue(true)
+  await act(async()=>window.dispatchEvent(new Event('online')))
+  expect(proofs).toHaveLength(1)
+  await act(async()=>proofs.shift()?.({...page,removedKeys:['thought-1']}))
+  expect(host.querySelector('[data-arko-interaction="thought-1"]')).toBeNull()
+ }finally{await act(async()=>root.unmount());host.remove();online.mockRestore()}
+})
+
+it('hides verified text when a later page read fails without a focus or source event',async()=>{
+ arkoTimelineMemory.set('test:10001',cache())
+ const observers:Array<{callback:(entries:unknown[])=>void;options:any;active:boolean}>=[]
+ vi.stubGlobal('IntersectionObserver',class{
+  entry:{callback:(entries:unknown[])=>void;options:any;active:boolean}
+  constructor(callback:(entries:unknown[])=>void,options:any){this.entry={callback,options,active:true};observers.push(this.entry)}
+  observe(){} disconnect(){this.entry.active=false}
+ })
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.interactions'){
+   if((params as any)?.cursor)throw new Error('owner unavailable')
+   return {accountScope:'test:10001',items:[],removedKeys:[],hasMore:false} as never
+  }
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>));expect(host.textContent).toContain('已加载的互动')
+  const observer=observers.filter(row=>row.active&&row.options?.rootMargin==='120px 0px 0px').at(-1)
+  expect(observer).toBeDefined()
+  await act(async()=>observer!.callback([{isIntersecting:true}]))
+  expect(host.textContent).not.toContain('已加载的互动');expect(host.textContent).not.toContain('复盘')
+  expect(host.querySelector('[data-arko-interaction="thought-1"]')).not.toBeNull()
+  expect(host.textContent).toContain('已加载的普通聊天')
+ }finally{await act(async()=>root.unmount());host.remove()}
+})
+
+it.each(['proof-lost','result-changed'])('closes an open suggestion when %s and never restores its old body',async reason=>{
+ const item={...cache().interactions[0]!,suggestion:true}
+ vi.mocked(callArkme).mockResolvedValue({accountScope:'test:10001',source:{sourceRef:'source',kind:'private_chat',displayName:'私聊'},itemUid:'root',recordOwnerUserId:10001,interactionKey:item.interactionKey,occurredAtMillis:2000,suggestion:true,thought:{id:'thought',recordUid:'root',biz:1,scene:5,status:'ready',content:'已授权的敏感建议'}} as never)
+ const host=document.createElement('ul');document.body.append(host);const root=createRoot(host)
+ try{
+  await act(async()=>root.render(<ArkoInteractionRow item={item} scope="test:10001" verified/>))
+  await act(async()=>host.querySelector('button')!.click())
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('已授权的敏感建议')
+  const next=reason==='result-changed' ? {...item,interactionRef:'replacement-result'} : item
+  await act(async()=>root.render(<ArkoInteractionRow item={next} scope="test:10001" verified={reason!=='proof-lost'}/>))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async()=>root.render(<ArkoInteractionRow item={next} scope="test:10001" verified/>))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+ }finally{await act(async()=>root.unmount());host.remove()}
 })

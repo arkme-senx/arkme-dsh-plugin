@@ -15,6 +15,7 @@ import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_transcript_view_change',
+  'arkme_arko_timeline_cache',
   'arkme_thought_reply',
  'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',
@@ -127,6 +128,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
     const billing = String(args.route_key).startsWith('user-api/') ? '模型费用由你绑定的供应商账户结算。' : '模型用量使用当前账号的 AI 积分。'
     return `是否使用刚才选定的模型生成新的${scene}版本？${billing}`
   }
+  if (name === 'arkme_arko_timeline_cache') return '是否保存当前账号的 Arko 展示缓存？这只影响本地展示，不会发送消息或修改服务端内容。'
   if (name === 'arkme_thought_reply') return `是否按原想法的可见范围发送这条回复：“${cleanArgument(args.text, 120)}”？私密续帖仅你可见。`
   if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'
   if(name==='arkme_codex_work_record_change')return '是否确认执行刚才选择的 Codex 操作？私人标记仅自己可见；分享链接或转发会向所选受众公开相应内容。'
@@ -299,6 +301,7 @@ function withCoreConversationalConfirmation(
     async execute(args, exec) {
       const violations = validateJsonSchemaValue(definition.parameters, args, '')
       if (violations.length > 0) throw new ToolArgsError(violations)
+      if (definition.name === 'arkme_arko_timeline_cache' && (args as Record<string, unknown>).snapshot_json === undefined) return await definition.execute(args, exec)
       if (definition.name === 'arkme_recording_import'
         && typeof args === 'object' && args !== null && 'action' in args && args.action === 'status') {
         return await definition.execute(args, exec)

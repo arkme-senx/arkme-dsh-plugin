@@ -440,3 +440,31 @@ it('drops a chat footer immediately when its source is no longer readable', asyn
   expect(host.querySelector('[data-arkme-thought-message-footer]')).toBeNull()
   expect(host.querySelector('.arkme-timed-bubble > time')).not.toBeNull()
 })
+it('handles focus for standalone result content without a navigation request or provider', async () => {
+  const errors: unknown[] = []
+  const onError = (event: ErrorEvent) => { errors.push(event.error); event.preventDefault() }
+  window.addEventListener('error', onError)
+  try {
+    await act(async () => root.render(<RecordThoughtContent item={item} items={[{ id: 'standalone', recordUid: 'note', biz: 2, status: 'ready', content: '只读结果' }]}/>))
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    expect(errors).toEqual([])
+    expect(host.textContent).toContain('只读结果')
+  } finally { window.removeEventListener('error', onError) }
+})
+
+it('keeps an explicitly selected result bound to its source owner when roots share a UID',async()=>{
+ const {arkoInteractionJump:jump}=await import('../src/client/arko-interaction-jump.js')
+ const {arkmeSourceIdentityKey}=await import('../src/client/source-identity.js')
+ const source={kind:'group_chat',sourceRef:'signed-group',sourceKey:'group',displayName:'群聊'} as const
+ try{
+  await act(async()=>{
+   jump.request({scope:'production:42',sourceKey:arkmeSourceIdentityKey(source),rootUid:item.itemUid,recordOwnerUserId:42,thought:{id:'exact-owner-result',recordUid:item.itemUid,biz:2,status:'ready',content:'本次精确结果'}})
+   root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="signed-group" source={source} chat enabled>
+    <div data-owner="42"><RecordThoughtContent item={{...item,recordOwnerUserId:42}}/></div>
+    <div data-owner="99"><RecordThoughtContent item={{...item,recordOwnerUserId:99}}/></div>
+   </RecordThoughtsProvider>)
+  })
+  expect(host.querySelector('[data-owner="42"]')?.textContent).toContain('本次精确结果')
+  expect(host.querySelector('[data-owner="99"]')?.textContent).not.toContain('本次精确结果')
+ }finally{const value=jump.snapshot();if(value)await act(async()=>jump.consume(value.revision))}
+})
