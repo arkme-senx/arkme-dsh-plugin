@@ -8,7 +8,7 @@ New human submissions freeze a stable revision identity and the editor's `{nickn
 
 `edit_duration_known` distinguishes a measured zero from an absent measurement. The published update duration remains cumulative; Record freezes the single-operation delta against the accepted base. An explicit edit plus AI polish counts human time only once, on the final accepted revision. Automatic processing remains separate. Incomplete cumulative coverage cannot become complete after a later known edit.
 
-Only version 1 establishes creation facts. Missing historical capture is not filled from retained current metadata. Snapshot completion uses the human capture clock independently of server edit time. Location enrichment and its cache must explicitly identify the requested revision. Another chat member receives content and frozen editor identity, with human timing, capture, coordinates and ambient audio removed.
+Only version 1 establishes creation facts. Missing historical capture is not filled from retained current metadata. Snapshot completion uses the human capture clock independently of server edit time. Location enrichment and its cache must explicitly identify the requested revision. Complete revision history and memory snapshots are private to the Record owner. Other chat members use the normal message reader and its existing publication/version checks; a readable current message never grants access to historical bodies. The edited marker remains visible without a history action for other authors.
 
 | Surface | Existing owner and entry | Verification |
 | --- | --- | --- |

@@ -30,7 +30,7 @@ it.each(['chat', 'owned'] as const)('a %s history outage does not delay ordinary
   const history = new RecordEditHistoryService(runtime, { projectPage: async () => [] })
   try {
     await expect(history.page(kind === 'owned' ? { viewerUserId: 7, recordUid: 'record', kind }
-      : { viewerUserId: 7, recordUid: 'record', kind, chatSessionUid: 'chat', relationUid: 'relation', recordOwnerUserId: 8 })).rejects.toBeDefined()
+      : { viewerUserId: 7, recordUid: 'record', kind, chatSessionUid: 'chat', relationUid: 'relation', recordOwnerUserId: 7 })).rejects.toBeDefined()
     await expect(kind === 'owned' ? runtime.authenticatedPost('/api/v1/records/create', {}, session)
       : runtime.authenticatedChatPost('/api/v1/chats/records/send', {}, session)).resolves.toEqual({ accepted: true })
   } finally { runtime.dispose() }
