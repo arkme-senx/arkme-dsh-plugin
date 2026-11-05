@@ -493,6 +493,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_ai_polish_manage',
       'arkme_favorite_stickers_list',
       'arkme_reactions_read', 'arkme_reactions_write',
+      'arkme_selected_text_prepare', 'arkme_selected_text_forward', 'arkme_selected_text_original',
       'arkme_message_comments_summary', 'arkme_message_marks_read', 'arkme_message_mark', 'arkme_message_quote_reply',
       'arkme_message_thoughts', 'arkme_thought_reply',
       'arkme_favorite_sticker_add',

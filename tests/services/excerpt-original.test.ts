@@ -32,7 +32,13 @@ it('matches the exact DSH event/role and rejects a different response or an inco
 })
 it('checks Team published/available state after the authoritative locate request',async()=>{
  const {runtime,readers}=fixture(),source={kind:'team_message',team_conversation_uid:'c',team_message_uid:'m',side:'external'}
- vi.mocked(runtime.authenticatedTeamPost).mockResolvedValueOnce({messages:[{message_uid:'m',state:'published',content:{status:'available',text_content:'当前消息'},created_at:20}]}).mockResolvedValueOnce({messages:[{message_uid:'m',state:'withdrawn',content:{status:'available',text_content:'旧内容'}}]})
- await expect(readExcerptOriginal(runtime,source,readers)).resolves.toMatchObject({text:'当前消息'})
+ vi.mocked(runtime.authenticatedTeamPost).mockResolvedValueOnce({messages:[{message_uid:'m',state:'published',record:{status:'available',version:3,text_content:'当前消息'},created_at:20}]}).mockResolvedValueOnce({messages:[{message_uid:'m',state:'withdrawn',record:{status:'available',version:3,text_content:'旧内容'}}]})
+ await expect(readExcerptOriginal(runtime,source,readers)).resolves.toMatchObject({text:'当前消息',recordVersion:3})
  await expect(readExcerptOriginal(runtime,source,readers)).rejects.toMatchObject({code:'excerpt-source-unavailable'})
+})
+
+it.each(['plain','markdown'] as const)('preserves Arko %s projection through the owner adapter',async textFormat=>{
+ const {runtime,readers}=fixture()
+ vi.mocked(readers.agent).mockResolvedValue({text:'**原文**',createdAtMillis:1,textFormat})
+ await expect(readExcerptOriginal(runtime,{kind:'agent_message',agent_session_id:1,agent_message_id:2},readers)).resolves.toMatchObject({text:'**原文**',textFormat})
 })

@@ -6,7 +6,7 @@ import { ArkmePluginError, objectValue as obj, stringValue as str, type ServiceR
 
 export interface ExcerptOriginalReaders {
   personal(uid:string,signal:AbortSignal):Promise<{textContent:string;title:string;sendAtMillis:number;recordVersion?:number;textFormat?:'plain'|'markdown'}>
-  agent(session:number,message:number,user:number,signal:AbortSignal):Promise<{text:string;createdAtMillis:number}>
+  agent(session:number,message:number,user:number,signal:AbortSignal):Promise<{text:string;createdAtMillis:number;textFormat:'plain'|'markdown'}>
   recording(uid:string,segment:string,signal:AbortSignal):Promise<RecordExcerptOriginal>
   call(uid:string,segment:string,signal:AbortSignal):Promise<RecordExcerptOriginal>
 }
@@ -38,11 +38,11 @@ export async function readExcerptOriginal(runtime:ServiceRuntime,raw:unknown,rea
       }
       case 'team_message':{
         const data=obj(await runtime.authenticatedTeamPost('/api/v1/team/conversations/timeline/locate',{conversation_uid:s.team_conversation_uid,message_uid:s.team_message_uid,side:s.side??'team',limit:1},session,scoped,true))
-        const row=(Array.isArray(data.messages)?data.messages:[]).map(obj).find(item=>item.message_uid===s.team_message_uid),content=obj(row?.content)
+        const row=(Array.isArray(data.messages)?data.messages:[]).map(obj).find(item=>item.message_uid===s.team_message_uid),content=obj(row?.record)
         if(!row||row.state!=='published'||content.status!=='available')throw unavailable()
-        return {title:str(content.title)||'团队原消息',text:str(content.text_content),textFormat:obj(content.content_payload).text_format==='markdown'?'markdown':'plain',...(Number.isSafeInteger(row.record_version)?{recordVersion:Number(row.record_version)}:{}),at:Number(row.created_at)||0}
+        return {title:str(content.title)||'团队原消息',text:str(content.text_content),textFormat:obj(content.content_payload).text_format==='markdown'?'markdown':'plain',...(Number.isSafeInteger(content.version)?{recordVersion:Number(content.version)}:{}),at:Number(row.created_at)||0}
       }
-      case 'agent_message':return {title:'Arko 原文',textFormat:'markdown',...await readers.agent(s.agent_session_id,s.agent_message_id,session.userId,scoped).then(item=>({text:item.text,at:item.createdAtMillis}))}
+      case 'agent_message':return {title:'Arko 原文',...await readers.agent(s.agent_session_id,s.agent_message_id,session.userId,scoped).then(item=>({text:item.text,at:item.createdAtMillis,textFormat:item.textFormat}))}
       case 'recording_segment':return readers.recording(s.recording_uid,s.segment_uid,scoped)
       case 'call_segment':return readers.call(s.call_uid,s.segment_uid,scoped)
       case 'dsh_message':{
