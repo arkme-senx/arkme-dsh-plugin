@@ -4661,6 +4661,7 @@ export type ArkmePluginOperation =
   | 'world.publications'
   | 'world.sound-excerpts'
   | 'world.suggestions'
+  | 'world.report'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'

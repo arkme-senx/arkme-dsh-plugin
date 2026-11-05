@@ -2480,6 +2480,7 @@ arkoImagesV1:true,
     })
   }
 
+  async reportWorldRecord(recordRef: string, expectedUserId: number, reportType: number, reason: string, requestUid: string, signal?: AbortSignal) { return this.world.reportWorldRecord(recordRef, expectedUserId, reportType, reason, requestUid, signal) }
   async readWorldRecord(recordRef: string, signal?: AbortSignal) { return await this.world.readWorldRecord(recordRef, signal) }
   async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal) { return this.world.shareWorldRecord(recordRef, expectedUserId, signal) }
   async forwardWorldRecord(recordRef: string, expectedUserId: number, options: { targetSourceRef: string; recordUid: string; commentText: string; signal?: AbortSignal }) {

@@ -1,3 +1,4 @@
+import { WorldReportActions } from './WorldReportActions.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { WorldSubscribeButton, WorldSubscriptionEntry } from './WorldSubscriptions.js'
 import { WorldSuggestionsEntry } from './WorldSuggestions.js'
@@ -1170,7 +1171,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
         event.preventDefault(); onOpenDetail(item)
       },
     })}>
-    {!detail && <header style={{ ...styles.cardHeader, ...(item.teamAuthor ? { gridTemplateColumns: '36px minmax(0,1fr)' } : {}) }}>
+    {!detail && <header style={styles.cardHeader}>
       {item.authorRef === undefined && !item.teamAuthor
         ? <WorldAuthorAvatar item={item} />
         : <button type="button" style={styles.avatarButton} aria-label={tr("查看{v0}的用户卡片", { v0: item.authorName })} onClick={() => { onOpenAuthor?.(item) }}><WorldAuthorAvatar item={item} /></button>}
@@ -1195,7 +1196,7 @@ export function WorldCard({ item, playable, voiceprintActive, voiceprintLoading,
           {item.publisher?.name && <> · <WorldPublisherAttribution item={item} /></>}
         </span>}
       </span>
-      {!item.teamAuthor && <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>}
+      {!item.teamAuthor && !item.authorRef ? <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time> : <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>{!item.teamAuthor && <time style={styles.time}>{dateTimeLabel(item.publishedAtMillis || item.createdAtMillis)}</time>}<WorldReportActions item={item} /></span>}
     </header>}
     {item.soundExcerpt&&<WorldSoundCard recordRef={item.recordRef} excerpt={item.soundExcerpt} detail={!!detail}/>}
     {!item.soundExcerpt&&item.headline !== '' && <h2 style={styles.headline}><ArkmeRichText text={item.headline} presentation="preview" /></h2>}
