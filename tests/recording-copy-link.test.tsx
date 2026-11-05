@@ -10,7 +10,7 @@ import { RecordingTranscriptSelectionBar } from '../src/client/recordings/Record
 const RecordingTranscriptCopyLink = (props: { items: ArkmeRecordingWorkbenchItem[]; scope: string; onNotice(text: string): void }) => <RecordingTranscriptSelectionBar {...props} playing={false} onCopy={() => {}} onPlay={() => {}} onForward={() => {}} onExit={() => {}} />
 import { CopyLinkSnapshotContent } from '../src/client/CopyLinkSnapshotContent.js'
 
-const item = (id = 'one', sessionKey = 'session') => ({ itemId: id, itemRef: `sealed-${id}`, sessionKey, transcriptSource: 'system' }) as ArkmeRecordingWorkbenchItem
+const item = (id = 'one', sessionKey = 'session') => ({ itemId: id, itemRef: `sealed-${id}`, sessionKey, transcriptSource: 'system', startAtMillis: 1000, endAtMillis: 2000 }) as ArkmeRecordingWorkbenchItem
 const result = { sid: 'abcdefghijklmnop', url: 'https://jotmo.com/s/abcdefghijklmnop' }
 let renderer: ReactTestRenderer
 beforeEach(() => { mocks.call.mockReset(); mocks.copy.mockReset(); mocks.call.mockResolvedValue(result); mocks.copy.mockResolvedValue(undefined) })
@@ -28,6 +28,15 @@ describe('recording copy-link interaction', () => {
     expect(mocks.call).toHaveBeenCalledWith('recordings.copy-link', { itemRefs: ['sealed-one'] }, expect.any(AbortSignal))
     expect(mocks.copy).toHaveBeenLastCalledWith(result.url)
     expect(button().props['aria-label']).toBe('已复制链接')
+  })
+  it('enforces the selected audio duration without creating a share', async () => {
+    const notice = vi.fn(); const selected = item(); selected.endAtMillis = selected.startAtMillis + 600_001
+    await act(async () => { renderer = create(<RecordingTranscriptCopyLink items={[selected]} scope="test:42:day" onNotice={notice} />) })
+    expect(button().props.disabled).toBe(true)
+    expect(mocks.call).not.toHaveBeenCalled()
+    selected.endAtMillis = selected.startAtMillis + 600_000
+    await act(async () => renderer.update(<RecordingTranscriptCopyLink items={[{ ...selected }]} scope="test:42:day" onNotice={notice} />))
+    expect(button().props.disabled).toBe(false)
   })
   it('keeps a failed selection retryable and disables invalid cross-session selections', async () => {
     const notice = vi.fn(); mocks.call.mockRejectedValueOnce(new Error('审核未通过'))
