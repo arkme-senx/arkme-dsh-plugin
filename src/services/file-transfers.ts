@@ -1,3 +1,5 @@
+import type { PendingAttachment, AttachmentReceipt, ProgressiveTarget } from './progressive-attachments.js'
+import type { ArkmeUploadCompletion, ArkmeUploadCompletionRecovery } from './media-service.js'
 import type { TeamSendTask } from '../team-send-contract.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { constants, createReadStream } from 'node:fs'
@@ -12,7 +14,8 @@ import { isLongArticleImageMimeType, LONG_ARTICLE_IMAGE_MAX_BYTES } from '../lon
 
 type Metadata = Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>
 interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: number; asset?: ArkmeUploadedAsset; retention?: 'references'; longArticle?: true }
-interface FileState { version: 1; files: Record<string, StoredFile>; tasks: ArkmeFileSendTask[]; originals: Record<string, string>; teamSends?: TeamSendTask[] }
+interface StoredSendTask extends ArkmeFileSendTask { completions?: Record<string, { generation: number; completion: ArkmeUploadCompletion }> }
+interface FileState { version: 1; files: Record<string, StoredFile>; tasks: StoredSendTask[]; originals: Record<string, string>; teamSends?: TeamSendTask[] }
 export type FileTransferSendOutcome =
   | { kind: 'owner_accepted'; result: ArkmeSourceSendResult }
   | { kind: 'owner_not_accepted'; message: string; code?: string; retryable?: boolean }
@@ -22,12 +25,19 @@ export interface FileTransferPorts {
   retainedFileRefs?(userId: number): Promise<readonly string[]>
   validateSource(sourceRef: string): Promise<void>
   upload(path: string, metadata: StoredFile, progress: (value: ArkmeFileProgress) => void, userId: number, signal: AbortSignal): Promise<ArkmeUploadedAsset>
+  progressive?: {
+    supported(userId: number, signal: AbortSignal): Promise<boolean>
+    reconcile(recordUid: string, userId: number, signal: AbortSignal): Promise<AttachmentReceipt[]>
+    retry(target: ProgressiveTarget, userId: number, signal: AbortSignal): Promise<AttachmentReceipt[]>
+    upload(path: string, metadata: StoredFile, progress: (value: ArkmeFileProgress) => void, userId: number, signal: AbortSignal, target: ProgressiveTarget, recovery: ArkmeUploadCompletionRecovery): Promise<ArkmeUploadedAsset>
+  }
   send(
     input: ArkmeFileSendInput,
     assets: ArkmeUploadedAsset[],
     backgroundSound: import('../types.js').ArkmeRichBackgroundSoundInput | undefined,
     userId: number,
     signal: AbortSignal,
+    pending?: PendingAttachment[],
   ): Promise<FileTransferSendOutcome>
   fetchMedia(ref: string, signal: AbortSignal): Promise<{ response: Response; descriptor: Metadata }>
   openPath?(path: string, signal: AbortSignal): Promise<void>
@@ -61,18 +71,19 @@ export class FileTransfers {
   private directUploads: Promise<unknown> = Promise.resolve()
   private readonly uploadingRefs = new Set<string>()
   private queue: Promise<void> = Promise.resolve()
+  private uploadQueue: Promise<void> = Promise.resolve()
   private readonly jobs = new Set<Promise<void>>()
   private readonly controllers = new Set<AbortController>()
   private readonly receptions = new Map<string, ArkmeFileReception>()
   private readonly policy: ArkmeFilePolicy
 
   constructor(private readonly directory: string, private readonly ports: FileTransferPorts, maxBytes: number) {
-    this.policy = { version: 1, maxFileBytes: maxBytes, maxImageBytes: Math.min(maxBytes, 50 * 1024 * 1024), maxAttachments: 9 }
+    this.policy = { version: 1, maxFileBytes: maxBytes, maxImageBytes: Math.min(maxBytes, 50 * 1024 * 1024), maxAttachments: 9, ...(ports.progressive ? { metadataFirstVersion: 2 as const } : {}) }
   }
 
   capabilities(): ArkmeFilePolicy { return { ...this.policy } }
   cancelActive(): void { for (const controller of this.controllers) controller.abort(); this.receptions.clear() }
-  async settled(): Promise<void> { await this.queue; await this.directUploads.catch(() => {}); await Promise.all(this.jobs); await this.writes }
+  async settled(): Promise<void> { await this.queue; await this.uploadQueue; await this.directUploads.catch(() => {}); await Promise.all(this.jobs); await this.writes }
 
   private root(userId: number): string { return join(this.directory, String(userId)) }
   private path(userId: number, ref: string): string {
@@ -122,6 +133,7 @@ export class FileTransfers {
         }
         if (state.version !== 1 || !state.files || !Array.isArray(state.tasks) || !state.originals || (state.teamSends !== undefined && (!Array.isArray(state.teamSends) || state.teamSends.some(task => !task || !Array.isArray(task.fileRefs) || !Array.isArray(task.files) || typeof task.taskRef !== 'string')))) throw fail('file-state-invalid', '本地文件状态版本无效')
         for (const task of state.tasks) {
+          task.delivery ??= 'legacy'
           if (task.state === 'sending') { task.state = 'uncertain'; task.error = '发送结果待确认，请先核对会话，避免重复发送' }
           else if (task.state === 'queued' || task.state === 'uploading') { task.state = 'failed'; task.error = '上次传输已中断，请重试' }
         }
@@ -301,7 +313,7 @@ export class FileTransfers {
   }
   async tasks(sourceRef?: string): Promise<ArkmeFileSendTask[]> {
     const state = await this.state(await this.ports.currentUser())
-    return clone(state.tasks.filter(task => !sourceRef || task.sourceRef === sourceRef))
+    return clone(state.tasks.filter(task => !sourceRef || task.sourceRef === sourceRef).map(({ completions: _completions, ...task }) => task))
   }
   /** Internal Team delivery uses the existing account store and file-reference lock. */
   async teamSends(userId: number): Promise<TeamSendTask[]> {
@@ -355,7 +367,7 @@ export class FileTransfers {
       const state = await this.state(userId)
       const task = state.tasks.find(value => value.taskRef === taskRef)
       if (!task) throw fail('file-task-missing', '发送任务不存在')
-      if (task.state !== 'uncertain') return clone(task)
+      if (task.state !== 'uncertain') return this.publicTask(task)
       const controller = new AbortController(); this.controllers.add(controller)
       try {
         await this.assertUser(userId, controller.signal)
@@ -363,13 +375,14 @@ export class FileTransfers {
         await this.assertUser(userId, controller.signal)
         if (result) {
           task.result = result
-          task.state = 'sent'
+          task.state = task.delivery === 'progressive' ? 'queued' : 'sent'
           delete task.location
           delete task.error
           await this.save(userId, state)
+          if (task.delivery === 'progressive') this.schedule(userId, state, task)
         }
         // Absence from a recent page is not proof that the send was rejected.
-        return clone(task)
+        return this.publicTask(task)
       } finally { this.controllers.delete(controller) }
     })
   }
@@ -414,7 +427,7 @@ export class FileTransfers {
           || JSON.stringify(prior.attachmentOrder) !== JSON.stringify(input.attachmentOrder)
           || JSON.stringify(prior.backgroundSound) !== JSON.stringify(backgroundSound)
           || (prior.state !== 'sent' && JSON.stringify(prior.location) !== JSON.stringify(input.location))) throw fail('file-send-conflict', '发送标识已用于另一份内容')
-        return clone(prior)
+        return this.publicTask(prior)
       }
       if (state.tasks.filter(task => task.state !== 'sent').length >= 100) throw fail('file-queue-full', '待发送文件过多，请先处理失败任务')
       const files: ArkmeFileSendTask['files'] = []
@@ -424,11 +437,11 @@ export class FileTransfers {
       }
       assertArkmeBackgroundSoundLocalFiles(backgroundSound, files)
       await this.assertUser(userId)
-      const task: ArkmeFileSendTask = { ...normalizedInput, taskRef: `arkme-send-v1.${randomUUID()}`, createdAtMillis: Date.now(), state: 'queued', files }
+      const task: ArkmeFileSendTask = { ...normalizedInput, taskRef: `arkme-send-v1.${randomUUID()}`, createdAtMillis: Date.now(), state: 'queued', files, delivery: this.ports.progressive ? 'negotiating' : 'legacy' }
       state.tasks.push(task)
       try { await this.save(userId, state) } catch (error) { state.tasks = state.tasks.filter(value => value !== task); throw error }
       this.schedule(userId, state, task)
-      return clone(task)
+      return this.publicTask(task)
     })
   }
   private imageFailure(error: unknown, fileRef: string, file: ArkmeLocalFile | undefined, phase: 'validation' | 'upload'): ArkmePluginError {
@@ -534,22 +547,120 @@ export class FileTransfers {
       if (!task) throw fail('file-task-missing', '发送任务不存在')
       await this.assertUser(userId)
       if (task.state === 'uncertain') throw fail('file-send-uncertain', '发送结果待确认，请先核对原会话，不能自动重复发送')
-      if (task.state !== 'failed') return clone(task)
+      if (task.state !== 'failed') return this.publicTask(task)
       if (task.retryable === false) throw fail(task.errorCode ?? 'file-send-rejected', task.error ?? '该发送已被拒绝，不能重试')
       task.state = 'queued'; delete task.error; delete task.errorCode
       for (const file of task.files) {
         if (!file.asset) file.progress = { phase: 'preparing', sentBytes: 0, totalBytes: file.size }
       }
       await this.save(userId, state); this.schedule(userId, state, task)
-      return clone(task)
+      return this.publicTask(task)
     })
   }
-  private schedule(userId: number, state: FileState, task: ArkmeFileSendTask): void {
+  private publicTask({ completions: _completions, ...task }: StoredSendTask): ArkmeFileSendTask { return clone(task) }
+
+  private async deliverProgressive(userId: number, state: FileState, task: StoredSendTask, controller: AbortController): Promise<boolean> {
+    const signal = controller.signal
+    const ports = this.ports.progressive
+    if (!ports) throw fail('attachment-protocol-unavailable', '附件补传需要更新插件')
+    const background = new Set(task.backgroundSound?.fileRefs ?? [])
+    const order = new Map((task.attachmentOrder ?? [...(task.content.assets ?? []).map(asset => asset.fileAssetUid), ...task.fileRefs]).map((ref, index) => [ref, index]))
+    const pending: PendingAttachment[] = task.files.map((file, index) => ({ ...publicFile(file),
+      attachmentUid: `pa-${createHash('sha256').update(`${task.recordUid}:${file.fileRef}`).digest('hex')}`,
+      generation: 1, sortOrder: order.get(file.fileRef) ?? index,
+      ...(background.has(file.fileRef) ? { backgroundSound: true, fileKind: 2 as const } : {}),
+    }))
+    for (const [index, file] of task.files.entries()) file.attachmentUid = pending[index]!.attachmentUid
+    if (!task.result) {
+      task.state = 'sending'; await this.save(userId, state)
+      let outcome: FileTransferSendOutcome
+      try { outcome = await this.ports.send(task, [], undefined, userId, signal, pending) }
+      catch { outcome = { kind: 'owner_outcome_unknown' } }
+      if (outcome.kind !== 'owner_accepted') {
+        task.state = outcome.kind === 'owner_not_accepted' ? 'failed' : 'uncertain'
+        task.error = outcome.message ?? '发送结果待确认，请先核对会话，避免重复发送'
+        if (outcome.code) task.errorCode = outcome.code
+        else delete task.errorCode
+        if (outcome.kind === 'owner_not_accepted' && outcome.retryable === false) task.retryable = false
+        else delete task.retryable
+        return false
+      }
+      task.result = outcome.result
+      delete task.location
+    }
+    task.state = 'uploading'; delete task.error; delete task.errorCode
+    // Persist the message receipt before any bytes leave the Host. Retries never resend it.
+    await this.save(userId, state)
+    const recordUid = task.result.itemUid
+    // A slow file must not hold the admission queue for later message bodies.
+    this.uploadQueue = this.uploadQueue.catch(() => {}).then(async () => {
+      await this.assertUser(userId, signal)
+      let receipts = await ports.reconcile(recordUid, userId, signal)
+      for (const descriptor of pending) {
+        await this.assertUser(userId, signal)
+        const file = task.files.find(file => file.fileRef === descriptor.fileRef)!
+        let receipt = receipts.find(value => value.attachmentUid === descriptor.attachmentUid)
+        if (!receipt) continue // Server removal is authoritative; never recreate a detached slot.
+        let target = { record_uid: recordUid, attachment_uid: receipt.attachmentUid, generation: receipt.generation }
+        if (receipt.state === 'failed') {
+          receipts = await ports.retry(target, userId, signal)
+          receipt = receipts.find(value => value.attachmentUid === descriptor.attachmentUid)
+          if (!receipt) continue
+          target = { ...target, generation: receipt.generation }
+          delete task.completions?.[file.fileRef]
+        }
+        if (receipt.state !== 'ready') {
+          const stored = state.files[file.fileRef]
+          if (!stored) throw fail('file-local-missing', '消息已发送，本地附件已不存在')
+          file.asset = await ports.upload(this.path(userId, file.fileRef), { ...stored, fileKind: descriptor.fileKind },
+            progress => { file.progress = progress }, userId, signal, target, {
+              read: () => task.completions?.[file.fileRef]?.generation === target.generation ? task.completions[file.fileRef]!.completion : undefined,
+              save: async completion => {
+                task.completions ??= {}; task.completions[file.fileRef] = { generation: target.generation, completion }
+                await this.save(userId, state)
+              },
+            })
+          await this.assertUser(userId, signal)
+          receipts = await ports.reconcile(recordUid, userId, signal)
+          receipt = receipts.find(value => value.attachmentUid === descriptor.attachmentUid)
+          if (receipt && receipt.state !== 'ready') throw new ArkmePluginError('attachment-completion-pending', '消息已发送，附件完成状态待确认，请重试补传', true, 409)
+        }
+        if (receipt?.fileAssetUid) {
+          file.asset = { fileAssetUid: receipt.fileAssetUid, fileName: file.fileName, mimeType: file.mimeType, size: file.size, fileKind: descriptor.fileKind }
+          const stored = state.files[file.fileRef]
+          if (stored) stored.asset = file.asset
+        }
+        file.progress = { phase: 'ready', sentBytes: file.size, totalBytes: file.size }
+        delete task.completions?.[file.fileRef]
+        await this.save(userId, state)
+      }
+      task.state = 'sent'; delete task.error; delete task.errorCode; delete task.completions
+    }).catch(error => {
+      task.state = 'failed'
+      task.error = error instanceof ArkmePluginError ? error.message : '附件补传中断，请重试'
+      if (error instanceof ArkmePluginError) task.errorCode = error.code
+    }).finally(async () => {
+      this.controllers.delete(controller)
+      await this.save(userId, state)
+    }).catch(() => { task.state = 'failed'; task.error = '附件状态保存失败，请重试补传' })
+    return true
+  }
+
+  private schedule(userId: number, state: FileState, task: StoredSendTask): void {
     const controller = new AbortController(); this.controllers.add(controller)
     let ownerOutcome: FileTransferSendOutcome | undefined
+    let deferred = false
     this.queue = this.queue.catch(() => {}).then(async () => {
       try {
         await this.assertUser(userId, controller.signal)
+        if (task.delivery === undefined || task.delivery === 'negotiating') {
+          task.delivery = await this.ports.progressive?.supported(userId, controller.signal) ? 'progressive' : 'legacy'
+          await this.save(userId, state)
+        }
+        if (task.delivery === 'progressive') {
+          deferred = await this.deliverProgressive(userId, state, task, controller)
+          return
+        }
         task.state = 'uploading'; await this.save(userId, state)
         const backgroundRefs = new Set(task.backgroundSound?.fileRefs ?? [])
         for (const file of task.files) {
@@ -615,10 +726,13 @@ export class FileTransfers {
         if (error instanceof ArkmePluginError) task.errorCode = error.code
         else delete task.errorCode
       } finally {
-        this.controllers.delete(controller)
-        await this.save(userId, state)
+        if (!deferred) {
+          this.controllers.delete(controller)
+          await this.save(userId, state)
+        }
       }
     }).catch(() => {
+      if (task.delivery === 'progressive' && task.state === 'uncertain') return
       if (ownerOutcome?.kind === 'owner_accepted') {
         task.state = 'sent'; delete task.error; delete task.errorCode
       } else if (ownerOutcome?.kind === 'owner_outcome_unknown') {

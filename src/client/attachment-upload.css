@@ -1,0 +1,9 @@
+.arkme-pending-attachment-ring { position: relative; display: grid; place-items: center; width: 34px; height: 34px; color: var(--dsw-alias-label-secondary, #68707c); }
+.arkme-pending-attachment-ring > svg:first-child { position: absolute; inset: 0; width: 100%; height: 100%; animation: arkme-attachment-spin 1.2s linear infinite; }
+.arkme-pending-attachment-bar { display: block; position: relative; height: 2px; margin-top: 5px; overflow: hidden; border-radius: 2px; background: var(--dsw-alias-border-l2, rgba(0,0,0,.1)); }
+.arkme-pending-attachment-bar::after { content: ''; display: block; width: 36%; height: 100%; border-radius: inherit; background: var(--dsw-alias-state-business-primary, #8295e8); animation: arkme-attachment-slide 1.4s ease-in-out infinite; }
+@keyframes arkme-attachment-spin { to { transform: rotate(360deg); } }
+@keyframes arkme-attachment-slide { from { transform: translateX(-100%); } to { transform: translateX(280%); } }
+@media (prefers-reduced-motion: reduce) {
+  .arkme-pending-attachment-ring > svg:first-child, .arkme-pending-attachment-bar::after { animation: none; }
+}
