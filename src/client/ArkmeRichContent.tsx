@@ -1023,9 +1023,9 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen, selectionTarget, onDecisionReply, decisionAnswered }: {
+export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen, selectionTarget, onDecisionReply, decisionResolution }: {
   onDecisionReply?: ((text: string) => void) | undefined
-  decisionAnswered?: boolean | undefined
+  decisionResolution?: 'answered' | 'blocked' | undefined
   sessionAttachmentPreview?: boolean
   item: ArkmeTimelineItem
   selectionTarget?: MessageSelectionTarget | undefined
@@ -1082,7 +1082,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
     setRetryVersions(new Map())
   }, [mediaRevision])
   const runnerCard = !item.forwardRecords && !item.sharedRecording && item.status === 1 ? parseRunnerCard(item.textContent ?? '', item.senderKind) : undefined
-  if (runnerCard) return <ArkmeRunnerCard card={runnerCard} onReply={onDecisionReply} answered={decisionAnswered} />
+  if (runnerCard) return <ArkmeRunnerCard card={runnerCard} onReply={onDecisionReply} resolution={decisionResolution} />
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} revision={version} onOpenDetail={onCallDetailOpen} />
   const selfQuote = selectedTextNotePresentation(item.textContent, item.localSelfQuote)
   if (selfQuote && item.status === 1 && item.textFormat !== 'markdown') return <div ref={selectionRef} data-arkme-message-content="message" data-arkme-content-presentation={presentation}>
