@@ -1,4 +1,3 @@
-import { executionMetadata } from './model-execution.js'
 import type {
   ArkmeRecordingSummaryModelConfig,
   ArkmeRecordingTimelineDialoguePoint,
@@ -79,7 +78,7 @@ export function projectRecordingSummaryModelConfig(value: unknown): ArkmeRecordi
     const provider = stringValue(option.provider).trim()
     const modelKey = stringValue(option.model_key ?? option.modelKey).trim()
     const displayName = stringValue(option.display_name ?? option.displayName).trim() || modelKey || routeKey
-    return [{ routeKey, provider, modelKey, displayName, ...executionMetadata(option) }]
+    return [{ routeKey, provider, modelKey, displayName }]
   })
   const personalRouteKey = stringValue(item.personal_route_key ?? item.personalRouteKey).trim()
   return {
@@ -379,7 +378,6 @@ export function projectRecordingVersions(
       id: stringValue(version.id ?? version.summary_id).trim() || `version-${sourceIndex}`,
       status,
       selectable,
-      ...(version.continuation_available === true ? { continuationAvailable: true } : {}),
       generationStage: numberValue(version.generation_stage ?? version.stage),
       generatedAtMillis: displayVersionTimestamp(version.update_at) ?? displayVersionTimestamp(version.create_at) ?? 0,
       modelDisplayName: stringValue(version.model_display_name ?? version.model_name).trim(),

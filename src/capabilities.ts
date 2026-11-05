@@ -1,4 +1,4 @@
-export const automaticCapabilityKeys = ['personal_profile', 'record_thought', 'chat_thought', 'arrangement_recognition', 'goal_insight', 'offline_context', 'recording_voice_trigger', 'event_insight', 'anniversary_insight'] as const
+export const automaticCapabilityKeys = ['personal_profile', 'record_thought', 'chat_thought', 'arrangement_recognition', 'goal_insight', 'offline_context', 'recording_voice_trigger'] as const
 export type AutomaticCapabilityKey = typeof automaticCapabilityKeys[number]
 export interface ArkmeCapabilitySetting { key: AutomaticCapabilityKey; title: string; enabled: boolean; version: number; enabledAt: number }
 export interface ArkmeCapabilitySettings { accountScope: string; settings: ArkmeCapabilitySetting[] }
@@ -10,7 +10,5 @@ export const automaticCapabilityDescriptions: Record<AutomaticCapabilityKey, str
   arrangement_recognition: '从开启后的快记、录音总结和通话中识别自己的安排。',
   offline_context: '自动分析录音与聊天内容，识别相关的线下交流。开启后会分析历史录音和聊天内容，运行时消耗 AI 额度。',
   goal_insight: '根据开启后的新材料自动更新目标。',
-  event_insight: '使用当前选择的模型整理事件。会处理所选模型尚未完成的历史记录，并持续分析新材料，运行时消耗 AI 额度。',
-  anniversary_insight: '根据开启后的新材料自动更新纪念日，使用所选模型并消耗 AI 额度。手动重新分析由你单独触发。',
   recording_voice_trigger: '录音时说「帮我记一下」和要记的内容，上传后保存为快记，必要时由你确认。仅处理开启后新上传的录音，使用 AI 额度。',
 }

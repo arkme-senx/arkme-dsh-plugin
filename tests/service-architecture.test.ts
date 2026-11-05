@@ -8,7 +8,7 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
-  'recordingFileStorage', 'recordingAnalysis',
+  'recordingFileStorage',
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'sourceMessageThoughts', // Signed-message reader shared by public SDK and Tools.
@@ -25,7 +25,7 @@ const expectedPublicMethods = [
   'attachExportDirectoryPicker', 'dataExportDirectoryPick', 'dataExportDirectoryOpen',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
-  'worldPublications', 'worldSoundExcerpts', 'worldSubscriptions', 'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
+  'worldPublications', 'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
@@ -167,7 +167,7 @@ const expectedServiceFiles = [
   'record-export-service.ts', 'record-export-range-service.ts',
   'record-directory-export-service.ts', 'backup-directory-store.ts', 'original-file-capacity.ts', 'original-file-store.ts',
   'team-world-service.ts',
-  'world-publication-service.ts', 'world-sound-service.ts', 'world-subscription-service.ts',
+  'world-publication-service.ts',
   'selected-text-forward.ts', 'world-local-reaction-service.ts', 'world-reaction-service.ts',
   'personal-keyword-service.ts',
   'device-control-realtime.ts', 'device-lock-service.ts',

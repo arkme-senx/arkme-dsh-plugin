@@ -1,4 +1,3 @@
-import { bindingWire, executionMetadata, type ModelBinding } from '../model-execution.js'
 import type { RecordingVoiceSourceQuery } from './recording-voice-trigger-service.js'
 import { parseRecordingEvidence, validateRecordingEvidenceQuery, type RecordingEvidenceQuery, type RecordingEvidenceResult } from '../recording-evidence-contract.js'
 import { RecordingStrategyService } from './recording-strategy-service.js'
@@ -338,12 +337,6 @@ export class RecordingService {
     }], session, signal)
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-share-account-changed', '账号已切换，请重新选择录音', false, 409)
     return result
-  }
-
-  async soundExcerptSelection(itemRefs: string[]): Promise<import('../world-sound-contract.js').WorldSoundOwnerSelection> {
-    if(!Array.isArray(itemRefs)||itemRefs.some(ref=>typeof ref!=='string'||ref.length>16384))throw new ArkmePluginError('world-sound-invalid','录音选段无效',false,400)
-    const {selection}=await this.recordingCommandSelection(itemRefs)
-    return {source:'recording',session_id:selection.sessionId,segments:selection.segments.map(s=>({child_id:s.childId,asr_item_index:s.asrItemIndex,transcript_source:s.transcriptSource}))}
   }
 
   private async recordingCommandSelection(itemRefs: readonly string[]) {
@@ -2286,8 +2279,6 @@ export class RecordingService {
     routeKey = '',
     signal?: AbortSignal,
     window?: ArkmeRecordingWindow,
-    binding?: ModelBinding,
-    expectedAccountScope?: string,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
     this.assertWorkbenchEnabled()
     this.validateRecordingWindow(window)
@@ -2297,7 +2288,6 @@ export class RecordingService {
     }
     const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const session = await this.runtime.requireSession()
-    if (expectedAccountScope !== undefined && expectedAccountScope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('recording-analysis-account-changed','账号已切换，请重新操作',false,409)
     const transcript = await this.recordingTranscriptWithSession(dayStart.getTime(), session, signal, window)
     if (transcript.state === 'processing') {
       throw new ArkmePluginError(
@@ -2317,7 +2307,6 @@ export class RecordingService {
     }
     const firstItem = transcript.items[0]!
     const endAt = transcript.items.reduce((end, item) => Math.max(end, item.endAtMillis), firstItem.endAtMillis)
-    await this.ensureRecordingSession(session,signal)
     const response = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       '/api/v1/summary/create',
       {
@@ -2331,13 +2320,11 @@ export class RecordingService {
         transcripts: buildRecordingGenerationTranscript(transcript.items, kind, dayStart.getTime(), window?.timeZone),
         kind: kind === 'timeline' ? 1 : 2,
         ...(normalizedRouteKey === '' ? {} : { route_key: normalizedRouteKey }),
-        ...(binding ? {model_binding:bindingWire(binding)} : {}),
       },
       session,
       signal,
       { lane: 'write', bypassCache: true },
     )
-    if (response.accepted === false) throw new ArkmePluginError('recording-generation-not-accepted', response.reason === 'model_catalog_changed' ? '模型目录已更新，请刷新后重新确认' : '当前已有其他模型任务在生成，本次选择尚未开始分析', true, 409)
     const flag = numberValue(response.flag)
     const summaryId = stringValue(response.summary_id).trim()
     if ((flag !== 1 && flag !== 2) || (flag === 1 && summaryId === '')) {
@@ -2355,11 +2342,11 @@ export class RecordingService {
     }
   }
 
-  async recordingSummaryModelConfig(signal?: AbortSignal, kind: ArkmeRecordingProjectionKind = 'summary'): Promise<ArkmeRecordingSummaryModelConfig> {
+  async recordingSummaryModelConfig(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-      '/api/v1/audio-summary/model-config/list', { kind: kind === 'timeline' ? 1 : 2 }, session, signal,
+      '/api/v1/audio-summary/model-config/list', {}, session, signal,
     )
     return projectRecordingSummaryModelConfig(data)
   }
@@ -2367,8 +2354,6 @@ export class RecordingService {
   async setRecordingSummaryModelRoute(
     routeKey: string,
     signal?: AbortSignal,
-    kind: ArkmeRecordingProjectionKind = 'summary',
-    expectedAccountScope?: string,
   ): Promise<ArkmeRecordingSummaryModelRouteUpdate> {
     this.assertWorkbenchEnabled()
     const normalizedRouteKey = routeKey.trim()
@@ -2376,63 +2361,11 @@ export class RecordingService {
       throw new ArkmePluginError('recording-summary-model-route-invalid', '录音总结模型无效', false, 400)
     }
     const session = await this.runtime.requireSession()
-    if (expectedAccountScope !== undefined && expectedAccountScope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('recording-analysis-account-changed','账号已切换，请重新操作',false,409)
     await this.runtime.authenticatedAudioPost(
-      '/api/v1/audio-summary/model-config/set', { route_key: normalizedRouteKey, kind: kind === 'timeline' ? 1 : 2 }, session, signal,
+      '/api/v1/audio-summary/model-config/set', { route_key: normalizedRouteKey }, session, signal,
       { lane: 'write', bypassCache: true },
     )
     return { effectiveRouteKey: normalizedRouteKey }
-  }
-
-  async recordingAnalysis(input: import('../recording-analysis-contract.js').RecordingAnalysisInput, signal?: AbortSignal): Promise<import('../recording-analysis-contract.js').RecordingAnalysisResult> {
-    this.assertWorkbenchEnabled()
-    if (!input || !['summary', 'timeline'].includes(input.kind)) throw new ArkmePluginError('recording-analysis-invalid', '录音分析类型无效', false, 400)
-    const session = await this.runtime.requireSession()
-    const accountScope = `${this.runtime.config.environment}:${session.userId}`
-    const current = async () => {
-      signal?.throwIfAborted()
-      const active = await this.runtime.requireSession()
-      if (`${this.runtime.config.environment}:${active.userId}` !== accountScope) throw new ArkmePluginError('recording-analysis-account-changed', '账号已切换，请重新操作', false, 409)
-    }
-    if (input.action === 'models') {
-      const config = await this.recordingSummaryModelConfig(signal, input.kind)
-      await current(); return { accountScope, config }
-    }
-    if (input.accountScope !== accountScope) throw new ArkmePluginError('recording-analysis-account-changed', '账号已切换，请重新操作', false, 409)
-    if (input.action === 'select') {
-      if (typeof input.routeKey !== 'string') throw new ArkmePluginError('recording-analysis-invalid', '模型路由无效', false, 400)
-      const result = await this.setRecordingSummaryModelRoute(input.routeKey, signal, input.kind, accountScope)
-      await current(); return { accountScope, ...result }
-    }
-    if (input.action === 'generate') {
-      if (typeof input.routeKey !== 'string' || input.routeKey.trim() === '') throw new ArkmePluginError('recording-analysis-invalid', '请明确选择模型', false, 400)
-      if (!executionMetadata({ binding: input.binding && bindingWire(input.binding), available: true }).binding) {
-        if (input.binding !== undefined || !input.routeKey.startsWith('user-api/')) throw new ArkmePluginError('recording-analysis-invalid', '请重新读取模型目录并确认模型版本', false, 400)
-        const config = await this.recordingSummaryModelConfig(signal, input.kind)
-        await current()
-        if (!config.options.some(model => model.routeKey === input.routeKey && model.provider === 'user-api' && model.available === true)) throw new ArkmePluginError('recording-analysis-invalid', '请重新读取模型目录并确认模型版本', false, 400)
-      }
-      const section = await this.generateRecordingProjection(input.dateStamp, input.kind, input.routeKey, signal, input.window, input.binding, accountScope)
-      await current(); return { accountScope, section }
-    }
-    if (input.action !== 'continue' || !/^[0-9a-f]{24}$/.test(input.versionId)) throw new ArkmePluginError('recording-analysis-invalid', '录音分析任务无效', false, 400)
-    this.validateRecordingWindow(input.window)
-    // This is an existing owner's frozen day, which may belong to a different
-    // civil timezone. Never reinterpret it as the Host's local midnight.
-    const dateStamp = input.window?.dateStamp ?? input.dateStamp
-    if (!Number.isSafeInteger(dateStamp) || !Number.isFinite(new Date(dateStamp).getTime())) throw new ArkmePluginError('recording-date-invalid', '录音任务日期无效', false, 400)
-    const window = input.window ?? { dateStamp, endStamp: dateStamp + 86400_000 }
-    await current()
-    const result = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/summary/continue', { summary_id: input.versionId, kind: input.kind === 'timeline' ? 1 : 2, date_stamp: dateStamp }, session, signal, { lane: 'write', bypassCache: true })
-    await current()
-    if (result.accepted !== true || result.summary_id !== input.versionId) throw new ArkmePluginError('recording-analysis-not-accepted', '当前任务尚未接受继续，请刷新状态', true, 409)
-    try {
-      const section = await this.recordingProjectionWithSession(dateStamp, input.kind, session, signal, window)
-      await current(); return { accountScope, section }
-    } catch (error) {
-      await current()
-      return { accountScope, section: { state: 'processing', items: [], message: '原任务已接受继续，正在更新状态' } }
-    }
   }
 
   private async recordingProjectionWithSession(
@@ -2440,7 +2373,7 @@ export class RecordingService {
     kind: ArkmeRecordingProjectionKind,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    window?: Pick<ArkmeRecordingWindow, 'dateStamp' | 'endStamp'>,
+    window?: ArkmeRecordingWindow,
   ): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> {
     const dayStart = window ? new Date(window.dateStamp) : this.recordingDayStart(dateStamp)
     const dayEnd = new Date(dayStart)
