@@ -79,9 +79,9 @@ it('shows actual phases without invented percentages for local repacks and delet
  await act(async()=>resolve({accountScope:'test:11',kind:'directory',directoryRef:'selected',fileRef:'',fileName:'内容.md',size:10,count:0,quotaFinalized:true}));
  expect(host.querySelector('progress')).toBeNull();expect(host.textContent).toContain('共 0 条快记');
 });
-it('reports cancellation as pending until the owner has safely settled',async()=>{
+it('reports cancellation as pending until the request settles without claiming owner cleanup completed',async()=>{
  let reject!:(e:Error)=>void;mock.run.mockImplementation(()=>new Promise((_r,j)=>{reject=j}));
  await act(async()=>root.render(<ArkmeRecordExportPanel scope="test:11" preflight={preflight}/>));await act(async()=>button('选择文件夹').click());await act(async()=>button('导出到文件夹').click());
- await act(async()=>button('取消导出').click());expect(host.textContent).toContain('正在取消导出，请等待安全收尾');expect(button('取消导出').disabled).toBe(true);expect(host.textContent).not.toContain('导出已停止');
- await act(async()=>reject(new Error('aborted')));expect(host.textContent).toContain('导出已停止，已保存内容保留');expect(host.querySelector('progress')).toBeNull();
+ await act(async()=>button('取消导出').click());expect(host.textContent).toContain('正在取消导出');expect(button('取消导出').disabled).toBe(true);expect(host.textContent).not.toContain('取消请求已发出');
+ await act(async()=>reject(new Error('aborted')));expect(host.textContent).toContain('取消请求已发出，已保存内容保留');expect(host.querySelector('progress')).toBeNull();
 });

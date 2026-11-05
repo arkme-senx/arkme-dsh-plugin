@@ -6,7 +6,7 @@ The UI retains previous counts while the Host validates the current selection. T
 
 Each page contains at most 100 records/removals and is staged in one SQLite transaction. Original files use at most four concurrent workers, with conflicting identities rejected and all writers settled before cleanup. Markdown writes are buffered to about 64 KiB; ordering, file hashing, fsync, atomic replacement, receipts and save confirmation remain unchanged.
 
-Progress reports `preparing`, `syncing`, `writing` and `confirming`. `count` is the number of synchronized records, not a percentage or the final date-filtered output count. The UI uses an indeterminate progress bar and only shows success after the owner returns the verified result. Cancellation remains pending until the request settles; any durable state is checked on the next export. A directory result may legitimately contain fewer records than were synchronized. ZIP and Arko result-count validation is unchanged.
+Progress reports `preparing`, `syncing`, `writing` and `confirming`. `count` is the number of synchronized records, not a percentage or the final date-filtered output count. The UI uses an indeterminate progress bar and only shows success after the owner returns the verified result. Cancellation remains pending until the request settles. A disconnected request cannot confirm Host cleanup, so the UI reports cancellation requested and the Host rejects new exports/previews until cleanup finishes; durable state is checked on the next export. A directory result may legitimately contain fewer records than were synchronized. ZIP and Arko result-count validation is unchanged.
 
 | Surface | Contract and verification |
 | --- | --- |
