@@ -2865,6 +2865,15 @@ export class ArkmeSdk {
   async worldPublications<R extends import('../world-publication-contract.js').WorldPublicationRequest>(input: R, signal?: AbortSignal): Promise<import('../world-publication-contract.js').WorldPublicationResponse<R>> {
     return this.call('world.publications', input, signal)
   }
+  async worldSuggestions<R extends import('../world-suggestions-contract.js').WorldSuggestionsRequest>(input: R, signal?: AbortSignal): Promise<import('../world-suggestions-contract.js').WorldSuggestionsResponse<R>> {
+    if ((await this.capabilities(signal)).features.worldSuggestionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持分享建议，请升级', retryable: false })
+    return this.call('world.suggestions', input, signal)
+  }
+
+  async worldSoundExcerpts<R extends import('../world-sound-contract.js').WorldSoundRequest>(input:R,signal?:AbortSignal):Promise<import('../world-sound-contract.js').WorldSoundResponse<R>>{
+    if((await this.capabilities(signal)).features.worldSoundExcerptsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持声音摘录，请升级',retryable:false})
+    return this.call('world.sound-excerpts',input,signal)
+  }
 
   async teamWorld<R extends import('../team-world-contract.js').TeamWorldRequest>(input: R, signal?: AbortSignal): Promise<import('../team-world-contract.js').TeamWorldResponse<R>> {
     if ((await this.capabilities(signal)).features.teamWorldV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持团队世界，请升级', retryable: false })
@@ -3430,3 +3439,5 @@ export type { ArkmeArkoInteraction, ArkmeArkoInteractionQuery, ArkmeArkoInteract
 export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '../world-reaction-contract.js'
 
 export type { WorldPublication, WorldPublicationRequest, WorldPublicationResponse, WorldPublicationSourceTarget } from '../world-publication-contract.js'
+export type {WorldSoundSegment,WorldSoundExcerpt,WorldSoundSelection,WorldSoundRequest,WorldSoundPrepared,WorldSoundReceipt,WorldSoundResponse} from '../world-sound-contract.js'
+export type { WorldSuggestion, WorldSuggestionJob, WorldSuggestionModel, WorldSuggestionPrepared, WorldSuggestionsState, WorldSuggestionsRequest, WorldSuggestionsResponse } from '../world-suggestions-contract.js'

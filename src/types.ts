@@ -833,7 +833,9 @@ export interface ArkmeWorldFeedItem {
   videoCount: number
   voiceCount: number
   extendCount: number
-  recordType?: 'extension_publication'
+  recordType?: 'extension_publication' | 'sound_excerpt'
+  soundExcerpt?: import('./world-sound-contract.js').WorldSoundExcerpt
+  soundStatus?: 'pending'|'published'|'rejected'|'withdrawn'
   extensionPublication?: ArkmeWorldExtensionPublication
 }
 
@@ -1660,6 +1662,8 @@ arkoImagesV1?:true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
     teamWorldV1?: true
+    worldSoundExcerptsV1?: true
+    worldSuggestionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -4655,6 +4659,8 @@ export type ArkmePluginOperation =
   | 'image.read'
   | 'images.list'
   | 'world.publications'
+  | 'world.sound-excerpts'
+  | 'world.suggestions'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'
@@ -4680,6 +4686,7 @@ export type ArkmePluginOperation =
   | 'world.notification-sources'
   | 'world.comment-notifications'
   | 'world.notification-target'
+  | 'world.subscriptions'
   | 'world.interactions.summary'
   | 'world.interactions.mark-viewed'
   | 'world.interactions.create-text'

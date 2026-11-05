@@ -16,6 +16,7 @@ export class WorldPublicationService {
     private chat: ChatService,
     private world: WorldService,
     private teams: TeamWorldService,
+    private suggestionSource?: (origin: import('../world-publish-source.js').WorldPublishOrigin, account: string, signal?: AbortSignal) => Promise<import('../world-publish-source.js').WorldPublishSourceDraft>,
   ) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
   }
@@ -116,12 +117,15 @@ export class WorldPublicationService {
     } else if (input.action === 'publish-source') {
       if (
         !input.origin ||
-        (input.origin.kind && input.origin.kind !== 'record') ||
+        (input.origin.kind && input.origin.kind !== 'record' && input.origin.kind !== 'suggestion') ||
         !Number.isSafeInteger(input.version) ||
         input.version <= 0
       )
         throw invalid()
-      const source = await this.record.worldPublishSource(input.origin.sourceRef, input.origin.itemUid, signal)
+      const source = input.origin.kind === 'suggestion'
+        ? await this.suggestionSource?.(input.origin, account, signal)
+        : await this.record.worldPublishSource(input.origin.sourceRef, input.origin.itemUid, signal)
+      if (!source) throw invalid()
       if (source.version !== input.version)
         throw new ArkmePluginError('world-source-changed', '原内容已变化，请重新打开发布窗口', false, 409)
       result = await this.world.publishExistingSource(source, actor, signal)
