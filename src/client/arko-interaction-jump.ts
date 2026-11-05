@@ -1,5 +1,6 @@
+import type { ArkmeRecordThought } from "../record-thought-contract.js"
 /** One explicit navigation request, scoped to the authenticated account and root. */
-interface ArkoInteractionJump { scope: string; sourceKey: string; rootUid: string; replyId?: string; revision: number; expiresAt: number }
+interface ArkoInteractionJump { scope: string; sourceKey: string; rootUid: string; recordOwnerUserId: number; replyId?: string; thought?: ArkmeRecordThought; revision: number; expiresAt: number }
 let value: ArkoInteractionJump | undefined, revision = 0
 const listeners = new Set<() => void>()
 export const arkoInteractionJump = {

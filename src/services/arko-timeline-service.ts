@@ -25,7 +25,7 @@ export class ArkoTimelineService {
   private scope(user: number) { return `${this.runtime.config.environment}:${user}` }
   private async check(scope: string) { if (this.scope((await this.runtime.requireSession()).userId) !== scope) throw invalid() }
   private async key(scope: string, id: string) { return createHmac('sha256', await this.localSecret()).update(`${scope}:${id}`).digest('hex') }
-  private async reference(scope: string, id: string) { return this.codec.seal(prefix, { scope, id }) }
+  private async reference(scope: string, id: string, revision?: string) { return this.codec.seal(prefix, { scope, id, revision }) }
   private async open(ref: string, scope: string): Promise<string> {
     const value = await this.codec.open(prefix, ref)
     if (value.scope !== scope || typeof value.id !== 'string' || !idPattern.test(value.id)) throw invalid()
@@ -41,10 +41,17 @@ export class ArkoTimelineService {
       || query.afterMillis !== undefined && (!Number.isSafeInteger(query.afterMillis) || query.afterMillis < 0)
       || query.beforeMillis !== undefined && (!Number.isSafeInteger(query.beforeMillis) || query.beforeMillis <= 0)
       || query.knownRefs && (!Array.isArray(query.knownRefs) || query.knownRefs.length > 100)) throw invalid()
-    const ids = query.knownRefs ? await Promise.all(query.knownRefs.map(ref => this.open(ref, scope))) : undefined
+    const knownRevisions: Record<string,string> = {}
+    const ids=query.knownRefs ? await Promise.all(query.knownRefs.map(async ref=>{
+      const value=await this.codec.open(prefix,ref)
+      if(value.scope!==scope||typeof value.id!=='string'||!idPattern.test(value.id))throw invalid()
+      knownRevisions[value.id]=str(value.revision,128)
+      return value.id
+    })) : undefined
+    if(ids && (ids.length===0||new Set(ids).size!==ids.length))throw invalid()
     if (ids && (query.cursor || query.afterMillis || query.beforeMillis)) throw invalid()
     const wire = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/interactions/query',
-      { limit: query.limit ?? 20, ...(query.cursor ? { cursor: query.cursor } : {}), ...(query.afterMillis ? { after: query.afterMillis } : {}), ...(query.beforeMillis ? { before: query.beforeMillis } : {}), ...(ids ? { ids } : {}) }, session, signal,
+      { limit: query.limit ?? 20, ...(query.cursor ? { cursor: query.cursor } : {}), ...(query.afterMillis ? { after: query.afterMillis } : {}), ...(query.beforeMillis ? { before: query.beforeMillis } : {}), ...(ids ? { ids, known_revisions: knownRevisions } : {}) }, session, signal,
       { lane: 'background-read', bypassCache: true, cacheMs: 0, publishServiceCooldown: false })
     await this.check(scope); signal?.throwIfAborted()
     if (!Array.isArray(wire.items) || wire.items.length > (ids?.length ?? 20) || !Array.isArray(wire.removed_ids) || typeof wire.has_more !== 'boolean') throw invalid()
@@ -67,8 +74,8 @@ export class ArkoTimelineService {
     for (const raw of wire.items) {
       const row = objectValue(raw), id = str(row.id, 70), at = row.occurred_at
       if (!idPattern.test(id) || !Number.isSafeInteger(at) || Number(at) <= 0 || !['record','chat'].includes(String(row.kind)) || !str(row.summary, 2000)) throw invalid()
-      items.push({ interactionKey: await this.key(scope, id), interactionRef: await this.reference(scope, id), occurredAtMillis: Number(at),
-        sourceName: chatNames.get(str(row.chat_session_uid)) || str(row.source_name, 500) || (row.kind === 'record' ? '发给自己' : '聊天'), kind: row.kind === 'record' ? 'self' : 'chat', summary: str(row.summary, 2000), suggestion: row.kind === 'chat' && (row.scene === 1 || row.scene === 5) })
+      items.push({ interactionKey: await this.key(scope, id), interactionRef: await this.reference(scope, id, str(row.revision,128)), occurredAtMillis: Number(at),
+        sourceName: chatNames.get(str(row.chat_session_uid)) || str(row.source_name, 500) || (row.kind === 'record' ? '发给自己' : '聊天'), kind: row.kind === 'record' ? 'self' : 'chat', summary: str(row.summary, 2000), suggestion: row.kind === 'chat' && row.scene === 5 })
     }
     const removedKeys: string[] = []
     for (const id of wire.removed_ids) { if (typeof id !== 'string' || !ids?.includes(id)) throw invalid(); removedKeys.push(await this.key(scope, id)) }
@@ -94,10 +101,10 @@ export class ArkoTimelineService {
       source = await this.source.chatSourceFromBundle(bundle, session, undefined, [])
     }
     await this.check(scope)
-    const suggestion = row.kind === 'chat' && (row.scene === 1 || row.scene === 5)
-    return { accountScope: scope, source, itemUid: String(row.record_uid), recordOwnerUserId: Number(row.record_owner_user_id), occurredAtMillis: Number(row.occurred_at), interactionKey: await this.key(scope, id),
+    const suggestion = row.kind === 'chat' && row.scene === 5
+    return { accountScope: scope, source, itemUid: String(row.record_uid), recordOwnerUserId: Number(row.record_owner_user_id), occurredAtMillis: Number(row.occurred_at), ...(Number.isSafeInteger(row.navigation_at)&&Number(row.navigation_at)>0?{sourceAtMillis:Number(row.navigation_at)}:{}), suggestion, interactionKey: await this.key(scope, id),
       ...(id.startsWith('t:') ? { replyId: id.slice(2) } : {}),
-      ...(suggestion ? { thought: { id, recordUid: String(row.record_uid), biz: 1, scene: row.scene as 1 | 5, status: 'ready', content: String(row.content), ...(displayView(row.display) ? { display: displayView(row.display)! } : {}) } } : {}),
+      ...(!id.startsWith('t:') ? { thought: { id: id.startsWith('r:') ? id.slice(2) : id.startsWith('a:') ? `agent:${id.slice(2)}` : `${row.record_uid}:${row.scene}`, recordUid: String(row.record_uid), biz: row.kind==='record' ? row.scene===2 ? 2 : 1 : row.scene===1||row.scene===2||row.scene===6 ? 2 : 1, ...(row.kind==='chat'?{scene: (row.scene===6 ? 1 : row.scene) as 1 | 2 | 3 | 4 | 5}:{}), generation: Number(row.generation), ...(str(row.reply_target_ref,4096)?{replyTargetRef:str(row.reply_target_ref,4096)}:{}), visibility: row.scene===2 ? 'members' : 'user', status: 'ready', content: String(row.content), ...(displayView(row.display) ? { display: displayView(row.display)! } : {}) } } : {}),
     }
   }
 }

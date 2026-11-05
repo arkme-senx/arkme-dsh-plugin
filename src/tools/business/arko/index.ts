@@ -455,7 +455,7 @@ export const arkoInteractionsToolModule = defineArkmeCoreToolModule({
 })
 export const arkoInteractionOpenToolModule = defineArkmeCoreToolModule({
   meta: { id: 'business.arko.interaction-open.v1', toolName: 'arkme_arko_interaction_open', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
-  create: (service: ArkmeArkoToolPort) => defineTool({ name: 'arkme_arko_interaction_open', description: 'Resolve an exact opaque Arko interactionRef under current source permissions. Returns its source target and optional reply suggestion. Does not send messages or fill drafts.',
+  create: (service: ArkmeArkoToolPort) => defineTool({ name: 'arkme_arko_interaction_open', description: 'Resolve an exact opaque Arko interactionRef under current source permissions. Returns its source target and exact selected result. Only suggestion=true denotes a reply suggestion. Does not send messages or fill drafts.',
     parameters: { interaction_ref: { type: 'string', required: true, description: 'Exact interactionRef returned by arkme_arko_interactions.' } }, output: ARKO_OUTPUT, isConcurrencySafe: () => true,
     async execute(args, exec) { return JSON.stringify(await service.arkoInteractionOpen(args.interaction_ref, exec.signal)) },
   }),

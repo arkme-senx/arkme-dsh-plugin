@@ -16,11 +16,11 @@ export interface ArkmeArkoInteraction {
 export interface ArkmeArkoInteractionQuery { cursor?: string; afterMillis?: number; beforeMillis?: number; limit?: number; knownRefs?: string[] }
 export interface ArkmeArkoInteractionPage { accountScope: string; items: ArkmeArkoInteraction[]; hasMore: boolean; nextCursor?: string; removedKeys: string[] }
 export interface ArkmeArkoInteractionTarget {
-  accountScope: string; source: ArkmeSourceItem; itemUid: string; occurredAtMillis: number; recordOwnerUserId: number
-  interactionKey: string; replyId?: string; thought?: ArkmeRecordThought
+  accountScope: string; source: ArkmeSourceItem; itemUid: string; occurredAtMillis: number; sourceAtMillis?: number; recordOwnerUserId: number
+  interactionKey: string; suggestion?: boolean; replyId?: string; thought?: ArkmeRecordThought
 }
 export interface ArkmeArkoTimelineCache {
-  schemaVersion: 1; savedAtMillis: number; messages: ArkoTimelineMessage[]; interactions: ArkmeArkoInteraction[]
+  schemaVersion: 2; savedAtMillis: number; messages: ArkoTimelineMessage[]; interactions: ArkmeArkoInteraction[]
   session?: ArkmeArkoSession; historyCursor?: string; interactionCursor?: string
   /** Retained-window boundary. History cursors require this filter on every page. */
   historyBeforeMillis?: number

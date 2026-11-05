@@ -1,33 +1,41 @@
 # Arko 统一互动时间线
 
-## 已确认范围
-
-Arko 直接聊天和其他来源的 AI 互动按实际互动时间混排。外部互动以灰色单行显示来源、摘要和跳转入口。重试更新同一行，评论续答为新行。建议沿用建议弹窗，填入原会话草稿。读取源权限始终由 Record / Chat 裁决。
+Arko 直接聊天与其他来源的 AI 结果按实际完成时间混排。外部互动复用既有灰色单行，显示来源、摘要及跳转入口。重试更新同一结果，评论续答具有独立身份。Record、Chat 及结果 owner 分别裁决当前访问权限；读取不触发生成或计费。
 
 ## 能力矩阵
 
 | 能力 | UI | Host | Tool | SDK |
 | --- | --- | --- | --- | --- |
-| 分页查询云端互动 | Arko 时间线 | arko.interactions | arkme_arko_interactions | arkoInteractions |
-| 互动来源定位 | 点击互动行 | arko.interaction.open | arkme_arko_interaction_open | arkoInteractionOpen |
-| 已加载对话缓存 | 进入立即恢复并后台同步 | arko.timeline.cache | arkme_arko_timeline_cache | arkoTimelineCache |
+| 分页查询互动 | Arko 时间线 | arko.interactions | arkme_arko_interactions | arkoInteractions |
+| 精确结果定位 | 既有详情及建议弹窗 | arko.interaction.open | arkme_arko_interaction_open | arkoInteractionOpen |
+| 展示缓存 | 恢复窗口和位置 | arko.timeline.cache | arkme_arko_timeline_cache | arkoTimelineCache |
 
-## 性能及一致性边界
+三种适配器共享 ArkoTimelineService。公开 SDK 沿用 feature discovery、AbortSignal 和既有 dispose 契约；dispose 取消托管导出与存储观察，普通单次读取由调用方的 signal 控制。Tool 读取缓存无需写入确认；保存缓存复用正式 Tool 的用户确认机制。
 
-浏览器缓存按环境和账号隔离，切账号不复用。Host 缓存独立于待发送恢复数据，采用私有文件权限、原子写入及容量上限。只在页面/已确认消息变化时节流保存，输入和流式 token 不触发持久化。恢复游标及视口，后台更新保留已加载旧页。
+## 缓存与权限
 
-云端每页最多 20 条候选；旧客户端接口不变。源数据拒绝访问时隐藏互动；网络故障保留缓存并给出重试状态。游标与来源引用必须绑定账号，拒绝篡改、跨账号及跨环境。只返回用户可见结果，不返回内部提示词、工具轨迹或推理。
+用户确认的行为是“保留窗口和位置，摘要复核后显示”。进入页面、重新获得焦点、可见性变化、断网/重新联网及源 invalidation 均清除本次验证状态并复核已有引用。未复核行显示等高占位，不向 DOM 或无障碍标签输出缓存来源名称和摘要。确认拒绝后移除；网络故障清除本次验证状态，保留占位和重试入口；重新联网后再次复核。请求代次和账号边界阻止迟到响应恢复已撤销内容。已打开的建议弹窗也绑定本次结果引用，证明失效或结果替换即关闭，不自动恢复旧正文。
 
-普通聊天增量请求沿用现有每页最多 50 条的 Host / 服务端合同；同一时间边界的重复结果按稳定消息身份合并。已加载的互动仅校验当前可见性和删除状态，避免重新传输旧回复正文。
+展示缓存按环境和账号隔离，schema 为 2，旧展示副本可丢弃。缓存独立于待发送恢复及回执数据；采用私有文件权限、原子写入、8 MiB 上限，最多持久化 2,000 条聊天及 400 条互动。仅对已确认消息与页面变化节流保存，输入和流式 token 不触发持久化。授权状态仅存在页面内，不持久化。
 
-持久化缓存最多保存 2,000 条聊天、400 条互动，总大小上限 8 MiB；超出范围可继续向前分页读取。缓存是展示副本，不替代发送回执或服务端权限。重试更新同一个来源场景的互动行，后续评论续答具有独立身份。历史系统已经清除且未保留的 AI 结果无法凭空恢复。
+引用加密携带结果身份与观察到的 revision。knownRefs 在 revision 不变时只取当前权限证明；变化时重新获取摘要。revision 本身不是授权凭证。源 owner 临时失败使整页失败，不推进游标或冒充删除；普通直接聊天仍使用自己的读取链路。
 
-## 后端部署与兼容
+## 导航与结果语义
 
-配套 Intelligent 新增 `/api/v1/arko/interactions/query`、`/api/v1/arko/interactions/details`，读取已有结果并进行当前 Record / Chat owner 授权。SQL migration 28 增加用户时间索引；Mongo 索引为新增，准备失败只关闭新入口。聊天建议保留最后完成的结果，源消息删除或权限变化仍清除 / 拒绝访问。
+只有 chat scene 5 使用既有建议弹窗，填入原会话草稿，由用户决定发送。scene 1 主动回答、群公开/私密回答及个人两业务槽位进入既有原文详情。details 刚授权的精确结果通过页面内 jump 传给 RecordThoughtContent，以账号、来源、record owner、根 UID 和 thought ID 精确定位；续答通过 replyId 定位。历史只读结果没有 replyTargetRef，不能当作当前可写槽位。
 
-部署需先执行 SQL 索引迁移并完成测试服验证，再按团队发布流程推广。回滚旧后端可保留新增字段和索引；插件遇到新入口不可用时保留已有聊天，并显示互动未同步状态。本文的本地验证不代表测试服或生产发布。
+Target.occurredAtMillis 始终表示结果完成时间；可选 sourceAtMillis 为 owner 确认的源时间，导航优先使用它。thought 表示选中的结果，suggestion=true 才表示建议弹窗。来源 UID、owner、详情组件和草稿交互沿用原实现。
 
-## 验证
+## 后端与数据准备
 
-覆盖同毫秒分页、空权限页推进、跨账号、源删除/隐私锁、并发重试、缓存损坏/超限、分页保留、切回无阻塞、后台同步视口稳定；使用隔离数据库及真实测试账号页面。构建、测试服、安装客户端和生产验证分别报告。
+Intelligent 提供 POST /api/v1/arko/interactions/query 及 /api/v1/arko/interactions/details。每页最多 20 条物理候选，按完成时间和稳定身份排序；拒绝访问的空页仍返回物理游标。先批量授权元数据，再按观察到的 revision 批量读正文；并发替换返回可重试错误。普通聊天想法读取不增加 Agent SQL 依赖。
+
+chatthought 在 cb/cv/db/dv 中仅保留一份成功正文；fa/frv/fgen 保存完成时间、源版本及代次，iu 仅作索引归属。新代开始或失败保留上一成功结果，当前 Content/Display/ReplyTarget 仍要求 ready。撤销已完成代或源失效会清除该结果。已经清除且未保留的历史正文无法凭空恢复。
+
+不新增集合或 SQL 表。Mongo 三个索引服务于个人结果、聊天结果、续答的账号/完成时间读取；SQL migration 28 仅为 Agent 增加账号/场景/状态/完成时间索引。显式准备工具默认 dry-run，单批最多 100 条，使用 checkpoint/CAS 并复用等价索引；运行时不建索引、不双读旧字段、不增加开关或轮询 worker。
+
+发布前应按后端实现文档完成依赖与数据准备。启动异步两秒内只读检查索引元数据；失败只使新互动接口暂不可用。回退保留已有结果及新增索引，不自动执行 down/drop。本任务开发不代表测试服或生产发布。
+
+## 验证边界
+
+覆盖完成排序、同毫秒分页、空权限页、源编辑/删除/退群、自动能力、代次竞争、已加载缓存复核、迟到响应、账号切换及精确导航。后端使用隔离 Mongo/MySQL 和独立 Record/Chat 测试进程；页面使用实际生产组件及合成传输。不可变 tgz 在未修改的官方 DSH 独立 Profile 中验收 Tools，并通过仓外公开 SDK Consumer。实际账号全产品与其他操作系统运行情况须分别记录，不能用本地组件证据替代。

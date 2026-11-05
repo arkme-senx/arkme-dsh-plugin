@@ -8,7 +8,7 @@ import { ArkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import type { ArkmeArkoTimelineCache } from '../src/arko-timeline-contract.js'
 const dirs: string[] = []
 afterEach(async () => { for (const path of dirs.splice(0)) await rm(path, { recursive: true, force: true }) })
-const snapshot = (at=1000): ArkmeArkoTimelineCache => ({ schemaVersion: 1, savedAtMillis: at, messages: [{ id:'history:1', messageId:1, sessionId:88, role:'assistant', text:'已加载回复', status:'done', createdAtMillis:1 }], interactions:[], session:{sessionId:88, name:'Arko', created:false}, historyCursor:'older', viewport:{scrollTop:128,followTail:false} })
+const snapshot = (at=1000): ArkmeArkoTimelineCache => ({ schemaVersion: 2, savedAtMillis: at, messages: [{ id:'history:1', messageId:1, sessionId:88, role:'assistant', text:'已加载回复', status:'done', createdAtMillis:1 }], interactions:[], session:{sessionId:88, name:'Arko', created:false}, historyCursor:'older', viewport:{scrollTop:128,followTail:false} })
 it('restores a private atomic account/environment cache across store instances and never lets stale unmount overwrite it', async () => {
  const dir=await mkdtemp(join(tmpdir(),'arko-cache-'));dirs.push(dir);const store=new ArkoTimelineCacheStore(dir)
  await store.access('test:11',snapshot(2000));await store.access('test:11',snapshot(1000))

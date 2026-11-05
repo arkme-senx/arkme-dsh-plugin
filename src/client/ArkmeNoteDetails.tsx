@@ -1,5 +1,6 @@
 import { WorldPublicationBadge, WorldPublicationActions } from './WorldPublicationControls.js'
 import { arkoInteractionJump } from './arko-interaction-jump.js'
+import { recordOwnerId } from '../record-owner-id.js'
 import { NoteWorldReactionArchive } from './NoteWorldReactionArchive.js'
 import { detailExtensionSends, useDetailExtensionSends, DetailExtensionSendStatus, type DetailExtensionSend } from './detail-extension-send.js'
 import { readDetailExtensionPages } from './detail-extension-pages.js'
@@ -921,6 +922,7 @@ export function ArkmeTimelineDetailDrawer({
   useEffect(() => {
     const request = interactionJump, body = bodyRef.current
     if (!request || !body || request.scope !== accountKey || request.rootUid !== item.itemUid
+      || String(request.recordOwnerUserId)!==String(recordOwnerId(item.recordOwnerUserId ?? (item.isMe&&auth?.status==='authenticated' ? auth.userId : undefined)))
       || request.sourceKey !== (sourceIdentityKey ?? normalizedSourceRef) || historyOpen || relatedView !== 'source-detail') return
     const expiry = setTimeout(() => arkoInteractionJump.consume(request.revision), Math.max(0,request.expiresAt-Date.now()))
     let frame: number | undefined
@@ -928,7 +930,7 @@ export function ArkmeTimelineDetailDrawer({
       frame = undefined
       const target = request.replyId
         ? [...body.querySelectorAll<HTMLElement>('[data-arkme-thought-reply]')].find(node => node.dataset.arkmeThoughtReply === request.replyId)
-        : body.querySelector<HTMLElement>('[data-arkme-record-thought-content]')
+        : [...body.querySelectorAll<HTMLElement>('[data-arkme-thought-reply]')].find(node => node.dataset.arkmeThoughtReply === request.thought?.id)
       if (!target) return
       body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 12
       scrollAnchorRef.current?.rebase()
@@ -940,7 +942,7 @@ export function ArkmeTimelineDetailDrawer({
     body.addEventListener('wheel',cancel,{passive:true}); body.addEventListener('touchmove',cancel,{passive:true})
     schedule()
     return () => { clearTimeout(expiry); observer.disconnect(); if(frame!==undefined) cancelAnimationFrame(frame); body.removeEventListener('wheel',cancel); body.removeEventListener('touchmove',cancel) }
-  }, [interactionJump, accountKey, item.itemUid, sourceIdentityKey, normalizedSourceRef, historyOpen, relatedView])
+  }, [interactionJump, accountKey, item.itemUid, item.recordOwnerUserId, item.isMe, sourceIdentityKey, normalizedSourceRef, historyOpen, relatedView])
   const quickNoteDetailsSupported = item.quickNoteDetailsSupported !== false
   const extensionParent = extensionState.kind === 'success'
     ? extensionState.context.extensionParent ?? item.extensionParent : item.extensionParent
