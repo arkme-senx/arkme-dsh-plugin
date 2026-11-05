@@ -98,3 +98,73 @@ it('leaves old recording-derived cards readable without a guessed return link', 
   expect(host.textContent).toContain('来源暂不可定位')
   expect(host.querySelector('button')).toBeNull()
 })
+
+const evidenceItem = () => ({ ...item(1), provenance: [{ id: 'e-original', kind: 'audio_summary' as const, role: 'initial' as const, text: '', canOpen: true, readOnExpand: true, sourceDate: '2026-10-09' }] })
+const sourceTarget = { kind: 'audio_summary', dateStamp, tzOffsetMillis: -new Date(dateStamp).getTimezoneOffset() * 60_000, summaryId: 'original-summary' }
+function sourceFixture(open: () => Promise<unknown>) {
+ mock.call.mockImplementation(async (op, params) => {
+  if (op === 'arrangements.recording-day') return page([evidenceItem()])
+  if (op === 'arrangements.detail') return evidenceItem()
+  if (op === 'arrangements.source.read') return { evidenceId: params.evidenceId, state: 'ready', text: '核验后的原句' }
+  if (op === 'arrangements.source.open') return open()
+  throw new Error(`Unexpected operation: ${op}`)
+ })
+}
+it.each([false, true])('navigates from verified provenance and closes the drawer (expanded=%s)', async expanded => {
+ sourceFixture(async () => sourceTarget)
+ await render(); await click(entry())
+ if (expanded) await click(button('安排 1'))
+ await click(button('查看原文'))
+ expect(document.querySelector('[role="dialog"]')).toBeNull()
+ expect(arkmeUi.getSnapshot().recordingTarget).toMatchObject({ dateStamp, summary: { versionId: 'original-summary' } })
+ expect(mock.call.mock.calls).toContainEqual(['arrangements.source.open', { arrangementRef: 'ref-1', evidenceId: 'e-original' }, expect.any(AbortSignal)])
+})
+it('keeps the drawer open and explains rejected source access', async () => {
+ sourceFixture(async () => { throw new Error('原录音总结已删除或当前无权查看') })
+ await render(); await click(entry()); await click(button('查看原文'))
+ expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+ expect(document.querySelector('[role="alert"]')?.textContent).toContain('原录音总结已删除或当前无权查看')
+})
+it('times out a stuck source read and allows retry without accepting its late result', async () => {
+ vi.useFakeTimers()
+ let resolveOld!: (value: unknown) => void
+ sourceFixture(() => new Promise(resolve => { resolveOld = resolve }))
+ try {
+  await render(); await click(entry()); await click(button('查看原文'))
+  await act(async () => { await vi.advanceTimersByTimeAsync(30_001) })
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('读取超时')
+  const request = mock.call.mock.calls.find(([op]) => op === 'arrangements.source.open')!
+  expect(request[2].aborted).toBe(true)
+  await act(async () => resolveOld(sourceTarget))
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  sourceFixture(async () => sourceTarget)
+  await click(button('重试'))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+ } finally { vi.useRealTimers() }
+})
+
+it.each([
+ [['unknown_origin'], '部分历史安排无法确认来源日期'],
+ [['extraction_incomplete'], '部分总结尚未完成安排识别'],
+ [['no_summary'], '当天暂无可用于核对识别结果的已完成总结'],
+ [['summary_unavailable'], '部分总结暂不可核验'],
+ [['source_unavailable'], '部分安排的原总结暂不可核验'],
+ [undefined, '当天录音安排的识别完整性尚未确认'],
+ [['future-reason'], '当天录音安排的识别完整性尚未确认'],
+ [['__proto__'], '当天录音安排的识别完整性尚未确认'],
+] as const)('explains actual coverage gaps (%s) without claiming a complete count', async (reasons, message) => {
+ mock.call.mockResolvedValue({ ...page(), state: 'partial', coverageReasons: reasons })
+ await render(); await click(entry())
+ expect(entry().textContent).toContain('已识别 1 项')
+ expect(document.querySelector('[role="dialog"]')?.textContent).toContain(message)
+ expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('历史录音来源尚不完整')
+})
+
+it('shows simultaneous gaps without hiding unfinished extraction behind history', async () => {
+ mock.call.mockResolvedValue({ ...page(), state: 'partial', coverageReasons: ['unknown_origin', 'extraction_incomplete'] })
+ await render(); await click(entry())
+ const text = document.querySelector('[role="dialog"]')?.textContent
+ expect(text).toContain('部分历史安排无法确认来源日期')
+ expect(text).toContain('部分总结尚未完成安排识别')
+})
