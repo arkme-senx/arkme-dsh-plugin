@@ -82,6 +82,29 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it.each(['select', 'generate', 'continue'] as const)('requires a later trusted confirmation for recording analysis %s', async action => {
+    const ctx = await setup(), recordingAnalysis = vi.fn(async () => ({ accountScope: 'test:42' }))
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, recordingAnalysis } as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = { id: SessionId(`recording-analysis-${action}`), session: { events } } as unknown as Agent
+    const args = { action, kind: 'summary', account_scope: 'test:42', route_key: 'dashscope/selected', date_stamp: 0, version_id: 'a'.repeat(24), model_binding: { catalogReleaseId: '11', offeringRevisionId: '22', publicModelCode: 'selected' } }
+    const run = (id: string, input = args) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_recording_analysis', arguments: input, agent, signal: new AbortController().signal })
+    const prepared = JSON.stringify(await run('prepare'))
+    expect(prepared).toContain('confirmation_required')
+    expect(prepared).toContain(action === 'select' ? '不会开始生成或扣除' : action === 'continue' ? '沿用原版本的计费方式' : 'AI 积分')
+    expect(recordingAnalysis).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required')
+    expect(recordingAnalysis).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认原操作' }] } })
+    // A changed target needs a fresh confirmation, even after the human approves the original.
+    const changed = { ...args, account_scope: 'test:43' }
+    expect(JSON.stringify(await run('changed', changed))).toContain('confirmation_required')
+    expect(recordingAnalysis).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认变更后的账号' }] } })
+    expect((await run('confirmed', changed)).isError).toBe(false)
+    expect(recordingAnalysis).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ action, accountScope: 'test:43', kind: 'summary' }), expect.any(AbortSignal))
+    await mounted.dispose()
+  })
   it('requires a later trusted human confirmation before replying to an Arko thought', async () => {
     const ctx = await setup(), extendSourceMessage = vi.fn(async () => ({ recordUid: 'reply', localState: 'synced' }))
     const mounted = await mountArkmeTools(ctx, 'business', { ...ports, extendSourceMessage } as unknown as ArkmeToolPorts)
@@ -394,7 +417,7 @@ describe('registerArkmeTools', () => {
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
       'arkme_relation_pages',
-      'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
+      'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_analysis_models', 'arkme_recording_analysis', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',

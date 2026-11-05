@@ -1,7 +1,8 @@
+import { publishedChoiceId } from './model-execution.js'
 import type { ArkmeArkoModelCatalog, ArkmeRecordingSummaryModelConfig } from './types.js'
 import type { DshRemoteModelCatalog } from './dsh-remote/types.js'
 
-export type ModelScene = 'dsh' | 'arko' | 'recording' | 'explore' | 'arrangement' | 'dayReview'
+export type ModelScene = 'dsh' | 'arko' | 'recording-summary' | 'recording-timeline' | 'explore-profile' | 'explore-event' | 'explore-goal' | 'explore-anniversary' | 'arrangement' | 'dayReview'
 export type ModelOrigin = 'official' | 'user-provided'
 export type ModelBilling = 'arkme-points' | 'provider-account' | 'unknown'
 export interface ModelChoice {
@@ -17,6 +18,8 @@ export interface ModelChoice {
   supplierCode?: string
   pricing?: string
   pointPricing?: { cacheMissInputPerThousand: string; cacheHitInputPerThousand: string; outputPerThousand: string }
+  referencesByScene?: Partial<Record<ModelScene, string>>
+  availabilityByScene?: Partial<Record<ModelScene, { available: boolean; reason?: string }>>
   billing?: ModelBilling
   /** A shared route can have different billing contracts in different scenes. */
   billingByScene?: Partial<Record<ModelScene, ModelBilling>>
@@ -50,35 +53,58 @@ export function dshModelChoices(catalog: DshRemoteModelCatalog): ModelChoice[] {
     dsh: { provider: model.provider, model: model.model } }))
 }
 export function arkoModelChoices(catalog: ArkmeArkoModelCatalog): ModelChoice[] {
-  return catalog.options.map(model => ({ id: JSON.stringify(['arko', model.routeKey]), name: model.displayName,
-    origin: model.provider==='user-api'?'user-provided':'official',
+  return catalog.options.map(model => ({ id: publishedChoiceId(model.binding, ['arko', model.routeKey]), name: model.displayName,
+    origin: model.provider === 'user-api' ? 'user-provided' : 'official',
     channel: model.provider === 'managed-ai' ? 'Arkme 托管' : model.provider, identifier: model.routeKey,
-    billingByScene: { arko: model.provider === 'managed-ai' ? 'arkme-points' : model.provider==='user-api'?'provider-account':'unknown' },
+    billingByScene: { arko: model.provider === 'managed-ai' ? 'arkme-points' : model.provider === 'user-api' ? 'provider-account' : 'unknown' },
+    ...(model.binding ? {catalogRevision:model.binding.catalogReleaseId,offeringRevision:model.binding.offeringRevisionId} : {}),
+    ...(model.provider === 'user-api' ? { exploreRouteKey: model.routeKey } : {}),
+    ...(model.supplierCode ? {supplierCode:model.supplierCode} : {}),
     ...(model.costDescription ? { pricing: model.costDescription } : {}), ...(model.imageInput ? { images: true } : {}), arko: model.routeKey }))
 }
-export function recordingModelChoices(catalog: ArkmeRecordingSummaryModelConfig): ModelChoice[] {
-  return catalog.options.map(model => ({ id: JSON.stringify(['recording', model.routeKey]), name: model.displayName,
-    origin: model.provider==='user-api'?'user-provided':'official', billingByScene: { recording: model.provider==='user-api'?'provider-account':'unknown' },
-    channel: model.provider === 'dashscope' ? '百炼' : model.provider, identifier: model.modelKey, recording: model.routeKey }))
+export function recordingModelChoices(catalog: ArkmeRecordingSummaryModelConfig, kind: 'summary' | 'timeline'): ModelChoice[] {
+  const scene = kind === 'timeline' ? 'recording-timeline' : 'recording-summary'
+  return catalog.options.map(model => ({ id: publishedChoiceId(model.binding, [scene, model.routeKey]), name: model.displayName,
+    origin: model.provider === 'user-api' ? 'user-provided' : 'official', billingByScene: { [scene]: model.provider === 'user-api' ? 'provider-account' : model.binding ? 'arkme-points' : 'unknown' },
+    availabilityByScene: { [scene]: { available: model.available === true, ...(model.unavailableReason ? { reason: model.unavailableReason } : {}) } },
+    ...(model.provider === 'user-api' ? { exploreRouteKey: model.routeKey } : {}),
+    ...(model.binding ? { catalogRevision: model.binding.catalogReleaseId, offeringRevision: model.binding.offeringRevisionId } : {}),
+    ...(model.supplierCode ? { supplierCode: model.supplierCode } : {}), ...(model.costDescription ? { pricing: model.costDescription } : {}),
+    channel: model.provider === 'dashscope' ? '百炼' : model.provider, identifier: model.binding?.publicModelCode ?? model.modelKey, recording: model.routeKey }))
+}
+export function sceneReference(model: ModelChoice, scene: ModelScene): string | object | undefined {
+  if (model.referencesByScene?.[scene]) return model.referencesByScene[scene]
+  if (scene.startsWith('recording-')) return model.recording
+  if (scene.startsWith('explore-')) return model.explore
+  return model[scene as 'dsh' | 'arko' | 'arrangement' | 'dayReview']
+}
+export function modelAvailable(model: ModelChoice, scene: ModelScene): boolean {
+  return !!sceneReference(model, scene) && (scene === 'dsh' || scene === 'arko' || scene === 'arrangement' || scene === 'dayReview' ? model.availabilityByScene?.[scene]?.available !== false : model.availabilityByScene?.[scene]?.available === true)
+}
+export function unavailableLabel(model: ModelChoice, scene: ModelScene): string {
+  const reason = model.availabilityByScene?.[scene]?.reason
+  return ({model_not_priced:'此模型尚未配置报价',model_price_ambiguous:'此模型报价无法确认',catalog_unavailable:'模型目录暂不可用',adapter_unavailable:'此模型暂不可用',business_not_opened:'此场景尚未开放',fixed_model_policy:'此场景按固定模型自动运行，暂不支持切换'} as Record<string,string>)[reason ?? ''] ?? '此场景支持情况待确认'
 }
 export function modelSceneBilling(model: ModelChoice, scene: ModelScene): ModelBilling {
-  if (!model[scene]) return 'unknown'
+  if (!sceneReference(model, scene) && !model.availabilityByScene?.[scene]) return 'unknown'
   return model.billingByScene?.[scene] ?? model.billing ?? 'unknown'
 }
 /** Only stable source identities deduplicate entries. Similar names are not route mappings. */
 export function mergeModelChoices(...lists: readonly (readonly ModelChoice[])[]): ModelChoice[] {
   const result = new Map<string, ModelChoice>()
   for (const models of lists) for (const model of models) {
+    // Published offerings join only by the complete immutable identity. The
+    // independent account/calendar owners also publish exact route aliases.
     const route = model.exploreRouteKey
-    const owner = route ? [...result.values()].find(existing => existing.origin === model.origin && (existing.arko === route || existing.recording === route || existing.exploreRouteKey === route || existing.dsh?.model === route)) : undefined
-    if (owner && route) result.set(owner.id, { ...owner,
- ...(model.origin==='user-provided'?{...(model.dsh?{dsh:model.dsh}:{}),...(model.arko?{arko:model.arko}:{}),...(model.recording?{recording:model.recording}:{})}:{}),
-      ...(owner.channel === '分析模型' ? { channel: model.channel } : {}),
-      ...(!owner.billing && model.billing ? { billing: model.billing } : {}),
-      ...(owner.billingByScene || model.billingByScene ? { billingByScene: { ...owner.billingByScene, ...model.billingByScene } } : {}),
-      ...(model.dayReview ? { dayReview: model.dayReview } : {}), ...(model.explore ? { explore: model.explore } : {}), exploreRouteKey: route })
-    else result.set(model.id, { ...result.get(model.id), ...model,
-      ...(result.get(model.id)?.billingByScene || model.billingByScene ? { billingByScene: { ...result.get(model.id)?.billingByScene, ...model.billingByScene } } : {}) })
+    const existing = result.get(model.id) ?? (route && (model.origin === 'user-provided' || model.dayReview)
+      ? [...result.values()].find(owner => owner.origin === model.origin &&
+        (owner.arko === route || owner.recording === route || owner.exploreRouteKey === route || owner.dsh?.model === route))
+      : undefined)
+    const id = existing?.id ?? model.id
+    result.set(id, { ...existing, ...model, id,
+      ...(existing?.billingByScene || model.billingByScene ? { billingByScene: { ...existing?.billingByScene, ...model.billingByScene } } : {}),
+      ...(existing?.referencesByScene || model.referencesByScene ? { referencesByScene: { ...existing?.referencesByScene, ...model.referencesByScene } } : {}),
+      ...(existing?.availabilityByScene || model.availabilityByScene ? { availabilityByScene: { ...existing?.availabilityByScene, ...model.availabilityByScene } } : {}) })
   }
   return [...result.values()]
 }

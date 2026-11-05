@@ -3,6 +3,8 @@ import { ModelDirectoryService } from '../../src/services/model-directory-servic
 import { mergeModelChoices, dshModelChoices, arkoModelChoices, modelSceneBilling } from '../../src/model-directory.js'
 import { exploreModelChoices } from '../../src/explore-models.js'
 import { publishedModelChoices } from '../../src/services/model-directory-contract.js'
+import { createArkmeSdk } from '../../src/sdk/index.js'
+import { dispatchArkmeHostOperation } from '../../src/host-api.js'
 function fixture() {
   const session = { userId: 42 }
   const runtime = { config: { environment: 'production' }, requireSession: async () => session }
@@ -15,8 +17,8 @@ function fixture() {
 describe('unified read-only model directory', () => {
   it('includes all source identities without guessing aliases, exact versions, pricing or cross-scene routes', async () => {
     const { service } = fixture(); const value = await service.read('production:42')
-    expect(value.models).toHaveLength(4)
-    expect(new Set(value.models.map(m => m.id)).size).toBe(4)
+    expect(value.models).toHaveLength(5)
+    expect(new Set(value.models.map(m => m.id)).size).toBe(5)
     expect(value.models.filter(m => m.dsh)).toHaveLength(2)
     expect(value.models.find(m => m.arko)?.dsh).toBeUndefined()
     expect(value.models.every(m => m.version === undefined)).toBe(true)
@@ -27,7 +29,7 @@ describe('unified read-only model directory', () => {
     const f = fixture(); f.arko.mockRejectedValue(new Error('目录不可用'))
     f.dsh.mockResolvedValue({ items: [], failedProviders: [{ provider: 'deepseek', providerName: 'DeepSeek' }], truncated: true })
     const value = await f.service.read('production:42')
-    expect(value.models).toHaveLength(1); expect(value.failures).toHaveLength(3)
+    expect(value.models).toHaveLength(2); expect(value.failures).toHaveLength(3)
   })
   it('rejects an account change before reads and during an in-flight aggregate', async () => {
     const f = fixture()
@@ -51,21 +53,22 @@ describe('unified read-only model directory', () => {
 
 it('classifies native official catalogs independently of supplier and of confirmed scene billing', async () => {
   const f = fixture(), value = await f.service.read('production:42')
-  expect(value.models.filter(model => model.origin === 'official')).toHaveLength(3)
+  expect(value.models.filter(model => model.origin === 'official')).toHaveLength(4)
   const own = value.models.find(model => model.dsh?.provider === 'deepseek')!
   expect(own.origin).toBe('user-provided')
   expect(modelSceneBilling(own, 'dsh')).toBe('provider-account')
   expect(modelSceneBilling(value.models.find(model => model.arko)!, 'arko')).toBe('arkme-points')
-  expect(modelSceneBilling(value.models.find(model => model.recording)!, 'recording')).toBe('unknown')
+  expect(modelSceneBilling(value.models.find(model => model.recording)!, 'recording-summary')).toBe('unknown')
 })
 
 it('preserves billing per scene and never reconciles user-provided models into official routes', async () => {
   const f = fixture(), arko = arkoModelChoices(await f.arko())
   const local = exploreModelChoices('events', { ref: 'settings', models: [{ ref: 'events/alias', label: 'DeepSeek', routeKey: 'managed-ai/alias', provider: 'managed-ai', selected: true }], sources: [] })
+  expect(mergeModelChoices(arko,local)).toHaveLength(2)
   const [model] = mergeModelChoices(arko, local)
   expect(model?.origin).toBe('official')
   expect(modelSceneBilling(model!, 'arko')).toBe('arkme-points')
-  expect(modelSceneBilling(model!, 'explore')).toBe('unknown')
+  expect(modelSceneBilling(model!, 'explore-event')).toBe('unknown')
   expect(modelSceneBilling(model!, 'dsh')).toBe('unknown')
   const user = { ...arko[0]!, id: 'user-owned', origin: 'user-provided' as const }
   expect(mergeModelChoices([user], local)).toHaveLength(2)
@@ -82,7 +85,6 @@ it('projects existing managed catalog revisions and supplier identity without ex
 })
 
 it('forwards model directory reads and cancellation through the SDK and Host without accepting a caller user ID', async () => {
-  const { createArkmeSdk } = await import('../../src/sdk/index.js'), { dispatchArkmeHostOperation } = await import('../../src/host-api.js')
   const value = { accountScope: 'production:42', observedAt: 1, models: [], failures: [] }, signal = new AbortController().signal
   const service = { modelDirectory: vi.fn(async () => value) }
   const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
@@ -118,4 +120,13 @@ it('keeps partial scenes usable and reports published catalog failures explicitl
  const f=fixture();Object.assign(f.runtime,{authenticatedIntelligentPost:vi.fn(async()=>({item_ls:[published(),published()]}))})
  const value=await f.service.read('production:42',undefined,true)
  expect(value.failures).toHaveLength(1);expect(value.failures[0]?.source).toBe('DSH 对话');expect(value.models.every(item=>!item.dsh)).toBe(true)
+})
+
+it('reports mixed official publications instead of fabricating a shared revision',async()=>{
+ const f=fixture()
+ const recording=async()=>({defaultRouteKey:'dashscope/qwen',effectiveRouteKey:'dashscope/qwen',options:[{routeKey:'dashscope/qwen',modelKey:'qwen',displayName:'Qwen',provider:'dashscope',binding:{catalogReleaseId:'13',offeringRevisionId:'35',publicModelCode:'qwen'},available:true}]})
+ Object.assign(f.runtime,{authenticatedIntelligentPost:vi.fn(async()=>({item_ls:[{public_model_code:'version-a',catalog_release_id:'12',offering_revision_id:'34',supplier_code:'deepseek'}]}))})
+ const value=await new ModelDirectoryService(f.runtime as never,{dsh:f.dsh,arko:f.arko,recording}).read('production:42')
+ expect(value.failures).toContainEqual({source:'官方模型',message:'发布目录已变化，请刷新后确认模型'})
+ expect(new Set(value.models.map(model=>model.catalogRevision).filter(Boolean))).toEqual(new Set(['12','13']))
 })
