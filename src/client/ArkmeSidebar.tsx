@@ -5217,7 +5217,7 @@ export function ArkmeSurface({
             }),
           })
         }
-        if (result.sequence !== undefined) {
+        if (result.sequence !== undefined && isArkmeChatDirectorySource(targetSource)) {
           arkmeChatDirectory.upsert({ ...targetSource,
             latestPreview: (textFormat === 'markdown' ? arkmeMarkdownPlainText(textContent) : textContent) || '非文本内容',
             activeAtMillis: now,

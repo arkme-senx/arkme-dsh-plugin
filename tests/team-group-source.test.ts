@@ -68,17 +68,17 @@ it('sends real decimal-string Team protocols without changing the existing numer
 
 it('revalidates the exact frozen delegation through current metadata without upgrading a rejoined employee',async()=>{
  let actor=90,revision=7
- const requests:{body:Record<string,unknown>;header:string|null}[]=[]
- const runtime=new ServiceRuntime({environment:'test',chatBaseUrl:'https://chat.example',requestTimeoutMs:1000} as ArkmeServiceConfig,{} as never,{uniqueCode:async()=> 'test-key'} as StateStore,(async(_url,init)=>{
-  requests.push({body:JSON.parse(String(init?.body)),header:new Headers(init?.headers).get('X-Chat-Access-Ref')})
-  return new Response(JSON.stringify({code:200,data:{items:[{chat_session_uid:'group',access_kind:'team_delegation',membership:{active:true,membership_uid:'group-epoch',revision:1,visible_from_seq:10},representation:{team_id:'42',membership_kind:'member',membership_revision:revision}}]}}))
+ const requests:{path:string;body:Record<string,unknown>;header:string|null}[]=[]
+ const runtime=new ServiceRuntime({environment:'test',chatBaseUrl:'https://chat.example',requestTimeoutMs:1000} as ArkmeServiceConfig,{} as never,{uniqueCode:async()=> 'test-key'} as StateStore,(async(url,init)=>{
+  requests.push({path:new URL(String(url)).pathname,body:JSON.parse(String(init?.body)),header:new Headers(init?.headers).get('X-Chat-Access-Ref')})
+  return new Response(JSON.stringify({code:200,data:{state:'ready',access_kind:'team_delegation',membership_policy:'independent',representation:{team_id:'42',membership_kind:'member',membership_revision:revision,group_membership_uid:'group-epoch',group_membership_revision:1}}}))
  }) as typeof fetch)
  vi.spyOn(runtime,'requireSession').mockImplementation(async()=>({userId:actor,accessToken:'fake',refreshToken:'same-refresh'}))
  const sources=new SourceService(runtime,{} as never,{} as never)
  const frame={version:1 as const,userId:90,kind:'group_chat' as const,ownerRef:'group',displayName:'客户群',groupDelegation:delegation}
  const session={userId:90,accessToken:'fake',refreshToken:'same-refresh'}
  await sources.authorizeGroupDelegation(frame,session)
- expect(requests[0]).toEqual({body:{team_id:'42',items:[{chat_session_uid:'group',membership_uid:'group-epoch',revision:1}]},header:delegation.accessRef})
+ expect(requests[0]).toEqual({path:'/api/v1/chats/team-group/access',body:{chat_session_uid:'group'},header:delegation.accessRef})
  revision=8
  await expect(sources.authorizeGroupDelegation(frame,session)).rejects.toThrow('资格已变化')
  revision=7;actor=91

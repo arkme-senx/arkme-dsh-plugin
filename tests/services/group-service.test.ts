@@ -21,7 +21,7 @@ describe('GroupService', () => {
     const f=fixture(async(input,init)=>{
       const path=new URL(String(input)).pathname;calls.push(path)
       expect(new Headers(init?.headers).get('X-Chat-Access-Ref')).toBe('settings-frame')
-      const data=path.endsWith('/scopes/query')?{items:revoked?[]:[{chat_session_uid:'group-1',access_kind:'team_delegation',membership:{active:true,membership_uid:'admission',revision:1,visible_from_seq:4},representation:{team_id:'42',membership_kind:'member',membership_revision:7}}]}:{session:{chat_session_uid:'group-1',title:'团队可见群'},current_policy:{mute_state:1}}
+      const data=path.endsWith('/team-group/access')?(revoked?{}:{state:'ready',access_kind:'team_delegation',membership_policy:'independent',representation:{team_id:'42',membership_kind:'member',membership_revision:7,group_membership_uid:'admission',group_membership_revision:1}}):{session:{chat_session_uid:'group-1',title:'团队可见群'},current_policy:{mute_state:1}}
       return new Response(JSON.stringify({code:200,data}))
     })
     const ref=await f.source.sealSourceRef(42,'group_chat','group-1','团队可见群',{groupDelegation:{accessRef:'settings-frame',teamId:'42',membershipKind:'member',membershipRevision:7,groupMembershipUid:'admission',groupMembershipRevision:1,visibleFromSeq:4}})

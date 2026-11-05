@@ -868,7 +868,7 @@ export class ArkmeService {
     if (localDshQuery !== undefined) this.search.localDshQuery = localDshQuery
     this.bot = new BotService(this.runtime, this.source)
     this.teamForward=new TeamMessageForwardService(this.runtime,this.teamApp,this.source,async(target,sequence)=>{
-      if(target.kind==='private_chat'||target.kind==='group_chat')this.realtime.scheduleChatSessionProjection(target.ownerRef,sequence??0)
+      if(target.kind==='private_chat'||target.kind==='group_chat') { if(!target.groupDelegation)this.realtime.scheduleChatSessionProjection(target.ownerRef,sequence??0) }
       else await this.realtime.invalidateRecordProjection()
     })
     this.messageActions = new MessageActionService(
@@ -877,7 +877,7 @@ export class ArkmeService {
         this.source,
         async (target, sequence) => {
           if (target.kind === 'private_chat' || target.kind === 'group_chat') {
-            this.realtime.scheduleChatSessionProjection(target.ownerRef, sequence ?? 0)
+            if (!target.groupDelegation) this.realtime.scheduleChatSessionProjection(target.ownerRef, sequence ?? 0)
           } else {
             await this.realtime.invalidateRecordProjection()
           }

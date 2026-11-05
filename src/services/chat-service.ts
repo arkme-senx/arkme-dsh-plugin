@@ -1827,7 +1827,11 @@ export class ChatService {
     const raw = listValue(data.items).map(objectValue)
     const ids = raw.map(item => recordOwnerId(item.user_id))
     const next = recordOwnerId(data.next_user_id)
-    if (stringValue(data.chat_session_uid) !== source.ownerRef || !Array.isArray(data.items) || typeof data.has_more !== 'boolean' || chatMemberRole(data.self_role) === 'unknown'
+    const selfRole = chatMemberRole(data.self_role)
+    const validSelf = source.groupDelegation
+      ? data.access_kind === 'team_delegation' && data.self_role == null
+      : selfRole !== 'unknown'
+    if (stringValue(data.chat_session_uid) !== source.ownerRef || !Array.isArray(data.items) || typeof data.has_more !== 'boolean' || !validSelf
       || raw.some(item => chatMemberStatus(item.status) === 'unknown')
       || raw.length > limit || ids.some((id, index) => !id || BigInt(id) <= BigInt(index === 0 ? after : ids[index - 1]!))
       || (data.has_more && (raw.length === 0 || next !== ids.at(-1)))) {
@@ -1848,7 +1852,7 @@ export class ChatService {
           eventIdForStableKey: async stableKey => `arkme-chat-join-v1.${createHmac('sha256', signingKey).update(`${session.userId}|${source.ownerRef}|${stableKey}`).digest('base64url')}`,
         }) : []
     const page: ArkmeConversationMemberPage = {
-      kind: 'membership', selfRole: chatMemberRole(data.self_role), source: await this.source.sourceItem(source),
+      kind: 'membership', selfRole, source: await this.source.sourceItem(source),
       items: items.map(({ memberRef, role, status, isSelf, isOwner, joinedAtMillis, memberName }) => ({ memberRef, role, status, isSelf, isOwner, joinedAtMillis, ...(memberName === undefined ? {} : { memberName }) })),
       removedMemberRefs, hasMore: data.has_more, joinEvents,
       ...(data.has_more ? { nextCursor: await this.sealMemberPageCursor(session.userId, source.ownerRef, next) } : {}),
@@ -3103,7 +3107,7 @@ export class ChatService {
     options: { signal?: AbortSignal } = {},
   ): Promise<ArkmeMessageReadReceiptSummaryList> {
     const session = await this.runtime.requireSession()
-    const source = await this.requireReadReceiptChatSource(sourceRef, session.userId)
+    const source = await this.requirePersonalReadReceiptSource(sourceRef, session.userId)
     const items = this.requireReadReceiptItems(rawItems)
     const data = await this.sourceChatPost<Record<string, unknown>>(source,
       '/api/v1/chats/read-receipts/summary-list',
@@ -3163,7 +3167,7 @@ export class ChatService {
     options: { signal?: AbortSignal; basicOnly?: boolean } = {},
   ): Promise<ArkmeMessageReadReceiptDetail> {
     const session = await this.runtime.requireSession()
-    const source = await this.requireReadReceiptChatSource(sourceRef, session.userId)
+    const source = await this.requirePersonalReadReceiptSource(sourceRef, session.userId)
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('message-read-receipt-group-required', '成员已读详情只支持群聊消息；私聊请查询消息已读状态', false, 400)
     }
@@ -3272,6 +3276,12 @@ export class ChatService {
       totalMemberCount: members.length,
       items: members,
     }
+  }
+
+  private async requirePersonalReadReceiptSource(sourceRef: string, userId: number) {
+    const source = await this.requireReadReceiptChatSource(sourceRef, userId)
+    if (source.groupDelegation) throw new ArkmePluginError('message-read-receipt-unavailable', '团队代理来源不提供个人群成员的已读状态', false, 403)
+    return source
   }
 
   private async requireReadReceiptChatSource(sourceRef: string, userId: number): Promise<ArkmeSourceRefPayload & {
@@ -4110,7 +4120,7 @@ nextPublic = next
       )
       const createdRecordUid = stringValue(data.child_record_uid).trim() || normalizedUid
       const sequence = numberValue(data.seq)
-      this.realtime.scheduleChatSessionProjection(reference.chatSessionUid, sequence)
+      if (!source.groupDelegation) this.realtime.scheduleChatSessionProjection(reference.chatSessionUid, sequence)
       if ((options.quote !== undefined || options.representation !== undefined || options.thoughtReplyRef || options.privateThoughtReplyRef) && data.accepted !== true) {
         throw new ArkmePluginError('message-quote-receipt-missing', '消息提交结果需要核对：服务端没有确认引用内容，请刷新查看，勿重复发送', true, 502, { writeOutcomeUnknown: true })
       }
@@ -4584,7 +4594,7 @@ nextPublic = next
           options.signal,
         )
         const sequence = numberValue(data.seq ?? data.sequence)
-        this.realtime.scheduleChatSessionProjection(targetSource.ownerRef, sequence)
+        if (!targetSource.groupDelegation) this.realtime.scheduleChatSessionProjection(targetSource.ownerRef, sequence)
         const representation = await new GroupRepresentationCodec(this.runtime).snapshot(data.representation,session.userId)
         return {
           ...(representation === undefined ? {} : { representation }),
@@ -5147,7 +5157,7 @@ nextPublic = next
         },
       )
       const sequence = numberValue(result.seq)
-      this.realtime.scheduleChatSessionProjection(chatSessionUid, sequence)
+      if (!source.groupDelegation) this.realtime.scheduleChatSessionProjection(chatSessionUid, sequence)
       return await this.withConfirmedSendReferences({
         sourceRef,
         itemUid: stringValue(result.record_uid).trim() || recordUid,
@@ -5356,7 +5366,7 @@ nextPublic = next
         { trackWriteOutcome: true },
       )
       const sequence = numberValue(result.seq)
-      this.realtime.scheduleChatSessionProjection(source.ownerRef, sequence)
+      if (!source.groupDelegation) this.realtime.scheduleChatSessionProjection(source.ownerRef, sequence)
       return await this.withConfirmedSendReferences({
         sourceRef,
         itemUid: stringValue(result.record_uid).trim() || recordUid,

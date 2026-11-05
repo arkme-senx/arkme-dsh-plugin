@@ -2054,13 +2054,14 @@ export class SourceService {
   async authorizeGroupDelegation(source:ArkmeSourceRefPayload,session:ArkmeSessionCredentials,signal?:AbortSignal):Promise<void> {
     const frame=source.groupDelegation
     if(!frame)return
-    const raw=objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/team-group/scopes/query',{
-      team_id:frame.teamId,items:[{chat_session_uid:source.ownerRef,membership_uid:frame.groupMembershipUid,revision:frame.groupMembershipRevision}],
-    },session,signal,{chatAccessRef:frame.accessRef,bypassCache:true,cacheMs:0,stringIdFields:['team_id']}))
-    const rows=Array.isArray(raw.items)?raw.items:[]
-    const row=objectValue(rows[0]),member=objectValue(row.membership),selection=objectValue(row.representation)
-    if(rows.length!==1||row.chat_session_uid!==source.ownerRef||row.access_kind!=='team_delegation'||member.active!==true||member.membership_uid!==frame.groupMembershipUid
-      ||member.revision!==frame.groupMembershipRevision||member.visible_from_seq!==frame.visibleFromSeq||String(selection.team_id)!==frame.teamId
+    const raw=objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/team-group/access',{
+      chat_session_uid:source.ownerRef,
+    },session,signal,{chatAccessRef:frame.accessRef,bypassCache:true,cacheMs:0,lane:'interactive-read'}))
+    const selection=objectValue(raw.representation)
+    // The signed access frame and its immutable admission UID/revision bind the
+    // history floor; current authority comes from the registered access owner.
+    if(raw.state!=='ready'||raw.access_kind!=='team_delegation'||raw.membership_policy!=='independent'
+      ||selection.group_membership_uid!==frame.groupMembershipUid||selection.group_membership_revision!==frame.groupMembershipRevision||String(selection.team_id)!==frame.teamId
       ||selection.membership_kind!==frame.membershipKind||selection.membership_revision!==frame.membershipRevision)throw new ArkmePluginError('team-source-access-changed','团队群资格已变化，请重新打开',false,403)
     signal?.throwIfAborted()
     const current=await this.runtime.requireSession()

@@ -32,14 +32,14 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
   const path=new URL(request.url,'https://localhost').pathname
   if(path==='/api/v1/sse/chat/noty'){response.writeHead(200,{'content-type':'text/event-stream'});response.write(': isolated\n\n');streams.add(response);response.on('close',()=>streams.delete(response));return}
   const chunks=[];for await(const chunk of request)chunks.push(chunk)
-  const bytes=Buffer.concat(chunks),input=bytes.length?JSON.parse(bytes.toString()):{};const call={path,input,scoped:!!request.headers['x-chat-access-ref']};calls.push(call)
+  const bytes=Buffer.concat(chunks),input=bytes.length?JSON.parse(bytes.toString()):{};let requestActor=actor;try{requestActor=Number(JSON.parse(Buffer.from(String(request.headers.authorization).split('.')[1],'base64url').toString()).user_id)}catch{}const call={path,input,actor:requestActor,scoped:!!request.headers['x-chat-access-ref']};calls.push(call)
   const owner=path.startsWith('/api/v1/team/')?'team':path.startsWith('/api/v1/chats/')||path.startsWith('/api/v1/chat/')?'chat':path.startsWith('/api/v1/records/')||path.startsWith('/api/v1/topics/')||path.startsWith('/api/v1/home/')?'record':undefined
   if(owner){
    const headers={Authorization:request.headers.authorization??`Bearer ${token(actor)}`}
    for(const key of ['content-type','x-chat-access-ref','range','if-range','if-match','if-none-match'])if(request.headers[key])headers[key]=request.headers[key]
    const result=await fetch(owners[owner]+request.url,{method:request.method,headers,...(request.method==='GET'||request.method==='HEAD'?{}:{body:bytes})})
    const outgoing={};for(const key of ['content-type','content-range','content-length','etag','accept-ranges'])if(result.headers.has(key))outgoing[key]=result.headers.get(key)
-   const resultBytes=Buffer.from(await result.arrayBuffer());if(path.endsWith('/extensions/children/create')||path.endsWith('/conversations/messages/send'))call.result=JSON.parse(resultBytes.toString());response.writeHead(result.status,outgoing);response.end(resultBytes);return
+   const resultBytes=Buffer.from(await result.arrayBuffer());call.status=result.status;if(result.headers.get('content-type')?.includes('application/json'))call.code=JSON.parse(resultBytes.toString()).code;if(path.endsWith('/extensions/children/create')||path.endsWith('/conversations/messages/send'))call.result=JSON.parse(resultBytes.toString());response.writeHead(result.status,outgoing);response.end(resultBytes);return
   }
   let data={items:[],users:[],has_more:false}
   if(path.endsWith('/the-best-api-for-testing')){actor=Number(input.user_id);data={access_token:token(actor),refresh_token:'isolated-stack'}}
@@ -101,6 +101,7 @@ try{
  const colleagueWorkspace=await host.executeTeamApp('team.app.workspace',{teamRef:colleagueTeamRef}),groupEntry=colleagueWorkspace.items.find(t=>t.kind==='group'),colleagueCustomer=colleagueWorkspace.items.find(t=>t.kind==='customer');assert(groupEntry&&colleagueCustomer)
  const delegated=groupEntry.source.sourceRef,timeline=await host.readSource(delegated,{limit:100})
  assert.equal(timeline.source.accessKind,'team_delegation');assert(!timeline.items.some(t=>t.textContent===oldText),'admission floor excludes existing messages');assert(timeline.items.some(t=>t.textContent===newText),'current coworker reads admitted public message')
+ const members=await host.listSourceMembers(delegated),memberPage=await host.pageSourceMembers(delegated,{limit:100});assert.equal(members.items.length,3,'the delegated source must load real human members through current access authority');assert.equal(memberPage.items.length,3);assert.equal(memberPage.selfRole,'unknown','delegation must not invent a personal governance role');proof.members={humanCount:members.items.length,selfRole:memberPage.selfRole}
  const {agent}=await ctx.agents.create({sessionId:`native-${randomUUID()}`,meta:{cwd:home}});await agent.whenIdle()
  assert(ctx.tools.schemas(agent).some(t=>t.name==='arkme_team_workspace'))
  const callId=randomUUID(),args={request:{operation:'page',teamRef:colleagueTeamRef}},call=agent.session.append('tool/call',{turn:1,step:1,callId,name:'arkme_team_workspace',arguments:JSON.stringify(args)})
@@ -115,15 +116,21 @@ try{
  assert(uiCall.scoped);assert.equal(uiCall.input.representation.team_id,'7')
  const childRecordUid=uiCall.input.child_record_uid,childRelationUid=uiCall.input.child_rel_uid
  assert.equal(uiCall.result.data.accepted,true)
+ const pendingTimeline=await host.readSource(delegated,{limit:100});assert(!pendingTimeline.items.some(item=>item.itemUid===childRecordUid),'a delegated sender does not inherit the personal unapproved-message exception');assert(pendingTimeline.items.some(item=>item.textContent===newText),'a pending own send must not break the existing authorized timeline')
  await approve({relationUid:childRelationUid})
  const replyItem=(await host.readSource(delegated,{limit:100})).items.find(t=>t.itemUid===childRecordUid);assert(replyItem);assert.equal(replyItem.representation?.jotmoId,'stack_team_7');assert.equal(replyItem.isMe,true)
  const detail=await host.messageSnapshotDetail(delegated,replyItem.messageActionRef);assert.equal(detail.textContent,uiText)
  proof.reply={item:replyItem,detail}
  const accepted=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:childRecordUid,rel_uid:childRelationUid,record_owner_user_id:13},4);assert.equal(accepted.item.relation.sender_user_id,13);assert.equal(accepted.item.relation.representation.team_id,'7')
- await approve({relationUid:childRelationUid});await page.getByText('暂时无法读取线下交流，请重试。',{exact:true}).waitFor({state:'hidden'});await page.screenshot({path:join(capture,'native-delegated-reply.png')})
+ await approve({relationUid:childRelationUid});await page.getByText('暂时无法读取线下交流，请重试。',{exact:true}).waitFor({state:'hidden'});await page.screenshot({path:join(capture,'native-delegated-reply.png')});assert.equal(await page.getByRole('alert').filter({hasText:'无操作权限'}).count(),0,'an authorized delegated reply must not display a permission failure')
  const currentCards=await host.executeTeamApp('team.app.sources.cards',{conversationRef:colleagueCustomer.conversation.ref});assert(currentCards.items[0])
  proof.occurrences=await until(()=>host.executeTeamApp('team.app.sources.occurrences',{conversationRef:colleagueCustomer.conversation.ref,cardRef:currentCards.items[0].ref}),v=>v.items.length===2,'exact customer occurrence after represented reply')
  const events=await ownerPost('team','/fixture/events',{});assert.equal(events.filter(e=>e.kind==='team.message.changed').length,0,'group interactions cannot create private message notifications')
+ assert.equal(calls.filter(c=>c.path.endsWith('/team-group/scopes/query')).length,0,'current delegation must use a registered authority route')
+ const coworkerGroupCalls=calls.filter(c=>c.actor===13&&c.input.chat_session_uid===group)
+ assert.equal(coworkerGroupCalls.filter(c=>c.path.includes('/read-receipts/')).length,0,'delegation must not query personal member receipts')
+ assert.equal(coworkerGroupCalls.filter(c=>!c.scoped&&c.path.endsWith('/timeline/tail')).length,0,'delegated sends must not start personal directory/body synchronization')
+ assert.equal(coworkerGroupCalls.filter(c=>c.code===1004).length,0,'current delegated operations must not fail the personal member gate')
  await ownerPost('team','/fixture/remove-member',{team_id:7,user_id:13},11)
  await assert.rejects(host.readSource(delegated),error=>error.code==='arkme-code-1004')
  await login(4);assert.notEqual((await host.readSource((await personal()).sourceRef)).source.accessKind,'team_delegation','independent human membership survives organization revocation')

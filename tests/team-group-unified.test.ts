@@ -13,7 +13,7 @@ it('isolates committed windows/cursors by team generation and checks current acc
     if(path.endsWith('/team-group/access')) {
       if(revoked)throw new ArkmePluginError('team_group_forbidden','团队资格已撤销',false,403)
       const a=options.chatAccessRef==='team-A-ref'
-      return {state:'ready',access_kind:'team_delegation',representation:{group_membership_uid:a?'epoch-A':'epoch-B',group_membership_revision:1}}
+      return {state:'ready',access_kind:'team_delegation',membership_policy:'independent',representation:{team_id:a?'42':'43',membership_kind:'member',membership_revision:7,group_membership_uid:a?'epoch-A':'epoch-B',group_membership_revision:1}}
     }
     expect(path).toBe('/api/v1/chat/timeline/unified/v3')
     return {protocol_version:3,chat_session_uid:body.chat_session_uid,timeline_items:[{event_id:'team-group:notice',kind:'team_membership',source:'team_membership',occurred_at:100,order_tie:'team-group:notice',content_status:'available',payload:{chat_session_uid:'group',team_name:'接待',kind:'joined'}}],sources:CHAT_TIMELINE_SOURCES.map(source=>({source,status:source==='team_membership'?'ready':'not_applicable',item_count:source==='team_membership'?1:0})),complete:true,window_token:'window',older_cursor:'older',has_more:false,older_has_more:false,newer_has_more:false}

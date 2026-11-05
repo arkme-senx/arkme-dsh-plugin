@@ -249,10 +249,7 @@ export class UnifiedChatTimelineService {
       signal.throwIfAborted()
       const currentSession = await this.runtime.requireSession()
       if (this.disposed || this.epoch !== epoch || state.revision !== revision || currentSession.userId !== session.userId || currentSession.refreshToken !== session.refreshToken) throw new ArkmePluginError('chat-timeline-stale', '账号或会话状态已变化，请重试', true, 409)
-      if(source.groupDelegation) {
-        const access=objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/team-group/access',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true,chatAccessRef:source.groupDelegation.accessRef}))
-        if(access.state!=='ready'||access.access_kind!=='team_delegation'||objectValue(access.representation).group_membership_uid!==source.groupDelegation.groupMembershipUid||objectValue(access.representation).group_membership_revision!==source.groupDelegation.groupMembershipRevision)throw invalid()
-      }
+      if(source.groupDelegation) await this.source.authorizeGroupDelegation(source,session,signal)
     }
     if (query.cacheOnly) {
       await assertCurrent()

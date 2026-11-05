@@ -6,6 +6,26 @@ import {ServiceRuntime,type ArkmeServiceConfig,type StateStore} from '../src/ser
 import {dispatchArkmeHostOperation} from '../src/host-api.js'
 import {createArkmeSdk} from '../src/sdk/index.js'
 
+it('rejects personal member read receipts for delegated sources before upstream I/O, including SDK dispatch',async()=>{
+ const session={userId:42,accessToken:'fake',refreshToken:'refresh'}
+ const fetchImpl=vi.fn(async()=>new Response('{}'))
+ const runtime=new ServiceRuntime({environment:'test',chatBaseUrl:'https://chat.example',requestTimeoutMs:1000} as ArkmeServiceConfig,{read:async()=>session,write:async()=>{},delete:async()=>{}},{uniqueCode:async()=> 'receipt-scope-key'} as StateStore,fetchImpl)
+ const sources=new SourceService(runtime,{} as never,{} as never)
+ const chat=new ChatService(runtime,sources,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
+ const sourceRef=await sources.sealSourceRef(42,'group_chat','group','客户群',{groupDelegation:{accessRef:'frame',teamId:'42',membershipKind:'member',membershipRevision:4,groupMembershipUid:'admission',groupMembershipRevision:1,visibleFromSeq:7}})
+ const service={messageReadReceiptSummaries:chat.messageReadReceiptSummaries.bind(chat),messageReadReceiptDetail:chat.messageReadReceiptDetail.bind(chat)}
+ const sdk=createArkmeSdk({fetchImpl:async(_input,init)=>{
+  const request=JSON.parse(String(init?.body)),value=await dispatchArkmeHostOperation(service as never,request.operation,request.params)
+  return new Response(JSON.stringify({ok:true,value}))
+ }})
+ try {
+  await expect(chat.messageReadReceiptSummaries(sourceRef,[{itemUid:'own-record',sequence:7}])).rejects.toMatchObject({code:'message-read-receipt-unavailable'})
+  await expect(chat.messageReadReceiptDetail(sourceRef,'own-record',7)).rejects.toMatchObject({code:'message-read-receipt-unavailable'})
+  await expect(sdk.messageReadReceiptSummaries(sourceRef,[{itemUid:'own-record',sequence:7}])).rejects.toThrow('个人群成员')
+  expect(fetchImpl).not.toHaveBeenCalled()
+ } finally {runtime.dispose()}
+})
+
 it('keeps issued report and owner-withdrawal references in their exact source, including Host and public SDK adapters',async()=>{
  const session={userId:42,accessToken:'fake',refreshToken:'refresh'}
  const wire:{path:string;frame:string|null}[]=[];let revoked=false

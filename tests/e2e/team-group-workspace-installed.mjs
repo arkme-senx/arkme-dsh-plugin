@@ -56,8 +56,7 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
   }
   else if(path.endsWith('/team-group/status'))data=receipts.get(input.request_uid)||{state:'not_found'}
   else if(path.endsWith('/team-group/participants'))data={items:joined?[{...membership(),can_leave:true}]:[],has_more:false,can_manage:true,leave_available:true}
-  else if(path.endsWith('/team-group/scopes/query'))data={items:joined&&!revoked?[groupRow()]:[]}
-  else if(path.endsWith('/team-group/access'))data={state:'ready',access_kind:'team_delegation',representation:representation()}
+  else if(path.endsWith('/team-group/access'))data={state:'ready',access_kind:'team_delegation',membership_policy:'independent',representation:representation()}
   else if(path.endsWith('/team-group/directory'))data={items:joined&&!revoked?[groupRow()]:[],has_more:false}
   else if(path.endsWith('/team-group/presentations/query'))data={items:joined&&!revoked?[presentation()]:[]}
   else if(path.endsWith('/workspace/folders/query'))data={items:joined&&!revoked?[{team_id:teamId,group_count:1,activity_at:200,unread_count:1,latest_group:{...groupRow(),presentation:presentation()},groups:[{chat_session_uid:group,unread_count:1,last_seq:10,visible_from_seq:10}],channel}]:[]}
