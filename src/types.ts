@@ -4897,6 +4897,7 @@ export type ArkmePluginOperation =
   | 'topic.hierarchy.move'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'topic.hidden-source'
   | 'official-notifications.list'
   | 'official-notifications.summary'
   | 'official-notifications.detail'

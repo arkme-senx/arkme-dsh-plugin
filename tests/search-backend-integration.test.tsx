@@ -54,6 +54,7 @@ it.skipIf(!process.env.ARKME_RECORD_E2E_URL).each([false, true])('search UI and 
     const directory = await service.listSources('send_to_self', { limit: 100 })
     const target = hits.items[0]!.targetSource!
     expect(target.topicHierarchyKey).toBeTruthy()
+    expect(await service.hiddenTopicSource(target.sourceRef)).toMatchObject({ topicKind: 3, topicHierarchyKey: target.topicHierarchyKey })
     // DSH archives stay searchable/openable, but are excluded from personal topics.
     expect(directory.items.some(item => item.kind === 'topic' && arkmeSourceIdentityKey(item) === arkmeSourceIdentityKey(target))).toBe(false)
     bridge.has.mockResolvedValue(local)
