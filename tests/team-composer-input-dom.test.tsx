@@ -54,6 +54,7 @@ it.each([false,true])('source customer explicit contact shares directory restora
       if(failure)throw new Error('联系失败')
       return {state:'ready',conversation:direct}
     }
+    if(op==='team.app.timeline')return {conversation:direct,messages:[],hasMore:false,beforeSeq:0}
     return previous(op,params)
   })
   try{
