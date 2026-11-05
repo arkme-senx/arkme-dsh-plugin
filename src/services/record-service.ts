@@ -66,6 +66,7 @@ import type { ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeRecordSourceReader {
+  topicHierarchyKey(userId: number, topicUid: string): Promise<string>
   openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload>
 }
 
