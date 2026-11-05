@@ -42,7 +42,7 @@ it('never replaces an uncertain command; renewed previews keep its exact UID and
   await f.ports.journal({put:{requestUid:'original',input,label:'工程群'}})
   expect(await f.owner.prepare({...input,name:'其他群'},'new-request','其他群')).toMatchObject({state:'unresolved',requestUid:'original'})
   const renewed=await f.owner.prepareOriginal()
-  expect(renewed).toMatchObject({state:'preview',requestUid:'original'})
+  expect(renewed).toMatchObject({state:'preview',requestUid:'original',mode:'create',label:'工程群'})
   expect(f.post.mock.calls.find(([p])=>p==='preview')?.[1]).toEqual(input)
   await expect(f.owner.ack('original')).rejects.toThrow()
   expect(await f.ports.journal()).toMatchObject({requestUid:'original',input})
@@ -64,4 +64,12 @@ it('settles a definitive pre-activation stale rejection without replacing the or
  const owner=new TeamInternalGroups(f.ports)
  expect(await owner.recover()).toMatchObject({state:'rejected',requestUid:'original'})
  await owner.ack('original');expect(await f.ports.journal()).toBeUndefined()
+})
+
+it('returns the original mode and label after reopening through a different entry',async()=>{
+ const f=await fixture(), original={mode:'link' as const,team_id:input.team_id,chat_session_uid:'original-group'}
+ await f.ports.journal({put:{requestUid:'original',input:original,label:'原协作群'}})
+ expect(await f.owner.prepare(input,'new-request','新群')).toMatchObject({state:'unresolved',label:'原协作群'})
+ expect(await f.owner.prepareOriginal()).toMatchObject({state:'preview',mode:'link',label:'原协作群',requestUid:'original'})
+ expect(f.post.mock.calls.find(([p])=>p==='preview')?.[1]).toEqual(original)
 })

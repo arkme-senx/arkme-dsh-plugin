@@ -2309,4 +2309,39 @@ Arko 对话|Arko conversations
 自提供模型|Custom models
 自提供模型配置|Custom model configuration
 配置保存在当前服务，同一服务的客户端共用；不会自动同步至其他服务。|Configuration is shared by clients connected to this service. It does not sync automatically to other services.
+关联团队内部群|Link team internal group
+查询进度|Check progress
+查询原请求|Check original request
+重新检查|Check again
+确认关联|Confirm link
+下一步|Next
+成员随团队自动同步。|Members sync automatically with the team.
+正在核对原请求|Checking the original request
+“{v0}”尚未确认，重新检查会继续原请求，不会重复建群。|“{v0}” is unconfirmed. Checking again continues the original request without creating another group.
+正在同步成员|Syncing members
+可关闭窗口，稍后打开查看进度。|You can close this window and return later to check progress.
+内部群已就绪|Internal group ready
+成员已同步，可在群聊列表中打开。|Members are synced. Open the group from your chats.
+关联未生效|Group not linked
+原群成员已变化，请完成后重新关联。|The group membership changed. Finish this request, then try linking again.
+内部群已归档|Internal group archived
+团队已解散。|The team was dissolved.
+了解同步规则|How syncing works
+加入团队自动入群，离开团队立即失去群访问权限。|Joining the team adds you to the group. Leaving immediately revokes group access.
+群内以本人身份发言，机器人和历史消息作者保持不变。|You speak as yourself. Bots and authors of earlier messages stay unchanged.
+免打扰和首页显示可单独设置；团队解散后内部群归档。|You control notifications and home visibility. Dissolving the team archives the group.
+成员变更|Member changes
+新增 {v0} 人|Add {v0} members
+移出 {v0} 人|Remove {v0} members
+保留 {v0} 人|Keep {v0} members
+{v0}（团队所有者）|{v0} (team owner)
+角色调整|Role changes
+保留 {v0} 个|Keep {v0}
+确认前请留意|Before you confirm
+新增或重新入群的成员，只能查看本次入群后的消息。|New and returning members can only see messages sent after this admission.
+保留成员的合法历史权限不变。|Retained members keep their existing authorized history.
+成员与角色随团队同步，不能单独退群或解除关联。|Membership and roles sync with the team. You cannot leave the group separately or unlink it.
+将关闭公开发现和公开入群。|Public discovery and public joining will be disabled.
+此群需升级客户端后继续使用，其他群不受影响。|This group requires an updated client. Other groups are unaffected.
+关联群|Group to link
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

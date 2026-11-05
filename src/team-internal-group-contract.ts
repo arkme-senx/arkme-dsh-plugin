@@ -1,6 +1,8 @@
 export interface TeamInternalGroupPerson { key: string; name: string }
 export interface TeamInternalGroupPreview {
   state: 'preview'
+  mode: 'create'|'link'
+  label: string
   previewRef: string
   requestUid: string
   expiresAt: number

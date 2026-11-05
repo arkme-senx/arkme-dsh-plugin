@@ -1,4 +1,4 @@
-import type { TeamInternalGroupAttempt, TeamInternalGroupResult } from '../team-internal-group-contract.js'
+import type { TeamInternalGroupAttempt, TeamInternalGroupPreview, TeamInternalGroupResult } from '../team-internal-group-contract.js'
 import { ArkmePluginError } from './service.js'
 
 type Attempt = TeamInternalGroupAttempt
@@ -7,7 +7,7 @@ export interface InternalGroupPorts {
   post(path: 'preview'|'confirm'|'status', body: Record<string, unknown>): Promise<Record<string, unknown>>
   seal(value: Record<string, unknown>): Promise<string>
   open(ref: string): Promise<Record<string, unknown>>
-  preview(value: Record<string, unknown>, requestUid: string, previewRef: string): Promise<TeamInternalGroupResult>
+  preview(value: Record<string, unknown>, requestUid: string, previewRef: string): Promise<Omit<TeamInternalGroupPreview, 'mode'|'label'>>
 }
 const invalid = () => new ArkmePluginError('internal-group-invalid', '内部群请求无效，请重新检查', false, 409)
 const equalInput = (a: Attempt['input'], b: Attempt['input']) => a.mode === b.mode && a.team_id === b.team_id && a.name === b.name && a.chat_session_uid === b.chat_session_uid
@@ -40,7 +40,7 @@ export class TeamInternalGroups {
     const data = await this.p.post('preview', input)
     if (typeof data.preview_token !== 'string' || !data.preview_token || typeof data.expires_at !== 'number') throw invalid()
     const previewRef = await this.p.seal({input, requestUid: uid, label, token: data.preview_token, expires: data.expires_at})
-    return this.p.preview(data, uid, previewRef)
+    return {...await this.p.preview(data, uid, previewRef), mode: input.mode, label}
   }
   async prepareOriginal(): Promise<TeamInternalGroupResult> {
     const attempt = await this.p.journal()

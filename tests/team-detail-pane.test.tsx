@@ -399,14 +399,14 @@ describe('TeamDetailPane', () => {
     const current = page(teamRefA, '团队 A')
     current.team.currentUserRole = 'owner'
     mocks.callArkme.mockImplementation(async operation => operation === 'team.app.members' ? current
-      : operation === 'team.app.teams' ? [current.team] : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false,requiresClientUpgrade:true})
+      : operation === 'team.app.teams' ? [current.team] : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'create',label:'团队 A内部群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false,requiresClientUpgrade:true})
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     expect(mocks.callArkme.mock.calls.some(([op]) => op === 'team.app.teams')).toBe(false)
     await act(async () => { button(renderer!, '团队内部群›').props.onClick(); await tick() })
     expect(text(renderer!.root)).toContain('创建团队内部群')
     expect(renderer!.root.findByType('input').props.value).toBe('团队 A内部群')
-    await act(async () => { button(renderer!, '检查创建条件').props.onClick(); await tick() })
-    expect(text(renderer!.root)).toContain('原群保留成员已有的合法历史权限不变')
+    await act(async () => { button(renderer!, '下一步').props.onClick(); await tick() })
+    expect(text(renderer!.root)).toContain('新增或重新入群的成员，只能查看本次入群后的消息。')
     expect(mocks.callArkme.mock.calls.find(([op]) => op === 'team.app.internal-group.prepare')?.[1])
       .toMatchObject({ mode: 'create', teamRef: teamRefA, expectedAccountKey: 'account-a' })
   })

@@ -68,51 +68,86 @@ function ScopedDialog({accountKey,target,onClose}:Props) {
   const locked=busy||!!result
   const canPrepare=!!team&&canManage&&recovered&&!loadError&&(target.mode==='link'||!!name.trim())
   const action=result?.state==='ready'||result?.state==='archived'||result?.state==='rejected'?'ack':result?.state==='activating'?'recover':result?.state==='unresolved'||preview&&error?'prepare-original':preview?'confirm':!recovered?'recover':'prepare'
-  const label=busy?'正在检查…':action==='ack'?'完成':action==='recover'?'查询原请求结果':action==='prepare-original'?'重新检查原请求':action==='confirm'?'确认以上变更':target.mode==='create'?'检查创建条件':'查看关联影响'
+  const label=busy?'处理中…':action==='ack'?'完成':action==='recover'?(result?.state==='activating'?'查询进度':'查询原请求'):action==='prepare-original'?'重新检查':action==='confirm'?(preview?.mode==='create'?'确认创建':'确认关联'):'下一步'
+  const showForm=!result
+  const showRules=showForm||!!preview
   const reset=()=>{requestUid.current='';setResult(undefined);setError('')}
-  return <TeamFeatureDialog title={tr(target.mode==='create'?'创建团队内部群':'关联为团队内部群')}
-    teamName={target.mode==='link'?target.source.displayName:team?.name??tr('团队')} onClose={onClose}
-    footer={<button type="button" disabled={busy||!team||(action==='prepare'&&!canPrepare)} onClick={()=>void invoke(action)}>{tr(label)}</button>}>
+  return <TeamFeatureDialog title={tr((preview?.mode??target.mode)==='create'?'创建团队内部群':'关联团队内部群')}
+    className="arkme-internal-group-dialog"
+    teamName={!result&&target.mode==='link'?target.source.displayName:team?.name??tr('团队')} onClose={onClose}
+    footer={<button className="arkme-contact-remark-confirm" type="button" disabled={busy||!team||(action==='prepare'&&!canPrepare)} onClick={()=>void invoke(action)}>{tr(label)}</button>}>
     <div ref={bodyRef} tabIndex={-1} style={styles.body}>
-      <p style={styles.copy}>{tr('成员随团队自动同步：加入团队后自动入群，离开团队后自动移出。')}</p>
-      <p style={styles.copy}>{tr('群内按本人身份发言，不需要选择个人或团队身份。')}</p>
+      {showForm&&<p style={styles.copy}>{tr('成员随团队自动同步。')}</p>}
       {!teams&&!loadError&&<p role="status">{tr('正在加载我的团队…')}</p>}
       {loadError&&<p role="alert">{loadError} <button type="button" onClick={()=>setRevision(r=>r+1)}>{tr('重试')}</button></p>}
-      {teams&&target.mode==='link'&&<label style={styles.label}>{tr('关联团队')}<select style={styles.input} value={teamId} disabled={busy} onChange={e=>{setTeamId(e.target.value);reset()}}>
+      {teams&&showForm&&target.mode==='link'&&<label style={styles.label}>{tr('关联团队')}<select style={styles.input} value={teamId} disabled={busy} onChange={e=>{setTeamId(e.target.value);reset()}}>
         <option value="">{tr('请选择团队')}</option>{teams.map(t=><option key={t.jotmoId} value={t.jotmoId}>{t.name}</option>)}
       </select></label>}
       {teams?.length===0&&<p>{tr('你尚未加入团队')}</p>}
-      {team&&target.mode==='create'&&<label style={styles.label}>{tr('群名称')}<input style={styles.input} maxLength={120} disabled={locked} value={name} onChange={e=>{setName(e.target.value);reset()}}/></label>}
+      {team&&showForm&&target.mode==='create'&&<label style={styles.label}>{tr('群名称')}<input style={styles.input} maxLength={120} disabled={locked} value={name} onChange={e=>{setName(e.target.value);reset()}}/></label>}
       {team&&!canManage&&<p role="status">{tr('仅团队所有者或管理员可创建或关联内部群。')}</p>}
       {preview&&<Preview value={preview}/>}
-      {result?.state==='unresolved'&&<p role="status">{tr('原请求“{v0}”的结果尚未确认。重新检查会继续核对原请求，不会另建群。',{v0:result.label??''})}</p>}
-      {result?.state==='activating'&&<p role="status">{tr('请求已受理，正在同步成员并完成群访问交接。可关闭窗口，稍后查询原请求。')}</p>}
-      {result?.state==='ready'&&<p role="status">{tr('内部群已就绪，成员已按团队同步。可在群聊列表中打开。')}</p>}
-      {result?.state==='rejected'&&<p role="status">{tr('旧群成员已变化，本次关联未生效。完成后请重新检查关联影响。')}</p>}
-      {result?.state==='archived'&&<p role="status">{tr('该请求已完成；团队已解散，内部群已归档。')}</p>}
-      {!result&&<p style={styles.copy}>{tr('检查后会展示成员、角色、历史消息和客户端升级的影响；确认后才会生效。')}</p>}
-      {error&&<p role="alert" style={{color:arkmeTheme.danger}}>{error}</p>}
+      {result?.state==='unresolved'&&<Status title={tr('正在核对原请求')} detail={tr('“{v0}”尚未确认，重新检查会继续原请求，不会重复建群。',{v0:result.label??''})}/>}
+      {result?.state==='activating'&&<Status title={tr('正在同步成员')} detail={tr('可关闭窗口，稍后打开查看进度。')}/>}
+      {result?.state==='ready'&&<Status title={tr('内部群已就绪')} detail={tr('成员已同步，可在群聊列表中打开。')}/>}
+      {result?.state==='rejected'&&<Status title={tr('关联未生效')} detail={tr('原群成员已变化，请完成后重新关联。')}/>}
+      {result?.state==='archived'&&<Status title={tr('内部群已归档')} detail={tr('团队已解散。')}/>}
+      {showRules&&<details style={styles.details}>
+        <summary style={styles.summary}>{tr('了解同步规则')}</summary>
+        <div style={styles.rules}>
+          <p>{tr('加入团队自动入群，离开团队立即失去群访问权限。')}</p>
+          <p>{tr('群内以本人身份发言，机器人和历史消息作者保持不变。')}</p>
+          <p>{tr('免打扰和首页显示可单独设置；团队解散后内部群归档。')}</p>
+        </div>
+      </details>}
+      {error&&<p role="alert" style={{margin:0,color:arkmeTheme.danger}}>{error}</p>}
     </div>
   </TeamFeatureDialog>
 }
+function Status({title,detail}:{title:string;detail:string}) {
+  return <div role="status" style={styles.status}><h3 style={styles.heading}>{title}</h3><p style={styles.copy}>{detail}</p></div>
+}
 function Preview({value:v}:{value:TeamInternalGroupPreview}) {
-  return <div style={styles.preview}>
-    <p>{tr('将新增 {v0} 人，移出 {v1} 人，保留 {v2} 人；保留 {v3} 个机器人。',{v0:v.add.length,v1:v.remove.length,v2:v.retainCount,v3:v.botCount})}</p>
-    {v.add.length>0&&<div>{tr('新增成员')}<ul>{v.add.map(p=><li key={p.key}>{p.name}</li>)}</ul></div>}
-    {v.remove.length>0&&<div>{tr('移出成员')}<ul>{v.remove.map(p=><li key={p.key}>{p.name}</li>)}</ul></div>}
-    <p>{tr('群主：{v0}（团队所有者）',{v0:v.owner.name})}</p>
-    {v.roleChanges.length>0&&<ul>{v.roleChanges.map(p=><li key={p.key}>{p.name}：{tr(roleName[p.before])} → {tr(roleName[p.after])}</li>)}</ul>}
-    <p>{tr('新增及重新加入的成员只可查看本次入群后的消息；原群保留成员已有的合法历史权限不变。')}</p>
-    <p>{tr('不能单独退群或解除关联；免打扰和首页显示由你自行设置。机器人及历史消息的实际作者保持不变。')}</p>
-    {v.closePublicAccess&&<p>{tr('确认后将关闭公开发现和公开入群。')}</p>}
-    {v.requiresClientUpgrade&&<p>{tr('此群要求升级客户端后继续使用，其他群不受影响。')}</p>}
-    <p style={styles.copy}>{tr('确认时会再次核对团队和群状态；预览变化后需要重新检查。')}</p>
-  </div>
+  const row=(label:string,value:string,danger=false)=><div style={styles.row} key={label+value}><dt style={{color:danger?arkmeTheme.danger:arkmeTheme.secondary}}>{label}</dt><dd style={{margin:0}}>{value}</dd></div>
+  return <>
+    <div style={styles.target}><span style={{color:arkmeTheme.secondary}}>{tr(v.mode==='create'?'群名称':'关联群')}</span><strong>{v.label}</strong></div>
+    <section aria-label={tr('成员变更')} style={styles.preview}>
+      <h3 style={styles.heading}>{tr('成员变更')}</h3>
+      <div style={styles.counts}>
+        {v.add.length>0&&<span style={styles.count}>{tr('新增 {v0} 人',{v0:v.add.length})}</span>}
+        {v.remove.length>0&&<span style={styles.count}>{tr('移出 {v0} 人',{v0:v.remove.length})}</span>}
+        {v.retainCount>0&&<span style={styles.count}>{tr('保留 {v0} 人',{v0:v.retainCount})}</span>}
+      </div>
+      <dl style={{margin:0}}>
+        {v.add.length>0&&row(tr('新增成员'),v.add.map(p=>p.name).join('、'))}
+        {v.remove.length>0&&row(tr('移出成员'),v.remove.map(p=>p.name).join('、'),true)}
+        {row(tr('群主'),tr('{v0}（团队所有者）',{v0:v.owner.name}))}
+        {v.roleChanges.map(p=>row(tr('角色调整'),`${p.name}：${tr(roleName[p.before])} → ${tr(roleName[p.after])}`))}
+        {v.botCount>0&&row(tr('机器人'),tr('保留 {v0} 个',{v0:v.botCount}))}
+      </dl>
+    </section>
+    <section aria-label={tr('确认前请留意')} style={styles.rules}>
+      <h3 style={styles.heading}>{tr('确认前请留意')}</h3>
+      <p>{tr('新增或重新入群的成员，只能查看本次入群后的消息。')}{v.mode==='link'&&tr('保留成员的合法历史权限不变。')}</p>
+      <p>{tr('成员与角色随团队同步，不能单独退群或解除关联。')}</p>
+      {v.closePublicAccess&&<p>{tr('将关闭公开发现和公开入群。')}</p>}
+      {v.requiresClientUpgrade&&<p>{tr('此群需升级客户端后继续使用，其他群不受影响。')}</p>}
+    </section>
+  </>
 }
 const styles:Record<string,CSSProperties>={
-  body:{display:'grid',gap:14,padding:20,fontSize:13,outline:'none'},
-  copy:{margin:0,color:arkmeTheme.secondary,lineHeight:1.7},
-  preview:{display:'grid',gap:8,maxHeight:'45vh',overflowY:'auto',padding:12,border:`1px solid ${arkmeTheme.borderSoft}`,borderRadius:8},
+  body:{display:'grid',gap:16,padding:20,fontSize:13,lineHeight:1.5,outline:'none',overflowWrap:'anywhere'},
+  copy:{margin:0,color:arkmeTheme.secondary,lineHeight:1.5},
+  preview:{display:'grid',gap:10,padding:14,border:`1px solid ${arkmeTheme.border}`,borderRadius:10},
+  heading:{fontSize:14,fontWeight:600,margin:0,color:arkmeTheme.text},
+  counts:{display:'flex',flexWrap:'wrap',gap:8},
+  count:{padding:'4px 8px',borderRadius:6,background:arkmeTheme.layer2},
+  row:{display:'grid',gridTemplateColumns:'72px minmax(0,1fr)',gap:8,padding:'5px 0'},
+  rules:{display:'grid',gap:6,color:arkmeTheme.secondary},
+  details:{borderTop:`1px solid ${arkmeTheme.borderSoft}`,paddingTop:4},
+  summary:{cursor:'pointer',padding:'10px 0',color:arkmeTheme.secondary},
+  status:{display:'grid',gap:8,textAlign:'center',padding:'28px 12px'},
+  target:{display:'grid',gridTemplateColumns:'72px minmax(0,1fr)',gap:8,padding:'10px 12px',background:arkmeTheme.layer1,borderRadius:8},
   label:{display:'grid',gap:8},
-  input:{width:'100%',minWidth:0,boxSizing:'border-box',padding:'9px 12px',border:`1px solid ${arkmeTheme.borderSoft}`,borderRadius:8,background:arkmeTheme.base,color:arkmeTheme.text,font:'inherit'},
+  input:{width:'100%',minWidth:0,boxSizing:'border-box',padding:'9px 12px',border:`1px solid ${arkmeTheme.borderSoft}`,borderRadius:8,background:arkmeTheme.layer1,color:arkmeTheme.text,font:'inherit'},
 }
