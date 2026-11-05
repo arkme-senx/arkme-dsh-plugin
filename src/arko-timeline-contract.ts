@@ -13,7 +13,13 @@ export interface ArkmeArkoInteraction {
   interactionKey: string; interactionRef: string; occurredAtMillis: number
   sourceName: string; kind: 'self' | 'chat'; summary: string; suggestion: boolean
 }
-export interface ArkmeArkoInteractionQuery { cursor?: string; afterMillis?: number; beforeMillis?: number; limit?: number; knownRefs?: string[] }
+export interface ArkmeArkoInteractionQuery {
+  cursor?: string; afterMillis?: number; beforeMillis?: number; limit?: number
+  /** Select and verify up to 100 existing rows. */
+  knownRefs?: string[]
+  /** Conditional-read hints for a range page; never selectors or access grants. */
+  observedRefs?: string[]
+}
 export interface ArkmeArkoInteractionPage { accountScope: string; items: ArkmeArkoInteraction[]; hasMore: boolean; nextCursor?: string; removedKeys: string[] }
 export interface ArkmeArkoInteractionTarget {
   accountScope: string; source: ArkmeSourceItem; itemUid: string; occurredAtMillis: number; sourceAtMillis?: number; recordOwnerUserId: number

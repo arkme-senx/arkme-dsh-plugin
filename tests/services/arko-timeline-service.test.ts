@@ -62,3 +62,12 @@ it.each([1,2,4,5,6])('preserves completed chat scene %s and only opens scene 5 a
  expect(target.thought?.biz).toBe([1,2,6].includes(scene)?2:1)
  expect(target.occurredAtMillis).toBe(1000);expect(target.sourceAtMillis).toBe(500)
 })
+
+it('uses observed refs as conditional range hints rather than ID selectors',async()=>{
+ let request:any
+ const {service}=await setup(async body=>{request=body;return response({items:body.known_revisions?[]:[{...wire,revision:'1:2:1000'}],has_more:false,removed_ids:[]})})
+ const first=await service.arkoInteractions()
+ await service.arkoInteractions({afterMillis:500,observedRefs:[first.items[0]!.interactionRef]})
+ expect(request).toEqual({limit:20,after:500,known_revisions:{[id]:'1:2:1000'}})
+ await expect(service.arkoInteractions({knownRefs:[first.items[0]!.interactionRef],observedRefs:[first.items[0]!.interactionRef]})).rejects.toThrow()
+})

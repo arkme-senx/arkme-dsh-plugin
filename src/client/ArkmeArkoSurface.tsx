@@ -834,17 +834,18 @@ export function ArkmeArkoSurface() {
       const userRead = callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, controller.signal).then(async value => value.profile ? value : callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, controller.signal)).then(value => { if (!controller.signal.aborted) setUserProfile(value.profile) })
       // External records load independently; slow owner authorization cannot block direct chat.
       const interactionRead = (async () => {
-        const after = Math.max(0, ...(cached?.interactions ?? []).map(item => item.occurredAtMillis))
+        const after = cached?.interactions.length ? Math.min(...cached.interactions.map(item => item.occurredAtMillis)) : 0
+        const observedRefs=cached?.interactions.slice(-400).map(item=>item.interactionRef)
         let cursor: string | undefined
         const visited = new Set<string>()
         do {
-          const page = await readInteractions(cursor ? { cursor, limit: 20 } : { limit: 20, ...(after ? { afterMillis: after } : {}) }, controller.signal)
+          const page = await readInteractions({...(cursor ? {cursor} : after ? {afterMillis:after} : {}),limit:20,...(observedRefs?.length ? {observedRefs} : {})}, controller.signal)
           if (controller.signal.aborted || page.accountScope !== accountKey) return
           if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
           setInteractions(current => mergeInteractions(current, page))
           if (!cached?.interactions.length) { setInteractionCursor(page.nextCursor); break }
           cursor = page.hasMore ? page.nextCursor : undefined
-          if (cursor) { if (visited.has(cursor) || visited.size >= 100) throw new Error('Arko interaction cursor did not advance'); visited.add(cursor) }
+          if (cursor) { if (visited.has(cursor)) throw new Error('Arko interaction cursor did not advance'); visited.add(cursor) }
         } while (cursor)
         setInteractionError('')
       })().catch(caught => { if (!controller.signal.aborted) setInteractionError(errorMessage(caught)) })
@@ -869,16 +870,17 @@ export function ArkmeArkoSurface() {
       const verify = revalidate; revalidate = false
       try {
         const loaded = timelineSnapshot.current?.interactions ?? []
-        const after = Math.max(0, ...loaded.map(item => item.occurredAtMillis))
+        const after = loaded.length ? (verify ? Math.min(...loaded.map(item=>item.occurredAtMillis)) : Math.max(...loaded.map(item=>item.occurredAtMillis))) : 0
+        const observedRefs=verify ? loaded.slice(-400).map(item=>item.interactionRef) : undefined
         let cursor: string | undefined; const seen = new Set<string>()
         do {
-          const page = await readInteractions(cursor ? { cursor, limit: 20 } : { limit: 20, ...(after ? { afterMillis: after } : {}) }, controller.signal)
+          const page = await readInteractions({...(cursor ? {cursor} : after ? {afterMillis:after} : {}),limit:20,...(observedRefs?.length ? {observedRefs} : {})}, controller.signal)
           if (controller.signal.aborted || page.accountScope !== accountKey) return
           if (!followTailRef.current && bodyRef.current) pendingHistoryViewport.current = arkmeConversationViewport(bodyRef.current)
           setInteractions(current => mergeInteractions(current,page))
           if (!loaded.length) { setInteractionCursor(page.nextCursor); break }
           cursor = page.hasMore ? page.nextCursor : undefined
-          if (cursor) { if (seen.has(cursor) || seen.size >= 100) throw new Error('Arko interaction cursor did not advance'); seen.add(cursor) }
+          if (cursor) { if (seen.has(cursor)) throw new Error('Arko interaction cursor did not advance'); seen.add(cursor) }
         } while (cursor)
         if (verify) for(let at=0;at<loaded.length;at+=100) {
           const page = await readInteractions({knownRefs:loaded.slice(at,at+100).map(item=>item.interactionRef)},controller.signal)

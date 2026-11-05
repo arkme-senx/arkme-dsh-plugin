@@ -19,7 +19,7 @@ it('paints both ready streams while cloud reads are pending and preserves loaded
  const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
  try{await act(async()=>root.render(<ArkmeArkoSurface/>));expect(host.textContent).toContain('已加载的普通聊天');expect(host.textContent).not.toContain('已加载的互动');expect(host.textContent).not.toContain('正在恢复会话')
  expect(vi.mocked(callArkme).mock.calls.find(([m])=>m==='arko.messages')?.[1]).toEqual({startAtMillis:1000,direction:'asc',limit:50})
- expect(vi.mocked(callArkme).mock.calls.find(([m,p])=>m==='arko.interactions'&&!(p as any)?.knownRefs)?.[1]).toEqual({limit:20,afterMillis:2000})
+ expect(vi.mocked(callArkme).mock.calls.find(([m,p])=>m==='arko.interactions'&&!(p as any)?.knownRefs)?.[1]).toEqual({limit:20,afterMillis:2000,observedRefs:['opaque']})
  }finally{await act(async()=>root.unmount());host.remove()}
  expect(arkoTimelineMemory.get('test:10001')).toMatchObject({historyCursor:'old-chat-page',interactionCursor:'old-interaction-page'})
 })
@@ -240,5 +240,25 @@ it.each(['proof-lost','result-changed'])('closes an open suggestion when %s and 
   expect(document.querySelector('[role="dialog"]')).toBeNull()
   await act(async()=>root.render(<ArkoInteractionRow item={next} scope="test:10001" verified/>))
   expect(document.querySelector('[role="dialog"]')).toBeNull()
+ }finally{await act(async()=>root.unmount());host.remove()}
+})
+
+it('rediscovers an older result that became readable again inside a restored window',async()=>{
+ const snapshot=cache()
+ snapshot.interactions=[{...snapshot.interactions[0]!,interactionKey:'floor',interactionRef:'floor-ref',occurredAtMillis:1000,summary:'范围下界'},{...snapshot.interactions[0]!,interactionKey:'ceiling',interactionRef:'ceiling-ref',occurredAtMillis:3000,summary:'范围上界'}]
+ arkoTimelineMemory.set('test:10001',snapshot)
+ vi.mocked(callArkme).mockImplementation(async(method,params)=>{
+  if(method==='arko.interactions'){
+   const p=params as any
+   const restored={...snapshot.interactions[0]!,interactionKey:'restored',interactionRef:'restored-ref',occurredAtMillis:2000,summary:'重新可读的历史结果'}
+   return {accountScope:'test:10001',items:!p?.knownRefs&&(p?.afterMillis??0)<=2000?[restored]:[],hasMore:false,removedKeys:[]} as never
+  }
+  return new Promise(()=>{}) as never
+ })
+ const host=document.createElement('div');document.body.append(host);const root=createRoot(host)
+ try{
+  await act(async()=>root.render(<ArkmeArkoSurface/>))
+  expect(host.textContent).toContain('重新可读的历史结果')
+  expect(host.textContent).toContain('范围下界');expect(host.textContent).toContain('范围上界')
  }finally{await act(async()=>root.unmount());host.remove()}
 })

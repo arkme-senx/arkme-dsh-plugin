@@ -448,9 +448,18 @@ export const arkoLifecycleChangeToolModule = defineArkmeCoreToolModule({
 
 export const arkoInteractionsToolModule = defineArkmeCoreToolModule({
   meta: { id: 'business.arko.interactions.v1', toolName: 'arkme_arko_interactions', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
-  create: (service: ArkmeArkoToolPort) => defineTool({ name: 'arkme_arko_interactions', description: 'Read the signed-in user’s Arko interactions from self notes and chats, ordered by actual interaction time. This is a permission-filtered page, not a scan of source conversations.',
-    parameters: { cursor: { type: 'string', description: 'Exact nextCursor from the previous page.' }, limit: { type: 'integer', description: '1-20, default 20.' } }, output: ARKO_OUTPUT, isConcurrencySafe: () => true,
-    async execute(args, exec) { return JSON.stringify(await service.arkoInteractions({ ...(args.cursor ? { cursor: args.cursor } : {}), ...(args.limit ? { limit: args.limit } : {}) }, exec.signal)) },
+  create: (service: ArkmeArkoToolPort) => defineTool({ name: 'arkme_arko_interactions', description: 'Read the signed-in user’s permission-filtered Arko results by completion time. Observed references only avoid retransmitting unchanged results; they never grant access.',
+    parameters: {
+      cursor: { type: 'string', description: 'Exact nextCursor from the previous page.' }, limit: { type: 'integer', description: '1-20, default 20.' },
+      after_millis: {type:'integer',description:'Inclusive completion-time lower bound; keep it on initial range reads.'},
+      before_millis: {type:'integer',description:'Exclusive completion-time upper bound.'},
+      known_refs: {type:'array',items:{type:'string'},description:'Select up to 100 opaque references for access verification; cannot combine with a range or cursor.'},
+      observed_refs: {type:'array',items:{type:'string'},description:'Up to 400 opaque reference hints for a range page; unchanged results are omitted. Cannot combine with known_refs.'},
+    }, output: ARKO_OUTPUT, isConcurrencySafe: () => true,
+    async execute(args, exec) { return JSON.stringify(await service.arkoInteractions({ ...(args.cursor ? { cursor: args.cursor } : {}), ...(args.limit ? { limit: args.limit } : {}),
+      ...(args.after_millis!==undefined ? {afterMillis:args.after_millis} : {}),...(args.before_millis!==undefined ? {beforeMillis:args.before_millis} : {}),
+      ...(args.known_refs ? {knownRefs:args.known_refs} : {}),...(args.observed_refs ? {observedRefs:args.observed_refs} : {}),
+    }, exec.signal)) },
   }),
 })
 export const arkoInteractionOpenToolModule = defineArkmeCoreToolModule({

@@ -19,6 +19,8 @@ const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
 const query: ArkmeArkoInteractionQuery = { limit: 1 }
 const page = await sdk.arkoInteractions(query)
 assert(page.items[0]?.interactionRef === 'opaque-result')
+await sdk.arkoInteractions({afterMillis:1000,observedRefs:[page.items[0]!.interactionRef]})
+assert(calls.some(row=>row.operation==='arko.interactions'&&Array.isArray(row.params.observedRefs)))
 const target = await sdk.arkoInteractionOpen(page.items[0].interactionRef)
 assert(target.suggestion === false && target.thought?.biz === 2 && target.sourceAtMillis === 1000 && target.occurredAtMillis === 2000)
 const snapshot: ArkmeArkoTimelineCache = { schemaVersion: 2, savedAtMillis: Date.now(), messages: [], interactions: page.items }

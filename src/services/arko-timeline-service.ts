@@ -40,18 +40,22 @@ export class ArkoTimelineService {
     if (query.limit !== undefined && (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 20)
       || query.afterMillis !== undefined && (!Number.isSafeInteger(query.afterMillis) || query.afterMillis < 0)
       || query.beforeMillis !== undefined && (!Number.isSafeInteger(query.beforeMillis) || query.beforeMillis <= 0)
-      || query.knownRefs && (!Array.isArray(query.knownRefs) || query.knownRefs.length > 100)) throw invalid()
+      || query.knownRefs && (!Array.isArray(query.knownRefs) || query.knownRefs.length > 100)
+      || query.observedRefs && (!Array.isArray(query.observedRefs) || query.observedRefs.length > 400)
+      || query.knownRefs && query.observedRefs) throw invalid()
     const knownRevisions: Record<string,string> = {}
-    const ids=query.knownRefs ? await Promise.all(query.knownRefs.map(async ref=>{
+    const refs=query.knownRefs ?? query.observedRefs
+    const observed=refs ? await Promise.all(refs.map(async ref=>{
       const value=await this.codec.open(prefix,ref)
       if(value.scope!==scope||typeof value.id!=='string'||!idPattern.test(value.id))throw invalid()
       knownRevisions[value.id]=str(value.revision,128)
       return value.id
     })) : undefined
-    if(ids && (ids.length===0||new Set(ids).size!==ids.length))throw invalid()
+    if(observed && (observed.length===0||new Set(observed).size!==observed.length))throw invalid()
+    const ids=query.knownRefs ? observed : undefined
     if (ids && (query.cursor || query.afterMillis || query.beforeMillis)) throw invalid()
     const wire = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arko/interactions/query',
-      { limit: query.limit ?? 20, ...(query.cursor ? { cursor: query.cursor } : {}), ...(query.afterMillis ? { after: query.afterMillis } : {}), ...(query.beforeMillis ? { before: query.beforeMillis } : {}), ...(ids ? { ids, known_revisions: knownRevisions } : {}) }, session, signal,
+      { limit: query.limit ?? 20, ...(query.cursor ? { cursor: query.cursor } : {}), ...(query.afterMillis ? { after: query.afterMillis } : {}), ...(query.beforeMillis ? { before: query.beforeMillis } : {}), ...(ids ? { ids } : {}), ...(refs ? { known_revisions: knownRevisions } : {}) }, session, signal,
       { lane: 'background-read', bypassCache: true, cacheMs: 0, publishServiceCooldown: false })
     await this.check(scope); signal?.throwIfAborted()
     if (!Array.isArray(wire.items) || wire.items.length > (ids?.length ?? 20) || !Array.isArray(wire.removed_ids) || typeof wire.has_more !== 'boolean') throw invalid()

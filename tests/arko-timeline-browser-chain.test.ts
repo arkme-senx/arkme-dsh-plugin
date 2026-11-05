@@ -1,0 +1,100 @@
+import {it,expect} from 'vitest'
+import {readFile,writeFile,mkdtemp} from 'node:fs/promises'
+import {join,dirname} from 'node:path'
+import {fileURLToPath} from 'node:url'
+import {createServer} from 'node:http'
+
+const directory=process.env.HPK_BROWSER_CHAIN_DIR
+it.skipIf(!directory)('runs the existing UI through Host, JWT/Gin, SQL/Mongo and real Record/Chat owners',async()=>{
+ const dir=directory!
+ const ready=JSON.parse(await readFile(join(dir,'intelligent.json'),'utf8'))
+ const {ArkmeService}=await import('../src/arkme-service.js')
+ const {ArkmeStateStore}=await import('../src/state-store.js')
+ const {ArkmeLocalDatabase}=await import('../src/local-database.js')
+ const {dispatchArkmeHostOperation}=await import('../src/host-api.js')
+ const {createServer:createVite}=await import('vite')
+ const {chromium}=await import(process.env.ARKME_PLAYWRIGHT_MODULE??'playwright')
+ const state=await mkdtemp(join(dir,'host state '))
+ const config={environment:'test',...Object.fromEntries(['auth','subject','record','chat','bot','im','webrtc','world','relation','intelligent','audio','data','team'].map(name=>[name+'BaseUrl',ready.url])),fileStateDirectory:state,routePath:'/arkme-self/api',requestTimeoutMs:5000,maxTextLength:20000,interwovenMomentsEnabled:true,updateCheckEnabled:false}
+ let credentials={userId:11,accessToken:ready.token11,refreshToken:'synthetic-no-refresh'}
+ const localDatabase=new ArkmeLocalDatabase(state,new ArkmeStateStore(state))
+ const service=new ArkmeService(config as never,{async read(){return credentials},async write(value){credentials=value as typeof credentials},async delete(){throw new Error('unexpected logout')}},localDatabase)
+ const calls:Array<{operation:string;params:Record<string,unknown>}>=[],errors:string[]=[]
+ const server=createServer(async(request,response)=>{
+  let operation=''
+  try{
+   let raw='';for await(const part of request)raw+=part
+   const parsed=JSON.parse(raw);operation=parsed.operation;const params=parsed.params??{};calls.push({operation,params})
+   // Independent ordinary-chat metadata has no bearing on the H business path.
+   const ordinary:Record<string,unknown>={'arko.session':{sessionId:88,name:'Arko',created:false},'arko.messages':{items:[{messageId:1,sessionId:88,role:'user',text:'普通直接聊天仍可用',reasoning:'',createdRecordUids:[],createdAtMillis:1,status:1}],hasMore:false,scanned:1,consistency:'live'},'arko.models':{options:[],effectiveRouteKey:''},'arko.profile':{displayName:'Arko',version:1},'user.profile':{profile:{userId:11,displayName:'验收用户'}}}
+   const value=operation in ordinary?ordinary[operation]:await dispatchArkmeHostOperation(service,operation,params)
+   response.setHeader('Content-Type','application/json');response.end(JSON.stringify({ok:true,value}))
+  }catch(error){const value=error as {code?:string;message:string;retryable?:boolean};errors.push(`[${operation}] ${String((error as Error).stack??value.message)}`);response.setHeader('Content-Type','application/json');response.end(JSON.stringify({ok:false,error:{code:value.code??'test-chain-failure',message:value.message,retryable:value.retryable??false}}))}
+ })
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve))
+ const hostPort=(server.address() as {port:number}).port
+ const root=join(dirname(fileURLToPath(import.meta.url)),'fixtures/arko-timeline-browser')
+ const vite=await createVite({configFile:false,root,esbuild:{jsx:'automatic'},server:{host:'127.0.0.1',port:0,fs:{allow:[join(root,'../../..')]},proxy:{'/arkme-self/api':`http://127.0.0.1:${hostPort}`}},logLevel:'error'})
+ await vite.listen()
+ const browser=await chromium.launch({headless:true,...(process.env.ARKME_CHROME_EXECUTABLE?{executablePath:process.env.ARKME_CHROME_EXECUTABLE}:{})})
+ let page:Awaited<ReturnType<typeof browser.newPage>>|undefined
+ try{
+  page=await browser.newPage({viewport:{width:1200,height:850}})
+  page.on('pageerror',error=>errors.push(String(error.stack??error)))
+  await page.goto(vite.resolvedUrls!.local[0]!)
+  await page.getByText('普通直接聊天仍可用',{exact:true}).waitFor()
+  await page.waitForFunction(()=>document.querySelectorAll('[data-arko-interaction]').length===9)
+  const results=['automatic reply','manual reply','scene-1 完成结果','scene-2 完成结果','scene-3 完成结果','scene-4 完成结果','Agent 精确完成结果','正式续答完成结果']
+  for(const text of results){
+   const row=page.locator('[data-arko-interaction]').filter({hasText:text})
+   await row.locator('button').first().click()
+   await page.locator('[data-arkme-thought-reply]').filter({hasText:text}).first().waitFor({timeout:15000})
+   expect(await page.locator('[data-arkme-chat-suggestion-dialog]').count()).toBe(0)
+   await page.getByRole('button',{name:'关闭详情',exact:true}).last().click()
+  }
+  await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).locator('button').first().click()
+  await page.locator('[data-arkme-chat-suggestion-dialog]').waitFor()
+  await page.getByRole('button',{name:'填入输入框',exact:true}).click()
+  expect(await page.evaluate(()=>String((window as any).hpkDraft()))).toContain('scene-5 完成结果')
+  const settings=async(enabled:boolean,version:number)=>{
+   const response=await fetch(ready.url+'/api/v1/settings/capabilities/update',{method:'POST',headers:{Authorization:`Bearer ${ready.token11}`,'Content-Type':'application/json'},body:JSON.stringify({key:'chat_thought',enabled,expected_version:version})})
+   const result=await response.json() as {code:number};expect(result.code).toBe(0)
+   await page.evaluate(()=>(window as any).hpkRecheck())
+  }
+  await settings(false,1);await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).waitFor({state:'detached'})
+  await settings(true,2);await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).waitFor()
+  // Exercise actual browser connectivity before changing the source owners.
+  const height=await page.locator('[data-arko-interaction]').first().evaluate(node=>node.getBoundingClientRect().height)
+  await page.context().setOffline(true)
+  await page.evaluate(()=>window.dispatchEvent(new Event('offline')))
+  await page.waitForFunction(()=>[...document.querySelectorAll('[data-arko-interaction]')].every(node=>!node.textContent?.includes('完成结果')&&!node.textContent?.includes('reply')))
+  expect(await page.locator('[data-arko-interaction]').count()).toBe(9)
+  expect(await page.locator('[data-arko-interaction]').first().evaluate(node=>node.getBoundingClientRect().height)).toBe(height)
+  await page.getByText('普通直接聊天仍可用',{exact:true}).waitFor()
+  await page.screenshot({path:join(dir,'browser-offline.png'),fullPage:true})
+  await page.context().setOffline(false)
+  await page.evaluate(()=>window.dispatchEvent(new Event('online')))
+  await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).waitFor()
+  const opened=calls.filter(call=>call.operation==='arko.interaction.open')
+  const recordOwner=JSON.parse(await readFile(join(dir,'record.json'),'utf8'))
+  expect((await fetch(recordOwner.url+'/__test/edit',{method:'POST'})).ok).toBe(true)
+  await page.evaluate(()=>(window as any).hpkRecheck())
+  for(const text of ['automatic reply','manual reply','正式续答完成结果'])await page.locator('[data-arko-interaction]').filter({hasText:text}).waitFor({state:'detached'})
+  await expect(dispatchArkmeHostOperation(service,'arko.interaction.open',opened[0]!.params)).rejects.toMatchObject({code:'arko-interaction-unavailable'})
+  const chatOwner=JSON.parse(await readFile(join(dir,'chat.json'),'utf8'))
+  expect((await fetch(chatOwner.url+'/__test/leave',{method:'POST'})).ok).toBe(true)
+  await page.evaluate(()=>(window as any).hpkRecheck())
+  await page.waitForFunction(()=>document.querySelectorAll('[data-arko-interaction]').length===0)
+  await expect(dispatchArkmeHostOperation(service,'arko.interaction.open',opened[2]!.params)).rejects.toMatchObject({code:'arko-interaction-unavailable'})
+  await expect(dispatchArkmeHostOperation(service,'arko.interaction.open',opened[6]!.params)).rejects.toMatchObject({code:'arko-interaction-unavailable'})
+  await page.getByText('普通直接聊天仍可用',{exact:true}).waitFor()
+  expect(calls.some(call=>['arko.ask','source.send','source.message-extension.extend'].includes(call.operation))).toBe(false)
+  // World, Bot and account-avatar services are outside this isolated stack.
+  const auxiliaryFailures=errors.filter(error=>/^\[(world\.|bots\.list|group\.bots)/.test(error))
+  expect(errors.filter(error=>!auxiliaryFailures.includes(error))).toEqual([])
+  const report={productionUi:true,productionHostDispatch:true,realJwtGin:true,realMongoMySQL:true,realRecordChatOwners:true,exactResults:results,suggestionUsesExistingDialog:true,fillDraftWithoutSend:true,capabilityDisableReenable:true,offlineGeometryAndSummaryGate:true,reconnectReauthorized:true,sourceEditRevokesPersonalAndContinuation:true,membershipRevokesChatAndAgent:true,staleReferencesDenied:true,modelCalls:0,operations:calls.map(row=>row.operation),auxiliaryFailures,businessErrors:[]}
+  await writeFile(join(dir,'browser-evidence.json'),JSON.stringify(report,null,2)+'\n')
+  await page.screenshot({path:join(dir,'browser-final.png'),fullPage:true})
+ }catch(error){await writeFile(join(dir,'browser-errors.json'),JSON.stringify({errors,calls,dom:await page?.locator('body').innerText().catch(()=>''),html:await page?.content().catch(()=>'')},null,2)+'\n');throw error}
+ finally{await browser.close();await vite.close();await new Promise<void>(resolve=>server.close(()=>resolve()));await service.dispose();localDatabase.close()}
+},180000)
