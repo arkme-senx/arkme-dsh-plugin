@@ -111,7 +111,7 @@ it.skipIf(!fixture)('shipped edit UI → Host → public Record → Chat history
   }
   const storage = new Map<string, string>()
   const storageApi = { getItem: (k: string) => storage.get(k) ?? null, setItem: (k: string, v: string) => storage.set(k, v), removeItem: (k: string) => storage.delete(k) }
-  vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {}, setTimeout, clearTimeout, innerHeight: 900, localStorage: storageApi, sessionStorage: storageApi })
+  vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {}, setTimeout, clearTimeout, setInterval, clearInterval, innerHeight: 900, localStorage: storageApi, sessionStorage: storageApi })
   vi.stubGlobal('requestAnimationFrame', () => 1); vi.stubGlobal('cancelAnimationFrame', () => {})
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: f.owner })
   arkmeChatDirectory.activateAccount(f.owner); arkmeChatDirectory.publish([sourceItem]); arkmeUi.selectSource(sourceItem)

@@ -246,17 +246,23 @@ describe('ArkmeService', () => {
       media_display_items: [{ file_asset_uid: 'old-image', file_kind: 1, file_name: 'old.png', preview_url: 'https://media.test/old.png' }],
     }], has_more: false } }))
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetcher)
-    const payload = Buffer.from(JSON.stringify({ version: 1, sourceKind: 'chat_relation', userId: 10001,
-      sourceOwnerRef: 'chat-1', chatSessionUid: 'chat-1', relationUid: 'rel-1', recordUid: 'record-1',
-      recordOwnerUserId: 20002, senderUserId: 20002, senderName: 'someone',
-    })).toString('base64url')
-    const action = `arkme-message-action-v1.${payload}.${createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')}`
+    const signedAction = (ownerUserId: number) => {
+      const payload = Buffer.from(JSON.stringify({ version: 1, sourceKind: 'chat_relation', userId: 10001,
+        sourceOwnerRef: 'chat-1', chatSessionUid: 'chat-1', relationUid: 'rel-1', recordUid: 'record-1',
+        recordOwnerUserId: ownerUserId, senderUserId: ownerUserId, senderName: 'author',
+      })).toString('base64url')
+      return `arkme-message-action-v1.${payload}.${createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')}`
+    }
+    const action = signedAction(10001)
     try {
       const result = await service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action)
       expect(result.items[0]).toMatchObject({ revisionUid: 'rev-old', content: { textContent: 'old text', contentBlocks: [{ fileAssetUid: 'old-image' }] } })
       expect(JSON.stringify(result)).not.toContain('https://media.test')
       expect(fetcher.mock.calls[0]?.[0]).toContain('/api/v1/chats/records/revisions/query')
       const count = fetcher.mock.calls.length
+      const peerAction = signedAction(20002)
+      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction)).rejects.toMatchObject({ code: 'record-history-private' })
+      await expect(service.recordRevisionSnapshot(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction, 'rev-old')).rejects.toMatchObject({ code: 'record-snapshot-private' })
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-2', 'other'), action)).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action + 'x')).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       sessions.session = { userId: 20002, accessToken: 'other', refreshToken: 'other' }

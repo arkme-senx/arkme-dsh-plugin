@@ -2145,9 +2145,6 @@ arkoImagesV1:true,
 
   async recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal) {
     const target = await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef)
-    if (target.kind === 'chat' && String(target.recordOwnerUserId) !== String(target.viewerUserId)) {
-      throw new ArkmePluginError('record-snapshot-private', '只能查看自己消息的记忆快照', false, 403)
-    }
     const { snapshot } = await this.recordEditHistory.revision(target, revisionUid, signal)
     return await this.chat.projectRecordRevisionSnapshot(snapshot, target, signal)
   }
