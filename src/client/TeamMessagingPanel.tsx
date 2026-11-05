@@ -100,7 +100,7 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamPage, TeamTimeline } from '../team-app-contract.js'
 import { invalidateTeamMessages, openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, restoreTeamDraftContent, updateTeamDraftText, validTeamDraftStart, teamDraftStartForInput, type TeamDraft as Draft } from './team-message-draft.js'
-import { loadTeamEntryOpen, retryTeamEntryOpen } from './team-entry-navigation.js'
+import { loadTeamEntryOpen, openConfirmedTeamContact, retryTeamEntryOpen } from './team-entry-navigation.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { TeamConversationTools } from './TeamConversationTools.js'
@@ -967,6 +967,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       const result=await callArkme<import('../team-outbound-contract.js').TeamOutboundOpenResult>('team.app.outbound.open',{expectedAccountKey:accountKey,teamRef:conversation.channel.teamRef,recipient:{kind:'team-customer',conversationRef:conversation.ref},requestUid:privateOpenRequest.current},ctrl.current.signal)
       if(ctrl.current.signal.aborted)return
       if(result.state!=='ready'||result.conversation.key!==conversation.key)throw new Error(tr('私信入口返回异常，请重试'))
+      if(!openConfirmedTeamContact(accountKey,result.conversation))throw new Error(tr('登录账号已变化，请重新打开此窗口'))
       const next={conversation:result.conversation,messages:latest.current?.messages??[],hasMore:false,beforeSeq:0};latest.current=next;setTimeline(next);setPrivateComposerEnabled(true)
     }catch(e){if(!ctrl.current.signal.aborted)setError(errorText(e))}
     finally{if(!ctrl.current.signal.aborted)setBusy(false)}

@@ -18,9 +18,11 @@ const {chromium}=createRequire(process.env.ARKME_PLAYWRIGHT_ANCHOR)('playwright'
 for(const key of ['ARKME_DESKTOP_BRIDGE_URL','ARKME_DESKTOP_BRIDGE_TOKEN','ARKME_DESKTOP_BRIDGE_SESSION_ID'])delete process.env[key]
 const profile=join(home,'profiles/web'),manifest=JSON.parse(await readFile(join(profile,'package.json'),'utf8'))
 assert.match(manifest.dependencies['@senguoyun/dsh-arkme'],/^file:.*\.tgz$/)
+assert(manifest.dsh?.profile?.bundles?.includes('@senguoyun/dsh-arkme'),'installed package must be activated through the official Profile bundle contract')
 const liveTeam=process.env.ARKME_E2E_TEAM_OWNER
 if(liveTeam){const u=new URL(liveTeam);assert(u.protocol==='http:'&&u.hostname==='127.0.0.1'&&u.port,'isolated Team owner required')}
-const actor=liveTeam?4:99001001,target=liveTeam?3:99001002,teamID=liveTeam?7:42,calls=[],streams=new Set(),errors=[]
+const actor=liveTeam?4:99001001,teamID=liveTeam?7:42,calls=[],streams=new Set(),errors=[]
+let target=liveTeam?3:99001002,contactIdentifier='customer_one'
 const token=id=>{const body=[{alg:'HS256',typ:'JWT'},{user_id:id,client_id:1,iss:'jotmo',exp:Math.floor(Date.now()/1000)+3600}].map(v=>Buffer.from(JSON.stringify(v)).toString('base64url')).join('.');return body+'.'+createHmac('sha256','team-interaction-isolated-stack').update(body).digest('base64url')}
 const ownerPost=async(path,body,id=actor)=>{const r=await fetch(liveTeam+'/api/v1/team/'+path,{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+token(id)},body:JSON.stringify(body)});const v=await r.json();assert.equal(v.code,200,JSON.stringify(v));return v.data}
 const channel={team_id:42,name:'主动接待验收团队',jotmo_id:'reception_team',public_ref:'a'.repeat(32),enabled:true,revision:1,can_manage:false,can_pause:false,avatar:{mode:'default',key:'team'}}
@@ -56,7 +58,8 @@ try{
  const config={environment:'test',stateDirectory:join(home,'reception-state'),keychainServicePrefix:`com.senqisi.reception-${randomUUID()}`,allowProduction:false,updateCheckEnabled:false,openApiMcpEnabled:false,dshRemoteFeatureEnabled:false,extensionShareDiscoveryEnabled:false,toolProfile:'business',shareWebsite:origin}
  for(const key of ['auth','subject','record','data','team','chat','bot','im','webrtc','world','relation','intelligent','audio','openApi','extensionPublish','updateService','updateArtifact'])config[`${key}BaseUrl`]=origin
  const overlay=join(home,'reception-overlay.json');await writeFile(overlay,JSON.stringify([{id:'arkme-self',config}]))
- const boot=await runProfile({environment:createLaunchEnvironmentSnapshot([{source:'process',values:{...process.env,DSH_TELEMETRY:'0'}}]),profile:'web',patchFiles:[overlay],args:['--host','127.0.0.1','--port','0','--no-open']});ctx=boot.ctx;shutdown=boot.shutdown
+ const launch=()=>runProfile({environment:createLaunchEnvironmentSnapshot([{source:'process',values:{...process.env,DSH_TELEMETRY:'0'}}]),profile:'web',patchFiles:[overlay],args:['--host','127.0.0.1','--port','0','--no-open']})
+ let boot=await launch();ctx=boot.ctx;shutdown=boot.shutdown
  const host=ctx.get('arkmeData');assert.equal((await host.testLogin(actor)).status,'authenticated')
  const teams=(await host.executeTeamApp('team.app.teams',{})).filter(t=>!liveTeam||t.jotmoId==='stack_team_7'),contact=await host.searchContact('customer_one'),recipient={kind:'contact-lookup',contactRef:contact.contactRef}
  const {agent}=await ctx.agents.create({sessionId:`reception-${randomUUID()}`,meta:{cwd:home}});await agent.whenIdle()
@@ -79,6 +82,8 @@ try{
  execFileSync(process.execPath,[join(repo,'node_modules/typescript/bin/tsc'),'--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--strict','--skipLibCheck','--outDir',join(consumer,'out'),join(consumer,'consumer.ts')],{stdio:'pipe',cwd:consumer})
  const {verifyInstalledReception}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
  await verifyInstalledReception(async(path,init)=>{const response=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await response.body(),{status:response.status(),headers:response.headers()})},teams[0].teamRef,recipient)
+ // UI must create a fresh contact; Tool/SDK setup must not pre-establish it.
+ if(liveTeam){target=5;contactIdentifier='customer_two';assert.equal((await ownerPost('conversations/list',{side:'team',team_id:teamID,limit:30})).items.some(c=>c.external_user_id===String(target)),false)}
  const enterReception=async()=>{
   await page.getByRole('button',{name:'联系人',exact:true}).click()
   const section=page.locator('[data-directory-section="teams"]'),toggle=section.locator('.arkme-contact-directory-section-header');if(await toggle.getAttribute('aria-expanded')!=='true')await toggle.click()
@@ -87,7 +92,7 @@ try{
   await page.getByRole('dialog',{name:/团队消息通道/}).getByRole('button',{name:'查看团队对话',exact:true}).click()
   await page.getByRole('button',{name:'联系用户',exact:true}).click()
   const dialog=page.getByRole('dialog',{name:'联系用户',exact:true})
-  await dialog.getByRole('textbox',{name:'查找联系用户'}).fill('customer_one');await dialog.getByRole('textbox',{name:'查找联系用户'}).press('Enter')
+  await dialog.getByRole('textbox',{name:'查找联系用户'}).fill(contactIdentifier);await dialog.getByRole('textbox',{name:'查找联系用户'}).press('Enter')
   await dialog.getByText('待联系客户',{exact:true}).click()
   return dialog
  }
@@ -112,9 +117,10 @@ try{
  assert.equal(await page.getByRole('dialog',{name:'联系用户',exact:true}).count(),0)
  assert.equal(calls.filter(c=>c.path.endsWith('/open-by-member')).length,openCount+1)
  await page.screenshot({path:join(capture,'reloaded-without-popup.png')})
+ if(liveTeam){const persisted=await ownerPost('conversations/list',{side:'team',team_id:teamID,limit:30},11);assert.equal(persisted.items.filter(c=>c.external_user_id===String(target)&&c.member_initiated&&c.last_seq===0).length,1,'accepted contact must survive loss of the opening response before explicit retry')}
  dialog=await enterReception()
  await dialog.getByRole('button',{name:'发起会话',exact:true}).click()
- const pane=page.locator('.team-conversation-pane');await pane.waitFor();await pane.getByText(liveTeam?'用户3':'待联系客户',{exact:true}).first().waitFor()
+ let pane=page.locator('.team-conversation-pane');await pane.waitFor();await pane.getByText(liveTeam?`用户${target}`:'待联系客户',{exact:true}).first().waitFor()
  await page.screenshot({path:join(capture,'empty-reception.png')})
  if(!liveTeam)assert.equal(calls.filter(c=>/messages\/send$|records\/send$|create-private$/.test(c.path)).length,0)
  if(liveTeam){
@@ -126,10 +132,16 @@ try{
     const directory=await ownerPost('conversations/list',{side:'team',team_id:teamID,limit:30},member)
     assert.equal(directory.items.filter(c=>c.conversation_uid===uid&&c.member_initiated&&c.last_seq===0&&c.unread===0).length,1,'another authorized device must discover the same empty contact')
   }
-  // A full browser reload discards all current-window retained rows.
-  await page.reload();await page.getByRole('button',{name:'联系人',exact:true}).waitFor()
+  // Rebuild the official Host and browser, discarding both memory owners.
+  await browser.close();browser=undefined;page=undefined
+  await shutdown.shutdown(0);ctx=undefined;shutdown=undefined
+  boot=await launch();ctx=boot.ctx;shutdown=boot.shutdown
+  assert.equal((await ctx.get('arkmeData').authStatus()).status,'authenticated','Host restart must recover the saved account without another login command')
+  browser=await chromium.launch({channel:process.env.DSH_WEB_TEST_BROWSER_CHANNEL||'chrome'});page=await browser.newPage({viewport:{width:1200,height:850}});page.on('pageerror',e=>errors.push(e.message))
+  await page.goto(ctx.get('connection').authenticatedUrl(ctx.get('webServer').getOrigin()));await page.getByRole('button',{name:'联系人',exact:true}).waitFor()
+  pane=page.locator('.team-conversation-pane')
   await enterReception().then(dialog=>dialog.getByRole('button',{name:'关闭',exact:true}).click())
-  const directoryRow=page.locator('[data-team-conversation-key]').filter({hasText:'用户3'})
+  const directoryRow=page.locator('[data-team-conversation-key]').filter({hasText:`用户${target}`})
   await directoryRow.first().waitFor({timeout:30000})
   await directoryRow.first().click();await pane.waitFor()
   assert.equal((await ownerPost('conversations/list',{side:'external',limit:30},target)).items.some(c=>c.conversation_uid===uid),false)
@@ -154,6 +166,6 @@ try{
  }
 
  assert.equal(errors.length,0,errors.join('\n'));await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2))
- console.log(JSON.stringify({acceptance:'team-outbound-installed',dsh:'0.2.1-rc.2',artifact:'official CLI tgz',tools:'real-session-discovery+grant+open+forgery-rejection',sdk:'external-compiled-consumer+capability-rejection',ui:'contact-lookup+team-selection+dismiss-unknown+reload-without-popup+explicit-reopen+empty-conversation-navigation',backend:liveTeam?'real Team/Record/Mongo/Rabbit owners; synthetic account directory':'isolated HTTPS fixture',sentMessages:liveTeam?1:0}))
-}catch(error){console.error(error);if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}
+ console.log(JSON.stringify({acceptance:'team-outbound-installed',dsh:'0.2.1-rc.2',artifact:'official CLI tgz',tools:'real-session-discovery+grant+open+forgery-rejection',sdk:'external-compiled-consumer+capability-rejection',ui:'fresh-contact+lost-response+explicit-retry+host-restart+directory-recovery+real-first-message',backend:liveTeam?'real Team/Record/Mongo/Rabbit owners; synthetic account directory':'isolated HTTPS fixture',sentMessages:liveTeam?1:0}))
+}catch(error){console.error(error);await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}
 finally{clearTimeout(openDeadline);releaseHeldOpen?.();await browser?.close();if(ctx?.get('arkmeData'))await ctx.get('arkmeData').logout();await shutdown?.shutdown(process.exitCode||0);api.closeAllConnections();await new Promise(r=>api.close(r))}
