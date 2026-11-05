@@ -1,3 +1,4 @@
+import { recordExportTopicMarkdown } from '../record-export-topic.js'
 import type { Readable } from 'node:stream'
 import { createReadStream } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -25,18 +26,6 @@ function rows(value: unknown, limit: number): Record<string, unknown>[] {
 }
 function safeName(value: string): string {
   return value.replace(/[\\/:*?"<>|\x00-\x1f\x7f]/g, '_').replace(/^\.+|[. ]+$/g, '').slice(0, 100) || 'attachment'
-}
-// Optional metadata stays compatible with older Record responses. Only the
-// server resolves visibility; names are plain text, not authored Markdown.
-function topicLine(value: unknown): string {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
-  const topic = value as Record<string, unknown>
-  if (typeof topic.topic_uid !== 'string' || !topic.topic_uid.trim()) return ''
-  const title = typeof topic.title === 'string' ? topic.title.trim() : ''
-  const escaped = (title || '未命名主题').replace(/\s+/g, ' ')
-    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
-    .replace(/[\\`*_{}\[\]()#+.!|~-]/g, '\\$&')
-  return `主题：${escaped}\n\n`
 }
 function mediaUrl(environment: string, raw: unknown): URL {
   let url: URL
@@ -165,7 +154,7 @@ export class RecordExportService {
                 let content = date === day ? '' : `## [[${day}]]\n`
                 date = day
                 content += `### ${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日 ${at.toTimeString().slice(0, 8)}\n\n`
-                content += topicLine(item.topic_core)
+                content += recordExportTopicMarkdown(item.topic_core)
                 const title = text(item.title ?? '').trim(), body = text(item.text ?? '').trim()
                 content += [title && title !== body ? title : '', body].filter(Boolean).join('\n\n').replaceAll('```', '') + '\n\n'
                 for (const ref of rows(item.file_refs, 100)) {
