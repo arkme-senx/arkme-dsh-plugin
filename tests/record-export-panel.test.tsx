@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ArkmeRecordExportPanel } from '../src/client/ArkmeRecordExportPanel.js';
+import { ArkmeExportDateRange } from '../src/client/ArkmeExportDateRange.js';
 const mock = vi.hoisted(() => ({ run: vi.fn(), dispose: vi.fn(), preview: vi.fn(), pick: vi.fn(), open: vi.fn() }));
 vi.mock('../src/sdk/index.js', () => ({ createArkmeSdk: () => ({ exportRecords: mock.run, dispose: mock.dispose, previewRecordExport: mock.preview, pickRecordExportDirectory: mock.pick, openRecordExportDirectory: mock.open }) }));
 let root: Root, host: HTMLDivElement;
@@ -98,4 +99,25 @@ it('exposes clearly named range tabs and keeps keyboard focus with the selected 
  await act(async () => button('按日期导出').dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowLeft',bubbles:true})));
  expect(incremental.getAttribute('aria-selected')).toBe('true');
  expect(document.activeElement).toBe(incremental);
+});
+
+it('compacts same-year dates and keeps the full range available in the calendar', async () => {
+ const value = {start:'2026-10-30',end:'2026-11-05'};
+ await act(async () => root.render(<ArkmeExportDateRange value={value} disabled={false} onChange={vi.fn()}/>));
+ const trigger = host.querySelector('button')!;
+ expect(trigger.textContent).toBe('10/30–11/05');
+ expect(trigger.title).toBe('2026-10-30 — 2026-11-05');
+ expect(trigger.getAttribute('aria-description')).toBe(trigger.title);
+ await act(async () => trigger.click());
+ expect(document.querySelector('.arkme-export-calendar footer small')?.textContent).toBe(trigger.title);
+ expect(document.querySelector('[aria-label="2026-10-30"]')).not.toBeNull();
+ await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',bubbles:true})));
+ expect(document.querySelector('.arkme-export-calendar')).toBeNull();
+ expect(document.activeElement).toBe(trigger);
+});
+
+it('retains both years in a date range that crosses a year boundary', async () => {
+ await act(async () => root.render(<ArkmeExportDateRange value={{start:'2025-12-30',end:'2026-01-02'}} disabled={false} onChange={vi.fn()}/>));
+ expect(host.querySelector('button')?.textContent).toBe('2025/12/30–2026/01/02');
+ expect(host.querySelector('button')?.title).toBe('2025-12-30 — 2026-01-02');
 });
