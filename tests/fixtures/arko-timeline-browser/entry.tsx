@@ -27,7 +27,7 @@ function App(){
   void read.then(items=>{
    const item=items.find(item=>item.itemUid===target.itemUid&&String(item.recordOwnerUserId??11)===String(target.recordOwnerUserId))
    if(!item)throw new Error('Actual source window did not contain the requested owner/root')
-   if(!controller.signal.aborted){setDetail({key:target.revision,item});globals.hpkActualSourceItem={sourceRef:source.sourceRef,messageActionRef:item.messageActionRef}}
+   if(!controller.signal.aborted){setDetail({key:target.revision,item});globals.hpkActualSourceItem={sourceRef:source.sourceRef,messageActionRef:item.messageActionRef,recordOwnerUserId:item.recordOwnerUserId}}
   }).catch(error=>{if(!controller.signal.aborted)setError(String(error))})
   return()=>controller.abort()
  },[ui.selectedSource,ui.conversationTarget])

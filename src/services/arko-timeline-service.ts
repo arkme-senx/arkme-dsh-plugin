@@ -8,6 +8,7 @@ import type { ArkmeSourceItem } from '../types.js'
 import { displayView } from './chat-thought-service.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 import type { SourceService } from './source-service.js'
+import { recordOwnerId } from '../record-owner-id.js'
 const invalid = () => new ArkmePluginError('arko-interaction-unavailable', '互动已不可查看，请刷新后重试', false, 404)
 const prefix = 'arkme-arko-interaction-v1'
 const str = (value: unknown, max = 256) => typeof value === 'string' && value.length <= max ? value : ''
@@ -85,7 +86,10 @@ export class ArkoTimelineService {
     for (const id of wire.removed_ids) { if (typeof id !== 'string' || !ids?.includes(id)) throw invalid(); removedKeys.push(await this.key(scope, id)) }
     const cursor = str(wire.next_cursor, 16384)
     if (wire.has_more && !cursor) throw invalid()
-    return { accountScope: scope, items, removedKeys, hasMore: wire.has_more, ...(cursor ? { nextCursor: cursor } : {}) }
+    const oldest = wire.oldest_scanned_at
+    if (oldest !== undefined && (!Number.isSafeInteger(oldest) || Number(oldest) < 0 || ids && oldest !== 0)) throw invalid()
+    return { accountScope: scope, items, removedKeys, hasMore: wire.has_more, ...(cursor ? { nextCursor: cursor } : {}),
+      ...(Number(oldest) > 0 ? {oldestScannedAtMillis:Number(oldest)} : {}) }
   }
   async arkoInteractionOpen(ref: string, signal?: AbortSignal): Promise<ArkmeArkoInteractionTarget> {
     const session = await this.runtime.requireSession(), scope = this.scope(session.userId), id = await this.open(ref, scope)
@@ -93,7 +97,8 @@ export class ArkoTimelineService {
       { lane: 'interactive-read', bypassCache: true, cacheMs: 0, publishServiceCooldown: false })
     await this.check(scope); signal?.throwIfAborted()
     const row = Array.isArray(wire.items) && wire.items.length === 1 ? objectValue(wire.items[0]) : {}
-    if (row.id !== id || !str(row.record_uid) || !Number.isSafeInteger(row.record_owner_user_id) || Number(row.record_owner_user_id) <= 0 || !str(row.content, 131072)) throw invalid()
+    const owner = recordOwnerId(row.record_owner_user_id)
+    if (row.id !== id || !str(row.record_uid) || owner === 0 || !str(row.content, 131072)) throw invalid()
     let source: ArkmeSourceItem
     if (row.kind === 'record') source = str(row.topic_uid) ? await this.source.sourceItem({ version: 1, userId: session.userId, kind: 'topic', ownerRef: str(row.topic_uid), displayName: str(row.source_name,500) || '主题' }) : await this.source.selfTarget(signal)
     else {
@@ -106,7 +111,7 @@ export class ArkoTimelineService {
     }
     await this.check(scope)
     const suggestion = row.kind === 'chat' && row.scene === 5
-    return { accountScope: scope, source, itemUid: String(row.record_uid), recordOwnerUserId: Number(row.record_owner_user_id), occurredAtMillis: Number(row.occurred_at), ...(Number.isSafeInteger(row.navigation_at)&&Number(row.navigation_at)>0?{sourceAtMillis:Number(row.navigation_at)}:{}), suggestion, interactionKey: await this.key(scope, id),
+    return { accountScope: scope, source, itemUid: String(row.record_uid), recordOwnerUserId: owner, occurredAtMillis: Number(row.occurred_at), ...(Number.isSafeInteger(row.navigation_at)&&Number(row.navigation_at)>0?{sourceAtMillis:Number(row.navigation_at)}:{}), suggestion, interactionKey: await this.key(scope, id),
       ...(id.startsWith('t:') ? { replyId: id.slice(2) } : {}),
       ...(!id.startsWith('t:') ? { thought: { id: id.startsWith('r:') ? id.slice(2) : id.startsWith('a:') ? `agent:${id.slice(2)}` : `${row.record_uid}:${row.scene}`, recordUid: String(row.record_uid), biz: row.kind==='record' ? row.scene===2 ? 2 : 1 : row.scene===1||row.scene===2||row.scene===6 ? 2 : 1, ...(row.kind==='chat'?{scene: (row.scene===6 ? 1 : row.scene) as 1 | 2 | 3 | 4 | 5}:{}), generation: Number(row.generation), ...(str(row.reply_target_ref,4096)?{replyTargetRef:str(row.reply_target_ref,4096)}:{}), visibility: row.scene===2 ? 'members' : 'user', status: 'ready', content: String(row.content), ...(displayView(row.display) ? { display: displayView(row.display)! } : {}) } } : {}),
     }

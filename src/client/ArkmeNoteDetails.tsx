@@ -750,7 +750,7 @@ function DetailExtensionContext({
     {extensionCount > 0 && <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{continuations.nextCursor ? '+' : ''}{tr("条延展")}</div>}
     <div style={styles.extensionContextList}>
       {thoughtReplies.hasContent && <div data-arkme-detail-scroll-anchor="original-thought">
-        <RecordThoughtContent item={rootItem} embedded selectedThoughtId={selectedThoughtId} onReply={canReply ? onReplyThought : undefined}/>
+        <RecordThoughtContent item={rootItem} embedded interaction={thoughtReplies.selectedInteraction} selectedThoughtId={selectedThoughtId} onReply={canReply ? onReplyThought : undefined}/>
       </div>}
       {orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
       const author = detailExtensionAuthor(extension, personalSource, currentSelfProfile, sourceKind, conversationMembers)

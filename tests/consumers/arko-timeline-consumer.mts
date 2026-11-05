@@ -11,19 +11,20 @@ const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
  init?.signal?.throwIfAborted()
  const request = JSON.parse(String(init?.body)); calls.push(request)
  const value = request.operation === 'provider.capabilities' ? { contractVersion: 1, features: { arkoInteractionTimelineV1: true } }
-  : request.operation === 'arko.interactions' ? { accountScope: 'test:11', items: [interaction], hasMore: false, removedKeys: [] }
-  : request.operation === 'arko.interaction.open' ? { accountScope: 'test:11', source: { sourceRef: 'opaque-source', kind: 'private_chat', displayName: '私聊' }, itemUid: 'synthetic-root', recordOwnerUserId: 11, interactionKey: 'stable', occurredAtMillis: 2000, sourceAtMillis: 1000, suggestion: false, thought: { id: 'synthetic-thought', recordUid: 'synthetic-root', biz: 2, content: '已授权回答', status: 'ready' } }
+  : request.operation === 'arko.interactions' ? { accountScope: 'test:11', items: [interaction], hasMore: false, removedKeys: [], oldestScannedAtMillis:1000 }
+  : request.operation === 'arko.interaction.open' ? { accountScope: 'test:11', source: { sourceRef: 'opaque-source', kind: 'private_chat', displayName: '私聊' }, itemUid: 'synthetic-root', recordOwnerUserId: '9007199254740993', interactionKey: 'stable', occurredAtMillis: 2000, sourceAtMillis: 1000, suggestion: false, thought: { id: 'synthetic-thought', recordUid: 'synthetic-root', biz: 2, content: '已授权回答', status: 'ready' } }
   : request.params.value ?? null
  return new Response(JSON.stringify({ ok: true, value }))
 } })
 const query: ArkmeArkoInteractionQuery = { limit: 1 }
 const page = await sdk.arkoInteractions(query)
-assert(page.items[0]?.interactionRef === 'opaque-result')
+assert(page.items[0]?.interactionRef === 'opaque-result' && page.oldestScannedAtMillis===1000)
 await sdk.arkoInteractions({afterMillis:1000,observedRefs:[page.items[0]!.interactionRef]})
 assert(calls.some(row=>row.operation==='arko.interactions'&&Array.isArray(row.params.observedRefs)))
 const target = await sdk.arkoInteractionOpen(page.items[0].interactionRef)
+assert(target.recordOwnerUserId==='9007199254740993')
 assert(target.suggestion === false && target.thought?.biz === 2 && target.sourceAtMillis === 1000 && target.occurredAtMillis === 2000)
-const snapshot: ArkmeArkoTimelineCache = { schemaVersion: 2, savedAtMillis: Date.now(), messages: [], interactions: page.items }
+const snapshot: ArkmeArkoTimelineCache = { schemaVersion: 2, savedAtMillis: Date.now(), messages: [], interactions: page.items, interactionStartMillis:page.oldestScannedAtMillis }
 assert((await sdk.arkoTimelineCache('test:11', snapshot))?.schemaVersion === 2)
 assert((await sdk.arkoTimelineCache('test:11')) === undefined)
 await rejects(() => sdk.arkoInteractions({}, AbortSignal.abort()))

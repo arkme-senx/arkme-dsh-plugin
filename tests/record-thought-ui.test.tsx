@@ -452,19 +452,39 @@ it('handles focus for standalone result content without a navigation request or 
   } finally { window.removeEventListener('error', onError) }
 })
 
-it('keeps an explicitly selected result bound to its source owner when roots share a UID',async()=>{
+it.each([42,'9007199254740993'])('keeps an explicitly selected result bound to owner %s when roots share a UID',async owner=>{
  const {arkoInteractionJump:jump}=await import('../src/client/arko-interaction-jump.js')
  const {arkmeSourceIdentityKey}=await import('../src/client/source-identity.js')
  const source={kind:'group_chat',sourceRef:'signed-group',sourceKey:'group',displayName:'群聊'} as const
  try{
   await act(async()=>{
-   jump.request({scope:'production:42',sourceKey:arkmeSourceIdentityKey(source),rootUid:item.itemUid,recordOwnerUserId:42,thought:{id:'exact-owner-result',recordUid:item.itemUid,biz:2,status:'ready',content:'本次精确结果'}})
+   jump.request({scope:'production:42',sourceKey:arkmeSourceIdentityKey(source),rootUid:item.itemUid,recordOwnerUserId:owner,thought:{id:'exact-owner-result',recordUid:item.itemUid,biz:2,status:'ready',content:'本次精确结果'}})
    root.render(<RecordThoughtsProvider accountScope="production:42" sourceRef="signed-group" source={source} chat enabled>
-    <div data-owner="42"><RecordThoughtContent item={{...item,recordOwnerUserId:42}}/></div>
+    <div data-owner="42"><RecordThoughtContent item={{...item,recordOwnerUserId:owner}}/></div>
     <div data-owner="99"><RecordThoughtContent item={{...item,recordOwnerUserId:99}}/></div>
    </RecordThoughtsProvider>)
   })
   expect(host.querySelector('[data-owner="42"]')?.textContent).toContain('本次精确结果')
   expect(host.querySelector('[data-owner="99"]')?.textContent).not.toContain('本次精确结果')
+ }finally{const value=jump.snapshot();if(value)await act(async()=>jump.consume(value.revision))}
+})
+
+it('keeps the selected result when the detail body remounts after its navigation request is consumed',async()=>{
+ const {arkoInteractionJump:jump}=await import('../src/client/arko-interaction-jump.js')
+ const {arkmeSourceIdentityKey}=await import('../src/client/source-identity.js')
+ const source={kind:'private_chat',sourceRef:'signed-private',sourceKey:'private',displayName:'私聊'} as const
+ mocks.callArkme.mockResolvedValue({accountScope:'production:42',items:[]})
+ function Detail({bodyKey}:{bodyKey:number}){
+  const summary=useRecordThoughtReplySummary(item)
+  return <><span data-count>{summary.count}</span>{summary.hasContent&&<RecordThoughtContent key={bodyKey} item={item} interaction={summary.selectedInteraction}/>}</>
+ }
+ const render=(bodyKey:number)=><RecordThoughtsProvider accountScope="production:42" sourceRef={source.sourceRef} source={source} chat enabled><Detail bodyKey={bodyKey}/></RecordThoughtsProvider>
+ try{
+  await act(async()=>{jump.request({scope:'production:42',sourceKey:arkmeSourceIdentityKey(source),rootUid:item.itemUid,recordOwnerUserId:42,thought:{id:'agent:exact',recordUid:item.itemUid,biz:2,status:'ready',content:'必须保留的精确 Agent 结果'}});root.render(render(1))})
+  expect(host.textContent).toContain('必须保留的精确 Agent 结果')
+  await act(async()=>jump.consume(jump.snapshot()!.revision))
+  await act(async()=>root.render(render(2)))
+  expect(host.querySelector('[data-count]')?.textContent).toBe('1')
+  expect(host.textContent).toContain('必须保留的精确 Agent 结果')
  }finally{const value=jump.snapshot();if(value)await act(async()=>jump.consume(value.revision))}
 })

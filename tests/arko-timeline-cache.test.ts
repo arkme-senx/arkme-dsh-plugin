@@ -37,9 +37,9 @@ it('has bounded admission and isolates synchronous memory by exact account scope
 it.each([false,true])('rebases trimmed cache boundaries without retaining an obsolete cursor (had cursor=%s)',async hadCursor=>{
  const raw={...snapshot(),messages:Array.from({length:2050},(_,i)=>({...snapshot().messages[0]!,id:`history:${i+1}`,createdAtMillis:i+1})),
   interactions:Array.from({length:450},(_,i)=>({interactionKey:`i${i+1}`,interactionRef:`r${i+1}`,occurredAtMillis:i+1,sourceName:'self',kind:'self' as const,summary:'synthetic',suggestion:false})),
-  historyCursor:hadCursor?'before-first-loaded':undefined,interactionCursor:hadCursor?'before-first-interaction':undefined}
+  historyCursor:hadCursor?'before-first-loaded':undefined,interactionStartMillis:1,interactionCursor:hadCursor?'before-first-interaction':undefined}
  const parsed=parseArkoTimelineCache(raw)!
- expect(parsed).toMatchObject({historyBeforeMillis:52,interactionBeforeMillis:52})
+ expect(parsed).toMatchObject({historyBeforeMillis:52,interactionBeforeMillis:52,interactionStartMillis:51})
  expect(parsed.messages[0]?.id).toBe('history:51');expect(parsed.interactions[0]?.interactionKey).toBe('i51')
  expect(parsed.historyCursor).toBeUndefined();expect(parsed.interactionCursor).toBeUndefined()
  expect(parseArkoTimelineCache(parsed)).toEqual(parsed)
@@ -51,4 +51,24 @@ it('keeps same-time clipping inclusive and rejects malformed resume boundaries',
  const raw={...snapshot(),messages:Array.from({length:2001},(_,i)=>({...snapshot().messages[0]!,id:`h${i}`,createdAtMillis:1000}))}
  expect(parseArkoTimelineCache(raw)).toMatchObject({historyBeforeMillis:1001})
  expect(parseArkoTimelineCache({...snapshot(),historyBeforeMillis:-1})).toBeUndefined()
+ expect(parseArkoTimelineCache({...snapshot(),interactionStartMillis:0})).toBeUndefined()
+ expect(parseArkoTimelineCache({...snapshot(),interactionStartMillis:1000})).toMatchObject({interactionStartMillis:1000})
+})
+
+it('rejects an oversized serialized envelope before replacing the last readable snapshot',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'arko-cache-byte-boundary-'));dirs.push(dir)
+ const store=new ArkoTimelineCacheStore(dir);await store.access('test:11',snapshot())
+ const value={...snapshot(2000),messages:Array.from({length:32},(_,i)=>({...snapshot().messages[0]!,id:`h${i}`,text:i<31?'x'.repeat(262144):''}))}
+ const room=ARKO_TIMELINE_CACHE_MAX_BYTES-Buffer.byteLength(JSON.stringify(value))-8
+ expect(room).toBeGreaterThan(0);expect(room).toBeLessThanOrEqual(262144)
+ value.messages[31]!.text='x'.repeat(room)
+ expect(parseArkoTimelineCache(value)).toBeDefined()
+ expect(Buffer.byteLength(JSON.stringify({scope:'test:11',value}))).toBeGreaterThan(ARKO_TIMELINE_CACHE_MAX_BYTES)
+ await expect(store.access('test:11',value)).rejects.toThrow()
+ expect(await store.access('test:11')).toEqual(snapshot())
+ const excess=Buffer.byteLength(JSON.stringify({scope:'test:11',value}))-ARKO_TIMELINE_CACHE_MAX_BYTES
+ value.messages[31]!.text=value.messages[31]!.text.slice(0,-excess)
+ expect(Buffer.byteLength(JSON.stringify({scope:'test:11',value}))).toBe(ARKO_TIMELINE_CACHE_MAX_BYTES)
+ await store.access('test:11',value)
+ expect(await store.access('test:11')).toEqual(value)
 })

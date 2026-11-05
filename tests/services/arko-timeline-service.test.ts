@@ -71,3 +71,21 @@ it('uses observed refs as conditional range hints rather than ID selectors',asyn
  expect(request).toEqual({limit:20,after:500,known_revisions:{[id]:'1:2:1000'}})
  await expect(service.arkoInteractions({knownRefs:[first.items[0]!.interactionRef],observedRefs:[first.items[0]!.interactionRef]})).rejects.toThrow()
 })
+
+it('transports the physical tail independently of authorized items and rejects malformed boundaries',async()=>{
+ let at:any=1000
+ const {service}=await setup(async()=>response({items:[],removed_ids:[],has_more:false,scanned:1,oldest_scanned_at:at}))
+ expect(await service.arkoInteractions()).toMatchObject({items:[],oldestScannedAtMillis:1000})
+ for(at of [-1,1.5,'1000',Number.MAX_SAFE_INTEGER+1])await expect(service.arkoInteractions()).rejects.toMatchObject({code:'arko-interaction-unavailable'})
+})
+
+it('preserves synthetic Bot record owners beyond the JavaScript safe integer range',async()=>{
+ const owner='9007199254740993',chat={...wire,id:'c:000000000000000000000002',kind:'chat',chat_session_uid:'chat',scene:3,record_owner_user_id:owner}
+ const {service}=await setup(async(_body,path)=>{
+  if(path.includes('display-snapshots'))return response({items:[{session:{chat_session_uid:'chat'}}]})
+  // The real owner API emits an int64 JSON number, not a quoted ID.
+  return new Response(JSON.stringify({code:200,data:{items:[chat],has_more:false,removed_ids:[]}}).replace(`"${owner}"`,owner),{headers:{'Content-Type':'application/json'}})
+ })
+ const page=await service.arkoInteractions()
+ expect((await service.arkoInteractionOpen(page.items[0]!.interactionRef)).recordOwnerUserId).toBe(owner)
+})

@@ -105,7 +105,7 @@ export function useRecordThoughtReplySummary(item: RecordItem) {
   const state = useThought(item), selected=useSelectedInteractionThought(item)
   const thoughts=visibleThoughts(selected ? [selected,...state.items.filter(row=>row.id!==selected.id)] : state.items)
   const count = thoughts.filter(thought => !state.chat || thought.scene !== 5).length
-  return { count, hasContent: thoughts.length > 0 || !!state.error }
+  return { count, hasContent: thoughts.length > 0 || !!state.error, selectedInteraction: selected }
 }
 function ThoughtState({ thought, onFill, onRetry, retrying, continuation, refreshError, onRefresh }: { thought: ArkmeRecordThought; onFill?: ((text: string, mentionAsen?: boolean) => void) | undefined; onRetry?: (() => void) | undefined; retrying?: boolean | undefined; continuation?: boolean; refreshError?: string | undefined; onRefresh?: (() => void) | undefined }) {
   if (continuation && refreshError && thought.status !== 'ready') return <span role="status" title={refreshError}
@@ -172,14 +172,16 @@ function ChatSuggestionSelection({ item, id, scopeKey, onClose }: { item: Record
     onRetry={state.retry} onClose={onClose}
     onFill={state.onFill ? text => { onClose(); state.onFill?.(text) } : undefined}/>
 }
-export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId, items, onRetry, retryingId, refreshError, onRefresh }: {
+export function RecordThoughtContent({ item, embedded = false, onReply, selectedThoughtId, items, interaction, onRetry, retryingId, refreshError, onRefresh }: {
   item: RecordItem; embedded?: boolean; onReply?: ((thought: ArkmeRecordThought) => void) | undefined; selectedThoughtId?: string | undefined
   items?: readonly ArkmeRecordThought[] | undefined; onRetry?: ((thought: ArkmeRecordThought) => void) | undefined; retryingId?: string | undefined
   refreshError?: string | undefined; onRefresh?: (() => void) | undefined
+  /** The enclosing detail owns this exact result across body remounts. */
+  interaction?: ArkmeRecordThought | undefined
 }) {
   const state = useThought(item)
   const selectedInteraction=useSelectedInteractionThought(item)
-  const override=items===undefined ? selectedInteraction : undefined
+  const override=items===undefined ? interaction ?? selectedInteraction : undefined
   const allThoughts = visibleThoughts(items ?? (override ? [override,...state.items.filter(row=>row.id!==override.id)] : state.items))
   const advice = items === undefined && state.chat ? allThoughts.filter(thought => thought.scene === 5) : []
   const thoughts = allThoughts.filter(thought => !advice.includes(thought))
