@@ -1,3 +1,4 @@
+import { recordExportTopicMarkdown } from '../record-export-topic.js';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
@@ -289,7 +290,7 @@ export class BackupDirectoryStore {
                         seenFiles.add(relative);
                     }
                 }
-                let text = `## ${new Date(Number(item.send_at)).toLocaleString()}\n\n` + [item.title, item.text].filter(Boolean).join('\n\n') + '\n\n';
+                let text = `## ${new Date(Number(item.send_at)).toLocaleString()}\n\n` + recordExportTopicMarkdown(item.topic_core) + [item.title, item.text].filter(Boolean).join('\n\n') + '\n\n';
                 for (const raw of item.file_refs ?? []) {
                     const f = object(raw);
                     text += Number(f.file_kind) === 2 ? `[语音](./${String(f.backup_path)})\n` : `![图片](./${String(f.backup_path)})\n`;
