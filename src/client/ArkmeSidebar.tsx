@@ -1,3 +1,4 @@
+import { parseRunnerCard } from './ArkmeRunnerCard.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { MessageAvatar } from './MessageAvatar.js'
 export { MessageAvatar } from './MessageAvatar.js'
@@ -263,6 +264,7 @@ import { ArkmeBotAvatarActionMenu, ArkmeBotAvatarProfileCard, ArkmeBotRemoveDial
 import { arkmeGroupBotsChanged } from './use-group-bots.js'
 import { arkmeLoadedBotRecords } from './bot-records.js'
 import type { ArkmeGroupBotItem } from '../tools/ports/bots.js'
+import { prepareRunnerDecisionDraft } from './runner-decision-draft.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
@@ -2335,6 +2337,10 @@ export function ArkmeSurface({
   aiPolishSettingsRef.current = aiPolishSettings
   aiPolishNoticesRef.current = aiPolishNotices
   const shareWebsite = authStoreSnapshot.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE
+  const answeredRunnerDecisions = useMemo(() => new Set(items.flatMap(item => {
+    const card = parseRunnerCard(item.textContent ?? '', item.senderKind)
+    return card?.decisionId && (card.state === 'answered' || card.state === 'blocked') ? [card.decisionId] : []
+  })), [items])
   const setItems = useCallback((action: SetStateAction<ArkmeTimelineItem[]>) => {
     setTimelineView(current => {
       const next = resolveStateAction(action, current.items)
@@ -8209,6 +8215,22 @@ export function ArkmeSurface({
                             <ArkmeMessageContent
                               key={`message-content:${conversationOverlayKey}`}
                               sessionAttachmentPreview
+                              decisionAnswered={answeredRunnerDecisions.has(parseRunnerCard(item.textContent ?? '', item.senderKind)?.decisionId ?? '')}
+                              onDecisionReply={archiveReadOnly || source.kind !== 'group_chat' || arkmeTimelineMessageActionRef(item) === '' ? undefined : text => {
+                                if (activeRecordReeditComposer || draft.trim() || attachments.length) {
+                                  showMessageActionStatus('请先发送或保存当前草稿，再回复决策')
+                                  return
+                                }
+                                if (!composerDraftKey || !composerMentionsEnabled) return
+                                try {
+                                  const cursor = prepareRunnerDecisionDraft(arkmeComposerDraftStore, composerDraftKey, item, text, mentionBots.group)
+                                  setDrawer(undefined)
+                                  focusEditedComposer(cursor)
+                                } catch (caught) {
+                                  mentionBots.retry()
+                                  showMessageActionStatus(errorMessage(caught))
+                                }
+                              }}
                               item={item}
                               mediaSelectionIsExplicit={reeditItems.has(item)}
                               onCallDetailOpen={videoUrl => { timelineActions.current.openNoteDetail(item, videoUrl) }}
