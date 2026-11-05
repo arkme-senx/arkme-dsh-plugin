@@ -1,5 +1,6 @@
 import type { ArkmeDeletedRecordPage, ArkmeExportPreflight } from '../data-management.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
+import { RecordExportRangeService } from './record-export-range-service.js'
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid()
@@ -70,6 +71,18 @@ export class DataManagementService {
   }
   async exportPreflight(scope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight> {
     const session = await this.session(scope)
+    const ranges = new RecordExportRangeService(this.runtime)
+    const rangeSupported = await ranges.supported(scope, signal).catch(error => {
+      if (error instanceof ArkmePluginError && error.code === 'record-export-range-invalid') throw invalid()
+      throw error
+    })
+    if (rangeSupported) {
+      const state = await ranges.state(scope, signal)
+      await this.session(scope)
+      // Range statistics are loaded only for the actual selection. Do not
+      // enumerate an entire account before showing a small incremental export.
+      return { accountScope: scope, canExport: true, recordCount: 0, imageCount: 0, voiceCount: 0, message: '', latestAtMillis: 0, rangeExportV2: state }
+    }
     const [preflightResponse, latestResponse] = await Promise.all([
       this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/export/session/preflight', { order_kind: 1, hide_record_privacy_lock: true }, session, signal, { lane: 'interactive-read' }),
       this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/export/session/latest', {}, session, signal, { lane: 'interactive-read' }),

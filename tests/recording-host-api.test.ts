@@ -5,6 +5,18 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 describe('recording UI-only host operations', () => {
+  it('dispatches only an explicitly selected day part and rejects invalid selectors', async () => {
+    const recordingDayPart = vi.fn(async () => ({ dateStamp: 10 })), recordingDay = vi.fn()
+    const service = { recordingDayPart, recordingDay } as unknown as ArkmeService
+    const controller = new AbortController()
+    for (const part of ['transcript', 'coverage', 'metrics', 'summary', 'timeline']) {
+      await dispatchArkmeHostOperation(service, 'recordings.day', { dateStamp: 10, part }, undefined, undefined, undefined, undefined, controller.signal)
+      expect(recordingDayPart).toHaveBeenLastCalledWith(10, part, controller.signal, undefined)
+    }
+    for (const part of ['unknown', ['transcript'], 1]) await expect(dispatchArkmeHostOperation(service, 'recordings.day', { dateStamp: 10, part })).rejects.toMatchObject({ code: 'recording-day-part-invalid' })
+    expect(recordingDay).not.toHaveBeenCalled()
+    expect(recordingDayPart).toHaveBeenCalledTimes(5)
+  })
   it('dispatches the native strategy snapshot with its account and cancellation signal', async () => {
     const registerRecordingImportStrategies = vi.fn(async () => {})
     const controller = new AbortController(), tasks = [{ taskId: 'opaque-task', strategy: 'system-sd-asr/v1' }]

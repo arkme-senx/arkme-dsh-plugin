@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { createHomeTourTrace, homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { useTourAccount } from './use-tour-account.js'
@@ -232,7 +233,7 @@ function HomeTourPanel({ steps, current, onPrevious, onNext, onDismiss, returnFo
     aria-labelledby="arkme-home-tour-title" aria-describedby="arkme-home-tour-description">
     <div className="arkme-home-tour-header">
       <span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / {steps.length}</span>
-      <button type="button" className="arkme-home-tour-close" aria-label={tr("关闭功能引导")} onClick={onDismiss}>×</button>
+      <ArkmeCloseButton type="button" className="arkme-home-tour-close" aria-label={tr("关闭功能引导")} onClick={onDismiss} />
     </div>
     <h2 id="arkme-home-tour-title">{step.title}</h2>
     <p id="arkme-home-tour-description">{step.description}</p>

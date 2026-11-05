@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -826,13 +827,13 @@ export function ArkmeExtensionDetailHeader({ title, copyAvailable, copyNotice = 
       <LinkIcon />
       {copyNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{copyNotice}</span>}
     </button>}
-    <button data-arkme-feedback="neutral"
+    <ArkmeCloseButton data-arkme-feedback="neutral"
       type="button"
       style={styles.detailModalHeaderAction}
       aria-label={tr("关闭扩展详情")}
       title={tr("关闭")}
       onClick={onClose}
-    ><CloseIcon /></button>
+     />
   </header>
 }
 
@@ -2691,10 +2692,10 @@ export function ArkmeMarketplace({
         title={tr("复制链接")}
         onClick={() => { setShareNotice(''); void copyShareLink() }}
       ><LinkIcon />{shareNotice !== '' && <span role="status" style={styles.detailCopyNotice}>{shareNotice}</span>}</button>}
-      <button data-arkme-feedback="neutral"
+      <ArkmeCloseButton data-arkme-feedback="neutral"
         type="button" style={styles.iconButton} aria-label={tr("关闭市集")} title={tr("关闭")}
         onClick={onClose}
-      ><CloseIcon /></button>
+       />
     </header>}
     {displayMode === 'page' && <header data-arkme-window-drag-region="marketplace" style={styles.marketPageHeader} data-market-header-layer="primary">
       <h2 id="arkme-marketplace-title" style={styles.marketPageTitle}>{tr("市集")}</h2>

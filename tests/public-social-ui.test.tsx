@@ -8,6 +8,7 @@ import { PublicPersonListingDialog, PublicGroupSettingsDialog } from '../src/cli
 import { ArkmeConfirmDialog } from '../src/client/ArkmeConfirmDialog.js'
 import { ArkmeGroupCreateDialog } from '../src/client/ArkmeQuickAdd.js'
 import { ArkmeWorldSurface } from '../src/client/ArkmeWorldSurface.js'
+import { PublicGroupJoinRequests } from '../src/client/PublicGroupJoinRequests.js'
 
 const group: PublicGroup = { chatSessionUid: 'group-a', title: '产品交流', introduction: '一起聊产品', ownerUserId: 1002, hasJoined: false, joinMode: 1 }
 const person: PublicPerson = { userId: 1001, isListed: true, displayName: '公开昵称', avatarUrl: '', introduction: '原介绍' }
@@ -24,12 +25,61 @@ describe('desktop public social interactions', () => {
     await act(async () => button('公开群聊').props.onClick())
     expect(renderer!.root.findByType(PublicSocialDirectory).props.mode).toBe('groups')
     await act(async () => button('找人聊聊').props.onClick())
-    expect(renderer!.root.findByType(PublicSocialDirectory).props.mode).toBe('people')
+    expect(renderer!.root.findAllByType(PublicSocialDirectory).map(view => view.props.mode)).toEqual(['groups', 'people'])
     await act(async () => button('我的世界').props.onClick())
-    expect(renderer!.root.findAllByType(PublicSocialDirectory)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(PublicSocialDirectory)).toHaveLength(2)
+    expect(mocks.call.mock.calls.filter(([op, input]) => op === 'social.groups.query' && !input.userId)).toHaveLength(1)
     expect(mocks.call).toHaveBeenCalledWith('world.mine', expect.any(Object), expect.any(AbortSignal))
     await act(async () => button('查看全部').props.onClick())
     expect(renderer!.root.findByType(PublicSocialDirectory).props.profileUserId).toBe(1001)
+  })
+  it('retains directory searches, selections and feed data across all four tabs', async () => {
+    mocks.call.mockImplementation(async (op: string) => op === 'social.groups.query' ? { items: [group], hasMore: false } : op === 'social.people.query' ? { items: [person], hasMore: false } : op === 'social.people.read' ? person : { items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface accountScope="test:1001" currentUserId={1001} />) })
+    await act(async () => button('公开群聊').props.onClick())
+    const directory = renderer!.root.findByType(PublicSocialDirectory)
+    await act(async () => directory.findByType('input').props.onChange({ currentTarget: { value: '产品' } }))
+    await act(async () => directory.findByType('form').props.onSubmit({ preventDefault() {} }))
+    const reads = mocks.call.mock.calls.filter(([op, input]) => op === 'social.groups.query' && !input.userId).length
+    await act(async () => button('找人聊聊').props.onClick())
+    await act(async () => button('我的世界').props.onClick())
+    await act(async () => button('世界').props.onClick())
+    await act(async () => button('公开群聊').props.onClick())
+    expect(renderer!.root.findAllByType(PublicSocialDirectory)[0]!.findByType('input').props.value).toBe('产品')
+    expect(mocks.call.mock.calls.filter(([op, input]) => op === 'social.groups.query' && !input.userId)).toHaveLength(reads)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.feed')).toHaveLength(1)
+    expect(renderer!.root.findAllByType('h1').map(heading => heading.children.join(''))).toEqual(['世界'])
+    expect(renderer!.root.findAllByType('nav').filter(nav => nav.props['aria-label'] === '世界范围')).toHaveLength(1)
+    expect(button('公开群聊').props['aria-current']).toBe('page')
+    expect(button('世界').props['aria-current']).toBeUndefined()
+  })
+  it('cancels optional author decoration when its feed is left', async () => {
+    mocks.call.mockImplementation(async (op: string) => op === 'world.feed' ? { items: [{ recordRef: 'post', authorRef: 'author', authorName: '公开昵称', headline: '', textContent: '正文', tags: [], templateKind: 0, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0, extendCount: 0 }], hasMore: false } : op === 'world.author-labels' ? new Promise(() => {}) : { items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface accountScope="test:1001" currentUserId={1001} />) })
+    const signal = mocks.call.mock.calls.find(([op]) => op === 'world.author-labels')![2] as AbortSignal
+    expect(signal.aborted).toBe(false)
+    await act(async () => button('公开群聊').props.onClick())
+    expect(signal.aborted).toBe(true)
+  })
+  it('defers late feed decoration until that feed becomes visible again', async () => {
+    let finish!: (value: unknown) => void
+    const post = { recordRef: 'late-post', authorRef: 'late-author', authorName: '公开昵称', headline: '', textContent: '迟到正文', tags: [], templateKind: 0, imageRefs: [], imageCount: 0, videoCount: 0, voiceCount: 0, extendCount: 0 }
+    mocks.call.mockImplementation(async (op: string) => op === 'world.feed' ? new Promise(resolve => { finish = resolve }) : op === 'world.author-labels' ? [{ authorRef: 'late-author', authorName: '本机备注' }] : { items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface accountScope="test:1001" currentUserId={1001} />) })
+    await act(async () => button('公开群聊').props.onClick())
+    await act(async () => finish({ items: [post], hasMore: false }))
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.author-labels')).toHaveLength(0)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.voiceprint.availability')).toHaveLength(0)
+    await act(async () => button('世界').props.onClick())
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.author-labels')).toHaveLength(1)
+    expect(JSON.stringify(renderer!.toJSON())).toContain('本机备注')
+  })
+  it('does not start feed work behind the team page and starts it when returning', async () => {
+    mocks.call.mockResolvedValue({ items: [], hasMore: false })
+    await act(async () => { renderer = create(<ArkmeWorldSurface active={false} accountScope="test:1001" currentUserId={1001} />) })
+    expect(mocks.call).not.toHaveBeenCalled()
+    await act(async () => renderer!.update(<ArkmeWorldSurface active accountScope="test:1001" currentUserId={1001} />))
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'world.feed')).toHaveLength(1)
   })
   it('prevents duplicate joins and reuses the request identity after an uncertain failure', async () => {
     let reject!: (error: Error) => void
@@ -48,6 +98,17 @@ describe('desktop public social interactions', () => {
     mocks.call.mockResolvedValueOnce({ status: 'joined', group: { ...group, hasJoined: true }, source })
     await act(async () => button('加入群聊').props.onClick())
     expect(joins()[1]![1].requestUid).toBe(requestUid); expect(activated).toHaveBeenCalledWith(source)
+  })
+  it('retains a pending join result without navigating away from the newly selected tab', async () => {
+    let finish!: (value: unknown) => void
+    const activated = vi.fn()
+    mocks.call.mockImplementation(async (op: string) => op === 'social.groups.query' ? { items: [group], hasMore: false } : new Promise(resolve => { finish = resolve }))
+    await act(async () => { renderer = create(<PublicSocialDirectory accountScope="test:1001" mode="groups" onSourceActivated={activated} />) })
+    await act(async () => button('加入群聊').props.onClick())
+    await act(async () => renderer!.update(<PublicSocialDirectory active={false} accountScope="test:1001" mode="groups" onSourceActivated={activated} />))
+    await act(async () => finish({ status: 'joined', group: { ...group, hasJoined: true }, source }))
+    expect(activated).not.toHaveBeenCalled()
+    expect(button('打开群聊')).toBeDefined()
   })
   it('refreshes approval state and completes the original approved request', async () => {
     let approved = false
@@ -125,4 +186,44 @@ describe('desktop public social interactions', () => {
     await act(async () => button('确认').props.onClick())
     expect(mocks.call).toHaveBeenCalledWith('group.create', expect.objectContaining({ title: '硬件交流', introduction: '聊聊硬件', isPublic: false, accountScope: 'test:1001', clientMutationId: expect.any(String) }))
   })
+})
+
+
+it('uses a fresh admission identity after a completed membership is removed', async()=>{
+ let member=false, removed=false
+ mocks.call.mockImplementation(async(op:string)=>{
+  if(op==='social.groups.query')return {items:[{...group,joinMode:2,hasJoined:member,joinRequest:removed?undefined:{requestUid:'old-approved-request',status:2}}],hasMore:false}
+  member=true;return {status:'joined',group:{...group,hasJoined:true},source}
+ })
+ await act(async()=>{renderer=create(<PublicSocialDirectory accountScope="test:1001" mode="groups"/>)})
+ await act(async()=>button('进入群聊').props.onClick())
+ member=false;removed=true
+ await act(async()=>button('刷新').props.onClick())
+ await act(async()=>button('申请加入').props.onClick())
+ const calls=mocks.call.mock.calls.filter(c=>c[0]==='social.groups.join')
+ expect(calls[0]![1].requestUid).toBe('old-approved-request')
+ expect(calls[1]![1].requestUid).not.toBe('old-approved-request')
+})
+it('allows direct admission when a former pending request remains in a stale UI snapshot', async()=>{
+ mocks.call.mockImplementation(async(op:string)=>op==='social.groups.query'?{items:[{...group,joinRequest:{requestUid:'pending',status:1}}],hasMore:false}:{status:'joined',group:{...group,hasJoined:true},source})
+ await act(async()=>{renderer=create(<PublicSocialDirectory accountScope="test:1001" mode="groups"/>)})
+ expect(button('加入群聊').props.disabled).toBe(false)
+ await act(async()=>button('加入群聊').props.onClick())
+ expect(mocks.call.mock.calls.some(c=>c[0]==='social.groups.join')).toBe(true)
+})
+
+it('finishes a pending refresh before allowing approval so a stale list cannot restore the processed row', async () => {
+  const page = { items: [{ requestRef: 'opaque-request', displayName: '公开昵称', status: 1, requestAt: 1 }], hasMore: false }
+  let finishRefresh!: (value: typeof page) => void
+  mocks.call.mockResolvedValueOnce(page).mockImplementationOnce(() => new Promise(resolve => { finishRefresh = resolve })).mockResolvedValue({ status: 2 })
+  await act(async () => { renderer = create(<PublicGroupJoinRequests accountScope="test:1001" sourceRef="group-source" disabled={false} onBusyChange={() => {}} />) })
+  await act(async () => button('刷新申请').props.onClick())
+  expect(button('同意').props.disabled).toBe(true)
+  await act(async () => button('同意').props.onClick())
+  expect(mocks.call.mock.calls.some(c => c[0] === 'social.groups.requests.resolve')).toBe(false)
+  await act(async () => finishRefresh(page))
+  expect(button('同意').props.disabled).toBe(false)
+  await act(async () => button('同意').props.onClick())
+  expect(renderer!.root.findAllByType('article')).toHaveLength(0)
+  expect(mocks.call).toHaveBeenCalledWith('social.groups.requests.resolve', expect.objectContaining({ requestRef: 'opaque-request', approved: true }), expect.any(AbortSignal))
 })

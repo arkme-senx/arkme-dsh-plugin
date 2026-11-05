@@ -100,6 +100,36 @@ describe('registerArkmeTools', () => {
     expect(loginDevices).toHaveBeenLastCalledWith({ action: 'confirm', accountScope: 'test:7', ticket: 'host-ticket' }, expect.any(AbortSignal))
     await mounted.dispose()
   })
+  it('requires a later trusted human confirmation before replying to an Arko thought', async () => {
+    const ctx = await setup(), extendSourceMessage = vi.fn(async () => ({ recordUid: 'reply', localState: 'synced' }))
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, extendSourceMessage } as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = { id: SessionId('thought-confirmation'), session: { events } } as unknown as Agent
+    const args = { source_ref: 'source', message_action_ref: 'action', thought_reply_ref: 'signed-target', text: '继续讨论', operation_uid: 'stable' }
+    const run = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_thought_reply', arguments: args, agent, signal: new AbortController().signal })
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required')
+    expect(extendSourceMessage).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required')
+    expect(extendSourceMessage).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认发送回复' }] } })
+    expect((await run('confirmed')).isError).toBe(false)
+    expect(extendSourceMessage).toHaveBeenCalledOnce()
+    await mounted.dispose()
+  })
+  it('requires a subsequent trusted human confirmation for public social writes', async () => {
+    const ctx=await setup(), publicSocialWrite=vi.fn(async()=>({operation:'resolve',status:2,requestRef:'opaque'}))
+    const mounted=await mountArkmeTools(ctx,'business',{...ports,publicSocialWrite} as unknown as ArkmeToolPorts)
+    const events=sessionEvents(), agent={id:SessionId('social-confirmation'),session:{events}} as unknown as Agent
+    const args={operation:'resolve',account_scope:'test:1',reference:'group-source',request_ref:'opaque',enabled:true}
+    const run=(id:string)=>ctx.tools.execute({callId:CallId(id),name:'arkme_social_write',arguments:args,agent,signal:new AbortController().signal})
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required');expect(publicSocialWrite).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{source:{kind:'plugin'},content:[{type:'text',text:'确认'}]}})
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required');expect(publicSocialWrite).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'确认同意入群申请'}]}})
+    expect((await run('confirmed')).isError).toBe(false);expect(publicSocialWrite).toHaveBeenCalledOnce()
+    await mounted.dispose()
+  })
+
   it('requires a later human grant before changing personal Team entries', async () => {
     const ctx = await setup(), changeTeamEntryPreferences = vi.fn(async () => ({ schemaVersion: 1, items: [], hasMore: false }))
     await mountArkmeTools(ctx, 'business', { ...ports, changeTeamEntryPreferences } as unknown as ArkmeToolPorts)
@@ -311,7 +341,7 @@ describe('registerArkmeTools', () => {
       'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',
       'arkme_message_sync_status', 'arkme_message_sync_retry',
       'arkme_self_roles_list', 'arkme_self_roles_write',
-      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_member_candidates', 'arkme_team_members_add', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_messages', 'arkme_team_message_send',
+      'arkme_official_notifications_list', 'arkme_official_notification_detail', 'arkme_official_notifications_read', 'arkme_team_profile', 'arkme_team_profile_update', 'arkme_team_member_candidates', 'arkme_team_members_add', 'arkme_team_external_chats', 'arkme_team_external_chat_share', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_send_task', 'arkme_team_marks', 'arkme_team_mark_change', 'arkme_team_history', 'arkme_team_messages', 'arkme_team_message_send', 'arkme_codex_work_records', 'arkme_codex_work_record_change',
       'arkme_team_notification_conversations',
       'arkme_team_notification_policy',
       'arkme_team_notification_policy_set',
@@ -336,6 +366,7 @@ describe('registerArkmeTools', () => {
       'arkme_team_join',
       'arkme_group_create',
       'arkme_group_rename',
+      'arkme_arko_interactions', 'arkme_arko_interaction_open', 'arkme_arko_timeline_cache',
       'arkme_arko_lifecycle', 'arkme_arko_change_lifecycle',
       'arkme_arko_models','arkme_arko_pending',
       'arkme_arko_profile',
@@ -359,6 +390,14 @@ describe('registerArkmeTools', () => {
       'arkme_group_bot_add',
       'arkme_group_bot_remove',
       'arkme_world_recent',
+      'arkme_world_reactions_read',
+      'arkme_world_reactions_write',
+      'arkme_team_world_read',
+      'arkme_team_world_write',
+      'arkme_world_reply',
+      'arkme_world_sound_read',
+      'arkme_world_sound_write',
+      'arkme_world_suggestions_read', 'arkme_world_suggestions_change',
       'arkme_world_mine',
       'arkme_world_user',
       'arkme_world_voiceprint_social_context',
@@ -375,7 +414,7 @@ describe('registerArkmeTools', () => {
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
       'arkme_relation_pages',
-      'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
+      'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',
@@ -409,6 +448,7 @@ describe('registerArkmeTools', () => {
       'arkme_group_self_nickname',
       'arkme_group_self_nickname_set',
       'arkme_common_groups',
+      'arkme_social_read', 'arkme_social_write',
       'arkme_source_read',
       'arkme_analytics_read', 'arkme_conversation_words_generate',
       'arkme_copy_link_extend',
@@ -435,6 +475,7 @@ describe('registerArkmeTools', () => {
       'arkme_favorite_stickers_list',
       'arkme_reactions_read', 'arkme_reactions_write',
       'arkme_message_marks_read', 'arkme_message_mark', 'arkme_message_quote_reply',
+      'arkme_message_thoughts', 'arkme_thought_reply',
       'arkme_favorite_sticker_add',
       'arkme_favorite_sticker_send',
       'arkme_favorite_sticker_manage',

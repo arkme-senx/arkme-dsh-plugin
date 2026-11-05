@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { reactionNotifications } from './reaction-notifications.js'
 import { useVisibleReactionNotification } from './ArkmeReactionNotification.js'
 import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -112,6 +113,8 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
       setPosition(current => JSON.stringify(current) === JSON.stringify(next) ? current : next)
     }
     reposition()
+    // The portaled picker owns Escape only while keyboard focus is inside it.
+    panel.current.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true })
     const dismiss = (event: Event) => {
       if (event.target instanceof Node && (panel.current?.contains(event.target) || anchor.current?.contains(event.target))) return
       if (event.target instanceof Element && message.current?.contains(event.target) && event.target.closest('[data-arkme-reaction-toggle]')) return
@@ -131,11 +134,11 @@ export function ArkmeReactionPreview({ scope, target, children, isMe = false, op
     setStatus(accepted
       ? ''
       : reactionPreview.error(target.id) ?? '暂时无法添加表态。')
-    if (accepted) { setOpen(false) }
+    if (accepted) { setOpen(false); activeAnchor()?.focus({ preventScroll: true }) }
     return accepted
   }
   const readOnly = forcedReadOnly || reactionPreview.snapshot(target.id)?.private === true
-  const overlay = enabled && open && !readOnly && <section ref={panel} aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); activeAnchor()?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
+  const overlay = enabled && open && !readOnly && <section ref={panel} role="dialog" aria-label="表态面板" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); activeAnchor()?.focus() } }} style={{ position: 'fixed', zIndex: 120, background: c.menu, color: c.text, fontSize: 12, border: `1px solid ${c.border}`, boxShadow: c.shadow, borderRadius: 12, padding: 14, width: 'min(340px, calc(100vw - 16px))', maxHeight: 'calc(100vh - 16px)', ...position, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxSizing: 'border-box' }}>
       <div role="group" aria-label="全部表情" style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 4, height: 206, minHeight: 38, flexShrink: 1, alignContent: 'start', scrollSnapType: 'y mandatory', overflowY: 'auto' }}>
         {arkmeDefaultEmojis.map(emoji => <button type="button" key={emoji.id} aria-label={emoji.label} title={emoji.label}
           disabled={reactionPreview.busy(target.id)} aria-pressed={selected.includes(emoji.token)} onClick={() => toggle(emoji.token)}
@@ -257,7 +260,7 @@ export function ArkmeReactionSelections({ scope, target, onAdd, actorName = '我
     {(currentGroupPage?.has_more ?? snapshot?.has_more) && <button type="button" disabled={groupBusy} style={button} onClick={() => void loadGroups()}>更多表态</button>}
     {groupError && <div role="alert">{groupError}</div>}
     {actorKey && snapshot?.actors_visible && actorScope.current === viewScope && <div role="region" aria-label="表态者" style={{ flexBasis: '100%', padding: 6, border: `1px solid ${c.border}`, borderRadius: 6 }}>
-      <button type="button" aria-label="关闭表态者" style={button} onClick={() => { actorAbort.current?.abort(); setActorKey(undefined); setActorBusy(false) }}>×</button>
+      <ArkmeCloseButton type="button" aria-label="关闭表态者" style={button} onClick={() => { actorAbort.current?.abort(); setActorKey(undefined); setActorBusy(false) }} />
       {actors?.items.map(actorIdentity).map(actor => <button type="button" key={actor.userId} aria-label={`查看${actor.displayName}的资料`} className={highlight?.rows.some(notice => notice.actorUserId === actor.userId && notice.selections.some(selection => selection.key === actorKey)) ? 'arkme-new-reaction' : undefined} style={{ ...button, margin: 6 }} onPointerEnter={() => warmActorAvatar(actor)} onFocus={() => warmActorAvatar(actor)} onClick={event => { event.stopPropagation(); setProfileActor(actor) }}>{actor.displayName}</button>)}
       {actorBusy && <span role="status">加载中…</span>}
       {actorError && <button type="button" style={button} onClick={() => void loadActors(actorKey)}>{actorError} · 重试</button>}

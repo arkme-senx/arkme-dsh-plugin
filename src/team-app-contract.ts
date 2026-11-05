@@ -9,8 +9,9 @@ export type TeamAppOperation = `team.app.${
   'external.list' | 'external.mine' | 'external.share' | 'external.unshare' | 'external.page' | 'directory' | 'teams' | 'members' | 'member.remove' | 'leave' | 'create' | 'create.check' | 'join'
   | 'source' | 'channel' | 'channel.configure' | 'official' | 'open' | 'conversations' | 'timeline'
   | 'snapshot.capabilities' | 'snapshot.seal' | 'snapshot.read' | 'snapshot.receipt'
-  | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
+  | 'history' | 'history.chunk' | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
+  | 'feature-links.get' | 'feature-links.save'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
   | 'entries.cached' | 'entries.query' | 'entries.list' | 'entries.change'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
@@ -19,7 +20,7 @@ export type TeamAppOperation = `team.app.${
   | 'group.context' | 'group.join' | 'group.directory'
   | 'internal-group.prepare'
   | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
-  | 'world.view' | 'world.prepare'
+  | 'world.view'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
@@ -55,6 +56,9 @@ export interface TeamMedia { inlineRef?: string; ref: string; key: string; url: 
 export interface TeamMessage {
   /** Verified author-only send acknowledgement; absent is unknown. */
   metadataSaved?: boolean
+  /** Bounded history excerpt: use locate before any content action. */
+  historyPreview?: boolean
+  historyMedia?: { name: string; kind: string }[]
  forwardRecords?: import('./types.js').ArkmeForwardRecordsPreview
   ref: string; key: string; seq: number; revision: number; side: TeamSide; sender: TeamIdentity
   canRecall?: boolean; recalledAt?: number

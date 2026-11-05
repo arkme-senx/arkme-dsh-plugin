@@ -54,7 +54,7 @@ it('refreshes the calendar and daily data after a file operation without leaving
  act(()=>button('音频文件').props.onClick())
  const panel=renderer.root.findByType(ArkmeRecordingFiles)
  await act(async()=>panel.props.onChanged())
- expect(mocks.call.mock.calls.filter(([op])=>op==='recordings.day')).toHaveLength(2)
+ expect(mocks.call.mock.calls.filter(([op,p])=>op==='recordings.day'&&p.part==='transcript')).toHaveLength(2)
  expect(mocks.call.mock.calls.filter(([op])=>op==='recordings.calendar')).toHaveLength(2)
  expect(button('音频文件').props['aria-current']).toBe('page')
 })

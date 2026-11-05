@@ -14,6 +14,8 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_thought_reply',
+ 'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',
   'arkme_recording_strategy_start',
   'arkme_realtime_dictation',
@@ -32,6 +34,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_team_notification_policy_set',
   'arkme_team_entry_preference_change',
   'arkme_reactions_write',
+  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply', 'arkme_world_sound_write', 'arkme_world_suggestions_change',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
@@ -53,6 +56,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_member_remove',
   'arkme_group_self_nickname_set',
   'arkme_group_join_restriction_set',
+  'arkme_social_write',
   'arkme_message_withdraw',
   'arkme_contact_add',
   'arkme_team_join',
@@ -101,6 +105,20 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_world_suggestions_change') {
+    const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
+    return request.action === 'create' ? `是否分析最近 ${Number(request.days)} 天的本人快记，生成仅自己可见的分享建议？模型分析会使用当前账号的模型额度，不会自动公开内容。`
+      : request.action === 'cancel' ? '是否停止这次分享建议分析？已发生的模型用量不受影响。' : '是否将这条分享建议设为暂不分享？原文会保留。'
+  }
+  if (name === 'arkme_world_sound_write') {
+    const request = JSON.parse(String(args.request_json)) as { action?: string }
+    return request.action === 'management'
+      ? '是否确认取消刚才这份声音摘录的公开发布？'
+      : '是否确认将已核对的原声选段和转写提交世界审核，并在通过后公开？'
+  }
+  if (name === 'arkme_thought_reply') return `是否按原想法的可见范围发送这条回复：“${cleanArgument(args.text, 120)}”？私密续帖仅你可见。`
+  if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'
+  if(name==='arkme_codex_work_record_change')return '是否确认执行刚才选择的 Codex 操作？私人标记仅自己可见；分享链接或转发会向所选受众公开相应内容。'
   if (name === 'arkme_records_export') return '是否导出当前账号的全部非隐私锁定快记及图片、语音为 ZIP？这会使用一次导出额度。'
   if (name === 'arkme_realtime_dictation') return '是否对刚才提供的音频执行实时听写操作？这会使用当前账号的语音权益，不获取麦克风或发送消息。'
   if (name === 'arkme_recording_strategy_preference') return `是否将当前账号的统一录音处理策略设为${args.strategy === 'baseline-sd-asr/20261026' ? '默认版' : '测试版v1'}？新录音和新提交的导入使用此设置，已提交任务保持原方案。`
@@ -122,7 +140,15 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
   if (name === 'arkme_dsh_annotations_write') return '是否确认添加或取消刚才指定的 DSH 个人标记？该标记会在同账号设备同步，不修改原文。'
-  if (name === 'arkme_reactions_write') {
+  if (name === 'arkme_team_world_write') {
+    const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
+    if (request.action === 'feedback-read') return '是否将刚才展示的团队世界反馈标记为已读？'
+    if (request.action === 'image-upload') return '是否上传所选团队内容图片？图片仍占用你的存储额度，离队后不会自动释放。'
+    const labels: Record<string,string> = { publish: '公开发布', edit: '编辑', unpublish: '撤回公开', delete: '删除', restore: '恢复为未公开' }
+    return `是否代表刚才选定的团队${labels[String(request.change)] ?? '操作'}这份内容？内容归团队所有，记录实际操作者，个人来源保持不变。`
+  }
+  if (name === 'arkme_world_reply') return `是否以你的个人身份公开回复刚才选定的世界内容：“${cleanArgument(args.text, 120)}”？`
+  if (name === 'arkme_reactions_write' || name === 'arkme_world_reactions_write') {
     const request = JSON.parse(String(args.request_json)) as Record<string, unknown>
     if (request.action === 'history-policy-set') return request.locked === true
       ? '是否确认锁定自己的表态操作记录？锁定后时间轴、数据管理和 AI 都不能读取这些记录。'
@@ -158,7 +184,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；Backend、聊天和录音请求立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
   if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'
   if (name === 'arkme_file_prepare') return `是否确认将“${cleanArgument(args.file_name, 100)}”暂存到本地？这一步不会上传或发送。`
-  if (name === 'arkme_files_send') return `是否确认向刚才指定的 Arkme 会话发送这 ${Array.isArray(args.file_refs) ? args.file_refs.length : 0} 个文件及附带文字？确认后开始上传。`
+  if (name === 'arkme_files_send') return `是否确认向刚才指定的 Arkme 会话发送这 ${Array.isArray(args.file_refs) ? args.file_refs.length : 0} 个文件及附带文字？确认后开始发送。`
   if (name === 'arkme_file_task') return cleanArgument(args.action, 30) === 'open-local'
     ? '是否确认使用本机默认应用打开这个 Arkme 文件？'
     : `是否确认执行文件任务操作“${cleanArgument(args.action, 30)}”？移除本地任务不会撤回已发送的消息。`
@@ -221,6 +247,16 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   }
   if (name === 'arkme_bot_openclaw_connect') {
     return '是否确认连接这个 Bot 到本机 OpenClaw？这会读取该 Bot 凭据、安装固定版本 Channel、创建独立 Agent；如有待应用配置，还会重启指定 profile 的 Gateway 并短暂影响其中全部 Agent。同一 Bot 已在别处在线时可能发生接管。'
+  }
+  if (name === 'arkme_social_write') {
+    switch (args.operation) {
+      case 'join': return '是否确认加入刚才选定的公开群聊？'
+      case 'chat': return '是否确认打开与刚才选定公开用户的私聊？不会自动发送消息。'
+      case 'listing': return args.enabled === true ? '是否确认将你的介绍展示到找人聊聊？其他用户将可以发现你并发起私聊。' : '是否确认下架你的公开展示？已有私聊会保留。'
+      case 'group': return args.enabled === true ? '是否确认公开这个群聊？其他用户将可以发现并按群规则申请加入。' : '是否确认关闭这个群聊的公开展示？已有成员会保留。'
+      case 'showcase': return args.enabled === true ? '是否确认在你的世界展示这个公开群的参群关系？' : '是否确认从你的世界移除这个群的参群展示？'
+      case 'resolve': return args.enabled === true ? '是否确认同意刚才选定的入群申请？申请人之后可完成入群。' : '是否确认拒绝刚才选定的入群申请？'
+    }
   }
   if (name === 'arkme_id_set') {
     const display = cleanArgument(args.arkme_id, 64)
@@ -309,7 +345,7 @@ export function registerArkmeTools(
   if (arkmeToolCatalog.modulesFor(profile, 'attachments').length === 0) return
   ctx.inject(['attachments'], imageCtx => {
     for (const definition of createArkmeContextToolDefinitions(imageCtx, ports, profile, 'attachments')) {
-      imageCtx.tools.register(definition)
+      imageCtx.tools.register(withCoreConversationalConfirmation(definition,coreConversation))
     }
   })
 }

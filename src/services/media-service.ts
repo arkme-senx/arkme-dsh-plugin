@@ -1,3 +1,4 @@
+import { OriginalFileStore, originalFileKey } from './original-file-store.js'
 import { recordingPlaybackPath, recordingPlaybackRef, recordingPlaybackLocator, sameRecordingPlaybackLocation, type RecordingPlaybackLocator, type RecordingPlaybackRef } from '../recording-playback-ref.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { avatarReferenceDiagnostic, logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -62,7 +63,7 @@ export interface ArkmeMediaDescriptor {
   stableKey?: string
 }
 
-type MediaSource = { remoteUrl: string; recordingClip?: never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never }
+type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never; worldSound?: never }
 type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
 type IssuableMediaDescriptor = Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'> & MediaSource
 
@@ -81,7 +82,7 @@ export interface ArkmeUploadCompletion {
 }
 export interface ArkmeUploadCompletionRecovery {
   read(): ArkmeUploadCompletion | undefined
-  save(completion: ArkmeUploadCompletion): void
+  save(completion: ArkmeUploadCompletion): void | Promise<void>
 }
 
 interface ArkmePreparedUpload {
@@ -305,6 +306,7 @@ function cloneImageBytes(value: ArkmeImageBytes): ArkmeImageBytes {
 }
 
 export class MediaService {
+  private readonly originalFiles: OriginalFileStore
   private readonly mediaRefs = new Map<string, StoredMediaDescriptor>()
   private readonly stableMediaRefs = new Map<string, string>()
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
@@ -324,7 +326,7 @@ export class MediaService {
     private readonly recordIdentity: ArkmeRecordIdentity,
     private readonly botImages?: ArkmeBotImageReader,
     private readonly selfRoleAvatars?: SelfRoleAvatarStore,
-  ) {}
+  ) { this.originalFiles = new OriginalFileStore(runtime) }
 
   dispose(): void {
     this.imageGeneration += 1
@@ -375,7 +377,7 @@ export class MediaService {
   async uploadLocalFile(
     filePath: string,
     metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
-    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal; completionRecovery?: ArkmeUploadCompletionRecovery } = {},
+    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal; completionRecovery?: ArkmeUploadCompletionRecovery; progressiveTarget?: import('./progressive-attachments.js').ProgressiveTarget } = {},
   ): Promise<ArkmeUploadedAsset> {
     if (this.runtime.config.richMediaSendEnabled === false) {
       throw new ArkmePluginError('rich-content-disabled', '文件上传已被插件配置关闭', false, 403)
@@ -394,6 +396,7 @@ export class MediaService {
     const pendingCompletion = options.completionRecovery?.read()
     let completionPersisted = pendingCompletion !== undefined
     const prepared = pendingCompletion === undefined ? await this.runtime.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
+      ...(options.progressiveTarget === undefined ? {} : { progressive_media: options.progressiveTarget }),
       planned_size: metadata.size,
       file_hash: metadata.sha256,
       mime_type: metadata.mimeType || 'application/octet-stream',
@@ -403,6 +406,8 @@ export class MediaService {
     }, session, options.signal) : undefined
     const uploadSessionUid = pendingCompletion?.upload_session_uid ?? stringValue(prepared?.upload_session_uid).trim()
     if (uploadSessionUid === '') throw new ArkmePluginError('upload-prepare-invalid', '上传准备响应无效', true, 502)
+    const uploadStartedAt = Date.now()
+    let uploadPhase = pendingCompletion === undefined ? 'storage' : 'completing'
     try {
       let storageETag = pendingCompletion?.storage_etag ?? ''
       const completedParts: Array<{ part_number: number; etag: string }> = pendingCompletion?.multipart_parts ?? []
@@ -457,6 +462,7 @@ export class MediaService {
           } finally { await handle.close() }
         }
       }
+      uploadPhase = 'completing'
       if (options.expectedUserId !== undefined
         && (await this.runtime.requireSession()).userId !== options.expectedUserId) {
         throw new ArkmePluginError('file-account-changed', '账号已切换，本次上传已取消', false, 409)
@@ -467,7 +473,7 @@ export class MediaService {
         storage_etag: storageETag, multipart_parts: completedParts,
       }
       if (options.completionRecovery !== undefined && !completionPersisted) {
-        options.completionRecovery.save(completion)
+        await options.completionRecovery.save(completion)
         completionPersisted = true
       }
       const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', { ...completion }, session, options.signal)
@@ -486,6 +492,19 @@ export class MediaService {
         fileKind: metadata.fileKind,
       }
     } catch (error) {
+      // Raw fetch errors can contain signed URLs; retain only known transport/file codes.
+      const safeCodes = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ENOENT', 'EACCES', 'EPERM', 'ABORT_ERR'])
+      const causeCodes: string[] = []
+      let cause: unknown = error
+      for (let depth = 0; cause !== undefined && depth < 3; depth++) {
+        const value = objectValue(cause)
+        if (typeof value.code === 'string' && safeCodes.has(value.code)) causeCodes.push(value.code)
+        cause = value.cause
+      }
+      console.warn('dsh-arkme: file_upload_failed', JSON.stringify({
+        phase: uploadPhase, elapsedMillis: Date.now() - uploadStartedAt,
+        cancelled: options.signal?.aborted === true, causeCodes, completionPersisted,
+      }))
       if (!completionPersisted) await this.runtime.authenticatedPost('/api/v1/files/abort-upload', { upload_session_uid: uploadSessionUid }, session).catch(() => undefined)
       throw error
     }
@@ -520,8 +539,14 @@ export class MediaService {
       || url.port !== '' || url.hash !== ''
       || !(allowedSignedImageHost(this.runtime.config.environment, url.hostname)
         || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
-        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname))) {
+        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname)
+        || descriptor.worldSound === true && this.worldSoundMediaURL(url.toString()) !== undefined)) {
       throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
+    }
+    const key = this.runtime.config.fileStateDirectory && descriptor.purpose === 'original' ? originalFileKey(this.runtime.config.environment,session.userId,url) : undefined
+    if (key && range === undefined && method === 'GET') {
+      const cached=await this.originalFiles.read(session.userId,key,descriptor.size)
+      if(cached)return {response:this.originalFiles.response(cached,descriptor.mimeType),descriptor}
     }
     const response = await this.runtime.fetchImpl(url, {
       headers: range === undefined ? {} : { Range: range },
@@ -530,6 +555,10 @@ export class MediaService {
     })
     if (!response.ok && response.status !== 206) {
       throw new ArkmePluginError('media-fetch-failed', `媒体读取失败（${String(response.status)}）`, true, 502)
+    }
+    if(key && range===undefined && method==='GET' && response.status===200) {
+      const captured=await this.originalFiles.capture(session.userId,key,response,descriptor.size,signal).catch(()=>response)
+      return {response:captured,descriptor}
     }
     return { response, descriptor }
   }
@@ -546,6 +575,28 @@ export class MediaService {
       fileName: worldVoiceprintFileName(mimeType),
       size: 0,
     })
+  }
+
+  private worldSoundMediaURL(raw: string): URL | undefined {
+    try {
+      const url = new URL(raw), origin = new URL(this.runtime.config.worldBaseUrl)
+      if (url.protocol !== 'https:' || url.origin !== origin.origin || url.port || url.username || url.password || url.hash
+        || url.pathname !== '/api/public/v1/public-record/media' || url.searchParams.get('kind') !== 'sound'
+        || !/^[a-f0-9]{64}$/.test(url.searchParams.get('version') ?? '')
+        || !/^world-sound-[a-f0-9]{64}$/.test(url.searchParams.get('record_uid') ?? '')
+        || !/^\d{1,3}$/.test(url.searchParams.get('index') ?? '') || Number(url.searchParams.get('index')) >= 150
+        || [...url.searchParams.keys()].length !== 4) return undefined
+      return url
+    } catch { return undefined }
+  }
+
+  issueWorldSoundMediaRef(viewerUserId: number, raw: string, expected: { recordUID: string; index: number }): string {
+    const url = this.worldSoundMediaURL(raw)
+    if (!url || url.searchParams.get('record_uid') !== expected.recordUID || url.searchParams.get('index') !== String(expected.index)) {
+      throw new ArkmePluginError('world-sound-media-invalid', '声音摘录地址无效', false, 502)
+    }
+    // The World proxy supplies the actual audio MIME, including call formats.
+    return this.issueMediaRef(viewerUserId, { remoteUrl: url.toString(), worldSound: true, mimeType: 'application/octet-stream', fileName: '声音摘录', size: 0 })
   }
 
   async issueUnmarkedSpeakerMediaRef(
@@ -999,9 +1050,10 @@ export class MediaService {
           trustedSignedImageUrl(this.runtime.config.environment, avatarUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
         )
       } catch (error) {
-        if (cachedAvatarUrl === undefined || cachedAvatarUrl !== avatarUrl) throw error
-        this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
-        const refreshedUrl = (await this.profile.publicProfilesByUserIds([reference.targetUserId], session, signal))
+        signal?.throwIfAborted()
+        if (!(error instanceof ArkmePluginError) || !['image-download-failed', 'image-download-timeout'].includes(error.code)) throw error
+        await this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
+        const refreshedUrl = (await this.profile.publicProfileSummariesByUserIds([reference.targetUserId], session, signal, 0))
           .get(reference.targetUserId)?.avatarUrl
         if (refreshedUrl === undefined) throw error
         return await this.downloadSignedImage(
@@ -1488,6 +1540,9 @@ export class MediaService {
     const candidates = mediaRefs.length > 0
       ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
       : displayItems
+    // Pending slots are metadata, never a download grant or an asset-query key.
+    candidates.push(...listValue(contentPayload.media_refs).map(objectValue).filter(ref =>
+      ['pending', 'failed'].includes(stringValue(objectValue(ref.upload).state)) && !stringValue(ref.file_asset_uid)))
     const projected = candidates.filter(item => {
       // content_file_role=4 is ambient background sound captured while writing a record.
       // It is author-only record metadata, not an attachment that belongs in a chat bubble.
@@ -1495,6 +1550,12 @@ export class MediaService {
     }).flatMap((item, index): ArkmeContentBlock[] => {
       const fileAssetUid = stringValue(item.file_asset_uid).trim()
       const fileName = stringValue(item.file_name).trim() || `附件-${String(index + 1)}`
+      const upload = objectValue(item.upload)
+      if (['pending', 'failed'].includes(stringValue(upload.state)) && stringValue(upload.attachment_uid)) {
+        return [{ kind: this.mediaKind(numberValue(upload.kind), arkmeNormalizedFileMimeType(stringValue(item.mime_type), fileName), fileName),
+          mediaRef: '', attachmentUid: stringValue(upload.attachment_uid), attachmentState: upload.state as 'pending' | 'failed',
+          fileName, mimeType: arkmeNormalizedFileMimeType(stringValue(item.mime_type), fileName), size: Math.max(0, numberValue(upload.size)), sortOrder: numberValue(item.sort_order ?? index) }]
+      }
       const fileKind = Math.trunc(numberValue(item.file_kind))
       const declaredMimeType = stringValue(item.mime_type).trim().toLowerCase()
       const mimeType = arkmeNormalizedFileMimeType(declaredMimeType, fileName)

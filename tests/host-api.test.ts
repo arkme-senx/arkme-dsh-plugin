@@ -12,6 +12,13 @@ it('passes paginated conversation-name reads and cancellation without trusting c
   expect(service.searchConversationNames).toHaveBeenCalledExactlyOnceWith({ query: '周鹏', cursor: 'next', signal })
 })
 
+it('resolves hidden topic identity with the Host session and cancellation, ignoring caller user IDs', async () => {
+  const signal = new AbortController().signal
+  const service = { hiddenTopicSource: vi.fn(async () => null) }
+  await expect(dispatchArkmeHostOperation(service as never, 'topic.hidden-source', { sourceRef: 'signed-topic', userId: 999 }, undefined, undefined, undefined, undefined, signal)).resolves.toBeNull()
+  expect(service.hiddenTopicSource).toHaveBeenCalledExactlyOnceWith('signed-topic', signal)
+})
+
 it('passes home preference read cancellation through the Host owner', async () => {
   const controller = new AbortController()
   const service = { topicHomeVisibility: vi.fn() }
@@ -1849,7 +1856,7 @@ it('forwards cache-only image probes without changing ordinary reads or trusting
  await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar',cacheOnly:true,userId:999})
  expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar',{cacheOnly:true})
  await dispatchArkmeHostOperation(service as never,'image.read',{imageRef:'file_asset://cached-avatar'})
- expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar')
+ expect(service.readImage).toHaveBeenLastCalledWith('file_asset://cached-avatar', {})
 })
 
 

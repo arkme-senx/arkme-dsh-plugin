@@ -17,6 +17,8 @@ import { arkmeAuthStore } from './auth-store.js'
 
 export interface MessageSelectionTarget {
   item: ArkmeTimelineItem; sourceRef: string
+  excerptSource?:import('../record-excerpt.js').RecordExcerptSource
+  excerptOrigin?:{kind:'recording'|'team_message'|'codex'|'dsh'|'call';itemRef:string}
   /** Owner-local authority is never passed to ordinary Chat actions. */
   selectionDomain?: 'transcript' | 'native' | 'codex'
   localMarkRef?: string
@@ -390,7 +392,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       } else if (sendSelf && selfNote && selfController && !selfController.signal.aborted) {
         const frozen: SelectedTextNoteQuote = {
           version: 1, sourceLabel: selfNote.sourceLabel, senderName: freshTarget.item.senderName || '原作者',
-          sourceAtMillis: freshTarget.item.sendAtMillis || 0, text: quote.text,
+          sourceAtMillis: freshTarget.item.sendAtMillis || 0, text: quote.text,...(freshTarget.excerptOrigin?{origin:freshTarget.excerptOrigin}:{}),...((freshTarget.excerptSource??freshTarget.item.excerptSource)?{source:(freshTarget.excerptSource??freshTarget.item.excerptSource)!}:{}),
         }
         const signal = selfController.signal
         document.getSelection()?.removeAllRanges(); setSnapshot(undefined)

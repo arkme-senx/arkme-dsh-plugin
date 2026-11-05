@@ -96,7 +96,8 @@ beforeEach(async () => {
     if (operation === 'provider.instance') return { instanceId: 'notification-directory-test' }
     if (operation === 'sources.list') return { directory: 'root', items: sources, hasMore: false }
     if (operation === 'arrangements.reminders.list') return { items: notices }
-    if (operation === 'world.notification-sources' || operation === 'ai-letter.list' || operation === 'bots.private-chat.directory') return { items: [] }
+    if (operation === 'world.comment-notifications') return { items: [], hasMore: false }
+    if (operation === 'ai-letter.list' || operation === 'bots.private-chat.directory') return { items: [] }
     if (operation === 'world.interactions.summary' || operation === 'ai-letter.unread') return { unreadCount: 0, seenThroughSequence: 0 }
     if (operation === 'chat.official-author.profile' || operation === 'arko.profile') throw new Error('not used')
     return {}
@@ -155,6 +156,8 @@ describe('notification directory stability', () => {
     const context = () => row().props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 40, clientY: 60,
       currentTarget: { focus() {}, getBoundingClientRect: () => ({ left: 20, top: 40 }) } })
     const before = arkmeUi.getViewSnapshot()
+    const orderedEntries = () => renderer!.root.findAllByProps({ role: 'treeitem' })
+      .map(node => node.props['data-arkme-builtin-entry'] ?? node.props['aria-label'])
     await act(async () => context())
     const menu = () => renderer!.root.findByProps({ role: 'menu' })
     expect(menu().findAllByProps({ role: 'menuitem' }).map(node => node.props['aria-label'])).toEqual(['预览', '置顶对话'])
@@ -164,19 +167,20 @@ describe('notification directory stability', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('directory.preferences.set', {
       accountKey: 'test:7001', entries: { [`builtin:${entry}`]: { pinned: true, pinnedAt: expect.any(Number) } },
     }, expect.any(AbortSignal))
-    expect(renderer!.root.findAllByProps({ role: 'treeitem' })[0]!.props['data-arkme-builtin-entry']).toBe(entry)
+    expect(orderedEntries().slice(0, 2)).toEqual(['置顶对话', entry])
     expect(arkmeUi.getViewSnapshot()).toBe(before)
     await act(async () => { renderer!.unmount(); renderer = create(<Workspace showHarnessEntry />) })
-    expect(renderer!.root.findAllByProps({ role: 'treeitem' })[0]!.props['data-arkme-builtin-entry']).toBe(entry)
+    expect(orderedEntries().slice(0, 2)).toEqual(['置顶对话', entry])
     await act(async () => context())
     await act(async () => menu().findByProps({ 'aria-label': '取消置顶' }).props.onClick())
     expect(builtinDirectoryPreferences.read('test:7001')[entry]).toBeUndefined()
+    expect(orderedEntries().indexOf(entry)).toBeGreaterThan(orderedEntries().indexOf('较早对话'))
     expect(builtinDirectoryPreferences.read('test:7002')[entry]).toBeUndefined()
     expect(mocks.callArkme.mock.calls.some(([op]) => String(op).includes('bot-pin') || String(op).includes('policy.set'))).toBe(false)
   })
 
   it('keeps Team entries available without phone binding and avoids duplicate official entries', async () => {
-    vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { visibilityState: 'visible', querySelector: () => null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
     let phoneMasked: string | undefined
     const conversation: TeamConversation = {
       key: 'official-team', ref: 'official-team-ref', side: 'external',
@@ -250,8 +254,7 @@ describe('notification directory stability', () => {
   it('restores the selected notification row and center after opening World from a notification', async () => {
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
-      if (operation === 'world.notification-sources') return { items: [{ recordRef: 'world-post' }] }
-      if (operation === 'world.interactions.list') return { items: [{ interactionRef: 'world-reply', authorName: '回复者', textContent: '世界回复', createdAtMillis: timestamp + 500 }] }
+      if (operation === 'world.comment-notifications') return { items: [{ interactionRef: 'world-reply', authorName: '回复者', textContent: '世界回复', createdAtMillis: timestamp + 500 }], hasMore: false }
       return original(operation, ...args)
     })
     await act(async () => { renderer = create(<><ArkmeProductNavigation compact /><Workspace /></>) })
@@ -326,8 +329,7 @@ describe('notification directory stability', () => {
     notices = []
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
-      if (operation === 'world.notification-sources') return { items: [{ recordRef: 'world-post' }] }
-      if (operation === 'world.interactions.list') return { items: [{ interactionRef: 'world-reply', authorName: '回复者', textContent: '世界回复', createdAtMillis: timestamp + 500 }] }
+      if (operation === 'world.comment-notifications') return { items: [{ interactionRef: 'world-reply', authorName: '回复者', textContent: '世界回复', createdAtMillis: timestamp + 500 }], hasMore: false }
       if (operation === 'world.interactions.summary') return { unreadCount: 2, seenThroughSequence: 9 }
       if (operation === 'ai-letter.list') return { items: [{ letterId: 'ai-letter', title: 'AI 通知', summary: '来信摘要', createdAtMillis: timestamp + 600 }] }
       if (operation === 'ai-letter.unread') return { unreadCount: 1 }
@@ -346,14 +348,27 @@ describe('notification directory stability', () => {
     expect(notificationRows()).toHaveLength(1)
   })
 
+  it('appends and deduplicates world history without dropping the current message', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, ...args) => {
+      if (operation === 'world.comment-notifications') return params?.cursor
+        ? { items: [{ interactionRef:'second',authorName:'回复者',textContent:'第二条',createdAtMillis:timestamp,replyToComment:true }],hasMore:false }
+        : { items: [{interactionRef:'first',authorName:'回复者',textContent:'第一条',createdAtMillis:timestamp+500}],hasMore:true,nextCursor:'older' }
+      return original(operation, params, ...args)
+    })
+    await act(async () => { renderer = create(<Workspace />) })
+    const items=arkmeNotificationStore.getSnapshot().worldItems
+    expect(items.map(item=>item.id)).toEqual(['world:first','world:second'])
+    expect(items[1]?.title).toContain('回复了你的评论')
+  })
+
   it('keeps a complete world page on partial interaction failure without accumulating old pages', async () => {
     const original = mocks.callArkme.getMockImplementation()!
     let partial = false
     mocks.callArkme.mockImplementation(async (operation: string, params: { recordRef?: string }, ...args: unknown[]) => {
-      if (operation === 'world.notification-sources') return { items: [{ recordRef: 'first' }, { recordRef: 'second' }] }
-      if (operation === 'world.interactions.list') {
-        if (partial && params.recordRef === 'second') throw new Error('partial failure')
-        return { items: [{ interactionRef: `${params.recordRef}-${partial ? 'new' : 'old'}`, authorName: '回复者', createdAtMillis: timestamp + 500 }] }
+      if (operation === 'world.comment-notifications') {
+        if (partial) throw new Error('partial failure')
+        return { items: ['first', 'second'].map(ref => ({ interactionRef: ref, authorName: '回复者', createdAtMillis: timestamp + 500 })), hasMore: false }
       }
       return original(operation, params, ...args)
     })

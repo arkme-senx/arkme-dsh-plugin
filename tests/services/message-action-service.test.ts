@@ -452,8 +452,8 @@ it('forwards Codex with distinct identities and visible provenance without imper
   const svc=messageActionService(rt,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'group'})})
   await svc.forwardCodex(snapshot,userId,options)
   const body=rt.authenticatedChatPost.mock.calls[0]![1] as any
-  expect(body.source_items[0]).toMatchObject({source_identity_id:expect.stringMatching(/^codex:/),snapshot_text:`Codex · 来源任务 · 同事 · ${new Date(snapshot.messages[0]!.createdAtMillis).toISOString()}\n\n问题`,source_sender_user_id:0})
-  expect(body.source_items[1].snapshot_text).toContain('Codex · 来源任务 · Codex')
+  expect(body.source_items[0]).toMatchObject({source_type:'codex',codex_message:{mode:'local',local_session_id:snapshot.sessionId,local_message_id:'event',role:'user',text_content:'问题',send_at:1000}})
+  expect(body.source_items[1].codex_message).toMatchObject({mode:'local',role:'assistant',text_content:'回答',send_at:2000})
   expect(JSON.stringify(body)).not.toMatch(/deepseek|dsh:|agent_session_id/)
   await expect(svc.forwardCodex(snapshot,999,options)).rejects.toThrow('账号已变化')
   const recordRuntime=runtime()

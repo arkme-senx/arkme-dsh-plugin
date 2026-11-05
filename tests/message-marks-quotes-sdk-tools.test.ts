@@ -32,3 +32,14 @@ it('uses the same Host owner from separate read, mark-write and quote-write tool
   await definitions.find(tool=>tool.name==='arkme_message_quote_reply')!.execute({source_ref:'s',message_action_ref:'m',start:0,end:2,text:'body'},exec)
   expect(extendSourceMessage).toHaveBeenCalledWith('s','m','body',expect.any(String),[],expect.objectContaining({quote:anchor,signal:exec.signal}))
 })
+
+it('quote reply Tool preserves explicit Team selection and original time on the shared extension owner', async () => {
+  const selection={teamRef:'opaque',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}
+  const extendSourceMessage=vi.fn(async()=>({recordUid:'reply',localState:'synced'}))
+  const tool=createArkmeCoreToolDefinitions({captureSourceMessageAnchor:async()=>anchor,extendSourceMessage} as never).find(t=>t.name==='arkme_message_quote_reply')!
+  const exec={callId:'stable-call',signal:new AbortController().signal} as never
+  await tool.execute({source_ref:'s',message_action_ref:'m',start:0,end:2,text:'body',representation:selection,send_at_millis:123},exec)
+  expect(extendSourceMessage).toHaveBeenCalledWith('s','m','body',expect.any(String),[],expect.objectContaining({representation:selection,sendAtMillis:123,quote:anchor}))
+  await expect(tool.execute({source_ref:'s',message_action_ref:'m',start:0,end:2,text:'body',representation:{...selection,team_id:'7'}},exec)).rejects.toMatchObject({code:'team-identity-invalid'})
+  expect(extendSourceMessage).toHaveBeenCalledTimes(1)
+})

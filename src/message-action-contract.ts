@@ -54,7 +54,7 @@ export interface NativeMessageSnapshot {
   senderUserId: number
   senderName: string
 }
-export interface CodexMessageSnapshot extends Omit<NativeMessageSnapshot, 'ownerKind'> { ownerKind: 'codex'; taskTitle: string }
+export interface CodexMessageSnapshot extends Omit<NativeMessageSnapshot, 'ownerKind'> { ownerKind: 'codex'; taskTitle: string; cloudSource?:{source_id:string;task_id:string;event_id:string;version:number} }
 export type MessageActionSource = MessageActionReference | NativeMessageSnapshot | CodexMessageSnapshot
 
 export interface AgentMessageActionConversation {

@@ -6,11 +6,17 @@ import { installHarnessSessionDropdown } from './harness-session-dropdown.js'
 import { installHarnessSessionSummary } from './harness-session-summary.js'
 import { installProjectedConversation } from './harness-projected-conversation.js'
 import { installHarnessActivityReporter } from './harness-activity-reporter.js'
+import { installHarnessSettings } from './harness-settings.js'
+import { installNativeModelSettings, nativeModelSettingsRequested } from './native-model-settings.js'
 
 export const inject = ['slots', 'locale', 'sessions']
 
 /** The outer Arkme shell owns authentication and the avatar settings entry. */
 export function apply(ctx: ClientContext): void {
+  if (nativeModelSettingsRequested()) {
+    ctx.effect(() => installNativeModelSettings(ctx), 'arkme: native model settings surface')
+    return
+  }
   ctx.effect(() => {
     const surface = window.frameElement?.parentElement
     if (surface?.getAttribute('data-arkme-owned') !== 'deepseek-harness-surface') return () => undefined
@@ -25,9 +31,7 @@ export function apply(ctx: ClientContext): void {
       const accountId = Number(surface.getAttribute('data-arkme-account-id'))
       const authenticated = Number.isSafeInteger(accountId) && accountId > 0
       if (authenticated && restoreSettings === undefined) {
-        restoreSettings = ctx.slots.inject('sidebar.settings', () => ctx.slots.register({
-          name: 'sidebar.settings', priority: -100,
-        }, () => null))
+        restoreSettings = installHarnessSettings(ctx)
         restoreDefault = installHarnessSessionListDefault(ctx)
         restoreAccountSessions = installHarnessAccountSessions(ctx, surface)
         restoreSummary = installHarnessSessionSummary(ctx, surface)

@@ -10,7 +10,13 @@ export interface IdentityPersonProfile {
   userId: number
   isSelf: boolean
   accountName?: string
+  publicDisplayName?: string
+  avatarRef?: string
+  avatarFallback?: ArkmeGroupAvatarFallback
+  cachedAtMillis?: number
+  refreshFailed?: boolean
 }
+export interface PersonProfileReadOptions { cacheOnly?: boolean; forceRefresh?: boolean }
 export interface IdentityShareLink { kind: 'person' | 'group'; url: string; expireAtMillis?: number }
 export type IdentityShareCard = {
   kind: 'person'; url: string; userId: number; displayName: string; accountName: string; isSelf: boolean

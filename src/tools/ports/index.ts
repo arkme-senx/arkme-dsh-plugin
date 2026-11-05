@@ -1,6 +1,9 @@
 import type { LoginDevicePort } from '../../login-devices-contract.js'
+import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
+import type { PublicSocialPort } from '../../public-social-contract.js'
 import type { ArkmeRecordExportPort } from '../../data-management.js'
 import type {TeamMemberManagementPort} from '../../team-member-add-contract.js'
+import type { TeamHistoryPort } from '../../team-history-contract.js'
 import type { RealtimeDictationRequest, RealtimeDictationSnapshot } from '../../realtime-dictation-contract.js'
 import type {TeamMessagePort} from '../../team-message-contract.js'
 import type { TeamEntryPreferencePort } from '../../team-entry-preference-contract.js'
@@ -33,9 +36,13 @@ import type { ArkmeFileToolPort } from './files.js'
 import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
-export interface ArkmeCoreToolPorts extends LoginDevicePort,
+export interface ArkmeCoreToolPorts extends
+  LoginDevicePort,
+  CodexWorkRecordsPort,
+  PublicSocialPort,
   ArkmeRecordExportPort,
   TeamMemberManagementPort,
+  TeamHistoryPort,
   TeamMessagePort,
   ArkmeDeviceLockPort,
   ArkmeTeamProfileToolPort,
@@ -64,6 +71,7 @@ export interface ArkmeCoreToolPorts extends LoginDevicePort,
   ArkmeWechatToolPort,
   ArkmeUserBanToolPort,
   ArkmeVoiceprintToolPort {
+  readCodexImage(ref:string,options:{maxBytes:number;signal?:AbortSignal}):Promise<{data:Uint8Array;mediaType:'image/png'|'image/jpeg'|'image/webp'}>
   realtimeDictationCommand(request: RealtimeDictationRequest, signal?: AbortSignal): Promise<RealtimeDictationSnapshot>
 
   externalChats(operation: import('../../team-external-chat-contract.js').ExternalChatOperation, params: Record<string,unknown>, signal?: AbortSignal): Promise<unknown>

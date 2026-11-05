@@ -2,6 +2,7 @@
 export type TeamMemberCodexSync =
   | { state: 'not_connected'; hasConversations: false; canViewConversations: false }
   | { state: 'enabled' | 'paused' | 'disabled'; hasConversations: boolean; canViewConversations: boolean }
+  | { state: 'unavailable'; reason: 'settings_unknown'; hasConversations:boolean; canViewConversations:boolean }
   | { state: 'unavailable'; reason: 'unsupported' | 'failed' | 'invalid' }
 
 /** Optional v1 extension to team/members/list. Missing data never means not connected. */
@@ -11,7 +12,10 @@ export function readTeamMemberCodexSync(value: unknown): TeamMemberCodexSync {
   if (typeof value !== 'object' || Array.isArray(value)) return invalid
   const data = value as Record<string, unknown>
   if (data.version !== 1) return invalid
-  if (data.state === 'unavailable') return { state: 'unavailable', reason: 'failed' }
+  if (data.state === 'unavailable') {
+    if(data.reason==='settings_unknown')return typeof data.has_conversations==='boolean'&&typeof data.can_view_conversations==='boolean'?{state:'unavailable',reason:'settings_unknown',hasConversations:data.has_conversations,canViewConversations:data.can_view_conversations}:invalid
+    return { state: 'unavailable', reason: 'failed' }
+  }
   if (typeof data.has_conversations !== 'boolean' || typeof data.can_view_conversations !== 'boolean') return invalid
   if (data.state === 'not_connected') return !data.has_conversations && !data.can_view_conversations
     ? { state: 'not_connected', hasConversations: false, canViewConversations: false } : invalid

@@ -9,14 +9,15 @@ function invalid(): never { throw new ArkmePluginError('voice-trigger-contract-i
 function text(value: unknown, max = 128): string { if (typeof value !== 'string' || !value || value.length > max) invalid(); return value }
 function number(value: unknown): number { if (!Number.isSafeInteger(value) || (value as number) < 0) invalid(); return value as number }
 function array(value: unknown, max = 50): unknown[] { if (!Array.isArray(value) || value.length > max) invalid(); return value }
-type Locate = (query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal) => Promise<{ items: ArkmeRecordingWorkbenchItem[] }>
+export interface RecordingVoiceSourceQuery { recordingId: string; childId: string; ordinal: number; revision: string; startAt: number; endAt: number }
+type Locate = (query: RecordingVoiceSourceQuery, signal?: AbortSignal) => Promise<{ items: ArkmeRecordingWorkbenchItem[] }>
 
-/** Proposed Audio owner adapter. No text fallback, model in the browser, polling or automatic writes. */
+/** Audio v2 transcript owner adapter. Paid interpretation and note delivery stay on the server. */
 export class RecordingVoiceTriggerService {
   constructor(private readonly runtime: ServiceRuntime, private readonly locate: Locate) {}
   async request(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     const session = await this.runtime.requireSession(), accountKey = `${this.runtime.config.environment}:${session.userId}`
-    if (input.accountKey !== accountKey) throw new ArkmePluginError('voice-trigger-account-changed', '账号已切换，请重新打开语音触发', false, 409)
+    if (input.accountKey !== accountKey && !(action === 'settings' && input.accountKey === undefined)) throw new ArkmePluginError('voice-trigger-account-changed', '账号已切换，请重新打开语音触发', false, 409)
     const assertCurrent = async () => {
       signal?.throwIfAborted()
       const current = await this.runtime.requireSession()
@@ -40,7 +41,7 @@ export class RecordingVoiceTriggerService {
     const capabilities = async () => {
       try {
         const raw = await post('capabilities', {})
-        return raw.version === 1 && raw.detector === 'audio-kws' && raw.ready === true
+        return raw.version === 2 && raw.detector === 'transcript' && raw.ready === true
           && ['upload', 'long-recording', 'all-day'].every(kind => Array.isArray(raw.sources) && raw.sources.includes(kind))
       } catch (error) {
         // Network/auth/server failures must remain retryable errors, never a fake empty list.
@@ -75,14 +76,16 @@ export class RecordingVoiceTriggerService {
     const project = (value: unknown): RecordingVoiceCandidate => {
       const raw = objectValue(value), evidence = objectValue(raw.evidence)
       if (!['self', 'unknown', 'other'].includes(String(raw.speaker)) || !['pending', 'saved', 'ignored'].includes(String(raw.status))
-        || !['complete', 'open', 'uncertain'].includes(String(raw.boundary)) || evidence.kind !== 'audio-kws'
-        || typeof evidence.score !== 'number' || !Number.isFinite(evidence.score) || evidence.score < 0 || evidence.score > 1) invalid()
+        || !['complete', 'open', 'uncertain'].includes(String(raw.boundary)) || evidence.kind !== 'transcript'
+        || !['literal', 'phonetic'].includes(String(evidence.match))) invalid()
       const id = text(raw.id), revision = number(raw.revision), start = number(raw.start_at), end = number(raw.end_at)
       if (end <= start || typeof raw.text !== 'string' || raw.text.length > 30_000) invalid()
       return { candidateKey: createHmac('sha256', secret).update(JSON.stringify([accountKey, id])).digest('hex'), candidateRef: seal('candidate', { id, revision }), revision, phrase: text(raw.phrase), text: raw.text,
         startAtMillis: start, endAtMillis: end, speaker: raw.speaker as RecordingVoiceCandidate['speaker'], speakerLabel: text(raw.speaker_label),
         status: raw.status as RecordingVoiceCandidate['status'], boundary: raw.boundary as RecordingVoiceCandidate['boundary'],
-        evidence: { kind: 'audio-kws', model: text(evidence.model), score: evidence.score } }
+        ...(raw.pending_reason ? { pendingReason: text(raw.pending_reason) } : {}),
+        ...(raw.status === 'saved' && raw.record_uid ? { recordUID: text(raw.record_uid) } : {}),
+        evidence: { kind: 'transcript', model: text(evidence.model), match: evidence.match as 'literal' | 'phonetic' } }
     }
     if (action === 'page') {
       const cursor = input.cursor ? text(open('cursor', input.cursor).cursor, 2048) : undefined
@@ -92,29 +95,23 @@ export class RecordingVoiceTriggerService {
     const candidate = open('candidate', input.candidateRef), id = text(candidate.id), revision = number(candidate.revision)
     if (action === 'decide') {
       if (!['save', 'ignore'].includes(String(input.decision))) invalid()
-      const result = await post('candidates/decide', { id, expected_revision: revision, decision: input.decision })
+      const result = await post('candidates/decide', { id, expected_revision: revision, decision: input.decision, confirmed_range: input.confirmedRange === true })
       const projected = project(result.candidate)
-      if (objectValue(result.candidate).id !== id || projected.status !== (input.decision === 'save' ? 'saved' : 'ignored')) invalid()
+      if (objectValue(result.candidate).id !== id || (input.decision === 'ignore' ? projected.status !== 'ignored' : projected.status !== 'saved' && !(projected.status === 'pending' && projected.pendingReason === 'save_in_progress'))) invalid()
       return projected
     }
     const raw = await post('candidates/detail', { id })
     if (raw.id !== id || number(raw.revision) !== revision) throw new ArkmePluginError('voice-trigger-candidate-changed', '这条识别记录已更新，请刷新后再操作', false, 409)
     const items: ArkmeRecordingWorkbenchItem[] = []
-    const nearby = new Map<string, ArkmeRecordingWorkbenchItem[]>()
-    for (const value of array(raw.anchors, 100)) {
-      const anchor = objectValue(value), atMillis = number(anchor.at_millis), dateStamp = number(anchor.date_stamp)
-      if (anchor.transcript_source !== 'system' && anchor.transcript_source !== 'doubao') invalid()
-      const cacheKey = `${dateStamp}:${anchor.transcript_source}`
-      let candidates = nearby.get(cacheKey) ?? []
-      if (!candidates.some(item => item.startAtMillis <= atMillis && item.endAtMillis > atMillis)) {
-        const page = await this.locate({ atMillis, dateStamp, transcriptSource: anchor.transcript_source }, signal)
-        await assertCurrent()
-        candidates = page.items
-        nearby.set(cacheKey, candidates)
-      }
-      const matches = candidates.filter(item => item.startAtMillis <= atMillis && item.endAtMillis > atMillis)
-      if (matches.length !== 1) throw new ArkmePluginError('voice-trigger-source-not-ready', '原音定位正在更新，请稍后重试', true, 409)
-      const item = matches[0]!
+    for (const value of array(raw.anchors, 128)) {
+      const anchor = objectValue(value)
+      const recordingId = text(anchor.recording_id), childId = text(anchor.child_id), revision = text(anchor.view_revision)
+      const ordinal = number(anchor.ordinal), startAt = number(anchor.start_at), endAt = number(anchor.end_at)
+      if (!/^[a-f0-9]{24}$/.test(recordingId) || !/^[a-f0-9]{24}$/.test(childId) || !/^[a-f0-9]{64}$/.test(revision) || endAt <= startAt) invalid()
+      const page = await this.locate({ recordingId, childId, ordinal, revision, startAt, endAt }, signal)
+      await assertCurrent()
+      if (page.items.length !== 1) throw new ArkmePluginError('voice-trigger-source-not-ready', '原音定位正在更新，请稍后重试', true, 409)
+      const item = page.items[0]!
       if (!items.some(other => other.itemRef === item.itemRef)) items.push(item)
     }
     if (!items.length) invalid()

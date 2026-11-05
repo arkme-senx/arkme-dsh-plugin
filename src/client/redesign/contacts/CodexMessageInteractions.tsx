@@ -29,7 +29,7 @@ export function CodexSelectableBody({ sourceRef, event, inputName, children }: {
   useLayoutEffect(() => {
     if(!ref.current) return
     const canonical=quoteDomProjection(ref.current).text
-    return registerMessageTextSelectionTarget(ref.current,event.text,{ sourceRef, selectionDomain:'codex',localMarkRef:JSON.stringify([sourceRef,codexEventKey(event),canonical]),item:{
+    return registerMessageTextSelectionTarget(ref.current,event.text,{ sourceRef,excerptOrigin:{kind:'codex',itemRef:JSON.stringify([sourceRef,codexEventKey(event)])},selectionDomain:'codex',localMarkRef:JSON.stringify([sourceRef,codexEventKey(event),canonical]),item:{
       itemUid:codexEventKey(event),title:'',textContent:canonical,textFormat:'plain',status:codexSelectable(event)?1:0,senderName:event.kind==='UserPromptSubmit'?inputName:'Codex',isMe:false,sendAtMillis:event.at,
     } })
   },[sourceRef,event.text,event.kind,event.at,event.truncated,event.eventId,event.turnId,event.sequence,inputName])
@@ -40,18 +40,19 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
   const sourceRef=JSON.stringify(['codex',userId,JSON.stringify([teamRef,task.cloud?.sourceId??task.installationId??'local',task.id])])
   const controller=useMemo(()=>new AbortController(),[sourceRef,account])
   useEffect(()=>()=>controller.abort(),[controller])
-  const [selection,setSelection]=useState<Map<string,string>>()
+  const [selection,setSelection]=useState<Map<string,TeamCodexEvent>>()
   const [menu,setMenu]=useState<{id:string;x:number;y:number}>()
   const [query,setQuery]=useState<string>()
   const [notice,setNotice]=useState(''),[busy,setBusy]=useState(false)
-  const working=useRef(false),latest=useRef(events);latest.current=events
+  const working=useRef(false),latest=useRef(events);latest.current=mergeSelectedCodexEvents(selection,events)
   const marks=useMessageUnderlines(`${account}:${sourceRef}`,userId?sourceRef:undefined,userId,marksTransport)
   useSelectedMessageSearch(sourceRef,setQuery)
   const getRows=useCallback(()=>Array.from(document.querySelectorAll<HTMLElement>('[data-codex-body]')).filter(row=>row.closest('[data-codex-source]')?.getAttribute('data-codex-source')===sourceRef),[sourceRef])
   useEffect(()=>{
     setSelection(previous=>{
       if(!previous)return previous
-      const next=new Map([...previous].filter(([key,text])=>events.some(event=>codexEventKey(event)===key&&event.text===text&&codexSelectable(event))))
+      if(!events.length)return undefined
+      const current=new Map(events.map(event=>[codexEventKey(event),event]));const next=new Map([...previous].filter(([key,snapshot])=>{const event=current.get(key);return !event||event.text===snapshot.text&&codexSelectable(event)}))
       return next.size===previous.size?previous:next
     })
     if(menu&&!events.some(event=>codexEventKey(event)===menu.id&&codexSelectable(event)))setMenu(undefined)
@@ -64,7 +65,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
   const toggle=(event:TeamCodexEvent)=>{
     if(working.current)return
     const key=codexEventKey(event)
-    setSelection(previous=>{const next=new Map(previous);if(next.has(key))next.delete(key);else if(next.size<100)next.set(key,event.text);return next})
+    setSelection(previous=>{const next=new Map(previous);if(next.has(key))next.delete(key);else if(next.size<100)next.set(key,event);return next})
   }
   const act=async(work:()=>Promise<void>)=>{
     if(working.current||controller.signal.aborted)return
@@ -72,7 +73,7 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
     try{await work()}catch(e){if(!controller.signal.aborted)setNotice(e instanceof Error?e.message:'操作失败，请重试')}
     finally{working.current=false;if(!controller.signal.aborted)setBusy(false)}
   }
-  const snapshot=()=>codexSelectionSnapshot(teamRef,task,latest.current,new Set(selection?.keys()))
+  const snapshot=()=>{if(!events.length)throw Error('所选消息已不可访问');return codexSelectionSnapshot(teamRef,task,latest.current,new Set(selection?.keys()))}
   const selectedCount=selection?.size??0
   const row=menu?events.find(event=>codexEventKey(event)===menu.id):undefined
   const forward=()=>act(async()=>{
@@ -96,23 +97,28 @@ export function useCodexMessageInteractions({ teamRef, task, events, account, us
     check:(event:TeamCodexEvent)=>selection&&codexSelectable(event)?<ArkmeMessageSelectionControl anchor="avatar" checked={selection.has(codexEventKey(event))} disabled={busy} onToggle={()=>toggle(event)}/>:null,
     dock: selection?<ArkmeMessageSelectionBar count={selectedCount} ariaLabel="Codex 多选操作" style={{position:'absolute',inset:0,minHeight:100}} actions={[
       {id:'copy',label:'复制文本',icon:<ArkmeSelectActionIcon kind="copy"/>,disabled:!selectedCount||busy,onSelect:()=>{void act(async()=>{await copyText(snapshot().messages.map(message=>message.text).join('\n\n'));setNotice('已复制')})}},
-      {id:'link',label:'复制链接',icon:<ArkmeSelectActionIcon kind="link"/>,disabled:!selectedCount||busy,onSelect:()=>setNotice('Codex 复制链接：后端接口开发中，开发完成后此功能完整可用。')},
+      {id:'link',label:'复制链接',icon:<ArkmeSelectActionIcon kind="link"/>,disabled:!selectedCount||busy,onSelect:()=>{void act(async()=>{const result=await callArkme<{url:string}>('codex.copy-link',{teamRef,id:task.id,...(task.cloud?.remote?{sourceId:task.cloud.sourceId}:{}),snapshot:snapshot(),expectedUserId:userId},controller.signal);if(!result.url)throw Error('链接尚未通过审核，请稍后重试');await copyText(result.url);setNotice('已复制链接')})}},
       {id:'forward',label:'转发',icon:<ArkmeSelectActionIcon kind="forward"/>,disabled:!selectedCount||busy,onSelect:()=>{void forward()}},
       {id:'exit',label:'退出多选',icon:<ArkmeSelectActionIcon kind="close"/>,disabled:busy,onSelect:()=>{setSelection(undefined);setNotice('')}},
     ]}><span style={{width:'100%',textAlign:'center',fontSize:12,color:arkmeTheme.secondary}}>已选 {selectedCount} 条{selectedCount===100?' · 最多 100 条':''}{busy?' · 处理中…':''}</span></ArkmeMessageSelectionBar>:null,
     host:typeof document !== 'undefined' && typeof document.addEventListener === 'function'?<>
       {menu&&row&&<ArkmeActionMenu point={menu} label="Codex 消息操作" autoFocus onClose={()=>setMenu(undefined)} actions={[
         {id:'copy',label:'复制',icon:<ArkmeSelectActionIcon kind="copy"/>,onSelect:()=>{setMenu(undefined);void act(()=>copyText(row.text))}},
-        {id:'select',label:'多选',icon:<ArkmeSelectActionIcon kind="select"/>,onSelect:()=>{setMenu(undefined);document.getSelection()?.removeAllRanges();setSelection(previous=>{const next=new Map(previous);if(next.size<100||next.has(codexEventKey(row)))next.set(codexEventKey(row),row.text);return next})}},
+        {id:'select',label:'多选',icon:<ArkmeSelectActionIcon kind="select"/>,onSelect:()=>{setMenu(undefined);document.getSelection()?.removeAllRanges();setSelection(previous=>{const next=new Map(previous);if(next.size<100||next.has(codexEventKey(row)))next.set(codexEventKey(row),row);return next})}},
         ...(row.kind === 'UserPromptSubmit' && userId && (!task.cloud ? task.member.userRef === String(userId) : task.cloud.ownerRef === String(userId)) ? [{ id: 'world', label: '发到世界', icon: <Globe size={16}/>, onSelect: () => {
           try { openWorldPublish({ accountKey: account, origin: { kind: 'local', sourceRef, itemUid: codexEventKey(row), sourceLabel: `Codex · ${task.title}`, textContent: codexSelectionSnapshot(teamRef, task, [row], new Set([codexEventKey(row)])).messages[0]!.text, sendAtMillis: row.at, hasAttachments: !!row.privateImages?.length } }, controller.signal); setMenu(undefined) }
           catch (error) { setNotice(error instanceof Error ? error.message : '暂时无法打开') }
         } }] : []),
       ]}/>}
-      <ArkmeMessageTextSelectionToolbar selectionDomain="codex" replySourceRef={sourceRef} onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage="local" selfNote={userId ? { sourceLabel: `Codex · ${task.title}`, accountKey: account } : undefined}/>
+      <ArkmeMessageTextSelectionToolbar selectionDomain="codex" replySourceRef={sourceRef} onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage={marks.storage} selfNote={userId ? { sourceLabel: `Codex · ${task.title}`, accountKey: account } : undefined}/>
       {marks.layer}
       {query!==undefined&&<MessageTextFind doc={document} getRows={getRows} query={query} setQuery={setQuery} onClose={()=>setQuery(undefined)}/>}
     </>:null,
     feedback:notice?<div role="status" style={{flex:'none',fontSize:12,padding:'7px 14px',background:arkmeTheme.menu,color:arkmeTheme.secondary,display:'flex',gap:8,alignItems:'center'}}><span style={{flex:1}}>{notice}</span><button type="button" aria-label="关闭提示" onClick={()=>setNotice('')} style={{border:0,background:'transparent',color:'inherit',cursor:'pointer'}}>×</button></div>:null,
   }
+}
+
+// Selection is already limited to 100 rows; evicting a reader page must not deselect its snapshot.
+function mergeSelectedCodexEvents(selected:Map<string,TeamCodexEvent>|undefined,events:TeamCodexEvent[]){
+ const rows=new Map(selected);for(const event of events)rows.set(codexEventKey(event),event);return [...rows.values()]
 }

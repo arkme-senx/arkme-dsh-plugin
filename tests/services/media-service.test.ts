@@ -261,6 +261,7 @@ describe('MediaService', () => {
     vi.spyOn(profile, 'publicProfilesByUserIds').mockResolvedValue(new Map([[88, {
       userId: 88, displayName: 'SECRET_NAME', nickname: 'SECRET_NAME', avatarUrl: url,
     }]]))
+    vi.spyOn(profile, 'publicProfileSummariesByUserIds').mockResolvedValue(new Map([[88, { userId: 88, displayName: 'SECRET_NAME', nickname: 'SECRET_NAME', avatarUrl: url }]]))
     const media = new MediaService(runtime, profile, {} as never, { recordUid() { return '' } })
     const ref = await profile.sealProfileImageRef(42, 88)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -559,4 +560,18 @@ it('does not treat hidden rich media as a complete original-attachment export', 
   expect(media.recordMediaUnavailable(raw, [])).toBe(false)
   expect(media.recordMediaUnavailable(raw, [], true)).toBe(true)
   expect(media.recordMediaUnavailable({ payload: {} }, [], true)).toBe(false)
+})
+
+it('projects remote pending/failed slots without URLs, grants or missing-asset queries', () => {
+  const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
+  const raw = { content_payload: { media_refs: [
+    { file_asset_uid: '', file_name: 'photo.png', sort_order: 0, upload: { attachment_uid: 'photo', kind: 1, size: 5, state: 'pending' } },
+    { file_asset_uid: '', file_name: 'movie.mp4', sort_order: 1, upload: { attachment_uid: 'video', kind: 3, size: 50, state: 'failed' } },
+    { file_asset_uid: '', file_name: 'paper.pdf', sort_order: 2, upload: { attachment_uid: 'file', kind: 4, size: 10, state: 'pending' } },
+  ] } }
+  const blocks = media.richContentBlocks(raw, 42)
+  expect(blocks.map(block => [block.kind, block.attachmentState, block.mediaRef])).toEqual([
+    ['image', 'pending', ''], ['video', 'failed', ''], ['file', 'pending', ''],
+  ])
+  expect(media.recordMediaUnavailable(raw, blocks)).toBe(false)
 })

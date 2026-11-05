@@ -1,8 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { codexPromptText, codexPromptPresentation } from '../src/team-codex-prompt-text.js'
-import { browserContext, wrappedCodexPrompt, questionReplyPrompt } from './fixtures/codex-prompt.js'
+import { codexPromptText, codexPromptPresentation, codexPromptDisplayText } from '../src/team-codex-prompt-text.js'
+import { browserContext, wrappedCodexPrompt, questionReplyPrompt, responseAnnotationPrompt } from './fixtures/codex-prompt.js'
+import { codexImageSafeText } from '../src/team-codex-image-text.js'
 
 describe('Codex question display text', () => {
+  it('projects response selections and comments while preserving the collected annotation body',()=>{
+    const rows=[{text:'第一段\n保留换行',comment:'继续验证',source:{messageId:'msg_first',startOffset:1,endOffset:10}},
+      {text:'第二段 😀',source:{messageId:'msg_second',startOffset:100,endOffset:108}}]
+    const raw=responseAnnotationPrompt('  实际请求\n',rows)
+    const shown=codexPromptPresentation(raw)
+    expect(shown.responseAnnotations).toEqual({annotations:rows,request:'  实际请求\n'})
+    expect(shown.text).toBe('第一段\n保留换行\n\n继续验证\n\n第二段 😀\n\n  实际请求\n')
+    expect(codexPromptDisplayText(wrappedCodexPrompt(raw))).toBe(shown.text)
+    expect(codexPromptDisplayText(shown.text)).toBe(shown.text)
+    expect(codexPromptText(raw)).toBe(raw)
+  })
+  it('keeps quoted, malformed, oversized and unfamiliar annotation envelopes readable',()=>{
+    const raw=responseAnnotationPrompt()
+    const row={text:'选文',source:{messageId:'msg_valid',startOffset:0,endOffset:2}}
+    for(const value of [`解释这个：\n${raw}`,`\`\`\`text\n${raw}\n\`\`\``,raw.replace('Each item contains','Unknown format contains'),
+      raw.slice(0,-30),responseAnnotationPrompt('',[]),responseAnnotationPrompt('',Array(101).fill(row)),
+      responseAnnotationPrompt('',[{...row,source:{...row.source,startOffset:-1}}]),
+      responseAnnotationPrompt('',[{...row,source:{...row.source,endOffset:Number.MAX_SAFE_INTEGER+1}}]),
+      responseAnnotationPrompt('',[{...row,source:{...row.source,messageId:'https://not-a-source.invalid'}}]),
+      responseAnnotationPrompt('',[{...row,unexpected:'data'}]),responseAnnotationPrompt('',[{...row,comment:{bad:true}}]),
+      responseAnnotationPrompt('x'.repeat(1024*1024))]) {
+      expect(codexPromptPresentation(value)).toEqual({text:value})
+    }
+  })
+  it('redacts annotation images as structured fields without corrupting their JSON or exposing private paths',()=>{
+    const raw=responseAnnotationPrompt('![需求图](/private/request.png)',[{text:'选文 ![图](/private/quoted.png)\n<img src="/private/html.png">',
+      comment:'![注释图](https://private.invalid/comment.png)',source:{messageId:'msg_image',startOffset:0,endOffset:30}}])
+    const safe=codexImageSafeText(codexPromptText(raw)),shown=codexPromptPresentation(safe)
+    expect(shown.responseAnnotations?.annotations).toHaveLength(1)
+    expect(shown.responseAnnotations?.request).toBe('[图片仅本人可见]')
+    expect(shown.text).not.toMatch(/private|<img|response-annotations/)
+    expect(codexImageSafeText(safe)).toBe(safe)
+  })
   it('extracts paired questions and answers, decodes JSON once, and omits generated identifiers and clock', () => {
     const replies = [{question:'先选哪种？\n支持多行',answer:'本机\n保留 \\n 原文'}, {question:'第二项',answer:'继续'}]
     const raw = questionReplyPrompt([{...replies[0]!,question:`当前时间：2026-10-23 18:29:01 CST (+0800)\n${replies[0]!.question}`},replies[1]!])

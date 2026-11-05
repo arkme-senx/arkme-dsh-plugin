@@ -3,7 +3,7 @@ import { parseDshDirectoryDelta, type DshDirectoryDelta } from './account-sessio
 import { setTimeout as delay } from 'node:timers/promises'
 import { remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { DshRemoteError, asDshRemoteError } from './errors.js'
-import { nativeRecord } from './native-transport.js'
+import { nativeRecord, nativeRequestIsRead } from './native-transport.js'
 import { parseDshRemoteRequest } from './protocol-v1.js'
 import { DshRemoteFragmentReader, dshRemoteOutboundPayloads } from './transport-fragment.js'
 import { DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES, type DshRemotePublishTiming, type DshRemoteRealtimeTransport, type DshRemoteRuntimeTarget, type DshRemoteTrustedEventMetadata, type DshRemoteRequest, type DshRemoteResponse } from './types.js'
@@ -81,6 +81,7 @@ export class DshSessionChannelHost {
   constructor(private readonly options: {
     transport: DshRemoteRealtimeTransport; target: DshRemoteRuntimeTarget
     epoch: (runtimeRef: string, sessionRef: string) => number | undefined
+    readable?: (runtimeRef: string, sessionRef: string) => boolean
     recover?: (runtimeRef: string, sessionRef: string, body: Json, signal: AbortSignal) => Promise<void>
     native: (runtimeRef: string, sessionRef: string, body: Json, signal: AbortSignal) => Promise<unknown>
     call?: (request: Request, signal: AbortSignal) => Promise<unknown>
@@ -89,6 +90,11 @@ export class DshSessionChannelHost {
     failed: (error: unknown) => void
     onDiagnostic?: (event: string, fields: Json) => void
   }) {}
+
+  private epoch(runtime: string, session: string, body: Json): number | undefined {
+    return this.options.readable?.(runtime, session) && (body.operation === 'session.history' || body.operation === 'session.model.get'
+      || body.operation === undefined && body.mode !== undefined && nativeRequestIsRead(body)) ? 0 : this.options.epoch(runtime, session)
+  }
 
   async start(): Promise<void> {
     this.unsubscribe = await this.options.transport.subscribe({ target: { ...this.options.target, sessionChannel: true },
@@ -227,18 +233,27 @@ export class DshSessionChannelHost {
       const envelope = parseDshRemoteRequest(raw, { expectedHostGeneration: Number(raw.host_generation), nowMillis: Date.now() })
       if (envelope.operation === 'session.native') return // Native has its existing carrier.
       const session = envelope.body.session_ref
-      if (typeof session === 'string' ? this.options.epoch(value.runtimeRef, session) === undefined : value.runtimeRef !== this.options.target.runtimeRef) return
+      if (typeof session === 'string' ? this.options.epoch(value.runtimeRef, session) === undefined && !this.options.readable : value.runtimeRef !== this.options.target.runtimeRef) return
       const id = JSON.stringify([value.runtimeRef, envelope.request_ref])
       if (this.running.has(id) || this.commands.has(id)) return
       if (!this.commands.has(id) && this.commands.size + this.pending.size + this.running.size >= 128) return
       this.diagnostic('host_request_received', { request_ref: envelope.request_ref, operation: envelope.operation, transport_seq: metadata.transportSequence })
       this.commands.set(id, { runtimeRef: value.runtimeRef, envelope })
-      if (typeof session === 'string' && (envelope.operation === 'session.history'
+      if (typeof session === 'string' && (envelope.operation === 'session.history' || envelope.operation === 'session.model.get'
         || envelope.operation === 'session.prompt' && envelope.body.mode === 'queue')) {
         // A mobile queued prompt can be the first access after a desktop
         // restart. Recover its writer through the same fenced opening as the
         // native prompt, then execute this original request/ledger key once.
-        this.recoverOpening(id, { runtimeRef: value.runtimeRef, sessionRef: session }, { ...envelope.body, operation: envelope.operation }, envelope.execute_before, () => { this.commands.delete(id) })
+        this.recoverOpening(id, { runtimeRef: value.runtimeRef, sessionRef: session }, { ...envelope.body, operation: envelope.operation }, envelope.execute_before, async error => {
+          this.commands.delete(id)
+          const remote = asDshRemoteError(error)
+          await this.publish({ kind: 'session.response', runtimeRef: value.runtimeRef, envelope: {
+            protocol: envelope.protocol, protocol_major: envelope.protocol_major, kind: 'response',
+            request_ref: envelope.request_ref, host_generation: envelope.host_generation, issued_at: Date.now(),
+            operation: envelope.operation, body: {}, status: 'rejected',
+            error: { code: remote.code, message: remote.message, retryable: remote.retryable, trace_ref: randomUUID() },
+          } }, this.lifetime.signal, session)
+        })
       }
       this.tick(); return
     }
@@ -261,26 +276,31 @@ export class DshSessionChannelHost {
       if (stream && key(stream.request) === key(request)) { this.streams.delete(String(request.body.streamRef)); stream.controller.abort() }
       return
     }
-    const execution = this.options.epoch(request.runtimeRef, request.sessionRef)
+    const execution = this.epoch(request.runtimeRef, request.sessionRef, request.body)
     const queuedPrompt = request.body.mode === 'call' && request.body.endpoint === 'session/prompt'
       && nativeRecord(nativeRecord(nativeRecord(request.body.payload).args).request).mode === 'queue'
-    if (execution === undefined || execution < 0 && request.body.mode !== 'pull' && !queuedPrompt || this.pending.has(request.requestRef) || this.running.has(request.requestRef)) return
+    if (execution === undefined && !this.options.readable || execution !== undefined && execution < 0 && request.body.mode !== 'pull' && !queuedPrompt || this.pending.has(request.requestRef) || this.running.has(request.requestRef)) return
     if (this.pending.size + this.running.size >= 128) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '会话请求积压超限')
     this.diagnostic('host_request_received', { request_ref: request.requestRef, operation: 'session.native', transport_seq: metadata.transportSequence })
     this.pending.set(request.requestRef, request)
-    if (request.body.mode === 'pull' && request.body.endpoint === 'session/follow' || queuedPrompt) {
-      this.recoverOpening(request.requestRef, request, request.body, request.expiresAt, () => { this.pending.delete(request.requestRef) })
+    if (nativeRequestIsRead(request.body) || queuedPrompt) {
+      this.recoverOpening(request.requestRef, request, request.body, request.expiresAt, async error => { this.pending.delete(request.requestRef); await this.respond(request, 0, undefined, error) })
     }
     this.tick()
   }
-  private recoverOpening(id: string, address: Address, body: Json, expiresAt: number, failed: () => void): void {
-    if (!this.options.recover || (this.options.epoch(address.runtimeRef, address.sessionRef) ?? 1) > 0) return
+  private recoverOpening(id: string, address: Address, body: Json, expiresAt: number, failed: (error: unknown) => Promise<void>): void {
+    if (!this.options.recover || (this.options.epoch(address.runtimeRef, address.sessionRef) ?? (this.options.readable ? 0 : 1)) > 0) return
     // Recover once for this actual opening, not on the periodic producer
     // tick. The local owner checks the peer and the original DSH writer fence.
     this.running.add(id)
     const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(Math.max(1, expiresAt - Date.now()))])
     void this.options.recover(address.runtimeRef, address.sessionRef, body, signal)
-      .catch(error => { failed(); if (!this.lifetime.signal.aborted) this.options.failed(error) })
+      .catch(async error => {
+        if (this.lifetime.signal.aborted) return
+        // A host without this source cannot reject a request another host can serve.
+        if (this.options.epoch(address.runtimeRef, address.sessionRef) === 0 && this.options.readable?.(address.runtimeRef, address.sessionRef)) await failed(error)
+        this.options.failed(error)
+      }).catch(error => { if (!this.lifetime.signal.aborted) this.options.failed(error) })
       .finally(() => { this.running.delete(id); this.tick() })
   }
   private tick(): void {
@@ -290,7 +310,10 @@ export class DshSessionChannelHost {
       if (this.running.has(id)) continue
       if (command.publisher && !command.publisher.inactive && this.reader.hasTransfer(command.publisher.transferRef)) continue
       const session = command.envelope.body.session_ref
-      if (typeof session === 'string' && (this.options.epoch(command.runtimeRef, session) ?? -1) <= 0) continue
+      if (typeof session === 'string') {
+        const epoch = this.epoch(command.runtimeRef, session, { ...command.envelope.body, operation: command.envelope.operation })
+        if (epoch === undefined || epoch < 0 || epoch === 0 && !(this.options.readable?.(command.runtimeRef, session) && ['session.history', 'session.model.get'].includes(command.envelope.operation))) continue
+      }
       this.commands.delete(id); this.running.add(id)
       const signal = AbortSignal.any([this.lifetime.signal, AbortSignal.timeout(Math.max(1, command.envelope.execute_before - Date.now()))])
       const started = performance.now()
@@ -304,12 +327,12 @@ export class DshSessionChannelHost {
         .catch(error => { if (!this.lifetime.signal.aborted) this.options.failed(error) })
         .finally(() => this.running.delete(id))
     }
-    for (const stream of this.streams.values()) if (Date.now() - stream.touched > 45_000 || this.options.epoch(stream.request.runtimeRef, stream.request.sessionRef) !== stream.epoch) stream.controller.abort()
+    for (const stream of this.streams.values()) if (Date.now() - stream.touched > 45_000 || this.epoch(stream.request.runtimeRef, stream.request.sessionRef, stream.request.body) !== stream.epoch) stream.controller.abort()
     for (const [id, request] of this.pending) {
       if (request.expiresAt <= Date.now()) { this.pending.delete(id); continue }
       if (this.running.has(id)) continue
-      const epoch = this.options.epoch(request.runtimeRef, request.sessionRef)
-      if (epoch === undefined || epoch <= 0) {
+      const epoch = this.epoch(request.runtimeRef, request.sessionRef, request.body)
+      if (epoch === undefined || epoch < 0 || epoch === 0 && !(this.options.readable?.(request.runtimeRef, request.sessionRef) && nativeRequestIsRead(request.body))) {
         if (epoch !== undefined && epoch < 0 && request.body.mode !== 'pull') this.pending.delete(id)
         continue
       }
@@ -349,7 +372,7 @@ export class DshSessionChannelHost {
           this.followReplies.clear(); this.followReplyBytes = 0
           for (const reply of replies) {
             if (this.lifetime.signal.aborted) { reply.reject(this.lifetime.signal.reason); continue }
-            if (this.options.epoch(String(reply.payload.runtimeRef), String(reply.payload.sessionRef)) !== reply.payload.epoch) {
+            if (this.epoch(String(reply.payload.runtimeRef), String(reply.payload.sessionRef), { mode: 'pull' }) !== reply.payload.epoch) {
               reply.reject(new DshRemoteError('SESSION_STATE_CHANGED', '会话执行权已改变', true)); continue
             }
             const { streamRef: _stream, ...common } = reply.payload
@@ -396,13 +419,13 @@ export class DshSessionChannelHost {
     } catch (error) {
       this.diagnostic('host_request_failed', { request_ref: request.requestRef, operation: 'session.native', error_code: asDshRemoteError(error).code })
       if (!this.lifetime.signal.aborted && this.streams.get(id) === stream) {
-        if (this.options.epoch(request.runtimeRef, request.sessionRef) !== epoch) return
+        if (this.epoch(request.runtimeRef, request.sessionRef, request.body) !== epoch) return
         if (controller.signal.aborted) await this.respond(request, epoch, { items: [], done: true })
         else await this.respond(request, epoch, undefined, error)
       }
     } finally {
       if (this.streams.get(id) === stream) this.streams.delete(id)
-      if (this.options.epoch(request.runtimeRef, request.sessionRef) === epoch) this.pending.delete(request.requestRef)
+      if (this.epoch(request.runtimeRef, request.sessionRef, request.body) === epoch) this.pending.delete(request.requestRef)
       controller.abort()
     }
   }
@@ -412,7 +435,7 @@ type Inbox = Address & { opened?: boolean; ended?: boolean; reopening?: ReturnTy
 export class DshSessionChannelClient {
   private readonly lifetime = new AbortController()
   private readonly streams = new Map<string, Inbox>()
-  private readonly calls = new Map<string, { address: Address; operation?: string; resolve: (value: unknown) => void; reject: (error: unknown) => void }>()
+  private readonly calls = new Map<string, { address: Address; operation?: string; readOnly?: boolean; resolve: (value: unknown) => void; reject: (error: unknown) => void }>()
   private reader = new DshRemoteFragmentReader(128)
   private readonly target: DshRemoteRuntimeTarget = { sessionChannel: true, runtimeRef: 'sessions_v1', hostProfileRef: 'session-observer', hostClientRef: 'session-observer', hostLeaseGeneration: 0 }
   private readonly directoryListeners = new Set<(delta?: DshDirectoryDelta) => void>()
@@ -552,12 +575,13 @@ export class DshSessionChannelClient {
       } else if (['accepted', 'completed', 'duplicate'].includes(String(envelope.status))) call.resolve(envelope.result)
       return
     }
-    if (value.kind !== 'session.response' || !validRef(value.runtimeRef) || !validRef(value.sessionRef) || !validRef(value.requestRef) || !Number.isSafeInteger(value.epoch) || Number(value.epoch) <= 0) return
+    if (value.kind !== 'session.response' || !validRef(value.runtimeRef) || !validRef(value.sessionRef) || !validRef(value.requestRef) || !Number.isSafeInteger(value.epoch) || Number(value.epoch) < 0) return
+    if (Number(value.epoch) === 0 && typeof value.streamRef !== 'string' && !this.calls.get(value.requestRef)?.readOnly && !value.error) return
     const address = value as Address, rawError = value.error ? nativeRecord(value.error) : undefined
     const error = rawError ? new DshRemoteError(String(rawError.code) as ConstructorParameters<typeof DshRemoteError>[0], String(rawError.message), rawError.retryable === true) : undefined
     if (typeof value.streamRef === 'string') {
       const stream = this.streams.get(value.streamRef)
-      if (!stream || key(stream) !== key(address) || Number(value.epoch) < stream.epoch) return
+      if (!stream || key(stream) !== key(address) || Number(value.epoch) > 0 && stream.epoch > 0 && Number(value.epoch) < stream.epoch) return
       if (stream.ended) return
       stream.epoch = Number(value.epoch)
       if (error?.code === 'REMOTE_NOT_FOUND' && error.retryable) {
@@ -638,7 +662,7 @@ export class DshSessionChannelClient {
       return new Promise((resolve, reject) => {
         const abort = () => finish(() => reject(deadline.reason))
         const finish = (action: () => void) => { this.calls.delete(requestRef); deadline.removeEventListener('abort', abort); action() }
-        this.calls.set(requestRef, { address, resolve: value => finish(() => resolve(value)), reject: error => finish(() => reject(error)) })
+        this.calls.set(requestRef, { address, readOnly: nativeRequestIsRead(body), resolve: value => finish(() => resolve(value)), reject: error => finish(() => reject(error)) })
         deadline.addEventListener('abort', abort, { once: true })
         if (deadline.aborted) { abort(); return }
         void publish(this.transport, this.target, request, deadline).catch(error => finish(() => reject(error)))
@@ -660,7 +684,7 @@ export class DshSessionChannelClient {
       while (!deadline.aborted && !waiting.failure && waiting.queue.length === 0) await new Promise<void>(resolve => { waiting.wake = resolve })
       scoped.throwIfAborted()
       if (waiting.failure) throw waiting.failure
-      if (deadline.aborted && waiting.epoch === 0) throw new DshRemoteError('RUNTIME_OFFLINE', '当前执行者尚未接收会话订阅', true)
+      if (deadline.aborted && !waiting.opened) throw new DshRemoteError('RUNTIME_OFFLINE', '当前执行者尚未接收会话订阅', true)
       const received = waiting.queue.shift()
       const bytes = received ? Buffer.byteLength(JSON.stringify(received)) : 0
       waiting.bytes -= bytes; this.bufferedBytes = Math.max(0, this.bufferedBytes - bytes)

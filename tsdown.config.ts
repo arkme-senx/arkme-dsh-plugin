@@ -30,6 +30,8 @@ export default defineConfig([
       'local-session-gateway': 'src/local-session-gateway.ts',
       'local-session-runtime': 'src/local-session-runtime.ts',
       'local-session-store': 'src/local-session-store.ts',
+      'local-session-persistence': 'src/local-session-persistence.ts',
+      'local-session-attachments': 'src/local-session-attachments.ts',
       'plugin-updater-helper': 'src/plugin-updater-helper-cli.ts',
       'persistent-extension': 'src/extensions/persistent-runtime.ts',
       'bundle-runtime': 'src/extensions/bundle-runtime.ts',

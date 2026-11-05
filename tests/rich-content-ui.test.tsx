@@ -1252,3 +1252,44 @@ describe('forward detail summary content', () => {
     expect(summaryLines[0]).toBe('[jm_emoji:heart_eyes][im_emoji:thumb_up]')
   })
 })
+
+it('renders pending attachments without media fetches or download/preview controls', () => {
+  const html = renderToStaticMarkup(<ArkmeMessageContent item={{ itemUid: 'message', title: '', textContent: '先到的正文', senderName: '甲', isMe: false, status: 1, sendAtMillis: 1,
+    contentBlocks: [
+      { kind: 'image', attachmentUid: 'image', attachmentState: 'pending', mediaRef: '', fileName: 'image.png', mimeType: 'image/png', size: 10, sortOrder: 0 },
+      { kind: 'video', attachmentUid: 'video', attachmentState: 'failed', mediaRef: '', fileName: 'video.mp4', mimeType: 'video/mp4', size: 10, sortOrder: 1 },
+      { kind: 'file', attachmentUid: 'file', attachmentState: 'pending', mediaRef: '', fileName: 'file.pdf', mimeType: 'application/pdf', size: 10, sortOrder: 2 },
+      { kind: 'audio', attachmentUid: 'audio', attachmentState: 'pending', mediaRef: '', fileName: 'audio.mp3', mimeType: 'audio/mpeg', size: 10, sortOrder: 3 },
+    ] }} />)
+  expect(html).toContain('先到的正文'); expect(html).toContain('附件上传中'); expect(html).toContain('附件上传失败')
+  expect(html).not.toContain('<video'); expect(html).not.toContain('<audio'); expect(html).not.toContain('?ref=')
+  expect(html.match(/data-arkme-pending-attachment=/g)).toHaveLength(4)
+  expect(html.match(/role="progressbar"/g)).toHaveLength(3)
+  expect(html).not.toContain('aria-valuenow')
+  expect(html).toContain('data-arkme-file-icon="pdf"')
+  expect(html).toContain('data-arkme-file-icon="audio"')
+  expect(html).toContain('aspect-ratio:1')
+  expect(html).not.toContain('min-width:100px')
+  expect(html).not.toContain('<button')
+})
+
+
+it('shows actual upload progress as a ring and removes it when ready', () => {
+  const item = { itemUid: 'upload', title: '', textContent: '', senderName: '我', isMe: true, status: 1, sendAtMillis: 1 }
+  const block = { kind: 'image' as const, mediaRef: '', localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'photo.png', mimeType: 'image/png', size: 100, sortOrder: 0 }
+  const uploading = renderToStaticMarkup(<ArkmeMessageContent item={{ ...item, contentBlocks: [{ ...block, uploadProgress: { phase: 'uploading', sentBytes: 42, totalBytes: 100 } }] }} />)
+  expect(uploading).toContain('aria-valuenow="42"')
+  expect(uploading).toContain('stroke-dasharray="42 100"')
+  const ready = renderToStaticMarkup(<ArkmeMessageContent item={{ ...item, contentBlocks: [{ ...block, uploadProgress: { phase: 'ready', sentBytes: 100, totalBytes: 100 } }] }} />)
+  expect(ready).not.toContain('role="progressbar"')
+})
+
+
+it('previews staged audio locally while its remote attachment is pending', () => {
+  const localFileRef = 'arkme-file-v1.11111111-1111-4111-8111-111111111111'
+  const html = renderToStaticMarkup(<ArkmeMessageContent item={{ itemUid: 'audio-upload', title: '', textContent: '', senderName: '我', isMe: true, status: 1, sendAtMillis: 1,
+    contentBlocks: [{ kind: 'audio', attachmentUid: 'audio', attachmentState: 'pending', mediaRef: localFileRef, localFileRef, fileName: 'audio.wav', mimeType: 'audio/wav', size: 100, sortOrder: 0 }],
+  }} />)
+  expect(html).toContain(`/arkme-self/api/files/local?ref=${localFileRef}`)
+  expect(html).not.toContain(`/api/media?ref=${localFileRef}`)
+})

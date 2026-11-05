@@ -4,6 +4,7 @@ import { beforeEach, expect, it, vi } from 'vitest'
 const mock=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',async original=>({...await original<typeof import('../src/client/api.js')>(),callArkme:mock.call}))
 vi.mock('../src/client/ArkmeDetailShell.js', () => ({ ArkmeDetailShell: ({ children, title }: { children: ReactNode; title: string }) => <section aria-label={title}>{children}</section> }))
+vi.mock('../src/client/ArkmeCallDetailContent.js', () => ({ArkmeCallDetailContent: () => <div>通话原文</div>}))
 import { ArkmeArrangementSources } from '../src/client/ArkmeArrangementSources.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import type { ArkmeArrangementEvidence } from '../src/types.js'
@@ -203,5 +204,51 @@ it('aborts alternative source selection when the arrangement changes', async () 
   await act(async () => pending.resolve(sourceTarget))
   expect(openedEvidence()).toEqual(['first'])
   expect(JSON.stringify(view.toJSON())).not.toContain('后续有效依据')
+  await act(async () => view.unmount())
+})
+
+
+it.each(['unlocated', 'ambiguous', 'version_changed', 'pending'])('keeps the open button for a readable %s quote', async quoteState => {
+  mock.call.mockResolvedValue({evidenceId:'e',state:'ready',text:'',quoteState})
+  let view!:ReturnType<typeof create>
+  await act(async()=>{view=create(<ArkmeArrangementSources arrangementRef="a" sources={[{...cloudSource,kind:'call'}]} expanded />)})
+  expect(JSON.stringify(view.toJSON())).toContain(quoteState === 'pending' ? '通话转写处理中' : '原句待定位')
+  expect(view.root.findAllByType('button')).toHaveLength(1)
+  expect(JSON.stringify(view.toJSON())).not.toContain('已删除')
+  await act(async()=>view.unmount())
+})
+
+
+it('opens the call with a location notice and never highlights an unlocated quote', async () => {
+  mock.call.mockResolvedValue({kind:'call',quoteState:'unlocated',quote:'相似原句',startMillis:1000,
+    detail:{title:'通话',startedAtMillis:0,transcriptSegments:[{segmentId:'s',text:'相似原句',startMillis:1000}]}})
+  const node={dataset:{arkmeCallUtterance:'s'},style:{outline:''},scrollIntoView:vi.fn()}
+  let view!:ReturnType<typeof create>
+  await act(async()=>{view=create(<ArkmeArrangementSources arrangementRef="a" sources={callSources} expanded={false}/>,
+    {createNodeMock:()=>({querySelectorAll:()=>[node]})})})
+  await act(async()=>view.root.findByType('button').props.onClick({stopPropagation(){}}))
+  expect(JSON.stringify(view.toJSON())).toContain('原句待定位，暂不高亮任何语句')
+  expect(JSON.stringify(view.toJSON())).toContain('通话原文')
+  expect(node.style.outline).toBe('')
+  expect(node.scrollIntoView).not.toHaveBeenCalled()
+  await act(async()=>view.unmount())
+})
+
+it.each(['initial', 'related'] as const)('shows the actual conversation and locates its message without changing %s provenance', async role => {
+  const source = { sourceRef: 'chat-source', kind: 'group_chat', displayName: '硬件项目组' } as import('../src/types.js').ArkmeSourceItem
+  mock.call.mockImplementation(async (op: string) => op === 'arrangements.source.read'
+    ? { evidenceId: 'chat-evidence', state: 'ready', text: '周五下午三点确认样机', conversation: { source, itemUid: 'record-chat', recordOwnerUserId: 11, sendAtMillis: 1000 } }
+    : { kind: 'conversation', source, itemUid: 'record-chat', recordOwnerUserId: 11, sendAtMillis: 1000 })
+  let view!: ReturnType<typeof create>
+  await act(async () => { view = create(<ArkmeArrangementSources arrangementRef="a" expanded sources={[
+    { id: 'chat-evidence', kind: 'record', role, text: '不能回退展示的缓存原文', canOpen: true, readOnExpand: true },
+  ]} />) })
+  const rendered = JSON.stringify(view.toJSON())
+  expect(rendered).toContain('硬件项目组')
+  expect(rendered).toContain(role === 'related' ? '关联对话' : '识别依据')
+  expect(rendered).not.toContain('不能回退展示的缓存原文')
+  expect(rendered).not.toContain('快记或聊天')
+  await act(async () => view.root.findByType('button').props.onClick({ stopPropagation() {} }))
+  expect(arkmeUi.getSnapshot().conversationTarget).toMatchObject({ itemUid: 'record-chat', recordOwnerUserId: 11 })
   await act(async () => view.unmount())
 })

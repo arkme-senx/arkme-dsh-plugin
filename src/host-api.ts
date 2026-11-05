@@ -1,4 +1,5 @@
 import { ARRANGEMENT_OCCURRENCE_ACTIONS } from './arrangement-occurrence.js'
+import { exportSelection } from './services/record-export-range-service.js'
 import { DayReviewConfirmation } from './calendar-day-review-confirmation.js'
 import {readTeamRepresentationSelection} from './services/group-representation.js'
 import { recordingStrategy } from './recording-strategy-contract.js'
@@ -83,15 +84,16 @@ function searchScopeParam(params: Record<string, unknown> | undefined): { search
   return { searchScope: value }
 }
 
-function requestBytesLimit(operation: string): number {
+function requestBytesLimit(operation: string, params?: unknown): number {
   if (operation === 'recordings.transcript.page' || operation === 'recordings.day.overview' || operation === 'recordings.day.review') return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
+  if (operation === 'team.world' && params && typeof params === 'object' && (params as Record<string, unknown>).action === 'image-upload') return Math.ceil(ARKME_WORLD_PUBLISH_MAX_IMAGE_BYTES / 3) * 4 + 64 * 1024
   if (operation === 'dictation.transcribe') return 600 * 1024
   if (operation === 'codex.local-mark.list' || operation === 'codex.local-mark.change' || operation === 'native-chat.local-mark.list' || operation === 'native-chat.local-mark.change' || operation === 'arko.local-mark.list' || operation === 'arko.local-mark.change') return 2 * 1024 * 1024
   // A selection contains up to 100 signed item references, not 100 raw IDs.
   if (['recordings.speaker.correction.apply', 'recordings.speaker.correction.preview', 'recordings.speaker.evidence.query'].includes(operation)) return 1024 * 1024
   if (operation === 'team.profile.avatar.upload' || operation === 'team.app.profile.avatar.upload') return 3*1024*1024
   if (operation === 'remote.session.native') return MAX_NATIVE_REQUEST_BYTES
-  if (operation === 'source.related-quick-notes.from-message') return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
+  if (operation === 'source.related-quick-notes.from-message' || operation === 'source.message-thoughts.query' || operation.startsWith('source.message-thought-continuations.')) return MAX_RELATED_QUICK_NOTE_REQUEST_BYTES
   if (operation === 'message-actions.copy-link' || operation === 'message-actions.forward' || operation === 'native-chat.forward' || operation === 'native-chat.copy-link' || operation === 'codex.forward') {
     return MAX_OWNER_MESSAGE_ACTION_REQUEST_BYTES
   }
@@ -126,7 +128,7 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   if (typeof source.operation !== 'string') {
     throw new ArkmePluginError('operation-required', '缺少操作类型', false)
   }
-  if (bytes > requestBytesLimit(source.operation)) {
+  if (bytes > requestBytesLimit(source.operation, source.params)) {
     throw new ArkmePluginError('request-too-large', '请求内容过大', false, 413)
   }
   return {
@@ -1009,16 +1011,17 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (['remote.reportCurrentSession', 'source.message-preparing.report', 'source.message-preparing.cancel'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '正在输入状态必须从当前 DSH 页面发起', false, 403)
       }
+      if(request.operation==='codex.work-records'&&origin===undefined&&!['tasks','events','marks'].includes(String((request.params?.request as {action?:unknown})?.action)))throw new ArkmePluginError('origin-required','该敏感操作需要受信任来源',false,403)
       if (request.operation === 'recordings.speaker.evidence.query' && params.action === 'build' && origin === undefined) throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       if (request.operation === 'offline-context' && origin === undefined) throw new ArkmePluginError('origin-required','上下文操作需要受信任来源',false,403)
       if (request.operation === 'recordings.import.strategies.register' && (!isLoopback(req.socket.remoteAddress) || origin === undefined)) {
         throw new ArkmePluginError('origin-required', '录音导入策略登记必须从本机页面发起', false, 403)
       }
-      if (['arrangements.occurrences.reviews.decide','arrangements.occurrences.history.preview','arrangements.occurrences.history.apply','arrangements.recognition.settings.set', 'arrangements.recognition.preview', 'arrangements.recognition.apply', 'recordings.voice-triggers.rules.set', 'recordings.voice-triggers.decide', 'recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
+      if (['arrangements.conversation.recognition.set','arrangements.occurrences.reviews.decide','arrangements.occurrences.history.preview','arrangements.occurrences.history.apply','arrangements.recognition.settings.set', 'arrangements.recognition.preview', 'arrangements.recognition.apply', 'recordings.voice-triggers.rules.set', 'recordings.voice-triggers.decide', 'recordings.import.file', 'recordings.strategies.start', 'recordings.strategies.preference.set', 'explore.mutate', 'explore.settings.save', 'source.record-delete', 'user.arkme-id.set', 'extensions.delete', 'extensions.reviews.create', 'extensions.audit.check', 'extensions.install.start', 'extensions.install.pause', 'extensions.install.resume', 'extensions.enabled.set', 'extensions.metadata.update', 'extensions.share.rotate', 'extensions.preview.delete', 'extensions.preview.reorder', 'extensions.uninstall', 'extensions.restart', 'extensions.client.failure', 'extensions.persistent.invoke', 'extensions.bundle.invoke', 'extensions.mine.publish', 'extensions.publish.resume', 'extensions.quarantine.dismiss', 'extensions.quarantine.reenable', 'remote.renameDesktop', 'remote.session.native', 'remote.session.command', 'message-actions.copy-link', 'message-actions.forward', 'native-chat.forward', 'native-chat.copy-link', 'codex.forward', 'codex.copy-link', 'world.forward', 'self-note.quote.send', 'selected-text.forward', 'codex.local-mark.change', 'recordings.summary-model-config.set', 'recordings.generate', 'recordings.compare.start', 'recordings.entities.start', 'recordings.entities.feedback', 'recordings.entities.feedback.undo', 'recordings.forward', 'recordings.copy-link', 'recordings.presence.capture', 'recordings.import.retry', 'recordings.import.cancel', 'recordings.import.session.update-start', 'recordings.import.session.update-ownership', 'recordings.import.session.delete', 'recordings.import.transcription.retry', 'recordings.speaker.assign-item', 'recordings.speaker.unassign-item', 'recordings.speaker.correction.apply', 'recordings.speaker.correction.undo', 'speaker-directory.seen', 'openapi.mcp.retry', 'team.create', 'team.join-by-jotmo-id']
         .includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', '该敏感变更必须从当前 DSH 页面发起', false, 403)
       }
-      if (request.operation === 'data.export' && origin === undefined) throw new ArkmePluginError('origin-required', '导出必须从当前页面确认后发起', false, 403)
+      if (['data.export', 'data.export.saved', 'data.export.directory.pick', 'data.export.directory.open'].includes(request.operation) && origin === undefined) throw new ArkmePluginError('origin-required', '导出必须从当前页面确认后发起', false, 403)
       if (['arko.ask', 'arko.pending.prepare', 'arko.pending.acknowledge'].includes(request.operation) && origin === undefined) {
         throw new ArkmePluginError('origin-required', 'Arko 输入必须由当前 DSH 页面发起', false, 403)
       }
@@ -1175,7 +1178,7 @@ export async function dispatchArkmeHostOperation(
     case 'provider.capabilities': {
       const capabilities = service.providerCapabilities()
       if (accountSessions) capabilities.features = { ...capabilities.features, dshAccountSessions: true }
-      if (teamCodex) capabilities.features = { ...capabilities.features, teamCodexLocal: true }
+      if (teamCodex) capabilities.features = { ...capabilities.features, teamCodexLocal: true, codexWorkRecordsV1:true }
       return teamService === undefined ? capabilities : {
         ...capabilities,
         features: {
@@ -1264,6 +1267,8 @@ export async function dispatchArkmeHostOperation(
     ))
     case 'openapi.mcp.status': return requireOpenApiMcpController(openApiMcpController).status()
     case 'openapi.mcp.retry': return await requireOpenApiMcpController(openApiMcpController).retry()
+    case 'codex.image.read': {const image=await service.readCodexImage(stringParam(params,'imageRef'),{maxBytes:20*1024*1024,...(requestSignal?{signal:requestSignal}:{})});return {mediaType:image.mediaType,bytes:image.data.byteLength,dataBase64:Buffer.from(image.data).toString('base64')}}
+    case 'codex.work-records': return service.codexWorkRecords(params.request as import('./codex-work-records-port.js').CodexWorkRequest,requestSignal)
     case 'team.codex.entry-availability': {
       if (!teamCodex) throw new ArkmePluginError('capability-unsupported', '当前环境不支持本地 Codex 工作动态', false, 503)
       return await teamCodex.entryAvailability(numberParam(params,'expectedUserId',-1))
@@ -1275,11 +1280,11 @@ export async function dispatchArkmeHostOperation(
     case 'team.codex.change': {
       if (!teamCodex) throw new ArkmePluginError('capability-unsupported', '当前环境不支持本地 Codex 工作动态', false, 503)
       const teamRef = stringParam(params, 'teamRef')
-      if (operation === 'team.codex.state') return await teamCodex.state(teamRef,optionalNumberParam(params,'page'),optionalTeamStringParam(params,'memberRef'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'projectKey'))
+      if (operation === 'team.codex.state') return await teamCodex.state(teamRef,optionalNumberParam(params,'page'),optionalTeamStringParam(params,'memberRef'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'projectKey'),{cursor:optionalTeamStringParam(params,'cursor'),after:optionalTeamStringParam(params,'after'),from:optionalTeamStringParam(params,'from')},requestSignal)
       if (operation === 'team.codex.invite') return await teamCodex.invite(teamRef)
       const id = stringParam(params, 'id')
-      if (operation === 'team.codex.image') return await teamCodex.image(teamRef,id,stringParam(params,'turnId'),stringParam(params,'kind'),stringParam(params,'ref'),params.full===true,optionalTeamStringParam(params,'sourceId'))
-      if (operation === 'team.codex.events') return await teamCodex.events(teamRef,id,optionalNumberParam(params,'before'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'cursor'))
+      if (operation === 'team.codex.image') return await teamCodex.image(teamRef,id,stringParam(params,'turnId'),stringParam(params,'kind'),stringParam(params,'ref'),params.full===true,optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'eventId'),requestSignal)
+      if (operation === 'team.codex.events') return await teamCodex.events(teamRef,id,optionalNumberParam(params,'before'),optionalTeamStringParam(params,'sourceId'),optionalTeamStringParam(params,'cursor'),{...(typeof params.after==='string'?{after:params.after}:{}),...(typeof params.from==='string'?{from:params.from}:{}),...(typeof params.through==='string'?{through:params.through}:{})},requestSignal)
       await teamCodex.change(teamRef,id,stringParam(params,'action'),optionalTeamStringParam(params,'projectKey'),optionalTeamStringParam(params,'sourceName'))
       return { ok: true }
     }
@@ -1299,6 +1304,8 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.metadata-freeze':return await service.freezeTeamMetadata(stringParam(params,'conversationRef'),stringParam(params,'operationUid'),params.metadata as import('./team-snapshot-contract.js').TeamRecordMetadata,requestSignal)
     case 'team.messages.snapshot':return await service.readTeamMessageSnapshot(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),requestSignal)
     case 'team.messages.extensions':return await service.readTeamExtensions(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),params.options as import('./team-message-contract.js').TeamExtensionOptions,requestSignal)
+    case 'team.history':return await service.teamHistory(stringParam(params,'conversationRef'),params.action as import('./team-history-contract.js').TeamHistoryAction,(params.options ?? {}) as import('./team-history-contract.js').TeamHistoryOptions,requestSignal)
+    case 'team.history.export-chunk':return await service.readTeamHistoryExportChunk(stringParam(params,'resultRef'),typeof params.cursor==='string'?params.cursor:undefined,requestSignal)
     case 'team.messages.read':return await service.readTeamMessages(stringParam(params,'conversationRef'),params.options as import('./team-message-contract.js').TeamMessageReadOptions,requestSignal)
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
@@ -1392,14 +1399,24 @@ export async function dispatchArkmeHostOperation(
     case 'remote.getStatus': return requireRemoteHost(remoteHost, remoteUnavailableReason).getStatus()
     case 'remote.renameDesktop': return await requireRemoteHost(remoteHost, remoteUnavailableReason).renameDesktop(stringParam(params, 'displayName'))
     case 'billing.quota': return await service.billingQuota()
-    case 'models.directory': return await service.modelDirectory(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'models.account.query': return await service.accountModels(stringParam(params,'expectedAccountScope'),requestSignal)
+    case 'models.account.save': return await service.saveAccountModel(stringParam(params,'expectedAccountScope'),params.input as import('./account-models.js').AccountModelSave,requestSignal)
+    case 'models.account.disable': return await service.disableAccountModel(stringParam(params,'expectedAccountScope'),numberParam(params,'revision',Number.NaN),stringParam(params,'uid'),params.disabled===true,requestSignal)
+    case 'models.preferences.save': return await service.accountModelPreferences(stringParam(params,'expectedAccountScope'),numberParam(params,'revision',Number.NaN),params.preferences as import('./account-models.js').AccountModelPreferences,requestSignal)
+    case 'models.usage.query': return await service.accountModelUsage(stringParam(params,'expectedAccountScope'),params.query as import('./account-models.js').ModelUsageQuery,requestSignal)
+    case 'models.connector.enroll': return await service.enrollModelConnector(stringParam(params,'expectedAccountScope'))
+    case 'models.directory': return params.officialOnly === true
+      ? await service.modelDirectory(stringParam(params, 'expectedAccountScope'), requestSignal, true)
+      : await service.modelDirectory(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'billing.products': return await service.billingProducts()
     case 'membership.current': return await service.membershipCurrent(numberParam(params, 'expectedUserId', Number.NaN))
     case 'membership.catalog': return await service.membershipCatalog(numberParam(params, 'expectedUserId', Number.NaN))
     case 'account.capabilities.query': return await service.automaticCapabilities(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.capabilities.update': return await service.updateAutomaticCapability({ key: params.key, enabled: params.enabled, expectedVersion: params.expectedVersion, billingConsent: params.billingConsent } as ArkmeCapabilityUpdate, stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.points.query': return await service.aiPointsAccount(stringParam(params, 'expectedAccountScope'), requestSignal)
-    case 'account.points.consumption': return await service.aiPointsConsumption({ month: stringParam(params, 'month'), ...(typeof params.beforeId === 'string' && params.beforeId ? { beforeId: params.beforeId } : {}) }, stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'account.points.statistics': return await service.aiPointsStatistics({ fromDate: stringParam(params, 'fromDate'), untilDate: stringParam(params, 'untilDate'), timezone: stringParam(params, 'timezone') as 'Asia/Shanghai', grain: stringParam(params, 'grain') as 'day' | 'week' | 'month' }, stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'account.points.consumption.range': return await service.aiPointsConsumptionRange({ fromDate: stringParam(params, 'fromDate'), untilDate: stringParam(params, 'untilDate'), timezone: stringParam(params, 'timezone') as 'Asia/Shanghai', ...(params.businessCodes === undefined ? {} : { businessCodes: params.businessCodes as string[] }), ...(params.beforeId === undefined ? {} : { beforeId: stringParam(params, 'beforeId') }), ...(params.settledBefore === undefined ? {} : { settledBefore: numberParam(params, 'settledBefore', Number.NaN) }), ...(params.limit === undefined ? {} : { limit: numberParam(params, 'limit', Number.NaN) }) }, stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'account.points.consumption': return await service.aiPointsConsumption({ month: stringParam(params, 'month'), ...(typeof params.beforeId === 'string' && params.beforeId ? { beforeId: params.beforeId } : {}), ...(params.limit === undefined ? {} : { limit: numberParam(params, 'limit', Number.NaN) }) }, stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'account.usage.tokens': return await service.accountTokenUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.storage': return await service.accountStorageUsage(stringParam(params, 'expectedAccountScope'))
     case 'account.usage.voice': return await service.accountVoiceUsage(stringParam(params, 'expectedAccountScope'))
@@ -1420,8 +1437,18 @@ export async function dispatchArkmeHostOperation(
       operationUid: stringParam(params, 'operationUid'), bizCode: numberParam(params, 'bizCode', -1),
     }, requestSignal)
     case 'data.deleted': return await service.dataDeletedRecords(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'data.export.directory.pick': return await service.dataExportDirectoryPick(stringParam(params,'expectedAccountScope'),requestSignal)
+    case 'data.export.directory.open': return await service.dataExportDirectoryOpen(stringParam(params,'expectedAccountScope'),stringParam(params,'destinationRef'),requestSignal)
     case 'data.export': return await service.dataExport(recordExportOptions(params), requestSignal)
     case 'data.export.preflight': return await service.dataExportPreflight(stringParam(params, 'expectedAccountScope'), requestSignal)
+    case 'data.export.range.preview': {
+      if (![1, 2].includes(params.orderKind as number)) throw new ArkmePluginError('record-export-range-invalid', '记录顺序无效', false, 400)
+      return await service.dataExportRangePreview(stringParam(params, 'expectedAccountScope'), exportSelection(params.selection), params.orderKind as 1 | 2, requestSignal, typeof params.destinationRef==='string'?params.destinationRef:undefined)
+    }
+    case 'data.export.saved': {
+      if (params.confirmed !== true) throw new ArkmePluginError('record-export-confirmation-required', '请确认已保存这份备份', false, 400)
+      return await service.dataExportSaved(stringParam(params, 'expectedAccountScope'), stringParam(params, 'confirmationRef'), requestSignal)
+    }
     case 'data.recover': return await service.dataRecoverRecord(stringParam(params, 'expectedAccountScope'), stringParam(params, 'recordUid'), numberParam(params, 'version', 0))
     case 'billing.order.create': return await service.createBillingOrder({
       productId: billingIdentifierParam(params, 'productId', 'billing-product-id-invalid', '购买套餐无效'),
@@ -1580,7 +1607,19 @@ export async function dispatchArkmeHostOperation(
     case 'identity.person.read':
     case 'identity.share.link': {
       const scope = stringParam(params, 'accountScope'), kind = stringParam(params, 'kind')
-      const read = operation === 'identity.person.read' ? service.identityPersonProfile.bind(service) : service.identityShareLink.bind(service)
+      const read = (scope: string, target: import('./identity-share-contract.js').IdentityShareTarget, signal?: AbortSignal) => {
+        if (operation !== 'identity.person.read') return service.identityShareLink(scope, target, signal)
+        const includeAccountName = params.includeAccountName === undefined ? undefined : requiredBooleanParam(params, 'includeAccountName')
+        for (const key of ['cacheOnly', 'forceRefresh']) if (params[key] !== undefined && typeof params[key] !== 'boolean') throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项无效', false, 400)
+        if (params.cacheOnly === true && params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+        if (includeAccountName === false) {
+          if (params.cacheOnly === true || params.forceRefresh === true) throw new ArkmePluginError('identity-profile-options-invalid', '资料缓存选项冲突', false, 400)
+          return service.identityPersonProfile(scope, target, signal, false)
+        }
+        if (includeAccountName === true && params.cacheOnly === undefined && params.forceRefresh === undefined) return service.identityPersonProfile(scope, target, signal, true)
+        return params.cacheOnly === undefined && params.forceRefresh === undefined ? service.identityPersonProfile(scope, target, signal)
+          : service.identityPersonProfile(scope, target, signal, { cacheOnly: params.cacheOnly === true, forceRefresh: params.forceRefresh === true })
+      }
       if (kind === 'self') return await read(scope, { kind }, requestSignal)
       if (kind === 'person') return await read(scope, { kind, userId: numberParam(params, 'userId', 0) }, requestSignal)
       if (kind === 'contact') return await read(scope, { kind, contactRef: stringParam(params, 'contactRef') }, requestSignal)
@@ -1597,6 +1636,10 @@ export async function dispatchArkmeHostOperation(
     case 'group.private.people': return await service.privateGroupPeople({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}) }, requestSignal)
     case 'group.private.matches': return await service.privateGroupMatches({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs') }, requestSignal)
     case 'group.private.create': return await service.createGroupFromPrivate({ sourceRef: stringParam(params, 'sourceRef'), accountScope: stringParam(params, 'accountScope'), personRefs: stringListParam(params, 'personRefs'), title: stringParam(params, 'title'), clientMutationId: stringParam(params, 'clientMutationId'), isPublic: requiredBooleanParam(params, 'isPublic'), allowDuplicate: requiredBooleanParam(params, 'allowDuplicate'), allowUnchecked: requiredBooleanParam(params, 'allowUnchecked') }, requestSignal)
+    case 'social.read': return await service.publicSocialRead(params as unknown as import('./public-social-contract.js').PublicSocialReadInput, requestSignal)
+    case 'social.write': return await service.publicSocialWrite(params as unknown as import('./public-social-contract.js').PublicSocialWriteInput, requestSignal)
+    case 'social.groups.requests': return await service.publicGroupJoinRequests(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'social.groups.requests.resolve': return await service.resolvePublicGroupJoinRequest(stringParam(params, 'sourceRef'), stringParam(params, 'accountScope'), stringParam(params, 'requestRef'), requiredBooleanParam(params, 'approved'), requestSignal)
     case 'social.groups.query': {
       const userId = optionalPositiveIntegerParam(params, 'userId')
       const relation = params.relation
@@ -1656,6 +1699,7 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.totals.index': return await service.recordingTotalsIndex(stringParam(params, 'account'), numberParam(params, 'toMillis', Number.NaN), numberParam(params, 'offset', Number.NaN), requestSignal)
     case 'recordings.totals.bucket': return await service.recordingTotalsBucket(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.totals.day': return await service.recordingTotalsDay(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', Number.NaN),
       numberParam(params, 'toStamp', Number.NaN),
@@ -1700,15 +1744,20 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.entities.feedback.undo': return await service.undoRecordingEntityFeedback({
       undoRef: stringParam(params, 'undoRef'), requestId: stringParam(params, 'requestId'),
     }, requestSignal)
-    case 'recordings.day': return params.window === undefined ? await service.recordingDay(numberParam(params, 'dateStamp', Number.NaN), requestSignal) : await service.recordingDay(
-      numberParam(params, 'dateStamp', Number.NaN), requestSignal,
-      params.window === undefined ? undefined : {
+    case 'recordings.day': {
+      const window = params.window === undefined ? undefined : {
         dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN),
         endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN),
         timeZone: stringParam(objectValue(params.window), 'timeZone'),
         date: stringParam(objectValue(params.window), 'date'),
-      },
-    )
+      }
+      const dateStamp = numberParam(params, 'dateStamp', Number.NaN)
+      if (params.part !== undefined) {
+        if (typeof params.part !== 'string' || !['transcript', 'coverage', 'metrics', 'summary', 'timeline'].includes(params.part)) throw new ArkmePluginError('recording-day-part-invalid', '录音读取分区无效', false, 400)
+        return await service.recordingDayPart(dateStamp, params.part as import('./types.js').ArkmeRecordingDayPart, requestSignal, window)
+      }
+      return window === undefined ? await service.recordingDay(dateStamp, requestSignal) : await service.recordingDay(dateStamp, requestSignal, window)
+    }
     case 'recordings.strategies': {
       if (params.action === 'start' || params.action === 'preference-set') throw new ArkmePluginError('recording-strategy-write-required', '请使用策略处理入口', false, 400)
       return service.recordingStrategies(params, requestSignal)
@@ -2016,6 +2065,9 @@ export async function dispatchArkmeHostOperation(
     case 'arko.lifecycle.query': return await service.arkoLifecycle(stringListParam(params, 'messageRefs'), requestSignal)
     case 'arko.lifecycle.change': return await service.arkoChangeLifecycle(params as unknown as import('./arko-lifecycle-contract.js').ArkmeArkoLifecycleCommand, requestSignal)
     case 'arko.deleted': return await service.arkoRecentlyDeleted(stringParam(params, 'cursor') || undefined, requestSignal)
+    case 'arko.interactions': return service.arkoInteractions(params as import('./arko-timeline-contract.js').ArkmeArkoInteractionQuery, requestSignal)
+    case 'arko.interaction.open': return service.arkoInteractionOpen(stringParam(params, 'interactionRef'), requestSignal)
+    case 'arko.timeline.cache': return (await service.arkoTimelineCache(stringParam(params, 'accountScope'), params?.value as import('./arko-timeline-contract.js').ArkmeArkoTimelineCache | undefined)) ?? null
     case 'arko.messages': return await service.arkoMessages(arkoHistoryQueryParams(params), requestSignal)
     case 'arko.search': return await service.arkoSearch({ ...arkoHistoryQueryParams(params), keyword: stringParam(params, 'keyword') }, requestSignal)
     case 'arko.context': return await service.arkoContext({ messageRef: stringParam(params, 'messageRef'),
@@ -2133,8 +2185,8 @@ export async function dispatchArkmeHostOperation(
     case 'user.arkme-id.set': return await service.setArkmeIdOnce(stringParam(params, 'arkmeId'))
     case 'image.read': {
       const image = params.cacheOnly === true
-        ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true })
-        : await service.readImage(stringParam(params, 'imageRef'))
+        ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true, ...(requestSignal ? { signal: requestSignal } : {}) })
+        : await service.readImage(stringParam(params, 'imageRef'), requestSignal ? { signal: requestSignal } : {})
       return {
         mediaType: image.mediaType,
         bytes: image.bytes,
@@ -2205,6 +2257,8 @@ export async function dispatchArkmeHostOperation(
       limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
       offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))), ...(requestSignal ? { signal: requestSignal } : {}),
     })
+    case 'arrangements.restore':
+    case 'arrangements.restore.result': return await service.restoreArrangement({ arrangementRef: stringParam(params, 'arrangementRef'), requestId: stringParam(params, 'requestId'), expectedVersion: numberParam(params, 'expectedVersion', Number.NaN) }, operation === 'arrangements.restore.result', requestSignal)
     case 'arrangements.deleted.detail': return await service.deletedArrangementDetail(stringParam(params, 'arrangementRef'), requestSignal)
     case 'arrangements.recording-day': return await service.recordingDayArrangements({
       dateStamp: numberParam(params, 'dateStamp', 0), tzOffsetMillis: numberParam(params, 'tzOffsetMillis', Number.NaN),
@@ -2222,6 +2276,14 @@ export async function dispatchArkmeHostOperation(
         boardVersion: stringParam(params, 'boardVersion'), requestId: stringParam(params, 'requestId'),
       })
     }
+    case 'arrangements.conversation.recognition.get':
+    case 'arrangements.conversation.recognition.set': {
+      const write = operation.endsWith('.set')
+      if (write && (typeof params.enabled !== 'boolean' || !Number.isSafeInteger(params.expectedVersion) || Number(params.expectedVersion) < 0)) throw new ArkmePluginError('invalid-params', '安排识别开关参数无效', false, 400)
+      return service.conversationArrangementRecognition(stringParam(params, 'expectedAccountScope'), stringParam(params, 'sourceRef'), stringParam(params, 'teamConversationRef'), write ? { enabled: params.enabled as boolean, version: Number(params.expectedVersion) } : undefined, requestSignal)
+    }
+    case 'arrangements.conversation.list': return service.conversationArrangements(stringParam(params, 'sourceRef'), stringParam(params, 'cursor'), requestSignal, stringParam(params, 'teamConversationRef'))
+    case 'arrangements.conversation.detail': return service.conversationArrangementDetail(stringParam(params, 'sourceRef'), stringParam(params, 'relatedRef'), requestSignal, stringParam(params, 'teamConversationRef'))
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
@@ -2250,6 +2312,10 @@ export async function dispatchArkmeHostOperation(
     }
     case 'arrangements.reminders.mark-all-read': return await service.markAllArrangementRemindersRead()
     case 'arrangements.reminders.clear': return await service.clearArrangementReminders()
+    case 'world.sound-excerpts':return await service.worldSoundExcerpts(params as unknown as import('./world-sound-contract.js').WorldSoundRequest,requestSignal)
+    case 'world.suggestions': return await service.worldSuggestions(params as unknown as import('./world-suggestions-contract.js').WorldSuggestionsRequest, requestSignal)
+    case 'world.subscriptions': return await service.worldSubscriptions(params as unknown as import('./world-subscription-contract.js').WorldSubscriptionRequest, requestSignal)
+    case 'world.publications': return await service.worldPublications(params as unknown as import('./world-publication-contract.js').WorldPublicationRequest, requestSignal)
     case 'world.record.read': return await service.readWorldRecord(stringParam(params, 'recordRef'), requestSignal)
     case 'world.share': return await service.shareWorldRecord(stringParam(params, 'recordRef'), numberParam(params, 'expectedUserId', 0), requestSignal)
     case 'world.forward': return await service.forwardWorldRecord(stringParam(params, 'recordRef'), numberParam(params, 'expectedUserId', 0), {
@@ -2258,7 +2324,8 @@ export async function dispatchArkmeHostOperation(
     })
     case 'world.feed': return await service.listWorldFeed({
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
-      offset: Math.max(0, Math.trunc(numberParam(params, 'offset', 0))),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+      ...(requestSignal ? { signal: requestSignal } : {}),
     })
     case 'world.mine': return await service.listMyWorldFeed({
       limit: Math.min(20, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
@@ -2297,6 +2364,11 @@ export async function dispatchArkmeHostOperation(
     case 'world.voiceprint.invite': return await service.inviteWorldVoiceprint(
       stringParam(params, 'recordRef').trim(),
     )
+    case 'world.replies': return await service.listWorldReplies(stringParam(params, 'recordRef'), {
+      limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))),
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+      ...(requestSignal ? { signal: requestSignal } : {}),
+    })
     case 'world.interactions.list': return await service.listWorldInteractions(
       stringParam(params, 'recordRef'),
       {
@@ -2306,6 +2378,7 @@ export async function dispatchArkmeHostOperation(
       },
     )
     case 'world.notification-sources': return await service.worldNotificationSources(Math.max(0, Math.trunc(numberParam(params, 'offset', 0))), requestSignal)
+    case 'world.comment-notifications': return await service.worldCommentNotifications({ limit: Math.min(50, Math.max(1, Math.trunc(numberParam(params, 'limit', 20)))), ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
     case 'world.notification-target': return await service.worldNotificationTarget(stringParam(params, 'interactionRef'), requestSignal)
     case 'world.interactions.summary': return await service.worldInteractionSummary(requestSignal)
     case 'world.interactions.mark-viewed': {
@@ -2328,7 +2401,9 @@ export async function dispatchArkmeHostOperation(
     }
     case 'world.arko-source-draft': return await service.worldArkoPublishSource(numberParam(params, 'sessionId', 0), numberParam(params, 'messageId', 0), requestSignal)
     case 'world.message-source-draft': return await service.worldMessagePublishSource(stringParam(params, 'conversationRef'), stringParam(params, 'actionRef'), requestSignal)
-    case 'world.source-draft': return await service.worldPublishSource(stringParam(params, 'sourceRef'), stringParam(params, 'itemUid'), requestSignal)
+    case 'world.source-draft': return params.kind === 'suggestion'
+      ? await service.worldSuggestionDraft(params as unknown as import('./world-publish-source.js').WorldPublishOrigin, requestSignal)
+      : await service.worldPublishSource(stringParam(params, 'sourceRef'), stringParam(params, 'itemUid'), requestSignal)
     case 'world.publish-text': {
       if (params.publisher !== undefined || params.teamRef !== undefined) throw new ArkmePluginError('world-publisher-unsupported', '团队发布接口开发中，不能改为个人发布', false, 409)
       return await service.publishWorldText({
@@ -2366,6 +2441,7 @@ export async function dispatchArkmeHostOperation(
       }
       return service.setArchiveState({ sourceRef: stringParam(params, 'sourceRef'), selfArchived: params.selfArchived, expectedRevision: Number(params.expectedRevision) }, requestSignal)
     }
+    case 'topic.hidden-source': return await service.hiddenTopicSource(stringParam(params, 'sourceRef'), requestSignal)
     case 'topic.home-visibility': {
       if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
         throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)
@@ -2600,6 +2676,13 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-underline.list': return await service.sourceUnderlines(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'), requestSignal)
     case 'source.message-underline.change': return await service.changeSourceUnderline(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)
     case 'source.message-extension.capabilities': return await service.sourceMessageExtensionCapabilities(stringParam(params, 'sourceRef'), requestSignal)
+    case 'source.message-thoughts.query': return await service.sourceMessageThoughts(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), requestSignal)
+    case 'source.message-thought-continuations.query': return await service.sourceMessageThoughtContinuations(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), {
+      ...(typeof params.cursor === 'string' ? { cursor: params.cursor } : {}),
+    }, requestSignal)
+    case 'source.message-thought-continuations.retry': return await service.sourceMessageThoughtContinuations(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), {
+      retryId: stringParam(params, 'id'),
+    }, requestSignal)
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),
@@ -2622,6 +2705,8 @@ export async function dispatchArkmeHostOperation(
         ...(quote === undefined ? {} : { quote }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'parentRecordUid') === '' ? {} : { parentRecordUid: stringParam(params, 'parentRecordUid') }),
+ ...(stringParam(params, 'thoughtReplyRef') === '' ? {} : { thoughtReplyRef: stringParam(params, 'thoughtReplyRef') }),
+ ...(stringParam(params, 'privateThoughtReplyRef') === '' ? {} : { privateThoughtReplyRef: stringParam(params, 'privateThoughtReplyRef') }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
@@ -2687,11 +2772,12 @@ export async function dispatchArkmeHostOperation(
     case 'native-chat.local-mark.list': return await service.nativeLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'markRefs'), requestSignal)
     case 'native-chat.local-mark.change': return await service.changeNativeLocalMark(stringParam(params, 'sourceRef'), stringParam(params, 'markRef'), params.change as import('./message-annotations.js').MessageUnderlineChange, requestSignal)
     case 'native-chat.copy-link': return await service.copyNativeChatLink(params.snapshot, numberParam(params, 'expectedUserId', 0), requestSignal)
+    case 'codex.copy-link':
     case 'codex.forward': {
       if (!teamCodex) throw new ArkmePluginError('capability-unsupported', 'Codex 来源未就绪', false, 503)
-      // Revalidate access before exporting a snapshot from a previously loaded task.
-      await teamCodex.events(stringParam(params, 'teamRef'), stringParam(params, 'id'), undefined, optionalTeamStringParam(params, 'sourceId'))
-      return await service.forwardCodexChat(params.snapshot, numberParam(params, 'expectedUserId', 0), {
+      const snapshot=await teamCodex.prepareExport(stringParam(params,'teamRef'),stringParam(params,'id'),optionalTeamStringParam(params,'sourceId'),params.snapshot)
+      if(operation==='codex.copy-link')return service.copyCodexChatLink(snapshot,numberParam(params,'expectedUserId',0),requestSignal)
+      return await service.forwardCodexChat(snapshot, numberParam(params, 'expectedUserId', 0), {
         targetSourceRef: stringParam(params, 'targetSourceRef').trim(), requestId: stringParam(params, 'requestId').trim(), recordUid: stringParam(params, 'recordUid').trim(),
         sendAtMillis: numberParam(params, 'sendAtMillis', 0), commentRecordUid: stringParam(params, 'commentRecordUid').trim(), commentText: stringParam(params, 'commentText').trim(),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
@@ -2722,6 +2808,7 @@ export async function dispatchArkmeHostOperation(
       recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
       commentText: stringParam(params, 'commentText'), quote: params.quote,
     }, requestSignal)
+    case 'excerpt.original': return await service.excerptOriginal(stringParam(params,'recordUid'),requestSignal)
     case 'self-note.quote.send': return await service.sendQuotedSelfNote({
       expectedAccountKey: stringParam(params, 'expectedAccountKey'), recordUid: stringParam(params, 'recordUid'),
       noteText: stringParam(params, 'noteText'), quote: params.quote,
@@ -2980,8 +3067,12 @@ export async function dispatchArkmeHostOperation(
     case 'emoji.recent.record': return await service.recordRecentEmoji(stringParam(params, 'accountKey'), stringParam(params, 'emojiId'), requestSignal)
     case 'favorite-stickers.list': return await service.favoriteStickers()
     case 'reactions': return await service.reactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
+    case 'team.world': return await service.teamWorld(params as unknown as import('./team-world-contract.js').TeamWorldRequest, requestSignal)
+    case 'world.reactions.versions': return await service.worldReactionVersions(params as unknown as import('./world-reaction-contract.js').WorldReactionVersionsRequest, requestSignal)
+    case 'world.reactions.archive': return await service.worldReactionArchive(params as unknown as import('./world-reaction-contract.js').WorldReactionArchiveRequest, requestSignal)
     case 'world.reactions': return await service.worldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
     case 'world.reactions.local': return await service.localWorldReactions(params as unknown as import('./reaction-contract.js').ReactionRequest, requestSignal)
+    case 'world.reactions.from-note': return await service.prepareNoteWorldReactions(stringParam(params, 'accountKey'), stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), requestSignal)
     case 'world.reactions.prepare': return await service.prepareWorldReactions(stringParam(params, 'accountKey'), stringListParam(params, 'recordRefs'), requestSignal)
     case 'favorite-stickers.add': return await service.addFavoriteSticker(favoriteStickerItemParam(params))
     case 'favorite-stickers.send': return await service.sendFavoriteSticker(
@@ -3471,5 +3562,8 @@ function arkoHistoryQueryParams(params: Record<string, unknown> | undefined): Ar
 
 function recordExportOptions(params: Record<string, unknown>): import('./data-management.js').ArkmeRecordExportOptions {
   if (params.confirmed !== true || ![1, 2].includes(params.orderKind as number)) throw new ArkmePluginError('record-export-confirmation-required', '请确认后再导出', false, 400)
-  return { expectedAccountScope: stringParam(params, 'expectedAccountScope'), confirmed: true, orderKind: params.orderKind as 1 | 2 }
+  if (params.previewUid !== undefined && params.selection === undefined) throw new ArkmePluginError('record-export-range-invalid', '缺少导出范围', false, 400)
+  return { expectedAccountScope: stringParam(params, 'expectedAccountScope'), confirmed: true, orderKind: params.orderKind as 1 | 2,
+    ...(params.destinationRef === undefined ? {} : {destinationRef: stringParam(params,'destinationRef')}),
+    ...(params.selection === undefined ? {} : { selection: exportSelection(params.selection), previewUid: stringParam(params, 'previewUid') }) }
 }

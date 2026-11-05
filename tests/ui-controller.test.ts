@@ -12,6 +12,19 @@ it('directory invalidation retains the content revision and stable view snapshot
 })
 
 describe('ArkmeUiController', () => {
+  it('returns from personal and team worlds without replacing the original world page', () => {
+    const controller = new ArkmeUiController()
+    controller.showWorld('mine')
+    const revision = controller.getSnapshot().worldNavigationRevision
+    controller.showUserWorld({ userId: 17, displayName: '个人' })
+    controller.backFromWorld()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'world', worldInitialScope: 'mine', worldNavigationRevision: revision })
+    expect(controller.getSnapshot().worldTarget).toBeUndefined()
+    controller.showTeamWorld({ name: '团队', jotmoId: 'our_team' })
+    controller.backFromWorld()
+    expect(controller.getSnapshot()).toMatchObject({ mode: 'world', worldInitialScope: 'mine', worldNavigationRevision: revision })
+    expect(controller.getSnapshot().worldTeamTarget).toBeUndefined()
+  })
   it('keeps team and personal World targets separate and restores a team detail entry', () => {
     const controller = new ArkmeUiController()
     controller.showUserWorld({ userId: 17, displayName: '个人' })
@@ -745,4 +758,18 @@ it('opens locations without leaving the current page and closes the overlay acro
   controller.openLocation()
   controller.authChanged(false)
   expect(controller.getViewSnapshot().locationOpen).toBeUndefined()
+})
+
+it.each(['same', 'different', 'explicit-normal'])('keeps only a confirmed same-topic read-only classification on repeated search navigation: %s', scenario => {
+  const controller = new ArkmeUiController()
+  const confirmed = { kind: 'topic' as const, topicKind: 3, sourceRef: 'old-reference', topicHierarchyKey: 'archive-owner', displayName: '发给 DSH 的消息' }
+  controller.showConversationTarget(confirmed, 'first-record', 1)
+  const previousTarget = controller.getSnapshot().conversationTarget!
+  const next = { kind: 'topic' as const, sourceRef: 'new-reference', topicHierarchyKey: scenario === 'different' ? 'another-owner' : 'archive-owner',
+    displayName: 'DSH Agent Input', ...(scenario === 'explicit-normal' ? { topicKind: 1 } : {}) }
+  controller.showConversationTarget(next, 'second-record', 2)
+  expect(controller.getSnapshot().selectedSource).toEqual(scenario === 'same' ? { ...next, topicKind: 3 } : next)
+  expect(controller.getSnapshot().selectedSource?.sourceRef).toBe('new-reference')
+  expect(controller.getSnapshot().conversationTarget).toMatchObject({ itemUid: 'second-record', sendAtMillis: 2 })
+  expect(controller.getSnapshot().conversationTarget!.revision).toBeGreaterThan(previousTarget.revision)
 })

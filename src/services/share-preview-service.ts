@@ -15,7 +15,7 @@ export class SharePreviewService {
       case 'message': return { base: c.chatBaseUrl, path: '/api/public/v1/chats/messages/copy-link/detail', body: { sid: target.id } }
       case 'conversation': return { base: c.chatBaseUrl, path: '/api/public/v1/chats/records/forward/share/detail', body: { share_id: target.id, code: target.code ?? '', s: target.stamp ?? 0 } }
       case 'world': return { base: c.authBaseUrl, path: '/api/public/v1/auth/get-public-user-by-jotmo-ids', body: { jotmo_ids: [target.id] } }
-      case 'public-record': return { base: c.worldBaseUrl, path: '/api/public/v1/public-record/detail', body: { record_uid: target.id } }
+      case 'public-record': return { base: c.worldBaseUrl, path: '/api/public/v1/world/read', body: { record_uid: target.id } }
       case 'topic': return { base: c.subjectBaseUrl, path: '/api/public/v1/subject/preview-remote-subject', body: { ob_remote_subject: target.id, code: target.code ?? '', stamp: target.stamp ?? 0 } }
       case 'call-invite': return target.id ? { base: c.webrtcBaseUrl, path: '/api/public/v1/trtc/share-call-link/resolve', body: { token: target.id } } : undefined
       case 'voiceprint': return target.id ? { base: c.audioBaseUrl, path: '/api/public/v1/audio/voiceprint/invites/preview', body: { preview_token: target.id } } : undefined

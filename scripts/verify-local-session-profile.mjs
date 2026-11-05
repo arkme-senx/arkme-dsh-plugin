@@ -19,7 +19,9 @@ assert.equal(host.version, manifest.version)
 assert.equal(host.dsh?.client, undefined)
 assert.equal(browser.name, '@deepseek-ai/dsh-api-gateway')
 assert.equal(browser.arkme.browserOnlyCarrier, true)
-assert.deepEqual(await readFile(join(browserDir, 'client.js')), await readFile(local.resolve('@deepseek-ai/dsh-api-gateway/client')))
+const gatewayManifestPath = local.resolve('@deepseek-ai/dsh-api-gateway/package.json')
+const gatewayManifest = JSON.parse(await readFile(gatewayManifestPath, 'utf8'))
+assert.ok((await readFile(join(browserDir, 'client.js'))).equals(await readFile(new URL(gatewayManifest.exports['./client'].browser, pathToFileURL(gatewayManifestPath)))), 'carrier must retain official browser bytes')
 assert.equal(await readFile(join(browserDir, 'index.js'), 'utf8'), 'export function apply() {}\n')
 
 // Exercise the published upstream extension, not a reimplementation of its

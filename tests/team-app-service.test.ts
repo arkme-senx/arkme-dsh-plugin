@@ -111,37 +111,42 @@ describe('team group frontend handoff boundary', () => {
   })
 })
 
-describe('team World frontend boundary', () => {
-  const member = { team_id: '9223372036854775800', jotmo_id: 'our_team', name: '团队', role: 3 }
-  it('reads a separate team namespace and returns no fake personal feed or publishing grant', async () => {
-    const f = fixture(() => ({ teams: [member] }))
-    const page = await f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:90' }) as import('../src/team-world-contract.js').TeamWorldView
-    expect(page).toMatchObject({ state: 'backend_pending', team: { jotmoId: 'our_team' }, memberTeam: { jotmoId: 'our_team' } })
-    expect(page).not.toHaveProperty('items'); expect(page).not.toHaveProperty('canPublish')
-    await expect(f.service.execute('team.app.world.prepare', { teamRef: page.memberTeam!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
-    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine'])
-  })
-  it('uses only public discovery for a non-member and never returns private membership or uses member-only profile reads', async () => {
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [] } : { team: { jotmo_id: 'public_team', name: '公开团队', requires_approval: false, state: 'not_member' } })
-    const page = await f.service.execute('team.app.world.view', { jotmoId: 'public_team' }) as import('../src/team-world-contract.js').TeamWorldView
-    expect(page.team).toMatchObject({ name: '公开团队', jotmoId: 'public_team' }); expect(page.memberTeam).toBeUndefined()
-    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/discovery/search'])
-  })
-  it('rechecks removed membership, account binding and malformed requests without writes', async () => {
-    let joined = true
-    const f = fixture(() => ({ teams: joined ? [member] : [] }))
-    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
-    joined = false
-    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
-    await expect(f.service.execute('team.app.world.prepare', { teamRef: teams[0]!.teamRef })).rejects.toThrow()
-    await expect(f.service.execute('team.app.world.view', { jotmoId: '' })).rejects.toThrow()
-    await expect(f.service.execute('team.app.world.view', { jotmoId: 'our_team', expectedAccountKey: 'test:91' })).rejects.toThrow('账号已在其他页面切换')
-    expect(f.requests.every(v => v.path.endsWith('/list-mine'))).toBe(true)
+describe('team World reference boundary', () => {
+  it('preserves large team IDs in account-scoped references without granting publication', async () => {
+    const f = fixture(), ref = await f.service.worldTeamRef('9223372036854775800', 90)
+    await expect(f.service.worldTeamID(ref, 90)).resolves.toBe('9223372036854775800')
+    await expect(f.service.worldTeamID(ref, 91)).rejects.toThrow()
+    expect(f.requests).toHaveLength(0)
   })
 })
 
 describe('team public card projection',()=>{
+ it.each(['17', '9007199254740993'])('normalizes existing decimal Team references %s at the request boundary', async teamId => {
+  const f = fixture(() => ({...channel, team_id: teamId}))
+  const teamRef = await f.service.worldTeamRef(teamId, 90)
+  await f.service.execute('team.app.channel', {teamRef})
+  expect(String(f.fetchImpl.mock.calls[0]?.[1]?.body)).toContain(`"team_id":${teamId}`)
+ })
+ it.each([0, -1, 'invalid', '9223372036854775808'])('rejects an invalid member-card Team ID %s', async teamId => {
+  const f = fixture(() => ({...channel, team_id:teamId, contact:{state:'disabled'}, navigation:{kind:'inbox'}}))
+  await expect(f.service.execute('team.app.public-card', {jotmoId:channel.jotmo_id})).rejects.toMatchObject({code:'team-reference-invalid'})
+  expect(f.requests).toHaveLength(1)
+ })
  const publicCard={...channel,contact:{state:'available',public_ref:channel.public_ref},navigation:{kind:'contact'},description:''}
+ it.each([17, '17', '9007199254740993', '9223372036854775807'])('opens the member directory from a public card with numeric int64 Team ID %s', async teamId => {
+  const memberChannel = {...channel, team_id: teamId}
+  const f = fixture(path => path.endsWith('/public-card/get')
+   ? {...memberChannel, contact:{state:'disabled'}, navigation:{kind:'inbox'}}
+   : path.endsWith('/message-channel/get') ? memberChannel : {items:[], has_more:false})
+  const card = await f.service.execute('team.app.public-card', {jotmoId:channel.jotmo_id}) as import('../src/team-group-contract.js').TeamPublicCard
+  await f.service.execute('team.app.channel', {teamRef:card.navigation!.teamRef})
+  await f.service.execute('team.app.conversations', {teamRef:card.navigation!.teamRef, side:'team', limit:1})
+  expect(f.requests.map(request => request.path)).toEqual(['/api/v1/team/public-card/get', '/api/v1/team/message-channel/get', '/api/v1/team/conversations/list'])
+  for (const [, init] of f.fetchImpl.mock.calls.slice(1)) {
+   expect(String(init?.body)).toContain(`"team_id":${teamId}`)
+   expect(String(init?.body)).not.toContain(`"team_id":"${teamId}"`)
+  }
+ })
  it('uses the pure public read and never repairs or opens a channel',async()=>{
   const f=fixture(()=>publicCard),value=await f.service.execute('team.app.public-card',{jotmoId:channel.jotmo_id,expectedAccountKey:'test:90'})
   expect(value).toMatchObject({name:channel.name,contact:{state:'available',publicRef:channel.public_ref},navigation:{kind:'contact'}})

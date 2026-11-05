@@ -3,6 +3,14 @@ import { ArkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/cli
 import { bindSentFileTaskLocals, fileTaskConversationPreview, fileTaskShowsInlineStatus, fileTaskTimelineItem } from '../src/client/file-send-tasks.js'
 
 describe('local file draft recovery', () => {
+  it('uses the accepted Team attribution for file cards without promoting an unconfirmed selection', () => {
+    const representation = { teamRef: 'accepted-team', name: '已确认团队', jotmoId: 'team', membershipKind: 'member' as const, membershipRevision: 3, groupJoinAt: 9 }
+    const task = { taskRef: 'task-team', sourceRef: 'source', recordUid: 'record', relationUid: 'rel',
+      content: { textContent: '附件消息', representation }, fileRefs: [], files: [], state: 'sending' as const, createdAtMillis: 1 }
+    expect(fileTaskTimelineItem(task).representation).toBeUndefined()
+    expect(fileTaskTimelineItem({ ...task, state: 'sent', result: { sourceRef: 'source', itemUid: 'record', status: 1,
+      localState: 'synced', representation } }).representation).toEqual(representation)
+  })
   it('keeps the same send IDs after a lost acceptance response and page refresh', () => {
     let saved = ''
     const storage = { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value } }

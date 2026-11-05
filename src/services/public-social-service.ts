@@ -3,13 +3,15 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { PublicGroup, PublicGroupPage, PublicGroupQuery, PublicGroupJoinResult, PublicGroupSettings, PublicPeoplePage, PublicPeopleQuery, PublicPerson } from '../public-social-contract.js'
 import { ArkmePluginError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import type { SourceService } from './source-service.js'
-import type { GroupService } from './group-service.js'
+import { EncryptedReferenceCodec } from '../encrypted-reference.js'
+import type { PublicJoinRequestPage, PublicSocialReadInput, PublicSocialWriteInput, PublicSocialReadResult, PublicSocialWriteResult } from '../public-social-contract.js'
 
 const prefix = '/api/v1/chats/discovery'
 function invalid(): never { throw new ArkmePluginError('public-social-response-invalid', '公开目录响应不完整，请重试', false, 502) }
 function uid(value: unknown): string { const s = stringValue(value).trim(); if (!s || s.length > 256) return invalid(); return s }
 function userId(value: unknown): number { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) return invalid(); return value }
 function text(value: unknown): string { if (typeof value !== 'string') return invalid(); return value }
+function enabled(value: unknown): boolean { if (typeof value !== 'boolean') throw new ArkmePluginError('public-social-input-invalid', '请明确指定操作状态', false, 400); return value }
 function boolean(value: unknown): boolean { if (typeof value !== 'boolean') return invalid(); return value }
 function groupItem(value: unknown): PublicGroup {
   const v = objectValue(value), mode = v.join_mode
@@ -32,7 +34,16 @@ function introduction(value: string): string {
 
 /** Chat owns listing, admission and pair identity; Host only adapts DTOs and opens existing sources. */
 export class PublicSocialService {
-  constructor(private readonly runtime: ServiceRuntime, private readonly source: SourceService, private readonly groups: Pick<GroupService, 'groupSettings'>) {}
+  private readonly codec: EncryptedReferenceCodec
+  constructor(private readonly runtime: ServiceRuntime, private readonly source: SourceService) {
+    this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), () => new ArkmePluginError('public-social-reference-invalid', '引用已失效，请重新读取', false, 409))
+  }
+  private async seal(scope: string, kind: string, value: unknown) { const ref = await this.codec.seal('arkme-social-v1', { scope, kind, value }); await this.session(scope); return ref }
+  private async unseal(scope: string, kind: string, ref: string) {
+    const p = await this.codec.open('arkme-social-v1', ref)
+    if (p.scope !== scope || p.kind !== kind) throw new ArkmePluginError('public-social-reference-invalid', '引用已失效，请重新读取', false, 409)
+    return p.value
+  }
 
   private async session(scope: string): Promise<ArkmeSessionCredentials> {
     const session = await this.runtime.requireSession()
@@ -40,9 +51,12 @@ export class PublicSocialService {
     return session
   }
   private async post(path: string, body: Record<string, unknown>, scope: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    return await this.chatPost(`${prefix}${path}`, body, scope, signal)
+  }
+  private async chatPost(path: string, body: Record<string, unknown>, scope: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const session = await this.session(scope)
     try {
-      const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>(`${prefix}${path}`, body, session, signal)
+      const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>(path, body, session, signal)
       signal?.throwIfAborted(); await this.session(scope)
       return result
     } catch (error) {
@@ -116,30 +130,11 @@ export class PublicSocialService {
   async groupSettings(sourceRef: string, scope: string, signal?: AbortSignal): Promise<PublicGroupSettings> {
     const session = await this.session(scope), source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊', false, 400)
-    const membership = await this.groups.groupSettings(sourceRef, signal)
-    await this.session(scope)
-    const canManage = membership.selfRole === 'owner' && membership.selfStatus === 'active'
-    if (membership.selfStatus !== 'active') throw new ArkmePluginError('public-social-membership-inactive', '你已不在此群中', false, 403)
-    if (canManage) {
-      const settings = await this.post('/groups/settings/get', { chat_session_uid: source.ownerRef }, scope, signal)
-      if (settings.chat_session_uid !== source.ownerRef) return invalid()
-      return { chatSessionUid: source.ownerRef, isPublic: boolean(settings.is_public), introduction: text(settings.introduction), canManage, isShown: boolean(settings.is_public) }
-    }
-    let group: PublicGroup
-    try { group = await this.readGroup(source.ownerRef, scope, signal) }
-    catch (error) {
-      if (error instanceof ArkmePluginError && error.code === 'arkme-code-2001') return { chatSessionUid: source.ownerRef, isPublic: false, introduction: '', canManage, isShown: false }
-      throw error
-    }
-    let cursor: string | undefined
-    for (let page = 0; page < 100; page += 1) {
-      const shown = await this.queryGroups({ accountScope: scope, userId: session.userId, relation: 'joined', ...(cursor ? { cursor } : {}) }, signal)
-      if (shown.items.some(item => item.chatSessionUid === source.ownerRef)) return { chatSessionUid: source.ownerRef, isPublic: true, introduction: group.introduction, canManage, isShown: true }
-      if (!shown.hasMore) return { chatSessionUid: source.ownerRef, isPublic: true, introduction: group.introduction, canManage, isShown: false }
-      cursor = shown.nextCursor
-    }
-    throw new ArkmePluginError('public-social-showcase-incomplete', '群展示状态未完整返回，请重试', false, 502)
+    const settings = await this.post('/groups/settings/get', { chat_session_uid: source.ownerRef }, scope, signal)
+    if (settings.chat_session_uid !== source.ownerRef) return invalid()
+    return { chatSessionUid: source.ownerRef, isPublic: boolean(settings.is_public), introduction: text(settings.introduction), canManage: boolean(settings.can_manage), isShown: boolean(settings.is_shown) }
   }
+
   async setGroup(sourceRef: string, scope: string, isPublic: boolean, value: string, signal?: AbortSignal): Promise<PublicGroupSettings> {
     const session = await this.session(scope), source = await this.source.openSourceRef(sourceRef, session.userId)
     if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊', false, 400)
@@ -152,4 +147,74 @@ export class PublicSocialService {
     await this.post('/groups/showcase/set', { chat_session_uid: source.ownerRef, is_shown: isShown }, scope, signal)
     return await this.groupSettings(sourceRef, scope, signal)
   }
+  async requests(sourceRef: string, scope: string, cursor?: string, signal?: AbortSignal): Promise<PublicJoinRequestPage> {
+    const session = await this.session(scope), source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊', false, 400)
+    const before = cursor ? objectValue(await this.unseal(scope, `requests:${source.ownerRef}`, cursor)) : undefined
+    const page = await this.chatPost('/api/v1/chats/governance/join/list', { chat_session_uid: source.ownerRef, statuses: [1], limit: 30, ...(before ? { cursor: before } : {}) }, scope, signal)
+    if (page.chat_session_uid !== source.ownerRef || !Array.isArray(page.items) || typeof page.has_more !== 'boolean') return invalid()
+    const items = await Promise.all(page.items.map(async value => {
+      const row = objectValue(value)
+      if (row.chat_session_uid !== source.ownerRef || row.status !== 1 || typeof row.request_at !== 'number' || typeof row.update_at !== 'number') return invalid()
+      return { requestRef: await this.seal(scope, `approval:${source.ownerRef}`, { uid: uid(row.request_uid), updateAt: row.update_at }), displayName: text(row.display_name), status: 1 as const, requestAt: row.request_at }
+    }))
+    const next = page.has_more ? objectValue(page.next_cursor) : undefined
+    if (next && (items.length === 0 || typeof next.request_at !== 'number' || !stringValue(next.request_uid))) return invalid()
+    return { items, hasMore: page.has_more, ...(next ? { nextCursor: await this.seal(scope, `requests:${source.ownerRef}`, next) } : {}) }
+  }
+  async resolveRequest(sourceRef: string, scope: string, requestRef: string, approved: boolean, signal?: AbortSignal) {
+    const session = await this.session(scope), source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'group_chat') throw new ArkmePluginError('group-source-invalid', '仅支持群聊', false, 400)
+    const request = objectValue(await this.unseal(scope, `approval:${source.ownerRef}`, requestRef))
+    if (typeof request.updateAt !== 'number') return invalid()
+    const status = approved ? 2 : 3
+    const result = await this.chatPost('/api/v1/chats/governance/join/resolve', { request_uid: uid(request.uid), status, update_at: Math.max(Date.now(), request.updateAt + 1) }, scope, signal)
+    const row = objectValue(result.approval)
+    if (row.request_uid !== request.uid || row.chat_session_uid !== source.ownerRef || row.status !== status) return invalid()
+    return { requestRef, status: status as 2 | 3 }
+  }
+  async read(input: PublicSocialReadInput, signal?: AbortSignal): Promise<PublicSocialReadResult> {
+    const session = await this.runtime.requireSession(), scope = input.accountScope ?? `${this.runtime.config.environment}:${session.userId}`
+    await this.session(scope)
+    switch (input.operation) {
+      case 'groups': {
+        const cursor = input.cursor ? uid(await this.unseal(scope, 'group-cursor', input.cursor)) : undefined
+        const profile = input.reference ? userId(await this.unseal(scope, 'person', input.reference)) : undefined
+        const page = await this.queryGroups({ accountScope: scope, ...(input.query ? { query: input.query } : {}), ...(cursor ? { cursor } : {}), ...(profile ? { userId: profile } : {}) }, signal)
+        return { operation: input.operation, accountScope: scope, hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: await this.seal(scope, 'group-cursor', page.nextCursor) } : {}), items: await Promise.all(page.items.map(async group => ({ reference: await this.seal(scope, 'group', group.chatSessionUid), title: group.title, introduction: group.introduction, hasJoined: group.hasJoined, joinMode: group.joinMode, approvalStatus: group.joinRequest?.status }))) }
+      }
+      case 'people': {
+        const cursor = input.cursor ? userId(await this.unseal(scope, 'person-cursor', input.cursor)) : undefined
+        const page = await this.queryPeople({ accountScope: scope, ...(input.query ? { query: input.query } : {}), ...(cursor ? { cursor } : {}) }, signal)
+        return { operation: input.operation, accountScope: scope, hasMore: page.hasMore, ...(page.nextCursor ? { nextCursor: await this.seal(scope, 'person-cursor', page.nextCursor) } : {}), items: await Promise.all(page.items.map(async person => ({ reference: await this.seal(scope, 'person', person.userId), displayName: person.displayName, introduction: person.introduction, isSelf: person.userId === session.userId }))) }
+      }
+      case 'person': {
+        const target = input.reference ? userId(await this.unseal(scope, 'person', input.reference)) : undefined
+        const person = await this.readPerson(target, scope, signal)
+        return { operation: input.operation, accountScope: scope, displayName: person.displayName, introduction: person.introduction, isListed: person.isListed }
+      }
+      case 'settings': { const v = await this.groupSettings(input.reference ?? '', scope, signal); return { operation: input.operation, accountScope: scope, isPublic: v.isPublic, isShown: v.isShown, canManage: v.canManage, introduction: v.introduction } }
+      case 'requests': return { operation: input.operation, accountScope: scope, ...await this.requests(input.reference ?? '', scope, input.cursor, signal) }
+      default: throw new ArkmePluginError('public-social-operation-invalid', '不支持的公开社交操作', false, 400)
+    }
+  }
+  async write(input: PublicSocialWriteInput, signal?: AbortSignal): Promise<PublicSocialWriteResult> {
+    const scope = input.accountScope
+    await this.session(scope)
+    const sourceResult = (source: ArkmeSourceItem) => ({ sourceRef: source.sourceRef, kind: source.kind, displayName: source.displayName })
+    switch (input.operation) {
+      case 'join': {
+        const id = uid(await this.unseal(scope, 'group', input.reference ?? '')), group = await this.readGroup(id, scope, signal)
+        const result = await this.joinGroup(id, group.joinRequest?.status !== 3 && group.joinRequest ? group.joinRequest.requestUid : uid(input.requestId ?? ''), scope, signal)
+        return { operation: 'join', status: result.status, ...(result.source ? { source: sourceResult(result.source) } : {}) }
+      }
+      case 'chat': return { operation: 'chat', ...sourceResult(await this.openPerson(userId(await this.unseal(scope, 'person', input.reference ?? '')), scope, signal)) }
+      case 'listing': { const listed = enabled(input.enabled); const introduction = input.introduction ?? (listed ? (await this.readPerson(undefined, scope, signal)).introduction : ''); const p = await this.setPerson(scope, listed, introduction, signal); return { operation: 'listing', isListed: p.isListed, introduction: p.introduction } }
+      case 'group': { const isPublic = enabled(input.enabled); const introduction = input.introduction ?? (await this.groupSettings(input.reference ?? '', scope, signal)).introduction; const p = await this.setGroup(input.reference ?? '', scope, isPublic, introduction, signal); return { operation: 'group', isPublic: p.isPublic, introduction: p.introduction } }
+      case 'showcase': { const p = await this.setShowcase(input.reference ?? '', scope, enabled(input.enabled), signal); return { operation: 'showcase', isShown: p.isShown } }
+      case 'resolve': return { operation: 'resolve', ...await this.resolveRequest(input.reference ?? '', scope, input.requestRef ?? '', enabled(input.enabled), signal) }
+      default: throw new ArkmePluginError('public-social-operation-invalid', '不支持的公开社交操作', false, 400)
+    }
+  }
+
 }

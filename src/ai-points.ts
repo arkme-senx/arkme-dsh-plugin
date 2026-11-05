@@ -31,7 +31,7 @@ export interface ArkmeAiPointsPage {
   items: ArkmeAiPointsConsumption[]
   nextBeforeId: string
 }
-export interface ArkmeAiPointsQuery { month: string; beforeId?: string }
+export interface ArkmeAiPointsQuery { month: string; beforeId?: string; limit?: number }
 
 export function pointsUnits(value: string): bigint {
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,7})?$/.test(value)) throw new TypeError('Invalid exact AI points')

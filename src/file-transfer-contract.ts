@@ -6,6 +6,8 @@ export interface ArkmeFilePolicy {
   maxFileBytes: number
   maxImageBytes: number
   maxAttachments: number
+  /** Metadata-first implementation; each send negotiates server support. */
+  metadataFirstVersion?: 2
 }
 
 export interface ArkmeLocalFile {
@@ -46,7 +48,9 @@ export interface ArkmeFileSendTask extends ArkmeFileSendInput {
   taskRef: string
   createdAtMillis: number
   state: 'queued' | 'uploading' | 'sending' | 'sent' | 'failed' | 'uncertain'
-  files: Array<ArkmeLocalFile & { progress: ArkmeFileProgress; asset?: ArkmeUploadedAsset }>
+  files: Array<ArkmeLocalFile & { progress: ArkmeFileProgress; asset?: ArkmeUploadedAsset; attachmentUid?: string }>
+  /** Frozen before the first remote write; old persisted tasks keep legacy delivery. */
+  delivery?: 'negotiating' | 'progressive' | 'legacy'
   result?: ArkmeSourceSendResult
   /** Sanitized owner error code. Definite rejection and unknown outcome remain distinct via state. */
   errorCode?: string

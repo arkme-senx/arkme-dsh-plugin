@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -7,6 +8,7 @@ import { callArkme } from './api.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
 import { ArkmeLongArticleDialog, ArkmeLongArticleSnapshotDialog } from './ArkmeLongArticleDialog.js'
 import type { ComposerArticle } from './composer-article-store.js'
+import type { LongArticleComposition } from './long-article-window.js'
 
 const styles: Record<string, CSSProperties> = {
   overlay: { position: 'fixed', inset: 0, zIndex: 1200, background: 'rgba(0,0,0,.45)', display: 'grid', placeItems: 'center', padding: 16 },
@@ -29,8 +31,9 @@ export function isOwnArticle(item: ArkmeSearchRecordItem, userId: number): boole
     && (item.recordCreatorUserId === undefined || String(item.recordCreatorUserId) === String(userId))
 }
 
-export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCreate, draftScope }: {
+export function ArkmeArticlePicker({ sourceRef, userId, composition, onClose, onSelect, onCreate, draftScope }: {
   draftScope?: string
+  composition?: LongArticleComposition | undefined
   onCreate?: () => Promise<boolean>
   sourceRef?: string; userId: number; onClose: () => void; onSelect: (article: ComposerArticle) => void
 }) {
@@ -136,7 +139,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
               .catch(caught => { if (mounted.current) setOpenError(caught instanceof Error ? caught.message : '无法打开文档编辑器') })
               .finally(() => { if (mounted.current) setOpening(false) })
           }}>{tr("＋新建文档")}</button>
-          <button type="button" style={styles.button} aria-label={tr("关闭即我文档")} onClick={close}>×</button></header>
+          <ArkmeCloseButton type="button" style={styles.button} aria-label={tr("关闭即我文档")} onClick={close} /></header>
         <input ref={search} style={styles.search} value={query} aria-label={tr("搜索我的文档")} placeholder={tr("搜索我的文档")} onChange={event => setQuery(event.target.value)} />
         <div style={styles.list}>
           {page?.items.map(item => <div key={item.recordUid} data-arkme-article-choice={item.recordUid} style={{ ...styles.row, background: selected === item.recordUid ? theme.accentSoft : theme.base }}>
@@ -158,7 +161,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, onClose, onSelect, onCre
           <button style={{ ...styles.button, background: theme.primaryAction, color: theme.onPrimaryAction, opacity: !selected || opening ? .5 : 1 }} disabled={!selected || opening} onClick={() => { void resolveArticle(selected, true) }}>{opening ? tr("正在读取…") : '添加所选'}</button></footer>
       </div>
     </div>
-    {creating && ownSourceRef && <ArkmeLongArticleDialog sourceRef={ownSourceRef} {...(draftScope ? { draftScope } : {})} overlayZIndex={1201} onClose={() => setCreating(false)} onPrepared={draft => {
+    {creating && ownSourceRef && <ArkmeLongArticleDialog sourceRef={ownSourceRef} draftScope={draftScope ?? composition?.draftScope} representation={composition?.representation} overlayZIndex={1201} onClose={() => setCreating(false)} onPrepared={draft => {
       if (!draft.recordUid || !draft.relationUid) return
       onSelect({ kind: 'new', draft: { ...draft, recordUid: draft.recordUid, relationUid: draft.relationUid } }); onClose()
     }} />}

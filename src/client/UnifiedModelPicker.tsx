@@ -1,9 +1,9 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { formatAiPoints, pointsUnits } from '../ai-points.js'
 import { mergeModelChoices, modelSceneBilling, type ModelChoice, type ModelScene, type ModelOrigin } from '../model-directory.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
@@ -34,10 +34,10 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   const choices = mergeModelChoices(data.catalog?.models ?? [], localModels)
   const resolveId = (id: string) => {
     const local = localModels.find(model => model.id === id)
-    return choices.find(model => model.id === id || !!local?.explore && model.explore === local.explore)?.id ?? id
+    return choices.find(model => model.id === id || !!local?.explore && model.explore === local.explore || !!local?.dayReview && model.dayReview === local.dayReview)?.id ?? id
   }
   const selected = choices.find(model => model.id === resolveId(selectedId))
-  const requiresConfirmation = scene === 'recording' || scene === 'explore'
+  const requiresConfirmation = scene === 'recording' || scene === 'explore' || scene === 'dayReview'
   const actualCurrentId = resolveId(currentId)
   const checkedId = resolveId(requiresConfirmation ? selectedId : currentId)
   const rank = (model: ModelChoice) => model.id === actualCurrentId ? 0 : model[scene] ? 1 : 2
@@ -53,7 +53,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   }
   const hasDraftChange = resolveId(selectedId) !== actualCurrentId || effort !== (currentEffort ?? '')
   // Recording's explicit generation action is meaningful even without a model change.
-  const showConfirmation = requiresConfirmation && (scene === 'recording' || hasDraftChange || busy || applying)
+  const showConfirmation = requiresConfirmation && (scene === 'recording' || scene === 'dayReview' || hasDraftChange || busy || applying)
   const originLabel = (origin: ModelOrigin) => tr(origin === 'official' ? '即我官方' : '用户自提供')
   const hasReadError = !!(data.catalogError || data.accountError || data.catalog?.failures.length)
   const restoreSelection = () => { setSelectedId(currentId); setEffort(currentEffort ?? '') }
@@ -141,7 +141,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
           <strong id={title}>{tr(view === 'usage' ? 'Arkme 积分与用量' : view === 'pricing' ? '计费详情' : '选择模型')}
             {view === 'models' && <span className="arkme-unified-model-scope" title={tr(scopeLabel)}> · {tr(scopeLabel)}</span>}
           </strong>
-          <button type="button" aria-label={tr('关闭模型面板')} onClick={onClose}><X size={18}/></button>
+          <ArkmeCloseButton type="button" aria-label={tr('关闭模型面板')} onClick={onClose} />
         </header>
         {view === 'models' ? <>
           <div className="arkme-unified-model-list" role="group" aria-label={tr('全部已接入模型')} aria-busy={applying}>
@@ -174,7 +174,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
           </div>
           <footer className="arkme-unified-model-footer">
             {showConfirmation && confirmationDescription && <p className="arkme-unified-model-muted">{tr(confirmationDescription)}</p>}
-            {selected?.reasoning && <ThinkingEffortSlider key={selected.id} reasoning={selected.reasoning} value={effort}
+            {selected?.reasoning && scene !== 'dayReview' && <ThinkingEffortSlider key={selected.id} reasoning={selected.reasoning} value={effort}
               disabled={busy || applying || !selected[scene]} onPreview={setEffort} onCommit={value => {
                 setNotice('')
                 if (!requiresConfirmation && value !== (currentEffort ?? '')) void apply(selected, value, false)

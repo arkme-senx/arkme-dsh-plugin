@@ -80,3 +80,43 @@ it('discards a queued navigation when its originating account is no longer curre
   listener(value); expect(navigate).toHaveBeenCalledOnce()
   stop(); navigate.mockRestore()
 })
+
+it.each([1,2,3])('keeps represented composition in the original native v%s window despite its target whitelist', async(version)=>{
+  const {longArticleWindowBridge}=await import('../src/client/long-article-window.js')
+  arkmeAuthStore.setAuth({status:'authenticated',userId:7,environment:'prod'})
+  let nativeTarget:any,created:((value:any)=>void)|undefined
+  const open=vi.fn(async(raw:any)=>{nativeTarget={accountKey:raw.accountKey,sourceKey:raw.sourceKey,sourceRef:raw.sourceRef,displayName:raw.displayName};return true})
+  vi.stubGlobal('arkmeLongArticle',{version,open,account:async()=>true,context:async()=>nativeTarget,onCreated:(listener:any)=>{created=listener;return()=>{created=undefined}}})
+  const composition={draftScope:'team-7',representation:{teamRef:'sealed-team-7',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}}
+  expect(await openLongArticleWindow(source,undefined,false,composition)).toBe(true)
+  expect(nativeTarget).not.toHaveProperty('composition')
+  expect(nativeTarget.sourceRef).not.toBe(source.sourceRef)
+  expect(nativeTarget.sourceKey).not.toBe(source.sourceKey)
+  const bridge=longArticleWindowBridge()!
+  expect(await bridge.context()).toEqual({...source,accountKey:'prod:7',composition})
+  const onCreated=vi.fn(),stop=bridge.onCreated(onCreated)
+  created!({...nativeTarget,item:{itemUid:'accepted',representation:composition.representation}})
+  expect(onCreated).toHaveBeenCalledWith({...source,accountKey:'prod:7',composition,item:{itemUid:'accepted',representation:composition.representation}})
+  const teamKey=nativeTarget.sourceKey
+  await openLongArticleWindow(source,undefined,false,{...composition,representation:{...composition.representation,teamRef:'rotated-team-7'}})
+  expect(nativeTarget.sourceKey).toBe(teamKey)
+  await openLongArticleWindow(source,undefined,false,{...composition,draftScope:'team-8',representation:{...composition.representation,teamRef:'sealed-team-8'}})
+  expect(nativeTarget.sourceKey).not.toBe(teamKey)
+  stop()
+})
+it('rejects broken represented window context before opening rather than publishing as personal', async()=>{
+  arkmeAuthStore.setAuth({status:'authenticated',userId:7,environment:'prod'})
+  const open=vi.fn(async()=>true)
+  vi.stubGlobal('arkmeLongArticle',{version:3,open,account:async()=>true})
+  await expect(openLongArticleWindow(source,undefined,false,{draftScope:'team',representation:{teamRef:'',membershipKind:'member',membershipRevision:3,groupJoinAt:9}})).rejects.toThrow()
+  expect(open).not.toHaveBeenCalled()
+})
+
+it('fails closed when the native return loses one half of the represented context', async()=>{
+ const {longArticleWindowBridge}=await import('../src/client/long-article-window.js')
+ arkmeAuthStore.setAuth({status:'authenticated',userId:7,environment:'prod'})
+ let target:any
+ vi.stubGlobal('arkmeLongArticle',{version:3,open:async(raw:any)=>{target=raw;return true},account:async()=>true,context:async()=>({...target,sourceRef:source.sourceRef})})
+ await openLongArticleWindow(source,undefined,false,{draftScope:'team',representation:{teamRef:'sealed',membershipKind:'member',membershipRevision:3,groupJoinAt:9}})
+ await expect(longArticleWindowBridge()!.context()).rejects.toThrow('上下文已失效')
+})

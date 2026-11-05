@@ -131,7 +131,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   private copyLinkSource(reference: MessageActionSource): Record<string, unknown> {
-    if (reference.ownerKind === 'codex') throw new ArkmePluginError('codex-copy-link-unsupported', '后端接口开发中，开发完成后此功能完整可用', false, 409)
+    if(reference.ownerKind==='codex')return {kind:'codex',codex_message:this.codexSource(reference)}
     if (reference.ownerKind === 'dsh_native') return {
       kind: 'dsh_native', dsh_message: { session_id: reference.sessionId, message_id: reference.messageIdentity,
         role: reference.role, text_content: reference.textContent, send_at: reference.createdAtMillis },
@@ -149,14 +149,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
   }
 
   private chatForwardSourceItem(reference: MessageActionSource): Record<string, unknown> {
-    if (reference.ownerKind === 'codex') return {
-      source_type: 'agent', render_format: 'markdown', source_identity_kind: 'agent_message',
-      source_identity_id: `codex:${createHash('sha256').update(JSON.stringify([reference.sessionId, reference.messageIdentity])).digest('hex')}`,
-      // Generic agent snapshots do not carry Codex attribution yet. Preserve it in
-      // the visible snapshot as well, never impersonating a DSH session or person.
-      snapshot_text: `Codex · ${reference.taskTitle} · ${reference.senderName} · ${new Date(reference.createdAtMillis).toISOString()}\n\n${reference.textContent}`,
-      source_sender_user_id: 0,
-    }
+    if(reference.ownerKind==='codex')return {source_type:'codex',render_format:'markdown',codex_message:this.codexSource(reference)}
     if (reference.ownerKind === 'dsh_native') return {
       source_type: 'agent', render_format: 'markdown', source_identity_kind: 'agent_message',
       source_identity_id: this.nativeIdentity(reference), snapshot_text: reference.textContent, source_sender_user_id: reference.senderUserId,
@@ -175,6 +168,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
     return { source_type: 'record', record_uid: reference.recordUid }
   }
 
+  private codexSource(reference:Extract<MessageActionSource,{ownerKind:'codex'}>){return reference.cloudSource?{mode:'cloud',...reference.cloudSource}:{mode:'local',local_session_id:reference.sessionId,local_message_id:reference.messageIdentity,role:reference.role,text_content:reference.textContent,send_at:reference.createdAtMillis}}
   private nativeIdentity(reference: Extract<MessageActionSource, { ownerKind: 'dsh_native' }>): string {
     return `dsh:${createHash('sha256').update(JSON.stringify([reference.sessionId, reference.messageIdentity])).digest('hex')}`
   }
@@ -191,7 +185,7 @@ export class ArkmeMessageActionGateway implements MessageActionGateway {
       text_state: 1,
       forward_records: {
         render_kind: 'forward_records', forward_id: requestId,
-        source_type: ['agent', 'dsh_native', 'codex'].includes(references[0]?.ownerKind ?? '') ? 'agent' : 'quick_records',
+        source_type:references[0]?.ownerKind==='codex'?'codex':['agent','dsh_native'].includes(references[0]?.ownerKind??'')?'agent':'quick_records',
         title: '转发快记', source_record_uids: sourceRecordUids, created_at: sendAtMillis,
         summary_lines: references.slice(0, 3).map(reference => `${reference.senderName}: ${arkmeEmojiTokenSafePrefix(reference.textContent.trim(), 500, 'codeUnits')}`),
         items: references.map(reference => ({

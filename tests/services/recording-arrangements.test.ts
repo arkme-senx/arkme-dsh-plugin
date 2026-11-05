@@ -27,6 +27,15 @@ describe('recording-derived arrangement read contract', () => {
     expect(post.mock.calls[0]?.slice(0, 2)).toEqual(['/api/v1/arrangements/recording-day', { date_stamp: dateStamp, tz_offset: tzOffsetMillis, limit: 20, offset: 0 }])
     expect(post.mock.calls[0]?.[4]).toMatchObject({ bypassCache: true })
   })
+  it('accepts the existing owner provenance response without a duplicate recording_source field', async () => {
+    const source_provenance = { version: 1, items: [{ id: 'e1', kind: 'audio_summary', role: 'initial', summary_id: source.summary_id, date_stamp: dateStamp, tz_offset: tzOffsetMillis }] }
+    const result = await setup(page({ list: [{ ...row, recording_source: undefined, source_provenance }] })).service.recordingDayArrangements(query)
+    expect(result).toMatchObject({ state: 'ready', total: 1, items: [{ recordingSource: { state: 'ready', summaryVersionId: source.summary_id } }] })
+  })
+  it('propagates snapshot conflicts so the existing drawer requests a first-page refresh', async () => {
+    const failure = new ArkmePluginError('recording-day-snapshot-changed', 'refresh', true, 409, { upstreamStatus: 409 })
+    await expect(setup(null, failure).service.recordingDayArrangements({ ...query, offset: 1, snapshotVersion: 'expired' })).rejects.toBe(failure)
+  })
   it.each([404, 405, 501])('does not turn an unsupported endpoint (%s) into zero', async status => {
     const { service } = setup(null, new ArkmePluginError('upstream', 'unavailable', false, status, { upstreamStatus: status }))
     await expect(service.recordingDayArrangements(query)).resolves.toEqual({ state: 'unavailable', total: null, items: [], hasMore: false })

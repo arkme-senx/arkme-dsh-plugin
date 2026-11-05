@@ -1,6 +1,7 @@
 import { HARNESS_MENU_POSITION, harnessMenuLayers } from './harness-session-menu-bridge.js'
 import { conversationMenuLayer } from './conversation-menu-layer.js'
 import { CONVERSATION_MENU_SURFACE } from './conversation-selector-style.js'
+import { watchHarnessDocument } from './harness-document.js'
 
 type PaintRect = Pick<DOMRect, 'left' | 'top' | 'right' | 'bottom'>
 
@@ -45,13 +46,23 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     `M ${left} ${top} H ${right} V ${bottom} H ${left} Z`
   function sync() {
     scheduled = 0
-    if (disposed || !native) return
+    if (disposed) return
     const rect = seat.getBoundingClientRect()
+    for (const [key, value] of Object.entries({ left: rect.left, top: rect.top, width: rect.width, height: rect.height })) {
+      set(surface, `--arkme-harness-content-${key}`, `${value}px`)
+    }
+    const visible = surface.getAttribute('data-arkme-visible') === 'true'
+    if (!native) {
+      const feedback = visible && surface.hasAttribute('data-arkme-boot-feedback')
+      set(surface, 'clip-path', feedback ? `path("${rectPath(rect.left, rect.top, rect.right, rect.bottom)}")` : 'inset(100%)')
+      set(surface, 'visibility', feedback ? 'visible' : 'hidden')
+      set(surface, 'pointer-events', feedback ? 'auto' : 'none')
+      return
+    }
     const viewport = native.documentElement
     for (const [key, value] of Object.entries({ left: rect.left, top: rect.top, width: rect.width, height: rect.height })) {
       set(viewport, `--arkme-harness-content-${key}`, `${value}px`)
     }
-    const visible = surface.getAttribute('data-arkme-visible') === 'true'
     if (visible) viewport.removeAttribute('data-arkme-session-preview')
     else if (!viewport.hasAttribute('data-arkme-session-preview')) viewport.setAttribute('data-arkme-session-preview', '')
     const nextContent = native.querySelector<HTMLElement>('[data-arkme-session-frame]')
@@ -82,8 +93,13 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
         : node.nodeType === 1 && !['SCRIPT', 'STYLE', 'LINK', 'META'].includes((node as Element).tagName)
           && (Boolean(node.textContent?.trim()) || (node as Element).children.length > 0)))
     const layers = ready ? harnessMenuLayers(native) : []
+    // A native modal owns its full-window mask and outside-click handling.
+    // Cropping it to the conversation and card bounds cuts that mask into blocks.
+    // Non-modal session selectors also use role=dialog, so check aria-modal.
+    const modalOpen = layers.some(layer => layer.getAttribute('aria-modal') === 'true')
     let menuRect: PaintRect | undefined
-    const painted: PaintRect[] = visible && ready ? [rect] : []
+    const painted: PaintRect[] = modalOpen ? [{ left: 0, top: 0, right: win.innerWidth, bottom: win.innerHeight }]
+      : visible && (ready || surface.hasAttribute('data-arkme-boot-feedback')) ? [rect] : []
     for (const layer of layers) {
       const r = layer.getBoundingClientRect()
       const isMenu = layer.hasAttribute('data-arkme-session-column')
@@ -144,24 +160,26 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     native.head.append(viewportStyle)
     nativeObserver = new win.MutationObserver(schedule)
     nativeObserver.observe(native.documentElement, { childList: true, subtree: true, attributes: true,
-      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'data-arkme-session-open', 'data-arkme-session-frame'] })
+      attributeFilter: ['style', 'class', 'hidden', 'aria-hidden', 'aria-modal', 'role', 'data-arkme-session-open', 'data-arkme-session-frame'] })
     sync()
   }
   const position = () => {
     // A queued resize can outlive the iframe document or this observer.
+    if (disposed) return
+    if (!native) { sync(); return }
     const nativeWindow = native?.defaultView
-    if (disposed || !nativeWindow) return
+    if (!nativeWindow) return
     sync()
     native?.dispatchEvent(new nativeWindow.Event(HARNESS_MENU_POSITION))
   }
   const resize = typeof win.ResizeObserver === 'function' ? new win.ResizeObserver(position) : undefined
   resize?.observe(seat)
   const visibility = new win.MutationObserver(sync)
-  visibility.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible'] })
-  frame.addEventListener('load', attach)
+  visibility.observe(surface, { attributes: true, attributeFilter: ['data-arkme-visible', 'data-arkme-boot-feedback'] })
+  const stopDocument = watchHarnessDocument(frame, attach)
   win.addEventListener('resize', position)
   win.addEventListener('scroll', position, true)
-  attach()
+  sync()
   return () => {
     disposed = true
     win.cancelAnimationFrame(scheduled)
@@ -169,12 +187,13 @@ export function watchHarnessSurfaceViewport(surface: HTMLElement, frame: HTMLIFr
     viewportStyle?.remove()
     contentFrame?.removeAttribute('data-arkme-harness-content-frame')
     shadow.remove()
-    frame.removeEventListener('load', attach)
+    stopDocument()
     win.removeEventListener('resize', position)
     win.removeEventListener('scroll', position, true)
     native?.documentElement.removeAttribute('data-arkme-harness-viewport')
     native?.documentElement.removeAttribute('data-arkme-session-preview')
     for (const key of ['left', 'top', 'width', 'height']) native?.documentElement.style.removeProperty(`--arkme-harness-content-${key}`)
+    for (const key of ['left', 'top', 'width', 'height']) surface.style.removeProperty(`--arkme-harness-content-${key}`)
     for (const key of ['top', 'height']) native?.documentElement.style.removeProperty(`--arkme-harness-panel-${key}`)
   }
 }

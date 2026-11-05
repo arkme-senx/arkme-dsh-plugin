@@ -1,4 +1,5 @@
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './message-marks-quotes.js'
+import { thoughtReplyToolModules } from './thought-replies.js'
 import { nativeAnnotationTools } from './native-annotations.js'
 import { messageSyncToolModules } from './message-sync.js'
 import { privateInteractionSummaryToolModule, privateInteractionsQueryToolModule } from './private-interactions.js'
@@ -47,6 +48,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   groupAiPolishToolModule,
   listFavoriteStickersToolModule,
   readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
+  ...thoughtReplyToolModules,
   readReactionsToolModule,
   writeReactionsToolModule,
   addFavoriteStickerToolModule,

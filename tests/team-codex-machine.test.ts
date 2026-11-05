@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexService } from '../src/team-codex-service.js'
+import { TeamCodexCloudJournal } from '../src/team-codex-cloud-journal.js'
+import { TeamCodexLiveUpdates } from '../src/team-codex-live-updates.js'
 import type { ArkmeTeamMember, ArkmeUserProfileSnapshot } from '../src/types.js'
 import type { TeamCodexCloudPort } from '../src/team-codex-cloud.js'
 import { wrappedCodexPrompt } from './fixtures/codex-prompt.js'
@@ -43,12 +45,45 @@ function fixture(cloud?:TeamCodexCloudPort){
       hook_event_name:kind,session_id:'task_current_123',turn_id:'turn_123',prompt:'请修复页面',last_assistant_message:'已经修复',cwd:project,...override})
   }
   const tasks=async()=>(await service.state(teamRef)).tasks
-  const task=async()=>(await tasks())[0]!
+  const task=async()=>{const row=(await tasks())[0]!;const detail=await service.events(teamRef,row.id);return {...row,...(detail.queue?{queue:detail.queue}:{})}}
   return {service,options,root,directory,codex,project,run,enroll,record,register,claim,tasks,task,
     setUser:(value:number|undefined)=>{user=value;service.fence()},advance:(value:number)=>{offset+=value}}
 }
 
 describe('machine-wide local Codex journal and real Python helper',()=>{
+  it('collects every authorized task and older turn in the background beyond both live budgets',async()=>{
+    const f=fixture();await f.enroll()
+    mkdirSync(join(f.codex,'sessions'))
+    const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
+    native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+    const at=Date.now(), expected:string[]=[]
+    for(let n=0;n<20;n++){
+      const id=`session_many_${n}`,path=join(f.codex,'sessions',id+'.jsonl'),lines:object[]=[{type:'session_meta',payload:{id}}]
+      native.prepare('INSERT INTO threads VALUES(?,?,?)').run(id,id,path)
+      for(let turn=0;turn<10;turn++){
+        const turnId=`turn_many_${turn}`,text=`task-${n}-turn-${turn}`;expected.push(text)
+        expect(f.record('UserPromptSubmit',{session_id:id,turn_id:turnId}).status).toBe(0)
+        lines.push({type:'event_msg',timestamp:new Date(at+turn*100).toISOString(),payload:{type:'task_started',turn_id:turnId,root_turn_id:turnId}},
+          {type:'response_item',timestamp:new Date(at+turn*100+1).toISOString(),payload:{id:`message_${turn}`,type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text}]}})
+      }
+      writeFileSync(path,lines.map(v=>JSON.stringify(v)).join('\n')+'\n')
+    }
+    native.close()
+    const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+    const owners=new Set<TeamCodexLiveUpdates>(),schedule=TeamCodexLiveUpdates.prototype.schedule
+    const observing=vi.spyOn(TeamCodexLiveUpdates.prototype,'schedule').mockImplementation(function(this:TeamCodexLiveUpdates,...args){owners.add(this);schedule.apply(this,args)})
+    try{
+      for(let attempt=0;attempt<18;attempt++){
+        f.advance(61000);await f.service.tick();await Promise.all([...owners].map(owner=>owner.idle()))
+        const count=Number(journal.prepare("SELECT COUNT(*) n FROM codex_live_messages WHERE kind='commentary'").get()?.n??0)
+        if(count===expected.length)break
+      }
+      expect(journal.prepare("SELECT text FROM codex_live_messages WHERE kind='commentary' ORDER BY text").all().map(row=>row.text)).toEqual(expected.sort())
+      // Reading source A uses the same first-class identities captured without opening its page.
+      const tasks=await f.tasks();expect(tasks).toHaveLength(20)
+      for(const task of tasks){const page=await f.service.events('self',task.id);expect(page.items.filter(e=>e.kind==='Progress')).toHaveLength(10)}
+    }finally{observing.mockRestore();journal.close()}
+  },60000)
   it('serves private images only through the exact owner, team, task and turn binding',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
     const native=new DatabaseSync(join(f.codex,'state_5.sqlite'))
@@ -64,6 +99,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     let ref=''
     await vi.waitFor(async()=>{ref=(await f.service.events(teamRef,task.id)).items[0]?.privateImages?.[0]?.ref??'';expect(ref).not.toBe('')})
     expect((await f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref)).dataUrl).toMatch(/^data:image\/webp/)
+    expect((await f.service.image('self',task.id,'turn_123','UserPromptSubmit',ref)).dataUrl).toMatch(/^data:image\/webp/)
     await expect(f.service.image(teamRef,task.id,'other_turn','UserPromptSubmit',ref)).rejects.toThrow()
     await expect(f.service.image(`team_v1_${'c'.repeat(32)}`,task.id,'turn_123','UserPromptSubmit',ref)).rejects.toThrow()
     f.setUser(22)
@@ -71,6 +107,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     f.setUser(11);f.service.close();rmSync(path)
     const restored=new TeamCodexService(f.options);services.push(restored)
     expect((await restored.image(teamRef,task.id,'turn_123','UserPromptSubmit',ref,true)).dataUrl).toMatch(/^data:image\/png/)
+    expect((await restored.image('self',task.id,'turn_123','UserPromptSubmit',ref,true)).dataUrl).toMatch(/^data:image\/png/)
   })
   it('attaches native timing to the exact captured turn and keeps it after restart and pause',async()=>{
     const f=fixture();await f.enroll();f.record();f.record('Stop');const task=await f.task()
@@ -111,6 +148,20 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     expect(await f.task()).toMatchObject({id:task.id,title:task.title,eventCount:1})
     expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe('请修复页面')
   })
+  it('keeps oversized fallback classification evidence pending until the native source confirms it',async()=>{
+    const f=fixture();await f.enroll();f.record();const task=await f.task()
+    const db=new DatabaseSync(join(f.directory,'journal.sqlite'))
+    try{
+      db.prepare('DELETE FROM codex_session_visibility').run()
+      db.prepare('DELETE FROM codex_events').run()
+      const put=db.prepare('INSERT INTO codex_events(task_id,turn_id,kind,text,at,truncated) VALUES(?,?,?,?,?,0)')
+      for(let i=0;i<150;i++)put.run(task.id,'fallback-'+i,'UserPromptSubmit','This is an app-generated request for a suggested next user message. The user did not write this message.',i+1)
+      rmSync(join(f.codex,'session_index.jsonl'))
+      expect(await f.tasks()).toEqual([])
+      expect(db.prepare('SELECT visibility FROM codex_session_visibility').get()).toEqual({visibility:'pending'})
+      f.register();expect((await f.tasks())[0]?.id).toBe(task.id)
+    }finally{db.close()}
+  })
   it('quarantines pre-upgrade background rows without deleting their raw events',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
     const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
@@ -128,7 +179,7 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     f.record('UserPromptSubmit',{prompt})
     const task=await f.task()
     expect(task.currentInput?.text).toBe(body.slice(0,240))
-    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe(prompt)
+    expect((await f.service.events(teamRef,task.id)).items[0]?.text).toBe(body)
   })
   it('buffers a final reply during a short runtime restart, then ingests it exactly once',async()=>{
     const f=fixture();await f.enroll();f.record();const task=await f.task()
@@ -177,14 +228,16 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
       await f.service.change(teamRef,'cloud','enable-cloud',undefined,'测试来源')
     } else {
       expect(f.record().status).toBe(0)
-      // Ingest without running a cloud pump until collection has been paused.
+      // The accepted Hook may start a metadata upload before the pause; its fence must stop all later body work.
       await f.service.tick()
       await f.service.change(teamRef,invite.id,'pause')
     }
+    const pausedAt=post.mock.calls.length
     f.advance(6000);await f.service.tick()
     await vi.waitFor(()=>expect(confirms()).toHaveLength(1))
     expect(confirms()[0]![2]).toMatchObject({source_name:'测试来源',team_ref:'101',expected_owner_ref:'11'})
-    expect(post.mock.calls.some(c=>c[1].endsWith('/sync'))).toBe(false)
+    expect(post.mock.calls.slice(pausedAt).some(c=>c[1].endsWith('/sync'))).toBe(false)
+    expect(post.mock.calls.some(c=>c[1].includes('/content/'))).toBe(false)
   })
   it('reveals the entry only after a real trusted event and keeps it when paused or disconnected',async()=>{
     const f=fixture()
@@ -306,8 +359,8 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     writeFileSync(path,'{');const failed=await f.task()
     expect(failed.queue?.availability).toBe('unavailable');expect(failed.queue?.items).toEqual(edited.queue?.items)
     f.service.close();const reopened=new TeamCodexService(f.options);services.push(reopened)
-    expect((await reopened.state(teamRef)).tasks[0]?.queue?.items).toEqual(edited.queue?.items)
-    write([]);const cleared=(await reopened.state(teamRef)).tasks[0]!
+    expect((await reopened.events(teamRef,edited.id)).queue?.items).toEqual(edited.queue?.items)
+    write([]);const clearedState=(await reopened.state(teamRef)).tasks[0]!;const cleared={...clearedState,queue:(await reopened.events(teamRef,clearedState.id)).queue}
     expect(cleared.queue).toMatchObject({availability:'ready',items:[]});expect(cleared.queue!.version).toBeGreaterThan(edited.queue!.version)
   })
   it('does not mix queues across accounts or collect excluded/paused tasks',async()=>{
@@ -438,8 +491,8 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     const task=await f.task();expect(task).toMatchObject({eventCount:56,state:'finished'})
     const newest=await f.service.events(teamRef,task.id)
     expect(newest.items.map(e=>e.text)).toEqual(Array.from({length:50},(_,i)=>`text_${i+6}`))
-    const older=await f.service.events(teamRef,task.id,newest.nextBefore)
-    expect(older.items.map(e=>e.text)).toEqual(Array.from({length:6},(_,i)=>`text_${i}`));expect(older.nextBefore).toBeUndefined()
+    const older=await f.service.events(teamRef,task.id,undefined,undefined,newest.nextCursor)
+    expect(older.items.map(e=>e.text)).toEqual(Array.from({length:6},(_,i)=>`text_${i}`));expect(older.nextCursor).toBeUndefined()
     expect(readdirSync(join(folder,'inbox'))).toEqual([])
   })
   it('keeps legacy records narrow, then preserves history and disables legacy hooks for the migrated task',async()=>{
@@ -478,3 +531,77 @@ describe('machine-wide local Codex journal and real Python helper',()=>{
     expect(await f.task()).toMatchObject({title:'Codex',eventCount:2})
   })
 })
+
+it('keeps the current input in the same turn namespace as its reader, including offline and personal views',async()=>{
+ let offline=false,duringRead:undefined|(()=>void)
+ const f=fixture({post:async(_owner:number,path:string)=>{
+  if(offline)throw Error('offline')
+  if(path.endsWith('list-mine'))return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}
+  if(path.endsWith('/tasks/list')){duringRead?.();duringRead=undefined}
+  return {items:[],page:1,has_more:false}
+ },selectedTeam:async()=>({teamRef,jotmoId:'arkme_cn'})} as unknown as TeamCodexCloudPort)
+ await f.enroll();expect(f.record().status).toBe(0)
+ const local=await f.task(),original=await f.service.events(teamRef,local.id)
+ expect(local.currentInput?.turnId).toBe(original.items[0]?.turnId)
+ duringRead=()=>{
+  const journal=new DatabaseSync(join(f.directory,'journal.sqlite'))
+  try{new TeamCodexCloudJournal(journal).reconcile(11,teamRef,'101',[local],()=>original.items)}finally{journal.close()}
+ }
+ for(const view of [teamRef,'self']){
+  const task=(await f.service.state(view)).tasks.find(t=>t.id===local.id)!
+  const page=await f.service.events(view,local.id)
+  expect(page.items[0]?.turnId).not.toBe(original.items[0]?.turnId)
+  expect(task.currentInput?.turnId).toBe(page.items[0]?.turnId)
+  expect(task.currentInput?.text).toBe(page.items[0]?.text)
+ }
+ offline=true
+ const task=(await f.service.state(teamRef)).tasks.find(t=>t.id===local.id)!
+ expect(task.currentInput?.turnId).toBe((await f.service.events(teamRef,local.id)).items[0]?.turnId)
+})
+
+it('pausing an installation fences a metadata upload already in flight before any object grant or body upload',async()=>{
+ let finish!:(value:unknown)=>void
+ const post=vi.fn(async(_owner:number,path:string,body:Record<string,unknown>)=>{
+  if(path.endsWith('list-mine'))return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}
+  if(path.endsWith('/confirm'))return {owner_ref:'11',source_id:body.source_id}
+  if(path.endsWith('/sync'))return new Promise(resolve=>{finish=resolve})
+  return {items:[],page:1,has_more:false}
+ })
+ const f=fixture({post,selectedTeam:async()=>({teamRef,jotmoId:'arkme_cn'})} as unknown as TeamCodexCloudPort)
+ const invitation=await f.enroll();await f.service.change(teamRef,'cloud','enable-cloud');f.record();await f.service.tick()
+ await vi.waitFor(()=>expect(finish).toBeTypeOf('function'))
+ await f.service.change(teamRef,invitation.id,'pause')
+ const sent=post.mock.calls.find(c=>c[1].endsWith('/sync'))![2] as any
+ finish({owner_ref:'11',task_results:sent.tasks.map((t:any)=>({task_id:t.task_id,version:t.version,status:'saved'}))})
+ await vi.waitFor(()=>expect((f.service as any).cloudPumping).toBe(false))
+ expect(post.mock.calls.some(c=>c[1].includes('/content/'))).toBe(false)
+ const db=new DatabaseSync(join(f.directory,'journal.sqlite'))
+ try{expect(db.prepare('SELECT count(*) n FROM codex_cloud_events WHERE ack=version').get()!.n).toBe(0)}finally{db.close()}
+})
+
+it('keeps the first Hook input and syncs native steering with its own private pictures end to end',async()=>{
+ const f=fixture();await f.enroll();expect(f.record('UserPromptSubmit',{prompt:'初始输入'}).status).toBe(0)
+ const task=await f.task(),first=(await f.service.events(teamRef,task.id)).items[0]!
+ expect(f.record('UserPromptSubmit',{prompt:'追加输入'}).status).toBe(0);await f.service.tick()
+ expect((await f.service.events(teamRef,task.id)).items[0]!.text).toBe('初始输入')
+ const path=join(f.codex,'sessions','steering.jsonl');mkdirSync(join(f.codex,'sessions'),{recursive:true})
+ const native=new DatabaseSync(join(f.codex,'state_5.sqlite'));native.exec('CREATE TABLE threads(id TEXT PRIMARY KEY,name TEXT,rollout_path TEXT)')
+ native.prepare('INSERT INTO threads VALUES(?,?,?)').run('task_current_123','真实输入',path);native.close()
+ const at=first.at,line=(type:string,payload:object,time=at)=>JSON.stringify({type,timestamp:new Date(time).toISOString(),payload})+'\n'
+ const image='data:image/png;base64,'+(await sharp({create:{width:12,height:8,channels:3,background:'#49a'}}).png().toBuffer()).toString('base64')
+ writeFileSync(path,line('session_meta',{id:'task_current_123'})+line('turn_context',{turn_id:'turn_123'})+
+ line('response_item',{id:'root',type:'message',role:'user',content:[{type:'input_text',text:'初始输入'},{type:'input_image',image_url:image}]})+
+ line('response_item',{id:'progress',type:'message',role:'assistant',phase:'commentary',content:[{type:'output_text',text:'处理中'}]},at+1)+
+ line('response_item',{id:'steer',type:'message',role:'user',content:[{type:'input_text',text:'追加输入'},{type:'input_image',image_url:image},{type:'input_image',image_url:image}]},at+2))
+ await vi.waitFor(async()=>{
+  f.advance(61000);await f.service.tick()
+  const page=await f.service.events(teamRef,task.id)
+  expect(page.items.map(e=>e.text)).toEqual(['初始输入','处理中','追加输入'])
+  expect(page.items[0]!.privateImages).toHaveLength(1);expect(page.items[2]!.privateImages).toHaveLength(2)
+  expect(page.items[0]!.at).toBe(first.at)
+ },{timeout:10000,interval:100})
+ const page=await f.service.events(teamRef,task.id),rootImage=page.items[0]!.privateImages![0]!,steerImage=page.items[2]!.privateImages![0]!
+ expect(steerImage.ref).not.toBe(rootImage.ref)
+ expect((await f.service.image(teamRef,task.id,'turn_123','UserPromptSubmit',steerImage.ref,false)).dataUrl).toContain('data:image/webp;')
+ f.setUser(22);await expect(f.service.events(teamRef,task.id)).rejects.toThrow()
+},15000)

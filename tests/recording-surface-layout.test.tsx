@@ -353,11 +353,12 @@ describe('ArkmeRecordingSurface layout', () => {
     expect(source).toContain("className=\"arkme-recording-transcript-speaker\"")
   })
 
-  it('shows the desktop transcript import-and-transcribe skeleton while the day is loading', () => {
+  it('distinguishes reading existing transcript from import-and-transcribe processing', () => {
     const markup = renderToStaticMarkup(recordingSurfaceElement())
 
     expect(markup).toContain('aria-label="转写加载中"')
-    expect(markup).toContain('音频文字正在导入&amp;转写中')
+    expect(markup).toContain('正在读取转写内容…')
+    expect(markup).not.toContain('音频文字正在导入&amp;转写中')
     expect(markup).not.toContain('>正在读取…<')
   })
 
@@ -366,7 +367,6 @@ describe('ArkmeRecordingSurface layout', () => {
 
     expect(source).toContain("section.state === 'processing'")
     expect(source).toContain('section.processingCount > 0')
-    expect(source).toContain('loading={dayLoading}')
     expect(source).toContain('coverage={coverage}')
   })
 })

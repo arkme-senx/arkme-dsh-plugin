@@ -30,6 +30,7 @@ export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask): boolean {
 export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem {
   const visibleFiles = visibleTaskFiles(task)
   const localBlocks = visibleFiles.map((file, index) => ({ key: file.fileRef, block: { ...localFileBlock(file, index),
+    ...(file.attachmentUid ? { attachmentUid: file.attachmentUid } : {}),
     ...(['queued', 'uploading', 'sending'].includes(task.state) ? { uploadProgress: file.progress } : {}) } }))
   const assetBlocks = (task.content.assets ?? []).map(asset => ({ key: asset.fileAssetUid, block: {
     kind: asset.fileKind === 1 ? 'image' as const : asset.fileKind === 3 ? 'video' as const : 'file' as const,
@@ -42,6 +43,7 @@ export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem
     sendAtMillis: task.createdAtMillis, senderName: '我', isMe: true, status: task.result?.status ?? 0, displayKind: 0,
     ...(task.result?.sequence === undefined ? {} : { sequence: task.result.sequence }),
     ...(task.result?.messageActionRef === undefined ? {} : { messageActionRef: task.result.messageActionRef }),
+    ...(task.result?.localState !== 'synced' || task.result.representation === undefined ? {} : { representation: task.result.representation }),
     contentBlocks: blocks,
   }
 }
@@ -62,9 +64,14 @@ export function bindSentFileTaskLocals(item: ArkmeTimelineItem, tasks: readonly 
       if (fileAssetUid !== undefined && fileAssetUid !== '') localByAsset.set(fileAssetUid, file.fileRef)
     }
   }
-  if (localByAsset.size === 0) return item
+  const task = tasks.find(task => task.delivery === 'progressive' && (task.result?.itemUid ?? task.recordUid) === item.itemUid)
+  const local = task ? fileTaskTimelineItem(task).contentBlocks ?? [] : []
   let changed = false
   const contentBlocks = item.contentBlocks.map(block => {
+    if (block.attachmentState) {
+      const replacement = local.find(value => block.attachmentUid && value.attachmentUid === block.attachmentUid)
+      if (replacement?.localFileRef) { changed = true; return { ...block, localFileRef: replacement.localFileRef, mediaRef: replacement.mediaRef, ...(replacement.uploadProgress ? { uploadProgress: replacement.uploadProgress } : {}) } }
+    }
     if (block.localFileRef !== undefined || block.fileAssetUid === undefined) return block
     const localFileRef = localByAsset.get(block.fileAssetUid)
     if (localFileRef === undefined) return block

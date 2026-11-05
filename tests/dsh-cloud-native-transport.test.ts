@@ -14,6 +14,17 @@ function fixture(wait?: (milliseconds: number, signal: AbortSignal) => Promise<v
   return { cloud, call, post }
 }
 afterEach(() => vi.useRealTimers())
+it('reads a complete repaired raw journal even when the legacy OSS generation is unavailable', async () => {
+  const f = fixture()
+  const event = { seq: 0, time: 1, type: 'user/message', surfaceOp: 'append', data: { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'recovered' }] } }
+  f.post.mockImplementation(async path => {
+    if (path.endsWith('/sessions/metadata')) return { runtime_ref: 'runtime', session_ref: 'empty', history_revision: 'stable', history_storage_version: 'oss_turn_v1', history_complete_through_seq: 0, projection_as_of_seq: 0, last_event_seq: 0, turn_projection_complete_through_seq: -2 }
+    if (path.endsWith('/session-events/list')) return { entries: [{ event }], complete: true }
+    throw new Error('old OSS must not be needed')
+  })
+  try { expect(await f.call()).toMatchObject({ items: [{ cursor: 0, cloudVerifiedComplete: true, records: [{ event }] }] }) }
+  finally { f.cloud.close() }
+})
 it('reports an unavailable reminder store instead of manufacturing empty tasks or history from cloud journals', async () => {
   const f = fixture()
   for (const endpoint of ['schedule/list', 'schedule/catalog', 'schedule/history', 'schedule/update', 'schedule/delete']) {
@@ -151,4 +162,22 @@ it('resumes only the cloud lease whose canonical executor became available', asy
   expect(f.cloud.has('two')).toBe(true)
   expect(f.post).not.toHaveBeenCalled()
   f.cloud.close()
+})
+
+it('loads only the complete current-format namespace and preserves its real header', async () => {
+  const f = fixture()
+  const header = { version: 4, id: 'empty', createdAt: 1, isSeeded: false, delegationDepth: 0 }
+  const event = { seq: 0, time: 1, type: 'user/message', surfaceOp: 'append', data: { id: 'm', role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'migrated' }] } }
+  f.post.mockImplementation(async path => {
+    if (path.endsWith('/sessions/metadata')) return { runtime_ref: 'runtime', session_ref: 'empty', history_revision: 'format4', native_history_format: 4, native_history_through_seq: 0, last_event_seq: 100, projection_as_of_seq: 100 }
+    if (path.endsWith('/format-read')) return { ready: true, header, through_seq: 0, entries: [{ event }] }
+    throw new Error('mixed original coordinates')
+  })
+  try {
+    expect(await f.call()).toMatchObject({ items: [{ header, cursor: 0, records: [{ event }], cloudVerifiedComplete: true }] })
+    f.cloud.close()
+    const previous = f.post.getMockImplementation()!
+    f.post.mockImplementation(async path => path.endsWith('/format-read') ? { ready: false, header, through_seq: 0, entries: [{ event }] } : previous(path))
+    await expect(f.call()).rejects.toMatchObject({ code: 'CAPABILITY_UNSUPPORTED' })
+  } finally { f.cloud.close() }
 })

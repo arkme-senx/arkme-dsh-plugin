@@ -1,12 +1,21 @@
+import{codexImageTool}from'./conversation/codex-image.js'
+import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
+import { publicSocialToolModules } from './groups/public-social.js'
 import { recordExportToolModules } from './records/export.js'
 import {teamOutboundToolModule} from './conversation/team-outbound.js'
 import {teamMemberTools} from './contacts/team-members.js'
 import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
 import { teamEntryTools } from './contacts/team-entries.js'
+import { teamWorldReadTool, teamWorldWriteTool } from './world/team-world.js'
+import {worldSoundReadTool,worldSoundWriteTool} from './world/sound-excerpts.js'
+import { worldSuggestionsReadTool, worldSuggestionsWriteTool } from './world/suggestions.js'
+import { worldReplyTool } from './world/reply.js'
+import { worldReactionReadTool, worldReactionWriteTool } from './world/reactions.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
 import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
+import { thoughtReplyToolModules } from './conversation/thought-replies.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
 import { analyticsToolModules } from './conversation/analytics.js'
 import {teamNotificationTools} from './contacts/team-notifications.js'
@@ -86,6 +95,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   ...teamMemberTools,
   ...teamExternalChatTools,
   ...teamMessageTools,
+  ...codexWorkRecordTools,
+  codexImageTool,
   ...teamNotificationTools,
   ...teamEntryTools,
   recentRecordsToolModule,
@@ -101,6 +112,9 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   reeditRecordToolModule,
   ...botToolModules,
   worldRecentToolModule,
+  worldReactionReadTool, worldReactionWriteTool, teamWorldReadTool, teamWorldWriteTool, worldReplyTool,
+  worldSoundReadTool,worldSoundWriteTool,
+  worldSuggestionsReadTool, worldSuggestionsWriteTool,
   worldMineToolModule,
   worldUserToolModule,
   worldVoiceprintSocialContextToolModule,
@@ -120,6 +134,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   privateInteractionSummaryToolModule,
   privateInteractionsQueryToolModule,
   ...groupMemberToolModules,
+  ...publicSocialToolModules,
   readSourceToolModule,
   ...analyticsToolModules,
   copyLinkExtendToolModule,
@@ -142,6 +157,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   readReactionsToolModule,
   writeReactionsToolModule,
   readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
+  ...thoughtReplyToolModules,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,
   manageFavoriteStickerToolModule,

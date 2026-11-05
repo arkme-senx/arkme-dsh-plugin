@@ -7,7 +7,7 @@ export function ArkmeTextTooltip({ anchor, id, text, onClose, kind }: {
   anchor: HTMLElement
   id: string
   text: string
-  kind: 'attachment' | 'membership'
+  kind: 'attachment' | 'membership' | 'history' | 'help'
   onClose(): void
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -39,7 +39,7 @@ export function ArkmeTextTooltip({ anchor, id, text, onClose, kind }: {
   }, [anchor, owner, text, onClose])
   // A modal's top layer must also contain its own tooltip.
   const portalRoot = anchor.closest('dialog') ?? owner.body
-  return createPortal(<div ref={ref} id={id} role="tooltip" data-arkme-attachment-tooltip={kind === 'attachment' ? '' : undefined} data-arkme-membership-tooltip={kind === 'membership' ? '' : undefined} style={{
+  return createPortal(<div ref={ref} id={id} role="tooltip" data-arkme-history-tooltip={kind === 'history' ? '' : undefined} data-arkme-attachment-tooltip={kind === 'attachment' ? '' : undefined} data-arkme-membership-tooltip={kind === 'membership' ? '' : undefined} style={{
     position: 'fixed', ...position, zIndex: 10000, pointerEvents: 'none',
     boxSizing: 'border-box', maxWidth: 'min(360px, calc(100vw - 16px))', padding: '6px 10px',
     border: `1px solid ${arkmeTheme.border}`, borderRadius: 8,

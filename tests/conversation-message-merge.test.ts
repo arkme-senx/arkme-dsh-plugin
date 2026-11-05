@@ -19,6 +19,19 @@ function page(items: ArkmeTimelineItem[]): ArkmeUnifiedTimelineWindow {
 }
 
 describe('conversation message merge ownership', () => {
+  it('shows only the accepted Team receipt immediately and preserves it through convergence', () => {
+    const representation = { teamRef: 'server-team', name: '已确认团队', jotmoId: 'team', membershipKind: 'member' as const, membershipRevision: 3, groupJoinAt: 9 }
+    const owner = new ArkmeConversationMessageMergeOwner()
+    const local = owner.begin(source, pending())
+    let rows = owner.confirm(source, 'local', { ...ack(), representation }, local, [local])
+    expect(rows[0]?.representation).toEqual(representation)
+    rows = owner.merge(source, [{ ...canonical(), representation }], Date.now(), rows)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.representation).toEqual(representation)
+    const failure = new ArkmeConversationMessageMergeOwner()
+    const rejected = failure.begin(source, pending())
+    expect(failure.confirm(source, 'local', { ...ack(), localState: 'failed', representation }, rejected, [rejected])[0]?.representation).toBeUndefined()
+  })
   it.each([
     ['ack', 'live', 'read'], ['ack', 'read', 'live'], ['live', 'ack', 'read'],
     ['live', 'read', 'ack'], ['read', 'ack', 'live'], ['read', 'live', 'ack'],

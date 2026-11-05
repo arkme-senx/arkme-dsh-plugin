@@ -8,15 +8,16 @@ function mergePages(current: ArkmeSourceMessageExtensionContext, page: ArkmeSour
   return { ...previous, ...page, extensions, extensionCount: Math.max(current.extensionCount, page.extensionCount, extensions.length) }
 }
 
-/** Publish the first page immediately; continue reading without blocking the editor.
- * The caller owns cancellation and retains the last published page on a later failure.
+/** First loads publish progressively; background revalidation publishes one complete snapshot.
+ * The caller owns cancellation and retains its prior authorized snapshot on a transient failure.
  */
-export async function readDetailExtensionPages({ parentRecordUid, loadPage, onPage, signal, initial }: {
+export async function readDetailExtensionPages({ parentRecordUid, loadPage, onPage, signal, initial, atomic = false }: {
   parentRecordUid: string
   loadPage(cursor?: string): Promise<ArkmeSourceMessageExtensionContext>
   onPage(context: ArkmeSourceMessageExtensionContext): void
   signal: AbortSignal
   initial?: ArkmeSourceMessageExtensionContext | undefined
+  atomic?: boolean
 }) {
   let context = initial
   const seen = new Set<string>()
@@ -30,6 +31,7 @@ export async function readDetailExtensionPages({ parentRecordUid, loadPage, onPa
     signal.throwIfAborted()
     if (page.parentRecordUid !== parentRecordUid) throw new Error('延展来源已变化，请重新打开详情')
     context = context ? mergePages(context, page) : page
-    onPage(context)
+    if (!atomic) onPage(context)
   } while (context.nextCursor)
+  if (atomic) onPage(context)
 }

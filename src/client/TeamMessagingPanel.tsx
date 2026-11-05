@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import { Images } from '@phosphor-icons/react/dist/icons/Images'
 import { Article } from '@phosphor-icons/react/dist/icons/Article'
@@ -33,6 +34,7 @@ import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { teamMessageActionUnavailable } from './team-message-action-availability.js'
 import { useAskDsh } from './use-ask-dsh.js'
 import { ArkmeComposerInfoRow } from './ArkmeComposerInfoRow.js'
+import { ArkmeConversationArrangements } from './ArkmeConversationArrangements.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
 import { ArkmeMessageSnapshotDialog } from './ArkmeMessageSnapshotDialog.js'
 import { useTeamMessageSelection } from './use-team-message-selection.js'
@@ -159,10 +161,11 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
   conversation: TeamConversation; accountKey?: string; selected?: boolean; showTeamName?: boolean; role?: 'treeitem'; onClick(): void
 }) {
   const actions = useTeamConversationEntryActions(accountKey, { kind: 'conversation', conversation: c })
-  const preview = c.preview?.status === 'available'
+  const emptyPreview = c.lastSeq === 0 && (!c.preview || c.preview.status === 'unavailable' && !c.preview.text && !c.preview.templateKind && !c.preview.hasMedia)
+  const preview = emptyPreview ? tr('尚未发送消息') : c.preview?.status === 'available'
     ? c.preview.text || (c.preview.templateKind === 3 ? tr('[语音]') : c.preview.hasMedia ? tr('[附件]') : '')
     : c.preview ? tr('内容暂不可用') : ''
-  return <><button className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-team-side={c.side} type="button" role={role}
+  return <><button className="team-conversation-row" data-team-conversation-key={c.key} data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-team-side={c.side} type="button" role={role}
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
     style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
     {actions.pinned && <ArkmePinnedCorner />}
@@ -528,16 +531,23 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     try {persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next);editor.current?.focus()}
     catch {setError(tr('草稿未能保存到本机，请勿关闭窗口'))}
   }
-  const locateMessage = async (ref:string,key:string) => {
-    const token=++generation.current
-    try {
-      const page=await callArkme<TeamTimeline>('team.app.locate',{conversationRef:conversation.ref,messageRef:ref},ctrl.current.signal)
-      if (ctrl.current.signal.aborted || token!==generation.current) return
-      historyWindow.current=(page.messages.at(-1)?.seq ?? 0)<page.conversation.lastSeq ? (page.messages.at(-1)?.seq ?? 0)+1 : 0
-      // Replace the timeline window. Merging a distant page with the live head
-      // would make the next refresh load every intervening history page.
-      pendingJump.current=key;latest.current=page;setTimeline(page)
-    } catch(e) {if(!ctrl.current.signal.aborted)setError(errorText(e))}
+  const readLocatedMessage = async (ref: string, key: string, signal: AbortSignal) => {
+    const token = ++generation.current
+    const requestSignal = AbortSignal.any([signal, ctrl.current.signal])
+    requestSignal.throwIfAborted()
+    const page = await callArkme<TeamTimeline>('team.app.locate', { conversationRef: conversation.ref, messageRef: ref }, requestSignal)
+    requestSignal.throwIfAborted()
+    if (token !== generation.current) throw new Error(tr('消息窗口已更新，请重新定位'))
+    const found = page.messages.find(message => message.key === key)
+    if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
+    historyWindow.current = (page.messages.at(-1)?.seq ?? 0) < page.conversation.lastSeq ? (page.messages.at(-1)?.seq ?? 0) + 1 : 0
+    // One authorized window for every history entry; never scan intervening pages.
+    pendingJump.current = key; latest.current = page; setTimeline(page)
+    setDetailKey(undefined); setLocatedKey(key)
+  }
+  const locateMessage = async (ref: string, key: string) => {
+    try { await readLocatedMessage(ref, key, ctrl.current.signal) }
+    catch (error) { if (!ctrl.current.signal.aborted) setError(errorText(error)) }
   }
   const locateReply = async (message:TeamMessage) => {
     const parent=teamReplyPresentation(message)
@@ -874,21 +884,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       setSelectionRequest({text:inserted.text,start:inserted.caretIndex,end:inserted.caretIndex})
     },
   })
-  const locateVisitorRecord = async (message: TeamMessage, signal: AbortSignal) => {
-    let page = latest.current
-    for (let pass = 0; !page?.messages.some(m => m.key === message.key) && pass < 100; pass++) {
-      signal.throwIfAborted()
-      if (page && (!page.hasMore || page.beforeSeq <= message.seq)) break
-      const previous = page?.beforeSeq
-      page = await refresh(previous ?? 0)
-      if (ctrl.current.signal.aborted) return
-      if (!page || previous && page.hasMore && page.beforeSeq >= previous) throw new Error(tr('原消息暂时无法定位，请重试'))
-    }
-    signal.throwIfAborted()
-    const found = page?.messages.find(m => m.key === message.key)
-    if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
-    setLocatedKey(message.key)
-  }
+  const locateVisitorRecord = (message: TeamMessage, signal: AbortSignal) => readLocatedMessage(message.ref, message.key, signal)
   useLayoutEffect(() => {
     if (!locatedKey) return
     const row = Array.from(scroller.current?.querySelectorAll<HTMLElement>('[data-team-message-key]') ?? []).find(node => node.dataset.teamMessageKey === locatedKey)
@@ -959,7 +955,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const conversationComposer = (defaultReply?: TeamMessage, detailReady = true) => <div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
       onDrop={event => { if (event.dataTransfer.files.length && !editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked) { event.preventDefault(); selectFiles(event.dataTransfer.files) } }}
       style={{...composerLayout.composer, flexDirection: 'column', ...(selection.ids ? { display: 'none' } : {})}} data-team-composer={editing ? 'reedit' : 'message'}>
-      <ArkmeComposerInfoRow destination={current.side === 'team' ? `${current.visitor?.nickname ?? tr('用户')}（${current.channel.name}）` : current.channel.name} focused={composerFocused && !editing}>
+      <ArkmeComposerInfoRow destination={current.side === 'team' ? `${current.visitor?.nickname ?? tr('用户')}（${current.channel.name}）` : current.channel.name} focused={composerFocused}
+        shortcuts={!editing && detailReady ? <ArkmeConversationArrangements teamConversation={current} accountScope={accountKey} active refreshRevision={current.revision} /> : undefined}>
         <ArkmeComposerInputStats active visible={composerFocused || !!richDraft.text || !!draft.localFiles?.length || !!draft.assets.length}
           textLength={Array.from(richDraft.text).length} startedAtMillis={validTeamDraftStart(editing ? editing.startedAtMillis : draft.startedAtMillis)}
           showsInputTime={showsInputTime} onToggle={() => setShowsInputTime(!showsInputTime)} />
@@ -1062,7 +1059,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         {!editing && <ArkmeBackgroundSoundWaveform owner={recordCapture} draftKey={recordDraftKey} />}
       </ArkmeComposerCard>
     </div>
-  return <section ref={paneHost} className="team-conversation-pane" style={{ position: 'relative', minHeight: 0 }}>
+  return <section ref={paneHost} className="team-conversation-pane" data-arkme-active-conversation-identity={`team:${conversation.side}:${conversation.key}`} style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
     {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version} revision={forwardAttempt.messages[0].revision}>{readable=><TeamForwardDialog attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
     {copyLinkNotice&&<div role="status">{copyLinkNotice}</div>}
@@ -1116,19 +1113,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           const message = latest.current?.messages.find(m => m.key === row?.dataset.teamMessageKey)
           return message ? teamHistoryDate(message.createdAt) : undefined
         }}
-        onLocate={async (message, signal) => {
-          signal.throwIfAborted()
-          let page = latest.current
-          if (!page?.messages.some(m => m.key === message.key)) {
-            historyWindow.current = message.seq + 26
-            page = await refresh(0, true)
-          }
-          signal.throwIfAborted()
-          const found = page?.messages.find(m => m.key === message.key)
-          if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
-          setDetailKey(undefined); setLocatedKey(undefined)
-          requestAnimationFrame(() => { if (!signal.aborted) setLocatedKey(message.key) })
-        }}/>
+        onLocate={locateVisitorRecord}/>
+
     </header>
     {Boolean(quoteNavigation.notice || replyBack.current) && <div role="status">{quoteNavigation.notice}
       {replyBack.current && <button type="button" onClick={()=>{const back=replyBack.current!;replyBack.current=undefined;quoteNavigation.clear();void locateMessage(back.ref,back.key)}}>{tr('返回回复位置')}</button>}
@@ -1142,7 +1128,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     {(selection.status || selection.error) && <div role={selection.error ? 'alert' : 'status'} style={{ padding: '8px 16px', color: selection.error ? arkmeTheme.danger : arkmeTheme.secondary, fontSize: 12 }}>
       {selection.status} {selection.error}
       {selection.error && <button type="button" disabled={selection.busy} onClick={() => { void recover() }}>{tr('刷新核对')}</button>}
-      {!selection.busy && <button type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus}>×</button>}
+      {!selection.busy && <ArkmeCloseButton type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus} />}
     </div>}
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
     <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current); bottomVisibility.measure() }} aria-label={tr("团队消息记录")}>

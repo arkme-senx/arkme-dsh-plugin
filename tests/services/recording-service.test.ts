@@ -341,6 +341,21 @@ describe('RecordingService', () => {
       async close() { service.dispose(); database.close(); await rm(root, { recursive: true, force: true }) } }
   }
 
+  it('reads monthly day totals with the same window as day details and checks account/date before upstream work', async () => {
+    const fixture = await speakerCacheFixture(), date = new Date(2026, 9, 8).getTime()
+    fixture.state.ownerRecordings = [{ startAt: date, items: [{ text: '当天', start: 1000, end: 2000 }] }]
+    try {
+      const result = await fixture.service.recordingTotalsDay('test:42', date)
+      expect(result).toHaveProperty('storage')
+      expect(result).toHaveProperty('asrInput')
+      expect(fixture.calls.some(path => /get-session-ls|one-day-trans|playback/.test(path))).toBe(false)
+      const count = fixture.calls.length
+      await expect(fixture.service.recordingTotalsDay('test:7', date)).rejects.toMatchObject({ code: 'account-changed' })
+      await expect(fixture.service.recordingTotalsDay('test:42', date + 1)).rejects.toMatchObject({ code: 'recording-date-invalid' })
+      expect(fixture.calls).toHaveLength(count)
+    } finally { await fixture.close() }
+  })
+
   it('serves a complete compact day overview bound to the same account, date and transcript snapshot', async () => {
     const fixture = await speakerCacheFixture(), date = new Date(2026, 9, 8).getTime()
     fixture.state.ownerRecordings = [{ startAt: date, items: [{ text: '汉🎙'.repeat(15000), start: 1000, end: 2000 }] },

@@ -1,6 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { ArkmeMessageQuote } from './message-quote.js'
+import type { NativeAnnotationContext } from './native-annotations.js'
 import type { DatabaseSync } from 'node:sqlite'
 import { readUnderlineSnapshot, type MessageUnderlineChange, type MessageUnderlineSnapshot } from './message-annotations.js'
+
+export type NativeAnnotationOperation = { path: string; body: Record<string, unknown>; context?: NativeAnnotationContext; pendingAnchor?: ArkmeMessageQuote; prepared?: boolean; requestedAnnotationId?: unknown }
 
 /** Legacy local marks stay private; cloud cache and durable intents use separate account scopes. */
 export class LocalMessageMarkStore {
@@ -41,11 +45,16 @@ export class LocalMessageMarkStore {
       }
     })
   }
-  stageCloudOperation(scope: string, key: string, value: { path: string; body: Record<string, unknown> }) {
+  stageCloudOperation(scope: string, key: string, value: NativeAnnotationOperation) {
     const payload = JSON.stringify(value)
     this.transaction(() => {
       const old = this.db.prepare('SELECT payload FROM native_annotation_outbox WHERE scope=? AND key=?').get(scope, key) as { payload: string } | undefined
-      if (old) { if (old.payload !== payload) throw new Error('同步操作已变化，请重新选择'); return }
+      if (old) {
+        const prior = JSON.parse(old.payload) as NativeAnnotationOperation
+        const body = prior.prepared ? { ...prior.body, annotation_id: prior.requestedAnnotationId } : prior.body
+        if (JSON.stringify(body) !== JSON.stringify(value.body) || prior.path !== value.path) throw new Error('同步操作已变化，请重新选择')
+        return
+      }
       const size = this.db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(length(CAST(payload AS BLOB))),0) AS bytes FROM native_annotation_outbox WHERE scope=?').get(scope) as { n: number; bytes: number }
       if (size.n >= 200 || size.bytes + Buffer.byteLength(payload) > 2 * 1024 * 1024) throw new Error('待同步标记已达上限，请联网同步后重试')
       this.db.prepare('INSERT INTO native_annotation_outbox(scope,key,payload,created_at) VALUES(?,?,?,?)').run(scope, key, payload, Date.now())
@@ -53,7 +62,10 @@ export class LocalMessageMarkStore {
   }
   cloudOperations(scope: string) {
     const rows = this.db.prepare('SELECT key,payload,created_at FROM native_annotation_outbox WHERE scope=? ORDER BY created_at,rowid LIMIT 200').all(scope) as { key: string; payload: string; created_at: number }[]
-    return rows.map(row => ({ key: row.key, value: JSON.parse(row.payload) as { path: string; body: Record<string, unknown> }, createdAt: row.created_at }))
+    return rows.map(row => ({ key: row.key, value: JSON.parse(row.payload) as NativeAnnotationOperation, createdAt: row.created_at }))
+  }
+  prepareCloudOperation(scope: string, key: string, value: NativeAnnotationOperation) {
+    this.db.prepare('UPDATE native_annotation_outbox SET payload=? WHERE scope=? AND key=?').run(JSON.stringify(value), scope, key)
   }
   completeCloudOperation(scope: string, key: string) { this.db.prepare('DELETE FROM native_annotation_outbox WHERE scope=? AND key=?').run(scope, key) }
 

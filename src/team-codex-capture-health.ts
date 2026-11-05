@@ -69,10 +69,10 @@ export class TeamCodexCaptureHealthReader {
           db.exec('PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=50')
           const task=db.prepare(`SELECT t.id,t.session_id FROM codex_tasks t JOIN codex_installations i ON i.id=t.installation_id
             JOIN codex_cloud_tasks c ON c.local_id=t.id JOIN codex_cloud_sources s ON s.id=c.source
-            WHERE i.id=? AND i.user_id=? AND i.team_ref=? AND i.home_key=? AND i.status='active'
-            AND c.id=? AND s.id=? AND s.owner=? AND s.local_team=? AND t.deleted=0 AND t.excluded=0
+            WHERE i.id=? AND i.user_id=? AND (?='self' OR i.team_ref=?) AND i.home_key=? AND i.status='active'
+            AND c.id=? AND s.id=? AND s.owner=? AND (?='self' OR s.local_team=?) AND t.deleted=0 AND t.excluded=0
             AND NOT EXISTS(SELECT 1 FROM codex_project_exclusions p WHERE p.installation_id=i.id AND p.project_key=t.project_key)`)
-            .get(entry.installation,owner,team,homeKey,taskId,sourceId,owner,team)
+            .get(entry.installation,owner,team,team,homeKey,taskId,sourceId,owner,team,team)
           if(!task || typeof task.session_id!=='string') continue
           const hasVisibility=!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_session_visibility'").get()
           const visible=hasVisibility ? db.prepare("SELECT 1 FROM codex_session_visibility WHERE installation_id=? AND session_id=? AND visibility='user'").get(entry.installation,task.session_id)
@@ -126,8 +126,8 @@ export class TeamCodexCaptureHealthReader {
           }
           db = new DatabaseSync(path, { readOnly: true })
           db.exec('PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA busy_timeout=50')
-          const installation = db.prepare('SELECT status,updated_at FROM codex_installations WHERE id=? AND user_id=? AND team_ref=? AND home_key=?')
-            .get(entry.installation, owner, team, homeKey)
+          const installation = db.prepare(`SELECT status,updated_at FROM codex_installations WHERE id=? AND user_id=? AND (?='self' OR team_ref=?) AND home_key=?`)
+            .get(entry.installation, owner, team, team, homeKey)
           if (!installation) continue
           const now = this.now()
           let status: NonNullable<TeamCodexTask['captureHealth']>['status'] = 'offline'
@@ -144,8 +144,8 @@ export class TeamCodexCaptureHealthReader {
             if (task.cloud && task.cloud.ownerRef !== String(owner)) continue
             const row = task.cloud
               ? db.prepare(`SELECT t.updated_at FROM codex_tasks t JOIN codex_cloud_tasks c ON c.local_id=t.id
-                  JOIN codex_cloud_sources s ON s.id=c.source WHERE t.installation_id=? AND c.id=? AND s.id=? AND s.owner=? AND s.local_team=?`)
-                .get(entry.installation, task.cloud.taskId, task.cloud.sourceId, owner, team)
+                  JOIN codex_cloud_sources s ON s.id=c.source WHERE t.installation_id=? AND c.id=? AND s.id=? AND s.owner=? AND (?='self' OR s.local_team=?)`)
+                .get(entry.installation, task.cloud.taskId, task.cloud.sourceId, owner, team, team)
               : db.prepare('SELECT updated_at FROM codex_tasks WHERE installation_id=? AND id=?').get(entry.installation, task.id)
             if (row) health.set(task.id, { status, checkedAt: now, lastReceivedAt: Number(row.updated_at) })
           }

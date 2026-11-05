@@ -59,3 +59,11 @@ it('keeps code and table text nodes stable during unchanged polling so selection
  expect(host.querySelector('pre code')).toBe(code);expect(host.querySelector('td')).toBe(cell)
  expect(document.getSelection()?.toString()).toContain('可选代码');expect(document.querySelector('[data-arkme-text-selection-toolbar]')).not.toBeNull()
 })
+
+it('uses the actual cloud mark capability without labelling a synced private mark as machine-only',async()=>{
+ vi.mocked(callArkme).mockImplementation(async(op)=>op.endsWith('capabilities')?{supported:true,maxLength:2000,storage:'cloud'}:[] as any)
+ await render();await select()
+ await vi.waitFor(()=>expect(document.querySelector('[data-arkme-text-selection-toolbar]')).not.toBeNull())
+ expect(document.querySelector('[data-arkme-text-selection-toolbar]')?.textContent).not.toContain('仅本机')
+ expect([...document.querySelectorAll('[data-arkme-text-selection-toolbar] button')].map(b=>b.textContent)).toEqual(['复制','全选','标记','查找','转发'])
+})

@@ -1,3 +1,4 @@
+import {codexObjectFixture} from "./helpers/codex-object-fixture.js"
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TeamCodexCloudJournal } from '../src/team-codex-cloud-journal.js'
@@ -9,7 +10,7 @@ import type { TeamCodexQueueSnapshot, TeamCodexTask, TeamCodexState } from '../s
 
 const databases:DatabaseSync[]=[]
 const db=()=>{const value=new DatabaseSync(':memory:');databases.push(value);return value}
-afterEach(()=>databases.splice(0).forEach(value=>value.close()))
+afterEach(()=>{vi.unstubAllGlobals();databases.splice(0).forEach(value=>value.close())})
 const member={userRef:'self',displayName:'本人',role:'member' as const,joinedAtMillis:1,identityState:'ready' as const}
 const snapshot=(texts=['需求甲','需求乙'],version=1,checkedAt=10000):TeamCodexQueueSnapshot=>({version,checkedAt,changedAt:checkedAt,sourceAt:checkedAt,
   availability:'ready',reason:'none',items:texts.map((text,index)=>({id:`request-${index}`,text,createdAt:1000,delivery:'queue',state:'queued',paused:false,attachmentCount:0,truncated:false}))})
@@ -133,9 +134,12 @@ describe('last-known cloud queue cache',()=>{
 function cloudFixture(supported=true) {
   let now=10000,user=11,capability=supported
   const stored=new Map<string,Record<string,unknown>>()
+ const objects=codexObjectFixture();vi.stubGlobal('fetch',objects.fetch)
   const post=vi.fn(async(_owner:number,path:string,body:Record<string,unknown>):Promise<unknown>=>{
     if(path.endsWith('list-mine'))return {teams:[{team_id:101,jotmo_id:'arkme_cn'}]}
     if(path.endsWith('connection/status'))return {owner_ref:String(user),has_connected_codex:true,first_connected_at:1,...(capability?cap:{})}
+    if(path.endsWith('/content/prepare'))return objects.prepare(body.descriptor as Record<string,unknown>)
+    if(path.endsWith('/content/commit')){const d=body.descriptor as Record<string,unknown>,value=objects.body(d),q=value.queue as Record<string,unknown>;const previous=stored.get(String(d.task_id));stored.set(String(d.task_id),{...previous,queue_snapshot:q,queue_descriptor:d});return {owner_ref:'11',event_results:[],queue_results:[{task_id:d.task_id,status:'saved',version:q.version,observed_at:q.observed_at}]}}
     if(path.endsWith('/sync')) {
       const batch=body as CodexQueueBatch
       for(const task of batch.tasks) {
@@ -145,14 +149,15 @@ function cloudFixture(supported=true) {
       }
       return {...ack(batch),task_results:batch.tasks.map(task=>({task_id:task.task_id,version:task.version,status:'saved'})),event_results:[]}
     }
-    if(path.endsWith('tasks/list'))return {items:[...stored.values()],page:body.page,has_more:false,...(capability?cap:{})}
+    if(path.endsWith('/content/list')){const row=stored.get(String(body.task_id)),d=row?.queue_descriptor as Record<string,unknown>|undefined,q=row?.queue_snapshot as Record<string,unknown>|undefined;return {task_summary:{source_id:body.source_id,task_id:body.task_id,task_title:'Codex',project_key:'p',project_name:'项目',branch:'dev',task_metadata_version:1,summary_version:0,event_count:0,latest_at:0,state:''},items:[],content_objects:[],has_more:false,owner_view:row?.owner_ref===String(_owner),...(d&&q?{queue_object:{descriptor:d,grant:objects.grant(String(d.sha256))},queue_observed_at:q.observed_at}:{})}}
+    if(path.endsWith('tasks/list'))return {items:[...stored.values()].map(({queue_descriptor,queue_snapshot,...row})=>{const q=queue_snapshot as Record<string,unknown>|undefined;const items=q?.items as Record<string,unknown>[]|undefined;return {...row,...(q?{queue_snapshot:{...q,items:null},queue_count:items?.length??0,queue_waiting_count:items?.filter(i=>i.delivery==='queue'&&['queued','pending'].includes(String(i.state))).length??0}:{})}}),page:body.page,has_more:false,...(capability?cap:{})}
     throw new Error(path)
   })
   const port={post,selectedTeam:async()=>({teamRef:'team',jotmoId:'arkme_cn'})} as unknown as TeamCodexCloudPort
   const cloud=new TeamCodexCloud(db(),port,async()=>user,()=>now)
   const reader=new TeamCodexCloud(db(),port,async()=>user,()=>now)
   const empty:TeamCodexState={localOnly:true,self:member,tasks:[],installations:[]}
-  return {cloud,reader,post,stored,empty,advance:(ms:number)=>now+=ms,setCapability:(v:boolean)=>capability=v,setUser:(v:number)=>{user=v;cloud.fence();reader.fence()}}
+  return {cloud,reader,post,stored,empty,readQueue:async()=>{const row=[...stored.values()][0]!;return (await reader.events(user,'team',String(row.task_id),String(row.source_id))).queue},advance:(ms:number)=>now+=ms,setCapability:(v:boolean)=>capability=v,setUser:(v:number)=>{user=v;cloud.fence();reader.fence()}}
 }
 
 describe('two-device cloud queue integration with a contract fixture',()=>{
@@ -160,12 +165,13 @@ describe('two-device cloud queue integration with a contract fixture',()=>{
     const f=cloudFixture();await f.cloud.enable(11,'team')
     await f.cloud.sync(11,'team',[task()],()=>[])
     let result=await f.reader.state(11,'team',f.empty)
-    expect(result.tasks[0]).toMatchObject({queueCloud:'ready',cloud:{remote:true},queue:{items:[{text:'需求甲'},{text:'需求乙'}]}})
+    expect(result.tasks[0]).toMatchObject({queueCloud:'ready',cloud:{remote:true},queueSummary:{count:2,waitingCount:2}})
+    expect((await f.readQueue())?.items.map(i=>i.text)).toEqual(['需求甲','需求乙'])
     expect(f.post.mock.calls.filter(c=>c[1].endsWith('/sync'))).toHaveLength(2)
     f.advance(1000);await f.cloud.sync(11,'team',[task(snapshot(['改过'],2,11000))],()=>[])
-    result=await f.reader.state(11,'team',f.empty);expect(result.tasks[0]!.queue?.items.map(i=>i.text)).toEqual(['改过'])
+    result=await f.reader.state(11,'team',f.empty);expect(result.tasks[0]?.queueSummary?.count).toBe(1);expect((await f.readQueue())?.items.map(i=>i.text)).toEqual(['改过'])
     f.advance(1000);await f.cloud.sync(11,'team',[task(snapshot([],3,12000))],()=>[])
-    result=await f.reader.state(11,'team',f.empty);expect(result.tasks[0]!.queue?.items).toEqual([])
+    result=await f.reader.state(11,'team',f.empty);expect(result.tasks[0]?.queueSummary?.count).toBe(0);expect((await f.readQueue())?.items).toEqual([])
   })
   it('never sends queue fields to an unsupported backend and caches capability discovery',async()=>{
     const f=cloudFixture(false);await f.cloud.enable(11,'team')
@@ -174,16 +180,16 @@ describe('two-device cloud queue integration with a contract fixture',()=>{
     expect(f.post.mock.calls.filter(c=>c[1].endsWith('connection/status'))).toHaveLength(1)
     expect((await f.reader.state(11,'team',f.empty)).tasks[0]?.queueCloud).toBe('unsupported')
     f.setCapability(true);f.advance(300001);await f.cloud.sync(11,'team',[task()],()=>[])
-    expect((await f.reader.state(11,'team',f.empty)).tasks[0]?.queue?.items).toHaveLength(2)
+    expect((await f.readQueue())?.items).toHaveLength(2)
   })
   it('retains stale queue after network failure and missing snapshot, but removes it after permission loss or account switch',async()=>{
     const f=cloudFixture();await f.cloud.enable(11,'team');await f.cloud.sync(11,'team',[task()],()=>[])
-    const initial=await f.reader.state(11,'team',f.empty),original=f.post.getMockImplementation()!
+    await f.reader.state(11,'team',f.empty);const initial=await f.readQueue(),original=f.post.getMockImplementation()!
     f.post.mockImplementation(async(owner,path,body)=>{if(path.endsWith('tasks/list'))throw new Error('offline');return original(owner,path,body)})
-    expect((await f.reader.state(11,'team',f.empty)).tasks[0]?.queue).toMatchObject({availability:'stale',items:initial.tasks[0]!.queue!.items})
+    expect((await f.reader.state(11,'team',f.empty)).tasks[0]?.queueSummary).toMatchObject({availability:'stale',count:initial!.items.length})
     f.post.mockImplementation(original)
     for(const row of f.stored.values())delete row.queue_snapshot
-    expect((await f.reader.state(11,'team',f.empty)).tasks[0]?.queue?.availability).toBe('stale')
+    expect((await f.readQueue())?.availability).toBe('stale')
     f.post.mockImplementation(async()=>{throw new ArkmePluginError('TEAM_FORBIDDEN','revoked',false,403)})
     expect((await f.reader.state(11,'team',f.empty)).tasks).toEqual([])
     f.setUser(22);expect((await f.reader.state(22,'team',f.empty)).tasks).toEqual([])
@@ -197,7 +203,7 @@ describe('two-device cloud queue integration with a contract fixture',()=>{
   it('backs off queue failures without suppressing subsequent ordinary task uploads',async()=>{
     const f=cloudFixture(),original=f.post.getMockImplementation()!
     f.post.mockImplementation(async(owner,path,body)=>{
-      if(path.endsWith('/sync')&&(body as CodexQueueBatch).tasks.some(task=>task.queue_snapshot))throw new Error('queue endpoint failure')
+      if(path.endsWith('/content/prepare')&&(body.descriptor as Record<string,unknown>)?.kind==='queue')throw new Error('queue endpoint failure')
       return original(owner,path,body)
     })
     await f.cloud.enable(11,'team');await f.cloud.sync(11,'team',[task()],()=>[])

@@ -50,7 +50,7 @@ export interface ArkmeProductNavigationProps {
 }
 
 type NavigationItem = {
-  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'arrangements' | 'explore' | 'extensions'
+  id: 'conversations' | 'contacts' | 'calls' | 'recordings' | 'calendar' | 'arrangements' | 'world' | 'explore' | 'extensions'
   label: string
   icon: Icon
 }
@@ -62,6 +62,7 @@ const items: NavigationItem[] = [
   { id: 'recordings', get label() { return tr("录音") }, icon: Waveform },
   { id: 'calendar', get label() { return tr("日历") }, icon: CalendarBlank },
   { id: 'arrangements', get label() { return tr("安排") }, icon: ListChecks },
+  { id: 'world', get label() { return tr("世界") }, icon: GlobeHemisphereWest },
   { id: 'explore', get label() { return tr("探索") }, icon: GlobeHemisphereWest },
   { id: 'extensions', get label() { return tr("市集") }, icon: PuzzlePiece },
 ]
@@ -77,7 +78,7 @@ const styles: Record<string, CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'stretch',
-    gap: 5,
+    gap: 8,
     borderRight: `1px solid ${theme.borderSoft}`,
     background: theme.sidebar,
     color: theme.text,
@@ -93,7 +94,7 @@ const styles: Record<string, CSSProperties> = {
     borderBottom: `1px solid ${theme.borderSoft}`,
   },
   hostedRail: {
-    width: '100%', minWidth: 0, padding: '28px 4px 12px', borderRight: 0,
+    width: '100%', minWidth: 0, padding: '28px 8px 12px', borderRight: 0,
   },
   taskExpandedRail: { width: ARKME_NAVIGATION_WIDTH, minWidth: ARKME_NAVIGATION_WIDTH },
   brand: {
@@ -103,34 +104,32 @@ const styles: Record<string, CSSProperties> = {
   },
   brandVersion: { color: theme.tertiary, fontSize: 10, lineHeight: '13px', whiteSpace: 'nowrap' },
   primary: {
-    minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5,
-    // Keep the existing edge marker and focus outline inside the scroll viewport.
-    margin: '-3px -8px', padding: '3px 8px', overflowY: 'auto', scrollbarWidth: 'none',
+    minHeight: 0, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+    // Keep keyboard focus outlines inside the scroll viewport.
+    margin: '-4px -4px', padding: '4px', overflowY: 'auto', scrollbarWidth: 'none',
   },
   button: {
     position: 'relative',
-    minHeight: 44,
-    height: 44,
+    width: 36,
+    minWidth: 36,
+    minHeight: 36,
+    height: 36,
     flexShrink: 0,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '0 4px',
+    padding: 0,
     border: 0,
-    borderRadius: 15,
+    borderRadius: 10,
     background: 'transparent',
     color: 'inherit',
     cursor: 'pointer',
     font: 'inherit',
     boxShadow: 'none',
   },
-  compactButton: { minHeight: 42, height: 42, flex: 1, flexDirection: 'row', gap: 6, padding: '0 8px', borderRadius: 12 },
-  hostedButton: { padding: '0 2px', borderRadius: 13 },
+  compactButton: { width: 'auto', minWidth: 0, minHeight: 42, height: 42, flex: 1, flexDirection: 'row', gap: 6, padding: '0 8px', borderRadius: 12 },
   activeButton: { background: theme.active, color: theme.text },
-  activeMarker: { left: -8 },
-  compactMarker: { left: '50%', top: 'auto', bottom: -6, width: 30, height: 3, transform: 'translateX(-50%)' },
-  hostedMarker: { left: -4 },
   icon: { position: 'relative', display: 'inline-flex' },
   unreadIndicator: {
     position: 'absolute', top: -7, right: -10, minWidth: 16, height: 16,
@@ -239,7 +238,8 @@ export function ArkmeProductNavigation({
     : ui.calendarOpen === true ? 'calendar'
     : ui.mode === 'arrangements' ? 'arrangements'
     : ui.mode === 'extensions' ? 'extensions'
-    : ui.mode === 'world' || ui.mode === 'explore' || ui.mode === 'statistics' ? 'explore'
+    : ui.mode === 'world' ? 'world'
+    : ui.mode === 'explore' || ui.mode === 'statistics' ? 'explore'
     : ui.mode === 'calls' ? 'calls'
     : ui.mode === 'recordings' || ui.mode === 'recognized-speakers' || ui.mode === 'voiceprint' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
@@ -272,6 +272,7 @@ export function ArkmeProductNavigation({
     if (id === 'contacts') arkmeUi.showContacts()
     else if (id === 'calls') arkmeUi.showCalls()
     else if (id === 'recordings') arkmeUi.showRecordings()
+    else if (id === 'world') arkmeUi.showWorld()
     else if (id === 'explore') arkmeUi.showExplore('profile')
     else if (id === 'calendar') arkmeUi.showCalendar()
     else if (id === 'arrangements') arkmeUi.showArrangements()
@@ -303,13 +304,12 @@ export function ArkmeProductNavigation({
         <span data-arkme-plugin-version={pluginManifest.version} style={styles.brandVersion}>{productVersion}</span>
       </div>}
       <div style={{ ...styles.primary,
-        ...(compact ? { flexDirection: 'row' as const, margin: 0, padding: 0, overflowY: 'visible' as const }
-          : hosted ? { margin: '-3px -4px', padding: '3px 4px' } : {}),
+        ...(compact ? { flexDirection: 'row' as const, margin: 0, padding: 0, overflowY: 'visible' as const } : {}),
       }} data-arkme-home-tour-scroll-container="navigation">
       {navigationItems.map(item => {
         const ItemIcon = item.icon
         const active = item.id === activeId
-        if (item.id === 'explore') return <ExploreNavigation key={item.id} active={active} current={ui.mode === 'statistics' ? 'statistics' : ui.mode === 'world' ? 'world' : ui.exploreModule} locked={locked} compact={compact} style={{...styles.button, ...(compact ? styles.compactButton : {}), ...(hosted ? styles.hostedButton : {}), ...(active ? styles.activeButton : {})}} />
+        if (item.id === 'explore') return <ExploreNavigation key={item.id} active={active} current={ui.mode === 'statistics' ? 'statistics' : ui.exploreModule} locked={locked} compact={compact} style={{...styles.button, ...(compact ? styles.compactButton : {}), ...(active ? styles.activeButton : {})}} />
         const showsUnread = item.id === 'conversations' && conversationUnreadCount > 0
         const showsRecording = item.id === 'recordings' && isRecording
         const hint = item.id === 'conversations' && !locked
@@ -328,7 +328,6 @@ export function ArkmeProductNavigation({
           style={{
             ...styles.button,
             ...(compact ? styles.compactButton : {}),
-            ...(hosted ? styles.hostedButton : {}),
             ...(active ? styles.activeButton : {}),
             ...(showsRecording ? recordingBreathStyle : {}),
           }}
@@ -359,13 +358,8 @@ export function ArkmeProductNavigation({
           }}
         >
           {showsRecording && <span data-arkme-recording-breath="surface" aria-hidden />}
-          {active && <span aria-hidden data-arkme-selection-marker style={{
-            ...styles.activeMarker,
-            ...(compact ? styles.compactMarker : {}),
-            ...(hosted ? styles.hostedMarker : {}),
-          }} />}
           <span style={styles.icon}>
-            <ItemIcon size={22} weight="regular" aria-hidden />
+            <ItemIcon size={20} weight="regular" aria-hidden />
             {showsRecording && <span data-arkme-recording-indicator data-arkme-recording-breath="dot" aria-hidden style={{
               position: 'absolute', top: -3, right: -5, width: 7, height: 7, borderRadius: '50%', background: theme.danger,
             }} />}

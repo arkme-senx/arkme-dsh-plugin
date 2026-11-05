@@ -85,6 +85,12 @@ it('publishes one canonical address across handoff and fences the old publisher'
       runtime_ref: 'runtime-B', session_ref: 'session', host_generation: 2,
       execution: { runtime_ref: 'runtime-A', host_generation: 1, owner_epoch: 2 },
     }), undefined)
+    await a.post(`${base}/annotations/source-context`, { runtime_ref: 'runtime-A', host_generation: 1, session_ref: 'session', canonical_text: 'continued' })
+    expect(post).toHaveBeenLastCalledWith(`${base}/annotations/source-context`, expect.objectContaining({
+      runtime_ref: 'runtime-B', host_generation: 2,
+      execution: { runtime_ref: 'runtime-A', host_generation: 1, owner_epoch: 2 },
+    }), undefined)
+    await expect(b.post(`${base}/annotations/source-context`, { session_ref: 'session' })).rejects.toMatchObject({ code: 'SESSION_STATE_CHANGED' })
     expect(ownership.bindAddress('session', 'runtime-A')).toBe('runtime-B')
   } finally { ownership.close(); rmSync(root, { recursive: true }) }
 })
@@ -215,4 +221,49 @@ it('republishes recoverable canonical metadata with the real newer writer proof'
     expect(ownership.read('session')?.epoch).toBe(2)
     expect(ownership.address('session')).toBe('runtime-B')
   } finally { ownership.close(); rmSync(root, { recursive: true }) }
+})
+
+it('fences a verified local recovery with the observed cloud owner and never recreates a rejected origin', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'arkme-cloud-recovered-'))
+  const ownership = new LocalSessionOwnership(root, { accountId: '42', environment: 'test' })
+  const post = vi.fn(async (path: string) => {
+    if (path.endsWith('/runtimes/register')) return { runtime_ref: 'executor', host_generation: 3 }
+    if (path.endsWith('/sessions/execution')) return { host_generation: 7, owner_epoch: 0 }
+    throw new DshRemoteError('REMOTE_NOT_FOUND', 'recovery unavailable')
+  })
+  try {
+    const cloud = new LocalSessionCloud({ ownership, instance: 'A', accountId: '42', request: { post }, recoveredLocalSource: () => true })
+    await cloud.post('/api/v1/dsh-remote/runtimes/register', {})
+    ownership.bindAddress('session', 'origin'); ownership.register('session', 'A')
+    await expect(cloud.post('/api/v1/dsh-remote/sessions/sync', { items: [{ session_ref: 'session' }] })).rejects.toMatchObject({ code: 'REMOTE_NOT_FOUND' })
+    expect(post).toHaveBeenLastCalledWith('/api/v1/dsh-remote/sessions/claim-execution', expect.objectContaining({
+      runtime_ref: 'origin', execution: { runtime_ref: 'executor', host_generation: 3, owner_epoch: 1, local_recovery: { host_generation: 7, owner_epoch: 0, writer_acquired: true } },
+    }), expect.any(AbortSignal))
+    expect(post.mock.calls.some(([path]) => path.endsWith('/sessions/sync'))).toBe(false)
+  } finally { ownership.close(); rmSync(root, { recursive: true }) }
+})
+it('shares one execution claim across activation and background synchronization', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'arkme-cloud-claim-'))
+  const ownership = new LocalSessionOwnership(root, { accountId: '42', environment: 'test' })
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const post = vi.fn(async (path: string) => {
+    if (path.endsWith('/runtimes/register')) return { runtime_ref: 'current', host_generation: 2 }
+    if (path.endsWith('/sessions/execution')) return { host_generation: 4, owner_epoch: 0 }
+    await gate; return { host_generation: 5 }
+  })
+  const cloud = new LocalSessionCloud({ ownership, instance: 'A', accountId: '42', request: { post }, recoveredLocalSource: () => true })
+  try {
+    await cloud.post('/runtimes/register', {})
+    ownership.bindAddress('session', 'original'); ownership.register('session', 'A')
+    const cancelled = new AbortController()
+    const first = cloud.publishExecution('session', cancelled.signal)
+    const second = cloud.publishExecution('session', new AbortController().signal)
+    const rejection = expect(first).rejects.toThrow()
+    cancelled.abort(); await rejection
+    await vi.waitFor(() => expect(post.mock.calls.filter(([path]) => path.endsWith('/claim-execution'))).toHaveLength(1))
+    release(); await second
+    await cloud.publishExecution('session', new AbortController().signal)
+    expect(post.mock.calls.filter(([path]) => path.endsWith('/claim-execution'))).toHaveLength(1)
+  } finally { release(); cloud.close(); ownership.close(); rmSync(root, { recursive: true }) }
 })

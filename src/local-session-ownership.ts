@@ -96,6 +96,17 @@ export class LocalSessionOwnership {
     return this.address(sessionId)!
   }
 
+  /** Server-verified aliases may change the address, never the writer or epoch. */
+  canonicalizeAddress(sessionId: string, runtimeRef: string, previous: readonly string[]): string {
+    this.validateRef(sessionId); this.validateRef(runtimeRef); previous.forEach(value => this.validateRef(value))
+    const current = this.address(sessionId)
+    if (current && current !== runtimeRef) {
+      if (!previous.includes(current)) throw new Error('本机会话云端地址冲突')
+      this.db.prepare('UPDATE addresses SET runtimeRef = ? WHERE sessionId = ? AND runtimeRef = ?').run(runtimeRef, sessionId, current)
+    }
+    return this.bindAddress(sessionId, runtimeRef)
+  }
+
   address(sessionId: string): string | undefined {
     this.validateRef(sessionId)
     return this.db.prepare('SELECT runtimeRef FROM addresses WHERE sessionId = ?').get(sessionId)?.runtimeRef as string | undefined
