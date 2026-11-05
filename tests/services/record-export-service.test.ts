@@ -37,6 +37,62 @@ function unzip(bytes: Buffer): Map<string, Buffer> {
   return files
 }
 describe('complete record export owner', () => {
+  it.each([
+    ['项目计划', '项目计划'],
+    [' \t\n ', '未命名主题'],
+    [undefined, '未命名主题'],
+    ['  <主题> & [链接](url)\n# 一 *二* `三` \\四  ', '&lt;主题&gt; &amp; \\[链接\\]\\(url\\) \\# 一 \\*二\\* \\`三\\` \\\\四'],
+  ])('writes the current topic as plain metadata before the unchanged body: %s', async (title, expected) => {
+    const f = await fixture(), original = f.post.getMockImplementation()!
+    f.post.mockImplementation(async path => path.endsWith('/page')
+      ? { items: [{ ...item, topic_core: { topic_uid: 'topic1', title } }], has_more: false }
+      : original(path))
+    const result = await f.owner.run(options)
+    const files = unzip(await readFile((await f.owner.read(result.fileRef)).path))
+    const markdown = [...files.entries()].find(([name]) => name.endsWith('.md'))![1].toString()
+    expect(markdown).toContain(`\n\n主题：${expected}\n\n标题\n\n正文`)
+    expect(markdown).not.toContain('topic1')
+    expect([...files.entries()].find(([name]) => name.startsWith('pic/'))![1]).toEqual(Buffer.from([1, 2, 3]))
+    expect(f.post.mock.calls.map(([path]) => path.split('/').slice(-2).join('/'))).toEqual([
+      'session/start', 'records/page', 'files/batch-sign', 'session/finish',
+    ])
+  })
+  it.each([undefined, null, {}, [], 'legacy', { topic_uid: '' }, { topic_uid: '  ' }, { topic_uid: 1 }])(
+    'preserves legacy output when no valid visible topic is returned: %j', async topic => {
+      const f = await fixture(), original = f.post.getMockImplementation()!
+      f.post.mockImplementation(async path => path.endsWith('/page')
+        ? { items: [{ ...item, topic_core: topic }], has_more: false }
+        : original(path))
+      const result = await f.owner.run(options)
+      const files = unzip(await readFile((await f.owner.read(result.fileRef)).path))
+      const markdown = [...files.entries()].find(([name]) => name.endsWith('.md'))![1].toString()
+      expect(markdown).not.toContain('主题：')
+      expect(markdown).toContain('标题\n\n正文')
+    },
+  )
+  it('uses each page’s topic summary without additional requests or leaking topic ids', async () => {
+    const f = await fixture()
+    let page = 0
+    f.post.mockImplementation(async path => {
+      if (path.endsWith('/start')) return { can_export: true, export_session_uid: 'session1', record_count: 101 }
+      if (path.endsWith('/page')) {
+        const first = page++ === 0
+        return { items: Array.from({ length: first ? 100 : 1 }, (_, i) => ({
+          ...item, record_uid: `${first ? 'a' : 'b'}${i}`, file_refs: [],
+          topic_core: { topic_uid: 'private-internal-id', title: first ? '工作' : '生活' },
+        })), has_more: first, next_cursor_send_at: 1000, next_cursor_record_uid: 'a99' }
+      }
+      return {}
+    })
+    const result = await f.owner.run(options)
+    const files = unzip(await readFile((await f.owner.read(result.fileRef)).path))
+    const markdown = [...files.values()][0]!.toString()
+    expect(markdown.match(/主题：工作/g)).toHaveLength(100)
+    expect(markdown.match(/主题：生活/g)).toHaveLength(1)
+    expect(markdown).not.toContain('private-internal-id')
+    expect(f.post).toHaveBeenCalledTimes(4)
+    expect(f.fetchImpl).not.toHaveBeenCalled()
+  })
   it('creates a real ZIP with Markdown and exact attachment bytes, reports finish and protects the account', async () => {
     const f = await fixture(), progress = vi.fn()
     const result = await f.owner.run(options, undefined, progress)

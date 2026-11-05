@@ -4,7 +4,7 @@ import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileTransfers, type FileTransferPorts } from '../src/services/file-transfers.js'
 import { arkmeCanInlineLocalFile, arkmePickedFileKind, arkmeVisibleUploadFraction } from '../src/file-transfer-contract.js'
-import { fileTaskTimelineItem } from '../src/client/file-send-tasks.js'
+import { fileTaskTimelineItem, bindSentFileTaskLocals } from '../src/client/file-send-tasks.js'
 import { createArkmeFileTransfers } from '../src/file-transfer-owner.js'
 import { ArkmePluginError } from '../src/services/service.js'
 import { ArkmeStateStore } from '../src/state-store.js'
@@ -604,7 +604,7 @@ describe('account-bound file lifecycle', () => {
     const owner = createArkmeFileTransfers({
       directory,
       maxUploadBytes: 1_000,
-      runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [] } } as never,
+      runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [] } } as never,
       source: { openSourceRef: async () => ({ kind: 'private_chat' }) } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
@@ -647,7 +647,7 @@ describe('account-bound file lifecycle', () => {
     const owner = createArkmeFileTransfers({
       directory,
       maxUploadBytes: 1_000,
-      runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [] } } as never,
+      runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [] } } as never,
       source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
@@ -964,7 +964,7 @@ it('preserves cloud and local attachment order through the durable file owner', 
   const directory = await mkdtemp(join(tmpdir(), 'arkme mixed composer ')); directories.push(directory)
   const sendSourceRich = vi.fn(async (_ref: string, _content: unknown, options: { recordUid: string }) => ({ sourceRef: 'source', itemUid: options.recordUid, status: 1, localState: 'synced' as const }))
   const owner = createArkmeFileTransfers({ directory, maxUploadBytes: 1000,
-    runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [], arkoFileRefs: async () => [] } } as never,
+    runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [], arkoFileRefs: async () => [] } } as never,
     source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
     media: { uploadLocalFile: async (_path: string, metadata: object) => ({ ...metadata, fileAssetUid: 'uploaded-local' }) } as never,
     chat: { sendSourceRich, readSource: async () => ({ items: [] }) } as never,
@@ -975,4 +975,33 @@ it('preserves cloud and local attachment order through the durable file owner', 
   await owner.enqueue(command); await owner.settled()
   expect(sendSourceRich).toHaveBeenCalledWith('source', expect.objectContaining({ assets: [expect.objectContaining({ fileAssetUid: 'uploaded-local' }), cloud] }), expect.anything())
   await expect(owner.enqueue({ ...command, attachmentOrder: [...command.attachmentOrder].reverse() })).rejects.toMatchObject({ code: 'file-send-conflict' })
+})
+
+it('retains local previews for both pending and ready blocks as progressive uploads settle', async () => {
+  const f = await fixture(), file = await f.stage('paper.pdf')
+  const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+  const finished = (await f.owner.tasks())[0]!
+  finished.delivery = 'progressive'
+  finished.files[0]!.attachmentUid = 'slot'
+  const item = { ...fileTaskTimelineItem(finished), contentBlocks: [
+    { kind: 'file' as const, mediaRef: '', attachmentUid: 'slot', attachmentState: 'pending' as const, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder: 0 },
+    { kind: 'file' as const, mediaRef: 'remote', fileAssetUid: finished.files[0]!.asset!.fileAssetUid, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder: 1 },
+  ] }
+  expect(bindSentFileTaskLocals(item, [finished]).contentBlocks?.map(block => block.localFileRef)).toEqual([file.fileRef, file.fileRef])
+  expect(bindSentFileTaskLocals(item, [])).toBe(item)
+})
+
+it('binds same-name pending previews by attachment identity after remote reordering', async () => {
+  const f = await fixture(), a = await f.stage('same.pdf'), b = await f.stage('same.pdf')
+  await f.owner.enqueue(input([a.fileRef, b.fileRef])); await f.owner.settled()
+  const task = (await f.owner.tasks())[0]!
+  task.delivery = 'progressive'
+  Object.assign(task.files[0]!, { attachmentUid: 'slot-a' })
+  Object.assign(task.files[1]!, { attachmentUid: 'slot-b' })
+  const item = { ...fileTaskTimelineItem(task), contentBlocks: [
+    { kind: 'file' as const, mediaRef: '', attachmentUid: 'slot-b', attachmentState: 'pending' as const, fileName: b.fileName, mimeType: b.mimeType, size: b.size, sortOrder: 0 },
+  ] }
+  const block = bindSentFileTaskLocals(item, [task]).contentBlocks![0]!
+  expect(block.localFileRef).toBe(b.fileRef)
+  expect(block.sortOrder).toBe(0)
 })
