@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useState, type CSSProperties, type FormEvent, type KeyboardEvent, type MouseEvent } from 'react'
 import { arkmeTheme } from './arkme-theme.js'
@@ -99,7 +100,7 @@ export function ArkmeTopicCreateDialog({
     >
       <div style={styles.header}>
         <h2 id="arkme-topic-create-title" style={styles.title}>{dialogTitle}</h2>
-        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭")} disabled={submitting} onClick={onCancel}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭")} disabled={submitting} onClick={onCancel} />
       </div>
       {mode === 'child' && parentTopicPath.length > 0 && <p style={styles.parentPath} title={parentTopicPath.join(' / ')}>{tr("将在「")}{parentTopicPath.join(' / ')}{tr("」下创建")}</p>}
       <label style={styles.field}>

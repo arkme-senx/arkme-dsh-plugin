@@ -139,6 +139,26 @@ export class TeamAppService {
     if(!str(value.conversation_uid)||!['team','external'].includes(str(value.side)))throw invalid()
     return {conversation_uid:str(value.conversation_uid),side:value.side as TeamSide}
   }
+  async arrangementSource(uid: string, messageUid: string, side: string, version: number, signal?: AbortSignal): Promise<{conversation:TeamConversation;message:TeamMessage}> {
+    if (!uid || !messageUid || !['team','external'].includes(side) || !Number.isSafeInteger(version) || version <= 0) throw invalid()
+    const session = await this.runtime.requireSession(), actor = session.userId
+    const context = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/context', {conversation_uid:uid}, session, signal, true))
+    if (context.conversation_uid !== uid) throw invalid()
+    if (context.side !== side) {
+      const policy=obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/notification-policy/get',{conversation_uid:uid,side},session,signal,true))
+      if(typeof policy.muted!=='boolean'||!Number.isSafeInteger(policy.policy_version)||Number(policy.policy_version)<0||!Number.isSafeInteger(policy.notify_after_seq)||Number(policy.notify_after_seq)<0)throw invalid()
+    }
+    const data = obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/timeline/locate', {conversation_uid:uid,side,message_uid:messageUid,limit:1}, session, signal, true))
+    const raw = list(data.messages).find(row => row.message_uid === messageUid)
+    if (obj(data.conversation).conversation_uid !== uid || obj(data.conversation).side !== side || !raw || raw.state !== 'published' || obj(raw.record).status !== 'available' || obj(raw.record).version !== version) {
+      throw new ArkmePluginError('arrangement-source-unavailable','原团队消息已变化或当前无权查看',false,404)
+    }
+    const result = {conversation:await this.conversation(data.conversation,actor),message:await this.message(raw,actor,{conversation_uid:uid,side})}
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== actor || current.refreshToken !== session.refreshToken) throw invalid()
+    return result
+  }
   async resolveMessageSelection(conversationRef:string,selections:unknown,actor:number):Promise<{conversation_uid:string;message_uid:string;side:TeamSide;expected_record_version:number}[]>{
     const context=await this.resolveConversation(conversationRef,actor)
     if(!Array.isArray(selections)||!selections.length||selections.length>100)throw invalid()

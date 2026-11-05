@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { VOICE_TRIGGER_PENDING, defaultRecordingVoiceRule, prioritizeRecordingVoiceCandidates, recordingVoiceRules,
@@ -130,7 +130,7 @@ export function RecordingVoiceTriggerDialog({ accountKey, mediaPath, onClose }: 
     }} style={{ width: 'min(760px, 100%)', maxHeight: 'calc(100dvh - 24px)', display: 'flex', flexDirection: 'column', borderRadius: 14, background: theme.base, color: theme.text, boxShadow: '0 12px 50px #0003', overflow: 'hidden' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: `1px solid ${theme.border}` }}>
         <strong style={{ flex: 1 }}>{tr('语音触发')}</strong>
-        <button type="button" style={quiet} disabled={busy} onClick={close} aria-label={tr('关闭语音触发')}><X size={20} /></button>
+        <ArkmeCloseButton type="button" style={quiet} disabled={busy} onClick={close} aria-label={tr('关闭语音触发')} />
       </header>
       <div style={{ padding: '16px 20px', overflowY: 'auto', minHeight: 0, display: 'grid', gap: 14, fontSize: 13 }}>
         <p style={{ margin: 0, color: theme.secondary }}>{tr('上传音频、长录音、全天候录音统一识别。本人优先，其他声音命中也保留供确认。')}</p>

@@ -45,6 +45,20 @@ it('keeps the saved model if a write fails',async () => {
  await act(async () => root.render(<ArkmeArrangementRecognitionSettings accountScope="test:42" onClose={() => {}} />));await click('切换模型');await click('Qwen3.8 Flash')
  expect(document.querySelector('.arkme-recognition-model')?.textContent).toContain('Qwen Flash');expect(document.body.textContent).toContain('设置保存失败')
 })
+it('shows Team source details and sends its model choice with the correct source',async () => {
+ const team={source:'team' as const,label:'团队对话',personal_route_key:'',effective_route_key:'dashscope/qwen-flash',inherited:true,prompts:[{name:'团队提示词',template:'仅提取本人在团队对话中需要执行的事项',hash:'team-template'}],rules:['仅核验当前团队消息'],pipeline:['Team 消息 → 本人安排']}
+ const value:ArrangementRecognitionSettings={...structuredClone(settings),sources:[...structuredClone(settings.sources),team]}
+ api.mockImplementation(async(op:string,params:any)=>{
+  const result=structuredClone(value)
+  if(op.endsWith('settings.set')){expect(params).toEqual({expectedAccountScope:'test:42',source:'team',routeKey:'dashscope/qwen3.8-flash'});result.sources.at(-1)!.effective_route_key='dashscope/qwen3.8-flash';result.sources.at(-1)!.inherited=false}
+  return result
+ })
+ await act(async()=>root.render(<ArkmeArrangementRecognitionSettings accountScope="test:42" onClose={()=>{}} />))
+ await click('团队对话');expect(document.body.textContent).toContain('仅提取本人在团队对话中需要执行的事项')
+ await click('切换模型');await click('Qwen3.8 Flash')
+ expect(document.querySelector('.arkme-recognition-model')?.textContent).toContain('Qwen3.8 Flash')
+ expect(document.body.textContent).toContain('已保存，后续识别使用新设置')
+})
 it('shows missing history honestly, previews on request, and only applies after explicit confirmation',async () => {
  const applied=vi.fn();api.mockImplementation(async (op:string) => op.endsWith('settings.get') ? structuredClone(settings) : op.endsWith('.preview') ? {accountScope:'test:42',state:'preview',trace} : op.endsWith('.apply') ? {accountScope:'test:42',state:'applied',item:{...item,title:trace.outcomes![0]!.title}} : {accountScope:'test:42',state:'not-recorded',reason:'历史安排未记录实际模型'})
  await act(async () => root.render(<ArkmeArrangementRecognitionProcess accountScope="test:42" item={item} onApplied={applied} onSettings={() => {}} />));expect(api).not.toHaveBeenCalled()

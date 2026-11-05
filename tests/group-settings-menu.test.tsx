@@ -82,7 +82,7 @@ describe('group settings menu', () => {
   beforeEach(() => {
     arkmeConversationMembers.activateAccount('test:42')
     vi.stubGlobal('window', {
-      addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true),
+      addEventListener: vi.fn(), removeEventListener: vi.fn(), confirm: vi.fn(() => true), setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
     })
     mocks.callArkme.mockReset()
     mocks.callArkme.mockImplementation(async (operation: string) => {
