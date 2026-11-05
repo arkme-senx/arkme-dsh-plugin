@@ -10,18 +10,18 @@ function raw(uid: string, at: number, extra: Record<string, unknown> = {}) {
   }, ...extra }
 }
 
-function fixture() {
+function fixture(topicKindHint?: number) {
   const runtime = { config: { maxTextLength: 20_000 }, stateStore: { uniqueCode: async () => 'test-key' },
     requireSession: async () => ({ userId: 42 }), authenticatedPost: vi.fn() }
   const source = {
     openSourceRef: async (kind: string) => ({ kind, userId: 42, ownerRef: 'personal' }),
-    sourceItem: async ({ kind }: { kind: string }) => ({ kind, sourceRef: kind, displayName: '发给自己', activeAtMillis: 0, unreadCount: 0 }),
+    sourceItem: async ({ kind }: { kind: string }) => ({ kind, sourceRef: kind, displayName: 'DSH Agent Input', activeAtMillis: 0, unreadCount: 0, ...(topicKindHint === undefined ? {} : { topicKind: topicKindHint }) }),
   }
   const media = { recordMediaUnavailable: () => false, richContentBlocks: () => [], hydrateRecordMediaPage: vi.fn(async () => ({ displayItemsByRecordUid: new Map(), unavailableRecordUids: new Set() })) }
   const record = new RecordService(runtime as never, media as never, source as never)
   const chat = new ChatService(runtime as never, source as never, {} as never, media as never, record,
     {} as never, {} as never, {} as never, {} as never, { lockedRecordUids: async () => new Set(['locked']) } as never)
-  return { runtime, media, chat }
+  return { runtime, media, chat, source }
 }
 
 describe('personal/DSH record isolation', () => {
@@ -86,4 +86,49 @@ describe('personal/DSH record isolation', () => {
     })
     expect((await chat.readSource('topic', { limit: 1 })).items.map(item => item.itemUid)).toEqual(['personal'])
   })
+
+  it.each([undefined, 1, 3])('reads an authorized archive using metadata, not source hint %s, while preserving pagination and privacy', async hint => {
+    const { runtime, media, chat, source } = fixture(hint)
+    const open = vi.spyOn(source, 'openSourceRef')
+    runtime.authenticatedPost.mockImplementation(async (path, body, session) => {
+      expect(session.userId).toBe(42)
+      expect(body.topic_uid).toBe('personal')
+      if (path.endsWith('/metadata')) return { topic_core: { topic_uid: 'personal', kind: 3, privacy_state: 1, show_in_home: false } }
+      expect(path).toBe('/api/v1/topics/display/records/page')
+      if (body.cursor_record_uid === 'archive-2') return { topic_uid: 'personal', privacy_state: 1,
+        records: [raw('archive-3', 100, { creation_source: 3 })], has_more: false }
+      return { topic_uid: 'personal', privacy_state: 1, records: [
+        raw('locked', 500, { creation_source: 3 }),
+        raw('private', 450, { creation_source: 3, record_core: { ...raw('private', 450).record_core, content_access_state: 2 } }),
+        raw('archive-1', 400, { creation_source: 3 }), raw('archive-2', 300, { creation_source: 3 }),
+      ], has_more: true, next_cursor_send_at: 300, next_cursor_record_uid: 'archive-2' }
+    })
+    const first = await chat.readSource('topic', { limit: 2 })
+    expect(first.source.topicKind).toBe(3)
+    expect(first.items.map(item => item.itemUid)).toEqual(['archive-1', 'archive-2'])
+    expect(first.hasMore).toBe(true)
+    expect((await chat.readSource('topic', { limit: 2, cursor: first.nextCursor })).items.map(item => item.itemUid)).toEqual(['archive-3'])
+    expect(open.mock.calls.every(call => call[1] === 42)).toBe(true)
+    expect(media.hydrateRecordMediaPage.mock.calls.flatMap(call => (call as unknown[])[0] as Array<{ record_uid: string }>)
+      .map(item => item.record_uid)).toEqual(['archive-1', 'archive-2', 'archive-3'])
+  })
+
+  it('does not let a stale archive hint bypass ordinary-topic provenance filtering', async () => {
+    const { runtime, chat } = fixture(3)
+    runtime.authenticatedPost.mockImplementation(async path => path.endsWith('/metadata')
+      ? { topic_core: { topic_uid: 'personal', kind: 1, privacy_state: 1, show_in_home: true } }
+      : { topic_uid: 'personal', privacy_state: 1, records: [raw('dsh', 300, { creation_source: 3 }), raw('ordinary', 200)], has_more: false })
+    expect((await chat.readSource('topic')).items.map(item => item.itemUid)).toEqual(['ordinary'])
+  })
+
+  it.each(['metadata', 'page'])('denies a privacy-locked archive at the %s boundary before media hydration', async boundary => {
+    const { runtime, media, chat } = fixture()
+    runtime.authenticatedPost.mockImplementation(async path => path.endsWith('/metadata')
+      ? { topic_core: { topic_uid: 'personal', kind: 3, privacy_state: boundary === 'metadata' ? 2 : 1, show_in_home: false } }
+      : { topic_uid: 'personal', privacy_state: 2, records: [raw('hidden', 300, { creation_source: 3 })], has_more: false })
+    await expect(chat.readSource('topic')).rejects.toMatchObject({ code: 'topic-privacy-locked' })
+    expect(media.hydrateRecordMediaPage).not.toHaveBeenCalled()
+    expect(runtime.authenticatedPost).toHaveBeenCalledTimes(boundary === 'metadata' ? 1 : 2)
+  })
+
 })
