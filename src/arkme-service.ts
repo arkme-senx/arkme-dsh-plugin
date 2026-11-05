@@ -2026,6 +2026,10 @@ arkoImagesV1:true,
     return result
   }
 
+  async hiddenTopicSource(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem | null> {
+    return await this.source.hiddenTopicSource(sourceRef, signal)
+  }
+
   async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {
     const result = await this.source.topicHomeVisibility(sourceRef, showInHome, signal)
     if (showInHome !== undefined) await this.realtime.invalidateRecordProjection()

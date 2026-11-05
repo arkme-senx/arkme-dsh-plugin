@@ -2432,6 +2432,7 @@ export async function dispatchArkmeHostOperation(
       }
       return service.setArchiveState({ sourceRef: stringParam(params, 'sourceRef'), selfArchived: params.selfArchived, expectedRevision: Number(params.expectedRevision) }, requestSignal)
     }
+    case 'topic.hidden-source': return await service.hiddenTopicSource(stringParam(params, 'sourceRef'), requestSignal)
     case 'topic.home-visibility': {
       if (params.showInHome !== undefined && typeof params.showInHome !== 'boolean') {
         throw new ArkmePluginError('topic-policy-invalid', '首页展示开关必须为布尔值', false)
