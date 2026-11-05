@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
-import { RecordDirectoryExportService } from '../../src/services/record-directory-export-service.js';
+import { backupDocumentName, RecordDirectoryExportService } from '../../src/services/record-directory-export-service.js';
 import { wireExportSelection } from '../../src/services/record-export-range-service.js';
 const roots: string[] = [];
 afterEach(async () => {
@@ -285,4 +285,15 @@ it.each([true, false])('retains current topic names across full, dates, delta an
     f.offline();
     expect(await content(await f.run(selection))).not.toContain('主题：');
     expect(f.fetchImpl).toHaveBeenCalledTimes(includeAttachments ? 1 : 0);
+});
+
+it('accepts legacy Windows receipt names only inside the original backup root', () => {
+    const root = 'C:\\Backup Folder\\即我备份-test-11';
+    expect(backupDocumentName(root, '导出.md')).toBe('导出.md');
+    expect(backupDocumentName(root, root + '\\导出.md')).toBe('导出.md');
+    for (const value of ['C:\\other\\导出.md', 'D:\\Backup Folder\\即我备份-test-11\\导出.md',
+        '..\\导出.md', 'sub\\导出.md', 'bad:stream.md', 'bad\0.md', 1]) {
+        expect(() => backupDocumentName(root, value)).toThrow('凭据无效');
+    }
+    expect(() => backupDocumentName('/tmp/backup', '/tmp/backup/导出.md')).toThrow('凭据无效');
 });
