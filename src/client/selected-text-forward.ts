@@ -7,13 +7,13 @@ import { openLocalSnapshotForward } from './local-snapshot-forward.js'
 export function selectedTextForwardContent(accountKey: string, quote: SelectedTextNoteQuote) {
   const userId = Number(accountKey.split(':').at(-1)), frozen = readSelectedTextNoteQuote(quote)
   if (!Number.isSafeInteger(userId) || userId <= 0 || !frozen) throw new Error('账号或选中文字无效，请重新选择')
-  return { userId, preview: { title: selectedTextNoteHeader(frozen), subtitle: frozen.text, quote: { ...frozen } },
+  return { userId, preview: { title: selectedTextNoteHeader(frozen), subtitle: frozen.text, quote: structuredClone(frozen) },
     delivery: nativeForwardDelivery((target, identity, commentText, signal) => {
       signal.throwIfAborted()
       return callArkme<ArkmeSourceSendResult>('selected-text.forward', {
         expectedAccountKey: accountKey, targetSourceRef: target.sourceRef,
         recordUid: identity.recordUid, relationUid: identity.commentRecordUid,
-        quote: { ...frozen }, commentText,sendAtMillis:identity.sendAtMillis,
+        quote: structuredClone(frozen), commentText,sendAtMillis:identity.sendAtMillis,
       }, signal)
     }),
   }

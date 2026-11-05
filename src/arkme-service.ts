@@ -2901,6 +2901,13 @@ recordingAnalysisV1: true,
 
   async excerptOriginal(recordUid:string,signal?:AbortSignal,occurrence?:{sourceRef:string;messageActionRef:string}) {
     const account=await this.runtime.requireSession()
+    const lifetime=new AbortController()
+    let subscribed=false
+    const stop=this.runtime.subscribeAccountScope(()=>{if(subscribed)lifetime.abort(new ArkmePluginError('excerpt-account-changed','账号已变化，请重新打开原文',false,409))})
+    subscribed=true
+    signal=signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal
+    try {
+    signal.throwIfAborted()
     const readSaved=()=>occurrence?this.chat.excerptOccurrence(occurrence.sourceRef,occurrence.messageActionRef,recordUid,signal):this.record.personalRecordDetail(recordUid,signal).then(item=>item.localSelfQuote)
     const saved=await readSaved()
     const source=saved?.quote.source
@@ -2914,8 +2921,10 @@ recordingAnalysisV1: true,
     const current=await readSaved()
     if(!current||JSON.stringify(current.quote)!==JSON.stringify(saved.quote))throw new ArkmePluginError('excerpt-source-changed','摘录或原文权限已变化，请重新打开',false,409)
     const session=await this.runtime.accountScopedSession()
+    signal.throwIfAborted()
     if(!session||session.userId!==account.userId||session.refreshToken!==account.refreshToken)throw new ArkmePluginError('excerpt-account-changed','账号已变化，请重新打开',false,409)
     return matchExcerptOriginal(original,saved.quote)
+    } finally {stop()}
   }
 
   async sendQuotedSelfNote(input: Parameters<typeof sendSelectedTextSelfNote>[1], signal?: AbortSignal, allowEmptyNote=false) {
