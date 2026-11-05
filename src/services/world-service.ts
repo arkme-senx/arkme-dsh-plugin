@@ -1,5 +1,4 @@
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
-import {worldSoundProjection} from './world-sound-service.js'
 import { TimelineTokenCodec } from './timeline-token.js'
 import { localWorldReactionTarget } from './world-local-reaction-service.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
@@ -53,7 +52,6 @@ export interface ArkmeWorldViewerLabelReader {
 }
 
 export interface ArkmeWorldMediaReader {
-  issueWorldSoundMediaRef?(viewerUserId:number,raw:string,expected:{recordUID:string;index:number}):string
   issueWorldVoiceprintMediaRef(viewerUserId: number, input: { remoteUrl: string; mimeType: string }): string
   downloadSignedImage(signedUrl: URL, byteLimit: number, signal?: AbortSignal, scope?: string): Promise<ArkmeImageBytes>
 }
@@ -416,17 +414,6 @@ export class WorldService {
     signal?.throwIfAborted()
     if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号状态已变化', false, 409)
     return out.map(item => item ?? undefined)
-  }
-
-  /** Project already visibility-checked public DTOs without duplicating identifiers. */
-  async projectSubscriptionPublications(values: unknown[], signal?: AbortSignal): Promise<ArkmeWorldFeedItem[]> {
-    if (values.length > 50) throw new ArkmePluginError('world-preview-invalid', '预览数量过多', false, 400)
-    const epoch = this.epoch, session = await this.runtime.requireSession(), raw = values.map(v => this.mixedItem(v))
-    const avatars = await this.resolveWorldAvatarUrls(raw, session, signal)
-    const out = await Promise.all(raw.map(v => this.worldFeedItem(v, session.userId, avatars, signal)))
-    signal?.throwIfAborted()
-    if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId || out.some(v => !v)) throw new ArkmePluginError('world-preview-invalid', '预览内容已变化，请刷新', true, 409)
-    return out as ArkmeWorldFeedItem[]
   }
 
   async readWorldRecord(recordRef: string, signal?: AbortSignal): Promise<ArkmeWorldFeedItem> {
@@ -1519,7 +1506,6 @@ export class WorldService {
       })
     return {
       recordRef,
-      ...(recordType==='sound_excerpt'?{recordType:'sound_excerpt' as const,soundExcerpt:this.soundExcerpt(item.sound_excerpt,viewerUserId,recordUid),soundStatus:item.is_public===false?'withdrawn' as const:[2,3].includes(Number(item.check_status))?'published' as const:Number(item.check_status)===4?'rejected' as const:'pending' as const}:{}),
       ...(item.team_author ? { publisher: await this.publicPublisher(item, viewerUserId, resolvedAvatars) } : {}),
       ...(item.team_author ? { teamAuthor: objectValue(item.team_author) as { jotmoId: string; name: string } } : {}),
       localReactionTarget: await localWorldReactionTarget(this.runtime, viewerUserId, recordUid, createHash('sha256').update(JSON.stringify({ headline, textContent, templateKind: item.template_kind,
@@ -1777,12 +1763,6 @@ export class WorldService {
       videoCount,
       voiceCount,
     }
-  }
-
-  private soundExcerpt(raw:unknown,viewer:number,recordUID:string):import('../world-sound-contract.js').WorldSoundExcerpt{
-    const excerpt=worldSoundProjection(raw),rows=listValue(objectValue(raw).segments)
-    if(!this.media?.issueWorldSoundMediaRef)throw new ArkmePluginError('world-sound-unsupported','当前运行环境不支持声音摘录',false,409)
-    return {...excerpt,segments:excerpt.segments.map((s,i)=>({...s,audioUrl:`${this.runtime.config.routePath}/media?ref=${encodeURIComponent(this.media!.issueWorldSoundMediaRef!(viewer,stringValue(objectValue(rows[i]).audio_url),{recordUID,index:i}))}`}))}
   }
 
   private async worldRecordRef(

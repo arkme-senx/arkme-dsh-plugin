@@ -14,8 +14,8 @@ let root:Root,host:HTMLDivElement
 const choices:ModelChoice[]=[
   {id:'one',origin:'official',name:'DeepSeek Flash',channel:'Arkme 托管',supplierCode:'deepseek',identifier:'flash',billingByScene:{dsh:'arkme-points'},dsh:{provider:'arkme-managed',model:'flash'},images:true,reasoning:{efforts:[{id:'off',name:'关闭'},{id:'high',name:'高'}]},pointPricing:{cacheMissInputPerThousand:'0.0000001',cacheHitInputPerThousand:'0',outputPerThousand:'1.2345678'}},
   {id:'arko',origin:'official',name:'DeepSeek Flash',channel:'Arkme 托管',identifier:'managed-ai/flash',arko:'managed-ai/flash',billingByScene:{arko:'arkme-points'},pricing:'Arko 实际按调用用量计费'},
-  {id:'other-route',origin:'official',name:'DeepSeek Flash',channel:'百炼',identifier:'other',recording:'dashscope/other',availabilityByScene:{'recording-summary':{available:true}},billingByScene:{'recording-summary':'unknown'}},
-  {id:'analysis',origin:'official',name:'Qwen Analysis',channel:'百炼',identifier:'qwen',exploreRouteKey:'dashscope/qwen',availabilityByScene:{'explore-event':{available:true}},billingByScene:{'explore-event':'unknown'}},
+  {id:'other-route',origin:'official',name:'DeepSeek Flash',channel:'百炼',identifier:'other',recording:'dashscope/other',billingByScene:{recording:'unknown'}},
+  {id:'analysis',origin:'official',name:'Qwen Analysis',channel:'百炼',identifier:'qwen',exploreRouteKey:'dashscope/qwen',billingByScene:{explore:'unknown'}},
   {id:'user',origin:'user-provided',name:'Private key model',channel:'个人账户',identifier:'private',dsh:{provider:'self',model:'private'}},
 ]
 const catalog=(scope='prod:11'):UnifiedModelCatalog=>({accountScope:scope,observedAt:Date.now(),models:choices,failures:[]})

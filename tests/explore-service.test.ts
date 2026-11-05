@@ -17,7 +17,7 @@ function fixture(){
     calls.push({path,body});state.afterRead()
     if(path.endsWith('/capabilities/query')) {
       if(state.capabilityFailure)throw new Error('设置暂不可用')
-      return ['personal_profile','goal_insight','event_insight'].map(key=>({key,title:key,enabled:state.analysisEnabled,version:1,enabled_at:1}))
+      return ['personal_profile','goal_insight'].map(key=>({key,title:key,enabled:state.analysisEnabled,version:1,enabled_at:1}))
     }
     if(path.includes('/override')||path.endsWith('/follow')||path.endsWith('/delete')||path.endsWith('/activate')||path.endsWith('/resume')||path.endsWith('/pause')||path.endsWith('/set')||path.endsWith('/reclassify')){
       if(state.failWrite)throw new Error('服务暂不可用')
@@ -26,7 +26,6 @@ function fixture(){
       if(path.endsWith('/override')){if(body.action==='delete')state.factDeleted=true;else state.factValue=String(body.value)}
       return {}
     }
-    if(path.endsWith('/refresh')) {writes.push({path,body});return {accepted:true}}
     if(path.endsWith('/experience/home'))return home()
     if(path.endsWith('/section/get'))return {snapshot_id:state.version,items:state.factDeleted?[]:[fact()],has_more:false}
     if(path.startsWith('/api/v1/relation/list'))return {entities:state.entities,private_chats:[]}
@@ -41,7 +40,7 @@ function fixture(){
     if(path.endsWith('/evidence/open'))return {available:state.available,owner_ref:{provider:'audio',container_id:'private-audio',transcript_source:'doubao'}}
     if(path.endsWith('/section-summary'))return {sections:[]}
     if(path.endsWith('/model/list')||path.endsWith('/event-model/list')||path.endsWith('/model-panel/get')) {
-      const items=[{route_key:'private-model-a',display_name:'模型 A',provider:'dashscope'},{route_key:'private-model-b',display_name:'模型 B',provider:'managed-ai'}].filter(x=>!state.removeModelB||x.route_key!=='private-model-b').map((x,i)=>({...x,available:true,binding:{catalog_release_id:'1',offering_revision_id:String(i+1),public_model_code:x.route_key},execution:{available:true,binding:{catalog_release_id:'1',offering_revision_id:String(i+1),public_model_code:x.route_key}}}))
+      const items=[{route_key:'private-model-a',display_name:'模型 A',provider:'dashscope'},{route_key:'private-model-b',display_name:'模型 B',provider:'managed-ai'}].filter(x=>!state.removeModelB||x.route_key!=='private-model-b')
       return path.endsWith('/model-panel/get')?{config:{effective_route_key:state.modelRoute,allowed_route_options:items}}:{effective_route_key:state.modelRoute,items}
     }
     if(path.endsWith('/records/detail'))return {record_core:{record_uid:'private-record',status:1,content_access_state:1,origin_kind:1}}
@@ -214,7 +213,7 @@ describe('Explore model selection',()=>{
   ] as const)('activates %s through its existing owner and confirms the effective selection',async(module,path)=>{
     const f=fixture(),settings=await f.service.settings(module,undefined,{part:'models'})
     const result=await f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})
-    expect(f.writes).toEqual([{path,body:{route_key:'private-model-b',model_binding:{catalog_release_id:'1',offering_revision_id:'2',public_model_code:'private-model-b'},...(module==='goals'?{trigger_refresh:true}:{})}}])
+    expect(f.writes).toEqual([{path,body:{route_key:'private-model-b',...(module==='goals'?{trigger_refresh:true}:{})}}])
     expect(result).toMatchObject({saved:true,settings:{accountScope:'prod:11',models:[{selected:false},{selected:true}]}})
     expect(result.message).not.toContain('分析完成')
   })
@@ -237,7 +236,7 @@ describe('Explore model selection',()=>{
     await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).rejects.toThrow('暂时无法确认生效状态')
     expect(f.writes).toHaveLength(1)
   })
-  it.each(['profile','events'] as const)('retains %s choices while disabled but does not bypass automatic AI authorization on activation',async module=>{
+  it.each(['profile','goals'] as const)('retains %s choices while disabled but does not bypass automatic AI authorization on activation',async module=>{
     const f=fixture();f.state.analysisEnabled=false
     const settings=await f.service.settings(module,undefined,{part:'models'})
     expect(settings.models).toHaveLength(2)
@@ -251,18 +250,13 @@ describe('Explore automatic AI authorization',()=>{
     const f=fixture();f.state.analysisEnabled=false
     const page=await f.service.page({module})
     expect(page.items).toHaveLength(1);expect(page.analysisEnabled).toBe(false)
-    expect(page.actions.some(x=>['activate','resume','refresh'].includes(x.id))).toBe(module==='goals')
+    expect(page.actions.some(x=>['activate','resume','refresh'].includes(x.id))).toBe(false)
     expect(page.progress).toBeUndefined();expect(f.writes).toHaveLength(0)
     f.state.capabilityFailure=true
     const unavailable=await f.service.page({module})
     expect(unavailable.items).toHaveLength(1);expect(unavailable.analysisEnabled).toBeNull()
-    if(module==='profile') {
-      await expect(f.service.mutate({ref:page.contextRef,action:'refresh'})).rejects.toThrow('设置暂不可用')
-      expect(f.writes).toHaveLength(0)
-    } else {
-      await expect(f.service.mutate({ref:page.contextRef,action:'refresh'})).resolves.toMatchObject({saved:true})
-      expect(f.writes).toHaveLength(1)
-    }
+    await expect(f.service.mutate({ref:page.contextRef,action:'refresh'})).rejects.toThrow('设置暂不可用')
+    expect(f.writes).toHaveLength(0)
   })
   it.each(['activate','refresh','resume'] as const)('rechecks permission before %s and never changes consent',async action=>{
     const f=fixture(),page=await f.service.page({module:'profile'})
@@ -284,11 +278,4 @@ describe('Explore automatic AI authorization',()=>{
     await expect(f.service.saveSettings({ref:settings.ref,sources:['native_chat']})).rejects.toThrow('自动使用额度')
     expect(f.writes).toHaveLength(0)
   })
-})
-
-it('manual Goal selection remains available when continuous analysis is disabled',async()=>{
- const f=fixture();f.state.analysisEnabled=false
- const settings=await f.service.settings('goals',undefined,{part:'models'})
- await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).resolves.toMatchObject({saved:true})
- expect(f.writes.at(-1)?.path).toBe('/api/v1/insight/goal/model/activate')
 })

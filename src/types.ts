@@ -1,4 +1,3 @@
-import type { ModelExecutionMetadata as importModelExecutionMetadata } from './model-execution.js'
 import type { TeamRepresentationSendOptions, TeamRepresentationSnapshot } from './team-group-contract.js'
 import type { ArkmeHostPolicy } from './host-policy.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
@@ -834,9 +833,7 @@ export interface ArkmeWorldFeedItem {
   videoCount: number
   voiceCount: number
   extendCount: number
-  recordType?: 'extension_publication' | 'sound_excerpt'
-  soundExcerpt?: import('./world-sound-contract.js').WorldSoundExcerpt
-  soundStatus?: 'pending'|'published'|'rejected'|'withdrawn'
+  recordType?: 'extension_publication'
   extensionPublication?: ArkmeWorldExtensionPublication
 }
 
@@ -1634,7 +1631,6 @@ arkoImagesV1?:true
     recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
-recordingAnalysisV1?: true
     recordingStrategiesV1?: true
     recordingFileStorageV1?: true
     recordingStrategyRecordingsV1?: true
@@ -1664,7 +1660,6 @@ recordingAnalysisV1?: true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
     teamWorldV1?: true
-    worldSoundExcerptsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -3371,7 +3366,7 @@ export interface ArkmeRecordingCalendarMonth {
 export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
 export type ArkmeRecordingTranscriptSource = 'system' | 'doubao'
 
-export interface ArkmeRecordingSummaryModelRouteOption extends importModelExecutionMetadata {
+export interface ArkmeRecordingSummaryModelRouteOption {
   routeKey: string
   provider: string
   modelKey: string
@@ -3655,7 +3650,6 @@ export type ArkmeRecordingVersionStatus = 'processing' | 'done' | 'failed'
 export type ArkmeRecordingSectionState = 'ready' | 'empty' | 'processing' | 'failed' | 'error'
 
 export interface ArkmeRecordingVersion {
-  continuationAvailable?: boolean
   id: string
   status: ArkmeRecordingVersionStatus
   selectable: boolean
@@ -4049,7 +4043,7 @@ export interface ArkmeArkoImageInput {
   mimeTypes: readonly string[]
 }
 
-export interface ArkmeArkoModelOption extends importModelExecutionMetadata {
+export interface ArkmeArkoModelOption {
   routeKey: string
   displayName: string
   provider: string
@@ -4415,7 +4409,6 @@ export type ArkmePluginOperation =
   | 'recordings.entities.occurrences'
   | 'recordings.person-references'
   | 'offline-context'
-  | 'recordings.analysis'
   | 'recordings.workflow'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'
@@ -4662,7 +4655,6 @@ export type ArkmePluginOperation =
   | 'image.read'
   | 'images.list'
   | 'world.publications'
-  | 'world.sound-excerpts'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'
@@ -4688,7 +4680,6 @@ export type ArkmePluginOperation =
   | 'world.notification-sources'
   | 'world.comment-notifications'
   | 'world.notification-target'
-  | 'world.subscriptions'
   | 'world.interactions.summary'
   | 'world.interactions.mark-viewed'
   | 'world.interactions.create-text'

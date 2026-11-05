@@ -8,8 +8,6 @@ const capabilityTitles: Partial<Record<ArkmeCapabilitySetting['key'], string>> =
   personal_profile: '自动整理个人档案',
   arrangement_recognition: '自动识别安排',
   goal_insight: '自动分析目标',
-  event_insight: '自动整理事件',
-  anniversary_insight: '自动分析纪念日',
   recording_voice_trigger: '录音口令记事',
 }
 
@@ -21,8 +19,6 @@ const capabilityGuidance: Record<ArkmeCapabilitySetting['key'], string> = {
   arrangement_recognition: '左侧「安排」',
   offline_context: '在聊天中回看相关的线下交流，仅你可见。',
   goal_insight: '「探索 → 目标」',
-  event_insight: '「探索 → 事件」',
-  anniversary_insight: '「探索 → 纪念日」',
   recording_voice_trigger: '录音日历「更多 → 语音触发」',
 }
 

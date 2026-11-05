@@ -819,12 +819,6 @@ export class CallHistoryService {
     return `call-${signature.slice(0, 16)}`
   }
 
-  async soundExcerptSelection(callRef:string,segmentIds:string[]):Promise<import('../world-sound-contract.js').WorldSoundOwnerSelection>{
-    const session=await this.runtime.requireSession(),call=await this.openCallRef(callRef,session.userId)
-    if(!Array.isArray(segmentIds)||!segmentIds.length||segmentIds.length>150||new Set(segmentIds).size!==segmentIds.length||segmentIds.some(id=>typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)))throw new ArkmePluginError('world-sound-call-unavailable','通话选段暂不支持公开声音，请刷新通话详情后重试',false,409)
-    return {source:'call',session_id:call.roomId,segments:segmentIds}
-  }
-
   private async openCallRef(callRef: string, expectedUserId: number): Promise<ArkmeCallRefPayload> {
     const parts = callRef.trim().split('.')
     if (parts.length !== 4 || parts[0] !== 'arkme-call-v1') {

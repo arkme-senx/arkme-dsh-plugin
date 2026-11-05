@@ -1,4 +1,3 @@
-import type { ModelExecutionMetadata } from './model-execution.js'
 import type { ArkmeRecordingSearchIdentity, ArkmeRecordingWorkbenchItem, ArkmeSourceItem, ArkmeTimelineItem } from './types.js'
 
 export const EXPLORE_MODULES = ['profile', 'relations', 'events', 'goals', 'anniversaries'] as const
@@ -87,6 +86,6 @@ export type ExploreSource =
 export interface ExploreSettings {
   ref: string
   accountScope?: string
-  models: Array<ModelExecutionMetadata & { key?: string; ref: string; label: string; selected: boolean; provider?: string; routeKey?: string }>
+  models: Array<{ key?: string; ref: string; label: string; selected: boolean; provider?: string; routeKey?: string }>
   sources: Array<{ key: string; label: string; description: string; enabled: boolean }>
 }
