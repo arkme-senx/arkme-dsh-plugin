@@ -11,6 +11,8 @@ export type LocalHistorySource = { dshHome: string; runtimeRef: string; sessionR
 export type DiscoveryLimits = { directories: number; depth: number; sources: number; jsonBytes: number }
 const DEFAULT_LIMITS: DiscoveryLimits = { directories: 25_000, depth: 10, sources: 256, jsonBytes: 4 * 1024 * 1024 }
 const SKIP = new Set(['node_modules', 'vendor', 'Pods', 'build', 'dist', 'target', 'Cache', 'Caches', 'Code Cache', 'GPUCache', 'DerivedData', 'runtime-manager', 'runtime-data-transactions', 'codex-backups', 'backups', 'sessions', 'attachments', 'dsh-containers'])
+const APPLICATION_LAYOUTS = new Set(['Arkme Harness', 'Arkme Harness Test', 'artifacts', 'app-data'])
+const DISCOVERY_MARKERS = ['.git', 'dsh-account-scopes.json', 'arkme-self', ...APPLICATION_LAYOUTS]
 const object = (value: unknown): Json => value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {}
 const missing = (error: unknown) => !!error && typeof error === 'object' && 'code' in error && ['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(String(error.code))
 const validRef = (ref: string) => /^[A-Za-z0-9_.:-]{1,256}$/.test(ref) && ref !== '.' && ref !== '..'
@@ -206,9 +208,29 @@ export class LocalSessionDiscovery {
       }
       inspected += batch.length
       const results = await Promise.allSettled(batch.map(async ({ path, depth, applicationData }) => {
-        let entries: import('node:fs').Dirent[] = []
-        try { for await (const entry of await opendir(path)) { signal.throwIfAborted(); if (entry.isDirectory() || entry.name === '.git' || entry.name === 'dsh-account-scopes.json') entries.push(entry); if (entries.length >= this.limits.directories) { this.limited = true; break } } }
+        const entries: Pick<import('node:fs').Dirent, 'name' | 'isDirectory' | 'isFile' | 'isSymbolicLink'>[] = []
+        let enumerated = 0, truncated = false
+        try {
+          for await (const entry of await opendir(path)) {
+            signal.throwIfAborted()
+            if (entry.isDirectory() || entry.name === '.git' || entry.name === 'dsh-account-scopes.json') entries.push(entry)
+            if (++enumerated >= this.limits.directories) { this.limited = true; truncated = true; break }
+          }
+        }
         catch (error) { if (missing(error)) return; throw error }
+        if (truncated) {
+          // Enumeration order is unspecified. Probe only these fixed names so a
+          // truncated listing cannot hide an application layout or safety marker.
+          for (const name of DISCOVERY_MARKERS) {
+            signal.throwIfAborted()
+            if (entries.some(entry => entry.name === name)) continue
+            try {
+              const stat = await lstat(join(path, name))
+              entries.push({ name, isDirectory: () => stat.isDirectory(), isFile: () => stat.isFile(), isSymbolicLink: () => stat.isSymbolicLink() })
+            } catch (error) { if (!missing(error)) throw error }
+          }
+        }
+        signal.throwIfAborted()
         if (entries.some(entry => entry.name === 'dsh-account-scopes.json' && entry.isFile())) {
           const registry = await this.json(join(path, 'dsh-account-scopes.json'))
           if (registry?.version === 1) await this.containers(path, signal)
@@ -224,7 +246,7 @@ export class LocalSessionDiscovery {
           if (!entry.isDirectory() || entry.isSymbolicLink() || entry.name.startsWith('.') || SKIP.has(entry.name)
             || entry.name === 'Library' || entry.name === 'AppData') continue
           // Development launchers also nest registered app data under their artifact root.
-          const applicationRoot = ['Arkme Harness', 'Arkme Harness Test', 'artifacts', 'app-data'].includes(entry.name)
+          const applicationRoot = APPLICATION_LAYOUTS.has(entry.name)
           if (repository && !applicationRoot) continue
           enqueue({ path: join(path, entry.name), depth: depth + 1, applicationData: applicationData || applicationRoot })
         }
