@@ -39,11 +39,23 @@ const upstream=createServer({key:await readFile(key),cert:await readFile(cert)},
  else if(path.endsWith('/team/members/snapshot'))data={team_id:'7',member_count:2,membership_revision:1,can_add_members:true,items:[{display_name:'同事1001',user_id:'1001',role:1,active:true,member_revision:0},{display_name:'同事1002',user_id:'1002',role:2,active:true,member_revision:1}],has_more:false}
  else if(path.endsWith('/team/discovery/search'))data={teams:[team],items:[team]}
  else if(path.endsWith('/contacts/list'))data={items:[{user_id:1002,remark:'同事1002',chat_session_uid:'private-1002'}],has_more:false}
- else if(path.endsWith('/get-public-users-by-ids'))data={items:[1001,1002,2001].map(user_id=>({user_id,nick_name:`同事${user_id}`,jotmo_id:`user_${user_id}`}))}
+ else if(path.endsWith('/get-public-users-by-ids'))data={items:[...new Set(input.user_ids||[])].filter(user_id=>[1001,1002,2001].includes(user_id)).map(user_id=>({user_id,nick_name:`同事${user_id}`,jotmo_id:`user_${user_id}`}))}
+ else if(path.endsWith('/get-public-user-by-jotmo-ids'))data={items:[1001,1002,2001].filter(user_id=>(input.jotmo_ids||[]).includes(`user_${user_id}`)).map(user_id=>({user_id,nick_name:`同事${user_id}`,jotmo_id:`user_${user_id}`}))}
  res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({code:200,data}))
  }catch(error){res.writeHead(500);res.end(JSON.stringify({error:error.message}))}
 })
 const wait=async(read,accept)=>{let last;for(let i=0;i<90;i++){try{last=await read();if(accept(last))return last}catch(error){last=String(error)}await new Promise(r=>setTimeout(r,500))}throw new Error('lifecycle did not converge: '+JSON.stringify(last))}
+// The real index/source owners may be briefly unavailable while completion
+// warms a fresh fixture. Retry only that explicit read failure, never a write,
+// a schema error or a successful response with the wrong visibility.
+const searchWhenAvailable=async(sdk,keyword)=>{
+ const deadline=Date.now()+45000
+ for(;;){try{return await sdk.searchRemote(keyword)}catch(error){
+  if(error.body?.code!=='arkme-code-50001'||error.body?.message!=='search unavailable'||Date.now()>=deadline)throw error
+  console.log('T25_SEARCH_OWNER_TRANSIENT_UNAVAILABLE')
+  await new Promise(resolve=>setTimeout(resolve,500))
+ }}
+}
 let ctx,shutdown,browser,page,viewerCtx,viewerShutdown,viewerBrowserContext,viewerPage,viewerSdk
 try{
  upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const origin=`https://127.0.0.1:${upstream.address().port}`
@@ -135,7 +147,8 @@ try{
  if(realOwners){
  await page.getByRole('button',{name:'对话',exact:true}).click()
  await page.getByText('界面关联的普通群',{exact:true}).first().click()
- await page.getByText('仅个人原件的未发布修改',{exact:true}).waitFor()
+ const conversation=page.locator('.arkme-conversation-panel')
+ await conversation.getByText('仅个人原件的未发布修改',{exact:true}).waitFor()
  await page.getByRole('button',{name:'群聊设置',exact:true}).click()
  await page.getByRole('menuitem',{name:'群管理',exact:true}).click()
  await page.getByRole('menuitem',{name:'关联为团队内部群',exact:true}).click()
@@ -149,8 +162,8 @@ try{
  await page.getByRole('button',{name:'完成',exact:true}).waitFor()
  await page.screenshot({path:join(capture,'link-ui-ready.png')});await page.getByRole('dialog').screenshot({path:join(capture,'link-ui-ready-dialog.png')})
  await page.getByRole('button',{name:'完成',exact:true}).click()
- await page.getByText('已批准的群历史正文',{exact:true}).waitFor()
- await page.getByText('仅个人原件的未发布修改',{exact:true}).waitFor({state:'hidden'})
+ await conversation.getByText('已批准的群历史正文',{exact:true}).waitFor()
+ await conversation.getByText('仅个人原件的未发布修改',{exact:true}).waitFor({state:'hidden'})
  await page.getByText('团队身份暂不可用',{exact:true}).waitFor({state:'hidden'})
  await page.screenshot({path:join(capture,'linked-approved-history.png')})
  }
@@ -176,7 +189,7 @@ try{
   assert.equal(first.items[0].sourceSnapshot,true);assert.equal(first.items[0].textContent,'已批准的群历史正文');assert.equal(first.items[0].recordVersion??first.items[0].version,1)
   const block=first.items[0].contentBlocks.find(block=>block.kind==='image'),mediaURL=new URL(viewerSdk.mediaUrl(block.originalRef||block.mediaRef),viewerBase).href
   const image=await viewerPage.request.get(mediaURL,{headers:{Range:'bytes=0-7'}});assert.equal(image.status(),206);assert.deepEqual([...await image.body()],[137,80,78,71,13,10,26,10])
-  assert((await viewerSdk.searchRemote('已批准')).items.length>0)
+  assert((await searchWhenAvailable(viewerSdk,'已批准')).items.length>0)
   const related=()=>viewerCtx.get('arkmeData').relatedQuickNotesFromMessage(memberRef,first.items[0].messageActionRef)
   assert.equal((await related()).recallMode,'search_fallback')
   await page.getByRole('button',{name:'联系人',exact:true}).click()
@@ -193,7 +206,7 @@ try{
   await wait(async()=>JSON.parse((await forward('/fixture/team/api/v1/team/members/snapshot',{team_id:'7'})).text).data,roster=>!roster.items.some(m=>m.user_id==='1002'))
   await assert.rejects(()=>viewerSdk.readSource(memberRef))
   assert([403,404].includes((await viewerPage.request.get(mediaURL)).status()))
-  assert.equal((await viewerSdk.searchRemote('已批准')).items.length,0)
+  assert.equal((await searchWhenAvailable(viewerSdk,'已批准')).items.length,0)
   const revokedRelated=await related();assert.equal(revokedRelated.items.length,0);assert.equal(revokedRelated.recallMode,'unavailable')
   const unaffected=(await viewerSdk.listSources('root',{refresh:true})).items.find(row=>row.displayName==='其他普通群保持使用');assert(unaffected);await viewerSdk.readSource(unaffected.sourceRef)
   await page.getByRole('button',{name:'＋ 添加成员',exact:true}).click()

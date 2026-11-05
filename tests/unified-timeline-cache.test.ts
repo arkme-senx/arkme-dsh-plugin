@@ -224,9 +224,7 @@ it('bounds SQLite pages including coverage indexes before continuous writes exha
       expect(db.prepare('PRAGMA quick_check').get()!.quick_check).toBe('ok')
     } finally { db.close() }
   } finally { store.close() }
-// The contract is the physical size, retained anchor and integrity after 72,000
-// event writes. Keep all data/assertions; allow slow shared-host disk service.
-}, 300_000)
+}, 30_000)
 
 it('reclaims an existing oversized coverage cache on open and keeps its recent anchor', () => {
   const path = mkdtempSync(join(tmpdir(), 'arkme legacy capacity ')); directories.push(path)

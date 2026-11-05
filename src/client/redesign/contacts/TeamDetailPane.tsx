@@ -400,12 +400,14 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onReady={() => {void arkmeChatDirectory.refreshRoot({force:true}).catch(()=>undefined)}} onClose={() => setInternalGroupOpen(false)} />}
     {/* A fresh directory read may reseal the same team. Keep this open command scoped to its original reference. */}
     {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey) }} onClose={() => setMemberAdditionRef(undefined)} />}
+    {page.canDissolve && <div className="arkme-team-detail-footer">
+      <button type="button" className="arkme-team-action" onClick={()=>setGovernance({kind:'dissolve',teamRef:page.team.teamRef,revision:page.membershipRevision})}>{tr('解散团队')}</button>
+    </div>}
+    {governance && <TeamGovernanceDialog accountKey={accountKey} teamName={page.team.name} intent={governance} onClose={()=>setGovernance(undefined)} onComplete={result=>{
+      setGovernance(undefined);arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey)
+      if(!result.active){arkmeContactsTab.clear()}else{void load()}
+    }}/>}
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
-      {page.canDissolve && <button type="button" className="arkme-team-action" onClick={()=>setGovernance({kind:'dissolve',teamRef:page.team.teamRef,revision:page.membershipRevision})}>{tr('解散团队')}</button>}
-      {governance && <TeamGovernanceDialog accountKey={accountKey} teamName={page.team.name} intent={governance} onClose={()=>setGovernance(undefined)} onComplete={result=>{
-        setGovernance(undefined);arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey)
-        if(!result.active){arkmeContactsTab.clear()}else{void load()}
-      }}/>}
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>
         <button disabled={!!removing} onClick={() => { void leaveTeam() }}>{tr('确认退出')}</button>
