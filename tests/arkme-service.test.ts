@@ -259,10 +259,10 @@ describe('ArkmeService', () => {
       expect(result.items[0]).toMatchObject({ revisionUid: 'rev-old', content: { textContent: 'old text', contentBlocks: [{ fileAssetUid: 'old-image' }] } })
       expect(JSON.stringify(result)).not.toContain('https://media.test')
       expect(fetcher.mock.calls[0]?.[0]).toContain('/api/v1/chats/records/revisions/query')
-      const count = fetcher.mock.calls.length
       const peerAction = signedAction(20002)
-      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction)).rejects.toMatchObject({ code: 'record-history-private' })
+      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction)).resolves.toMatchObject({ items: [{ revisionUid: 'rev-old' }] })
       await expect(service.recordRevisionSnapshot(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction, 'rev-old')).rejects.toMatchObject({ code: 'record-snapshot-private' })
+      const count = fetcher.mock.calls.length
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-2', 'other'), action)).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action + 'x')).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       sessions.session = { userId: 20002, accessToken: 'other', refreshToken: 'other' }

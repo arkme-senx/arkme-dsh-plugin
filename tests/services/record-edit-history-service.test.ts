@@ -102,11 +102,11 @@ describe('Record edit history', () => {
   })
 })
 
-it('keeps other-member history private before any Record or Chat request', async () => {
+it('delegates member history to Chat but refuses private revision capture before any snapshot request', async () => {
   const f = fixture({ items: [], has_more: false })
   const peer = { kind: 'chat' as const, viewerUserId: 42, recordUid: 'r1', chatSessionUid: 's1', relationUid: 'rel1', recordOwnerUserId: 43 }
-  await expect(f.service.page(peer)).rejects.toMatchObject({ code: 'record-history-private' })
+  await expect(f.service.page(peer)).resolves.toEqual({ items: [], hasMore: false })
   await expect(f.service.revision(peer, 'r2')).rejects.toMatchObject({ code: 'record-snapshot-private' })
   expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
-  expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
+  expect(f.runtime.authenticatedChatPost).toHaveBeenCalledTimes(1)
 })

@@ -588,13 +588,18 @@ describe('normal timeline related quick note drawer', () => {
     act(() => view.unmount())
   })
 
-  it('shows an edited marker without a history entry for another person', async () => {
-    mocks.callArkme.mockResolvedValue({ items: [], total: 0, extensions: [], extensionCount: 0 })
+  it('preserves another member history entry while keeping its private snapshot action unavailable', async () => {
+    mocks.callArkme.mockImplementation(async (op: string) => op === 'source.record-edit-history'
+      ? { items: [{ revisionUid: 'peer-rev', version: 2, kind: 'manual', editAtMillis: 1710000000000, content: { textContent: '对方有权公开的历史正文', contentBlocks: [] } }], hasMore: false }
+      : { items: [], total: 0, extensions: [], extensionCount: 0 })
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: false, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
-    expect(JSON.stringify(view.toJSON())).toContain('已编辑')
-    expect(view.root.findAllByProps({ 'aria-label': '已编辑' })).toHaveLength(0)
-    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.record-edit-history')).toBe(false)
+    await act(async () => view.root.findByProps({ 'aria-label': '已编辑' }).props.onClick())
+    expect(JSON.stringify(view.toJSON())).toContain('对方有权公开的历史正文')
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 50, clientY: 50 }
+    act(() => view.root.findByProps({ 'data-arkme-history-bubble': true }).props.onContextMenu(event))
+    expect(view.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.record-revision-snapshot')).toBe(false)
     act(() => view.unmount())
   })
 

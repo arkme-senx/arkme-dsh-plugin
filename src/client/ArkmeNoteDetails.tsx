@@ -910,7 +910,7 @@ export function ArkmeTimelineDetailDrawer({
   const extensionSendTasks = sourceSendTasks.filter(task => task.rootRecordUid === item.itemUid)
   const sentNotifications = useRef(new Set<string>())
   const historyTarget = `${normalizedSourceRef}:${item.itemUid}`
-  const historyOpen = item.isMe === true && editHistoryTarget === historyTarget && messageActionRef !== ''
+  const historyOpen = editHistoryTarget === historyTarget && messageActionRef !== ''
   useLayoutEffect(() => {
     if (historyOpen || relatedView !== 'source-detail' || !bodyRef.current) return
     const anchor = observeDetailScrollAnchor(bodyRef.current)
@@ -1228,8 +1228,7 @@ export function ArkmeTimelineDetailDrawer({
     {sourceBadge}
     {personalSource && item.isMe && normalizedSourceRef && messageActionRef && <NoteWorldReactionArchive sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} />}
     <style>{`.arkme-edit-history-entry { background: transparent; } .arkme-edit-history-entry:hover { background: ${arkmeTheme.hover}; }`}</style>
-    {item.hasManualEdit === true && item.isMe !== true && <span className="arkme-edit-history-entry" style={{ display: 'inline-block', height: 32, marginTop: 5, color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('已编辑')}</span>}
-    {item.isMe === true && item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button data-arkme-feedback="neutral"
+    {item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button data-arkme-feedback="neutral"
       type="button" aria-label={tr("已编辑")} className="arkme-edit-history-entry" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 32, marginTop: 5, padding: 0, border: 0, borderRadius: 4, color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}
       onClick={() => {
         if (bodyRef.current !== null) scrollTopByViewRef.current['source-detail'] = bodyRef.current.scrollTop

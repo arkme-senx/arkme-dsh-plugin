@@ -16,10 +16,9 @@ export interface RecordRevisionContentProjector {
 function invalid(): never {
   throw new ArkmePluginError('record-edit-history-invalid', '编辑记录暂不可用，请刷新后重试', true, 502)
 }
-function requireHistoryOwner(target: RecordEditHistoryTarget, snapshot = false): void {
+function requireSnapshotOwner(target: RecordEditHistoryTarget): void {
   if (target.kind === 'chat' && String(target.recordOwnerUserId) !== String(target.viewerUserId)) {
-    if (snapshot) throw new ArkmePluginError('record-snapshot-private', '只能查看自己消息的记忆快照', false, 403)
-    throw new ArkmePluginError('record-history-private', '只能查看自己消息的编辑记录', false, 403)
+    throw new ArkmePluginError('record-snapshot-private', '只能查看自己消息的记忆快照', false, 403)
   }
 }
 const revisionKinds: Record<number, ArkmeRecordRevision['kind']> = { 1: 'manual', 2: 'transcription', 3: 'polish', 4: 'rewrite', 5: 'original' }
@@ -30,7 +29,6 @@ export class RecordEditHistoryService {
 
   private async readPage(target: RecordEditHistoryTarget, cursorVersion = 0, signal?: AbortSignal) {
     if (!Number.isSafeInteger(cursorVersion) || cursorVersion < 0 || target.recordUid.trim() === '') invalid()
-    requireHistoryOwner(target)
     const session = await this.runtime.requireSession()
     if (session.userId !== target.viewerUserId) invalid()
     const window = { limit: 50, cursor_version: cursorVersion }
@@ -60,7 +58,7 @@ export class RecordEditHistoryService {
 
   async revision(target: RecordEditHistoryTarget, revisionUid: string, signal?: AbortSignal): Promise<{ snapshot: Record<string, unknown>; previous?: Record<string, unknown> }> {
     if (!revisionUid.trim() || revisionUid.length > 256) invalid()
-    requireHistoryOwner(target, true)
+    requireSnapshotOwner(target)
     const session = await this.runtime.requireSession()
     if (session.userId !== target.viewerUserId) invalid()
     const data = objectValue(target.kind === 'owned'

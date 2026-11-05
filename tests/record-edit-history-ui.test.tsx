@@ -213,3 +213,14 @@ describe('edit history view', () => {
     } finally { if (view) act(() => view!.unmount()); vi.unstubAllGlobals() }
   })
 })
+
+it('does not attribute edits across a hidden version gap to a single edit', async () => {
+ const previous = { ...page('old approved body').items[0]!, version: 1, editAtMillis: 1000 }
+ const revision = { ...page('new approved body').items[0]!, version: 3, editAtMillis: 3000 }
+ let view!: ReactTestRenderer
+ await act(async () => { view = create(<ArkmeRecordRevisionDiff revision={revision} previous={previous} hasMore={false} senderName="peer" mine={false} />) })
+ expect(JSON.stringify(view.toJSON())).toContain('缺少上一版本，无法完整对比')
+ expect(view.root.findAllByType('del')).toHaveLength(0)
+ expect(view.root.findByType(ArkmeMessageContent).props.item.textContent).toBe('new approved body')
+ act(() => view.unmount())
+})

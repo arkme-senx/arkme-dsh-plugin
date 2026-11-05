@@ -40,7 +40,8 @@ export function ArkmeRecordRevisionDiff({ revision, previous, orderUncertain = f
   const original = revision.kind === 'original'
   // Equal timestamps do not establish a causal order. Never guess which edit
   // came first, or treat the oldest loaded item as the original.
-  const comparable = !orderUncertain && revision.kind !== 'original' && previous !== undefined && previous.editAtMillis < revision.editAtMillis
+  const versionGap = previous?.version !== undefined && revision.version !== undefined && revision.version !== previous.version + 1
+  const comparable = !versionGap && !orderUncertain && revision.kind !== 'original' && previous !== undefined && previous.editAtMillis < revision.editAtMillis
   const diff = useMemo(() => comparable && previous ? {
     title: historyTextDiff(previous.content.title ?? '', revision.content.title ?? ''),
     text: historyTextDiff(previous.content.textContent, revision.content.textContent),
@@ -60,6 +61,7 @@ export function ArkmeRecordRevisionDiff({ revision, previous, orderUncertain = f
   return <div data-arkme-history-revision={revision.revisionUid}>
     {!original && <div data-arkme-history-summary style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '0 12px', fontSize: 12, fontWeight: 500, lineHeight: 1.7 }}>
       <span>{diff ? summary || tr('文字、标题和可比较附件未变化')
+        : versionGap ? tr('缺少上一版本，无法完整对比')
         : orderUncertain || previous ? tr('版本先后顺序不明确，暂不对比')
         : hasMore ? tr('上一版本加载后显示差异') : tr('缺少上一版本，无法完整对比')}</span>
       {diff && previous && <span style={hintStyle}>{tr('对比基准：{v0}', { v0: new Date(previous.editAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
