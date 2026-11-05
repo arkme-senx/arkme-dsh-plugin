@@ -1,3 +1,4 @@
+import { bindingWire, executionMetadata } from '../model-execution.js'
 import { projectPersonReferences } from './person-reference-projection.js'
 import { CapabilityService } from './capability-service.js'
 import { mergeExploreEvidence } from '../explore-evidence.js'
@@ -68,7 +69,7 @@ export class ExploreService {
   }
   private async analysisEnabled(module: ExploreModule, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<boolean> {
     const result = await new CapabilityService(this.runtime).query(`${this.runtime.config.environment}:${session.userId}`, signal)
-    const setting = result.settings.find(x => x.key === (module === 'profile' ? 'personal_profile' : 'goal_insight'))
+    const setting = result.settings.find(x => x.key === (module === 'profile' ? 'personal_profile' : module === 'events' ? 'event_insight' : 'goal_insight'))
     if (!setting) throw new ArkmePluginError('capability-contract-invalid', '暂时无法确认额度设置，请重试', true, 502)
     return setting.enabled
   }
@@ -310,7 +311,7 @@ export class ExploreService {
     if (module === 'profile' || module === 'goals') {
       try { page.analysisEnabled = await this.analysisEnabled(module, session, signal) }
       catch { signal?.throwIfAborted(); page.analysisEnabled = null }
-      if (page.analysisEnabled !== true) {
+      if (module === 'profile' && page.analysisEnabled !== true) {
         // Reading saved results must not depend on optional billing settings.
         page.actions = page.actions.filter(x => x.id === 'pause' || x.id === 'stop')
         delete page.progress
@@ -442,11 +443,19 @@ export class ExploreService {
         const target=await this.open(input.targetRef,session,'category');if(target.module!=='events'||!target.eventId)throw missing()
         await request('/api/v1/event/record/reclassify',{event_record_id:ref.id,source_event_id:ref.eventId,target_event_id:target.eventId})
       } else if(kind==='context'&&input.action==='create')await request('/api/v1/event/create',{event_name:value(),name:value(),is_subscribed:true,subscribed:true})
-      else if(kind==='context'&&input.action==='refresh')await request('/api/v1/event/process/trigger',{force:false})
+      else if(kind==='context'&&input.action==='refresh') {
+        await this.requireAnalysis(module,session,signal)
+        const settings=await this.settings('events',signal,{part:'models',expectedAccountScope:`${this.runtime.config.environment}:${session.userId}`})
+        const selected=settings.models.find(model=>model.selected)
+        if(!selected?.routeKey || (selected.provider!=='user-api'&&!selected.binding) || selected.available!==true)throw missing()
+        await this.guard(session,epoch,signal)
+        const receipt=await this.runtime.authenticatedIntelligentPost<Doc>('/api/v1/event-model/retry',{route_key:selected.routeKey},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
+        if(receipt.accepted===false)throw new ArkmePluginError('explore-event-not-accepted',text(receipt.message)||'整理任务尚未接受，请刷新状态',true,409)
+      }
       else throw missing()
     } else if(kind==='context'&&(module==='goals'||module==='anniversaries')&&['refresh','stop'].includes(input.action)) {
-      if (module === 'goals' && input.action === 'refresh') await this.requireAnalysis(module,session,signal)
-      await request(input.action==='stop'?'/api/v1/insight/terminate':`/api/v1/insight/${module==='goals'?'goal':'anniversary'}/refresh`,input.action==='stop'?{section_type:module==='goals'?3:4}:{source_type:0})
+      const receipt=await request(input.action==='stop'?'/api/v1/insight/terminate':`/api/v1/insight/${module==='goals'?'goal':'anniversary'}/refresh`,input.action==='stop'?{section_type:module==='goals'?3:4}:{source_type:0})
+      if(input.action==='refresh' && receipt.accepted!==true)throw new ArkmePluginError('explore-analysis-not-accepted',text(receipt.message)||'本次分析尚未接受，请查看当前任务',true,409)
     } else if(module==='anniversaries'&&kind==='item'&&['confirm','dismiss'].includes(input.action)) {
       await this.detail(input.ref,undefined,signal)
       const body:Doc={candidate_id:ref.id}
@@ -466,7 +475,7 @@ export class ExploreService {
     const models=[],failures=[]
     for(const [index,item] of result.entries()) {
       // Directory entries advertise identity only; only the active module supplies activation refs.
-      if(item.status==='fulfilled')models.push(item.value.map(({explore:_,...model})=>model))
+      if(item.status==='fulfilled')models.push(item.value.map(({explore:_,referencesByScene:__,...model})=>model))
       else failures.push({source:EXPLORE_LABELS[EXPLORE_MODEL_MODULES[index]!],message:item.reason instanceof Error?item.reason.message:'目录读取失败，请重试'})
     }
     return {models:mergeModelChoices(...models),failures}
@@ -487,7 +496,10 @@ export class ExploreService {
     const config=module==='anniversaries'?doc(raw.config):raw,current=first(config.effective_route_key,config.active_route_key,config.current_route_key)
     const routes=[...new Map(list(config.items??config.allowed_route_options).filter(x=>typeof x.route_key==='string'&&x.route_key.trim()&&x.route_key.length<=256).map(x=>[x.route_key,x])).values()]
     const result:ExploreSettings={ref:await this.seal(session,{kind:'settings',module}),accountScope,
-      models:await Promise.all(routes.map(async x=>({key:await this.key(session,'model',module,x.route_key),ref:await this.seal(session,{kind:'model',module,route:x.route_key}),routeKey:text(x.route_key),label:first(x.display_name,x.model_key),selected:x.route_key===current,...(text(x.provider)?{provider:text(x.provider)}:{})}))),sources}
+      models:await Promise.all(routes.map(async x=>{
+        const metadata=executionMetadata(module==='events'?{...doc(x.execution),provider:x.provider}:x)
+        return {key:await this.key(session,'model',module,x.route_key),ref:await this.seal(session,{kind:'model',module,route:x.route_key,...(metadata.binding?{binding:metadata.binding}:{})}),routeKey:text(x.route_key),label:first(x.display_name,x.model_key),selected:x.route_key===current,...(text(x.provider)?{provider:text(x.provider)}:{}),...metadata}
+      })),sources}
     await this.guard(session,epoch,signal);return result
   }
   async saveSettings(input: Doc, signal?: AbortSignal): Promise<{saved:true;message?:string;settings?:ExploreSettings}> {
@@ -499,12 +511,15 @@ export class ExploreService {
       const current=await this.settings(module,signal,{part:'models'})
       const available=await Promise.all(current.models.map(x=>this.open(x.ref,session,'model')))
       if(!available.some(x=>x.route===model.route))throw missing()
+      const selectedModel=current.models.find((_,index)=>available[index]?.route===model.route)
+      if(!selectedModel || selectedModel.available!==true || JSON.stringify(selectedModel.binding)!==JSON.stringify(model.binding))throw new ArkmePluginError('explore-model-unavailable','模型目录已更新或此场景尚不可用，请刷新后确认',true,409)
       if(current.models.some((x,index)=>x.selected&&available[index]?.route===model.route))return {saved:true,message:'当前已在使用该模型',settings:current}
-      if(module==='profile'||module==='goals')await this.requireAnalysis(module,session,signal)
+      if(module==='profile'||module==='events')await this.requireAnalysis(module,session,signal)
       const path=module==='profile'?'/api/v1/personal-profile/v3/model/activate':module==='events'?'/api/v1/event-model/activate':module==='goals'?'/api/v1/insight/goal/model/activate':'/api/v1/insight/anniversary/model/activate'
       await this.guard(session,epoch,signal)
-      const response=await this.runtime.authenticatedIntelligentPost<Doc>(path,{route_key:model.route,...(module==='goals'?{trigger_refresh:true}:{})},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
+      const response=await this.runtime.authenticatedIntelligentPost<Doc>(path,{route_key:model.route,...(model.binding?{model_binding:bindingWire(model.binding as import('../model-execution.js').ModelBinding)}:{}),...(module==='goals'?{trigger_refresh:true}:{})},session,signal,{lane:'write',bypassCache:true,cacheMs:0})
       await this.guard(session,epoch,signal)
+      if(response.accepted===false && response.selection_saved!==true)throw new ArkmePluginError('explore-model-not-accepted',text(response.message)||'模型选择尚未接受执行，请查看当前任务',true,409)
       const verified=await this.settings(module,signal,{part:'models'})
       if(!verified.models.some(x=>x.key===current.models.find((_,index)=>available[index]?.route===model.route)?.key&&x.selected))throw new ArkmePluginError('explore-model-unconfirmed','模型切换已提交，暂时无法确认生效状态，请刷新后核对',true,409)
       return {saved:true,message:text(response.message).slice(0,500)||'模型已切换，分析状态将在后台更新',settings:verified}
