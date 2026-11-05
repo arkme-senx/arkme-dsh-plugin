@@ -46,7 +46,7 @@ import { ArkmeConversationDate } from './ArkmeConversationDate.js'
 import { StatisticsSurface } from './statistics/StatisticsSurface.js'
 import { SelfConversationStatistics } from './statistics/SelfConversationStatistics.js'
 import { ExploreSurface } from './explore/ExploreSurface.js'
-import { MessageQuoteThreadsProvider, MessageQuoteThreadTimestamp } from './MessageQuoteThreads.js'
+import { MessageQuoteThreadsProvider, MessageQuoteThreadTimestamp, MessageWorldPublicationBadge } from './MessageQuoteThreads.js'
 import { RecordThoughtContent, RecordThoughtMessageFooter, RecordThoughtsProvider } from './RecordThoughts.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
 import { removeUnifiedTimelineItems, UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
@@ -8173,8 +8173,8 @@ export function ArkmeSurface({
                             ? <div className="arkme-offline-message-footer"><OfflineContextMessageLink onOpen={() => {
                               const entry = offlineMessageLinks.get(item.offlineContextMessageRef!)!
                               arkmeUi.showConversationTarget(source, entry.id, entry.startAtMillis, undefined, undefined, false, false, entry.id)
-                            }} /><MessageQuoteThreadTimestamp item={item} sourceRef={canPublishSelfNote(source, item) ? source.sourceRef : undefined} /></div>
-                            : <MessageQuoteThreadTimestamp item={item} sourceRef={canPublishSelfNote(source, item) ? source.sourceRef : undefined} />
+                            }} /><MessageQuoteThreadTimestamp item={item} /></div>
+                            : <MessageQuoteThreadTimestamp item={item} />
                           const messageBubble = <div
                             className="arkme-timed-bubble"
                             role="button"
@@ -8201,7 +8201,7 @@ export function ArkmeSurface({
                             onContextMenu={event => { timelineActions.current.openMessageMenu(item, event, event.currentTarget) }}
                             data-arkme-message-direction={role === undefined ? item.isMe ? 'self' : 'other' : 'self-role'}
                             aria-label={item.callRecord ? '打开通话详情' : isSharedRecordingCard ? '打开录音详情' : tr("打开快记详情")}
-                          >{polishStatus !== '' && <span style={styles.polishMeta}>
+                          ><MessageWorldPublicationBadge item={item} sourceRef={canPublishSelfNote(source, item) ? source.sourceRef : undefined} />{polishStatus !== '' && <span style={styles.polishMeta}>
                             {item.aiPolish?.state === 'failed' ? <button data-arkme-feedback="neutral"
                               type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.retryAiPolish(item) }}
                             >{polishStatus}</button> : polishStatus}
