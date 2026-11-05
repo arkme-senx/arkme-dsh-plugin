@@ -1,7 +1,8 @@
 import { harnessNativeTransportScript } from './harness-native-transport-script.js'
-import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH } from './harness-embed-contract.js'
+import { HARNESS_SESSION_CLIENT_ID, HARNESS_SESSION_CLIENT_PATH, HARNESS_MODELS_SETTINGS_QUERY } from './harness-embed-contract.js'
 import { HARNESS_SESSION_RESTORE_SCRIPT } from './harness-session-restore-script.js'
 import { HARNESS_THEME_BOOTSTRAP } from './harness-theme-bootstrap.js'
+import { HARNESS_DOCUMENT_BOOTSTRAP } from './harness-document-bootstrap.js'
 import { createHash } from 'node:crypto'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
@@ -179,11 +180,14 @@ export function projectHarnessBootGraph(
   modelClient?: DshWebBootEntry,
   trajectoryClient?: DshWebBootEntry,
   sidebarClient?: DshWebBootEntry,
+  modelsSettings = false,
 ): DshWebBootGraph {
   const requiredPackageNames = requiredBootPackages(graph.entries)
   const removedPackageNames = new Set([
     ARKME_PLUGIN_PACKAGE_NAME,
     DSH_CLIENT_HMR_PACKAGE_NAME,
+    ...(modelsSettings ? ['@deepseek-ai/dsh-client-ui-settings-general']
+      : sidebarClient ? ['@deepseek-ai/dsh-client-ui-settings-models'] : []),
     ...installedPackageNames.map(name => name.trim()).filter(Boolean),
   ])
   completeRemovedPackageClosure(graph.entries, removedPackageNames, requiredPackageNames)
@@ -263,8 +267,10 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
 
     try {
       const fullGraph = options.getGraph()
-      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), options.modelClient, options.trajectoryClient, options.sidebarClient)
-      if (options.onboardingClient !== undefined) {
+      const modelsSettings = new URL(request.url ?? '/', 'http://localhost').searchParams.get(HARNESS_MODELS_SETTINGS_QUERY) === '1'
+      const projectedGraph = projectHarnessBootGraph(fullGraph, options.installedPackageNames(), modelsSettings ? undefined : options.modelClient, modelsSettings ? undefined : options.trajectoryClient, options.sidebarClient, modelsSettings)
+      if (modelsSettings && (!options.sidebarClient || !projectedGraph.entries.some(entry => entry.id === options.sidebarClient!.id) || !projectedGraph.entries.some(entry => entry.id === '@deepseek-ai/dsh-client-ui-settings-models'))) throw new Error('Native model settings unavailable')
+      if (!modelsSettings && options.onboardingClient !== undefined) {
         const entry = {
           ...options.onboardingClient,
           // Register the final step after all native settings/onboarding contributions.
@@ -275,7 +281,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
         projectedGraph.batches?.push({ phase: 'application', url: entry.url, rev: entry.rev, entries: [entry.id] })
         projectedGraph.rev = shortHash(`${projectedGraph.rev}:${entry.rev}`)
       }
-      if (options.sessionClient !== undefined) {
+      if (!modelsSettings && options.sessionClient !== undefined) {
         const rev = options.sessionClient.revision
         projectedGraph.entries.push({
           id: HARNESS_SESSION_CLIENT_ID, url: HARNESS_SESSION_CLIENT_PATH, rev,
@@ -293,26 +299,33 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
       html = /<base\b[^>]*>/i.test(html)
         ? html.replace(/<base\b[^>]*>/i, '<base href="/">')
         : html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<base href="/">`)
-      if (options.sessionClient !== undefined) {
+      if (!modelsSettings && options.sessionClient !== undefined) {
         if (!/<head(?:\s[^>]*)?>/i.test(html)) throw new Error('harness session restore requires a document head')
         html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-session-restore>${HARNESS_SESSION_RESTORE_SCRIPT}</script>`)
       }
-      if (options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
+      if (!modelsSettings && options.selectionClientRevision && /^[a-f0-9]+$/.test(options.selectionClientRevision)) {
         html = html.replace('</head>', `<meta name="arkme-native-selection" content="/arkme-self/harness-native-selection-client.js?rev=${options.selectionClientRevision}"></head>`)
       }
-      if (options.sessionClient?.defaultWorkspacePath) {
+      if (!modelsSettings && options.sessionClient?.defaultWorkspacePath) {
         const path = encodeURIComponent(options.sessionClient.defaultWorkspacePath)
         html = html.replace('</head>', `<meta name="arkme-default-workspace" content="${path}"></head>`)
       }
-      if (options.sessionClient?.apiPath !== undefined) {
+      if (!modelsSettings && options.sessionClient?.apiPath !== undefined) {
         const apiPath = options.sessionClient.apiPath
         if (!/^\/[A-Za-z0-9/_-]+$/.test(apiPath) || !html.includes('</head>')) {
           throw new Error('harness session observer configuration is invalid')
         }
         html = html.replace('</head>', `<meta name="arkme-session-api" content="${apiPath}"></head>`)
       }
-      if (options.sessionClient?.apiPath !== undefined) html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-native-transport>${harnessNativeTransportScript(options.sessionClient!.apiPath!)}</script>`)
-      html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script>`)
+      if (!modelsSettings && options.sessionClient?.apiPath !== undefined) html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-native-transport>${harnessNativeTransportScript(options.sessionClient!.apiPath!)}</script>`)
+      // These are required by the native boot barrier. Discover them before the
+      // outer conversation's background reads compete for HTTP/1.1 connections.
+      const adapters = [options.modelClient, options.trajectoryClient, options.sidebarClient, options.onboardingClient,
+        options.sessionClient ? { url: HARNESS_SESSION_CLIENT_PATH } : undefined]
+      const escapeAttribute = (value: string) => value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;')
+      const preloads = [...new Set(adapters.flatMap(entry => entry && projectedGraph.entries.some(item => item.url === entry.url) ? [entry.url] : []))]
+        .map(url => `<link rel="preload" as="script" fetchpriority="high" href="${escapeAttribute(url)}">`).join('')
+      html = html.replace(/<head(?:\s[^>]*)?>/i, head => `${head}<script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script><script data-arkme-document-started>${HARNESS_DOCUMENT_BOOTSTRAP}</script>${preloads}`)
       const body = Buffer.from(html)
       response.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
@@ -323,7 +336,7 @@ export function createHarnessEmbedRouteHandler(options: HarnessEmbedRouteOptions
       response.end(method === 'HEAD' ? undefined : body)
     } catch (error) {
       options.onError?.(error)
-      const body = Buffer.from(`<!doctype html><html><head><script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script></head><body><p role="alert">DeepSeek Harness unavailable</p></body></html>`)
+      const body = Buffer.from(`<!doctype html><html><head><script data-arkme-theme-bootstrap>${HARNESS_THEME_BOOTSTRAP}</script><script data-arkme-document-started>${HARNESS_DOCUMENT_BOOTSTRAP}</script></head><body><p role="alert">DeepSeek Harness unavailable</p></body></html>`)
       response.writeHead(503, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': body.byteLength,

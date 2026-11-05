@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RecordingReadOwner, type RecordingReadSource } from '../../src/services/recording-read-owner.js'
-import { ArkmeUpstreamResponseError, type ServiceRuntime } from '../../src/services/service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from '../../src/services/service.js'
 
 const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
 const start = 1_780_000_000_000
@@ -58,7 +58,169 @@ function fixture(rows: Row[][]) {
 
 const rows = (count: number, phase = 0): Row[] => Array.from({ length: count }, (_, i) => ({ body: `原文-${phase}-${i}`, offset: 2 * i + phase, child: phase + 100, ordinal: i }))
 
+function enableMetadata(f: ReturnType<typeof fixture>, stagger = false) {
+  const post = vi.mocked(f.runtime.authenticatedAudioPost), original = post.getMockImplementation()!
+  const adjust = (value: unknown, body: Record<string, unknown>) => {
+    const raw = value as Record<string, unknown>
+    if (stagger && body.recording_uid) raw.start_at = start + (parseInt(String(body.recording_uid), 16) - 1) * 10_000
+    return raw
+  }
+  post.mockImplementation(async (path, body, ...rest) => {
+    if (path.endsWith('/transcript/metadata')) {
+      const items = await Promise.all((body.recording_uids as string[]).map(async recording_uid => {
+        const raw = adjust(await original('/api/v1/audio/recordings/transcript/query', { ...body, recording_uid, limit: 1 }, ...rest), { recording_uid })
+        delete raw.next_page_cursor
+        return { ...raw, speakers: [], utterances: [], has_more: false }
+      }))
+      return { items }
+    }
+    const raw = adjust(await original(path, body, ...rest), body)
+    if (path.endsWith('/recordings/query')) {
+      raw.transcript_metadata_batch = true
+      if (stagger) for (const [index, item] of (raw.items as Record<string, unknown>[]).entries()) {
+        item.start_at = start + index * 10_000; item.end_at = start + (index + 1) * 10_000
+      }
+    }
+    return raw
+  })
+  return post
+}
+
 describe('RecordingReadOwner', () => {
+  it.each([404, 405, 501])('keeps text readable if a rolling deployment advertises metadata but the next node returns %s', async status => {
+    const f = fixture([rows(250), rows(250, 1)]), post = enableMetadata(f)
+    const original = post.getMockImplementation()!
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'route unavailable', true, 502, { upstreamStatus: status })
+      return await original(path, ...rest)
+    })
+    const page = await f.owner.dayPage(window, 'primary', session)
+    expect(page.items).toHaveLength(100)
+    expect(page.items[0]!.startAt).toBe(start)
+  })
+
+  it.each([400, 401, 403, 409, 429, 500])('does not hide metadata authority, version or service errors (%s)', async status => {
+    const f = fixture([rows(250)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    const error = new ArkmeUpstreamResponseError('arkme-http-error', 'failure', true, 502, {}, { upstreamStatus: status })
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw error
+      return await original(path, ...rest)
+    })
+    await expect(f.owner.dayPage(window, 'primary', session)).rejects.toBe(error)
+    expect(post.mock.calls.some(([path]) => path.endsWith('/transcript/query'))).toBe(false)
+  })
+
+  it('preserves continuation across a backend rollback and still rejects a changed recording', async () => {
+    const f = fixture([rows(250), rows(250, 1)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    const first = await f.owner.dayPage(window, 'primary', session)
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'missing route', true, 502, { upstreamStatus: 404 })
+      return await original(path, ...rest)
+    })
+    const second = await f.owner.dayPage(window, 'primary', session, first.next)
+    expect(second.items).toHaveLength(100)
+    expect([...first.items, ...second.items].map(item => item.startAt)).toEqual(Array.from({length:200},(_,i)=>start+i))
+    f.versions[1] = 'b'.repeat(64)
+    await expect(f.owner.dayPage(window, 'primary', session, second.next)).rejects.toMatchObject({code:'recording-view-changed'})
+  })
+
+  it('does not scan bodies solely for metrics when an advertised route is missing', async () => {
+    const f = fixture([rows(250)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'missing route', true, 502, { upstreamStatus: 404 })
+      return await original(path, ...rest)
+    })
+    expect(await f.owner.dayMetrics(window, session)).toBeUndefined()
+    expect(post.mock.calls.map(([path])=>path.split('/').at(-1))).toEqual(['query','metadata'])
+  })
+
+  it('uses legacy revision checks if the route disappears during a complete overview', async () => {
+    const f = fixture([rows(250), rows(250, 1)]), post = enableMetadata(f), original = post.getMockImplementation()!
+    const first = await f.owner.dayPage(window, 'primary', session)
+    post.mockImplementation(async (path, ...rest) => {
+      if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'missing route', true, 502, { upstreamStatus: 404 })
+      return await original(path, ...rest)
+    })
+    const overview = await f.owner.dayOverview(window,'primary',session,first.next!)
+    expect(overview.items).toHaveLength(500)
+    expect(overview.items.map(item=>item.startAt)).toEqual(Array.from({length:500},(_,i)=>start+i))
+  })
+
+  it('reads metrics without any text-page request when supported, and does not scan bodies on an older owner', async () => {
+    const f = fixture([rows(300), rows(300, 1)]), post = enableMetadata(f)
+    expect(await f.owner.dayMetrics(window, session)).toMatchObject({ textCount: 0 })
+    expect(post.mock.calls.map(([path]) => path.split('/').at(-1))).toEqual(['query', 'metadata'])
+    const old = fixture([rows(300)])
+    expect(await old.owner.dayMetrics(window, session)).toBeUndefined()
+    expect(old.requests).toHaveLength(1)
+  })
+  it('uses three upstream reads for a 17-recording first page and two for continuation when batch metadata is supported', async () => {
+    const f = fixture(Array.from({ length: 17 }, (_, i) => rows(300, i))), post = enableMetadata(f, true)
+    const first = await f.owner.dayPage(window, 'primary', session)
+    expect(first.items).toHaveLength(100)
+    expect(post.mock.calls.map(([path]) => path.split('/').at(-1))).toEqual(['query', 'metadata', 'query'])
+    post.mockClear()
+    const second = await f.owner.dayPage(window, 'primary', session, first.next)
+    expect(second.items).toHaveLength(100)
+    expect(second.items[0]!.index).toBe(100)
+    expect(post).toHaveBeenCalledTimes(2)
+    expect(post.mock.calls[1]![1]).toMatchObject({ page_cursor: '100' })
+  })
+
+  it('keeps overlapping recordings in exact order with batch metadata and rejects an unloaded recording revision change', async () => {
+    const f = fixture([rows(250), rows(250, 1)])
+    enableMetadata(f)
+    const first = await f.owner.dayPage(window, 'primary', session)
+    expect(vi.mocked(f.runtime.authenticatedAudioPost).mock.calls.filter(([path]) => path.endsWith('/transcript/query')).slice(0, 2).map(([, body]) => body.limit)).toEqual([1, 1])
+    const all = [...first.items]
+    let cursor = first.next
+    while (cursor) { const next = await f.owner.dayPage(window, 'primary', session, cursor); all.push(...next.items); cursor = next.next }
+    expect(all.map(item => item.startAt)).toEqual(Array.from({ length: 500 }, (_, i) => start + i))
+    f.versions[1] = 'b'.repeat(64)
+    await expect(f.owner.dayPage(window, 'primary', session, first.next)).rejects.toMatchObject({ code: 'recording-view-changed' })
+  })
+
+  it('preserves long Unicode fragments and whitespace on the batch metadata path', async () => {
+    const body = `  ${'汉🎙'.repeat(15000)} 尾部\n`, f = fixture([[{ body, offset: 1, child: 100, ordinal: 7 }]])
+    enableMetadata(f)
+    const complete = await f.owner.completeDay(window, 'primary', session)
+    expect(complete.items).toHaveLength(1); expect(complete.items[0]!.text).toBe(body)
+  })
+  it('builds a compact complete overview in linear reads instead of rechecking all recordings on every merged page', async () => {
+    const f = fixture([rows(250), rows(250, 1)])
+    const first = await f.owner.dayPage(window, 'primary', session)
+    f.requests.length = 0
+    const value = await f.owner.dayOverview(window, 'primary', session, first.next!)
+    expect(value.items).toHaveLength(500)
+    expect(value.items.every(item => !('text' in item) && item.textPreview.length <= 80)).toBe(true)
+    expect(f.requests.filter(request => request.path.endsWith('/transcript/query'))).toHaveLength(8)
+    expect(f.requests.filter(request => request.path.endsWith('/recordings/query'))).toHaveLength(1)
+    expect(value.views).toEqual(first.views)
+  })
+
+  it('rejects revision changes during the final overview verification', async () => {
+    const f = fixture([rows(250)])
+    const first = await f.owner.dayPage(window, 'primary', session)
+    f.mutate((value, request) => { if (request.limit === 1) value.revision = 'b'.repeat(64) })
+    await expect(f.owner.dayOverview(window, 'primary', session, first.next!)).rejects.toMatchObject({ code: 'recording-view-changed' })
+  })
+
+  it('rejects a newly added recording instead of publishing an incomplete day overview', async () => {
+    const recordings = [rows(250)], f = fixture(recordings)
+    const first = await f.owner.dayPage(window, 'primary', session)
+    recordings.push(rows(2, 1))
+    await expect(f.owner.dayOverview(window, 'primary', session, first.next!)).rejects.toMatchObject({ code: 'recording-view-changed' })
+  })
+
+  it('coalesces long Unicode fragments in the overview without retaining the full body', async () => {
+    const body = '汉🎙'.repeat(15000), f = fixture([[{body,offset:1,child:100,ordinal:7}]])
+    const first = await f.owner.dayPage(window, 'primary', session)
+    const value = await f.owner.dayOverview(window, 'primary', session, first.next!)
+    expect(value.items).toHaveLength(1)
+    expect(value.items[0]).toMatchObject({ textCount: 30000, textPreview: '汉🎙'.repeat(40), textStart: 0, textEnd: 30000 })
+    expect(value.items[0]).not.toHaveProperty('text')
+  })
+
   it('preserves the owner search version when a long utterance is split across pages', async () => {
     const f = fixture([[{body:'原'.repeat(24_000),offset:1,child:100,ordinal:7}]])
     f.mutate(value => {
@@ -220,4 +382,56 @@ it('retains selected recording continuation after midnight for entity evidence u
   expect(result.items.map(row => row.text)).toEqual(['before midnight', 'after midnight'])
   expect(f.requests.filter(row => row.path.endsWith('/recordings/query'))).toHaveLength(1)
   expect(f.requests.filter(row => row.path.endsWith('/transcript/query')).every(row => row.body.limit as number <= 100)).toBe(true)
+})
+
+it.each([false, true])('uses daily windows for monthly numbers, with metadata capability=%s and no cursor follow-up', async metadata => {
+  const f = fixture([rows(200), rows(200, 1), rows(200, 2)])
+  f.mutate(value => {
+    value.storage = { bytes: 421, archive_bytes: 321, clip_bytes: 100, confirmed_count: 1, pending_count: 0, unknown_count: 0 }
+    value.asr_input = { duration_ms: 3000, confirmed_count: 1, pending_count: 0, unknown_count: 0, estimated_count: 0 }
+  })
+  if (metadata) enableMetadata(f)
+  const result = await f.owner.calendarDayMetrics(window, session)
+  expect(result).toMatchObject({ storage: { bytes: 1263, archiveBytes: 963, clipBytes: 300 }, asrInputDurationMillis: 9000 })
+  const calls = vi.mocked(f.runtime.authenticatedAudioPost).mock.calls
+  const bodies = calls.filter(([path]) => path.endsWith('/transcript/query'))
+  expect(bodies).toHaveLength(metadata ? 0 : 3)
+  for (const [, body] of bodies) expect(body).toMatchObject({ start_at: window.startAt, end_at: window.endAt, limit: 1 })
+  expect(bodies.every(([, body]) => !body.page_cursor)).toBe(true)
+  expect(calls.some(([path]) => /playback|clips\//.test(path))).toBe(false)
+})
+
+it('limits old-server metric reads to two and rejects a changed account without partial totals', async () => {
+  const f = fixture([rows(10), rows(10), rows(10), rows(10)])
+  const post = vi.mocked(f.runtime.authenticatedAudioPost), original = post.getMockImplementation()!
+  let active = 0, peak = 0
+  post.mockImplementation(async (path, ...args) => {
+    if (!path.endsWith('/transcript/query')) return await original(path, ...args)
+    peak = Math.max(peak, ++active)
+    await new Promise(r => setTimeout(r, 5))
+    try { return await original(path, ...args) } finally { active-- }
+  })
+  await f.owner.calendarDayMetrics(window, session)
+  expect(peak).toBe(2)
+  f.setSid(7)
+  await expect(f.owner.calendarDayMetrics(window, session)).rejects.toMatchObject({ code: 'recording-view-changed' })
+})
+
+it.each([404, 405, 501])('reads monthly day metrics through old nodes when the advertised metadata route is missing (%s)', async status => {
+  const f = fixture([rows(250)]), post = enableMetadata(f), original = post.getMockImplementation()!
+  post.mockImplementation(async (path, ...args) => {
+    if (path.endsWith('/transcript/metadata')) throw new ArkmePluginError('arkme-http-error', 'missing', true, 502, { upstreamStatus: status })
+    return await original(path, ...args)
+  })
+  await f.owner.calendarDayMetrics(window, session)
+  const reads = post.mock.calls.filter(([path]) => path.endsWith('/transcript/query'))
+  expect(reads).toHaveLength(1); expect(reads[0]![1].limit).toBe(1)
+})
+
+it.each([400, 401, 403, 409, 429, 500])('does not downgrade monthly metric authority/version/service errors (%s)', async status => {
+  const f = fixture([rows(10)]), post = enableMetadata(f), original = post.getMockImplementation()!
+  const error = new ArkmeUpstreamResponseError('arkme-http-error', 'failed', true, 502, {}, { upstreamStatus: status })
+  post.mockImplementation(async (path, ...args) => { if (path.endsWith('/transcript/metadata')) throw error; return await original(path, ...args) })
+  await expect(f.owner.calendarDayMetrics(window, session)).rejects.toBe(error)
+  expect(post.mock.calls.some(([path]) => path.endsWith('/transcript/query'))).toBe(false)
 })

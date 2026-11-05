@@ -63,7 +63,7 @@ export function SelectedTextSelfNoteDialog({ quote, accountKey, signal, onClose,
         <blockquote style={{ margin: '6px 0 0', maxHeight: 140, overflowY: 'auto', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 13 }}>{quote.text}</blockquote>
       </div>
       <textarea aria-label="写下你的内容" placeholder="写下自己的思考…" rows={4} value={value} readOnly={frozen} disabled={busy} maxLength={10000} onChange={e => setValue(e.target.value)} style={{ marginTop: 12, width: '100%', boxSizing: 'border-box', resize: 'vertical', minHeight: 85, padding: 10, font: 'inherit', fontSize: 14, borderRadius: 8, border: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.input, color: arkmeTheme.text }} />
-      <p style={{ fontSize: 11, color: arkmeTheme.secondary }}>引用样式保存在本机；其他设备暂时显示完整引用文本。</p>
+      <p style={{ fontSize: 11, color: arkmeTheme.secondary }}>引用与笔记一起保存；原文失效后，个人摘录仍会保留。</p>
       {error && <p role="alert" style={{ fontSize: 12, color: arkmeTheme.danger }}>{error}</p>}
       {frozen && error && <p style={{ fontSize: 12, color: arkmeTheme.secondary }}>重试将发送原内容，避免重复创建。</p>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>

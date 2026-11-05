@@ -12,14 +12,15 @@ describe('native World integration', () => {
     expect(controller).toContain("mode: 'world'")
   })
 
-  it('groups World under Explore in the product navigation', async () => {
+  it('places World directly above Explore without a duplicate Explore entry', async () => {
     const productNavigation = await source('src/client/ArkmeProductNavigation.tsx')
 
-    expect(productNavigation).toMatch(/id: 'calendar'[\s\S]*id: 'explore'[\s\S]*id: 'extensions'/)
+    expect(productNavigation).toMatch(/id: 'calendar'[\s\S]*id: 'world'[\s\S]*id: 'explore'[\s\S]*id: 'extensions'/)
     expect(productNavigation).toContain('<ExploreNavigation')
     const explore = await source('src/client/explore/ExploreNavigation.tsx')
-    expect(explore).toContain("...EXPLORE_MODULES,'location' as const,'world' as const]")
-    expect(explore).toContain("module==='world'?arkmeUi.showWorld()")
+    expect(explore).toContain("...EXPLORE_MODULES,'location' as const]")
+    expect(explore).not.toContain("'world' as const")
+    expect(productNavigation).toContain("arkmeUi.showWorld()")
   })
 
   it('renders World as a full native utility surface like recordings', async () => {

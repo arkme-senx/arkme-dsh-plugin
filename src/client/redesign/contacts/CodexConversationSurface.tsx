@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from '../../ArkmeCloseButton.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { ArkmeTeam, ArkmeTeamPage } from '../../../types.js'
 import { callArkme } from '../../api.js'
@@ -79,7 +80,7 @@ export function CodexConversationSurface({ accountKey, userId, active }: { accou
   return <section className="arkme-codex-surface" aria-label={tr('Codex 对话')}>
     {error && <p className="arkme-codex-scope-error" role="alert">{error} <button type="button" disabled={busy} onClick={()=>{void load()}}>{tr('重试')}</button></p>}
     <div className="arkme-codex-team-panel" hidden={!active || !!target}>
-      <TeamCodexActivity conversation active={active && !target && loaded} teamRef="" personalTeams={teams} selfMember={String(userId)}
+      <TeamCodexActivity conversation active={active && !target} teamRef="" personal selfMember={String(userId)}
         headerActions={workspaceButton} onManage={()=>setWorkspaceOpen(true)}/>
     </div>
     {panels.map(panel => <div key={codexTargetScopeKey(panel)} className="arkme-codex-team-panel" hidden={!active || !target || codexTargetScopeKey(panel)!==codexTargetScopeKey(target) || !!error}>
@@ -88,7 +89,7 @@ export function CodexConversationSurface({ accountKey, userId, active }: { accou
         headerActions={<><button type="button" onClick={personal}>{tr('回到我的任务')}</button><button type="button" onClick={()=>manageTeam(panel.team.teamRef,panel.returnView ?? 'members')}>{tr('返回团队')}</button></>}/>
     </div>)}
     {workspaceOpen && <div className="arkme-codex-team-workspace" ref={workspace} role="dialog" aria-label={tr('团队工作台')}>
-      <header><strong>{tr('团队工作台')}</strong><button type="button" aria-label={tr('关闭')} onClick={()=>setWorkspaceOpen(false)}>×</button></header>
+      <header><strong>{tr('团队工作台')}</strong><ArkmeCloseButton type="button" aria-label={tr('关闭')} onClick={()=>setWorkspaceOpen(false)} /></header>
       <p>{tr('在团队中选择成员或管理同步，对话统一在这里查看。')}</p>
       {busy && <p role="status">{tr('加载中…')}</p>}
       {teams.map(team=><button className="arkme-codex-team-choice" type="button" key={team.teamRef} onClick={()=>manageTeam(team.teamRef,'members')}><strong>{team.name}</strong><small>@{team.jotmoId}</small><span aria-hidden>›</span></button>)}

@@ -45,6 +45,7 @@ export function ArkmeConfirmDialogPreview({ children, title }: { children: React
 type ArkmeDialogProps = {
   titleId: string
   title: string
+  dialogStyle?: CSSProperties
   children?: ReactNode
   error?: string
   busy: boolean
@@ -77,9 +78,14 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
       : undefined
     const initialFocus = cancelRef.current ?? dialogRef.current
     initialFocus?.focus({ preventScroll: true })
+    const dialog = dialogRef.current
     return () => {
       const previousFocus = previousFocusRef.current
-      if (previousFocus?.isConnected === true) previousFocus.focus({ preventScroll: true })
+      const active = document.activeElement
+      // A completed action may deliberately focus its destination before cleanup.
+      if (previousFocus?.isConnected === true && (active === document.body || active === null || dialog?.contains(active))) {
+        previousFocus.focus({ preventScroll: true })
+      }
     }
   }, [])
 
@@ -111,7 +117,7 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
     }
     if (event.key !== 'Tab' || typeof document === 'undefined') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])',
     )
     if (focusable === undefined || focusable.length === 0) {
       event.preventDefault()
@@ -140,7 +146,7 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
       tabIndex={-1}
       aria-busy={props.busy || undefined}
       data-arkme-confirm-dialog="true"
-      style={{ ...styles.dialog, ...(props.layout === 'picker' ? { width: 'min(440px, 100%)', padding: 0, borderRadius: 12 } : {}) }}
+      style={{ ...styles.dialog, ...(props.layout === 'picker' ? { width: 'min(440px, 100%)', padding: 0, borderRadius: 12 } : {}), ...props.dialogStyle }}
       onKeyDown={trapFocus}
     >
       {props.layout === 'picker' && <h2 id={props.titleId} style={{ position: 'absolute', width: 1, height: 1, padding: 0, margin: -1, overflow: 'hidden', clipPath: 'inset(50%)' }}>{props.title}</h2>}

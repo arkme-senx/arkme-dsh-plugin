@@ -69,6 +69,42 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
 const target = { sourceRef: 'source', itemUid: 'r1' }
 
 describe('Record attachment re-edit', () => {
+  it('persists and restores per-edit capture and ambient files before committing', async () => {
+    const x = await setup({ record_duration_millis: 1000, edit_duration_millis: 2000 })
+    x.files.readLocal.mockResolvedValue({ file: { ...localFile, mimeType: 'audio/webm', fileKind: 4 } } as never)
+    x.files.uploadRefs.mockResolvedValue([{ ...asset, fileAssetUid: 'new-background', fileKind: 4, mimeType: 'audio/webm', fileName: 'background.webm' }] as never)
+    let restored: RecordService | undefined
+    try {
+      const capture = { completedAtMillis: 1700000005000, startedAtMillis: 1700000002000, durationMillis: 3000,
+        captureContext: { clientName: '编辑设备', networkName: '编辑网络', electric: 0 },
+        backgroundSound: { fileRefs: [fileRef], amplitudes: [0.2, 0.5] } }
+      const context = await x.service.prepareRecordReedit({ ...target, newText: '编辑正文', expectedVersion: 7, capture })
+      expect(await x.stateStore.recordReeditFileRefs(42)).toContain(fileRef)
+      x.service.dispose()
+      restored = x.restart(true)
+      await restored.commitRecordReedit(context)
+      expect(x.writes).toHaveLength(1)
+      expect(x.writes[0]).toMatchObject({ record_duration_millis: 1000, edit_duration_millis: 5000,
+        edit_capture_context: { schema_version: 1, captured_at: capture.completedAtMillis, client_name: '编辑设备', network_name: '编辑网络', electric: 0 },
+        content_payload: { media_refs: expect.arrayContaining([{ file_asset_uid: 'new-background', content_file_role: 4, binding_type: 4, render_role: 1, sort_order: 2, file_name: 'background.webm' }]),
+          background_sound_amplitudes: [0.2, 0.5] } })
+    } finally { x.service.dispose(); restored?.dispose() }
+  })
+
+  it('uses a mixed voice payload for an edit with newly recorded ambient audio', async () => {
+    const x = await setup({ template_kind: 3, content_payload: { payload_kind: 3, schema_version: 1, text_state: 2,
+      voice: { source_file_asset_uid: 'voice', duration_millis: 1200, transcription_state: 2 } } })
+    x.files.readLocal.mockResolvedValue({ file: { ...localFile, mimeType: 'audio/webm', fileKind: 4 } } as never)
+    x.files.uploadRefs.mockResolvedValue([{ ...asset, fileKind: 4, mimeType: 'audio/webm' }] as never)
+    try {
+      const context = await x.service.prepareRecordReedit({ ...target, newText: '编辑转写', expectedVersion: 7,
+        capture: { completedAtMillis: 1700000000000, durationMillis: 1000, captureContext: { clientName: '本次设备' },
+          backgroundSound: { fileRefs: [fileRef], amplitudes: [] } } })
+      await x.service.commitRecordReedit(context)
+      expect(x.writes[0]).toMatchObject({ template_kind: 4, content_payload: { payload_kind: 4, voice: { source_file_asset_uid: 'voice' },
+        media_refs: [expect.objectContaining({ content_file_role: 4 })] } })
+    } finally { x.service.dispose() }
+  })
   it('reads only committed personal content for World without restoring or changing an edit draft', async () => {
     const x = await setup()
     try {

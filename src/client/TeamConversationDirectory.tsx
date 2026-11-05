@@ -1,3 +1,4 @@
+import { TeamEntryRemovalList } from './TeamEntryRemovalFeedback.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import type { TeamChannel } from '../team-app-contract.js'
@@ -18,7 +19,7 @@ import { teamText as tr } from './team-messaging-i18n.js'
 import { useArkmeLocale } from './locale.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
-import { teamDirectoryPreferences, teamFolderEntryKey, teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
+import { teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
 
 export function TeamConversationGroupRow({ group, accountKey, selected = false, onClick }: {
   group: TeamConversationGroup; accountKey?: string; selected?: boolean; onClick(): void
@@ -26,12 +27,13 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
   const actions = useTeamConversationEntryActions(accountKey, { kind: 'folder', group })
   const { latest, channel } = group
   const unread = group.attentionUnread
-  const preview = latest.preview?.status === 'available'
+  const emptyPreview = latest.lastSeq === 0 && (!latest.preview || latest.preview.status === 'unavailable' && !latest.preview.text && !latest.preview.templateKind && !latest.preview.hasMedia)
+  const preview = emptyPreview ? tr('尚未发送消息') : latest.preview?.status === 'available'
     ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
     : latest.preview ? tr('内容暂不可用') : ''
   return <><button type="button" role="treeitem" aria-selected={selected} data-team-folder={channel.jotmoId}
-    className="team-conversation-row" data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}
-    style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}) }}>
+    className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}
+    style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }}>
     {actions.pinned && <ArkmePinnedCorner />}
     <span style={styles.sourceAvatarWrap}>
       <ArkmeTeamChannelAvatar size={styles.sourceAvatarWrap.width} channel={channel} />
@@ -45,6 +47,7 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
       <span style={styles.chatBottom}><span style={styles.preview}><ArkmeRichText
         text={`${latest.visitor?.nickname ?? tr('用户')}：${preview}`} presentation="preview" emojiSize={20} /></span></span>
     </span>
+    {actions.feedback}
   </button>{actions.overlays}</>
 }
 
@@ -65,8 +68,6 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
     const controller = new AbortController(), teamRef = folder.teamRef
     void callArkme<TeamChannel>('team.app.channel', { teamRef, expectedAccountKey: accountKey }, controller.signal)
       .then(async value => {
-        controller.signal.throwIfAborted()
-        await teamDirectoryPreferences.restore(accountKey, teamFolderEntryKey(value.jotmoId))
         controller.signal.throwIfAborted()
         arkmeUi.resolveTeamDirectory(teamRef, value)
       })
@@ -90,6 +91,15 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
     scroll.current.scrollTop = arkmeUi.readTeamDirectoryScroll(scope)
     restoredScope.current = scope
   }, [scope, resolving, directory.hasLoaded])
+  useLayoutEffect(() => {
+    if (!selectedKey || !scroll.current || resolving) return
+    const selected = [...scroll.current.querySelectorAll<HTMLElement>('[data-team-conversation-key]')]
+      .find(row => row.dataset.teamConversationKey === selectedKey)
+    if (!selected) return
+    const container = scroll.current.getBoundingClientRect(), row = selected.getBoundingClientRect()
+    if (row.top < container.top) scroll.current.scrollTop -= container.top - row.top
+    else if (row.bottom > container.bottom) scroll.current.scrollTop += row.bottom - container.bottom
+  }, [scope, resolving, selectedKey, directory.hasLoaded, JSON.stringify(visibleItems.map(c => c.key))])
   useEffect(() => {
     if (resolving || directory.loading || directory.error || !directory.hasMore) return
     // A selected team's first conversation may be beyond the global first page.
@@ -116,10 +126,15 @@ export function TeamConversationDirectory({ accountKey, folder, selectedKey, onB
       {error && <div role="alert" className="team-opening-error"><p>{tr(error)}</p><button onClick={() => setAttempt(value=>value+1)}>{tr('重试')}</button></div>}
       {!error && <>
         <div role="tree" aria-label={channel?.name ?? tr('团队对话')}>
-          {channel ? visibleItems.map(c => <TeamConversationRow key={c.key} accountKey={accountKey} conversation={c} showTeamName={false} selected={selectedKey===c.key} role="treeitem"
-            onClick={() => openTeamMessages({kind:'conversation',conversation:c})} />)
-            : !resolving && visibleGroups.map(group => <TeamConversationGroupRow key={group.key} accountKey={accountKey} group={group}
-              onClick={() => openTeamMessages({kind:'team',teamRef:group.channel.teamRef,channel:group.channel})} />)}
+          <TeamEntryRemovalList key={`${accountKey}:${channel?.jotmoId ?? 'groups'}`} accountKey={accountKey}
+            targets={channel ? items.map(conversation => ({ kind: 'conversation', conversation })) : groups.map(group => ({ kind: 'folder', group }))}
+            visible={channel ? visibleItems.map(conversation => ({ kind: 'conversation', conversation })) : resolving ? [] : visibleGroups.map(group => ({ kind: 'folder', group }))}>
+            {rows => rows.map(target => target.kind === 'conversation'
+              ? <TeamConversationRow key={target.conversation.key} accountKey={accountKey} conversation={target.conversation} showTeamName={false} selected={selectedKey===target.conversation.key} role="treeitem"
+                  onClick={() => openTeamMessages({kind:'conversation',conversation:target.conversation})} />
+              : <TeamConversationGroupRow key={target.group.key} accountKey={accountKey} group={target.group}
+                  onClick={() => openTeamMessages({kind:'team',teamRef:target.group.channel.teamRef,channel:target.group.channel})} />)}
+          </TeamEntryRemovalList>
         </div>
         {channel && removedItems.length > 0 && <div>
           <button type="button" onClick={() => setShowRemoved(value => !value)} style={{ border: 0, padding: '8px 12px', background: 'transparent', color: arkmeTheme.secondary, fontSize: 12, cursor: 'pointer' }}>{showRemoved ? '收起已移除对话' : `查看已移除对话 (${removedItems.length})`}</button>

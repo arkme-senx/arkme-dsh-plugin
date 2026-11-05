@@ -7,7 +7,7 @@ import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js
 
 type Runtime = Pick<ServiceRuntime, 'requireSession' | 'authenticatedPost' | 'config' | 'stateStore'>
 function validId(value: unknown): value is string { return typeof value === 'string' && value.trim() === value && value.length > 0 && value.length <= 128 }
-function invalid(): never { throw new ArkmePluginError('world-reactions-contract-invalid', '世界表态接口尚未完成对接，请稍后重试', false, 502) }
+function invalid(): never { throw new ArkmePluginError('world-reactions-contract-invalid', '世界表态数据暂时无法读取，请刷新后重试', false, 502) }
 export function worldReactionFailure(error: unknown): never {
   if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? error.httpStatus)) {
     throw new ArkmePluginError('world-reactions-unavailable', WORLD_REACTION_PENDING, false, 501)
@@ -20,6 +20,16 @@ export class WorldReactionService {
   constructor(private readonly runtime: Runtime, private readonly resolveRecord: (ref: string) => Promise<ReactionWireTarget>) {}
   private async codec(userId: number) {
     return new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), JSON.stringify([this.runtime.config.environment, userId]))
+  }
+  private sealTarget(codec: TimelineTokenCodec, target: ReactionWireTarget): ReactionTargetRef {
+    const token = codec.seal(JSON.stringify({ target, expiresAt: Date.now() + 15 * 60_000 }), 'world-reaction-context')
+    const id = `world-reaction:${createHash('sha256').update(codec.seal(JSON.stringify(target), 'world-reaction-id')).digest('hex')}`
+    return { id, worldRecordRef: token }
+  }
+  async reference(wire: ReactionWireTarget): Promise<ReactionTargetRef> {
+    if (!validId(wire.record_uid) || !validId(wire.world_context_uid) || !validId(wire.content_revision) || wire.chat_session_uid || wire.rel_uid || wire.owned || wire.team_conversation_uid || wire.team_message_uid) return invalid()
+    const session = await this.runtime.requireSession()
+    return this.sealTarget(await this.codec(session.userId), { record_uid: wire.record_uid, world_context_uid: wire.world_context_uid, content_revision: wire.content_revision })
   }
   async prepare(accountKey: string, recordRefs: readonly string[], signal?: AbortSignal): Promise<WorldReactionContextPage> {
     const session = await this.runtime.requireSession()
@@ -46,23 +56,52 @@ export class WorldReactionService {
       if (!item.readable) { page.unavailableRecordRefs.push(recordRef); continue }
       if (!validId(item.context_uid) || !validId(item.content_revision) || !['published', 'unpublished'].includes(String(item.visibility))) return invalid()
       const target = { record_uid: uid, world_context_uid: item.context_uid, content_revision: item.content_revision }
-      const token = codec.seal(JSON.stringify({ target, expiresAt: Date.now() + 15 * 60_000 }), 'world-reaction-context')
-      const id = `world-reaction:${createHash('sha256').update(codec.seal(JSON.stringify(target), 'world-reaction-id')).digest('hex')}`
-      page.items.push({ recordRef, target: { id, worldRecordRef: token }, visibility: item.visibility as 'published' | 'unpublished' })
+      page.items.push({ recordRef, target: this.sealTarget(codec, target), visibility: item.visibility as 'published' | 'unpublished' })
     }
     signal?.throwIfAborted()
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     return page
   }
+  async versions(input: import('../world-reaction-contract.js').WorldReactionVersionsRequest, signal?: AbortSignal): Promise<import('../world-reaction-contract.js').WorldReactionVersionsPage> {
+    const session = await this.runtime.requireSession()
+    if (input.accountKey !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false, 409)
+    if (!input.target || typeof input.target !== 'object' || input.cursor !== undefined && typeof input.cursor !== 'string') return invalid()
+    const limit = input.limit ?? 10
+    if (!Number.isInteger(limit) || limit < 1 || limit > 20) return invalid()
+    const target = await this.resolve(input.target), codec = await this.codec(session.userId)
+    let after = ''
+    if (input.cursor) {
+      let cursor: Record<string, unknown>
+      try { cursor = objectValue(JSON.parse(codec.open(input.cursor, 'world-archive-page'))) } catch { return invalid() }
+      if (cursor.record !== target.record_uid || cursor.context !== target.world_context_uid || !validId(cursor.after)) return invalid()
+      after = cursor.after
+    }
+    let response: Record<string, unknown>
+    try { response = objectValue(await this.runtime.authenticatedPost(`${WORLD_REACTION_PREFIX}archive/versions`, { target, after_revision: after, limit }, session, signal)) }
+    catch (error) { return worldReactionFailure(error) }
+    if (response.contract !== WORLD_REACTION_CONTRACT || !Array.isArray(response.items) || response.items.length > limit || typeof response.has_more !== 'boolean') return invalid()
+    const items: ReactionTargetRef[] = []
+    let last = after
+    for (const raw of response.items) {
+      const wire = objectValue(raw)
+      if (wire.record_uid !== target.record_uid || wire.world_context_uid !== target.world_context_uid || !validId(wire.content_revision) || wire.content_revision <= last || wire.chat_session_uid || wire.rel_uid || wire.owned || wire.team_conversation_uid || wire.team_message_uid) return invalid()
+      last = wire.content_revision
+      items.push(this.sealTarget(codec, { record_uid: target.record_uid!, world_context_uid: target.world_context_uid!, content_revision: last }))
+    }
+    if (response.has_more && (!items.length || response.after_revision !== last)) return invalid()
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false, 409)
+    return { items, hasMore: response.has_more, ...(response.has_more ? { nextCursor: codec.seal(JSON.stringify({ record: target.record_uid, context: target.world_context_uid, after: last }), 'world-archive-page') } : {}) }
+  }
   async resolve(target: ReactionTargetRef): Promise<ReactionWireTarget> {
-    if (!target.worldRecordRef || target.sourceRef || target.messageActionRef) return invalid()
+    if (!target.worldRecordRef || target.sourceRef || target.messageActionRef || target.teamConversationRef || target.teamMessageRef) return invalid()
     const session = await this.runtime.requireSession(), codec = await this.codec(session.userId)
     let value: Record<string, unknown>
     try { value = objectValue(JSON.parse(codec.open(target.worldRecordRef, 'world-reaction-context'))) }
     catch { throw new ArkmePluginError('world-reactions-context-expired', '世界表态引用已失效，请刷新后重试', false, 409) }
     const wire = objectValue(value.target)
     if (typeof value.expiresAt !== 'number' || value.expiresAt <= Date.now()) throw new ArkmePluginError('world-reactions-context-expired', '世界表态引用已失效，请刷新后重试', false, 409)
-    if (!validId(wire.record_uid) || !validId(wire.world_context_uid) || !validId(wire.content_revision) || wire.chat_session_uid || wire.rel_uid || wire.owned) return invalid()
+    if (!validId(wire.record_uid) || !validId(wire.world_context_uid) || !validId(wire.content_revision) || wire.chat_session_uid || wire.rel_uid || wire.owned || wire.team_conversation_uid || wire.team_message_uid) return invalid()
     return { record_uid: wire.record_uid, world_context_uid: wire.world_context_uid, content_revision: wire.content_revision }
   }
 }

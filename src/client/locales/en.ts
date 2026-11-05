@@ -1,5 +1,128 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+可用模型|Available models
+即我可用模型|Arkme models
+查看官方模型，可在对应功能中选用|Explore official models to use in the corresponding features
+刷新模型目录|Refresh model catalog
+关闭模型目录|Close model catalog
+搜索模型名称或提供方|Search models or providers
+筛选模型适用场景|Filter by use case
+正在读取官方模型…|Loading official models…
+暂时无法读取模型目录|Could not load the model catalog
+部分场景暂时无法读取，已展示可确认的模型。|Some use cases are unavailable. Verified models are shown.
+共 {v0} 个模型|{v0} models
+没有找到匹配的模型|No matching models
+该场景暂未提供可用模型|No models available for this use case
+查看 {v0} 的能力与费用|View capabilities and pricing for {v0}
+能力与费用|Capabilities and pricing
+识别与分析|Recognition and analysis
+使用 AI 积分|Uses AI points
+计费信息待确认|Billing not confirmed
+每 1,000 Token，单位：积分|AI points per 1,000 tokens
+缓存输入|Cached input
+该场景的计费详情暂未提供|Pricing details are not available for this use case
+模型能力及费用以对应场景为准，实际费用按用量结算。|Capabilities and pricing vary by use case. Charges are based on actual usage.
+模型目录会随官方开放情况更新|The catalog updates as official models become available
+读取于 {v0}|Read at {v0}
+选择导出文件夹|Choose export folder
+更换导出文件夹|Change export folder
+将快记与原文件直接保存到本地文件夹。|Save notes and original files directly to a local folder.
+已选择文件夹|Folder selected
+选择文件夹失败|Could not choose a folder
+导出文件夹|Export folder
+选择文件夹|Choose folder
+正在选择…|Choosing…
+先建立完整备份|Create a complete backup first
+增量进度读取失败|Could not read incremental progress
+尚未建立完整备份|No complete backup yet
+自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。|Save new, changed and removed content, including backdated records. Incremental exports are unlimited and do not use the full export allowance.
+当前离线，将导出上次完整保存的本地副本。|You are offline. The last complete local copy will be exported.
+复用本地备份，仅同步变化，不占用全量导出次数。|Reuse the local backup and sync changes without using the full export allowance.
+日期与全部导出共用原有云端导出额度；本地已有原文件会优先复用。|Date and full cloud exports share the existing allowance. Locally saved originals are reused first.
+数据截至：|Data as of:
+以上为所选范围的本地已保存数量，完成同步后更新。|These are locally saved counts for the selected range. They update after syncing.
+请先在所选文件夹建立完整备份，再使用增量。|Create a complete backup in the selected folder before using incremental export.
+当前服务尚未支持文件夹导出，请更新后重试。|This server does not support folder export yet. Update and retry.
+包含图片、语音等原文件|Include original images, audio and other files
+原文件|Original files
+不含隐私锁定内容。导出成功后自动保存增量进度。|Privacy-locked content is excluded. Incremental progress is saved automatically after a successful export.
+正在写入本地文件夹|Writing to the local folder
+导出已取消，已下载的原文件保留供重试。|Export canceled. Downloaded originals are kept for retry.
+已导出到本地文件夹|Exported to the local folder
+内容与原文件已保存，无需另行下载。|Content and originals are saved. No separate download is needed.
+继续导出|Export again
+内容已保存，导出额度确认暂未完成，请勿重复发起云端全量导出。|Content is saved, but allowance confirmation is pending. Do not start another full cloud export.
+增量同步不限次数|Unlimited incremental syncs
+云端全量及日期导出沿用原有额度|Full and date cloud exports use the existing allowance
+导出到文件夹|Export to folder
+确认导出到所选文件夹？|Export to the selected folder?
+将保存所选内容及原文件，成功后使用一次云端导出额度。取消或失败不扣次数。|Save the selected content and originals. A successful export uses one cloud export allowance. Cancellation or failure does not use it.
+选择导出日期|Choose export dates
+查看 Arko 回复建议|View Arko suggestions
+Arko 回复建议|Arko suggestions
+正在帮你想一句更合适的话…|Thinking of a suitable response…
+暂未获得回复建议|No suggestion is available yet
+查看建议|View suggestions
+展开查看|View more
+关闭建议|Close suggestions
+重新读取|Reload
+为什么这样建议|Why this suggestion
+建议暂时无法更新|Suggestions could not be refreshed
+当前输入框暂不可用|The composer is currently unavailable
+导出日期范围|Export date range
+保存确认失败，请重试。|Could not confirm the saved backup. Please retry.
+上次成功保存：|Last successfully saved:
+先保存一份完整备份|Save a complete backup first
+正在读取增量进度…|Loading incremental progress…
+正在统计本次导出范围…|Counting content in this export…
+请先完成一次全部导出并确认保存，再使用增量。|Export all content and confirm the file is saved before using incremental export.
+选择全部|Select all content
+新增 {v0} 条 · 更新 {v1} 条 · 移除 {v2} 条|{v0} new · {v1} updated · {v2} removed
+暂无新增或更新内容。|No new or updated content.
+已确认保存，日期导出不会改变增量进度。|Save confirmed. Date exports do not change incremental progress.
+已确认保存，下次将自动选择增量。|Save confirmed. Incremental export will be selected next time.
+文件完整保存后，请确认保存；取消下载请勿确认。|Confirm once the complete file is saved. Do not confirm a canceled download.
+我已保存|I have saved it
+确认导出所选内容？|Export the selected content?
+将按当前范围生成备份，并使用导出额度。|Create a backup for the selected range using your export allowance.
+确认文件已完整保存？|Is the complete file saved?
+只有文件已完整保存到你的电脑后才确认。仅生成备份或取消下载，不应更新增量进度。|Confirm only after the complete file is saved on your computer. Generating an archive or canceling its download must not advance incremental progress.
+确认已保存|Confirm saved
+正在更新进度…|Updating progress…
+按日期|By date
+增量|Incremental
+开始日期|Start date
+结束日期|End date
+快捷日期|Date shortcuts
+本月|This month
+最近7天|Last 7 days
+上月|Last month
+请选择开始日期和结束日期。|Choose a start date and an end date.
+日期无效，请重新选择。|Invalid date. Please choose again.
+结束日期不能早于开始日期。|The end date cannot be before the start date.
+按记录显示日期筛选，包含结束日期全天。|Filter by the date shown on each record, including the entire end date.
+增量导出说明|About incremental export
+增量进度尚未接通|Incremental progress is not connected yet
+接通后自动选择上次成功保存后新增和修改的内容，包括补录的旧日期记录。|Once connected, selects new and updated content since the last successfully saved backup, including backdated records.
+首次需要建立完整备份；取消或保存失败不会推进进度。增量包需与此前备份一起保留。|A full backup is required first. Canceling or failing to save will not advance progress. Keep incremental archives with previous backups.
+接通后将显示本次范围的记录和附件数量。|Record and attachment counts for this selection will appear once connected.
+包含图片、语音等附件|Include images, audio, and other attachments
+不含隐私锁定内容。|Privacy-locked content is excluded.
+当前仍可选择全部内容并包含附件进行导出。|You can currently export all content with attachments.
+暂无可导出的记录。|No records to export.
+接通前不会创建导出任务或使用额度。|No export task or allowance will be used until connected.
+最近生成备份：|Last archive generated:
+原句待定位，可查看原通话|Quote not located. You can open the original call.
+原句待定位，暂不高亮任何语句|Quote not located. No transcript segment is highlighted.
+通话转写处理中，可查看原通话|Transcript processing. You can open the original call.
+通话转写处理中，暂不高亮语句|Transcript processing. No transcript segment is highlighted.
+即我设置|Arkme settings
+即我设置分类|Arkme settings categories
+语言|Language
+外观|Appearance
+浅色|Light
+深色|Dark
+跟随系统|System
 长图|Long image
 停止听写|Stop dictation
 正在识别语音|Recognizing speech
@@ -31,9 +154,21 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 左侧「安排」|Plans in the left navigation
 「探索 → 目标」|Explore → Goals
 开启后自动分析，消耗 AI 额度。|Enabled features analyze automatically and use your AI allowance.
+开启后自动处理，按模型使用偏好调用。官方模型消耗积分，自提供模型使用提供方账号额度。|Automatic processing follows your model preferences. Official models use Arkme points; your models use the provider account allowance.
 额度使用说明|AI allowance usage
 AI 自动分析|Automatic AI analysis
 自动使用额度|Automatic allowance usage
+录音时说「帮我记一下」和要记的内容，上传后保存为快记，必要时由你确认。仅处理开启后新上传的录音，使用 AI 额度。|While recording, say “帮我记一下” followed by your note. After upload, it is saved as a note, with your confirmation when needed. Only recordings newly uploaded after enabling are processed. Uses AI allowance.
+自动分析录音与聊天内容，识别相关的线下交流。开启后会分析历史录音和聊天内容，运行时消耗 AI 额度。|Automatically analyze recordings and chats to identify related in-person conversations. Enabling this also analyzes historical recordings and chats and uses AI allowance.
+自动整理个人档案|Automatically organize my profile
+自动识别安排|Automatically recognize plans
+自动分析目标|Automatically analyze goals
+录音口令记事|Voice-command notes
+在私聊和群聊消息下方提供建议，仅你可见。|Offers suggestions beneath private and group chat messages, visible only to you.
+在聊天中回看相关的线下交流，仅你可见。|Revisit related in-person conversations from your chats, visible only to you.
+阅读新快记，有想法时在快记下方回应你。|Reads new notes and responds beneath them when it has an insight.
+开启后会自动使用 AI 额度。|Uses AI allowance automatically when enabled.
+持续更新个人档案。首次开启会分析所选来源的历史材料。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources.
 目标|Goals
 自动识别设置|Automatic recognition settings
 开启功能|Enable feature
@@ -56,8 +191,13 @@ AI 自动分析|Automatic AI analysis
 快记建议|Note suggestions
 个人档案|Personal profile
 根据开启后的新材料自动更新目标。|Automatically update goals using new material after opt-in.
+录音语音触发|Recording voice triggers
+确认保存当前内容|Confirm saving the displayed content
+内容边界待确认，仅保存当前显示的文字。请试听核对后保存。|The content boundary is uncertain. Only the displayed text will be saved. Listen and verify before saving.
+原文或原音已更新，这条旧识别记录无法保存。请查看当前录音，或忽略此记录。|The transcript or audio has changed, so this old candidate cannot be saved. Review the current recording or ignore this candidate.
+上下文超出处理范围，仅保留可核验的原音范围，无法生成完整记事。|The context exceeds the processing limit. Only the verifiable source audio range is retained; a complete note could not be produced.
+录音日历「更多 → 语音触发」|Recording calendar → More → Voice triggers
 从开启后的快记、录音总结和通话中识别自己的安排。|Identify your tasks from notes, recording summaries and calls after opt-in.
-持续更新个人档案。首次开启会分析所选来源的历史材料。结果可在移动端「探索 → 个人档案」查看。|Keep your personal profile up to date. The first analysis includes historical material from your selected sources. View results in Explore → Personal profile on mobile.
 自动 AI|Automatic AI
 当天录音实体|Entities from this recording day
 实体|Entities
@@ -553,6 +693,7 @@ AI 摘要：|AI summary:
 选择二维码图片|Choose QR code image
 条新消息|new messages
 暂时无法回到底部，请重试|Unable to jump to the latest message. Please retry.
+已移除，可在团队中重新打开|Removed. Reopen it from Teams.
 已移除对话，可在联系人中找回|Conversation removed. Find it again in Contacts.
 搜索结果暂不完整，请缩小范围或调整关键词|Results may be incomplete. Narrow your search or change the keywords.
 查看媒体消息|View media message
@@ -663,6 +804,8 @@ AI 小结|AI recap
 其他群动态|Other group activity
 多维活动数据尚未接入，原有日历仍可使用。|Multi-source activity is unavailable. The original calendar remains available.
 正在加载当天活动…|Loading this day's activity…
+录音处理版本：{v0}|Recording processing version: {v0}
+新录音和新导入使用此版本，历史录音保留原处理版本|New recordings and imports use this version. Historical recordings keep their original version.
 音频文件列表|Audio files
 当天暂无音频文件|No audio files for this day
 暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.
@@ -1853,6 +1996,7 @@ ICP备案号|ICP registration
 正在同步设备录音状态…|Syncing device recording status…
 设备录音状态暂未启用|Device recording status is not enabled yet
 同步暂时失败，正在重试|Sync failed temporarily. Retrying
+连接暂时不畅，正在重试…|Connection interrupted. Retrying…
 暂无设备上报录音状态|No devices are reporting recording status
 已暂停|Paused
 已中断|Interrupted
@@ -2046,6 +2190,7 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 查看录音|View recordings
 查看总结|View summary
 查看时间轴|View timeline
+图片暂不可读，请稍后重试|Images are temporarily unavailable. Please try again later.
 暂时无法打开对应消息，请稍后重试|Unable to open this message. Please try again later.
 表态通知暂时无法加载，请重试|Reaction notifications could not be loaded. Please try again.
 通知操作失败，请重试|Notification action failed. Try again.
@@ -2111,4 +2256,57 @@ Bot 列表加载失败，点击重试|Could not load Bots. Click to retry
 团队消息延展列表|Team message replies
 正在加载延展…|Loading replies…
 返回延展列表|Back to replies
+AI 额度消费记录|AI allowance spending
+统计|Statistics
+明细|Details
+按天|Day
+按周|Week
+按月|Month
+Arko 对话|Arko conversations
+录音总结|Recording summary
+线下交流关联|Offline context links
+截至|As of
+合计|Total
+刷新消费记录|Refresh spending
+关闭消费记录|Close spending
+消费记录视图|Spending view
+统计粒度|Time grouping
+上一段时间|Previous period
+下一段时间|Next period
+所选时段消费|Spending in selected period
+近15天消费|Spending over the past 15 days
+近8周消费|Spending over the past 8 weeks
+近12个月消费|Spending over the past 12 months
+按时间 · 积分|Over time · points
+消费积分时间趋势|Spending over time
+{v0}，消费 {v1} 积分|{v0}, {v1} points spent
+按类型|By type
+查看当前时段|View current period
+查看全部时段|View all periods
+全部时段|All periods
+截至当前|So far
+查看{v0}消费明细|View {v0} spending details
+明细时间范围|Detail time range
+清除类型筛选|Clear type filter
+该时段暂无积分消费|No points spent in this period
+仅统计已结算的 AI 积分消费|Settled AI point charges only
+北京时间|China Standard Time
+正在核对完整消费记录…|Checking the complete spending history…
+暂时无法读取消费统计，请重试。|Unable to load spending statistics. Please retry.
+账单正在更新，暂时无法确认完整统计，请重试。|Your statement is updating. Please retry for complete statistics.
+账单已更新，请刷新统计后再查看明细。|Your statement changed. Refresh statistics before viewing details.
+记录较多，当前无法完成统计。请按天查看或选择单个时段。|Too many records to finish this view. Try daily grouping or a single period.
+个人档案识别|Profile recognition
+安排识别|Plan recognition
+目标识别|Goal recognition
+录音时间轴|Recording timeline
+快记分析|Note analysis
+聊天分析|Chat analysis
+登录后查看模型设置|Sign in to view model settings
+管理模型，查看各功能可用的模型与费用|Manage models and review availability and pricing by feature
+模型来源|Model source
+即我官方|Arkme official
+自提供模型|Custom models
+自提供模型配置|Custom model configuration
+配置保存在当前服务，同一服务的客户端共用；不会自动同步至其他服务。|Configuration is shared by clients connected to this service. It does not sync automatically to other services.
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

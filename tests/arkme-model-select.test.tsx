@@ -5,120 +5,57 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 import { ArkmeModelSelect, type ArkmeModelDirectory } from '../src/client/ArkmeModelSelect.js'
-
-let root: Root
-let host: HTMLDivElement
-let state: ReturnType<ArkmeModelDirectory['store']['getSnapshot']>
-let directory: ArkmeModelDirectory
+import { arkmeAuthStore } from '../src/client/auth-store.js'
+import { unifiedModelStore } from '../src/client/use-unified-models.js'
+let root: Root, host: HTMLDivElement, state: ReturnType<ArkmeModelDirectory['store']['getSnapshot']>, directory: ArkmeModelDirectory
 const listeners = new Set<() => void>()
-const quota = { availableNanoCny: '123450000000', totalNanoCny: '123450000000', reservedNanoCny: '0', currency: 'CNY' }
-function button(text: string) {
-  const found = [...host.querySelectorAll('button')].find(item => item.textContent?.includes(text))
-  if (!found) throw new Error(`Missing button: ${text}`)
-  return found
-}
-const click = async (text: string) => { await act(async () => { button(text).click() }) }
-const render = async (available = true, locked = false) => {
-  await act(async () => { root.render(<ArkmeModelSelect directory={directory} available={available} locked={locked} />) })
-}
+function button(text: string) { const found = [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === text); if (!found) throw Error(`Missing ${text}`); return found }
+const click = (text: string) => act(async () => button(text).click())
+const render = (available = true, locked = false) => act(async () => root.render(<ArkmeModelSelect directory={directory} available={available} locked={locked}/>))
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); unifiedModelStore.activate(undefined)
+  arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'production', userId: 42 })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   state = { current: { provider: 'deepseek', model: 'flash' }, groups: [
-    { id: 'deepseek', name: 'DeepSeek', models: [{ id: 'flash', name: 'DeepSeek-V4-Flash' }] },
-    { id: 'arkme-managed', name: 'Arkme', models: [{ id: 'pro', name: 'DeepSeek V4 Pro', reasoning: {
-      efforts: [{ id: 'high', name: '高' }, { id: 'low', name: '低' }], defaultEffort: 'high',
-    } }] },
+    { id: 'deepseek', name: 'DeepSeek', models: [{ id: 'flash', name: 'DeepSeek Flash' }] },
+    { id: 'arkme-managed', name: 'Arkme', models: [{ id: 'pro', name: 'DeepSeek Pro', reasoning: { efforts: [{ id: 'high', name: '高' }, { id: 'low', name: '低' }], defaultEffort: 'high' } }] },
   ], failures: [], status: 'ready', error: null }
-  directory = {
-    store: { getSnapshot: () => state, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } }, update: vi.fn() },
-    load: vi.fn(async () => undefined),
-    select: vi.fn(async selection => { state = { ...state, current: selection }; listeners.forEach(listener => listener()) }),
-  }
-  mocks.callArkme.mockReset().mockImplementation(async operation => {
-    if (operation === 'billing.quota') return quota
-    if (operation === 'billing.products') return { items: [] }
-    throw new Error('Unexpected operation: ' + operation)
+  directory = { store: { getSnapshot: () => state, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } }, update: vi.fn() }, load: vi.fn(async () => undefined),
+    select: vi.fn(async selection => { state = { ...state, current: selection }; listeners.forEach(listener => listener()) }) }
+  mocks.callArkme.mockReset().mockImplementation(async op => {
+    if (op === 'models.directory') return { accountScope: 'production:42', observedAt: 1, models: [], failures: [] }
+    if (op === 'account.points.query') return { accountScope: 'production:42', unit: 'ai_points', availablePoints: '123.45', reservedPoints: '0' }
+    throw Error(`Unexpected ${op}`)
   })
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); listeners.clear(); vi.unstubAllGlobals() })
-
-it('loads balance only on opening, shows the blue recharge entry, and opens existing checkout without selecting a model', async () => {
-  await render()
-  expect(mocks.callArkme).not.toHaveBeenCalled()
-  await click('DeepSeek-V4-Flash')
-  expect(host.textContent).toContain('Arkme · 12,345 积分')
-  expect(host.textContent).not.toContain('余额计费')
-  expect(button('去充值').closest('.arkme-model-balance-actions')).not.toBeNull()
-  expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'billing.quota')).toHaveLength(1)
-  await click('去充值')
-  expect(directory.select).not.toHaveBeenCalled()
-  expect(host.querySelector('[role="menu"]')).toBeNull()
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('可用积分12,345 积分')
-  expect(mocks.callArkme).toHaveBeenCalledWith('billing.products')
-  expect(document.activeElement?.getAttribute('aria-label')).toBe('关闭充值弹窗')
-  await act(async () => { document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
-  expect(document.querySelector('[role="dialog"]')).toBeNull()
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); listeners.clear(); unifiedModelStore.activate(undefined); arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'production' }); vi.unstubAllGlobals() })
+it('keeps credits in the managed model header and applies only an advertised model and reasoning effort', async () => {
+  await render(); expect(host.textContent).not.toMatch(/123.45|充值|积分/)
+  await click('DeepSeek Flash⌄')
+  expect(document.querySelector('.arkme-unified-model-group-title')?.textContent).toContain('即我官方· 123.45 积分')
+  expect(button('充值')).toBeDefined()
+  const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(b => b.textContent?.includes('DeepSeek Pro'))!
+  await act(async () => option.click())
+  expect(directory.select).toHaveBeenCalledExactlyOnceWith({ provider: 'arkme-managed', model: 'pro', reasoningEffort: 'high' })
+  expect(document.querySelector('.arkme-unified-model-panel')).toBeNull()
+  await act(async () => host.querySelector<HTMLButtonElement>('.arkme-model-trigger')!.click())
+  await click('低')
+  expect(directory.select).toHaveBeenCalledWith({ provider: 'arkme-managed', model: 'pro', reasoningEffort: 'low' })
+  expect(document.querySelector('.arkme-unified-model-panel')).not.toBeNull()
+  expect(document.querySelector<HTMLInputElement>('input[type="range"]')?.value).toBe('1')
+  await act(async () => document.querySelector('.arkme-unified-model-panel')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(document.querySelector('.arkme-unified-model-panel')).toBeNull()
   expect(document.activeElement).toBe(host.querySelector('.arkme-model-trigger'))
 })
-
-it('uses the shared model owner for selection and advertised reasoning effort; Escape restores focus', async () => {
-  await render(); await click('DeepSeek-V4-Flash'); await click('DeepSeek V4 Pro')
-  expect(directory.select).toHaveBeenCalledWith({ provider: 'arkme-managed', model: 'pro' })
-  await click('DeepSeek V4 Pro'); await click('思考强度'); await click('低')
-  expect(directory.select).toHaveBeenLastCalledWith({ provider: 'arkme-managed', model: 'pro', reasoningEffort: 'low' })
-  await click('DeepSeek V4 Pro')
-  await act(async () => { button('去充值').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })) })
-  expect(host.querySelector('[role="menu"]')).toBeNull()
-  expect(document.activeElement).toBe(host.querySelector('.arkme-model-trigger'))
+it('retains the previous owner selection on rejection and restores focus on Escape', async () => {
+  directory.select = vi.fn(async () => { throw Error('选择失败') })
+  await render(); await click('DeepSeek Flash⌄')
+  await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(b => b.textContent?.includes('DeepSeek Pro'))!.click())
+  expect(state.current?.provider).toBe('deepseek'); expect(document.body.textContent).toContain('选择失败')
+  await act(async () => document.querySelector('.arkme-unified-model-panel')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
+  expect(document.querySelector('.arkme-unified-model-panel')).toBeNull(); expect(document.activeElement).toBe(host.querySelector('.arkme-model-trigger'))
 })
-
-it('keeps recharge usable on quota failure, retries quota, and retains the selected model on selection failure', async () => {
-  mocks.callArkme.mockRejectedValueOnce(new Error('offline'))
-  await render(); await click('DeepSeek-V4-Flash')
-  expect(host.textContent).toContain('积分读取失败'); expect(button('去充值')).toBeDefined()
-  await click('重试'); expect(host.textContent).toContain('12,345 积分')
-  directory.select = vi.fn(async () => {
-    state = { ...state, error: '选择失败', status: 'error' }; listeners.forEach(listener => listener()); throw new Error('failed')
-  })
-  await click('DeepSeek V4 Pro')
-  expect(host.querySelector('[role="menu"]')).not.toBeNull()
-  expect(host.textContent).toContain('选择失败')
-  expect(state.current?.provider).toBe('deepseek')
-})
-
-it('does not load unavailable sessions, honors locked state, and cancels quota work on unmount', async () => {
+it('honors unavailable and locked sessions', async () => {
   await render(false); expect(directory.load).not.toHaveBeenCalled(); expect(host.querySelector('button')).toBeNull()
-  await render(true, true); expect(button('DeepSeek-V4-Flash').disabled).toBe(true)
-  await render(); await click('DeepSeek-V4-Flash')
-  const signal = mocks.callArkme.mock.calls.find(call => call[0] === 'billing.quota')?.[2] as AbortSignal
-  await act(async () => root.unmount()); root = createRoot(host)
-  expect(signal.aborted).toBe(true); expect(listeners.size).toBe(0)
-})
-
-it('consolidates model prices into one keyboard-accessible disclosure without selecting a model',async()=>{
- const group=state.groups.find(group=>group.id==='arkme-managed')!
- group.models[0]!.description='输入 0.2075 积分，输出 0.83 积分。'
- state = { ...state, groups: state.groups.map(provider => provider === group ? { ...group, models: [...group.models,
-   { id: 'flash', name: 'DeepSeek V4 Flash', description: '输入 0.32 积分，输出 1.28 积分' },
- ] } : provider) }
- await render(); await click('DeepSeek-V4-Flash')
- expect(host.querySelectorAll('details')).toHaveLength(1)
- expect(host.querySelector('details')?.open).toBe(false)
- const summary=host.querySelector('details summary')!
- expect(summary.textContent).toBe('按用量扣积分 · 计费说明')
- await act(async()=>{button('DeepSeek V4 Flash').dispatchEvent(new KeyboardEvent('keydown',{key:'End',bubbles:true}))})
- expect(document.activeElement).toBe(summary)
- await act(async()=>{summary.dispatchEvent(new MouseEvent('click',{bubbles:true}))})
- expect(directory.select).not.toHaveBeenCalled()
- expect(host.querySelector('details')?.textContent).toContain('0.2075')
- expect(host.querySelector('details')?.textContent).toContain('DeepSeek V4 Pro')
- expect(host.querySelector('details')?.textContent).toContain('DeepSeek V4 Flash')
- expect(host.querySelector('details')?.textContent).toContain('1.28')
- expect(host.querySelector('[role="menu"]')).not.toBeNull()
-})
-
-it('omits pricing when no managed model advertises it', async () => {
- await render(); await click('DeepSeek-V4-Flash')
- expect(host.querySelector('details')).toBeNull()
+  await render(true, true); expect(button('DeepSeek Flash⌄').disabled).toBe(true)
 })

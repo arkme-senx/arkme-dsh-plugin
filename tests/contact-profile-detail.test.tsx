@@ -29,7 +29,8 @@ const worldImageMocks = vi.hoisted(() => ({
   loadWorldImageDataUrl: vi.fn<(imageRef: string) => Promise<string>>(),
 }))
 
-vi.mock('../src/client/ArkmeWorldSurface.js', () => ({
+vi.mock('../src/client/world-image-cache.js', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/client/world-image-cache.js')>(),
   loadWorldImageDataUrl: worldImageMocks.loadWorldImageDataUrl,
 }))
 

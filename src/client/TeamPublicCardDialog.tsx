@@ -1,3 +1,5 @@
+import { WorldSubscribeButton } from './WorldSubscriptions.js'
+import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import type { TeamPublicCard } from '../team-group-contract.js'
 import type { TeamChannel } from '../team-app-contract.js'
@@ -6,7 +8,7 @@ import { ArkmeTeamAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
-import { invalidateTeamMessages, openTeamMessages } from './team-messaging-events.js'
+import { invalidateTeamMessages } from './team-messaging-events.js'
 import { TeamMembershipForm } from './redesign/contacts/TeamDirectoryActions.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import { arkmeUi } from './ui-controller.js'
@@ -38,12 +40,12 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
   }, [accountKey, jotmoId, attempt, currentChannel])
   const contact = () => {
     if (!card) return
-    if(card.navigation?.kind==='inbox'&&card.navigation.teamRef){onClose();openTeamMessages({kind:'team',teamRef:card.navigation.teamRef});return}
+    if(card.navigation?.kind==='inbox'&&card.navigation.teamRef){onClose();openTeamEntryMessages({kind:'team',teamRef:card.navigation.teamRef}, accountKey);return}
     if(card.contact.state==='disabled'||card.contact.state==='unavailable')return
     onClose()
     // Existing link navigation opens the canonical team conversation/inbox.
     // Merely reading the card never opens a conversation or sends a message.
-    openTeamMessages({ kind: 'link', publicRef: card.contact.publicRef })
+    openTeamEntryMessages({ kind: 'link', publicRef: card.contact.publicRef }, accountKey)
   }
   // Replace the card rather than stacking two modal focus traps. Cancelling
   // reveals the same card and leaves the underlying conversation/draft intact.
@@ -72,8 +74,9 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
         </div></div>}
         {card.description&&<p style={styles.hint}>{card.description}</p>}
         <div style={{ ...styles.contact, gap: 12 }}>
+          {card.contact.state !== 'unavailable' && <WorldSubscribeButton target={{ kind: 'team', jotmoId: card.jotmoId }} />}
           <button type="button" style={styles.link} onClick={() => { onClose(); arkmeUi.showTeamWorld({ name: card.name, jotmoId: card.jotmoId, avatar: card.avatar }) }}>{tr('团队的世界')}</button>
-          {!inCurrentConversation && <button type="button" disabled={card.navigation?.kind!=='inbox'&&(card.contact.state === 'disabled'||card.contact.state==='unavailable')} style={styles.link} onClick={contact}>{tr(card.navigation?.kind==='inbox'?'进入团队收件箱':'联系团队')}</button>}
+          {!inCurrentConversation && <button type="button" disabled={card.navigation?.kind!=='inbox'&&(card.contact.state === 'disabled'||card.contact.state==='unavailable')} style={styles.link} onClick={contact}>{tr(card.navigation?.kind==='inbox'?'查看团队对话':'联系团队')}</button>}
         </div>
         {card.contact.state === 'unavailable' && <p role="status" style={styles.hint}>{tr('团队资料暂不可用')}</p>}
         {card.contact.state === 'disabled' && <p role="status" style={styles.hint}>{tr('该团队暂未开放消息通道。')}</p>}
@@ -103,5 +106,4 @@ const styles: Record<string, CSSProperties> = {
   contact: { display: 'flex', justifyContent: 'flex-end', paddingTop: 8 },
   features: { borderTop: `1px solid ${arkmeTheme.borderSoft}`, marginTop: 16, paddingTop: 20 },
   featureList: { margin: 0, paddingLeft: 18, color: arkmeTheme.secondary, lineHeight: 2, fontSize: 13 },
-  notice: { padding: 12, borderRadius: 10, background: arkmeTheme.subtle, lineHeight: 1.7 },
 }

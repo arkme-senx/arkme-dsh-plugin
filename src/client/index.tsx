@@ -1,8 +1,10 @@
+import { installArkmeSettingsDialog } from './ArkmeSettingsDialog.js'
+import { installModalInteractions } from './modal-interactions.js'
 import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
 import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
 import { ArkmeScreenshotWindow } from './ArkmeScreenshotWindow.js'
-import { screenshotWindowRequested } from './native-screenshot.js'
+import { screenshotWindowRequested, nativeScreenshotBridge } from './native-screenshot.js'
 import { registerConversationWindowRoot } from './conversation-window-root.js'
 import { conversationWindowRequested } from './conversation-window.js'
 import { bindConversationWindows } from './conversation-window-sync.js'
@@ -25,11 +27,6 @@ import './private-chat-actions-auth-binding.js'
 import { callArkme } from './api.js'
 import { connectArkmeLocale, tr } from './locale.js'
 import { connectDesktopBranding, type DesktopBrandingBridge } from './desktop-branding.js'
-import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
-import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
-import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
-import { selectArkmeSettingsSection } from './settings-navigation.js'
-import type { ArkmeSettingsSection } from './ui-controller.js'
 import { ArkmeStartupAuthGate, startupAuthGateEnabled } from './ArkmeStartupAuthGate.js'
 import { ArkmeWebLoginOverlay } from './ArkmeWebLoginOverlay.js'
 import {
@@ -47,16 +44,15 @@ import {
 } from './notification-activation-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
-import { deepSeekHarnessEmbedRequested, deepSeekHarnessNativeSettingsRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
+import { deepSeekHarnessEmbedRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
 import { installHarnessConversationLayoutLoader } from './harness-conversation-layout.js'
-import { installArkmeSettingsNavIcons } from './settings-nav-icons.js'
 import { DesktopHarnessReadinessCommit } from './desktop-harness-readiness.js'
 import {
   ARKME_LOGIN_LOCALE_NAMESPACE, arkmeLoginEn, arkmeLoginZh,
 } from './arkme-login-locales.js'
 
-export const inject = ['slots', 'layout', 'locale', 'sessions', 'modules']
+export const inject = ['slots', 'layout', 'locale', 'theme', 'sessions', 'modules']
 
 function closeLayoutDetails(layout: ClientContext['layout']): void {
   const compatible = layout as typeof layout & {
@@ -66,10 +62,6 @@ function closeLayoutDetails(layout: ClientContext['layout']): void {
   if (typeof compatible.closeRightbar === 'function') return compatible.closeRightbar()
   if (typeof compatible.closeDetails === 'function') return compatible.closeDetails()
   throw new Error('当前 DSH 版本不支持关闭详情面板')
-}
-
-function ArkmeDshSettingsSection() {
-  return <ArkmeSettingsSurface />
 }
 
 async function resolveNotificationSource(
@@ -112,6 +104,9 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  ctx.effect(installModalInteractions, 'dsh-arkme: modal pointer and close interactions')
+  // Only the main top frame is authorized by the desktop to register this capability.
+  void nativeScreenshotBridge()?.enableStandaloneEditor?.('reset-v1').catch(() => {})
   // Explicit loopback-only review surface; never inject synthetic events into a real chat.
   if (typeof window !== 'undefined' && offlineContextPreviewRequested()) {
     ctx.effect(() => connectArkmeLocale(ctx.locale), 'dsh-arkme: offline context preview language')
@@ -160,15 +155,7 @@ export function apply(ctx: ClientContext): void {
     return
   }
 
-	if (deepSeekHarnessEmbedRequested()) {
-		if (!deepSeekHarnessNativeSettingsRequested()) {
-			ctx.slots.inject('sidebar.settings', () => ctx.slots.register({
-				name: 'sidebar.settings',
-				priority: -100,
-			}, () => null))
-		}
-		return
-	}
+	if (deepSeekHarnessEmbedRequested()) return
 	if (typeof window !== 'undefined' && window.location !== undefined && window.history !== undefined) {
 		ctx.effect(() => observeExtensionShareDeepLinks(
 			window.location,
@@ -296,105 +283,28 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('arkme.topic.actions', () => ctx.slots.register({ name: 'arkme.topic.actions', priority: 100 }, props => props.renderDefault()))
   ctx.slots.inject('arkme.send-to-self.entry', () => ctx.slots.register({ name: 'arkme.send-to-self.entry', priority: 100 }, props => props.renderEntry()))
 
-  // 0.2's account plugin replaces the settings launcher with an account menu.
-  // Use the public owner callback to preserve Arkme's direct dialog entry.
-  ctx.slots.inject('settings.launcher', () => ctx.slots.register({
-    name: 'settings.launcher', priority: -100,
-  }, props => <button type="button" aria-label="设置" aria-haspopup="dialog"
-    aria-expanded={props.settingsOpen} onClick={props.openSettings} />))
+  ctx.effect(() => ctx.slots.inject('sidebar', () => ctx.slots.register({
+    name: 'sidebar', priority: -100,
+    children: {
+      'arkme.directory.entry': { kind: 'list', scope: 'root' },
+      'arkme.send-to-self.entry': { kind: 'single', scope: 'root' },
+      'arkme.topic.actions': { kind: 'single', scope: 'root' },
+    },
+    inject: () => ({
+      collapseSidebar: () => { ctx.layout.toggleSidebar() },
+      closeDetails: () => { closeLayoutDetails(ctx.layout) },
+      searchDshMessages: async (query: string, signal: AbortSignal) => {
+        const dshSessions = (ctx as unknown as { sessions?: ISessions }).sessions
+        if (typeof dshSessions?.search !== 'function') throw new Error('当前 DSH 版本暂不支持任务消息搜索')
+        const result = await dshSessions.search(query, signal)
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value
+      },
+      openDshSession: openEmbeddedDshSession,
+    }),
+  }, ArkmePersistentSidebar)), 'dsh-arkme: permanent Arkme sidebar')
 
-  ctx.effect(() => {
-    let disposeSidebar: (() => void) | undefined
-    let settingsTimer: number | undefined
-    let settingsOpened = false
-    let disposed = false
-
-    const mountArkmeSidebar = () => {
-      if (disposed || disposeSidebar !== undefined) return
-      disposeSidebar = ctx.slots.inject('sidebar', () => ctx.slots.register({
-        name: 'sidebar',
-        priority: -100,
-        children: {
-          'arkme.directory.entry': { kind: 'list', scope: 'root' },
-          'arkme.send-to-self.entry': { kind: 'single', scope: 'root' },
-          'arkme.topic.actions': { kind: 'single', scope: 'root' },
-        },
-        inject: () => ({
-          collapseSidebar: () => { ctx.layout.toggleSidebar() },
-          closeDetails: () => { closeLayoutDetails(ctx.layout) },
-          searchDshMessages: async (query: string, signal: AbortSignal) => {
-            const dshSessions = (ctx as unknown as { sessions?: ISessions }).sessions
-            if (typeof dshSessions?.search !== 'function') throw new Error('当前 DSH 版本暂不支持任务消息搜索')
-            const result = await dshSessions.search(query, signal)
-            if (!result.ok) throw new Error(result.error.message)
-            return result.value
-          },
-          openDshSession: openEmbeddedDshSession,
-        }),
-      }, ArkmePersistentSidebar))
-    }
-    const stopSettingsTimer = () => {
-      if (settingsTimer === undefined || typeof window === 'undefined') return
-      window.clearInterval(settingsTimer)
-      settingsTimer = undefined
-    }
-    const restoreArkmeSidebar = () => {
-      stopSettingsTimer()
-      settingsOpened = false
-      mountArkmeSidebar()
-    }
-    const openOfficialSettings = (section: ArkmeSettingsSection = 'arkme-account') => {
-      if (disposed || typeof document === 'undefined' || typeof window === 'undefined') return
-      stopSettingsTimer()
-      disposeSidebar?.()
-      disposeSidebar = undefined
-      settingsOpened = false
-      let attempts = 0
-      let triggerClicked = false
-      let sectionSelected = false
-      settingsTimer = window.setInterval(() => {
-        if (disposed) return
-        attempts += 1
-        const sidebar = document.querySelector('[data-slot="sidebar"]')
-        const arkmeSidebarPresent = sidebar?.querySelector('[data-arkme-owned="persistent-sidebar"]') !== null
-        const trigger = arkmeSidebarPresent
-          ? null
-          : sidebar?.querySelector<HTMLButtonElement>(
-            '[data-slot="sidebar.settings"] button[aria-haspopup="dialog"]',
-          ) ?? null
-        if (!triggerClicked && trigger !== null) {
-          triggerClicked = true
-          trigger.click()
-        }
-        const open = trigger?.getAttribute('aria-expanded') === 'true'
-        if (open) settingsOpened = true
-        if (open && !sectionSelected) sectionSelected = selectArkmeSettingsSection(section)
-        if (settingsOpened && !open) {
-          restoreArkmeSidebar()
-          return
-        }
-        if (!settingsOpened && attempts >= 40) restoreArkmeSidebar()
-      }, 50)
-    }
-
-    const unbindSettings = arkmeUi.bindSettingsOpener(openOfficialSettings)
-    // Account logout is performed inside the native settings surface.  It can
-    // replace the active sidebar before the settings-popover polling sees a
-    // close event, so restore Arkme immediately when authentication returns to
-    // its login state.
-    const unsubscribeLogoutRestore = arkmeUi.subscribe(() => {
-      if (arkmeUi.getSnapshot().mode === 'login') restoreArkmeSidebar()
-    })
-    mountArkmeSidebar()
-    return () => {
-      disposed = true
-      unbindSettings()
-      unsubscribeLogoutRestore()
-      stopSettingsTimer()
-      disposeSidebar?.()
-      disposeSidebar = undefined
-    }
-  }, 'dsh-arkme: bridge to official settings sidebar')
+  ctx.effect(() => installArkmeSettingsDialog(ctx), 'dsh-arkme: independent product settings')
 
   ctx.effect(() => {
     const disposeStyles = installArkmeRedesignStyles()
@@ -402,11 +312,6 @@ export function apply(ctx: ClientContext): void {
       disposeStyles()
     }
   }, 'dsh-arkme: install redesign visual system')
-
-  ctx.effect(
-    () => installArkmeSettingsNavIcons(),
-    'dsh-arkme: render Arkme settings navigation icons',
-  )
 
   ctx.effect(() => {
     const disposeConversation = ctx.slots.inject('main', () => ctx.slots.register({
@@ -426,34 +331,6 @@ export function apply(ctx: ClientContext): void {
       disposeDetails()
     }
   }, 'dsh-arkme: keep Arkme conversation seats around the embedded DeepSeek Harness')
-
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'arkme-account',
-    order: -3,
-    label: () => tr('我的账户'),
-  }, ArkmeDshSettingsSection))
-
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'arkme-usage', order: -2, label: () => tr('用量与额度'),
-  }, ArkmeAccountUsageSettings))
-
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section', id: 'arkme-data', order: -2.5, label: () => tr('数据管理'),
-  }, ArkmeDataManagementSettings))
-
-  ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-    name: 'settings.general.item',
-    id: 'arkme-general',
-    order: 100,
-  }, () => <ArkmeSettingsSurface view="general" />))
-
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'arkme-about',
-    order: 100,
-    label: () => tr('关于'),
-  }, () => <ArkmeSettingsSurface view="about" />))
 
   if (!startupAuthGateEnabled()) {
     ctx.slots.inject('shell.overlay', () => ctx.slots.register({

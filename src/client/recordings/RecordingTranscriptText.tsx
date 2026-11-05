@@ -13,6 +13,7 @@ export function RecordingTranscriptText({ text, matches, activeIndex, entityRang
   entityRange?: EntityTextRange
   onEntityClick?(key: string): void
 }) {
+  if (matches.length === 0 && entityRanges.length === 0 && !entityRange) return <>{text}</>
   const characters = Array.from(text)
   if (entityRanges.length || entityRange) {
     const ranges = [...entityRanges, ...(entityRange ? [entityRange] : [])]

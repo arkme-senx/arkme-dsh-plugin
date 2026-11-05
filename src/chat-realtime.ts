@@ -12,6 +12,7 @@ export const ARKME_CHAT_READ_CURSOR_ADVANCED_BIZ_TYPE = 18
 export const ARKME_CHAT_POLICY_UPDATED_BIZ_TYPE = 19
 export const ARKME_CHAT_TIMELINE_CHANGED_BIZ_TYPE = 20
 export const ARKME_CHAT_MESSAGE_PREPARING_BIZ_TYPE = 21
+export const ARKME_CHAT_THOUGHT_CHANGED_BIZ_TYPE = 23
 export const ARKME_PROJECTION_INVALIDATED_BIZ_TYPE = 25
 export const ARKME_CONVERSATION_LIST_PREFERENCE_UPDATED_BIZ_TYPE = 26
 export const ARKME_MEMBER_JOINED_BIZ_TYPE = 24
@@ -100,6 +101,16 @@ export interface ArkmeChatMessagePreparingHint {
   sourceClientId: number
 }
 
+export interface ArkmeChatThoughtChangedHint {
+  eventUid: string
+  chatSessionUid: string
+  relationUid: string
+  scene: number
+  status: number
+  generation: number
+  eventAtMillis: number
+}
+
 export interface ArkmeChatRealtimeNotice {
   state: ArkmeChatRealtimeState
   teamPublication?: ArkmeTeamPublicationHint
@@ -109,6 +120,7 @@ export interface ArkmeChatRealtimeNotice {
   hint?: ArkmeChatReceiveHint
   policyUpdated?: ArkmeChatPolicyUpdatedHint
   readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
+  thoughtChanged?: ArkmeChatThoughtChangedHint
   timelineChanged?: ArkmeChatTimelineChangedHint
   messagePreparing?: ArkmeChatMessagePreparingHint
   /** Host-only receiving connection evidence; never project these fields to Browser. */
@@ -123,6 +135,8 @@ export interface ArkmeChatRealtimeNotice {
 
 export interface ArkmeChatRealtimeRuntimeOptions {
   imBaseUrl: string
+  /** Reuse authentication, cancellation and retry ownership for Intelligent receive-only streams. */
+  receiveStream?: { path: string; onLine(line: string, userId: number, signal: AbortSignal): void }
   readSession(): Promise<ArkmeSessionCredentials | undefined>
   refreshSession?(session: ArkmeSessionCredentials): Promise<ArkmeSessionCredentials | undefined>
   fetchImpl?: FetchLike
@@ -192,11 +206,12 @@ export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: s
   const v = decodeDataLine(line)
   if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
   if (Object.keys(v).some(key => !['t','event_uid','kind','team_id','conversation_uid','message_uid','revision','event_at','seq','published_at','expires_at','message_revision','reconcile'].includes(key))) return undefined
-  if (!['team.reaction.changed','team.annotation.changed','team.message.changed','team.receipt.changed','team.access.changed','team.channel.changed','team.profile.changed','team.notification-policy.changed','team.message.published'].includes(String(v.kind))) return undefined
+  if (!['team.reaction.changed','team.annotation.changed','team.message.changed','team.receipt.changed','team.access.changed','team.channel.changed','team.profile.changed','team.notification-policy.changed','team.entry-preference.changed','team.message.published'].includes(String(v.kind))) return undefined
   const eventUid=nonEmptyString(v.event_uid),eventAtMillis=positiveInteger(v.event_at)
   if(!eventUid||!eventAtMillis||!positiveInteger(v.revision))return undefined
   if(v.message_revision!==undefined && (!Number.isSafeInteger(v.message_revision) || Number(v.message_revision)<0 || Number(v.message_revision)>0 && (v.kind!=='team.message.changed'||!nonEmptyString(v.message_uid)||!positiveInteger(v.seq))))return undefined
   if(v.reconcile!==undefined && typeof v.reconcile!=='boolean' || v.reconcile===true && ['team.message.published','team.receipt.changed'].includes(String(v.kind)))return undefined
+  if(v.kind==='team.entry-preference.changed' && (!positiveInteger(v.team_id) || v.conversation_uid !== undefined || v.message_uid !== undefined)) return undefined
   if(v.reconcile===true)return {eventUid,eventAtMillis,receiptOnly:false}
   if(v.kind==='team.message.published'){
     const conversationUid=nonEmptyString(v.conversation_uid),messageUid=nonEmptyString(v.message_uid),seq=positiveInteger(v.seq),expiresAt=positiveInteger(v.expires_at)
@@ -232,6 +247,15 @@ export function decodeArkmeMemberEventDataLine(line: string): ArkmeMemberInvalid
 }
 
 /** Decode one server data line. Heartbeats, malformed frames, and non-Chat hints are ignored. */
+export function decodeArkmeChatThoughtChangedDataLine(line: string): ArkmeChatThoughtChangedHint | undefined {
+  const row = decodeDataLine(line)
+  if (!row || positiveInteger(row.t) !== ARKME_CHAT_THOUGHT_CHANGED_BIZ_TYPE) return undefined
+  const eventUid = nonEmptyString(row.event_uid), chatSessionUid = nonEmptyString(row.chat_session_uid), relationUid = nonEmptyString(row.rel_uid)
+  const scene = positiveInteger(row.scene), status = positiveInteger(row.status), generation = positiveInteger(row.generation), eventAtMillis = positiveInteger(row.event_at)
+  if (!eventUid || !chatSessionUid || !relationUid || !scene || scene > 5 || !status || status > 4 || !generation || !eventAtMillis) return undefined
+  return { eventUid, chatSessionUid, relationUid, scene, status, generation, eventAtMillis }
+}
+
 export function decodeArkmeChatReceiveDataLine(line: string): ArkmeChatReceiveHint | undefined {
   const source = decodeDataLine(line)
   if (source === undefined) return undefined
@@ -631,8 +655,8 @@ export class ArkmeChatRealtimeRuntime {
     let leaseTimer: ReturnType<typeof setTimeout> | undefined
     let acceptedAtMillis: number | undefined
     try {
-      const response = await this.fetchImpl(new URL(ARKME_CHAT_SSE_PATH, this.options.imBaseUrl), {
-        method: 'POST',
+      const response = await this.fetchImpl(new URL(this.options.receiveStream?.path ?? ARKME_CHAT_SSE_PATH, this.options.imBaseUrl), {
+        method: this.options.receiveStream ? 'GET' : 'POST',
         headers: {
           Accept: 'text/event-stream',
           'Accept-Language': 'zh-CN',
@@ -642,7 +666,7 @@ export class ArkmeChatRealtimeRuntime {
           [ARKME_TEAM_HINT_VERSION_HEADER]: '2',
           Usersource: '3',
         },
-        body: '{}',
+        ...(this.options.receiveStream ? {} : { body: '{}' }),
         signal: controller.signal,
       })
       clearTimeout(connectTimer)
@@ -747,6 +771,8 @@ export class ArkmeChatRealtimeRuntime {
     // v2 connection can claim that its locator covers the complete change.
     const teamNotification = decodedTeam && !scopedTeamHints && decodedTeam.change
       ? { ...decodedTeam, change: undefined } : decodedTeam
+    if (this.options.receiveStream) { this.options.receiveStream.onLine(line, connectionUserId, connectionSignal); return }
+    const thoughtChanged = decodeArkmeChatThoughtChangedDataLine(line)
     const policyUpdated = decodeArkmeChatPolicyUpdatedDataLine(line)
     if (policyUpdated !== undefined && policyUpdated.userId !== connectionUserId) return
     const memberJoined = decodeArkmeMemberJoinedDataLine(line)
@@ -767,7 +793,7 @@ export class ArkmeChatRealtimeRuntime {
       && projectionInvalidation === undefined && readCursorAdvanced === undefined && timelineChanged === undefined
       ? decodeArkmeChatReceiveDataLine(line)
       : undefined
-    const eventUid = teamNotification?.eventUid ?? policyUpdated?.eventUid ?? memberJoined?.eventUid ?? memberEvent?.eventUid ?? conversationListPreferenceUpdated?.eventUid
+    const eventUid = thoughtChanged?.eventUid ?? teamNotification?.eventUid ?? policyUpdated?.eventUid ?? memberJoined?.eventUid ?? memberEvent?.eventUid ?? conversationListPreferenceUpdated?.eventUid
       ?? projectionInvalidation?.eventUid ?? readCursorAdvanced?.eventUid
       ?? timelineChanged?.eventUid ?? messagePreparing?.eventUid ?? hint?.eventUid
     if (eventUid === undefined || this.seenEventUids.has(eventUid)) return
@@ -776,13 +802,15 @@ export class ArkmeChatRealtimeRuntime {
       const oldest = this.seenEventUids.values().next().value as string | undefined
       if (oldest !== undefined) this.seenEventUids.delete(oldest)
     }
-    this.lastEventAtMillis = teamNotification?.eventAtMillis ?? policyUpdated?.eventAtMillis ?? memberJoined?.eventAtMillis ?? memberEvent?.eventAtMillis ?? conversationListPreferenceUpdated?.acceptedAtMillis
+    this.lastEventAtMillis = thoughtChanged?.eventAtMillis ?? teamNotification?.eventAtMillis ?? policyUpdated?.eventAtMillis ?? memberJoined?.eventAtMillis ?? memberEvent?.eventAtMillis ?? conversationListPreferenceUpdated?.acceptedAtMillis
       ?? projectionInvalidation?.eventAtMillis
       ?? readCursorAdvanced?.eventAtMillis
       ?? timelineChanged?.eventAtMillis
       ?? messagePreparing?.eventAtMillis
       ?? hint?.eventAtMillis
-    if (teamNotification) {
+    if (thoughtChanged) {
+      this.advanceRevision('chat-hint', { thoughtChanged, connectionUserId, connectionSignal })
+    } else if (teamNotification) {
       this.advanceRevision(teamNotification.publication ? 'team-message-published' : 'team-invalidation', { connectionUserId, connectionSignal, ...(connectionStartedAtMillis===undefined?{}:{connectionStartedAtMillis}), ...(teamNotification.publication?{teamPublication:teamNotification.publication}:{}), teamReceiptOnly: teamNotification.receiptOnly, ...(teamNotification.change?{teamChange:teamNotification.change}:{}) })
     } else if (policyUpdated !== undefined) {
       this.advanceRevision('chat-policy-invalidation', { policyUpdated, connectionUserId, connectionSignal })
@@ -824,6 +852,7 @@ export class ArkmeChatRealtimeRuntime {
       policyUpdated?: ArkmeChatPolicyUpdatedHint
       readCursorAdvanced?: ArkmeChatReadCursorAdvancedHint
       projectionInvalidation?: ArkmeProjectionInvalidatedHint
+      thoughtChanged?: ArkmeChatThoughtChangedHint
       timelineChanged?: ArkmeChatTimelineChangedHint
       messagePreparing?: ArkmeChatMessagePreparingHint
       teamPublication?: ArkmeTeamPublicationHint
@@ -843,6 +872,7 @@ export class ArkmeChatRealtimeRuntime {
       policyUpdated,
       projectionInvalidation,
       timelineChanged,
+      thoughtChanged,
       messagePreparing,
       teamReceiptOnly,
       teamChange,
@@ -865,6 +895,7 @@ export class ArkmeChatRealtimeRuntime {
       ...(memberJoined === undefined ? {} : { memberJoined }),
       ...(memberEvent === undefined ? {} : { memberEvent }),
       ...(timelineChanged === undefined ? {} : { timelineChanged }),
+      ...(thoughtChanged === undefined ? {} : { thoughtChanged }),
       ...(messagePreparing === undefined ? {} : { messagePreparing }),
       ...(connectionUserId === undefined ? {} : { connectionUserId }),
       ...(connectionSignal === undefined ? {} : { connectionSignal }),

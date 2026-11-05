@@ -8,6 +8,13 @@ export const arrangementColumnLabels: Record<ArrangementColumn, string> = {
   identified: '已识别', following: '跟进中', completed: '已完成',
 }
 
+export async function readArrangementForTransition(ref: string, signal: AbortSignal): Promise<ArkmeArrangementItem> {
+  const item = await withArkmeReadDeadline(readSignal => callArkme<ArkmeArrangementItem>('arrangements.detail', { arrangementRef: ref }, readSignal), signal)
+  signal.throwIfAborted()
+  if (item.arrangementRef !== ref || item.status === 'unknown') throw new Error('安排已变化，请刷新后操作')
+  return item
+}
+
 /** Never replay an ambiguous write. Read its owner state before continuing a multi-step move. */
 export async function moveArrangement(item: ArkmeArrangementItem, target: ArrangementColumn, signal: AbortSignal): Promise<ArkmeArrangementItem> {
   if (item.status === target) return item

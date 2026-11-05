@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 import { webcrypto } from 'node:crypto'
 import { act } from 'react'
@@ -54,6 +55,7 @@ async function mark() {
   await click([...toolbar()!.querySelectorAll('button')].find(button => button.textContent === '标记')!)
 }
 beforeEach(async () => {
+ arkoTimelineMemory.clear()
   arkoModelCache.clear(); highlights.clear(); saved.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto)
   vi.stubGlobal('CSS', { highlights }); vi.stubGlobal('Highlight', class extends Set<Range> { constructor(...ranges: Range[]) { super(ranges) } })

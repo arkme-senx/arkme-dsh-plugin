@@ -13,3 +13,11 @@ it('SDK and UI Host use one owner for public card, candidates and represented se
 it('checks provider support before querying identity facts',async()=>{const fetchImpl=vi.fn(async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{}}}))) as typeof fetch;await expect(new ArkmeSdk({fetchImpl}).teamPublicCard('team')).rejects.toThrow('不支持');expect(fetchImpl).toHaveBeenCalledOnce()})
 
 it('registers both read capabilities in the production catalog',()=>{expect(arkmeToolCatalog.toolNamesFor('business')).toEqual(expect.arrayContaining(['arkme_group_identities','arkme_team_public_card']))})
+
+it('SDK extension forwards the same frozen Team selection into the existing Host owner', async () => {
+ const selection={teamRef:'opaque',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}
+ const service={extendSourceMessage:vi.fn(async()=>({localState:'synced',representation:{name:'团队',jotmoId:'team'}}))}
+ const sdk=new ArkmeSdk({fetchImpl:async(_url,init)=>{const{operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params)}))}})
+ await sdk.extendSourceMessage('source','action','回复',{recordUid:'child',relationUid:'relation',representation:selection,sendAtMillis:123})
+ expect(service.extendSourceMessage).toHaveBeenCalledWith('source','action','回复','child',[],expect.objectContaining({representation:selection,sendAtMillis:123}))
+})

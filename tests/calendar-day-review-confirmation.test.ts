@@ -77,3 +77,23 @@ it('enforces the pending capacity after concurrent account checks settle', async
  expect(results.filter(x=>x.status==='fulfilled')).toHaveLength(32)
  expect(results.filter(x=>x.status==='rejected')).toHaveLength(8)
 })
+
+it('shows the authenticated model name and provider billing before confirming a frozen user model', async()=>{
+ const alias='user-api/019a4c10-0000-7000-8000-000000000001',route=`${alias}/019a4c10-0000-7000-8000-000000000002`
+ const create=vi.fn(async()=>({supported:true,job:null,result:null,versions:[],freshness:'unknown'}))
+ const service={createDayReview:create,dayReviewConfirmationAccount:async()=>prepared.accountScope,dayReviewModels:async()=>({unified:true,models:[{route,displayName:'我的模型 <安全>',origin:'user-provided'}]})}
+ const options={expectedPort:0,allowNonLoopback:false},server=createServer(createArkmeHostApi(service as never,options));server.listen(0,'127.0.0.1');await once(server,'listening');options.expectedPort=(server.address() as {port:number}).port
+ const input={...prepared,modelRoute:route},base=`http://127.0.0.1:${options.expectedPort}/arkme-self/api`,id='00000000-0000-4000-8000-000000000020'
+ const page=`${base}?dayReviewConfirmation=${id}&action=create&intent=${encodeURIComponent(JSON.stringify(input))}`
+ const headers={'Sec-Fetch-Dest':'document','Sec-Fetch-Mode':'navigate','Sec-Fetch-User':'?1'}
+ try{
+  const displayed=await nativeRequest(page,'GET',headers)
+  expect(displayed.body).toContain('我的模型 &lt;安全&gt;')
+  expect(displayed.body).toContain('不扣即我 AI 积分')
+  expect(displayed.body).not.toContain('生成会消耗 AI 积分')
+  expect(displayed.body).not.toContain(route)
+  const nonce=/name="nonce" value="([a-f0-9]+)"/.exec(displayed.body)![1]
+  const accepted=await nativeRequest(page,'POST',{...headers,Origin:'null','Content-Type':'application/x-www-form-urlencoded'},`nonce=${nonce}`)
+  expect(accepted.status).toBe(303);expect(create).toHaveBeenCalledExactlyOnceWith(input)
+ }finally{server.close();await once(server,'close')}
+})

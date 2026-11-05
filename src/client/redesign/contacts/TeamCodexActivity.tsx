@@ -1,19 +1,20 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import {codexAccessRevoked} from '../../../team-codex-access.js'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { callArkme } from '../../api.js'
 import { ArkmeUserAvatar } from '../../ArkmeAvatar.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../../locale.js'
-import type { TeamCodexInvitation, TeamCodexState, TeamCodexTask } from '../../../team-codex-contract.js'
+import type { TeamCodexInvitation, TeamCodexState, TeamCodexTask, TeamCodexTaskSummary } from '../../../team-codex-contract.js'
 import type { ArkmeTeam } from '../../../types.js'
 import { TeamCodexConversation, codexReadingKey, newCodexReadingState, type CodexReadingState } from './TeamCodexConversation.js'
 import type { CodexConversationTarget } from './codex-conversation-target.js'
-import { codexTaskViewKey, readPersonalCodexState, type CodexTeamScope, type CodexViewState, type CodexViewTask } from './personal-codex-state.js'
+import { codexTaskViewKey, readPersonalCodexState, type CodexViewState, type CodexViewTask } from './personal-codex-state.js'
 import { CodexDispatchEntry } from './CodexDispatchEntry.js'
 import { CodexSyncStatus } from './CodexSyncStatus.js'
 import { CodexQueueDock, codexQueueAvailability as queueAvailability, codexQueueLabel as queueLabel, isCodexTaskLive as liveTask } from './CodexQueueDock.js'
-import { codexTaskStatus } from './codex-task-status.js'
+import { codexTaskPhase, mergeCodexTaskSummary } from './codex-task-status.js'
 import { CodexTaskStateDot, codexTaskStatusLabel } from './CodexTaskStateDot.js'
 import { CodexConversationMenu } from './CodexConversationMenu.js'
-import { codexConversationTime, mergeCodexConversationPages, type CodexConversationPage } from './codex-conversation-pages.js'
+import { codexTaskPage, codexConversationTime, mergeCodexConversationPages, fitCodexConversationPages, CODEX_CONVERSATION_PAGES, type CodexConversationPage } from './codex-conversation-pages.js'
 
 const taskGroupKey = (task: CodexViewTask): string => {
   const key = task.cloud ? `${task.cloud.sourceId}:${task.projectKey}` : task.installationId ? `${task.installationId}:${task.projectKey}` : 'legacy'
@@ -28,20 +29,20 @@ function status(task: TeamCodexTask): string {
   if (task.status === 'expired') return tr('接入指令已过期')
   if (task.status === 'paused') return tr('已暂停')
   if (task.status === 'disconnected') return tr('已断开')
-  return codexTaskStatusLabel(codexTaskStatus(task))
+  return codexTaskStatusLabel(codexTaskPhase(task))
 }
 
-const taskPriority = (task: TeamCodexTask): number => !liveTask(task) ? 0 : task.state==='working' ? 2 : queueAvailability(task)==='ready' && !!task.queue?.items.length ? 1 : 0
+const taskPriority = (task: TeamCodexTask): number => !liveTask(task) ? 0 : task.state==='working' ? 2 : queueAvailability(task)==='ready' && !!(task.queue?.items.length??task.queueSummary?.count) ? 1 : 0
 
-export function TeamCodexActivity({ teamRef, team, active = true, conversation = false, managementOnly = false, target, selfMember = '', scopeControl, headerActions, personalTeams, onManage, onOpenTask }: {
+export function TeamCodexActivity({ teamRef, team, active = true, conversation = false, managementOnly = false, target, selfMember = '', scopeControl, headerActions, personal = false, onManage, onOpenTask }: {
   teamRef: string; team?: Pick<ArkmeTeam, 'name' | 'jotmoId'>; active?: boolean; conversation?: boolean
   managementOnly?: boolean
   target?: CodexConversationTarget; selfMember?: string; scopeControl?: ReactNode; onManage?(): void
-  headerActions?: ReactNode; personalTeams?: readonly CodexTeamScope[]
+  headerActions?: ReactNode; personal?: boolean
   onOpenTask?(task: TeamCodexTask, filters: {page:number;member:string;project:string}): void
 }) {
   useArkmeLocale()
-  const isPersonal = personalTeams !== undefined
+  const isPersonal = personal
   const [state, setState] = useState<CodexViewState>()
   const [unavailable,setUnavailable] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -49,14 +50,33 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const [busy, setBusy] = useState(false)
   const [invitation, setInvitation] = useState<TeamCodexInvitation>()
   const [copied, setCopied] = useState(false)
-  const [expanded, setExpanded] = useState<string | undefined>(target?.task?.id)
+  const [expanded, setExpanded] = useState<string | undefined>(target?.task?(personal?JSON.stringify(['self',target.task.id]):target.task.id):undefined)
   const [pickerOpen, setPickerOpen] = useState(false)
   const picker = useRef<HTMLDivElement>(null)
   const pickerTrigger = useRef<HTMLButtonElement>(null)
   const pickerList = useRef<HTMLElement>(null)
+  const overviewPosition=useRef<import('../../../team-codex-contract.js').CodexTaskPosition>({})
   const conversationPages = useRef(new Map<number,CodexConversationPage>())
+  const selectedSnapshot=useRef<{scope:string;key:string;task:CodexViewTask}>()
+  const pickerAnchor=useRef<{key:string;offset:number}>()
+  const pickerScroll=useRef(0)
+  const capturePickerAnchor=()=>{
+    const list=pickerList.current;if(!list)return
+    const top=list.getBoundingClientRect().top
+    const row=[...list.querySelectorAll<HTMLElement>('[data-codex-task-row]')].find(row=>row.getBoundingClientRect().bottom>top)
+    if(row)pickerAnchor.current={key:row.dataset.codexTaskRow!,offset:row.getBoundingClientRect().top-top}
+  }
+  useLayoutEffect(()=>{
+    const list=pickerList.current,anchor=pickerAnchor.current
+    if(!list||!anchor)return
+    pickerAnchor.current=undefined
+    const row=[...list.querySelectorAll<HTMLElement>('[data-codex-task-row]')].find(row=>row.dataset.codexTaskRow===anchor.key)
+    if(row)list.scrollTop+=row.getBoundingClientRect().top-list.getBoundingClientRect().top-anchor.offset
+    pickerScroll.current=list.scrollTop
+  },[state])
   const [loadingMore,setLoadingMore] = useState(false)
   const [moreError,setMoreError] = useState('')
+  const retryDirection=useRef<'older'|'newer'>('older')
   const readings = useRef(new Map<string,CodexReadingState>())
   const [taskMenu,setTaskMenu] = useState(false)
   const [confirm, setConfirm] = useState<{ id:string; action:'disconnect'|'delete'; teamRef?:string }>()
@@ -81,19 +101,20 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const reading = useRef(false)
   const retryAfter = useRef(0)
   const controllers = useRef(new Set<AbortController>())
-  const directoryScope = JSON.stringify([conversation,teamRef,selfMember,member,target?.accountKey,personalTeams?.map(team=>team.teamRef).sort()])
-  useEffect(() => {
-    conversationPages.current.clear(); setMoreError(''); setLoadingMore(false)
+  const directoryScope = JSON.stringify([conversation,teamRef,selfMember,member,target?.accountKey,personal])
+  useLayoutEffect(() => {
+    overviewPosition.current={};conversationPages.current.clear();readings.current.clear();if(selectedSnapshot.current?.scope!==directoryScope)selectedSnapshot.current=undefined;pickerAnchor.current=undefined
+    setState(undefined);setMoreError('');setLoadingMore(false)
   },[directoryScope])
   useEffect(() => {
-    if (!personalTeams) return
-    const allowed = new Set(personalTeams.map(team=>team.teamRef))
+    if (!personal) return
+    const allowed = new Set(['self'])
     setState(current => current && ({...current,tasks:current.tasks.filter(task=>task.viewTeam && allowed.has(task.viewTeam.teamRef))}))
     for (const key of readings.current.keys()) {
       const [ref] = JSON.parse(key) as string[]
       if (!allowed.has(ref!)) readings.current.delete(key)
     }
-  },[personalTeams])
+  },[personal])
   useEffect(() => {
     if (!target?.task) {
       if (target && member !== (target.member ?? '')) {
@@ -102,7 +123,11 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       }
       return
     }
-    setExpanded(target.task.id); setMember(target.member ?? ''); setPage(target.page ?? 1); setProject(target.project ?? '')
+    const desiredMember=target.member??(conversation?selfMember:'')
+    const task:CodexViewTask=personal?{...target.task,viewTeam:{teamRef:'self',name:'我的 Codex',jotmoId:''}}:target.task
+    const key=codexTaskViewKey(task),scope=JSON.stringify([conversation,teamRef,selfMember,desiredMember,target.accountKey,personal])
+    selectedSnapshot.current={scope,key,task}
+    setExpanded(key); setMember(desiredMember); setPage(target.page ?? 1); setProject(target.project ?? '')
     setSearch(''); setPickerOpen(false); setTaskMenu(false)
     if (target.project && target.task.cloud) setKnownProjects(current => ({...current,[target.project!]:{name:target.task!.projectName ?? '',sourceId:target.task!.cloud!.sourceId,projectKey:target.task!.projectKey ?? 'unknown'}}))
   }, [target])
@@ -127,11 +152,12 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     try { return await callArkme<T>(operation,{ teamRef,...params },controller.signal) }
     finally { controllers.current.delete(controller) }
   }, [teamRef])
-  const readPage = useCallback(async (at: number,signal: AbortSignal): Promise<CodexConversationPage> => {
-    if (personalTeams) return readPersonalCodexState(personalTeams,selfMember,at,
-      ref=>request<TeamCodexState>('team.codex.state',{teamRef:ref,page:at,memberRef:selfMember}),signal)
-    return {state:await request<TeamCodexState>('team.codex.state',{page:at,memberRef:member,sourceId:selectedSource,projectKey:selectedProject}),unavailable:[]}
-  },[request,personalTeams,selfMember,member,selectedSource,selectedProject])
+  const readPage = useCallback(async (at: number,signal: AbortSignal,position:{cursor?:string|undefined;after?:string|undefined;from?:string|undefined}={}): Promise<CodexConversationPage> => {
+    if (personal) return readPersonalCodexState(selfMember,
+      ref=>request<TeamCodexState>('team.codex.state',{teamRef:ref,page:Math.min(at,10000),memberRef:selfMember,...position}),signal).then(value=>({...value,position:codexTaskPage(value.state)?.firstCursor?{from:codexTaskPage(value.state)!.firstCursor}:position}))
+    const state=await request<TeamCodexState>('team.codex.state',{page:Math.min(at,10000),memberRef:member,sourceId:selectedSource,projectKey:selectedProject,...position})
+    return {state,unavailable:[],position:codexTaskPage(state)?.firstCursor?{from:codexTaskPage(state)!.firstCursor}:position}
+  },[request,personal,selfMember,member,selectedSource,selectedProject])
   const refresh = useCallback(async () => {
     if (reading.current) return
     const epoch = readEpoch.current
@@ -142,49 +168,59 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       let resultPage: CodexConversationPage
       const refreshed = new Map<number,CodexConversationPage>()
       if (conversation) {
-        // Refresh the loaded prefix together: retains the selected older conversation,
-        // removes revoked rows, and avoids keeping stale duplicates across page shifts.
-        const lastPage = Math.max(1,page,...conversationPages.current.keys())
-        for (let at=1;at<=lastPage;at++) {
+        const firstPage=conversationPages.current.size?Math.min(...conversationPages.current.keys()):1
+        let position=firstPage===1 && (pickerList.current?.scrollTop??0)<80?{}:conversationPages.current.get(firstPage)?.position??{}
+        const count=Math.max(1,Math.min(CODEX_CONVERSATION_PAGES,conversationPages.current.size))
+        capturePickerAnchor()
+        for (let offset=0;offset<count;offset++) {
           batch.signal.throwIfAborted()
-          const value=await readPage(at,batch.signal)
-          refreshed.set(at,value)
-          if (value.state.localOnly || !value.state.cloud?.hasMore) break
+          const value=await readPage(firstPage+offset,batch.signal,position)
+          refreshed.set(firstPage+offset,value)
+          if (!codexTaskPage(value.state)?.hasMore) break
+          position={cursor:codexTaskPage(value.state)!.nextCursor}
         }
         resultPage=mergeCodexConversationPages(refreshed)
-      } else resultPage=await readPage(page,batch.signal)
+      } else {resultPage=await readPage(page,batch.signal,overviewPosition.current);overviewPosition.current=resultPage.position??{}}
       const result=resultPage.state
       if (alive.current && epoch === readEpoch.current) {
         if(conversation) conversationPages.current=refreshed
         setUnavailable(resultPage.unavailable)
         setState(result); setReadError(''); retryAfter.current = result.cloud?.status==='offline'||result.cloud?.status==='blocked'?Date.now()+30_000:0
         if(result.cloud?.status==='blocked') {readings.current.clear();setExpanded(undefined)}
-        if (!member.startsWith('usr_v1_')) setKnownMembers(current=>({...current,...Object.fromEntries(result.tasks.filter(t=>t.cloud).map(t=>[t.cloud!.ownerRef,t.member.displayName]))}))
-        setKnownProjects(current=>({...current,...Object.fromEntries(result.tasks.filter(t=>t.cloud).map(t=>[`${t.cloud!.sourceId}:${t.projectKey}`,{
+        if (!member.startsWith('usr_v1_')) setKnownMembers(current=>({...((member&&current[member])?{[member]:current[member]}:{}),...Object.fromEntries(result.tasks.filter(t=>t.cloud).map(t=>[t.cloud!.ownerRef,t.member.displayName]))}))
+        setKnownProjects(current=>({...((project&&current[project])?{[project]:current[project]}:{}),...Object.fromEntries(result.tasks.filter(t=>t.cloud).map(t=>[`${t.cloud!.sourceId}:${t.projectKey}`,{
           name:`${t.member.displayName} · ${t.cloud!.sourceName} · ${t.projectName||tr('未归属项目')}`,sourceId:t.cloud!.sourceId,projectKey:t.projectKey??'unknown',
         }]))}))
         if(result.localOnly && result.cloud?.status==='blocked') {setKnownMembers({});setKnownProjects({})}
       }
-    } catch (error) { if (alive.current && epoch === readEpoch.current) { setReadError(errorText(error)); retryAfter.current = Date.now()+30_000; readings.current.clear();conversationPages.current.clear();setState(undefined);setExpanded(undefined) } }
+    } catch (error) { if (alive.current && epoch === readEpoch.current) { setReadError(errorText(error)); retryAfter.current = Date.now()+30_000; if(codexAccessRevoked(error)){readings.current.clear();conversationPages.current.clear();setState(undefined);setExpanded(undefined)} } }
     finally { controllers.current.delete(batch); reading.current = false }
   }, [readPage,page,member,conversation,directoryScope])
-  const loadMore = useCallback(async () => {
+  const loadMore = useCallback(async (direction:'older'|'newer'='older') => {
     if (!conversation || !active || reading.current || !conversationPages.current.size) return
-    const lastPage=Math.max(...conversationPages.current.keys())
-    const last=conversationPages.current.get(lastPage)!.state
-    if(last.localOnly || !last.cloud?.hasMore || lastPage>=10000) return
+    const boundary=direction==='older'?Math.max(...conversationPages.current.keys()):Math.min(...conversationPages.current.keys())
+    const edge=conversationPages.current.get(boundary)!.state
+    const paging=codexTaskPage(edge)
+    if(direction==='older'?!paging?.hasMore:!paging?.hasNewer)return
+    const at=direction==='older'?boundary+1:Math.max(1,boundary-1)
+    const position=direction==='older'?{cursor:paging?.nextCursor}:{after:paging?.previousCursor}
+    if(direction==='newer'&&!position.after)return
     const epoch=readEpoch.current
     const batch=new AbortController()
-    controllers.current.add(batch); reading.current=true; setLoadingMore(true); setMoreError('')
+    controllers.current.add(batch); reading.current=true; retryDirection.current=direction;setLoadingMore(true); setMoreError('')
     try {
-      const next=await readPage(lastPage+1,batch.signal)
+      capturePickerAnchor()
+      const next=await readPage(at,batch.signal,position)
       if(alive.current && epoch===readEpoch.current) {
         if(next.state.cloud?.status==='blocked') {
           conversationPages.current.clear();readings.current.clear();setExpanded(undefined)
           setState(next.state);setUnavailable(next.unavailable)
           return
         }
-        conversationPages.current.set(lastPage+1,next)
+        if(direction==='newer'&&!next.state.tasks.length){paging!.hasNewer=false;setState(mergeCodexConversationPages(conversationPages.current).state);return}
+        if(direction==='newer'&&boundary===1)conversationPages.current=new Map([...conversationPages.current].map(([key,value])=>[key+1,value]))
+        conversationPages.current.set(at,next)
+        fitCodexConversationPages(conversationPages.current,direction)
         const merged=mergeCodexConversationPages(conversationPages.current)
         setState(merged.state);setUnavailable(merged.unavailable)
       }
@@ -193,7 +229,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   },[conversation,active,readPage])
   useEffect(() => {
     const list=pickerList.current
-    if(pickerOpen && !loadingMore && !moreError && list && list.scrollHeight-list.scrollTop-list.clientHeight<80) void loadMore()
+    if(pickerOpen && !loadingMore && !moreError && conversationPages.current.size<CODEX_CONVERSATION_PAGES && list && list.scrollHeight-list.scrollTop-list.clientHeight<80) void loadMore()
   },[pickerOpen,state,loadingMore,moreError,loadMore])
   useEffect(() => {
     readEpoch.current++
@@ -202,20 +238,20 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     void refresh()
     const timer = setInterval(() => { if (Date.now() >= retryAfter.current && (typeof document === 'undefined' || !document.hidden)) void refresh() },isPersonal ? 5000 : 3000)
     const foreground=()=>{if(typeof document==='undefined'||!document.hidden)void refresh()}
-    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground)}
+    if(typeof window!=='undefined'){window.addEventListener('focus',foreground);window.addEventListener('online',foreground);window.addEventListener('arkme-codex-changed',foreground)}
     if(typeof document!=='undefined')document.addEventListener('visibilitychange',foreground)
     return () => {
       alive.current=false;readEpoch.current++;clearInterval(timer);for(const c of controllers.current)c.abort()
-      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground)}
+      if(typeof window!=='undefined'){window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground);window.removeEventListener('arkme-codex-changed',foreground)}
       if(typeof document!=='undefined')document.removeEventListener('visibilitychange',foreground)
     }
   }, [refresh, active,isPersonal])
   useEffect(() => {
-    if (!(isPersonal || conversation && target && !target.task) || !active || !state || expanded && state.tasks.some(task=>codexTaskViewKey(task)===expanded)) return
+    if (!(isPersonal || conversation && target && !target.task) || !active || !state || expanded && (state.tasks.some(task=>codexTaskViewKey(task)===expanded)||selectedSnapshot.current?.scope===directoryScope&&selectedSnapshot.current.key===expanded)) return
     const recent = state.tasks.filter(task=>conversation || !project || taskGroupKey(task)===project)
       .sort((a,b)=>(conversation ? 0 : taskPriority(b)-taskPriority(a))||b.updatedAt-a.updatedAt)[0]
     setExpanded(recent ? codexTaskViewKey(recent) : undefined)
-  },[isPersonal,conversation,target,active,state,expanded,project])
+  },[isPersonal,conversation,target,active,state,expanded,project,directoryScope])
   const invite = async () => {
     setBusy(true); setCopied(false)
     try {
@@ -246,8 +282,18 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     finally { if (alive.current) setBusy(false) }
   }
   const installations=state?.installations ?? []
-  const selected=state?.tasks.find(task=>codexTaskViewKey(task)===expanded)
+  const currentSelected=state?.tasks.find(task=>codexTaskViewKey(task)===expanded)
+  if(currentSelected)selectedSnapshot.current={scope:directoryScope,key:expanded!,task:currentSelected.cloud?.remote && selectedSnapshot.current?.scope===directoryScope && selectedSnapshot.current.key===expanded ? mergeCodexTaskSummary(currentSelected,selectedSnapshot.current.task) : currentSelected}
+  const selected=(selectedSnapshot.current?.scope===directoryScope&&selectedSnapshot.current.key===expanded?selectedSnapshot.current.task:undefined)
   const selectedTeamRef=selected?.viewTeam?.teamRef ?? teamRef
+  const updateSelectedSummary=(summary:TeamCodexTaskSummary)=>{
+    const snapshot=selectedSnapshot.current
+    if(!alive.current || !snapshot || snapshot.scope!==directoryScope || snapshot.key!==expanded)return
+    snapshot.task=mergeCodexTaskSummary(snapshot.task,summary)
+    const update=(value:CodexViewState)=>({...value,tasks:value.tasks.map(task=>codexTaskViewKey(task)===snapshot.key?mergeCodexTaskSummary(task,summary):task)})
+    for(const value of conversationPages.current.values())value.state=update(value.state)
+    setState(value=>value?update(value):value)
+  }
   const ownSelected = !!selected && (selected.cloud ? !!selfMember && selected.cloud.ownerRef === selfMember
     : !!state?.self && selected.member.userRef === state.self.userRef)
   const readingKey=selected?codexReadingKey(selectedTeamRef,selected):''
@@ -260,6 +306,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
   const localStatus = !state ? tr('正在确认…') : connection?.status==='active' ? tr('已连接') : connection?.status==='paused' ? tr('已暂停') : connection?.configured ? tr('已配置，等待 Codex 真实事件') : tr('等待接入')
   const cloudStatus = !state ? tr('正在确认…') : !state.cloud || state.cloud.status==='unsupported' ? tr('仅本机采集')
     : state.cloud.status!=='ready' ? tr(state.cloud.message ?? '暂无法核验云端状态')
+    : state.cloud.settingsPending ? tr('同步设置等待云端确认')
     : !state.cloud.uploadEnabled ? tr('未开启 · 仅查看云端记录')
     : state.cloud.blocked>0 ? tr('已开启 · 需处理 {count} 条',{count:state.cloud.blocked})
     : tr('已开启 · 待上传 {count} 条',{count:state.cloud.pending})
@@ -302,12 +349,12 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
           <small>{tr('仅显示已同步的输入与回答，不包含工具过程。')}</small>
         </div>
   const renderTask = (task: CodexViewTask) => <article className="arkme-team-codex-task" key={codexTaskViewKey(task)}>
-    <button type="button" className="arkme-team-codex-task-toggle" aria-pressed={expanded===codexTaskViewKey(task)} onClick={() => {
+    <button type="button" data-codex-task-row={codexTaskViewKey(task)} className="arkme-team-codex-task-toggle" aria-pressed={expanded===codexTaskViewKey(task)} onClick={() => {
       if (onOpenTask) onOpenTask(task,{page,member,project})
       else { setExpanded(codexTaskViewKey(task)); if (expanded!==codexTaskViewKey(task)) setTaskMenu(false); setPickerOpen(false); pickerTrigger.current?.focus() }
     }}>
-      <CodexTaskStateDot status={codexTaskStatus(task)}/>
-      <span className="arkme-team-codex-task-title"><strong title={task.title}>{task.title}</strong>{!conversation && liveTask(task) && (task.state==='working'||!!task.queue?.items.length) && <small>{status(task)}{!!task.queue?.items.length && ` · ${queueLabel(task)}`}</small>}</span>
+      <CodexTaskStateDot status={codexTaskPhase(task)}/>
+      <span className="arkme-team-codex-task-title"><strong title={task.title}>{task.title}</strong>{!conversation && liveTask(task) && (task.state==='working'||!!(task.queue?.items.length??task.queueSummary?.count)) && <small>{status(task)}{!!(task.queue?.items.length??task.queueSummary?.count) && ` · ${queueLabel(task)}`}</small>}</span>
       {conversation && <time title={time(task.updatedAt)} dateTime={new Date(task.updatedAt).toISOString()}>{codexConversationTime(task.updatedAt,Date.now())}</time>}
       {!conversation && <time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>}
     </button>
@@ -316,13 +363,15 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
     {onOpenTask && expanded===task.id && taskMenu && <div className="arkme-codex-overview-task-info">{taskInfo}{confirm?.id===task.id && confirmation}</div>}
   </article>
   const taskList = <aside className="arkme-codex-task-sidebar" aria-label={tr('Codex 任务列表')} ref={conversation?pickerList:undefined}
-    onScroll={conversation?event=>{const list=event.currentTarget;if(!moreError && list.scrollHeight-list.scrollTop-list.clientHeight<80)void loadMore()}:undefined}
+    onScroll={conversation?event=>{const list=event.currentTarget,previous=pickerScroll.current;pickerScroll.current=list.scrollTop;if(moreError)return;if(list.scrollTop<previous&&list.scrollTop<80)void loadMore('newer');else if(list.scrollHeight-list.scrollTop-list.clientHeight<80)void loadMore()}:undefined}
+    onWheel={conversation?event=>{if(event.deltaY<0&&event.currentTarget.scrollTop<80&&!moreError)void loadMore('newer')}:undefined}
     onKeyDown={conversation?event=>{
       if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return
       const rows=[...event.currentTarget.querySelectorAll<HTMLButtonElement>('.arkme-team-codex-task-toggle')]
       if(!rows.length)return
       event.preventDefault()
       const index=rows.indexOf(event.target as HTMLButtonElement)
+      if(event.key==='ArrowUp'&&index===0&&!moreError)void loadMore('newer')
       const next=event.key==='Home'?0:event.key==='End'?rows.length-1:Math.max(0,Math.min(rows.length-1,index+(event.key==='ArrowDown'?1:-1)))
       rows[next]?.focus()
     }:undefined}>
@@ -330,7 +379,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       {!isPersonal && state.cloud && state.cloud.status!=='unsupported' && <select aria-label={tr('筛选成员')} value={member} onChange={event=>{setMember(event.target.value);setPage(1);setProject('');setExpanded(undefined);setState(undefined)}}>
         <option value="">{tr('全部成员')}</option>{Object.entries(knownMembers).map(([id,name])=><option key={id} value={id}>{name}</option>)}
       </select>}
-      {!conversation && <select aria-label={tr('筛选项目')} value={project} onChange={event=>{setProject(event.target.value);if(!isPersonal)setPage(1);setExpanded(undefined)}}><option value="">{tr('全部项目')}</option>{Object.entries({...Object.fromEntries([...groups.values()].map(g=>[g.key,{name:g.name}])),...(!isPersonal?knownProjects:{})}).map(([key,value])=><option key={key} value={key}>{value.name}</option>)}</select>}
+      {!conversation && <select aria-label={tr('筛选项目')} value={project} onChange={event=>{overviewPosition.current={};setProject(event.target.value);if(!isPersonal)setPage(1);setExpanded(undefined)}}><option value="">{tr('全部项目')}</option>{Object.entries({...Object.fromEntries([...groups.values()].map(g=>[g.key,{name:g.name}])),...(!isPersonal?knownProjects:{})}).map(([key,value])=><option key={key} value={key}>{value.name}</option>)}</select>}
       <input type="search" aria-label={tr('搜索任务或项目')} placeholder={tr('搜索任务或项目')} value={search} onChange={event=>setSearch(event.target.value)}/>
       {!state.localOnly && <small>{tr('搜索仅筛选当前页已加载的任务')}</small>}
     </div>}
@@ -349,11 +398,11 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       {!collapsed.has(group.key) && group.tasks.length>(limits[group.key]??20) && <button type="button" onClick={()=>setLimits(current=>({...current,[group.key]:(current[group.key]??20)+20}))}>{tr('显示更多任务')}</button>}
     </section>)}
     {conversation && loadingMore && <p className="arkme-codex-picker-status" role="status">{tr('正在加载…')}</p>}
-    {conversation && moreError && <p className="arkme-codex-picker-status" role="alert">{moreError} <button type="button" onClick={()=>{void loadMore()}}>{tr('重试')}</button></p>}
-    {!conversation && state?.cloud && !state.localOnly && <div className="arkme-team-codex-filters">
-      <button type="button" disabled={page===1} onClick={()=>{setPage(page-1);setExpanded(undefined);if(isPersonal)setProject('')}}>{tr('上一页')}</button>
+    {conversation && moreError && <p className="arkme-codex-picker-status" role="alert">{moreError} <button type="button" onClick={()=>{void loadMore(retryDirection.current)}}>{tr('重试')}</button></p>}
+    {!conversation && state && (state.cloud || state.localTaskPage) && <div className="arkme-team-codex-filters">
+      <button type="button" disabled={page===1} onClick={()=>{overviewPosition.current={after:codexTaskPage(state)?.previousCursor};setPage(page-1);setExpanded(undefined);if(isPersonal)setProject('')}}>{tr('上一页')}</button>
       <small>{tr('第 {page} 页',{page})}</small>
-      <button type="button" disabled={!state.cloud.hasMore || page>=10000} onClick={()=>{setPage(page+1);setExpanded(undefined);if(isPersonal)setProject('')}}>{tr('下一页')}</button>
+      <button type="button" disabled={!codexTaskPage(state)?.hasMore} onClick={()=>{overviewPosition.current={cursor:codexTaskPage(state)?.nextCursor};setPage(page+1);setExpanded(undefined);if(isPersonal)setProject('')}}>{tr('下一页')}</button>
     </div>}
   </aside>
   return <section className="arkme-team-codex" data-codex-view={managementOnly ? 'management' : conversation ? 'conversation' : onOpenTask ? 'overview' : 'legacy'} aria-label={tr(managementOnly ? 'Codex 同步管理' : conversation ? 'Codex 对话阅读区' : '工作动态')}>
@@ -361,7 +410,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       <strong className="arkme-codex-identity">Codex</strong>
       <div className="arkme-codex-centered-selector" ref={picker}>
         <button type="button" ref={pickerTrigger} className="arkme-codex-task-trigger" aria-label={tr('切换 Codex 任务')} aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={() => {setTaskMenu(false);setPickerOpen(!pickerOpen)}}>
-          {selected && <CodexTaskStateDot status={codexTaskStatus(selected)}/>}
+          {selected && <CodexTaskStateDot status={codexTaskPhase(selected)}/>}
           <strong title={selected?.title}>{selected?.title ?? tr('选择任务')}</strong>
           {selected && <span className="arkme-team-codex-status" data-state={selected.state}>{status(selected)}</span>}<span aria-hidden>⌄</span>
         </button>
@@ -444,16 +493,18 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
         {confirm?.id===selected.id && confirmation}
         {selected.cloudBlocked && <p className="arkme-codex-inline-notice">{tr('此会话曾关联不同账号或团队，暂不上传云端。')}</p>}
         {selected.projectExcluded && <p className="arkme-codex-inline-notice">{tr('此项目已排除；恢复单项任务不会恢复项目同步。')}</p>}
-        {active && <TeamCodexConversation key={readingKey} teamRef={selectedTeamRef} task={selected} reading={readings.current.get(readingKey)!} inputName={selected.member.displayName}>
+        {active && <TeamCodexConversation key={readingKey} teamRef={selectedTeamRef} task={selected} reading={readings.current.get(readingKey)!} onTaskSummary={updateSelectedSummary} inputName={selected.member.displayName}>
+        {detailTask=><>
         {conversation && <div className="arkme-codex-project-context" aria-label={tr('当前对话项目')} title={selected.projectName || tr('未归属项目')}>
           {tr('项目：{name}',{name:selected.projectName || tr('未归属项目')})}
         </div>}
-        <CodexQueueDock key={`queue:${readingKey}`} task={selected}/>
+        <CodexQueueDock key={`queue:${readingKey}`} task={detailTask}/>
         {conversation && active && <CodexDispatchEntry
           scopeKey={JSON.stringify([selfMember, state?.self?.userRef, selectedTeamRef, readingKey])}
           mode={(selected.cloud ? !!selfMember && selected.cloud.ownerRef === selfMember
             : !!state?.self && selected.member.userRef === state.self.userRef)
             ? selected.cloud?.remote ? 'remote' : 'local' : 'readonly'}/>}
+        </>}
         </TeamCodexConversation>}
       </> : <div className="arkme-codex-reader-empty"><strong>Codex</strong><p>{tr(state?.cloud?.reviewingTasks ? '正在核对任务来源…' : isPersonal && state?.tasks.length===0 ? '暂无自己的同步任务' : '选择一项任务，继续阅读对话')}</p><small>{tr(isPersonal ? '这里展示自己已同步的任务。接入与同事任务请前往团队工作台。' : '按成员和项目查看已同步的输入与回答')}</small>{conversation && <p>{(!isPersonal || !!state?.tasks.length) && <button type="button" onClick={() => setPickerOpen(true)}>{tr('选择任务')}</button>}<button type="button" onClick={onManage}>{tr(isPersonal ? '团队工作台' : target?.fromTeam ? '返回团队' : '团队与同步管理')}</button></p>}</div>}
     </section>}

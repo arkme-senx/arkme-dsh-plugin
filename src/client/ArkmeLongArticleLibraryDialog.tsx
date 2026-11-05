@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeLongArticleBrowseScope, ArkmeSearchRecordItem, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -11,7 +11,7 @@ import { ArkmeLongArticleDialog } from './ArkmeLongArticleDialog.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr, useArkmeLocale } from './locale.js'
-import { openBrowseWindow, openLongArticleWindow, longArticleWindowBridge } from './long-article-window.js'
+import { openBrowseWindow, longArticleWindowBridge } from './long-article-window.js'
 import css from './long-article-library.css?inline'
 import { longArticleSearchTimelineItem } from './long-article-search-item.js'
 import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
@@ -52,8 +52,26 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
   const [visited, setVisited] = useState<ArkmeLongArticleBrowseScope[]>(['recent'])
   const [preparing, setPreparing] = useState(false), [error, setError] = useState('')
   const request = useRef<AbortController>()
-  const [creating, setCreating] = useState<ArkmeSourceItem>()
+  const [editorSource, setEditorSource] = useState<ArkmeSourceItem>()
+  const [selectedArticle, setSelectedArticle] = useState<ArkmeSearchRecordItem>()
   const [created, setCreated] = useState<ArkmeSearchRecordItem>()
+  // Both exits use the editor guard; only a native close should destroy the window.
+  const nativeClose = useRef(false)
+  const bridge = longArticleWindowBridge()
+  useEffect(() => {
+    if (standalone && !editorSource) return bridge?.onClose?.(() => close.current())
+  }, [standalone, editorSource, bridge])
+  const editorWindowMode = useMemo(() => standalone && editorSource ? {
+    displayName: editorSource.displayName,
+    verifyAccount: async () => {
+      if (!await bridge?.active()) throw new Error('账号已切换，请关闭后重新打开长文')
+      await arkmeAuthStore.refresh()
+      const current = arkmeAuthStore.getSnapshot().auth
+      if (`${current?.environment}:${current?.userId}` !== originalAccount.current || !await bridge?.active()) throw new Error('账号已切换，请关闭后重新打开长文')
+    },
+    subscribeClose: (listener: () => void) => bridge?.onClose?.(() => { nativeClose.current = true; listener() }) ?? (() => {}),
+    cancelClose: () => { nativeClose.current = false; void bridge?.cancelClose() },
+  } : undefined, [standalone, editorSource, bridge])
   const choose = (next: ArkmeLongArticleBrowseScope) => { setScope(next); setVisited(previous => previous.includes(next) ? previous : [...previous, next]) }
   useEffect(() => {
     mounted.current = true
@@ -72,17 +90,17 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
       const current = arkmeAuthStore.getSnapshot().auth
       if (`${current?.environment}:${current?.userId}` !== originalAccount.current) throw new Error('账号已切换，请重新打开长文')
       if (target.kind !== 'send_to_self' || !target.sourceRef) throw new Error('暂时无法读取发给自己，请重试')
-      if (standalone) {
-        if (!await openLongArticleWindow({ ...target, sourceKey: target.sourceKey ?? target.sourceRef }, undefined, true)) throw new Error('当前客户端不支持长文窗口')
-      } else setCreating(target)
+      nativeClose.current = false
+      setSelectedArticle(undefined)
+      setEditorSource(target)
     } catch (reason) { if (!controller.signal.aborted && mounted.current) setError(reason instanceof Error ? reason.message : '无法新建长文，请重试') }
     finally { if (request.current === controller) { request.current = undefined; if (mounted.current) setPreparing(false) } }
   }
-  const body = <div className="arkme-article-library-backdrop" data-native-window={standalone || undefined} data-arkme-notification-blocking-overlay="true" onMouseDown={event => { if (event.target === event.currentTarget && !creating) onClose() }}>
+  const body = <div className="arkme-article-library-backdrop" data-native-window={standalone || undefined} data-arkme-notification-blocking-overlay="true" onMouseDown={event => { if (event.target === event.currentTarget && !editorSource) onClose() }}>
     <style>{css}</style>
     <section ref={root} data-arkme-long-article-library role="dialog" aria-modal={standalone ? undefined : true} aria-label={tr('长文库')} tabIndex={-1}
       className="arkme-article-library" style={{ background: arkmeTheme.base, color: arkmeTheme.text }}
-      {...(creating ? { inert: '', 'aria-hidden': true } : {})}
+      {...(editorSource ? { inert: '', 'aria-hidden': true } : {})}
       onKeyDown={event => {
         if (event.defaultPrevented || !root.current?.contains(event.target as Node)) return
         if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose() }
@@ -95,7 +113,7 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
       }}>
       <header className="arkme-article-library-header"><h2>{tr('长文')}</h2>
         <button type="button" disabled={preparing} aria-busy={preparing} onClick={() => { void create() }}><Plus size={16} aria-hidden />{tr(preparing ? '准备中…' : '新建长文')}</button>
-        {!standalone && <button type="button" aria-label={tr('关闭长文库')} onClick={onClose}><X size={20} aria-hidden /></button>}
+        {!standalone && <ArkmeCloseButton type="button" aria-label={tr('关闭长文库')} onClick={onClose} />}
       </header>
       {error && <p className="arkme-article-library-error" role="alert" style={{ color: arkmeTheme.danger }}>{error}</p>}
       <div className="arkme-article-library-tabs" role="tablist" aria-label={tr('长文分类')}>
@@ -112,16 +130,19 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
         aria-labelledby={`${id}-${item.key}-tab`} className="arkme-article-library-panel" hidden={scope !== item.key}>
         <ArkmeLongArticleQuickView key={item.key} onChooseArticle={standalone ? item => {
           if (!item.targetSource) return
-          void openLongArticleWindow({ ...item.targetSource, sourceKey: item.targetSource.sourceKey ?? item.targetSource.sourceRef }, { mode: 'existing', item: longArticleSearchTimelineItem(item) }).catch(reason => setError(reason instanceof Error ? reason.message : '无法打开长文'))
+          nativeClose.current = false
+          setSelectedArticle(item)
+          setEditorSource(item.targetSource)
         } : undefined} scope={item.key} active={scope === item.key} scrollRoot={panels[item.key]} created={created} />
       </div>)}
     </section>
-    {creating && <ArkmeLongArticleDialog sourceRef={creating.sourceRef} overlayZIndex={10060} onClose={() => {
-      setCreating(undefined); requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>('.arkme-article-library-header button')?.focus())
+    {editorSource && <ArkmeLongArticleDialog sourceRef={editorSource.sourceRef} {...(selectedArticle ? { item: longArticleSearchTimelineItem(selectedArticle) } : {})} overlayZIndex={10060} windowMode={editorWindowMode} returnToLibrary={standalone === true} onClose={() => {
+      if (nativeClose.current) { onClose(); return }
+      setEditorSource(undefined); requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>('.arkme-article-library-header button')?.focus())
     }} onCreated={item => {
       setCreated({ recordUid: item.itemUid, ...(auth.auth?.userId !== undefined ? { recordOwnerUserId: auth.auth.userId } : {}), sourceKind: 1, routeTargetKind: 'record_detail',
         sendAtMillis: item.sendAtMillis, title: item.title ?? '', textContent: item.textContent, snippet: '', templateKind: 8, displayKind: 1,
-        ...(item.textFormat ? { textFormat: item.textFormat } : {}), sourceTitle: creating.displayName, targetSource: creating, media: [], files: [] })
+        ...(item.textFormat ? { textFormat: item.textFormat } : {}), sourceTitle: editorSource.displayName, targetSource: editorSource, media: [], files: [] })
       choose('recent'); arkmeUi.recordChanged()
     }} onUpdated={detail => { setCreated(previous => previous?.recordUid === detail.itemUid ? { ...previous, title: detail.title, textContent: detail.textContent } : previous); arkmeUi.recordChanged() }} />}
   </div>

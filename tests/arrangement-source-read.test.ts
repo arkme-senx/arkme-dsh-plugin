@@ -28,7 +28,7 @@ describe('saved arrangement source owner protocol', () => {
     const { read, host } = fixture()
     const signal = new AbortController().signal
     expect(await read(signal)).toMatchObject({ id: 'evidence-a', room_id: 'room-a', start_ms: 1200, text: '识别所依据的原句', persisted: true })
-    expect(host.runtime.authenticatedIntelligentPost).toHaveBeenLastCalledWith('/api/v1/arrangements/source/read', { uid: 'arr-a', evidence_id: 'evidence-a' }, expect.objectContaining({ userId: 11 }), signal, { lane: 'interactive-read', bypassCache: true })
+    expect(host.runtime.authenticatedIntelligentPost).toHaveBeenLastCalledWith('/api/v1/arrangements/source/read', { uid: 'arr-a', evidence_id: 'evidence-a', contract_version: 2 }, expect.objectContaining({ userId: 11 }), signal, { lane: 'interactive-read', bypassCache: true })
     expect(host.recovery.cached).not.toHaveBeenCalled()
   })
   it('uses the summary evidence quote rather than replacing it with the entire summary', async () => {
@@ -40,6 +40,7 @@ describe('saved arrangement source owner protocol', () => {
   it.each([
     ['id', 'another-evidence'], ['kind', 'agent'], ['role', 'supplement'], ['room_id', 'different-room'],
     ['start_ms', 1201], ['record_uid', 'injected-destination'], ['occurred_at', 99], ['text', 42],
+    ['team_conversation_uid','wrong-team'],['team_message_uid','wrong-message'],['team_side','external'],
   ])('rejects changed or malformed source field %s', async (key, value) => {
     const { source, read } = fixture(); source[key] = value
     await expect(read()).rejects.toMatchObject({ code: 'arrangement-source-contract-invalid' })
@@ -72,7 +73,7 @@ describe('saved arrangement source owner protocol', () => {
     await expect(read()).rejects.toMatchObject({ code: 'arrangement-source-missing' })
     expect(host.recovery.cached).not.toHaveBeenCalled()
   })
-  it.each([{ uid: 'different' }, { status: 4 }])('rejects changed arrangement ownership/status %j', async fields => {
+  it.each([{ uid: 'different' }, { status: 5 }, { status: 0 }])('rejects changed arrangement ownership/status %j', async fields => {
     const { detail, read, host } = fixture(); Object.assign(detail, fields)
     await expect(read()).rejects.toMatchObject({ code: 'arrangement-source-mismatch' })
     expect(host.runtime.authenticatedIntelligentPost).toHaveBeenCalledTimes(1)
@@ -99,4 +100,39 @@ describe('saved arrangement source owner protocol', () => {
     sourceEvidence.mockRejectedValue(new Error('network failed'))
     await expect(ArrangementSourceService.prototype.arrangementSourceRead.call(host, 'a', 'e')).rejects.toThrow('network failed')
   })
+})
+
+
+describe('G02 call access and location', () => {
+  it.each(['unlocated', 'ambiguous', 'version_changed', 'pending'])('keeps readable %s calls open without model text or timestamps', async quoteState => {
+    const {response, source, read} = fixture()
+    Object.assign(response, {contract_version:2, access_state:'readable', quote_state:quoteState, content:''})
+    source.text = ''
+    const evidence = await read()
+    expect(evidence).toMatchObject({room_id:'room-a',text:'',quoteState})
+    expect(evidence).not.toHaveProperty('locatedStartMs')
+  })
+  it('uses only the verified owner quote and fresh location', async () => {
+    const {response, source, read} = fixture()
+    source.text = ''
+    Object.assign(response, {contract_version:2,access_state:'readable',quote_state:'exact',content:'真实转写',quote:{text:'真实转写',start_ms:2500,end_ms:3000}})
+    expect(await read()).toMatchObject({text:'真实转写',quoteState:'exact',locatedStartMs:2500})
+  })
+  it.each([
+    {access_state:'forbidden'}, {quote_state:'guessed'}, {contract_version:3},
+    {quote_state:'exact'}, {quote:{text:'猜测原文',start_ms:0}}, {content:'模型改写'},
+  ])('rejects inconsistent v2 location %j', async invalid => {
+    const {response, source, read} = fixture()
+    source.text = ''
+    Object.assign(response, {contract_version:2,access_state:'readable',quote_state:'unlocated',content:''},invalid)
+    await expect(read()).rejects.toMatchObject({code:'arrangement-source-contract-invalid'})
+  })
+})
+
+it('reads a deleted arrangement source without restoring it and preserves owner denial',async()=>{
+ const {detail,response,read,host}=fixture();detail.status=4
+ expect(await read()).toMatchObject({id:'evidence-a',persisted:true})
+ response.state='unavailable';response.reason='原通话已删除'
+ await expect(read()).rejects.toMatchObject({code:'arrangement-source-unavailable',message:'原通话已删除'})
+ expect(host.runtime.authenticatedIntelligentPost.mock.calls.every(([path])=>path.endsWith('/detail')||path.endsWith('/source/read'))).toBe(true)
 })

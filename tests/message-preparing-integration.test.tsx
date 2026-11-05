@@ -168,7 +168,7 @@ describe('preparing production wiring', () => {
     const sidebar = readFileSync(new URL('../src/client/ArkmeSidebar.tsx', import.meta.url), 'utf8')
     expect(sidebar).toContain('const messagePreparing = useMessagePreparing({')
     expect(sidebar).toContain('enabled: activeConversation && activeRecordReeditComposer === undefined && !directAdmission.blocked')
-    expect(sidebar.includes('onInputActivity={messagePreparing.input}')).toBe(true)
+    expect(sidebar).toMatch(/onInputActivity=\{text => \{\s*messagePreparing\.input\(text\)/)
     expect(sidebar).toContain('if (sameTargetComposer()) messagePreparing.stop()')
     const submit = sidebar.slice(sidebar.indexOf('const send = async'), sidebar.indexOf('const updateComposerText ='))
     const normalSendStart = submit.indexOf('const targetSource = source')
@@ -185,8 +185,19 @@ describe('preparing production wiring', () => {
     expect(normalSend.indexOf('if (sameTargetComposer()) messagePreparing.stop()')).toBeGreaterThan(emptyGuard)
     expect(sidebar).toContain('<ArkmeMessagePreparingIndicator sourceKey={source.sourceKey} accountScope={authenticatedAccountKey} />')
     const atomicEdits = sidebar.slice(sidebar.indexOf('const insertMemberMentionAt'), sidebar.indexOf('const updateComposerRichTrigger'))
-    // Member, emoji, Bot-avatar, @all, Bot candidate, and hashtag edits.
-    expect(atomicEdits.match(/focusEditedComposer\((cursor|caretIndex)\)/g)).toHaveLength(6)
+    // Check each edit owner. An added business action must not invalidate an
+    // unrelated global call count (thought suggestions are also genuine edits).
+    for (const [start, end] of [
+      ['insertMemberMentionAt', 'insertEmoji'],
+      ['insertEmoji', 'insertMemberMention'],
+      ['insertBotMention', 'fillThoughtSuggestion'],
+      ['fillThoughtSuggestion', 'insertMentionCandidate'],
+      ['insertMentionCandidate', 'insertHashTagCandidate'],
+      ['insertHashTagCandidate', 'updateComposerRichTrigger'],
+    ]) {
+      const edit = sidebar.slice(sidebar.indexOf(`const ${start} =`), sidebar.indexOf(`const ${end} =`))
+      expect(edit, start).toMatch(/focusEditedComposer\((cursor|caretIndex)\)/)
+    }
     const botAvatarEdit = atomicEdits.slice(atomicEdits.indexOf('const insertBotMention'), atomicEdits.indexOf('const insertMentionCandidate'))
     expect(botAvatarEdit).toContain('focusEditedComposer(cursor)')
     const deletionStart = sidebar.indexOf('const caret = arkmeComposerDraftStore.deleteMentionAtSelection')

@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
@@ -6,7 +7,6 @@ import { Link } from '@phosphor-icons/react/dist/icons/Link'
 import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple'
 import { PaperPlaneTilt } from '@phosphor-icons/react/dist/icons/PaperPlaneTilt'
 import { Info } from '@phosphor-icons/react/dist/icons/Info'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import type { ArkmeLongArticleDetail, ArkmeMessageSnapshotDetail, ArkmeTimelineItem } from '../types.js'
 import type { ArkmeRecordDeletionResult } from '../record-deletion-contract.js'
@@ -69,12 +69,12 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     assertAccount()
     return current
   }
-  const openMenu = async () => {
+  const openMenu = () => {
     if (menu) { setMenu(undefined); return }
-    setBusy(true); setError('')
-    try { await prepare(); if (mounted.current) setMenu('main') }
-    catch (caught) { setError(caught instanceof Error ? caught.message : '请先完成发布') }
-    finally { if (mounted.current) setBusy(false) }
+    setError('')
+    // Opening the menu is read-only. Flush edits only when executing a content action.
+    try { assertAccount(); setMenu('main') }
+    catch (caught) { setError(caught instanceof Error ? caught.message : '请重新打开长文') }
   }
   const withCurrent = async (forward: boolean) => {
     setMenu(undefined); setBusy(true); setError('')
@@ -163,7 +163,7 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     {(panel === 'history' || panel === 'images') && <ArkmeConfirmDialog layout="picker" titleId="arkme-article-panel-title" title={panel === 'history' ? '编辑记录' : '导出长文'} busy={false} onClose={close}>
       <header data-arkme-article-subdialog style={{ position: 'sticky', top: 0, zIndex: 1, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: theme.base, borderBottom: `1px solid ${theme.border}` }}>
         <h3 style={{ margin: 0, fontSize: 16 }}>{panel === 'history' ? tr('编辑记录') : tr('导出长文')}</h3>
-        <button type="button" aria-label={tr('关闭长文操作弹窗')} disabled={busy} onClick={close} style={{ border: 0, background: 'transparent', color: theme.text, display: 'grid', placeItems: 'center', width: 30, height: 30 }}><X size={20}/></button>
+        <ArkmeCloseButton type="button" aria-label={tr('关闭长文操作弹窗')} disabled={busy} onClick={close} style={{ border: 0, background: 'transparent', color: theme.text, display: 'grid', placeItems: 'center', width: 30, height: 30 }} />
       </header>
       {panel === 'history' && ref && <div style={{ padding: '28px 20px 8px' }}><ArkmeRecordEditHistory sourceRef={sourceRef} messageActionRef={ref} {...(item ? { author: item } : {})}/></div>}
       {panel === 'images' && <div style={{ padding: '0 16px 16px' }}>

@@ -12,6 +12,15 @@ const CLIENT_EXTERNALS = [
 
 export default defineConfig([
   {
+    name: '@senguoyun/dsh-arkme/screenshot-editor',
+    entry: { 'screenshot-editor': 'src/client/screenshot-standalone.tsx' },
+    outDir: 'lib', format: 'iife', platform: 'browser', target: 'es2022',
+    fixedExtension: false, dts: false, clean: false, minify: true,
+    deps: { alwaysBundle: () => true, onlyBundle: ['react', 'react-dom', 'scheduler'] },
+    define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+    outputOptions: { codeSplitting: false, entryFileNames: 'screenshot-editor.js' },
+  },
+  {
     name: '@senguoyun/dsh-arkme',
     entry: {
       index: 'src/index.ts',
@@ -21,6 +30,8 @@ export default defineConfig([
       'local-session-gateway': 'src/local-session-gateway.ts',
       'local-session-runtime': 'src/local-session-runtime.ts',
       'local-session-store': 'src/local-session-store.ts',
+      'local-session-persistence': 'src/local-session-persistence.ts',
+      'local-session-attachments': 'src/local-session-attachments.ts',
       'plugin-updater-helper': 'src/plugin-updater-helper-cli.ts',
       'persistent-extension': 'src/extensions/persistent-runtime.ts',
       'bundle-runtime': 'src/extensions/bundle-runtime.ts',

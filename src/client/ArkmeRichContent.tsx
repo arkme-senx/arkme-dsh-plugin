@@ -1,3 +1,5 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
+import { TeamRepresentationBadge } from './TeamRepresentationBadge.js'
 import { useMessageTextSelectionTarget, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
 import { SelectedTextSelfNoteContent } from './SelectedTextSelfNoteContent.js'
 import { selectedTextNotePresentation } from '../selected-text-note.js'
@@ -834,11 +836,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
         [data-arkme-media-preview-actions] button:not(:disabled):hover { box-shadow: inset 0 0 0 30px rgba(255,255,255,.14); }
         [data-arkme-media-preview-actions] button:not(:disabled):active { box-shadow: inset 0 0 0 30px rgba(255,255,255,.20); }
       `}</style>
-      {!standalone && <button type="button" style={styles.previewClose} data-arkme-preview-close aria-label={tr("关闭预览")} title={tr("关闭预览")} onClick={onClose}>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-          <path d="M1.0804 2.81662C0.59579 2.33201 0.595791 1.5463 1.0804 1.06169C1.56501 0.577077 2.35072 0.577077 2.83533 1.06169L8.14213 6.36849L13.4489 1.06169C13.9335 0.577075 14.7193 0.577076 15.2039 1.06169C15.6885 1.5463 15.6885 2.33201 15.2039 2.81662L9.89707 8.12342L15.2225 13.4489C15.7071 13.9335 15.7071 14.7192 15.2225 15.2038C14.7379 15.6884 13.9522 15.6884 13.4676 15.2038L8.14213 9.87835L2.81666 15.2038C2.33205 15.6884 1.54634 15.6884 1.06173 15.2038C0.577121 14.7192 0.577121 13.9335 1.06173 13.4489L6.3872 8.12342L1.0804 2.81662Z" />
-        </svg>
-      </button>}
+      {!standalone && <ArkmeCloseButton type="button" style={styles.previewClose} data-arkme-preview-close aria-label={tr("关闭预览")} title={tr("关闭预览")} onClick={onClose} />}
       <div style={styles.previewStage}>
         {selected.kind === 'image'
           ? <div
@@ -1040,7 +1038,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} revision={version} onOpenDetail={onCallDetailOpen} />
   const selfQuote = selectedTextNotePresentation(item.textContent, item.localSelfQuote)
   if (selfQuote && item.status === 1 && item.textFormat !== 'markdown') return <div ref={selectionRef} data-arkme-message-content="message" data-arkme-content-presentation={presentation}>
-    <SelectedTextSelfNoteContent value={selfQuote} detail={presentation === 'detail'} />
+    <SelectedTextSelfNoteContent value={selfQuote} detail={presentation === 'detail'} recordUid={item.itemUid} />
   </div>
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
@@ -1065,6 +1063,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, item, so
     return <div ref={selectionRef} style={styles.sharedRecordingCard} data-arkme-shared-recording-card="true">
       <div style={styles.sharedRecordingTop}>
         <p style={styles.sharedRecordingTitle} title={arkmeEmojiPlainText(item.sharedRecording.title)}><ArkmeRichText text={item.sharedRecording.title} presentation="preview" /></p>
+        {item.representation && <TeamRepresentationBadge value={item.representation} />}
         {timeText !== '' && <span style={styles.sharedRecordingTime}>{timeText}</span>}
       </div>
       <p style={styles.sharedRecordingSummary}><ArkmeRichText text={item.sharedRecording.summary} presentation="preview" highlightMentions={highlightMentions} /></p>

@@ -168,3 +168,31 @@ it('locates a system event by its signed row identity, never by an unrelated rec
  expect(arkmeConversationTargetRow(host, target)).toBe(host.children[1])
  expect(arkmeConversationTargetRow(host, { ...target, itemUid: 'missing' })).toBeUndefined()
 })
+
+it('records deferred media heights without an extra React commit for measurement alone', async () => {
+  const { Profiler } = await import('react')
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('IntersectionObserver', class { observe() {}; disconnect() {} })
+  const resize: ResizeObserverCallback[] = []
+  vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {}; constructor(callback: ResizeObserverCallback) { resize.push(callback) } })
+  let height = 4000
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ height }) as DOMRect)
+  const commit = vi.fn()
+  function Fixture() {
+    const body = useRef<HTMLDivElement>(null)
+    const rows = Array.from({ length: 2000 }, (_, n) => ({ id: `row-${n}` }))
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}>
+      {rows.map(row => <li key={row.id}>{row.id}</li>)}
+    </WindowedTimelineRows></ul></div>
+  }
+  const host = document.createElement('div'); const root = createRoot(host)
+  try {
+    await act(async () => root.render(<Profiler id="timeline" onRender={commit}><Fixture /></Profiler>))
+    const before = commit.mock.calls.length
+    for (let n = 0; n < 50; n++) {
+      height += 20
+      await act(async () => resize.forEach(callback => callback([], {} as ResizeObserver)))
+    }
+    expect(commit.mock.calls.length).toBe(before)
+  } finally { await act(async () => root.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() }
+})

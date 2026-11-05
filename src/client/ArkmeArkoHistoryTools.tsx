@@ -1,3 +1,4 @@
+import { ArkoReplyManager } from './ArkoReplyManager.js'
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
@@ -34,7 +35,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
 }) {
   const calendarAnchor = useRef<HTMLButtonElement>(null), menuAnchor = useRef<HTMLButtonElement>(null), searchAnchor = useRef<HTMLButtonElement>(null), searchInput = useRef<HTMLInputElement>(null)
   const lifecycleGeneration = useSyncExternalStore(arkoLifecycleSync.subscribe, arkoLifecycleSync.snapshot, arkoLifecycleSync.snapshot)
-  const [open, setOpen] = useState<'calendar' | 'search' | 'menu'>()
+  const [open, setOpen] = useState<'calendar' | 'search' | 'menu' | 'replies'>()
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(emptyPage), [searching, setSearching] = useState(false), [searchError, setSearchError] = useState('')
   const [locationFeedback, setLocationFeedback] = useState<{ text: string; pending: boolean }>()
@@ -86,11 +87,12 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     locateController.current?.abort(); locateController.current = controller; setLocationFeedback({ text: tr('正在定位原消息…'), pending: true })
     try {
       const window = await callArkme<ArkmeArkoContextWindow>('arko.context', { messageRef: ref, before: 20, after: 20 }, controller.signal)
-      if (controller.signal.aborted) return
+      if (controller.signal.aborted) return false
       const anchor = window.items.find(item => item.messageRef === window.anchorMessageRef)
       if (!anchor) throw new Error('原消息已不可查看，请刷新后重试')
-      onLocate(window, anchor); setOpen(undefined); setLocationFeedback(undefined)
+      onLocate(window, anchor); setOpen(undefined); setLocationFeedback(undefined); return true
     } catch (error) { if (!controller.signal.aborted) setLocationFeedback({ text: failText(error), pending: false }) }
+    return false
   }
   const locateDay = async (date: string) => {
     locateController.current?.abort(); const controller = new AbortController(); locateController.current = controller
@@ -117,7 +119,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     if (result.coverage?.status !== 'complete' || !Array.isArray(result.daily_data)) throw new Error('日历读取不完整，请重试')
     return { days: result.daily_data.map(day => ({ bucketDate: day.date, count: day.count, hasRecords: day.has_items, protectedCount: 0 })) }
   }, [lifecycleGeneration])
-  const toggle = (next: 'calendar' | 'search' | 'menu') => { if (open === next) { setOpen(undefined); return }; if (next !== 'menu') { cancelLocation(); onOpenPanel() }; setOpen(next) }
+  const toggle = (next: 'calendar' | 'search' | 'menu' | 'replies') => { if (open === next) { setOpen(undefined); return }; if (next !== 'menu') { cancelLocation(); onOpenPanel() }; setOpen(next) }
   useSelectedMessageSearch(accountScope ? `arko:${accountScope}` : undefined, text => {
     cancelLocation(); setQuery(text); onOpenPanel(); setOpen('search')
     requestAnimationFrame(() => searchInput.current?.focus({ preventScroll: true }))
@@ -141,6 +143,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     <ArkmeConversationHeaderIconButton label={tr('按日期查看 Arko 对话')} buttonRef={calendarAnchor} hasPopup="dialog" expanded={open === 'calendar'} onClick={() => toggle('calendar')}><CalendarBlank size={24} aria-hidden /></ArkmeConversationHeaderIconButton>
     <ArkmeConversationHeaderIconButton label={tr('搜索 Arko 对话')} buttonRef={searchAnchor} hasPopup="dialog" expanded={open === 'search'} onClick={() => toggle('search')}><MagnifyingGlass size={24} aria-hidden /></ArkmeConversationHeaderIconButton>
     <ConversationActionsMenu anchor={menuAnchor} label={tr('更多 Arko 操作')} trigger={{ open: open === 'menu', onOpenChange: value => value ? toggle('menu') : setOpen(undefined) }} onClose={() => setOpen(undefined)} items={[
+      { id: 'reply-management', label: tr('回复管理'), icon: <RobotIcon size={20} />, disabled: !accountScope, invoke: () => toggle('replies') },
       conversationExportActionItem({ busy: exporting, processed: exportCount, invoke: () => { void exportMessages() } }),
       { id: 'new-context', label: tr('清除上下文'), icon: <ArrowsClockwiseIcon size={20} />, disabled: clearDisabled, invoke: () => { cancelLocation(); onClear() } },
       { id: 'capabilities', label: tr('{v0} 能干什么', { v0: name }), icon: <RobotIcon size={20} />, disabled, invoke: () => { cancelLocation(); onCapabilities(menuAnchor.current) } },
@@ -148,6 +151,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
     <ArkmeSelfCalendarPopover open={open === 'calendar'} anchor={calendarAnchor} accountScope={accountScope} scopeKey="arko-history"
       getReadingDate={getReadingDate} onClose={() => setOpen(undefined)} onSelectRecord={() => {}}
       index={{ loadMonth, loading: false, error: '', retry: () => {} }} onSelectIndexedDay={date => { void locateDay(date) }} />
+    {host.current && open === 'replies' && createPortal(<ArkoReplyManager key={accountScope} accountScope={accountScope} onClose={() => setOpen(undefined)}/>, host.current)}
     {host.current && open === 'search' && createPortal(<ArkmeDetailShell title={tr('搜索 Arko 对话')} label={tr('搜索 Arko 对话')} returnFocusRef={searchAnchor} onClose={() => { cancelLocation(); setOpen(undefined) }} bodyStyle={{ padding: '12px 16px' }}>
       <input ref={searchInput} type="search" aria-label={tr('搜索 Arko 关键词')} placeholder={tr('搜索提问和回复')} value={query} onChange={event => setQuery(event.target.value)}
         style={{ width: '100%', height: 36, boxSizing: 'border-box', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, padding: '0 10px', background: arkmeTheme.input, color: arkmeTheme.text, font: 'inherit' }} />

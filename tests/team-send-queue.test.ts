@@ -512,3 +512,24 @@ it('retains frozen private audio while a server lacks the complete property cont
  properties=true;await f.queue.retry(command.conversationRef,(await f.queue.list(command.conversationRef))[0]!.taskRef);await f.queue.recover();
  expect(f.published.size).toBe(1);
 });
+
+it('uploads document images once, resolves markdown refs and preserves the document card through a lost acknowledgement', async () => {
+  const f = await fixture(), file = await f.stage('document.png')
+  const command = input({ content: { title: '文档', text_content: `![图](arkme-local:${file.fileRef})`, template_kind: 2, display_kind: 1,
+    content_payload: { payload_kind: 2, schema_version: 1, text_format: 'markdown', text_state: 1 } }, fileRefs: [file.fileRef] })
+  f.setOnline(false); await f.queue.enqueue(command)
+  f.setOnline(true); f.loseAck(); await f.queue.recover()
+  f.restart(); vi.setSystemTime(Date.now() + 10000); await f.queue.recover()
+  expect(f.published.size).toBe(1)
+  expect(f.upload).toHaveBeenCalledTimes(1)
+  const bodies = f.execute.mock.calls.filter(([op]) => op === 'team.app.send').map(([, body]) => body)
+  expect(bodies.length).toBeGreaterThan(0)
+  for (const body of bodies) expect(body).toMatchObject({ clientUid: command.clientUid, content: { display_kind: 1, title: '文档', text_content: '![图](arkme-asset:asset-document.png)',
+    content_payload: { text_format: 'markdown', media_refs: [{ file_asset_uid: 'asset-document.png' }] } } })
+})
+
+it('admits a document body up to 40000 characters while retaining the normal message limit', async () => {
+  const f = await fixture(); f.setOnline(false)
+  await expect(f.queue.enqueue(input({ content: { title: '文档', text_content: '文'.repeat(40000), template_kind: 1, display_kind: 1 } }))).resolves.toMatchObject({ state: 'queued' })
+  await expect(f.queue.enqueue(input({ content: { text_content: '文'.repeat(20001), template_kind: 1 } }))).rejects.toMatchObject({ code: 'team-invalid_request' })
+})

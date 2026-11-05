@@ -62,6 +62,26 @@ function fixture(options: FixtureOptions = {}) {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ContactDirectoryService', () => {
+  it('selects registered contacts and recent private peers without opening chats, and binds selections to the viewer', async () => {
+    const f = fixture({
+      contacts: { items: [{ user_id: 88, remark: '同事备注' }, { user_id: 'pending-user' }], has_more: false },
+      groups: { items: [{ session: { chat_session_uid: 'recent-89', session_kind: 1 }, private_counterpart: { user_id: 89, display_name_snapshot: '最近聊天' } }], has_more: false },
+      profiles: new Map([[88, { nickname: '小林', jotmoId: 'lin' }]]),
+    })
+    const page = await f.service.groupCreationPeople()
+    expect(page).toMatchObject({ hasMore: false, incomplete: false })
+    expect(page.items.map(person => person.userId).sort()).toEqual([88, 89])
+    const person = page.items.find(person => person.userId === 88)!
+    expect(person.searchText).toContain('同事备注')
+    expect(person.searchText).toContain('小林')
+    const reads = f.runtime.authenticatedChatPost.mock.calls.length
+    await expect(f.service.resolveGroupCreationPerson(person.personRef)).resolves.toEqual({ userId: 88, displayName: '同事备注' })
+    expect(f.runtime.authenticatedChatPost).toHaveBeenCalledTimes(reads)
+    expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+    f.setSession({ ...session, userId: 8 })
+    await expect(f.service.resolveGroupCreationPerson(person.personRef)).rejects.toMatchObject({ code: 'directory-contact-ref-account-mismatch' })
+  })
+
   it('provides read-only team candidates with real identities, remarks and avatar presentation', async () => {
     const f = fixture({ contacts: { items: [{ user_id: 88, remark: '同事备注' }], has_more: false },
       profiles: new Map([[88, { nickname: '小林', jotmoId: 'lin', avatarUrl: 'https://photo.invalid' }]]) })

@@ -1,5 +1,6 @@
-import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 // @vitest-environment jsdom
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
+import { installArkoPendingHostMock } from './helpers/arko-pending-host.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -26,6 +27,7 @@ async function menuAction(label: string) {
 }
 const detail = () => host.querySelector('[role="dialog"][aria-label="消息详情"]')
 beforeEach(async () => {
+ arkoTimelineMemory.clear()
   arkoModelCache.clear()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('requestAnimationFrame', () => 0)
@@ -488,8 +490,8 @@ it('keeps model switching isolated from the open detail and preserves the draft'
   await click(bubble('完整回答'))
   const originalPanel = detail()
   await click(host.querySelector('footer [aria-label="选择模型"]')!)
-  const modal = document.querySelector('[role="menu"]')!
-  await click([...modal.querySelectorAll('button')].find(b => b.textContent?.includes('模型B'))!)
+  const modal = document.querySelector('.arkme-unified-model-panel')!
+  await click([...modal.querySelectorAll('[role="option"]')].find(b => b.textContent?.includes('模型B'))! as HTMLElement)
   expect((host.querySelector('[aria-label="发送"]') as HTMLButtonElement).disabled).toBe(true)
   await act(async () => { finish({ ...models, effectiveRouteKey: 'b' }) })
   expect(detail()).toBe(originalPanel)

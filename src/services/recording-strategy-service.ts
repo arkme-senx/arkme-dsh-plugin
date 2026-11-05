@@ -1,4 +1,4 @@
-import { recordingStrategy, type RecordingStrategyOptions, type RecordingStrategyPage, type RecordingStrategySources } from '../recording-strategy-contract.js'
+import { recordingStrategy, type RecordingComparisonAvailability, type RecordingStrategyOptions, type RecordingStrategyPage, type RecordingStrategySources } from '../recording-strategy-contract.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 
@@ -41,13 +41,21 @@ export class RecordingStrategyService {
       const { sessionId } = await this.refs.openSession(text(input.sessionRef))
       let after: string | undefined
       if (input.cursor) { const c = await this.refs.open(text(input.cursor)); if (c.kind !== 'sources' || c.sessionId !== sessionId) invalid(); after = identifier(c.after) }
-      const page = objectValue(await post('strategy-comparison/sources', { session_id: sessionId, ...(after ? { after } : {}) }))
+      const availabilityWindow = input.includeAvailability === true ? { include_availability: true, start_at: input.startAtMillis === undefined && input.endAtMillis === undefined ? 0 : integer(input.startAtMillis), end_at: input.startAtMillis === undefined && input.endAtMillis === undefined ? Number.MAX_SAFE_INTEGER : integer(input.endAtMillis) } : undefined
+      if (availabilityWindow && (availabilityWindow.end_at <= availabilityWindow.start_at || (availabilityWindow.end_at - availabilityWindow.start_at > 27 * 3600_000 && !(availabilityWindow.start_at === 0 && availabilityWindow.end_at === Number.MAX_SAFE_INTEGER)))) invalid()
+      const page = objectValue(await post('strategy-comparison/sources', { session_id: sessionId, ...(after ? { after } : {}), ...availabilityWindow }))
       const result: RecordingStrategySources = { items: await Promise.all(rows(page.items).map(async value => {
         const row = objectValue(value), sourceId = identifier(row.id)
         const startAtMillis = integer(row.start_at)
         const endAtMillis = row.end_at === undefined ? undefined : integer(row.end_at)
         if (endAtMillis !== undefined && endAtMillis <= startAtMillis) invalid()
-        return { sourceRef: await seal({ kind: 'source', sessionId, sourceId }), fileName: text(row.file_name), startAtMillis, ...(endAtMillis === undefined ? {} : { endAtMillis }) }
+        let availability: RecordingComparisonAvailability | undefined
+        if (row.availability !== undefined) {
+          const raw = objectValue(row.availability)
+          if (!['available', 'unavailable', 'unknown'].includes(String(raw.strategy)) || !['available', 'unavailable', 'unknown'].includes(String(raw.doubao))) invalid()
+          availability = { strategy: raw.strategy as RecordingComparisonAvailability['strategy'], doubao: raw.doubao as RecordingComparisonAvailability['doubao'], ...(raw.expires_at === undefined ? {} : { expiresAtMillis: integer(raw.expires_at) }) }
+        }
+        return { ...(availability ? { availability } : {}), sourceRef: await seal({ kind: 'source', sessionId, sourceId }), fileName: text(row.file_name), startAtMillis, ...(endAtMillis === undefined ? {} : { endAtMillis }) }
       })) }
       if (page.next) result.nextCursor = await seal({ kind: 'sources', sessionId, after: identifier(page.next) })
       return result

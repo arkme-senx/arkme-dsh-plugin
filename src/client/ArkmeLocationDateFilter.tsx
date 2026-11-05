@@ -3,8 +3,8 @@ import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { tr } from './locale.js'
 
-export function ArkmeLocationDateFilter({ date, lastDate, onChange }: {
-  date: string; lastDate: string; onChange(value: string): void
+export function ArkmeLocationDateFilter({ date, lastDate, onChange, scoped = false }: {
+  date: string; lastDate: string; onChange(value: string): void; scoped?: boolean
 }) {
   const [open, setOpen] = useState(false), [draft, setDraft] = useState(date)
   const apply = () => { if (draft) { onChange(draft); setOpen(false); trigger.current?.focus() } }
@@ -29,7 +29,7 @@ export function ArkmeLocationDateFilter({ date, lastDate, onChange }: {
         onChange={event => setDraft(event.currentTarget.value)} onInput={event => setDraft(event.currentTarget.value)}
         onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); apply() } }}/></label>
       <button type="button" disabled={!draft} onClick={apply}>{tr('查看位置')}</button>
-      {date ? <><button type="button" onClick={() => onChange('')}>{tr('查看所有位置')}</button><small>{tr('当前日期显示个人记录的设备位置')}</small></>
+      {date ? <><button type="button" onClick={() => onChange('')}>{tr(scoped ? '全部日期' : '查看所有位置')}</button><small>{tr(scoped ? '当前日期显示此范围内的全部位置' : '当前日期显示个人记录的设备位置')}</small></>
         : lastDate && <button type="button" onClick={() => onChange(lastDate)}>{tr('返回 {date}', { date: lastDate })}</button>}
     </div>}
   </div>

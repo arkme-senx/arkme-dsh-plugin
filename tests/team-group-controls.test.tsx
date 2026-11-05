@@ -4,15 +4,41 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { TeamGroupIdentityPicker, TeamGroupJoinPanel } from '../src/client/TeamGroupControls.js'
 import { AddMembersDrawer } from '../src/client/ArkmeGroupChatControls.js'
+import { TeamRepresentationBadge, TeamRepresentationAvatar } from '../src/client/TeamRepresentationBadge.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { canChooseTeamGroupIdentity, TEAM_GROUP_PENDING_TEXT, type TeamGroupContext } from '../src/team-group-contract.js'
 import type { ArkmeSourceItem, ArkmeTeam } from '../src/types.js'
 
-const { call } = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: call }))
+const { call, subscriptionState } = vi.hoisted(() => ({ call: vi.fn(), subscriptionState: vi.fn() }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: any[]) => {
+  if (operation === 'world.subscriptions' && args[0]?.action === 'state') {
+    const auth = arkmeAuthStore.getSnapshot().auth
+    return subscriptionState(...args, auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : '')
+  }
+  return call(operation, ...args)
+} }))
 const selection={teamRef:'sealed-team',membershipKind:'member' as const,membershipRevision:3,groupJoinAt:9}
 const teams: Array<ArkmeTeam & {representation:typeof selection}> = [{representation:selection, teamRef: 'sealed-team', jotmoId: 'our_team', name: '即我', currentUserRole: 'member', createdAtMillis: 1, updatedAtMillis: 1 }]
 const eligible: TeamGroupContext = { state: 'ready', membershipPolicy: 'independent', teams }
 const source: ArkmeSourceItem = { kind: 'group_chat', sourceRef: 'group-ref', sourceKey: 'chat:group-id', displayName: '产品反馈群', activeAtMillis: 1, unreadCount: 0 }
+
+it.each([true, false])('reuses the Team marker/link and original pure card compact=%s', async compact => {
+  const value = { name: '接待团队', jotmoId: 'team' }
+  arkmeAuthStore.setAuth({ status: 'authenticated', userId: 90, environment: 'prod' })
+  call.mockResolvedValue({ ...value, contact: { state: 'disabled' }, navigation: { kind: 'none' } })
+  const rowClick = vi.fn()
+  await mount(<div onClick={rowClick}><TeamRepresentationBadge value={value} compact={compact} /></div>)
+  const marker = host.querySelector<HTMLButtonElement>('button[aria-label="查看接待团队团队资料"]')!
+  expect(marker.title).toContain('代表接待团队发言')
+  expect(marker.textContent).toBe(compact ? '' : '接待团队')
+  expect(call).not.toHaveBeenCalled()
+  await act(async () => marker.click())
+  expect(rowClick).not.toHaveBeenCalled()
+  expect(call.mock.calls.map(([op]) => op)).toEqual(['team.app.public-card'])
+  expect(call.mock.calls[0]![1]).toEqual({ expectedAccountKey: 'prod:90', jotmoId: 'team' })
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('接待团队')
+  arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' })
+})
 let host: HTMLDivElement, root: Root
 const mount = async (element: React.ReactNode) => act(async () => root.render(element))
 function button(text: string) {
@@ -23,11 +49,21 @@ function button(text: string) {
 const click = async (label: string) => act(async () => button(label).click())
 function deferred() { let resolve!: (value: unknown) => void; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 beforeEach(() => {
+  subscriptionState.mockReset().mockResolvedValue({ subscribed: false })
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); call.mockReset()
   call.mockImplementation(async operation => operation === 'team.app.group.context' ? eligible : { state: 'backend_pending' })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
+afterEach(async () => {
+  await act(async () => root.unmount())
+  for (const [params, signal, account] of subscriptionState.mock.calls) {
+    expect(account).not.toBe('')
+    expect(params).toMatchObject({ accountKey: account, action: 'state' })
+    expect(signal).toBeInstanceOf(AbortSignal)
+  }
+  expect(call.mock.calls.filter(([op]) => op === 'world.subscriptions')).toHaveLength(0)
+  host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals()
+})
 
 it('requires an explicit team choice and does not add a personal member or fabricate a joined team', async () => {
   await mount(<TeamGroupJoinPanel accountKey="prod:90" source={source} />)
@@ -137,7 +173,49 @@ it('hides the menu after membership is removed on refresh, without polling', asy
 it('retains an explicitly selected identity when membership refresh fails',async()=>{
  call.mockRejectedValue(new Error('temporarily unavailable'));const onSelect=vi.fn()
  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" value={{team:teams[0]!,selection}} onSelect={onSelect}/>)
- expect(document.body.textContent).toContain('即我');expect(onSelect).not.toHaveBeenCalled()
- await click('即我');await act(async()=>document.querySelector<HTMLButtonElement>('[data-role-action="personal"]')!.click())
+ expect(document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!.title).toContain('即我');expect(onSelect).not.toHaveBeenCalled()
+ await click('我');await act(async()=>document.querySelector<HTMLButtonElement>('[data-role-action="personal"]')!.click())
  expect(onSelect).toHaveBeenCalledWith(undefined)
+})
+
+it('preserves the original compact self trigger and team menu wording after a real selection', async () => {
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" selfName="真实姓名" value={{team:teams[0]!,selection}} onSelect={vi.fn()} />)
+  const trigger=document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!
+  expect(trigger.textContent).toBe('我')
+  expect(trigger.title).toContain('即我')
+  expect(trigger.title).toContain('代表团队发言')
+  await act(async()=>trigger.click())
+  expect(document.querySelector('[data-role-action="team:our_team"]')?.textContent).toContain('我 · 即我团队')
+  expect(document.querySelector('[data-role-action="team:our_team"]')?.textContent).not.toContain('真实姓名')
+})
+it('preserves the explicit retry action without clearing a frozen selected identity', async () => {
+  call.mockRejectedValue(new Error('读取失败'))
+  const onSelect=vi.fn()
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" value={{team:teams[0]!,selection}} onSelect={onSelect}/>)
+  expect(button('重试')).toBeDefined()
+  call.mockResolvedValue(eligible)
+  await click('重试')
+  expect(onSelect).not.toHaveBeenCalled()
+  expect(document.querySelector('[role="status"]')).toBeNull()
+  expect(document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!.textContent).toBe('我')
+})
+
+it('decorates the existing avatar with one corner marker and keeps personal avatars unchanged', async () => {
+  await mount(<TeamRepresentationAvatar value={{name:'团队',jotmoId:'team'}}><span data-personal-avatar>作者</span></TeamRepresentationAvatar>)
+  expect(host.querySelector('[data-personal-avatar]')?.textContent).toBe('作者')
+  expect(host.querySelectorAll('[data-arkme-team-representation="marker"]')).toHaveLength(1)
+  expect(host.querySelector('[data-arkme-team-representation="label"]')).toBeNull()
+  await mount(<TeamRepresentationAvatar><span data-personal-avatar>作者</span></TeamRepresentationAvatar>)
+  expect(host.querySelector('[data-personal-avatar]')?.textContent).toBe('作者')
+  expect(host.querySelector('[data-arkme-team-representation]')).toBeNull()
+})
+
+it('Team marker keyboard activation does not also select its enclosing extension row', async () => {
+  const onRowKeyDown = vi.fn()
+  await mount(<div onKeyDown={onRowKeyDown}><TeamRepresentationBadge value={{name:'团队',jotmoId:'team'}} compact /></div>)
+  const marker = host.querySelector('button')!
+  for (const key of ['Enter',' ']) await act(async () => marker.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true})))
+  expect(onRowKeyDown).not.toHaveBeenCalled()
+  await act(async () => marker.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})))
+  expect(onRowKeyDown).toHaveBeenCalledTimes(1)
 })

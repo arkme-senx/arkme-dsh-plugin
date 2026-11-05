@@ -46,6 +46,7 @@ function sameBot(left: ArkmeBotSummary | undefined, right: ArkmeBotSummary | und
 }
 
 export interface ArkmeUiState {
+  arrangementTargetRef?: string | undefined
   composerFocusRevision?: number
   authRevision: number
   chatRevision: number
@@ -259,10 +260,10 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'calls' })
   }
 
-  showArrangements(): void {
+  showArrangements(arrangementTargetRef?: string | undefined): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
-    this.publish({ ...rest, mode: 'arrangements' })
+    this.publish({ ...rest, mode: 'arrangements', arrangementTargetRef })
   }
 
   showCalendar(): void {
@@ -313,8 +314,9 @@ export class ArkmeUiController {
   showTeamWorld(target: TeamWorldTarget): void {
     const jotmoId = target.jotmoId.trim(), name = target.name.trim()
     if (!jotmoId || jotmoId.length > 128 || !name) throw new TypeError('团队世界身份无效')
-    this.showWorld()
-    this.publish({ ...this.state, worldTeamTarget: { ...target, jotmoId, name } })
+    if (this.state.mode !== 'world') this.showWorld()
+    const { worldTarget: _target, ...rest } = this.state
+    this.publish({ ...rest, worldTeamTarget: { ...target, jotmoId, name } })
   }
 
   backFromWorld(): void {
@@ -323,10 +325,20 @@ export class ArkmeUiController {
       this.showContacts()
       return
     }
+    if (this.state.mode === 'world' && this.state.worldTeamTarget) {
+      const { worldTeamTarget: _team, ...rest } = this.state
+      this.publish(rest)
+      return
+    }
     const target = this.state.worldTarget
     if (this.state.mode === 'world' && target !== undefined && 'contactRef' in target) {
       arkmeContactsTab.select({ kind: 'contact', contactRef: target.contactRef })
       this.showContacts()
+      return
+    }
+    if (this.state.mode === 'world' && target) {
+      const { worldTarget: _target, ...rest } = this.state
+      this.publish(rest)
       return
     }
     this.showWorld()
@@ -676,6 +688,7 @@ export class ArkmeUiController {
       && next.recordingTarget?.revision === this.state.recordingTarget?.revision
       && next.searchTarget?.revision === this.state.searchTarget?.revision
       && next.searchTarget?.query === this.state.searchTarget?.query
+      && next.arrangementTargetRef === this.state.arrangementTargetRef
       && next.extensionShareRef === this.state.extensionShareRef
       && next.extensionShareAction === this.state.extensionShareAction
       && next.extensionDetailId === this.state.extensionDetailId
@@ -704,4 +717,4 @@ export class ArkmeUiController {
 }
 
 export const arkmeUi = new ArkmeUiController()
-export type ArkmeSettingsSection = 'arkme-account' | 'arkme-usage' | 'arkme-data'
+export type ArkmeSettingsSection = 'arkme-account' | 'arkme-models' | 'arkme-usage' | 'arkme-data'

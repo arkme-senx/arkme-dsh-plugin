@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { longArticleWindowBridge } from './long-article-window.js'
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { ArticleAutoPublisher } from './article-auto-publisher.js'
@@ -64,6 +65,7 @@ export interface ArkmeLongArticleDialogProps {
     cancelClose: () => void
   } | undefined
   item?: Pick<ArkmeTimelineItem, 'itemUid' | 'title' | 'textContent' | 'sendAtMillis' | 'recordDurationMillis' | 'editDurationMillis' | 'messageActionRef' | 'textFormat' | 'contentBlocks' | 'recordOwnerUserId'> | undefined
+  returnToLibrary?: boolean
   overlayZIndex?: number
   initialDirectoryPage?: import('../types.js').ArkmeRecordSearchResult | undefined
   onClose: () => void
@@ -127,7 +129,7 @@ export function ArkmeLongArticleDialog(props: ArkmeLongArticleDialogProps) {
       {...props} sourceRef={selection.sourceRef} item={selection.item} onClose={onClose} onUpdated={onUpdated} windowMode={windowMode} workspace={workspace} />} />
 }
 
-function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, overlayZIndex, onClose, onCreated, onUpdated, onDeleted, onPrepared, sendOnConfirm, windowMode, workspace }: ArkmeLongArticleDialogProps & { workspace?: ArticleWorkspaceFrame }) {
+function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, overlayZIndex, onClose, onCreated, onUpdated, onDeleted, onPrepared, sendOnConfirm, windowMode, workspace, returnToLibrary }: ArkmeLongArticleDialogProps & { workspace?: ArticleWorkspaceFrame }) {
   useArkmeLocale()
   const { notice: imageNotice, showNotice: showImageNotice } = useArkmeFileActionNotice(5000)
   const messageActionRef = useRef(item?.messageActionRef)
@@ -365,8 +367,8 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
       void (async () => {
         try {
           if (latestPublication.current.dirty) await saveDraft()
-          // Incomplete new articles remain recoverable drafts rather than invalid empty records.
-          if (latestPublication.current.dirty && (!creating || (titleRef.current.trim() && textRef.current.trim()))) await publisher.current!.flush()
+          // Incomplete edits, including cleared existing articles, remain recoverable drafts.
+          if (latestPublication.current.dirty && titleRef.current.trim() && textRef.current.trim()) await publisher.current!.flush()
           skipUnmountSaveRef.current = true; closeReadRef.current()
         } catch (caught) { setError(errorMessage(caught)); setPublicationFailed(true); workspace?.onLeaveFailed(); windowMode?.cancelClose() }
         finally { closingDraftRef.current = false; setClosingDraft(false) }
@@ -493,12 +495,12 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
           sendAtMillis: Date.now(), updateAtMillis: Date.now(), version: 1, editable: true,
           recordDurationMillis: duration, editDurationMillis: 0, thinkingDurationMillis: duration }
         // Detail hydration is best effort after a confirmed create. Never create it a second time.
-        updated = await callArkme<ArkmeLongArticleDetail>('source.long-article.detail', { sourceRef, itemUid: result.itemUid }).catch(() => undefined) ?? updated
+        updated = await callArkme<ArkmeLongArticleDetail>('source.long-article.detail', { sourceRef, itemUid: result.itemUid, ...(result.messageActionRef ? { messageActionRef: result.messageActionRef } : {}) }).catch(() => undefined) ?? updated
         const created: ArkmeTimelineItem = { itemUid: result.itemUid, senderName: '我', isMe: true, sendAtMillis: updated.sendAtMillis,
           title: updated.title, textContent: updated.textContent, textFormat: format, ...(updated.contentBlocks ? { contentBlocks: updated.contentBlocks } : {}),
           status: result.status, templateKind: 8, displayKind: 1, version: 1, recordVersion: updated.version,
-          recordDurationMillis: duration, editDurationMillis: 0, ...(result.messageActionRef ? { messageActionRef: result.messageActionRef } : {}), ...(result.sequence === undefined ? {} : { sequence: result.sequence }) }
-        updated.actionItem ??= created
+          recordDurationMillis: duration, editDurationMillis: 0, ...(result.messageActionRef ? { messageActionRef: result.messageActionRef } : {}), ...(result.sequence === undefined ? {} : { sequence: result.sequence }), ...updated.actionItem }
+        updated.actionItem = created
         baseVersionRef.current = updated.version
         publishedDetail.current = updated; setDetail(updated)
         const receipt = Promise.resolve().then(() => onCreated?.(created)).catch(() => showImageNotice({ kind: 'error', message: '长文已发布，列表更新失败，请重新打开核对' }))
@@ -589,14 +591,14 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
 
   return <div style={{ ...styles.overlay, ...(overlayZIndex === undefined ? {} : { zIndex: overlayZIndex }), ...(windowMode ? { padding: 0, background: theme.base } : {}), ...(workspace ? { position: 'relative', inset: 'auto', display: 'flex', height: '100%', minHeight: 0, width: '100%', padding: 0, zIndex: 'auto', background: 'transparent' } : {}) }} role={workspace ? 'region' : 'dialog'} aria-modal={windowMode || workspace ? undefined : true} aria-label={creating ? '写长文' : '长文详情'} onClick={event => { event.stopPropagation() }} onMouseDown={event => { if (event.target === event.currentTarget) requestClose() }}>
     <article style={{ ...styles.dialog, ...(windowMode || workspace ? { width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderRadius: 0, boxShadow: 'none', background: theme.base } : {}) }} data-arkme-long-article-dialog={creating ? 'create' : editing ? 'edit' : 'detail'}>
-      {windowMode && <div data-arkme-article-window-toolbar style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px 32px', borderBottom: `1px solid ${theme.border}` }}><span style={{ flex: 1, minWidth: 0, color: theme.secondary, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{creating ? tr('发送到：') : tr('所属会话：')}{windowMode.displayName}</span>{editing && manualCompose && publishAction}</div>}
+      {windowMode && <div data-arkme-article-window-toolbar style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px 32px', borderBottom: `1px solid ${theme.border}` }}>{returnToLibrary && <button type="button" data-arkme-feedback="neutral" style={styles.action} disabled={closingDraft} onClick={requestClose}>← {tr('返回')}</button>}<span style={{ flex: 1, minWidth: 0, color: theme.secondary, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{creating ? tr('发送到：') : tr('所属会话：')}{windowMode.displayName}</span>{editing && manualCompose && publishAction}</div>}
       <header style={{ ...styles.header, ...(windowMode && editing ? { paddingBottom: 12 } : {}), ...(workspace ? { display: 'flex', alignItems: 'flex-start', gap: 10, padding: '20px 24px 14px' } : {}) }}>
         {workspace?.leading}
         <div style={workspace ? { flex: 1, minWidth: 0 } : undefined}>{editing
           ? <input autoFocus style={styles.titleInput} value={title} maxLength={MAX_TITLE_LENGTH} placeholder={tr("请输入标题")} aria-label={tr("长文标题")} disabled={(manualCompose && submitting) || closingDraft || closePrompt} readOnly={accountChanged} onCompositionStart={() => { composing.current = true; setCompositionEpoch(value => value + 1) }} onCompositionEnd={() => { composing.current = false; setCompositionEpoch(value => value + 1) }} onChange={event => { changeRevision.current++; titleRef.current = event.target.value; setDraftState('unsaved'); setTitle(event.target.value) }} />
           : <h2 style={styles.titleRead}><ArkmeRichText text={titleValue || '无标题长文'} presentation="preview" /></h2>}</div>
         {workspace ? workspace.renderTrailing(moreActions) : moreActions}
-        {!windowMode && !workspace && <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭长文")} disabled={closingDraft} onClick={requestClose}>×</button>}
+        {!windowMode && !workspace && <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭长文")} disabled={closingDraft} onClick={requestClose} />}
       </header>
       <div style={styles.metaRow}>
         {!creating && sendAt > 0 && <span style={styles.meta}>▦ {formatDate(sendAt)}</span>}
@@ -645,7 +647,7 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
       }} style={{ position: 'relative', width: 'min(420px, 90vw)', borderRadius: 16, padding: 24, background: theme.base, color: theme.text, boxShadow: theme.shadow }}>
         <h3 style={{ margin: '0 0 12px', paddingRight: 32, fontSize: 18 }}>{tr('是否暂存草稿')}</h3>
-        <button autoFocus type="button" data-arkme-feedback="neutral" aria-label={tr('关闭草稿确认弹窗')} style={{ ...styles.close, top: 18, right: 18 }} disabled={closingDraft} onClick={() => { setClosePrompt(false); windowMode?.cancelClose() }}>×</button>
+        <ArkmeCloseButton autoFocus type="button" data-arkme-feedback="neutral" aria-label={tr('关闭草稿确认弹窗')} style={{ ...styles.close, top: 18, right: 18 }} disabled={closingDraft} onClick={() => { setClosePrompt(false); windowMode?.cancelClose() }} />
         <p style={{ color: theme.secondary, fontSize: 14 }}>{tr(accountChanged ? '账号已切换，无法保存；请保留窗口或复制内容后再关闭' : '保存草稿后，可以下次继续编辑。')}</p>
         {error && <p role="alert" style={{ color: theme.danger, fontSize: 13 }}>{error}</p>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>

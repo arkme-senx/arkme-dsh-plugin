@@ -4,6 +4,7 @@ const english: Record<string,string> = {
   '已开通·暂无对话': 'Sync enabled · No conversations yet',
   '已暂停同步': 'Sync paused',
   '已关闭同步': 'Sync disabled',
+  '同步设置尚未确认': 'Sync settings not yet confirmed',
   '同步状态暂不可用': 'Sync status unavailable',
   '状态获取失败': 'Could not load status',
   '正在获取同步状态…': 'Loading sync status…',

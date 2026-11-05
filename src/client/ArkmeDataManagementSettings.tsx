@@ -154,7 +154,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
         confirmLabel={tr('确认恢复')} busyLabel={tr('正在恢复…')} busy={recovering} error={tr(error)}
         onClose={() => setConfirm(undefined)} onConfirm={() => { void recover() }}
       ><ArkmeConfirmDialogPreview>{confirm.title || confirm.text.slice(0, 80) || tr('无文字记录')}</ArkmeConfirmDialogPreview></ArkmeConfirmDialog>}
-      {page === 'export' && <ArkmeRecordExportPanel scope={scope} preflight={preflight} loading={loading} onRefresh={() => setRevision(value => value + 1)} />}
+      {page === 'export' && <ArkmeRecordExportPanel key={scope} scope={scope} preflight={preflight} loading={loading} onRefresh={() => setRevision(value => value + 1)} />}
     </>}
   </section>
 }

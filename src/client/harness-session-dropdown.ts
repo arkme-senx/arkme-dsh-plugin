@@ -3,6 +3,7 @@ import { CONVERSATION_MENU_COLORS, CONVERSATION_MENU_LAYOUT, CONVERSATION_MENU_S
 import { conversationMenuPosition } from './conversation-menu-layer.js'
 import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.js'
 import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
+import { HARNESS_SETTINGS_OPEN, HARNESS_SETTINGS_READY } from './harness-settings.js'
 
 const PREFIX = 'data-arkme-session-'
 const HEADER = '[data-slot="conversation.session.header"] > header, header:has([data-conversation-header-leading])'
@@ -55,7 +56,7 @@ function compactTools(value: Shell): Array<[HTMLElement, string]> {
   const heading = header.firstElementChild as HTMLElement | null
   if (!searchArea || !actions || searchArea === actions || !heading || heading.tagName !== 'SPAN'
     || !header.querySelector('[data-slot="sidebar.workspaces.directoryFlow"]')
-    || [...actions.querySelectorAll('button')].some(button => ![value.copy.view, value.copy.add].some(label => label === button.getAttribute('aria-label')))) return []
+    || [...actions.querySelectorAll('button')].some(button => !button.hasAttribute(PREFIX + 'settings') && ![value.copy.view, value.copy.add].some(label => label === button.getAttribute('aria-label')))) return []
   return [[header, 'tools-header'], [heading, 'tools-label'], [searchArea, 'tools-search'], [actions, 'tools-actions']]
 }
 
@@ -127,6 +128,30 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   identity.setAttribute('role', 'heading')
   identity.setAttribute('aria-level', '2')
   const trigger = doc.createElement('button')
+  const settings = doc.createElement('button')
+  settings.type = 'button'
+  mark(settings, 'settings')
+  const gear = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  gear.setAttribute('viewBox', '0 0 24 24')
+  gear.setAttribute('width', '18')
+  gear.setAttribute('height', '18')
+  gear.setAttribute('fill', 'none')
+  gear.setAttribute('stroke', 'currentColor')
+  gear.setAttribute('stroke-width', '1.6')
+  gear.setAttribute('aria-hidden', 'true')
+  const gearPath = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+  gearPath.setAttribute('d', 'M9.5 3h5l.6 2.4 2 .9 2.2-.7 2.5 4.3-1.7 1.7v2.3l1.7 1.7-2.5 4.3-2.2-.7-2 .9-.6 2.4h-5l-.6-2.4-2-.9-2.2.7-2.5-4.3 1.7-1.7v-2.3L2.2 9.9l2.5-4.3 2.2.7 2-.9L9.5 3Z')
+  const gearCircle = doc.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  gearCircle.setAttribute('cx', '12')
+  gearCircle.setAttribute('cy', '12.5')
+  gearCircle.setAttribute('r', '3.2')
+  gear.append(gearPath, gearCircle)
+  settings.append(gear)
+  settings.addEventListener('click', () => {
+    close()
+    trigger.focus({ preventScroll: true })
+    doc.dispatchEvent(new win.Event(HARNESS_SETTINGS_OPEN))
+  })
   trigger.type = 'button'
   trigger.setAttribute('aria-haspopup', 'dialog')
   trigger.setAttribute('aria-expanded', 'false')
@@ -191,6 +216,9 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
       display: flex !important; align-items: center; gap: 4px; max-width: none !important;
       opacity: 1 !important; visibility: visible !important; transform: none !important;
     }
+    [${PREFIX}settings] { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+    [${PREFIX}settings]:hover { background: var(--dsw-alias-interactive-bg-hover); }
+    [${PREFIX}settings]:disabled { opacity: .45; cursor: default; }
     [${PREFIX}anchor] { display: inline-flex; width: max-content; min-width: 0; max-width: 100%; }
     /* The selected row's own status dot, mirrored beside the fixed title. Empty
        when the session has no status, so the title keeps its full width. */
@@ -280,6 +308,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   }
   function restore() {
     close()
+    settings.remove()
     stopScrollbars?.(); stopScrollbars = undefined; scrollList = undefined
     for (const cleanup of rowFocusCleanups.values()) cleanup()
     for (const [node, key] of toolbarMarks) node.removeAttribute(PREFIX + key)
@@ -364,10 +393,17 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     for (const [node, key] of toolbarMarks) mark(node, key)
     const tools = toolbarMarks.find(([, key]) => key === 'tools-actions')?.[0]
     if (tools) {
+      const settingsLabel = next.copy.expand === 'Open sidebar' ? 'DeepSeek Harness settings' : 'DeepSeek Harness 设置'
+      if (settings.getAttribute('aria-label') !== settingsLabel) settings.setAttribute('aria-label', settingsLabel)
+      if (settings.title !== settingsLabel) settings.title = settingsLabel
+      const settingsPending = !doc.documentElement.hasAttribute(HARNESS_SETTINGS_READY)
+      if (settings.disabled !== settingsPending) settings.disabled = settingsPending
+      if (settings.parentElement !== tools) tools.append(settings)
       mark(next.root, 'compact-tools')
       const count = tools.querySelectorAll('button').length
       variable(next.root, '--arkme-session-tools-width', `${count * 28 + Math.max(0, count - 1) * 4}px`)
     } else {
+      settings.remove()
       next.root.removeAttribute(PREFIX + 'compact-tools')
       next.root.style.removeProperty('--arkme-session-tools-width')
     }
@@ -549,8 +585,8 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     }
   }
   const observer = new win.MutationObserver(schedule)
-  observer.observe(doc.body, { childList: true, subtree: true, characterData: true, attributes: true,
-    attributeFilter: ['class', 'style', 'aria-hidden', 'aria-selected', 'disabled', 'data-slot', 'data-state'] })
+  observer.observe(doc.documentElement, { childList: true, subtree: true, characterData: true, attributes: true,
+    attributeFilter: ['class', 'style', 'aria-hidden', 'aria-selected', 'disabled', 'data-slot', 'data-state', HARNESS_SETTINGS_READY] })
   doc.addEventListener('pointerdown', pointer, true)
   doc.addEventListener('click', click)
   doc.addEventListener('keydown', key)

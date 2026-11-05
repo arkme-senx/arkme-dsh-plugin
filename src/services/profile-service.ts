@@ -1,3 +1,4 @@
+import { PUBLIC_PERSON_FRESH_MS, publicPersonSnapshot, type ArkmePublicProfile, type PublicPersonSnapshot } from '../public-person-cache.js'
 import { measureReaction } from '../reaction-host-diagnostics.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -17,15 +18,7 @@ import type {
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
-export interface ArkmePublicProfile {
-  userId: number
-  displayName: string
-  nickname: string
-  accountName?: string
-  avatarUrl?: string
-  avatarFallback?: ArkmeGroupAvatarFallback
-  arkmeId?: string
-}
+export type { ArkmePublicProfile } from '../public-person-cache.js'
 
 export interface ArkmePublicAvatarPresentation {
   avatarRef?: string
@@ -39,12 +32,13 @@ export interface ArkmeProfileImageRefPayload {
 }
 
 interface CacheEntry<T> {
+  fetchedAtMillis?: number
   value: T
   expiresAtMillis: number
 }
 
 const PROFILE_CACHE_TTL_MS = 60_000
-const PUBLIC_PROFILE_CACHE_TTL_MS = 60_000
+const PUBLIC_PROFILE_CACHE_TTL_MS = PUBLIC_PERSON_FRESH_MS
 const PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS = 30_000
 const PUBLIC_PROFILE_CACHE_MAX_ENTRIES = 4_096
 const PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS = 10 * 60 * 1000
@@ -183,6 +177,10 @@ function trustedSignedImageUrl(environment: ArkmeEnvironment, raw: string): URL 
 export class ProfileService {
   private readonly profileCache = new Map<number, CacheEntry<ArkmeUserProfileSnapshot>>()
   private readonly profileInFlight = new Map<number, Promise<ArkmeUserProfileSnapshot>>()
+  private publicProfileGeneration = 0
+  private publicReadStamp = 0
+  private readonly activePublicReads = new Set<{ viewer: number; targets: ReadonlySet<number>; obsolete: boolean }>()
+  private readonly publicInvalidations = new Map<string, Promise<void>>()
   private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
   private readonly publicProfileAvatarCache = new Map<string, { avatarUrl: string; expiresAtMillis: number }>()
   private readonly avatarRevisions = new Map<number, number>()
@@ -191,6 +189,8 @@ export class ProfileService {
   constructor(private readonly runtime: ServiceRuntime) {}
 
   invalidate(userId?: number): void {
+    for (const viewer of userId === undefined ? new Set([...this.activePublicReads].map(read => read.viewer)) : [userId]) this.detachPublicRequests(viewer)
+    this.publicProfileGeneration += 1
     if (userId === undefined) {
       this.profileCache.clear()
       this.profileInFlight.clear()
@@ -198,6 +198,7 @@ export class ProfileService {
       this.publicProfileAvatarCache.clear()
       return
     }
+    void this.runtime.stateStore?.clearPublicPeople?.(this.runtime.config.environment, userId).catch(() => undefined)
     this.profileCache.delete(userId)
     this.profileInFlight.delete(userId)
     const prefix = `${String(userId)}:`
@@ -214,10 +215,63 @@ export class ProfileService {
     return undefined
   }
 
-  invalidatePublicProfile(viewerUserId: number, targetUserId: number): void {
-    const key = `${String(viewerUserId)}:${String(targetUserId)}`
+  async invalidatePublicProfile(viewerUserId: number, targetUserId: number): Promise<void> {
+    const key = `${viewerUserId}:${targetUserId}`
+    this.detachPublicRequests(viewerUserId)
+    for (const read of this.activePublicReads) {
+      if (read.viewer === viewerUserId && read.targets.has(targetUserId)) read.obsolete = true
+    }
     this.publicProfileAvatarCache.delete(key)
     this.publicProfileCache.delete(key)
+    const previous = this.publicInvalidations.get(key)
+    const clearing = (async () => {
+      await previous
+      await this.runtime.stateStore?.clearPublicPeople?.(this.runtime.config.environment, viewerUserId, targetUserId)
+    })().catch(() => undefined)
+    this.publicInvalidations.set(key, clearing)
+    try { await clearing }
+    finally { if (this.publicInvalidations.get(key) === clearing) this.publicInvalidations.delete(key) }
+  }
+
+  private detachPublicRequests(viewer: number): void {
+    if (!this.runtime.invalidateOwnerRead) return
+    // The runtime owns canonical keys and both transport pools. Existing
+    // unrelated consumers finish normally; new reads use a fresh flight.
+    this.runtime.invalidateOwnerRead(this.runtime.requestScope(viewer),
+      `${this.runtime.config.authBaseUrl.replace(/\/+$/, '')}/api/v1/auth/get-public-users-by-ids`)
+  }
+
+  private async withPublicRead<T>(viewer: number, targets: readonly number[], signal: AbortSignal | undefined, operation: (assertCurrent: () => void) => Promise<T>): Promise<T> {
+    const generation = this.publicProfileGeneration
+    const read = { viewer, targets: new Set(targets), obsolete: false }
+    const assertCurrent = () => {
+      signal?.throwIfAborted()
+      if (read.obsolete || generation !== this.publicProfileGeneration) throw new ArkmePluginError('public-profile-obsolete', '资料已变化，请重试', true, 409)
+    }
+    this.activePublicReads.add(read)
+    try {
+      await Promise.all(targets.map(target => this.publicInvalidations.get(`${viewer}:${target}`)))
+      assertCurrent()
+      const result = await operation(assertCurrent)
+      assertCurrent()
+      return result
+    } finally { this.activePublicReads.delete(read) }
+  }
+
+  private cachePublicProfile(key: string, entry: CacheEntry<ArkmePublicProfile | null>): void {
+    this.publicProfileCache.set(key, entry)
+    while (this.publicProfileCache.size > PUBLIC_PROFILE_CACHE_MAX_ENTRIES) {
+      this.publicProfileCache.delete(this.publicProfileCache.keys().next().value!)
+    }
+  }
+
+  private cachePublicProfileAvatar(key: string, avatarUrl?: string): void {
+    this.publicProfileAvatarCache.delete(key)
+    if (avatarUrl === undefined) return
+    this.publicProfileAvatarCache.set(key, { avatarUrl, expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS })
+    while (this.publicProfileAvatarCache.size > PUBLIC_PROFILE_CACHE_MAX_ENTRIES) {
+      this.publicProfileAvatarCache.delete(this.publicProfileAvatarCache.keys().next().value!)
+    }
   }
 
   async cachedProfile(): Promise<ArkmeUserProfileSnapshot> {
@@ -335,6 +389,44 @@ export class ProfileService {
       displayName,
       ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.sealProfileImageRef(session.userId, userId) }),
     }
+  }
+
+  /** Resolve the public handle on the receiving account; sender-local refs never travel in links. */
+  async shareIdentityByArkmeId(arkmeId: string, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.accountScopedPublicAuthReadPost<Record<string, unknown>>(
+      '/api/public/v1/auth/get-public-user-by-jotmo-ids', { jotmo_ids: [arkmeId] }, session.userId, signal,
+      { lane: 'interactive-read', bypassCache: true },
+    )
+    return await this.shareIdentityFromPublicResponse(arkmeId, data, session.userId)
+  }
+
+  /** Project identity and avatar from the same response; no second profile request. */
+  private async shareIdentityFromPublicResponse(arkmeId: string, data: Record<string, unknown>, viewerUserId: number) {
+    if (!Array.isArray(data.items)) throw new ArkmePluginError('identity-share-profile-invalid', '联系人资料响应不完整，请重试', false, 502)
+    const matches = data.items.map(objectValue).filter(item => item.jotmo_id === arkmeId)
+    if (matches.length !== 1 || !Number.isSafeInteger(matches[0]?.user_id) || Number(matches[0]?.user_id) <= 0) {
+      throw new ArkmePluginError('identity-share-person-unavailable', '该联系人链接暂不可用，可能已更改即我号', false, 404)
+    }
+    const item = matches[0]!, userId = Number(item.user_id)
+    const avatar = await this.publicAvatarPresentation(item, viewerUserId, userId)
+    return { userId, accountName: arkmeId, displayName: stringValue(item.nick_name).trim() || arkmeId, ...avatar }
+  }
+
+  private async publicAvatarPresentation(item: Record<string, unknown>, viewerUserId: number, userId: number): Promise<ArkmePublicAvatarPresentation> {
+    const avatarUrl = stringValue(item.head_img).trim()
+    const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
+    if (avatarFallback !== undefined) return { avatarFallback }
+    if (avatarUrl === '') {
+      this.publicProfileAvatarCache.delete(`${viewerUserId}:${userId}`)
+      return {}
+    }
+    try {
+      const trustedAvatarUrl = trustedSignedImageUrl(this.runtime.config.environment, avatarUrl).toString()
+      const avatarRef = await this.sealProfileImageRef(viewerUserId, userId)
+      this.cachePublicProfileAvatar(`${viewerUserId}:${userId}`, trustedAvatarUrl)
+      return { avatarRef }
+    } catch { return {} }
   }
 
   async profileForSession(session: ArkmeSessionCredentials): Promise<ArkmeUserProfileSnapshot> {
@@ -513,6 +605,25 @@ export class ProfileService {
     return /^https?:\/\//i.test(avatarRef) || fileAssetAvatarRef(avatarRef) !== undefined
   }
 
+  async cachedPublicPerson(viewer: number, target: number): Promise<PublicPersonSnapshot | undefined> {
+    return this.withPublicRead(viewer, [target], undefined, async assertCurrent => {
+      const cached = this.publicProfileCache.get(`${viewer}:${target}`)
+      if (cached?.value === null) return undefined
+      if (cached?.value) {
+        const value = publicPersonSnapshot({ profile: cached.value, updatedAtMillis: cached.fetchedAtMillis ?? cached.expiresAtMillis - PUBLIC_PROFILE_CACHE_TTL_MS }, target)
+        if (value) return value
+      }
+      const stored = await this.runtime.stateStore?.cachedPublicPerson?.(this.runtime.config.environment, viewer, target).catch(() => undefined)
+      assertCurrent()
+      if (stored) this.publicReadStamp = Math.max(this.publicReadStamp, stored.updatedAtMillis)
+      const newer = this.publicProfileCache.get(`${viewer}:${target}`)
+      if (newer && (!stored || (newer.fetchedAtMillis ?? 0) >= stored.updatedAtMillis)) {
+        return newer.value === null ? undefined : publicPersonSnapshot({ profile: newer.value, updatedAtMillis: newer.fetchedAtMillis ?? 0 }, target)
+      }
+      return stored
+    })
+  }
+
   async publicProfileSummariesByUserIds(
     userIds: readonly number[],
     session: ArkmeSessionCredentials,
@@ -522,105 +633,132 @@ export class ProfileService {
   ): Promise<Map<number, ArkmePublicProfile>> {
     const normalized = [...new Set(userIds.filter(userId => Number.isSafeInteger(userId) && userId > 0))]
       .sort((left, right) => left - right)
-    const profiles = new Map<number, ArkmePublicProfile>()
-    const missing: number[] = []
-    const now = Date.now()
-    for (const [key, cached] of this.publicProfileCache) {
-      if (cached.expiresAtMillis <= now) this.publicProfileCache.delete(key)
-    }
-    for (const userId of normalized) {
-      const cached = this.publicProfileCache.get(`${String(session.userId)}:${String(userId)}`)
-      if (cached === undefined || cached.expiresAtMillis <= now
-        || cached.expiresAtMillis - (cached.value === null ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS : PUBLIC_PROFILE_CACHE_TTL_MS) + maxAgeMillis <= now) {
-        missing.push(userId)
-        continue
+    return this.withPublicRead(session.userId, normalized, signal, async assertCurrent => {
+      const profiles = new Map<number, ArkmePublicProfile>()
+      const missing: number[] = []
+      const now = Date.now()
+      for (const [key, cached] of this.publicProfileCache) {
+        if (cached.expiresAtMillis <= now) this.publicProfileCache.delete(key)
       }
-      if (cached.value !== null) profiles.set(userId, cached.value)
-    }
-    await measureReaction('profile-cache', { requested: normalized.length, hits: normalized.length - missing.length, misses: missing.length }, async () => undefined)
-    for (const batch of chunksOf(missing, 50)) {
-      if (batch.length === 0) continue
-      const startedAtMillis = Date.now()
-      const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
-        '/api/v1/auth/get-public-users-by-ids',
-        { user_ids: batch },
-        session,
-        signal,
-        {
-          lane,
-          key: `public-profiles:${batch.join('|')}`,
-          failureCooldownMs: 5_000,
-        },
-      ).catch((error: unknown) => {
-        logArkmeAvatarDiagnostic('profile_fetch_failed', {
-          environment: this.runtime.config.environment, viewerUserId: session.userId,
-          targetUserIds: batch, durationMillis: Math.max(0, Date.now() - startedAtMillis),
-        }, error)
-        throw error
-      })
-      if (!Array.isArray(data.items)) throw new ArkmePluginError('public-profile-contract-invalid', '联系人资料响应不完整', false, 502)
-      for (const raw of data.items) {
-        const item = objectValue(raw)
-        const userId = numberValue(item.user_id)
-        if (!batch.includes(userId)) continue
-        const displayName = stringValue(item.nick_name ?? item.display_name ?? item.name_slug).trim()
-        const nickname = stringValue(item.nick_name ?? item.nickname).trim()
-        const accountName = stringValue(item.jotmo_id).trim()
-          || stringValue(item.display_name).trim()
-          || stringValue(item.name_slug).trim()
-          || stringValue(item.arkme_id).trim()
-        const arkmeId = stringValue(item.name_slug ?? item.arkme_id).trim()
-        const avatarUrl = stringValue(item.head_img).trim()
-        let trustedAvatarUrl: string | undefined
-        const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
-        if (avatarUrl !== '') {
-          try {
-            trustedSignedImageUrl(this.runtime.config.environment, avatarUrl)
-            trustedAvatarUrl = avatarUrl
-          } catch (error) {
-            trustedAvatarUrl = undefined
-            // phone_avatar is a supported fallback, not an invalid remote image.
-            if (avatarFallback === undefined) logArkmeAvatarDiagnostic('profile_avatar_rejected', {
-              environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserId: userId,
-            }, error)
+      for (const userId of normalized) {
+        let cached = this.publicProfileCache.get(`${String(session.userId)}:${String(userId)}`)
+        if (!cached) {
+          const stored = await this.runtime.stateStore?.cachedPublicPerson?.(this.runtime.config.environment, session.userId, userId).catch(() => undefined)
+          signal?.throwIfAborted()
+          assertCurrent()
+          if (stored) this.publicReadStamp = Math.max(this.publicReadStamp, stored.updatedAtMillis)
+          cached = this.publicProfileCache.get(`${session.userId}:${userId}`)
+          if (maxAgeMillis > 0 && !cached && stored && now - stored.updatedAtMillis < Math.min(maxAgeMillis, PUBLIC_PROFILE_CACHE_TTL_MS)) {
+            cached = { value: stored.profile, expiresAtMillis: stored.updatedAtMillis + PUBLIC_PROFILE_CACHE_TTL_MS, fetchedAtMillis: stored.updatedAtMillis }
+            this.cachePublicProfile(`${session.userId}:${userId}`, cached)
           }
         }
-        const avatarCacheKey = `${String(session.userId)}:${String(userId)}`
-        if (trustedAvatarUrl === undefined) this.publicProfileAvatarCache.delete(avatarCacheKey)
-        else this.publicProfileAvatarCache.set(avatarCacheKey, {
-          avatarUrl: trustedAvatarUrl,
-          expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
-        })
-        profiles.set(userId, {
-          userId,
-          displayName,
-          nickname,
-          ...(accountName === '' ? {} : { accountName }),
-          ...(trustedAvatarUrl === undefined ? {} : { avatarUrl: trustedAvatarUrl }),
-          ...(avatarFallback === undefined ? {} : { avatarFallback }),
-          ...(arkmeId === '' ? {} : { arkmeId }),
-        })
-      }
-      const missingUserIds = batch.filter(userId => !profiles.has(userId))
-      if (missingUserIds.length > 0) logArkmeAvatarDiagnostic('profile_missing', {
-        environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserIds: missingUserIds,
-      })
-      for (const userId of batch) {
-        const value = profiles.get(userId) ?? null
-        this.publicProfileCache.set(`${String(session.userId)}:${String(userId)}`, {
-          value,
-          expiresAtMillis: Date.now() + (value === null
-            ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS
-            : PUBLIC_PROFILE_CACHE_TTL_MS),
-        })
-        while (this.publicProfileCache.size > PUBLIC_PROFILE_CACHE_MAX_ENTRIES) {
-          const oldestKey = this.publicProfileCache.keys().next().value as string | undefined
-          if (oldestKey === undefined) break
-          this.publicProfileCache.delete(oldestKey)
+        if (maxAgeMillis <= 0 || cached === undefined || cached.expiresAtMillis <= now
+          || (cached.fetchedAtMillis ?? cached.expiresAtMillis - (cached.value === null ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS : PUBLIC_PROFILE_CACHE_TTL_MS)) + maxAgeMillis <= now) {
+          missing.push(userId)
+          continue
         }
+        if (cached.value !== null) profiles.set(userId, cached.value)
       }
-    }
-    return profiles
+      await measureReaction('profile-cache', { requested: normalized.length, hits: normalized.length - missing.length, misses: missing.length }, async () => undefined)
+      for (const batch of chunksOf(missing, 50)) {
+        if (batch.length === 0) continue
+        const startedAtMillis = Math.max(Date.now(), this.publicReadStamp + 1)
+        this.publicReadStamp = startedAtMillis
+        // A forced read must not reuse a request dispatched before the refresh.
+        // Detach transport flights without discarding the retained display or
+        // cancelling existing consumers; timestamp checks still fence old results.
+        if (maxAgeMillis <= 0) this.detachPublicRequests(session.userId)
+        const data = await this.runtime.authenticatedAuthPost<Record<string, unknown>>(
+          '/api/v1/auth/get-public-users-by-ids',
+          { user_ids: batch },
+          session,
+          signal,
+          {
+            lane,
+            key: `public-profiles:${batch.join('|')}`,
+            failureCooldownMs: 5_000,
+          },
+        ).catch((error: unknown) => {
+          logArkmeAvatarDiagnostic('profile_fetch_failed', {
+            environment: this.runtime.config.environment, viewerUserId: session.userId,
+            targetUserIds: batch, durationMillis: Math.max(0, Date.now() - startedAtMillis),
+          }, error)
+          throw error
+        })
+        signal?.throwIfAborted()
+        assertCurrent()
+        if (!Array.isArray(data.items) || data.items.length > batch.length) throw new ArkmePluginError('public-profile-contract-invalid', '联系人资料响应不完整', false, 502)
+        const seen = new Set<number>()
+        for (const raw of data.items) {
+          const item = objectValue(raw)
+          const userId = numberValue(item.user_id)
+          if (!raw || typeof raw !== 'object' || Array.isArray(raw) || !Number.isSafeInteger(userId) || !batch.includes(userId) || seen.has(userId)
+            || ['nick_name', 'nickname', 'display_name', 'name_slug', 'jotmo_id', 'arkme_id', 'head_img'].some(field => item[field] != null
+              && (typeof item[field] !== 'string' || (item[field] as string).length > (field === 'head_img' ? 4096 : 512)))) {
+            throw new ArkmePluginError('public-profile-contract-invalid', '联系人资料响应不完整', false, 502)
+          }
+          seen.add(userId)
+          const displayName = stringValue(item.nick_name ?? item.display_name ?? item.name_slug).trim()
+          const nickname = stringValue(item.nick_name ?? item.nickname).trim()
+          const accountName = stringValue(item.jotmo_id).trim()
+            || stringValue(item.display_name).trim()
+            || stringValue(item.name_slug).trim()
+            || stringValue(item.arkme_id).trim()
+          const arkmeId = stringValue(item.name_slug ?? item.arkme_id).trim()
+          const avatarUrl = stringValue(item.head_img).trim()
+          let trustedAvatarUrl: string | undefined
+          const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
+          if (avatarUrl !== '') {
+            try {
+              trustedSignedImageUrl(this.runtime.config.environment, avatarUrl)
+              trustedAvatarUrl = avatarUrl
+            } catch (error) {
+              trustedAvatarUrl = undefined
+              // phone_avatar is a supported fallback, not an invalid remote image.
+              if (avatarFallback === undefined) logArkmeAvatarDiagnostic('profile_avatar_rejected', {
+                environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserId: userId,
+              }, error)
+            }
+          }
+          profiles.set(userId, {
+            userId,
+            displayName,
+            nickname,
+            ...(accountName === '' ? {} : { accountName }),
+            ...(trustedAvatarUrl === undefined ? {} : { avatarUrl: trustedAvatarUrl }),
+            ...(avatarFallback === undefined ? {} : { avatarFallback }),
+            ...(arkmeId === '' ? {} : { arkmeId }),
+          })
+        }
+        for (const id of batch) {
+          const newer = this.publicProfileCache.get(`${session.userId}:${id}`)
+          if ((newer?.fetchedAtMillis ?? 0) > startedAtMillis) {
+            if (newer?.value) profiles.set(id, newer.value)
+            else profiles.delete(id)
+          }
+        }
+        const missingUserIds = batch.filter(userId => !profiles.has(userId))
+        if (missingUserIds.length > 0) logArkmeAvatarDiagnostic('profile_missing', {
+          environment: this.runtime.config.environment, viewerUserId: session.userId, targetUserIds: missingUserIds,
+        })
+        for (const userId of batch) {
+          const value = profiles.get(userId) ?? null
+          this.cachePublicProfileAvatar(`${session.userId}:${userId}`, value?.avatarUrl)
+          this.cachePublicProfile(`${String(session.userId)}:${String(userId)}`, {
+            value, fetchedAtMillis: Math.max(startedAtMillis, this.publicProfileCache.get(`${session.userId}:${userId}`)?.fetchedAtMillis ?? 0),
+            expiresAtMillis: Date.now() + (value === null
+              ? PUBLIC_PROFILE_NEGATIVE_CACHE_TTL_MS
+              : PUBLIC_PROFILE_CACHE_TTL_MS),
+          })
+        }
+        await this.runtime.stateStore?.cachePublicPeople?.(this.runtime.config.environment, session.userId,
+          batch.flatMap(id => profiles.has(id) ? [{ profile: profiles.get(id)!, updatedAtMillis: this.publicProfileCache.get(`${session.userId}:${id}`)?.fetchedAtMillis ?? startedAtMillis }] : []), missingUserIds, startedAtMillis).catch(() => undefined)
+      }
+      signal?.throwIfAborted()
+      assertCurrent()
+      return profiles
+    })
   }
 
   async publicProfilesByUserIds(
@@ -635,6 +773,20 @@ export class ProfileService {
       profiles.set(userId, profile)
     }
     return profiles
+  }
+
+  async publicAvatarPresentationsByUserIds(
+    userIds: readonly number[],
+    signal?: AbortSignal,
+  ): Promise<Map<number, ArkmePublicAvatarPresentation>> {
+    const session = await this.runtime.requireSession()
+    const profiles = await this.publicProfileSummariesByUserIds(userIds, session, signal)
+    const result = new Map<number, ArkmePublicAvatarPresentation>()
+    for (const [userId, profile] of profiles) {
+      result.set(userId, profile.avatarFallback ? { avatarFallback: profile.avatarFallback }
+        : profile.avatarUrl ? { avatarRef: await this.sealProfileImageRef(session.userId, userId) } : {})
+    }
+    return result
   }
 
   async publicAvatarPresentationsByArkmeIds(
@@ -664,28 +816,7 @@ export class ProfileService {
         if (!requested.has(arkmeId) || userId <= 0 || presentations.has(arkmeId)) {
           throw new ArkmePluginError('profile-contract-invalid', 'Arkme公开头像响应无效', true, 502)
         }
-        const avatarUrl = stringValue(item.head_img).trim()
-        const avatarFallback = phoneDefaultAvatarFallback(avatarUrl)
-        if (avatarFallback !== undefined) {
-          presentations.set(arkmeId, { avatarFallback })
-          continue
-        }
-        if (avatarUrl === '') {
-          this.publicProfileAvatarCache.delete(`${String(session.userId)}:${String(userId)}`)
-          presentations.set(arkmeId, {})
-          continue
-        }
-        try {
-          const trustedAvatarUrl = trustedSignedImageUrl(this.runtime.config.environment, avatarUrl).toString()
-          const avatarRef = await this.sealProfileImageRef(session.userId, userId)
-          this.publicProfileAvatarCache.set(`${String(session.userId)}:${String(userId)}`, {
-            avatarUrl: trustedAvatarUrl,
-            expiresAtMillis: Date.now() + PUBLIC_PROFILE_AVATAR_CACHE_TTL_MS,
-          })
-          presentations.set(arkmeId, { avatarRef })
-        } catch {
-          presentations.set(arkmeId, {})
-        }
+        presentations.set(arkmeId, await this.publicAvatarPresentation(item, session.userId, userId))
       }
     }
     return presentations

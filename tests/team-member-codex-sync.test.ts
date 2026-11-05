@@ -24,3 +24,7 @@ describe('team member Codex sync contract', () => {
     expect(readTeamMemberCodexSync({ version: 1, state: 'unavailable' })).toEqual({ state: 'unavailable', reason: 'failed' })
   })
 })
+
+it('retains explicit historical access when old source settings are unknown',()=>{
+ expect(readTeamMemberCodexSync({version:1,state:'unavailable',reason:'settings_unknown',has_conversations:true,can_view_conversations:true})).toEqual({state:'unavailable',reason:'settings_unknown',hasConversations:true,canViewConversations:true})
+})

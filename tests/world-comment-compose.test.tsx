@@ -8,7 +8,7 @@ import type { ArkmeWorldFeedItem, ArkmeWorldInteractionPage } from '../src/types
 
 it('focuses the composer before comments arrive and preserves its draft when Comment is clicked again', async () => {
   let resolveComments!: (page: ArkmeWorldInteractionPage) => void
-  const request = vi.spyOn(api, 'callArkme').mockImplementation(() => new Promise(resolve => { resolveComments = resolve }))
+  const request = vi.spyOn(api, 'callArkme').mockImplementation((operation, params) => operation === 'world.replies' && params?.recordRef === 'comment' ? Promise.resolve({ items: [], hasMore: false }) : new Promise(resolve => { resolveComments = resolve }))
   const focus = vi.fn()
   const item: ArkmeWorldFeedItem = { recordRef: 'post', authorName: '作者', headline: '', textContent: '公开正文',
     tags: [], templateKind: 0, createdAtMillis: 1000, publishedAtMillis: 1000, imageRefs: [], imageCount: 0,

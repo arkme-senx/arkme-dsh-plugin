@@ -57,11 +57,29 @@ describe('AI points accounting boundary', () => {
     f.read.mockImplementation(async () => { f.changeUser(); return raw() })
     await expect(f.service.account('prod:1')).rejects.toMatchObject({ code: 'ai-points-account-changed' })
   })
+  it('rechecks consumption identity after the paged response returns', async () => {
+    const f = fixture()
+    f.read.mockImplementation(async () => { f.changeUser(); return page() })
+    await expect(f.service.consumption({ month: '2026-09', limit: 100 }, 'prod:1')).rejects.toMatchObject({ code: 'ai-points-account-changed' })
+  })
   it('does not query a backend for invalid months or cursors', async () => {
     const f = fixture()
     await expect(f.service.consumption({ month: '2026-13' }, 'prod:1')).rejects.toThrow()
     await expect(f.service.consumption({ month: '2026-09', beforeId: '-1' }, 'prod:1')).rejects.toThrow()
     expect(f.read).not.toHaveBeenCalled()
+  })
+  it.each([0, -1, 101, 1.5, Infinity, NaN])('rejects invalid statement page size %s before reading', async limit => {
+    const f = fixture()
+    await expect(f.service.consumption({ month: '2026-09', limit }, 'prod:1')).rejects.toMatchObject({ code: 'ai-points-query-invalid' })
+    expect(f.read).not.toHaveBeenCalled()
+  })
+  it('supports an explicitly bounded 100-operation read while retaining the 20-operation default', async () => {
+    const f = fixture()
+    await f.service.consumption({ month: '2026-09', limit: 100 }, 'prod:1')
+    expect((f.read.mock.calls[0] as unknown[])[1]).toEqual({ month: '2026-09', before_id: '', limit: 100 })
+    const data = page(); data.items = Array.from({ length: 100 }, (_, index) => ({ ...data.items[0]!, request_uid: String(index), operation_uid: '' }))
+    expect(parseAiPointsPage(data, 'prod:1', '2026-09', 100).items).toHaveLength(100)
+    expect(() => parseAiPointsPage(data, 'prod:1', '2026-09')).toThrow()
   })
 })
 

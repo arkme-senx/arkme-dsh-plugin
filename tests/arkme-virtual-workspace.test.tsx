@@ -122,14 +122,8 @@ describe('Arkme conversation directory load state', () => {
     expect(arkmeOfficialAuthorSource([peer], 11)).toBeUndefined()
     expect(workspaceSource).toContain('authenticated && shouldShowOfficialContact(officialMembership, teamDirectory.items, teamPreferences) && <ArkmeOfficialAuthorRow')
     expect(workspaceSource).not.toContain("callArkme<ArkmeOfficialAuthorProfile>('chat.official-author.profile'")
-    expect(workspaceSource).toContain("openTeamMessages({ kind: 'official' })")
+    expect(workspaceSource).toContain("openTeamEntryMessages({ kind: 'official' }, currentAccountKey)")
     expect(workspaceSource).toContain('<ArkmeUserAvatar')
-  })
-
-  it('keeps DeepSeek Harness ahead of every root-directory guide', () => {
-    const rootDirectory = workspaceSource.slice(workspaceSource.indexOf("{directory === 'root' && <>"))
-    expect(rootDirectory.indexOf('<DeepSeekHarnessRow')).toBeLessThan(rootDirectory.indexOf('<ArkmeDSHBetaCommunityEntry'))
-    expect(rootDirectory.indexOf('<DeepSeekHarnessRow')).toBeLessThan(rootDirectory.indexOf('<ArkmeOfficialAuthorRow'))
   })
 
   it('provides right-click pin and remove actions for chat and Bot rows', () => {
@@ -163,9 +157,11 @@ describe('Arkme conversation directory load state', () => {
   it('commits owner visibility immediately but retains shared inline removal feedback', () => {
     expect(workspaceSource).toContain('useConversationRemovalFeedback({')
     expect(workspaceSource).toContain('removalFeedback.begin(presentationRow, submittedActivity)')
-    expect(workspaceSource).toContain('mergeTeamDirectoryRows(removalFeedback.rows, teamDirectory.items, teamDirectory.hasLoaded && !teamDirectory.hasMore && !teamDirectory.error, teamPreferences)')
+    expect(workspaceSource).toContain('mergeTeamDirectoryRows(rootConversationRows, teamDirectory.items,')
+    expect(workspaceSource).toContain('rows: mergedRows,')
+    expect(workspaceSource).toContain('const mergedConversationRows = removalFeedback.rows')
     expect(workspaceSource).toContain('= [...mergedConversationRows]')
-    expect(workspaceSource).toContain("rootDirectoryRows.filter(row => !row.pinned).map(renderConversationDirectoryRow)")
+    expect(workspaceSource).toContain("rootDirectoryRows.map(row => ({ activeAtMillis: row.activeAtMillis, pinned: row.pinned, node: renderConversationDirectoryRow(row) }))")
     expect(workspaceSource.match(/<ArkmeConversationRemovalFeedback phase=\{removalPhase\}/g)).toHaveLength(2)
     expect(workspaceSource).toContain('setConversationVisibility(current => dismissConversationVisibilityEntry(')
     expect(workspaceSource).not.toContain("setDirectoryActionFeedback('已移除对话，可在联系人中找回')")

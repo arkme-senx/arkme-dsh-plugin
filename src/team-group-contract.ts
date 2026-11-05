@@ -27,6 +27,7 @@ export interface TeamPublicCard {
 }
 
 export interface TeamRepresentationSelection {teamRef:string;membershipKind:'owner'|'member';membershipRevision:number;groupJoinAt:number}
-export interface TeamRepresentationSnapshot extends TeamRepresentationSelection {name:string;jotmoId:string}
+export interface TeamRepresentationDisplay {name:string;jotmoId:string}
+export interface TeamRepresentationSnapshot extends TeamRepresentationSelection, TeamRepresentationDisplay {}
 export interface TeamGroupIdentity {team:ArkmeTeam;selection:TeamRepresentationSelection}
 export interface TeamRepresentationSendOptions {representation?:TeamRepresentationSelection;sendAtMillis?:number}

@@ -39,5 +39,5 @@ export function ArkmeMemberEventProfileDialog(props: {
         else props.onError(error instanceof Error ? error.message : '发送消息失败')
       }).finally(() => { if (!controller.signal.aborted) { request.current=undefined; setBusy(false) } })
   }
-  return <ArkmeMemberProfileCard member={profile} showTopicNickname busy={busy} onClose={props.onClose} onSend={send}/>
+  return <ArkmeMemberProfileCard copyLinkTarget={{ kind: 'member-event', sourceRef: props.sourceRef, eventId: props.event.eventId }} member={profile} showTopicNickname busy={busy} onClose={props.onClose} onSend={send}/>
 }

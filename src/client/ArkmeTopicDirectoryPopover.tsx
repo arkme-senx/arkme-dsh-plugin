@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import type { ArkmeArchiveState } from '../archive-contract.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
@@ -403,7 +404,7 @@ export function ArkmeTopicDirectoryPopover({
           setSourceSort(value)
           setHoveredSourceRef(undefined)
         }} />
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭主题")} style={styles.close} onClick={() => { setOpen(false) }}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭主题")} style={styles.close} onClick={() => { setOpen(false) }} />
       </div>
       <label style={styles.search}>
         <svg aria-hidden viewBox="0 0 16 16" width="14" height="14" fill="none">

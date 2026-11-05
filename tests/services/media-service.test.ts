@@ -261,6 +261,7 @@ describe('MediaService', () => {
     vi.spyOn(profile, 'publicProfilesByUserIds').mockResolvedValue(new Map([[88, {
       userId: 88, displayName: 'SECRET_NAME', nickname: 'SECRET_NAME', avatarUrl: url,
     }]]))
+    vi.spyOn(profile, 'publicProfileSummariesByUserIds').mockResolvedValue(new Map([[88, { userId: 88, displayName: 'SECRET_NAME', nickname: 'SECRET_NAME', avatarUrl: url }]]))
     const media = new MediaService(runtime, profile, {} as never, { recordUid() { return '' } })
     const ref = await profile.sealProfileImageRef(42, 88)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})

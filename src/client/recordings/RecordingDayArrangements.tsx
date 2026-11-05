@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeRecordingArrangementPage } from '../../types.js'
 import { callArkme } from '../api.js'
 import { ArkmeArrangementContent } from '../ArkmeArrangementContent.js'
@@ -58,7 +58,7 @@ function DayArrangements({ dateStamp, accountScope, active, refreshRevision }: P
     return () => clearTimeout(timer)
   }, [active, loading, error, page])
 
-  const value = !page ? (loading ? '—' : tr('暂不可用')) : page.state === 'unavailable' ? tr('暂不可用')
+  const value = !active ? '—' : !page ? (loading ? '—' : tr('暂不可用')) : page.state === 'unavailable' ? tr('暂不可用')
     : page.state === 'ready' ? tr('{count} 项', { count: page.total }) : page.total > 0 ? tr('已识别 {count} 项', { count: page.total }) : tr(page.state === 'processing' ? '处理中' : '暂不可用')
   return <>
     <button type="button" className="arkme-recording-arrangement-entry" aria-haspopup="dialog" title={tr('查看当天录音识别的安排')}
@@ -91,7 +91,7 @@ function RecordingArrangementDrawer({ dateStamp, page, loading, error, expanded,
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
       }
     }}>
-      <header><h2>{tr('识别安排')}</h2><button ref={close} type="button" aria-label={tr('关闭')} onClick={onClose}><X size={20} aria-hidden /></button></header>
+      <header><h2>{tr('识别安排')}</h2><ArkmeCloseButton ref={close} type="button" aria-label={tr('关闭')} onClick={onClose} /></header>
       <div className="arkme-recording-arrangements-body">
         <p className="arkme-recording-arrangements-date">{date}</p>
         <p>{tr('由当天录音总结识别，与安排板块保持同步。')}</p>

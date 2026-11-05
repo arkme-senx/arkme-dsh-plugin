@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { quoteDomProjection } from './message-quote-selection.js'
@@ -54,7 +55,7 @@ export function MessageTextFind({ getRows, doc, query, setQuery, onClose }: {
       <span role="status" style={{ fontSize: 12 }}>{matches.length ? `${index + 1}/${matches.length}${matches.length === 500 ? '+' : ''}` : '无匹配'}</span>
       <button style={button} aria-label="上一个匹配" disabled={!matches.length} onClick={() => move(-1)}>↑</button>
       <button style={button} aria-label="下一个匹配" disabled={!matches.length} onClick={() => move(1)}>↓</button>
-      <button style={button} aria-label="关闭查找" onClick={onClose}>×</button>
+      <ArkmeCloseButton style={button} aria-label="关闭查找" onClick={onClose} />
     </div>
     <div style={{ color: arkmeTheme.secondary, fontSize: 11, marginTop: 5 }}>仅查找当前已加载消息；向上加载历史后自动补充</div>
   </div>, doc.body)

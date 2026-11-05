@@ -61,22 +61,24 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
     {current?.status === 'error' && <p role="alert">{tr('暂时无法读取消费明细。')} <button type="button" onClick={() => setRetry(value => value + 1)}>{tr('重试')}</button></p>}
     {current?.status === 'ready' && <>
       {current.items.length === 0 && <p>{tr('该月暂无积分消费')}</p>}
-      {groupPointsConsumption(current.items).map(group => <details key={group.key}>
-        <summary><span><strong>{consumptionLabel(group.calls[0]!.businessCode)}</strong><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(group.calls[group.calls.length - 1]!.createdAt)}</small></span><span className="arkme-points-record-amount">−{formatAiPoints(group.chargedPoints)} {tr('积分')} <span className="arkme-points-chevron" aria-hidden>›</span></span></summary>
-        {group.calls.map(item => <PointsCallDetails key={item.requestUid} item={item} />)}
-      </details>)}
+      <PointsConsumptionRows items={current.items} />
       {current.more === 'error' && <p role="alert">{tr('加载失败，已有明细已保留。')}</p>}
       {current.next && <button type="button" disabled={current.more === 'loading'} onClick={() => void read(current.next)}>{tr(current.more === 'loading' ? '读取中…' : current.more === 'error' ? '重试' : '加载更多')}</button>}
     </>}
   </div>
 }
 
-function consumptionLabel(businessCode: string): string {
-  if (businessCode === 'agent') return 'Agent'
-  if (businessCode === 'arkme') return tr('DSH 对话')
-  if (businessCode === 'audio_entity') return tr('录音实体识别')
-  const labels: Record<string,string> = { personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标', offline_context: '线下交流关联（自动）', offline_context_manual: '线下交流关联（主动操作）' }
-  return tr(labels[businessCode] ?? 'AI 调用')
+function consumptionLabel(code: string): string {
+  if (code === 'agent') return 'Agent'
+  if (code === 'arkme') return 'DSH 对话'
+  const labels: Record<string, string> = { audio_entity: '录音实体识别', personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标', offline_context: '线下交流关联（自动）', offline_context_manual: '线下交流关联（主动操作）', recording_voice_trigger: '录音口令记事' }
+  return labels[code] ?? 'AI 调用'
+}
+export function PointsConsumptionRows({ items, limit, label = consumptionLabel }: { items: ArkmeAiPointsConsumption[]; limit?: number; label?: (code: string) => string }) {
+  return <>{groupPointsConsumption(items).slice(0, limit).map(group => <details key={group.key}>
+    <summary><span><strong>{tr(label(group.calls[0]!.businessCode))}</strong><small>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai' }).format(group.calls[group.calls.length - 1]!.createdAt)}</small></span><span className="arkme-points-record-amount">−{formatAiPoints(group.chargedPoints)} {tr('积分')} <span className="arkme-points-chevron" aria-hidden>›</span></span></summary>
+    {group.calls.map(item => <PointsCallDetails key={item.requestUid} item={item} />)}
+  </details>)}</>
 }
 
 function PointsCallDetails({ item }: { item: ArkmeAiPointsConsumption }) {

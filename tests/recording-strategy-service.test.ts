@@ -93,3 +93,15 @@ it('exposes confirmed source coverage through the shared owner and rejects inval
  f.post.mockResolvedValueOnce({items:[{id,file_name:'bad.wav',start_at:1000,end_at:999}]} as never)
  await expect(f.service.request({action:'sources',sessionRef:'session'})).rejects.toThrow()
 })
+
+it('adds optional availability metadata without leaking private media or requiring it from old servers',async()=>{
+ const f=fixture()
+ f.post.mockResolvedValueOnce({items:[{id,file_name:'history.wav',start_at:1000,availability:{strategy:'available',doubao:'unavailable',expires_at:2000,private_ref:'must-not-leak'}}]} as never)
+ const result=await f.service.request({action:'sources',sessionRef:'session',includeAvailability:true}) as any
+ expect(f.post.mock.calls[0]!.slice(0,2)).toEqual(['/api/v1/audio/strategy-comparison/sources',{session_id:id,include_availability:true,start_at:0,end_at:Number.MAX_SAFE_INTEGER}])
+ expect(result.items[0].availability).toEqual({strategy:'available',doubao:'unavailable',expiresAtMillis:2000})
+ expect(JSON.stringify(result)).not.toContain('must-not-leak')
+ const legacy=await f.service.request({action:'sources',sessionRef:'session'}) as any
+ expect(legacy.items[0]).not.toHaveProperty('availability')
+ await expect(f.service.request({action:'sources',sessionRef:'session',includeAvailability:true,startAtMillis:2000,endAtMillis:1000})).rejects.toThrow()
+})

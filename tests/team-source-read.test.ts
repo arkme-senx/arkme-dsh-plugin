@@ -77,7 +77,7 @@ it('keeps an already-granted media reader for represented revisions and rechecks
  expect(listener).toHaveBeenLastCalledWith({status:'checking'})
  await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(2))
 })
-it.each(['team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'])('does not reread a published source for %s',kind=>{
+it.each(['team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'])('does not reread a published source for %s',kind=>{
  expect(teamChangeAffectsSource({kind},target)).toBe(false)
 })
 it('distinguishes other messages and conversations from current or unknown access changes',()=>{

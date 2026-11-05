@@ -1,4 +1,4 @@
-import { X } from '@phosphor-icons/react/X'
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeCancellationSnapshot } from '../types.js'
 import { callArkme } from './api.js'
@@ -48,7 +48,7 @@ export function ArkmeAccountCancellation({ userId, disabled, onBusyChange, onCom
       <section className="arkme-account-dialog arkme-cancellation-dialog" role="dialog" aria-modal="true" aria-label={tr('注销账号')}>
         <header>
           <h3>{tr('注销账号')}</h3>
-          <button type="button" data-arkme-feedback="neutral" aria-label={tr('关闭')} disabled={busy} onClick={close}><X size={20} aria-hidden /></button>
+          <ArkmeCloseButton type="button" data-arkme-feedback="neutral" aria-label={tr('关闭')} disabled={busy} onClick={close} />
         </header>
         <form className="arkme-account-form arkme-cancellation-form" onSubmit={event => { event.preventDefault(); void run(true) }}>
         <p className="arkme-cancellation-description">{tr(preview.mode === 'immediate' ? '无需等待，将立即注销。注销完成后无法恢复登录。' : '账号将在 15 天等待期结束后注销，期间继续登录可撤销注销。')}</p>

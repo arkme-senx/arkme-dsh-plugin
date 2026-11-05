@@ -25,8 +25,9 @@ export interface RecordingImportUploadOptions {
   batch?: RecordingImportBatch
   signal?: AbortSignal
   onProgress?: (progress: RecordingImportUploadProgress) => void
-  /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
+  /** Retained only for retrying queue entries created by older clients. */
   strategy?: import('../recording-strategy-contract.js').RecordingStrategy
+  /** Manual microphone capture is 1; ordinary file/directory import defaults to 3. */
   recordingKind?: 1 | 3
 }
 
@@ -164,6 +165,9 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.calendar'
   | 'recordings.totals.index'
   | 'recordings.totals.bucket'
+  | 'recordings.totals.day'
+  | 'recordings.day.review'
+  | 'recordings.day.overview'
   | 'recordings.day'
   | 'recordings.transcript.page'
   | 'recordings.compare'
@@ -251,11 +255,15 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
   | 'source.record-edit-history'
+  | 'source.record-revision-snapshot'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
   | 'source.message-extension.context'
   | 'source.message-extension.capabilities'
+  | 'source.message-thoughts.query'
+  | 'source.message-thought-continuations.query'
+  | 'source.message-thought-continuations.retry'
   | 'transcript.local.read'
   | 'transcript.local.change'
   | 'source.local-message-mark.capabilities'
@@ -273,6 +281,9 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'message-actions.copy-link'
   | 'message-actions.forward'
   | 'codex.forward'
+  | 'codex.copy-link'
+  | 'codex.image.read'
+ | 'codex.work-records'
   | 'codex.local-mark.capabilities'
   | 'codex.local-mark.list'
   | 'codex.local-mark.change'
@@ -311,6 +322,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'search.records'
   | 'search.conversations'
   | 'search.locations'
+  | 'search.conversation-locations'
   | 'search.scene'
   | 'search.recordings'
   | 'ai-video.list'

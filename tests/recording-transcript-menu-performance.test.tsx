@@ -21,6 +21,8 @@ afterEach(async () => {
 })
 
 // Assert bounded render work, not wall-clock time, so slower CI hosts remain reliable.
+// Rendering the 3448-row fixture can exceed Vitest's default 5s on shared CI.
+// Keep the menu render/request assertions strict; allow time for fixture setup.
 it('opens, retargets and closes a context menu without rerendering a 3448-row day or reading data', async () => {
   vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 9, 20, 12))
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -57,4 +59,4 @@ it('opens, retargets and closes a context menu without rerendering a 3448-row da
   expect(renderer!.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
   expect(probe.textRenders).toBe(before)
   expect(probe.call.mock.calls).toHaveLength(requests)
-})
+}, 30_000)

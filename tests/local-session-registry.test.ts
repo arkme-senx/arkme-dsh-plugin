@@ -114,3 +114,19 @@ describe('local session lifecycle owner', () => {
     await ctx.fiber.dispose()
   })
 })
+
+it('refuses background history promotion until the explicit coordinator acquisition', async () => {
+  const ctx = new Context(), id = SessionId('legacy-read-only')
+  ctx.provide('sessions', {} as never)
+  ctx.provide('arkmeLocalHistory', { isDiscovered: (candidate: string) => candidate === id } as never)
+  await ctx.plugin(LocalSessionRegistry)
+  const registry = ctx.agents as LocalSessionRegistry
+  const resume = vi.fn(async () => { throw new Error('entered authorized native resume') })
+  registry.setFactory({ createAgent: vi.fn(), resume })
+  try {
+    await expect(registry.resume({ resumeSessionId: id })).rejects.toThrow('只读')
+    expect(resume).not.toHaveBeenCalled()
+    await expect(registry.acquireOwned(id, () => {}, () => registry.resume({ resumeSessionId: id }))).rejects.toThrow('authorized native resume')
+    expect(resume).toHaveBeenCalledOnce()
+  } finally { await ctx.fiber.dispose() }
+})

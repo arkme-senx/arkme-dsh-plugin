@@ -1,3 +1,8 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
+import { ArkmePeoplePickerSearch } from './ArkmePeoplePickerSearch.js'
+import { useConversationRecognitionAction } from './ConversationRecognitionControl.js'
+import { ConversationSettingSwitch } from './ConversationSettingSwitch.js'
+import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import {
@@ -15,7 +20,8 @@ import { DownloadSimple } from '@phosphor-icons/react/dist/csr/DownloadSimple'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Prohibit } from '@phosphor-icons/react/dist/icons/Prohibit'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
-import { X } from '@phosphor-icons/react/dist/icons/X'
+import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
+import { MapPin } from '@phosphor-icons/react/dist/icons/MapPin'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeConversationMemberItem,
@@ -44,6 +50,7 @@ import { useConversationMembers } from './use-conversation-members.js'
 import { callArkme } from './api.js'
 import { ArkmeGroupSelfNicknameDialog } from './ArkmeGroupSelfNicknameDialog.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
+import { PublicGroupSettingsDialog } from './PublicSocialDialogs.js'
 import { isArkmeRequestAbort, retryArkmeRead } from './read-retry.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { ArkmeMark } from './ArkmeFooterAction.js'
@@ -799,11 +806,7 @@ export function AddMembersDrawer(props: {
       </div>
       {entryKind === 'team' ? props.accountScope ? <TeamGroupJoinPanel key={JSON.stringify([props.accountScope, props.source.sourceRef])} accountKey={props.accountScope} source={props.source} />
         : <p role="alert" style={{ padding: 16 }}>{tr('请登录后再添加团队')}</p> : <>
-      <div style={{ position: 'relative', margin: '16px 12px 8px' }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ position: 'absolute', left: 12, top: 11, color: colors.secondary }}><circle cx="11" cy="11" r="6" stroke="currentColor" strokeWidth="2"/><path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-        <input className="arkme-group-member-search" style={{ ...styles.dialogInput, height: 40, border: 0, borderRadius: 11, paddingLeft: 36, paddingRight: 30, background: arkmeTheme.base }} value={query} placeholder={tr("搜索")} aria-label={tr("搜索成员候选人")} disabled={busy} onChange={event => { setQuery(event.target.value) }} />
-        {query !== '' ? <button data-arkme-feedback="neutral" type="button" aria-label={tr("清除搜索")} disabled={busy} onClick={() => { setQuery('') }} style={{ position: 'absolute', right: 8, top: 8, width: 24, height: 24, border: 0, background: 'transparent', color: colors.secondary, cursor: 'pointer' }}><CloseGlyph /></button> : null}
-      </div>
+      <ArkmePeoplePickerSearch value={query} onChange={setQuery} disabled={busy}/>
       <div style={{ overflowY: 'auto', minHeight: 120, flex: 1, padding: '0 12px' }}>
         {!isSearchMode && entryKind === 'people' && <><div style={{ padding: '2px 0 8px', fontSize: 14, fontWeight: 600 }}>{tr("我的会话")}</div>{focusRows.map(row => {
           const active = focus === row.focus
@@ -910,7 +913,7 @@ export function InviteCollaboratorsDialog(props: {
   }
   return <div style={styles.dialogScrim} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) props.onClose() }}>
     <section style={{ ...styles.dialog, width: 420 }} role="dialog" aria-modal="true" aria-label={tr("邀请协作者")}>
-      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>{tr("邀请协作者")}</h3><span style={{ flex: 1 }} /><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose}><CloseGlyph /></button></div>
+      <div style={{ display: 'flex', alignItems: 'center' }}><h3 style={{ ...styles.dialogTitle, margin: 0, fontSize: 18 }}>{tr("邀请协作者")}</h3><span style={{ flex: 1 }} /><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={{ ...styles.closeButton, width: 28, height: 28, padding: 0, borderRadius: 999, background: colors.subtle, color: colors.secondary }} onClick={props.onClose} /></div>
       <div style={{ height: 10 }} />
       <div style={{ width: 264, margin: '0 auto', padding: '16px 16px 14px', borderRadius: 18, background: colors.panel, boxSizing: 'border-box', boxShadow: '0 10px 22px rgba(0,0,0,.08)' }}>
         <div style={{ display: 'flex', alignItems: 'center' }}><Avatar imageRef={props.source.avatarRef} size={32} /><div style={{ marginLeft: 10, minWidth: 0 }}><div style={{ fontSize: 15, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{preview?.title ?? props.source.displayName}</div><div style={{ marginTop: 2, fontSize: 12, color: colors.secondary }}>{tr("发起人：")}{preview?.inviterDisplayName ?? 'Arkme'}</div></div></div>
@@ -924,24 +927,7 @@ export function InviteCollaboratorsDialog(props: {
 }
 
 export function MessageDndSwitch(props: { checked: boolean; busy: boolean; onChange: (checked: boolean) => void }) {
-  return <span
-    role="switch"
-    aria-label={tr("消息免打扰")}
-    aria-checked={props.checked}
-    aria-disabled={props.busy || undefined}
-    style={{
-      ...styles.switch,
-      background: props.checked ? colors.primary : arkmeTheme.active,
-      opacity: props.busy ? .55 : 1,
-      justifyContent: 'flex-start',
-    }}
-    onClick={(event?: { stopPropagation(): void }) => {
-      event?.stopPropagation()
-      if (!props.busy) props.onChange(!props.checked)
-    }}
-  >
-    <span style={{ ...styles.switchThumb, transform: props.checked ? 'translateX(18px)' : 'translateX(0)' }} />
-  </span>
+  return <ConversationSettingSwitch label={tr('消息免打扰')} {...props} />
 }
 
 const initialAiPolishMessage: ArkmeGroupAiPolishThreadMessage = {
@@ -1122,7 +1108,7 @@ function GroupAiPolishPanel(props: {
           style={{ ...styles.aiApplyButton, opacity: canApply ? 1 : .32, cursor: canApply ? 'pointer' : 'default' }}
           disabled={!canApply}
           onClick={() => { void applyRule() }}
-        >{busy ? tr("处理中") : '应用规则'}</button> : <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 AI 润色设置")} style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose}><X size={18} /></button>}
+        >{busy ? tr("处理中") : '应用规则'}</button> : <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 AI 润色设置")} style={{ ...styles.aiHeaderButton, justifySelf: 'end' }} onClick={props.onClose} />}
       </div>
       {view === 'rules' ? <div style={styles.aiBody}>
         {loading && settings === undefined ? <div style={styles.loading}>{tr("正在读取 AI 润色设置…")}</div> : null}
@@ -1202,6 +1188,7 @@ function GroupAiPolishPanel(props: {
 }
 
 function GroupSettingsMenu(props: {
+  accountScope: string | undefined
   source: ArkmeSourceItem
   open: boolean
   buttonRef: RefObject<HTMLButtonElement>
@@ -1209,6 +1196,8 @@ function GroupSettingsMenu(props: {
   onClose: () => void
   onRename: (target: ArkmeGroupActionTarget) => void
   onSelfNickname: () => void
+  onPublicSettingsOpen?: () => void
+  onCopyLink?: () => void
   aiPolishSettings?: ArkmeGroupAiPolishSnapshot | undefined
   onAiPolishSettingsChanged: (settings: ArkmeGroupAiPolishSnapshot) => void
   onAiPolishOpen: () => void
@@ -1219,10 +1208,13 @@ function GroupSettingsMenu(props: {
   onMessageDndUpdated: (target: ArkmeGroupActionTarget, result: ArkmeGroupNotificationResult) => boolean
   onError: (message: string) => void
   onExport: () => void
+  onLocation?: () => void
+  onOfflineContext?: () => void
   exportBusy: boolean
   exportProcessed: number
 }) {
   useArkmeLocale()
+  const recognitionAction = useConversationRecognitionAction(props.accountScope ?? '', props.source.conversationRef ?? props.source.sourceRef, 'chat', props.open)
   const [snapshot, setSnapshot] = useState<ArkmeGroupSettingsSnapshot>()
   const [managementOpen, setManagementOpen] = useState(false)
   const managementFocusRef = useRef<HTMLSpanElement>(null)
@@ -1361,8 +1353,12 @@ function GroupSettingsMenu(props: {
   }
   const entries: MenuEntry[] = [
     { type: 'label', id: 'personal-label', text: '个人设置' },
+    { id: recognitionAction.id, label: recognitionAction.label, icon: recognitionAction.icon, disabled: recognitionAction.disabled === true },
+    ...(recognitionAction.error ? [{ id: 'recognition-error', label: <span role="status">{recognitionAction.error}</span>, disabled: true }] : []),
     { id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> },
   ]
+  if (props.onPublicSettingsOpen) entries.push({ id: 'public-settings', label: '公开与展示', icon: <ClientIcon src={icons.members} size={16} /> })
+  if (props.onCopyLink) entries.push({ id: 'copy-group-link', label: '复制群聊链接', icon: <ClientIcon src={icons.members} size={16} /> })
   entries.push({
     id: 'message-dnd',
     label: <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1404,6 +1400,8 @@ function GroupSettingsMenu(props: {
   entries.push(
     { type: 'separator', id: 'export-separator' },
     { type: 'label', id: 'export-label', text: '聊天记录' },
+    ...(props.onOfflineContext ? [{ id: 'offline-context', label: tr('线下交流'), icon: <Waveform size={20} aria-hidden /> }] : []),
+    ...(props.onLocation ? [{ id: 'location', label: tr('位置'), icon: <MapPin size={20} aria-hidden /> }] : []),
     { id: 'export', label: props.exportBusy
       ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
       : '导出', icon: <DownloadSimple size={20} weight="regular" aria-hidden />, disabled: props.exportBusy },
@@ -1429,10 +1427,15 @@ function GroupSettingsMenu(props: {
     items={managementOpen ? managementEntries : entries}
     onClose={close}
     onSelect={id => {
+      if (id === recognitionAction.id) { recognitionAction.invoke(); return }
       if (id === 'management') { if (effective.canRename || canManage) setManagementOpen(true); return }
       if (id === 'back') { setManagementOpen(false); return }
       if (id === 'export') { close(); props.onExport(); return }
+      if (id === 'offline-context') { close(); props.onOfflineContext?.(); return }
+      if (id === 'location') { close(); props.onLocation?.(); return }
       if (id === 'self-nickname') { close(); props.onSelfNickname(); return }
+      if (id === 'public-settings') { close(); props.onPublicSettingsOpen?.(); return }
+      if (id === 'copy-group-link') { close(); props.onCopyLink?.(); return }
       if (id === 'message-dnd') {
         close()
         changeMessageDnd(!messageDnd)
@@ -1711,6 +1714,8 @@ export function ArkmeGroupChatControls(props: {
   onStatus?: (message: string) => void
   onError: (message: string) => void
   onExport?: () => void
+  onLocation?: () => void
+  onOfflineContext?: () => void
   exportBusy?: boolean
   exportProcessed?: number
 } & GroupBotActions) {
@@ -1724,6 +1729,7 @@ export function ArkmeGroupChatControls(props: {
   const [inviteOpen, setInviteOpen] = useState(false)
   const [addMembersOpen, setAddMembersOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [publicSettingsOpen, setPublicSettingsOpen] = useState(false)
   const [aiPolishOpen, setAiPolishOpen] = useState(false)
   const [restrictionsOpen, setRestrictionsOpen] = useState(false)
   const [internalGroupOpen, setInternalGroupOpen] = useState(false)
@@ -1738,6 +1744,7 @@ export function ArkmeGroupChatControls(props: {
   useEffect(() => {
     setRestrictionsOpen(false)
     setSelfNicknameOpen(false)
+    setPublicSettingsOpen(false)
     setInternalGroupOpen(false)
   }, [props.source.sourceRef, props.accountScope])
   const reportError = useCallback((message: string) => {
@@ -1781,6 +1788,7 @@ export function ArkmeGroupChatControls(props: {
     <div style={styles.headerActions}>
       <ArkmeConversationHeaderIconButton label={tr("查看群成员")} onClick={openMembers}><ClientIcon src={icons.members} size={24} /></ArkmeConversationHeaderIconButton>
       <GroupSettingsMenu
+        accountScope={props.accountScope}
         key={JSON.stringify([props.accountScope, props.source.sourceRef])}
         source={props.source}
         open={settingsOpen}
@@ -1794,6 +1802,8 @@ export function ArkmeGroupChatControls(props: {
         onClose={() => { setSettingsOpen(false) }}
         onRename={setRenameSource}
         onSelfNickname={() => { setSelfNicknameOpen(true) }}
+        {...(props.accountScope ? { onPublicSettingsOpen: () => setPublicSettingsOpen(true) } : {})}
+        {...(props.accountScope ? { onCopyLink: () => { void copyIdentityShareLink(props.accountScope!, { kind: 'source', sourceRef: props.source.sourceRef }).then(() => props.onStatus?.(tr('链接已复制'))).catch(error => reportError(errorMessage(error))) } } : {})}
         onAiPolishOpen={openAiPolish}
         onRestrictionsOpen={openRestrictions}
         {...(props.accountScope ? { onInternalGroupOpen: () => setInternalGroupOpen(true) } : {})}
@@ -1802,6 +1812,8 @@ export function ArkmeGroupChatControls(props: {
         onMessageDndUpdated={props.onMessageDndUpdated}
         onError={reportError}
         onExport={() => { props.onExport?.() }}
+        {...(props.onLocation ? { onLocation: props.onLocation } : {})}
+        {...(props.onOfflineContext ? { onOfflineContext: props.onOfflineContext } : {})}
         exportBusy={props.exportBusy === true}
         exportProcessed={props.exportProcessed ?? 0}
       />
@@ -1870,6 +1882,7 @@ export function ArkmeGroupChatControls(props: {
         onSourceProjectionUpdated={props.onSourceProjectionUpdated}
         onError={reportError}
       />
+      {publicSettingsOpen && props.accountScope && <PublicGroupSettingsDialog key={`${props.accountScope}:${props.source.sourceRef}`} accountScope={props.accountScope} sourceRef={props.source.sourceRef} onClose={() => { setPublicSettingsOpen(false); settingsButtonRef.current?.focus({ preventScroll: true }) }} onSaved={() => props.onStatus?.(tr('公开展示设置已保存'))} />}
     </>, overlayHost)}
   </>
 }

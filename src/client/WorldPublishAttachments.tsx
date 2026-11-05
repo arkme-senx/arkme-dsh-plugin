@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import { ArkmeAttachmentStrip } from './ArkmeAttachmentStrip.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -29,7 +30,7 @@ export function WorldPublishAttachments({ items, disabled, onRemove, onMove, onR
       const item = items.find(value => value.id === attachment.clientId)
       if (item?.block) { openSessionAttachmentPreview([item.block], item.block, 'world-publish', false); return }
       if (item?.previewUrl) showAttachmentPreview(`world-draft:${item.id}`, () => <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: arkmeTheme.base, color: arkmeTheme.text }}>
-        <button type="button" aria-label={tr('关闭预览')} style={{ alignSelf: 'flex-end', padding: 12 }} onClick={closeAttachmentPreview}>×</button>
+        <ArkmeCloseButton type="button" aria-label={tr('关闭预览')} style={{ alignSelf: 'flex-end', padding: 12 }} onClick={closeAttachmentPreview} />
         <img src={item.previewUrl} alt={item.file?.name ?? '图片'} style={{ minHeight: 0, flex: 1, width: '100%', objectFit: 'contain' }} />
       </div>)
     }} onRemove={item => onRemove(item.clientId!)} />

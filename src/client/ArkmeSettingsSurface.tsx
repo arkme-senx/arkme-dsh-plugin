@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
@@ -16,7 +17,6 @@ import { AppleLogo } from '@phosphor-icons/react/AppleLogo'
 import { GoogleLogo } from '@phosphor-icons/react/GoogleLogo'
 import { DeviceMobile } from '@phosphor-icons/react/DeviceMobile'
 import { EnvelopeSimple } from '@phosphor-icons/react/EnvelopeSimple'
-import { X } from '@phosphor-icons/react/X'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot,
@@ -48,6 +48,8 @@ import {
   arkmeBackgroundSoundCaptureEnabled,
   arkmeBackgroundSoundServerPreferenceRuntime,
   arkmeMicrophonePermissionState,
+  arkmeMicrophoneCaptureReady,
+  requestArkmeBackgroundSoundPermission,
   setArkmeBackgroundSoundFromSettings,
   subscribeArkmeBackgroundSoundCapturePreference,
   type ArkmeMicrophonePermissionState,
@@ -83,11 +85,11 @@ export function describeArkmeBackgroundSoundSetting(input: {
   if (input.enabled) {
     if (input.permission === 'denied') return tr("已开启；输入时检测到麦克风权限已拒绝，请在浏览器站点设置中允许")
     if (input.permission === 'unavailable') return tr("账号开关已开启，但当前浏览器不支持麦克风录音")
-    return tr("已开启，首次输入时会请求麦克风权限")
+    return tr("已开启，请在此授权麦克风；输入时不会弹出授权窗口")
   }
   if (input.permission === 'denied') return tr("未开启，麦克风权限已拒绝")
   if (input.permission === 'unavailable') return tr("当前浏览器不支持麦克风录音")
-  return tr("未开启；开启后会在首次输入时请求麦克风权限")
+  return tr("未开启；开启时授权麦克风，输入过程中自动记录")
 }
 
 interface SettingsRowProps {
@@ -302,7 +304,7 @@ function SettingsDialog({
     <section className="arkme-account-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={event => { event.stopPropagation() }}>
       <header>
         <h3>{title}</h3>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose}><X size={20} aria-hidden /></button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose} />
       </header>
       {children}
     </section>
@@ -929,7 +931,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
         arkmeMicrophonePermissionState(),
       ]).then(([capabilities, preference, permission]) => {
         if (!sameAccount()) return
-        setBackgroundSoundPermission(permission)
+        setBackgroundSoundPermission(permission === 'granted' && !arkmeMicrophoneCaptureReady() ? 'prompt' : permission)
         if (capabilities === undefined) {
           setBackgroundSoundCapabilityState({ accountId: targetAccountKey, status: 'loading' })
           setBackgroundSoundEligibilityState({ accountId: targetAccountKey, status: 'loading' })
@@ -988,6 +990,10 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
     setBackgroundSoundBusy(true)
     setBackgroundSoundFeedback(enabled ? '正在开启文字背景音…' : '')
     try {
+      if (enabled && !arkmeMicrophoneCaptureReady()) {
+        await requestArkmeBackgroundSoundPermission()
+        if (!sameAccount()) return
+      }
       let persistedEnabled = enabled
       await setArkmeBackgroundSoundFromSettings(
         targetAccountKey,
@@ -1016,7 +1022,7 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
     } finally {
       const permission = await arkmeMicrophonePermissionState()
       if (sameAccount()) {
-        setBackgroundSoundPermission(permission)
+        setBackgroundSoundPermission(permission === 'granted' && !arkmeMicrophoneCaptureReady() ? 'prompt' : permission)
         backgroundSoundBusyRef.current = false
         setBackgroundSoundBusy(false)
       }
@@ -1110,6 +1116,10 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
           description={backgroundSoundDescription}
           onChange={enabled => { void changeBackgroundSound(enabled) }}
         />
+        {backgroundSoundEnabled && backgroundSoundPermission === 'prompt'
+          && backgroundSoundCapability === 'supported' && backgroundSoundEligibility === 'eligible' && <SettingsRow
+          title={tr('授权背景音麦克风')} description={tr('授权后在输入过程中自动记录，输入时不再弹窗')}
+          disabled={backgroundSoundBusy} onClick={() => { void changeBackgroundSound(true) }} />}
       </SettingsGroup> : null}
       </>}
 

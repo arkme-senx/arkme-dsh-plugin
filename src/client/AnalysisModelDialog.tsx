@@ -1,10 +1,12 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { tr, useArkmeLocale } from './locale.js'
 import { arkmeTheme as colors } from './arkme-theme.js'
+import type { ModelChoice } from '../model-directory.js'
+import { UnifiedModelPicker } from './UnifiedModelPicker.js'
 type RecordingDropdownAnchor = { left: number; right: number; top: number; bottom: number }
 const styles: Record<string, CSSProperties> = {
   analysisDropdownButton: { height: 36, minWidth: 0, padding: '0 12px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, border: `1px solid ${colors.border}`, borderRadius: 10, background: colors.input, color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 14, lineHeight: 1, textAlign: 'left' },
@@ -78,18 +80,22 @@ export function AnalysisDropdown({ ariaLabel, value, options, width, variant, au
   </>
 }
 
-export function AnalysisModelDialog({ ariaLabel, initialValue, options, onClose, onConfirm }: {
+export function AnalysisModelDialog({ ariaLabel, initialValue, options, onClose, onConfirm, unifiedModels }: {
   ariaLabel: string
   initialValue: string
   options: AnalysisDropdownOption[]
   onClose(): void
   onConfirm(value: string): void
+  unifiedModels?: ModelChoice[]
 }) {
   useArkmeLocale()
   const [routeKey, setRouteKey] = useState(options.some(option => option.value === initialValue) ? initialValue : '')
+  if (unifiedModels) return <UnifiedModelPicker ariaLabel={ariaLabel} scene="recording" scopeLabel="录音总结与时间轴" models={unifiedModels}
+    currentId={JSON.stringify(['recording', initialValue])} confirmLabel="确认并生成" onClose={onClose}
+    onApply={async model => { if (!model.recording) return false; onConfirm(model.recording); return true }}/>
   const dialog = <div style={styles.modelBackdrop} role="presentation" onKeyDown={event => { if (event.key === 'Escape') onClose() }} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section role="dialog" aria-modal="true" aria-label={ariaLabel} style={styles.modelDialog}>
-      <header style={styles.modelDialogHeader}><h2 style={styles.modelDialogTitle}>{tr("选择模型")}</h2><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.modelDialogClose} onClick={onClose}><X size={20} aria-hidden /></button></header>
+      <header style={styles.modelDialogHeader}><h2 style={styles.modelDialogTitle}>{tr("选择模型")}</h2><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} style={styles.modelDialogClose} onClick={onClose} /></header>
       <div style={styles.modelField}><span style={styles.modelFieldLabel}>{tr("模型：")}</span><AnalysisDropdown autoFocus ariaLabel={tr("选择生成模型")} value={routeKey} options={options} width={280} variant="model" onChange={setRouteKey} /></div>
       <footer style={styles.modelDialogActions}><button data-arkme-feedback="neutral" type="button" style={styles.modelDialogButton} onClick={onClose}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" disabled={routeKey === ''} style={{ ...styles.modelDialogButton, background: colors.primaryAction, color: colors.onPrimaryAction, borderColor: 'transparent', ...(routeKey === '' ? { opacity: .5, cursor: 'default' } : {}) }} onClick={() => { onConfirm(routeKey) }}>{tr("确认")}</button></footer>
     </section>

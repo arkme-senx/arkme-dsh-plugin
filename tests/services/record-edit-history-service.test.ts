@@ -12,6 +12,26 @@ const revision = (id: string, type = 1) => ({ revision_uid: id, record_uid: 'r1'
 const target = { kind: 'owned' as const, viewerUserId: 42, recordUid: 'r1' }
 
 describe('Record edit history', () => {
+  it('preserves the author snapshot of each revision', async () => {
+    const f = fixture({ items: [
+      { ...revision('new'), sender_snapshot: { avatar: 'file_asset://new-avatar', nickname: '编辑时的名字' } },
+      { ...revision('old', 5), avatar: 'file_asset://original-avatar', nickname: '创建时的名字' },
+    ], has_more: false })
+    const page = await f.service.page(target)
+    expect(page.items).toMatchObject([
+      { revisionUid: 'new', avatarRef: 'file_asset://new-avatar', senderName: '编辑时的名字' },
+      { revisionUid: 'old', avatarRef: 'file_asset://original-avatar', senderName: '创建时的名字' },
+    ])
+  })
+
+  it('finds an exact historical revision across pages without querying the current message', async () => {
+    const f = fixture({})
+    f.runtime.authenticatedPost.mockResolvedValueOnce({ items: [revision('new')], has_more: true, next_cursor_edit_at: 100 })
+      .mockResolvedValueOnce({ items: [{ ...revision('wanted', 5), edit_at: 50, edit_capture_context: { client_name: 'old device' } }], has_more: false })
+    expect(await f.service.revision(target, 'wanted')).toMatchObject({ snapshot: { revision_uid: 'wanted', edit_capture_context: { client_name: 'old device' } } })
+    expect(f.runtime.authenticatedPost).toHaveBeenLastCalledWith('/api/v1/records/revisions/query', { record_uid: 'r1', limit: 50, cursor_edit_at: 100 }, { userId: 42 }, undefined)
+    await expect(fixture({ items: [], has_more: false }).service.revision(target, 'missing')).rejects.toMatchObject({ code: 'record-revision-not-found' })
+  })
   it('prefers explicit manual edit facts over legacy status; never infers from versions', () => {
     expect(recordManualEditFact({ has_manual_edit: false, edit_status: 4 })).toBe(false)
     expect(recordManualEditFact({ record_core: { has_manual_edit: true } })).toBe(true)

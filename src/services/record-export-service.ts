@@ -1,4 +1,6 @@
 import type { Readable } from 'node:stream'
+import { createReadStream } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, open, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
@@ -6,6 +8,7 @@ import { ZipFile } from 'yazl'
 import { GeneratedArtifacts } from '../generated-artifacts.js'
 import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress } from '../data-management.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
+import { RecordExportRangeService, exportSelection, wireExportSelection } from './record-export-range-service.js'
 
 export const RECORD_EXPORT_PREFIX = 'arkme-record-export-v1'
 const MAX_BYTES = 1024 * 1024 * 1024
@@ -51,7 +54,9 @@ export class RecordExportService {
   private controller: AbortController | undefined
   private readonly root: string
   private readonly generated: GeneratedArtifacts
+  private readonly ranges: RecordExportRangeService
   constructor(private readonly runtime: ServiceRuntime) {
+    this.ranges = new RecordExportRangeService(runtime)
     this.root = join(runtime.config.fileStateDirectory ?? join(homedir(), '.arkme'), 'record-exports', runtime.config.environment)
     this.generated = new GeneratedArtifacts(this.root, () => runtime.stateStore.uniqueCode(),
       async () => (await runtime.requireSession()).userId, undefined,
@@ -59,8 +64,22 @@ export class RecordExportService {
   }
   dispose(): void { this.controller?.abort() }
   read(ref: string) { return this.generated.read(ref) }
+  preview(scope: string, selection: unknown, order: 1 | 2, signal?: AbortSignal) { return this.ranges.preview(scope, selection, order, signal) }
+  confirmSaved(scope: string, ref: string, signal?: AbortSignal) {
+    return this.ranges.confirmSaved(scope, ref, async (fileRef, digest, size) => {
+      const file = await this.generated.read(fileRef, signal)
+      if (file.file.size !== size) throw invalid()
+      const hash = createHash('sha256')
+      for await (const chunk of createReadStream(file.path, { signal })) hash.update(chunk)
+      if (hash.digest('hex') !== digest) throw invalid()
+    }, signal)
+  }
   async run(options: ArkmeRecordExportOptions, parent?: AbortSignal, progress?: (value: ArkmeRecordExportProgress) => void): Promise<ArkmeRecordExport> {
     if (options.confirmed !== true || ![1, 2].includes(options.orderKind)) throw new ArkmePluginError('record-export-confirmation-required', '请确认导出范围和次数后再开始', false, 400)
+    const selection = options.selection === undefined ? undefined : exportSelection(options.selection)
+    const range = selection !== undefined
+    if (range && (!options.previewUid || options.previewUid.length > 100)) throw invalid()
+    if (!range && options.previewUid !== undefined) throw invalid()
     if (this.controller) throw new ArkmePluginError('record-export-busy', '已有导出正在进行，请稍后重试', true, 429)
     const controller = new AbortController(); this.controller = controller
     const signal = AbortSignal.any([controller.signal, ...(parent ? [parent] : [])])
@@ -84,13 +103,17 @@ export class RecordExportService {
     const report = (force = false) => { if (force || Date.now() - lastProgress >= 250) { lastProgress = Date.now(); try { progress?.({ count }) } catch { /* UI observers do not own export. */ } } }
     try {
       await assertAccount()
-      const start = await post('session/start', { order_kind: options.orderKind, hide_record_privacy_lock: true })
-      if (start.can_export !== true) throw new ArkmePluginError('record-export-blocked', '当前导出额度不足或暂不满足导出条件，请刷新后重试', false, 409)
-      sessionUid = text(start.export_session_uid)
+      const start = await post(range ? 'range/start' : 'session/start', range ? { preview_uid: options.previewUid } : { order_kind: options.orderKind, hide_record_privacy_lock: true })
+      if (range) {
+        const received = object(start.selection), expected = wireExportSelection(selection!, options.orderKind)
+        if (start.status !== 'started' || Object.entries(expected).some(([key, value]) => received[key] !== value)) throw invalid()
+      } else if (start.can_export !== true) throw new ArkmePluginError('record-export-blocked', '当前导出额度不足或暂不满足导出条件，请刷新后重试', false, 409)
+      sessionUid = text(range ? start.preview_uid : start.export_session_uid)
       const expectedCount = number(start.record_count)
-      if (!sessionUid || expectedCount > 100_000) throw invalid()
+      const expectedRemoved = range ? number(start.removed_count) : 0
+      if (!sessionUid || expectedCount + expectedRemoved > 100_000) throw invalid()
       const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '')
-      const fileName = `Jotmo${expectedCount}条快记_导出时间${stamp}.zip`
+      const fileName = `Jotmo${range ? selection!.mode === 'incremental' ? '增量_' : selection!.mode === 'dates' ? `${selection!.startDate}_${selection!.endDate}_` : '全部_' : ''}${expectedCount}条快记_导出时间${stamp}.zip`
       await mkdir(this.root, { recursive: true, mode: 0o700 })
       scratch = await mkdtemp(join(this.root, 'working-'))
       const markdownPath = join(scratch, 'records.md'), markdown = await open(markdownPath, 'wx', 0o600)
@@ -107,26 +130,35 @@ export class RecordExportService {
           // Observe immediately even if disk backpressure fails during an upstream request.
           void pump.catch(() => controller.abort())
           try {
-            let cursorAt = 0, cursorUid = '', date = ''
+            let cursorAt = 0, cursorUid = '', cursorIndex = 0, date = ''
             const seen = new Set<string>()
+            const removed = new Set<string>(), manifest: Record<string, unknown>[] = []
             for (let pageIndex = 0; ; pageIndex++) {
               if (pageIndex >= 1001) throw invalid()
-              const page = await post('records/page', { export_session_uid: sessionUid, limit: 100,
-                ...(cursorAt ? { cursor_send_at: cursorAt, cursor_record_uid: cursorUid } : {}) }, true)
+              const page = await post(range ? 'range/page' : 'records/page', range
+                ? { preview_uid: sessionUid, limit: 100, after_index: cursorIndex }
+                : { export_session_uid: sessionUid, limit: 100, ...(cursorAt ? { cursor_send_at: cursorAt, cursor_record_uid: cursorUid } : {}) }, true)
               const items = rows(page.items, 100)
+              const removals = range ? page.removed_uids : []
+              if (!Array.isArray(removals) || removals.length + items.length > 100) throw invalid()
+              for (const uid of removals) {
+                if (typeof uid !== 'string' || !uid || removed.has(uid) || seen.has(uid) || removed.size >= expectedRemoved) throw invalid()
+                removed.add(uid)
+              }
               const refs = items.flatMap(item => rows(item.file_refs, 100))
               const signed = new Map<string, Record<string, unknown>>()
               // Signing requests also stay bounded when a page contains many attachments.
               for (let i = 0; i < refs.length; i += 100) {
-                const response = await post('files/batch-sign', { export_session_uid: sessionUid,
+                const response = await post(range ? 'range/files/batch-sign' : 'files/batch-sign', { [range ? 'preview_uid' : 'export_session_uid']: sessionUid,
                   file_asset_uids: [...new Set(refs.slice(i, i + 100).map(ref => text(ref.file_asset_uid)))],
                   record_uids: items.map(item => text(item.record_uid)) }, true)
                 for (const file of rows(response.items, 100)) signed.set(text(file.file_asset_uid), file)
               }
               for (const item of items) {
                 const recordUid = text(item.record_uid)
-                if (!recordUid || seen.has(recordUid) || ++count > expectedCount) throw invalid()
+                if (!recordUid || seen.has(recordUid) || removed.has(recordUid) || ++count > expectedCount) throw invalid()
                 seen.add(recordUid)
+                const manifestFiles: Record<string, unknown>[] = []
                 const at = new Date(number(item.send_at))
                 if (!Number.isFinite(at.getTime())) throw invalid()
                 const day = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
@@ -164,21 +196,29 @@ export class RecordExportService {
                   const zipPath = `${ref.file_kind === 2 ? 'voice' : 'pic'}/${attachmentCount}-${safeName(text(ref.suggested_name ?? 'attachment'))}`
                   zip.addFile(path, zipPath, { compress: false })
                   const link = `./${zipPath.split('/').map(encodeURIComponent).join('/')}`
+                  if (range) manifestFiles.push({ file_asset_uid: text(ref.file_asset_uid), path: zipPath, mime_type: ref.mime_type })
                   content += ref.file_kind === 2 ? `[语音](${link})\n` : `![图片](${link})\n`
                 }
                 bytes += Buffer.byteLength(content)
                 if (bytes > MAX_BYTES) throw invalid()
                 await markdown.writeFile(content)
+                if (range) manifest.push({ record_uid: recordUid, version: number(item.version), send_at: number(item.send_at), title, text: body, files: manifestFiles })
                 report()
               }
               if (typeof page.has_more !== 'boolean') throw invalid()
               if (!page.has_more) break
+              if (range) {
+                const nextIndex = number(page.next_index)
+                if (nextIndex <= cursorIndex || nextIndex > expectedCount + expectedRemoved || !items.length && !removals.length) throw invalid()
+                cursorIndex = nextIndex; continue
+              }
               const nextAt = number(page.next_cursor_send_at), nextUid = text(page.next_cursor_record_uid)
               if (!items.length || !nextAt || !nextUid || (nextAt === cursorAt && nextUid === cursorUid)) throw invalid()
               cursorAt = nextAt; cursorUid = nextUid
             }
-            if (count !== expectedCount) throw invalid()
+            if (count !== expectedCount || removed.size !== expectedRemoved) throw invalid()
             await markdown.sync()
+            if (range) zip.addBuffer(Buffer.from(JSON.stringify({ schema_version: 2, preview_uid: sessionUid, base_version: number(start.base_version), chain_uid: text(start.chain_uid), selection_fingerprint: text(start.selection_fingerprint), selection, record_count: count, removed_count: removed.size, records: manifest, removed_uids: [...removed] })), 'manifest.json')
             zip.addFile(markdownPath, `Jotmo${stamp}.md`, { compress: false }); zip.end()
             await pump; await assertAccount()
             return count
@@ -193,15 +233,23 @@ export class RecordExportService {
       // export or a contradictory failure write. Keep the usable download.
       finishAttempted = true
       let quotaFinalized = true
-      try { await post('session/finish', { export_session_uid: sessionUid, success: true }) } catch { quotaFinalized = false }
+      try {
+        const response = await post(range ? 'range/finish' : 'session/finish', range
+          ? { preview_uid: sessionUid, success: true, artifact_sha256: generated.sha256, artifact_size: generated.file.size }
+          : { export_session_uid: sessionUid, success: true })
+        if (range) quotaFinalized = response.quota_finalized === true
+      } catch { quotaFinalized = false }
       await assertAccount(); report(true)
-      return { ...generated.file, accountScope: scope, count, quotaFinalized }
+      return { ...generated.file, accountScope: scope, count, quotaFinalized, ...(range ? {
+        savedConfirmationRef: await this.ranges.confirmation(scope, generated.file.fileRef, sessionUid, generated.sha256, generated.file.size), rangeMode: selection!.mode, removedCount: expectedRemoved,
+      } : {}) }
     } catch (error) {
       if (sessionUid && !finishAttempted) {
         const current = await this.runtime.requireSession().catch(() => undefined)
         if (current?.userId === session.userId && current.refreshToken === session.refreshToken && scope === `${this.runtime.config.environment}:${current.userId}`) {
-          await this.runtime.authenticatedPost('/api/v1/records/export/session/finish', { export_session_uid: sessionUid, success: false,
-            failure_code: 'plugin_export_failed', failure_message: '导出取消或备份生成失败' }, session, AbortSignal.timeout(10_000)).catch(() => undefined)
+          await this.runtime.authenticatedPost(`/api/v1/records/export/${range ? 'range/finish' : 'session/finish'}`, range
+            ? { preview_uid: sessionUid, success: false, artifact_sha256: '', artifact_size: 0 }
+            : { export_session_uid: sessionUid, success: false, failure_code: 'plugin_export_failed', failure_message: '导出取消或备份生成失败' }, session, AbortSignal.timeout(10_000)).catch(() => undefined)
         }
       }
       if (error instanceof ArkmePluginError) throw error

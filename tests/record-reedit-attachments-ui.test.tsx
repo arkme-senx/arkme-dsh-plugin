@@ -47,6 +47,7 @@ import { ArkmeMediaPreview } from '../src/client/ArkmeRichContent.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory, arkmeChatTimelineDelta } from '../src/client/chat-directory-store.js'
 import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/client/composer-draft-store.js'
+import { recordReeditBackground } from '../src/client/record-reedit-background.js'
 import { arkmeMessageReadReceipts } from '../src/client/message-read-receipt-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { ArkmeConversationMemoryCache } from '../src/client/conversation-memory-cache.js'
@@ -171,6 +172,8 @@ describe('record re-edit attachment UI', () => {
     await mount(); await open()
     act(() => composer().props.onTextChange('@小明 输入更新'))
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
+    expect(composer().props.value).toBe('普通发送草稿')
+    await open()
     expect(composer().props.value).toBe('@小明 输入更新')
     expect(composer().props.mentions).toEqual(mentions)
     expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('@ 对象当前不可用')
@@ -317,7 +320,7 @@ describe('record re-edit attachment UI', () => {
     expect(renderer!.root.findAllByProps({ 'aria-label': '保存重新编辑' })).toHaveLength(0)
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
     expect(JSON.stringify(renderer!.toJSON())).toContain('待保存新正文')
-    expect(row.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(0)
+    expect(row.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(1)
     expect(composer().props.value).toBe('普通发送草稿')
     expect(arkmeComposerDraftStore.get(normalKey).text).toBe('普通发送草稿')
     expect(JSON.stringify(renderer!.toJSON())).toContain('b.pdf')
@@ -441,7 +444,7 @@ describe('record re-edit attachment UI', () => {
     const observers: IntersectionObserverCallback[] = []
     vi.stubGlobal('IntersectionObserver', class {
       constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        if (options?.rootMargin === '120px 0px 0px') observers.push(callback)
+        if (options?.rootMargin === '800px 0px 0px') observers.push(callback)
       }
       observe() {} disconnect() {}
     })
@@ -788,14 +791,14 @@ describe('record re-edit attachment UI', () => {
       && value.contentBlocks[0]?.mediaRef === blocks[0]!.mediaRef)).toBe(true)
   })
 
-  it.each(['committing', 'uncertain'] as const)('shows only actionable delivery feedback: %s', async state => {
+  it.each(['committing', 'uncertain'] as const)('shows background delivery feedback: %s', async state => {
     const base = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params) => operation === 'source.record-reedit.submissions'
       ? [{ submissionId: 'feedback', baseVersion: 3, itemUid: item.itemUid, state,
         title: '', textContent: '提交候选', attachments: [] }]
       : base(operation, params))
     await mount()
-    expect(renderer!.root.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(state === 'uncertain' ? 1 : 0)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(1)
     if (state === 'uncertain') expect(renderer!.root.findAllByType('button').some(button => button.children.includes('核对结果'))).toBe(true)
   })
 
@@ -917,11 +920,12 @@ describe('record re-edit attachment UI', () => {
   })
 
   beforeEach(() => {
+    recordReeditBackground.clear()
     mocks.renderedItems.length = 0
     snapshot = baseline()
     const storage = new Map<string, string>()
     const storageApi = { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => { storage.set(key, value) }, removeItem: (key: string) => { storage.delete(key) } }
-    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, innerHeight: 900, localStorage: storageApi, sessionStorage: storageApi })
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, innerHeight: 900, localStorage: storageApi, sessionStorage: storageApi })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
     arkmeComposerDraftStore.clearAccount(42)
@@ -953,6 +957,7 @@ describe('record re-edit attachment UI', () => {
   })
   afterEach(async () => {
     await act(async () => { renderer?.unmount(); await flush() })
+    recordReeditBackground.clear()
     renderer = undefined
     arkmeConversationMembers.activateAccount(undefined)
     arkmeComposerDraftStore.clearAccount(42)
@@ -1073,6 +1078,8 @@ describe('record re-edit attachment UI', () => {
       return base(operation, params)
     })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '关闭重新编辑' }).props.onClick(); await flush() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(0)
+    await open()
     expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(1)
     expect(composer().props.value).toBe('')
     expect(strip().props.attachments).toHaveLength(1)
@@ -1198,6 +1205,7 @@ describe('record re-edit attachment UI', () => {
     await act(async () => { saving.resolve({ draftRevision: 1 }); await flush() })
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.record-reedit.submit')).toHaveLength(0)
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 }); await flush() })
+    await open()
     expect(composer().props.value).toBe('账号 42 的未提交输入')
     expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(false)
   })
@@ -1209,7 +1217,7 @@ describe('record re-edit attachment UI', () => {
     mocks.callArkme.mockImplementation(async (operation, params) => operation === 'source.record-reedit.detail' && ++reads === 1
       ? detail.promise : base(operation, params))
     await mount(); await open()
-    expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(true)
+    expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(false)
     await act(async () => { arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 43 }); await flush() })
     await act(async () => { detail.resolve({ ...baseline(), textContent: '迟到的账号 42 内容' }); await flush() })
     expect(composer().props.value).not.toBe('迟到的账号 42 内容')
@@ -1247,12 +1255,13 @@ describe('record re-edit attachment UI', () => {
       await flush()
     })
     expect(composer().props.value).toBe('重新打开后的新输入')
-    expect(strip().props.attachments).toHaveLength(2)
-    expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(false)
+    if (initial === 'pending') expect(renderer!.root.findAllByType(ArkmeAttachmentStrip)).toHaveLength(0)
+    else expect(strip().props.attachments).toHaveLength(2)
+    expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(initial === 'pending')
     expect(arkmeComposerDraftStore.get(normalKey)).toMatchObject({ text: '保留普通发送正文', attachments: [{ localFile: local }] })
   })
 
-  it.each(['failed', 'pending'] as const)('rejects text, picked files and pasted files until the %s initial detail is available', async initial => {
+  it.each(['failed', 'pending'] as const)('accepts text immediately but defers picked and pasted files until the %s initial detail is available', async initial => {
     const detail = deferred<unknown>()
     const base = mocks.callArkme.getMockImplementation()!
     let reads = 0
@@ -1274,8 +1283,8 @@ describe('record re-edit attachment UI', () => {
       } })
       await flush()
     })
-    expect(composer().props.value).toBe(item.textContent)
-    expect(composer().props.disabled).toBe(true)
+    expect(composer().props.value).toBe('没有快照不能接收的输入')
+    expect(composer().props.disabled).toBe(false)
     expect(renderer!.root.findByProps({ 'aria-label': '添加内容' }).props.disabled).toBe(true)
     expect(renderer!.root.findAllByType(ArkmeAttachmentStrip)).toHaveLength(0)
     expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).endsWith('/files/stage'))).toHaveLength(0)
@@ -1285,7 +1294,7 @@ describe('record re-edit attachment UI', () => {
     expect(strip().props.attachments[0].localFile).toEqual(local)
     await open()
     expect(composer().props.disabled).toBe(false)
-    expect(renderer!.root.findByProps({ 'aria-label': '添加内容' }).props.disabled).toBe(false)
+    expect(renderer!.root.findByProps({ 'aria-label': '添加内容' }).props.disabled).toBe(initial === 'pending')
   })
 
   it.each(['close', 'source'] as const)('retains unsaved input when an account switch skips its queued %s save', async exit => {
@@ -1311,6 +1320,7 @@ describe('record re-edit attachment UI', () => {
       arkmeUi.selectSource(source)
       await flush()
     })
+    await open()
     expect(composer().props.value).toBe('A 尚未落盘的新内容')
     expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(false)
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.record-reedit.draft.put')).toHaveLength(1)
@@ -1356,12 +1366,12 @@ describe('record re-edit attachment UI', () => {
     act(() => composer().props.onTextChange('A 已请求提交'))
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
     if (context === 'source') await act(async () => { arkmeUi.selectSource(other); await flush() })
-    await open(context === 'source' ? 0 : 1)
+    await open(1)
     act(() => composer().props.onTextChange('B 正在继续输入'))
     await act(async () => {
       if (outcome === 'accepted') submitting.resolve({ submissionId: 'late-A', state: 'pending', itemUid: item.itemUid,
         title: '', textContent: 'A 已请求提交', attachments: [] })
-      else submitting.reject(new Error('A 提交失败'))
+      else submitting.reject(new ArkmeClientError({ code: 'record-reedit-rejected', message: 'A 提交失败', retryable: true }))
       await flush()
     })
     expect(composer().props.value).toBe('B 正在继续输入')
@@ -1500,7 +1510,7 @@ describe('record re-edit attachment UI', () => {
     const base = mocks.callArkme.getMockImplementation()!
     let failCommit = true
     mocks.callArkme.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
-      if (operation === 'source.record-reedit.submit' && failCommit) throw new Error('上传失败，请重试')
+      if (operation === 'source.record-reedit.submit' && failCommit) throw new ArkmeClientError({ code: 'file-upload-failed', message: '上传失败，请重试', retryable: true })
       return base(operation, params)
     })
     await mount(); await open()
@@ -1509,6 +1519,7 @@ describe('record re-edit attachment UI', () => {
     expect(mocks.callArkme.mock.calls.filter(([operation]) => ['source.record-reedit.draft.put', 'source.record-reedit.submit'].includes(operation)).map(([operation, params]) => [operation, params.expectedDraftRevision])).toEqual([
       ['source.record-reedit.draft.put', 0], ['source.record-reedit.submit', 1],
     ])
+    await open()
     expect(strip().props.attachments).toHaveLength(1)
     expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('上传失败，请重试')
     failCommit = false
@@ -1605,6 +1616,7 @@ describe('record re-edit attachment UI', () => {
     })
     await mount(); await open()
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
+    await open()
     expect(renderer!.root.findAllByProps({ 'aria-label': '放弃草稿并重新载入' })).toHaveLength(0)
     act(() => renderer!.root.findByProps({ 'aria-label': '重新载入草稿' }).props.onClick())
     snapshot.draft = { title: '', textContent: '最新草稿', attachments: [], baseVersion: 3, draftRevision: 8, updatedAtMillis: 2 }

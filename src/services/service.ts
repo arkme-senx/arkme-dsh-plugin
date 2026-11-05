@@ -1,3 +1,5 @@
+import { ArkmePluginError } from './service-error.js'
+export { ArkmePluginError } from './service-error.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
 import { parseOwnerJson, stringifyOwnerJson } from '../record-owner-id.js'
@@ -26,7 +28,6 @@ import type {
   ArkmeSelfSummary,
   ArkmeUserProfile,
   ArkmeUserProfileSnapshot,
-  ArkmePluginErrorBody,
 } from '../types.js'
 import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
@@ -37,6 +38,7 @@ export interface StateStore extends RecentEmojiStore {
  retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>
 
   teamMemberAddition?(scope: string, teamId: string, change?: {put: import('../team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}): Promise<import('../team-member-add-contract.js').TeamMemberAdditionAttempt | undefined>
+  teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
   localTranscriptEntries?(account: string, scope: string, ids: string[], change?: import('../local-transcript-state.js').LocalTranscriptChange): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
@@ -68,6 +70,9 @@ arkoFileRefs(userId:number):Promise<string[]>
   writeAvatarCache?(userId: number, imageRef: string, image: import('../types.js').ArkmeImageBytes): Promise<void>
   selfRoleAvatarLocalRef?(userId: number, fileAssetUid: string): Promise<string | undefined>
   forgetCachedMembers?(userId: number, group: string, refs: readonly string[]): Promise<void>
+  clearPublicPeople?(environment: string, viewer: number, target?: number): Promise<void>
+  cachedPublicPerson?(environment: string, viewer: number, target: number): Promise<import('../public-person-cache.js').PublicPersonSnapshot | undefined>
+  cachePublicPeople?(environment: string, viewer: number, entries: readonly import('../public-person-cache.js').PublicPersonSnapshot[], missing: readonly number[], observedAt: number): Promise<void>
   cachedConversationMembers?(userId: number, group: string): Promise<import('../types.js').ArkmeConversationMemberCache | undefined>
   mergeConversationMembers?(userId: number, group: string, page: import('../types.js').ArkmeConversationMemberUpdate): Promise<void>
   clearConversationMembers?(userId: number, group: string): Promise<void>
@@ -194,6 +199,8 @@ export interface ArkmeRemoteRequestOptions {
   key?: string
   cacheMs?: number
   failureCooldownMs?: number
+  /** Per-request owner budget, shared by transport and read recovery. */
+  requestTimeoutMs?: number
   bypassCache?: boolean
   /** Cancel a shared read transport once its last subscriber leaves. */
   cancelWhenUnobserved?: boolean
@@ -201,38 +208,6 @@ export interface ArkmeRemoteRequestOptions {
   publishServiceCooldown?: boolean
   /** Mark only transport outcomes where a mutation may have reached its owner without a usable acknowledgement. */
   trackWriteOutcome?: boolean
-}
-
-export class ArkmePluginError extends Error {
-  readonly publishReceipt?: ArkmePluginErrorBody['publishReceipt']
-  readonly upstreamStatus?: number
-  readonly retryAfterMillis?: number
-  readonly failureKind?: ArkmePluginErrorBody['failureKind']
-  readonly retryScope?: ArkmePluginErrorBody['retryScope']
-  readonly recovery?: ArkmePluginErrorBody['recovery']
-  readonly imageFailures?: ArkmePluginErrorBody['imageFailures']
-  /** The owner mutation may have completed, but the caller did not receive a usable acknowledgement. */
-  readonly writeOutcomeUnknown?: true
-
-  constructor(
-    readonly code: string,
-    message: string,
-    readonly retryable: boolean,
-    readonly httpStatus = 400,
-    options?: ErrorOptions & { upstreamStatus?: number; retryAfterMillis?: number; writeOutcomeUnknown?: boolean; publishReceipt?: ArkmePluginErrorBody['publishReceipt'];
-      failureKind?: ArkmePluginErrorBody['failureKind']; retryScope?: ArkmePluginErrorBody['retryScope']; recovery?: ArkmePluginErrorBody['recovery']; imageFailures?: ArkmePluginErrorBody['imageFailures'] },
-  ) {
-    super(message, options)
-    this.name = 'ArkmePluginError'
-    if (options?.publishReceipt !== undefined) this.publishReceipt = options.publishReceipt
-    if (options?.upstreamStatus !== undefined) this.upstreamStatus = options.upstreamStatus
-    if (options?.retryAfterMillis !== undefined) this.retryAfterMillis = options.retryAfterMillis
-    if (options?.failureKind !== undefined) this.failureKind = options.failureKind
-    if (options?.retryScope !== undefined) this.retryScope = options.retryScope
-    if (options?.recovery !== undefined) this.recovery = options.recovery
-    if (options?.imageFailures !== undefined) this.imageFailures = options.imageFailures
-    if (options?.writeOutcomeUnknown === true) this.writeOutcomeUnknown = true
-  }
 }
 
 /** Opaque upstream body, for the owning business adapter only. Never serialize this error wholesale. */
@@ -443,9 +418,13 @@ export class ServiceRuntime {
       // 只执行一次写入；未知写结果也需让后续查询回到 owner，不加入写前的 flight。
       return await operation()
     } finally {
-      this.requestCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${route}:`)
-      this.messageSyncCoordinator.invalidateKey(this.requestScope(session.userId), `owner-read:${route}:`)
+      this.invalidateOwnerRead(this.requestScope(session.userId), route)
     }
+  }
+
+  invalidateOwnerRead(scope: string, route: string): void {
+    this.requestCoordinator.invalidateKey(scope, `owner-read:${route}:`)
+    this.messageSyncCoordinator.invalidateKey(scope, `owner-read:${route}:`)
   }
 
   async runOwnerRead<T>(route: string, parameters: Record<string, unknown>, operation: (signal: AbortSignal) => Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -681,6 +660,7 @@ export class ServiceRuntime {
     preserveForbiddenError = false,
   ): Promise<T> {
     const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
+    const requestTimeoutMs = options.requestTimeoutMs ?? this.config.requestTimeoutMs
     const route = `${baseUrl.replace(/\/+$/, '')}${path}`
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
@@ -721,7 +701,7 @@ export class ServiceRuntime {
         cacheMs: 0,
         failureCooldownMs: 0,
         cancelWhenUnobserved: true,
-        recovery: { maxAttempts: 3, deadlineMs: this.config.requestTimeoutMs, delay: readRecoveryDelay, coolsRoute: readFailureCoolsRoute, exhausted: exhaustedRead,
+        recovery: { maxAttempts: 3, deadlineMs: requestTimeoutMs, delay: readRecoveryDelay, coolsRoute: readFailureCoolsRoute, exhausted: exhaustedRead,
           timeout: () => new ArkmePluginError('arkme-timeout', '读取超时，请稍后重试', true, 504) },
       } : {}),
       shouldCooldown: error => !(error instanceof ArkmePluginError)
@@ -733,7 +713,7 @@ export class ServiceRuntime {
         let errorCode: string | undefined
         try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
           baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
-          preserveHttpError, preserveForbiddenError,
+          preserveHttpError, preserveForbiddenError, requestTimeoutMs,
         )) } catch (error) {
           if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
           throw error
@@ -764,6 +744,7 @@ export class ServiceRuntime {
     preferDataError = false,
     preserveHttpError = false,
     preserveForbiddenError = false,
+    requestTimeoutMs = this.config.requestTimeoutMs,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
@@ -777,7 +758,7 @@ export class ServiceRuntime {
     // Intake verifies the owned originals before acceptance (a two-minute
     // server budget). Keep that receipt reachable without a new user setting.
     const requestBudget = imageIntake ? 150_000 : publishing ? 100_000 : 0
-    const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, this.config.requestTimeoutMs))
+    const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, requestTimeoutMs))
     try {
       const multipart = body instanceof FormData
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
@@ -1198,7 +1179,15 @@ export class ServiceRuntime {
     const origin = this.config.teamBaseUrl
     if (!origin) throw new ArkmePluginError('team-service-unavailable', '团队服务地址未配置', false, 503)
     let session = initialSession ?? await this.requireSession()
-    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', { bypassCache: true, cacheMs: 0 })
+    // Full snapshot verification may use the Record owner's 120s read budget.
+    // Keep ordinary messages, status polling and source pages at their normal budget.
+    const snapshotRead = typeof body.result_id === 'string' && body.result_id.length > 0 && [
+      'analysis/result', 'analysis/words', 'dates', 'participants', 'exports/download',
+    ].some(action => path === `/api/v1/team/conversations/history/${action}`)
+    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', {
+      bypassCache: true, cacheMs: 0,
+      ...(snapshotRead ? { requestTimeoutMs: Math.max(150_000, this.config.requestTimeoutMs) } : {}),
+    })
     try {
       return await this.post<T>(origin, path, body, session.accessToken, [200], signal, false, options())
     } catch (error) {
@@ -1296,6 +1285,18 @@ export class ServiceRuntime {
   async authenticatedAudioStream(path: string, options: {
     expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'
   }): Promise<Response> {
+    return await this.authenticatedMediaStream('audio', path, options)
+  }
+
+  async authenticatedRecordImage(path: string, body: Record<string, unknown>, options: {
+    expectedUserId: number; maxBytes: number; signal?: AbortSignal
+  }): Promise<Response> {
+    return await this.authenticatedMediaStream('record', path, { ...options, body })
+  }
+
+  private async authenticatedMediaStream(service: 'audio' | 'record', path: string, options: {
+    expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>
+  }): Promise<Response> {
     const session = await this.requireSession()
     const opening = new AbortController()
     const timer = setTimeout(() => opening.abort(new DOMException('Media opening timed out', 'TimeoutError')), 35_000)
@@ -1304,16 +1305,16 @@ export class ServiceRuntime {
       // Admission, token recovery and first headers are bounded independently
       // of media duration. The opened body owns its progress/idle lifetime.
       return await this.requestCoordinator.runStream({
-        scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'audio', signal,
-        operation: signal => this.openAudioStream(path, { ...options, signal }, session),
+        scope: this.requestScope(session.userId), lane: 'interactive-read', service, signal,
+        operation: signal => this.openMediaStream(service, path, { ...options, signal }, session),
       })
     } finally { clearTimeout(timer) }
   }
 
-  private async openAudioStream(path: string, options: {
-    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'
+  private async openMediaStream(service: 'audio' | 'record', path: string, options: {
+    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>
   }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
-    const base = new URL(this.config.audioBaseUrl)
+    const base = new URL(service === 'audio' ? this.config.audioBaseUrl : this.config.recordBaseUrl)
     const url = new URL(path, base)
     if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin
       || url.username !== '' || url.password !== '' || url.hash !== ''
@@ -1334,15 +1335,16 @@ export class ServiceRuntime {
       signal.throwIfAborted()
       const current = await this.accountScopedSession()
       if (identity.userId !== options.expectedUserId || current?.userId !== identity.userId || current.refreshToken !== identity.refreshToken) {
-        throw new ArkmePluginError('media-account-changed', '账号已变化，请重新读取音频', false, 409)
+        throw new ArkmePluginError('media-account-changed', '账号已变化，请重新读取媒体', false, 409)
       }
       signal.throwIfAborted()
     }
     const send = async (): Promise<Response> => {
       await assertAccount()
       return await this.fetchImpl(url, {
-        method: options.method ?? 'GET',
-        headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.range === undefined ? {} : { Range: options.range }) },
+        method: options.body === undefined ? options.method ?? 'GET' : 'POST',
+        headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.range === undefined ? {} : { Range: options.range }), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
+        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
         redirect: 'error', signal,
       })
     }
@@ -1367,15 +1369,49 @@ export class ServiceRuntime {
         await waitForCapacity(Math.max(1_000, delay), undefined, { signal })
       }
       if (response.status !== 200 && response.status !== 206) {
-        throw new ArkmePluginError('media-fetch-failed', '录音媒体当前不可用', response.status >= 500,
+        throw new ArkmePluginError('media-fetch-failed', '媒体当前不可用', response.status >= 500,
           [401, 403, 404, 416].includes(response.status) ? response.status : 502, { upstreamStatus: response.status })
       }
       const lengthText = response.headers.get('content-length') ?? ''
       const length = Number(lengthText)
       const mime = (response.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase()
+      // Binary endpoints can return the same JSON error envelope as other
+      // service APIs. Preserve it for the business owner, without allowing an
+      // unbounded body or bypassing the opening deadline/account fence.
+      if (mime === 'application/json' && response.body !== null) {
+        const reader = response.body.getReader()
+        const chunks: Uint8Array[] = []
+        let size = 0
+        const abort = (): void => { void reader.cancel(signal.reason).catch(() => undefined) }
+        signal.addEventListener('abort', abort, { once: true })
+        try {
+          for (;;) {
+            await assertAccount()
+            const part = await reader.read()
+            await assertAccount()
+            if (part.done) break
+            size += part.value.byteLength
+            if (size > 16 * 1024) throw invalid()
+            chunks.push(part.value)
+          }
+        } finally {
+          signal.removeEventListener('abort', abort)
+          await reader.cancel().catch(() => undefined)
+          reader.releaseLock()
+        }
+        let envelope: ArkmeEnvelope<unknown>
+        try { envelope = parseOwnerJson(Buffer.concat(chunks).toString('utf8')) as ArkmeEnvelope<unknown> }
+        catch { throw invalid() }
+        if (envelope && Number.isSafeInteger(envelope.code) && envelope.code !== 200) {
+          throw new ArkmeUpstreamResponseError(`arkme-code-${envelope.code}`,
+            typeof envelope.message === 'string' && envelope.message.trim() || 'Arkme 服务请求失败',
+            envelope.code !== 1004 && envelope.code >= 500, 502, envelope.data)
+        }
+        throw invalid()
+      }
       if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length <= 0
         || (options.maxBytes !== undefined && length > options.maxBytes)
-        || !['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'].includes(mime)
+        || !(service === 'audio' ? ['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'] : ['image/png', 'image/jpeg', 'image/webp']).includes(mime)
         || (options.method !== 'HEAD' && response.body === null)) throw invalid()
       if (response.status === 206) {
         const returned = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')

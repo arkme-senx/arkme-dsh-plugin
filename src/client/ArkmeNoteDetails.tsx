@@ -1,9 +1,22 @@
-import {TeamRepresentationBadge} from './TeamRepresentationBadge.js'
+import { WorldPublicationBadge, WorldPublicationActions } from './WorldPublicationControls.js'
+import { arkoInteractionJump } from './arko-interaction-jump.js'
+import { NoteWorldReactionArchive } from './NoteWorldReactionArchive.js'
+import { detailExtensionSends, useDetailExtensionSends, DetailExtensionSendStatus, type DetailExtensionSend } from './detail-extension-send.js'
+import { readDetailExtensionPages } from './detail-extension-pages.js'
+import {TeamRepresentationBadge, TeamRepresentationAvatar} from './TeamRepresentationBadge.js'
 import { arkmeExtensionDetailListStyles } from './extension-detail-list-styles.js'
 import { ArkmeQuotePreview } from './ArkmeQuotePreview.js'
+import { useMessageQuoteThreads } from './MessageQuoteThreads.js'
+import { quoteThreadKey } from './message-quote-threads.js'
+import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { loadRelatedQuickNotes } from './related-quick-notes-query.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRecordEditHistory } from './ArkmeRecordEditHistory.js'
+import { RecordThoughtContent, useRecordThoughtReplySummary } from './RecordThoughts.js'
+import { useThoughtContinuations } from './thought-continuations.js'
+import type { ArkmeRecordThought } from '../record-thought-contract.js'
+import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
+import { activateDetailReplyKey, detailReplyClickAllowed } from './detail-reply-interaction.js'
 import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
@@ -11,7 +24,9 @@ import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { observeDetailScrollAnchor } from './detail-scroll-anchor.js'
+import { isArkmeTransientReadFailure } from './read-retry.js'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { FileTextIcon } from '@phosphor-icons/react/dist/csr/FileText'
@@ -52,7 +67,6 @@ import {
   type ArkmeRelatedQuickNotesLoadState,
 } from './ArkmeRelatedQuickNotes.js'
 import { ArkmeClientError, callArkme } from './api.js'
-import { requirePhoneForSocialAction } from './social-action-guard.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -211,7 +225,9 @@ interface DetailSelfRoleSelection {
   onSelect(role?: ArkmeSelfRole): void
 }
 
-function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, conversationMembers, messageActionRef, parentRecordUid, targetKey, selfRoleSelection, onSent, onError, messageCreationBlocked, messageCreationRestriction }: {
+type DetailReplyTarget = { kind: 'extension'; item: ArkmeTimelineItem } | { kind: 'thought'; thought: ArkmeRecordThought }
+
+function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, conversationMembers, messageActionRef, parentRecordUid, targetKey, selfRoleSelection, parentItem, rootRecordUid, extensionLevel, currentSelfProfile, onError, messageCreationBlocked, messageCreationRestriction, replyTarget, replyFocusRevision, onCancelReply, onQueued }: {
   sourceRef: string
   sourceIdentityKey?: string | undefined
   sourceKind?: ArkmeSourceKind | undefined
@@ -220,16 +236,25 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
   parentRecordUid?: string | undefined
   targetKey: string
   selfRoleSelection?: DetailSelfRoleSelection | undefined
-  onSent: (result: ArkmeSourceMessageExtendResult) => void
+  parentItem: ArkmeTimelineItem
+  rootRecordUid: string
+  extensionLevel: number
+  currentSelfProfile?: ArkmeUserProfile | undefined
   onError: (message: string) => void
   messageCreationBlocked: boolean
   messageCreationRestriction: string
+  replyTarget?: DetailReplyTarget | undefined
+  replyFocusRevision: number
+  onCancelReply(): void
+  onQueued(): void
 }) {
   useArkmeLocale()
   const [text, setText] = useState('')
   const [mentions, setMentions] = useState<ArkmeComposerMention[]>([])
   const [emojis, setEmojis] = useState<ArkmeComposerEmoji[]>([])
   const [markdown, setMarkdown] = useState<ArkmeMarkdownDraft>()
+  const markdownRef = useRef(markdown)
+  markdownRef.current = markdown
   const [markdownEnabled, setMarkdownEnabled] = useState(false)
   useEffect(() => {
     const controller = new AbortController()
@@ -238,15 +263,11 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
   }, [sourceRef])
   const [attachments, setAttachments] = useState<ArkmeComposerAttachment[]>([])
   const preparing = arkmeAttachmentsPending(attachments)
-  const [sending, setSending] = useState(false)
   const [draftPreview, setDraftPreview] = useState<ArkmeComposerAttachment>()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const preparationQueue = useRef<AttachmentPreparationQueue>()
-  const sendAbortRef = useRef<AbortController>()
-  const sendPromiseRef = useRef<Promise<unknown>>()
   const generationRef = useRef(0)
   const attachmentsRef = useRef<ArkmeComposerAttachment[]>([])
-  const submissionRef = useRef<{ fingerprint: string; recordUid: string; relationUid: string }>()
   const inputRef = useRef<ArkmeRichComposerHandle>(null)
   const textRef = useRef(text)
   const mentionsRef = useRef<readonly ArkmeComposerMention[]>(mentions)
@@ -265,24 +286,16 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     generationRef.current += 1
     preparationQueue.current?.dispose(); preparationQueue.current = undefined
     attachmentsRef.current = []
-    sendAbortRef.current = undefined
-    sendPromiseRef.current = undefined
-    submissionRef.current = undefined
     setText(''); setMentions([]); setEmojis([]); setMarkdown(undefined)
     setMentionTrigger(undefined)
     setAttachments([])
-    setSending(false)
     setDraftPreview(undefined)
     return () => {
       generationRef.current += 1
       preparationQueue.current?.dispose(); preparationQueue.current = undefined
       const pending = attachmentsRef.current
-      const pendingSend = sendPromiseRef.current
       attachmentsRef.current = []
-      sendAbortRef.current?.abort()
-      sendAbortRef.current = undefined
-      sendPromiseRef.current = undefined
-      removeDetailExtensionAttachmentsAfter(pending, pendingSend)
+      removeDetailExtensionAttachmentsAfter(pending)
     }
   }, [targetKey])
   useEffect(() => { setMentionTrigger(undefined) }, [accountKey, sourceKind, sourceRef])
@@ -308,8 +321,11 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
       editor.setSelectionRange(caret, caret)
     })
   }, [])
+  useEffect(() => {
+    if (replyFocusRevision > 0) focusComposerAt(textRef.current.length)
+  }, [replyFocusRevision, focusComposerAt])
   const updateText = (value: string, nextEmojis?: readonly ArkmeComposerEmoji[]) => {
-    if (messageCreationBlocked || sending) return
+    if (messageCreationBlocked) return
     const previousText = textRef.current
     setText(value)
     setMentions(reconcileArkmeComposerMentions(previousText, value, mentionsRef.current))
@@ -364,7 +380,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     return deletion.caretIndex
   }, [])
   const selectFiles = async (files: FileList | readonly File[] | null) => {
-    if (messageCreationBlocked || !files?.length || sending) return
+    if (messageCreationBlocked || !files?.length) return
     const picked = Array.from(files)
     if (fileInputRef.current) fileInputRef.current.value = ''
     if (!preparationQueue.current) {
@@ -383,105 +399,54 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
     catch (error) { onError(error instanceof Error ? error.message : tr('附件准备失败，请重试')) }
   }
 
-  const send = async () => {
-    const serializedDraft = serializeArkmeComposerDraft({
-      text,
-      mentions,
-      emojis,
-      attachments,
-      ...(markdown === undefined ? {} : { markdown }),
-    })
+  const send = () => {
+    if (replyTarget?.kind === 'thought' && !replyTarget.thought.replyTargetRef) { onError(tr('暂时无法回复 Arko，输入内容会保留')); return }
+    const pendingAttachments = attachmentsRef.current
+    const serializedDraft = serializeArkmeComposerDraft({ text: textRef.current, mentions: mentionsRef.current,
+      emojis: emojisRef.current, attachments: pendingAttachments, ...(markdownRef.current === undefined ? {} : { markdown: markdownRef.current }) })
     const normalizedText = serializedDraft.textFormat === 'markdown' ? serializedDraft.text : serializedDraft.text.trim()
-    const humanMentions = detailHumanMentionInputs(serializedDraft.mentions)
-    const botMentions = detailBotMentionInputs(serializedDraft.mentions)
-    const fileRefs = attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
-    if (messageCreationBlocked || sending || arkmeAttachmentsPending(attachmentsRef.current) || (normalizedText === '' && fileRefs.length === 0)) return
-    const roleAtSendStart = selfRoleSelection?.selectedRole
-    const fingerprint = JSON.stringify([parentRecordUid ?? '', normalizedText, fileRefs, serializedDraft.textFormat ?? 'plain', humanMentions, botMentions, roleAtSendStart?.roleId ?? 'me'])
-    const recordUid = submissionRef.current?.fingerprint === fingerprint
-      ? submissionRef.current.recordUid
-      : crypto.randomUUID()
-    const relationUid = submissionRef.current?.fingerprint === fingerprint
-      ? submissionRef.current.relationUid
-      : crypto.randomUUID()
-    submissionRef.current = { fingerprint, recordUid, relationUid }
-    const generation = generationRef.current
-    const controller = new AbortController()
-    sendAbortRef.current = controller
-    setSending(true)
-    const request = (async (): Promise<ArkmeSourceMessageExtendResult> => {
-      let roleSnapshot: ArkmeSelfRoleSnapshot | undefined
-      let providerWriteStarted = false
-      try {
-        if (sourceKind === 'private_chat' || sourceKind === 'group_chat') await requirePhoneForSocialAction('发送消息', controller.signal)
-        if (generationRef.current !== generation || controller.signal.aborted) throw new Error('延展已取消')
-        if (roleAtSendStart !== undefined && selfRoleSelection !== undefined) {
-          // Bind before the cloud write, so a bind failure never sends a message under the wrong identity.
-          roleSnapshot = await callArkme<ArkmeSelfRoleSnapshot>('self-roles.bind', {
-            expectedUserId: selfRoleSelection.userId,
-            sourceRef,
-            recordUid,
-            roleId: roleAtSendStart.roleId,
-          }, controller.signal)
-          if (generationRef.current !== generation || controller.signal.aborted) throw new Error('延展已取消')
-        }
-        providerWriteStarted = true
-        const sent = await callArkme<ArkmeSourceMessageExtendResult>('source.message-extension.extend', {
-          sourceRef,
-          messageActionRef,
-          textContent: serializedDraft.text,
-          ...(serializedDraft.textFormat === undefined ? {} : { textFormat: serializedDraft.textFormat }),
-          ...(humanMentions.length === 0 ? {} : { humanMentions }),
-          ...(botMentions.length === 0 ? {} : { botMentions }),
-          recordUid,
-          relationUid,
-          ...(parentRecordUid === undefined ? {} : { parentRecordUid }),
-          fileRefs,
-        }, controller.signal)
-        if (roleSnapshot !== undefined && selfRoleSelection !== undefined && sent.recordUid !== recordUid) {
-          try {
-            await callArkme('self-roles.rebind', {
-              expectedUserId: selfRoleSelection.userId, recordUid, newRecordUid: sent.recordUid,
-            }, controller.signal)
-          } catch (caught) {
-            onError(`延展已发送，但角色展示暂未保存：${caught instanceof Error ? caught.message : '请刷新后重试'}`)
-          }
-        }
-        return roleSnapshot === undefined ? sent : { ...sent, extension: { ...sent.extension, selfRole: roleSnapshot } }
-      } catch (caught) {
-        if (roleSnapshot !== undefined && !providerWriteStarted && selfRoleSelection !== undefined) {
-          await callArkme('self-roles.unbind', {
-            expectedUserId: selfRoleSelection.userId, recordUid, roleId: roleAtSendStart!.roleId,
-          }).catch(() => undefined)
-        }
-        throw caught
-      }
-    })()
-    sendPromiseRef.current = request
+    const fileRefs = pendingAttachments.flatMap(attachment => attachment.localFile === undefined ? [] : [attachment.localFile.fileRef])
+    if (messageCreationBlocked || arkmeAttachmentsPending(pendingAttachments) || (normalizedText === '' && fileRefs.length === 0)) return
+    if (!accountKey) { onError('请先登录'); return }
+    if (parentRecordUid !== undefined && parentItem.itemUid !== parentRecordUid) { onError('延展目标已变化，请重新选择'); return }
+    const recordUid = crypto.randomUUID(), relationUid = crypto.randomUUID()
+    const role = selfRoleSelection?.selectedRole
     try {
-      const result = await request as ArkmeSourceMessageExtendResult
-      if (generationRef.current !== generation || controller.signal.aborted) return
-      submissionRef.current = undefined
-      attachmentsRef.current = []
-      for (const attachment of attachments) releaseArkmeComposerAttachment(attachment)
-      setText(''); setMentions([]); setEmojis([]); setMarkdown(undefined)
-      setMentionTrigger(undefined)
-      setAttachments([])
-      setDraftPreview(undefined)
-      onSent(result)
-      const sdk = createArkmeSdk()
-      void Promise.all(fileRefs.map(async fileRef => { await sdk.removeLocalFile(fileRef) })).catch(() => {})
-    } catch (caught) {
-      if (generationRef.current === generation && !controller.signal.aborted) {
-        onError(caught instanceof Error ? caught.message : '延展发送失败，请重试')
-      }
-    } finally {
-      if (sendPromiseRef.current === request) sendPromiseRef.current = undefined
-      if (sendAbortRef.current === controller) sendAbortRef.current = undefined
-      if (generationRef.current === generation) setSending(false)
-    }
+      detailExtensionSends.enqueue({
+        accountKey, sourceKey: sourceIdentityKey ?? sourceRef, sourceRef, sourceKind, rootRecordUid,
+        ...(replyTarget?.kind === 'thought' ? { thoughtReplyRef: replyTarget.thought.replyTargetRef } : {}),
+        ...(replyTarget?.kind === 'extension' && replyTarget.item.privateThoughtReplyRef ? { privateThoughtReplyRef: replyTarget.item.privateThoughtReplyRef } : {}),
+        parent: parentItem, messageActionRef, recordUid, relationUid, textContent: serializedDraft.text,
+        textFormat: serializedDraft.textFormat,
+        humanMentions: detailHumanMentionInputs(serializedDraft.mentions), botMentions: detailBotMentionInputs(serializedDraft.mentions), fileRefs,
+        ...(role && selfRoleSelection ? { role: { userId: selfRoleSelection.userId, roleId: role.roleId } } : {}),
+        extension: { recordUid, parentRecordUid: parentRecordUid ?? rootRecordUid, level: extensionLevel,
+          ...(replyTarget?.kind === 'thought' ? { thoughtReply: { thoughtId:replyTarget.thought.id, recordUid:rootRecordUid,
+            generation:replyTarget.thought.generation ?? 1, visibility:replyTarget.thought.visibility ?? 'user', content:replyTarget.thought.content } } : {}),
+          ...((sourceKind === 'private_chat' || sourceKind === 'group_chat') && ((replyTarget?.kind === 'thought' && replyTarget.thought.visibility !== 'members') || replyTarget?.kind === 'extension' && replyTarget.item.privateThoughtReply === true) ? { privateThoughtReply: true } : {}),
+          sourceKind: 'record_extension', senderIsMe: true,
+          senderDisplayName: currentSelfProfile?.displayName || currentSelfProfile?.nickname || '我',
+          ...(currentSelfProfile?.avatarRef === undefined ? {} : { senderAvatarUrl: currentSelfProfile.avatarRef }),
+          ...(role === undefined ? {} : { selfRole: { roleId: role.roleId, name: role.name, ...(role.avatarRef === undefined ? {} : { avatarRef: role.avatarRef }) } }),
+          title: '', textContent: serializedDraft.text, textFormat: serializedDraft.textFormat ?? 'plain',
+          sendAtMillis: Date.now(), templateKind: 1, displayKind: 0, officialMark: 0,
+          mediaItems: pendingAttachments.flatMap(attachment => attachment.localFile ? [{ fileKind: attachment.localFile.fileKind, fileName: attachment.localFile.fileName, size: attachment.localFile.size }] : []),
+          contentBlocks: pendingAttachments.flatMap(attachment => attachment.localFile ? [localFileBlock(attachment.localFile)] : []),
+        },
+      })
+      // Ownership transfers to the queue before this draft is released. A double click sees an empty draft.
+      attachmentsRef.current = []; textRef.current = ''; mentionsRef.current = []; emojisRef.current = []; markdownRef.current = undefined
+      for (const attachment of pendingAttachments) releaseArkmeComposerAttachment(attachment)
+      setText(''); setMentions([]); setEmojis([]); setMarkdown(undefined); setMentionTrigger(undefined)
+      setAttachments([]); setDraftPreview(undefined)
+      onQueued()
+      focusComposerAt(0)
+    } catch (error) { onError(error instanceof Error ? error.message : '延展发送失败，内容已保留') }
   }
-  const disabled = messageCreationBlocked || sending
+  const disabled = messageCreationBlocked
+  const thoughtReplyUnavailable = replyTarget?.kind === 'thought' && !replyTarget.thought.replyTargetRef
+  const replyName = replyTarget?.kind === 'thought' ? 'Arko' : replyTarget?.item.senderName
+  const replyText = replyTarget?.kind === 'thought' ? replyTarget.thought.content : replyTarget?.item.textContent || replyTarget?.item.title || ''
   const canSend = (markdown?.source ?? text).trim() !== '' || attachments.length > 0
   return <div style={styles.extensionComposer}
     onDragOver={event => { if (!disabled && Array.from(event.dataTransfer.types).includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
@@ -508,6 +473,11 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
       /></div>}
     <div className="arkme-detail-extension-input-bar" style={styles.extensionInputBar}>
       <style>{extensionComposerStyles}</style>
+      {replyTarget && <div data-arkme-detail-reply-target={replyTarget.kind} style={{ marginBottom: 6 }}>
+        <ArkmeComposerTargetPreview mode="extension" quote label={`${tr('回复')} ${replyName}`} text={replyText}
+          closeLabel={tr('取消回复')} onClose={onCancelReply}/>
+        {thoughtReplyUnavailable && <div role="status" data-arkme-thought-reply-unavailable style={{ padding: '4px 8px', color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('暂时无法回复 Arko，输入内容会保留')}</div>}
+      </div>}
       {mentionTrigger !== undefined && <ArkmeMentionSuggestions session={mentionSession}
         style={styles.mentionSuggestions!}
         loading={mentionBots.loading || (!mentionBots.ready && !mentionBots.error)}
@@ -519,7 +489,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
       <div className="arkme-detail-extension-input-shell" style={styles.extensionInputWrap}>
         <button data-arkme-feedback="neutral" type="button" style={{ ...styles.extensionTool, opacity: disabled ? .4 : 1 }} aria-label={tr("添加延展附件")} disabled={disabled}
           onClick={() => { fileInputRef.current?.click() }}><FileTextIcon size={18} /></button>
-        <ArkmeRichComposerInput ref={inputRef} style={styles.extensionInput!} ariaLabel={tr("延展此快记")} placeholder={tr("延展此快记...")} value={text} disabled={disabled}
+        <ArkmeRichComposerInput ref={inputRef} style={styles.extensionInput!} ariaLabel={replyTarget ? `${tr('回复')} ${replyName}` : tr("延展此快记")} placeholder={replyTarget ? `${tr('回复')} ${replyName}…` : tr("延展此快记...")} value={text} disabled={disabled}
           mentions={mentions} emojis={emojis} maxLength={20000} markdownEnabled={markdownEnabled} markdown={markdown}
           onTextChange={updateText} onMarkdownChange={(value, nextText, nextMentions, nextEmojis) => {
             if (disabled) return
@@ -577,7 +547,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
         />}
         <ArkmeComposerSendButton
           ariaLabel={tr("发送延展")}
-          disabled={disabled || preparing || !canSend}
+          disabled={disabled || thoughtReplyUnavailable || preparing || !canSend}
           shortcutHint={attachmentPreparationHint(attachments) ?? tr("Enter发送 / Shift+Enter换行")}
           onClick={() => { void send() }}
         />
@@ -609,7 +579,7 @@ export function arkmeTimelineDetailSenderText(item: ArkmeTimelineItem, members: 
 type ArkmeDetailExtensionLoadState =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'success'; context: ArkmeSourceMessageExtensionContext }
+  | { kind: 'success'; context: ArkmeSourceMessageExtensionContext; pageError?: string; retryFromStart?: boolean }
   | { kind: 'error'; message: string }
 
 function detailExtensionSenderName(item: ArkmeMessageCopyLinkExtensionItem): string {
@@ -647,7 +617,12 @@ function detailExtensionTimelineItem(item: ArkmeMessageCopyLinkExtensionItem, au
   const mediaOnlyUnavailable = item.mediaUnavailable === true && item.mediaItems.length > 0
     && item.title.trim() === '' && item.textContent.trim() === '' && (item.contentBlocks?.length ?? 0) === 0
   return {
+ ...(item.thoughtReply ? { thoughtReply:item.thoughtReply } : {}),
+ ...(item.privateThoughtReplyRef ? { privateThoughtReplyRef:item.privateThoughtReplyRef } : {}),
+ ...(item.privateThoughtReply ? { privateThoughtReply:true } : {}),
     itemUid: item.recordUid,
+    ...(item.recordOwnerUserId === undefined ? {} : { recordOwnerUserId: item.recordOwnerUserId }),
+    ...(item.sequence === undefined ? {} : { sequence: item.sequence }),
     senderName: author.name,
     isMe: false,
     sendAtMillis: item.sendAtMillis,
@@ -722,11 +697,14 @@ function DetailExtensionParent({ parent, onOpen }: {
 }
 
 function DetailExtensionContext({
+  rootItem,
   state, optimistic, selectedRecordUid, sourceRef, sourceIdentityKey, shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, onRetry, onSelect,
-  personalSource, currentSelfProfile, sourceKind, conversationMembers,
+  personalSource, currentSelfProfile, sourceKind, conversationMembers, sendTasks, onReplyThought, selectedThoughtId, canReply,
 }: {
   state: ArkmeDetailExtensionLoadState
+  rootItem: ArkmeTimelineItem
   optimistic: readonly ArkmeMessageCopyLinkExtensionItem[]
+  sendTasks: readonly DetailExtensionSend[]
   selectedRecordUid?: string | undefined
   sourceRef?: string | undefined
   sourceIdentityKey?: string | undefined
@@ -740,7 +718,13 @@ function DetailExtensionContext({
   conversationMembers?: readonly ArkmeConversationMemberItem[] | undefined
   onRetry: () => void
   onSelect: (item: ArkmeMessageCopyLinkExtensionItem) => void
+  onReplyThought: (thought: ArkmeRecordThought) => void
+  selectedThoughtId?: string | undefined
+  canReply: boolean
 }) {
+  const quoteThreads = useMessageQuoteThreads()
+  const thoughtReplies = useRecordThoughtReplySummary(rootItem)
+  const continuations = useThoughtContinuations(sourceRef, rootItem.messageActionRef, sendTasks, rootItem.itemUid, sourceIdentityKey)
   const context = state.kind === 'success' ? state.context : undefined
   const byUid = new Map<string, ArkmeMessageCopyLinkExtensionItem>()
   for (const item of optimistic) byUid.set(item.recordUid, item)
@@ -750,37 +734,58 @@ function DetailExtensionContext({
       ? { ...item, selfRole: pending.selfRole } : item)
   }
   const extensions = [...byUid.values()]
-  const extensionCount = Math.max(context?.extensionCount ?? 0, extensions.length)
-  if ((state.kind === 'idle' || state.kind === 'loading') && extensions.length === 0) return null
-  if (state.kind === 'error' && extensions.length === 0) {
-    return <div style={styles.extensionContext}><div role="alert" style={styles.extensionContextStatus}>
-      <span>{state.message}</span><button data-arkme-feedback="neutral" type="button" style={styles.extensionContextRetry} onClick={onRetry}>{tr("重试")}</button>
-    </div></div>
+  const repliesByHuman = new Map<string, typeof continuations.items>()
+  for (const reply of continuations.items) {
+    const rows = repliesByHuman.get(reply.replyRecordUid) ?? []
+    rows.push(reply); repliesByHuman.set(reply.replyRecordUid, rows)
   }
-  if (extensionCount === 0) return null
+  const pendingReplies = new Set(continuations.pendingReplyRecordUids)
+  const pendingCount = continuations.supported ? extensions.filter(row => pendingReplies.has(row.recordUid) && !repliesByHuman.has(row.recordUid)).length : 0
+  const hasInlineStatus = pendingCount > 0 || continuations.items.some(row => row.status !== 'ready')
+  const extensionCount = Math.max(context?.extensionCount ?? 0, extensions.length) + thoughtReplies.count + continuations.items.length + pendingCount
+  const contextError = state.kind === 'error' ? state.message : state.kind === 'success' ? state.pageError : undefined
+  if (extensionCount === 0 && !thoughtReplies.hasContent && !contextError) return null
   return <section style={styles.extensionContext} aria-label={tr("快记延展列表")}>
-    <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{tr("条延展")}</div>
-    <div style={styles.extensionContextList}>{orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
+    {extensionCount > 0 && <div style={styles.extensionContextTitle} data-arkme-note-extension-count="true">{tr("共")}{extensionCount}{continuations.nextCursor ? '+' : ''}{tr("条延展")}</div>}
+    <div style={styles.extensionContextList}>
+      {thoughtReplies.hasContent && <div data-arkme-detail-scroll-anchor="original-thought">
+        <RecordThoughtContent item={rootItem} embedded selectedThoughtId={selectedThoughtId} onReply={canReply ? onReplyThought : undefined}/>
+      </div>}
+      {orderedDetailExtensions(extensions, context?.parentRecordUid ?? '').map(({ item: extension, nested }) => {
       const author = detailExtensionAuthor(extension, personalSource, currentSelfProfile, sourceKind, conversationMembers)
       const timelineItem = detailExtensionTimelineItem(extension, author)
       const missingMedia = extension.mediaUnavailable === true && extension.mediaItems.length > 0
         && (extension.title.trim() !== '' || extension.textContent.trim() !== '' || (extension.contentBlocks?.length ?? 0) > 0)
       const selected = extension.recordUid === selectedRecordUid
-      return <div key={extension.recordUid} style={{
+      const pendingSend = sendTasks.some(task => task.recordUid === extension.recordUid && task.state !== 'sent')
+      return <Fragment key={extension.recordUid}><div style={{
         ...styles.extensionContextRow,
         ...(selected ? styles.extensionContextRowSelected : {}),
         ...(nested ? { marginLeft: 30 } : {}),
       }}
-        role="button" tabIndex={0} aria-pressed={selected}
+        role={canReply ? 'button' : undefined} tabIndex={pendingSend || !canReply ? -1 : 0} aria-pressed={selected}
+        aria-label={canReply ? `${tr('回复')} ${author.name}` : undefined}
         data-arkme-note-extension-item={extension.recordUid}
-        onClick={() => { onSelect(extension) }}
-        onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect(extension) } }}>
-        <DetailExtensionAvatar author={author} size={nested ? 28 : 32} />
+        data-arkme-detail-scroll-anchor={`human:${extension.recordUid}`}
+        onClick={event => { if (canReply && !pendingSend && detailReplyClickAllowed(event)) onSelect(extension) }}
+        onKeyDown={event => { if (canReply && !pendingSend) activateDetailReplyKey(event, () => onSelect(extension)) }}>
+        <TeamRepresentationAvatar value={extension.representation}><DetailExtensionAvatar author={author} size={nested ? 28 : 32} /></TeamRepresentationAvatar>
         <div style={styles.extensionContextBody}>
           <div style={styles.extensionContextHead}>
-            <span style={styles.extensionContextName}>{author.name}</span>
+            <span style={styles.extensionContextName}>{author.name}{extension.privateThoughtReply && <span style={{ fontSize:11, fontWeight:400, color:arkmeTheme.tertiary, marginLeft:8 }}>{tr('仅自己可见')}</span>}</span>
             <span style={styles.extensionContextTime}>{[dateLabel(extension.sendAtMillis), timeLabel(extension.sendAtMillis)].filter(Boolean).join(' ')}</span>
           </div>
+          {(() => {
+            const replySource = extension.parentRecordUid ? byUid.get(extension.parentRecordUid) : undefined
+            const replySourceAuthor = replySource ? detailExtensionAuthor(replySource, personalSource, currentSelfProfile, sourceKind, conversationMembers) : undefined
+            const wholeReplyParent = replySource ? { itemUid: replySource.recordUid, senderName: replySourceAuthor!.name,
+              title: replySource.title, textContent: replySource.textContent, textFormat: replySource.textFormat ?? 'plain' as const } : undefined
+            const parent = extension.thoughtReply && !replySource ? { itemUid: extension.thoughtReply.thoughtId, senderName:'Arko', title:'', textContent:extension.thoughtReply.content, textFormat:'plain' as const } : quoteThreads.store?.commentParent(rootItem, extension)
+              ?? (extension.quote || extension.quoteState === 'unavailable' ? { itemUid: extension.parentRecordUid ?? rootItem.itemUid,
+                senderName: replySourceAuthor?.name ?? rootItem.senderName, title: '', textContent: '', ...(extension.quote ? { quote: extension.quote } : {}),
+                ...(extension.quoteState ? { quoteState: extension.quoteState } : {}) } : wholeReplyParent)
+            return parent ? <div data-arkme-comment-quote style={{ margin: '2px 0 8px' }}><ArkmeQuotePreview parent={parent} wholeMessageText={parent.textContent || parent.title}/></div> : null
+          })()}
           <ArkmeMessageContent
             presentation="detail"
             item={timelineItem}
@@ -792,13 +797,36 @@ function DetailExtensionContext({
             {...(onMentionClick === undefined ? {} : { onMentionClick })}
             {...(isMentionClickable === undefined ? {} : { isMentionClickable })}
           />
+          {sendTasks.filter(task => (task.result?.recordUid ?? task.recordUid) === extension.recordUid).map(task => <DetailExtensionSendStatus key={task.recordUid} task={task} />)}
           {missingMedia && <span data-arkme-missing-extension-media style={{ display: 'inline-flex', alignItems: 'center', gap: 4,
             marginTop: 5, color: arkmeTheme.tertiary, fontSize: 12 }}>
             <FileTextIcon size={13} aria-hidden />{tr('附件暂不可用')}
           </span>}
         </div>
       </div>
+      {(() => {
+        const replies: ArkmeRecordThought[] = [...(repliesByHuman.get(extension.recordUid) ?? [])]
+        if (!replies.length && continuations.supported && pendingReplies.has(extension.recordUid)) replies.push({
+          id: `pending:${extension.recordUid}`, recordUid: rootItem.itemUid, biz: 2, status: 'generating', content: '',
+          visibility: extension.privateThoughtReply ? 'user' : personalSource ? 'user' : 'members',
+        })
+        return replies.length ? <div data-arkme-detail-scroll-anchor={`ai:${extension.recordUid}`} data-arkme-detail-continuation-slot={extension.recordUid}>
+          <RecordThoughtContent item={rootItem} embedded items={replies} onReply={canReply ? onReplyThought : undefined}
+            selectedThoughtId={selectedThoughtId} refreshError={continuations.error} onRefresh={continuations.refresh}
+            onRetry={replies.some(thought => continuations.items.find(reply => reply.id === thought.id)?.canRetry)
+              ? thought => { if (continuations.items.find(reply => reply.id === thought.id)?.canRetry) continuations.retry(thought.id) } : undefined}
+            retryingId={continuations.retryingId}/>
+        </div> : null
+      })()}
+      </Fragment>
     })}</div>
+    {continuations.error && !hasInlineStatus && <div role="status" style={styles.extensionContextStatus}><span>{continuations.error}</span>
+      <button type="button" style={styles.extensionContextRetry} onClick={continuations.refresh}>{tr('重试')}</button></div>}
+    {continuations.nextCursor && <button type="button" style={styles.extensionContextRetry} onClick={continuations.loadMore}>{tr('查看更多回复')}</button>}
+    {contextError && <div role="alert" style={styles.extensionContextStatus}>
+      <span>{contextError}</span><button data-arkme-feedback="neutral" type="button" style={styles.extensionContextRetry} onClick={onRetry}>{tr('重试')}</button>
+    </div>}
+    {state.kind === 'success' && state.context.nextCursor && !state.pageError && <div role="status" style={styles.extensionContextStatus}>{tr('正在加载更多延展…')}</div>}
   </section>
 }
 
@@ -813,6 +841,7 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 export function ArkmeTimelineDetailDrawer({
   item, sourceBadge, sourceRef, sourceIdentityKey, sourceKind, selfTopicPath, selfTopicSource, onOpenSelfTopic, onOpenExtensionParent, onBackToExtension, currentSelfProfile, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
   onOpenPrivateChatMember, selfRoleSelection, messageCreationBlocked = false, messageCreationRestriction = '',
+  detailLoading = false, detailError, onRetryDetail,
 }: {
   sourceBadge?: ReactNode
   item: ArkmeTimelineItem
@@ -838,6 +867,9 @@ export function ArkmeTimelineDetailDrawer({
   onOpenPrivateChatMember?: (member: ArkmeConversationMemberItem) => void
   messageCreationBlocked?: boolean
   messageCreationRestriction?: string
+  detailLoading?: boolean
+  detailError?: string | undefined
+  onRetryDetail?: () => void
 }) {
   useArkmeLocale()
   const [editHistoryTarget, setEditHistoryTarget] = useState<string>()
@@ -848,10 +880,16 @@ export function ArkmeTimelineDetailDrawer({
   const detailAbortRef = useRef<AbortController>()
   const extensionAbortRef = useRef<AbortController>()
   const [extensionState, setExtensionState] = useState<ArkmeDetailExtensionLoadState>({ kind: 'idle' })
+  const extensionStateRef = useRef(extensionState)
+  extensionStateRef.current = extensionState
   const [optimisticExtensions, setOptimisticExtensions] = useState<ArkmeMessageCopyLinkExtensionItem[]>([])
-  const [selectedExtensionRecordUid, setSelectedExtensionRecordUid] = useState<string>()
+  const [replySelection, setReplySelection] = useState<{ scopeKey: string; target: DetailReplyTarget }>()
+  const [replyFocusRevision, setReplyFocusRevision] = useState(0)
   const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const scrollAnchorRef = useRef<ReturnType<typeof observeDetailScrollAnchor>>()
+  const quoteThreads = useMessageQuoteThreads()
+  const commentJump = useRef('')
   const scrollTopByViewRef = useRef<Record<ArkmeRelatedDrawerView, number>>({
     'source-detail': 0,
     'related-list': 0,
@@ -859,8 +897,50 @@ export function ArkmeTimelineDetailDrawer({
   })
   const messageActionRef = item.messageActionRef?.trim() ?? ''
   const normalizedSourceRef = sourceRef?.trim() ?? ''
+  const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
+  const accountKey = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
+  const replyScopeKey = JSON.stringify([accountKey, sourceIdentityKey ?? normalizedSourceRef, item.itemUid])
+  const replyTarget = replySelection?.scopeKey === replyScopeKey ? replySelection.target : undefined
+  const selectedExtensionRecordUid = replyTarget?.kind === 'extension' ? replyTarget.item.itemUid : undefined
+  const selectReply = (target: DetailReplyTarget | undefined) => {
+    setReplySelection(target ? { scopeKey: replyScopeKey, target } : undefined)
+    setReplyFocusRevision(value => value + 1)
+  }
+  const sourceSendTasks = useDetailExtensionSends(accountKey, sourceIdentityKey ?? normalizedSourceRef)
+  const extensionSendTasks = sourceSendTasks.filter(task => task.rootRecordUid === item.itemUid)
+  const sentNotifications = useRef(new Set<string>())
   const historyTarget = `${normalizedSourceRef}:${item.itemUid}`
   const historyOpen = editHistoryTarget === historyTarget && messageActionRef !== ''
+  useLayoutEffect(() => {
+    if (historyOpen || relatedView !== 'source-detail' || !bodyRef.current) return
+    const anchor = observeDetailScrollAnchor(bodyRef.current)
+    scrollAnchorRef.current = anchor
+    return () => { anchor(); if (scrollAnchorRef.current === anchor) scrollAnchorRef.current = undefined }
+  }, [replyScopeKey, historyOpen, relatedView])
+  const interactionJump = useSyncExternalStore(arkoInteractionJump.subscribe, arkoInteractionJump.snapshot, arkoInteractionJump.snapshot)
+  useEffect(() => {
+    const request = interactionJump, body = bodyRef.current
+    if (!request || !body || request.scope !== accountKey || request.rootUid !== item.itemUid
+      || request.sourceKey !== (sourceIdentityKey ?? normalizedSourceRef) || historyOpen || relatedView !== 'source-detail') return
+    const expiry = setTimeout(() => arkoInteractionJump.consume(request.revision), Math.max(0,request.expiresAt-Date.now()))
+    let frame: number | undefined
+    const align = () => {
+      frame = undefined
+      const target = request.replyId
+        ? [...body.querySelectorAll<HTMLElement>('[data-arkme-thought-reply]')].find(node => node.dataset.arkmeThoughtReply === request.replyId)
+        : body.querySelector<HTMLElement>('[data-arkme-record-thought-content]')
+      if (!target) return
+      body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 12
+      scrollAnchorRef.current?.rebase()
+      arkoInteractionJump.consume(request.revision)
+    }
+    const schedule = () => { if (frame === undefined) frame = requestAnimationFrame(align) }
+    const cancel = () => arkoInteractionJump.consume(request.revision)
+    const observer = new MutationObserver(schedule); observer.observe(body, { childList: true, subtree: true })
+    body.addEventListener('wheel',cancel,{passive:true}); body.addEventListener('touchmove',cancel,{passive:true})
+    schedule()
+    return () => { clearTimeout(expiry); observer.disconnect(); if(frame!==undefined) cancelAnimationFrame(frame); body.removeEventListener('wheel',cancel); body.removeEventListener('touchmove',cancel) }
+  }, [interactionJump, accountKey, item.itemUid, sourceIdentityKey, normalizedSourceRef, historyOpen, relatedView])
   const quickNoteDetailsSupported = item.quickNoteDetailsSupported !== false
   const extensionParent = extensionState.kind === 'success'
     ? extensionState.context.extensionParent ?? item.extensionParent : item.extensionParent
@@ -884,7 +964,7 @@ export function ArkmeTimelineDetailDrawer({
       setRelatedState({ kind: 'error', message: relatedQuickNoteErrorMessage(error, '相关快记加载失败') })
     })
   }, [messageActionRef, normalizedSourceRef, quickNoteDetailsSupported])
-  const loadExtensionContext = useCallback(() => {
+  const loadExtensionContext = useCallback((resume?: ArkmeSourceMessageExtensionContext) => {
     extensionAbortRef.current?.abort()
     if (!quickNoteDetailsSupported || normalizedSourceRef === '' || messageActionRef === '') {
       setExtensionState({ kind: 'idle' })
@@ -893,17 +973,64 @@ export function ArkmeTimelineDetailDrawer({
     const controller = new AbortController()
     extensionAbortRef.current = controller
     setExtensionState(current => current.kind === 'success' ? current : { kind: 'loading' })
-    void callArkme<ArkmeSourceMessageExtensionContext>('source.message-extension.context', {
-      sourceRef: normalizedSourceRef,
-      messageActionRef,
-    }, controller.signal).then(context => {
-      if (controller.signal.aborted || extensionAbortRef.current !== controller) return
-      setExtensionState({ kind: 'success', context })
+    const retained = extensionStateRef.current
+    const retainedContext = retained.kind === 'success' && retained.context.parentRecordUid === item.itemUid ? retained.context : undefined
+    const atomic = retainedContext !== undefined && resume === undefined
+    let published = resume
+    if (resume) setExtensionState({ kind: 'success', context: resume })
+    void readDetailExtensionPages({ parentRecordUid: item.itemUid, signal: controller.signal, initial: resume, atomic,
+      loadPage: pageCursor => callArkme<ArkmeSourceMessageExtensionContext>('source.message-extension.context', {
+        sourceRef: normalizedSourceRef, messageActionRef, paginated: true, ...(pageCursor ? { pageCursor } : {}),
+      }, controller.signal),
+      onPage: context => {
+        if (controller.signal.aborted || extensionAbortRef.current !== controller) return
+        published = context
+        setExtensionState({ kind: 'success', context })
+      },
     }).catch(error => {
       if (controller.signal.aborted || extensionAbortRef.current !== controller) return
-      setExtensionState({ kind: 'error', message: relatedQuickNoteErrorMessage(error, '延展加载失败') })
+      const message = relatedQuickNoteErrorMessage(error, published ? '更多延展加载失败' : '延展加载失败')
+      const visible = atomic ? isArkmeTransientReadFailure(error) ? retainedContext : undefined
+        : published ?? (isArkmeTransientReadFailure(error) ? retainedContext : undefined)
+      setExtensionState(visible ? { kind: 'success', context: visible, pageError: message, retryFromStart: atomic } : { kind: 'error', message })
     })
-  }, [messageActionRef, normalizedSourceRef, quickNoteDetailsSupported])
+  }, [item.itemUid, messageActionRef, normalizedSourceRef, quickNoteDetailsSupported])
+  useEffect(() => {
+    if (extensionState.kind === 'success') quoteThreads.store?.acceptContext(item, extensionState.context)
+  }, [quoteThreads.store, item, extensionState])
+  useEffect(() => subscribeMessageQuoteInvalidations(changedSource => {
+    if (changedSource && sourceIdentityKey && changedSource !== sourceIdentityKey) return
+    loadExtensionContext()
+  }), [sourceIdentityKey, loadExtensionContext])
+  useEffect(() => {
+    const request = quoteThreads.store?.request
+    if (!request || request.key !== quoteThreadKey(item) || historyOpen || extensionState.kind !== 'success') return
+    const key = `${request.key}:${request.revision}`
+    if (commentJump.current === key) return
+    const frame = requestAnimationFrame(() => {
+      const body = bodyRef.current, target = body?.querySelector<HTMLElement>('[data-arkme-note-extension-count]')
+      if (!body || !target) return
+      body.scrollTop += target.getBoundingClientRect().top - body.getBoundingClientRect().top - 12
+      scrollAnchorRef.current?.rebase()
+      // One click owns one alignment. The viewport anchor handles late layout;
+      // a delayed related-note response must never override subsequent user scrolling.
+      commentJump.current = key
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [quoteThreads.revision, quoteThreads.store, item, historyOpen, extensionState, relatedState.kind])
+  useEffect(() => {
+    for (const task of extensionSendTasks) {
+      const key = `${task.accountKey}:${task.recordUid}`
+      if (task.result && !sentNotifications.current.has(key)) {
+        sentNotifications.current.add(key)
+        setOptimisticExtensions(current => [task.result!.extension, ...current.filter(item => item.recordUid !== task.result!.recordUid)])
+        onExtensionSent?.(task.result)
+        loadExtensionContext()
+      }
+      const canonical = extensionState.kind === 'success' ? extensionState.context.extensions.find(item => item.recordUid === task.recordUid) : undefined
+      if (canonical) detailExtensionSends.observe(task, canonical)
+    }
+  }, [extensionSendTasks, extensionState, onExtensionSent, loadExtensionContext])
   const loadRelatedDetail = useCallback((relatedItem: ArkmeRelatedQuickNoteItem) => {
     detailAbortRef.current?.abort()
     if (normalizedSourceRef === '') return
@@ -940,7 +1067,8 @@ export function ArkmeTimelineDetailDrawer({
     setRelatedDetailState({ kind: 'idle' })
     setExtensionState({ kind: 'idle' })
     setOptimisticExtensions([])
-    setSelectedExtensionRecordUid(undefined)
+    setReplySelection(undefined)
+    setReplyFocusRevision(0)
     setMemberProfile(undefined)
     scrollTopByViewRef.current = { 'source-detail': 0, 'related-list': 0, 'related-detail': 0 }
     return () => {
@@ -990,6 +1118,7 @@ export function ArkmeTimelineDetailDrawer({
     : item.aiPolish?.state === 'polished' && item.aiPolish.polishedText !== undefined ? item.aiPolish.polishedText : item.textContent
   const canToggle = item.aiPolish?.state === 'polished' && item.aiPolish.originalText !== undefined && item.aiPolish.polishedText !== undefined
   const personalSource = sourceKind === 'send_to_self' || sourceKind === 'topic' || sourceKind === 'default_category'
+  const publicationTarget = item.isMe && quickNoteDetailsSupported && (personalSource || sourceKind === 'private_chat' || sourceKind === 'group_chat') && normalizedSourceRef && messageActionRef ? { source: { sourceRef: normalizedSourceRef, messageActionRef, itemUid: item.itemUid } } : undefined
   const privateOwnCurrentName = sourceKind === 'private_chat' && item.isMe && item.senderKind !== 'bot'
     && currentSelfProfile !== undefined
   const currentNameFallback = personalSource && item.isMe && item.avatarSnapshot === true
@@ -1006,22 +1135,29 @@ export function ArkmeTimelineDetailDrawer({
   // detail must retain its source identity regardless of the entry point.
   const showTopicBadge = personalSource
   const extensionFooter = !quickNoteDetailsSupported || !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
+    key={replyScopeKey}
     sourceRef={normalizedSourceRef}
     sourceIdentityKey={sourceIdentityKey}
     sourceKind={sourceKind}
     {...(personalSource && selfRoleSelection !== undefined ? { selfRoleSelection } : {})}
     conversationMembers={conversationMembers}
     messageActionRef={messageActionRef}
+    rootRecordUid={item.itemUid}
+    parentItem={selectedExtensionRecordUid === undefined ? item : (() => {
+      const selected = [...(extensionState.kind === 'success' ? extensionState.context.extensions : []), ...optimisticExtensions, ...extensionSendTasks.map(task => task.extension)].find(extension => extension.recordUid === selectedExtensionRecordUid)
+      return selected ? detailExtensionTimelineItem(selected, detailExtensionAuthor(selected, personalSource, currentSelfProfile, sourceKind, conversationMembers)) : item
+    })()}
+    extensionLevel={selectedExtensionRecordUid === undefined ? 2 : 3}
+    currentSelfProfile={currentSelfProfile}
     messageCreationBlocked={messageCreationBlocked}
     messageCreationRestriction={messageCreationRestriction}
     {...(selectedExtensionRecordUid === undefined ? {} : { parentRecordUid: selectedExtensionRecordUid })}
-    targetKey={`${normalizedSourceRef}:${item.itemUid}:${selectedExtensionRecordUid ?? item.itemUid}`}
+    targetKey={replyScopeKey}
+    replyTarget={replyTarget}
+    replyFocusRevision={replyFocusRevision}
+    onCancelReply={() => selectReply(undefined)}
+    onQueued={() => selectReply(undefined)}
     onError={message => { onToast?.(message) }}
-    onSent={result => {
-      setOptimisticExtensions(current => [result.extension, ...current.filter(item => item.recordUid !== result.recordUid)])
-      onExtensionSent?.(result)
-      loadExtensionContext()
-    }}
   />
   if (relatedView === 'related-list') {
     const total = relatedState.kind === 'success' ? relatedState.list.total : 0
@@ -1051,17 +1187,24 @@ export function ArkmeTimelineDetailDrawer({
   }
   return <ArkmeDetailShell title={historyOpen ? tr("编辑记录") : tr("快记详情")} label={historyOpen ? tr("编辑记录") : tr("快记详情")}
     onClose={closeDrawer} bodyRef={bodyRef} footer={extensionFooter} footerHidden={historyOpen}
-    headerContent={historyOpen ? undefined : <ArkmeMessageDetailAuthor at={item.sendAtMillis} bot={item.senderKind === 'bot'}
+    headerActions={!historyOpen && publicationTarget ? <WorldPublicationActions target={publicationTarget}/> : undefined}
+    headerContent={historyOpen ? undefined : <ArkmeMessageDetailAuthor at={item.sendAtMillis}
+      timeSuffix={publicationTarget ? <WorldPublicationBadge target={publicationTarget}/> : undefined} bot={item.senderKind === 'bot'}
       name={item.senderKind === 'bot' ? <ArkmeBotSenderName name={authorName} detail /> : authorName}
-      avatar={<ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
+      avatar={<TeamRepresentationAvatar value={item.representation}><ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
         {...(roleAvatarFallback === undefined ? {} : { fallback: roleAvatarFallback })}
-        size={40} label={tr("作者头像")} />} /> }
+        size={40} label={tr("作者头像")} /></TeamRepresentationAvatar>} /> }
     {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' }
       : onBackToExtension === undefined ? {} : { onBack: onBackToExtension, backLabel: tr('返回延展快记') })}>
-    {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} author={item} /> : <>
+    {historyOpen ? <ArkmeRecordEditHistory key={historyTarget} sourceRef={normalizedSourceRef} messageActionRef={messageActionRef}
+      author={{ ...item, senderName: authorName, ...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef }) }} /> : <>
+    {detailLoading && <div role="status" style={styles.notice}>{tr('正在加载快记详情…')}</div>}
+    {detailError && <div role="alert" style={styles.notice}>
+      {tr(detailError)}{onRetryDetail && <button type="button" style={styles.toggle} onClick={onRetryDetail}>{tr('重试')}</button>}
+    </div>}
     {quickNoteDetailsSupported && extensionParent !== undefined && <DetailExtensionParent parent={extensionParent} onOpen={onOpenExtensionParent} />}
     {canToggle && <button data-arkme-feedback="neutral" type="button" style={styles.toggle} onClick={onToggleOriginal}>{showOriginal ? '显示润色' : '显示原文'}</button>}
-    <div data-arkme-timeline-detail-rich-content>
+    <div data-arkme-timeline-detail-rich-content data-arkme-detail-scroll-anchor="original-message">
       <ArkmeMessageContent
         presentation="detail"
         item={{ ...item, textContent }}
@@ -1083,6 +1226,7 @@ export function ArkmeTimelineDetailDrawer({
       {canOpenTopic && <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />}
     </button>}
     {sourceBadge}
+    {personalSource && item.isMe && normalizedSourceRef && messageActionRef && <NoteWorldReactionArchive sourceRef={normalizedSourceRef} messageActionRef={messageActionRef} />}
     <style>{`.arkme-edit-history-entry { background: transparent; } .arkme-edit-history-entry:hover { background: ${arkmeTheme.hover}; }`}</style>
     {item.hasManualEdit === true && normalizedSourceRef !== '' && messageActionRef !== '' && <button data-arkme-feedback="neutral"
       type="button" aria-label={tr("已编辑")} className="arkme-edit-history-entry" style={{ display: 'flex', alignItems: 'center', gap: 2, height: 32, marginTop: 5, padding: 0, border: 0, borderRadius: 4, color: arkmeTheme.tertiary, font: 'inherit', fontSize: 12, cursor: 'pointer' }}
@@ -1096,8 +1240,10 @@ export function ArkmeTimelineDetailDrawer({
       onRetry={loadRelated}
     />}
     {quickNoteDetailsSupported && <DetailExtensionContext
+      rootItem={item}
       state={extensionState}
-      optimistic={optimisticExtensions}
+      optimistic={[...optimisticExtensions, ...extensionSendTasks.map(task => task.result?.extension ?? task.extension)]}
+      sendTasks={extensionSendTasks}
       personalSource={personalSource}
       sourceKind={sourceKind}
       conversationMembers={conversationMembers}
@@ -1109,10 +1255,15 @@ export function ArkmeTimelineDetailDrawer({
       {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
       onMentionClick={openMentionMemberProfile}
       isMentionClickable={mentionOpensMemberProfile}
-      onRetry={loadExtensionContext}
-      onSelect={extension => { setSelectedExtensionRecordUid(extension.recordUid) }}
+      onRetry={() => loadExtensionContext(extensionState.kind === 'success' && !extensionState.retryFromStart && extensionState.context.nextCursor ? extensionState.context : undefined)}
+      canReply={canExtend && !messageCreationBlocked}
+      selectedThoughtId={replyTarget?.kind === 'thought' ? replyTarget.thought.id : undefined}
+      onReplyThought={thought => selectReply({ kind: 'thought', thought })}
+      onSelect={extension => selectReply({ kind: 'extension', item: detailExtensionTimelineItem(extension, detailExtensionAuthor(extension, personalSource, currentSelfProfile, sourceKind, conversationMembers)) })}
     />}
+    {!quickNoteDetailsSupported && <RecordThoughtContent item={item}/>}
     {memberProfile !== undefined && <ArkmeMemberProfileCard
+      copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : sourceRef ? { kind: 'member', sourceRef, memberRef: memberProfile.memberRef } : undefined}
       member={memberProfile}
       showTopicNickname={sourceKind === 'group_chat'}
       busy={false}
@@ -1123,10 +1274,11 @@ export function ArkmeTimelineDetailDrawer({
   </ArkmeDetailShell>
 }
 
-function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, segment = false, children }: {
+function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, representation, segment = false, children }: {
   name: string; time: string; avatarRef?: string | undefined; avatarKind?: 'deepseek' | undefined
   senderUserId?: number | undefined
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
+  representation?: Pick<import('../team-group-contract.js').TeamRepresentationSnapshot, 'name' | 'jotmoId'> | undefined
   segment?: boolean; children: ReactNode
 }) {
   return <div style={styles.row} {...(segment ? { 'data-arkme-forward-segment': 'true' } : {})}>
@@ -1135,7 +1287,7 @@ function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onP
       : <ForwardSenderAvatar name={name} avatarRef={avatarRef} senderUserId={senderUserId}
         onPrivateChatOpened={onPrivateChatOpened} segment={segment} />}
     <div style={styles.content}>
-      <div style={styles.meta}><span style={styles.name}>{name}</span><span style={styles.time}>{time}</span></div>
+      <div style={styles.meta}><span style={styles.name}>{name}</span>{representation && <TeamRepresentationBadge value={representation} />}<span style={styles.time}>{time}</span></div>
       {children}
     </div>
   </div>
@@ -1232,6 +1384,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
           </div>
         })}
       </div>
+      <RecordThoughtContent item={item} />
       {(forward.truncated || recording.truncated) && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
     </ArkmeDetailShell>
   }
@@ -1259,10 +1412,8 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     const hasRecordBody = segments.length === 0 || hasDistinctText || (value.contentBlocks?.length ?? 0) > 0
     return <div key={index} style={styles.rows}>
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKind={value.avatarKind}
-        senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened}
+        senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened} representation={value.sourceTeam}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
-        {value.sourceTeam&&<TeamRepresentationBadge value={value.sourceTeam}/>}
-        {value.originTeam&&<div style={{fontSize:11}}>原始内容来源：<TeamRepresentationBadge value={value.originTeam}/></div>}
         {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
           <ArkmeRichText text={value.title} presentation="preview" />
         </h3>}
@@ -1288,6 +1439,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     footer={forwardedAt ? tr("转发于 {v0}", { v0: forwardedAt }) : '转发时间未知'} onClose={onClose}>
     {sourceBadge}
     <div style={styles.rows}>{rows.map(renderRecord)}</div>
+    <RecordThoughtContent item={item} />
     {rows.length === 0 && <p style={styles.notice}>{tr("原快记暂不可查看")}</p>}
     {forward.truncated && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
   </ArkmeDetailShell>

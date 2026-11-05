@@ -30,6 +30,9 @@ export default class LocalSessionRegistry extends AgentRegistry {
 
   override async resume(options: ResumeAgentOptions): Promise<AgentHandle> {
     const id = options.resumeSessionId, coordination = this.coordination
+    if (this.ctx.get('arkmeLocalHistory')?.isDiscovered(id) && this.acquisition.getStore()?.id !== id) {
+      throw new Error('旧会话已按只读方式打开，发送消息后可接管')
+    }
     if (!this.acquisition.getStore() && !this.fences.has(id) && coordination?.restore) {
       const owner = coordination.ownership.read(id)
       if (owner && (owner.owner !== coordination.instance || owner.phase !== 'active')) {
