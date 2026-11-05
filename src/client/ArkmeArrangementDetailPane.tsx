@@ -15,8 +15,8 @@ import type { ArrangementWorkspaceItem } from './arrangement-workspace-model.js'
 const statusLabels = { identified: '已识别', following: '跟进中', completed: '已完成', deleted: '已删除', unknown: '状态待确认' }
 function fullTime(value?: number) { return value && Number.isFinite(new Date(value).getTime()) ? new Intl.DateTimeFormat(arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(value) : tr('未设置') }
 
-export function ArkmeArrangementDetailPane({ accountScope, onSettings, onApplied, onRedirect, item, busy, onClose, onComplete, onDelete, onReminder, readDetail = true }: {
-  readDetail?: boolean; accountScope: string; onSettings(): void; onApplied(item: ArkmeArrangementItem): void; onRedirect(item: ArkmeArrangementItem): void;
+export function ArkmeArrangementDetailPane({ accountScope, onSettings, onApplied, onRedirect, onRestored, item, busy, onClose, onComplete, onDelete, onReminder, readDetail = true }: {
+  onRestored?(): void; readDetail?: boolean; accountScope: string; onSettings(): void; onApplied(item: ArkmeArrangementItem): void; onRedirect(item: ArkmeArrangementItem): void;
   item: ArrangementWorkspaceItem; busy: boolean; onClose(): void; onComplete(item: ArkmeArrangementItem): Promise<void>; onDelete(item: ArkmeArrangementItem): void; onReminder(item: ArkmeArrangementItem): Promise<void>
 }) {
   const [detail, setDetail] = useState<ArrangementWorkspaceItem>()
@@ -101,7 +101,7 @@ export function ArkmeArrangementDetailPane({ accountScope, onSettings, onApplied
       {loading && <p role="status" className="arkme-arrangement-detail-progress">{tr('正在补充详情…')}</p>}
       {error && <div role="alert" className="arkme-arrangement-list-error">{tr('详情加载失败，已保留当前信息')} <button type="button" onClick={() => setAttempt(value => value + 1)}>{tr('重试')}</button></div>}
       {current.status === 'deleted' && <ArkmeArrangementRestore key={`${current.arrangementRef}:${current.restore?.expectedVersion ?? 'unsupported'}`} item={current} disabled={loading || error || busy}
-        onRestored={next => { onApplied(next); onRedirect(next) }} onRefresh={() => setAttempt(value => value + 1)} />}
+        onRestored={next => { onApplied(next); onRedirect(next); onRestored?.() }} onRefresh={() => setAttempt(value => value + 1)} />}
       <section className="arkme-arrangement-detail-sources" aria-label={tr('安排来源')}>
         {current.status === 'deleted' ? <><h3>{tr('来源')}</h3>{current.provenance?.length
           ? <ArkmeArrangementSources arrangementRef={current.arrangementRef} sources={current.provenance} expanded />
