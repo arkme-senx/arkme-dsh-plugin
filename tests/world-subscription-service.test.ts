@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest'
+import {ArkmePluginError} from '../src/services/service.js'
 import { WorldSubscriptionService } from '../src/services/world-subscription-service.js'
 import type { ServiceRuntime } from '../src/services/service.js'
 import type { ProfileService } from '../src/services/profile-service.js'
@@ -73,3 +74,9 @@ it('discards an in-flight result if the account changes', async () => {
   f.post.mockImplementation(async () => { f.changeAccount(); return { items: [{ target: { kind: 'person', id: '9' }, subscribed: true }] } })
   await expect(f.service.execute({ accountKey: 'test:8', action: 'state', target: { kind: 'person', userId: 9 } })).rejects.toMatchObject({ code: 'world-subscription-account-changed' })
 })
+
+it.each([404,501,503])('maps unavailable subscription reads %i to a useful retry message',async status=>{
+ const f=fixture();f.post.mockRejectedValue(new ArkmePluginError('upstream','raw server error',false,status));
+ await expect(f.service.execute({accountKey:'test:8',action:'state',target:{kind:'person',userId:9}})).rejects.toMatchObject({code:'world-subscription-unavailable',message:'订阅服务尚未接通，请稍后再试'});
+ await expect(f.service.execute({accountKey:'test:8',action:'set',target:{kind:'person',userId:9},active:true,requestUid:'uncertain-request-123'})).rejects.toMatchObject({message:'暂未确认订阅操作结果，请重试核对本次操作'});
+});

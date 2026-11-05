@@ -626,7 +626,7 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     {official.error && (activeKind === 'all' || activeKind === 'official') && <div role="status" className="arkme-notification-status">{tr('官方通知暂时不可用')} <button onClick={() => { void officialNotifications.refresh() }}>{tr('重试')}</button></div>}
     {snapshot.error && (activeKind === 'all' || activeKind === 'arrangement') && <div role="alert" className="arkme-notification-status">{snapshot.error}</div>}
     {snapshot.worldError && (activeKind === 'all' || activeKind === 'world' || activeKind === 'reaction') && <div role="status" className="arkme-notification-status">{tr('世界互动暂时无法加载')}</div>}
-    {snapshot.subscriptionError && (activeKind === 'all' || activeKind === 'subscription') && <div role="status" className="arkme-notification-status">{tr('订阅通知暂时无法加载')} <button type="button" disabled={snapshot.subscriptionLoading} onClick={() => { void arkmeNotificationStore.refreshSubscriptions(scope) }}>{tr('重试')}</button></div>}
+    {snapshot.subscriptionError && (activeKind === 'all' || activeKind === 'subscription') && <div role="status" className="arkme-notification-status">{snapshot.subscriptionError} <button type="button" disabled={snapshot.subscriptionLoading} onClick={() => { void arkmeNotificationStore.refreshSubscriptions(scope) }}>{tr('重试')}</button></div>}
     {snapshot.aiError && (activeKind === 'all' || activeKind === 'ai') && <div role="status" className="arkme-notification-status">{tr('AI 来信暂时无法加载')}</div>}
     {filterLoading && filteredItems.length === 0 && <div role="status" className="arkme-notification-status">{tr('正在加载通知…')}</div>}
     <div className="arkme-notification-body">

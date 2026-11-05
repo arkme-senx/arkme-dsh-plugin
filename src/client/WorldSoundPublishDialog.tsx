@@ -1,5 +1,5 @@
+import {ArkmeCloseButton} from './ArkmeCloseButton.js'
 import {useEffect,useRef,useState,useSyncExternalStore,type CSSProperties} from 'react'
-import {X} from '@phosphor-icons/react/dist/icons/X'
 import {createPortal} from 'react-dom'
 import type {WorldSoundPrepared,WorldSoundReceipt,WorldSoundSelection} from '../world-sound-contract.js'
 import {callArkme} from './api.js'
@@ -42,7 +42,7 @@ export function WorldSoundPublishDialog({selection,playing=false,onPreview,onClo
       if(event.key==='Escape'&&!busy){event.stopPropagation();onClose()}
       if(event.key==='Tab'){const controls=[...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled)')],first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus()}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus()}}
     }}>
-      <header style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h2 style={{margin:0,fontSize:17,fontWeight:500}}>{tr('发到世界')}</h2><button type="button" aria-label={tr('关闭声音发布窗口')} style={{...button,padding:5,border:0}} disabled={busy} onClick={onClose}><X size={18}/></button></header>
+      <header style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><h2 style={{margin:0,fontSize:17,fontWeight:500}}>{tr('发到世界')}</h2><ArkmeCloseButton aria-label={tr('关闭声音发布窗口')} disabled={busy} onClick={onClose}/></header>
       <p style={{color:c.secondary,fontSize:12,margin:'10px 0 16px'}}>{source}{prepared?` · ${prepared.excerpt.segments.length} ${tr('段')} · ${Math.ceil(prepared.excerpt.durationMillis/1000)} ${tr('秒')}`:''}</p>
       {loading&&<p role="status">{tr('正在核对所选声音与原文…')}</p>}
       {prepared&&<><div style={{background:c.subtle,borderRadius:10,padding:16}}><div style={{fontSize:11,color:c.secondary}}>{tr('卡片引语 · 所选原文')}</div><p style={{fontSize:19,lineHeight:1.8,margin:'8px 0 12px'}}>“{prepared.excerpt.segments[0]!.text}”</p><button type="button" style={button} disabled={busy||!!receipt} onClick={onPreview}>{tr(playing?'停止试听':'试听全部选段')}</button><p style={{fontSize:12,color:c.secondary,lineHeight:1.8,margin:'12px 0 0'}}>{tr('只公开选中的声音和原文，按原始顺序连续播放。')}</p></div>
