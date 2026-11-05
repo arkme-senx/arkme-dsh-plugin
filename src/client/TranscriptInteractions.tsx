@@ -50,9 +50,9 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
 })
 
 /** Shared transcript commands; local overlays never mutate cloud transcripts or chat records. */
-export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay, onStop, playing = false, onMultiSelect, onFind, onPublish }: {
+export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay, onStop, playing = false, onMultiSelect, onFind }: {
   scope: string; rows: TranscriptInteractionRow[]; enabled?: boolean
-  onPlay(ids: string[]): void; onStop?(): void; playing?: boolean; onMultiSelect?(id: string): void; onFind?(text: string): void; onPublish?(ids:string[]):void
+  onPlay(ids: string[]): void; onStop?(): void; playing?: boolean; onMultiSelect?(id: string): void; onFind?(text: string): void
 }) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
   const account = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
@@ -217,7 +217,6 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
     {selected && <div role="toolbar" aria-label="转写多选操作" style={{ position: 'sticky', bottom: 0, background: arkmeTheme.menu, padding: 10, display: 'flex', gap: 12, alignItems: 'center', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8 }}>
       <span>已选 {selectedRows.length} 段</span><button type="button" style={controlButton} disabled={!selectedRows.length} onClick={() => { void copyRows(selectedRows.map(r => r.id)) }}>复制</button>
       <button type="button" style={controlButton} disabled={!playing && (!selectedRows.length || selectedRows.some(r => !r.playable))} onClick={() => playing && onStop ? onStop() : latest.current.onPlay(selectedRows.map(r => r.id))}>{playing && onStop ? '停止' : '播放'}</button>
-      {onPublish&&<button type="button" style={controlButton} disabled={!selectedRows.length||selectedRows.length>150||selectedRows.some(r=>!r.playable)} onClick={()=>onPublish(selectedRows.map(r=>r.id))}>发到世界</button>}
       <button type="button" style={controlButton} onClick={() => setSelected(undefined)}>取消</button>
     </div>}
   </>

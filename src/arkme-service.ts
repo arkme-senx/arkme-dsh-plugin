@@ -1,5 +1,3 @@
-import { WorldSubscriptionService } from './services/world-subscription-service.js'
-import { WorldSoundService } from './services/world-sound-service.js'
 import { AccountModelService } from './services/account-model-service.js'
 import { WorldPublicationService } from './services/world-publication-service.js'
 import{readSelectedTextNoteQuote}from'./selected-text-note.js'
@@ -1502,7 +1500,6 @@ arkoImagesV1:true,
         worldReactionsV1: true,
         worldReactionArchiveVersionsV1: true,
         teamWorldV1: true,
-        worldSoundExcerptsV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         ...(this.config.markdownLongArticlesEnabled === true ? { markdownLongArticles: true as const } : {}),
@@ -3808,21 +3805,6 @@ arkoImagesV1:true,
   }
 
   async worldNotificationSources(offset: number, signal?: AbortSignal) { return this.world.worldNotificationSources(offset, signal) }
-  async worldSoundExcerpts(input:import('./world-sound-contract.js').WorldSoundRequest,signal?:AbortSignal){
-    return new WorldSoundService(this.runtime,{
-      recording:refs=>this.recording.soundExcerptSelection(refs),call:(ref,ids)=>this.callHistory.soundExcerptSelection(ref,ids),
-      team:(ref,actor)=>this.teamApp.worldTeamID(ref,actor),recordUID:async ref=>(await this.world.publicationPrincipal(ref,signal)).uid,
-      recordRef:uid=>this.world.publicationReference(uid),
-    }).execute(input,signal)
-  }
-  async worldSubscriptions(input: import('./world-subscription-contract.js').WorldSubscriptionRequest, signal?: AbortSignal) {
-    return new WorldSubscriptionService(this.runtime, this.profile, {
-      openPrivate: (id, viewer, displayName, signal) => this.chat.openPrivateChatFromUser(id, { expectedViewerUserId: viewer, presentationDisplayName: displayName, ...(signal ? { signal } : {}) }),
-      teams: async signal => await this.teamApp.execute('team.app.teams', { expectedAccountKey: input.accountKey }, signal) as import('./types.js').ArkmeTeam[],
-      teamID: (ref, actor) => this.teamApp.worldTeamID(ref, actor),
-      project: (values, signal) => this.world.projectSubscriptionPublications(values, signal),
-    }).execute(input, signal)
-  }
   async worldCommentNotifications(options: { cursor?: string; limit?: number; signal?: AbortSignal } = {}) { return this.world.worldCommentNotifications(options) }
   async worldNotificationTarget(interactionRef: string, signal?: AbortSignal) { return this.world.worldNotificationTarget(interactionRef, signal) }
 

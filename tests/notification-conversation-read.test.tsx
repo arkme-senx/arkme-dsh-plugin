@@ -41,27 +41,6 @@ afterEach(async () => {
   await act(async () => { root.unmount(); arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' }) })
   container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()
 })
-
-it('acknowledges subscription watermarks, polls new arrivals, and hides actions for withdrawn content', async () => {
-  let latest = 1, through = 0
-  const notice = (sequence: number) => ({ id: `notice-${sequence}`, kind: 'publication', subject: { kind: 'person', id: '9', userId: 9, name: `订阅发布人${sequence}`, available: true }, actor: { userId: 9, name: '发布人' }, at: 1000 + sequence, unread: sequence > through, readRef: `receipt-${sequence}`, scopeKey: 'person:742', sequence })
-  mocks.call.mockImplementation(async (operation, params) => {
-    if (operation === 'world.subscriptions' && params.action === 'notifications') return { items: [notice(latest)], unreadCount: latest - through, hasMore: false }
-    if (operation === 'world.subscriptions' && params.action === 'read') { through = Math.max(through, ...params.readRefs.map((v: string) => Number(v.split('-').at(-1)))); return { ok: true } }
-    return { items: [], unreadCount: 0, total: 0, seenThroughSequence: 0 }
-  })
-  await act(async () => root.render(<ArkmeNotificationCenter />)); await tick()
-  expect(container.textContent).toContain('订阅发布人1发布了新内容')
-  expect(container.textContent).toContain('这条内容已不可查看')
-  expect([...container.querySelectorAll('button')].some(b => b.textContent?.includes('查看公开内容'))).toBe(false)
-  expect(mocks.call.mock.calls.some(c => c[0] === 'world.subscriptions' && c[1].action === 'read' && c[1].readRefs[0] === 'receipt-1')).toBe(true)
-  latest = 2
-  await act(async () => { await vi.advanceTimersByTimeAsync(30_500) })
-  expect(container.textContent).toContain('订阅发布人2发布了新内容')
-  expect(container.textContent).not.toContain('订阅发布人1发布了新内容')
-  await tick() // The new DOM revision starts its own visible-read debounce.
-  expect(through).toBe(2)
-})
 it('acknowledges the displayed recording revision once, leaves offscreen official notices alone, and accepts a later revision', async () => {
   await act(async () => root.render(<ArkmeNotificationCenter />)); await tick()
   expect(mocks.recordingRead).toHaveBeenCalledExactlyOnceWith('test:742', [expect.objectContaining({ id: 'recording-one', sequence: '60' })])

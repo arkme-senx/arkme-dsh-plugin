@@ -33,7 +33,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_team_notification_policy_set',
   'arkme_team_entry_preference_change',
   'arkme_reactions_write',
-  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply', 'arkme_world_sound_write',
+  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
@@ -104,12 +104,6 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
-  if (name === 'arkme_world_sound_write') {
-    const request = JSON.parse(String(args.request_json)) as { action?: string }
-    return request.action === 'management'
-      ? '是否确认取消刚才这份声音摘录的公开发布？'
-      : '是否确认将已核对的原声选段和转写提交世界审核，并在通过后公开？'
-  }
   if (name === 'arkme_thought_reply') return `是否按原想法的可见范围发送这条回复：“${cleanArgument(args.text, 120)}”？私密续帖仅你可见。`
   if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'
   if(name==='arkme_codex_work_record_change')return '是否确认执行刚才选择的 Codex 操作？私人标记仅自己可见；分享链接或转发会向所选受众公开相应内容。'

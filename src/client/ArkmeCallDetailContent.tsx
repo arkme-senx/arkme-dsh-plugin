@@ -1,5 +1,4 @@
 import { useTranscriptInteractions, type TranscriptInteractionRow } from './TranscriptInteractions.js'
-import {WorldSoundPublishDialog} from './WorldSoundPublishDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
@@ -88,8 +87,6 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
   useArkmeLocale()
   const selectedIsSample = selectedItem.callRef.startsWith('sample-')
   const [samplePerspective, setSamplePerspective] = useState<SamplePerspective>('primary')
-  const [soundSelection,setSoundSelection]=useState<string[]>()
-  useEffect(()=>setSoundSelection(undefined),[selectedItem.callRef,active])
   const [playingVideoKey, setPlayingVideoKey] = useState('')
   const [videoPlaying, setVideoPlaying] = useState(false)
   const [videoCurrentTime, setVideoCurrentTime] = useState(0)
@@ -107,7 +104,6 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
     enabled: active && !selectedIsSample && !!detail?.stableId,
     playing: !!transcriptPlayback.state && transcriptPlayback.state.status !== 'failed', onStop: transcriptPlayback.stop,
     onPlay: ids => transcriptPlayback.playItems((detail?.transcriptSegments ?? []).filter(segment => ids.includes(segment.segmentId)).sort((a,b) => a.startMillis - b.startMillis)),
-    onPublish:ids=>{transcriptPlayback.stop();setSoundSelection(ids)},
   })
   const stopTranscript = transcriptPlayback.stop
   useEffect(() => {
@@ -350,7 +346,6 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
   }
 
   return <div data-arkme-call-detail-content="true" style={{ ...styles.detailBody, ...(compact ? { padding: '8px 16px 24px' } : {}) }}>
-    {soundSelection&&<WorldSoundPublishDialog selection={{kind:'call',callRef:selectedItem.callRef,segmentIds:soundSelection}} playing={!!transcriptPlayback.state&&transcriptPlayback.state.status!=='failed'} onPreview={()=>{if(transcriptPlayback.state&&transcriptPlayback.state.status!=='failed'){transcriptPlayback.stop();return}transcriptPlayback.playItems((detail?.transcriptSegments??[]).filter(s=>soundSelection.includes(s.segmentId)).sort((a,b)=>a.startMillis-b.startMillis))}} onClose={()=>{transcriptPlayback.stop();setSoundSelection(undefined)}}/>}
     {transcriptInteraction.host}
           <section style={styles.card} data-arkme-call-tour-target={tourSample ? 'summary' : undefined}>
             <h3 style={styles.cardTitle}>{tr("AI 摘要")}</h3>
