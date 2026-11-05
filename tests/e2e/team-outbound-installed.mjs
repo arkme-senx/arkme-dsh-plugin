@@ -157,10 +157,21 @@ try{
   assert.equal(external.messages[0].actor_user_id,undefined)
   const member=await ownerPost('conversations/timeline/page',{conversation_uid:uid,side:'team',limit:30})
   assert.equal(member.conversation.visitor.user_id,String(target));assert.equal(member.conversation.visitor.member_type,'svip')
+  assert.equal(member.messages.find(m=>m.message_uid===row.message_uid)?.record?.text_content,text,'member and recipient must read the same published body')
   assert.equal((await ownerPost('conversations/open',{public_ref:member.conversation.channel.public_ref},target)).conversation.conversation_uid,uid)
   assert.equal((await ownerPost('conversations/open-by-member',{team_id:teamID,external_user_id:String(target)},11)).conversation.conversation_uid,uid)
   assert.equal((await ownerPost('conversations/list',{side:'external',limit:30},target)).items.filter(c=>c.conversation_uid===uid).length,1)
   assert.equal((await ownerPost('conversations/list',{side:'team',limit:30},11)).items.filter(c=>c.conversation_uid===uid).length,1)
+  // A draft bubble can disappear after ACK invalidation. Require the authorized
+  // Record version and directory preview, then reconstruct the browser again.
+  const published=()=>pane.locator('[data-arkme-message-sequence="1"][data-arkme-message-version="1"]')
+  await published().getByText(text,{exact:true}).waitFor({timeout:30000})
+  await directoryRow.first().getByText(text,{exact:true}).waitFor({timeout:30000})
+  await page.reload();await page.getByRole('button',{name:'联系人',exact:true}).waitFor()
+  pane=page.locator('.team-conversation-pane')
+  await enterReception().then(dialog=>dialog.getByRole('button',{name:'关闭',exact:true}).click())
+  await directoryRow.first().getByText(text,{exact:true}).waitFor({timeout:30000})
+  await directoryRow.first().click();await published().getByText(text,{exact:true}).waitFor({timeout:30000})
   await page.screenshot({path:join(capture,'published-reception.png')})
   await writeFile(join(capture,'real-owner-result.json'),JSON.stringify({uid,messageUid:row.message_uid,seq:row.seq,recordVersion:row.record.version,externalRead:external.conversation.my_read_seq,externalUnread:external.conversation.unread},null,2))
  }
