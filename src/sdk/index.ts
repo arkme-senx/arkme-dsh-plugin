@@ -1,9 +1,9 @@
+export type {SelectedTextNoteQuote,SelectedTextForwardInput} from '../selected-text-note.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
-export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
+export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal,RecordExcerptSelection} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
 export type { ArkmeThoughtContinuation, ArkmeThoughtContinuationPage } from '../thought-continuation.js'
 export type { ArkmeThoughtReplySnapshot } from '../thought-reply.js'
-export type {SelectedTextNoteQuote} from '../selected-text-note.js'
 import type{CodexWorkRequest,CodexWorkResult}from'../codex-work-records-port.js'
 export type{CodexWatchRequest,CodexReadRequest,CodexWriteRequest,CodexWorkRequest,CodexWorkResult,CodexTaskLocator}from'../codex-work-records-port.js'
 export type{TeamCodexState,TeamCodexTask,TeamCodexTaskSummary,CodexTaskPosition,CodexTaskPage,TeamCodexEvent,TeamCodexEventPage,TeamCodexTurnTiming,TeamCodexQueueSnapshot}from'../team-codex-contract.js'
@@ -646,7 +646,7 @@ export class ArkmeSdk {
     return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
   }
   private readonly requestLifetime = new AbortController()
-  /** Cancels managed exports and storage observations. Other subscriptions return their own disposers. */
+  /** Cancels managed exports, storage observations and selected-text requests. Other subscriptions return their own disposers. */
   dispose(): void { this.requestLifetime.abort() }
   async recordExportPreflight(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight> {
     signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
@@ -2666,6 +2666,16 @@ export class ArkmeSdk {
   async modelDirectory(expectedAccountScope: string, signal?: AbortSignal, options?: { officialOnly?: boolean }): Promise<import('../model-directory.js').UnifiedModelCatalog> {
     return this.call('models.directory', { expectedAccountScope, ...(options?.officialOnly === true ? { officialOnly: true } : {}) }, signal)
   }
+
+  private async requireSelectedTextForward(signal?:AbortSignal):Promise<AbortSignal> {
+    signal=AbortSignal.any([this.requestLifetime.signal,...(signal?[signal]:[])])
+    signal.throwIfAborted()
+    if((await this.capabilities(signal)).features.selectedTextForwardV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持云端选段摘录，请升级',retryable:false})
+    return signal
+  }
+  async prepareSelectedText(input:{expectedAccountKey:string;quote:import('../selected-text-note.js').SelectedTextNoteQuote},signal?:AbortSignal):Promise<import('../selected-text-note.js').SelectedTextNoteQuote>{const scoped=await this.requireSelectedTextForward(signal);return this.call('selected-text.prepare',input,scoped)}
+  async forwardSelectedText(input:import('../selected-text-note.js').SelectedTextForwardInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult>{const scoped=await this.requireSelectedTextForward(signal);return this.call('selected-text.forward',{...input},scoped)}
+  async excerptOriginal(recordUid:string,options:{sourceRef?:string;messageActionRef?:string;signal?:AbortSignal}={}):Promise<import('../record-excerpt.js').RecordExcerptOriginal>{const {signal,...occurrence}=options;const scoped=await this.requireSelectedTextForward(signal);return this.call('excerpt.original',{recordUid,...occurrence},scoped)}
 
   async sourceMessageExtensionContext(
     sourceRef: string,

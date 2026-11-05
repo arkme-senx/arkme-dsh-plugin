@@ -15,6 +15,7 @@ vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 const quote: SelectedTextNoteQuote = { version: 1, sourceLabel: '群聊 · 产品讨论', senderName: '同事', sourceAtMillis: 1000, text: '引用文字\n第二行' }
 let root: Root, host: HTMLDivElement
 beforeEach(() => {
+  vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockImplementation(async(operation,params)=>operation==='selected-text.prepare'?params!.quote:undefined)
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -44,7 +45,8 @@ it.each(['私聊', '群聊', '发给自己', 'Arko', '团队消息', '录音转�
   await vi.waitFor(() => expect(present).toHaveBeenCalledOnce())
   expect((present.mock.calls[0] as unknown as any[])[0].preview.quote).toMatchObject({ text: '部分原文', sourceLabel: label, senderName: '原作者' })
   cleanup()
-  expect(callArkme).not.toHaveBeenCalled()
+  expect(callArkme).toHaveBeenCalledOnce()
+  expect(vi.mocked(callArkme).mock.calls[0]?.[0]).toBe('selected-text.prepare')
 })
 it('does not use stale quote content after the message text changes', () => {
   const saved = { quote, noteText: '旧笔记', header: selectedTextNoteHeader(quote), storage: 'local' as const }

@@ -17,6 +17,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_thought_reply',
  'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',
+  'arkme_selected_text_forward',
   'arkme_recording_strategy_start',
   'arkme_realtime_dictation',
   'arkme_recording_strategy_preference',
@@ -104,6 +105,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_selected_text_forward') return '是否将刚才选中的文字与附言发送到选定对话？只分享这段摘录，不授予原文访问权。'
   if (name === 'arkme_world_suggestions_change') {
     const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
     return request.action === 'create' ? `是否分析最近 ${Number(request.days)} 天的本人快记，生成仅自己可见的分享建议？模型分析会使用当前账号的模型额度，不会自动公开内容。`

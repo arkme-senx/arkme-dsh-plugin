@@ -26,3 +26,14 @@ it('freezes selected content and optional comment, retains successful targets an
   ctrl.abort()
   await expect(content.delivery.send({ ...group, sourceKey: 'chat:new' }, '', ctrl.signal)).rejects.toThrow()
 })
+
+it('prepares the source once before opening the existing picker and keeps time stable on retry',async()=>{
+ const {forwardSelectedText}=await import('../src/client/selected-text-forward.js')
+ const {registerLocalSnapshotForward}=await import('../src/client/local-snapshot-forward.js')
+ const prepared={...quote,source:{kind:'record' as const,owner_user_id:11,record_uid:'original'}}
+ vi.mocked(callArkme).mockReset();vi.mocked(callArkme).mockImplementation(async(op,params)=>op==='selected-text.prepare'?prepared:{itemUid:params!.recordUid,localState:'synced'})
+ const stop=registerLocalSnapshotForward(async(content,signal)=>{expect(content.preview.quote?.source).toEqual(prepared.source);await content.delivery.send(self,'',signal);return {completed:true} as never})
+ try {await forwardSelectedText('test:11',quote,new AbortController().signal)}finally{stop()}
+ expect(vi.mocked(callArkme).mock.calls.map(([op])=>op)).toEqual(['selected-text.prepare','selected-text.forward'])
+ expect(vi.mocked(callArkme).mock.calls[1]![1]!.sendAtMillis).toBeGreaterThan(0)
+})

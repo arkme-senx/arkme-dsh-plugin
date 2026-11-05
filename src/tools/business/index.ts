@@ -1,3 +1,4 @@
+import {selectedTextPrepareTool,selectedTextForwardTool,selectedTextOriginalTool} from './conversation/selected-text-forward.js'
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
 import { publicSocialToolModules } from './groups/public-social.js'
@@ -156,6 +157,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listFavoriteStickersToolModule,
   readReactionsToolModule,
   writeReactionsToolModule,
+  selectedTextPrepareTool,selectedTextForwardTool,selectedTextOriginalTool,
   readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
   ...thoughtReplyToolModules,
   addFavoriteStickerToolModule,

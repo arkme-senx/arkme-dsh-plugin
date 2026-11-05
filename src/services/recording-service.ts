@@ -1,3 +1,6 @@
+import {rebaseExcerptSelection,matchExcerptOriginal} from './excerpt-original.js'
+import {quoteSourceContent} from '../message-quote.js'
+import type {SelectedTextNoteQuote} from '../selected-text-note.js'
 import type { RecordingVoiceSourceQuery } from './recording-voice-trigger-service.js'
 import { parseRecordingEvidence, validateRecordingEvidenceQuery, type RecordingEvidenceQuery, type RecordingEvidenceResult } from '../recording-evidence-contract.js'
 import { RecordingStrategyService } from './recording-strategy-service.js'
@@ -138,6 +141,8 @@ interface RecordingCorrectionItemRefPayload {
   endAtMillis: number
 }
 interface RecordingItemRefPayload extends RecordingCorrectionItemRefPayload {
+  textStartOffset?:number
+  textEndOffset?:number
   speakerReference: string
   revision: string
 }
@@ -2537,6 +2542,7 @@ export class RecordingService {
     window?: ArkmeRecordingWindow,
   ): ArkmeRecordingWorkbenchItem {
     const payload: RecordingItemRefPayload = {
+      textStartOffset:item.textStartOffset,textEndOffset:item.textEndOffset,
       version: 1,
       viewerUserId,
       dateStamp,
@@ -2647,9 +2653,19 @@ export class RecordingService {
     return candidate.speakerIdentity === selected.speakerIdentity && candidate.transcriptSource === selected.transcriptSource
   }
 
-  async excerptSource(itemRef:string):Promise<import('../record-excerpt.js').RecordExcerptSource>{
+  async excerptSource(itemRef:string):Promise<Extract<import('../record-excerpt.js').RecordExcerptSource,{kind:'recording_segment'}>>{
     const item=await this.openRecordingItemRef(itemRef)
     return {kind:'recording_segment',recording_uid:item.sessionId,segment_uid:JSON.stringify([item.childId,item.asrItemIndex,item.transcriptSource,item.dateStamp,item.startAtMillis,item.endAtMillis,item.window??null])}
+  }
+  async prepareExcerptSelection(itemRef:string,quote:SelectedTextNoteQuote,signal?:AbortSignal) {
+    const item=await this.openRecordingItemRef(itemRef),source=await this.excerptSource(itemRef)
+    if(!quote.sourceSelection)return {source}
+    const original=await this.excerptOriginal(item.sessionId,source.segment_uid!,signal)
+    const fullDigest=createHash('sha256').update(quoteSourceContent({textContent:original.text,textFormat:'plain'})).digest('hex')
+    if(quote.sourceSelection.source_digest===fullDigest)matchExcerptOriginal(original,quote)
+    const selection=quote.sourceSelection.source_digest===fullDigest?quote.sourceSelection
+      :rebaseExcerptSelection(original.text,item.textStartOffset??-1,item.textEndOffset??-1,quote)
+    return {source,sourceSelection:selection}
   }
   async excerptOriginal(recordingUid:string,segmentUid:string,signal?:AbortSignal):Promise<import('../record-excerpt.js').RecordExcerptOriginal> {
     let key:unknown;try{key=JSON.parse(segmentUid)}catch{throw new ArkmePluginError('excerpt-source-unavailable','录音缺少精确来源位置',false,404)}
@@ -2694,6 +2710,7 @@ export class RecordingService {
     const window = raw.window as ArkmeRecordingWindow | undefined
     this.validateRecordingWindow(window)
     const payload: RecordingItemRefPayload = {
+      ...(Number.isSafeInteger(raw.textStartOffset)&&Number.isSafeInteger(raw.textEndOffset)?{textStartOffset:Number(raw.textStartOffset),textEndOffset:Number(raw.textEndOffset)}:{}),
       version: 1,
       viewerUserId: numberValue(raw.viewerUserId),
       dateStamp: numberValue(raw.dateStamp),

@@ -391,7 +391,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
         if (message) { setNotice(message); return }
       } else if (sendSelf && selfNote && selfController && !selfController.signal.aborted) {
         const frozen: SelectedTextNoteQuote = {
-          version: 1, sourceLabel: selfNote.sourceLabel, senderName: freshTarget.item.senderName || '原作者',
+          version: 1, sourceSelection:{projection:quote.projection,source_digest:quote.sourceDigest,start:quote.start,end:quote.end,...(quote.recordVersion===undefined?{}:{record_version:quote.recordVersion})},sourceLabel: selfNote.sourceLabel, senderName: freshTarget.item.senderName || '原作者',
           sourceAtMillis: freshTarget.item.sendAtMillis || 0, text: quote.text,...(freshTarget.excerptOrigin?{origin:freshTarget.excerptOrigin}:{}),...((freshTarget.excerptSource??freshTarget.item.excerptSource)?{source:(freshTarget.excerptSource??freshTarget.item.excerptSource)!}:{}),
         }
         const signal = selfController.signal
