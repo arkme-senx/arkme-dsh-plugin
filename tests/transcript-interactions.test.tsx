@@ -133,3 +133,28 @@ it('drops the private wording when the Host reports an account change before the
  await act(async()=>{document.getSelection()?.removeAllRanges();window.dispatchEvent(new Event('focus'))})
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
+
+it.each(['replacement', 'history'] as const)('retires an open %s surface when background read observes source revocation', async surface => {
+ await act(async()=>root.render(<Fixture/>))
+ if(surface==='replacement') {await select();await click('替换');await input('未提交私人草稿')}
+ else {
+  const normal=mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[{segment_uid:'old',text:'历史私人正文',revision:1,marks:[]}],next_cursor:''}:normal(op,p))
+  await click('已保存的个人更正');expect(host.textContent).toContain('历史私人正文')
+ }
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
+ await act(async()=>{document.getSelection()?.removeAllRanges();window.dispatchEvent(new Event('focus'))})
+ expect(document.querySelector('textarea')).toBeNull()
+ expect(host.textContent).not.toContain('历史私人正文')
+})
+
+it.each(['change','saved'] as const)('clears private projections when %s observes source revocation before the next watch', async operation => {
+ stored.set('recording:123:one',{revision:1,original,text:'已确认私人正文',marks:[]})
+ await act(async()=>root.render(<Fixture/>));expect(host.textContent).toContain('已确认私人正文')
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{if(op===`transcript.views.${operation}`)throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
+ await click(operation==='change'?'个人更正 · 恢复原文':'已保存的个人更正')
+ expect(host.textContent).not.toContain('已确认私人正文')
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})

@@ -9,9 +9,11 @@ import type { TranscriptViewSavedPage } from '../transcript-view-contract.js'
 export function TranscriptViewHistory({
   sourceRef,
   onClose,
+  onFailure,
 }: {
   sourceRef: string
   onClose(): void
+  onFailure?(error: unknown): void
 }) {
   const auth = useSyncExternalStore(
     arkmeAuthStore.subscribe,
@@ -53,6 +55,7 @@ export function TranscriptViewHistory({
         const body=(error as {body?:{code?:string;httpStatus?:number}})?.body
         if(body?.code === 'transcript-source-unavailable' || body?.code === 'transcript-account-changed' || [401,403].includes(body?.httpStatus ?? 0)) setPage({key,rows:[],cursor:''})
         setNotice(error instanceof Error ? error.message : '更正读取失败')
+        onFailure?.(error)
       }
     } finally {
       if (!signal?.aborted && currentKey.current === key) setBusy(false)

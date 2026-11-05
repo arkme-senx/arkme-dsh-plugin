@@ -79,7 +79,7 @@ async function fixture() {
         ...target,
         kind: 'call' as const,
       })),
-      privateTranscriptSource: vi.fn(async () => target),
+      privateTranscriptSource: vi.fn(async () => ({ ...target, kind: 'call' as const })),
       validatePrivateTranscriptImport: vi.fn(async () => {}),
     }
   const service = () => new TranscriptViewService(runtime, recording, calls)
@@ -250,4 +250,45 @@ it('a restarted UI can inspect and explicitly retry the frozen request without r
   expect(await readFile(join(f.root, 'state.json'), 'utf8')).not.toContain(
     'restore-once',
   )
+})
+
+it('a delayed ACK cannot erase a newer frozen request from another UI or SDK caller', async () => {
+  const f = await fixture()
+  let firstStarted!: () => void, secondStarted!: () => void
+  let releaseFirst!: () => void, releaseSecond!: () => void
+  const startedA = new Promise<void>(resolve => { firstStarted = resolve })
+  const startedB = new Promise<void>(resolve => { secondStarted = resolve })
+  const waitA = new Promise<void>(resolve => { releaseFirst = resolve })
+  const waitB = new Promise<void>(resolve => { releaseSecond = resolve })
+  const next = { ...command, operation_id: 'second-request', expected_revision: 1 }
+  f.post.mockImplementation(async (path: string, body?: { command?: TranscriptViewCommand }) => {
+    if (path.endsWith('/receipt')) return { receipt: { operation_id: command.operation_id, accepted_revision: 1, target } }
+    if (path.endsWith('/read')) return { items: [snapshot], unchanged: [] }
+    if (body?.command?.operation_id === command.operation_id) {
+      firstStarted(); await waitA
+      return { ...snapshot, accepted: true, receipt: { operation_id: command.operation_id, accepted_revision: 1, target } }
+    }
+    secondStarted(); await waitB
+    throw new Error('second response lost')
+  })
+  const first = f.service().change('prod:7', ref, command)
+  await startedA
+  const second = f.service().change('prod:7', ref, next)
+  const secondFailure = expect(second).rejects.toThrow('second response lost')
+  await startedB
+  releaseFirst(); await first
+  const frozen = await readFile(join(f.root, 'state.json'), 'utf8')
+  releaseSecond(); await secondFailure
+  expect(frozen).toContain('second-request')
+  f.restart()
+  const current = await f.service().read('prod:7', 'recording:day', [{ id: 'one', ref }])
+  expect(current.one?.pendingCommand?.operation_id).toBe('second-request')
+})
+
+it('revoked call history reports source access loss through the same private error contract', async () => {
+  const f = await fixture()
+  f.post.mockImplementation(async () => {
+    throw new ArkmeUpstreamResponseError('arkme-code-1003', 'denied', false, 502, { error_code: 'source_unavailable' })
+  })
+  await expect(f.service().saved('prod:7', JSON.stringify({ kind: 'call', callRef: 'opaque-call' }))).rejects.toMatchObject({ code: 'transcript-source-unavailable', httpStatus: 403 })
 })

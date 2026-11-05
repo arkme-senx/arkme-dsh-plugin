@@ -61,7 +61,10 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   const account = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''
   const viewer = auth?.status === 'authenticated' ? auth.userId : undefined
   const key = `${account}:${scope}`, sourceRef = `transcript:${key}`
-  const currentKey = useRef(key); currentKey.current = key
+  const currentKey = useRef(key), accessEpoch = useRef(0)
+  if(currentKey.current!==key)accessEpoch.current++
+  currentKey.current=key
+  const epoch=accessEpoch.current
   const latest = useRef({ rows, onPlay, onMultiSelect, onFind }); latest.current = { rows, onPlay, onMultiSelect, onFind }
   const [state, setState] = useState<{ key: string; entries: Record<string, PersonalTranscriptEntry> }>({ key, entries: {} })
   const entries = state.key === key ? state.entries : {}
@@ -73,10 +76,23 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   const [search, setSearch] = useState(''), [matchIndex, setMatchIndex] = useState(0)
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
-  const guard = () => { if (!alive.current || currentKey.current !== key) throw new Error('转写页面已切换，请重新选择') }
+  const failure = (error: unknown, notify = true) => {
+    if (!alive.current || currentKey.current !== key || accessEpoch.current !== epoch) return
+    const body = (error as {body?:{code?:string;httpStatus?:number}})?.body
+    if (body?.code === 'transcript-source-unavailable' || body?.code === 'transcript-account-changed' || [401,403].includes(body?.httpStatus ?? 0)) {
+      accessEpoch.current++
+      entriesRef.current = {}
+      setState({key, entries:{}})
+      setHistoryRef(undefined)
+      setSelected(undefined)
+      notify = true
+    }
+    if (notify) setNotice(message(error))
+  }
+  const guard = () => { if (!alive.current || currentKey.current !== key || accessEpoch.current !== epoch) throw new Error('转写页面已切换，请重新选择') }
   const accept = (next: Record<string, PersonalTranscriptEntry>,force=false) => {
     const selection=typeof window==='undefined'?null:window.getSelection?.();const anchor=selection?.toString()?(selection.anchorNode instanceof Element?selection.anchorNode:selection.anchorNode?.parentElement)?.closest<HTMLElement>('[data-transcript-row]'):null;const selectedId=anchor?.dataset.transcriptScope===sourceRef?anchor.dataset.transcriptRow:undefined;
-    if (!alive.current || currentKey.current !== key) return
+    if (!alive.current || currentKey.current !== key || accessEpoch.current !== epoch) return
     setState(old => {
       const merged = { ...(old.key === key ? old.entries : {}) }
       let changed = old.key !== key
@@ -90,7 +106,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     guard()
     const items=ids.flatMap(id=>{const row=latest.current.rows.find(r=>r.id===id);const prior=entriesRef.current[id];return row?.viewRef?[{id,ref:row.viewRef,...(watch&&prior&&prior.originalVersion===row.sourceVersion?{knownRevision:prior.revision,knownOriginalVersion:prior.originalVersion,...(prior.pendingCommand?{knownPendingOperationId:prior.pendingCommand.operation_id}:{})}:{})}]:[]})
     if(!items.length)return {}
-    const result = await callArkme<Record<string,PersonalTranscriptEntry>>('transcript.views.read', { accountKey: account, scope, items }, signal)
+    const result = await callArkme<Record<string,PersonalTranscriptEntry>>('transcript.views.read', { accountKey: account, scope, items }, signal).catch(error => { failure(error, false); throw error })
     guard(); accept(result); return result
   }
   const change = async (row: TranscriptInteractionRow, entry: PersonalTranscriptEntry | undefined, patch: {restore?:boolean;mark?:MessageUnderlineChange;anchor?:ArkmeMessageQuote;replacement?:string;operationId?:string}, signal?: AbortSignal) => {
@@ -101,9 +117,10 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       action:patch.restore?'restore':patch.mark?.kind==='add'?'add_mark':patch.mark?.kind==='remove'?'remove_mark':'replace',
       ...(patch.anchor?{anchor:patch.anchor}:{}),...(patch.replacement!==undefined?{replacement:patch.replacement}:{}),
       ...(patch.mark?.kind==='add'?{anchor:patch.mark.anchor}:{}),...(patch.mark?.kind==='remove'?{annotation_id:patch.mark.annotationId}:{})}
-    const result=await callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command},signal)
+    const result=await callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command},signal).catch(error => { failure(error, false); throw error })
     guard();accept({[row.id]:result},true);return result
   }
+  const currentRead=useRef(read);currentRead.current=read
   const idsKey = JSON.stringify(rows.map(row => [row.id,row.sourceVersion,row.viewRef]))
   useEffect(() => {
     if (!account || !enabled || typeof window === 'undefined' || typeof document === 'undefined' || typeof window.getSelection !== 'function') return
@@ -113,11 +130,12 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       if(window.getSelection()?.toString())return
       if(loading||controller.signal.aborted)return
       loading=true
+      const requestEpoch=accessEpoch.current
       try {
         const ids = (JSON.parse(idsKey) as string[][]).map(row=>row[0]!)
-        for (let i = 0; i < ids.length; i += 40) await read(ids.slice(i, i + 40), controller.signal,true)
-        if (!controller.signal.aborted) setNotice('')
-      } catch (error) { if (!controller.signal.aborted && currentKey.current === key) { const body = (error as {body?:{code?:string;httpStatus?:number}})?.body; if(body?.code === 'transcript-source-unavailable' || body?.code === 'transcript-account-changed' || [401,403].includes(body?.httpStatus ?? 0)) {entriesRef.current={};setState({key,entries:{}})} setNotice(message(error)) } } finally {loading=false}
+        for (let i = 0; i < ids.length; i += 40) await currentRead.current(ids.slice(i, i + 40), controller.signal,true)
+        if (!controller.signal.aborted && accessEpoch.current === requestEpoch) setNotice('')
+      } catch (error) { if (!controller.signal.aborted && currentKey.current === key && accessEpoch.current === requestEpoch) setNotice(message(error)) } finally {loading=false}
     }
     const timer=setInterval(()=>{if(document.visibilityState!=="hidden")void refresh()},15000)
     void refresh(); if (typeof window !== 'undefined') window.addEventListener('focus', refresh);document.addEventListener('selectionchange',refresh)
@@ -154,8 +172,8 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       if (display(row, entry) !== text) throw new Error('转写已变化，请重新选择文字')
       return snapshot(row, await change(row, entry, { mark }, signal))
     },
-  }), [key, enabled])
-  const marks = useMessageUnderlines(key, enabled && account ? sourceRef : undefined, viewer, transport, 'cloud')
+  }), [key, enabled, epoch])
+  const marks = useMessageUnderlines(`${key}:${epoch}`, enabled && account ? sourceRef : undefined, viewer, transport, 'cloud')
   useSelectedMessageSearch(enabled ? sourceRef : undefined, text => {
     if (latest.current.onFind) latest.current.onFind(text)
     else { setSearch(text); setMatchIndex(0) }
@@ -190,10 +208,10 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
         onClick={event => { event.stopPropagation(); void change(row, entry, { restore: true }).catch(e => setNotice(message(e))) }}>
         {entry.originalChanged ? '原文已更新 · 恢复原文' : '个人更正 · 恢复原文'}
       </button>}
-      {entry?.pendingCommand && row.viewRef && <button type="button" style={smallButton} title={`待确认操作：${entry.pendingCommand.action} ${entry.pendingCommand.replacement ?? entry.pendingCommand.anchor?.text ?? ''}`} onClick={() => {void callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command:{operation_id:crypto.randomUUID(),expected_revision:entry.revision,original_version:entry.originalVersion,action:'retry_pending'}}).then(next=>accept({[row.id]:next},true)).catch(error=>{setNotice(message(error));setRetry(v=>v+1)})}}>重试上次提交</button>}
+      {entry?.pendingCommand && row.viewRef && <button type="button" style={smallButton} title={`待确认操作：${entry.pendingCommand.action} ${entry.pendingCommand.replacement ?? entry.pendingCommand.anchor?.text ?? ''}`} onClick={() => {void callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command:{operation_id:crypto.randomUUID(),expected_revision:entry.revision,original_version:entry.originalVersion,action:'retry_pending'}}).then(next=>accept({[row.id]:next},true)).catch(error=>{failure(error);setRetry(v=>v+1)})}}>重试上次提交</button>}
       {row.viewRef&&<button type="button" style={smallButton} onClick={()=>{setHistoryRef({key,ref:row.viewRef!})}}>历史更正</button>}
       {entry?.legacy && <button type="button" style={smallButton} title={`本机更正：${entry.legacy.text}\n原数据将保留，确认后仅同步到自己的账号`}
-        onClick={event=>{event.stopPropagation();if(!row.viewRef)return;void callArkme<PersonalTranscriptEntry>('transcript.views.import',{accountKey:account,scope,item:{id:row.id,ref:row.viewRef},operationId:crypto.randomUUID()}).then(next=>accept({[row.id]:next},true)).catch(error=>setNotice(message(error)))}}>本机更正 · 同步到账号</button>}
+        onClick={event=>{event.stopPropagation();if(!row.viewRef)return;void callArkme<PersonalTranscriptEntry>('transcript.views.import',{accountKey:account,scope,item:{id:row.id,ref:row.viewRef},operationId:crypto.randomUUID()}).then(next=>accept({[row.id]:next},true)).catch(failure)}}>本机更正 · 同步到账号</button>}
       {entry?.legacy&&<button type="button" style={smallButton} title="保留本机旧数据，使用当前账号的云端原文" onClick={()=>{void change(row,entry,{restore:true}).catch(error=>setNotice(message(error)))}}>使用云端原文</button>}
     </span>
   }
@@ -207,7 +225,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   const selectedRows = rows.filter(row => selected?.has(row.id)).sort((a,b) => a.at - b.at)
   const toggle = (id: string) => setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const host = enabled && typeof document !== 'undefined' && document.body && typeof window !== 'undefined' ? <>
-    <ArkmeMessageTextSelectionToolbar selectionDomain="transcript" replySourceRef={sourceRef} markStorage="cloud" selfNote={{ sourceLabel: scope.startsWith('call:') ? '通话转写' : '录音转写', accountKey: account }}
+    <ArkmeMessageTextSelectionToolbar key={`toolbar:${key}:${epoch}`} selectionDomain="transcript" replySourceRef={sourceRef} markStorage="cloud" selfNote={{ sourceLabel: scope.startsWith('call:') ? '通话转写' : '录音转写', accountKey: account }}
       onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} canReplace={target=>!!account&&!!latest.current.rows.find(row=>row.id===target.item.itemUid)?.viewRef}
       prepareReplace={async (t, quote, signal) => {
         const row = latest.current.rows.find(row => row.id === t.item.itemUid)
@@ -224,7 +242,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
         } }
       }} />
     {marks.layer}
-    <TranscriptContextMenu key={`menu:${key}`} ref={menuRef} rows={rows}
+    <TranscriptContextMenu key={`menu:${key}:${epoch}`} ref={menuRef} rows={rows}
       onCopy={row => { void copyText(display(row)).catch(e => { if (alive.current && currentKey.current === key) setNotice(message(e)) }) }}
       onSelect={row => { if (latest.current.onMultiSelect) latest.current.onMultiSelect(row.id); else setSelected(new Set([row.id])) }}
       onPlay={row => latest.current.onPlay([row.id])} />
@@ -232,7 +250,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   </> : null
   const controls = <>
     {enabled&&account&&(savedRef||rows.some(row=>row.viewRef))&&<button type="button" style={smallButton} onClick={()=>{const ref=savedRef??rows.find(row=>row.viewRef)?.viewRef;if(ref)setHistoryRef({key,ref})}}>已保存的个人更正</button>}
-    {historyRef?.key === key && <TranscriptViewHistory key={historyRef.ref} sourceRef={historyRef.ref} onClose={() => setHistoryRef(undefined)} />}
+    {historyRef?.key === key && <TranscriptViewHistory key={historyRef.ref} sourceRef={historyRef.ref} onFailure={error => failure(error, false)} onClose={() => setHistoryRef(undefined)} />}
 
     {search && <div role="search" style={{ position: 'sticky', bottom: 0, background: arkmeTheme.menu, padding: 8, borderRadius: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12 }}>
       <input style={{ minWidth: 100, flex: 1, border: `1px solid ${arkmeTheme.border}`, borderRadius: 6, background: arkmeTheme.input, color: arkmeTheme.text, padding: '5px 8px' }} aria-label="查找通话转写" value={search} onChange={e => { setSearch(e.target.value); setMatchIndex(0) }} />

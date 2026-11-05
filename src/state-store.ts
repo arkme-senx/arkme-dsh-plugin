@@ -629,7 +629,7 @@ export class ArkmeStateStore {
     return await this.read(state => state.uniqueCode)
   }
 
-  async transcriptViewAttempt(scope:string,key:string,value?:import('./transcript-view-contract.js').TranscriptViewAttempt|null):Promise<import('./transcript-view-contract.js').TranscriptViewAttempt|undefined> {
+  async transcriptViewAttempt(scope:string,key:string,value?:import('./transcript-view-contract.js').TranscriptViewAttempt|null,acknowledgedAttempt?:import('./transcript-view-contract.js').TranscriptViewAttempt):Promise<import('./transcript-view-contract.js').TranscriptViewAttempt|undefined> {
     const access=(state:PersistedState)=>{
       if(!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)||!/^[a-f0-9]{64}$/u.test(key))throw new Error('转写恢复记录作用域无效')
       if(state.transcriptViewAttempts===undefined)state.transcriptViewAttempts={}
@@ -644,7 +644,7 @@ export class ArkmeStateStore {
     }
     if(value===undefined)return this.read(state=>{const rows=access(state);return rows[key]?structuredClone(rows[key]):undefined})
     let result:import('./transcript-view-contract.js').TranscriptViewAttempt|undefined
-    await this.update(state=>{const rows=access(state);if(value===null){delete rows[key];return};if(rows[key]&&JSON.stringify(rows[key])!==JSON.stringify(value))throw new Error('上次转写更正仍待确认');if(!rows[key]&&Object.keys(rows).length>=64)throw new Error('请先核对尚未确认的转写更正');rows[key]=structuredClone(value);result=structuredClone(value)})
+    await this.update(state=>{const rows=access(state);if(value===null){if(!acknowledgedAttempt)throw new Error('转写回执身份无效');if(rows[key]?.command.operation_id===acknowledgedAttempt.command.operation_id&&rows[key]?.fingerprint===acknowledgedAttempt.fingerprint)delete rows[key];return};if(rows[key]&&JSON.stringify(rows[key])!==JSON.stringify(value))throw new Error('上次转写更正仍待确认');if(!rows[key]&&Object.keys(rows).length>=64)throw new Error('请先核对尚未确认的转写更正');rows[key]=structuredClone(value);result=structuredClone(value)})
     return result
   }
   async readOfflineContextJournal(scope: string): Promise<Record<string, OfflineContextJournalEntry>> {

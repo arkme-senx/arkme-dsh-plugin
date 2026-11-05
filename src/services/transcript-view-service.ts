@@ -315,7 +315,7 @@ export class TranscriptViewService {
           !Number.isSafeInteger(known.receipt.accepted_revision)
         )
           throw new Error('转写回执无效，原恢复信息已保留')
-        await store.call(this.runtime.stateStore, account, key, null)
+        await store.call(this.runtime.stateStore, account, key, null, prior)
         if (prior.fingerprint === fingerprint) {
           return (
             await this.read(
@@ -371,7 +371,7 @@ export class TranscriptViewService {
       )
         throw new Error('更正回执来源无效，原恢复信息已保留')
       await this.session(account)
-      await store.call(this.runtime.stateStore, account, key, null)
+      await store.call(this.runtime.stateStore, account, key, null, attempt)
       await this.session(account)
       return entry
     } catch (error) {
@@ -393,7 +393,7 @@ export class TranscriptViewService {
           'operation_conflict',
         ].includes(code ?? '')
       )
-        await store.call(this.runtime.stateStore, account, key, null)
+        await store.call(this.runtime.stateStore, account, key, null, attempt)
       transcriptFailure(error)
     }
   }
@@ -410,7 +410,7 @@ export class TranscriptViewService {
           >(path, body, session, signal).catch(transcriptFailure)
         : await this.runtime.authenticatedWebrtcPost<
             import('../transcript-view-contract.js').TranscriptViewSavedPage
-          >(path, body, session, signal)
+          >(path, body, session, signal).catch(transcriptFailure)
     await this.session(account)
     if (
       result.historical !== true ||
