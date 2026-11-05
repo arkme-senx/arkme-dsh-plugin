@@ -43,9 +43,12 @@ export function ArkmeExportDateRange({ value, disabled, onChange }: {
         if (disabled)
             setOpen(false);
     }, [disabled]);
+    const fullRange = `${value.start} — ${value.end}`;
+    const sameYear = value.start.slice(0, 4) === value.end.slice(0, 4);
+    const compactDate = (date: string) => (sameYear ? date.slice(5) : date).replaceAll('-', '/');
     const first = new Date(month.getFullYear(), month.getMonth(), 1), start = new Date(first);
     start.setDate(1 - first.getDay());
-    return <><button ref={anchor} type="button" className="arkme-export-date-trigger" aria-label={tr('选择导出日期')} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => { setDraft(value); setChoosingEnd(false); setMonth(new Date(value.start + 'T12:00:00')); setOpen(v => !v); }}>{value.start} — {value.end}<CaretDown size={14} aria-hidden/></button>
+    return <><button ref={anchor} type="button" className="arkme-export-date-trigger" title={fullRange} aria-label={tr('选择导出日期')} aria-description={fullRange} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => { setDraft(value); setChoosingEnd(false); setMonth(new Date(value.start + 'T12:00:00')); setOpen(v => !v); }}>{compactDate(value.start)}–{compactDate(value.end)}<CaretDown size={14} aria-hidden/></button>
  {open && createPortal(<div ref={panel} id={id} role="dialog" aria-label={tr('导出日期范围')} className="arkme-export-calendar" style={{ position: 'fixed', left: position.left, top: position.top, zIndex: 2147483000 }}>
  <header><button type="button" aria-label={tr('上个月')} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><CaretLeft size={16}/></button><strong>{month.getFullYear()} / {month.getMonth() + 1}</strong><button type="button" aria-label={tr('下个月')} onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><CaretRight size={16}/></button></header>
  <div className="arkme-export-calendar-grid">{['日', '一', '二', '三', '四', '五', '六'].map(day => <span key={day}>{tr(day)}</span>)}{Array.from({ length: 42 }, (_, index) => {
