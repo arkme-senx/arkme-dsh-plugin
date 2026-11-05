@@ -9,6 +9,7 @@ import { recordingSourceLocalDate } from '../arrangement-recording-source.js'
 import conversationCss from './conversation-arrangements.css?inline'
 import { tr } from './locale.js'
 import { useArrangementSourceQuotes } from './arrangement-source-quotes.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 import { TeamMessageContent } from './TeamMessageContent.js'
 
 const labels: Record<ArkmeArrangementEvidence['kind'], string> = {record:'快记或聊天',team_message:'团队对话',audio_summary:'录音总结',call:'通话',input:'直接输入',voice_input:'语音输入',agent:'助手创建',manual:'手动创建'}
@@ -51,7 +52,7 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
         if(controller.signal.aborted) return
         let value:ArkmeArrangementSourceTarget
         try {
-          value=await callArkme<ArkmeArrangementSourceTarget>('arrangements.source.open',{arrangementRef,evidenceId:candidate.id},controller.signal)
+          value=await withArkmeReadDeadline(signal=>callArkme<ArkmeArrangementSourceTarget>('arrangements.source.open',{arrangementRef,evidenceId:candidate.id},signal),controller.signal)
         } catch(err) {
           if(controller.signal.aborted) return
           if(alternatives&&err instanceof ArkmeClientError&&err.body.code==='arrangement-source-unavailable') {unavailable++;continue}
