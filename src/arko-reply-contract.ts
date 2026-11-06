@@ -22,7 +22,7 @@ export interface ArkoReplyPromptWrite {
 }
 export interface ArkoReplyPromptResult { accountScope: string; conflict: boolean; current: ArkoReplyPromptView }
 export type ArkoReplyHistoryItem = Pick<ArkmeTimelineItem, 'itemUid' | 'sendAtMillis' | 'isMe' | 'recordVersion' | 'version' | 'messageActionRef' | 'timelineItemKey' | 'recordOwnerUserId'>
-export interface ArkoReplyHistoryEntry { sourceOrderAtMillis: number; key: string; scene: ConfigurableReplyScene; resultKind: 'root' | 'continuation'; source: ArkmeSourceItem; item: ArkoReplyHistoryItem; thought: ArkmeRecordThought }
+export interface ArkoReplyHistoryEntry { preview?: string; sourceOrderAtMillis: number; key: string; scene: ConfigurableReplyScene; resultKind: 'root' | 'continuation'; source: ArkmeSourceItem; item: ArkoReplyHistoryItem; thought: ArkmeRecordThought }
 export interface ArkoReplyHistoryQuery { scene?: ConfigurableReplyScene | 'all'; cursor?: string; limit?: number }
 export interface ArkoReplyHistoryPage { accountScope: string; items: ArkoReplyHistoryEntry[]; nextCursor?: string }
 export interface ArkoReplyManagementPort {

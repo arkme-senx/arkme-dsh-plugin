@@ -32,3 +32,28 @@ it('continuation navigation keeps the root anchor separate from result ordering 
  const page=await readReplyHistory(f.runtime,source as never,chat as never,{},'test:11')
  expect(page.items[0]?.item.sendAtMillis).toBe(100)
 })
+
+it('retains conversation names and analysis previews with one lean owner batch', async () => {
+ const f=fixture(), snapshots=vi.fn(async()=>({items:[{session:{chat_session_uid:'chat',session_kind:1},private_supplement:{remark:'小林'}}]}))
+ Object.assign(f.runtime,{authenticatedChatPost:snapshots})
+ const target={kind:'private_chat',sourceRef:'signed-chat',displayName:'小林'}
+ const source={selfTarget:vi.fn(async()=>({kind:'send_to_self',sourceRef:'self'})),chatSourceFromBundle:vi.fn(async()=>target),chatTimelineItemKey:vi.fn(async()=> 'opaque-key')}
+ const chat={arkoReplyHistoryActionRef:vi.fn(async()=> 'opaque-action')}
+ const row={key:'chat:one',scene:'direct_receive',result_kind:'root',source_kind:'chat',chat_session_uid:'chat',rel_uid:'rel',seq:1,source_owner_user_id:22,source_sender_user_id:22,record_uid:'root',source_version:2,source_order_at:100,navigation_at:100,generation:10,content:'可以，明天下午三点见。',preview:'对方正在确认见面安排'}
+ f.post.mockResolvedValue({items:[row,{...row,key:'chat:two',rel_uid:'other'}]})
+ const page=await readReplyHistory(f.runtime,source as never,chat as never,{},'test:11')
+ expect(snapshots).toHaveBeenCalledExactlyOnceWith('/api/v1/chats/display-snapshots',{chat_session_uids:['chat']},expect.objectContaining({userId:11}),undefined,{lane:'background-read',publishServiceCooldown:false})
+ expect(source.chatSourceFromBundle).toHaveBeenCalledOnce()
+ expect(page.items[0]).toMatchObject({source:{displayName:'小林'},preview:'对方正在确认见面安排',thought:{content:'可以，明天下午三点见。'}})
+ for(const items of [[],[{session:{chat_session_uid:'unrequested',session_kind:1},private_supplement:{remark:'其他会话'}}],Array(2).fill({session:{chat_session_uid:'chat',session_kind:1}})]){
+  snapshots.mockResolvedValueOnce({items})
+  await expect(readReplyHistory(f.runtime,source as never,chat as never,{},'test:11')).rejects.toThrow('暂时无法读取')
+ }
+ const projectedBeforeSwitch=source.chatSourceFromBundle.mock.calls.length
+ snapshots.mockImplementationOnce(async()=>{
+  f.session.mockResolvedValue({userId:12,refreshToken:'next-account'})
+  return{items:[{session:{chat_session_uid:'chat',session_kind:1},private_supplement:{remark:'小林'}}]}
+ })
+ await expect(readReplyHistory(f.runtime,source as never,chat as never,{},'test:11')).rejects.toThrow('账号已切换')
+ expect(source.chatSourceFromBundle.mock.calls).toHaveLength(projectedBeforeSwitch)
+})

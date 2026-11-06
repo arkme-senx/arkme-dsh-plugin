@@ -19,9 +19,10 @@ it.skipIf(!directory)('actual UI, SDK and Host use authenticated Go handlers, en
         expect(new URL(settings[key]).hostname).toBe('127.0.0.1');
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     const temporary = await mkdtemp(join(tmpdir(), 'arko reply e2e '));
+    const chatOwner = JSON.parse(await readFile(join(directory!, 'chat.json'), 'utf8'));
     let userId = 11;
     const sessions = { async read() { return { userId, accessToken: settings[`token${userId}`], refreshToken: 'synthetic' }; }, async write() { }, async delete() { } };
-    const config = { environment: 'test', authBaseUrl: settings.url, recordBaseUrl: settings.url, chatBaseUrl: settings.url, botBaseUrl: settings.url, imBaseUrl: settings.url, webrtcBaseUrl: settings.url, worldBaseUrl: settings.url, relationBaseUrl: settings.url, intelligentBaseUrl: settings.url, audioBaseUrl: settings.url, routePath: '/arkme-self/api', requestTimeoutMs: 5000, maxTextLength: 20000, geetestCaptchaId: 'synthetic', fileStateDirectory: temporary } as ArkmeServiceConfig;
+    const config = { environment: 'test', authBaseUrl: settings.url, recordBaseUrl: settings.url, chatBaseUrl: chatOwner.url, botBaseUrl: settings.url, imBaseUrl: settings.url, webrtcBaseUrl: settings.url, worldBaseUrl: settings.url, relationBaseUrl: settings.url, intelligentBaseUrl: settings.url, audioBaseUrl: settings.url, routePath: '/arkme-self/api', requestTimeoutMs: 5000, maxTextLength: 20000, geetestCaptchaId: 'synthetic', fileStateDirectory: temporary } as ArkmeServiceConfig;
     const service = new ArkmeService(config, sessions, { async uniqueCode() { return 'synthetic-contract-signing-key'; } } as never, fetch);
     const dispatch = async (op: string, params: unknown, signal?: AbortSignal) => await dispatchArkmeHostOperation(service, op as never, params as never, undefined, undefined, undefined, undefined, signal);
     transport.call = dispatch;
@@ -67,7 +68,10 @@ it.skipIf(!directory)('actual UI, SDK and Host use authenticated Go handlers, en
         expect(history.items).toHaveLength(4);
         expect(history.items.every(i => !!i.item.messageActionRef && i.item.sendAtMillis === 1712991000001)).toBe(true);
         expect(new Set(history.items.map(i => i.scene))).toEqual(new Set(['record_auto', 'record_mention', 'direct_mention', 'group_mention']));
-        const chatOwner = JSON.parse(await readFile(join(directory!, 'chat.json'), 'utf8'));
+        expect(history.items.find(i => i.scene === 'group_mention')?.source.displayName).toBe('闭环验收群');
+        expect(history.items.find(i => i.scene === 'direct_mention')?.source.displayName).toBe('小林');
+        expect(host.textContent).toContain('群聊公开回应 · 闭环验收群');
+        expect(host.textContent).toContain('私聊主动回应 · 小林');
         await fetch(chatOwner.url + '/__test/leave', { method: 'POST' });
         expect((await sdk.arkoRepliesPage({ scene: 'all' }, 'test:11')).items).toHaveLength(2);
         userId = 12;
@@ -78,6 +82,10 @@ it.skipIf(!directory)('actual UI, SDK and Host use authenticated Go handlers, en
         const selected = (await sdk.arkoReplyPrompts('test:11')).items.find(i => i.scene === 'record_auto')!;
         const reset = await sdk.resetArkoReplyPrompt({ scene: 'record_auto', expectedRevision: selected.revision, baseOfficialRevision: selected.officialRevision }, 'test:11');
         expect(reset.current.userBody).toBeNull();
+        const receiver = (await sdk.arkoReplyPrompts('test:11')).items.find(i => i.scene === 'direct_receive')!;
+        const restored = await sdk.saveArkoReplyPrompt({scene:'direct_receive',expectedRevision:receiver.revision,baseOfficialRevision:receiver.officialRevision,body:receiver.officialBody},'test:11');
+        expect(restored.current.userBody).toBeNull();
+        expect(restored.current.revision).toBe(receiver.revision+1);
     }
     finally {
         await act(async () => root.unmount());

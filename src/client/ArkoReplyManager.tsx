@@ -37,6 +37,7 @@ function ArkoReplyManagerBody({ accountScope, onClose }: { accountScope: string;
   const [promptLoading,setPromptLoading]=useState(true), [saving,setSaving]=useState(false)
   const historyController = useRef<AbortController>(), historyState = useRef(history); historyState.current = history
   const currentPrompt=book?.items.find(item=>item.scene===target)
+  const promptTooLong = [...form].length > (currentPrompt?.maxBodyRunes ?? 6000)
   const officialArkoReplyPrompt=(scene:ConfigurableReplyScene)=>book?.items.find(item=>item.scene===scene)?.officialBody ?? ''
   const dirty=!!currentPrompt && form!==currentPrompt.effectiveBody
   const navigate=(action:()=>void)=>{if(saving)return;if(dirty)setPendingNavigation(()=>action);else action()}
@@ -86,7 +87,7 @@ function ArkoReplyManagerBody({ accountScope, onClose }: { accountScope: string;
   const changedCount=book?.items.filter(item=>item.userBody!==null).length ?? 0
   const feedback=<>{error && <p role="alert" style={{ ...note, color: theme.danger }}>{tr(error)}{promptReadFailed && <button type="button" onClick={loadPrompts} style={{ ...quiet, marginLeft: 8 }}>{tr('重试')}</button>}</p>}{notice && <p role="status" style={note}>{notice}</p>}</>
   const rows = [
-    ...history.thoughts.map(entry => ({ key: entry.key, title: arkoReplySceneInfo[entry.scene].title, source: entry.source.displayName, at: entry.sourceOrderAtMillis, content: entry.thought.display?.headline || entry.thought.content,
+    ...history.thoughts.map(entry => ({ key: entry.key, title: arkoReplySceneInfo[entry.scene].title, source: entry.source.displayName, at: entry.sourceOrderAtMillis, content: entry.preview || entry.thought.content,
       open: () => openThought(entry), disabled: false })),
   ]
   return <ArkmeDetailShell title={title} label={tr('Arko 回复管理')} onClose={() => navigate(onClose)}
@@ -94,10 +95,11 @@ function ArkoReplyManagerBody({ accountScope, onClose }: { accountScope: string;
     bodyStyle={{ padding: '16px 22px 28px' }}
     footer={target ? <div style={{ padding: '12px 22px 18px', borderTop: `1px solid ${theme.borderSoft}` }}>
       {feedback}
+      {promptTooLong && <p role="alert" style={{ ...note, color: theme.danger }}>{tr('提示词最多允许')} {currentPrompt?.maxBodyRunes ?? 6000} {tr('字，请缩短后再保存。')}</p>}
       <p style={{ ...note, margin: '0 0 10px' }}>{tr(saving?'正在保存…':'保存后在所有设备生效')}</p>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
         <button type="button" style={quiet} disabled={saving || promptReadFailed || form === officialArkoReplyPrompt(target)} onClick={() => { setForm(officialArkoReplyPrompt(target)); setNotice(''); setError('') }}>{tr('恢复默认')}</button>
-        <button type="button" data-arko-reply-save disabled={!dirty || promptReadFailed || saving || !form.trim() || [...form].length>(currentPrompt?.maxBodyRunes ?? 6000)} onClick={() => { void save() }} style={{ border: 0, borderRadius: 8, padding: '9px 18px', background: dirty && !promptReadFailed ? theme.primaryAction : theme.layer2, color: dirty && !promptReadFailed ? theme.onPrimaryAction : theme.tertiary, cursor: dirty ? 'pointer' : 'default', font: 'inherit', fontSize: 13 }}>{tr('保存修改')}</button>
+        <button type="button" data-arko-reply-save disabled={!dirty || promptReadFailed || saving || !form.trim() || promptTooLong} onClick={() => { void save() }} style={{ border: 0, borderRadius: 8, padding: '9px 18px', background: dirty && !promptReadFailed ? theme.primaryAction : theme.layer2, color: dirty && !promptReadFailed ? theme.onPrimaryAction : theme.tertiary, cursor: dirty ? 'pointer' : 'default', font: 'inherit', fontSize: 13 }}>{tr('保存修改')}</button>
       </div>
     </div> : undefined}>
     <style>{`.arko-reply-tabs{display:flex;gap:24px;border-bottom:1px solid ${theme.borderSoft};margin-bottom:20px}[data-arkme-workspace] .arko-reply-tabs button{border:0;background:transparent;padding:7px 0 12px;font:inherit;font-size:14px;color:${theme.tertiary};cursor:pointer}[data-arkme-workspace] .arko-reply-tabs button[aria-selected=true]{color:${theme.text};box-shadow:0 2px ${theme.text}}

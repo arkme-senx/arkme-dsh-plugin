@@ -53,6 +53,24 @@ export async function readReplyHistory(runtime: ServiceRuntime, source: SourceSe
   if (!Array.isArray(result.items) || result.items.length > limit || result.next !== undefined && !text(result.next, 2048)) throw invalid()
   const page: ArkoReplyHistoryPage = { accountScope: a.scope, items: [], ...(typeof result.next === 'string' && result.next ? { nextCursor: result.next } : {}) }
   const self = await source.selfTarget(signal), sources = new Map<string, typeof self>()
+  const sessions = [...new Set(result.items.flatMap(raw => {
+    const row = objectValue(raw)
+    return row.source_kind === 'chat' && text(row.chat_session_uid, 256) && row.chat_session_uid ? [row.chat_session_uid] : []
+  }))]
+  if (sessions.length) {
+    // Reuse Chat's lean, viewer-authorized display read and the existing source
+    // projection. Do not replace names with generic labels or scan the directory.
+    const snapshots = await runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/display-snapshots', { chat_session_uids: sessions }, a.session, signal,
+      { lane: 'background-read', publishServiceCooldown: false })
+    await a.verify(signal)
+    if (!Array.isArray(snapshots.items)) throw invalid()
+    for (const raw of snapshots.items) {
+      const bundle = objectValue(raw), uid = objectValue(bundle.session).chat_session_uid
+      if (typeof uid !== 'string' || !sessions.includes(uid) || sources.has(uid)) throw invalid()
+      sources.set(uid, await source.chatSourceFromBundle(bundle, a.session, undefined, []))
+    }
+    if (sources.size !== sessions.length) throw invalid()
+  }
   for (const raw of result.items) {
     const r = objectValue(raw)
     if (!validScene(r.scene) || !text(r.key, 300) || !r.key || !text(r.record_uid, 256) || !r.record_uid || !positive(r.source_version) || !positive(r.source_order_at) || !positive(r.navigation_at)
@@ -62,16 +80,15 @@ export async function readReplyHistory(runtime: ServiceRuntime, source: SourceSe
     let target = self, itemUid = r.record_uid
     if (r.source_kind === 'chat') {
       if (!text(r.chat_session_uid, 256) || !r.chat_session_uid || !text(r.rel_uid, 256) || !r.rel_uid || !positive(r.seq)) throw invalid()
-      let cached = sources.get(r.chat_session_uid)
-      if (!cached) { const kind = r.scene.startsWith('direct_') ? 'private_chat' : 'group_chat', name = kind === 'private_chat' ? '私聊' : '群聊'
-        cached = { kind, displayName: name, sourceRef: await source.sealSourceRef(a.session.userId, kind, r.chat_session_uid, name), sourceKey: await source.chatDirectorySourceKey(a.session.userId, r.chat_session_uid), activeAtMillis: 0, unreadCount: 0 }
-        sources.set(r.chat_session_uid, cached) }
+      const cached = sources.get(r.chat_session_uid), kind = r.scene.startsWith('direct_') ? 'private_chat' : 'group_chat'
+      if (!cached || cached.kind !== kind) throw invalid()
       target = cached; itemUid = r.rel_uid
     }
     const actionRef = await chat.arkoReplyHistoryActionRef(target.sourceRef, { recordUid: r.record_uid, recordOwnerUserId: owner, senderUserId: sender,
       relationUid: r.source_kind === 'chat' ? itemUid : '', sendAtMillis: r.navigation_at, sequence: Number(r.seq ?? 0) }, signal)
     const biz = r.scene === 'record_mention' || r.scene.endsWith('_mention') ? 2 : 1
-    page.items.push({ sourceOrderAtMillis: r.source_order_at, key: r.key, scene: r.scene, resultKind: r.result_kind as 'root' | 'continuation', source: target,
+    if (r.preview !== undefined && !text(r.preview, 16_384)) throw invalid()
+    page.items.push({ ...(typeof r.preview === 'string' && r.preview ? { preview: r.preview } : {}), sourceOrderAtMillis: r.source_order_at, key: r.key, scene: r.scene, resultKind: r.result_kind as 'root' | 'continuation', source: target,
       item: { itemUid, sendAtMillis: r.navigation_at, isMe: sender === recordOwnerId(a.session.userId), recordVersion: r.source_version, recordOwnerUserId: owner, messageActionRef: actionRef,
         ...(r.source_kind === 'chat' ? { timelineItemKey: await source.chatTimelineItemKey(a.session.userId, String(r.chat_session_uid), itemUid) } : {}) },
       thought: { id: r.key, recordUid: itemUid, biz, content: r.content, sourceVersion: r.source_version, generation: r.generation, status: 'ready',
