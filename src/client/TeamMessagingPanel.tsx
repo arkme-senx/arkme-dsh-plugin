@@ -100,7 +100,7 @@ import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamPage, TeamTimeline } from '../team-app-contract.js'
 import { invalidateTeamMessages, openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, restoreTeamDraftContent, updateTeamDraftText, validTeamDraftStart, teamDraftStartForInput, type TeamDraft as Draft } from './team-message-draft.js'
-import { loadTeamEntryOpen, retryTeamEntryOpen } from './team-entry-navigation.js'
+import { loadTeamEntryOpen, openConfirmedTeamContact, retryTeamEntryOpen } from './team-entry-navigation.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
 import { ArkmeMessageTextSelectionToolbar } from './ArkmeMessageTextSelection.js'
 import { TeamConversationTools } from './TeamConversationTools.js'
@@ -309,7 +309,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const storageKey = `arkme.team.draft:${accountKey}:${conversation.key}`
   const [contentPicker, setContentPicker] = useState<'document' | 'file' | 'gallery'>()
   const [draft, setDraft] = useState<Draft>(() => loadTeamDraft(localStorage, storageKey)), [timeline, setTimeline] = useState<TeamTimeline>()
-  const [privateComposerEnabled,setPrivateComposerEnabled]=useState(false),privateOpenRequest=useRef('')
+  const privateOpenRequest=useRef('')
+  const sourceOnly=(timeline?.conversation??conversation).sourceOnly===true
   const [error, setError] = useState(''), [loadError, setLoadError] = useState(''), [busy, setBusy] = useState(false)
   const draftAttachments = draft.attachments ?? (draft.localFiles ?? []).map(localFile => ({ localFile }))
   const uploading = arkmeAttachmentsPending(draftAttachments)
@@ -438,7 +439,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }, [receiptStore])
   const replyBack=useRef<{ref:string;key:string}>()
   const refresh = useCallback(async (beforeSeq = 0, replace = false) => {
-    if(conversation.sourceOnly&&!privateComposerEnabled) {
+    if(sourceOnly) {
       const empty:TeamTimeline={conversation,messages:[],hasMore:false,beforeSeq:0}
       latest.current=empty;setTimeline(empty);return empty
     }
@@ -470,7 +471,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       if (!windowBefore && beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
     } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old); if (inaccessible(e)) { revokeAccess(); receiptStore.dispose() } } }
-  }, [conversation.ref, receiptStore, revokeAccess,privateComposerEnabled])
+  }, [conversation.ref, receiptStore, revokeAccess,sourceOnly])
   const returnToLatest = async () => {
     if (historyWindow.current) {
       const previousWindow = historyWindow.current
@@ -967,11 +968,12 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       const result=await callArkme<import('../team-outbound-contract.js').TeamOutboundOpenResult>('team.app.outbound.open',{expectedAccountKey:accountKey,teamRef:conversation.channel.teamRef,recipient:{kind:'team-customer',conversationRef:conversation.ref},requestUid:privateOpenRequest.current},ctrl.current.signal)
       if(ctrl.current.signal.aborted)return
       if(result.state!=='ready'||result.conversation.key!==conversation.key)throw new Error(tr('私信入口返回异常，请重试'))
-      const next={conversation:result.conversation,messages:latest.current?.messages??[],hasMore:false,beforeSeq:0};latest.current=next;setTimeline(next);setPrivateComposerEnabled(true)
+      if(!openConfirmedTeamContact(accountKey,result.conversation))throw new Error(tr('登录账号已变化，请重新打开此窗口'))
+      const next={conversation:result.conversation,messages:latest.current?.messages??[],hasMore:false,beforeSeq:0};latest.current=next;setTimeline(next)
     }catch(e){if(!ctrl.current.signal.aborted)setError(errorText(e))}
     finally{if(!ctrl.current.signal.aborted)setBusy(false)}
   }
-  const conversationComposer = (defaultReply?: TeamMessage, detailReady = true) => conversation.sourceOnly&&!privateComposerEnabled
+  const conversationComposer = (defaultReply?: TeamMessage, detailReady = true) => sourceOnly
     ?<div className="arkme-conversation-composer" style={composerLayout.composer}><p>{tr('此客户来自群聊互动，回复请使用上方来源群卡片。')}</p><button type="button" disabled={busy} onClick={()=>{void openPrivateComposer()}}>{tr('改为私信此用户')}</button></div>
     :<div className="arkme-conversation-composer" data-arkme-width-composer onClick={event => { focusArkmeComposerFromClick(editor.current, event) }} onDragOver={event => { if (!editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked && event.dataTransfer.types.includes('Files')) event.preventDefault() }}
       onDrop={event => { if (event.dataTransfer.files.length && !editing && !busy && !draft.attempt && current.channel.enabled && !current.blocked) { event.preventDefault(); selectFiles(event.dataTransfer.files) } }}

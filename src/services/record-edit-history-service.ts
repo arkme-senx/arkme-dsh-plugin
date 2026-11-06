@@ -6,7 +6,7 @@ import { recordSenderSnapshot } from '../record-sender-snapshot.js'
 /** Produced only after existing account/source-bound message reference verification. */
 export type RecordEditHistoryTarget = { viewerUserId: number; recordUid: string } & (
   | { kind: 'owned' }
-  | { kind: 'chat'; chatAccessRef?:string; chatSessionUid: string; relationUid: string; recordOwnerUserId: RecordOwnerId }
+  | { kind: 'chat'; chatAccessRef?:string; audienceKey?:string; chatSessionUid: string; relationUid: string; recordOwnerUserId: RecordOwnerId }
 )
 
 export interface RecordRevisionContentProjector {
@@ -65,7 +65,7 @@ export class RecordEditHistoryService {
       ? await this.runtime.authenticatedPost('/api/v1/records/revisions/query', { record_uid: target.recordUid, revision_uid: revisionUid }, session, signal)
       : await this.runtime.authenticatedChatPost('/api/v1/chats/records/revisions/query', {
         chat_session_uid: target.chatSessionUid, rel_uid: target.relationUid, revision_uid: revisionUid,
-      }, session, signal))
+      }, session, signal,...(target.chatAccessRef ? [{chatAccessRef:target.chatAccessRef,cacheMs:0,bypassCache:true}] : [])))
     if (signal?.aborted || (await this.runtime.requireSession()).userId !== session.userId) invalid()
     if (data.has_more !== false || !Array.isArray(data.items) || data.items.length > 1) invalid()
     const snapshot = objectValue(data.items[0])
