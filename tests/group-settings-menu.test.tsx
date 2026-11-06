@@ -167,7 +167,7 @@ describe('group settings menu', () => {
     mocks.callArkme.mockImplementation(async operation => operation === 'group.settings'
       ? { target: source, selfRole: 'owner', selfStatus: 'active', canRename: true, canDissolve: true, canLeave: false, messageDnd: false }
       : operation === 'team.app.teams' ? [{ teamRef: 'team-ref', jotmoId: 'team', name: '团队', currentUserRole: 'owner' }]
-      : operation === 'source.ai-polish.settings' ? aiSettings : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'link',label:'当前群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false,requiresClientUpgrade:true})
+      : operation === 'source.ai-polish.settings' ? aiSettings : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'link',label:'当前群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false})
     await act(async () => { renderer = create(controls(source)) })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
     await openManagement()

@@ -399,7 +399,7 @@ describe('TeamDetailPane', () => {
     const current = page(teamRefA, '团队 A')
     current.team.currentUserRole = 'owner'
     mocks.callArkme.mockImplementation(async operation => operation === 'team.app.members' ? current
-      : operation === 'team.app.teams' ? [current.team] : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'create',label:'团队 A内部群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false,requiresClientUpgrade:true})
+      : operation === 'team.app.teams' ? [current.team] : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'create',label:'团队 A内部群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false})
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     expect(mocks.callArkme.mock.calls.some(([op]) => op === 'team.app.teams')).toBe(false)
     await act(async () => { button(renderer!, '团队内部群›').props.onClick(); await tick() })

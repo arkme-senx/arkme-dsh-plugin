@@ -21,7 +21,7 @@ async function fixture() {
   })
   const ports:InternalGroupPorts={journal:change=>store.teamInternalGroup('test:11',input.team_id,change),post,
     seal:async value=>{const ref=`opaque-${refs.size}`;refs.set(ref,value);return ref},open:async ref=>refs.get(ref)!,
-    preview:async(_data,requestUid,previewRef)=>({state:'preview',requestUid,previewRef,expiresAt:Date.now()+300000,add:[],remove:[],retainCount:0,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false,requiresClientUpgrade:false})}
+    preview:async(_data,requestUid,previewRef)=>({state:'preview',requestUid,previewRef,expiresAt:Date.now()+300000,add:[],remove:[],retainCount:0,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false})}
   return {dir,store,ports,owner:new TeamInternalGroups(ports),post,setLost:()=>{loseReply=true},accept:()=>{accepted=true}}
 }
 it('persists before dispatch, resolves lost acknowledgement and survives restart/account changes',async()=>{

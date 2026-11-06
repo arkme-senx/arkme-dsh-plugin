@@ -132,7 +132,6 @@ function Preview({value:v}:{value:TeamInternalGroupPreview}) {
       <p>{tr('新增或重新入群的成员，只能查看本次入群后的消息。')}{v.mode==='link'&&tr('保留成员的合法历史权限不变。')}</p>
       <p>{tr('成员与角色随团队同步，不能单独退群或解除关联。')}</p>
       {v.closePublicAccess&&<p>{tr('将关闭公开发现和公开入群。')}</p>}
-      {v.requiresClientUpgrade&&<p>{tr('此群需升级客户端后继续使用，其他群不受影响。')}</p>}
     </section>
   </>
 }

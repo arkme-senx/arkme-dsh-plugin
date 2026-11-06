@@ -916,7 +916,7 @@ export class TeamAppService {
               retainCount: (data.retain as unknown[]).length, botCount: (data.bots as unknown[]).length,
               owner: await person(ownerId), ownerChanged: !!str(data.previous_owner_user_id) && data.previous_owner_user_id !== ownerId,
               roleChanges: await Promise.all(changes.map(async c => { if (![1,2,3].includes(num(c.before)) || ![1,2,3].includes(num(c.after))) throw invalid(); return {...await person(str(c.user_id)), before: role(c.before), after: role(c.after)} })),
-              closePublicAccess: data.close_public_access === true, requiresClientUpgrade: data.requires_client_upgrade === true}
+              closePublicAccess: data.close_public_access === true}
           },
         })
         if (operation === 'team.app.internal-group.recover') return owner.recover()

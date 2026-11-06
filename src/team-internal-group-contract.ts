@@ -14,7 +14,6 @@ export interface TeamInternalGroupPreview {
   ownerChanged: boolean
   roleChanges: Array<TeamInternalGroupPerson & {before: 'owner'|'admin'|'member'; after: 'owner'|'admin'|'member'}>
   closePublicAccess: boolean
-  requiresClientUpgrade: boolean
 }
 export type TeamInternalGroupResult = TeamInternalGroupPreview
   | {state: 'none'|'acknowledged'}

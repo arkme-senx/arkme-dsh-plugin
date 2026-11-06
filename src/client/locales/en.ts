@@ -2358,6 +2358,5 @@ Arko 对话|Arko conversations
 保留成员的合法历史权限不变。|Retained members keep their existing authorized history.
 成员与角色随团队同步，不能单独退群或解除关联。|Membership and roles sync with the team. You cannot leave the group separately or unlink it.
 将关闭公开发现和公开入群。|Public discovery and public joining will be disabled.
-此群需升级客户端后继续使用，其他群不受影响。|This group requires an updated client. Other groups are unaffected.
 关联群|Group to link
 `.trim().split('\n').map(line => { const index = line.indexOf('|'); return [line.slice(0, index), line.slice(index + 1)] }))

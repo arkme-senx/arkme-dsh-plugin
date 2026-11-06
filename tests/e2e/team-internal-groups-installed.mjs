@@ -60,7 +60,7 @@ let ctx,shutdown,browser,page,viewerCtx,viewerShutdown,viewerBrowserContext,view
 try{
  upstream.listen(0,'127.0.0.1');await once(upstream,'listening');const origin=`https://127.0.0.1:${upstream.address().port}`
  const env={...process.env,DSH_HOME:home,NODE_EXTRA_CA_CERTS:cert,COREPACK_ENABLE_AUTO_PIN:'0',npm_config_auto_install_peers:'false'}
- await writeFile(join(capture,'isolation.json'),JSON.stringify({root,profile,artifact:resolve(artifact),fixture,authorities:realOwners?'real Team/Chat/Record/Subject handlers, Mongo/MySQL/ES/Rabbit and Completion; fixture login/profile/object storage':'synthetic organization and empty legacy inventory; real Chat/Gin/Mongo'}))
+ await writeFile(join(capture,'isolation.json'),JSON.stringify({root,profile,artifact:resolve(artifact),fixture,authorities:realOwners?'real Team/Chat/Record/Subject handlers, Mongo/MySQL/ES/Rabbit and Completion; fixture login/profile/object storage':'synthetic organization; real Chat/Gin/Mongo'}))
  execFileSync(process.execPath,[cli,'plugin','--profile','web','add','-w',resolve(artifact)],{cwd:root,env,stdio:'pipe',timeout:240000})
  const manifest=JSON.parse(await readFile(join(profile,'package.json'),'utf8'));assert.match(manifest.dependencies['@senguoyun/dsh-arkme'],/^file:.*\.tgz$/);manifest.dsh.profile.bundles=['@deepseek-ai/dsh-base','@deepseek-ai/dsh-web-app','@senguoyun/dsh-arkme'];await writeFile(join(profile,'package.json'),JSON.stringify(manifest,null,2))
  // The official runtime reads its environment through its public launch snapshot.
@@ -110,7 +110,7 @@ try{
  const source=(await host.listSources('root')).items.find(row=>row.displayName==='待关联的普通群')
  assert(source,'existing owned group must have an opaque directory source')
  const linkPreview=await sdk.teamInternalGroup({teamRef,action:'prepare',mode:'link',requestUid:randomUUID(),sourceRef:source.sourceRef})
- assert.equal(linkPreview.state,'preview');assert.equal(linkPreview.mode,'link');assert.equal(linkPreview.label,'待关联的普通群');assert.equal(linkPreview.requiresClientUpgrade,true);assert(linkPreview.remove.some(person=>person.name==='同事2001'))
+ assert.equal(linkPreview.state,'preview');assert.equal(linkPreview.mode,'link');assert.equal(linkPreview.label,'待关联的普通群');assert.equal('requiresClientUpgrade' in linkPreview,false);assert(linkPreview.remove.some(person=>person.name==='同事2001'))
  const linkAccepted=await sdk.teamInternalGroup({teamRef,action:'confirm',previewRef:linkPreview.previewRef});assert.equal(linkAccepted.state,'activating')
  const linked=await wait(()=>sdk.teamInternalGroup({teamRef,action:'recover'}),r=>r.state==='ready')
  const replay=await sdk.teamInternalGroup({teamRef,action:'confirm',previewRef:linkPreview.previewRef});assert.equal(replay.requestUid,linked.requestUid);assert.equal(replay.state,'ready')
@@ -161,7 +161,7 @@ try{
  await page.getByRole('button',{name:'下一步',exact:true}).click()
  await page.getByRole('button',{name:'确认关联',exact:true}).waitFor()
  await page.getByRole('dialog').getByText('界面关联的普通群',{exact:true}).waitFor()
- await page.getByText('此群需升级客户端后继续使用，其他群不受影响。',{exact:true}).waitFor()
+ assert.equal(await page.getByText('此群需升级客户端后继续使用，其他群不受影响。',{exact:true}).count(),0)
  await page.screenshot({path:join(capture,'link-ui-preview.png')});await page.getByRole('dialog').screenshot({path:join(capture,'link-ui-preview-dialog.png')})
  await page.getByRole('button',{name:'确认关联',exact:true}).click()
  await page.getByRole('button',{name:'完成',exact:true}).waitFor()
@@ -197,6 +197,10 @@ try{
   const memberBoot=await runProfile({environment:createLaunchEnvironmentSnapshot([{source:'process',values:env}]),profile:'member',patchFiles:[memberOverlay],args:['--host','127.0.0.1','--port','0','--no-open']})
   viewerCtx=memberBoot.ctx;viewerShutdown=memberBoot.shutdown
   assert.equal((await viewerCtx.get('arkmeData').testLogin(1002)).status,'authenticated')
+  const legacyResponse=await forward('/fixture/subject/fixture/verify-legacy',{})
+  const legacyState=JSON.parse(legacyResponse.text)
+  assert.equal(legacyResponse.status,200,legacyResponse.text);assert.equal(legacyState.legacy_member_active,true);assert.equal(legacyState.legacy_original_member_active,true);assert.equal(legacyState.upgrade_marker_absent,true)
+  await writeFile(join(capture,'legacy-group-remains-usable.json'),JSON.stringify(legacyState,null,2))
   viewerBrowserContext=await browser.newContext({viewport:{width:1280,height:900},locale:'zh-CN'});viewerPage=await viewerBrowserContext.newPage()
   const viewerBase=viewerCtx.get('webServer').getOrigin();await viewerPage.goto(viewerCtx.get('connection').authenticatedUrl(viewerBase))
   const viewerFetch=async(path,init)=>{const r=await viewerPage.request.fetch(new URL(String(path),viewerBase).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:viewerBase}});return new Response(await r.body(),{status:r.status(),headers:r.headers()})}
