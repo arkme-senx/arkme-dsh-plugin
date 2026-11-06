@@ -47,9 +47,32 @@ it('preserves edited text on conflict and requires a deliberate retry against th
 it('keeps input and exposes failure when cloud save fails',async()=>{
  await render();await edit();await act(async()=>change('不要丢失'));mocks.call.mockRejectedValueOnce(Error('网络不可用'));await click(button('保存修改'));expect(host.querySelector('textarea')!.value).toBe('不要丢失');expect(host.textContent).toContain('网络不可用');expect(books.get('prod:1')![0]!.revision).toBe(0)
 })
+it('explains the execution limit and counts Unicode characters consistently with the backend',async()=>{
+ await render();await edit();await act(async()=>change('🐱'.repeat(6001)))
+ expect(button('保存修改').disabled).toBe(true)
+ expect(host.querySelector('[role="alert"]')?.textContent).toContain('6000')
+ expect(host.querySelector('textarea')!.value).toBe('🐱'.repeat(6001))
+ expect(mocks.call.mock.calls.some(([op])=>op==='arko.reply-prompts.save')).toBe(false)
+ await act(async()=>change('🐱'.repeat(6000)))
+ expect(host.querySelector('[role="alert"]')).toBeNull()
+ expect(button('保存修改').disabled).toBe(false)
+ await click(button('保存修改'));expect(books.get('prod:1')![0]!.userBody).toBe('🐱'.repeat(6000))
+})
 it('protects unsaved edits and does not import historical local drafts into the cloud',async()=>{
  const key='arkme:arko-reply-prompt-drafts:v1:prod:1';localStorage.setItem(key,'old private local draft');await render();await edit();expect(host.querySelector('textarea')!.value).toBe('official record_auto');expect(localStorage.getItem(key)).toBe('old private local draft');await act(async()=>change('尚未保存'));await click(host.querySelector<HTMLButtonElement>('[aria-label="关闭详情"]')!);expect(close).not.toHaveBeenCalled();await click([...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent==='放弃修改')!);expect(close).toHaveBeenCalledOnce();expect(books.get('prod:1')![0]!.revision).toBe(0)
 })
 it('isolates account changes and reads history without any locally observed results',async()=>{
  await render();await edit();await act(async()=>change('账号一'));await click(button('保存修改'));await render('prod:2');expect(host.textContent).not.toContain('账号一');await click(button('全部回复'));expect(host.textContent).toContain('云端完整范围的回复');expect(mocks.call.mock.calls.some(([op])=>op==='record.thoughts.query'||op==='arko.messages')).toBe(false);await click(button('快记想法 · 发给自己'));expect(mocks.openSource).toHaveBeenCalledWith(source,'note',200,undefined,undefined,false,true)
+})
+it('shows the original conversation label and analysis headline rather than the first sendable suggestion',async()=>{
+ mocks.call.mockImplementation(async(op,params)=>{
+  if(op==='arko.reply-prompts.get')return{accountScope:'prod:1',items:defaults()}
+  if(op==='account.capabilities.query')return{accountScope:'prod:1',settings:[]}
+  if(op==='arko.replies.page')return{accountScope:'prod:1',items:[{key:'chat:one',scene:'direct_receive',sourceOrderAtMillis:200,resultKind:'root',source:{...source,kind:'private_chat',displayName:'小林'},item:{itemUid:'rel',sendAtMillis:200,isMe:false},preview:'对方正在确认见面安排',thought:{id:'one',recordUid:'rel',biz:1,content:'可以，明天下午三点见。'}}]}
+  throw Error(`unexpected ${op}`)
+ })
+ await render();await click(button('全部回复'))
+ expect(host.textContent).toContain('私聊回复建议 · 小林')
+ expect(host.textContent).toContain('对方正在确认见面安排')
+ expect(host.textContent).not.toContain('可以，明天下午三点见。')
 })
