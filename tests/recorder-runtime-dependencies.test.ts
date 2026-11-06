@@ -25,7 +25,9 @@ afterAll(async () => { if (root) await rm(root, { recursive: true, force: true }
 
 async function copyCase(name: string) {
   const directory = join(root, name)
-  await cp(packed, directory, { recursive: true })
+  await mkdir(directory)
+  await cp(join(packed, 'package.json'), join(directory, 'package.json'))
+  await cp(join(packed, 'node_modules'), join(directory, 'node_modules'), { recursive: true })
   return directory
 }
 const binding = 'node_modules/@serialport/bindings-cpp'

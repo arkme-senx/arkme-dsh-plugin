@@ -3,13 +3,15 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { x as extractTar } from 'tar'
 
 const output = resolve(process.argv[2])
 const archives = (await readdir(output)).filter(name => name.endsWith('.tgz'))
 if (archives.length !== 1) throw new Error('Expected one packed recorder npm artifact')
 const temporary = await mkdtemp(join(tmpdir(), 'arkme-recorder-native-'))
 try {
-  execFileSync('tar', ['-xzf', join(output, archives[0]), '-C', temporary])
+  await extractTar({ file: join(output, archives[0]), cwd: temporary, strict: true,
+    filter: name => name === 'package' || name.startsWith('package/') })
   const validator = pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), 'recorder-runtime-dependencies.mjs')).href
   // A child unloads the native DLL before Windows removes the extracted files.
   execFileSync(process.env.ARKME_RECORDER_PROBE_BINARY || process.execPath, ['--input-type=module', '--eval', `

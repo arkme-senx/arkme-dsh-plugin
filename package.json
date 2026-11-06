@@ -299,7 +299,8 @@
     "tsdown": "0.22.2",
     "typescript": "6.0.3",
     "vitest": "4.1.8",
-    "zustand": "4.5.7"
+    "zustand": "4.5.7",
+    "tar": "7.5.22"
   },
   "packageManager": "pnpm@11.7.0",
   "engines": {
