@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdir,writeFile,readFile} from 'node:fs/promises'
+import {mkdir,writeFile,readFile,rename} from 'node:fs/promises'
 import {createUserMessage} from '@deepseek-ai/dsh-llm'
 export const name='account-model-acceptance'
 export const inject=['webServer','agents','sessions','tools','llm','arkmeData']
@@ -85,9 +85,11 @@ export function apply(ctx,config){void(async()=>{
      else if(chunk.type==='usage')usage=chunk.usage
      else if(chunk.type==='finish')finish=chunk.reason
     }
-    results.push({route,usage,finish,textLength:text.length})
-    await writeFile(command.output,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',installedAdapter:true,results},null,2)+'\n')
     assert.equal(finish?.kind,'stop');assert(text.length>0);assert(usage&&usage.inputTokens>=0&&usage.outputTokens>0)
+    results.push({route,usage,finish,textLength:text.length})
+    const temporary=`${command.output}.${randomUUID()}.tmp`
+    await writeFile(temporary,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',installedAdapter:true,results},null,2)+'\n',{mode:0o600})
+    await rename(temporary,command.output)
    }
    console.log('HPK04_NATIVE_LIVE_PASSED '+results.length)
   })().catch(error=>{console.error('HPK04_NATIVE_LIVE_FAILED',error);ctx.get('appExit')(1)})
