@@ -37,7 +37,8 @@ it('keeps issued report and owner-withdrawal references in their exact source, i
  }) as typeof fetch)
  const sources=new SourceService(runtime,{} as never,{} as never),media=new MediaService(runtime,{} as never,{} as never,{} as never)
  const createPersonalRecord=vi.fn(async(_path,body)=>({accepted:true,record_uid:body.record_uid,status:1}))
- const chat=new ChatService(runtime,sources,{} as never,media,{createPersonalRecord} as never,{} as never,{} as never,{timelineAiPolish:()=>undefined} as never,{} as never)
+ const forwardToTeam=vi.fn(async()=>({sourceRef:'team-contact',itemUid:'accepted-team-forward',status:1,localState:'synced' as const}))
+ const chat=new ChatService(runtime,sources,{} as never,media,{createPersonalRecord} as never,{} as never,{} as never,{timelineAiPolish:()=>undefined} as never,{} as never,undefined,undefined,undefined,undefined,forwardToTeam)
  const frame={accessRef:'exact-team-frame',teamId:'42',membershipKind:'member' as const,membershipRevision:4,groupMembershipUid:'admission',groupMembershipRevision:1,visibleFromSeq:7}
  const sourceRef=await sources.sealSourceRef(42,'group_chat','group','客户群',{groupDelegation:frame})
  try {
@@ -67,6 +68,8 @@ it('keeps issued report and owner-withdrawal references in their exact source, i
   const personal=await sources.sealSourceRef(42,'send_to_self','self','自己')
   await expect(chat.forwardSourceMessages(sourceRef,[item!.messageActionRef!],{targetSourceRef:personal,recordUid:'019d8590-ebb4-7232-90f2-000000000001',sendAtMillis:123})).resolves.toMatchObject({localState:'synced'})
   expect(createPersonalRecord).toHaveBeenCalledWith('/api/v1/records/source-forward/create',expect.objectContaining({sources:[{record_uid:'record',chat_session_uid:'group',relation_uid:'rel',access_ref:'exact-team-frame'}]}),session,undefined)
+  await chat.forwardSourceMessages(sourceRef,[item!.messageActionRef!],{targetConversationRef:'team-contact',recordUid:'019d8590-ebb4-7232-90f2-000000000002',sendAtMillis:123})
+  expect(forwardToTeam).toHaveBeenCalledWith(expect.objectContaining({sources:[{record_uid:'record',chat_session_uid:'group',relation_uid:'rel',access_ref:'exact-team-frame'}]}),undefined)
   expect(await chat.reactionTarget(sourceRef,item!.messageActionRef!)).toEqual({chat_session_uid:'group',rel_uid:'rel',chatAccessRef:'exact-team-frame'})
   expect(await chat.recordEditHistoryTarget(sourceRef,item!.messageActionRef!)).toMatchObject({kind:'chat',chatAccessRef:'exact-team-frame'})
   revoked=true

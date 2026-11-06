@@ -2846,6 +2846,26 @@ export class ArkmeSdk {
     }, signal)
   }
 
+  /** Local same-origin desktop access; device operations never expose ports or file paths. */
+  async localRecorders(signal?: AbortSignal): Promise<import('../local-recorder/contract.js').LocalRecorderSnapshot> {
+    return this.call('recorders.local.snapshot', {}, signal)
+  }
+  async discoverLocalRecorders(signal?: AbortSignal): Promise<import('../local-recorder/contract.js').LocalRecorderSnapshot> {
+    return this.call('recorders.local.discover', {}, signal)
+  }
+  async syncLocalRecorder(deviceId: string, signal?: AbortSignal): Promise<import('../local-recorder/contract.js').LocalRecorderSnapshot> {
+    return this.call('recorders.local.sync', { deviceId }, signal)
+  }
+  async stopLocalRecorder(deviceId: string, signal?: AbortSignal): Promise<import('../local-recorder/contract.js').LocalRecorderSnapshot> {
+    return this.call('recorders.local.stop', { deviceId }, signal)
+  }
+  async prepareLocalRecorderAudio(deviceId: string, recordingId: string, signal?: AbortSignal): Promise<import('../local-recorder/contract.js').LocalRecorderAudio> {
+    return this.call('recorders.local.prepare', { deviceId, recordingId }, signal)
+  }
+  async importLocalRecorderAudio(input: { deviceId: string; recordingId: string; startAtMillis: number; ownership: 'self' | 'other' }, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
+    return this.call('recorders.local.import', input, signal)
+  }
+
   async recordingImportStatus(importRef: string, signal?: AbortSignal): Promise<PublicRecordingImportJob> {
     signal?.throwIfAborted()
     if (importRef.trim() === '') throw new TypeError('A recording import reference is required')
@@ -3539,3 +3559,5 @@ export type { RecordingAnalysisInput, RecordingAnalysisResult } from '../recordi
 export type { ModelBinding, ModelExecutionMetadata } from '../model-execution.js'
 
 export type {AccountModelSettings,AccountModelSave,AccountModelPreferences,AccountModelCapabilities,AccountModelScene,ModelUsageQuery,ModelUsagePage} from '../account-models.js'
+
+export type { LocalRecorderSnapshot, LocalRecorderDevice, LocalRecorderRecording, LocalRecorderAudio } from '../local-recorder/contract.js'

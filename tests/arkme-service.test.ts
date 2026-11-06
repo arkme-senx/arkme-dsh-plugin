@@ -6779,3 +6779,35 @@ it('uses the fixed 50 MiB image limit without querying server capabilities', asy
   await expect(service.stageLongArticleImage('/unused',{fileName:'large.png',mimeType:'image/png',size:50 * 1024 * 1024 + 1})).rejects.toMatchObject({code:'long-article-image-too-large'})
   expect(fetchImpl).not.toHaveBeenCalled()
 })
+
+
+it('projects delegated historical media through the exact source stream without personal hydration',async()=>{
+ const sessions=new MemorySessionStore();sessions.session={userId:10001,accessToken:'access',refreshToken:'refresh'}
+ let revoked=false
+ const requests:Array<{path:string;body:Record<string,unknown>;headers:Headers}>=[]
+ const fetcher=vi.fn(async(input:string|URL|Request,init?:RequestInit)=>{
+  const path=new URL(String(input)).pathname,body=JSON.parse(String(init?.body??'{}'))
+  requests.push({path,body,headers:new Headers(init?.headers)})
+  if(path==='/api/v1/chats/records/revisions/query')return json({code:200,data:{items:[{revision_uid:'old',record_uid:'record-1',revision_type:5,version:1,edit_at:1712990001000,text_content:'approved history',content_payload:{media_refs:[
+   {file_asset_uid:'bound',file_name:'bound.png',mime_type:'image/png',source_attachment_ref:'a'.repeat(64)},
+   {file_asset_uid:'unbound',file_name:'private.png',mime_type:'image/png',download_url:'https://media.test/private'},
+  ]}}],has_more:false}})
+  if(path==='/api/v1/content/source-stream')return new Response(revoked?null:'image',{status:revoked?404:200,headers:{'content-type':'image/png','content-length':revoked?'0':'5','X-Jotmo-Source-Stream':'1'}})
+  throw new Error('unexpected personal media lookup: '+path)
+ })
+ const service=new ArkmeService(config,sessions,new MemoryStateStore(),fetcher)
+ vi.spyOn((service as any).chat,'recordEditHistoryTarget').mockResolvedValue({kind:'chat',viewerUserId:10001,recordUid:'record-1',recordOwnerUserId:10001,chatSessionUid:'chat-1',relationUid:'rel-1',chatAccessRef:'opaque-team-frame',audienceKey:'stable-admission'})
+ try {
+  const page=await service.recordEditHistoryPage('team-source','team-action')
+  const content=page.items[0]!.content
+  expect(content).toMatchObject({textContent:'approved history',mediaUnavailable:true,contentBlocks:[{fileAssetUid:'bound'}]})
+  expect(JSON.stringify(page)).not.toMatch(/opaque-team-frame|https:\/\/media.test|source_attachment_ref/)
+  const mediaRef=content.contentBlocks![0]!.mediaRef
+  expect(await (await service.fetchMedia(mediaRef)).response.text()).toBe('image')
+  expect(requests[0]!.headers.get('X-Chat-Access-Ref')).toBe('opaque-team-frame')
+  expect(requests[1]!.body).toMatchObject({access_ref:'opaque-team-frame',chat_session_uid:'chat-1',relation_uid:'rel-1',record_owner_user_id:10001,record_uid:'record-1',version:1,attachment:'a'.repeat(64)})
+  revoked=true
+  await expect(service.fetchMedia(mediaRef)).rejects.toMatchObject({httpStatus:404})
+  expect(requests.every(r=>['/api/v1/chats/records/revisions/query','/api/v1/content/source-stream'].includes(r.path))).toBe(true)
+ }finally{service.dispose()}
+})

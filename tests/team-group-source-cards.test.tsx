@@ -49,3 +49,87 @@ it('rejects revoked source replies and discovers the first source of an already 
  expect(open).not.toHaveBeenCalled()
  expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(90,source)).extensionTarget).toBeUndefined()
 })
+
+it('does not drop the first source change while an empty older response is pending',async()=>{
+ let release!:(v:typeof cards)=>void,reads=0
+ const pending=new Promise<typeof cards>(resolve=>{release=resolve})
+ call.mockImplementation(async op=>op==='team.app.sources.cards'?(++reads===1?pending:cards):cards)
+ await mount()
+ await act(async()=>invalidateTeamWorkspace('test:90'))
+ await act(async()=>release({...cards,items:[]}))
+ expect(reads,'the source hint needs a head read after the older request').toBe(2)
+ expect(host.textContent).toContain('客户群')
+})
+
+
+it('drains one coalesced source refresh after an in-flight reply locate',async()=>{
+ let release!:(v:{source:ArkmeSourceItem;item:ArkmeTimelineItem})=>void,reads=0
+ const locate=new Promise<{source:ArkmeSourceItem;item:ArkmeTimelineItem}>(resolve=>{release=resolve})
+ call.mockImplementation(async op=>op==='team.app.sources.locate'?locate:(++reads===1?cards:{...cards,items:[]}))
+ const open=vi.spyOn(arkmeUi,'selectSource').mockImplementation(()=>{})
+ await mount()
+ await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='回复到此群')!.click())
+ await act(async()=>{for(let i=0;i<5;i++)invalidateTeamWorkspace('test:90')})
+ expect(reads).toBe(1)
+ await act(async()=>release({source,item}))
+ expect(reads).toBe(2)
+ expect(open).toHaveBeenCalledWith(source,true)
+ expect(host.textContent).toBe('')
+ expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(90,source)).extensionTarget?.item.itemUid).toBe('message')
+})
+
+it('replaces the head after a failed pending cursor instead of losing its hints',async()=>{
+ let reject!:(e:Error)=>void,reads=0
+ const pending=new Promise<typeof cards>((_,fail)=>{reject=fail})
+ call.mockImplementation(async op=>++reads===1?{...cards,hasMore:true,nextCursor:'older'}:reads===2?pending:{...cards,items:[]})
+ await mount()
+ await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='更多来源群')!.click())
+ await act(async()=>{invalidateTeamWorkspace('test:90');window.dispatchEvent(new Event('focus'))})
+ expect(reads).toBe(2)
+ await act(async()=>reject(new Error('old source page failed')))
+ expect(reads).toBe(3)
+ expect(call.mock.calls.map(([,params])=>params.cursor)).toEqual([undefined,'older',undefined])
+ expect(host.textContent).toBe('')
+})
+
+it('isolates a changed conversation from an old response and queued hints',async()=>{
+ let release!:(p:typeof cards)=>void
+ const pending=new Promise<typeof cards>(resolve=>{release=resolve})
+ call.mockImplementation(async(op,params)=>params.conversationRef==='customer'?pending:{...cards,items:[]})
+ await mount()
+ await act(async()=>invalidateTeamWorkspace('test:90'))
+ const signal=call.mock.calls[0]![2] as AbortSignal
+ await act(async()=>root.render(<TeamGroupSourceCards key="test:90:other-key" accountKey="test:90" conversation={{...conversation,key:'other-key',ref:'other-customer'}}/>))
+ expect(signal.aborted).toBe(true)
+ await act(async()=>release(cards))
+ expect(call.mock.calls.map(([,params])=>params.conversationRef)).toEqual(['customer','other-customer'])
+ expect(host.textContent).toBe('')
+})
+
+it('does not drain or navigate after the source owner is unmounted',async()=>{
+ let release!:(v:{source:ArkmeSourceItem;item:ArkmeTimelineItem})=>void,reads=0
+ const locate=new Promise<{source:ArkmeSourceItem;item:ArkmeTimelineItem}>(resolve=>{release=resolve})
+ call.mockImplementation(async op=>op==='team.app.sources.locate'?locate:(reads++,cards))
+ const open=vi.spyOn(arkmeUi,'selectSource').mockImplementation(()=>{})
+ await mount()
+ await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='回复到此群')!.click())
+ await act(async()=>invalidateTeamWorkspace('test:90'))
+ await act(async()=>root.render(null))
+ await act(async()=>release({source,item}))
+ expect(reads).toBe(1)
+ expect(open).not.toHaveBeenCalled()
+ expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(90,source)).extensionTarget).toBeUndefined()
+})
+
+
+it('keeps visible source cards while a same-conversation reference rotates',async()=>{
+ let release!:(p:typeof cards)=>void,reads=0
+ const pending=new Promise<typeof cards>(resolve=>{release=resolve})
+ call.mockImplementation(async()=>++reads===1?cards:pending)
+ await mount()
+ await act(async()=>root.render(<TeamGroupSourceCards accountKey="test:90" conversation={{...conversation,ref:'rotated-ref'}}/>))
+ expect(reads).toBe(2)
+ expect(host.textContent).toContain('客户群')
+ await act(async()=>release({...cards,items:[]}))
+ expect(host.textContent).toBe('')
+})

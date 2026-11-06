@@ -1028,8 +1028,11 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         const session = await this.runtime.requireSession()
         if (session.userId !== target.viewerUserId) throw new ArkmePluginError('record-edit-history-invalid', '编辑记录暂不可用，请刷新后重试', true, 403)
         const displayPages = await this.media.hydrateRecordSnapshotMediaPage(snapshots, session, target.kind === 'chat' ? target : undefined, signal)
+        const source = target.kind === 'chat' && target.chatAccessRef ? {accessRef:target.chatAccessRef,
+          audienceKey:target.audienceKey??'',chatSessionUid:target.chatSessionUid,relationUid:target.relationUid,
+          recordOwnerUserId:target.recordOwnerUserId,recordUid:target.recordUid} : undefined
         return snapshots.map((snapshot, index) => {
-          const contentBlocks = this.media.richContentBlocks(snapshot, session.userId, displayPages[index])
+          const contentBlocks = this.media.richContentBlocks(snapshot, session.userId, displayPages[index],source?{...source,version:Number(snapshot.version)}:undefined)
           return { title: stringValue(snapshot.title), textContent: stringValue(snapshot.text_content),
             textFormat: arkmeRecordTextFormat(snapshot), contentBlocks,
             ...(this.media.recordMediaUnavailable(snapshot, contentBlocks) ? { mediaUnavailable: true } : {}) }

@@ -4402,6 +4402,7 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | import('./local-recorder/contract.js').LocalRecorderOperation
   | 'source.record-edit-history'
   | 'source.record-revision-snapshot'
   | 'record.thoughts.query'

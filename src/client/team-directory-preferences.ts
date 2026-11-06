@@ -1,4 +1,5 @@
 import { useEffect, useSyncExternalStore } from 'react'
+import { hasTeamDirectEntry } from '../team-app-contract.js'
 import { localDirectoryPreferences } from './local-directory-preferences.js'
 import { callArkme } from './api.js'
 import type { TeamAppOperation, TeamChannel, TeamConversation } from '../team-app-contract.js'
@@ -8,6 +9,11 @@ import type { TeamConversationGroup } from './team-conversation-directory.js'
 
 export type TeamGroupEntryTarget={kind:'group';source:ArkmeSourceItem;entryKey:string;entryRef:string;channel?:TeamChannel|undefined}
 export type TeamEntryTarget = TeamGroupEntryTarget | { kind: 'folder'; group: TeamConversationGroup } | { kind: 'conversation'; conversation: TeamConversation }
+function canRestoreEntry(target: TeamEntryTarget): boolean {
+  return target.kind === 'group' || (target.kind === 'folder'
+    ? target.group.hasPublished || target.group.conversations.some(hasTeamDirectEntry)
+    : hasTeamDirectEntry(target.conversation))
+}
 type Preference = { pinned: boolean; dismissed: boolean }
 export type TeamDirectoryPreferences = Readonly<Record<string, Preference>>
 const empty: TeamDirectoryPreferences = Object.freeze({})
@@ -109,10 +115,9 @@ export class TeamDirectoryPreferenceStore {
   }
   pin(account: string, target: TeamEntryTarget, pinned: boolean) { return this.change(account, [target], pinned ? 'pin' : 'unpin') }
   remove(account: string, target: TeamEntryTarget) { return this.change(account, [target], 'dismiss') }
-  restoreTarget(account: string, target: TeamEntryTarget, publishedOnly = false): Promise<void> {
-    // Existing conversation sequences include historical publications. A folder's
-    // new activity counter may legitimately still be zero for that history.
-    if (publishedOnly && target.kind!=='group' && (target.kind === 'folder' ? (target.group.hasPublished?1:target.group.latest?.lastSeq??0) : target.conversation.lastSeq) <= 0) return Promise.resolve()
+  restoreTarget(account: string, target: TeamEntryTarget, requireDirectEntry = false): Promise<void> {
+    // Contact eligibility comes from Team; preference activity remains message-only.
+    if (requireDirectEntry && !canRestoreEntry(target)) return Promise.resolve()
     return this.command(account, this.restoreEntries(target), 'restore')
   }
   private restoreEntries(target: TeamEntryTarget) {
@@ -128,12 +133,7 @@ export class TeamDirectoryPreferenceStore {
   restoreNavigation(account: string, resolve: () => Promise<TeamEntryTarget | undefined>, signal?: AbortSignal): Promise<void> {
     return this.command(account, [], 'restore', async () => {
       const target = await resolve()
-      if (!target) return []
-      if (target.kind !== 'group') {
-        const conversation = target.kind === 'folder' ? target.group.latest : target.conversation
-        const published = target.kind === 'folder' ? target.group.hasPublished : target.conversation.lastSeq > 0
-        if (!published && !(conversation?.side === 'team' && conversation.memberInitiated === true)) return []
-      }
+      if (!target || !canRestoreEntry(target)) return []
       return this.restoreEntries(target)
     }, signal)
   }

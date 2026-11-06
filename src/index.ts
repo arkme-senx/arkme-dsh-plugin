@@ -1,3 +1,5 @@
+import { LocalRecorderOwner } from './local-recorder/owner.js'
+import { createLocalRecorderMediaHandler } from './local-recorder/routes.js'
 import { AccountModelConnector } from './account-model-connector.js'
 import { registerAccountModelAdapter,registerAccountModelDefault } from './account-model-adapter.js'
 import type {} from '@deepseek-ai/dsh-host-directory-picker'
@@ -792,7 +794,10 @@ export function apply(ctx: Context, config: Config): void {
       peer,
     ), new DshNativeTransport(apiCtx.get('typertGateway') as DshGatewayLike, connection, peer))
   })
+  const localRecorder = new LocalRecorderOwner(join(stateDirectory, 'local-recorders'), service, undefined, undefined, `${config.environment}:${config.audioBaseUrl}`)
+  ctx.effect(() => service.accountScope.subscribe(() => localRecorder.cancelActive()), 'dsh-arkme: recorder account lifetime')
   const handler = createArkmeHostApi(service, {
+    localRecorder,
     expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
     updateManager,
@@ -828,6 +833,7 @@ export function apply(ctx: Context, config: Config): void {
   const stageHandler = createArkmeUploadHandler(service, richMediaOptions, 'stage')
   const longArticleStageHandler = createArkmeUploadHandler(service, richMediaOptions, 'long-article-stage')
   const localFileHandler = createArkmeLocalFileHandler(service, richMediaOptions)
+  const localRecorderMediaHandler = createLocalRecorderMediaHandler(localRecorder, webPort)
   const recordingImportHandler = createArkmeRecordingImportHandler(service, {
     expectedPort: webPort,
     allowNonLoopback: config.allowNonLoopback,
@@ -959,7 +965,8 @@ export function apply(ctx: Context, config: Config): void {
       ctx.logger.warn('dsh-arkme: core-only Harness document failed: %s', error instanceof Error ? error.message : String(error))
     },
   })
-  ctx.effect(() => () => {
+  ctx.effect(() => async () => {
+    await localRecorder.dispose()
     service.dispose()
     localDatabase.close()
     extensionStore.close()
@@ -1038,6 +1045,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/stage`, handler: stageHandler }), 'dsh-arkme: local file preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/long-article-stage`, handler: longArticleStageHandler }), 'dsh-arkme: long article image preparation')
   ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/files/local`, handler: localFileHandler }), 'dsh-arkme: authorized local file bytes')
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: `${config.routePath}/recording/local-audio`, handler: localRecorderMediaHandler }), 'dsh-arkme: account-owned local recorder audio')
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: `${config.routePath}/recording/import`,

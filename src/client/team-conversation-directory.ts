@@ -34,6 +34,7 @@ export function startTeamDirectory(key: string): () => void {
     return [...items.values()].sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
   }
   let running = false, again = false, fullAgain = false, revision = 0
+  let folderRequest: AbortController | undefined
   account = key; openedTeamConversations.activate(key); snapshot = { ...empty, items: itemsNow() }; emit()
   const stopOpened = openedTeamConversations.subscribe(changed => {
     if (changed !== key || controller.signal.aborted || account !== key) return
@@ -49,12 +50,15 @@ export function startTeamDirectory(key: string): () => void {
     let failure: string | undefined, accessLost = false
     void(async()=>{
       if(more||readStateOnly)return
+      // Folder IO stays optional, but a newer head owns its result and error.
+      folderRequest?.abort()
+      const folders=new AbortController();folderRequest=folders
       try {
-        const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,request:{operation:'folders'}},controller.signal)
+        const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,request:{operation:'folders'}},folders.signal)
         if(!Array.isArray(value))throw new Error('团队群文件夹暂时无法刷新')
-        if(!controller.signal.aborted&&account===key&&token===revision){const {foldersError:_,...current}=snapshot;snapshot={...current,workspaceSupported:true,workspaceFolders:value};teamDirectoryPreferences.setWorkspaceAvailable(key,true)}
+        if(!folders.signal.aborted&&account===key&&token===revision){const {foldersError:_,...current}=snapshot;snapshot={...current,workspaceSupported:true,workspaceFolders:value};teamDirectoryPreferences.setWorkspaceAvailable(key,true)}
       } catch(e) {
-        if(!controller.signal.aborted&&account===key&&token===revision) {
+        if(!folders.signal.aborted&&account===key&&token===revision) {
           if ((e as {body?:{code?:string}})?.body?.code === 'team-workspace-unsupported') {
             const {foldersError:_,...current}=snapshot
             snapshot={...current,workspaceSupported:false,workspaceFolders:[]}
@@ -62,7 +66,8 @@ export function startTeamDirectory(key: string): () => void {
           } else snapshot={...snapshot,workspaceFolders:[],foldersError:e instanceof Error?e.message:'团队群文件夹暂时无法刷新'}
         }
       } finally {
-        if(!controller.signal.aborted&&account===key&&token===revision&&snapshot.hasLoaded) {
+        if(folderRequest===folders)folderRequest=undefined
+        if(!folders.signal.aborted&&account===key&&token===revision&&snapshot.hasLoaded) {
           emit()
           void teamDirectoryPreferences.hydrate(key,true).then(()=>teamDirectoryPreferences.reconcile(key,itemsNow(),controller.signal)).catch(()=>{})
         }
@@ -196,7 +201,7 @@ export function startTeamDirectory(key: string): () => void {
   window.addEventListener('focus', focus)
   void refresh()
   return () => {
-    controller.abort(); stop(); stopOpened(); stopWorkspace(); clearInterval(timer); window.removeEventListener('focus', focus)
+    controller.abort(); folderRequest?.abort(); stop(); stopOpened(); stopWorkspace(); clearInterval(timer); window.removeEventListener('focus', focus)
     if (request === refresh) { account = ''; request = undefined; discard = undefined; snapshot = empty; openedTeamConversations.reset(key); emit() }
   }
 }

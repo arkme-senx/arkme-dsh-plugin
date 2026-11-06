@@ -5,12 +5,21 @@ import { describe, expect, it } from 'vitest'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 
-function publicOperations(source: string): string[] {
+function publicOperations(source: string, modules: Record<string, string> = {}, aliasName = 'ArkmePluginOperation'): string[] {
   const file = ts.createSourceFile('types.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const alias = file.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'ArkmePluginOperation')
-  if (alias === undefined || !ts.isTypeAliasDeclaration(alias)) throw new Error('ArkmePluginOperation not found')
+  const alias = file.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === aliasName)
+  if (alias === undefined || !ts.isTypeAliasDeclaration(alias)) throw new Error(`${aliasName} not found`)
   const operations: string[] = []
   const visit = (node: ts.Node): void => {
+    if (ts.isImportTypeNode(node)) {
+      if (!ts.isLiteralTypeNode(node.argument) || !ts.isStringLiteral(node.argument.literal) || !node.qualifier) {
+        throw new Error('Unsupported operation type import')
+      }
+      const imported = modules[node.argument.literal.text]
+      if (imported === undefined) throw new Error(`Operation type module not provided: ${node.argument.literal.text}`)
+      operations.push(...publicOperations(imported, modules, node.qualifier.getText(file)))
+      return
+    }
     if (ts.isLiteralTypeNode(node) && ts.isStringLiteral(node.literal)) operations.push(node.literal.text)
     else node.forEachChild(visit)
   }
@@ -33,9 +42,9 @@ function hostCases(source: string): Set<string> {
   return operations
 }
 
-function missingHostOperations(typesSource: string, hostSource: string): string[] {
+function missingHostOperations(typesSource: string, hostSource: string, modules: Record<string, string> = {}): string[] {
   const cases = hostCases(hostSource)
-  return publicOperations(typesSource).filter(operation => !cases.has(operation))
+  return publicOperations(typesSource, modules).filter(operation => !cases.has(operation))
 }
 
 describe('Host operation contract', () => {
@@ -56,10 +65,22 @@ describe('Host operation contract', () => {
       "if (operation === 'explore.list') return service.explorePage(params)")).toEqual([])
   })
 
+  it('checks imported operation members rather than treating their module path as an operation', () => {
+    const types = "export type ArkmePluginOperation = import('./device.js').DeviceOperation | 'world.feed'"
+    const modules = { './device.js': "export type DeviceOperation = 'device.read' | 'device.write'" }
+    expect(missingHostOperations(types, "switch (operation) { case 'world.feed': case 'device.read': break }", modules))
+      .toEqual(['device.write'])
+    expect(() => missingHostOperations(types, '')).toThrow('Operation type module not provided')
+  })
+
   it('dispatches every public Provider operation instead of failing at runtime', () => {
     const types = readFileSync(`${root}/src/types.ts`, 'utf8')
     const host = readFileSync(`${root}/src/host-api.ts`, 'utf8')
+    const recorder = readFileSync(`${root}/src/local-recorder/routes.ts`, 'utf8')
+    const modules = { './local-recorder/contract.js': readFileSync(`${root}/src/local-recorder/contract.ts`, 'utf8') }
 
-    expect(missingHostOperations(types, host)).toEqual([])
+    // The delegated dispatcher is also exercised through real HTTP in local-recorder-routes.test.ts.
+    expect(host).toContain('callLocalRecorder(options.localRecorder, request.operation, params, controller.signal)')
+    expect(missingHostOperations(types, `${host}\n${recorder}`, modules)).toEqual([])
   })
 })
