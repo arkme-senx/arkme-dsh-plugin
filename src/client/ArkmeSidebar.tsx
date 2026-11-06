@@ -268,7 +268,7 @@ import { ArkmeBotAvatarActionMenu, ArkmeBotAvatarProfileCard, ArkmeBotRemoveDial
 import { arkmeGroupBotsChanged } from './use-group-bots.js'
 import { arkmeLoadedBotRecords } from './bot-records.js'
 import type { ArkmeGroupBotItem } from '../tools/ports/bots.js'
-import { prepareRunnerDecisionDraft } from './runner-decision-draft.js'
+import { isRunnerTaskReply, prepareRunnerDecisionDraft } from './runner-decision-draft.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
@@ -6825,6 +6825,10 @@ export function ArkmeSurface({
       || !activeConversation || activeRecordReeditComposer !== undefined) return
     const item = composerExtensionTarget.item
     if (item.senderKind === 'bot') {
+      if (isRunnerTaskReply(item)) {
+        pendingExtensionMentionTargetRef.current = undefined
+        return
+      }
       if (!mentionBots.ready && !mentionBots.error) return
       pendingExtensionMentionTargetRef.current = undefined
       if (!arkmeComposerDraftStore.mentionExtensionBot(composerDraftKey, mentionBots.group)) {
@@ -8016,17 +8020,16 @@ export function ArkmeSurface({
   // Draft updates must not rebuild every loaded message. Event handlers read the
   // latest committed actions; render dependencies below contain only timeline facts.
   const replyRunnerDecision = (item: ArkmeTimelineItem, text: string) => {
-    if (archiveReadOnly || source?.kind !== 'group_chat' || !composerDraftKey || !composerMentionsEnabled) return
+    if (archiveReadOnly || source?.kind !== 'group_chat' || !composerDraftKey) return
     if (activeRecordReeditComposer) {
       showMessageActionStatus('请先完成当前编辑，再回复决策')
       return
     }
     try {
-      const cursor = prepareRunnerDecisionDraft(arkmeComposerDraftStore, composerDraftKey, item, text, mentionBots.group)
+      const cursor = prepareRunnerDecisionDraft(arkmeComposerDraftStore, composerDraftKey, item, text)
       setDrawer(undefined)
       focusEditedComposer(cursor)
     } catch (caught) {
-      mentionBots.retry()
       showMessageActionStatus(errorMessage(caught))
     }
   }
