@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_transcript_view_change',
   'arkme_thought_reply',
  'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',
@@ -105,6 +106,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_transcript_view_change') return '是否更新你自己的录音或通话转写更正/标记？原始转写与其他人的视图保持独立。'
   if (name === 'arkme_world_suggestions_change') {
     const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
     return request.action === 'create' ? `是否分析最近 ${Number(request.days)} 天的本人快记，生成仅自己可见的分享建议？模型分析会使用当前账号的模型额度，不会自动公开内容。`

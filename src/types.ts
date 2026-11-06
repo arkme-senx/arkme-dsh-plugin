@@ -1499,6 +1499,8 @@ export interface ArkmeCallParticipant {
 }
 
 export interface ArkmeCallTranscriptSegment {
+ privateViewTarget?: import("./transcript-view-contract.js").TranscriptViewTarget
+ privateViewVersion?: string
   /** Present only when the source supplies a stable segment identity. */
   sourceSegmentId?: string
   segmentId: string
@@ -1591,6 +1593,7 @@ arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
     recordingVoiceTriggersV2?: true
+    personalTranscriptViewsV1?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -3401,6 +3404,7 @@ export interface ArkmeRecordingSummaryModelRouteUpdate {
 }
 
 export interface ArkmeRecordingTranscriptItem {
+ privateViewVersion?: string
   /** Confirmed acoustic source, independent of who the voice belongs to. */
   soundSource?: ArkmeRecordingSoundSource
   /** Includes a confirmed playback subrange after provider resegmentation. */
@@ -3424,6 +3428,7 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+ privateViewVersion?: string
   /** Available only for complete projections; paged reads obtain counts when editing. */
   sameSpeakerItemCount?: number
   /** User-confirmed source, independent of the speaker identity. */
@@ -4462,8 +4467,10 @@ export type ArkmePluginOperation =
   | 'source.message-thoughts.query'
   | 'source.message-thought-continuations.query'
   | 'source.message-thought-continuations.retry'
-  | 'transcript.local.read'
-  | 'transcript.local.change'
+  | 'transcript.views.saved' | 'transcript.views.receipt' | 'transcript.views.capabilities'
+  | 'transcript.views.read'
+  | 'transcript.views.change'
+  | 'transcript.views.import'
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
