@@ -95,7 +95,7 @@ describe('profile/settings navigation', () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('导出数据').click())
     expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['data.export.preflight'])
-    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('增量')
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('增量导出')
     expect(button('选择文件夹')).toBeDefined()
     expect(button('导出到文件夹').disabled).toBe(true)
     await act(async () => button('导出到文件夹').click())
