@@ -20,6 +20,8 @@ from zoneinfo import ZoneInfo
 parser = argparse.ArgumentParser()
 for name in ("bridge", "secrets", "dsh-ready", "commands", "evidence"):
     parser.add_argument("--" + name, type=Path, required=True)
+parser.add_argument("--verify-existing", action="store_true",
+                    help="Verify saved admission and native receipts without provider dispatch")
 args = parser.parse_args()
 args.evidence.mkdir(parents=True, exist_ok=True)
 bridge = json.loads(args.bridge.read_text())
@@ -60,62 +62,77 @@ def wait(path, timeout, predicate=lambda value: True):
     raise RuntimeError("acceptance deadline exceeded: " + path.name)
 
 
-wait(args.dsh_ready, 90)
-points_before = request("/api/v1/managed-ai/points/query", {})
-assert Decimal(points_before["purchased_points"]) > 0
-assert Decimal(points_before["granted_points"]) > 0
-foreign = bridge["foreignToken"]
-zero_before = request("/api/v1/managed-ai/points/query", {}, foreign)
-assert Decimal(zero_before["available_points"]) == 0
+if args.verify_existing:
+    admission = json.loads((args.evidence / "admission.json").read_text())
+    points_before, zero_before = admission["points_before"], admission["zero_points_before"]
+    models, foreign_status = admission["models"], admission["foreign_model_status"]
+    foreign = bridge["foreignToken"]
+    native_output = args.evidence.resolve() / "native-results.json"
+else:
+    wait(args.dsh_ready, 90)
+    points_before = request("/api/v1/managed-ai/points/query", {})
+    assert Decimal(points_before["purchased_points"]) > 0
+    assert Decimal(points_before["granted_points"]) > 0
+    foreign = bridge["foreignToken"]
+    zero_before = request("/api/v1/managed-ai/points/query", {}, foreign)
+    assert Decimal(zero_before["available_points"]) == 0
 
 
-def save(name, key_name, base, model, protocol, token=None):
-    settings = request("/api/v1/user-models/settings/query", {}, token)
-    saved = request("/api/v1/user-models/settings/save", {
-        "expected_revision": settings["revision"], "name": name,
-        "execution": "cloud", "protocol": protocol, "base_url": base,
-        "model_key": model, "api_key": secrets[key_name],
-        "capabilities": {"text": True, "tools": True, "json": True,
-                         "stream": True, "images": False,
-                         "context_tokens": 32768, "output_tokens": 512}}, token)
-    result = next(m for m in saved["models"] if m["name"] == name)
-    assert "api_key" not in result and result["key_configured"]
-    return result
+    def save(name, key_name, base, model, protocol, token=None):
+        settings = request("/api/v1/user-models/settings/query", {}, token)
+        saved = request("/api/v1/user-models/settings/save", {
+            "expected_revision": settings["revision"], "name": name,
+            "execution": "cloud", "protocol": protocol, "base_url": base,
+            "model_key": model, "api_key": secrets[key_name],
+            "capabilities": {"text": True, "tools": True, "json": True,
+                             "stream": True, "images": False,
+                             "context_tokens": 32768, "output_tokens": 512}}, token)
+        result = next(m for m in saved["models"] if m["name"] == name)
+        assert "api_key" not in result and result["key_configured"]
+        return result
 
 
-zero = save("零积分自备模型实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY",
-            "https://api.deepseek.com", "deepseek-flash", "openai-chat", foreign)
-call_id = str(uuid4())
-body = {"model": zero["version_route"], "messages": [
-    {"role": "user", "content": "只回复 OK。"}], "max_tokens": 512,
-    "thinking": {"type": "disabled"}}
-headers = {"X-Arkme-Call-Id": call_id}
-first = request("/api/v1/user-models/chat/completions", body, foreign, headers)
-assert first["choices"][0]["finish_reason"] == "stop"
-assert first["usage"]["completion_tokens"] > 0
-for _ in range(2):
-    assert request("/api/v1/user-models/chat/completions", body, foreign, headers) == first
-foreign_status = request("/api/v1/user-models/chat/completions", body,
-                         headers={"X-Arkme-Call-Id": str(uuid4())}, expected=None)
+    zero = save("零积分自备模型实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY",
+                "https://api.deepseek.com", "deepseek-flash", "openai-chat", foreign)
+    call_id = str(uuid4())
+    body = {"model": zero["version_route"], "messages": [
+        {"role": "user", "content": "只回复 OK。"}], "max_tokens": 512,
+        "thinking": {"type": "disabled"}}
+    headers = {"X-Arkme-Call-Id": call_id}
+    first = request("/api/v1/user-models/chat/completions", body, foreign, headers)
+    assert first["choices"][0]["finish_reason"] == "stop"
+    assert first["usage"]["completion_tokens"] > 0
+    for _ in range(2):
+        assert request("/api/v1/user-models/chat/completions", body, foreign, headers) == first
+    foreign_status = request("/api/v1/user-models/chat/completions", body,
+                             headers={"X-Arkme-Call-Id": str(uuid4())}, expected=None)
 
-vectors = [
-    ("白链 Chat 实测", "JOTMO_MANAGED_AI_TEST_BAILIAN_API_KEY", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-flash", "openai-chat"),
-    ("DeepSeek Chat 实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", "openai-chat"),
-    ("DeepSeek Responses 实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", "openai-responses"),
-    ("DeepSeek Messages 实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY", "https://api.deepseek.com/anthropic/v1", "deepseek-flash", "anthropic-messages"),
-    ("白链 Messages 实测", "JOTMO_MANAGED_AI_TEST_BAILIAN_API_KEY", "https://dashscope.aliyuncs.com/apps/anthropic/v1", "qwen-flash", "anthropic-messages"),
-]
-models = [save(*vector) for vector in vectors]
-native_output = args.evidence.resolve() / "native-results.json"
-native_output.unlink(missing_ok=True)
-(args.evidence / "admission.json").write_text(json.dumps({
-    "points_before": points_before, "zero_points_before": zero_before,
-    "models": models, "foreign_model_status": foreign_status,
-    "zero_points_call": True, "zero_points_replays": 2,
-}, ensure_ascii=False, indent=2) + "\n")
-args.commands.write_text(json.dumps({"routes": [m["route"] for m in models],
-                                    "output": str(native_output)}))
+    vectors = [
+        ("白链 Chat 实测", "JOTMO_MANAGED_AI_TEST_BAILIAN_API_KEY", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen-flash", "openai-chat"),
+        ("DeepSeek Chat 实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", "openai-chat"),
+        ("DeepSeek Responses 实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY", "https://api.deepseek.com", "deepseek-flash", "openai-responses"),
+        ("DeepSeek Messages 实测", "JOTMO_MANAGED_AI_TEST_DEEPSEEK_API_KEY", "https://api.deepseek.com/anthropic/v1", "deepseek-flash", "anthropic-messages"),
+        ("白链 Messages 实测", "JOTMO_MANAGED_AI_TEST_BAILIAN_API_KEY", "https://dashscope.aliyuncs.com/apps/anthropic/v1", "qwen-flash", "anthropic-messages"),
+    ]
+    models = [save(*vector) for vector in vectors]
+    native_output = args.evidence.resolve() / "native-results.json"
+    native_output.unlink(missing_ok=True)
+    (args.evidence / "admission.json").write_text(json.dumps({
+        "points_before": points_before, "zero_points_before": zero_before,
+        "models": models, "foreign_model_status": foreign_status,
+        "zero_points_call": True, "zero_points_replays": 2,
+    }, ensure_ascii=False, indent=2) + "\n")
+    temporary = args.commands.with_name(args.commands.name + "." + str(uuid4()) + ".tmp")
+    temporary.write_text(json.dumps({"routes": [m["route"] for m in models],
+                                     "output": str(native_output)}))
+    temporary.replace(args.commands)
+
 native = wait(native_output, 480, lambda value: len(value["results"]) == len(models))
+assert native["installedAdapter"] is True
+assert [item["route"] for item in native["results"]] == [model["route"] for model in models]
+for item in native["results"]:
+    assert item["finish"]["kind"] == "stop" and item["textLength"] > 0
+    assert item["usage"]["inputTokens"] >= 0 and item["usage"]["outputTokens"] > 0
 
 now = datetime.now(ZoneInfo("Asia/Shanghai"))
 query = {"start": (now - timedelta(days=1)).date().isoformat(),
@@ -149,7 +166,8 @@ zero_after = request("/api/v1/managed-ai/points/query", {}, foreign)
 for key in ("available_points", "reserved_points", "granted_points", "purchased_points", "account_version", "grants"):
     assert points_before[key] == points_after[key], "BYOK changed points: " + key
     assert zero_before[key] == zero_after[key], "zero-balance BYOK changed points: " + key
-result = {"native_adapter_calls": len(models), "zero_points_call": True,
+result = {"verification_mode": "saved-receipts" if args.verify_existing else "full-circuit",
+          "native_adapter_calls": len(models), "zero_points_call": True,
           "zero_points_replays": 2, "foreign_model_status": foreign_status,
           "points_before": points_before, "points_after": points_after,
           "zero_points_before": zero_before, "zero_points_after": zero_after,
