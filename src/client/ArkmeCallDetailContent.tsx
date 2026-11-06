@@ -394,7 +394,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
                 />}
                 <span style={{ ...styles.segmentStack, ...(mine ? styles.segmentStackMine : {}) }}>
                   <span aria-pressed={segment.audioUrl ? highlighted : undefined} aria-busy={segment.audioUrl ? playback === 'loading' : undefined} role={segment.audioUrl ? 'button' : undefined} tabIndex={segment.audioUrl ? 0 : undefined}
-                    aria-label={segment.audioUrl ? `${highlighted ? '停止' : playback === 'failed' ? '重试播放' : tr('播放')}${segment.speakerDisplayName}的录音片段：${segment.text}` : undefined}
+                    aria-label={segment.audioUrl ? `${highlighted ? '停止' : playback === 'failed' ? '重试播放' : tr('播放')}${segment.speakerDisplayName}的录音片段：${transcriptInteraction.text(interactionRows[index]!)}` : undefined}
                     onClick={() => { if (segment.audioUrl && !transcriptInteraction.selected && (typeof document === 'undefined' || !document.getSelection()?.toString())) transcriptPlayback.toggle(segment) }}
                     onKeyDown={event => { if (event.target === event.currentTarget && segment.audioUrl && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); if (!transcriptInteraction.selected) transcriptPlayback.toggle(segment) } }}
                     data-arkme-call-tour-target={tourSample && segment.segmentId === 'sample-video-1' ? 'utterance' : undefined}

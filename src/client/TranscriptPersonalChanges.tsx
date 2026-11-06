@@ -2,7 +2,6 @@ import { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import type { PersonalTranscriptEntry, TranscriptViewSavedPage } from '../transcript-view-contract.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
-import { ArkmeRichText } from './ArkmeRichText.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -19,8 +18,9 @@ const bodyStyle = {
   maxHeight: 'min(520px, calc(100dvh - 150px))', fontSize: 13, lineHeight: 1.65,
 }
 function TranscriptWords({ text }: { text: string }) {
+  // Comparison and saved views show the stored wording, including literal URLs.
   return <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-    <ArkmeRichText text={text} highlightTags={false} />
+    {text}
   </div>
 }
 function OriginalWords({ text }: { text: string }) {

@@ -68,6 +68,7 @@ export function ArkmeRecordingFiles(props: Props) {
 }
 
 function RecordingFiles({ mediaPath, accountKey, dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
+  const changesKey = `${accountKey}:${dateStamp}`
   const [personalChanges, setPersonalChanges] = useState<{key:string;ref:string}>()
   const [comparison, setComparison] = useState<{sessionRef: string; fileName: string}>()
   const [current, setCurrent] = useState<RecordingFile[]>([])
@@ -212,9 +213,9 @@ function RecordingFiles({ mediaPath, accountKey, dateStamp, active, refreshRevis
     else setLoading(false)
     return () => { context.controller.abort() }
   }, [active, revision, refreshRevision])
-  useEffect(() => { if (!active) { setMenu(undefined); if (!busy) setAction(undefined) } }, [active, busy])
+  useEffect(() => { if (!active) { setPersonalChanges(undefined); setMenu(undefined); if (!busy) setAction(undefined) } }, [active, busy])
   useEffect(() => () => { mutation.current?.abort() }, [])
-  useEffect(() => { setMenu(undefined); if (!busy) { setAction(undefined); setMutationError('') } }, [dateStamp])
+  useEffect(() => { setPersonalChanges(undefined); setMenu(undefined); if (!busy) { setAction(undefined); setMutationError('') } }, [dateStamp])
   useEffect(() => {
     if (!action) return
     dialog.current?.showModal()
@@ -322,7 +323,7 @@ function RecordingFiles({ mediaPath, accountKey, dateStamp, active, refreshRevis
   useEffect(() => { onCountChange?.({ dateStamp, count: files.length, complete, loading: active && (loading || currentLoading) }) }, [dateStamp, files.length, complete, active, loading, currentLoading, onCountChange])
 
   return <section ref={section} aria-label={tr('音频文件')} style={{ minWidth: 0, fontSize: 13 }}>
-    {active && personalChanges && personalChanges.key === accountKey && <TranscriptPersonalChanges key={personalChanges.ref} sourceRef={personalChanges.ref} onClose={() => setPersonalChanges(undefined)} />}
+    {active && personalChanges && personalChanges.key === changesKey && <TranscriptPersonalChanges key={personalChanges.ref} sourceRef={personalChanges.ref} onClose={() => setPersonalChanges(undefined)} />}
     {notice && <p role="status" style={note}>{notice}</p>}
     {storage.error && <p role="alert" style={note}>{tr('读取录音存储失败，请重试')}<button type="button" style={{ ...button, marginLeft: 8 }} onClick={storage.retry}>{tr('重试读取存储')}</button></p>}
     {currentWarning && <p role="status" style={note}>{currentWarning}{currentReadFailed && <button type="button" style={{ ...button, marginLeft: 8 }} disabled={loading || currentLoading || busy} onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button>}</p>}
@@ -360,7 +361,7 @@ function RecordingFiles({ mediaPath, accountKey, dateStamp, active, refreshRevis
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
       buttons[next]?.focus()
     }}>
-      {'sessionRef' in menu.file && menu.file.sessionRef && <button role="menuitem" type="button" style={button} onClick={() => {const file=menu.file;if('sessionRef' in file && file.sessionRef && accountKey)setPersonalChanges({key:accountKey,ref:JSON.stringify({kind:'recording',sessionRef:file.sessionRef})});setMenu(undefined)}}>{tr('我的修改')}</button>}
+      {'sessionRef' in menu.file && menu.file.sessionRef && <button role="menuitem" type="button" style={button} onClick={() => {const file=menu.file;if('sessionRef' in file && file.sessionRef && accountKey)setPersonalChanges({key:changesKey,ref:JSON.stringify({kind:'recording',sessionRef:file.sessionRef})});setMenu(undefined)}}>{tr('我的修改')}</button>}
       {'sessionRef' in menu.file && menu.file.sessionRef && comparisonAvailability.availability.strategy === 'available' && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
       {comparisonSession && comparisonAvailability.loading && <button role="menuitem" type="button" disabled style={button}>正在检查策略对比…</button>}
       {comparisonSession && !comparisonAvailability.loading && comparisonAvailability.availability.strategy === 'unknown' && <button role="menuitem" type="button" style={button} onClick={comparisonAvailability.retry}>重试检查策略对比</button>}

@@ -497,3 +497,22 @@ it('opens personal changes for the chosen recording session rather than mixing f
     arkmeAuthStore.setAuth(previous ?? { status: 'logged-out', environment: 'test' })
   }
 })
+
+
+it.each(['inactive', 'day'] as const)('retires a recording changes modal after %s navigation and does not reopen it later', async reason => {
+  const previous = arkmeAuthStore.getSnapshot().auth
+  arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
+  const normal = mock.call.getMockImplementation()!
+  mock.call.mockImplementation((operation, input, signal) => operation === 'transcript.views.saved'
+    ? { historical: true, items: [], next_cursor: '' } : normal(operation, input, signal))
+  try {
+    await render(); await openMenu(); await click('我的修改')
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+    await render(reason === 'inactive' ? { active: false } : { dateStamp: day + 86400000 })
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    await render(); expect(document.querySelector('[role="dialog"]')).toBeNull()
+  } finally {
+    await act(async () => root.render(null))
+    arkmeAuthStore.setAuth(previous ?? { status: 'logged-out', environment: 'test' })
+  }
+})

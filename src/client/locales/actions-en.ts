@@ -1,6 +1,7 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
   '我的修改': 'My changes',
+  '这份录音的修改': 'Changes to this recording',
   '已更正': 'Corrected',
   '查看原文与我的更正': 'Compare original and my correction',
   '更正和标记仅自己可见': 'Only you can see your corrections and marks',

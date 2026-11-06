@@ -6,6 +6,7 @@ import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, 
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { CheckSquare } from '@phosphor-icons/react/dist/icons/CheckSquare'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
+import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import type { ArkmeTimelineItem } from '../types.js'
 import type { MessageUnderlineChange } from '../message-annotations.js'
 import type { MessageUnderlineSnapshot } from '../message-annotations.js'
@@ -39,7 +40,8 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
   onCopy(row: TranscriptInteractionRow): void
   onSelect(row: TranscriptInteractionRow): void
   onPlay(row: TranscriptInteractionRow): void
-}>(function TranscriptContextMenu({ rows, onCopy, onSelect, onPlay }, ref) {
+  onChanges?(row: TranscriptInteractionRow): void
+}>(function TranscriptContextMenu({ rows, onCopy, onSelect, onPlay, onChanges }, ref) {
   const [point, setPoint] = useState<TranscriptMenuPoint>()
   useImperativeHandle(ref, () => ({ open: setPoint }), [])
   const row = point ? rows.find(row => row.id === point.id) : undefined
@@ -50,6 +52,7 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
     { id: 'copy', label: '复制', icon: <Copy />, onSelect: () => { close(); onCopy(row) } },
     { id: 'select', label: '多选', icon: <CheckSquare />, onSelect: () => { close(); onSelect(row) } },
     { id: 'play', label: '播放', icon: <Play />, disabled: !row.playable, onSelect: () => { close(); onPlay(row) } },
+    ...(onChanges && row.viewRef ? [{ id: 'changes', label: tr('这份录音的修改'), icon: <PencilSimple />, onSelect: () => { close(); onChanges(row) } }] : []),
   ]} />
 })
 
@@ -142,7 +145,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     void refresh(); if (typeof window !== 'undefined') window.addEventListener('focus', refresh);document.addEventListener('selectionchange',selectionChanged)
     return () => { clearInterval(timer);controller.abort(); if (typeof window !== 'undefined') window.removeEventListener('focus', refresh);document.removeEventListener('selectionchange',selectionChanged) }
   }, [key, idsKey, enabled, retry])
-  useEffect(() => { setSelected(undefined); setSearch(''); setNotice('') }, [key, enabled])
+  useEffect(() => { setSelected(undefined); setSearch(''); setNotice(''); setPanel(undefined) }, [key, enabled])
   const display = (row: TranscriptInteractionRow, entry = entriesRef.current[row.id]) => entry && entry.originalVersion === row.sourceVersion ? (entry.legacy?.original === entry.original ? entry.legacy.text : entry.text) : row.text
   const target = (row: TranscriptInteractionRow): MessageSelectionTarget => {
     const text = display(row)
@@ -257,6 +260,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     {correctionVisible && correctionRow && correctionEntry && <TranscriptCorrectionDetails key={'correction:'+key+':'+epoch+':'+correctionRow.id}
       entry={correctionEntry} onRestore={signal => change(correctionRow, correctionEntry, {restore:true}, signal)} onClose={() => setPanel(undefined)} />}
     <TranscriptContextMenu key={`menu:${key}:${epoch}`} ref={menuRef} rows={rows}
+      {...(scope.startsWith('recording:') && !savedRef ? { onChanges: (row: TranscriptInteractionRow) => { if (row.viewRef) setPanel({key,kind:'source',ref:row.viewRef}) } } : {})}
       onCopy={row => { void copyText(display(row)).catch(e => { if (alive.current && currentKey.current === key) setNotice(message(e)) }) }}
       onSelect={row => { if (latest.current.onMultiSelect) latest.current.onMultiSelect(row.id); else setSelected(new Set([row.id])) }}
       onPlay={row => latest.current.onPlay([row.id])} />

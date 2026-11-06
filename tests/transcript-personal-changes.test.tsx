@@ -167,3 +167,18 @@ it('follows the shared language setting while leaving transcript wording untouch
     disconnect()
   }
 })
+
+
+it('shows stored wording literally in comparison and saved views without resolving URL titles', async () => {
+  const before = '原文 https://example.com/reference?item=1\n[微笑] <b>原样</b>'
+  const after = '更正 https://example.com/reference?item=2\n[微笑] <b>原样</b>'
+  mocks.call.mockResolvedValue(page([saved('literal', after, before)]))
+  await renderSource()
+  expect(document.querySelector('[data-transcript-personal-change]')?.textContent).toContain(after)
+  expect(document.querySelector('details')?.textContent).toContain(before)
+  await click('复制文字'); expect(mocks.copy).toHaveBeenCalledWith(after)
+  await act(async () => root.render(<TranscriptCorrectionDetails entry={{ original: before, text: after }} onRestore={vi.fn()} onClose={closed} />))
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(before)
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(after)
+  expect(mocks.call.mock.calls.filter(([operation]) => operation === 'link.metadata')).toHaveLength(0)
+})

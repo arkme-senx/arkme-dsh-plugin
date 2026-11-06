@@ -9,6 +9,8 @@ import { changeLocalTranscript } from './helpers/legacy-transcript-owner.js'
 import type { LocalTranscriptEntry } from '../src/local-transcript-state.js'
 import { quoteSourceContent } from '../src/message-quote.js'
 import { useTranscriptInteractions } from '../src/client/TranscriptInteractions.js'
+import { ArkmeCallDetailContent } from '../src/client/ArkmeCallDetailContent.js'
+import type { ArkmeCallDetail } from '../src/types.js'
 import { ArkmeMessageTextSelectionToolbar, registeredMessageTargets } from '../src/client/ArkmeMessageTextSelection.js'
 const mocks=vi.hoisted(()=>({call:vi.fn(),copy:vi.fn(),play:vi.fn(),auth:{auth:{status:'authenticated',userId:11,environment:'prod'}}}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.call}))
@@ -253,4 +255,55 @@ it.each(['corrected','restored'] as const)('does not label a source-version refr
  await click('我的修改')
  if(state==='corrected')expect(document.querySelector('[role="dialog"]')?.textContent).toContain('保留的更正')
  else expect(document.querySelector('[role="dialog"]')?.textContent).toContain('还没有更正或标记')
+})
+
+
+it.each(['row', 'source'] as const)('retires the %s modal on a scope or activation change without reopening it on return', async surface => {
+ stored.set('recording:123:one',{revision:1,original,text:'私人更正',marks:[]})
+ for (const reason of ['scope', 'inactive'] as const) {
+  await act(async()=>root.render(<Fixture/>))
+  await click(surface==='row'?'已更正':'我的修改')
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  await act(async()=>root.render(<Fixture scope={reason==='scope'?'call:456':'recording:123'} enabled={reason!=='inactive'}/>))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async()=>root.render(<Fixture/>))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+ }
+})
+
+
+it('announces the same current private wording that the call bubble displays, then follows restoration', async () => {
+ const raw='识别原文', privateText='个人更正后的通话文字'
+ const detail:ArkmeCallDetail={stableId:'room-one',callRef:'call-ref',title:'通话详情',mediaType:'audio',startedAtMillis:1000,acceptedAtMillis:1000,endedAtMillis:5000,durationSeconds:4,callResult:'NormalEnd',resultLabel:'已接通',summaryStatus:'done',summaryText:'摘要',transcriptPending:false,transcriptFailed:false,participants:[],transcriptSegments:[{segmentId:'one',speakerDisplayName:'同事',text:raw,startMillis:0,endMillis:1000,audioUrl:'https://example.invalid/audio.wav',privateViewTarget:{kind:'call',source_uid:'room-one',segment_uid:'one'},privateViewVersion:'v1'}]}
+ let current:PersonalTranscriptEntry={revision:1,original:raw,text:privateText,originalVersion:'v1',originalDigest:'a'.repeat(64),originalChanged:false,marks:[]}
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{
+  if(op==='transcript.views.read')return Object.fromEntries(p.items.map((item:any)=>[item.id,current]))
+  if(op==='transcript.views.change'){current={...current,revision:2,text:raw};return current}
+  return normal(op,p)
+ })
+ await act(async()=>root.render(<ArkmeCallDetailContent selectedItem={{callRef:'call-ref',peerDisplayName:'同事',mediaType:'audio',acceptedAtMillis:1000,durationSeconds:4,summaryPreview:''}} detail={detail} detailState="ready"/>))
+ const bubble=host.querySelector('[data-arkme-call-utterance="one"] [role="button"]')!
+ expect(bubble.querySelector('[data-arkme-text-selection]')?.textContent).toBe(privateText)
+ expect(bubble.getAttribute('aria-label')).toContain(privateText)
+ expect(bubble.getAttribute('aria-label')).not.toContain(raw)
+ await click('已更正');await click('恢复原文')
+ expect(bubble.querySelector('[data-arkme-text-selection]')?.textContent).toBe(raw)
+ expect(bubble.getAttribute('aria-label')).toContain(raw)
+ expect(detail.transcriptSegments[0]!.text).toBe(raw)
+})
+
+
+it('keeps saved changes reachable for an ordinary recording through the chosen row menu without a first-row source fallback', async () => {
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[],next_cursor:''}:normal(op,p))
+ await act(async()=>root.render(<Fixture savedSource={false}/>))
+ expect(host.querySelectorAll('article button')).toHaveLength(0)
+ await act(async()=>host.querySelectorAll('article')[1]!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:50,clientY:50})))
+ await click('这份录音的修改')
+ expect(document.querySelector('[role="menu"]')).toBeNull()
+ expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+ const request=mocks.call.mock.calls.find(([op])=>op==='transcript.views.saved')![1]
+ expect(JSON.parse(request.ref)).toMatchObject({scope:'recording:123',id:'two'})
+ expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toHaveLength(0)
 })
