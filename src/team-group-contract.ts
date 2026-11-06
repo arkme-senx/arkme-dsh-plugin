@@ -76,7 +76,7 @@ export interface TeamWorkspaceFolder {
  groups:Array<{sourceKey:string;unread:number;lastSeq:number}>
 }
 export type TeamWorkspaceRequest =
-  | {operation:'folders'}
+  | {operation:'folders';teamRef?:string}
   | {operation:'resolve-entries';teamRef:string;entries:import('./team-entry-preference-contract.js').TeamEntryReference[]}
   | {operation:'preferences';action:'query';params:{entries:import('./team-entry-preference-contract.js').TeamEntryReference[]}}
   | {operation:'preferences';action:'list';params:{cursor?:string}}

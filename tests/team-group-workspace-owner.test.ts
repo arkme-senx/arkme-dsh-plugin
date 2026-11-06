@@ -100,3 +100,22 @@ it('returns approved selected-page previews and true group-only folders through 
  expect(JSON.stringify(folders)).not.toContain('chat_session_uid')
  expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
 })
+
+
+it('scopes folder discovery by the decoded team identity before projecting unrelated folders',async()=>{
+ const f=fixture(),teamRef=await f.service.worldTeamRef(43,90)
+ const folders=await f.service.execute('team.app.workspace.request',{request:{operation:'folders',teamRef}})
+ expect(folders).toEqual([])
+ expect(f.paths).toEqual(['/api/v1/team/workspace/folders/query'])
+ const own=await f.service.execute('team.app.workspace.request',{request:{operation:'folders',teamRef:await f.service.worldTeamRef(42,90)}})
+ expect(own).toMatchObject([{groupCount:1,channel:{jotmoId:'support'}}])
+ expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
+})
+it.each(['viewer','environment','malformed'] as const)('rejects %s folder scope before the owner read',async failure=>{
+ const f=fixture()
+ const teamRef=failure==='malformed'?'invalid':await new EncryptedReferenceCodec(async()=> 'fake-workspace-key',()=>new Error('invalid')).seal('team-app-team',{
+  viewer:failure==='viewer'?91:90,environment:failure==='environment'?'prod':'test',team_id:'42',
+ })
+ await expect(f.service.execute('team.app.workspace.request',{request:{operation:'folders',teamRef}})).rejects.toThrow()
+ expect(f.paths).toEqual([])
+})

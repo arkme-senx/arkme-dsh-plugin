@@ -26,6 +26,8 @@ it('discovers reads and commands in an official DSH session and enforces the wri
   expect((await invoke('arkme_team_groups_read',{request:{operation:'directory',teamRef:'opaque'}})).isError).toBe(false)
   expect((await invoke('arkme_team_workspace',{request:{operation:'folders'}})).isError).toBe(false)
   expect(workspace).toHaveBeenLastCalledWith({operation:'folders'},expect.any(AbortSignal))
+  expect((await invoke('arkme_team_workspace',{request:{operation:'folders',teamRef:'opaque-team'}})).isError).toBe(false)
+  expect(workspace).toHaveBeenLastCalledWith({operation:'folders',teamRef:'opaque-team'},expect.any(AbortSignal))
   expect((await invoke('arkme_team_workspace',{request:{operation:'cards',conversationRef:'customer'}})).isError).toBe(false)
   expect((await invoke('arkme_records_search',{query:'授权',source_ref:'opaque-team-source'})).isError).toBe(false)
   expect(search).toHaveBeenLastCalledWith(expect.objectContaining({sourceRef:'opaque-team-source',query:'授权'}))

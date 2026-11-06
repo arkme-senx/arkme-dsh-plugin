@@ -635,9 +635,16 @@ export class TeamAppService {
 
   private async workspaceOperation(operation:TeamAppOperation,p:Record<string,unknown>,actor:number,post:TeamOwnerPost,signal?:AbortSignal):Promise<unknown> {
     if(operation==='team.app.workspace.folders') {
+      let selectedTeamId:string|undefined
+      if(p.teamRef!==undefined) {
+        const team=await this.open('team',p.teamRef,actor)
+        selectedTeamId=String(recordOwnerId(team.team_id))
+        if(team.environment!==this.runtime.config.environment||!/^[1-9][0-9]*$/.test(selectedTeamId))throw invalid()
+      }
       const raw=await post('workspace/folders/query',{},true)
       if(!Array.isArray(raw.items)||!this.contacts?.chatDirectorySourceKey)throw invalid()
-      return await Promise.all(list(raw.items).map(async row=>{
+      const rows=list(raw.items).filter(row=>selectedTeamId===undefined||String(recordOwnerId(row.team_id))===selectedTeamId)
+      return await Promise.all(rows.map(async row=>{
         const teamId=String(recordOwnerId(row.team_id)),group=obj(row.latest_group)
         if(!/^[1-9][0-9]*$/.test(teamId)||num(row.group_count)<1||!Array.isArray(row.groups)||num(row.unread_count)<0)throw invalid()
         const source=await this.groupSource(group,actor,teamId)

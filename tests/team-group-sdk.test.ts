@@ -18,7 +18,8 @@ it('uses the same typed Host owner for group commands and workspace reads, with 
  const service={providerCapabilities:()=>({contractVersion:1,features:{teamGroupWorkspace:1}}),executeTeamApp:vi.fn(async(operation)=>({operation}))}
  const sdk=new ArkmeSdk({fetchImpl:async(_url,init)=>{const{operation,params}=JSON.parse(String(init?.body));return new Response(JSON.stringify({ok:true,value:await dispatchArkmeHostOperation(service as never,operation,params)}))}})
  const request={operation:'command' as const,command:{action:'join' as const,sourceRef:'source',teamRef:'team',requestUid:'same-attempt',expectedRevision:0}}
- await sdk.teamGroups(request);await sdk.teamWorkspace({operation:'folders'});await sdk.teamWorkspace({operation:'cards',conversationRef:'customer'})
+ await sdk.teamGroups(request);await sdk.teamWorkspace({operation:'folders'});await sdk.teamWorkspace({operation:'folders',teamRef:'opaque-team'});await sdk.teamWorkspace({operation:'cards',conversationRef:'customer'})
+ expect(service.executeTeamApp).toHaveBeenCalledWith('team.app.workspace.request',{request:{operation:'folders',teamRef:'opaque-team'}},undefined)
  expect(service.executeTeamApp).toHaveBeenCalledWith('team.app.group.request',{request},undefined)
  expect(service.executeTeamApp).toHaveBeenCalledWith('team.app.workspace.request',{request:{operation:'cards',conversationRef:'customer'}},undefined)
  expect(arkmeToolCatalog.toolNamesFor('business')).toEqual(expect.arrayContaining(['arkme_team_groups_read','arkme_team_groups_change','arkme_team_workspace']))

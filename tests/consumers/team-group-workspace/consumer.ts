@@ -10,6 +10,8 @@ export async function verifyInstalledTeamWorkspace(fetchImpl:typeof fetch,person
     assert(context.state==='ready'&&context.teams[0]?.joined,'current admission')
     const folders=await sdk.teamWorkspace({operation:'folders'}) as TeamWorkspaceFolder[]
     assert(folders.length===1&&folders[0]?.groupCount===1,'group-only folder')
+    const scoped=await sdk.teamWorkspace({operation:'folders',teamRef:context.teams[0].teamRef}) as TeamWorkspaceFolder[]
+    assert(scoped.length===1&&scoped[0]?.channel.entryKey===folders[0]?.channel.entryKey,'scoped folder uses the same team owner')
     const page=await sdk.teamWorkspace({operation:'page',teamRef:context.teams[0].teamRef}) as TeamWorkspacePage
     const group=page.items.find(row=>row.kind==='group')
     assert(group?.kind==='group'&&group.source.accessKind==='team_delegation','independent team source')
