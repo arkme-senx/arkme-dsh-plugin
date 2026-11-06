@@ -2,7 +2,7 @@
 
 沿用团队内「联系用户」及名片「以团队联系」交互；公开 SDK `teamOutboundOpen`、`arkme_team_outbound_open` Tool 和 UI 共用 TeamAppService。
 
-服务端 `conversations/open-by-member` 在现有 Team 授权事务中保留首次明确联系。`team_conversation.member_initiated_at` 是内部毫秒时间，不返回访客；成员响应仅增加可缺省的 `member_initiated`。普通预览、公开入口和群来源投影不写入该事实。
+服务端 `conversations/open-by-member` 在现有 Team 授权事务中保留首次明确联系。`team_conversation.member_opened_at` 是内部毫秒时间，不返回访客；成员响应仅增加可缺省的 `member_initiated`。普通预览、公开入口和群来源投影不写入该事实。
 
 成员目录资格为：真实消息存在，或已明确联系。团队成员共享联系事实，移除和置顶仍是个人入口偏好。首次真实发送继续按 `last_seq == 0` 检查当前接待资格；联系不产生消息、未读、阅读回执或客户通知。
 
