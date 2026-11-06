@@ -147,7 +147,8 @@ try{
  await ownerPost('team','/fixture/remove-member',{team_id:7,user_id:13},11)
  await assert.rejects(host.readSource(delegated),error=>error.code==='arkme-code-1004')
  await login(4);assert.notEqual((await host.readSource((await personal()).sourceRef)).source.accessKind,'team_delegation','independent human membership survives organization revocation')
- assert.equal(calls.filter(c=>/conversations\/open|message-channel/.test(c.path)||c.path==='/api/v1/records/detail').length,0,'source cards never open a DM or use personal Record fallback')
+ assert.equal(calls.filter(c=>/conversations\/open/.test(c.path)||c.path.includes('/message-channel/')&&!c.path.endsWith('/message-channel/get')||c.path==='/api/v1/records/detail').length,0,'source cards and team-card navigation never open a DM, mutate its channel or use personal Record fallback')
+ assert(calls.filter(c=>c.path.endsWith('/message-channel/get')).every(c=>c.actor===13&&String(c.input.team_id)==='7'),'existing team navigation only reads its own channel settings')
  await writeFile(join(capture,'proof.json'),JSON.stringify(proof,null,2));console.log(JSON.stringify({acceptance:'team-group-workspace-native-stack',owners:'real Chat/Team/Record HTTP+Mongo+Completion+Rabbit',ui:'admission/customer card/delegated original-group reply',sdk:'external compiled installed public SDK',tools:'official DSH real session discovery/read',boundary:'floor, non-human-membership, exact author, revocation, no private customer message',externalSeams:'account identity, blob, moderation and SSE transport only'}))
  }
 }catch(error){console.error(error);await mkdir(capture,{recursive:true});if(error?.stdout)console.error(String(error.stdout));if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}
