@@ -1412,12 +1412,14 @@ function GroupSettingsMenu(props: {
     { id: 'export', label: props.exportBusy
       ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
       : '导出', icon: <DownloadSimple size={20} weight="regular" aria-hidden />, disabled: props.exportBusy },
+  )
+  if (effective.canLeave || effective.canDissolve) entries.push(
     { type: 'separator', id: 'leave-separator' },
     {
       id: 'leave', danger: true,
       label: <span style={{ color: arkmeTheme.danger }}>{effective.canDissolve ? '解散群聊' : tr("退出群聊")}</span>,
       icon: <span style={{ color: arkmeTheme.danger }}><ClientIcon src={icons.exit} size={16} /></span>,
-      disabled: busy || (!effective.canLeave && !effective.canDissolve),
+      disabled: busy,
     },
   )
 
