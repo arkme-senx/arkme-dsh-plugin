@@ -1431,6 +1431,7 @@ export class ChatService {
     private readonly messageActions?: MessageActionService,
     private readonly callHistory = new CallHistoryService(runtime, profile, media),
     private readonly senderProfiles: BotDisplayProfilesReader = new RuntimeBotDisplayProfilesReader(runtime, bot),
+    private readonly forwardToTeam?: (input: import('./team-message-forward-service.js').RecordTeamForwardInput, signal?: AbortSignal) => Promise<ArkmeSourceSendResult>,
   ) {
     this.memberEvents = new MemberEventService(runtime, source, profile, (userId, options) => this.openPrivateChatFromUser(userId, options))
   }
@@ -4517,13 +4518,27 @@ nextPublic = next
   async forwardSourceMessages(
       sourceRef: string,
       actionRefs: readonly string[],
-      options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {},
+      options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; targetConversationRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {},
     ): Promise<ArkmeSourceSendResult> {
     requireFrozenTeamSendTime(options)
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw new ArkmePluginError('file-account-changed', '账号已切换', false, 403)
       if (options.sendAtMillis !== undefined && (!Number.isSafeInteger(options.sendAtMillis) || options.sendAtMillis <= 0)) throw new ArkmePluginError('message-actions-time-invalid', '发送时间无效', false)
       const source = await this.source.openSourceRef(sourceRef, session.userId)
+      if (options.targetConversationRef !== undefined) {
+        if (!options.targetConversationRef.trim() || options.targetSourceRef !== undefined || options.representation !== undefined || !this.forwardToTeam) throw new ArkmePluginError('message-actions-target-invalid', '转发目标无效，请重新选择', false, 400)
+        const references = this.forwardReferencesOrderedForCommand(await this.openMessageActionRefs(actionRefs, session.userId, source))
+        if (!references.length || references.length > 100) throw new ArkmePluginError('message-actions-selection-invalid', '请选择 1 至 100 条消息', false)
+        this.validateForwardReferences(references)
+        return this.forwardToTeam({ targetConversationRef: options.targetConversationRef, expectedUserId: session.userId,
+          requestId: options.recordUid?.trim() ?? '', sendAtMillis: options.sendAtMillis ?? 0,
+          ...(options.commentText ? { commentText: options.commentText } : {}),
+          sources: references.map(reference => ({ record_uid: reference.recordUid,
+            ...(reference.sourceKind === 'record' ? { record_owner_user_id: session.userId } : {}),
+            ...(reference.sourceKind === 'chat_relation' ? { chat_session_uid: reference.chatSessionUid, relation_uid: reference.relationUid } : {}),
+          })),
+        }, options.signal)
+      }
       const targetSourceRef = options.targetSourceRef?.trim() || sourceRef
       const targetSource = targetSourceRef === sourceRef ? source : await this.source.openSourceRef(targetSourceRef, session.userId)
       if(options.representation&&targetSource.kind!=='group_chat')throw new ArkmePluginError('team-identity-target-invalid','团队身份仅用于普通群',false,409)

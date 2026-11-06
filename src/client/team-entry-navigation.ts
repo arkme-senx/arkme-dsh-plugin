@@ -23,7 +23,7 @@ async function readOpen(account: string, intent: PublicIntent, signal: AbortSign
 }
 async function folderTarget(account: string, teamRef: string, signal: AbortSignal): Promise<TeamEntryTarget | undefined> {
   const page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef, side: 'team', limit: 1, expectedAccountKey: account }, signal)
-  const group = groupTeamConversations(page.items.filter(c => c.lastSeq > 0))[0]
+  const group = groupTeamConversations(page.items.filter(c => c.lastSeq > 0 || c.side === 'team' && c.memberInitiated === true))[0]
   return group ? { kind: 'folder', group } : undefined
 }
 function prepareRestore(account: string, intent: TeamMessageIntent): void {

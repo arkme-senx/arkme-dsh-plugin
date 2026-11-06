@@ -987,6 +987,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       this.privacy,
       this.messageActions,
       this.callHistory,
+      undefined,
+      (input, signal) => this.teamForward.forwardRecords(input, signal),
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
@@ -2804,7 +2806,7 @@ arkoImagesV1:true,
     }
     return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options)
   }
-  async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
+  async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; targetConversationRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
   async ownLongArticle(itemUid: string, expectedUserId: number, signal?: AbortSignal) { return await this.chat.ownLongArticle(itemUid, expectedUserId, signal) }
   async copyCodexChatLink(snapshot:unknown,expectedUserId:number,signal?:AbortSignal){return this.messageActions.copyLinkCodex(snapshot,expectedUserId,signal)}
   async forwardCodexChat(snapshot: unknown, expectedUserId: number, options: import('./services/message-action-service.js').MessageActionForwardOptions) {

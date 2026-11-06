@@ -14,10 +14,46 @@ function clientUid(request:string):string {
  const hex=bytes.toString('hex');return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`
 }
 
+export interface RecordTeamForwardInput {
+ targetConversationRef:string;expectedUserId:number;requestId:string;sendAtMillis:number;commentText?:string
+ sources:{record_uid:string;record_owner_user_id?:number;chat_session_uid?:string;relation_uid?:string}[]
+}
+
 /** Each destination keeps its native acceptance, identity and recovery owner.
  * This adapter resolves opaque selectors only; it never rebuilds source text. */
 export class TeamMessageForwardService {
  constructor(private readonly runtime:ServiceRuntime,private readonly team:TeamAppService,private readonly sources:Pick<SourceService,'openSourceRef'|'invalidateSourceListCache'>,private readonly changed:(target:ArkmeSourceRefPayload,sequence?:number)=>void|Promise<void>){}
+ async forwardRecords(input:RecordTeamForwardInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult>{
+  const comment=input.commentText?.trim()??''
+  if(!input.targetConversationRef||!Number.isSafeInteger(input.expectedUserId)||input.expectedUserId<=0||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(input.requestId)||!Number.isSafeInteger(input.sendAtMillis)||input.sendAtMillis<=0||comment.length>20000||!input.sources.length||input.sources.length>100)throw invalid()
+  const session=await this.runtime.requireSession()
+  const guard=async()=>{
+   signal?.throwIfAborted()
+   const current=await this.runtime.accountScopedSession()
+   if(session.userId!==input.expectedUserId||current?.userId!==session.userId||current.refreshToken!==session.refreshToken)throw new ArkmePluginError('team-account-changed','登录账号已变化，请重新打开转发',false,409)
+   signal?.throwIfAborted()
+  }
+  await guard()
+  const context=await this.team.resolveConversation(input.targetConversationRef,session.userId)
+  await guard()
+  const raw=objectValue(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/messages/forward',{
+   ...context,client_message_uid:clientUid(input.requestId),expected_reply_seq:0,record_sources:input.sources,
+  },session,signal))
+  await guard()
+  if(!stringValue(raw.message_uid)||!['published','recalled'].includes(String(raw.state))||raw.side!==context.side||!Number.isSafeInteger(raw.seq)||Number(raw.seq)<=0)throw unknown()
+  const receipt=await this.team.messageReceipt(raw,session.userId,context)
+  await guard()
+  const result:ArkmeSourceSendResult={sourceRef:input.targetConversationRef,itemUid:receipt.key,status:1,sequence:receipt.seq,localState:'synced'}
+  if(raw.state==='recalled')return {...result,warningText:'该消息已投递，随后被撤回'}
+  if(comment)try{
+   const response=objectValue(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/messages/send',{
+    ...context,client_message_uid:clientUid(input.requestId+':comment'),expected_reply_seq:0,content:{text_content:comment,template_kind:1},
+   },session,signal))
+   await guard()
+   if(!['published','recalled'].includes(String(response.state))||response.side!==context.side||!stringValue(response.message_uid)||!Number.isSafeInteger(response.seq)||Number(response.seq)<=0)throw unknown()
+  }catch(error){await guard();return {...result,warningText:'消息已转发，附言尚未确认，请使用原请求重试'}}
+  return result
+ }
  async forward(input:TeamForwardInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult>{
   if(!input||!input.requestId||!/^[A-Za-z0-9._:-]{1,128}$/u.test(input.requestId)||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(input.recordUid)||!Number.isSafeInteger(input.sendAtMillis)||input.sendAtMillis<=0)throw invalid()
   const comment=input.commentText?.trim()??''
