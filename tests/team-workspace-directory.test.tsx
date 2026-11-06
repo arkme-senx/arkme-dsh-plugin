@@ -116,7 +116,7 @@ it('starts the new account read immediately and never publishes or drains the di
  await mount()
  await act(async()=>invalidateTeamWorkspace('test:90'))
  const oldSignal=call.mock.calls.find(([op])=>op==='team.app.workspace')![2] as AbortSignal
- await act(async()=>root.render(<TeamWorkspaceDirectory accountKey="test:91" teamRef={channel.teamRef} channel={channel} onBack={()=>{}}/>))
+ await act(async()=>root.render(<TeamWorkspaceDirectory key="test:91:support" accountKey="test:91" teamRef={channel.teamRef} channel={channel} onBack={()=>{}}/>))
  expect(oldSignal.aborted).toBe(true)
  await act(async()=>release(page))
  expect(call.mock.calls.filter(([op])=>op==='team.app.workspace').map(([,params])=>params.expectedAccountKey)).toEqual(['test:90','test:91'])
@@ -132,4 +132,17 @@ it('cancels an invalidated read on unmount without starting its queued refresh',
  await act(async()=>release(page))
  expect(reads).toBe(1)
  expect(host.textContent).toBe('')
+})
+
+
+it('retains the same team rows when only its encrypted reference rotates',async()=>{
+ let release!:(p:TeamWorkspacePage)=>void,reads=0
+ const pending=new Promise<TeamWorkspacePage>(resolve=>{release=resolve})
+ call.mockImplementation(async op=>op==='team.app.workspace'?(++reads===1?page:pending):{schemaVersion:2,items:[],hasMore:false})
+ await mount()
+ await act(async()=>root.render(<TeamWorkspaceDirectory accountKey="test:90" teamRef="rotated-team-ref" channel={{...channel,teamRef:'rotated-team-ref'}} onBack={()=>{}}/>))
+ expect(reads).toBe(2)
+ expect(host.textContent).toContain('客户群')
+ await act(async()=>release({...page,items:[]}))
+ expect(host.textContent).not.toContain('客户群')
 })

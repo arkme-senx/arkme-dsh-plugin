@@ -88,8 +88,8 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
   },[accountKey,teamRef])
   useEffect(()=>{if(initialChannel)setChannel(initialChannel)},[initialChannel])
   useEffect(()=>{
+    // The parent key owns account/team state; rotating sealed refs only refresh rows.
     const life=new AbortController();lifecycle.current=life;refreshPending.current=false
-    latest.current=undefined;setPage(undefined);setRows([]);setPinRows([]);setLoading(false);setError('')
     if(!initialChannel)void callArkme<TeamChannel>('team.app.channel',{expectedAccountKey:accountKey,teamRef},life.signal).then(value=>{if(!life.signal.aborted){setChannel(value);arkmeUi.resolveTeamDirectory(teamRef,value)}}).catch(e=>{if(!life.signal.aborted)setError(e instanceof Error?e.message:tr('团队暂不可用'))})
     void load()
     const stop=subscribeTeamMessageChanges(account=>{if(account===accountKey)void load()})

@@ -36,8 +36,8 @@ export function TeamGroupSourceCards({accountKey,conversation}:{accountKey:strin
     }
   },[accountKey,conversation.ref])
   useEffect(()=>{
+    // The parent key owns account/conversation state; rotating sealed refs only refresh cards.
     const life=new AbortController();lifecycle.current=life;refreshPending.current=false
-    latest.current=undefined;setPage(undefined);setBusy(false);setError('')
     void load()
     const stop=subscribeTeamWorkspaceChanges(account=>{if(account===accountKey)void load()})
     const focus=()=>{void load()},timer=setInterval(()=>{if(document.visibilityState==='visible')void load()},60_000)

@@ -99,7 +99,7 @@ it('isolates a changed conversation from an old response and queued hints',async
  await mount()
  await act(async()=>invalidateTeamWorkspace('test:90'))
  const signal=call.mock.calls[0]![2] as AbortSignal
- await act(async()=>root.render(<TeamGroupSourceCards accountKey="test:90" conversation={{...conversation,ref:'other-customer'}}/>))
+ await act(async()=>root.render(<TeamGroupSourceCards key="test:90:other-key" accountKey="test:90" conversation={{...conversation,key:'other-key',ref:'other-customer'}}/>))
  expect(signal.aborted).toBe(true)
  await act(async()=>release(cards))
  expect(call.mock.calls.map(([,params])=>params.conversationRef)).toEqual(['customer','other-customer'])
@@ -119,4 +119,17 @@ it('does not drain or navigate after the source owner is unmounted',async()=>{
  expect(reads).toBe(1)
  expect(open).not.toHaveBeenCalled()
  expect(arkmeComposerDraftStore.get(arkmeSourceComposerDraftKey(90,source)).extensionTarget).toBeUndefined()
+})
+
+
+it('keeps visible source cards while a same-conversation reference rotates',async()=>{
+ let release!:(p:typeof cards)=>void,reads=0
+ const pending=new Promise<typeof cards>(resolve=>{release=resolve})
+ call.mockImplementation(async()=>++reads===1?cards:pending)
+ await mount()
+ await act(async()=>root.render(<TeamGroupSourceCards accountKey="test:90" conversation={{...conversation,ref:'rotated-ref'}}/>))
+ expect(reads).toBe(2)
+ expect(host.textContent).toContain('客户群')
+ await act(async()=>release({...cards,items:[]}))
+ expect(host.textContent).toBe('')
 })
