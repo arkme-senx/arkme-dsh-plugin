@@ -68,7 +68,7 @@ export function RecordingSpeechStatistics({ query, refreshRevision, onClose, onS
     {owner.uncertain && <p className="speech-muted">{tr('上次提交结果尚未确认；核对提交会复用同一次请求，避免重复分析。')}</p>}
     {owner.loading && !owner.state && <p role="status">{tr('正在读取说话统计…')}</p>}
     {owner.state && !owner.state.supported && <div className="speech-empty"><ChartBar size={36} /><strong>{tr('原音说话统计尚未接通')}</strong><p>{tr('接通后，将根据你当天的真实发音，分析常用表达和口语习惯。')}</p><p className="speech-muted">{tr('每次出现都可试听原音，并定位到转写原文。')}</p></div>}
-    {owner.state?.job && <p role="status">{tr(stages[owner.state.job.stage])}{owner.state.job.total > 0 && ` · ${owner.state.job.completed}/${owner.state.job.total}`}</p>}
+    {owner.state?.job && <p role="status">{tr(owner.state.job.failureCode === 'insufficient_balance' ? 'AI 点数不足，补充后可重试。' : stages[owner.state.job.stage])}{owner.state.job.total > 0 && ` · ${owner.state.job.completed}/${owner.state.job.total}`}</p>}
     {(owner.state?.stale || owner.state?.job?.stale || owner.locallyStale) && <p role="status">{tr(result ? '录音或人物标记已变化，当前展示上次结果，请重新分析。' : '录音或人物标记已变化，请重新分析。')}</p>}
     {result && <>
       <div className="speech-coverage"><div>{tr('已分析本人语音')} {minutes(result.coverage.analyzedMillis)} / {minutes(result.coverage.eligibleMillis)} {tr('分钟')}</div>

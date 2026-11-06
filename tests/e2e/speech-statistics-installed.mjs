@@ -11,6 +11,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { isDeepStrictEqual } from 'node:util'
 
 const cli = process.env.ARKME_OFFICIAL_DSH_CLI, artifact = process.env.ARKME_PACKED_ARTIFACT
 const anchor = process.env.PLAYWRIGHT_MODULE_ANCHOR, fixturePath = process.env.ARKME_SPEECH_FIXTURE
@@ -122,16 +123,47 @@ export function apply(ctx){void(async()=>{
   await page.getByText('表达用法分类可能使用 AI 点数', { exact: false }).waitFor()
   const initial = await page.evaluate(async query => { const r = await fetch('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'recordings.speech-statistics.state', params: query }) }); return r.json() }, { accountScope: `test:${fixture.user_id}`, date: fixture.query.date, timezone: fixture.query.time_zone })
   const initialResultId = initial.value.result.id
+  assert.match(fixture.allowance_url, /^http:\/\/127\.0\.0\.1:\d+\/_fixture\/allowance$/)
+  const funding = async action => {
+    const response = await fetch(fixture.allowance_url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': fixture.secret }, body: JSON.stringify({ action }) })
+    assert.equal(response.status, 200); return response.json()
+  }
+  const quotaBefore = await funding('arm')
+  assert.ok(quotaBefore.provider_dispatches > 1)
   const submitted = page.waitForResponse(r => r.url().endsWith('/arkme-self/api') && r.request().postDataJSON()?.operation === 'recordings.speech-statistics.create')
   await page.getByRole('button', { name: '重新分析', exact: true }).click()
   const accepted = await (await submitted).json()
   assert.equal(accepted.ok, true); assert.ok(accepted.value.job)
   await page.getByRole('button', { name: '重新分析', exact: true }).waitFor({ state: 'hidden' })
+  const firstUiRequestId = calls.filter(call => call.path.endsWith('/speech-statistics/create')).at(-1).body.request_id
+  assert.notEqual(firstUiRequestId, fixture.request_id)
+  await page.getByRole('button', { name: '重新分析', exact: true }).waitFor({ timeout: 120000 })
+  const quotaFailed = await page.evaluate(async query => { const r = await fetch('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'recordings.speech-statistics.state', params: query }) }); return r.json() }, { accountScope: `test:${fixture.user_id}`, date: fixture.query.date, timezone: fixture.query.time_zone })
+  assert.equal(quotaFailed.value.job?.stage, 'failed')
+  assert.equal(quotaFailed.value.job.failureCode, 'insufficient_balance')
+  await page.getByText('AI 点数不足，补充后可重试。', { exact: false }).waitFor()
+  assert.equal(quotaFailed.value.job.id, accepted.value.job.id)
+  assert.ok(quotaFailed.value.job.completed > 0)
+  assert.equal(quotaFailed.value.result.id, initialResultId)
+  const exhausted = await funding('state')
+  assert.equal(exhausted.available_nano_cny, 0); assert.equal(exhausted.reserved_nano_cny, 0)
+  assert.equal(exhausted.exhausted_once, true)
+  assert.equal(exhausted.provider_dispatches - quotaBefore.provider_dispatches, 1)
+  await page.screenshot({ path: join(capture, 'speech-quota-partial-failure.png') })
+  await funding('refill')
+  const continuation = page.waitForResponse(r => r.url().endsWith('/arkme-self/api') && r.request().postDataJSON()?.operation === 'recordings.speech-statistics.create')
+  await page.getByRole('button', { name: '重新分析', exact: true }).click()
+  const resumed = await (await continuation).json()
+  assert.equal(resumed.ok, true); assert.equal(resumed.value.job.id, accepted.value.job.id)
+  assert.ok(resumed.value.job.completed > 0)
   const uiRequestId = calls.filter(call => call.path.endsWith('/speech-statistics/create')).at(-1).body.request_id
-  assert.notEqual(uiRequestId, fixture.request_id)
+  assert.notEqual(uiRequestId, firstUiRequestId)
+  await page.getByRole('button', { name: '重新分析', exact: true }).waitFor({ state: 'hidden' })
   await page.getByRole('button', { name: '重新分析', exact: true }).waitFor({ timeout: 120000 })
   const uiState = await page.evaluate(async query => { const r = await fetch('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'recordings.speech-statistics.state', params: query }) }); return r.json() }, { accountScope: `test:${fixture.user_id}`, date: fixture.query.date, timezone: fixture.query.time_zone })
   assert.ok(uiState.ok && uiState.value.result && uiState.value.result.id !== initialResultId && !uiState.value.job)
+  const quotaAfter = await funding('state')
+  assert.equal(quotaAfter.provider_dispatches - quotaBefore.provider_dispatches, quotaBefore.provider_dispatches, 'quota retry dispatched already-paid source batches again')
   const assertListCounts = async mode => {
     const expected = uiState.value.result.terms.map(term => ({ text: term.text, count: mode === 'all' ? term.verifiedCount : term.habitCount, pending: term.pendingCount })).filter(term => term.count > 0 || term.pending > 0)
     await page.waitForFunction(expected => {
@@ -181,7 +213,7 @@ export function apply(ctx){void(async()=>{
   await page.locator('.speech-occurrence').nth(locationIndex).getByRole('button', { name: '定位原文', exact: true }).click()
   await page.getByRole('button', { name: '关闭说话统计', exact: true }).waitFor({ state: 'hidden' })
   await page.waitForFunction(itemId => [...document.querySelectorAll('[data-recording-transcript-item]')].some(row => row.dataset.recordingTranscriptItem === itemId), located.value.target.focusItemId)
-  assert.ok(browserDayReads.slice(dayReadStart).some(read => JSON.stringify(read.window) === JSON.stringify(located.value.target.window)), 'UI discarded the original transcript date window')
+  assert.ok(browserDayReads.slice(dayReadStart).some(read => isDeepStrictEqual(read.window, located.value.target.window)), 'UI discarded the original transcript date window')
   await page.screenshot({ path: join(capture, 'speech-locate-original.png') })
   const originalRows = page.locator('[data-recording-transcript-item]')
   await originalRows.first().waitFor()
@@ -211,6 +243,7 @@ export function apply(ctx){void(async()=>{
   assert.equal(source.target, null); assert.ok(sdk.mediaUrl(source.playback.playbackRef))
   assert.notEqual(state.result.id, initialResultId)
   assert.equal((await sdk.createSpeechStatistics({ ...query, requestId: uiRequestId })).result.id, state.result.id)
+  assert.equal((await sdk.createSpeechStatistics({ ...query, requestId: firstUiRequestId })).result.id, state.result.id)
   assert.equal((await sdk.createSpeechStatistics({ ...query, requestId: fixture.request_id })).result.id, initialResultId)
   // Retention removes the accepted original bytes. Frozen evidence stays
   // readable, playback must resolve the current retained physical parts.
@@ -242,7 +275,8 @@ export function apply(ctx){void(async()=>{
   const unsupported = createArkmeSdk({ fetchImpl: async () => Response.json({ ok: true, value: { contractVersion: 1, features: { recordingSpeechStatistics: 1 } } }) })
   await assert.rejects(() => unsupported.speechStatisticsCapabilities(), /v2/); unsupported.dispose()
   assert.ok(!calls.some(call => /strategy-comparison\/start|del-session|uploads\//.test(call.path)))
-  await writeFile(join(capture, 'acceptance.json'), JSON.stringify({ officialRuntime: '0.2.1-rc.2', artifact: resolve(artifact), profile, realSession: true, trustedConfirmation: true, packedSdkConsumer: true, originalOmittedPlayback: true, originalCrossMidnightLocation: true, originalDayWindow: located.value.target.window, existingTranscriptPlayback: true, uiCreateQueuedToReady: true, countsMatchServer: true, billingDisclosure: true, realModelAndAllowance: fixture.live_model === true, expiredOriginalRetainedPlayback: true, sameReceipt: state.result.id, browserErrors: errors, mediaEvents: await page.evaluate(() => window.__speechMediaEvents), calls: calls.map(call => call.path) }, null, 2))
+  assert.deepEqual(errors, [], 'browser or fixture proxy reported runtime errors')
+  await writeFile(join(capture, 'acceptance.json'), JSON.stringify({ officialRuntime: '0.2.1-rc.2', artifact: resolve(artifact), profile, realSession: true, trustedConfirmation: true, packedSdkConsumer: true, originalOmittedPlayback: true, originalCrossMidnightLocation: true, originalDayWindow: located.value.target.window, existingTranscriptPlayback: true, uiCreateQueuedToReady: true, countsMatchServer: true, billingDisclosure: true, realModelAndAllowance: fixture.live_model === true, quotaRetrySameOperation: true, paidProgressReused: true, providerDispatches: quotaAfter.provider_dispatches, expiredOriginalRetainedPlayback: true, sameReceipt: state.result.id, browserErrors: errors, mediaEvents: await page.evaluate(() => window.__speechMediaEvents), calls: calls.map(call => call.path) }, null, 2))
   console.log('SPEECH_INSTALLED_ACCEPTANCE_OK', capture)
 } catch (error) {
   if (page) { await writeFile(join(capture, 'failure.txt'), await page.locator('body').innerText()).catch(() => undefined); await page.screenshot({ path: join(capture, 'failure.png') }).catch(() => undefined) }

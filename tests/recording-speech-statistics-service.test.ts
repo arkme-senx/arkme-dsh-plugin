@@ -114,6 +114,12 @@ it('keeps an old stale result separate from a current non-stale job', () => {
   expect(parsed.stale).toBe(true)
   expect(parsed.job?.stale).toBe(false)
 })
+it('exposes a closed quota failure only on a failed job', () => {
+  const job = { id: 'partial', stage: 'failed', completed: 50, total: 100, stale: false, failureCode: 'insufficient_balance' }
+  expect(parseSpeechState({ ...state, job }, q).job?.failureCode).toBe('insufficient_balance')
+  expect(() => parseSpeechState({ ...state, job: { ...job, stage: 'counting' } }, q)).toThrow()
+  expect(() => parseSpeechState({ ...state, job: { ...job, failureCode: 'provider-internal-detail' } }, q)).toThrow()
+})
 it('rejects v1 source negotiation without accepting an invented v2 payload', async () => {
   const f = fixture(); f.post.mockResolvedValueOnce({ ...capability, schema_version: 1 })
   await expect(f.service.capabilities()).rejects.toThrow('不兼容')

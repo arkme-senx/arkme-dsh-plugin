@@ -16,7 +16,7 @@ export interface SpeechResult {
 }
 export interface SpeechState {
   supported: boolean; stale: boolean; result: SpeechResult | null
-  job: { id: string; stage: 'queued' | 'recognizing' | 'verifying' | 'counting' | 'failed'; completed: number; total: number; stale: boolean } | null
+  job: { id: string; stage: 'queued' | 'recognizing' | 'verifying' | 'counting' | 'failed'; completed: number; total: number; stale: boolean; failureCode?: 'insufficient_balance' } | null
 }
 export interface SpeechOccurrence {
   key: string; startAtMillis: number; endAtMillis: number; text: string; originalText: string
@@ -67,6 +67,10 @@ export function parseSpeechState(value: unknown, q: SpeechQuery): SpeechState {
     const j = speechObject(v.job), stage = speechText(j.stage) as NonNullable<SpeechState['job']>['stage']
     if (!['queued', 'recognizing', 'verifying', 'counting', 'failed'].includes(stage)) invalid()
     job = { id: speechText(j.id), stage, completed: count(j.completed), total: count(j.total), stale: bool(j.stale) }
+    if (j.failureCode !== undefined) {
+      if (stage !== 'failed' || j.failureCode !== 'insufficient_balance') invalid()
+      job.failureCode = 'insufficient_balance'
+    }
     if (job.completed > job.total) invalid()
   }
   return { supported: true, stale: bool(v.stale), result, job }

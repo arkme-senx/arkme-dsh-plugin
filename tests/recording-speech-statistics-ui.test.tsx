@@ -62,6 +62,17 @@ it('aborts delayed reads when closed', async () => {
   await act(async () => { resolve(state); await tick() })
   expect(host.textContent).toBe('')
 })
+it('explains quota exhaustion and waits for an explicit retry while preserving progress', async () => {
+  const blocked: SpeechState = { ...state, job: { id: 'partial', stage: 'failed', completed: 50, total: 100, stale: false, failureCode: 'insufficient_balance' } }
+  mocks.call.mockImplementation(async op => op.endsWith('.create') ? { ...state, job: { ...blocked.job, stage: 'queued', failureCode: undefined } } : blocked)
+  await render()
+  expect(host.textContent).toContain('AI 点数不足，补充后可重试。')
+  expect(host.textContent).toContain('50/100')
+  expect(mocks.call.mock.calls.some(call => call[0].endsWith('.create'))).toBe(false)
+  await act(async () => { button('重新分析').click(); await tick() })
+  expect(mocks.call.mock.calls.filter(call => call[0].endsWith('.create'))).toHaveLength(1)
+  expect(host.textContent).toContain('50/100')
+})
 it('reuses an uncertain request id after closing and reopening', async () => {
   mocks.call.mockImplementation(async op => { if (op.endsWith('.create')) throw new Error('timeout'); return state })
   await render()
