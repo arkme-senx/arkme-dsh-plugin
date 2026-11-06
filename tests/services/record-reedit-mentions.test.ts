@@ -69,7 +69,7 @@ describe('record re-edit mention identities', () => {
     const result = await metadataFromInputs(payload, '@小明 原文', '@小明 @小红', [original,
       { mentionRef: 'signed-chat-ref', displayName: '小红', startIndex: 4, length: 3 },
     ], source, validate, 'plain')
-    expect(validate).toHaveBeenCalledWith([{ mentionRef: 'signed-chat-ref', startIndex: 4, length: 3 }], [])
+    expect(validate).toHaveBeenCalledWith([{ mentionRef: 'signed-chat-ref', startIndex: 4, length: 3 }], [],[])
     expect(result?.human_mentions).toHaveLength(2)
   })
   it.each([
@@ -126,11 +126,12 @@ describe('record re-edit mention identities', () => {
     const runtime = { config: { maxTextLength: 20000 }, stateStore: new ArkmeStateStore(root),
       requireSession: async () => session,
       authenticatedPost: async (path: string, body: Record<string, unknown>) => {
+        if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: written?.revision_uid === body.revision_uid, accepted_version: 2, current_version: 2 }
         if (path === '/api/v1/records/update') {
           writes += 1
           written = body; core = { ...core, ...body, version: 2 }
           if (mode === 'unknown') throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })
-          return { record_core: core, revision_uid: 'revision-2' }
+          return { record_core: core, revision_uid: body.revision_uid }
         }
         return { record_core: core }
       },
@@ -156,7 +157,7 @@ describe('record re-edit mention identities', () => {
     const metadata = (written?.content_payload as Record<string, unknown>).mention_metadata
     if (remove) expect(metadata).toBeUndefined()
     else expect(metadata).toMatchObject({ human_mentions: [{ user_id: 17, start_index: 3, length: 3 }, ...(adding ? [{ user_id: 99, start_index: 7, length: 3 }] : [])] })
-    if (adding) expect(validate).toHaveBeenCalledWith(source, '😀 @小明 @小红 更新', [{ mentionRef: 'new-human', startIndex: 7, length: 3 }], [], session, 'plain')
+    if (adding) expect(validate).toHaveBeenCalledWith(source, '😀 @小明 @小红 更新', [{ mentionRef: 'new-human', startIndex: 7, length: 3 }], [], session, 'plain',[])
     service.dispose()
   })
 })

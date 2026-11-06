@@ -242,7 +242,7 @@ describe('isolated message synchronization admission', () => {
     expect(Object.keys(f.runtime.requestStats())).toEqual(['interactive-read:chat'])
   })
 
-  it.each(['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2'])('admits %s and its required profile projection while unrelated background reads are held', async route => {
+  it.each(['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2','/api/v1/chat/timeline/unified/v3'])('admits %s and its required profile projection while unrelated background reads are held', async route => {
     vi.useFakeTimers()
     const held = gate(), starts: string[] = []
     const f = fixture(async (input, init) => {

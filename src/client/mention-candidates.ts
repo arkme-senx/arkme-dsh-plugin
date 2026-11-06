@@ -49,12 +49,14 @@ export function arkmeMentionCandidateMatches(
 }
 
 export type ArkmeMentionCandidate =
+  | {kind:'team';key:string;teamMentionRef:string;displayName:string;secondaryName?:string;avatarRef?:string}
   | { kind: 'all'; displayName: '所有人' }
   | { kind: 'bot'; displayName: string; botRef: string; secondaryName?: string; avatarRef?: string; searchText?: string; reservedAgent?: 'asen' }
   | ({ kind: 'member'; mentionRef: string } & ArkmeConversationMemberItem)
 
 export function arkmeMentionCandidateKey(candidate: ArkmeMentionCandidate): string {
   if (candidate.kind === 'all') return 'all'
+  if(candidate.kind==='team')return `team:${candidate.key}`
   if (candidate.kind === 'bot') return `bot:${candidate.botRef}`
   return `member:${candidate.mentionRef}`
 }
@@ -66,7 +68,7 @@ export function arkmeMentionCandidateIsReservedAsen(candidate: ArkmeMentionCandi
 
 export function arkmeMentionCandidatePrimaryText(
   member: {
-    kind: 'all' | 'bot' | 'member'
+    kind: 'all' | 'bot' | 'member' | 'team'
     displayName: string
     mentionDisplayName?: string
     mentionSecondaryName?: string
@@ -113,11 +115,13 @@ export function arkmeGroupMentionCandidates(
   query: string,
   bots: readonly ArkmeGroupBotCandidate[],
   members: readonly ArkmeConversationMemberItem[],
+  teams:readonly import('../team-group-contract.js').TeamGroupParticipant[]=[],
 ): ArkmeMentionCandidate[] {
   const candidates: ArkmeMentionCandidate[] = []
   if (arkmeAllMentionMatches(query)) {
     candidates.push({ kind: 'all', displayName: '所有人' })
   }
+  candidates.push(...teams.filter(t=>!!t.mentionRef&&arkmeMentionCandidateMatches({displayName:t.name,secondaryName:t.jotmoId},query)).map(t=>({kind:'team' as const,key:t.key,teamMentionRef:t.mentionRef,displayName:t.name,secondaryName:`团队 · ${t.jotmoId}`})))
   const botCandidates = bots
     .filter(bot => bot.installed && !arkmeLooksLikeReservedAsenBot(bot) && arkmeMentionCandidateMatches({
       displayName: bot.name,
@@ -204,6 +208,7 @@ export function arkmeMemberForMention(
   members: readonly ArkmeConversationMemberItem[],
   mentionTarget?: ArkmeTimelineMentionTarget,
 ): ArkmeConversationMemberItem | undefined {
+  if(mentionTarget&&mentionTarget.kind!=='member')return undefined
   return arkmeMemberForMentionTarget(mentionTarget, members)
     ?? arkmeMemberForVisibleMention(mentionText, members)
 }

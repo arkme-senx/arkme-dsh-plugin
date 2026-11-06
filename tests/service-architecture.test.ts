@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
   'recordingFileStorage',
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
@@ -45,6 +46,7 @@ const expectedPublicMethods = [
   'automaticCapabilities', 'updateAutomaticCapability',
   'relationPage', 'relationRecords', 'peopleList', 'peopleOpenChat', 'exploreEnrich', 'recordingImportReceipt', 'explorePage', 'exploreDetail', 'exploreSource', 'exploreMutate', 'exploreSettings', 'saveExploreSettings',
   'messageSyncStatus', 'retryMessageSync',
+  'teamGroups', 'teamWorkspace',
   'externalChats',
   'listTeamEntryPreferences', 'queryTeamEntryPreferences', 'changeTeamEntryPreferences',
   'listTeamNotificationConversations', 'getTeamNotificationPolicy', 'setTeamNotificationPolicy',
@@ -67,7 +69,7 @@ const expectedPublicMethods = [
   'preflightTeamMessages','readTeamMarks','changeTeamMark','recallTeamMessage', 'reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
-  'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'localDirectoryPreferences', 'localTranscriptEntries', 'publishLongArticle', 'stageLongArticleImage',
+  'recentEmojiIds', 'recordRecentEmoji', 'conversationViewports', 'localDirectoryPreferences', 'publishLongArticle', 'stageLongArticleImage',
   'listArchives', 'getArchiveStates', 'setArchiveState',
   'withGroupMemberInvalidation', // composition-only MCP presentation seam; no SDK/Host route
   'directMessageAdmission', 'setDirectMessageRefusal', 'assignRecordTopic', 'listTopicCandidates', 'deleteSourceRecords', 'selfTarget',
@@ -154,6 +156,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'transcript-view-service.ts',
   'progressive-attachments.ts',
   'account-model-service.ts',
   'identity-share-service.ts',
@@ -203,7 +206,7 @@ const expectedServiceFiles = [
 
   'service.ts', 'auth-service.ts', 'profile-service.ts', 'bot-service.ts', 'bot-conversation-service.ts', 'source-service.ts',
   'conversation-directory-service.ts', 'conversation-list-preference-service.ts', 'conversation-directory-visibility-service.ts',
-  'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts', 'group-representation.ts',
+  'chat-sender-display-reader.ts', 'chat-service.ts', 'chat-realtime-service.ts', 'group-service.ts', 'group-ai-polish-service.ts', 'group-team-mention.ts', 'group-representation.ts',
   'member-event-service.ts', 'official-notification-service.ts', 'offline-context-service.ts',
   'desktop-attention-bridge.ts',
   'record-service.ts', 'record-edit-history-service.ts', 'related-quick-note-service.ts', 'related-recording-service.ts', 'recording-entity-personalization.ts', 'recording-service.ts', 'recording-strategy-service.ts', 'recording-entity-service.ts', 'recording-read-owner.ts', 'recording-file-upload.ts', 'recording-workflow-service.ts', 'recording-import-gateway.ts',

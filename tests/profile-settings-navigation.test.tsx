@@ -100,6 +100,7 @@ describe('profile/settings navigation', () => {
     expect(button('导出到文件夹').disabled).toBe(true)
     await act(async () => button('导出到文件夹').click())
     expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['data.export.preflight'])
+
   })
   it('renders usage in settings and unmounts account content immediately on logout', async () => {
     await act(async () => root.render(<ArkmeAccountUsageSettings />))

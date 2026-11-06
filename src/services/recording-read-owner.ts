@@ -22,6 +22,7 @@ export interface RecordingSpeakerEdit {
   start: number; end: number; revision: string; formalSpeakerId: string; sourceNumber: number; assignmentNumber: number; partitionId: string
 }
 export interface RecordingOwnerFragment {
+ privateViewVersion?: string
   speakerEdit?: RecordingSpeakerEdit
   soundSource?: 'unknown' | 'in_person' | 'playback'
   containsPlayback?: boolean
@@ -297,7 +298,7 @@ export class RecordingReadOwner {
       if (item.sound_source !== undefined && !['unknown', 'in_person', 'playback'].includes(String(item.sound_source))) return invalid()
       if (item.contains_playback !== undefined && typeof item.contains_playback !== 'boolean') return invalid()
       const edit = speakerEdit(item.speaker_edit)
-      return { ...(edit === undefined ? {} : { speakerEdit: edit }), ...(item.sound_source === undefined ? {} : { soundSource: item.sound_source as 'unknown' | 'in_person' | 'playback' }), ...(item.contains_playback === undefined ? {} : { containsPlayback: item.contains_playback as boolean }), ...(item.search_version === undefined ? {} : { searchVersion: revision(item.search_version) }), recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
+      return { ...(item.private_view_version === undefined ? {} : {privateViewVersion: revision(item.private_view_version)}), ...(edit === undefined ? {} : { speakerEdit: edit }), ...(item.sound_source === undefined ? {} : { soundSource: item.sound_source as 'unknown' | 'in_person' | 'playback' }), ...(item.contains_playback === undefined ? {} : { containsPlayback: item.contains_playback as boolean }), ...(item.search_version === undefined ? {} : { searchVersion: revision(item.search_version) }), recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
     })
     if (items.reduce((sum, item) => sum + item.textEnd - item.textStart, 0) > 20_000) return invalid()
     for (let index = 1; index < items.length; index++) follows(items[index - 1]!, items[index]!)

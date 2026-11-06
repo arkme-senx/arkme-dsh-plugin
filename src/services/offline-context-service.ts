@@ -45,6 +45,13 @@ export class OfflineContextService implements OfflineContextPort {
   }
   dispose(): void { this.disposed = true; this.epoch++; this.unsubscribe() }
 
+  private async personalChatSource(ref:string,userId:number) {
+    const source=await this.sources.openSourceRef(ref,userId)
+    if(source.groupDelegation)throw new ArkmePluginError('offline-context-source-unsupported','团队代理来源不支持个人线下交流关联',false,403)
+    if(source.kind!=='private_chat'&&source.kind!=='group_chat')throw invalid()
+    return source
+  }
+
   async timelineReference(id: string, chat: string, kind: 'private_chat' | 'group_chat', name: string): Promise<string> {
     const session = await this.runtime.requireSession()
     const codec = new TimelineTokenCodec(await this.runtime.stateStore.uniqueCode(), `offline-context:${this.runtime.config.environment}:${session.userId}`)
@@ -101,8 +108,7 @@ export class OfflineContextService implements OfflineContextPort {
     if (input.operation === 'capability') return { supported: capability.supported, version: 1 }
     if (!capability.supported) throw new ArkmePluginError('offline-context-unsupported', '当前服务尚不支持线下交流关联', false, 409)
     if (input.operation === 'coverage') {
-      const source = await this.sources.openSourceRef(input.sourceRef, session.userId)
-      if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw invalid()
+      const source = await this.personalChatSource(input.sourceRef, session.userId)
       const raw = await post('coverage', { chat_session_uid: source.ownerRef })
       if (!Array.isArray(raw.observations) || raw.observations.length > 32) throw invalid()
       return { observations: raw.observations.map(value => {
@@ -168,8 +174,7 @@ export class OfflineContextService implements OfflineContextPort {
       return entry
     }
     if (input.operation === 'list') {
-      const source = await this.sources.openSourceRef(input.sourceRef, session.userId)
-      if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw invalid()
+      const source = await this.personalChatSource(input.sourceRef, session.userId)
       const state = input.state ?? 'suggested'
       if (!['suggested', 'linked', 'dismissed'].includes(state)) throw invalid()
       if (input.messageRefs !== undefined && (!Array.isArray(input.messageRefs) || input.messageRefs.length < 1 || input.messageRefs.length > 100)) throw invalid()

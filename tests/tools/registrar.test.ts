@@ -82,6 +82,17 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires trusted human confirmation before a private transcript mutation reaches its owner', async () => {
+    const ctx = await setup(), changeTranscriptView = vi.fn(async () => ({revision:1}))
+    const mounted = await mountArkmeTools(ctx, 'business', {...ports, changeTranscriptView} as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = {id:SessionId('private-transcript-grant'),session:{events}} as unknown as Agent
+    const args = {action:'change',account_key:'test:7',ref:'sealed',command_json:JSON.stringify({operation_id:'one',expected_revision:0,original_version:'v1',action:'restore'})}
+    const run = (id:string) => ctx.tools.execute({callId:CallId(id),name:'arkme_transcript_view_change',arguments:args,agent,signal:new AbortController().signal})
+    expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required');expect(changeTranscriptView).not.toHaveBeenCalled()
+    events.push({type:'user/message',data:{source:{kind:'user'},content:[{type:'text',text:'确认恢复刚才这段个人转写原文'}]}})
+    expect((await run('confirmed')).isError).toBe(false);expect(changeTranscriptView).toHaveBeenCalledOnce()
+    await mounted.dispose()
+  })
   it('requires a later trusted human confirmation before replying to an Arko thought', async () => {
     const ctx = await setup(), extendSourceMessage = vi.fn(async () => ({ recordUid: 'reply', localState: 'synced' }))
     const mounted = await mountArkmeTools(ctx, 'business', { ...ports, extendSourceMessage } as unknown as ArkmeToolPorts)
@@ -318,7 +329,7 @@ describe('registerArkmeTools', () => {
     expect(ctx.tools.schemas().map(schema => schema.name)).toEqual([
       'arkme_plugin_contract',
       'arkme_records_export_preflight', 'arkme_records_export',
-      'arkme_team_outbound_open','arkme_group_identities', 'arkme_team_public_card',
+      'arkme_team_outbound_open','arkme_group_identities', 'arkme_team_public_card','arkme_team_groups_read','arkme_team_groups_change','arkme_team_workspace',
       'arkme_realtime_dictation',
       'arkme_dsh_annotations_read', 'arkme_dsh_annotations_write',
       'arkme_message_sync_status', 'arkme_message_sync_retry',
@@ -363,6 +374,7 @@ describe('registerArkmeTools', () => {
       'arkme_images_list',
       'arkme_record_create',
       'arkme_record_reedit',
+      'arkme_record_history',
       'arkme_bots_list',
       'arkme_bot_create',
       'arkme_bot_openclaw_connect',
@@ -395,6 +407,7 @@ describe('registerArkmeTools', () => {
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
       'arkme_relation_pages',
+      'arkme_transcript_views', 'arkme_transcript_view_change',
       'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
