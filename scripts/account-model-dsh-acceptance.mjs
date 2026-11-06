@@ -1,21 +1,30 @@
-// Synthetic business owner; official DSH session/grant and packed SDK transport.
+// Official DSH session/grant and packed SDK transport; optional real Go owner bridge.
 // Backend execution, settlement and storage are tested by the Go suites.
 import assert from 'node:assert/strict'
 import {randomUUID} from 'node:crypto'
 import {execFile} from 'node:child_process'
 import {promisify} from 'node:util'
-import {mkdir,writeFile} from 'node:fs/promises'
+import {mkdir,writeFile,readFile} from 'node:fs/promises'
 import {createUserMessage} from '@deepseek-ai/dsh-llm'
 export const name='account-model-acceptance'
 export const inject=['webServer','agents','sessions','tools','llm','arkmeData']
 export function apply(ctx,config){void(async()=>{
  await ctx.get('loader').await();await mkdir(config.workspace,{recursive:true})
  const service=ctx.arkmeData,scope='test:42',calls=[]
+ const backend=config.backendFile?JSON.parse(await readFile(config.backendFile,'utf8')):undefined
+ if(backend){
+  assert.equal(new URL(backend.origin).hostname,'127.0.0.1')
+  service.runtime.config.intelligentBaseUrl=backend.origin;service.runtime.config.environment='test'
+  const session={userId:42,clientId:7,accessToken:backend.token,refreshToken:'isolated-bridge-session'}
+  service.runtime.accountScopedSession=async()=>session
+ }
+
  const model={uid:'owned',route:'user-api/owned',version_route:'user-api/owned/version',name:'验收模型',execution:'cloud',protocol:'openai-chat',base_url:'https://example.com/v1',model_key:'owned',disabled:false,key_configured:true,capabilities:{text:true,json:true,tools:true,stream:true,images:false,context_tokens:16384,output_tokens:4096}}
  let settings={accountScope:scope,revision:1,enabled:true,models:[model],connectors:[],scenes:[],preferences:{default_route:'system-default',scenes:{},points_fallback:false}}
  const totals={calls:1,failed_calls:0,unknown_calls:1,invalid_calls:0,input_known_calls:0,output_known_calls:0,cache_known_calls:0,input_tokens:0,output_tokens:0,cached_tokens:0,cache_creation_tokens:0}
  service.authStatus=async()=>({status:'authenticated',environment:'test',userId:42})
  service.cachedProfile=async()=>({profile:null,cachedAtMillis:0,revision:0})
+ if(!backend){
  service.accountModels=async(expected)=>{assert(!expected||expected===scope);return structuredClone(settings)}
  service.modelDirectory=async()=>({accountScope:scope,models:[],failures:[]})
  service.accountModelPreferences=async(expected,revision,preferences)=>{assert.equal(expected,scope);assert.equal(revision,settings.revision);calls.push('preferences');settings={...settings,revision:revision+1,preferences};return structuredClone(settings)}
@@ -29,6 +38,14 @@ export function apply(ctx,config){void(async()=>{
   return{accountScope:scope,unit:'ai_points',query,chargedPoints:includes(query)?'0.1234567':'0',observedAt:cutoff,buckets}
  }
  service.aiPointsConsumptionRange=async(query,expected)=>{assert(!expected||expected===scope);const has=includes(query);return{accountScope:scope,unit:'ai_points',fromDate:query.fromDate,untilDate:query.untilDate,observedAt:query.settledBefore,chargedPoints:has?'0.1234567':'0',items:has?[{requestUid:'synthetic-statement',businessCode:'arkme',model:'验收模型',chargedPoints:'0.1234567',modelPoints:'0.1234567',services:[],grantedPoints:'0',purchasedPoints:'0.1234567',createdAt:factAt,completedAt:factAt+1,tokens:{cacheHitInput:'0',cacheMissInput:'1',output:'2'}}]:[],nextBeforeId:''}}
+ }else{
+  const initial=await service.accountModels(scope)
+  if(!initial.models.length){
+  const saved=await service.saveAccountModel(scope,{name:'Go 后端验收模型',expected_revision:initial.revision,execution:'cloud',protocol:'openai-chat',base_url:'https://example.com/v1',model_key:'bridge-model',api_key:'isolated-fixture-key',capabilities:model.capabilities})
+  const response=await fetch(backend.origin+'/api/v1/user-models/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+backend.token,'Content-Type':'application/json','X-Arkme-Call-Id':randomUUID()},body:JSON.stringify({model:saved.models[0].route,messages:[{role:'user',content:'隔离后端验收'}],max_tokens:512})});assert(response.ok,await response.text())
+  }
+ }
+
 
  const origin=`http://127.0.0.1:${ctx.webServer.port}`
  const consumer=await promisify(execFile)(process.execPath,[config.consumer,origin],{timeout:20000});assert(consumer.stdout.includes('ACCOUNT_MODEL_CONSUMER_PASSED'),consumer.stdout+consumer.stderr)
@@ -44,11 +61,11 @@ export function apply(ctx,config){void(async()=>{
  const invoke=(name,args={})=>ctx.tools.execute({agent,name,callId:randomUUID(),arguments:args,signal:AbortSignal.timeout(10000)})
  for(const name of ['arkme_account_models','arkme_account_model_binding','arkme_account_model_usage','arkme_account_model_preference','arkme_account_model_disable','arkme_ai_points_statistics','arkme_ai_points_consumption_range'])assert(names.includes(name),name)
  for(const [name,args]of [['arkme_account_models',{}],['arkme_account_model_binding',{}],['arkme_account_model_usage',{mode:'statistics'}],['arkme_ai_points_statistics',{fromDate:'2026-11-04',untilDate:'2026-11-05',grain:'day'}],['arkme_ai_points_consumption_range',{fromDate:'2026-11-04',untilDate:'2026-11-05',settledBefore:1793870000000}]]){const result=await invoke(name,args);assert(!result.isError,JSON.stringify(result));assert(! /\"(?:api_key|accessToken|credential)\"\s*:/.test(JSON.stringify(result)))}
- const before=calls.length
- agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'修改全局默认模型'}]}));await until(()=>confirmations===1);await agent.whenIdle();assert.equal(calls.length,before)
- agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'确认修改全局默认模型'}]}));await until(()=>completed);await agent.whenIdle();assert.equal(calls.length,before+1)
+ const before=(await service.accountModels(scope)).revision
+ agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'修改全局默认模型'}]}));await until(()=>confirmations===1);await agent.whenIdle();assert.equal((await service.accountModels(scope)).revision,before)
+ agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'确认修改全局默认模型'}]}));await until(()=>completed);await agent.whenIdle();assert.equal((await service.accountModels(scope)).revision,before+1)
  await ctx.sessions.flush(agent.session);await handle.dispose()
- await writeFile(config.output,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',artifact:true,toolDiscovery:names.filter(x=>/arkme_(account_model|ai_points_stat|ai_points_consumption_range)/.test(x)),grantedRead:true,humanConfirmation:true,publicConsumer:true,unknownUsage:true,owner:'synthetic; Go owner contracts tested separately'},null,2)+'\n')
+ await writeFile(config.output,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',artifact:true,toolDiscovery:names.filter(x=>/arkme_(account_model|ai_points_stat|ai_points_consumption_range)/.test(x)),grantedRead:true,humanConfirmation:true,publicConsumer:true,unknownUsage:true,owner:backend?'real Gin JWT + Mongo account/execution/usage + MySQL points; supplier and login issuance fixtures':'synthetic; Go owner contracts tested separately'},null,2)+'\n')
  console.log('HPK01_DSH_ACCEPTANCE_PASSED '+origin)
  // Keep this isolated Profile open for the actual existing UI acceptance.
 })().catch(e=>{console.error(e);ctx.get('appExit')(1)})}

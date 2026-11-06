@@ -6,7 +6,7 @@ const scope='test:42',dates={fromDate:'2026-11-04',untilDate:'2026-11-05',timezo
 const settings=await sdk.accountModels(scope);assert.equal(settings.accountScope,scope)
 const preferences:AccountModelPreferences={default_route:'system-default',scenes:{},points_fallback:false}
 const saved=await sdk.accountModelPreferences(scope,settings.revision,preferences);assert.equal(saved.revision,settings.revision+1)
-const usage:ModelUsageQuery={start:'2026-11-04',end:'2026-11-05',mode:'calls'}
+const usage:ModelUsageQuery={start:'2026-11-04',end:'2026-11-07',mode:'statistics'}
 assert.equal((await sdk.accountModelUsage(scope,usage)).totals.unknown_calls,1)
 const summary=await sdk.aiPointsStatistics(scope,{...dates,grain:'day'});assert.equal(summary.chargedPoints,'0.1234567')
 assert.equal((await sdk.aiPointsConsumptionRange(scope,{...dates,settledBefore:summary.observedAt})).observedAt,summary.observedAt)
