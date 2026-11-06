@@ -5,8 +5,29 @@ import type { ArkmeTimelineItem, ArkmeGroupBotCandidate } from '../src/types.js'
 
 const item: ArkmeTimelineItem = { itemUid: 'question', messageActionRef: 'opaque-action', senderKind: 'bot', senderBotDirectoryKey: 'original-bot', senderName: '旧管家名称', isMe: false, sendAtMillis: 1, title: '', textContent: '请确认', status: 0 }
 const bot: ArkmeGroupBotCandidate = { botRef: 'account-bound-bot', directoryKey: 'original-bot', name: '新管家名称', installed: true, description: '' }
-const answer = '【研发决策:22222222-2222-2222-2222-222222222222】\n同意'
+const answer = '同意'
 describe('Runner decision composer', () => {
+  it('normal extension mentions its exact Bot without replacing text, attachments or quote', () => {
+    const store = new ArkmeComposerDraftStore()
+    store.setText('group', '这是补充，不是另一项任务')
+    store.setExtensionTarget('group', item)
+    expect(store.mentionExtensionBot('group', [bot, { ...bot, directoryKey: 'other', botRef: 'other' }])).toBe(true)
+    expect(store.mentionExtensionBot('group', [bot])).toBe(true)
+    const draft = store.get('group')
+    expect(draft.text).toBe('@新管家名称 这是补充，不是另一项任务')
+    expect(draft.mentions).toHaveLength(1)
+    expect(draft.extensionTarget?.item.itemUid).toBe(item.itemUid)
+    expect(store.get('other-group').text).toBe('')
+  })
+  it('normal extension cannot infer an unbound or ambiguous Bot from its name', () => {
+    for (const bots of [[], [{ ...bot, installed: false }], [bot, bot]]) {
+      const store = new ArkmeComposerDraftStore()
+      store.setText('group', '保留草稿')
+      store.setExtensionTarget('group', item)
+      expect(store.mentionExtensionBot('group', bots)).toBe(false)
+      expect(store.get('group').text).toBe('保留草稿')
+    }
+  })
   it('serializes a structured mention of the original Bot and a correlated quoted reply', () => {
     const store = new ArkmeComposerDraftStore()
     prepareRunnerDecisionDraft(store, 'group', item, answer, [bot, { ...bot, directoryKey: 'other', botRef: 'other' }])

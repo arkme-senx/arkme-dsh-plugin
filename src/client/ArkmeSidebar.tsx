@@ -6824,6 +6824,14 @@ export function ArkmeSurface({
       || source?.kind !== 'group_chat'
       || !activeConversation || activeRecordReeditComposer !== undefined) return
     const item = composerExtensionTarget.item
+    if (item.senderKind === 'bot') {
+      if (!mentionBots.ready && !mentionBots.error) return
+      pendingExtensionMentionTargetRef.current = undefined
+      if (!arkmeComposerDraftStore.mentionExtensionBot(composerDraftKey, mentionBots.group)) {
+        showMessageActionStatus('当前 Bot 暂不可回复，请刷新群聊后重试')
+      }
+      return
+    }
     const member = item.memberRef === undefined ? undefined : conversationMemberByRef.get(item.memberRef)
     if (member === undefined && !conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined) return
     pendingExtensionMentionTargetRef.current = undefined
@@ -6838,7 +6846,7 @@ export function ArkmeSurface({
     insertMemberMentionAt(member, 0, current.text.length)
   }, [activeConversation, activeRecordReeditComposer, composerDraftKey, composerExtensionTarget,
     conversationMemberByRef, conversationMemberSnapshot.complete, conversationMemberSnapshot.error,
-    insertMemberMentionAt, source])
+    insertMemberMentionAt, source, mentionBots.ready, mentionBots.error, mentionBots.group, showMessageActionStatus])
   const closeRecordReedit = useCallback(() => {
     const target = recordReeditComposerRef.current
     if (target === undefined || target.busy || preparationJobs.current.has(arkmeRecordReeditPreparationKey(target))) return

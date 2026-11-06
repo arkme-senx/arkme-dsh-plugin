@@ -21,7 +21,7 @@ describe('Runner decision presentation', () => {
   const reply=vi.fn();await render(<ArkmeRunnerCard card={card} onReply={reply} />)
   expect(host.textContent).toContain('等待负责人决策')
   await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='采用建议并回复')!.click())
-  expect(reply).toHaveBeenCalledWith(`【研发决策:${card.decisionId}】\n同意采用以下方案：${card.recommendation}`)
+  expect(reply).toHaveBeenCalledWith(`同意采用以下方案：${card.recommendation}`)
   expect(host.textContent).toContain('点击后在输入框确认并发送；管家会核对负责人身份。')
  })
  it('answered historical cards offer no decision action', async () => {
@@ -73,10 +73,17 @@ it('requirement clarification identifies the requester and only prefills a draft
   const reply = vi.fn()
   await render(<ArkmeRunnerCard card={{ ...card, purpose: 'requirement', domain: '需求澄清', expert: '产品同事' }} onReply={reply} />)
   await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '补充需求')!.click())
-  expect(reply).toHaveBeenCalledWith(`【研发决策:${card.decisionId}】\n我的业务目标是：`)
+  expect(reply).toHaveBeenCalledWith('我的业务目标是：')
 })
 it('delivery renders branch links with existing safe Markdown without fetching images', async () => {
   await render(<ArkmeRunnerCard card={{ version: 1, producer: 'jotmo-agent-runner', kind: 'task', taskId: card.taskId, state: 'completed', title: '已交付', answer: '[查看分支](https://example.invalid/branch)\n\n![tracking](https://example.invalid/tracking.png)' }} />)
   expect(host.querySelector('a')?.getAttribute('href')).toBe('https://example.invalid/branch')
   expect(host.querySelector('img')).toBeNull()
+})
+
+it('keeps the business task visible when concurrent tasks ask the same question', async () => {
+  await render(<><ArkmeRunnerCard card={{...card, taskTitle:'修复重复提交'}} /><ArkmeRunnerCard card={{...card, taskId:'33333333-3333-3333-3333-333333333333', taskTitle:'完善图片预览'}} /></>)
+  expect(host.textContent).toContain('任务：修复重复提交')
+  expect(host.textContent).toContain('任务：完善图片预览')
+  expect(host.textContent).not.toContain(card.taskId)
 })

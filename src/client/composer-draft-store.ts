@@ -2,7 +2,7 @@ import { arkmeEmojiTextRuns } from '../arkme-emoji-text.js'
 import { arkmeEscapeMarkdownText, arkmeMarkdownPlainText, arkmeMarkdownTextRanges, type ArkmeTextFormat } from '../markdown.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import { composerExtensionTarget, readComposerExtensionTarget, type ArkmeComposerExtensionTarget } from './composer-extension-target.js'
-import type { ArkmeTimelineItem, ArkmeSourceItem, ArkmeUploadedAsset } from '../types.js'
+import type { ArkmeTimelineItem, ArkmeSourceItem, ArkmeUploadedAsset, ArkmeGroupBotCandidate } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import { arkmeEmojiById, type ArkmeEmoji } from './arkme-emoji.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
@@ -573,6 +573,21 @@ export class ArkmeComposerDraftStore {
     selectionEnd = selectionStart,
   ): number | undefined {
     return this.insertMentionToken(key, { all: true }, '所有人', selectionStart, selectionEnd)
+  }
+
+  mentionExtensionBot(key: string | undefined, bots: readonly ArkmeGroupBotCandidate[]): boolean {
+    if (key === undefined) return false
+    const current = this.get(key)
+    const item = current.extensionTarget?.item
+    if (item?.senderKind !== 'bot' || !item.senderBotDirectoryKey) return false
+    const matches = bots.filter(bot => bot.installed && bot.directoryKey === item.senderBotDirectoryKey)
+    if (matches.length !== 1) return false
+    const bot = matches[0]!
+    if (!bot.botRef.trim() || !bot.name.trim()) return false
+    if (!current.mentions.some(mention => mention.botRef === bot.botRef)) {
+      this.insertBotMention(key, bot.botRef, bot.name, 0)
+    }
+    return true
   }
 
   insertBotMention(

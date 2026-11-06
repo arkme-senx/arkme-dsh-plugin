@@ -6,7 +6,7 @@ export function prepareRunnerDecisionDraft(store: ArkmeComposerDraftStore, key: 
   item: ArkmeTimelineItem, text: string, bots: readonly ArkmeGroupBotCandidate[]): number {
   const current = store.get(key)
   if (current.text.trim() || current.attachments.length || current.emojis.length || current.extensionTarget) {
-    throw new Error('请先发送或保存当前草稿，再回复决策')
+    throw new Error('请先发送或保存当前草稿，再补充这项工作')
   }
   const matches = bots.filter(bot => bot.installed && bot.directoryKey
     && bot.directoryKey === item.senderBotDirectoryKey)

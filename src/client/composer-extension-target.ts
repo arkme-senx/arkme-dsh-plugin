@@ -15,6 +15,8 @@ export function composerExtensionTarget(item: ArkmeTimelineItem, quote?: ArkmeMe
     title: item.title.slice(0, 500), textContent: item.textContent.slice(0, 2_000), status: item.status,
     ...(item.textFormat === undefined ? {} : { textFormat: item.textFormat }),
     ...(item.memberRef === undefined ? {} : { memberRef: item.memberRef }),
+    ...(item.senderKind === undefined ? {} : { senderKind: item.senderKind }),
+    ...(item.senderBotDirectoryKey === undefined ? {} : { senderBotDirectoryKey: item.senderBotDirectoryKey }),
     ...(item.recordVersion === undefined ? {} : { recordVersion: item.recordVersion }),
     ...(item.recordOwnerUserId === undefined ? {} : { recordOwnerUserId: item.recordOwnerUserId }),
     ...(item.sequence === undefined ? {} : { sequence: item.sequence }),
@@ -37,6 +39,8 @@ export function readComposerExtensionTarget(value: unknown): ArkmeComposerExtens
     || !bounded(item.senderName, 256) || !bounded(item.title, 500) || !bounded(item.textContent, 2_000)
     || typeof item.isMe !== 'boolean' || !Number.isFinite(item.sendAtMillis) || !Number.isFinite(item.status)
     || (item.textFormat !== undefined && item.textFormat !== 'plain' && item.textFormat !== 'markdown')
+    || (item.senderKind !== undefined && item.senderKind !== 'human' && item.senderKind !== 'bot')
+    || (item.senderBotDirectoryKey !== undefined && !bounded(item.senderBotDirectoryKey, 16_384))
     || (item.memberRef !== undefined && !bounded(item.memberRef, 16_384))) return undefined
   if (item.contentBlocks !== undefined && (!Array.isArray(item.contentBlocks) || item.contentBlocks.length > 3
     || !item.contentBlocks.every((block: ArkmeContentBlock | null) => block !== null
