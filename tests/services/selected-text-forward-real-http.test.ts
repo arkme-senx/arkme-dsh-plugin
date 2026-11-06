@@ -10,11 +10,12 @@ import {quoteSourceContent} from '../../src/message-quote.js'
 const dir=process.env.CODEX_EXCERPT_CONTRACT_DIR
 it.skipIf(!dir)('sends four target kinds through the actual Host owner, Record/Chat HTTP and Mongo, then reads from an independent client',async()=>{
  const ready=JSON.parse(await readFile(join(dir!,'ready.json'),'utf8')),chat=JSON.parse(await readFile(join(dir!,'chat-ready.json'),'utf8')),roots:string[]=[],clients:Array<{service:ArkmeService;db:ArkmeLocalDatabase}>=[],trace:unknown[]=[]
+ let unknownRecordUid=''
  const make=async(user:number,token:string)=>{
   const root=await mkdtemp(join(tmpdir(),'q01 independent client '));roots.push(root);const db=new ArkmeLocalDatabase(root,new ArkmeStateStore(root));
   const session={userId:user,accessToken:token,refreshToken:token},store={read:async()=>session,write:async()=>{},delete:async()=>{}}
   const config={environment:'test',authBaseUrl:ready.url,recordBaseUrl:ready.url,chatBaseUrl:chat.url,subjectBaseUrl:ready.url,botBaseUrl:ready.url,imBaseUrl:ready.url,webrtcBaseUrl:ready.url,worldBaseUrl:ready.url,relationBaseUrl:ready.url,intelligentBaseUrl:ready.url,audioBaseUrl:ready.url,routePath:'/arkme-self/api',requestTimeoutMs:30000,maxTextLength:20000,fileStateDirectory:root,geetestCaptchaId:'isolated'} as ArkmeServiceConfig
-  const service=new ArkmeService(config,store,db,async(input,init)=>{const url=new URL(String(input));if(url.hostname!=='127.0.0.1')throw new Error('Non-loopback request forbidden');const response=await fetch(input,init);const json=await response.clone().json().catch(()=>({}));trace.push({path:url.pathname,status:response.status,code:json.code,message:json.message});return response})
+  const service=new ArkmeService(config,store,db,async(input,init)=>{const url=new URL(String(input));if(url.hostname!=='127.0.0.1')throw new Error('Non-loopback request forbidden');const response=await fetch(input,init);const json=await response.clone().json().catch(()=>({}));trace.push({path:url.pathname,status:response.status,code:json.code,message:json.message});if(unknownRecordUid&&url.pathname==='/api/v1/records/create'&&JSON.parse(String(init?.body)).record_uid===unknownRecordUid&&json.code===0)throw new TypeError('fixture lost accepted response');return response})
   clients.push({service,db});return service
  }
  const rawPost=async(base:string,path:string,body:unknown,token=ready.token_a)=>{const response=await fetch(base+path,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify(body)});const r=await response.json() as any;expect([0,200],JSON.stringify(r)).toContain(r.code);return r.data}
@@ -26,6 +27,14 @@ it.skipIf(!dir)('sends four target kinds through the actual Host owner, Record/C
   const commands:any[]=[]
   for(const [kind,owner] of [['send_to_self','self'],['topic','11111111-1111-4111-8111-111111111119'],['private_chat',chat.private],['group_chat',chat.group]] as const){
    const targetSourceRef=await source.sealSourceRef(11,kind,owner,'隔离目标'),command={expectedAccountKey:'test:11',targetSourceRef,recordUid:randomUUID(),relationUid:randomUUID(),sendAtMillis:Date.now(),commentText:kind==='topic'?'我的 #思考':'',quote:prepared};commands.push(command)
+   if(kind==='send_to_self'){
+    unknownRecordUid=command.recordUid
+    await expect(a.forwardSelectedText(command)).rejects.toMatchObject({code:'selected-text-unconfirmed'})
+    unknownRecordUid=''
+    const requests=trace.length
+    await expect(a.forwardSelectedText({...command,sendAtMillis:command.sendAtMillis+1})).rejects.toMatchObject({code:'record-intent-conflict'})
+    expect(trace).toHaveLength(requests)
+   }
    const first=await a.forwardSelectedText(command);expect(first.localState,JSON.stringify(trace)).toBe('synced');const retry=await a.forwardSelectedText(command);expect(retry.itemUid).toBe(first.itemUid)
    if(kind==='send_to_self'||kind==='topic'){
     expect(first.status).toBe(1)
@@ -63,6 +72,7 @@ it.skipIf(!dir)('sends four target kinds through the actual Host owner, Record/C
   await rawPost(ready.url,'/api/v1/records/update',{record_uid:original,version:1,title:'',text_content:originalText+'编辑',template_kind:1})
   await expect(b.excerptOriginal(own.recordUid)).rejects.toThrow(/变化/)
   expect((await b.personalRecordDetail(own.recordUid)).localSelfQuote?.quote.text).toBe(quote.text)
-  await writeFile(join(dir!,'forward-passed.json'),JSON.stringify({targets:4,independentClients:3,recipientOccurrence:true,sharedOriginal:true,trace}));
+  await writeFile(join(dir!,'mobile-fixtures.json'),JSON.stringify({sharedCommand,privateCommand:firstChat,staleCommand:own}));
+  await writeFile(join(dir!,'forward-passed.json'),JSON.stringify({targets:4,independentClients:3,recipientOccurrence:true,sharedOriginal:true,pendingIntentConflict:true,trace}));
  }finally{for(const c of clients){c.service.dispose();c.db.close()}for(const root of roots)await rm(root,{recursive:true,force:true})}
 },180000)

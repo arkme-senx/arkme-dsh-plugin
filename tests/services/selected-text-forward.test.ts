@@ -4,6 +4,7 @@ import {readRecordExcerpt} from '../../src/record-excerpt.js'
 import {matchExcerptOriginal} from '../../src/services/excerpt-original.js'
 import {createHash} from 'node:crypto'
 import type {ServiceRuntime} from '../../src/services/service.js'
+import {RecordService} from '../../src/services/record-service.js'
 const quote={version:1 as const,sourceLabel:'群聊',senderName:'原作者',sourceAtMillis:1000,text:'引用 😀\n'}
 const input={expectedAccountKey:'prod:11',recordUid:'019d8592-ebb4-7232-90f2-000000000001',relationUid:'019d8592-ebb4-7232-90f2-000000000002',sendAtMillis:1000,commentText:'',quote}
 function fixture(){const session={userId:11,refreshToken:'session'};return {config:{environment:'prod',maxTextLength:20000},requireSession:vi.fn(async()=>session),accountScopedSession:vi.fn(async()=>session)} as unknown as ServiceRuntime}
@@ -29,4 +30,21 @@ it('matches the exact occurrence of repeated text without persisting surrounding
  expect(matchExcerptOriginal({title:'source',text,recordVersion:3},q).selection).toEqual({start,end:start+2})
  expect(()=>matchExcerptOriginal({title:'source',text:text+'改',recordVersion:4},q)).toThrow('变化')
  expect(JSON.stringify(q.sourceSelection)).not.toContain('私文')
+})
+
+it('keeps a pending self excerpt bound to the original send time and exposes intent conflicts',async()=>{
+ const runtime=fixture()
+ let pending:any
+ await sendSelectedTextForward(runtime,input,{kind:'send_to_self',ownerRef:'self'},async(text,userId,excerpt)=>{
+  pending={recordUid:input.recordUid,textContent:text,excerpt:readRecordExcerpt(excerpt,text),sendAtMillis:input.sendAtMillis,createdAtMillis:input.sendAtMillis,attempts:1}
+  return {sourceRef:'self',itemUid:input.recordUid,status:1,localState:'synced'}
+ })
+ ;(runtime as any).stateStore={listPending:async()=>[pending]}
+ const record=new RecordService(runtime,{} as never,{} as never)
+ const dispatch=vi.spyOn(record as any,'sendPending').mockResolvedValue({recordUid:input.recordUid,status:1})
+ await expect(record.createText(input.recordUid,pending.textContent,{excerpt:pending.excerpt,sendAtMillis:input.sendAtMillis+1})).rejects.toMatchObject({code:'record-intent-conflict'})
+ await expect(record.createTextForConversation(input.recordUid,pending.textContent,{excerpt:pending.excerpt,sendAtMillis:input.sendAtMillis+1})).rejects.toMatchObject({code:'record-intent-conflict'})
+ expect(dispatch).not.toHaveBeenCalled()
+ await expect(record.createTextForConversation(input.recordUid,pending.textContent,{excerpt:pending.excerpt,sendAtMillis:input.sendAtMillis})).resolves.toMatchObject({localState:'synced',recordUid:input.recordUid})
+ expect(dispatch).toHaveBeenCalledOnce()
 })

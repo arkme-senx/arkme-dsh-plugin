@@ -1632,7 +1632,11 @@ export class RecordService {
     if(options.excerpt && !excerpt)throw new ArkmePluginError('self-note-invalid','摘录结构无效，未发送',false,400)
     const previous=(await this.runtime.stateStore.listPending(session.userId)).find(p=>p.recordUid===normalizedUid)
     if(previous){
-      if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt))throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
+      const changedExcerptTime = excerpt !== undefined && options.sendAtMillis !== undefined
+        && previous.sendAtMillis !== options.sendAtMillis
+      if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt) || changedExcerptTime) {
+        throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
+      }
       return this.sendPending(session,previous)
     }
     const now = options.sendAtMillis ?? Date.now()
@@ -1661,6 +1665,7 @@ export class RecordService {
       const result = await this.createText(recordUid, textContent, options)
       return { ...result, localState: 'synced' }
     } catch (error) {
+      if (options.excerpt && error instanceof ArkmePluginError && error.code === 'record-intent-conflict') throw error
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw error
       const pending = (await this.runtime.stateStore.listPending(session.userId))
