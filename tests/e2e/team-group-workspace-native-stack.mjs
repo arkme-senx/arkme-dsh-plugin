@@ -133,7 +133,7 @@ try{
  await page.locator('[data-arkme-group-team-row]').filter({hasText:'接待团队7'}).click()
  await page.getByRole('button',{name:'查看团队对话',exact:true}).click()
  proof.restoredGroupOnlyFolder=await until(()=>host.executeTeamApp('team.app.entries.query',{entries:[folderTarget],scope:'workspace'}),v=>v.items[0]?.dismissed===false,'team card restores group-only folder')
- await page.getByRole('button',{name:'关闭群成员',exact:true}).click()
+ assert.equal(await page.getByRole('button',{name:'关闭群成员',exact:true}).count(),0,'the existing navigation closes the previous group pane')
  await page.screenshot({path:join(capture,'native-team-card-restoration.png')})
  const currentCards=await host.executeTeamApp('team.app.sources.cards',{conversationRef:colleagueCustomer.conversation.ref});assert(currentCards.items[0])
  proof.occurrences=await until(()=>host.executeTeamApp('team.app.sources.occurrences',{conversationRef:colleagueCustomer.conversation.ref,cardRef:currentCards.items[0].ref}),v=>v.items.length===2,'exact customer occurrence after represented reply')
