@@ -333,7 +333,6 @@ export class UnifiedChatTimelineService {
         if (event.source === 'messages' && uid) {
           projected.push({ ...order, kind: 'message', item: {
             itemUid: uid, timelineEventId: order.eventId,
-            ...(objectValue(payload.record).source_snapshot === true ? {sourceSnapshot:true as const} : {}),
             timelineItemKey: await this.source.chatTimelineItemKey(session.userId, source.ownerRef, stringValue(relation.rel_uid)),
             senderName: '', isMe: false, sendAtMillis: order.occurredAtMillis, title: '', textContent: '内容暂时不可用',
             status: 0, quickNoteDetailsSupported: false,

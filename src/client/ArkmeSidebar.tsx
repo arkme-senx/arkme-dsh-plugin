@@ -59,7 +59,7 @@ import { MAX_ACTIVE_TIMELINE_EVENTS, MAX_ACTIVE_TIMELINE_TOKENS } from './unifie
 import { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
 export { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
-import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, conversationMessageDefaultUnread, conversationMessagesForSource, mergeConversationMessages as mergeItems } from './conversation-message-merge.js'
+import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, conversationMessageDefaultUnread, conversationMessageVisibleFromSequence, mergeConversationMessages as mergeItems } from './conversation-message-merge.js'
 export { ArkmeConversationMessageMergeOwner as ArkmeConfirmedSendRetentionOwner } from './conversation-message-merge.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { arkmeConversationMessageLayout, dayKey, timeLabel } from './conversation-message-presentation.js'
@@ -2330,9 +2330,10 @@ export function ArkmeSurface({
     newerCursor,
     newerHasMore,
   } = timelineView
-  const items = useMemo(()=>conversationMessagesForSource(rawTimelineItems, source?.teamRosterManaged === true),[rawTimelineItems,source?.teamRosterManaged])
+  const historyFloor = source?.teamRosterManaged === true ? source.sourceVisibleFromSeq ?? 0 : undefined
+  const items = useMemo(()=>rawTimelineItems.filter(item=>conversationMessageVisibleFromSequence(item, historyFloor)),[rawTimelineItems,historyFloor])
   const unifiedWindow = useMemo(()=>!rawUnifiedWindow || source?.teamRosterManaged !== true ? rawUnifiedWindow : {...rawUnifiedWindow,
-    events:rawUnifiedWindow.events.filter(event=>event.kind!=='message' || event.item.sourceSnapshot === true)},[rawUnifiedWindow,source?.teamRosterManaged])
+    events:rawUnifiedWindow.events.filter(event=>event.kind!=='message' || conversationMessageVisibleFromSequence(event.item, historyFloor))},[rawUnifiedWindow,source?.teamRosterManaged,historyFloor])
   const aiPolishSettingsRef = useRef(aiPolishSettings)
   const aiPolishNoticesRef = useRef(aiPolishNotices)
   aiPolishSettingsRef.current = aiPolishSettings
@@ -5038,7 +5039,6 @@ export function ArkmeSurface({
     )
     let optimistic: ArkmeTimelineItem = {
       itemUid: recordUid, senderName: optimisticSenderName, isMe: true, sendAtMillis: now,
-      ...(source.teamRosterManaged === true ? {sourceSnapshot:true as const} : {}),
       ...(roleAtSendStart === undefined ? {} : { selfRole: {
         roleId: roleAtSendStart.roleId,
         name: roleAtSendStart.name,
@@ -8601,8 +8601,8 @@ export function ArkmeSurface({
             onAiPolishSettingsChanged={setAiPolishSettings}
             onSourceProjectionUpdated={updateSourceProjection}
             onInternalGroupReady={() => {
-              // This source changed its content authority. Retire its old window
-              // before reading approved occurrences; other conversation caches stay intact.
+              // Refresh current membership, history range and scoped media delivery
+              // after association; message content keeps its ordinary semantics.
               for (const request of timelineRequestsRef.current.values()) request.controller.abort()
               timelineRequestsRef.current.clear()
               timelineGenerationRef.current += 1

@@ -148,7 +148,12 @@ try{
  await page.getByRole('button',{name:'对话',exact:true}).click()
  await page.getByText('界面关联的普通群',{exact:true}).first().click()
  const conversation=page.locator('.arkme-conversation-panel')
- await conversation.getByText('仅个人原件的未发布修改',{exact:true}).waitFor()
+ await conversation.getByText('编辑后的群消息',{exact:true}).waitFor()
+ const beforeAssociationSource=(await sdk.listSources('root',{refresh:true})).items.find(row=>row.displayName==='界面关联的普通群')
+ assert(beforeAssociationSource)
+ const beforeAssociation=await sdk.readSource(beforeAssociationSource.sourceRef)
+ const contentIdentity=page=>page.items.map(row=>({itemUid:row.itemUid,text:row.textContent,version:row.recordVersion??row.version}))
+
  await page.getByRole('button',{name:'群聊设置',exact:true}).click()
  await page.getByRole('menuitem',{name:'群管理',exact:true}).click()
  await page.getByRole('menuitem',{name:'关联为团队内部群',exact:true}).click()
@@ -162,20 +167,23 @@ try{
  await page.getByRole('button',{name:'完成',exact:true}).waitFor()
  await page.screenshot({path:join(capture,'link-ui-ready.png')});await page.getByRole('dialog').screenshot({path:join(capture,'link-ui-ready-dialog.png')})
  await page.getByRole('button',{name:'完成',exact:true}).click()
- await conversation.getByText('已批准的群历史正文',{exact:true}).waitFor()
- await conversation.getByText('仅个人原件的未发布修改',{exact:true}).waitFor({state:'hidden'})
+ await conversation.getByText('编辑后的群消息',{exact:true}).waitFor()
+ const afterAssociation=await sdk.readSource(beforeAssociationSource.sourceRef)
+ assert.deepEqual(contentIdentity(afterAssociation),contentIdentity(beforeAssociation))
+ await writeFile(join(capture,'association-preserves-content.json'),JSON.stringify({before:contentIdentity(beforeAssociation),after:contentIdentity(afterAssociation)},null,2))
+
+
  await page.getByText('团队身份暂不可用',{exact:true}).waitFor({state:'hidden'})
- await page.screenshot({path:join(capture,'linked-approved-history.png')})
- // Exercise the other public message consumer against the same approved
- // occurrence and real Record provider, including the author's private v2.
+ await page.screenshot({path:join(capture,'linked-ordinary-history.png')})
+ // OpenAPI and the UI retain the same ordinary current content after association.
  const evidenceResponse=await forward('/api/internal/v1/chat/openapi/messages/batch-get',{items:[{item_id:'approved-history',chat_session_uid:'t25-existing-ui-group',sequence:1}]},1001,{'X-Internal-Secret':'t25-full-owner-test','X-User-Id':'1001'})
  const evidence=JSON.parse(evidenceResponse.text)
  assert.equal(evidence.code,200,JSON.stringify(evidence))
  const approvedEvidence=evidence.data.items[0]
  assert.equal(approvedEvidence.lookup_status,'found')
  assert.notEqual(approvedEvidence.message.mutable,true) // Imported history has no personal edit target.
- assert.equal(approvedEvidence.message.text_content,'已批准的群历史正文')
- await writeFile(join(capture,'openapi-approved-evidence.json'),JSON.stringify(evidence,null,2))
+ assert.equal(approvedEvidence.message.text_content,'编辑后的群消息')
+ await writeFile(join(capture,'openapi-current-content-evidence.json'),JSON.stringify(evidence,null,2))
  }
 
  if(realOwners){
@@ -196,10 +204,10 @@ try{
   const memberSource=(await viewerSdk.listSources('root',{refresh:true})).items.find(row=>row.displayName==='待关联的普通群')
   assert(memberSource,'member must discover the actual linked group')
   const memberRef=memberSource.sourceRef,first=await viewerSdk.readSource(memberRef)
-  assert.equal(first.items[0].sourceSnapshot,true);assert.equal(first.items[0].textContent,'已批准的群历史正文');assert.equal(first.items[0].recordVersion??first.items[0].version,1)
+  assert.equal(first.items[0].textContent,'编辑后的群消息');assert.equal(first.items[0].recordVersion??first.items[0].version,2)
   const block=first.items[0].contentBlocks.find(block=>block.kind==='image'),mediaURL=new URL(viewerSdk.mediaUrl(block.originalRef||block.mediaRef),viewerBase).href
   const image=await viewerPage.request.get(mediaURL,{headers:{Range:'bytes=0-7'}});assert.equal(image.status(),206);assert.deepEqual([...await image.body()],[137,80,78,71,13,10,26,10])
-  assert((await searchWhenAvailable(viewerSdk,'已批准')).items.length>0)
+  assert((await searchWhenAvailable(viewerSdk,'编辑后')).items.length>0)
   const related=()=>viewerCtx.get('arkmeData').relatedQuickNotesFromMessage(memberRef,first.items[0].messageActionRef)
   assert.equal((await related()).recallMode,'search_fallback')
   await page.getByRole('button',{name:'联系人',exact:true}).click()
@@ -216,7 +224,7 @@ try{
   await wait(async()=>JSON.parse((await forward('/fixture/team/api/v1/team/members/snapshot',{team_id:'7'})).text).data,roster=>!roster.items.some(m=>m.user_id==='1002'))
   await assert.rejects(()=>viewerSdk.readSource(memberRef))
   assert([403,404].includes((await viewerPage.request.get(mediaURL)).status()))
-  assert.equal((await searchWhenAvailable(viewerSdk,'已批准')).items.length,0)
+  assert.equal((await searchWhenAvailable(viewerSdk,'编辑后')).items.length,0)
   const revokedRelated=await related();assert.equal(revokedRelated.items.length,0);assert.equal(revokedRelated.recallMode,'unavailable')
   const unaffected=(await viewerSdk.listSources('root',{refresh:true})).items.find(row=>row.displayName==='其他普通群保持使用');assert(unaffected);await viewerSdk.readSource(unaffected.sourceRef)
   await page.getByRole('button',{name:'＋ 添加成员',exact:true}).click()
@@ -233,7 +241,7 @@ try{
   await wait(()=>viewerSdk.pageSourceMembers(memberRef),page=>page.selfRole==='owner')
   const afterOwner=JSON.parse((await forward('/fixture/group-state',{chat_session_uid:'t25-existing-group'})).text)
   assert.deepEqual(afterOwner.members.find(m=>m.user_id===1002).roster_grant,beforeOwner.members.find(m=>m.user_id===1002).roster_grant)
-  const oldOwnerHistory=await sdk.readSource(source.sourceRef);assert.equal(oldOwnerHistory.items[0].textContent,'已批准的群历史正文')
+  const oldOwnerHistory=await sdk.readSource(source.sourceRef);assert.equal(oldOwnerHistory.items[0].textContent,'编辑后的群消息')
   assert.equal((await viewerSdk.readSource(memberRef)).items.length,0)
   const viewerOnboarding=viewerPage.frameLocator('iframe[title="DeepSeek Harness"]').getByRole('button',{name:'继续',exact:true})
   if(await viewerOnboarding.isVisible())await viewerOnboarding.click()
@@ -250,8 +258,8 @@ try{
   await viewerSdk.readSource(unaffected.sourceRef)
   const privateSource=(await viewerSdk.listSources('root',{refresh:true})).items.find(row=>row.kind==='private_chat'&&Number(row.peerUserId)===1001)
   assert(privateSource,'unrelated private chat must remain discoverable')
-  assert.equal((await viewerSdk.readSource(privateSource.sourceRef)).items[0].textContent,'仅个人原件的未发布修改')
-  await writeFile(join(capture,'lifecycle.json'),JSON.stringify({create:true,link:true,role:true,owner:true,immediateRevocation:true,reentryFloor:true,archived:true,approvedHistory:true,mediaRange:true,search:true,relatedQuickNotes:true,ordinaryUnaffected:true,hostRestart:true,beforeOwner,afterOwner},null,2))
+  assert.equal((await viewerSdk.readSource(privateSource.sourceRef)).items[0].textContent,'编辑后的群消息')
+  await writeFile(join(capture,'lifecycle.json'),JSON.stringify({create:true,link:true,role:true,owner:true,immediateRevocation:true,reentryFloor:true,archived:true,ordinaryHistoryPreserved:true,mediaRange:true,search:true,relatedQuickNotes:true,ordinaryUnaffected:true,hostRestart:true,beforeOwner,afterOwner},null,2))
  }
  sdk.dispose();await assert.rejects(()=>sdk.teamInternalGroup({teamRef,action:'recover'}));await assert.rejects(()=>sdk.teamGovernance({teamRef,action:'state'}))
  await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',installedImmutableTgz:true,artifactSHA256:createHash('sha256').update(await readFile(artifact)).digest('hex'),sdkExistingGroupLink:true,realSessionDiscovery:true,writeHumanGrant:true,realChatGinMongo:true,externalTypedSdk:true,uiCreatePreviewConfirmReady:true,uiExistingGroupLink:realOwners,scope:realOwners?'real four owner HTTP adapters and actual SQL/Mongo/revisions/ES/Rabbit/Completion; only login/profile and object bytes fixture; no production calls':'organization/profile and empty legacy inventory use isolated ports; completion worker invoked through owner entry; no production calls'},null,2))

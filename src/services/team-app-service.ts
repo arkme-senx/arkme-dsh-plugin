@@ -53,7 +53,7 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
-  preview_stale: '团队或群成员已变化，请重新检查原请求后确认', group_history_not_ready: '该群历史消息尚未完成同步，请稍后重新检查关联条件', members_managed_by_team: '该群成员由团队统一管理',
+  preview_stale: '团队或群成员已变化，请重新检查原请求后确认', members_managed_by_team: '该群成员由团队统一管理',
   feature_links_forbidden: '仅团队所有者或管理员可管理团队入口',
   invalid_feature_links: '请检查入口名称和网址',
   feature_links_request_conflict: '重试内容已变化，请重新加载团队入口',

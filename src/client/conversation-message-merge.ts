@@ -30,20 +30,17 @@ export function mergeConversationMessages(current: ArkmeTimelineItem[], incoming
   const map = new Map<string, PresentedMessage>(current.map(item => [identity(item), item]))
   for (const item of incoming) {
     const key = identity(item)
-    const found = map.get(key) ?? map.get(item.itemUid)
-    // An ordinary/personal snapshot is not a newer version of an approved occurrence.
-    if (found?.sourceSnapshot === true && item.sourceSnapshot !== true && found.status === 1 && item.status === 1) continue
-    const previous = item.sourceSnapshot === true && found?.sourceSnapshot !== true ? undefined : found
+    const previous = map.get(key) ?? map.get(item.itemUid)
     const version = item.recordVersion ?? item.version ?? 0
     const previousVersion = previous?.recordVersion ?? previous?.version ?? 0
     // Live deltas and reads may arrive out of order. Keep the authoritative
     // record snapshot and its matching action reference together.
     if (previous?.status === 1 && item.status === 1 && version > 0 && previousVersion > 0
       && previousVersion > version) continue
-    if (found && identity(found) !== key) map.delete(identity(found))
+    if (previous && identity(previous) !== key) map.delete(identity(previous))
     map.set(key, {
       ...retainPartialTimelineMedia(previous, item),
-      ...messagePresentation(found ?? item),
+      ...messagePresentation(previous ?? item),
       [sendFailure]: item.status === 1 ? undefined : sendFailure in item ? conversationMessageSendFailure(item)
         : previous ? conversationMessageSendFailure(previous) : undefined,
       ...(previous?.aiPolish !== undefined && item.aiPolish === undefined ? { aiPolish: previous.aiPolish } : {}),
@@ -262,7 +259,7 @@ export class ArkmeConversationMessageMergeOwner extends ConfirmedSendRetentionOw
   }
 }
 
-/** Cache visibility follows observed source authority, without erasing personal/global records. */
-export function conversationMessagesForSource(items: ArkmeTimelineItem[], teamRosterManaged: boolean): ArkmeTimelineItem[] {
-  return teamRosterManaged ? items.filter(item=>item.sourceSnapshot === true) : items
+/** Team admission narrows history without changing message content/version semantics. */
+export function conversationMessageVisibleFromSequence(item: ArkmeTimelineItem, floor?: number): boolean {
+  return floor === undefined || floor === 0 || item.isMe === true && item.status === 0 || (item.sequence ?? 0) >= floor
 }
