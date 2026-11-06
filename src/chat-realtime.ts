@@ -1,3 +1,4 @@
+import { parseOwnerJson, recordOwnerId, type RecordOwnerId } from './record-owner-id.js'
 import type { ArkmeSessionCredentials } from './keychain-store.js'
 import type { ArkmeChatRealtimeState } from './types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
@@ -41,7 +42,7 @@ export interface ArkmeChatReceiveHint {
   chatSessionUid: string
   relationUid: string
   latestSequence: number
-  senderUserId: number
+  senderUserId: RecordOwnerId
   eventAtMillis: number
 }
 
@@ -192,7 +193,7 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
   const payload = normalized.slice('data:'.length).trim()
   if (payload === '') return undefined
   let value: unknown
-  try { value = JSON.parse(payload) }
+  try { value = parseOwnerJson(payload) }
   catch { return undefined }
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -264,10 +265,10 @@ export function decodeArkmeChatReceiveDataLine(line: string): ArkmeChatReceiveHi
   const chatSessionUid = nonEmptyString(source.chat_session_uid)
   const relationUid = nonEmptyString(source.rel_uid)
   const latestSequence = positiveInteger(source.latest_seq)
-  const senderUserId = positiveInteger(source.sender_user_id)
+  const senderUserId = recordOwnerId(source.sender_user_id)
   const eventAtMillis = positiveInteger(source.event_at)
   if (eventUid === undefined || chatSessionUid === undefined || relationUid === undefined
-    || latestSequence === undefined || senderUserId === undefined || eventAtMillis === undefined) return undefined
+    || latestSequence === undefined || senderUserId === 0 || eventAtMillis === undefined) return undefined
   return { eventUid, chatSessionUid, relationUid, latestSequence, senderUserId, eventAtMillis }
 }
 

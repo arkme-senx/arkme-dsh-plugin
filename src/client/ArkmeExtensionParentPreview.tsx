@@ -1,3 +1,4 @@
+import { runnerCardPreviewText } from './ArkmeRunnerCard.js'
 import type { CSSProperties } from 'react'
 import type { ArkmeTimelineExtensionParent } from '../types.js'
 import { useArkmeMediaUrl } from './media-access.js'
@@ -33,7 +34,7 @@ export function ArkmeExtensionParentPreview({ parent, isMe, onSelect, inline = f
   const mediaUrl = useArkmeMediaUrl()
   const placement = inline ? {} : isMe ? styles.extensionParentPreviewMe : styles.extensionParentPreviewOther
   if (parent.quote || parent.quoteState === 'unavailable') return <div style={{ ...styles.extensionParentPreview, ...placement, background: 'transparent' }}><ArkmeQuotePreview parent={parent} wholeMessageText={parent.textContent || parent.title} onOpen={onSelect} /></div>
-  const text = parent.textContent.trim() || parent.title.trim()
+  const text = runnerCardPreviewText(parent.textContent.trim() || parent.title.trim())
   const blocks = [...(parent.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
   const visuals = blocks.filter(block => block.kind === 'image' || block.kind === 'video').slice(0, 3)
   const firstFile = blocks.find(block => block.kind !== 'image' && block.kind !== 'video')

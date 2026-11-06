@@ -468,8 +468,9 @@ describe('ChatRealtimeService', () => {
     service.dispose()
   })
 
-  it.each(['normal', 'held', 'disposed', 'account-changed'] as const)('bounds native notifications without blocking session updates: %s', async scenario => {
-    const held = scenario !== 'normal'
+  it.each(['normal', 'bot', 'held', 'disposed', 'account-changed'] as const)('bounds native notifications without blocking session updates: %s', async scenario => {
+    const held = scenario !== 'normal' && scenario !== 'bot'
+    const sender = scenario === 'bot' ? '6864412151599408801' : 20002
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 10001, accessToken: 'access', refreshToken: 'refresh' } },
       async write() {}, async delete() {},
@@ -499,7 +500,7 @@ describe('ChatRealtimeService', () => {
             return { relation: {
               record_uid: `message-${String(sessionIndex)}-${String(index)}`,
               rel_uid: `relation-${String(notificationIndex)}`,
-              sender_user_id: 20002,
+              sender_user_id: sender,
               seq: index + 1,
             } }
           },
@@ -599,7 +600,7 @@ describe('ChatRealtimeService', () => {
               chatSessionUid: bundle.session.chat_session_uid,
               relationUid: `relation-${String(notificationIndex)}`,
               latestSequence: index + 1,
-              senderUserId: 20002,
+              senderUserId: sender,
               eventAtMillis: 1_700_000_000_000 + notificationIndex,
             },
             connectionGeneration: 7,

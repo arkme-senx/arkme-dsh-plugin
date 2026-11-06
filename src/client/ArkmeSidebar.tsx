@@ -1,3 +1,4 @@
+import { parseRunnerCard, runnerCardPreviewText, runnerDecisionResolutions } from './ArkmeRunnerCard.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { MessageAvatar } from './MessageAvatar.js'
 export { MessageAvatar } from './MessageAvatar.js'
@@ -265,6 +266,7 @@ import { ArkmeBotAvatarActionMenu, ArkmeBotAvatarProfileCard, ArkmeBotRemoveDial
 import { arkmeGroupBotsChanged } from './use-group-bots.js'
 import { arkmeLoadedBotRecords } from './bot-records.js'
 import type { ArkmeGroupBotItem } from '../tools/ports/bots.js'
+import { prepareRunnerDecisionDraft } from './runner-decision-draft.js'
 import { ARKME_DEFAULT_SHARE_WEBSITE } from '../types.js'
 import { ArkmeMarketplace } from './ArkmeMarketplace.js'
 import {
@@ -2337,6 +2339,7 @@ export function ArkmeSurface({
   aiPolishSettingsRef.current = aiPolishSettings
   aiPolishNoticesRef.current = aiPolishNotices
   const shareWebsite = authStoreSnapshot.config?.shareWebsite ?? ARKME_DEFAULT_SHARE_WEBSITE
+  const resolvedRunnerDecisions = useMemo(() => runnerDecisionResolutions(items), [items])
   const setItems = useCallback((action: SetStateAction<ArkmeTimelineItem[]>) => {
     setTimelineView(current => {
       const next = resolveStateAction(action, current.items)
@@ -7984,7 +7987,22 @@ export function ArkmeSurface({
 
   // Draft updates must not rebuild every loaded message. Event handlers read the
   // latest committed actions; render dependencies below contain only timeline facts.
-  const timelineActionValues = { activateSelfSource, openChatMessage, openMemberEventProfile, openMemberHover, openMemberMenu, openMemberProfile, openBotHover, openBotMenu, openBotProfile, openMentionMemberProfile, openMessageCopyLinkDetail, openMessageMenu, openMomentDetail, openNoteDetail, openRecordReedit, retryAiPolish, toggleSelectedMessage, updateComposerText,
+  const replyRunnerDecision = (item: ArkmeTimelineItem, text: string) => {
+    if (archiveReadOnly || source?.kind !== 'group_chat' || !composerDraftKey || !composerMentionsEnabled) return
+    if (activeRecordReeditComposer) {
+      showMessageActionStatus('请先完成当前编辑，再回复决策')
+      return
+    }
+    try {
+      const cursor = prepareRunnerDecisionDraft(arkmeComposerDraftStore, composerDraftKey, item, text, mentionBots.group)
+      setDrawer(undefined)
+      focusEditedComposer(cursor)
+    } catch (caught) {
+      mentionBots.retry()
+      showMessageActionStatus(errorMessage(caught))
+    }
+  }
+  const timelineActionValues = { replyRunnerDecision, activateSelfSource, openChatMessage, openMemberEventProfile, openMemberHover, openMemberMenu, openMemberProfile, openBotHover, openBotMenu, openBotProfile, openMentionMemberProfile, openMessageCopyLinkDetail, openMessageMenu, openMomentDetail, openNoteDetail, openRecordReedit, retryAiPolish, toggleSelectedMessage, updateComposerText,
     openTimelineExtensionParent, refreshFiles: fileTasks.refresh, refreshReedits: reeditSubmissions.refresh }
   const timelineActions = useRef(timelineActionValues)
   useLayoutEffect(() => { timelineActions.current = timelineActionValues })
@@ -8213,6 +8231,8 @@ export function ArkmeSurface({
                             <ArkmeMessageContent
                               key={`message-content:${conversationOverlayKey}`}
                               sessionAttachmentPreview
+                              decisionResolution={resolvedRunnerDecisions.get(JSON.stringify([item.senderBotDirectoryKey, parseRunnerCard(item.textContent ?? '', item.senderKind)?.decisionId]))}
+                              onDecisionReply={archiveReadOnly || source.kind !== 'group_chat' || arkmeTimelineMessageActionRef(item) === '' ? undefined : text => timelineActions.current.replyRunnerDecision(item, text)}
                               item={item}
                               mediaSelectionIsExplicit={reeditItems.has(item)}
                               onCallDetailOpen={videoUrl => { timelineActions.current.openNoteDetail(item, videoUrl) }}
@@ -8353,7 +8373,7 @@ export function ArkmeSurface({
                   </li>
                 </Fragment>
               })
-  }, [offlineMessageLinks, displayRows, personalExtensionParents, source, selfSources, selfProfile, conversationBootstrap, selfConversationMember, conversationMemberByRef, resolveReactionActor,
+  }, [resolvedRunnerDecisions, offlineMessageLinks, displayRows, personalExtensionParents, source, selfSources, selfProfile, conversationBootstrap, selfConversationMember, conversationMemberByRef, resolveReactionActor,
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, directAdmission.blocked, timelineFileTasks,
     highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
@@ -9026,7 +9046,7 @@ export function ArkmeSurface({
             {activeComposerTargetItem !== undefined && <ArkmeComposerTargetPreview
               mode={activeRecordReeditComposer === undefined ? 'extension' : 'reedit'}
               {...(activeRecordReeditComposer === undefined ? composerExtensionTarget?.quote ? { label: sourceIsChat ? `回复 ${arkmeTimelineDetailSenderText(activeComposerTargetItem, conversationMembers)}` : '延展片段' } : {} : { label: tr('重新编辑:') })}
-              text={activeRecordReeditComposer === undefined && composerExtensionTarget?.quote ? composerExtensionTarget.quote.text : activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim()}
+              text={activeRecordReeditComposer === undefined && composerExtensionTarget?.quote ? composerExtensionTarget.quote.text : runnerCardPreviewText(activeComposerTargetItem.textContent.trim() || activeComposerTargetItem.title.trim())}
               quote={activeRecordReeditComposer === undefined && !!composerExtensionTarget?.quote}
               closeLabel={activeRecordReeditComposer === undefined ? composerExtensionTarget?.quote ? '取消引用' : '取消延展' : '关闭重新编辑'}
               disabled={activeRecordReeditComposer?.busy === true || preparingReeditFiles}

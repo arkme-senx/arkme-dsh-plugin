@@ -1,3 +1,4 @@
+import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { arkmeChatActivityPreview } from '../chat-activity-preview.js'
 import {
   ArkmeChatRealtimeRuntime,
@@ -91,7 +92,7 @@ interface ArkmeTimelineNotificationIdentity {
   relationUid: string
   itemUid: string
   sequence: number
-  senderUserId: number
+  senderUserId: RecordOwnerId
 }
 
 function numberValue(value: unknown): number {
@@ -109,10 +110,10 @@ function timelineNotificationIdentities(data: Record<string, unknown>): ArkmeTim
       relationUid: stringValue(relation.rel_uid ?? relation.relUid).trim(),
       itemUid: stringValue(relation.record_uid ?? relation.recordUid ?? payload.record_uid ?? payload.recordUid).trim(),
       sequence: numberValue(relation.seq ?? relation.sequence),
-      senderUserId: numberValue(relation.sender_user_id ?? relation.senderUserId),
+      senderUserId: recordOwnerId(relation.sender_user_id ?? relation.senderUserId),
     }
     return identity.itemUid !== '' && Number.isSafeInteger(identity.sequence) && identity.sequence > 0
-      && Number.isSafeInteger(identity.senderUserId) && identity.senderUserId > 0
+      && identity.senderUserId !== 0
       ? [identity] : []
   })
 }
@@ -474,7 +475,7 @@ export class ChatRealtimeService {
         notice.messagePreparing === undefined
           ? this.source.chatPreparingActorKey(session.userId, hint.chatSessionUid, actorUserId)
             .then(actorKey => ({ actorKey }))
-          : this.source.chatPreparingActorPresentation(session.userId, hint.chatSessionUid, actorUserId),
+          : this.source.chatPreparingActorPresentation(session.userId, hint.chatSessionUid, notice.messagePreparing.actorUserId),
       ])
       if (signal.aborted || this.disposed) return
       const activeSession = await this.runtime.sessionStore.read()

@@ -3250,6 +3250,8 @@ export interface ArkmeGroupMemberCandidateGroup {
 
 export interface ArkmeGroupBotCandidate {
   botRef: string
+  /** Account-scoped identity shared with Bot-authored timeline messages. */
+  directoryKey?: string
   name: string
   description: string
   installed: boolean

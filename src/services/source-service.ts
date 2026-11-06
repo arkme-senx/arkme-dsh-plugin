@@ -2073,7 +2073,7 @@ export class SourceService {
     return `arkme-chat-timeline-item-v1.${digest}`
   }
 
-  async chatPreparingActorKey(viewerUserId: number, chatSessionUid: string, actorUserId: number): Promise<string> {
+  async chatPreparingActorKey(viewerUserId: number, chatSessionUid: string, actorUserId: RecordOwnerId): Promise<string> {
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`chat-preparing-actor-v1:${String(viewerUserId)}:${chatSessionUid.trim()}:${String(actorUserId)}`)
       .digest('base64url')
