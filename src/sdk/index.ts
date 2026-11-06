@@ -2930,6 +2930,7 @@ export class ArkmeSdk {
     return await this.call<ArkmeFavoriteStickerList>('favorite-stickers.list', undefined, signal)
   }
 
+  /** Query readPriority:'interactive' keeps explicit fact reads ahead of passive previews; actorPresentation controls enrichment separately. */
   async reactions<R extends import('../reaction-contract.js').ReactionRequest>(input: R, signal?: AbortSignal): Promise<import('../reaction-contract.js').ReactionResponse<R>> {
     if ((await this.capabilities(signal)).features.reactionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持表态，请升级', retryable: false })
     return await this.call('reactions', input, signal)

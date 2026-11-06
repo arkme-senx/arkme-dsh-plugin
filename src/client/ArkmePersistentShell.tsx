@@ -70,7 +70,7 @@ const styles: Record<string, CSSProperties> = {
     position: 'absolute', inset: 0, minWidth: 0, minHeight: 0,
   },
   contactsLayer: {
-    position: 'absolute', inset: 0, zIndex: 2,
+    position: 'absolute', inset: 0,
   },
   details: { width: 0, height: 0, overflow: 'hidden' },
 }
@@ -584,7 +584,9 @@ export function ArkmePersistentWorkspace({
           ...styles.conversationLayer,
           visibility: conversationHidden ? 'hidden' : 'visible',
           pointerEvents: conversationHidden ? 'none' : 'auto',
-          zIndex: conversationHidden ? 0 : 1,
+          // Active pages must not trap fixed dialogs below sidebar chrome.
+          // Retained inactive pages keep their lower, isolated paint layer.
+          zIndex: conversationHidden ? 0 : undefined,
         }}
         aria-hidden={conversationHidden ? true : undefined}
       >
@@ -598,7 +600,7 @@ export function ArkmePersistentWorkspace({
           active={conversationActive}
         />
       </div>}
-    {teamVisible && <div data-arkme-owned="team-conversation-layer" style={{ ...styles.conversationLayer, zIndex: 1 }}>
+    {teamVisible && <div data-arkme-owned="team-conversation-layer" style={styles.conversationLayer}>
       <TeamMessagingPanel key={contactsAccountKey} accountKey={contactsAccountKey!} intent={ui.teamIntent!} />
     </div>}
     {contactsMode && <div className="arkme-directory-detail-pane" data-arkme-contacts-workspace style={styles.contactsLayer}>

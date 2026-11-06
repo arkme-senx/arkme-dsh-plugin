@@ -795,7 +795,8 @@ describe('ArkmeService', () => {
   it('hydrates calendar chat sources from record origin once per page, excluding protected rows', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      if (String(input).endsWith('/api/v1/chats/display-snapshots')) return json({ code: 200, data: { items: JSON.parse(String(init?.body)).chat_session_uids.map((uid: string) => ({ session: { chat_session_uid: uid, session_kind: 2, title: '项目群' } })) } })
       if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
       if (String(input).endsWith('/api/v1/calendar/records/query')) return json({ code: 0, data: {
         items: [1, 2, 3].map(id => ({ record_uid: `r${id}`, send_at: 100, record_core: {
@@ -819,14 +820,10 @@ describe('ArkmeService', () => {
     expect(hydrate.mock.calls[0]?.[0]).toHaveLength(1)
     expect(JSON.stringify(page)).not.toContain('origin_container_ref')
     resolve.mockRestore()
-    const list = vi.spyOn(source, 'listSources').mockImplementation(async () => {
-      source.setChatSource(10001, 'chat-1', { sourceRef: 'safe-ref', kind: 'group_chat', displayName: '项目群' })
-      source.setChatSource(10001, 'chat-2', { sourceRef: 'safe-ref-2', kind: 'private_chat', displayName: '同事' })
-      return { items: [], hasMore: false }
-    })
+    const list = vi.spyOn(source, 'listSources')
     const targets = await source.chatSourcesBySessionUids(['chat-1', 'chat-2', 'chat-1'])
     expect(targets.size).toBe(2)
-    expect(list).toHaveBeenCalledTimes(1)
+    expect(list).not.toHaveBeenCalled()
 
   })
 

@@ -184,6 +184,7 @@ export function createArkmeLocalFileHandler(service: ArkmeService, options: Arkm
       res.writeHead(range ? 206 : 200, {
         'Content-Type': file.mimeType, 'Content-Length': end - start + 1,
         'Content-Disposition': `${attachment ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+        'X-Arkme-File-Origin': file.origin === 'local' || file.origin === 'received' ? file.origin : 'unknown',
         'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'",
         'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${file.size}` } : {}),
       })

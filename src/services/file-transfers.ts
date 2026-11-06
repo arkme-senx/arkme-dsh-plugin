@@ -52,7 +52,8 @@ const validLocation = (location: ArkmeFileSendInput['location']): boolean => loc
   && Number.isFinite(location.longitude) && location.longitude >= -180 && location.longitude <= 180
   && Number.isSafeInteger(location.capturedAtMillis) && location.capturedAtMillis > 0
 )
-const publicFile = (file: ArkmeLocalFile): ArkmeLocalFile => ({ fileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, fileKind: file.fileKind })
+const publicFile = (file: ArkmeLocalFile): ArkmeLocalFile => ({ fileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, fileKind: file.fileKind,
+  ...(file.origin === 'local' || file.origin === 'received' ? { origin: file.origin } : {}) })
 const nativeOpenFileName = (fileName: string): string => {
   const cleaned = fileName.replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_').trim().replace(/^[. ]+|[. ]+$/g, '')
   const extension = /\.[a-zA-Z0-9]{1,16}$/.exec(cleaned)?.[0] ?? ''
@@ -171,12 +172,12 @@ export class FileTransfers {
   async stageLongArticleImage(temporaryPath: string, metadata: Metadata, expectedUserId?: number): Promise<ArkmeLocalFile> {
     const mime = arkmeNormalizedFileMimeType(metadata.mimeType, metadata.fileName)
     if (!isLongArticleImageMimeType(mime)) throw fail('long-article-image-invalid', '长文仅支持 JPG、PNG、GIF、WebP、AVIF、BMP 图片')
-    return await this.stageLocal(temporaryPath, metadata, expectedUserId, 'references', true)
+    return await this.stageLocal(temporaryPath, metadata, expectedUserId, 'references', true, 'local')
   }
   async stage(temporaryPath: string, metadata: Metadata, expectedUserId?: number, retention?: 'references'): Promise<ArkmeLocalFile> {
-    return await this.stageLocal(temporaryPath, metadata, expectedUserId, retention, false)
+    return await this.stageLocal(temporaryPath, metadata, expectedUserId, retention, false, 'local')
   }
-  private async stageLocal(temporaryPath: string, metadata: Metadata, expectedUserId: number | undefined, retention: 'references' | undefined, longArticle: boolean): Promise<ArkmeLocalFile> {
+  private async stageLocal(temporaryPath: string, metadata: Metadata, expectedUserId: number | undefined, retention: 'references' | undefined, longArticle: boolean, origin: 'local' | 'received'): Promise<ArkmeLocalFile> {
     const userId = await this.ports.currentUser()
     if (expectedUserId !== undefined && expectedUserId !== userId) throw fail('file-account-changed', '账号已切换，本次文件导入已取消')
     const normalizedMetadata = { ...metadata, mimeType: arkmeNormalizedFileMimeType(metadata.mimeType, metadata.fileName) }
@@ -195,7 +196,7 @@ export class FileTransfers {
       for await (const chunk of createReadStream(temporaryPath)) hash.update(chunk)
       await this.assertUser(userId)
       const ref = `arkme-file-v1.${randomUUID()}`
-      const file: StoredFile = { ...normalizedMetadata, fileRef: ref, fileKind: arkmePickedFileKind(normalizedMetadata.mimeType, normalizedMetadata.fileName), sha256: hash.digest('hex'), createdAtMillis: Date.now(), ...(retention ? { retention } : {}), ...(longArticle ? { longArticle: true as const } : {}) }
+      const file: StoredFile = { ...normalizedMetadata, origin, fileRef: ref, fileKind: arkmePickedFileKind(normalizedMetadata.mimeType, normalizedMetadata.fileName), sha256: hash.digest('hex'), createdAtMillis: Date.now(), ...(retention ? { retention } : {}), ...(longArticle ? { longArticle: true as const } : {}) }
       await copyFile(temporaryPath, this.path(userId, ref))
       await chmod(this.path(userId, ref), 0o600)
       state.files[ref] = file
@@ -784,7 +785,7 @@ export class FileTransfers {
         } finally { await handle.close() }
         if (!progress.receivedBytes || (declared > 0 && progress.receivedBytes !== declared) || (descriptor.size > 0 && progress.receivedBytes !== descriptor.size)) throw fail('file-download-incomplete', '原文件接收不完整，请重试')
         await this.assertUser(userId, controller.signal)
-        const file = await this.stage(temporary, { fileName: descriptor.fileName, mimeType: descriptor.mimeType, size: progress.receivedBytes }, userId)
+        const file = await this.stageLocal(temporary, { fileName: descriptor.fileName, mimeType: descriptor.mimeType, size: progress.receivedBytes }, userId, undefined, false, 'received')
         state.originals[mediaRef] = file.fileRef
         await this.save(userId, state)
         progress.file = file; progress.state = 'ready'

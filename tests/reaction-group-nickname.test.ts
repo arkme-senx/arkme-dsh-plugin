@@ -41,7 +41,7 @@ it.each(['query', 'groups', 'actors'] as const)('adds nicknames through the shar
   expect(JSON.stringify(degraded)).not.toContain('groupNickname')
 })
 
-it('returns authorized actor references without waiting for profiles in deferred queries', async () => {
+it.each([undefined, 'interactive'] as const)('returns authorized actor references without waiting for profiles with deferred priority %s', async readPriority => {
   const wire = { chat_session_uid: 'group', rel_uid: 'message' }
   const profile = vi.fn(() => new Promise(() => {})), labels = vi.fn(() => new Promise(() => {}))
   const owner = {
@@ -50,7 +50,7 @@ it('returns authorized actor references without waiting for profiles in deferred
     chat: { reactionTarget: async (_source: string, ref: string) => ({ ...wire, rel_uid: ref }), reactionActorLabels: labels, reactionActorReferences: vi.fn(async () => new Map([[8, 'signed-member']])) },
     profile: { publicProfileSummariesByUserIds: profile },
   }
-  const result = await ArkmeService.prototype.reactions.call(owner as never, { action: 'query', actorPresentation: 'deferred', accountKey: 'test:7', targets: ['message', 'private'].map(id => ({ id, sourceRef: 'signed', messageActionRef: id })) }) as { items: { groups: { actors: unknown[] }[] }[] }
+  const result = await ArkmeService.prototype.reactions.call(owner as never, { action: 'query', actorPresentation: 'deferred', ...(readPriority ? { readPriority } : {}), accountKey: 'test:7', targets: ['message', 'private'].map(id => ({ id, sourceRef: 'signed', messageActionRef: id })) }) as { items: { groups: { actors: unknown[] }[] }[] }
   expect(result.items[0].groups[0].actors).toEqual([{ userId: 8, displayName: '用户', presentationPending: true, memberRef: 'signed-member' }])
   expect(result.items[1].groups[0].actors).toEqual([])
   expect(profile).not.toHaveBeenCalled(); expect(labels).not.toHaveBeenCalled()

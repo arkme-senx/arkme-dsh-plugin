@@ -13,11 +13,15 @@ const button: CSSProperties = { font: 'inherit', cursor: 'pointer', border: `1px
 const phraseButton: CSSProperties = { ...button, height: 28, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
 export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice, library = defaultReactionLibrary }: { scope: string; selected: readonly ReactionExpression[]; onUse: (label: string, expression: ReactionExpression) => Promise<boolean>; onNotice?: (text: string) => void; library?: ReactionLibraryStore }) {
   const [phrases, setPhrases] = useState<ReactionExpression[]>(() => readReactionCollection(scope, library))
-  const [busy, setBusy] = useState(true)
+  const [loading, setLoading] = useState(() => library.read(scope) === undefined)
+  const [saving, setBusy] = useState(false)
+  const busy = loading || saving
   useEffect(() => {
     let active = true
     const update = () => { if (active) setPhrases(readReactionCollection(scope, library)) }
-    void library.load(scope).then(update).catch(error => { if (active) setError(error.message) }).finally(() => { if (active) setBusy(false) })
+    // Revalidate confirmed phrases without disabling them. A completing read
+    // must not release the separate lock held by a subsequent save.
+    void library.load(scope).then(update).catch(error => { if (active) setError(error.message) }).finally(() => { if (active) setLoading(false) })
     return () => { active = false }
   }, [scope, library])
   const [view, setView] = useState<'closed' | 'create'>('closed')
@@ -123,6 +127,7 @@ export function ArkmeReactionPhrases({ scope, selected, onUse, onNotice, library
         {confirmDelete !== id && <button type="button" disabled={!!deleting || busy} className="arkme-saved-phrase-delete" data-arkme-hover="none" aria-label={`删除短语：${reactionLabelText(label)}`} title="删除短语" style={{ ...button, position: 'absolute', top: 2, right: 2, padding: 0, width: 18, height: 18, display: 'grid', placeItems: 'center', border: 0, background: 'transparent' }} onClick={() => setConfirmDelete(id)}><span aria-hidden style={{ width: 12, height: 12, display: 'grid', placeItems: 'center', color: '#65727d' }}><svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 3L9 9M9 3L3 9" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg></span></button>}
       </div>})}
     </div>
+    {loading && <div role="status" style={{ color: c.secondary, marginTop: 6 }}>正在加载短语…</div>}
     {view === 'create' && <ReactionPhraseDialog emoji={emoji} onEmojiChange={setEmoji} colorId={colorId} onColorChange={setColorId} text={text} error={error} notice={notice} disabled={(!text.trim() && !emoji) || busy} onChange={setText} onSave={create} onClose={close} />}
     {drag.drag && <div aria-hidden style={{ ...phraseButton, ...reactionPhraseStyle(expressionLabel(byId.get(drag.drag.label)!), false, byId.get(drag.drag.label)?.color), position: 'fixed', zIndex: 150, pointerEvents: 'none', boxSizing: 'border-box', left: drag.drag.left, top: drag.drag.top, width: drag.drag.width, height: drag.drag.height, boxShadow: c.shadow, transform: 'scale(1.04)', textAlign: 'center' }}><ReactionLabel label={expressionLabel(byId.get(drag.drag.label)!)} size={18} /></div>}
     {error && view !== 'create' && <div role="alert" style={{ color: c.secondary, marginTop: 10 }}>{error} <button type="button" disabled={busy} style={button} onClick={() => {

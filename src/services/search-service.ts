@@ -27,6 +27,7 @@ import { ArkmePluginError, ServiceRuntime, clippedText, objectValue, stringValue
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import { arkmeNormalizedHashTag } from '../hashtag.js'
 import { arkmeSearchRecordLinks } from '../search-record-links.js'
+import { arkmeMediaKind } from '../file-transfer-contract.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -34,6 +35,21 @@ function numberValue(value: unknown): number {
 
 function booleanValue(value: unknown): boolean { return value === true }
 function listValue(value: unknown): unknown[] { return Array.isArray(value) ? value : [] }
+
+/** Scene hits retain the complete Record payload, including nonvisual attachments. */
+function isSearchVisualMediaRef(value: unknown): boolean {
+  const ref = objectValue(value)
+  // Voice sources and author-only background sound are not gallery attachments.
+  if ([3, 4].includes(numberValue(ref.content_file_role))) return false
+  const name = stringValue(ref.file_name).trim()
+  const mime = stringValue(ref.mime_type).trim().toLowerCase()
+  const kind = arkmeMediaKind(mime, name)
+  if (kind !== undefined) return kind === 'image' || kind === 'video'
+  if (/\.[A-Za-z0-9]+$/u.test(name) || mime !== '' && mime !== 'application/octet-stream') return false
+  // Keep metadata-free legacy candidates; absence of a type is not proof that
+  // an otherwise authorized image disappeared. Explicit audio/files are known.
+  return [0, 1, 3].includes(numberValue(ref.file_kind))
+}
 
 type SearchSourceFrame = { source: ArkmeSourceRefPayload; audienceKey: string; viewerUserId: number }
 
@@ -112,8 +128,11 @@ export class SearchService {
     )
     const result = this.recordSearchResult(data, lockedRecordUids, frame)
     result.items = await resolveDshSearchOrigins(this.localDshQuery?.(), result.items, options.signal)
-    const navigable=await this.withNavigationTargets(result,options.signal,options.sourceRef)
-    await this.bindSourceArticleActions(data,navigable,frame,options.signal)
+    const navigable = await this.withNavigationTargets(result, options.signal, options.sourceRef)
+    await this.bindSourceArticleActions(data, navigable, frame, options.signal)
+    options.signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+    options.signal?.throwIfAborted()
     return navigable
   }
 
@@ -361,7 +380,11 @@ export class SearchService {
         if (raw && item.targetSource && this.articleActionRef) item.messageActionRef = await this.articleActionRef(raw, item.targetSource.sourceRef, options.signal)
       }
     }
-    return options.scene === 'audio' ? await this.withAudioMediaRefs(result, options.signal) : result
+    const projected = options.scene === 'audio' ? await this.withAudioMediaRefs(result, options.signal) : result
+    options.signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+    options.signal?.throwIfAborted()
+    return projected
   }
 
   private async bindSourceArticleActions(data:Record<string,unknown>,result:ArkmeRecordSearchResult,frame:SearchSourceFrame|undefined,signal?:AbortSignal):Promise<void> {
@@ -651,7 +674,7 @@ export class SearchService {
         ...(numberValue(source.duration_millis) <= 0 ? {} : { durationMillis: numberValue(source.duration_millis) }),
       }
     }
-    const media = listValue(payload.media_refs).map(assetItem).filter((value): value is NonNullable<typeof value> => value !== undefined)
+    const media = listValue(payload.media_refs).filter(isSearchVisualMediaRef).map(assetItem).filter((value): value is NonNullable<typeof value> => value !== undefined)
     const files = listValue(item.file_ls).map(assetItem).filter((value): value is NonNullable<typeof value> => value !== undefined)
     const voice = assetItem(payload.voice)
     const textContent = clippedText(core.text_content, 2_000)
