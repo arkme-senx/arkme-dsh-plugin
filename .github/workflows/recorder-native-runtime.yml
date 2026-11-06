@@ -1,0 +1,38 @@
+name: Recorder native runtime payload
+
+on:
+  pull_request:
+    paths:
+      - package.json
+      - pnpm-lock.yaml
+      - scripts/recorder-runtime-dependencies.mjs
+      - scripts/verify-recorder-native-runtime.mjs
+      - .github/workflows/recorder-native-runtime.yml
+
+permissions:
+  contents: read
+
+jobs:
+  native-payload:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      ARKME_SKIP_PREPARE_BUILD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.7.0'
+      - name: Install locked dependencies without host rebuilds
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Pack the actual dependency payload
+        run: pnpm --config.verifyDepsBeforeRun=warn pack --pack-destination native-payload
+      - name: Load native serial binding and enumerate ports from isolated archive
+        run: node scripts/verify-recorder-native-runtime.mjs native-payload
