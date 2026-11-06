@@ -297,3 +297,93 @@ it('accepts legacy Windows receipt names only inside the original backup root', 
     }
     expect(() => backupDocumentName('/tmp/backup', '/tmp/backup/导出.md')).toThrow('凭据无效');
 });
+
+it('reuses an opted-in frozen preview across tab/directory checks, with refresh, TTL and export invalidation', async () => {
+ const f=await fixture();
+ const cached=(destination?:string,refresh=false)=>f.service.preview('test:11',all,1,destination,undefined,refresh);
+ const first=await cached();expect((await cached(f.destinationRef)).previewUid).toBe(first.previewUid);
+ expect(f.post.mock.calls.filter(([p])=>p.endsWith('/prepare'))).toHaveLength(1);
+ await cached(f.destinationRef,true);
+ expect(f.post.mock.calls.filter(([p])=>p.endsWith('/prepare'))).toHaveLength(2);
+ const clock=vi.spyOn(Date,'now').mockReturnValue(Date.now()+60_001);
+ try {await cached(f.destinationRef)} finally {clock.mockRestore()}
+ expect(f.post.mock.calls.filter(([p])=>p.endsWith('/prepare'))).toHaveLength(3);
+ await f.run();
+ expect((await cached(f.destinationRef)).localReplica).toBe(true);
+ f.switchUser();await expect(cached(f.destinationRef)).rejects.toMatchObject({code:'record-export-account-changed'});
+});
+it('joins preview readers without letting one canceled reader abort the other',async()=>{
+ const f=await fixture(), original=f.post.getMockImplementation()!;
+ let release!:()=>void;const gate=new Promise<void>(r=>{release=r});
+ f.post.mockImplementation(async(path,body)=>{if(path.endsWith('/prepare'))await gate;return original(path,body)});
+ const a=new AbortController(),b=new AbortController();
+ const one=f.service.preview('test:11',all,1,undefined,a.signal,false);const failed=expect(one).rejects.toBeDefined();
+ const two=f.service.preview('test:11',all,1,undefined,b.signal,false);
+ await vi.waitFor(()=>expect(f.post.mock.calls.filter(([p])=>p.endsWith('/prepare'))).toHaveLength(1));
+ a.abort();await failed;release();expect((await two).recordCount).toBe(1);
+ expect(f.post.mock.calls.filter(([p])=>p.endsWith('/prepare'))).toHaveLength(1);f.service.dispose();
+});
+it('bounds original downloads at four, deduplicates shared files and preserves every verified attachment',async()=>{
+ const f=await fixture(),original=f.post.getMockImplementation()!;
+ const refs=Array.from({length:8},(_,i)=>({file_asset_uid:'a'+i,file_kind:1,size:3,backup_path:'pic/'+String(i).padStart(64,'0')+'.png',reuse:false}));
+ f.post.mockImplementation(async(path,body)=>{
+  if(path.endsWith('/page'))return{items:[{record_uid:'r1',version:1,send_at:1,title:'标题',text:'正文',file_refs:[...refs,refs[0]]}],removed_uids:[],has_more:false,next_index:1};
+  if(path.endsWith('/batch-sign'))return{items:refs.map((f,i)=>({...f,method:'GET',url:'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/'+i+'.png',headers:{}}))};
+  return original(path,body);
+ });
+ let active=0,max=0;
+ f.fetchImpl.mockImplementation(async()=>{active++;max=Math.max(max,active);try{await new Promise(r=>setTimeout(r,10));return new Response(new Uint8Array([1,2,3]),{headers:{'Content-Length':'3'}})}finally{active--}});
+ const result=await f.run();expect(max).toBe(4);expect(active).toBe(0);expect(f.fetchImpl).toHaveBeenCalledTimes(8);
+ const receipt=JSON.parse(await readFile(join(f.root,'即我备份-test-11',result.fileName+'.json'),'utf8'));
+ expect(receipt.records).toBe(1);expect(receipt.files).toHaveLength(8);
+ for(const file of refs)expect(await readFile(join(f.root,'即我备份-test-11',file.backup_path))).toEqual(Buffer.from([1,2,3]));
+});
+
+it('settles concurrent attachment writers before failing and never acknowledges an incomplete export',async()=>{
+ const f=await fixture(),original=f.post.getMockImplementation()!;
+ const refs=Array.from({length:4},(_,i)=>({file_asset_uid:'a'+i,file_kind:1,size:3,backup_path:'pic/'+String(i).padStart(64,'0')+'.png',reuse:false}));
+ f.post.mockImplementation(async(path,body)=>{
+  if(path.endsWith('/page'))return{items:[{record_uid:'r1',version:1,send_at:1,title:'标题',text:'正文',file_refs:refs}],removed_uids:[],has_more:false,next_index:1};
+  if(path.endsWith('/batch-sign'))return{items:refs.map((f,i)=>({...f,method:'GET',url:'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/'+i+'.png',headers:{}}))};
+  return original(path,body);
+ });
+ let active=0,started=0;
+ f.fetchImpl.mockImplementation(async()=>{active++;const index=started++;try{await new Promise(r=>setTimeout(r,index===0?5:20));if(index===0)throw new Error('download failed');return new Response(new Uint8Array([1,2,3]),{headers:{'Content-Length':'3'}})}finally{active--}});
+ await expect(f.run()).rejects.toMatchObject({code:'directory-export-failed'});expect(active).toBe(0);expect(f.version()).toBe(0);
+ expect(f.post.mock.calls.some(([path,body])=>path.endsWith('/finish')&&body.success===true)).toBe(false);
+ expect(f.post.mock.calls.some(([path])=>path.endsWith('/saved'))).toBe(false);
+ f.fetchImpl.mockImplementation(async()=>new Response(new Uint8Array([1,2,3]),{headers:{'Content-Length':'3'}}));
+ expect((await f.run()).count).toBe(1);
+});
+
+it('reports syncing, file generation and save confirmation in order, and blocks preview recovery during a live export',async()=>{
+ const f=await fixture(),original=f.post.getMockImplementation()!;let release!:()=>void;
+ const gate=new Promise<void>(r=>{release=r});let saving=false;
+ f.post.mockImplementation(async(path,body)=>{if(path.endsWith('/saved')){saving=true;await gate}return original(path,body)});
+ const p=await f.preview(),updates:any[]=[];
+ const run=f.service.run({expectedAccountScope:'test:11',confirmed:true,orderKind:1,selection:all,previewUid:p.previewUid!,destinationRef:f.destinationRef},undefined,p=>updates.push(p));
+ await vi.waitFor(()=>expect(saving).toBe(true));
+ expect(updates).toEqual([{count:0,phase:'preparing'},{count:0,phase:'syncing'},{count:1,phase:'syncing'},{count:1,phase:'writing'},{count:1,phase:'confirming'}]);
+ const calls=f.post.mock.calls.length;await expect(f.preview()).rejects.toThrow('已有导出');expect(f.post.mock.calls).toHaveLength(calls);
+ release();await run;
+ const local=await f.preview();updates.length=0;
+ await f.service.run({expectedAccountScope:'test:11',confirmed:true,orderKind:1,selection:all,previewUid:local.previewUid!,destinationRef:f.destinationRef},undefined,p=>updates.push(p));
+ expect(updates).toEqual([{count:0,phase:'preparing'},{count:0,phase:'writing'}]);
+});
+it('rejects conflicting attachment identities before writing or advancing the backup',async()=>{
+ const f=await fixture(),original=f.post.getMockImplementation()!;
+ f.post.mockImplementation(async(path,body)=>{const value=await original(path,body);if(path.endsWith('/page'))value.items[0].file_refs.push({...value.items[0].file_refs[0],file_asset_uid:'conflict'});return value});
+ await expect(f.run()).rejects.toThrow('附件身份冲突');expect(f.fetchImpl).not.toHaveBeenCalled();expect(f.version()).toBe(0);expect(f.finished()).toBe(0);
+});
+it('bounds prepared plans and simultaneous distinct prepares, and clears work on disposal',async()=>{
+ const f=await fixture(),date=(n:number)=>({...all,mode:'dates' as const,startDate:`2026-11-${String(n).padStart(2,'0')}`,endDate:`2026-11-${String(n).padStart(2,'0')}`});
+ for(let n=1;n<=13;n++)await f.service.preview('test:11',date(n),1,undefined,undefined,false);
+ const before=f.post.mock.calls.filter(([path])=>path.endsWith('/prepare')).length;
+ await f.service.preview('test:11',date(13),1,undefined,undefined,false);expect(f.post.mock.calls.filter(([path])=>path.endsWith('/prepare'))).toHaveLength(before);
+ await f.service.preview('test:11',date(1),1,undefined,undefined,false);expect(f.post.mock.calls.filter(([path])=>path.endsWith('/prepare'))).toHaveLength(before+1);
+ const signals:AbortSignal[]=[];
+ f.runtime.authenticatedPost=vi.fn(async(_path,_body,_session,signal:AbortSignal)=>{signals.push(signal);await new Promise((_r,j)=>signal.addEventListener('abort',()=>j(signal.reason),{once:true}));return {}}) as never;
+ const pending=Array.from({length:4},(_,i)=>f.service.preview('test:11',date(20+i),1,undefined,undefined,false).then(()=>false,()=>true));
+ await vi.waitFor(()=>expect(signals).toHaveLength(4));await expect(f.service.preview('test:11',date(24),1,undefined,undefined,false)).rejects.toThrow('正在准备其他');
+ f.service.dispose();expect(await Promise.all(pending)).toEqual([true,true,true,true]);expect(signals.every(s=>s.aborted)).toBe(true);
+});

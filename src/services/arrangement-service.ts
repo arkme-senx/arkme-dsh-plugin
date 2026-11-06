@@ -542,7 +542,8 @@ export class ArrangementService {
       throw new ArkmePluginError('arrangement-contract-invalid', '录音来源安排与当天不匹配，请刷新', true, 502)
     }
     return { state: data.state as 'ready' | 'processing' | 'partial', items, total, hasMore: nextOffset < total,
-      ...(nextOffset < total ? { nextOffset } : {}), snapshotVersion: version }
+      ...(nextOffset < total ? { nextOffset } : {}), snapshotVersion: version,
+      ...(Array.isArray(data.coverage_reasons) && data.coverage_reasons.every(reason => typeof reason === 'string') ? { coverageReasons: [...new Set(data.coverage_reasons as string[])] } : {}) }
   }
 
   async reorderArrangement(input: ArkmeArrangementReorderInput, signal?: AbortSignal): Promise<ArkmeArrangementReorderResult> {
