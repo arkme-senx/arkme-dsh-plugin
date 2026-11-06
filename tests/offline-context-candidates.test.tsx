@@ -106,6 +106,14 @@ it('pages pending cards without a second entry and removes the banner after conf
   await act(async () => r.unmount())
 })
 
+it('does not request personal associations in a delegated group',async()=>{
+ fixture()
+ let r!:ReactTestRenderer
+ await act(async()=>{r=create(<OfflineContextCandidates source={{...source,kind:'group_chat',accessKind:'team_delegation'}} items={[]} onChanged={()=>{}}/>)})
+ expect(r.toJSON()).toBeNull();expect(api.offlineContext).not.toHaveBeenCalled()
+ await act(async()=>r.unmount())
+})
+
 it('loads candidate management only after its directory opens and keeps removed entries out of chat history', async () => {
   const { OfflineContextDirectory } = await import('../src/client/offline-context/OfflineContextDirectory.js')
   fixture()
@@ -125,4 +133,5 @@ it('loads candidate management only after its directory opens and keeps removed 
     expect(close).toHaveBeenCalledOnce()
     expect(api.offlineContext.mock.calls.some(([input]) => input.operation === 'command')).toBe(false)
   } finally { await act(async () => r.unmount()) }
+
 })

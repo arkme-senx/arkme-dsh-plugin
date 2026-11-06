@@ -1,3 +1,4 @@
+import {ArkmeChatPreviewDialog,arkmeCanPreviewChat} from './ArkmeChatPreviewDialog.js'
 import { useConversationActionFeedback } from './use-conversation-action-feedback.js'
 import { useTeamEntryRemovalActions } from './TeamEntryRemovalFeedback.js'
 import { ArkmeConversationRemovalFeedback, conversationRemovalRowStyle } from './ArkmeConversationRemovalFeedback.js'
@@ -16,7 +17,7 @@ export function useTeamConversationEntryActions(accountKey: string | undefined, 
   const scope = useMemo(() => ({}), [accountKey, key])
   const feedback = useConversationActionFeedback(scope)
   useEffect(() => { setPoint(undefined); setPreview(false) }, [accountKey, key])
-  const name = target.kind === 'folder' ? target.group.channel.name : target.conversation.side === 'team' ? target.conversation.visitor?.nickname ?? '用户' : target.conversation.channel.name
+  const name = target.kind==='group'?target.source.displayName:target.kind === 'folder' ? target.group.channel.name : target.conversation.side === 'team' ? target.conversation.visitor?.nickname ?? '用户' : target.conversation.channel.name
   const mutate = async (action: () => void | Promise<void>, success?: string) => { setPoint(undefined); try { await action(); if (success) feedback.notify(success) } catch (caught) { feedback.notify(caught instanceof Error ? caught.message : '操作失败，请重试') } }
   const restore = (navigation = false) => { if (accountKey) return teamDirectoryPreferences.restoreTarget(accountKey, target, navigation) }
   return {
@@ -40,7 +41,8 @@ export function useTeamConversationEntryActions(accountKey: string | undefined, 
         { id: 'remove', label: hidden ? '恢复到列表' : '移除', danger: !hidden, onSelect: () => mutate(() => hidden ? restore() : removal ? removal.remove(target) : teamDirectoryPreferences.remove(accountKey, target)) },
       ]} />}
       {feedback.feedback}
-      {preview && accountKey && <TeamConversationPreview key={`${accountKey}:${key}`} accountKey={accountKey} target={target} onClose={() => setPreview(false)} />}
+      {preview && accountKey && target.kind==='group'&&arkmeCanPreviewChat(target.source)&&<ArkmeChatPreviewDialog source={target.source} onClose={()=>setPreview(false)}/> }
+      {preview && accountKey && target.kind!=='group'&& <TeamConversationPreview key={`${accountKey}:${key}`} accountKey={accountKey} target={target} onClose={() => setPreview(false)} />}
     </>,
   }
 }

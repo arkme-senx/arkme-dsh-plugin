@@ -102,8 +102,8 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
     for (const video of videoRefs.current.values()) video.pause()
     standaloneVideo.current?.pause()
   })
-  const interactionRows: TranscriptInteractionRow[] = (detail?.transcriptSegments ?? []).map(segment => ({ id: segment.segmentId, text: segment.text, speaker: segment.speakerDisplayName, at: detail!.startedAtMillis + segment.startMillis, playable: !!segment.audioUrl,...(detail?.callRef&&segment.sourceSegmentId?{excerptOrigin:{kind:'call' as const,itemRef:JSON.stringify([detail.callRef,segment.sourceSegmentId])}}:{}) }))
-  const transcriptInteraction = useTranscriptInteractions({ scope: `call:${detail?.stableId ?? ''}`, rows: interactionRows,
+  const interactionRows: TranscriptInteractionRow[] = (detail?.transcriptSegments ?? []).map(segment => ({ id: segment.segmentId, ...(detail?.callRef&&segment.privateViewTarget&&segment.privateViewVersion?{viewRef:JSON.stringify({kind:"call",callRef:detail.callRef,target:segment.privateViewTarget}),sourceVersion:segment.privateViewVersion}:{}), text: segment.text, speaker: segment.speakerDisplayName, at: detail!.startedAtMillis + segment.startMillis, playable: !!segment.audioUrl,...(detail?.callRef&&segment.sourceSegmentId?{excerptOrigin:{kind:'call' as const,itemRef:JSON.stringify([detail.callRef,segment.sourceSegmentId])}}:{}) }))
+  const transcriptInteraction = useTranscriptInteractions({...(detail?.callRef?{savedRef:JSON.stringify({kind:'call',callRef:detail.callRef})}:{}), scope: `call:${detail?.stableId ?? ''}`, rows: interactionRows,
     enabled: active && !selectedIsSample && !!detail?.stableId,
     playing: !!transcriptPlayback.state && transcriptPlayback.state.status !== 'failed', onStop: transcriptPlayback.stop,
     onPlay: ids => transcriptPlayback.playItems((detail?.transcriptSegments ?? []).filter(segment => ids.includes(segment.segmentId)).sort((a,b) => a.startMillis - b.startMillis)),

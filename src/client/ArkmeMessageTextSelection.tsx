@@ -151,7 +151,7 @@ function wholeMessageRange(element: HTMLElement): Range | undefined {
 }
 
 /** One host per product surface; only explicitly registered message bodies participate. */
-export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, markScopeControl, onMarkStorageChange, markAudience = 'self', canReplace, prepareReplace, selectionDomain, getViewport, selfNote }: {
+export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, replyLabel = '回复', onUnderline, getMarks, onRemoveMark, markStorage, markScopeControl, onMarkStorageChange, markAudience = 'self', canMark: canMarkTarget, canReplace, prepareReplace, selectionDomain, getViewport, selfNote }: {
   selfNote?: { sourceLabel: string; accountKey?: string } | undefined
   /** Embedded native chat may occupy only part of a full-window clipped iframe. */
   getViewport?: (() => { left: number; right: number; top: number; bottom: number }) | undefined
@@ -166,6 +166,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   onUnderline?: ((target: MessageSelectionTarget, quote: ArkmeMessageQuote) => Promise<string | undefined>) | undefined
   getMarks?: ((target: MessageSelectionTarget) => MessageUnderline[]) | undefined
   onRemoveMark?: ((target: MessageSelectionTarget, mark: MessageUnderline) => Promise<string | undefined>) | undefined
+  canMark?: ((target: MessageSelectionTarget) => boolean) | undefined
   canReplace?: ((target: MessageSelectionTarget) => boolean) | undefined
   prepareReplace?: PrepareSelectedTextReplace | undefined
 } = {}) {
@@ -330,7 +331,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   // A partial overlap is not permission to delete a larger mark. Cancel only an exact selection.
   const ownMark = marks.find(mark => mark.mine && mark.anchor!.start === quote?.start && mark.anchor!.end === quote?.end)
   const authors = [...new Set(marks.map(mark => mark.mine ? '你' : mark.actorName))]
-  const canMark = !!onUnderline && replyTarget?.sourceRef === replySourceRef && replyTarget?.item.status === 1
+  const canMark = !!onUnderline && replyTarget?.sourceRef === replySourceRef && replyTarget?.item.status === 1 && (!canMarkTarget || canMarkTarget(replyTarget))
   const chooseMarkScope = canMark && !!onMarkStorageChange
   const localScope = chooseMarkScope && markStorage === 'local'
   const markLabel = ownMark ? localScope ? '取消标记（仅此电脑）' : '取消标记'
@@ -386,6 +387,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
         || JSON.stringify([quoteSourceContent(freshTarget.item), freshTarget.item.recordVersion]) !== source) return
       anchors.current.set(snapshot, { source, quote })
       if (underline) {
+        if (canMarkTarget && !canMarkTarget(freshTarget)) return
         const message = await onUnderline?.(freshTarget, quote)
         if (current.current !== snapshot) return
         if (message) { setNotice(message); return }

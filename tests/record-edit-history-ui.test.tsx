@@ -31,10 +31,11 @@ describe('edit history view', () => {
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeRecordEditHistory sourceRef="s" messageActionRef="a" reader={reader} author={{ isMe, senderName: '作者', senderKind: 'bot' }} />) })
     expect(view.root.findByProps({ 'data-arkme-history-row': true }).props.style.flexDirection).toBe(isMe ? 'row-reverse' : 'row')
-    expect(view.root.findByType(ArkmeUserAvatar).props).toMatchObject({ size: 32, senderKind: 'bot', label: '作者' })
+    expect(view.root.findByType(ArkmeUserAvatar).props).toMatchObject({ size: 32, senderKind: 'bot', label: '未记录' })
     const content = view.root.findByType(ArkmeMessageContent).props
     expect(content.presentation).toBe('detail')
     expect(content.item.itemUid).toBe('revision-only')
+    expect(content.item.senderName).toBe('未记录')
     expect(content.item.messageActionRef).toBeUndefined()
     expect(content.sourceRef).toBeUndefined()
     expect(view.root.findByProps({ 'data-arkme-history-latest': true }).props.style.fontSize).toBe(10)
@@ -55,7 +56,7 @@ describe('edit history view', () => {
   it('keeps pagination reachable when a whole page is filtered and blocks duplicate loads', async () => {
     let resolve!: (value: ArkmeRecordEditHistoryPage) => void
     const reader = { page: vi.fn<ArkmeRecordEditHistoryReader['page']>()
-      .mockResolvedValueOnce({ items: [], hasMore: true, nextCursorEditAt: 100 })
+      .mockResolvedValueOnce({ items: [], hasMore: true, nextCursorVersion: 100 })
       .mockImplementationOnce(() => new Promise(done => { resolve = done })) }
     const view = await render(reader)
     expect(button(view, '加载更多')).toBeDefined()
@@ -67,7 +68,7 @@ describe('edit history view', () => {
   })
   it('retains loaded revisions on pagination failure and retries the same cursor', async () => {
     const reader = { page: vi.fn<ArkmeRecordEditHistoryReader['page']>()
-      .mockResolvedValueOnce({ ...page('first'), hasMore: true, nextCursorEditAt: 100 })
+      .mockResolvedValueOnce({ ...page('first'), hasMore: true, nextCursorVersion: 100 })
       .mockRejectedValueOnce(new Error('网络失败')).mockResolvedValueOnce(page('second')) }
     const view = await render(reader)
     await act(async () => button(view, '加载更多').props.onClick())
@@ -110,7 +111,7 @@ describe('edit history view', () => {
     const first = page('first')
     first.items[0]!.content.mediaUnavailable = true
     const reader = { page: vi.fn<ArkmeRecordEditHistoryReader['page']>()
-      .mockResolvedValueOnce({ ...first, hasMore: true, nextCursorEditAt: 100 })
+      .mockResolvedValueOnce({ ...first, hasMore: true, nextCursorVersion: 100 })
       .mockRejectedValueOnce(new Error('刷新失败')).mockResolvedValueOnce(page('refreshed')) }
     const view = await render(reader)
     await act(async () => button(view, '重新加载历史附件').props.onClick())
@@ -148,7 +149,7 @@ describe('edit history view', () => {
   it('fills a page boundary baseline without resetting expanded versions', async () => {
     const first = page('new'); first.items[0]!.content.textContent = '周四开会'
     const older = page('older'); older.items[0]!.editAtMillis -= 1000; older.items[0]!.content.textContent = '周三开会'
-    const reader = { page: vi.fn().mockResolvedValueOnce({ ...first, hasMore: true, nextCursorEditAt: 100 }).mockResolvedValueOnce(older) }
+    const reader = { page: vi.fn().mockResolvedValueOnce({ ...first, hasMore: true, nextCursorVersion: 100 }).mockResolvedValueOnce(older) }
     const view = await render(reader)
     expect(view.root.findAllByType('del')).toHaveLength(0)
     await act(async () => button(view, '加载更多').props.onClick())
@@ -199,7 +200,7 @@ describe('edit history view', () => {
     })
     let view: ReactTestRenderer | undefined
     try {
-      const reader = { page: vi.fn().mockResolvedValueOnce({ ...page('new'), hasMore: true, nextCursorEditAt: 100 }).mockRejectedValueOnce(new Error('读取失败')) }
+      const reader = { page: vi.fn().mockResolvedValueOnce({ ...page('new'), hasMore: true, nextCursorVersion: 100 }).mockRejectedValueOnce(new Error('读取失败')) }
       await act(async () => { view = create(<ArkmeRecordEditHistory sourceRef="s" messageActionRef="a" reader={reader} />, { createNodeMock: element => element.props['data-arkme-history-baseline'] !== undefined ? {} : null }) })
       expect(observe).toHaveBeenCalledTimes(1)
       await act(async () => { intersect([{ isIntersecting: true }]); intersect([{ isIntersecting: true }]) })
@@ -211,4 +212,16 @@ describe('edit history view', () => {
       expect(button(view!, '重试')).toBeDefined()
     } finally { if (view) act(() => view!.unmount()); vi.unstubAllGlobals() }
   })
+})
+
+it('compares actual visible revisions even when non-body mutations leave version-number gaps', async () => {
+ const previous = { ...page('old approved body').items[0]!, version: 1, editAtMillis: 1000 }
+ const revision = { ...page('new approved body').items[0]!, version: 3, editAtMillis: 3000 }
+ let view!: ReactTestRenderer
+ await act(async () => { view = create(<ArkmeRecordRevisionDiff revision={revision} previous={previous} hasMore={false} senderName="peer" mine={false} />) })
+ expect(JSON.stringify(view.toJSON())).toContain('对比基准')
+ expect(view.root.findAllByType('del').length).toBeGreaterThan(0)
+ expect(JSON.stringify(view.toJSON())).not.toContain('缺少上一版本')
+ expect(JSON.stringify(view.toJSON())).not.toContain('unreviewed hidden body')
+ act(() => view.unmount())
 })
