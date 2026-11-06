@@ -20,6 +20,7 @@ import {tr,useArkmeLocale} from './locale.js'
 import {teamDirectoryPreferences,teamEntryHidden,teamEntryPinned,teamEntryKey,teamFolderEntryKey,useTeamDirectoryPreferences,type TeamEntryTarget} from './team-directory-preferences.js'
 import {readTeamDirectory,subscribeTeamDirectory} from './team-conversation-directory.js'
 import {openedTeamConversations} from './team-opened-conversations.js'
+import {mergeTeamWorkspaceRows,teamWorkspaceTarget} from './team-workspace-rows.js'
 
 /** One server cursor owns the mixed stream. Client rows are presentation only. */
 export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChannel,selectedKey,onBack}:{accountKey:string;teamRef:string;channel?:TeamChannel|undefined;selectedKey?:string|undefined;onBack():void}) {
@@ -29,18 +30,9 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
   const scope=JSON.stringify([accountKey,channel?.jotmoId??teamRef])
   const preferences=useTeamDirectoryPreferences(accountKey)
   const privateDirectory=useSyncExternalStore(subscribeTeamDirectory,()=>readTeamDirectory(accountKey),()=>readTeamDirectory(accountKey))
-  const pins:TeamWorkspaceEntry[]=page?privateDirectory.items.filter(c=>c.side==='team'&&c.channel.jotmoId===channel?.jotmoId&&teamEntryPinned(preferences,{kind:'conversation',conversation:c}))
-    .map(c=>({kind:'customer',key:`pinned:${c.key}`,activityAt:c.updatedAt,conversation:c})):[]
-  const targetFor=(row:TeamWorkspaceEntry):TeamEntryTarget=>row.kind==='customer'?{kind:'conversation',conversation:row.conversation}:{kind:'group',source:row.source,entryKey:row.entryKey,entryRef:row.entryRef,channel}
-  // Existing private-contact snapshots retain their ordinary offline behavior.
-  // Delegated group bodies enter only through a currently authorized mixed page.
-  const cachedCustomers:TeamWorkspaceEntry[]=privateDirectory.items.filter(c=>c.side==='team'&&c.channel.jotmoId===channel?.jotmoId)
-    .map(conversation=>({kind:'customer',key:conversation.key,activityAt:conversation.updatedAt,conversation}))
-  const openedCustomers:TeamWorkspaceEntry[]=openedTeamConversations.read(accountKey).filter(c=>c.channel.jotmoId===channel?.jotmoId)
-    .map(conversation=>({kind:'customer',key:conversation.key,activityAt:conversation.updatedAt,conversation}))
-  const allRows=[...new Map([...openedCustomers,...pins,...pinRows,...(page?rows:cachedCustomers)].map(row=>[row.kind==='customer'?`customer:${row.conversation.key}`:`group:${row.source.sourceKey}`,row])).values()]
-    .filter(row=>teamDirectoryPreferences.canPresentTarget(accountKey,targetFor(row)))
-    .sort((a,b)=>Number(teamEntryPinned(preferences,targetFor(b)))-Number(teamEntryPinned(preferences,targetFor(a)))||b.activityAt-a.activityAt||(a.key<b.key?1:a.key>b.key?-1:0))
+  const targetFor=(row:TeamWorkspaceEntry)=>teamWorkspaceTarget(row,channel)
+  const allRows=mergeTeamWorkspaceRows({channel,rows,conversations:privateDirectory.items,opened:openedTeamConversations.read(accountKey),pinRows,hasPage:!!page,preferences,
+    canPresent:target=>teamDirectoryPreferences.canPresentTarget(accountKey,target)})
   const visibleRows=allRows.filter(row=>!teamEntryHidden(preferences,targetFor(row))),removed=allRows.filter(row=>teamEntryHidden(preferences,targetFor(row)))
   useEffect(()=>{
     if(!page||!channel)return
