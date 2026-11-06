@@ -7,7 +7,7 @@ let host: HTMLDivElement
 const render = async (node: React.ReactNode) => { host=document.createElement('div');document.body.append(host);root=createRoot(host);await act(async()=>root!.render(node));return {container:host} }
 afterEach(async()=>{ if(root) await act(async()=>root!.unmount());host?.remove();root=undefined })
 import { ArkmeRunnerCard, parseRunnerCard, runnerDecisionResolutions, runnerCardPreviewText, type RunnerCard } from '../src/client/ArkmeRunnerCard.js'
-const card: RunnerCard = { version: 1, kind: 'decision', taskId: '11111111-1111-1111-1111-111111111111', decisionId: '22222222-2222-2222-2222-222222222222', state: 'waiting', title: '订单归属应由哪个服务维护？', expert: '李工', domain: '后端架构', recommendation: '沿用订单服务，通过接口访问' }
+const card: RunnerCard = { version: 1, producer: 'jotmo-agent-runner', kind: 'decision', taskId: '11111111-1111-1111-1111-111111111111', decisionId: '22222222-2222-2222-2222-222222222222', state: 'waiting', title: '订单归属应由哪个服务维护？', expert: '李工', domain: '后端架构', recommendation: '沿用订单服务，通过接口访问' }
 const text = `李工，请确认\n\n\`\`\`jotmo-task\n${JSON.stringify(card)}\n\`\`\``
 describe('Runner decision presentation', () => {
  it('only renders valid Bot-owned protocol and falls back on malformed or unknown data', () => {
@@ -60,8 +60,23 @@ describe('Decision state identity and revoked requests', () => {
 })
 
 it('renders a readable quote summary without protocol fields and leaves ordinary text intact', () => {
-  const text = '说明\n\n```jotmo-task\n' + JSON.stringify({version: 1, kind:'decision', state:'waiting', taskId:'11111111-1111-1111-1111-111111111111', decisionId:'22222222-2222-2222-2222-222222222222', title:'空值如何处理？', expert:'李工', domain:'后端架构'}) + '\n```'
+  const text = '说明\n\n```jotmo-task\n' + JSON.stringify({version: 1, producer: 'jotmo-agent-runner', kind:'decision', state:'waiting', taskId:'11111111-1111-1111-1111-111111111111', decisionId:'22222222-2222-2222-2222-222222222222', title:'空值如何处理？', expert:'李工', domain:'后端架构'}) + '\n```'
   expect(runnerCardPreviewText(text)).toBe('研发决策 · 后端架构：空值如何处理？')
   expect(runnerCardPreviewText('普通群消息')).toBe('普通群消息')
   expect(runnerCardPreviewText('说明\n\n```jotmo-task\n{}\n```')).toContain('```jotmo-task')
+})
+
+it('ordinary Bot payloads do not opt into development controls', () => {
+  expect(parseRunnerCard(text.replace('"producer":"jotmo-agent-runner",', ''), 'bot')).toBeUndefined()
+})
+it('requirement clarification identifies the requester and only prefills a draft', async () => {
+  const reply = vi.fn()
+  await render(<ArkmeRunnerCard card={{ ...card, purpose: 'requirement', domain: '需求澄清', expert: '产品同事' }} onReply={reply} />)
+  await act(async () => [...host.querySelectorAll('button')].find(b => b.textContent === '补充需求')!.click())
+  expect(reply).toHaveBeenCalledWith(`【研发决策:${card.decisionId}】\n我的业务目标是：`)
+})
+it('delivery renders branch links with existing safe Markdown without fetching images', async () => {
+  await render(<ArkmeRunnerCard card={{ version: 1, producer: 'jotmo-agent-runner', kind: 'task', taskId: card.taskId, state: 'completed', title: '已交付', answer: '[查看分支](https://example.invalid/branch)\n\n![tracking](https://example.invalid/tracking.png)' }} />)
+  expect(host.querySelector('a')?.getAttribute('href')).toBe('https://example.invalid/branch')
+  expect(host.querySelector('img')).toBeNull()
 })
