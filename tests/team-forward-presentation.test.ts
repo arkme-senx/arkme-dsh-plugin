@@ -26,6 +26,13 @@ it('renders ordinary source envelopes as Team-owned copies without making the or
  expect(projection.items[0]).not.toHaveProperty('senderUserId')
 })
 
+it('keeps ordinary compact previews usable when full frozen items are omitted from the list response',()=>{
+ const files=vi.fn(()=>[])
+ const projection=projectTeamForward({forward_records:{source_type:'quick_records',render_kind:'forward_records',title:'转发快记',summary_lines:['作者：测试'],created_at:100}},files)
+ expect(projection).toEqual({title:'转发快记',createdAtMillis:100,summaryLines:['作者：测试'],items:[]})
+ expect(files).not.toHaveBeenCalled()
+})
+
 it('retains the existing public team attribution badges on frozen ordinary copies',()=>{
  const result=projectTeamForward({forward_records:{source_type:'quick_records',items:[{owner_name:'同事',text:'团队原文',source_representation:{team_id:'7',actor_user_id:13,name:'接待团队',jotmo_id:'support'},origin_representation:{team_id:'8',name:'原始团队',jotmo_id:'origin'}}]}},()=>[])!
  expect(result.items[0]).toMatchObject({senderName:'同事',sourceTeam:{name:'接待团队',jotmoId:'support'},originTeam:{name:'原始团队',jotmoId:'origin'}})
