@@ -440,6 +440,9 @@ function recordReeditSubmissionEntries(state: PersistedState, userId: number): R
 function validRecordReeditSubmission(raw: unknown, userId: number, key: string): raw is ArkmeRecordReeditSubmission {
   if (!raw || typeof raw !== 'object') return false
   const job = raw as ArkmeRecordReeditSubmission
+  if (job.revisionUid !== undefined && (typeof job.revisionUid !== 'string' || job.revisionUid !== job.submissionId)) return false
+  if (job.editorSnapshot !== undefined && (!job.editorSnapshot || typeof job.editorSnapshot !== 'object'
+    || Object.entries(job.editorSnapshot).some(([key, value]) => !['avatar', 'nickname'].includes(key) || typeof value !== 'string' || value.length > (key === 'avatar' ? 4096 : 640)))) return false
   const draft = normalizedRecordReeditDraft(job.draft)
   if (!draft || typeof job.submissionId !== 'string' || job.submissionId === '' || !job.context
     || job.context.expectedUserId !== userId || job.context.itemUid !== draft.itemUid

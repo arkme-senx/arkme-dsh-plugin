@@ -25,6 +25,7 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
     status: 1, version: 7, content_access_state: 1, ...overrides,
   }
   const writes: Record<string, unknown>[] = []
+  const receipts = new Map<string, number>()
   const readMedia = vi.fn(async () => ({ items: [{ record_uid: 'r1', items: [
     { file_asset_uid: 'a', file_name: 'a.png', file_kind: 1, mime_type: 'image/png', size: 20, preview_url: 'https://example.com/a.png', download_url: 'https://example.com/a.png' },
     { file_asset_uid: 'b', file_name: 'b.png', file_kind: 1, mime_type: 'image/png', size: 20, preview_url: 'https://example.com/b.png', download_url: 'https://example.com/b.png' },
@@ -37,13 +38,15 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
     }
     writes.push(structuredClone(body))
     Object.assign(core, body, { version: Number(core.version) + 1 })
-    return { record_core: structuredClone(core), revision_uid: 'revision' }
+    receipts.set(String(body.revision_uid), Number(core.version))
+    return { record_core: structuredClone(core), revision_uid: body.revision_uid ?? 'revision' }
   })
   const runtime = {
     config: { maxTextLength: 20_000, richMediaSendEnabled: true }, stateStore,
     async requireSession() { return { userId, accessToken: 'access', refreshToken: 'refresh' } },
     async authenticatedPost(path: string, body: Record<string, unknown>) {
       if (path === '/api/v1/records/detail') return { record_core: structuredClone(core) }
+      if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: receipts.has(String(body.revision_uid)), accepted_version: receipts.get(String(body.revision_uid)) ?? 0, current_version: core.version }
       if (path === '/api/v1/records/update') return await update(body)
       if (path === '/api/v1/records/media/batch-list') return await readMedia()
       throw new Error(path)
@@ -64,7 +67,7 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
   }
   const restart = (freshState = false) => new RecordService((freshState ? { ...runtime, stateStore: new ArkmeStateStore(root) } : runtime) as never, mediaService, sourceReader, undefined, files, onCommitted)
   const service = restart()
-  return { root, stateStore, service, restart, runtime, core, files, writes, update, readMedia, sourceReader, switchAccount: () => { userId = 99 } }
+  return { root, stateStore, service, restart, runtime, core, files, writes, receipts, update, readMedia, sourceReader, switchAccount: () => { userId = 99 } }
 }
 const target = { sourceRef: 'source', itemUid: 'r1' }
 
@@ -254,7 +257,7 @@ describe('Record attachment re-edit', () => {
         const owner = owners.get(String(body.record_uid))!
         x.writes.push(structuredClone(body))
         Object.assign(owner, body, { version: Number(owner.version) + 1 })
-        return { record_core: structuredClone(owner), revision_uid: 'revision' }
+        return { record_core: structuredClone(owner), revision_uid: body.revision_uid ?? 'revision' }
       }
       return read(path, body)
     })
@@ -1190,21 +1193,20 @@ describe('Record attachment re-edit', () => {
     } finally { restarted.dispose() }
   })
 
-  it.each([false, true])('checks background metadata when reconciling a lost response (owner changed: %s)', async changed => {
+  it.each([false, true])('uses the accepted revision receipt even when later background metadata changed: %s', async changed => {
     const x = await setup({ template_kind: 1, content_payload: { payload_kind: 1, schema_version: 1, text_state: 1,
       media_refs: [{ ...media('background'), content_file_role: 4 }], background_sound_amplitudes: [0.2] } })
     try {
       const prepared = await x.service.prepareRecordReedit({ ...target, newText: '修改正文' })
       x.update.mockImplementationOnce(async body => {
-        Object.assign(x.core, body, { version: 8 })
+        Object.assign(x.core, body, { version: changed ? 9 : 8 })
+        x.receipts.set(String(body.revision_uid), 8)
         if (changed) (x.core.content_payload as any).background_sound_amplitudes = [0.8]
         throw new ArkmePluginError('network-failed', '未知结果', false, 502, { writeOutcomeUnknown: true })
       })
       const committed = x.service.commitRecordReedit(prepared)
-      if (changed) {
-        await expect(committed).rejects.toMatchObject({ code: 'record-reedit-conflict' })
-        expect(await x.stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'r1')).toBeDefined()
-      } else {
+      await expect(committed).resolves.toMatchObject({ status: 'committed', version: 8 })
+      if (!changed) {
         await expect(committed).resolves.toMatchObject({ status: 'committed', version: 8 })
         expect(x.core.content_payload).toMatchObject({ background_sound_amplitudes: [0.2],
           media_refs: [{ file_asset_uid: 'background', content_file_role: 4 }] })
@@ -1472,7 +1474,7 @@ describe('Record attachment re-edit', () => {
     const x = await setup({ template_kind: 1, content_payload: { payload_kind: 1, schema_version: 1, text_state: 1 } })
     const p = await x.service.prepareRecordReedit({ ...target, expectedVersion: 7, attachments: [{ fileRef }] })
     x.update.mockImplementationOnce(async body => {
-      Object.assign(x.core, body, { version: 8 })
+      Object.assign(x.core, body, { version: 8 }); x.receipts.set(String(body.revision_uid), 8)
       throw new ArkmePluginError('network-failed', '未知结果', false, 502, { writeOutcomeUnknown: true })
     })
     await expect(x.service.commitRecordReedit(p)).resolves.toMatchObject({ status: 'committed', version: 8 })

@@ -8,9 +8,10 @@ import {TeamForwardAttempt} from '../src/client/team-forward-attempt.js'
 import type {ArkmeSourceItem} from '../src/types.js'
 import type {TeamConversation} from '../src/team-app-contract.js'
 
-const mocks=vi.hoisted(()=>({native:vi.fn(),team:vi.fn(),admit:vi.fn()}))
+const mocks=vi.hoisted(()=>({native:vi.fn(),admit:vi.fn(),directory:vi.fn(),refresh:vi.fn(),auth:{status:'authenticated',environment:'test',userId:11}}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.native}))
-vi.mock('../src/sdk/index.js',()=>({createArkmeSdk:()=>({listTeamConversations:mocks.team})}))
+vi.mock('../src/client/unified-forward-directory.js',()=>({useUnifiedForwardDirectory:mocks.directory}))
+vi.mock('../src/client/auth-store.js',()=>({arkmeAuthStore:{getSnapshot:()=>({auth:mocks.auth}),subscribe:()=>()=>{}}}))
 vi.mock('../src/client/direct-message-admission.js',()=>({requireDirectMessageSendAllowed:mocks.admit}))
 vi.mock('../src/client/ArkmeAvatar.js',()=>({ArkmeDirectorySourceAvatar:()=>null,ArkmeUserAvatar:()=>null}))
 vi.mock('../src/client/ArkmeTeamAvatar.js',()=>({ArkmeTeamChannelAvatar:()=>null}))
@@ -21,9 +22,9 @@ const page=(items:unknown[])=>({items,hasMore:false})
 let host:HTMLDivElement,root:Root
 beforeEach(()=>{
  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true)
- mocks.native.mockReset();mocks.team.mockReset();mocks.admit.mockReset().mockResolvedValue(undefined)
+ mocks.native.mockReset();mocks.admit.mockReset().mockResolvedValue(undefined);mocks.refresh.mockReset().mockResolvedValue(undefined)
+ mocks.directory.mockReset().mockImplementation(()=>({rows:[source('自己','send_to_self'),source('同事')].map(value=>({kind:'target',target:{kind:'source',source:value},pinned:false,activeAtMillis:1})).concat([team('客服'),team('屏蔽',true)].map(value=>({kind:'target',target:{kind:'team',conversation:value},pinned:false,activeAtMillis:1})) as never),preferences:{},loading:false,hasMore:false,error:'',refresh:mocks.refresh}))
  mocks.native.mockResolvedValue(page([source('自己','send_to_self'),source('同事')]))
- mocks.team.mockImplementation(async(side:string)=>page(side==='team'?[team('客服'),team('屏蔽',true)]:[]))
  host=document.createElement('div');document.body.append(host);root=createRoot(host)
 })
 afterEach(()=>{act(()=>root.unmount());host.remove();vi.unstubAllGlobals()})
@@ -35,7 +36,7 @@ const sendButton=()=>dialog().querySelector<HTMLButtonElement>('button[aria-labe
 it('uses native targets and real Team targets, retains partial failures and retries only unresolved commands',async()=>{
  const sender=vi.fn().mockResolvedValueOnce({itemUid:'native',localState:'synced'}).mockRejectedValueOnce(new Error('响应丢失')).mockResolvedValue({itemUid:'team',localState:'synced'})
  const attempt=new TeamForwardAttempt('conversation',[{messageRef:'message',version:3}],sender),complete=vi.fn()
- await act(async()=>root.render(<TeamForwardDialog attempt={attempt} previewTitle="转发消息" previewSubtitle="正文" onClose={()=>{}} onComplete={complete}/>))
+ await act(async()=>root.render(<TeamForwardDialog accountKey="test:11" attempt={attempt} previewTitle="转发消息" previewSubtitle="正文" onClose={()=>{}} onComplete={complete}/>))
  await click(row('屏蔽'));expect(dialog().querySelector('[role="alert"]')?.textContent).toContain('暂时不能发送')
  await click(row('同事'));await click(row('客服'))
  expect(dialog().querySelectorAll('[aria-pressed="true"]')).toHaveLength(2)
@@ -51,9 +52,10 @@ it('uses native targets and real Team targets, retains partial failures and retr
 })
 
 it('loads owner topics through the existing directory and enforces the five-target limit',async()=>{
- mocks.native.mockImplementation(async(_method:string,args:{directory:string})=>page(args.directory==='send_to_self'?[source('本人主题','topic')]:Array.from({length:6},(_,index)=>source(`同事${index}`)).concat(source('自己','send_to_self'))))
+ mocks.native.mockImplementation(async()=>page([source('本人主题','topic')]))
+ mocks.directory.mockImplementation(()=>({rows:Array.from({length:6},(_,index)=>source(`同事${index}`)).concat(source('自己','send_to_self')).map(value=>({kind:'target',target:{kind:'source',source:value},pinned:false,activeAtMillis:1})),preferences:{},loading:false,hasMore:false,error:'',refresh:mocks.refresh}))
  const sender=vi.fn(),attempt=new TeamForwardAttempt('source',[{messageRef:'message',version:1}],sender)
- await act(async()=>root.render(<TeamForwardDialog attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>))
+ await act(async()=>root.render(<TeamForwardDialog accountKey="test:11" attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>))
  for(let i=0;i<5;i++)await click(row(`同事${i}`))
  await click(row('同事5'))
  expect(dialog().querySelectorAll('[aria-pressed="true"]')).toHaveLength(5)
@@ -70,7 +72,7 @@ it('owns keyboard focus and blocks dismissal during send, then aborts before sta
  const trigger=document.createElement('button');document.body.append(trigger);trigger.focus()
  const attempt=new TeamForwardAttempt('source',[{messageRef:'message',version:1}],sender)
  try{
-  await act(async()=>root.render(<TeamForwardDialog attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={close} onComplete={complete}/>))
+  await act(async()=>root.render(<TeamForwardDialog accountKey="test:11" attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={close} onComplete={complete}/>))
   const first=dialog().querySelector<HTMLElement>('button')!
   expect(document.activeElement).toBe(first)
   act(()=>first.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',shiftKey:true,bubbles:true,cancelable:true})))
@@ -92,18 +94,18 @@ it('owns keyboard focus and blocks dismissal during send, then aborts before sta
 
 it('reloads after the development StrictMode lifecycle and releases every request on retirement',async()=>{
  const sender=vi.fn(),attempt=new TeamForwardAttempt('source',[{messageRef:'message',version:1}],sender)
- await act(async()=>root.render(<StrictMode><TeamForwardDialog attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/></StrictMode>))
+ await act(async()=>root.render(<StrictMode><TeamForwardDialog accountKey="test:11" attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/></StrictMode>))
  expect(row('客服')).toBeTruthy();expect(row('同事')).toBeTruthy()
- expect(mocks.team.mock.calls.some(call=>!call[2].aborted)).toBe(true)
+ expect(mocks.refresh).toHaveBeenCalled()
  await act(async()=>root.render(null))
- expect(mocks.team.mock.calls.every(call=>call[2].aborted)).toBe(true)
+ expect(sender).not.toHaveBeenCalled()
 })
 
 
 it('confirms IME text before submitting a forwarding comment with Enter',async()=>{
  const sender=vi.fn().mockResolvedValue({itemUid:'accepted',localState:'synced'})
  const attempt=new TeamForwardAttempt('source',[{messageRef:'message',version:1}],sender)
- await act(async()=>root.render(<TeamForwardDialog attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>))
+ await act(async()=>root.render(<TeamForwardDialog accountKey="test:11" attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>))
  await click(row('同事'))
  const input=dialog().querySelector<HTMLTextAreaElement>('textarea')!
  await act(async()=>input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',isComposing:true,bubbles:true,cancelable:true})))
@@ -129,4 +131,28 @@ it('shows selected-text preview before choosing a recipient without allowing a p
  expect(sendButton().disabled).toBe(false)
  expect(dialog().querySelectorAll('footer')).toHaveLength(1)
  await click(sendButton());expect(submit).toHaveBeenCalledOnce()
+})
+
+it('shows Team destinations from an ordinary chat and uses the same directory and send feedback',async()=>{
+ const {UnifiedForwardDialog}=await import('../src/client/UnifiedForwardDialog.js')
+ const {SourceForwardAttempt}=await import('../src/client/source-forward-attempt.js')
+ const sender=vi.fn().mockResolvedValue({itemUid:'accepted',localState:'synced'}),complete=vi.fn()
+ const attempt=new SourceForwardAttempt('private-source',['saved-private-action'],11,sender)
+ await act(async()=>root.render(<UnifiedForwardDialog accountKey="test:11" attempt={attempt} previewTitle="普通私聊消息" previewSubtitle="正文" onClose={()=>{}} onComplete={complete}/>))
+ expect(row('客服')).toBeTruthy();expect(row('同事')).toBeTruthy()
+ await click(row('客服'));await click(sendButton())
+ expect(sender.mock.calls[0]![0]).toMatchObject({sourceRef:'private-source',actionRefs:['saved-private-action'],targetConversationRef:'team-ref-客服',expectedUserId:11})
+ expect(sender.mock.calls[0]![0]).not.toHaveProperty('targetSourceRef')
+ expect(complete).toHaveBeenCalledOnce()
+})
+
+it('opens a Team folder whose public identifier is self without entering personal topics',async()=>{
+ const conversation={...team('访客'),channel:{...team('访客').channel,name:'我的团队',jotmoId:'self',teamRef:'own-team'}}
+ const group={key:'self',channel:conversation.channel,conversations:[conversation],latest:conversation,unread:0,attentionUnread:0,unreadExact:true}
+ mocks.directory.mockImplementation(()=>({rows:[{kind:'folder',group,pinned:false,activeAtMillis:1}],preferences:{},loading:false,hasMore:false,error:'',refresh:mocks.refresh}))
+ const attempt=new TeamForwardAttempt('source',[{messageRef:'message',version:1}],vi.fn())
+ await act(async()=>root.render(<TeamForwardDialog accountKey="test:11" attempt={attempt} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>))
+ await click(dialog().querySelector<HTMLElement>('[aria-label="展开团队 我的团队"]')!)
+ expect(row('我的团队 · 访客')).toBeTruthy()
+ expect(mocks.native).not.toHaveBeenCalled()
 })

@@ -990,6 +990,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       this.privacy,
       this.messageActions,
       this.callHistory,
+      undefined,
+      (input, signal) => this.teamForward.forwardRecords(input, signal),
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
@@ -1518,6 +1520,7 @@ recordingAnalysisV1: true,
         messageTextAnchorsV1: true,
         arkoThoughtRepliesV1: true,
         arkoThoughtContinuationsV1: true,
+        recordEditHistoryV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
         worldReactionArchiveVersionsV1: true,
@@ -2165,17 +2168,14 @@ recordingAnalysisV1: true,
     return await this.interwoven.interwovenReadReceipts(sourceRef, momentRefs, signal)
   }
 
-  async recordEditHistoryPage(sourceRef: string, messageActionRef: string, cursorEditAt = 0, signal?: AbortSignal): Promise<ArkmeRecordEditHistoryPage> {
-    return await this.recordEditHistory.page(await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef), cursorEditAt, signal)
+  async recordEditHistoryPage(sourceRef: string, messageActionRef: string, cursorVersion = 0, signal?: AbortSignal): Promise<ArkmeRecordEditHistoryPage> {
+    return await this.recordEditHistory.page(await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef), cursorVersion, signal)
   }
 
   async recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal) {
     const target = await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef)
-    if (target.kind === 'chat' && String(target.recordOwnerUserId) !== String(target.viewerUserId)) {
-      throw new ArkmePluginError('record-snapshot-private', '只能查看自己消息的记忆快照', false, 403)
-    }
-    const { snapshot, previous } = await this.recordEditHistory.revision(target, revisionUid, signal)
-    return await this.chat.projectRecordRevisionSnapshot(snapshot, target, signal, previous)
+    const { snapshot } = await this.recordEditHistory.revision(target, revisionUid, signal)
+    return await this.chat.projectRecordRevisionSnapshot(snapshot, target, signal)
   }
 
   async relatedQuickNotesFromMessage(sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<ArkmeRelatedQuickNoteList> { return await this.relatedQuickNote.list(await this.chat.relatedQuickNoteLocator(sourceRef, messageActionRef), signal) }
@@ -2813,7 +2813,7 @@ recordingAnalysisV1: true,
     }
     return await this.chat.extendSourceMessage(sourceRef, messageActionRef, textContent, recordUid, assets, options)
   }
-  async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
+  async forwardSourceMessages(sourceRef: string, actionRefs: readonly string[], options: { representation?:TeamRepresentationSelection; targetSourceRef?: string; targetConversationRef?: string; recordUid?: string; relationUid?: string; commentText?: string; expectedUserId?: number; sendAtMillis?: number; signal?: AbortSignal } = {}): Promise<ArkmeSourceSendResult> { return await this.chat.forwardSourceMessages(sourceRef, actionRefs, options) }
   async ownLongArticle(itemUid: string, expectedUserId: number, signal?: AbortSignal) { return await this.chat.ownLongArticle(itemUid, expectedUserId, signal) }
   async copyCodexChatLink(snapshot:unknown,expectedUserId:number,signal?:AbortSignal){return this.messageActions.copyLinkCodex(snapshot,expectedUserId,signal)}
   async forwardCodexChat(snapshot: unknown, expectedUserId: number, options: import('./services/message-action-service.js').MessageActionForwardOptions) {

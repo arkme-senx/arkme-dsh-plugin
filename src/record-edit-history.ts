@@ -3,6 +3,7 @@ import type { ArkmeContentBlock, ArkmeTimelineItem, ArkmeMessageSnapshotDetail }
 /** Revision content is immutable display data, never a mutable timeline message. */
 export interface ArkmeRecordRevision {
   revisionUid: string
+  version?: number
   kind: 'manual' | 'original' | 'transcription' | 'polish' | 'rewrite' | 'other'
   editAtMillis: number
   avatarRef?: string
@@ -13,11 +14,11 @@ export interface ArkmeRecordRevision {
 export interface ArkmeRecordEditHistoryPage {
   items: ArkmeRecordRevision[]
   hasMore: boolean
-  nextCursorEditAt?: number
+  nextCursorVersion?: number
 }
 
 export interface ArkmeRecordEditHistoryReader {
-  page(sourceRef: string, messageActionRef: string, cursorEditAt: number, signal: AbortSignal): Promise<ArkmeRecordEditHistoryPage>
+  page(sourceRef: string, messageActionRef: string, cursorVersion: number, signal: AbortSignal): Promise<ArkmeRecordEditHistoryPage>
   snapshot?(sourceRef: string, messageActionRef: string, revisionUid: string, signal: AbortSignal): Promise<ArkmeRecordRevisionSnapshot>
 }
 

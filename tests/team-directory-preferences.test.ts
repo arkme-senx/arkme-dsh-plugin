@@ -96,6 +96,17 @@ it('empty navigation never restores, while an explicit restore supports a zero w
   await f.store.restoreTarget('a', folder)
   expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
 })
+
+it('explicit navigation restores a backend-confirmed silent member contact and its folder', async () => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { dismissed: true, version: 2, activitySeq: 0 }))
+  const silent = { ...conversation, lastSeq: 0, memberInitiated: true }
+  await f.store.restoreNavigation('a', async () => ({ kind: 'conversation', conversation: silent }))
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).at(-1)?.[1].changes).toHaveLength(2)
+  expect(teamEntryHidden(f.store.read('a'), { kind: 'conversation', conversation: silent })).toBe(false)
+  expect(teamEntryHidden(f.store.read('a'), { kind: 'folder', group: groupTeamConversations([silent])[0]! })).toBe(false)
+})
 it('explicit historical navigation restores a zero-counter folder and its child atomically', async () => {
   const f = fixture()
   f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
