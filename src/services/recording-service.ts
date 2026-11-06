@@ -2124,6 +2124,7 @@ export class RecordingService {
     const color = createHash('sha256').update(identity).digest().readUInt32BE(0)
     const profile = item.speaker.userId === undefined ? undefined : profiles.get(item.speaker.userId)
     return {
+      ...(item.privateViewVersion === undefined ? {} : {privateViewVersion:item.privateViewVersion}),
       itemId: createHash('sha256').update(`${String(viewerUserId)}:${item.recordingId}:${item.locator.child_id}:${item.locator.source}:${String(item.locator.ordinal)}`).digest('base64url'),
       sessionId: item.recordingId, childId: item.locator.child_id, asrItemIndex: item.locator.ordinal,
       transcriptSource: item.locator.source === 'primary' ? 'system' : 'doubao',
@@ -2558,6 +2559,7 @@ export class RecordingService {
       ...(item.speakerRevision === undefined ? {} : { speakerRevision: item.speakerRevision }),
     }
     return {
+      ...(item.privateViewVersion===undefined?{}:{privateViewVersion:item.privateViewVersion}),
       itemId: item.itemId,
       recordingBelongsToViewer: item.recordingBelongsToViewer === true,
       itemRef: this.sealRecordingRefWithKey('arkme-recording-item-v1', payload, refKey),
@@ -2647,6 +2649,16 @@ export class RecordingService {
     return candidate.speakerIdentity === selected.speakerIdentity && candidate.transcriptSource === selected.transcriptSource
   }
 
+  async privateTranscriptSource(sessionRef:string){const item=await this.openRecordingImportSessionRef(sessionRef);return {kind:'recording' as const,source_uid:item.sessionId}}
+  async validatePrivateTranscriptImport(itemRef:string,scope:string,id:string){
+    const item=await this.openRecordingItemRef(itemRef)
+    const expected=createHash('sha256').update(`${item.viewerUserId}:${item.sessionId}:${item.childId}:${item.transcriptSource==='system'?'primary':'enhanced'}:${item.asrItemIndex}`).digest('base64url')
+    if(scope!==`recording:${item.dateStamp}`||id!==expected)throw new ArkmePluginError('transcript-import-source-invalid','本机更正与所选录音片段不一致，原数据已保留',false,400)
+  }
+  async privateTranscriptTarget(itemRef:string):Promise<import('../transcript-view-contract.js').TranscriptViewTarget> {
+    const item=await this.openRecordingItemRef(itemRef)
+    return {kind:'recording',source_uid:item.sessionId,segment_uid:`${item.childId}:${item.transcriptSource==='system'?'primary':'enhanced'}:${item.asrItemIndex}`}
+  }
   async excerptSource(itemRef:string):Promise<import('../record-excerpt.js').RecordExcerptSource>{
     const item=await this.openRecordingItemRef(itemRef)
     return {kind:'recording_segment',recording_uid:item.sessionId,segment_uid:JSON.stringify([item.childId,item.asrItemIndex,item.transcriptSource,item.dateStamp,item.startAtMillis,item.endAtMillis,item.window??null])}
