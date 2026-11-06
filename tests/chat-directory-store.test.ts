@@ -1448,3 +1448,12 @@ it('bounds rotating source-ref aliases without losing stable-key read acknowledg
   store.activateAccount('test:next')
   expect((store as unknown as { sourceKeysByRef: Map<string, string> }).sourceKeysByRef.size).toBe(0)
 }, 10000)
+
+it('invalidates every audience of one canonical group while retaining unrelated conversations',()=>{
+ const store=new ArkmeInterwovenInvalidationStore();store.activateAccount(1001)
+ const first=store.getSnapshotForSource('team-A-epoch1','canonical-group'),second=store.getSnapshotForSource('team-B-epoch4','canonical-group'),other=store.getSnapshotForSource('private-chat')
+ store.invalidate('canonical-group')
+ expect(store.getSnapshotForSource('team-A-epoch1','canonical-group').revision).toBeGreaterThan(first.revision)
+ expect(store.getSnapshotForSource('team-B-epoch4','canonical-group').revision).toBeGreaterThan(second.revision)
+ expect(store.getSnapshotForSource('private-chat')).toBe(other)
+})

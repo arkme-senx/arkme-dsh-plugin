@@ -1,3 +1,4 @@
+import {ArkmeTeamAvatar} from './ArkmeTeamAvatar.js'
 import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
@@ -62,6 +63,7 @@ function ArkmeMentionSuggestionAvatar({ candidate, styles }: {
   candidate: ArkmeMentionCandidate
   styles: Pick<ArkmeMentionSuggestionRowStyles, 'botAvatar'>
 }) {
+  if(candidate.kind==='team')return <ArkmeTeamAvatar name={candidate.displayName} size={28}/>
   if (candidate.kind === 'all') {
     return <span className="arkme-mention-all-avatar" style={{ width: '100%', height: '100%', display: 'block' }}>
       <img data-arkme-theme-image="light" src={allMemberLightUrl} alt="" style={themeImageStyle} />
@@ -89,7 +91,7 @@ export function ArkmeMentionSuggestionRow({ candidate, active, disabled = false,
 }) {
   const primary = arkmeMentionCandidatePrimaryText(candidate)
   const reservedAgent = arkmeMentionCandidateIsReservedAsen(candidate)
-  const secondary = candidate.kind === 'bot' && !reservedAgent ? (candidate.secondaryName ?? 'Bot').trim() : ''
+  const secondary = candidate.kind==='team'?(candidate.secondaryName??'团队'):candidate.kind === 'bot' && !reservedAgent ? (candidate.secondaryName ?? 'Bot').trim() : ''
   return <button
     type="button"
     role="option"

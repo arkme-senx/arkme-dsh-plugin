@@ -1617,6 +1617,7 @@ arkoImagesV1?:true
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
     teamGroupRepresentation?: 1
+    teamGroupWorkspace?: 1
     teamProfiles?: true
     teamMemberManagementV1?: true
     teamExternalChats?: true
@@ -1886,6 +1887,8 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  accessKind?:'personal_membership'|'team_delegation'
+  teamWorkspace?:{ref:string;jotmoId:string}
   /** Viewer-visible private counterpart nickname, independent of the preferred remark. */
   privateNickname?: string
   /** Record-owned topic container kind; never a chat kind or creation source. */
@@ -1897,6 +1900,8 @@ export interface ArkmeSourceItem {
   directMessageAdmissionApplicable?: boolean
   /** Stable Host-projected directory identity. Consumers must treat it as opaque when present. */
   sourceKey?: string
+  /** Canonical Chat identity for invalidating all audience views; never an access grant. */
+  canonicalChatSourceKey?: string
   /** Private-chat peer identity when this source is a one-to-one chat. */
   peerUserId?: number
   /** Private-chat counterpart membership from Chat; never the viewer's membership. */
@@ -2146,7 +2151,7 @@ export interface ArkmeMessageSnapshotDetail {
 }
 
 export interface ArkmeTimelineMentionTarget {
-  kind: 'member' | 'all' | 'bot'
+  kind: 'member' | 'all' | 'bot' | 'team'
   startIndex: number
   length: number
   displayName: string
@@ -2609,6 +2614,7 @@ export interface ArkmeRichSendInput extends TeamRepresentationSendOptions {
   captureContext?: ArkmeRecordCaptureContext
   assets?: ArkmeUploadedAsset[]
   backgroundSound?: ArkmeRichBackgroundSoundInput
+  teamMentions?: ArkmeTeamMentionInput[]
   humanMentions?: ArkmeHumanMentionInput[]
   botMentions?: ArkmeBotMentionInput[]
 }
@@ -2621,6 +2627,8 @@ interface ArkmeHumanMentionRange {
 export type ArkmeHumanMentionInput =
   | (ArkmeHumanMentionRange & { mentionRef: string; memberRef?: never; all?: never })
   | (ArkmeHumanMentionRange & { all: true; mentionRef?: never; memberRef?: never })
+
+export interface ArkmeTeamMentionInput {teamMentionRef:string;startIndex:number;length:number}
 
 export interface ArkmeBotMentionInput {
   botRef: string
@@ -4390,6 +4398,8 @@ export type ArkmePluginOperation =
   | 'composer.document.prepare'
   | 'team.app.outbound.open'
   | 'team.app.group.context'
+  | 'team.app.group.request'
+  | 'team.app.workspace.request'
   | 'team.app.public-card'
   | 'recordings.voice-triggers'
   | 'recordings.voice-triggers.rules.set'
@@ -4612,6 +4622,7 @@ export type ArkmePluginOperation =
   | 'records.refresh'
   | 'records.search'
   | 'search.records'
+  | 'search.scene'
   | 'search.conversations'
   | 'records.list'
   | 'records.tags.list'
@@ -4776,6 +4787,7 @@ export type ArkmePluginOperation =
   | 'source.message-extension.context'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
+  | 'source.shared-recording-detail'
   | 'source.message-snapshot.detail'
   | 'source.message-location.set'
   | 'source.link-metadata.resolve'

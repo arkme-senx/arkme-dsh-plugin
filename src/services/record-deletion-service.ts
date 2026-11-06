@@ -58,15 +58,17 @@ export class RecordDeletionService {
     if (!Array.isArray(deletionRefs) || deletionRefs.length < 1 || deletionRefs.length > 100) throw invalid()
     const session = await this.runtime.requireSession()
     const source = await this.sources.openSourceRef(sourceRef, session.userId)
+    const audienceKey=source.groupDelegation?await this.sources.sourceScopeKey(source):undefined
     const key = await this.runtime.stateStore.uniqueCode()
     const refs = deletionRefs.map(ref => openRecordDeletionRef(ref, key))
     const seen = new Set<string>()
     for (const ref of refs) {
-      if (ref.userId !== session.userId || ref.sourceKind !== source.kind || ref.sourceOwnerRef !== source.ownerRef || seen.has(ref.recordUid)) throw invalid()
+      if (ref.audienceKey!==audienceKey || ref.userId !== session.userId || ref.sourceKind !== source.kind || ref.sourceOwnerRef !== source.ownerRef || seen.has(ref.recordUid)) throw invalid()
       seen.add(ref.recordUid)
     }
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换，请重新选择', false, 409)
     if (signal?.aborted) throw signal.reason ?? new Error('请求已取消')
+    if(source.groupDelegation)await this.sources.authorizeGroupDelegation(source,session,signal)
     try { return await this.port.deleteBatch(refs.map(ref => ({ recordUid: ref.recordUid, version: ref.recordVersion })), session, signal) }
     finally {
       this.sources.invalidateSourceListCache(session.userId)

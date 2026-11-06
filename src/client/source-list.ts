@@ -21,7 +21,7 @@ export function isArkmeSelfWorkspaceSource(source: ArkmeSourceItem | undefined):
 
 /** Only real chats own rows in the left conversation directory. */
 export function isArkmeChatDirectorySource(source: ArkmeSourceItem): boolean {
-  return source.kind === 'private_chat' || source.kind === 'group_chat'
+  return source.accessKind !== 'team_delegation' && (source.kind === 'private_chat' || source.kind === 'group_chat')
 }
 
 /** The aggregate is a timeline target, not a category row inside the directory popover. */

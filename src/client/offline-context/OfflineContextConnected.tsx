@@ -120,6 +120,8 @@ function ConnectedCard({ entryRef, revision, source, relinkOptions, onChanged }:
 }
 
 export function OfflineContextCandidates(props: { source: ArkmeSourceItem; items: ArkmeTimelineItem[]; state?: 'suggested' | 'dismissed'; presentation?: 'inline' | 'directory'; onChanged(): void }) {
+  if(props.source.accessKind==='team_delegation')return null
+
   // The keyed lifetime prevents a late result from crossing conversations.
   return <CandidateList key={`${props.source.sourceRef}:${props.state ?? 'suggested'}`} {...props} />
 }

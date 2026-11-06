@@ -20,14 +20,14 @@ import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 
 const button = { border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', padding: '6px 8px', fontSize: 13 }
 /** Read-only history: deliberately does not mount the conversation pane, composer or read-ack effect. */
-export function TeamConversationPreview({ accountKey, target, onClose }: { accountKey: string; target: TeamEntryTarget; onClose(): void }) {
+export function TeamConversationPreview({ accountKey, target, onClose }: { accountKey: string; target: Exclude<TeamEntryTarget,{kind:'group'}>; onClose(): void }) {
   useLayoutEffect(suspendArkmeVisibleReadIntent, [])
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
   const retainFolderIdentity = (value: TeamConversation): TeamConversation => {
     const retained = withoutTeamConversationMaterial(value)
     return directory.hasLoaded && retained.visitor ? { ...retained, visitor: { ...retained.visitor, memberType: 'unknown' } } : retained
   }
-  const group = target.kind === 'folder' ? groupTeamConversations(directory.items).find(group => group.key === target.group.key) ?? {...target.group, latest:retainFolderIdentity(target.group.latest), conversations:target.group.conversations.map(retainFolderIdentity)} : undefined
+  const group = target.kind === 'folder' ? groupTeamConversations(directory.items,true,directory.workspaceFolders).find(group => group.key === target.group.key) ?? {...target.group, ...(target.group.latest?{latest:retainFolderIdentity(target.group.latest)}:{}), conversations:target.group.conversations.map(retainFolderIdentity)} : undefined
   const [chosen, setChosen] = useState<TeamConversation | undefined>(target.kind === 'conversation' ? target.conversation : undefined)
   const conversation = target.kind === 'conversation' ? target.conversation : chosen
   const [loadedConversation, setLoadedConversation] = useState<TeamConversation>()
@@ -68,6 +68,7 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
       </header>
       {conversation ? <TeamPreviewMessages key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation} onConversation={setLoadedConversation} />
         : <div aria-label="团队对话预览列表" style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 16px' }}>
+          {group&&group.conversations.length===0&&group.groupCount>0&&<p style={{fontSize:13,color:arkmeTheme.secondary}}>{group.preview||tr('团队群聊')}</p>}
           {group?.conversations.map(c => <button key={c.key} style={{ ...button, width: '100%', textAlign: 'left', padding: '12px 0', borderBottom: `1px solid ${arkmeTheme.borderSoft}`, color: arkmeTheme.text }} onClick={() => setChosen(c)}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}><span style={{ minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.visitor?.nickname ?? '用户'}</span><TeamVisitorMembership conversation={c} />{c.unread > 0 && <span style={{ marginLeft: 'auto', flexShrink: 0, color: arkmeTheme.accent }}>{c.unread} 条未读</span>}</span>
             <span style={{ display: 'block', marginTop: 5, fontSize: 12, color: arkmeTheme.secondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? '[附件]' : '[消息]') : '内容暂不可用'}</span>

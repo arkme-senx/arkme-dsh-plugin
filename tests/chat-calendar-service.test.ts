@@ -15,6 +15,19 @@ function fixture(kind = 'private_chat') {
 }
 
 describe('mobile-compatible chat calendar statistics', () => {
+  it('isolates a delegated calendar and checks current authority before serving its cache',async()=>{
+    const f=fixture('group_chat'),authorize=vi.fn(async()=>{})
+    f.source.openSourceRef.mockResolvedValue({kind:'group_chat',ownerRef:'server-session',groupDelegation:{accessRef:'current-team-frame'}} as never)
+    Object.assign(f.source,{authorizeGroupDelegation:authorize,sourceScopeKey:async()=> 'team-admission-scope'})
+    await f.service.chatStatistics(f.query)
+    expect(f.runtime.authenticatedChatPost.mock.calls[0]?.[4]).toMatchObject({chatAccessRef:'current-team-frame',cacheMs:0,bypassCache:true})
+    await f.service.chatStatistics(f.query)
+    expect(f.runtime.authenticatedChatPost).toHaveBeenCalledOnce()
+    authorize.mockRejectedValueOnce(new Error('team_group_forbidden'))
+    await expect(f.service.chatStatistics(f.query)).rejects.toThrow('team_group_forbidden')
+    expect(f.runtime.authenticatedChatPost).toHaveBeenCalledOnce()
+    f.service.dispose()
+  })
   it('keeps automatic statistics reads behind message bodies while sharing canonical cached data', async () => {
     const { runtime, service, query } = fixture()
     const background = await service.chatStatistics({ ...query, background: true })
