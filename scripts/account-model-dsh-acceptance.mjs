@@ -17,6 +17,7 @@ export function apply(ctx,config){void(async()=>{
   service.runtime.config.intelligentBaseUrl=backend.origin;service.runtime.config.environment='test'
   const session={userId:42,clientId:7,accessToken:backend.token,refreshToken:'isolated-bridge-session'}
   service.runtime.accountScopedSession=async()=>session
+  if(config.liveCommands)await service.accountScope.write(session)
  }
 
  const model={uid:'owned',route:'user-api/owned',version_route:'user-api/owned/version',name:'验收模型',execution:'cloud',protocol:'openai-chat',base_url:'https://example.com/v1',model_key:'owned',disabled:false,key_configured:true,capabilities:{text:true,json:true,tools:true,stream:true,images:false,context_tokens:16384,output_tokens:4096}}
@@ -67,5 +68,29 @@ export function apply(ctx,config){void(async()=>{
  await ctx.sessions.flush(agent.session);await handle.dispose()
  await writeFile(config.output,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',artifact:true,toolDiscovery:names.filter(x=>/arkme_(account_model|ai_points_stat|ai_points_consumption_range)/.test(x)),grantedRead:true,humanConfirmation:true,publicConsumer:true,unknownUsage:true,owner:backend?'real Gin JWT + Mongo account/execution/usage + MySQL points; supplier and login issuance fixtures':'synthetic; Go owner contracts tested separately'},null,2)+'\n')
  console.log('HPK01_DSH_ACCEPTANCE_PASSED '+origin)
+ if(config.liveCommands){
+  // This opt-in harness uses the installed native adapter, never a supplier
+  // mock or a second model executor. Commands contain routes, never API Keys.
+  void(async()=>{
+   let command
+   while(!command){try{command=JSON.parse(await readFile(config.liveCommands,'utf8'))}catch(error){if(error.code!=='ENOENT')throw error;await new Promise(resolve=>setTimeout(resolve,200))}}
+   assert(Array.isArray(command.routes)&&command.routes.length>0&&command.routes.length<=5)
+   const results=[]
+   for(const route of command.routes){
+    assert(/^user-api\/[0-9a-f-]{36}$/.test(route))
+    const signal=AbortSignal.timeout(90000),prepared=await ctx.llm.prepareCall({provider:'arkme-user-api',model:route,maxTokens:512},signal)
+    let usage,finish,text=''
+    for await(const chunk of prepared.stream({...prepared.config,messages:[createUserMessage({source:{kind:'user'},content:[{type:'text',text:'只回复 OK，不要调用工具。'}]})],signal})){
+     if(chunk.type==='text-delta')text+=chunk.text
+     else if(chunk.type==='usage')usage=chunk.usage
+     else if(chunk.type==='finish')finish=chunk.reason
+    }
+    results.push({route,usage,finish,textLength:text.length})
+    await writeFile(command.output,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',installedAdapter:true,results},null,2)+'\n')
+    assert.equal(finish?.kind,'stop');assert(text.length>0);assert(usage&&usage.inputTokens>=0&&usage.outputTokens>0)
+   }
+   console.log('HPK04_NATIVE_LIVE_PASSED '+results.length)
+  })().catch(error=>{console.error('HPK04_NATIVE_LIVE_FAILED',error);ctx.get('appExit')(1)})
+ }
  // Keep this isolated Profile open for the actual existing UI acceptance.
 })().catch(e=>{console.error(e);ctx.get('appExit')(1)})}
