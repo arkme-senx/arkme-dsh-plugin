@@ -78,17 +78,25 @@ it('opens private matching references for maximum-size Team text without cloud I
   expect(f.requests).toHaveLength(calls)
  } finally { db.close() }
 })
-describe('team group frontend handoff boundary', () => {
-  const member = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 3 }
-  it('checks a viewer-scoped group source and returns real teams without granting delegated group access', async () => {
-    const f = fixture(path => path.endsWith('/group-identity/context')?{state:'ready',membership_policy:'independent',group_join_at:9,teams:[{...member,team_id:'17',membership_kind:'member',membership_revision:3}]}:({ teams: [member] }))
-    const result = await f.service.execute('team.app.group.context', { sourceRef: 'sealed-group', expectedAccountKey: 'test:90' }) as { state: string; teams: Array<{ teamRef: string }> }
-    expect(result.state).toBe('ready'); expect(result.teams).toHaveLength(1)
-    expect(f.contacts.openSourceRef).toHaveBeenCalledWith('sealed-group', 90)
-    expect(f.requests.map(v => v.path)).toEqual(['/api/v1/chats/group-identity/context'])
-    await expect(f.service.execute('team.app.group.join', { sourceRef: 'sealed-group', teamRef: result.teams[0]!.teamRef, requestUid: 'attempt-1' })).resolves.toEqual({ state: 'backend_pending' })
-    await expect(f.service.execute('team.app.group.directory', { teamRef: result.teams[0]!.teamRef })).resolves.toEqual({ state: 'backend_pending' })
-    expect(f.requests.slice(1).every(v => v.path === '/api/v1/team/list-mine')).toBe(true)
+describe('team group owner boundary', () => {
+  const member = { team_id: '17', jotmo_id: 'our_team', name: '团队', membership_kind:'member',membership_revision:3 }
+  it('keeps personal representation separate from real team admission and historical acceptance', async () => {
+    const f = fixture(path => {
+      if(path.endsWith('/group-identity/context'))return {state:'ready',membership_policy:'independent',group_join_at:9,teams:[member]}
+      if(path.endsWith('/team-group/context'))return {state:'ready',teams:[member],team_memberships:[]}
+      if(path.endsWith('/team-group/directory'))return {state:'ready',items:[],has_more:false}
+      return {state:'joined',access_status:'unavailable',command:{request_uid:'attempt-1'},membership:{revision:1}}
+    })
+    const identities=await f.service.execute('team.app.group.context',{sourceRef:'group',expectedAccountKey:'test:90'}) as {teams:{teamRef:string}[]}
+    expect(f.requests.map(v=>v.path)).toEqual(['/api/v1/chats/group-identity/context'])
+    const context=await f.service.execute('team.app.group.join-context',{sourceRef:'group'}) as import('../src/team-group-contract.js').TeamGroupJoinContext
+    expect(context.teams[0]).toMatchObject({joined:false,revision:0})
+    const result=await f.service.execute('team.app.group.join',{sourceRef:'group',teamRef:context.teams[0]!.teamRef,requestUid:'attempt-1',expectedRevision:0})
+    expect(result).toMatchObject({state:'joined',accessStatus:'unavailable'})
+    expect(result).not.toHaveProperty('revision');expect(result).not.toHaveProperty('sourceRef')
+    expect(f.requests.at(-1)!.body).toEqual({action:'join',chat_session_uid:'group-id',team_id:'17',request_uid:'attempt-1',expected_revision:0})
+    await expect(f.service.execute('team.app.group.directory',{teamRef:identities.teams[0]!.teamRef})).resolves.toEqual({items:[],hasMore:false})
+    expect(f.requests.some(v=>v.path.endsWith('/list-mine'))).toBe(false)
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
   })
   it('treats a roster group as a ready self-only context without delegated teams',async()=>{
@@ -98,23 +106,22 @@ describe('team group frontend handoff boundary', () => {
     expect(f.requests.map(v=>v.path)).toEqual(['/api/v1/chats/group-identity/context'])
   })
   it('rejects an invalid source, non-group source, missing idempotency key and changed account', async () => {
-    const f = fixture(() => ({ teams: [member] }))
+    const f=fixture()
     f.contacts.openSourceRef.mockRejectedValueOnce(new Error('invalid source'))
-    await expect(f.service.execute('team.app.group.context', { sourceRef: 'forged' })).rejects.toThrow('invalid source')
-    f.contacts.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat' } as never)
-    await expect(f.service.execute('team.app.group.context', { sourceRef: 'private' })).rejects.toThrow()
-    await expect(f.service.execute('team.app.group.join', { sourceRef: 'group' })).rejects.toThrow()
+    await expect(f.service.execute('team.app.group.join-context',{sourceRef:'forged'})).rejects.toThrow('invalid source')
+    f.contacts.openSourceRef.mockResolvedValueOnce({kind:'private_chat'} as never)
+    await expect(f.service.execute('team.app.group.join-context',{sourceRef:'private'})).rejects.toThrow()
+    await expect(f.service.execute('team.app.group.join',{sourceRef:'group'})).rejects.toThrow()
     f.changeAccount()
-    await expect(f.service.execute('team.app.group.context', { sourceRef: 'group', expectedAccountKey: 'test:90' })).rejects.toThrow()
+    await expect(f.service.execute('team.app.group.join-context',{sourceRef:'group',expectedAccountKey:'test:90'})).rejects.toThrow()
     expect(f.requests).toHaveLength(0)
   })
-  it('does not reuse removed team membership for either joins or the team group directory', async () => {
-    let joined = true
-    const f = fixture(() => ({ teams: joined ? [member] : [] }))
-    const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
-    joined = false
-    await expect(f.service.execute('team.app.group.directory', { teamRef: teams[0]!.teamRef })).rejects.toThrow('无权访问')
-    await expect(f.service.execute('team.app.group.join', { sourceRef: 'group', teamRef: teams[0]!.teamRef, requestUid: 'attempt-1' })).rejects.toThrow('无权访问')
+  it('leaves current Team and group authority at the backend for both joins and directory reads',async()=>{
+    const f=fixture(path=>path.endsWith('/list-mine')?{teams:[member]}:new Response(JSON.stringify({code:1004,data:{reason:'team_group_forbidden'}})))
+    const teams=await f.service.execute('team.app.teams',{}) as {teamRef:string}[]
+    await expect(f.service.execute('team.app.group.directory',{teamRef:teams[0]!.teamRef})).rejects.toThrow('无权访问')
+    await expect(f.service.execute('team.app.group.join',{sourceRef:'group',teamRef:teams[0]!.teamRef,requestUid:'attempt-1',expectedRevision:0})).rejects.toThrow('无权访问')
+    expect(f.requests.filter(v=>v.path.endsWith('/list-mine'))).toHaveLength(1)
   })
 })
 
@@ -1340,4 +1347,39 @@ it.each(['unknown','cancelled'])('does not expose current visitor actions or mem
  expect(opened.conversation!.visitor?.memberType).toBe('unknown')
  expect(opened.conversation!.visitor?.personRef).toBeUndefined()
  await expect(f.service.execute('team.app.visitor.private.open',{conversationRef:opened.conversation!.ref})).rejects.toThrow()
+})
+
+it('opens a participant public card by exact Team identity across a public handle rename',async()=>{
+ const raw={team_id:channel.team_id,name:'Renamed',jotmo_id:'new_handle',avatar:{mode:'default',key:'avatar'},contact:{state:'disabled'},navigation:{kind:'none'}}
+ const f=fixture(()=>raw),teamRef=await f.service.worldTeamRef(channel.team_id,90)
+ const result=await f.service.execute('team.app.public-card',{teamRef,jotmoId:'old_handle'})
+ expect(result).toMatchObject({name:'Renamed',jotmoId:'new_handle',contact:{state:'disabled'}})
+ expect(f.requests).toHaveLength(1)
+ expect(f.requests[0]!.body).toEqual({team_id:channel.team_id})
+})
+
+it('approves the exact permanent admission identity rather than the applicants request UID',async()=>{
+ const f=fixture((path,body)=>{
+  if(path.endsWith('/team-group/approvals'))return {items:[{admission:{admission_uid:'permanent-admission',command:{team_id:'17',request_uid:'applicant-request'},accepted_at:1},team:{name:'团队',jotmo_id:'our_team'},expected_revision:2}],has_more:false}
+  if(path.endsWith('/team-group/command')){expect(body.target_request_uid).toBe('permanent-admission');expect(body.expected_revision).toBe(2);return {state:'joined',access_status:'available',command:{request_uid:'manager-request'},current_membership:{revision:3}}}
+  throw new Error(`Unexpected request ${path}`)
+ })
+ const page=await f.service.execute('team.app.group.approvals',{sourceRef:'group-ref'}) as import('../src/team-group-contract.js').TeamGroupPage<import('../src/team-group-contract.js').TeamGroupApproval>
+ expect(page.items[0]!.revision).toBe(2)
+ expect(JSON.stringify(page)).not.toContain('permanent-admission')
+ await expect(f.service.execute('team.app.group.command',{sourceRef:'group-ref',teamRef:page.items[0]!.teamRef,admissionRef:page.items[0]!.admissionRef,expectedRevision:2,requestUid:'manager-request',action:'approve'})).resolves.toMatchObject({state:'joined'})
+})
+
+// A plugin may reach existing accounts before these server routes are deployed.
+it('reports absent Team group routes without granting access or issuing a write', async () => {
+  const f = fixture(() => new Response('404 page not found', { status: 404 }))
+  await expect(f.service.execute('team.app.group.join-context', { sourceRef: 'group' })).resolves.toEqual({ state: 'backend_pending', teams: [] })
+  await expect(f.service.execute('team.app.group.participants', { sourceRef: 'group' })).rejects.toMatchObject({ code: 'team-group-backend-pending' })
+  await expect(f.service.execute('team.app.workspace.folders', {})).rejects.toMatchObject({ code: 'team-workspace-unsupported' })
+  expect(f.requests.every(r => /context|participants|workspace\/folders/.test(r.path))).toBe(true)
+})
+it.each([403,500])('does not hide HTTP %s as a missing workspace or group capability', async status => {
+  const f = fixture(() => new Response('failed', { status }))
+  await expect(f.service.execute('team.app.group.join-context', { sourceRef: 'group' })).rejects.not.toMatchObject({ code: 'team-group-backend-pending' })
+  await expect(f.service.execute('team.app.workspace.folders', {})).rejects.not.toMatchObject({ code: 'team-workspace-unsupported' })
 })

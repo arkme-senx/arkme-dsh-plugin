@@ -30,6 +30,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_team_members_add', 'arkme_team_internal_group_confirm', 'arkme_team_governance',
   'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_outbound_open',
+  'arkme_team_groups_change',
   'arkme_team_notification_policy_set',
   'arkme_team_entry_preference_change',
   'arkme_reactions_write',
@@ -56,7 +57,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_self_nickname_set',
   'arkme_group_join_restriction_set',
   'arkme_social_write',
-  'arkme_message_withdraw',
+  'arkme_message_withdraw', 'arkme_message_report',
   'arkme_contact_add',
   'arkme_team_join',
   'arkme_contact_private_chat_open',
@@ -134,6 +135,11 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_external_chat_share') return args.operation === 'unshare' ? '是否取消这段对外私聊的团队共享？双方原私聊仍会保留。' : '是否将这段私聊共享到选定团队？全体现任成员将能查看完整历史和后续消息，包括隐私锁定消息及附件。'
   if (name === 'arkme_team_entry_preference_change') return '是否确认修改刚才指定团队入口的本人置顶或移除设置？此设置会在你的设备同步，不删除消息、不退出团队，也不修改已读或免打扰。'
   if (name === 'arkme_team_outbound_open') return '是否使用刚才选定的团队与客户打开团队接待？只有之后发送首条消息才会触达客户。'
+  if(name==='arkme_team_groups_change') {
+    const command=args.command as Record<string,unknown>|undefined
+    const labels:Record<string,string>={join:'申请加入',leave:'退出',remove:'移除团队参与者',approve:'批准团队入群申请',reject:'拒绝团队入群申请'}
+    return `是否对刚才选定的群聊执行“${labels[String(command?.action)]??'团队入群操作'}”？团队加入后，当前有效同事可查看并参与团队本次入群以来的群聊。`
+  }
   if (name === 'arkme_team_notification_policy_set') return `是否确认${args.muted === true ? '开启' : '关闭'}刚才选定团队对话的个人消息免打扰？消息和未读记录仍会保留。`;
   if (name === 'arkme_team_governance') return args.action === 'dissolve' ? '是否确认解散刚才选定的团队？其内部群将关闭并归档，此操作无法撤销。' : args.action === 'transfer' ? '是否确认将团队转让给刚才选定的成员？你将成为普通成员，内部群群主同步转移。' : '是否确认将刚才选定成员的团队角色调整为已核对的管理员或普通成员？内部群角色同步更新。'
   if (name === 'arkme_team_internal_group_confirm') return args.action === 'ack' ? '是否已向用户展示并核对刚才内部群操作的最终结果？' : '是否确认刚才预览的内部群变更？成员随团队同步，新增和重新加入成员只看本次入群后的消息；原群成员、角色与公开入口按预览生效。';
@@ -204,6 +210,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
       ? '是否确认禁止这位用户以后再次加入该群？此操作本身不会移除当前活跃成员。'
       : '是否确认解除这位用户的群聊加入限制？'
   }
+  if (name === 'arkme_message_report') return '是否确认向平台举报刚才指定的这条群消息？这不会删除原消息。'
   if (name === 'arkme_message_withdraw') {
     return '是否确认撤回这条群消息？撤回后所有群成员都无法再查看，但不会移除或限制发送者。'
   }

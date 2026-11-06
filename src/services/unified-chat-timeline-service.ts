@@ -15,22 +15,25 @@ import type { InterwovenService } from './interwoven-service.js'
 import type { SourceService } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 
-const ROUTE = '/api/v1/chat/timeline/unified/v2'
+import { isBackendRouteUnavailable } from './service-error.js'
+type WireProtocol = 2 | 3
+const route = (version: WireProtocol) => `/api/v1/chat/timeline/unified/v${version}`
 function invalid(): ArkmePluginError { return new ArkmePluginError('chat-timeline-contract-invalid', '时间线响应不完整，请重试', true, 502) }
 
-export function parseUnifiedTimelineResponse(raw: unknown, sessionUid: string) {
+export function parseUnifiedTimelineResponse(raw: unknown, sessionUid: string, protocol: WireProtocol = 3) {
   const data = objectValue(raw)
-  if (data.protocol_version !== 2 || data.chat_session_uid !== sessionUid || !Array.isArray(data.timeline_items)
+  if (data.protocol_version !== protocol || data.chat_session_uid !== sessionUid || !Array.isArray(data.timeline_items)
     || data.timeline_items.length > 100 || !Array.isArray(data.sources) || typeof data.complete !== 'boolean'
     || typeof data.has_more !== 'boolean' || typeof data.older_has_more !== 'boolean' || typeof data.newer_has_more !== 'boolean'
     || typeof data.window_token !== 'string' || !data.window_token) throw invalid()
+  const expectedSources = CHAT_TIMELINE_SOURCES.filter(source => protocol === 3 || source !== 'team_membership')
   const sources: ArkmeTimelineSourceStatus[] = data.sources.map(rawSource => {
     const source = objectValue(rawSource)
-    if (!CHAT_TIMELINE_SOURCES.includes(source.source as never) || !['ready', 'not_applicable', 'gap'].includes(String(source.status))
+    if (!expectedSources.includes(source.source as never) || !['ready', 'not_applicable', 'gap'].includes(String(source.status))
       || !Number.isSafeInteger(source.item_count) || Number(source.item_count) < 0) throw invalid()
     return { source: source.source, status: source.status, itemCount: source.item_count } as ArkmeTimelineSourceStatus
   })
-  if (sources.length !== CHAT_TIMELINE_SOURCES.length || new Set(sources.map(s => s.source)).size !== CHAT_TIMELINE_SOURCES.length) throw invalid()
+  if (sources.length !== expectedSources.length || new Set(sources.map(s => s.source)).size !== expectedSources.length) throw invalid()
   if (data.complete && sources.some(s => s.status === 'gap')) throw invalid()
   for (const [more, key] of [['has_more', 'next_cursor'], ['older_has_more', 'older_cursor'], ['newer_has_more', 'newer_cursor']]) {
     if (data[more!] && !stringValue(data[key!])) throw invalid()
@@ -38,7 +41,7 @@ export function parseUnifiedTimelineResponse(raw: unknown, sessionUid: string) {
   const ids = new Set<string>()
   const events = data.timeline_items.map(rawEvent => {
     const event = objectValue(rawEvent)
-    if (!stringValue(event.event_id) || ids.has(String(event.event_id)) || !CHAT_TIMELINE_SOURCES.includes(event.source as never)
+    if (!stringValue(event.event_id) || ids.has(String(event.event_id)) || !expectedSources.includes(event.source as never)
       || !Number.isSafeInteger(event.occurred_at) || Number(event.occurred_at) <= 0
       || !stringValue(event.order_tie) || !['available', 'unavailable'].includes(String(event.content_status))
       || sources.find(s => s.source === event.source)?.status === 'not_applicable') throw invalid()
@@ -56,7 +59,7 @@ export class UnifiedChatTimelineService {
   private storageRetryAt = 0
   private storageFailures = 0
   private invalidateAll = 0
-  private readonly knownSources = new Map<string, { scope: string; userId: number; revision: number; refreshRevision: number }>()
+  private readonly knownSources = new Map<string, { scope: string; canonical?:string; userId: number; revision: number; refreshRevision: number }>()
   private readonly pendingInvalidations = new Map<string, TimelineCacheCommand>()
   private invalidating: Promise<void> | undefined
   private readonly unsubscribe: (() => void) | undefined
@@ -114,6 +117,9 @@ export class UnifiedChatTimelineService {
   /** Directory arrivals request catch-up; they do not revoke a confirmed snapshot. */
   async refreshKnownWindows(): Promise<void> {
     for (const sourceKey of [...this.knownSources.keys()]) await this.refreshHint(sourceKey)
+  }
+  audienceAliases(sourceKey:string):string[] {
+    return [...this.knownSources].flatMap(([key,state])=>state.canonical===sourceKey&&key!==sourceKey?[key]:[])
   }
 
   async refreshHint(sourceKey: string): Promise<void> {
@@ -219,16 +225,16 @@ export class UnifiedChatTimelineService {
     }
     const key = await this.runtime.stateStore.uniqueCode()
     if (this.disposed || this.epoch !== epoch) throw new ArkmePluginError('chat-timeline-stale', '账号状态已变化', false, 409)
-    const codec = new TimelineTokenCodec(key, JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef]))
-    const scope = JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef])
     const sourceItem = await this.source.sourceItem(source)
+    const scope = JSON.stringify([this.runtime.config.environment, session.userId, source.ownerRef,...(source.groupDelegation?[sourceItem.sourceKey]:[])])
+    const codec = new TimelineTokenCodec(key,scope)
     const sourceKey = sourceItem.sourceKey ?? sourceRef
-    const state = this.knownSources.get(sourceKey) ?? { scope, userId: session.userId, revision: 0, refreshRevision: 0 }
+    const state = this.knownSources.get(sourceKey) ?? { scope,...(source.groupDelegation?{canonical:await this.source.chatDirectorySourceKey(session.userId,source.ownerRef)}:{}), userId: session.userId, revision: 0, refreshRevision: 0 }
     this.knownSources.delete(sourceKey); this.knownSources.set(sourceKey, state)
     while (this.knownSources.size > 512) this.knownSources.delete(this.knownSources.keys().next().value!)
     const revision = state.revision
     const refreshRevision = state.refreshRevision
-    const requestKey = createHmac('sha256', key).update('projection:6\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
+    const requestKey = createHmac('sha256', key).update('projection:7\0').update(JSON.stringify({ ...query, cacheOnly: undefined, anchorId: undefined })).digest('hex')
     const invalidating = this.invalidating
     if (invalidating) await new Promise<void>((resolve, reject) => {
       const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
@@ -243,8 +249,10 @@ export class UnifiedChatTimelineService {
       signal.throwIfAborted()
       const currentSession = await this.runtime.requireSession()
       if (this.disposed || this.epoch !== epoch || state.revision !== revision || currentSession.userId !== session.userId || currentSession.refreshToken !== session.refreshToken) throw new ArkmePluginError('chat-timeline-stale', '账号或会话状态已变化，请重试', true, 409)
+      if(source.groupDelegation) await this.source.authorizeGroupDelegation(source,session,signal)
     }
     if (query.cacheOnly) {
+      await assertCurrent()
       let cached: ArkmeTimelinePage | undefined
       try { cached = cache ? await this.callStorage<ArkmeTimelinePage | undefined>(cache, { kind: 'read', scope, request: requestKey,
         ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
@@ -284,18 +292,43 @@ export class UnifiedChatTimelineService {
     await assertCurrent()
     const readPage = async (pageQuery: ArkmeUnifiedTimelineQuery): Promise<ArkmeTimelinePage> => {
     const mode = pageQuery.mode ?? 'initial'
+    // A continuation belongs to the wire protocol that issued it. Published v2
+    // tokens contained the upstream string directly; their personal scope is unchanged.
+    const open = (token: string, purpose: string): { protocol: WireProtocol; token: string } => {
+      const value = codec.open(token, purpose)
+      let parsed: unknown
+      try { parsed = JSON.parse(value) } catch { /* Opaque published v2 token. */ }
+      if (Array.isArray(parsed) && parsed[0] === 'wire') {
+        if (parsed.length !== 3 || ![2, 3].includes(parsed[1]) || typeof parsed[2] !== 'string' || !parsed[2]) throw invalid()
+        return { protocol: parsed[1] as WireProtocol, token: parsed[2] }
+      }
+      return { protocol: source.groupDelegation ? 3 : 2, token: value }
+    }
+    const cursor = pageQuery.cursor ? open(pageQuery.cursor, mode) : undefined
+    const windows = pageQuery.windowTokens?.map(token => open(token, 'window'))
+    const protocols = new Set([...(cursor ? [cursor.protocol] : []), ...(windows?.map(w => w.protocol) ?? [])])
+    if (protocols.size > 1 || source.groupDelegation && protocols.has(2)) throw new ArkmePluginError('chat-timeline-window-invalid', '当前时间线窗口需要重新加载', false, 409)
+    let protocol: WireProtocol = cursor?.protocol ?? windows?.[0]?.protocol ?? 3
     const body = { chat_session_uid: source.ownerRef, mode, limit: pageQuery.limit ?? 40,
-      ...(pageQuery.cursor ? { cursor: codec.open(pageQuery.cursor, mode) } : {}),
-      ...(pageQuery.windowTokens ? { window_tokens: pageQuery.windowTokens.map(token => codec.open(token, 'window')) } : {}),
-      ...(mode === 'around' && pageQuery.systemRef ? systemTimelineAnchorCodec(key, this.runtime.config.environment, session.userId, source.ownerRef).open(pageQuery.systemRef) : {}),
+      ...(cursor ? { cursor: cursor.token } : {}),
+      ...(windows ? { window_tokens: windows.map(w => w.token) } : {}),
+      ...(mode === 'around' && pageQuery.systemRef ? systemTimelineAnchorCodec(key, this.runtime.config.environment, session.userId, source.ownerRef, source.groupDelegation ? sourceItem.sourceKey : undefined).open(pageQuery.systemRef) : {}),
       ...(mode === 'around' && pageQuery.contextRef ? { anchor_source: 'offline_context', anchor_id: await this.offlineContexts?.timelineAnchor(pageQuery.contextRef, source.ownerRef) } : {}),
       ...(mode === 'around' && pageQuery.messageRef ? await this.offlineContexts?.messageAnchor(pageQuery.messageRef, source.ownerRef) : {}),
       ...(mode === 'around' && !pageQuery.systemRef && !pageQuery.contextRef && !pageQuery.messageRef ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
+    const post = () => this.runtime.authenticatedChatPost(route(protocol), body, session, signal, {
+      ...(source.groupDelegation ? { chatAccessRef: source.groupDelegation.accessRef } : {}),
+      lane: background || mode === 'refresh' ? 'background-read' : 'interactive-read',
+      key: `unified-timeline:v${protocol}:${JSON.stringify(body)}`, cancelWhenUnobserved: true,
+    })
     let raw: unknown
     try {
-      raw = await this.runtime.authenticatedChatPost(ROUTE, body, session, signal, {
-        lane: background || mode === 'refresh' ? 'background-read' : 'interactive-read', key: `unified-timeline:${JSON.stringify(body)}`, cancelWhenUnobserved: true,
-      })
+      try { raw = await post() }
+      catch (error) {
+        if (source.groupDelegation || protocols.size || !['initial', 'around'].includes(mode) || !isBackendRouteUnavailable(error)) throw error
+        protocol = 2
+        raw = await post()
+      }
     } catch (error) {
       if (error instanceof ArkmeUpstreamResponseError && error.code === 'arkme-code-2002'
         && objectValue(error.responseData).reason === 'chat_timeline_window_invalid') {
@@ -303,7 +336,8 @@ export class UnifiedChatTimelineService {
       }
       throw error
     }
-    const { data, sources, events } = parseUnifiedTimelineResponse(raw, source.ownerRef)
+    const seal = (value: string, purpose: string) => codec.seal(JSON.stringify(['wire', protocol, value]), purpose)
+    const { data, sources, events } = parseUnifiedTimelineResponse(raw, source.ownerRef, protocol)
     const eventId = (value: string) => chatTimelineEventId(key, session.userId, this.runtime.config.environment, source.ownerRef, value)
     const native = events.filter(event => event.source === 'messages' && event.content_status === 'available')
     const messages = await this.chat.projectChatTimelineItems(native.map(event => event.payload), source, session, signal)
@@ -321,7 +355,7 @@ export class UnifiedChatTimelineService {
       const payload = objectValue(event.payload)
       const order = { eventId: eventId(String(event.event_id)), source: event.source as ArkmeTimelineSourceStatus['source'],
         occurredAtMillis: Number(event.occurred_at), orderTie: String(event.order_tie),
-        contentStatus: event.content_status as 'available' | 'unavailable', windowToken: codec.seal(String(data.window_token), 'window') }
+        contentStatus: event.content_status as 'available' | 'unavailable', windowToken: seal(String(data.window_token), 'window') }
       if (event.source === 'offline_context') {
         if (!this.offlineContexts || !stringValue(payload.association_id) || !Number.isSafeInteger(payload.revision) || Number(payload.revision) < 1) throw invalid()
         projected.push({ ...order, kind: 'offline-context',
@@ -364,6 +398,10 @@ export class UnifiedChatTimelineService {
         if (join) { projected.push({ ...order, kind: 'member-join', item: join }); continue }
         projected.push({ ...order, kind: 'notice', text: event.kind === 'group_invite' ? '群聊已创建'
           : '群成员加入了群聊' })
+      } else if(event.source==='team_membership') {
+        const labels:Record<string,string>={joined:'加入了群聊',left:'退出了群聊',removed:'已被移出群聊'}
+        if(payload.chat_session_uid!==source.ownerRef||!stringValue(payload.team_name)||!labels[String(payload.kind)])throw invalid()
+        projected.push({...order,kind:'notice',text:`${stringValue(payload.team_name)}团队${labels[String(payload.kind)]}`})
       } else if (event.source === 'ai_polish') {
         const actor = stringValue(payload.actor_display_name_snapshot)
         const rule = stringValue(payload.rule_name) || stringValue(payload.rule_text)
@@ -381,10 +419,10 @@ export class UnifiedChatTimelineService {
     }
     signal?.throwIfAborted()
     const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: projected.sort(compareUnifiedTimelineEvents), sources,
-      complete: data.complete as boolean, windowTokens: [codec.seal(String(data.window_token), 'window')],
-      ...(stringValue(data.older_cursor) ? { olderCursor: codec.seal(String(data.older_cursor), 'older') } : {}),
-      ...(stringValue(data.newer_cursor) ? { newerCursor: codec.seal(String(data.newer_cursor), 'newer') } : {}),
-      ...(stringValue(data.next_cursor) ? { nextCursor: codec.seal(String(data.next_cursor), mode === 'initial' || mode === 'around' ? 'older' : mode) } : {}),
+      complete: data.complete as boolean, windowTokens: [seal(String(data.window_token), 'window')],
+      ...(stringValue(data.older_cursor) ? { olderCursor: seal(String(data.older_cursor), 'older') } : {}),
+      ...(stringValue(data.newer_cursor) ? { newerCursor: seal(String(data.newer_cursor), 'newer') } : {}),
+      ...(stringValue(data.next_cursor) ? { nextCursor: seal(String(data.next_cursor), mode === 'initial' || mode === 'around' ? 'older' : mode) } : {}),
       olderHasMore: data.older_has_more as boolean, newerHasMore: data.newer_has_more as boolean, hasMore: data.has_more as boolean }
     const result: ArkmeTimelinePage = { source: await this.source.sourceItem(source), items: projected.flatMap(event => event.kind === 'message' ? [event.item] : []),
       unified, hasMore: unified.hasMore, ...(unified.nextCursor ? { nextCursor: { unified: { mode: mode === 'initial' || mode === 'around' ? 'older' : mode, cursor: unified.nextCursor } } } : {}) }

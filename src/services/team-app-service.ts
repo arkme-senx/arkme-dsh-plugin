@@ -1,11 +1,13 @@
 import { changeTeamGovernance } from './team-governance.js'
 import {TeamInternalGroups} from './team-internal-groups.js'
+import { isBackendRouteUnavailable } from './service-error.js'
 import {TeamMemberAddition} from './team-member-addition.js'
 import { teamHistoryOperation, teamHistoryChunk, type TeamHistoryAdapter } from './team-history-service.js'
 import type { TeamHistoryAction, TeamHistoryOptions } from '../team-history-contract.js'
-import { GroupRepresentationCodec } from './group-representation.js'
+import { GroupRepresentationCodec, readTeamRepresentationDisplay } from './group-representation.js'
 import { readTeamRecordMetadata, readTeamEditMetadata, decodeTeamMessageSnapshot } from '../team-snapshot-contract.js'
 import { encodeMentionMetadata } from './mention-metadata-codec.js'
+import {GroupTeamMentionCodec} from './group-team-mention.js'
 import { readTeamFeatureLinks, teamFeatureLinkId, MAX_TEAM_FEATURE_LINKS, type TeamFeatureLinks } from '../team-feature-links-contract.js'
 import { TeamEntryPreferenceService, teamEntryCloudKey } from './team-entry-preference-service.js'
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
@@ -22,14 +24,14 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
 import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
 import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
-import type { TeamGroupContext, TeamGroupPending, TeamPublicCard } from '../team-group-contract.js'
+import type { TeamGroupContext, TeamGroupPending, TeamGroupJoinContext, TeamGroupCommandResult, TeamPublicCard } from '../team-group-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
 import { quoteSourceContent, quoteCanonicalText, quoteMatchesCanonical, readMessageQuote } from '../message-quote.js'
 import { readTeamUnderlineSnapshot, underlineId, type MessageUnderlineChange } from '../message-annotations.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
 import { readTeamMemberCodexSync } from '../team-member-codex-sync.js'
 import type { ChatService } from './chat-service.js'
-import type { SourceService } from './source-service.js'
+import {arkmeChatConversationPreview, type SourceService, type ArkmeGroupAvatarSnapshotProjection} from './source-service.js'
 import type { TeamMemberCandidatePort, TeamMemberCandidatePage, TeamMemberCandidateSource, TeamMemberAddResult } from '../team-member-add-contract.js'
 import { remapLongArticleAssets } from '../long-article-content.js'
 import { sharedAttachments, sharedAttachmentAt, sharedContentBlock, sharedForwardPreview } from '../team-external-chat-presentation.js'
@@ -54,6 +56,7 @@ function receiptCounts(raw: unknown) {
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
   preview_stale: '团队或群成员已变化，请重新检查原请求后确认', members_managed_by_team: '该群成员由团队统一管理',
+  team_group_forbidden:'你已无权访问或操作该团队群，请重新打开',team_group_membership_stale:'团队群资格已变化，请刷新后重试',invalid_team_group_request:'团队群请求无效',team_group_request_conflict:'同一入群请求的内容不一致，请核对原请求',
   feature_links_forbidden: '仅团队所有者或管理员可管理团队入口',
   invalid_feature_links: '请检查入口名称和网址',
   feature_links_request_conflict: '重试内容已变化，请重新加载团队入口',
@@ -101,6 +104,8 @@ function imagePresentationIdentity(raw: string): string {
 }
 
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
+type TeamOwnerPost=(path:string,body?:Record<string,unknown>,read?:boolean,wire?:{stringIdFields?:readonly string[]})=>Promise<Record<string,unknown>>
+
 export class TeamAppService {
   private readonly entryPreferences: TeamEntryPreferenceService
   private readonly policies = new Map<string,TeamNotificationPolicy>()
@@ -113,8 +118,8 @@ export class TeamAppService {
   private readonly codec: EncryptedReferenceCodec
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort & Partial<Pick<import('./profile-service.js').ProfileService, 'publicProfileSummariesByUserIds'>>,
-    private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService, 'chatSharedRecordingPreview'>>,
-    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'>>,
+    private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService, 'chatSharedRecordingPreview'|'readSourceAround'>>,
+    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'|'sealSourceRef'|'sourceItem'|'groupDirectoryAvatars'|'chatDirectorySourceKey'>>,
     private readonly memberCandidates?: TeamMemberCandidatePort,
  private readonly outboundTargets?: import('../team-outbound-contract.js').TeamOutboundTargetPort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
@@ -126,7 +131,7 @@ export class TeamAppService {
   }
   private async open(kind: string, value: unknown, actor: number): Promise<Record<string, unknown>> {
     const decoded = await this.codec.open(`team-app-${kind}`, str(value))
-    if (decoded.viewer !== actor || ['member-candidate','member-candidate-cursor','internal-group-preview'].includes(kind) && decoded.environment !== this.runtime.config.environment) throw invalid()
+    if (decoded.viewer !== actor || ['member-candidate','member-candidate-cursor','internal-group-preview','entry-group'].includes(kind) && decoded.environment !== this.runtime.config.environment) throw invalid()
     return decoded
   }
   async worldTeamID(ref: string, actor: number): Promise<import('../record-owner-id.js').RecordOwnerId> {
@@ -139,6 +144,14 @@ export class TeamAppService {
     const value=await this.open('conversation',ref,actor)
     if(!str(value.conversation_uid)||!['team','external'].includes(str(value.side)))throw invalid()
     return {conversation_uid:str(value.conversation_uid),side:value.side as TeamSide}
+  }
+  async resolveOutboundCustomer(ref:string,session:ArkmeSessionCredentials,signal?:AbortSignal):Promise<import('../record-owner-id.js').RecordOwnerId> {
+    const locator=await this.open('conversation',ref,session.userId)
+    if(locator.side!=='team'||locator.environment!==this.runtime.config.environment)throw invalid()
+    const raw=obj(await this.runtime.authenticatedTeamPost('/api/v1/team/conversations/timeline/page',{conversation_uid:locator.conversation_uid,side:'team',limit:1},session,signal,true))
+    const c=obj(raw.conversation),visitor=obj(c.visitor),id=recordOwnerId(c.external_user_id)
+    if(c.conversation_uid!==locator.conversation_uid||c.side!=='team'||!id||visitor.kind!=='person'||visitor.account_state!=='active')throw invalid()
+    return id
   }
   async arrangementSource(uid: string, messageUid: string, side: string, version: number, signal?: AbortSignal): Promise<{conversation:TeamConversation;message:TeamMessage}> {
     if (!uid || !messageUid || !['team','external'].includes(side) || !Number.isSafeInteger(version) || version <= 0) throw invalid()
@@ -159,6 +172,7 @@ export class TeamAppService {
     const current = await this.runtime.requireSession()
     if (current.userId !== actor || current.refreshToken !== session.refreshToken) throw invalid()
     return result
+
   }
   async resolveMessageSelection(conversationRef:string,selections:unknown,actor:number):Promise<{conversation_uid:string;message_uid:string;side:TeamSide;expected_record_version:number}[]>{
     const context=await this.resolveConversation(conversationRef,actor)
@@ -180,6 +194,7 @@ export class TeamAppService {
   }
   async changeHint(hint:import('../chat-realtime.js').ArkmeTeamChangeHint,actor:number):Promise<import('../team-app-contract.js').TeamMessageChangeHint>{
     return {kind:hint.kind,
+      ...(hint.groupUid&&this.contacts?.chatDirectorySourceKey?{canonicalChatSourceKey:await this.contacts.chatDirectorySourceKey(actor,hint.groupUid)}:{}),
       ...(hint.messageRevision?{messageRevision:hint.messageRevision}:{}),
       ...(hint.conversationRevision?{conversationRevision:hint.conversationRevision}:{}),
       ...(hint.sequence?{sequence:hint.sequence}:{}),
@@ -251,7 +266,7 @@ export class TeamAppService {
         ...(avatar.mode === 'custom' ? { imageRef: await this.ref('profile-image', { jotmo_id: v.jotmo_id, key: avatar.key }, session.userId) } : {}) } }
   }
 
-  private async team(raw: unknown, actor: number): Promise<ArkmeTeam> {
+  private async team(raw: unknown, actor: number): Promise<ArkmeTeam & {key:string}> {
     const v = obj(raw)
     if (!recordOwnerId(v.team_id)) throw invalid()
     return { key: await this.key(`team:${String(v.team_id)}`, actor), teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
@@ -294,7 +309,7 @@ export class TeamAppService {
     const availablePerson = visitor.kind === 'person' && visitor.account_state === 'active' && !!recordOwnerId(v.external_user_id)
     // A former visitor can also be a current member. Each side owns a different
     // composer and accepted send identity, even when the conversation is shared.
-    return { entryKey: teamEntryCloudKey(actor,'conversation',uid,side), ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: legacyKey,
+    return { ...(v.source_only===true?{sourceOnly:true}:{}),entryKey: teamEntryCloudKey(actor,'conversation',uid,side), ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: legacyKey,
       channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity({ ...visitor, member_type: availablePerson ? visitor.member_type : 'unknown' }, actor, availablePerson ? { id: v.external_user_id, context: { conversation_uid: uid, side } } : undefined) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       ...(side === 'team' && v.member_initiated === true ? { memberInitiated: true } : {}),
@@ -442,9 +457,16 @@ export class TeamAppService {
       const current = await this.runtime.accountScopedSession()
       if (!current || current.userId !== actor || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('team-account-changed', '登录账号已变化，请重新打开团队消息', false, 409)
     }
-    const post = async (path: string, body: Record<string, unknown> = {}, read = false): Promise<Record<string, unknown>> => {
+    const post = async (path: string, body: Record<string, unknown> = {}, read = false,wire:{stringIdFields?:readonly string[]}={}): Promise<Record<string, unknown>> => {
       await assertAccount()
-      const result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read)
+      let result: unknown
+      try { result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read,wire) }
+      catch (error) {
+        if (read && /^(workspace|group-sources)\//.test(path) && isBackendRouteUnavailable(error)) {
+          throw new ArkmePluginError('team-workspace-unsupported', '服务端尚未提供团队群工作区', false, 501)
+        }
+        throw error
+      }
       await assertAccount()
       return obj(result)
     }
@@ -468,9 +490,251 @@ export class TeamAppService {
     return { available: data.available === true, reason: str(data.reason) }
   }
 
+  private async groupOperation(operation:TeamAppOperation,p:Record<string,unknown>,session:ArkmeSessionCredentials,signal?:AbortSignal):Promise<unknown> {
+    const actor=session.userId
+    const source = operation==='team.app.group.directory'||operation==='team.app.group.status' ? undefined
+      : await this.contacts?.openSourceRef?.(str(p.sourceRef),actor)
+    if (source && source.kind!=='group_chat' || !source && operation!=='team.app.group.directory'&&operation!=='team.app.group.status') throw invalid()
+    const call = async (path: string, body: Record<string, unknown>, read = true) => {
+      try {
+        return obj(await this.runtime.authenticatedChatPost(`/api/v1/chats/team-group/${path}`, body, session, signal,
+          { lane: read ? 'interactive-read' : 'write', bypassCache: true, stringIdFields: ['team_id'], ...(source?.groupDelegation ? { chatAccessRef: source.groupDelegation.accessRef } : {}) }))
+      } catch (error) {
+        if (isBackendRouteUnavailable(error)) throw new ArkmePluginError('team-group-backend-pending', '服务端尚未提供团队入群能力', false, 501)
+        throw error
+      }
+    }
+    const group=source?.ownerRef
+    if(operation==='team.app.group.join-context') {
+      let raw: Record<string, unknown>
+      try { raw = await call('context', { chat_session_uid: group }) }
+      catch (error) {
+        if (error instanceof ArkmePluginError && error.code === 'team-group-backend-pending') return { state: 'backend_pending', teams: [] } satisfies TeamGroupJoinContext
+        throw error
+      }
+      if(raw.state!=='ready'||!Array.isArray(raw.teams)||!Array.isArray(raw.team_memberships))throw invalid()
+      const memberships=new Map(list(raw.team_memberships).map(m=>[str(m.team_id),m]))
+      const teams=await Promise.all(list(raw.teams).map(async t=>{
+        const member=memberships.get(str(t.team_id)),team=await this.team(t,actor)
+        return {...team,joined:member?.active===true,revision:num(member?.revision)}
+      }))
+      return {state:'ready',teams} satisfies TeamGroupJoinContext
+    }
+    if(operation==='team.app.group.status') {
+      if(!/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid)))throw invalid()
+      return this.groupCommandResult(await call('status',{request_uid:p.requestUid}),actor)
+    }
+    if(operation==='team.app.group.join'||operation==='team.app.group.command') {
+      const action=operation==='team.app.group.join'?'join':str(p.action)
+      const team=await this.open('team',p.teamRef,actor),id=String(recordOwnerId(team.team_id))
+      if(team.environment!==this.runtime.config.environment||!/^[1-9][0-9]*$/.test(id)||!['join','leave','remove','approve','reject'].includes(action)
+        ||!/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))||!Number.isSafeInteger(p.expectedRevision)||Number(p.expectedRevision)<0)throw invalid()
+      const admission=p.admissionRef?await this.open('group-admission',p.admissionRef,actor):undefined
+      if((action==='approve'||action==='reject')!==!!admission || admission&&(admission.environment!==this.runtime.config.environment||admission.group!==group||admission.team!==id||!str(admission.admission_uid)))throw invalid()
+      return this.groupCommandResult(await call('command',{action,chat_session_uid:group,team_id:id,request_uid:p.requestUid,expected_revision:p.expectedRevision,...(admission?{target_request_uid:admission.admission_uid}:{})},false),actor)
+    }
+    const kind=operation==='team.app.group.directory'?'directory':operation==='team.app.group.participants'?'participants':'approvals'
+    const team=kind==='directory'?await this.open('team',p.teamRef,actor):undefined
+    if(team&&(team.environment!==this.runtime.config.environment||!/^[1-9][0-9]*$/.test(String(recordOwnerId(team.team_id)))))throw invalid()
+    const scope=group??String(recordOwnerId(team?.team_id))
+    const after=p.cursor?await this.open('group-page',p.cursor,actor):undefined
+    if(after&&(after.environment!==this.runtime.config.environment||after.kind!==kind||after.scope!==scope))throw invalid()
+    const limit=p.limit===undefined?30:p.limit
+    if(!Number.isSafeInteger(limit)||Number(limit)<1||Number(limit)>100)throw invalid()
+    const raw=await call(kind,{...(team?{team_id:String(recordOwnerId(team.team_id))}:{chat_session_uid:group}),limit,...(after?{[kind==='participants'?'after_team_id':'after']:after.after}:{})})
+    if(!Array.isArray(raw.items)||typeof raw.has_more!=='boolean')throw invalid()
+    if(kind==='directory' && raw.items.length) {
+      const selected=list(raw.items)
+      const response=await call('presentations/query',{team_id:String(recordOwnerId(team!.team_id)),items:selected.map(row=>({chat_session_uid:row.chat_session_uid,membership_uid:obj(row.membership).membership_uid,revision:obj(row.membership).revision}))})
+      const presentations=new Map(list(response.items).map(row=>[str(row.chat_session_uid),row]))
+      raw.items=selected.filter(row=>presentations.has(str(row.chat_session_uid))).map(row=>({...row,presentation:presentations.get(str(row.chat_session_uid))}))
+    }
+    let items=await Promise.all(list(raw.items).map(async row=>{
+      if(kind==='directory')return this.groupSource(row,actor,String(recordOwnerId(team!.team_id)))
+      const admission=obj(row.admission),display=kind==='approvals'?obj(row.team):row
+      const id=kind==='approvals'?str(obj(admission.command).team_id):str(row.team_id)
+      if(!/^[1-9][0-9]*$/.test(id))throw invalid()
+      const teamRef=await this.ref('team',{team_id:id},actor)
+      if(kind==='participants')return {key:await new GroupTeamMentionCodec(this.runtime).key(source!,row),mentionRef:await new GroupTeamMentionCodec(this.runtime).seal(source!,row),teamRef,name:str(row.team_name),jotmoId:str(row.team_jotmo_id),revision:num(row.revision),canLeave:row.can_leave===true}
+      return {key:await this.key(`group-approval:${str(admission.admission_uid)}`,actor),revision:num(row.expected_revision),teamRef,name:str(display.name),jotmoId:str(display.jotmo_id),requestedAt:num(admission.accepted_at),admissionRef:await this.ref('group-admission',{group,team:id,admission_uid:admission.admission_uid},actor)}
+    }))
+    if(kind==='directory')items=await this.groupSourcesAvatars(items as import('../types.js').ArkmeSourceItem[],list(raw.items),actor,signal)
+    const next=kind==='participants'?raw.next_team_id:raw.next_after
+    if(raw.has_more&&!str(next))throw invalid()
+    return {items,hasMore:raw.has_more,...(kind==='participants'?{canManage:raw.can_manage===true,leaveAvailable:raw.leave_available===true}:{}),...(raw.has_more?{nextCursor:await this.ref('group-page',{kind,scope,after:next},actor)}:{})}
+  }
+
+  private async groupCommandResult(raw:Record<string,unknown>,actor:number):Promise<TeamGroupCommandResult> {
+    const states:Record<string,TeamGroupCommandResult['state']>={joined:'joined',already_joined:'joined',pending_approval:'pending',rejected:'rejected',left:'left',removed:'removed',not_found:'not_found'}
+    const state=states[str(raw.state)]
+    if(!state)throw invalid()
+    if(state==='not_found')return {state,accessStatus:'unavailable'}
+    if(!['available','unavailable','unknown'].includes(str(raw.access_status)))throw invalid()
+    return {state,accessStatus:raw.access_status as TeamGroupCommandResult['accessStatus'],receiptRef:await this.ref('group-receipt',{request_uid:obj(raw.command).request_uid},actor),...(num(obj(raw.current_membership).revision)>0?{revision:num(obj(raw.current_membership).revision)}:{})}
+  }
+
+  private async groupSource(row:Record<string,unknown>,actor:number,team:string) {
+    const member=obj(row.membership),r=obj(row.representation)
+    if(!this.contacts?.sourceItem||str(member.team_id)!==team||member.active!==true||str(row.access_kind)!=='team_delegation'
+      ||str(row.membership_policy)!=='independent'||!str(row.access_ref)||!str(row.chat_session_uid))throw invalid()
+    const snapshot=await new GroupRepresentationCodec(this.runtime).snapshot(r,actor)
+    if(!snapshot||!snapshot.groupMembershipUid||snapshot.groupMembershipUid!==member.membership_uid||snapshot.groupMembershipRevision!==member.revision||str(r.team_id)!==team)throw invalid()
+    const source=await this.contacts.sourceItem({version:1,userId:actor,kind:'group_chat',ownerRef:str(row.chat_session_uid),displayName:str(row.title)||'群聊',conversationListActivityAtMillis:num(row.activity_at),conversationListLatestSequence:num(row.activity_seq),
+      groupDelegation:{accessRef:str(row.access_ref),teamId:team,membershipKind:snapshot.membershipKind,membershipRevision:snapshot.membershipRevision,groupMembershipUid:snapshot.groupMembershipUid,groupMembershipRevision:snapshot.groupMembershipRevision!,visibleFromSeq:num(member.visible_from_seq),workspace:{ref:snapshot.teamRef,jotmoId:snapshot.jotmoId}}})
+    if(row.presentation===undefined)return source
+    const presentation=obj(row.presentation),unread=obj(presentation.unread),latest=obj(presentation.latest),relation=obj(latest.relation)
+    if(presentation.chat_session_uid!==row.chat_session_uid||presentation.membership_uid!==member.membership_uid||presentation.revision!==member.revision
+      ||!Number.isSafeInteger(unread.unread_count)||Number(unread.unread_count)<0||!Number.isSafeInteger(unread.session_last_seq)||Number(unread.session_last_seq)<0)throw invalid()
+    const preview=arkmeChatConversationPreview(obj(latest.record),0)
+    const representation=readTeamRepresentationDisplay(relation.representation)
+    const senderName=str(relation.display_name_snapshot)
+    const sender=representation?`${senderName||'群成员'} [${representation.name}]`:senderName
+    return {...source,unreadCount:num(unread.unread_count),badgeUnreadCount:num(unread.unread_count),hasUnreadMention:unread.has_unread_attention===true,
+      latestPreview:preview?(sender?`${sender}：${preview}`:preview):'',latestSequence:num(unread.session_last_seq)}
+  }
+
+  private async groupSourcesAvatars(sources:import('../types.js').ArkmeSourceItem[],rawRows:Record<string,unknown>[],actor:number,signal?:AbortSignal) {
+    if(!this.contacts?.groupDirectoryAvatars||!sources.length)return sources
+    const rows=sources.flatMap((source,index)=>{
+      const raw=obj(obj(rawRows[index]?.presentation).avatar)
+      if(!Array.isArray(raw.member_ids)||!Number.isSafeInteger(raw.member_count)||Number(raw.member_count)<0)return []
+      const memberIds=raw.member_ids.filter((id):id is number=>typeof id==='number'&&Number.isSafeInteger(id)&&id>0).slice(0,5)
+      const snapshot:ArkmeGroupAvatarSnapshotProjection={memberIds,memberCount:num(raw.member_count),strategy:str(raw.strategy),computedAtMillis:num(raw.computed_at)}
+      return [{source,snapshot}]
+    })
+    try {
+      const values=await this.contacts.groupDirectoryAvatars(rows,actor,signal)
+      const byKey=new Map(values.map(source=>[source.sourceKey,source]))
+      return sources.map(source=>byKey.get(source.sourceKey)??source)
+    } catch(error) {
+      signal?.throwIfAborted()
+      if(error instanceof ArkmePluginError&&error.code==='team-account-changed')throw error
+      return sources
+    }
+  }
+
+  private async sourceCard(raw:Record<string,unknown>,actor:number,conversation:string):Promise<import('../team-group-contract.js').TeamGroupSourceCard> {
+    const group=obj(raw.group),latest=obj(raw.latest),member=obj(group.membership)
+    if(str(raw.conversation_uid)!==conversation||!str(raw.card_uid)||str(raw.group_uid)!==group.chat_session_uid||str(raw.membership_uid)!==member.membership_uid
+      ||str(latest.membership_uid)!==member.membership_uid||str(latest.group_uid)!==group.chat_session_uid||latest.active!==true||num(latest.sequence)<num(member.visible_from_seq))throw invalid()
+    return {ref:await this.ref('source-card',{conversation,card:raw.card_uid,team:member.team_id,group:raw.group_uid,membership:raw.membership_uid},actor),key:await this.key(`source-card:${str(raw.card_uid)}`,actor),source:await this.groupSource(group,actor,str(member.team_id)),activityAt:num(raw.activity_at),
+      latestRef:await this.ref('source-anchor',{conversation,card:raw.card_uid,team:member.team_id,group:raw.group_uid,membership:raw.membership_uid,sequence:latest.sequence,relation:latest.relation_uid},actor)}
+  }
+
+  private async workspaceRows(raw:Record<string,unknown>,actor:number,teamId:string,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamWorkspaceEntry[]> {
+    const items=await Promise.all(list(raw.items).map(async row=>{
+        const key=await this.key(`workspace:${str(row.key)}`,actor),activityAt=num(row.activity_at)
+        if(row.conversation_kind==='team_group')return {kind:'group' as const,key,activityAt,source:await this.groupSource(obj(row.group),actor,teamId),entryKey:teamEntryCloudKey(actor,'group',`${teamId}:${str(obj(row.group).chat_session_uid)}`),entryRef:await this.ref('entry-group',{team_id:recordOwnerId(teamId),group_uid:obj(row.group).chat_session_uid},actor)}
+        const c=obj(row.conversation)
+        if(row.conversation_kind!=='team_direct'||String(recordOwnerId(c.team_id))!==teamId||c.side!=='team')throw invalid()
+        return {kind:'customer' as const,key,activityAt,conversation:{...await this.conversation(c,actor),...(row.source_card?{hasGroupSources:true}:{})},...(row.source_card?{sourceCard:await this.sourceCard(obj(row.source_card),actor,str(c.conversation_uid))}:{})}
+    }))
+    const groups=items.filter(item=>item.kind==='group')
+    const rawGroups=list(raw.items).filter(row=>row.conversation_kind==='team_group').map(row=>obj(row.group))
+    const decorated=await this.groupSourcesAvatars(groups.map(item=>item.source),rawGroups,actor,signal)
+    let index=0
+    return items.map(item=>item.kind==='group'?{...item,source:decorated[index++]!}:item)
+  }
+
+  private async workspaceOperation(operation:TeamAppOperation,p:Record<string,unknown>,actor:number,post:TeamOwnerPost,signal?:AbortSignal):Promise<unknown> {
+    if(operation==='team.app.workspace.folders') {
+      let selectedTeamId:string|undefined
+      if(p.teamRef!==undefined) {
+        const team=await this.open('team',p.teamRef,actor)
+        selectedTeamId=String(recordOwnerId(team.team_id))
+        if(team.environment!==this.runtime.config.environment||!/^[1-9][0-9]*$/.test(selectedTeamId))throw invalid()
+      }
+      const raw=await post('workspace/folders/query',{},true)
+      if(!Array.isArray(raw.items)||!this.contacts?.chatDirectorySourceKey)throw invalid()
+      const rows=list(raw.items).filter(row=>selectedTeamId===undefined||String(recordOwnerId(row.team_id))===selectedTeamId)
+      return await Promise.all(rows.map(async row=>{
+        const teamId=String(recordOwnerId(row.team_id)),group=obj(row.latest_group)
+        if(!/^[1-9][0-9]*$/.test(teamId)||num(row.group_count)<1||!Array.isArray(row.groups)||num(row.unread_count)<0)throw invalid()
+        const source=await this.groupSource(group,actor,teamId)
+        const groups=await Promise.all(list(row.groups).map(async item=>{
+          if(!str(item.chat_session_uid)||num(item.unread_count)<0||num(item.visible_from_seq)<1)throw invalid()
+          return {sourceKey:await this.contacts!.chatDirectorySourceKey!(actor,str(item.chat_session_uid)),unread:num(item.unread_count),lastSeq:num(item.last_seq)}
+        }))
+        if(groups.length!==row.group_count||groups.reduce((sum,item)=>sum+item.unread,0)!==row.unread_count)throw invalid()
+        return {channel:await this.channel(row.channel,actor),activityAt:num(row.activity_at),preview:source.latestPreview??'',unread:num(row.unread_count),groupCount:num(row.group_count),
+          hasPublished:list(row.groups).some(item=>num(item.last_seq)>=num(item.visible_from_seq)),groups} satisfies import('../team-group-contract.js').TeamWorkspaceFolder
+      }))
+    }
+    if(operation==='team.app.workspace') {
+      const team=await this.open('team',p.teamRef,actor),teamId=String(recordOwnerId(team.team_id))
+      if(team.environment!==this.runtime.config.environment||!/^[1-9][0-9]*$/.test(teamId))throw invalid()
+      const cursor=p.cursor?await this.open('workspace-page',p.cursor,actor):undefined
+      if(cursor&&(cursor.team!==teamId||cursor.environment!==this.runtime.config.environment))throw invalid()
+      const raw=await post('workspace/page',{team_id:teamId,cursor:cursor?.cursor??'',limit:p.limit??30},true,{stringIdFields:['team_id']})
+      if(!Array.isArray(raw.items)||typeof raw.has_more!=='boolean'||typeof raw.complete!=='boolean'||!Array.isArray(raw.unavailable_sources)||raw.has_more&&!str(raw.next_cursor))throw invalid()
+      const items=await this.workspaceRows(raw,actor,teamId,signal)
+      return {items,hasMore:raw.has_more,complete:raw.complete,unavailableSources:raw.unavailable_sources.map(str),resetRequired:raw.reset_required===true,...(raw.has_more?{nextCursor:await this.ref('workspace-page',{team:teamId,cursor:raw.next_cursor},actor)}:{})} satisfies import('../team-group-contract.js').TeamWorkspacePage
+    }
+    if(operation==='team.app.sources.cards') {
+      const c=await this.resolveConversation(str(p.conversationRef),actor)
+      if(c.side!=='team')throw invalid()
+      const cursor=p.cursor?await this.open('source-cards-page',p.cursor,actor):undefined
+      if(cursor&&(cursor.conversation!==c.conversation_uid||cursor.environment!==this.runtime.config.environment))throw invalid()
+      const raw=await post('group-sources/cards',{conversation_uid:c.conversation_uid,cursor:cursor?.cursor??'',limit:p.limit??30},true)
+      if(!Array.isArray(raw.items)||typeof raw.has_more!=='boolean'||raw.has_more&&!str(raw.next_cursor))throw invalid()
+      return {items:await Promise.all(list(raw.items).map(row=>this.sourceCard(row,actor,c.conversation_uid))),hasMore:raw.has_more,...(raw.has_more?{nextCursor:await this.ref('source-cards-page',{conversation:c.conversation_uid,cursor:raw.next_cursor},actor)}:{})}
+    }
+    const locating=operation==='team.app.sources.locate'
+    const target=await this.open(locating?'source-anchor':'source-card',locating?p.anchorRef:p.cardRef,actor)
+    if(target.environment!==this.runtime.config.environment)throw invalid()
+    if(!locating) {
+      const c=await this.resolveConversation(str(p.conversationRef),actor)
+      if(c.side!=='team'||c.conversation_uid!==target.conversation)throw invalid()
+    }
+    const cursor=p.cursor?await this.open('source-occurrences-page',p.cursor,actor):undefined
+    if(cursor&&(cursor.card!==target.card||cursor.environment!==this.runtime.config.environment))throw invalid()
+    const raw=await post('group-sources/occurrences',{conversation_uid:target.conversation,card_uid:target.card,before_seq:locating?num(target.sequence)+1:num(cursor?.before),limit:locating?1:p.limit??30},true)
+    const group=obj(raw.group),member=obj(group.membership)
+    if(str(member.team_id)!==target.team||group.chat_session_uid!==target.group||member.membership_uid!==target.membership||!Array.isArray(raw.items)||typeof raw.has_more!=='boolean')throw invalid()
+    const source=await this.groupSource(group,actor,str(member.team_id)),rows=list(raw.items)
+    if(rows.some(row=>row.conversation_uid!==target.conversation||row.group_uid!==target.group||row.membership_uid!==target.membership||row.active!==true||num(row.sequence)<num(member.visible_from_seq)))throw invalid()
+    if(locating) {
+      const row=rows[0],record=obj(row?.record_ref)
+      if(!row||row.relation_uid!==target.relation||row.sequence!==target.sequence||!this.privateChat?.readSourceAround)throw invalid()
+      const page=await this.privateChat.readSourceAround(source.sourceRef,str(record.record_uid),recordOwnerId(record.owner_user_id),{beforeLimit:1,afterLimit:1,...(signal?{signal}:{})})
+      const item=page.items.find(i=>i.sequence===row.sequence&&i.itemUid===record.record_uid)
+      if(!item)throw invalid()
+      const fresh=await post('group-sources/occurrences',{conversation_uid:target.conversation,card_uid:target.card,before_seq:num(target.sequence)+1,limit:1},true)
+      const current=list(fresh.items)[0],freshGroup=obj(fresh.group)
+      if(!current||current.relation_uid!==row.relation_uid||current.sequence!==row.sequence||current.record_version!==row.record_version||freshGroup.chat_session_uid!==target.group||obj(freshGroup.membership).membership_uid!==target.membership)throw invalid()
+      return {source:page.source,item}
+    }
+    if(raw.has_more&&num(raw.before_seq)<1)throw invalid()
+    return {source,items:await Promise.all(rows.map(async row=>({ref:await this.ref('source-anchor',{conversation:target.conversation,card:target.card,team:target.team,group:target.group,membership:target.membership,sequence:row.sequence,relation:row.relation_uid},actor),key:await this.key(`source-occurrence:${str(row.source_uid)}`,actor),sequence:num(row.sequence),occurredAt:num(row.occurred_at)}))),hasMore:raw.has_more,...(raw.has_more?{nextCursor:await this.ref('source-occurrences-page',{card:target.card,before:raw.before_seq},actor)}:{})}
+  }
+
   private async dispatch(operation: TeamAppOperation, p: Record<string, unknown>, session: ArkmeSessionCredentials,
-    post: (path: string, body?: Record<string, unknown>, read?: boolean) => Promise<Record<string, unknown>>, signal?: AbortSignal): Promise<unknown> {
+    post: TeamOwnerPost, signal?: AbortSignal): Promise<unknown> {
     const actor = session.userId
+    if (operation === 'team.app.group.request') {
+      const request=obj(p.request), kind=str(request.operation)
+      if (!['join-context','command','status','participants','approvals','directory'].includes(kind)) throw invalid()
+      return this.dispatch(`team.app.group.${kind}` as TeamAppOperation, {...(kind==='command'?obj(request.command):request),expectedAccountKey:p.expectedAccountKey},session,post,signal)
+    }
+    if(operation==='team.app.workspace.request') {
+      const request=obj(p.request),kind=str(request.operation)
+      if(kind==='preferences') {
+        const action=str(request.action)
+        if(!['query','list','change'].includes(action))throw invalid()
+        return this.entryPreferences.execute(`team.app.entries.${action}`,{...obj(request.params),scope:'workspace'},actor,this.runtime.config.environment,post)
+      }
+      if(kind==='resolve-entries') {
+        const team=await this.open('team',request.teamRef,actor),teamId=String(recordOwnerId(team.team_id))
+        if(team.environment!==this.runtime.config.environment||!Array.isArray(request.entries)||!request.entries.length||request.entries.length>100)throw invalid()
+        const entries=await Promise.all(request.entries.map(e=>this.entryPreferences.resolve(e,actor)))
+        const raw=await post('workspace/entries/query',{team_id:teamId,entries},true,{stringIdFields:['team_id']})
+        if(!Array.isArray(raw.items)||typeof raw.complete!=='boolean')throw invalid()
+        return {items:await this.workspaceRows(raw,actor,teamId,signal),complete:raw.complete,resetRequired:raw.reset_required===true,hasMore:false,unavailableSources:[]} satisfies import('../team-group-contract.js').TeamWorkspacePage
+      }
+      if(!['folders','page','cards','occurrences','locate'].includes(kind))throw invalid()
+      return this.dispatch(kind==='folders'?'team.app.workspace.folders':kind==='page'?'team.app.workspace':`team.app.sources.${kind}` as TeamAppOperation,{...request,expectedAccountKey:p.expectedAccountKey},session,post,signal)
+    }
+    if(operation==='team.app.workspace'||operation==='team.app.workspace.folders'||operation.startsWith('team.app.sources.'))return this.workspaceOperation(operation,p,actor,post,signal)
     if (operation.startsWith('team.app.entries.')) return this.entryPreferences.execute(operation, p, actor, this.runtime.config.environment, post)
     if (operation === 'team.app.local-mark.capabilities' || operation === 'team.app.local-mark.list' || operation === 'team.app.local-mark.change') {
       return await this.localMarks(operation, p, session, signal)
@@ -777,17 +1041,20 @@ export class TeamAppService {
       }
       case 'team.app.channel': return await this.channel(await post('message-channel/get', { team_id: await teamID() }, true), actor)
       case 'team.app.public-card': {
-        const jotmoId = str(p.jotmoId).trim()
-        if (!jotmoId || jotmoId.length > 64) throw invalid()
-        const raw = await post('public-card/get', {jotmo_id:jotmoId}, true)
+        const requestedJotmoId = str(p.jotmoId).trim()
+        const target=p.teamRef?await this.open('team',p.teamRef,actor):undefined
+        if(target&&(target.environment!==this.runtime.config.environment||!recordOwnerId(target.team_id)))throw invalid()
+        if (!target&&(!requestedJotmoId || requestedJotmoId.length > 64)) throw invalid()
+        const raw = await post('public-card/get', target?{team_id:String(recordOwnerId(target.team_id))}:{jotmo_id:requestedJotmoId}, true,{stringIdFields:['team_id']})
         const contact=obj(raw.contact), navigation=obj(raw.navigation)
-        if(contact.state==='unavailable')return {name:'',jotmoId,contact:{state:'unavailable'},navigation:{kind:'none'}} satisfies TeamPublicCard
-        if(raw.jotmo_id!==jotmoId||!str(raw.name)||!['available','disabled'].includes(str(contact.state))||!['contact','inbox','none'].includes(str(navigation.kind))||contact.state==='available'&&!str(contact.public_ref))throw invalid()
+        if(contact.state==='unavailable')return {name:'',jotmoId:requestedJotmoId,contact:{state:'unavailable'},navigation:{kind:'none'}} satisfies TeamPublicCard
+        const jotmoId=str(raw.jotmo_id)
+        if(!jotmoId||(target?recordOwnerId(raw.team_id)!==recordOwnerId(target.team_id):jotmoId!==requestedJotmoId)||!str(raw.name)||!['available','disabled'].includes(str(contact.state))||!['contact','inbox','none'].includes(str(navigation.kind))||contact.state==='available'&&!str(contact.public_ref))throw invalid()
         const teamId = recordOwnerId(raw.team_id)
         if (navigation.kind === 'inbox' && !teamId) throw invalid()
         const teamRef = navigation.kind === 'inbox' ? await this.ref('team', {team_id:teamId}, actor) : undefined
         const avatar=await this.avatar({...raw,avatar:{...obj(raw.avatar),mode:'default'}},actor)
-        if(obj(raw.avatar).mode==='custom')Object.assign(avatar,{mode:'custom',key:`team_avatar_asset://${avatar.key}`,imageRef:await this.ref('profile-image',{jotmo_id:jotmoId,public_card:true,key:obj(raw.avatar).key},actor)})
+        if(obj(raw.avatar).mode==='custom')Object.assign(avatar,{mode:'custom',key:`team_avatar_asset://${avatar.key}`,imageRef:await this.ref('profile-image',{team_id:recordOwnerId(raw.team_id),public_card:true,key:obj(raw.avatar).key},actor)})
         return {name:str(raw.name),jotmoId,avatar,description:str(raw.description),
           contact:contact.state==='available'?{state:'available',publicRef:str(contact.public_ref)}:{state:'disabled'},
           navigation:{kind:navigation.kind as 'contact'|'inbox'|'none',...(teamRef ? {teamRef} : {})}} satisfies TeamPublicCard
@@ -806,6 +1073,14 @@ export class TeamAppService {
         if(!this.contacts?.openSourceRef||!str(p.sourceRef))throw invalid()
         const source=await this.contacts.openSourceRef(str(p.sourceRef),actor)
         if(source.kind!=='group_chat')throw invalid()
+        if(source.groupDelegation) {
+          const raw=obj(await this.runtime.authenticatedChatPost('/api/v1/chats/team-group/access',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true,chatAccessRef:source.groupDelegation.accessRef}))
+          if(raw.state!=='ready'||raw.access_kind!=='team_delegation'||raw.membership_policy!=='independent')throw invalid()
+          const r=obj(raw.representation),snapshot=await new GroupRepresentationCodec(this.runtime).snapshot(r,actor)
+          if(!snapshot||!snapshot.groupMembershipUid||snapshot.groupMembershipUid!==source.groupDelegation.groupMembershipUid||snapshot.groupMembershipRevision!==source.groupDelegation.groupMembershipRevision||str(r.team_id)!==source.groupDelegation.teamId)throw invalid()
+          const team=await this.team(r,actor),{name:_name,jotmoId:_id,...selection}=snapshot
+          return {state:'ready',membershipPolicy:'independent',teams:[{...team,representation:selection}],fixedIdentity:{team,selection}} satisfies TeamGroupContext
+        }
         const raw=await this.runtime.authenticatedChatPost<Record<string,unknown>>('/api/v1/chats/group-identity/context',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true})
         if(raw.state!=='ready'||!['independent','team_roster'].includes(str(raw.membership_policy))||!Number.isSafeInteger(raw.group_join_at)||!Array.isArray(raw.teams))throw invalid()
         if(raw.membership_policy==='team_roster') {
@@ -821,22 +1096,9 @@ export class TeamAppService {
         }))
         return {state:'ready',membershipPolicy:'independent',groupJoinAt:num(raw.group_join_at),teams} satisfies TeamGroupContext
       }
-      case 'team.app.group.join': case 'team.app.group.directory': {
-        // Real team membership is sufficient to offer an identity candidate.
-        // Neither the candidate nor its pending write grants teammates group access.
-        if (operation !== 'team.app.group.directory') {
-          if (!this.contacts?.openSourceRef || !str(p.sourceRef)) throw invalid()
-          const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
-          if (source.kind !== 'group_chat') throw invalid()
-        }
-        if (operation === 'team.app.group.join' && !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
-        const id = await teamID()
-        const mine = list((await post('list-mine', {}, true)).teams)
-        if (id !== undefined && !mine.some(team => String(team.team_id) === String(id))) {
-          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
-        }
-        return { state: 'backend_pending' } satisfies TeamGroupPending
-      }
+      case 'team.app.group.join-context': case 'team.app.group.join': case 'team.app.group.directory':
+      case 'team.app.group.command': case 'team.app.group.status': case 'team.app.group.participants': case 'team.app.group.approvals':
+        return this.groupOperation(operation,p,session,signal)
       case 'team.app.members.add': case 'team.app.members.add-recover': case 'team.app.members.add-retry': case 'team.app.members.add-ack': {
         const teamId = String(await teamID()), scope = `${this.runtime.config.environment}:${actor}`
         const journal = this.runtime.stateStore.teamMemberAddition

@@ -15,6 +15,24 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('GroupService', () => {
+  it('retains the frozen team source in settings and rejects governance after its revocation',async()=>{
+    let revoked=false
+    const calls:string[]=[]
+    const f=fixture(async(input,init)=>{
+      const path=new URL(String(input)).pathname;calls.push(path)
+      expect(new Headers(init?.headers).get('X-Chat-Access-Ref')).toBe('settings-frame')
+      const data=path.endsWith('/team-group/access')?(revoked?{}:{state:'ready',access_kind:'team_delegation',membership_policy:'independent',representation:{team_id:'42',membership_kind:'member',membership_revision:7,group_membership_uid:'admission',group_membership_revision:1}}):{session:{chat_session_uid:'group-1',title:'团队可见群'},current_policy:{mute_state:1}}
+      return new Response(JSON.stringify({code:200,data}))
+    })
+    const ref=await f.source.sealSourceRef(42,'group_chat','group-1','团队可见群',{groupDelegation:{accessRef:'settings-frame',teamId:'42',membershipKind:'member',membershipRevision:7,groupMembershipUid:'admission',groupMembershipRevision:1,visibleFromSeq:4}})
+    const result=await f.service.groupSettings(ref)
+    expect(result.target.sourceRef).toBe(ref)
+    expect((await f.source.openSourceRef(result.target.sourceRef,42)).groupDelegation?.accessRef).toBe('settings-frame')
+    expect(result).toMatchObject({canRename:false,canLeave:false,canDissolve:false})
+    revoked=true
+    await expect(f.service.renameGroup(result.target.sourceRef,'不可借个人权限修改')).rejects.toThrow('团队群资格已变化')
+    expect(calls.some(path=>path.endsWith('/metadata/update'))).toBe(false)
+  })
   function fixture(fetchImpl: typeof fetch, inviteSender?: ConstructorParameters<typeof GroupService>[3]) {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },

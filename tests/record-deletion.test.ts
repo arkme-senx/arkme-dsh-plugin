@@ -89,3 +89,19 @@ describe('authoritative deletion capability',()=>{
  it('issues the exact owner version',()=>{const ref=recordDeletionCapability(own,'key').recordDeletionRef!;expect(openRecordDeletionRef(ref,'key').recordVersion).toBe(3)})
  it.each([{isMe:false},{recordOwnerUserId:8},{status:2},{recordVersion:0},{recordVersion:1.5},{sourceKind:'agent'},{sourceKind:'bot_subject'}])('does not grant for unsupported or foreign facts %s',override=>{expect(recordDeletionCapability({...own,...override},'key')).toEqual({})})
 })
+
+it('binds deletion to the selected delegated audience and rechecks current access before the owner command',async()=>{
+ const x=setup(),authorize=vi.fn(async()=>{}),source={kind:'group_chat',ownerRef:'chat',groupDelegation:{teamId:'42'}}
+ x.sources.openSourceRef.mockResolvedValue(source as never)
+ Object.assign(x.sources,{sourceScopeKey:async()=> 'team-A-admission-1',authorizeGroupDelegation:authorize})
+ const scoped={...ref,sourceKind:'group_chat' as const,audienceKey:'team-A-admission-1'}
+ await expect(x.service.delete('source',[sealRecordDeletionRef({...scoped,audienceKey:'team-B'},'key')])).rejects.toThrow('当前页面')
+ await expect(x.service.delete('source',[sealRecordDeletionRef({...ref,sourceKind:'group_chat'},'key')])).rejects.toThrow('当前页面')
+ expect(x.port.deleteBatch).not.toHaveBeenCalled()
+ await x.service.delete('source',[sealRecordDeletionRef(scoped,'key')])
+ expect(authorize).toHaveBeenCalledWith(source,{userId:7},undefined)
+ expect(x.port.deleteBatch).toHaveBeenCalledOnce()
+ authorize.mockRejectedValueOnce(new Error('团队资格已失效'))
+ await expect(x.service.delete('source',[sealRecordDeletionRef(scoped,'key')])).rejects.toThrow('团队资格已失效')
+ expect(x.port.deleteBatch).toHaveBeenCalledOnce()
+})

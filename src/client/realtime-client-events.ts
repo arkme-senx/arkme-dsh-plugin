@@ -7,7 +7,7 @@ import { arkmeMessageSync } from './message-sync-store.js'
 import { callArkme } from './api.js'
 import type { ArkmeMessageSyncProgress } from '../chat-message-sync.js'
 import { officialNotifications } from './official-notification-store.js'
-import { invalidateTeamMessages } from './team-messaging-events.js'
+import { invalidateTeamMessages,invalidateTeamWorkspace } from './team-messaging-events.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { homeTourDiagnostic } from './home-tour-diagnostics.js'
 import { arkmeConversationMembers } from './conversation-members-store.js'
@@ -261,6 +261,8 @@ export function useArkmeRealtimeClientEvents(
           }
           return
         }
+        if(update.type==='team-invalidated'&&(update.change?.kind==='team.group.changed'||update.change?.kind==='team.group.source.changed'||update.change?.kind==='team.group.timeline.changed')) {invalidateTeamWorkspace(authenticatedAccountScope,update.change.canonicalChatSourceKey);if(update.change.canonicalChatSourceKey)arkmeInterwovenInvalidation.invalidate(update.change.canonicalChatSourceKey);return}
+        if(update.type==='reconcile'||update.type==='team-invalidated'&&!update.change&&!update.receiptOnly)invalidateTeamWorkspace(authenticatedAccountScope)
         if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true,update.type==='team-invalidated'?update.change:undefined)
         if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {

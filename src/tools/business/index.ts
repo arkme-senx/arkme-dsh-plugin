@@ -9,6 +9,7 @@ import { recordExportToolModules } from './records/export.js'
 import {teamOutboundToolModule} from './conversation/team-outbound.js'
 import {teamMemberTools} from './contacts/team-members.js'
 import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
+import {teamGroupsReadTool,teamGroupsChangeTool,teamWorkspaceTool} from './conversation/team-groups.js'
 import { teamEntryTools } from './contacts/team-entries.js'
 import { teamWorldReadTool, teamWorldWriteTool } from './world/team-world.js'
 import {worldSoundReadTool,worldSoundWriteTool} from './world/sound-excerpts.js'
@@ -88,7 +89,7 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
   ...recordExportToolModules,
-  teamOutboundToolModule,groupIdentitiesToolModule,teamPublicCardToolModule,
+  teamOutboundToolModule,groupIdentitiesToolModule,teamPublicCardToolModule,teamGroupsReadTool,teamGroupsChangeTool,teamWorkspaceTool,
   realtimeDictationTool,
   ...nativeAnnotationTools,
   ...messageSyncToolModules,

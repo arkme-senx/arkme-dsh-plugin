@@ -20,6 +20,7 @@ import { ProfileService } from './profile-service.js'
 import { SelfRoleAvatarStore, MAX_SELF_ROLE_AVATAR_BYTES } from '../self-role-avatar-store.js'
 import { isRecordDynamicPhotoMotion, recordDynamicPhotoGroups } from './dynamic-photo.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import type {RecordOwnerId} from '../record-owner-id.js'
 
 export interface ArkmeWorldImageEntry {
   viewerUserId: number
@@ -55,6 +56,7 @@ export interface ArkmeUnmarkedSpeakerSegmentResolver {
 }
 
 export interface ArkmeMediaDescriptor {
+  sourceBound?:boolean
   purpose?: 'original'
   viewerUserId: number
   mimeType: string
@@ -64,10 +66,9 @@ export interface ArkmeMediaDescriptor {
   stableKey?: string
 }
 
-type MediaSource =
-  | { remoteUrl: string; worldSound?: true; recordingClip?: never; sourceStream?: never }
-  | { recordingClip: RecordingPlaybackRef; remoteUrl?: never; worldSound?: never; sourceStream?: never }
-  | { sourceStream: Record<string, unknown>; remoteUrl?: never; recordingClip?: never; worldSound?: never }
+export interface ArkmeChatMediaSource {accessRef?:string;chatSessionUid:string;relationUid:string;recordOwnerUserId:RecordOwnerId;recordUid:string;version:number;audienceKey?:string}
+type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;worldSound?:never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;worldSound?:never;recordingClip?:never}
+
 type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
 type IssuableMediaDescriptor = Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'> & MediaSource
 
@@ -531,10 +532,10 @@ export class MediaService {
     if (originalOnly && descriptor.purpose !== 'original') {
       throw new ArkmePluginError('original-unavailable', '原文件不可用，请刷新后重试；不会用预览图代替原文件', false, 404)
     }
-    if (descriptor.sourceStream !== undefined) {
-      const response = await this.runtime.authenticatedRecordSourceStream(descriptor.sourceStream, {
-        expectedUserId:session.userId, method, ...(range===undefined?{}:{range}), ...(signal===undefined?{}:{signal})})
-      return {response,descriptor}
+    if(descriptor.chatSource!==undefined) {
+      const response=await this.runtime.authenticatedRecordSourceStream(descriptor.chatSource,{expectedUserId:session.userId,method,...(range===undefined?{}:{range}),...(signal?{signal}:{})})
+      const {chatSource:_private,...presentation}=descriptor
+      return {response,descriptor:presentation}
     }
     if (descriptor.recordingClip !== undefined) {
       const response = await this.runtime.authenticatedAudioStream(recordingPlaybackPath(descriptor.recordingClip), {
@@ -754,7 +755,7 @@ export class MediaService {
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     // Source bytes are never an independent image-cache grant. Every new read
     // goes through the source stream, including AI/SDK image reads.
-    if (this.mediaRefs.get(imageRef.trim())?.sourceStream !== undefined) {
+    if (this.mediaRefs.get(imageRef.trim())?.chatSource !== undefined) {
       return this.withImageDownloadPermit(() => this.readImageUncached(session, imageRef, byteLimit, options.signal))
     }
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
@@ -1428,7 +1429,7 @@ export class MediaService {
   }
 
   /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
-  forwardContentBlocks(files: unknown[], viewerUserId: number, options: { longArticle?: boolean; sourceOccurrence?: unknown } = {}): ArkmeContentBlock[] {
+  forwardContentBlocks(files: unknown[], viewerUserId: number, options: { longArticle?: boolean; source?: ArkmeChatMediaSource | undefined } = {}): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
     const displayItems = (options.longArticle ? files : files.slice(0, 32)).map(objectValue).flatMap((file, index) => {
       if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
@@ -1445,6 +1446,7 @@ export class MediaService {
       return [{
         // Only item-local aliases are exposed, never source asset IDs.
         ...(options.longArticle ? { inline_alias: /^arkme-asset:media-\d+$/.test(stringValue(file.inline_ref)) ? stringValue(file.inline_ref).slice('arkme-asset:'.length) : `media-${index}` } : {}),
+        ...(options.source ? { source_attachment_ref: stringValue(file.source_attachment_ref) } : {}),
         file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
         file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
         mime_type: stringValue(file.mime_type ?? file.mimeType),
@@ -1455,9 +1457,7 @@ export class MediaService {
         ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
       }]
     })
-    const root=objectValue(options.sourceOccurrence), record=objectValue(root.record), payload=jsonObjectValue(record.payload), core=objectValue(root.record_core)
-    const scope=options.sourceOccurrence === undefined ? {} : {relation:root.relation,record:{payload:{version:payload.version ?? core.version ?? root.version}}}
-    const blocks = this.richContentBlocks(scope, viewerUserId, displayItems)
+    const blocks = this.richContentBlocks({}, viewerUserId, displayItems, options.source)
     // Aliases only join this snapshot's Markdown to its authorized media. They
     // must not be used as global cache identities across unrelated snapshots.
     return options.longArticle ? blocks.map(block => {
@@ -1535,7 +1535,19 @@ export class MediaService {
       .filter(ref => numberValue(ref.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND)
   }
 
-  richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = []): ArkmeContentBlock[] {
+  // Coordinates identify one received occurrence; Chat remains the authority.
+  chatMediaSource(raw: unknown): ArkmeChatMediaSource | undefined {
+    const root=objectValue(raw),relation=objectValue(root.relation),record=objectValue(root.record)
+    const payload=jsonObjectValue(record.payload),core=objectValue(root.record_core)
+    const chatSessionUid=stringValue(relation.chat_session_uid),relationUid=stringValue(relation.rel_uid)
+    const recordUid=stringValue(relation.record_uid ?? payload.record_uid ?? core.record_uid)
+    const recordOwnerUserId=recordOwnerId(relation.record_owner_user_id ?? payload.owner_user_id ?? core.owner_user_id)
+    const version=numberValue(payload.version ?? core.version ?? root.version)
+    if(!chatSessionUid||!relationUid||!recordUid||!recordOwnerUserId||!Number.isSafeInteger(version)||version<1)return undefined
+    return {chatSessionUid,relationUid,recordUid,recordOwnerUserId,version}
+  }
+
+  richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = [],source?:ArkmeChatMediaSource): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
     const root = objectValue(raw)
     const record = objectValue(root.record)
@@ -1578,16 +1590,17 @@ export class MediaService {
       const declaredMimeType = stringValue(item.mime_type).trim().toLowerCase()
       const mimeType = arkmeNormalizedFileMimeType(declaredMimeType, fileName)
       const kind = this.mediaKind(fileKind, mimeType, fileName)
-      const remoteUrl = stringValue(kind === 'image' ? item.preview_url ?? item.download_url : item.download_url).trim()
-      const attachment = stringValue(item.source_attachment_ref)
-      if(Object.hasOwn(item, 'source_attachment_ref')) {
-        const relation = objectValue(root.relation), owner=recordOwnerId(relation.record_owner_user_id ?? payload.owner_user_id ?? core.owner_user_id)
-        const session=stringValue(relation.chat_session_uid),rel=stringValue(relation.rel_uid),recordUid=stringValue(relation.record_uid ?? payload.record_uid ?? core.record_uid),version=numberValue(payload.version ?? core.version ?? root.version)
-        if(!session||!rel||!recordUid||!owner||!Number.isSafeInteger(version)||version<1||!/^[a-f0-9]{64}$/u.test(attachment)) return []
-        const sourceStream={chat_session_uid:session,relation_uid:rel,record_owner_user_id:owner,record_uid:recordUid,version,attachment}
-        const ref=this.issueMediaRef(viewerUserId,{sourceStream,purpose:'original',mimeType,fileName,size:Math.max(0,Math.trunc(numberValue(item.size)))},`source:${session}:${rel}:${recordUid}:${version}:${attachment}`)
-        return [{kind,originalRef:ref,mediaRef:ref,...(fileAssetUid===''?{}:{fileAssetUid}),fileName,mimeType,size:Math.max(0,Math.trunc(numberValue(item.size))),sortOrder:Math.trunc(numberValue(item.sort_order??index)),...([1,3].includes(Math.trunc(numberValue(item.render_role)))?{renderRole:Math.trunc(numberValue(item.render_role)) as 1|3}: {})}]
+      if(source || Object.hasOwn(item, 'source_attachment_ref')) {
+        const occurrence=source ?? this.chatMediaSource(raw),attachment=stringValue(item.source_attachment_ref)
+        if(!occurrence||!occurrence.chatSessionUid||!occurrence.relationUid||!occurrence.recordUid||!occurrence.recordOwnerUserId
+          ||!Number.isSafeInteger(occurrence.version)||occurrence.version<1||!/^[a-f0-9]{64}$/u.test(attachment)
+          ||occurrence.accessRef!==undefined&&(!occurrence.accessRef||!occurrence.audienceKey))return []
+        const chatSource={...(occurrence.accessRef===undefined?{}:{access_ref:occurrence.accessRef}),chat_session_uid:occurrence.chatSessionUid,relation_uid:occurrence.relationUid,record_owner_user_id:occurrence.recordOwnerUserId,record_uid:occurrence.recordUid,version:occurrence.version,attachment}
+        const stableIdentity=JSON.stringify(['source-media',occurrence.audienceKey ?? occurrence.chatSessionUid,occurrence.relationUid,occurrence.recordUid,occurrence.version,attachment])
+        const ref=this.issueMediaRef(viewerUserId,{chatSource,sourceBound:true,purpose:'original',mimeType,fileName,size:Math.max(0,Math.trunc(numberValue(item.size)))},stableIdentity)
+        return [{kind,mediaRef:ref,originalRef:ref,...(fileAssetUid?{fileAssetUid}:{}),fileName,mimeType,size:Math.max(0,Math.trunc(numberValue(item.size))),sortOrder:Math.trunc(numberValue(item.sort_order??index)),...(numberValue(item.duration_sec)>0?{durationSec:numberValue(item.duration_sec)}:{}),...([1,3].includes(Math.trunc(numberValue(item.render_role)))?{renderRole:Math.trunc(numberValue(item.render_role)) as 1|3}:{})}]
       }
+      const remoteUrl = stringValue(kind === 'image' ? item.preview_url ?? item.download_url : item.download_url).trim()
       if (remoteUrl === '') return []
       const originalUrl = stringValue(item.download_url).trim()
       const originalRef = originalUrl === '' ? undefined : this.issueMediaRef(viewerUserId, {

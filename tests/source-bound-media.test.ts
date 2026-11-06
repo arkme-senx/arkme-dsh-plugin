@@ -16,7 +16,7 @@ it('streams each exact source with current authority, preserves numeric owner/Ra
   const body=JSON.parse(String(init?.body));expect(body).toMatchObject({chat_session_uid:'group',relation_uid:'mount',record_uid:'record',version:3,attachment})
   if(!allowed)return new Response('',{status:404})
   const partial=new Headers(init?.headers).has('Range')
-  return new Response(partial?'12':'1234',{status:partial?206:200,headers:{'content-type':'application/json','content-length':partial?'2':'4','content-disposition':'attachment; filename="report.json"','content-security-policy':"sandbox; default-src 'none'",...(partial?{'content-range':'bytes 1-2/4'}:{})}})
+  return new Response(partial?'12':'1234',{status:partial?206:200,headers:{'X-Jotmo-Source-Stream':'1','content-type':'application/json','content-length':partial?'2':'4','content-disposition':'attachment; filename="report.json"','content-security-policy':"sandbox; default-src 'none'",...(partial?{'content-range':'bytes 1-2/4'}:{})}})
  })
  const runtime=new ServiceRuntime(config,sessions,{} as StateStore,fetch),media=new MediaService(runtime,{} as never,{} as never,{} as never)
  const blocks=media.richContentBlocks(source,42)
@@ -34,10 +34,10 @@ it('streams each exact source with current authority, preserves numeric owner/Ra
 
 it('forwarded files use the containing mounted occurrence, including nested files, without substituting source owner rights',()=>{
  const runtime=new ServiceRuntime(config,{} as ArkmeSessionStore,{} as StateStore,vi.fn()),media=new MediaService(runtime,{} as never,{} as never,{} as never)
- const blocks=media.forwardContentBlocks([{source_attachment_ref:attachment,name:'nested.pdf',type:4,size:12,download_url:'https://unauthorized.test/file'}],42,{sourceOccurrence:source})
+ const blocks=media.forwardContentBlocks([{source_attachment_ref:attachment,name:'nested.pdf',type:4,size:12,download_url:'https://unauthorized.test/file'}],42,{source:media.chatMediaSource(source)})
  expect(blocks).toHaveLength(1);expect(blocks[0]).toMatchObject({kind:'file',fileName:'nested.pdf',size:12})
  expect(blocks[0]!.originalRef).not.toContain(owner)
- expect(media.forwardContentBlocks([{source_attachment_ref:'',name:'closed.pdf',type:4,download_url:'https://unauthorized.test/file'}],42,{sourceOccurrence:source})).toEqual([])
+ expect(media.forwardContentBlocks([{source_attachment_ref:'',name:'closed.pdf',type:4,download_url:'https://unauthorized.test/file'}],42,{source:media.chatMediaSource(source)})).toEqual([])
  expect(media.forwardContentBlocks([{source_attachment_ref:attachment,name:'closed.pdf',type:4}],42)).toEqual([])
  media.dispose()
 })

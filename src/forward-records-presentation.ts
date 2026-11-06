@@ -1,6 +1,6 @@
 import { projectTeamForward } from './team-forward-presentation.js'
 import type { ArkmeForwardRecordsPreview, ArkmeForwardRecordPreviewItem, ArkmeForwardTranscriptSegment } from './types.js'
-import type { MediaService } from './services/media-service.js'
+import type { ArkmeChatMediaSource, MediaService } from './services/media-service.js'
 import type { ProfileService } from './services/profile-service.js'
 import { objectValue, stringValue } from './services/service.js'
 import { arkmeRecordTextFormat } from './markdown.js'
@@ -17,7 +17,7 @@ function listValue(value: unknown): unknown[] {
 
 export async function projectForwardRecordsWithAvatars(
   contentPayload: Record<string, unknown>, viewerUserId: number, fallbackCreatedAtMillis: number,
-  media: Pick<MediaService, 'forwardContentBlocks'>, profile: Pick<ProfileService, 'sealProfileImageRef'>, sourceOccurrence?: unknown,
+  media: Pick<MediaService, 'forwardContentBlocks'>, profile: Pick<ProfileService, 'sealProfileImageRef'>, source?: ArkmeChatMediaSource,
 ): Promise<ArkmeForwardRecordsPreview | undefined> {
   const senders = new Map<number, ArkmeForwardRecordPreviewItem[]>()
   const preview = projectForwardRecordsPreview(contentPayload, viewerUserId, fallbackCreatedAtMillis, media,
@@ -25,7 +25,7 @@ export async function projectForwardRecordsWithAvatars(
       const items = senders.get(userId) ?? []
       items.push(item)
       senders.set(userId, items)
-    }, sourceOccurrence)
+    }, source)
   for (const [userId, items] of senders) {
     const avatarRef = await profile.sealProfileImageRef(viewerUserId, userId)
     for (const item of items) item.avatarRef = avatarRef
@@ -40,13 +40,13 @@ export function projectForwardRecordsPreview(
   fallbackCreatedAtMillis: number,
   media: Pick<MediaService, 'forwardContentBlocks'>,
   onSender?: (item: ArkmeForwardRecordPreviewItem, userId: number) => void,
-  sourceOccurrence?: unknown,
+  source?: ArkmeChatMediaSource,
 ): ArkmeForwardRecordsPreview | undefined {
   const nested = objectValue(contentPayload.forward_records ?? contentPayload.forwardRecords)
   const payload = Object.keys(nested).length > 0 ? nested : contentPayload
   if (payload.source_type === 'team_message') {
     return projectTeamForward({ forward_records: payload },
-      (files, longArticle) => media.forwardContentBlocks(files, viewerUserId, { longArticle, sourceOccurrence }))
+      (files, longArticle) => media.forwardContentBlocks(files, viewerUserId, { longArticle, source }))
   }
   if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'forward_records') return undefined
 
@@ -97,7 +97,7 @@ export function projectForwardRecordsPreview(
           || rawType === 'agent' || rawType === 'codex' || rawType === 'ai_letter' ? rawType : 'unknown'
       const files = listValue(item.files)
       const longArticle = displayKind === 1
-      const contentBlocks = media.forwardContentBlocks(files, viewerUserId, { longArticle, sourceOccurrence })
+      const contentBlocks = media.forwardContentBlocks(files, viewerUserId, { longArticle, source })
       if (longArticle && textFormat === 'markdown') {
         const aliases = new Map(files.map((value, index) => [`arkme-asset:${stringValue(objectValue(value).file_asset_uid)}`, `arkme-asset:media-${index}`]))
         textContent = remapLongArticleAssets(textContent, aliases)
@@ -120,7 +120,7 @@ export function projectForwardRecordsPreview(
         const segmentMedia = audioUrl === '' ? [] : media.forwardContentBlocks([{
           type: 2, name: '通话片段', mime_type: 'audio/wav', download_url: audioUrl,
           duration_sec: (endMillis - startMillis) / 1000,
-        }], viewerUserId)
+        }], viewerUserId, { source })
         return {
           speakerName, textContent: stringValue(segment.text ?? segment.text_content ?? segment.textContent), startMillis, endMillis,
           ...(segmentMedia.length === 0 ? {} : { contentBlocks: segmentMedia }),

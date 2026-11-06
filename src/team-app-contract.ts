@@ -17,7 +17,8 @@ export type TeamAppOperation = `team.app.${
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'visitor.world-target' | 'person.world-target' | 'people.remarks' | 'outbound.open'
-  | 'group.context' | 'group.join' | 'group.directory'
+  | 'group.context' | 'group.join' | 'group.directory' | 'group.request' | 'group.join-context' | 'group.command' | 'group.status' | 'group.participants' | 'group.approvals'
+  | 'workspace' | 'workspace.folders' | 'workspace.request' | 'sources.cards' | 'sources.occurrences' | 'sources.locate'
   | 'internal-group.prepare' | 'internal-group.confirm' | 'internal-group.prepare-original' | 'internal-group.recover' | 'internal-group.ack'
   | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
   | 'governance.state' | 'governance.role' | 'governance.transfer' | 'governance.dissolve'
@@ -44,6 +45,8 @@ export interface TeamChannel {
   canPause?: boolean
 }
 export interface TeamConversation {
+  sourceOnly?:boolean
+  hasGroupSources?:boolean
 	/** Backend-confirmed member contact, independent of first publication. */
 	memberInitiated?: boolean
   entryKey?: string
@@ -121,6 +124,7 @@ export interface TeamExtensionPage { message: TeamMessage; items: TeamMessage[];
 
 /** A scoped invalidation hint, never a read grant or raw backend locator. */
 export interface TeamMessageChangeHint {
+  canonicalChatSourceKey?:string
   kind: string
   messageRevision?: number
   conversationRevision?: number
