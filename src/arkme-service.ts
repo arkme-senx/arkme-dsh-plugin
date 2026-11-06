@@ -158,6 +158,7 @@ import { BackgroundSoundPreferenceService } from './services/background-sound-pr
 import { BotService, type ArkmeBotManageUpdateInput, type ArkmeBotRefPayload } from './services/bot-service.js'
 import { BotConversationService } from './services/bot-conversation-service.js'
 import { CalendarService } from './services/calendar-service.js'
+import { TranscriptViewService } from './services/transcript-view-service.js'
 import { CallHistoryService } from './services/call-history-service.js'
 import { ChatRealtimeService } from './services/chat-realtime-service.js'
 import { ChatService } from './services/chat-service.js'
@@ -1464,6 +1465,7 @@ arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
         recordingVoiceTriggersV2: true,
+        personalTranscriptViewsV1: true,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,
@@ -2940,16 +2942,13 @@ arkoImagesV1:true,
   ): Promise<ArkmeSourceSendResult> {
     return await this.chat.sendSourceRich(sourceRef, input, options)
   }
-  async localTranscriptEntries(account: string, scope: string, ids: string[], change?: import('./local-transcript-state.js').LocalTranscriptChange, signal?: AbortSignal) {
-    signal?.throwIfAborted()
-    const session = await this.runtime.requireSession()
-    signal?.throwIfAborted()
-    if (account !== `${this.config.environment}:${session.userId}`) throw new ArkmePluginError('transcript-account-changed', '账号已变化，请重新打开转写', false, 409)
-    if (!/^(recording|call):.{1,2048}$/u.test(scope) || !Array.isArray(ids) || ids.length > 200 || ids.some(id => typeof id !== 'string' || !id || id.length > 2048)
-      || change && (!ids.includes(change.id) || ids.length !== 1)) throw new ArkmePluginError('transcript-local-invalid', '转写参数无效', false, 400)
-    if (!this.stateStore.localTranscriptEntries) throw new ArkmePluginError('transcript-local-unavailable', '本机转写存储暂不可用', true, 503)
-    return this.stateStore.localTranscriptEntries(account, scope, ids, change)
-  }
+  private privateTranscriptViews() {return new TranscriptViewService(this.runtime,this.recording,this.callHistory)}
+  savedTranscriptViews(account:string,ref:string,after?:string,signal?:AbortSignal){return this.privateTranscriptViews().saved(account,ref,after,signal)}
+  transcriptViewReceipt(account:string,operationId:string,signal?:AbortSignal){return this.privateTranscriptViews().receipt(account,operationId,signal)}
+  transcriptViewCapabilities(signal?:AbortSignal){return this.privateTranscriptViews().capabilities(signal)}
+  readTranscriptViews(account:string,scope:string,items:import('./transcript-view-contract.js').TranscriptViewReadItem[],signal?:AbortSignal){return this.privateTranscriptViews().read(account,scope,items,signal)}
+  changeTranscriptView(account:string,ref:string,command:import('./transcript-view-contract.js').TranscriptViewCommand,signal?:AbortSignal){return this.privateTranscriptViews().change(account,ref,command,signal)}
+  importLocalTranscriptView(account:string,scope:string,item:import('./transcript-view-contract.js').TranscriptViewReadItem,operationId:string,signal?:AbortSignal){return this.privateTranscriptViews().importLocal(account,scope,item,operationId,signal)}
 
   async localDirectoryPreferences(accountKey: string, entries?: unknown, migrate = false, signal?: AbortSignal) {
     signal?.throwIfAborted()

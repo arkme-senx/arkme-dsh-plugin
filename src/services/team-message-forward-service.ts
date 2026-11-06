@@ -4,6 +4,7 @@ import type {ArkmeSourceSendResult} from '../types.js'
 import type {TeamAppService} from './team-app-service.js'
 import type {SourceService,ArkmeSourceRefPayload} from './source-service.js'
 import {postChatMessageCreation} from './direct-message-admission-service.js'
+import {bindGroupSourceRepresentation} from './group-representation.js'
 import {ArkmePluginError,objectValue,stringValue,type ServiceRuntime} from './service.js'
 
 const invalid=()=>new ArkmePluginError('team-forward-invalid','转发请求无效，请重新选择',false,400)
@@ -76,7 +77,9 @@ export class TeamMessageForwardService {
    if(typeof target.sourceRef!=='string'||target.conversationRef!==undefined)throw invalid()
    nativeTarget=await this.sources.openSourceRef(target.sourceRef,session.userId)
    if(nativeTarget.kind==='private_chat'||nativeTarget.kind==='group_chat'){
-    const raw=objectValue(await postChatMessageCreation(this.runtime,'/api/v1/chats/records/forward',{chat_session_uid:nativeTarget.ownerRef,client_request_id:input.requestId,source_items:selected.map(source=>({source_type:'team_message',team_source:source})),send_at:input.sendAtMillis,...(comment?{comment_text:comment}:{})},session,signal))
+    const delegation=nativeTarget.groupDelegation
+    const representation=bindGroupSourceRepresentation(nativeTarget,undefined)
+    const raw=objectValue(await postChatMessageCreation(this.runtime,'/api/v1/chats/records/forward',{chat_session_uid:nativeTarget.ownerRef,client_request_id:input.requestId,source_items:selected.map(source=>({source_type:'team_message',team_source:source})),send_at:input.sendAtMillis,...(comment?{comment_text:comment}:{}),...(representation?{representation}:{})},session,signal,...(delegation?[{chatAccessRef:delegation.accessRef,trackWriteOutcome:true}]:[])))
     const itemUid=stringValue(raw.record_uid),sequence=typeof raw.seq==='number'&&Number.isSafeInteger(raw.seq)&&raw.seq>0?raw.seq:0
     if(!itemUid||!sequence)throw unknown()
     result={sourceRef:target.sourceRef,itemUid,status:1,sequence,localState:'synced'}

@@ -1,3 +1,4 @@
+import { TranscriptViewHistory } from '../TranscriptViewHistory.js'
 import { useRecordingComparisonAvailability } from './useRecordingComparisonAvailability.js'
 import { RecordingStrategyComparison } from './RecordingStrategyComparison.js'
 import { RecordingFileStorageLabel, recordingMegabytesLabel, useRecordingFileStorage } from './recording-file-storage.js'
@@ -66,7 +67,8 @@ export function ArkmeRecordingFiles(props: Props) {
   return props.accountKey ? <RecordingFiles key={props.accountKey} {...props} /> : <p style={note}>{tr('登录后查看音频文件')}</p>
 }
 
-function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
+function RecordingFiles({ mediaPath, accountKey, dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
+  const [personalHistory, setPersonalHistory] = useState<{key:string;ref:string}>()
   const [comparison, setComparison] = useState<{sessionRef: string; fileName: string}>()
   const [current, setCurrent] = useState<RecordingFile[]>([])
   const [history, setHistory] = useState<RecordingFile[]>([])
@@ -320,6 +322,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
   useEffect(() => { onCountChange?.({ dateStamp, count: files.length, complete, loading: active && (loading || currentLoading) }) }, [dateStamp, files.length, complete, active, loading, currentLoading, onCountChange])
 
   return <section ref={section} aria-label={tr('音频文件')} style={{ minWidth: 0, fontSize: 13 }}>
+    {active && personalHistory && personalHistory.key === accountKey && <TranscriptViewHistory key={personalHistory.ref} sourceRef={personalHistory.ref} onClose={() => setPersonalHistory(undefined)} />}
     {notice && <p role="status" style={note}>{notice}</p>}
     {storage.error && <p role="alert" style={note}>{tr('读取录音存储失败，请重试')}<button type="button" style={{ ...button, marginLeft: 8 }} onClick={storage.retry}>{tr('重试读取存储')}</button></p>}
     {currentWarning && <p role="status" style={note}>{currentWarning}{currentReadFailed && <button type="button" style={{ ...button, marginLeft: 8 }} disabled={loading || currentLoading || busy} onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button>}</p>}
@@ -357,6 +360,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
       buttons[next]?.focus()
     }}>
+      {'sessionRef' in menu.file && menu.file.sessionRef && <button role="menuitem" type="button" style={button} onClick={() => {const file=menu.file;if('sessionRef' in file && file.sessionRef && accountKey)setPersonalHistory({key:accountKey,ref:JSON.stringify({kind:'recording',sessionRef:file.sessionRef})});setMenu(undefined)}}>已保存的个人更正</button>}
       {'sessionRef' in menu.file && menu.file.sessionRef && comparisonAvailability.availability.strategy === 'available' && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
       {comparisonSession && comparisonAvailability.loading && <button role="menuitem" type="button" disabled style={button}>正在检查策略对比…</button>}
       {comparisonSession && !comparisonAvailability.loading && comparisonAvailability.availability.strategy === 'unknown' && <button role="menuitem" type="button" style={button} onClick={comparisonAvailability.retry}>重试检查策略对比</button>}

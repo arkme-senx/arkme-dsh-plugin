@@ -1,9 +1,12 @@
+import {applyMessageTextReplacement,resolveMessageTextReplacement} from '../src/client/message-text-replacement.js'
+import type {PersonalTranscriptEntry,TranscriptViewCommand} from '../src/transcript-view-contract.js'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { createHash } from 'node:crypto'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { changeLocalTranscript, type LocalTranscriptChange, type LocalTranscriptEntry } from '../src/local-transcript-state.js'
+import { changeLocalTranscript } from './helpers/legacy-transcript-owner.js'
+import type { LocalTranscriptEntry } from '../src/local-transcript-state.js'
 import { quoteSourceContent } from '../src/message-quote.js'
 import { useTranscriptInteractions } from '../src/client/TranscriptInteractions.js'
 import { ArkmeMessageTextSelectionToolbar, registeredMessageTargets } from '../src/client/ArkmeMessageTextSelection.js'
@@ -16,14 +19,14 @@ vi.mock('../src/client/ArkmeDshMenu.js',()=>({ArkmeActionMenu:({actions,onClose}
 let root:Root,host:HTMLDivElement
 const stored=new Map<string,LocalTranscriptEntry>()
 const original='重复词，重复词。'
-function Fixture({text=original,scope='recording:123',enabled=true,omitFirst=false,playable=true}:{text?:string;scope?:string;enabled?:boolean;omitFirst?:boolean;playable?:boolean}) {
- const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].filter(row=>!omitFirst||row.id!=='one')
+function Fixture({text=original,scope='recording:123',enabled=true,omitFirst=false,playable=true,privateRows='all'}:{text?:string;scope?:string;enabled?:boolean;omitFirst?:boolean;playable?:boolean;privateRows?:'all'|'none'|'second'}) {
+ const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].map(row=>({...row,sourceVersion:createHash('sha256').update(row.text).digest('hex'),viewRef:privateRows==='none'||privateRows==='second'&&row.id==='one'?undefined:JSON.stringify({scope,id:row.id,text:row.text})})).filter(row=>!omitFirst||row.id!=='one')
  const actions=useTranscriptInteractions({scope,rows,enabled,onPlay:mocks.play})
  return <><ArkmeMessageTextSelectionToolbar replySourceRef="ordinary-chat" />{actions.host}
  {rows.map(row=><article key={row.id} onContextMenu={e=>actions.contextMenu(row,e)}>{actions.checkbox(row)}{actions.renderText(row)}</article>)}{actions.controls}</>
 }
-async function select(start=4,end=7){
- const element=host.querySelector('[data-arkme-text-selection]')!,range=document.createRange()
+async function select(start=4,end=7,index=0){
+ const element=host.querySelectorAll('[data-arkme-text-selection]')[index]!,range=document.createRange()
  range.setStart(element.firstChild!,start);range.setEnd(element.firstChild!,end)
  await act(async()=>{document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range);element.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}))})
 }
@@ -37,9 +40,18 @@ beforeEach(()=>{
  Range.prototype.getClientRects=()=>[new DOMRect(50,100,180,20)] as unknown as DOMRectList
  Element.prototype.scrollIntoView=vi.fn()
  stored.clear();mocks.copy.mockReset().mockResolvedValue(undefined);mocks.play.mockReset()
- mocks.call.mockReset().mockImplementation(async(op:string,p:{scope:string;ids?:string[];id?:string;change?:LocalTranscriptChange})=>{
-  if(op==='transcript.local.change'){const key=p.scope+':'+p.id;stored.set(key,changeLocalTranscript(stored.get(key),p.change!,11))}
-  return Object.fromEntries((p.ids??[p.id!]).flatMap(id=>{const entry=stored.get(p.scope+':'+id);return entry?[[id,entry]]:[]}))
+ mocks.call.mockReset().mockImplementation(async(op:string,p:any)=>{
+  if(op==='transcript.views.capabilities')return {supported:true,protocol_version:1}
+  const project=(ref:string):PersonalTranscriptEntry=>{const r=JSON.parse(ref),entry=stored.get(r.scope+':'+r.id)??{revision:0,original:r.text,text:r.text,marks:[]},changed=entry.original!==r.text;return {...entry,text:changed?r.text:entry.text,original:r.text,originalVersion:createHash('sha256').update(r.text).digest('hex'),originalDigest:'a'.repeat(64),originalChanged:changed}}
+  if(op==='transcript.views.read')return Object.fromEntries(p.items.map((item:any)=>[item.id,project(item.ref)]))
+  if(op==='transcript.views.saved')return {historical:true,items:[],next_cursor:''}
+  if(op==='transcript.views.change'){
+   const row=JSON.parse(p.ref),key=row.scope+':'+row.id,c=p.command as TranscriptViewCommand,previous=stored.get(key),current=project(p.ref)
+   const mark=c.action==='add_mark'?{kind:'add' as const,operationId:c.operation_id,anchor:c.anchor!}:c.action==='remove_mark'?{kind:'remove' as const,operationId:c.operation_id,annotationId:c.annotation_id!}:undefined
+   const text=c.action==='replace'?applyMessageTextReplacement(current.text,resolveMessageTextReplacement({textContent:current.text,textFormat:'plain'},c.anchor!),c.replacement!).text:undefined
+   stored.set(key,changeLocalTranscript(previous,{id:row.id,original:row.text,expectedRevision:c.expected_revision,...(text===undefined?{}:{text}),...(mark?{mark}:{}),...(c.action==='restore'?{restore:true}:{})},11));return project(p.ref)
+  }
+  throw new Error('Unexpected '+op)
  })
  host=document.createElement('div');document.body.append(host);root=createRoot(host)
 })
@@ -56,9 +68,9 @@ it('replaces just the second occurrence, restores after remount, and can restore
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
  await act(async()=>root.unmount());root=createRoot(host);await act(async()=>root.render(<Fixture/>))
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
- await click('本机更正 · 恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+ await click('个人更正 · 恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
-it('saves marks locally and cancels the same mark without changing text',async()=>{
+it('saves private marks in the cloud and cancels the same mark without changing text',async()=>{
  await act(async()=>root.render(<Fixture/>));await select();await click('标记')
  expect(stored.get('recording:123:one')?.marks[0]?.anchor).toMatchObject({text:'重复词',start:4,end:7})
  await select();await click('✓ 取消标记');expect(stored.get('recording:123:one')?.marks).toEqual([])
@@ -66,7 +78,7 @@ it('saves marks locally and cancels the same mark without changing text',async()
 })
 it('retains replacement input on failed save and does not alter the displayed transcript',async()=>{
  await act(async()=>root.render(<Fixture/>));await select();await click('替换');await input('新词')
- const normal=mocks.call.getMockImplementation()!;mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.local.change')throw new Error('磁盘已满');return normal(op,p)})
+ const normal=mocks.call.getMockImplementation()!;mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.change')throw new Error('磁盘已满');return normal(op,p)})
  await click('替换');expect(document.querySelector('textarea')?.value).toBe('新词');expect(document.querySelector('[role="alert"]')?.textContent).toBe('磁盘已满')
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
@@ -114,4 +126,64 @@ it('keeps the partial-selection toolbar ahead of the block menu',async()=>{
  await act(async()=>host.querySelector('[data-arkme-text-selection]')!.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:50,clientY:50})))
  expect(document.querySelector('[aria-label="选中文字操作"]')).not.toBeNull()
  expect(document.querySelector('[role="menu"]')).toBeNull()
+})
+it('drops the private wording when the Host reports an account change before the auth store rerenders',async()=>{
+ await act(async()=>root.render(<Fixture/>));await select();await click('替换');await input('私人新词');await click('替换');expect(host.textContent).toContain('私人新词')
+ const normal=mocks.call.getMockImplementation()!;mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('账号已变化'),{body:{code:'transcript-account-changed',httpStatus:409}});return normal(op,p)})
+ await act(async()=>{document.getSelection()?.removeAllRanges();window.dispatchEvent(new Event('focus'))})
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})
+
+it.each(['replacement', 'history'] as const)('retires an open %s surface when background read observes source revocation', async surface => {
+ await act(async()=>root.render(<Fixture/>))
+ if(surface==='replacement') {await select();await click('替换');await input('未提交私人草稿')}
+ else {
+  const normal=mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[{segment_uid:'old',text:'历史私人正文',revision:1,marks:[]}],next_cursor:''}:normal(op,p))
+  await click('已保存的个人更正');expect(host.textContent).toContain('历史私人正文')
+ }
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
+ await act(async()=>{document.getSelection()?.removeAllRanges();window.dispatchEvent(new Event('focus'))})
+ expect(document.querySelector('textarea')).toBeNull()
+ expect(host.textContent).not.toContain('历史私人正文')
+})
+
+it('checks source access while private prose is selected without replacing an active selection',async()=>{
+ stored.set('recording:123:one',{revision:1,original,text:'私人词，私人词。',marks:[]})
+ await act(async()=>root.render(<Fixture/>));await select()
+ expect(document.getSelection()?.toString()).toBe('私人词')
+ stored.set('recording:123:one',{revision:2,original,text:'另一设备的新更正',marks:[]})
+ const before=mocks.call.mock.calls.filter(([op])=>op==='transcript.views.read').length
+ await act(async()=>{window.dispatchEvent(new Event('focus'))})
+ expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.read').length).toBeGreaterThan(before)
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('私人词，私人词。')
+ expect(document.getSelection()?.toString()).toBe('私人词')
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
+ await act(async()=>{window.dispatchEvent(new Event('focus'))})
+ expect(host.textContent).not.toContain('私人词')
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})
+
+it.each(['change','saved'] as const)('clears private projections when %s observes source revocation before the next watch', async operation => {
+ stored.set('recording:123:one',{revision:1,original,text:'已确认私人正文',marks:[]})
+ await act(async()=>root.render(<Fixture/>));expect(host.textContent).toContain('已确认私人正文')
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{if(op===`transcript.views.${operation}`)throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
+ await click(operation==='change'?'个人更正 · 恢复原文':'已保存的个人更正')
+ expect(host.textContent).not.toContain('已确认私人正文')
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})
+
+it.each(['none','second'] as const)('keeps raw transcript actions without private mark authority (%s)',async privateRows=>{
+ await act(async()=>root.render(<Fixture privateRows={privateRows}/>));await select()
+ const buttons=[...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)
+ expect(buttons).toContain('复制');expect(buttons).toContain('查找')
+ expect(buttons).not.toContain('标记');expect(buttons).not.toContain('替换')
+ await click('复制');expect(mocks.copy).toHaveBeenCalledWith('重复词')
+ expect(mocks.call.mock.calls.filter(([op,p])=>op==='transcript.views.read'&&p.items.some((item:any)=>item.id==='one'))).toEqual([])
+ expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toEqual([])
+ if(privateRows==='none')expect(mocks.call).not.toHaveBeenCalled()
+ else {await select(0,2,1);expect([...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)).toContain('标记');await click('标记');expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toHaveLength(1)}
 })
