@@ -67,6 +67,7 @@ import { arkmeGroupBotAvatarIdentity, arkmeInvalidateBotAvatarResolution, type A
 import { useGroupBots, arkmeGroupBotsChanged } from './use-group-bots.js'
 import { TeamGroupJoinPanel } from './TeamGroupControls.js'
 import { TeamInternalGroupDialog } from './TeamInternalGroupDialog.js'
+import { isGroupAiPolishMembershipRequired } from '../group-ai-polish-access.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -1298,6 +1299,11 @@ function GroupSettingsMenu(props: {
       })
       .catch(caught => {
         if (!active || (controller.signal.aborted && !timedOut)) return
+        if (props.source.accessKind === 'team_delegation' && isGroupAiPolishMembershipRequired(caught)) {
+          setLocalAiPolishSettings(undefined)
+          setAiPolishLoadState('idle')
+          return
+        }
         setAiPolishLoadState('error')
         props.onError(timedOut ? 'AI 润色设置读取超时，请重试' : errorMessage(caught))
       })
@@ -1378,7 +1384,7 @@ function GroupSettingsMenu(props: {
   const polishStatus = localAiPolishSettings === undefined
     ? aiPolishLoadState === 'error' ? '加载失败' : '读取中'
     : localAiPolishSettings.enabled ? localAiPolishSettings.activeRuleName || '已开启' : '不润色'
-  entries.push({
+  if (props.source.accessKind !== 'team_delegation' || localAiPolishSettings !== undefined || aiPolishLoadState === 'error') entries.push({
     id: 'ai-polish',
     label: <span
       data-arkme-group-ai-polish-entry="true"

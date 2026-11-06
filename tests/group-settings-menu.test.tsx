@@ -142,6 +142,38 @@ describe('group settings menu', () => {
     expect(menuIds()).not.toContain('leave-separator')
   })
 
+  it('hides unavailable AI settings for a team-only viewer without reporting a page error or retaining old settings', async () => {
+    const delegated = { ...source, accessKind: 'team_delegation' as const }
+    const onError = vi.fn()
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
+      if (operation === 'source.ai-polish.settings') throw Object.assign(new Error('需要真人群成员资格'), { body: { code: 'group-ai-polish-membership-required', retryable: false } })
+      return await original(operation, ...args)
+    })
+    await act(async () => { renderer = create(controls(delegated, { onError })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).not.toContain('ai-polish')
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('retains real AI settings for a dual member and keeps real service failures visible', async () => {
+    const delegated = { ...source, accessKind: 'team_delegation' as const }
+    const onError = vi.fn()
+    await act(async () => { renderer = create(controls(delegated, { onError })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).toContain('ai-polish')
+    expect(onError).not.toHaveBeenCalled()
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
+      if (operation === 'source.ai-polish.settings') throw new Error('service unavailable')
+      return await original(operation, ...args)
+    })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).toContain('ai-polish')
+    expect(onError).toHaveBeenCalledWith('service unavailable')
+  })
+
   it('opens the nickname editor immediately even while group settings are unavailable', async () => {
     const onError = vi.fn()
     let rejectSettings!: (error: Error) => void

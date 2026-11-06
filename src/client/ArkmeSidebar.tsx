@@ -16,6 +16,7 @@ import {boundedArkmeBackgroundTransfer,arkmeBackgroundSoundCaptureFailureFeedbac
 import {useArkmeRecordInputPolicy} from './use-record-input-policy.js'
 import {TeamRepresentationBadge, TeamRepresentationAvatar} from './TeamRepresentationBadge.js'
 import type {TeamGroupIdentity,TeamRepresentationSelection} from '../team-group-contract.js'
+import { isGroupAiPolishMembershipRequired } from '../group-ai-polish-access.js'
 import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
 import { ArkmeExtensionParentPreview } from './ArkmeExtensionParentPreview.js'
 import { ArkmeDictationButton } from './ArkmeDictationButton.js'
@@ -4539,6 +4540,10 @@ export function ArkmeSurface({
             const snapshot = settingsResult.value
             aiPolishSettingsRef.current = snapshot
             setAiPolishSettings(snapshot)
+          } else if (settingsResult.status === 'rejected' && source.accessKind === 'team_delegation'
+            && isGroupAiPolishMembershipRequired(settingsResult.reason) && aiPolishSettingsRef.current !== undefined) {
+            aiPolishSettingsRef.current = undefined
+            setAiPolishSettings(undefined)
           }
           if (noticesResult.status === 'fulfilled'
             && !sameStateValue(aiPolishNoticesRef.current, noticesResult.value)) {
@@ -4567,7 +4572,7 @@ export function ArkmeSurface({
       controller?.abort()
       browserDocument?.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [activeConversation, authenticated, conversationKey, source?.kind, source?.sourceRef])
+  }, [activeConversation, authenticated, conversationKey, source?.kind, source?.sourceRef, source?.accessKind])
 
   const loadOlderHistory = useCallback(async () => {
     const state = olderLoadRef.current
