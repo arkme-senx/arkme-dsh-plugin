@@ -1,5 +1,5 @@
 import { WorldPublicationBadge } from './WorldPublicationControls.js'
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
 import type { ArkmeTimelineItem } from '../types.js'
 import { registeredMessageTargets } from './ArkmeMessageTextSelection.js'
@@ -39,10 +39,27 @@ export function MessageQuoteThreadBadge({ item }: { item: ArkmeTimelineItem }) {
   </button>
 }
 
-export function MessageQuoteThreadTimestamp({ item, sourceRef }: { item: ArkmeTimelineItem; sourceRef?: string | undefined }) {
-  const value = useMessageQuoteThreads()
+export function MessageWorldPublicationBadge({ item, sourceRef }: { item: ArkmeTimelineItem; sourceRef?: string | undefined }) {
   const target = item.isMe && item.quickNoteDetailsSupported !== false && sourceRef && item.messageActionRef ? {source:{sourceRef,messageActionRef:item.messageActionRef,itemUid:item.itemUid}} : undefined
-  return <span style={{ float: 'right', display: 'inline-flex', alignItems: 'center' }}><ArkmeMessageTimestamp at={item.sendAtMillis}/><WorldPublicationBadge target={target}/>{!!value.store?.thread(item).count && <MessageQuoteThreadBadge item={item}/>}</span>
+  return <WorldPublicationBadge target={target} corner />
+}
+
+export function MessageQuoteThreadTimestamp({ item }: { item: ArkmeTimelineItem }) {
+  const value = useMessageQuoteThreads(), count = value.store?.thread(item).count ?? 0
+  const groupRef = useRef<HTMLSpanElement>(null)
+  // Only messages with a comment count need measurement. Keep the reservation
+  // local to this bubble, including after late count updates or unmount.
+  useLayoutEffect(() => {
+    const group = groupRef.current, bubble = group?.closest<HTMLElement>('.arkme-timed-bubble')
+    if (!count || !group || !bubble) return
+    const measure = () => bubble.style.setProperty('--arkme-message-time-space', `${Math.max(42, Math.ceil(group.getBoundingClientRect().width) + 8)}px`)
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    observer?.observe(group)
+    return () => { observer?.disconnect(); bubble.style.removeProperty('--arkme-message-time-space') }
+  }, [count])
+  if (!count) return <ArkmeMessageTimestamp at={item.sendAtMillis}/>
+  return <span ref={groupRef} data-arkme-message-time-group><ArkmeMessageTimestamp at={item.sendAtMillis}/><MessageQuoteThreadBadge item={item}/></span>
 }
 
 function MessageQuoteUnderlines({ store, sourceRef }: { store: MessageQuoteThreadStore; sourceRef?: string | undefined }) {

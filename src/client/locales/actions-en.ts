@@ -431,6 +431,7 @@ export const actionEnglish: Record<string,string> = {
   '取消完成：{title}': 'Mark incomplete: {title}',
   '已恢复为未完成': 'Marked incomplete',
   '未能确认安排状态，请刷新后重试': 'Could not confirm the plan status. Refresh and retry.',
+  '已恢复安排': 'Plan restored',
   '已移入已删除': 'Moved to deleted plans',
   '删除未确认，请刷新后重试': 'Could not confirm deletion. Refresh and retry.',
   '正在加载安排': 'Loading plans',

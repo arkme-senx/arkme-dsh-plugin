@@ -83,3 +83,11 @@ describe('recording-derived arrangement read contract', () => {
     expect([date.getFullYear(), date.getMonth(), date.getDate(), date.getHours()]).toEqual([2026, 9, 9, 0])
   })
 })
+
+it('preserves coverage reasons while accepting an older server without them', async () => {
+ const current = await setup(page({ state: 'partial', coverage_reasons: ['extraction_incomplete', 'unknown_origin'] })).service.recordingDayArrangements(query)
+ expect(current).toMatchObject({ state: 'partial', coverageReasons: ['extraction_incomplete', 'unknown_origin'] })
+ const old = await setup(page({ state: 'partial' })).service.recordingDayArrangements(query)
+ expect(old.state).toBe('partial')
+ expect(old).not.toHaveProperty('coverageReasons')
+})
