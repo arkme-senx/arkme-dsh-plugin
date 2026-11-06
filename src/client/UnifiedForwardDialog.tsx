@@ -140,8 +140,8 @@ export function UnifiedForwardDialog({ accountKey, attempt, previewTitle, previe
   const dialog = <ArkmeForwardTargetDialog fixed={fixed} keyword={keyword} busy={sending} onClose={onClose} onKeywordChange={setKeyword}
     previewTitle={previewTitle} previewSubtitle={previewSubtitle} selectedAvatars={avatars} comment={attempt.commentText ?? comment} commentFrozen={attempt.commentText !== undefined}
     onCommentChange={setComment} error={error} onSubmit={() => { void send() }}
+    navigation={folder ? <button data-arkme-feedback="neutral" type="button" style={styles.forwardTargetBack} disabled={sending} aria-label={tr('返回转发对象')} onClick={() => { topicRequest.current?.abort(); setFolder(undefined); setKeyword('') }}><span aria-hidden>←</span>{tr('返回转发对象')}</button> : undefined}
     identityControls={[...selected].flatMap(([key, target]) => target.kind === 'source' && target.source.kind === 'group_chat' && (groupIdentity || target.source.accessKind === 'team_delegation') ? [<div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>{target.source.displayName}</span><TeamGroupIdentityPicker accountKey={accountKey} sourceRef={target.source.sourceRef} value={identities[key]} disabled={sending || attempt.hasAttempt(key)} onSelect={value => setIdentities(previous => ({ ...previous, [key]: value }))}/></div>] : [])}>
-    {folder && <button type="button" disabled={sending} onClick={() => { topicRequest.current?.abort(); setFolder(undefined); setKeyword('') }}>{tr('返回转发对象')}</button>}
     <ul style={styles.forwardTargetList} aria-label={tr('转发对象列表')}>
 
       {renderedRows}
