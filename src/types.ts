@@ -1,3 +1,4 @@
+import type { ModelExecutionMetadata as importModelExecutionMetadata } from './model-execution.js'
 import type { TeamRepresentationSendOptions, TeamRepresentationSnapshot } from './team-group-contract.js'
 import type { ArkmeHostPolicy } from './host-policy.js'
 import type { ArkmeTeamAvatar } from './team-profile-contract.js'
@@ -1571,6 +1572,9 @@ export interface ArkmeProviderCapabilities {
   sdk: '@senguoyun/dsh-arkme/sdk'
   environment: ArkmeEnvironment
   features: {
+ accountModelsV1?:boolean
+ aiPointsStatisticsV1?:boolean
+
     authStatus: true
     realtimeDictationV1?: true
     /** Interactive preset-account login; passwords must never enter model tools. */
@@ -1633,6 +1637,7 @@ arkoImagesV1?:true
     recordingEntityStart?: true
     speakerPresence?: true
     recordingWorkflowV2?: true
+recordingAnalysisV1?: true
     recordingStrategiesV1?: true
     recordingFileStorageV1?: true
     recordingStrategyRecordingsV1?: true
@@ -3372,7 +3377,7 @@ export interface ArkmeRecordingCalendarMonth {
 export type ArkmeRecordingProjectionKind = 'summary' | 'timeline'
 export type ArkmeRecordingTranscriptSource = 'system' | 'doubao'
 
-export interface ArkmeRecordingSummaryModelRouteOption {
+export interface ArkmeRecordingSummaryModelRouteOption extends importModelExecutionMetadata {
   routeKey: string
   provider: string
   modelKey: string
@@ -3656,6 +3661,7 @@ export type ArkmeRecordingVersionStatus = 'processing' | 'done' | 'failed'
 export type ArkmeRecordingSectionState = 'ready' | 'empty' | 'processing' | 'failed' | 'error'
 
 export interface ArkmeRecordingVersion {
+  continuationAvailable?: boolean
   id: string
   status: ArkmeRecordingVersionStatus
   selectable: boolean
@@ -4049,7 +4055,7 @@ export interface ArkmeArkoImageInput {
   mimeTypes: readonly string[]
 }
 
-export interface ArkmeArkoModelOption {
+export interface ArkmeArkoModelOption extends importModelExecutionMetadata {
   routeKey: string
   displayName: string
   provider: string
@@ -4415,6 +4421,7 @@ export type ArkmePluginOperation =
   | 'recordings.entities.occurrences'
   | 'recordings.person-references'
   | 'offline-context'
+  | 'recordings.analysis'
   | 'recordings.workflow'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'

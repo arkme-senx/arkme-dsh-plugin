@@ -11,8 +11,11 @@ vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/client/read-intent-visibility.js', () => ({ suspendArkmeVisibleReadIntent: () => () => {} }))
 let root: Root, host: HTMLDivElement
 const row = { businessCode: 'arkme', requestUid: 'one', model: 'DeepSeek Pro', chargedPoints: '1', modelPoints: '1', services: [], grantedPoints: '0.5', purchasedPoints: '0.5', createdAt: Date.parse('2026-11-04T00:00:00Z'), completedAt: Date.parse('2026-11-04T00:00:01Z'), tokens: { cacheHitInput: '0', cacheMissInput: '0', output: '0' } }
-const response = (params: Record<string, string>) => ({ accountScope: params.expectedAccountScope, unit: 'ai_points', month: params.month,
-  chargedPoints: params.month === '2026-11' ? '1' : '0', items: params.month === '2026-11' ? [row] : [], nextBeforeId: '' })
+function response(params: Record<string, any>) {
+  const has = params.expectedAccountScope !== 'prod:22' && row.createdAt >= Date.parse(`${params.fromDate}T00:00:00+08:00`) && row.createdAt < Date.parse(`${params.untilDate}T00:00:00+08:00`)
+  return { accountScope: params.expectedAccountScope, unit: 'ai_points', fromDate: params.fromDate, untilDate: params.untilDate, observedAt: params.settledBefore, chargedPoints: has ? '1' : '0', items: has ? [row] : [], nextBeforeId: '' }
+}
+const dispatch = async (operation: string,params:Record<string,any>) => operation === 'account.points.statistics' ? summary(params) : response(params)
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-11-04T09:00:00Z'))
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -20,7 +23,7 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
-  mocks.call.mockReset().mockImplementation(async (_op, params) => { if (_op === 'account.points.statistics') throw { code: 'ai-points-statistics-unsupported' }; return response(params) })
+  mocks.call.mockReset().mockImplementation(dispatch)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
 const render = async (scope = 'prod:11') => { await act(async () => root.render(<ArkmePointsHistoryDialog scope={scope} revision={0} onClose={vi.fn()} />)) }
@@ -33,7 +36,7 @@ it('opens a modal in statistics with fifteen days and drills into the selected t
   expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('统计')
   expect(button('按天').getAttribute('aria-pressed')).toBe('true')
   expect(document.querySelectorAll('.arkme-points-history-columns > button')).toHaveLength(15)
-  expect(mocks.call.mock.calls.filter(([op]) => op === 'account.points.consumption').every(([, params]) => params.limit === 100)).toBe(true)
+  expect(mocks.call.mock.calls.map(([op]) => op)).toEqual(['account.points.statistics'])
   expect(document.querySelector('.arkme-points-history-selection')?.textContent).toContain('11/4 · 1 积分')
   const reads = mocks.call.mock.calls.length
   await click('查看DSH 对话消费明细')
@@ -41,7 +44,7 @@ it('opens a modal in statistics with fifteen days and drills into the selected t
   expect(document.querySelector('.arkme-points-history-filter')?.textContent).toBe('DSH 对话')
   expect(document.querySelector('summary strong')?.textContent).toBe('DSH 对话')
   expect(document.querySelector('.arkme-points-call')?.textContent).toContain('赠送 0.5 · 充值 0.5')
-  expect(mocks.call).toHaveBeenCalledTimes(reads)
+  expect(mocks.call).toHaveBeenCalledTimes(reads + 1)
   await click('清除类型筛选'); expect(document.querySelector('.arkme-points-history-filter')).toBeNull()
 })
 
@@ -92,7 +95,7 @@ it('cancels account-scoped reads and discards delayed previous-account responses
   const releases: (() => void)[] = [], signals: AbortSignal[] = []
   mocks.call.mockImplementation((_op, params, signal) => { signals.push(signal); return new Promise(resolve => releases.push(() => resolve(response(params)))) })
   await render()
-  mocks.call.mockImplementation(async (_op, params) => { if (_op === 'account.points.statistics') throw { code: 'ai-points-statistics-unsupported' }; return { ...response(params), chargedPoints: '0', items: [] } })
+  mocks.call.mockImplementation(dispatch)
   await render('prod:22')
   expect(signals.every(signal => signal.aborted)).toBe(true)
   await act(async () => releases.forEach(release => release()))
@@ -104,14 +107,14 @@ it('keeps a failed read explicit and retries without displaying a partial total'
   mocks.call.mockRejectedValue(new Error('offline'))
   await render(); expect(document.querySelector('[role="alert"]')).not.toBeNull()
   expect(document.querySelector('.arkme-points-history-overview')).toBeNull()
-  mocks.call.mockImplementation(async (_op, params) => { if (_op === 'account.points.statistics') throw { code: 'ai-points-statistics-unsupported' }; return response(params) })
+  mocks.call.mockImplementation(dispatch)
   await click('重试'); expect(document.querySelector('.arkme-points-history-overview strong')?.textContent).toBe('1 积分')
 })
 
 function summary(params: Record<string, unknown>) {
   const query = { fromDate: params.fromDate, untilDate: params.untilDate, timezone: params.timezone, grain: params.grain } as ArkmeAiPointsStatisticsQuery
   const buckets = aiPointsPeriods(query).map(period => {
-    const has = row.createdAt >= Date.parse(`${period.fromDate}T00:00:00+08:00`) && row.createdAt < Date.parse(`${period.untilDate}T00:00:00+08:00`)
+    const has = params.expectedAccountScope !== 'prod:22' && row.createdAt >= Date.parse(`${period.fromDate}T00:00:00+08:00`) && row.createdAt < Date.parse(`${period.untilDate}T00:00:00+08:00`)
     return { ...period, chargedPoints: has ? '1' : '0', types: has ? [{ businessCode: 'arkme', chargedPoints: '1' }] : [] }
   })
   return { accountScope: params.expectedAccountScope, unit: 'ai_points', query, buckets, chargedPoints: buckets.some(bucket => bucket.chargedPoints === '1') ? '1' : '0', observedAt: Date.now() }

@@ -5,7 +5,7 @@ import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { tr, useArkmeLocale } from './locale.js'
 import { arkmeTheme as colors } from './arkme-theme.js'
-import type { ModelChoice } from '../model-directory.js'
+import type { ModelChoice, ModelScene } from '../model-directory.js'
 import { UnifiedModelPicker } from './UnifiedModelPicker.js'
 type RecordingDropdownAnchor = { left: number; right: number; top: number; bottom: number }
 const styles: Record<string, CSSProperties> = {
@@ -80,18 +80,19 @@ export function AnalysisDropdown({ ariaLabel, value, options, width, variant, au
   </>
 }
 
-export function AnalysisModelDialog({ ariaLabel, initialValue, options, onClose, onConfirm, unifiedModels }: {
+export function AnalysisModelDialog({ ariaLabel, initialValue, options, onClose, onConfirm, unifiedModels, modelScene }: {
   ariaLabel: string
   initialValue: string
   options: AnalysisDropdownOption[]
   onClose(): void
   onConfirm(value: string): void
   unifiedModels?: ModelChoice[]
+  modelScene?: ModelScene
 }) {
   useArkmeLocale()
   const [routeKey, setRouteKey] = useState(options.some(option => option.value === initialValue) ? initialValue : '')
-  if (unifiedModels) return <UnifiedModelPicker ariaLabel={ariaLabel} scene="recording" scopeLabel="录音总结与时间轴" models={unifiedModels}
-    currentId={JSON.stringify(['recording', initialValue])} confirmLabel="确认并生成" onClose={onClose}
+  if (unifiedModels) return <UnifiedModelPicker ariaLabel={ariaLabel} scene={modelScene ?? 'recording-summary'} scopeLabel={modelScene === 'recording-timeline' ? '录音时间轴' : '录音总结'} models={unifiedModels}
+    currentId={unifiedModels.find(model => model.recording === initialValue)?.id ?? ''} confirmLabel="确认并生成" onClose={onClose}
     onApply={async model => { if (!model.recording) return false; onConfirm(model.recording); return true }}/>
   const dialog = <div style={styles.modelBackdrop} role="presentation" onKeyDown={event => { if (event.key === 'Escape') onClose() }} onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
     <section role="dialog" aria-modal="true" aria-label={ariaLabel} style={styles.modelDialog}>

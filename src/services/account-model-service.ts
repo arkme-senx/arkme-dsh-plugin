@@ -1,5 +1,6 @@
 import type { AccountModelSettings, AccountModelSave, AccountModelPreferences, ModelUsagePage, ModelUsageQuery } from '../account-models.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
+import {parseModelUsagePage} from './model-usage-contract.js'
 
 export class AccountModelService {
   constructor(private readonly runtime: ServiceRuntime) {}
@@ -28,5 +29,5 @@ export class AccountModelService {
   async save(scope: string, input: AccountModelSave, signal?: AbortSignal) { return await this.request<AccountModelSettings>(scope, 'settings/save', input as unknown as Record<string, unknown>, signal) }
   async preferences(scope: string, revision: number, preferences: AccountModelPreferences, signal?: AbortSignal) { return await this.request<AccountModelSettings>(scope, 'preferences/save', { expected_revision: revision, preferences }, signal) }
   async disable(scope: string, revision: number, uid: string, disabled: boolean, signal?: AbortSignal) { return await this.request<AccountModelSettings>(scope, 'settings/disable', { expected_revision: revision, uid, disabled }, signal) }
-  async usage(scope: string, query: ModelUsageQuery, signal?: AbortSignal): Promise<ModelUsagePage> { return { ...await this.request<ModelUsagePage>(scope, 'usage/query', query as Record<string, unknown>, signal), accountScope: scope } }
+  async usage(scope: string, query: ModelUsageQuery, signal?: AbortSignal): Promise<ModelUsagePage> { return parseModelUsagePage(await this.request<unknown>(scope, 'usage/query', query as Record<string, unknown>, signal),scope) }
 }

@@ -646,7 +646,7 @@ export class ArkmeSdk {
     return this.call('arko.deleted', { ...(cursor ? { cursor } : {}) }, signal)
   }
   private readonly requestLifetime = new AbortController()
-  /** Cancels managed exports and storage observations. Other subscriptions return their own disposers. */
+  /** Cancels managed exports, storage observations and account model/statistics requests. Other subscriptions return their own disposers. */
   dispose(): void { this.requestLifetime.abort() }
   async recordExportPreflight(expectedAccountScope: string, signal?: AbortSignal): Promise<ArkmeExportPreflight> {
     signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
@@ -838,6 +838,11 @@ export class ArkmeSdk {
     return page
   }
 
+  async recordingAnalysis(input: import('../recording-analysis-contract.js').RecordingAnalysisInput, signal?: AbortSignal): Promise<import('../recording-analysis-contract.js').RecordingAnalysisResult> {
+    if ((await this.capabilities(signal)).features.recordingAnalysisV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持录音模型执行与原任务继续，请升级', retryable: false })
+    return this.call('recordings.analysis', input, signal)
+  }
+
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
     if ((await this.capabilities(signal)).features.recordingWorkflowV2 !== true) return { supported: false }
     return this.call('recordings.workflow', { operation: 'capabilities' }, signal)
@@ -953,11 +958,13 @@ export class ArkmeSdk {
     if ((await this.capabilities(signal)).features.aiPoints !== true) throw new Error('当前 Provider 不支持 AI 积分')
     return this.call('account.points.consumption', { expectedAccountScope, ...query }, signal)
   }
+  private scopedAccountSignal(signal?:AbortSignal):AbortSignal {const scoped=AbortSignal.any([this.requestLifetime.signal,...(signal?[signal]:[])]);scoped.throwIfAborted();return scoped}
+  private async requirePointsStatistics(signal?:AbortSignal){if((await this.capabilities(signal)).features.aiPointsStatisticsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持积分统计，请升级',retryable:false})}
   async aiPointsStatistics(expectedAccountScope: string, query: ArkmeAiPointsStatisticsQuery, signal?: AbortSignal): Promise<ArkmeAiPointsStatistics> {
-    return this.call('account.points.statistics', { expectedAccountScope, ...query }, signal)
+    signal=this.scopedAccountSignal(signal);await this.requirePointsStatistics(signal); return this.call('account.points.statistics', { expectedAccountScope, ...query }, signal)
   }
   async aiPointsConsumptionRange(expectedAccountScope: string, query: ArkmeAiPointsRangeQuery, signal?: AbortSignal): Promise<ArkmeAiPointsRangePage> {
-    return this.call('account.points.consumption.range', { expectedAccountScope, ...query }, signal)
+    signal=this.scopedAccountSignal(signal);await this.requirePointsStatistics(signal); return this.call('account.points.consumption.range', { expectedAccountScope, ...query }, signal)
   }
 
   async state(signal?: AbortSignal): Promise<ArkmeProviderState> {
@@ -2660,9 +2667,12 @@ export class ArkmeSdk {
     return this.call('source.message-extension.capabilities', { sourceRef }, signal)
   }
 
-  async accountModels(expectedAccountScope:string,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{return this.call('models.account.query',{expectedAccountScope},signal)}
-  async saveAccountModel(expectedAccountScope:string,input:import('../account-models.js').AccountModelSave,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{return this.call('models.account.save',{expectedAccountScope,input},signal)}
-  async accountModelUsage(expectedAccountScope:string,query:import('../account-models.js').ModelUsageQuery,signal?:AbortSignal):Promise<import('../account-models.js').ModelUsagePage>{return this.call('models.usage.query',{expectedAccountScope,query},signal)}
+  private async requireAccountModels(signal?:AbortSignal){if((await this.capabilities(signal)).features.accountModelsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持账号模型，请升级',retryable:false})}
+  async accountModels(expectedAccountScope:string,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{signal=this.scopedAccountSignal(signal);await this.requireAccountModels(signal);return this.call('models.account.query',{expectedAccountScope},signal)}
+  async saveAccountModel(expectedAccountScope:string,input:import('../account-models.js').AccountModelSave,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{signal=this.scopedAccountSignal(signal);await this.requireAccountModels(signal);return this.call('models.account.save',{expectedAccountScope,input},signal)}
+  async accountModelPreferences(expectedAccountScope:string,revision:number,preferences:import('../account-models.js').AccountModelPreferences,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{signal=this.scopedAccountSignal(signal);await this.requireAccountModels(signal);return this.call('models.preferences.save',{expectedAccountScope,revision,preferences},signal)}
+  async disableAccountModel(expectedAccountScope:string,revision:number,uid:string,disabled:boolean,signal?:AbortSignal):Promise<import('../account-models.js').AccountModelSettings>{signal=this.scopedAccountSignal(signal);await this.requireAccountModels(signal);return this.call('models.account.disable',{expectedAccountScope,revision,uid,disabled},signal)}
+  async accountModelUsage(expectedAccountScope:string,query:import('../account-models.js').ModelUsageQuery,signal?:AbortSignal):Promise<import('../account-models.js').ModelUsagePage>{signal=this.scopedAccountSignal(signal);await this.requireAccountModels(signal);return this.call('models.usage.query',{expectedAccountScope,query},signal)}
   async modelDirectory(expectedAccountScope: string, signal?: AbortSignal, options?: { officialOnly?: boolean }): Promise<import('../model-directory.js').UnifiedModelCatalog> {
     return this.call('models.directory', { expectedAccountScope, ...(options?.officialOnly === true ? { officialOnly: true } : {}) }, signal)
   }
@@ -3441,3 +3451,8 @@ export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '..
 export type { WorldPublication, WorldPublicationRequest, WorldPublicationResponse, WorldPublicationSourceTarget } from '../world-publication-contract.js'
 export type {WorldSoundSegment,WorldSoundExcerpt,WorldSoundSelection,WorldSoundRequest,WorldSoundPrepared,WorldSoundReceipt,WorldSoundResponse} from '../world-sound-contract.js'
 export type { WorldSuggestion, WorldSuggestionJob, WorldSuggestionModel, WorldSuggestionPrepared, WorldSuggestionsState, WorldSuggestionsRequest, WorldSuggestionsResponse } from '../world-suggestions-contract.js'
+export type { RecordingAnalysisInput, RecordingAnalysisResult } from '../recording-analysis-contract.js'
+
+export type { ModelBinding, ModelExecutionMetadata } from '../model-execution.js'
+
+export type {AccountModelSettings,AccountModelSave,AccountModelPreferences,AccountModelCapabilities,AccountModelScene,ModelUsageQuery,ModelUsagePage} from '../account-models.js'

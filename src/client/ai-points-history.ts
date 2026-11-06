@@ -1,4 +1,4 @@
-import { nanoCnyToPoints, pointsUnits, type ArkmeAiPointsConsumption, type ArkmeAiPointsPage } from '../ai-points.js'
+import { nanoCnyToPoints, pointsUnits, type ArkmeAiPointsConsumption } from '../ai-points.js'
 import type { ArkmeAiPointsRangePage, ArkmeAiPointsRangeQuery, ArkmeAiPointsStatistics, ArkmeAiPointsStatisticsQuery } from '../ai-points-statistics.js'
 
 export type PointsGrain = 'day' | 'week' | 'month'
@@ -45,20 +45,9 @@ export function pointsWindow(grain: PointsGrain, offset = 0, now = Date.now()): 
   })
   return { grain, periods, from: periods[0]!.from, until: periods.at(-1)!.until }
 }
-function monthsIn(from: number, until: number): string[] {
-  const start = new Date(from + zoneMs), last = monthKey(until - 1), result: string[] = []
-  for (let index = 0; index < 13; index++) {
-    const key = monthKey(monthStart(start.getUTCFullYear(), start.getUTCMonth() + index))
-    result.push(key); if (key === last) return result
-  }
-  throw new Error('Invalid points range')
-}
 export class PointsHistoryError extends Error {
   constructor(readonly reason: 'changed' | 'invalid' | 'too-large') { super(reason) }
 }
-type ReadPage = (month: string, beforeId: string, signal: AbortSignal, limit: number) => Promise<ArkmeAiPointsPage>
-type Month = { page: ArkmeAiPointsPage; items?: ArkmeAiPointsConsumption[]; observedAt: number }
-type Budget = { pages: number; rows: number }
 type AggregateApi = {
   summary(query: ArkmeAiPointsStatisticsQuery, signal: AbortSignal): Promise<ArkmeAiPointsStatistics>
   range(query: ArkmeAiPointsRangeQuery, signal: AbortSignal): Promise<ArkmeAiPointsRangePage>
@@ -82,160 +71,28 @@ export function aggregatePointsView(snapshot: ArkmeAiPointsStatistics, window: P
 
 /** Dialog-local statements; Refresh/reopen replaces this reader. Never publishes a partial aggregate. */
 export class PointsHistoryReader {
-  private readonly cache = new Map<string, Month>()
   private readonly summaries = new Map<string, ArkmeAiPointsStatistics>()
-  private aggregateSupported = true
-  constructor(private readonly scope: string, private readonly readPage: ReadPage, private readonly now = Date.now, private readonly aggregate?: AggregateApi) {}
-
-  private remember(month: string, value: Month): void {
-    this.cache.delete(month); this.cache.set(month, value)
-    let rows = [...this.cache.values()].reduce((sum, entry) => sum + (entry.items?.length ?? entry.page.items.length), 0)
-    while (this.cache.size > 24 || rows > 50_000) {
-      const key = this.cache.keys().next().value!
-      const entry = this.cache.get(key)!
-      rows -= entry.items?.length ?? entry.page.items.length
-      this.cache.delete(key)
-    }
-  }
-
-  private async page(month: string, cursor: string, signal: AbortSignal, budget: Budget, limit = 100): Promise<ArkmeAiPointsPage> {
-    signal.throwIfAborted()
-    if (++budget.pages > 240) throw new PointsHistoryError('too-large')
-    const page = await this.readPage(month, cursor, signal, limit)
-    signal.throwIfAborted()
-    if (page.accountScope !== this.scope || page.unit !== 'ai_points' || page.month !== month
-      || !Array.isArray(page.items) || !/^(?:|[1-9]\d*)$/.test(page.nextBeforeId)
-      || (cursor && page.nextBeforeId && BigInt(page.nextBeforeId) >= BigInt(cursor))) throw new PointsHistoryError('invalid')
-    pointsUnits(page.chargedPoints)
-    budget.rows += page.items.length
-    if (budget.rows > 25_000) throw new PointsHistoryError('too-large')
-    if (page.nextBeforeId && !page.items.length) throw new PointsHistoryError('invalid')
-    for (const item of page.items) {
-      if (!item.requestUid || !Number.isSafeInteger(item.createdAt) || monthKey(item.createdAt) !== month
-        || pointsUnits(item.chargedPoints) <= 0n) throw new PointsHistoryError('invalid')
-    }
-    return page
-  }
-
-  async month(month: string, complete: boolean, signal: AbortSignal, budget: Budget): Promise<Month> {
-    signal.throwIfAborted()
-    const cached = this.cache.get(month)
-    if (cached && (!complete || cached.items)) { this.remember(month, cached); return cached }
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const reuse = attempt === 0 && cached
-      const first = reuse
-        ? cached.page : await this.page(month, '', signal, budget, complete ? 100 : 1)
-      const observedAt = reuse ? cached.observedAt : this.now()
-      if (!complete) {
-        const value = { page: first, observedAt }; this.remember(month, value); return value
-      }
-      try {
-        const items: ArkmeAiPointsConsumption[] = [], seen = new Set<string>()
-        let page = first, pageCount = 0, sum = 0n
-        while (true) {
-          signal.throwIfAborted()
-          if (++pageCount > 160) throw new PointsHistoryError('too-large')
-          // The ledger is append-only and cursors use stable MIN(id) operation anchors.
-          // Newer groups may settle above our cursor. Keep the first total and
-          // require the final, duplicate-free traversal to reconcile exactly to it.
-          if (pointsUnits(page.chargedPoints) < pointsUnits(first.chargedPoints)) throw new PointsHistoryError('changed')
-          for (const item of page.items) {
-            if (seen.has(item.requestUid)) throw new PointsHistoryError('changed')
-            seen.add(item.requestUid); items.push(item); sum += pointsUnits(item.chargedPoints)
-          }
-          if (!page.nextBeforeId) break
-          page = await this.page(month, page.nextBeforeId, signal, budget)
-        }
-        if (sum !== pointsUnits(first.chargedPoints)) throw new PointsHistoryError('changed')
-        const value = { page: first, items, observedAt }; this.remember(month, value); return value
-      } catch (error) {
-        this.cache.delete(month)
-        if (!(error instanceof PointsHistoryError) || error.reason !== 'changed' || attempt) throw error
-      }
-    }
-    throw new PointsHistoryError('changed')
-  }
-
+  constructor(private readonly scope: string, private readonly aggregate: AggregateApi) {}
   async statistics(window: PointsWindow, selected: string | null, signal: AbortSignal): Promise<PointsStatistics> {
-    const controller = new AbortController(), abort = () => controller.abort(signal.reason)
     signal.throwIfAborted()
-    signal.addEventListener('abort', abort, { once: true })
-    try {
-      if (this.aggregate && this.aggregateSupported) {
-        const query: ArkmeAiPointsStatisticsQuery = { fromDate: pointsDateKey(window.from), untilDate: pointsDateKey(window.until), timezone: 'Asia/Shanghai', grain: window.grain }
-        const key = `${query.grain}:${query.fromDate}:${query.untilDate}`
-        try {
-          let snapshot = this.summaries.get(key)
-          if (!snapshot) {
-            snapshot = await this.aggregate.summary(query, controller.signal)
-            controller.signal.throwIfAborted()
-            if (snapshot.accountScope !== this.scope) throw new PointsHistoryError('invalid')
-            this.summaries.set(key, snapshot)
-            if (this.summaries.size > 8) this.summaries.delete(this.summaries.keys().next().value!)
-          }
-          return aggregatePointsView(snapshot, window, selected)
-        } catch (error) {
-          const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
-          if (code !== 'ai-points-statistics-unsupported' && code !== 'operation-unknown') throw error
-          this.aggregateSupported = false
-        }
-      }
-      return await this.readStatistics(window, selected, controller.signal)
+    const query: ArkmeAiPointsStatisticsQuery = { fromDate: pointsDateKey(window.from), untilDate: pointsDateKey(window.until), timezone: 'Asia/Shanghai', grain: window.grain }
+    const key = `${query.grain}:${query.fromDate}:${query.untilDate}`
+    let snapshot = this.summaries.get(key)
+    if (!snapshot) {
+      snapshot = await this.aggregate.summary(query, signal)
+      signal.throwIfAborted()
+      if (snapshot.accountScope !== this.scope) throw new PointsHistoryError('invalid')
+      this.summaries.set(key,snapshot)
+      if(this.summaries.size>8)this.summaries.delete(this.summaries.keys().next().value!)
     }
-    catch (error) { controller.abort(); throw error }
-    finally { signal.removeEventListener('abort', abort) }
+    return aggregatePointsView(snapshot,window,selected)
   }
-
   async details(query: ArkmeAiPointsRangeQuery, expectedTotal: string, signal: AbortSignal): Promise<ArkmeAiPointsRangePage> {
-    if (!this.aggregate || !this.aggregateSupported) throw new PointsHistoryError('invalid')
-    const page = await this.aggregate.range(query, signal)
     signal.throwIfAborted()
-    if (page.accountScope !== this.scope || page.fromDate !== query.fromDate || page.untilDate !== query.untilDate || page.observedAt !== query.settledBefore) throw new PointsHistoryError('invalid')
-    if (pointsUnits(page.chargedPoints) !== pointsUnits(expectedTotal)) throw new PointsHistoryError('changed')
+    const page=await this.aggregate.range(query,signal)
+    signal.throwIfAborted()
+    if(page.accountScope!==this.scope||page.fromDate!==query.fromDate||page.untilDate!==query.untilDate||page.observedAt!==query.settledBefore)throw new PointsHistoryError('invalid')
+    if(pointsUnits(page.chargedPoints)!==pointsUnits(expectedTotal))throw new PointsHistoryError('changed')
     return page
-  }
-
-  private async readStatistics(window: PointsWindow, selected: string | null, signal: AbortSignal): Promise<PointsStatistics> {
-    const budget: Budget = { pages: 0, rows: 0 }, months = monthsIn(window.from, window.until)
-    const statements = new Map<string, Month>()
-    let next = 0
-    // Two reads at most; the year chart initially reads totals, not twelve complete ledgers.
-    await Promise.all([0, 1].map(async () => {
-      while (next < months.length) {
-        const month = months[next++]!
-        statements.set(month, await this.month(month, window.grain !== 'month', signal, budget))
-      }
-    }))
-    const period = selected === null ? window : window.periods.find(period => period.key === selected) ?? window.periods.at(-1)!
-    if (window.grain === 'month') {
-      const selectedMonths = monthsIn(period.from, period.until)
-      next = 0
-      await Promise.all([0, 1].map(async () => {
-        while (next < selectedMonths.length) {
-          const month = selectedMonths[next++]!
-          statements.set(month, await this.month(month, true, signal, budget))
-        }
-      }))
-    }
-    signal.throwIfAborted()
-    const allItems = [...statements.values()].flatMap(value => value.items ?? [])
-    if (new Set(allItems.map(item => item.requestUid)).size !== allItems.length) throw new PointsHistoryError('invalid')
-    const buckets = window.periods.map(period => ({ ...period, chargedPoints: window.grain === 'month'
-      ? statements.get(monthKey(period.from))!.page.chargedPoints
-      : nanoCnyToPoints(allItems.filter(item => item.createdAt >= period.from && item.createdAt < period.until).reduce((sum, item) => sum + pointsUnits(item.chargedPoints), 0n).toString()) }))
-    const items = allItems.filter(item => item.createdAt >= period.from && item.createdAt < period.until)
-      .sort((a, b) => b.createdAt - a.createdAt || a.requestUid.localeCompare(b.requestUid))
-    const byCategory = new Map<PointsCategory, bigint>()
-    for (const item of items) {
-      const category = pointsCategory(item.businessCode)
-      byCategory.set(category, (byCategory.get(category) ?? 0n) + pointsUnits(item.chargedPoints))
-    }
-    const categories = pointsCategories.map(([category]) => ({ category, chargedPoints: nanoCnyToPoints((byCategory.get(category) ?? 0n).toString()) }))
-      .sort((a, b) => { const left = pointsUnits(a.chargedPoints), right = pointsUnits(b.chargedPoints); return left === right ? 0 : left > right ? -1 : 1 })
-    return {
-      buckets, items, categories, observedAt: Math.min(...[...statements.values()].map(value => value.observedAt)),
-      chargedPoints: nanoCnyToPoints(buckets.reduce((sum, bucket) => sum + pointsUnits(bucket.chargedPoints), 0n).toString()),
-      selectedPoints: nanoCnyToPoints(items.reduce((sum, item) => sum + pointsUnits(item.chargedPoints), 0n).toString()),
-    }
   }
 }

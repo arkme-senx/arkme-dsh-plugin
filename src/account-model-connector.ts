@@ -124,22 +124,20 @@ export class AccountModelConnector {
     const owner=this
     return(async function*(){
       if(owner.connectorCalls.getStore()||options.provider==='arkme-managed'||options.provider===ACCOUNT_MODEL_PROVIDER){yield*next();return}
-      let settings:Awaited<ReturnType<ArkmeService['accountModels']>>|undefined
-      let scope:string|undefined,usage:TokenUsage|undefined,finish:Extract<StreamChunk,{type:'finish'}>|undefined
+      // Capture ownership concurrently. Observation never gates native model IO.
       const began=Date.now()
-      try{scope=await owner.scope();settings=await owner.service.accountModels(scope);if(!settings.enabled){yield*next();return}}
-      catch{yield*next();return}
+      let usage:TokenUsage|undefined,finish:Extract<StreamChunk,{type:'finish'}>|undefined
+      const capturedScope=owner.scope().catch(()=>undefined)
       try{for await(const chunk of next()){if(chunk.type==='usage')usage=chunk.usage;if(chunk.type==='finish')finish=chunk;yield chunk}}
       finally{
         const wire=usageWire(usage),input=wire?.prompt_tokens as number|undefined,output=wire?.completion_tokens as number|undefined
         const cached=usage?.cacheReadTokens,creation=usage?.cacheWriteTokens
-        const binding=settings?.models.find(model=>!model.disabled&&model.execution==='connector'&&model.host_provider===options.provider&&model.model_key===options.model)
-        const key=binding?.uid??createHash('sha256').update(JSON.stringify([options.provider,options.model])).digest('hex')
+        const key=createHash('sha256').update(JSON.stringify([options.provider,options.model])).digest('hex')
         const userMessage=[...options.messages].reverse().find(message=>message.role==='user')
         const operation=userMessage&&'id'in userMessage?String(userMessage.id):randomUUID()
-        const event:UsageEvent={event_uid:randomUUID(),schema_version:1,source_service:'dsh-host/reported',account_model_uid:key,...(binding?{model_version_uid:binding.version_route.split('/').at(-1)}:{}),model_source:'host-local',scene_key:'dsh',trigger_kind:'manual',operation_uid:operation,provider:options.provider,model_key:options.model,model_display_name:binding?.name??options.model,call_mode:2,call_status:finish?.reason.kind==='aborted'?4:!finish||finish.reason.kind==='error'?2:1,usage_field_mask:wire?3|(cached===undefined?0:4)|(creation===undefined?0:16):0,prompt_tokens:input??0,completion_tokens:output??0,cached_tokens:cached??0,cache_creation_input_tokens:creation??0,duration_ms:Date.now()-began,created_at:Date.now(),error_type:!finish?'outcome_unknown':finish.reason.kind==='aborted'?'canceled':finish.reason.kind==='error'?'failed':''}
+        const event:UsageEvent={event_uid:randomUUID(),schema_version:1,source_service:'dsh-host/reported',account_model_uid:key,model_source:'host-local',scene_key:'dsh',trigger_kind:'manual',operation_uid:operation,provider:options.provider,model_key:options.model,model_display_name:options.model,call_mode:2,call_status:finish?.reason.kind==='aborted'?4:!finish||finish.reason.kind==='error'?2:1,usage_field_mask:wire?3|(cached===undefined?0:4)|(creation===undefined?0:16):0,prompt_tokens:input??0,completion_tokens:output??0,cached_tokens:cached??0,cache_creation_input_tokens:creation??0,duration_ms:Date.now()-began,created_at:Date.now(),error_type:!finish?'outcome_unknown':finish.reason.kind==='aborted'?'canceled':finish.reason.kind==='error'?'failed':''}
         // Connector executions are already recorded by the durable gateway.
-        if(!owner.connectorCalls.getStore())void owner.enqueue(scope!,event).catch(()=>owner.ctx.logger.warn('Arkme model usage outbox could not be persisted'))
+        if(!owner.connectorCalls.getStore())void capturedScope.then(scope=>scope?owner.enqueue(scope,event):undefined).catch(()=>owner.ctx.logger.warn('Arkme model usage outbox could not be persisted'))
       }
     })()
   }
