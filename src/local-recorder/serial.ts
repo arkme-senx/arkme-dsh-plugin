@@ -49,7 +49,7 @@ export async function assertRecorderPortsAvailable(ports: readonly RecorderPort[
   }))]
   let stdout = ''
   try {
-    stdout = (await execFileAsync('/usr/sbin/lsof', ['-w', '-nP', '-Fpcn', '--', ...paths], { encoding: 'utf8', timeout: 2500, maxBuffer: 262144 })).stdout
+    stdout = (await execFileAsync('/usr/sbin/lsof', ['-w', '-nP', '-Fpcn', '--', ...paths], { encoding: 'utf8', timeout: 8000, maxBuffer: 262144 })).stdout
   } catch (error) {
     const failure = error as { code?: number; stdout?: string; stderr?: string }
     if (failure.code === 1 && !failure.stdout && !failure.stderr?.trim()) return
