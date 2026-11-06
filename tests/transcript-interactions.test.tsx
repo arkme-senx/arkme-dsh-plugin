@@ -19,14 +19,14 @@ vi.mock('../src/client/ArkmeDshMenu.js',()=>({ArkmeActionMenu:({actions,onClose}
 let root:Root,host:HTMLDivElement
 const stored=new Map<string,LocalTranscriptEntry>()
 const original='重复词，重复词。'
-function Fixture({text=original,scope='recording:123',enabled=true,omitFirst=false,playable=true}:{text?:string;scope?:string;enabled?:boolean;omitFirst?:boolean;playable?:boolean}) {
- const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].map(row=>({...row,sourceVersion:createHash('sha256').update(row.text).digest('hex'),viewRef:JSON.stringify({scope,id:row.id,text:row.text})})).filter(row=>!omitFirst||row.id!=='one')
+function Fixture({text=original,scope='recording:123',enabled=true,omitFirst=false,playable=true,privateRows='all'}:{text?:string;scope?:string;enabled?:boolean;omitFirst?:boolean;playable?:boolean;privateRows?:'all'|'none'|'second'}) {
+ const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].map(row=>({...row,sourceVersion:createHash('sha256').update(row.text).digest('hex'),viewRef:privateRows==='none'||privateRows==='second'&&row.id==='one'?undefined:JSON.stringify({scope,id:row.id,text:row.text})})).filter(row=>!omitFirst||row.id!=='one')
  const actions=useTranscriptInteractions({scope,rows,enabled,onPlay:mocks.play})
  return <><ArkmeMessageTextSelectionToolbar replySourceRef="ordinary-chat" />{actions.host}
  {rows.map(row=><article key={row.id} onContextMenu={e=>actions.contextMenu(row,e)}>{actions.checkbox(row)}{actions.renderText(row)}</article>)}{actions.controls}</>
 }
-async function select(start=4,end=7){
- const element=host.querySelector('[data-arkme-text-selection]')!,range=document.createRange()
+async function select(start=4,end=7,index=0){
+ const element=host.querySelectorAll('[data-arkme-text-selection]')[index]!,range=document.createRange()
  range.setStart(element.firstChild!,start);range.setEnd(element.firstChild!,end)
  await act(async()=>{document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range);element.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,button:0}))})
 }
@@ -174,4 +174,16 @@ it.each(['change','saved'] as const)('clears private projections when %s observe
  await click(operation==='change'?'个人更正 · 恢复原文':'已保存的个人更正')
  expect(host.textContent).not.toContain('已确认私人正文')
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})
+
+it.each(['none','second'] as const)('keeps raw transcript actions without private mark authority (%s)',async privateRows=>{
+ await act(async()=>root.render(<Fixture privateRows={privateRows}/>));await select()
+ const buttons=[...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)
+ expect(buttons).toContain('复制');expect(buttons).toContain('查找')
+ expect(buttons).not.toContain('标记');expect(buttons).not.toContain('替换')
+ await click('复制');expect(mocks.copy).toHaveBeenCalledWith('重复词')
+ expect(mocks.call.mock.calls.filter(([op,p])=>op==='transcript.views.read'&&p.items.some((item:any)=>item.id==='one'))).toEqual([])
+ expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toEqual([])
+ if(privateRows==='none')expect(mocks.call).not.toHaveBeenCalled()
+ else {await select(0,2,1);expect([...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)).toContain('标记');await click('标记');expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toHaveLength(1)}
 })

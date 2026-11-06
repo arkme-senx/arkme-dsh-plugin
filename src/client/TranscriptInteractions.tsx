@@ -153,6 +153,8 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     const digest = await quoteDigest({ title: '', textContent: display(row, entry), textFormat: 'plain' } as ArkmeTimelineItem)
     return { revision: entry?.revision ?? 0, accessible: true, items: (entry?.legacy?.marks ?? entry?.marks ?? []).map(mark => ({ ...mark, state: mark.state === 'stale' || mark.anchor?.sourceDigest !== digest ? 'stale' : 'available' })) }
   }
+  const hasPrivateRows = rows.some(row => !!row.viewRef)
+  const canChange = (target: MessageSelectionTarget) => !!account && !!latest.current.rows.find(row => row.id === target.item.itemUid)?.viewRef
   const transport = useMemo<MessageMarkTransport>(() => ({
     retainOnReadError:true,
     capabilities: async (_source,signal) => {const caps=await callArkme<{supported:boolean;protocol_version:number}>('transcript.views.capabilities',{},signal);return {supported:!!account&&enabled&&caps.supported&&caps.protocol_version===1,maxLength:2000,storage:'cloud',requiresBaseRevision:true}},
@@ -161,7 +163,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       const data = await read(ids, signal)
       return Promise.all(refs.map(async (ref, index) => {
         const row = latest.current.rows.find(row => row.id === ids[index])
-        return { actionRef: ref, snapshot: row ? await snapshot(row, data[row.id]) : { revision: 0, accessible: false, items: [] } }
+        return { actionRef: ref, snapshot: row?.viewRef ? await snapshot(row, data[row.id]) : { revision: 0, accessible: false, items: [] } }
       }))
     },
     change: async (_source, ref, mark, signal) => {
@@ -172,8 +174,8 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       if (display(row, entry) !== text) throw new Error('转写已变化，请重新选择文字')
       return snapshot(row, await change(row, entry, { mark }, signal))
     },
-  }), [key, enabled, epoch])
-  const marks = useMessageUnderlines(`${key}:${epoch}`, enabled && account ? sourceRef : undefined, viewer, transport, 'cloud')
+  }), [key, enabled, epoch, hasPrivateRows])
+  const marks = useMessageUnderlines(`${key}:${epoch}`, enabled && account && hasPrivateRows ? sourceRef : undefined, viewer, transport, 'cloud')
   useSelectedMessageSearch(enabled ? sourceRef : undefined, text => {
     if (latest.current.onFind) latest.current.onFind(text)
     else { setSearch(text); setMatchIndex(0) }
@@ -226,7 +228,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   const toggle = (id: string) => setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
   const host = enabled && typeof document !== 'undefined' && document.body && typeof window !== 'undefined' ? <>
     <ArkmeMessageTextSelectionToolbar key={`toolbar:${key}:${epoch}`} selectionDomain="transcript" replySourceRef={sourceRef} markStorage="cloud" selfNote={{ sourceLabel: scope.startsWith('call:') ? '通话转写' : '录音转写', accountKey: account }}
-      onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} canReplace={target=>!!account&&!!latest.current.rows.find(row=>row.id===target.item.itemUid)?.viewRef}
+      onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} canMark={canChange} canReplace={canChange}
       prepareReplace={async (t, quote, signal) => {
         const row = latest.current.rows.find(row => row.id === t.item.itemUid)
         if (!row) throw new Error('转写片段已变化')
