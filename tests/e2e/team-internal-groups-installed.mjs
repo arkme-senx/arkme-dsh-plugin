@@ -166,6 +166,16 @@ try{
  await conversation.getByText('仅个人原件的未发布修改',{exact:true}).waitFor({state:'hidden'})
  await page.getByText('团队身份暂不可用',{exact:true}).waitFor({state:'hidden'})
  await page.screenshot({path:join(capture,'linked-approved-history.png')})
+ // Exercise the other public message consumer against the same approved
+ // occurrence and real Record provider, including the author's private v2.
+ const evidenceResponse=await forward('/api/internal/v1/chat/openapi/messages/batch-get',{items:[{item_id:'approved-history',chat_session_uid:'t25-existing-ui-group',sequence:1}]},1001,{'X-Internal-Secret':'t25-full-owner-test','X-User-Id':'1001'})
+ const evidence=JSON.parse(evidenceResponse.text)
+ assert.equal(evidence.code,200,JSON.stringify(evidence))
+ const approvedEvidence=evidence.data.items[0]
+ assert.equal(approvedEvidence.lookup_status,'found')
+ assert.notEqual(approvedEvidence.message.mutable,true) // Imported history has no personal edit target.
+ assert.equal(approvedEvidence.message.text_content,'已批准的群历史正文')
+ await writeFile(join(capture,'openapi-approved-evidence.json'),JSON.stringify(evidence,null,2))
  }
 
  if(realOwners){
