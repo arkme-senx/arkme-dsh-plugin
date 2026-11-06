@@ -22,7 +22,7 @@ it('keeps nested frozen attachments and shared-recording detail in the selected 
  const sourceRef=await sources.sealSourceRef(42,'group_chat','group','客户群',{groupDelegation:frame}),source=await sources.openSourceRef(sourceRef,42)
  const raw=(uid:string,payload:unknown)=>({relation:{chat_session_uid:'group',rel_uid:`rel-${uid}`,record_uid:uid,record_owner_user_id:77,sender_user_id:77,seq:7},record:{status:1,payload:{record_uid:uid,owner_user_id:77,version:3,content_payload:payload}}})
  try {
-  const [shared,forward]=await chat.projectChatTimelineItems([raw('recording',recording),raw('forward',{forward_records:{render_kind:'forward_records',items:[{forward_records:{render_kind:'forward_records',items:[{owner_id:88,record_uid:'original-deleted',files:[{type:4,name:'说明.pdf',source_attachment_ref:'nested-receiving-proof',download_url:'https://must-not-use.test/original'}]}]}}]}})],source,session,undefined,{basicPresentation:true})
+  const [shared,forward]=await chat.projectChatTimelineItems([raw('recording',recording),raw('forward',{forward_records:{render_kind:'forward_records',items:[{forward_records:{render_kind:'forward_records',items:[{owner_id:88,record_uid:'original-deleted',files:[{type:4,name:'说明.pdf',source_attachment_ref:'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',download_url:'https://must-not-use.test/original'}]}]}}]}})],source,session,undefined,{basicPresentation:true})
   const ref=shared?.sharedRecording?.detailRef;expect(ref).toBeTruthy()
   await expect(chat.sharedRecordingDetail(ref!)).rejects.toMatchObject({code:'message-source-required'})
   const other=await sources.sealSourceRef(42,'group_chat','group','客户群',{groupDelegation:{...frame,teamId:'43'}})
@@ -34,7 +34,7 @@ it('keeps nested frozen attachments and shared-recording detail in the selected 
   const block=forward?.forwardRecords?.items[0]?.forwardRecords?.items[0]?.contentBlocks?.[0];expect(block?.mediaRef).toBeTruthy()
   const stream=vi.spyOn(runtime,'authenticatedRecordSourceStream').mockResolvedValue(new Response('pdf'))
   await media.fetchMedia(block!.mediaRef)
-  expect(stream).toHaveBeenCalledWith(expect.objectContaining({access_ref:'receiving-frame',chat_session_uid:'group',relation_uid:'rel-forward',record_uid:'forward',record_owner_user_id:77,version:3,attachment:'nested-receiving-proof'}),expect.anything())
+  expect(stream).toHaveBeenCalledWith(expect.objectContaining({access_ref:'receiving-frame',chat_session_uid:'group',relation_uid:'rel-forward',record_uid:'forward',record_owner_user_id:77,version:3,attachment:'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'}),expect.anything())
   expect(JSON.stringify(forward)).not.toContain('must-not-use')
   revoked=true;await expect(chat.sharedRecordingDetail(ref!,{sourceRef})).rejects.toThrow()
  }finally{runtime.dispose()}

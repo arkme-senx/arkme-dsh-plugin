@@ -67,6 +67,18 @@ export interface ArkmeMediaDescriptor {
 }
 
 export interface ArkmeChatMediaSource {accessRef?:string;chatSessionUid:string;relationUid:string;recordOwnerUserId:RecordOwnerId;recordUid:string;version:number;audienceKey?:string}
+// Coordinates identify one received occurrence; Chat remains the authority.
+export function chatMediaSource(raw: unknown): ArkmeChatMediaSource | undefined {
+  const root=objectValue(raw),relation=objectValue(root.relation),record=objectValue(root.record)
+  const payload=jsonObjectValue(record.payload),core=objectValue(root.record_core)
+  const chatSessionUid=stringValue(relation.chat_session_uid),relationUid=stringValue(relation.rel_uid)
+  const recordUid=stringValue(relation.record_uid ?? payload.record_uid ?? core.record_uid)
+  const recordOwnerUserId=recordOwnerId(relation.record_owner_user_id ?? payload.owner_user_id ?? core.owner_user_id)
+  const version=numberValue(payload.version ?? core.version ?? root.version)
+  if(!chatSessionUid||!relationUid||!recordUid||!recordOwnerUserId||!Number.isSafeInteger(version)||version<1)return undefined
+  return {chatSessionUid,relationUid,recordUid,recordOwnerUserId,version}
+}
+
 type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;worldSound?:never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;worldSound?:never;recordingClip?:never}
 
 type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
@@ -1512,7 +1524,6 @@ export class MediaService {
       return [{
         // Only item-local aliases are exposed, never source asset IDs.
         ...(options.longArticle ? { inline_alias: /^arkme-asset:media-\d+$/.test(stringValue(file.inline_ref)) ? stringValue(file.inline_ref).slice('arkme-asset:'.length) : `media-${index}` } : {}),
-        ...(options.source ? { source_attachment_ref: stringValue(file.source_attachment_ref) } : {}),
         file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
         file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
         mime_type: stringValue(file.mime_type ?? file.mimeType),
@@ -1625,17 +1636,6 @@ export class MediaService {
     return this.issueMediaRef(viewerUserId, { chatSource, sourceBound: true, purpose: 'thumbnail', mimeType, fileName, size }, identity)
   }
 
-  // Coordinates identify one received occurrence; Chat remains the authority.
-  chatMediaSource(raw: unknown): ArkmeChatMediaSource | undefined {
-    const root=objectValue(raw),relation=objectValue(root.relation),record=objectValue(root.record)
-    const payload=jsonObjectValue(record.payload),core=objectValue(root.record_core)
-    const chatSessionUid=stringValue(relation.chat_session_uid),relationUid=stringValue(relation.rel_uid)
-    const recordUid=stringValue(relation.record_uid ?? payload.record_uid ?? core.record_uid)
-    const recordOwnerUserId=recordOwnerId(relation.record_owner_user_id ?? payload.owner_user_id ?? core.owner_user_id)
-    const version=numberValue(payload.version ?? core.version ?? root.version)
-    if(!chatSessionUid||!relationUid||!recordUid||!recordOwnerUserId||!Number.isSafeInteger(version)||version<1)return undefined
-    return {chatSessionUid,relationUid,recordUid,recordOwnerUserId,version}
-  }
 
   richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = [],source?:ArkmeChatMediaSource): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
@@ -1688,8 +1688,10 @@ export class MediaService {
       const thumbnailRef = kind === 'image'
         ? this.issuePhotoThumbnail(source, viewerUserId, displayByAsset.get(stringValue(upload.preview_asset_uid)), stringValue(upload.attachment_uid), fileName)
         : undefined
-      if(source || Object.hasOwn(item, 'source_attachment_ref')) {
-        const occurrence=source ?? this.chatMediaSource(raw),attachment=stringValue(item.source_attachment_ref)
+      // Native occurrence coordinates also exist in ordinary groups and private chats.
+      // Only an explicit delegation or an output source marker selects source delivery.
+      if(source?.accessRef !== undefined || Object.hasOwn(item, 'source_attachment_ref')) {
+        const occurrence=source ?? chatMediaSource(raw),attachment=stringValue(item.source_attachment_ref)
         if(!occurrence||!occurrence.chatSessionUid||!occurrence.relationUid||!occurrence.recordUid||!occurrence.recordOwnerUserId
           ||!Number.isSafeInteger(occurrence.version)||occurrence.version<1||!/^[a-f0-9]{64}$/u.test(attachment)
           ||occurrence.accessRef!==undefined&&(!occurrence.accessRef||!occurrence.audienceKey))return []

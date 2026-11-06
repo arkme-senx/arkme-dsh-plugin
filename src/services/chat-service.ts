@@ -114,7 +114,7 @@ import { ARKME_MESSAGE_READ_RECEIPT_MAX_ITEMS } from '../types.js'
 import { ArkoService } from './arko-service.js'
 import { BotService } from './bot-service.js'
 import { GroupAiPolishService } from './group-ai-polish-service.js'
-import { MediaService, type ArkmeMediaDescriptor, type ArkmeChatMediaSource } from './media-service.js'
+import { MediaService, chatMediaSource, type ArkmeMediaDescriptor, type ArkmeChatMediaSource } from './media-service.js'
 import { MessageActionService } from './message-action-service.js'
 import { ProfileService } from './profile-service.js'
 import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
@@ -6295,7 +6295,7 @@ nextPublic = next
     source?: ArkmeChatMediaSource,
   ): Promise<ArkmeTimelineItem['forwardRecords'] | undefined> {
     return await projectForwardRecordsWithAvatars(this.media.recordContentPayload(raw), viewerUserId,
-      fallbackCreatedAtMillis, this.media, this.profile, source ?? this.media.chatMediaSource(raw))
+      fallbackCreatedAtMillis, this.media, this.profile, source ?? chatMediaSource(raw))
   }
 
   chatSharedRecordingPreview(raw: unknown): ArkmeTimelineItem['sharedRecording'] | undefined {
@@ -7229,7 +7229,7 @@ nextPublic = next
       const quickNoteDetailsSupported = chatTimelineItemSupportsQuickNoteDetails(relation, recordOwnerUserId)
       const aiPolish = this.aiPolish.timelineAiPolish(record, payload)
       const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
-      const mediaSource=source.groupDelegation?{accessRef:source.groupDelegation.accessRef,chatSessionUid:source.ownerRef,relationUid,recordOwnerUserId,recordUid:uid,version:numberValue(payload.version??record.version),audienceKey:audienceKey!}:this.media.chatMediaSource(item)
+      const mediaSource=source.groupDelegation?{accessRef:source.groupDelegation.accessRef,chatSessionUid:source.ownerRef,relationUid,recordOwnerUserId,recordUid:uid,version:numberValue(payload.version??record.version),audienceKey:audienceKey!}:chatMediaSource(item)
       const forwardRecords = options.basicPresentation
         ? projectForwardRecordsPreview(this.media.recordContentPayload(item), session.userId, sendAtMillis, this.media, undefined, mediaSource)
         : await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis, mediaSource)

@@ -36,7 +36,7 @@ it.each((['keyword', 'long_article'] as const).flatMap(kind => (['account', 'abo
 it('preserves delegation on keyword and every scene, including source media and navigation',async()=>{
  const config={environment:'test',authBaseUrl:'https://auth.test',subjectBaseUrl:'https://subject.test',recordBaseUrl:'https://record.test',chatBaseUrl:'https://chat.test',botBaseUrl:'https://bot.test',imBaseUrl:'https://im.test',webrtcBaseUrl:'https://webrtc.test',worldBaseUrl:'https://world.test',relationBaseUrl:'https://relation.test',intelligentBaseUrl:'https://intelligent.test',audioBaseUrl:'https://audio.test',routePath:'/arkme-self/api',requestTimeoutMs:5000,maxTextLength:20000,richMediaRenderEnabled:true} as ArkmeServiceConfig
  const session={userId:42,accessToken:'fake',refreshToken:'fake-refresh'}
- const data={items:[{record_uid:'record',source_kind:3,source_uid:'group',route_target_kind:'chat_timeline',chat_core:{chat_session_uid:'group',title:'客户群',occurrence:{relation_uid:'rel',sequence:57,approved_record_version:3}},record_core:{owner_user_id:77,version:3,text_content:'授权内容',content_payload:{media_refs:[{file_asset_uid:'asset',file_name:'图片.png',file_kind:1,mime_type:'image/png',download_url:'https://must-not-use.test/owner-url'}]},media_display_items:[{file_asset_uid:'asset',source_attachment_ref:'attachment-proof',file_kind:1,file_name:'图片.png',mime_type:'image/png',size:12}]}}],source_aggregates:[{source_kind:3,source_uid:'group',matched_record_count:1,matched_record_count_exact:true}],has_more:false}
+ const data={items:[{record_uid:'record',source_kind:3,source_uid:'group',route_target_kind:'chat_timeline',chat_core:{chat_session_uid:'group',title:'客户群',occurrence:{relation_uid:'rel',sequence:57,approved_record_version:3}},record_core:{owner_user_id:77,version:3,text_content:'授权内容',content_payload:{media_refs:[{file_asset_uid:'asset',file_name:'图片.png',file_kind:1,mime_type:'image/png',download_url:'https://must-not-use.test/owner-url'}]},media_display_items:[{file_asset_uid:'asset',source_attachment_ref:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',file_kind:1,file_name:'图片.png',mime_type:'image/png',size:12}]}}],source_aggregates:[{source_kind:3,source_uid:'group',matched_record_count:1,matched_record_count_exact:true}],has_more:false}
  let fail=false
  let hide=false
  const fetcher=vi.fn(async(input:unknown,init?:RequestInit)=>{
@@ -67,7 +67,7 @@ it('preserves delegation on keyword and every scene, including source media and 
   const mediaRef=result.items[0]?.media[0]?.mediaRef
   expect(mediaRef).toBeTruthy()
   await media.fetchMedia(mediaRef!)
-  expect(stream).toHaveBeenCalledWith(expect.objectContaining({access_ref:'signed-team-frame',chat_session_uid:'group',relation_uid:'rel',record_uid:'record',record_owner_user_id:77,version:3,attachment:'attachment-proof'}),expect.anything())
+  expect(stream).toHaveBeenCalledWith(expect.objectContaining({access_ref:'signed-team-frame',chat_session_uid:'group',relation_uid:'rel',record_uid:'record',record_owner_user_id:77,version:3,attachment:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}),expect.anything())
   expect(JSON.stringify(result)).not.toContain('owner-url')
   expect(JSON.stringify(result)).not.toContain('signed-team-frame')
   for(const scene of ['audio','link','image_video','file','long_article'] as const) await search.searchScene({scene,limit:20,sourceRef:ref})
@@ -90,7 +90,7 @@ it('opens another authors article from source keyword and scene results through 
  const {RecordService}=await import('../../src/services/record-service.js')
  const paths:string[]=[];let revoked=false
  const session={userId:42,accessToken:'fake',refreshToken:'refresh'}
- const core={record_uid:'article',owner_user_id:77,creator_user_id:77,template_kind:2,display_kind:1,version:3,title:'群内长文',text_content:'# 正文',content_payload:{text_format:'markdown',media_refs:[{file_asset_uid:'asset',file_kind:1,file_name:'图片.png'}]},media_display_items:[{file_asset_uid:'asset',file_kind:1,file_name:'图片.png',source_attachment_ref:'exact-attachment'}]}
+ const core={record_uid:'article',owner_user_id:77,creator_user_id:77,template_kind:2,display_kind:1,version:3,title:'群内长文',text_content:'# 正文',content_payload:{text_format:'markdown',media_refs:[{file_asset_uid:'asset',file_kind:1,file_name:'图片.png'}]},media_display_items:[{file_asset_uid:'asset',file_kind:1,file_name:'图片.png',source_attachment_ref:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'}]}
  const hit={record_uid:'article',source_kind:3,source_uid:'group',record_core:core,chat_core:{chat_session_uid:'group',sender_user_id:77,occurrence:{relation_uid:'article-rel',sequence:57,approved_record_version:3}}}
  const raw={relation:{chat_session_uid:'group',rel_uid:'article-rel',record_uid:'article',record_owner_user_id:77,sender_user_id:77,display_name_snapshot:'群内作者',seq:57},record:{status:1,payload:core}}
  const runtime=new ServiceRuntime({environment:'test',chatBaseUrl:'https://chat.example',recordBaseUrl:'https://record.example',requestTimeoutMs:1000} as ArkmeServiceConfig,{read:async()=>session,write:async()=>{},delete:async()=>{}},{uniqueCode:async()=> 'article-source-key'} as StateStore,(async(input,init)=>{
