@@ -1589,6 +1589,7 @@ export interface ArkmeProviderCapabilities {
     analyticsV1?: true
 arkoImagesV1?:true
     aiPoints?: true
+    loginDevicesV1?: true
     automaticCapabilitiesV1?: true
     recordingVoiceTriggersV2?: true
     imageRead: true
@@ -4481,6 +4482,7 @@ export type ArkmePluginOperation =
   | 'auth.cancellation.preview'
   | 'auth.cancellation.submit'
   | 'auth.cancellation.login.resolve'
+  | 'account.devices'
   | 'device.lock.status' | 'device.lock.lock' | 'device.lock.unlock'
   | 'auth.logout'
   | 'auth.logout.feedback'

@@ -82,6 +82,24 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires human confirmation for the exact Host-prepared login target', async () => {
+    const ctx = await setup()
+    const loginDevices = vi.fn(async (input: { action: string }) => input.action === 'prepare'
+      ? { accountScope: 'test:7', name: '工作电脑', kind: 'logout', ticket: 'host-ticket', expiresAt: Date.now() + 300000 }
+      : { accountScope: 'test:7', kind: 'logout', state: 'applied', cleanup: 'pending' })
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, loginDevices } as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = { id: SessionId('login-devices'), session: { events } } as unknown as Agent
+    const run = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_login_device_change', arguments: { account_scope: 'test:7', ref: 'opaque-ref', kind: 'logout' }, agent, signal: new AbortController().signal })
+    const prepared = await run('prepare')
+    expect(JSON.stringify(prepared)).toContain('工作电脑')
+    expect(loginDevices.mock.calls.every(([x]) => x.action === 'prepare')).toBe(true)
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await run('plugin'))).toContain('confirmation_required')
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认退出工作电脑' }] } })
+    expect((await run('human')).isError).toBe(false)
+    expect(loginDevices).toHaveBeenLastCalledWith({ action: 'confirm', accountScope: 'test:7', ticket: 'host-ticket' }, expect.any(AbortSignal))
+    await mounted.dispose()
+  })
   it('requires a later trusted human confirmation before replying to an Arko thought', async () => {
     const ctx = await setup(), extendSourceMessage = vi.fn(async () => ({ recordUid: 'reply', localState: 'synced' }))
     const mounted = await mountArkmeTools(ctx, 'business', { ...ports, extendSourceMessage } as unknown as ArkmeToolPorts)
@@ -335,6 +353,7 @@ describe('registerArkmeTools', () => {
       'arkme_device_lock_status',
       'arkme_device_lock',
       'arkme_device_unlock_request',
+      'arkme_login_devices', 'arkme_login_device_change', 'arkme_login_device_notifications',
       'arkme_ai_points',
       'arkme_ai_points_consumption',
       'arkme_automatic_ai_settings', 'arkme_disable_automatic_ai',
