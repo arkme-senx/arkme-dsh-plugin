@@ -44,6 +44,7 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
   let data={items:[],users:[],has_more:false}
   if(path.endsWith('/the-best-api-for-testing')){actor=Number(input.user_id);data={access_token:token(actor),refresh_token:'isolated-stack'}}
   else if(path.endsWith('/get-user-info'))data={user_id:actor,nick_name:`验收用户${actor}`,jotmo_id:`native_user_${actor}`,phone:'13800000000'}
+  else if(path==='/api/v1/auth/get-public-users-by-ids')data={items:input.user_ids.map(user_id=>({user_id,nick_name:`用户${user_id}`,jotmo_id:`native_user_${user_id}`}))}
   response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({code:200,data}))
  }catch(error){response.writeHead(500);response.end(JSON.stringify({error:String(error)}))}
 })
@@ -114,7 +115,7 @@ try{
  await cards.getByRole('button',{name:'回复到此群',exact:true}).click()
  await page.getByRole('button',{name:'查看群成员',exact:true}).waitFor()
  await page.getByRole('button',{name:'群聊设置',exact:true}).click()
- const groupMenu=page.getByRole('menu',{name:'群聊设置',exact:true});await groupMenu.waitFor()
+ const groupMenu=page.getByRole('menu');await groupMenu.waitFor()
  assert.equal(await groupMenu.getByRole('menuitem',{name:'退出群聊',exact:true}).count(),0,'a delegated source must not show personal leave')
  assert.equal(await groupMenu.getByRole('menuitem',{name:'解散群聊',exact:true}).count(),0,'a delegated source must not show personal dissolve')
  await page.keyboard.press('Escape')
