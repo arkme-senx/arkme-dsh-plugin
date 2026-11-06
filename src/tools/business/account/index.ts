@@ -1,5 +1,6 @@
 import { deviceLockToolModules } from './device-lock.js'
 import { automaticCapabilityToolModules } from './automatic-capabilities.js'
+import { accountModelToolModules } from './models.js'
 import { aiPointsToolModules } from './ai-points.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { userProfileToolModule } from './profile.js'
@@ -10,6 +11,7 @@ export const accountBusinessToolModules: readonly ArkmeToolModule[] = [
   userProfileToolModule,
   ...deviceLockToolModules,
   ...aiPointsToolModules,
+  ...accountModelToolModules,
   ...automaticCapabilityToolModules,
   ...backgroundSoundPreferenceToolModules,
   setArkmeIdToolModule,
