@@ -33,3 +33,14 @@ it('keeps decimal visitor strings and numeric int64 ID batches distinct on the w
  const encoded=stringifyOwnerJson({external_user_id:'9007199254740993',user_ids:['9007199254740993']})
  expect(encoded).toBe('{"external_user_id":"9007199254740993","user_ids":[9007199254740993]}')
 })
+
+it('respects declared decimal-string IDs at the owner boundary while nested numeric Team targets keep their wire type',()=>{
+ const id='9223372036854775806'
+ const raw=stringifyOwnerJson({team_id:id,entries:[{entry_kind:'team_group',team_id:id,group_uid:'g'}],content_payload:{mention_metadata:{team_mentions:[{team_id:id,start_index:3,length:5}]}}},['team_id'])
+ expect(raw).toContain('"team_id":"9223372036854775806"')
+ expect(raw).toContain('"entries":[{"entry_kind":"team_group","team_id":9223372036854775806')
+ expect(raw).toContain('"team_mentions":[{"team_id":"9223372036854775806"')
+ expect(JSON.parse(raw).team_id).toBe(id)
+ expect(typeof JSON.parse(raw).entries[0].team_id).toBe('number')
+ expect(JSON.parse(raw).content_payload.mention_metadata.team_mentions[0].team_id).toBe(id)
+})

@@ -92,6 +92,14 @@ describe('message report UI', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('submits the selected team source together with its report reference', async () => {
+    mocks.callArkme.mockResolvedValue({ reportUid: 'report', status: 1 })
+    await act(async () => { renderer = create(<ArkmeMessageReportDialog item={message} sourceRef="original-team-source" onClose={vi.fn()} onSubmitted={vi.fn()} />) })
+    act(() => { renderer!.root.findByProps({ role: 'radio', 'aria-label': '违法违规' }).props.onClick() })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '提交举报' }).props.onClick(); await Promise.resolve() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-report', expect.objectContaining({ sourceRef: 'original-team-source', messageRef: message.messageRef }), expect.any(AbortSignal))
+  })
+
   it('preserves the stable retry identity and form state after a failed submission', async () => {
     mocks.callArkme
       .mockRejectedValueOnce(new Error('暂时无法提交'))

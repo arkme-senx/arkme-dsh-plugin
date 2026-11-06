@@ -1,3 +1,6 @@
+import { callArkme } from './api.js'
+import { startMessageProjectionRefresh } from './message-projection-refresh.js'
+import type { ArkmeMessageExtensionSummaryItem } from '../message-extension-summary.js'
 import { WorldPublicationBadge } from './WorldPublicationControls.js'
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
@@ -5,7 +8,7 @@ import type { ArkmeTimelineItem } from '../types.js'
 import { registeredMessageTargets } from './ArkmeMessageTextSelection.js'
 import { quoteDigest, quoteHighlightRange } from './message-quote-selection.js'
 import { MessageQuoteThreadStore } from './message-quote-threads.js'
-import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
+import { invalidateMessageQuoteSources, subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
@@ -21,11 +24,32 @@ export function MessageQuoteThreadsProvider({ scope, sourceRef, chat, items, onO
   scope: string; sourceRef?: string | undefined; chat: boolean; items: readonly ArkmeTimelineItem[]; onOpenComments(item: ArkmeTimelineItem): void; children: ReactNode
 }) {
   const store = useMemo(() => new MessageQuoteThreadStore(chat), [scope, chat])
+  useSyncExternalStore(store.subscribe, store.getSnapshot, emptyRevision)
   const open = useRef(onOpenComments); open.current = onOpenComments
   const value = useMemo(() => ({ store, open: (item: ArkmeTimelineItem) => { store.requestComments(item); open.current(item) } }), [store])
   useEffect(() => { store.ingest(items) }, [store, items])
-  useEffect(() => subscribeMessageQuoteInvalidations(() => store.invalidate()), [store])
-  return <context.Provider value={value}><MessageQuoteUnderlines store={store} sourceRef={sourceRef}/>{children}</context.Provider>
+  useEffect(() => {
+    if (!chat || !sourceRef) return subscribeMessageQuoteInvalidations(() => store.invalidate())
+    if (typeof document === 'undefined' || typeof window === 'undefined') return
+    const controller = new AbortController()
+    const refresh = startMessageProjectionRefresh({
+      visible: () => !document.hidden,
+      read: () => store.readSummaries(sourceRef, registeredMessageTargets(sourceRef).filter(({ element }) => {
+        const box = element.getBoundingClientRect()
+        return box.width > 0 && box.height > 0 && box.bottom > 0 && box.top < innerHeight
+      }).map(({ target }) => target.item), controller.signal,
+        (sourceRef, actionRefs, signal) => callArkme<ArkmeMessageExtensionSummaryItem[]>('source.message-extension.summaries', { sourceRef, actionRefs }, signal)),
+      subscribe: invalidate => subscribeMessageQuoteInvalidations(() => { store.invalidate(); invalidate() }),
+      onError: () => {}, // The store clears unconfirmed data and supplies the existing inline retry notice.
+    })
+    const recover = () => { store.invalidate(); refresh.request(0) }
+    const visible = () => { if (!document.hidden) recover() }
+    const scroll = () => refresh.request()
+    window.addEventListener('focus', recover); document.addEventListener('visibilitychange', visible)
+    document.addEventListener('scroll', scroll, true)
+    return () => { controller.abort(); refresh.dispose(); window.removeEventListener('focus', recover); document.removeEventListener('visibilitychange', visible); document.removeEventListener('scroll', scroll, true) }
+  }, [store, sourceRef, chat, items])
+  return <context.Provider value={value}><MessageQuoteUnderlines store={store} sourceRef={sourceRef}/>{children}{store.notice && <button type="button" aria-live="polite" onClick={() => invalidateMessageQuoteSources()} style={{ border: 0, background: 'transparent', color: arkmeTheme.secondary, font: 'inherit', cursor: 'pointer', padding: 6 }}>{store.notice}</button>}</context.Provider>
 }
 export function MessageQuoteThreadBadge({ item }: { item: ArkmeTimelineItem }) {
   const value = useMessageQuoteThreads(), thread = value.store?.thread(item)
@@ -75,11 +99,11 @@ function MessageQuoteUnderlines({ store, sourceRef }: { store: MessageQuoteThrea
       for (const { element, target } of registeredMessageTargets(sourceRef)) {
         const box = element.getBoundingClientRect()
         if (box.width <= 0 || box.height <= 0 || box.bottom < 0 || box.top > innerHeight) continue
-        const replies = store.thread(target.item).replies.filter(reply => reply.parent.quote && reply.parent.quoteState !== 'edited' && reply.parent.quoteState !== 'unavailable')
-        if (!replies.length) continue
+        const quotes = store.quotes(target.item)
+        if (!quotes.length) continue
         const digest = await quoteDigest(target.item)
-        for (const reply of replies) if (reply.parent.quote!.sourceDigest === digest) {
-          const range = quoteHighlightRange(element, reply.parent.quote!)
+        for (const quote of quotes) if (quote.sourceDigest === digest) {
+          const range = quoteHighlightRange(element, quote)
           if (range) ranges.push(range)
         }
       }

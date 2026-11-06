@@ -1,5 +1,6 @@
 import type { LocalRecorderOwner } from './local-recorder/owner.js'
 import { callLocalRecorder } from './local-recorder/routes.js'
+import {readTeamMentionInputs} from './services/group-team-mention.js'
 import { ARRANGEMENT_OCCURRENCE_ACTIONS } from './arrangement-occurrence.js'
 import { exportSelection } from './services/record-export-range-service.js'
 import { DayReviewConfirmation } from './calendar-day-review-confirmation.js'
@@ -753,6 +754,8 @@ function botMentionsParam(params: Record<string, unknown>): ArkmeBotMentionInput
   })
 }
 
+function teamMentionsParam(params:Record<string,unknown>) { return readTeamMentionInputs(params.teamMentions) }
+
 function botRefsParam(params: Record<string, unknown>): string[] {
   const values = params.botRefs
   if (values === undefined) return []
@@ -766,6 +769,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
   const thinkingDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'thinkingDurationMillis', 0)))
   const recordDurationMillis = Math.max(0, Math.trunc(numberParam(params, 'recordDurationMillis', 0)))
   const captureContext = captureContextParam(params)
+  const teamMentions=teamMentionsParam(params)
   const humanMentions = humanMentionsParam(params)
   const botMentions = botMentionsParam(params)
   const assets = rawAssets.flatMap(raw => {
@@ -792,6 +796,7 @@ function richSendParam(params: Record<string, unknown>): ArkmeRichSendInput {
     ...(thinkingDurationMillis === 0 ? {} : { thinkingDurationMillis }),
     ...(recordDurationMillis === 0 ? {} : { recordDurationMillis }),
     ...(captureContext === undefined ? {} : { captureContext }),
+    ...(teamMentions.length===0?{}:{teamMentions}),
     ...(humanMentions.length === 0 ? {} : { humanMentions }),
     ...(botMentions.length === 0 ? {} : { botMentions }),
     assets,
@@ -1166,6 +1171,7 @@ export async function dispatchArkmeHostOperation(
   if (operation === 'explore.enrich') return service.exploreEnrich(params.refs, requestSignal)
   if (operation === 'explore.mutate') return service.exploreMutate(params as unknown as ExploreMutation, requestSignal)
   if (operation === 'explore.source') return service.exploreSource(stringParam(params, 'ref'), requestSignal)
+  if (operation === 'team.app.group.request' || operation === 'team.app.workspace.request') return await service.executeTeamApp(operation, params, requestSignal)
   if (operation === 'team.app.group.context') return await service.executeTeamApp(operation, params, requestSignal)
   if (operation === 'team.app.outbound.open') return await service.executeTeamApp(operation, params, requestSignal)
   if (operation === 'team.app.public-card') return await service.executeTeamApp(operation, params, requestSignal)
@@ -1318,8 +1324,8 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
     case 'team.messages.task-update':return await service.updateTeamSend(stringParam(params,'conversationRef'),stringParam(params,'taskRef'),params.action as 'retry'|'cancel',requestSignal)
-    case 'team.entries.list': return await service.listTeamEntryPreferences(stringParam(params, 'cursor'), requestSignal)
-    case 'team.entries.query': return await service.queryTeamEntryPreferences(params.entries as import('./team-entry-preference-contract.js').TeamEntryReference[], requestSignal)
+    case 'team.entries.list': return await service.listTeamEntryPreferences(stringParam(params, 'cursor'), requestSignal,params.scope==='workspace'?'workspace':undefined)
+    case 'team.entries.query': return await service.queryTeamEntryPreferences(params.entries as import('./team-entry-preference-contract.js').TeamEntryReference[], requestSignal,params.scope==='workspace'?'workspace':undefined)
     case 'team.entries.change': return await service.changeTeamEntryPreferences(params.command as import('./team-entry-preference-contract.js').TeamEntryPreferenceCommand, requestSignal)
     case 'team.notifications.list':return await service.listTeamNotificationConversations(stringParam(params,'side') as 'team'|'external',stringParam(params,'cursor'),requestSignal)
     case 'team.notifications.get':return await service.getTeamNotificationPolicy(stringParam(params,'conversationRef'),requestSignal)
@@ -2638,6 +2644,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-report': {
       const report = messageReportParam(params)
       return await service.reportMessage(report.messageRef, report.reportType, {
+        ...(params.sourceRef===undefined?{}:{sourceRef:stringParam(params,'sourceRef')}),
         ...(report.reason === undefined ? {} : { reason: report.reason }),
         ...(report.requestUid === undefined ? {} : { requestUid: report.requestUid }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
@@ -2649,6 +2656,7 @@ export async function dispatchArkmeHostOperation(
         throw new ArkmePluginError('message-withdrawal-ref-invalid', '消息撤回引用无效', false, 400)
       }
       return await service.withdrawGroupMessage(messageWithdrawalRef, {
+        ...(params.sourceRef===undefined?{}:{sourceRef:stringParam(params,'sourceRef')}),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
@@ -2692,6 +2700,7 @@ export async function dispatchArkmeHostOperation(
     case 'source.message-thought-continuations.retry': return await service.sourceMessageThoughtContinuations(stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), {
       retryId: stringParam(params, 'id'),
     }, requestSignal)
+    case 'source.message-extension.summaries': return await service.sourceMessageExtensionSummaries(stringParam(params, 'sourceRef'), stringListParam(params, 'actionRefs'), requestSignal)
     case 'source.message-extension.context': return await service.sourceMessageExtensionContext(
       stringParam(params, 'sourceRef'),
       stringParam(params, 'messageActionRef'),
@@ -2722,7 +2731,7 @@ export async function dispatchArkmeHostOperation(
     }
     case 'source.shared-recording-detail': return await service.sharedRecordingDetail(
       stringParam(params, 'detailRef'),
-      requestSignal === undefined ? {} : { signal: requestSignal },
+      { ...(stringParam(params, 'sourceRef') === '' ? {} : { sourceRef: stringParam(params, 'sourceRef') }), ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
     )
     case 'source.message-snapshot.detail': return await service.messageSnapshotDetail(
       stringParam(params, 'sourceRef'),
@@ -2828,7 +2837,8 @@ export async function dispatchArkmeHostOperation(
     }, requestSignal)
     case 'source.send-text': {
       const botRefs = botRefsParam(params)
-      const humanMentions = humanMentionsParam(params)
+      const teamMentions=teamMentionsParam(params)
+  const humanMentions = humanMentionsParam(params)
       const botMentions = botMentionsParam(params)
       const captureContext = captureContextParam(params)
       const expectedUserId = fileExpectedUserIdParam(params)
@@ -2844,7 +2854,8 @@ export async function dispatchArkmeHostOperation(
           ...(captureContext === undefined ? {} : { captureContext }),
           ...(booleanParam(params, 'agentAuthored') ? { agentAuthored: true } : {}),
           ...(botRefs.length === 0 ? {} : { botRefs }),
-          ...(humanMentions.length === 0 ? {} : { humanMentions }),
+          ...(teamMentions.length===0?{}:{teamMentions}),
+    ...(humanMentions.length === 0 ? {} : { humanMentions }),
           ...(botMentions.length === 0 ? {} : { botMentions }),
           ...(expectedUserId === undefined ? {} : { expectedUserId }),
         },
@@ -3070,8 +3081,12 @@ export async function dispatchArkmeHostOperation(
       )
     }
     case 'emoji.recent.list': return await service.recentEmojiIds(stringParam(params, 'accountKey'), requestSignal)
-    case 'transcript.local.read': return await service.localTranscriptEntries(stringParam(params, 'accountKey'), stringParam(params, 'scope'), stringListParam(params, 'ids'), undefined, requestSignal)
-    case 'transcript.local.change': return await service.localTranscriptEntries(stringParam(params, 'accountKey'), stringParam(params, 'scope'), [stringParam(params, 'id')], params.change as import('./local-transcript-state.js').LocalTranscriptChange, requestSignal)
+    case 'transcript.views.saved': return service.savedTranscriptViews(stringParam(params,'accountKey'),stringParam(params,'ref'),typeof params.after==='string'?params.after:undefined,requestSignal)
+    case 'transcript.views.receipt': return service.transcriptViewReceipt(stringParam(params,'accountKey'),stringParam(params,'operationId'),requestSignal)
+    case 'transcript.views.capabilities': return service.transcriptViewCapabilities(requestSignal)
+    case 'transcript.views.read': return service.readTranscriptViews(stringParam(params,'accountKey'),stringParam(params,'scope'),params.items as import('./transcript-view-contract.js').TranscriptViewReadItem[],requestSignal)
+    case 'transcript.views.change': return service.changeTranscriptView(stringParam(params,'accountKey'),stringParam(params,'ref'),params.command as import('./transcript-view-contract.js').TranscriptViewCommand,requestSignal)
+    case 'transcript.views.import': return service.importLocalTranscriptView(stringParam(params,'accountKey'),stringParam(params,'scope'),params.item as import('./transcript-view-contract.js').TranscriptViewReadItem,stringParam(params,'operationId'),requestSignal)
     case 'directory.preferences.read': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), undefined, false, requestSignal)
     case 'directory.preferences.set': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, false, requestSignal)
     case 'directory.preferences.migrate': return await service.localDirectoryPreferences(stringParam(params, 'accountKey'), params.entries ?? {}, true, requestSignal)

@@ -1,11 +1,12 @@
 import type { ArkmeSourceItem } from '../types.js'
-import type { TeamConversation } from '../team-app-contract.js'
+import type { TeamChannel, TeamConversation } from '../team-app-contract.js'
+import type { TeamWorkspaceFolder } from '../team-group-contract.js'
 import { arkmeSourceAllowsUserWrite } from '../topic-policy.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { mergeTeamDirectoryRows, type TeamConversationGroup } from './team-conversation-directory.js'
 import { teamEntryHidden, teamEntryPinned, type TeamDirectoryPreferences } from './team-directory-preferences.js'
 
-export type ForwardTarget = { kind: 'source'; source: ArkmeSourceItem } | { kind: 'team'; conversation: TeamConversation }
+export type ForwardTarget = { kind: 'source'; source: ArkmeSourceItem; workspace?: TeamChannel } | { kind: 'team'; conversation: TeamConversation }
 export type ForwardTargetRow = { kind: 'target'; target: ForwardTarget; pinned: boolean; activeAtMillis: number }
   | { kind: 'folder'; group: TeamConversationGroup; pinned: boolean; activeAtMillis: number }
 
@@ -15,7 +16,7 @@ export function forwardTargetKey(target: ForwardTarget): string {
       : `${target.source.kind}:${arkmeSourceIdentityKey(target.source)}`
 }
 export function forwardTargetName(target: ForwardTarget): string {
-  return target.kind === 'source' ? target.source.displayName : target.conversation.side === 'team'
+  return target.kind === 'source' ? target.workspace ? `${target.workspace.name} · ${target.source.displayName}` : target.source.displayName : target.conversation.side === 'team'
     ? `${target.conversation.channel.name} · ${target.conversation.visitor?.nickname || '外部用户'}` : target.conversation.channel.name
 }
 export function forwardTargetSubtitle(target: ForwardTarget): string {
@@ -31,19 +32,22 @@ export function forwardTeamChildren(group: TeamConversationGroup, preferences: T
 
 /** Use the same merge as the second column; target authority remains with its owner. */
 export function projectUnifiedForwardTargets(ordinary: readonly { source: ArkmeSourceItem; pinned: boolean; activeAtMillis: number }[],
-  teams: readonly TeamConversation[], preferences: TeamDirectoryPreferences, complete: boolean): ForwardTargetRow[] {
+  teams: readonly TeamConversation[], preferences: TeamDirectoryPreferences, complete: boolean, workspaceFolders: readonly TeamWorkspaceFolder[] = []): ForwardTargetRow[] {
   const sources = ordinary.filter(row => arkmeSourceAllowsUserWrite(row.source))
     .map(row => ({ ...row, kind: 'source' as const }))
-  return mergeTeamDirectoryRows(sources, [...teams], complete, preferences).map(row => row.kind === 'team-folder'
+  return mergeTeamDirectoryRows(sources, [...teams], complete, preferences, workspaceFolders).map(row => row.kind === 'team-folder'
     ? { kind: 'folder', group: row.group, pinned: row.pinned, activeAtMillis: row.activeAtMillis }
     : { kind: 'target', target: row.kind === 'team' ? { kind: 'team', conversation: row.conversation }
       : { kind: 'source', source: row.source }, pinned: row.pinned, activeAtMillis: row.activeAtMillis })
 }
 
-export function searchForwardRows(rows: readonly ForwardTargetRow[], keyword: string, preferences: TeamDirectoryPreferences): ForwardTargetRow[] {
+export function searchForwardRows(rows: readonly ForwardTargetRow[], keyword: string, preferences: TeamDirectoryPreferences, children: (group: TeamConversationGroup) => ForwardTargetRow[] = group => forwardTeamChildren(group, preferences)): ForwardTargetRow[] {
   const query = keyword.trim().toLocaleLowerCase()
   if (!query) return [...rows]
   const matches = (target: ForwardTarget) => `${forwardTargetName(target)} ${forwardTargetSubtitle(target)}`.toLocaleLowerCase().includes(query)
-  return rows.flatMap(row => row.kind === 'target' ? matches(row.target) ? [row] : []
-    : forwardTeamChildren(row.group, preferences).filter(child => child.kind === 'target' && matches(child.target)))
+  return rows.flatMap(row => {
+    if (row.kind === 'target') return matches(row.target) ? [row] : []
+    const found = children(row.group).filter(child => child.kind === 'target' && matches(child.target))
+    return found.length ? found : row.group.channel.name.toLocaleLowerCase().includes(query) ? [row] : []
+  })
 }
