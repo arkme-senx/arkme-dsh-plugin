@@ -5,6 +5,33 @@ import {MediaService} from '../../src/services/media-service.js'
 import {SearchService} from '../../src/services/search-service.js'
 import {stringifyOwnerJson} from '../../src/record-owner-id.js'
 
+it.each((['keyword', 'long_article'] as const).flatMap(kind => (['account', 'abort'] as const).map(reason => ({ kind, reason }))))('rejects a delegated $kind search invalidated during article action binding: $reason', async ({ kind, reason }) => {
+ let userId = 42
+ const hit = { record_uid: 'article', source_kind: 3, source_uid: 'group', record_core: { record_uid: 'article', owner_user_id: 77, version: 3, display_kind: 1, text_content: '正文' }, chat_core: { chat_session_uid: 'group', occurrence: { relation_uid: 'article-rel', sequence: 57, approved_record_version: 3 } } }
+ const runtime = new ServiceRuntime({ environment: 'test', recordBaseUrl: 'https://record.test', requestTimeoutMs: 1000 } as ArkmeServiceConfig,
+  { read: async () => ({ userId, accessToken: 'fake', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} },
+  { uniqueCode: async () => 'article-source-key' } as StateStore,
+  (async () => new Response(JSON.stringify({ code: 0, data: { items: [hit], source_aggregates: [], has_more: false } }))) as typeof fetch)
+ const source = new SourceService(runtime, {} as never, {} as never)
+ const search = new SearchService(runtime, {} as never, new MediaService(runtime, {} as never, {} as never, {} as never), source)
+ const started = Promise.withResolvers<void>(), binding = Promise.withResolvers<void>()
+ search.articleActionRef = vi.fn(async () => { started.resolve(); await binding.promise; return 'signed-article-action' })
+ const controller = new AbortController()
+ try {
+  const sourceRef = await source.sealSourceRef(42, 'group_chat', 'group', '客户群', { groupDelegation: { accessRef: 'article-frame', teamId: '42', membershipKind: 'member', membershipRevision: 4, groupMembershipUid: 'admission', groupMembershipRevision: 7, visibleFromSeq: 57 } })
+  const request = kind === 'keyword'
+   ? search.searchRemote({ query: '正文', limit: 20, sourceRef, signal: controller.signal })
+   : search.searchScene({ scene: kind, limit: 20, sourceRef, signal: controller.signal })
+  const outcome = request.then(value => ({ value }), error => ({ error }))
+  await started.promise
+  if (reason === 'account') userId = 43
+  else controller.abort()
+  binding.resolve()
+  expect(await outcome).toMatchObject({ error: reason === 'account' ? { code: 'read-account-changed' } : { name: 'AbortError' } })
+  expect(search.articleActionRef).toHaveBeenCalledExactlyOnceWith(hit, expect.any(String), controller.signal)
+ } finally { binding.resolve(); runtime.dispose() }
+})
+
 it('preserves delegation on keyword and every scene, including source media and navigation',async()=>{
  const config={environment:'test',authBaseUrl:'https://auth.test',subjectBaseUrl:'https://subject.test',recordBaseUrl:'https://record.test',chatBaseUrl:'https://chat.test',botBaseUrl:'https://bot.test',imBaseUrl:'https://im.test',webrtcBaseUrl:'https://webrtc.test',worldBaseUrl:'https://world.test',relationBaseUrl:'https://relation.test',intelligentBaseUrl:'https://intelligent.test',audioBaseUrl:'https://audio.test',routePath:'/arkme-self/api',requestTimeoutMs:5000,maxTextLength:20000,richMediaRenderEnabled:true} as ArkmeServiceConfig
  const session={userId:42,accessToken:'fake',refreshToken:'fake-refresh'}

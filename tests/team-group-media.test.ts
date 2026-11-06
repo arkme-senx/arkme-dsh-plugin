@@ -52,3 +52,30 @@ it('keeps JSON attachments distinct from error envelopes and does not upgrade an
  const newer=f.media.richContentBlocks(f.raw,42,[],{...source,version:4})[0]!
  expect(newer.mediaRef).not.toBe(block.mediaRef)
 })
+
+it.each(['image/png', 'video/mp4'])('keeps source-bound %s attachment slots when the owner publishes their ready version', mimeType => {
+ const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
+ const kind = mimeType.startsWith('image/') ? 1 : 3
+ const pendingRefs = ['slot-a', 'slot-b'].map((uid, sort_order) => ({ file_asset_uid: '', file_name: kind === 1 ? 'same.png' : 'same.mp4', sort_order,
+  upload: { attachment_uid: uid, generation: 1, state: 'pending', kind, size: 10 } }))
+ const pending = media.richContentBlocks({ content_payload: { media_refs: pendingRefs } }, 42, [], source)
+ const readyRefs = pendingRefs.map((ref, index) => ({ ...ref, file_asset_uid: `asset-${index}`, upload: { ...ref.upload, state: 'ready' } })).reverse()
+ const display = readyRefs.map(ref => ({ file_asset_uid: ref.file_asset_uid, file_kind: kind, mime_type: mimeType, size: 10, source_attachment_ref: `signed-${ref.file_asset_uid}` }))
+ const ready = media.richContentBlocks({ record_core: { content_payload: { media_refs: readyRefs } } }, 42, display, { ...source, version: source.version + 1 })
+ expect(pending.map(block => [block.attachmentUid, block.attachmentState, block.mediaRef])).toEqual([['slot-a', 'pending', ''], ['slot-b', 'pending', '']])
+ expect(ready.map(block => [block.attachmentUid, block.fileAssetUid, block.sortOrder])).toEqual([['slot-a', 'asset-0', 0], ['slot-b', 'asset-1', 1]])
+ for (const block of ready) {
+  expect(block.mediaRef).toMatch(/^arkme-media-v1\./)
+  expect(block.originalRef).toBe(block.mediaRef)
+  expect(block).not.toHaveProperty('attachmentState')
+ }
+ expect(JSON.stringify(ready)).not.toContain(source.accessRef)
+})
+
+it.each([undefined, {}, { state: 'ready' }, { state: 'ready', attachment_uid: '' }])('does not invent a source-bound attachment slot without owner metadata: %j', upload => {
+ const f = fixture()
+ const raw = { ...f.raw, content_payload: { media_refs: [{ file_asset_uid: 'asset', ...(upload === undefined ? {} : { upload }) }] } }
+ const blocks = f.media.richContentBlocks(raw, 42, [], source)
+ expect(blocks).toHaveLength(1)
+ expect(blocks[0]).not.toHaveProperty('attachmentUid')
+})

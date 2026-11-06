@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { directMessageAdmissionMessage, type ArkmeDirectMessageAdmission } from '../direct-message-admission.js'
-import { callArkme } from './api.js'
+import { directMessageAdmissionMessage } from '../direct-message-admission.js'
 import { isSocialSource } from './social-access-store.js'
 import { requirePhoneForSocialAction } from './social-action-guard.js'
 import type { ArkmeSourceItem } from '../types.js'
@@ -8,12 +7,11 @@ import { chatActionKey, privateChatActions } from './private-chat-actions-store.
 import { useResource } from './use-resource.js'
 
 export async function requireDirectMessageSendAllowed(source: ArkmeSourceItem, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted()
   if (isSocialSource(source)) await requirePhoneForSocialAction('发送消息', signal)
-  if (source.directMessageAdmissionApplicable !== true) return
-  let admission: ArkmeDirectMessageAdmission | undefined
-  try { admission = await callArkme<ArkmeDirectMessageAdmission>('chat.direct-message-admission', { sourceRef: source.sourceRef }, signal) }
-  catch { signal?.throwIfAborted(); return }
-  if (!admission.canSend) throw new Error(`${source.displayName}：${directMessageAdmissionMessage(admission)}`)
+  // Forward writes already check live refusal before Record creation and again at Chat relation commit.
+  // A separate UI query adds a round trip without making that write authorization more current.
+  signal?.throwIfAborted()
 }
 
 export function invalidateDirectMessageAdmission(): void { privateChatActions.admission.invalidate() }

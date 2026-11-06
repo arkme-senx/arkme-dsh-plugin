@@ -36,9 +36,11 @@ export function ForwardTargetAvatar({ target, size = 38 }: { target: ForwardTarg
 }
 
 /** Shared directory, navigation, selection and feedback for both source owners. */
-export function UnifiedForwardDialog({ accountKey, attempt, previewTitle, previewSubtitle, onClose, onComplete, groupIdentity = false, fixed = false }: {
+export function UnifiedForwardDialog({ accountKey, attempt, previewTitle, previewSubtitle, onClose, onComplete, groupIdentity = false, fixed = false, preflightSelection = true }: {
   accountKey: string; attempt: UnifiedForwardAttempt; previewTitle: string; previewSubtitle: string;
   onClose(): void; onComplete(targets: readonly ForwardTarget[]): void; groupIdentity?: boolean; fixed?: boolean;
+  /** Ordinary forwarding chooses locally and checks the phone guard at send. */
+  preflightSelection?: boolean;
 }) {
   const directory = useUnifiedForwardDirectory(accountKey)
   const [folder, setFolder] = useState<{ kind: 'self' } | { kind: 'team'; key: string }>(), [topics, setTopics] = useState<ArkmeSourceItem[]>([])
@@ -103,7 +105,7 @@ export function UnifiedForwardDialog({ accountKey, attempt, previewTitle, previe
     const key = forwardTargetKey(target)
     if (selected.has(key)) { setSelected(previous => { const next = new Map(previous); next.delete(key); return next }); return }
     if (selected.size >= 5) { setError(tr('最多选择 5 个转发对象')); return }
-    try { if (target.kind === 'source' && target.source.directMessageAdmissionApplicable === true && !attempt.hasAttempt(key)) await requireDirectMessageSendAllowed(target.source, controller.current.signal)
+    try { if (preflightSelection && target.kind === 'source' && target.source.directMessageAdmissionApplicable === true && !attempt.hasAttempt(key)) await requireDirectMessageSendAllowed(target.source, controller.current.signal)
       if (target.kind === 'team' && (target.conversation.blocked || !target.conversation.channel.enabled) && !attempt.hasAttempt(key)) throw new Error(tr('该团队对话暂时不能发送'))
       if (current() && !busy.current && latestTargets.current.has(key)) setSelected(previous => previous.size >= 5 ? previous : new Map(previous).set(key, latestTargets.current.get(key)!))
     } catch (reason) { if (current()) setError(reason instanceof Error ? reason.message : tr('发送失败')) }

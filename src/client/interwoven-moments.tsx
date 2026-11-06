@@ -17,6 +17,7 @@ import {
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 import { ArkmeInterwovenReadReceipt, useArkmeInterwovenReadReceipt } from './ArkmeInterwovenReadReceipt.js'
 import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
+import { ArkmeDirectorySourceAvatar } from './ArkmeAvatar.js'
 
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
@@ -280,6 +281,7 @@ export function ArkmeInterwovenDetailAside({
   onClose,
   onRetry,
   onOpenGroup,
+  groupTarget,
   onOpenRelated,
   onSelectRelated,
   onBackRelated,
@@ -295,6 +297,7 @@ export function ArkmeInterwovenDetailAside({
   onClose: () => void
   onRetry: () => void
   onOpenGroup?: () => void
+  groupTarget?: ArkmeSourceItem
   onOpenRelated?: () => void
   onSelectRelated?: (item: ArkmeRelatedQuickNoteItem) => void
   onBackRelated?: () => void
@@ -376,10 +379,10 @@ export function ArkmeInterwovenDetailAside({
             data-arkme-interwoven-group-target={state.detail.groupName}
             onClick={onOpenGroup}
           >
-            <svg viewBox="0 0 16 16" style={styles.groupTagIcon} aria-hidden>
+            {groupTarget ? <ArkmeDirectorySourceAvatar source={groupTarget} size={16} /> : <svg viewBox="0 0 16 16" style={styles.groupTagIcon} aria-hidden>
               <path d="M3 2.5h8.5a2 2 0 0 1 2 2V11a2 2 0 0 1-2 2H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" strokeWidth="1.4" />
               <path d="M5 5.5h5M5 8h3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
+            </svg>}
             <span style={styles.groupTagText}>{state.detail.groupName}</span>
             <span style={styles.groupTagChevron} aria-hidden>›</span>
           </button>

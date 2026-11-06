@@ -1579,7 +1579,7 @@ export class MediaService {
         const chatSource={access_ref:source.accessRef,chat_session_uid:source.chatSessionUid,relation_uid:source.relationUid,record_owner_user_id:source.recordOwnerUserId,record_uid:source.recordUid,version:source.version,attachment}
         const stableIdentity=JSON.stringify(['source-media',source.audienceKey,source.relationUid,source.recordUid,source.version,attachment])
         const ref=this.issueMediaRef(viewerUserId,{chatSource,sourceBound:true,purpose:'original',mimeType,fileName,size:Math.max(0,Math.trunc(numberValue(item.size)))},stableIdentity)
-        return [{kind,mediaRef:ref,originalRef:ref,...(fileAssetUid?{fileAssetUid}:{}),fileName,mimeType,size:Math.max(0,Math.trunc(numberValue(item.size))),sortOrder:Math.trunc(numberValue(item.sort_order??index)),...(numberValue(item.duration_sec)>0?{durationSec:numberValue(item.duration_sec)}:{}),...([1,3].includes(Math.trunc(numberValue(item.render_role)))?{renderRole:Math.trunc(numberValue(item.render_role)) as 1|3}:{})}]
+        return [{kind,mediaRef:ref,originalRef:ref,...(stringValue(upload.attachment_uid)===''?{}:{attachmentUid:stringValue(upload.attachment_uid)}),...(fileAssetUid?{fileAssetUid}:{}),fileName,mimeType,size:Math.max(0,Math.trunc(numberValue(item.size))),sortOrder:Math.trunc(numberValue(item.sort_order??index)),...(numberValue(item.duration_sec)>0?{durationSec:numberValue(item.duration_sec)}:{}),...([1,3].includes(Math.trunc(numberValue(item.render_role)))?{renderRole:Math.trunc(numberValue(item.render_role)) as 1|3}:{})}]
       }
       const remoteUrl = stringValue(kind === 'image' ? item.preview_url ?? item.download_url : item.download_url).trim()
       if (remoteUrl === '') return []
@@ -1589,10 +1589,14 @@ export class MediaService {
       }, fileAssetUid === '' ? undefined : `original\0${fileAssetUid}`)
       return [{
         kind,
+        ...(stringValue(upload.attachment_uid) === '' ? {} : { attachmentUid: stringValue(upload.attachment_uid) }),
         ...(originalRef === undefined ? {} : { originalRef }),
         mediaRef: this.issueMediaRef(viewerUserId, {
           remoteUrl, mimeType, fileName, size: Math.max(0, Math.trunc(numberValue(item.size))),
-        }, kind === 'image' && fileAssetUid !== '' ? fileAssetUid : undefined),
+        }, fileAssetUid === '' ? undefined : kind === 'image' ? fileAssetUid : kind === 'video' ? `video\0${fileAssetUid}` : undefined,
+        // Refresh the grant in place so timeline refreshes do not restart video decoding.
+        // Preserve the existing video lifetime despite now having a stable identity.
+        kind === 'video' ? 30 * 60_000 : undefined),
         ...(fileAssetUid === '' ? {} : { fileAssetUid }),
         fileName,
         mimeType,

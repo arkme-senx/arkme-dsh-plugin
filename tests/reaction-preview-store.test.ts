@@ -311,3 +311,24 @@ it('cancels an abandoned conversation read only after its last consumer leaves',
  expect(store.snapshot(next.id)).toBeDefined()
  expect(store.error(target.id)).toBeUndefined()
 })
+
+it('sends a cold click after interactive facts without waiting for actor presentation', async () => {
+ vi.useFakeTimers()
+ let release!: () => void
+ const presentation = new Promise<void>(resolve => { release = resolve })
+ const calls: ReactionRequest[] = []
+ const store = new ReactionPreviewStore(async input => {
+  calls.push(input)
+  if (input.action === 'query' && input.actorPresentation !== 'deferred') await presentation
+  return reactionFixture.call('reactions', input)
+ })
+ stores.push(store); store.setScope('test:a')
+ let accepted = false
+ const clicking = store.toggle('test:a', target, '收到').then(value => { accepted = value })
+ try {
+  for (let n = 0; n < 10; n++) await Promise.resolve()
+  expect(accepted).toBe(true)
+  expect(calls[0]).toMatchObject({ action: 'query', actorPresentation: 'deferred', readPriority: 'interactive' })
+  expect(calls.some(call => call.action === 'set')).toBe(true)
+ } finally { release(); await clicking }
+})

@@ -1,4 +1,5 @@
-import { useArkmeMediaUrl } from './media-access.js'
+import { ArkmeMediaAccessContext, useArkmeMediaUrl } from './media-access.js'
+import { arkmeAuthStore } from './auth-store.js'
 import { AttachmentPreviewSurface } from './attachment-preview-window.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useContext, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -9,6 +10,7 @@ import type { ArkmeContentBlock } from '../types.js'
 import { arkmeBrowserVisualKind, arkmeCanInlineLocalFile, type ArkmeFileReception } from '../file-transfer-contract.js'
 import { createArkmeSdk } from '../sdk/index.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { arkmeVideoClipboardBridge, copyArkmeVideo } from './video-clipboard.js'
 
 const sdk = createArkmeSdk()
 const markdownLabels = { code: { copyLabel: '复制', copiedLabel: '复制成功' }, footnotes: '脚注' }
@@ -17,6 +19,30 @@ const markdownLabelProps = { labels: markdownLabels, codeLabels: markdownLabels.
 const receptionListeners = new Map<string, Set<(value: ArkmeFileReception) => void>>()
 function publishReception(identity: string, value: ArkmeFileReception) {
   for (const listener of receptionListeners.get(identity) ?? []) listener(value)
+}
+
+/** Join the mounted original receiver; this waiter never owns a second poll or download. */
+function waitForOriginal(identity: string, receive: () => void, signal: AbortSignal): Promise<string> {
+  signal.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const listeners = receptionListeners.get(identity) ?? new Set<(value: ArkmeFileReception) => void>()
+    const finish = (fileRef?: string, error?: unknown) => {
+      clearTimeout(timer); signal.removeEventListener('abort', abort); listeners.delete(update)
+      if (listeners.size === 0) receptionListeners.delete(identity)
+      if (fileRef !== undefined) resolve(fileRef)
+      else reject(error)
+    }
+    const abort = () => { finish(undefined, signal.reason) }
+    const update = (value: ArkmeFileReception) => {
+      if (value.state === 'ready' && value.file) finish(value.file.fileRef)
+      else if (value.state === 'failed') finish(undefined, new Error(value.error ?? '原视频接收失败'))
+    }
+    // Same explicit-action deadline as Save As; the shared receiver retains its own lifetime.
+    const timer = setTimeout(() => { finish(undefined, new Error('原视频接收超时')) }, 120_000)
+    listeners.add(update); receptionListeners.set(identity, listeners)
+    signal.addEventListener('abort', abort, { once: true })
+    try { receive() } catch (error) { finish(undefined, error) }
+  })
 }
 export const arkmeLocalFileUrl = (ref: string, download = false): string => sdk.localFileUrl(ref, download)
 export function arkmeFileSize(size: number): string {
@@ -35,8 +61,7 @@ export function useArkmeOriginal(block: ArkmeContentBlock | undefined, autoRecei
   const identity = block?.localFileRef ?? block?.originalRef ?? block?.mediaRef
   const [snapshot, setSnapshot] = useState<{ identity: string; value: ArkmeFileReception }>()
   const reception: ArkmeFileReception = identity !== undefined && snapshot?.identity === identity ? snapshot.value : { state: 'missing', receivedBytes: 0, totalBytes: block?.size ?? 0 }
-  const [revision, setRevision] = useState(0)
-  const [requested, setRequested] = useState<string>()
+  const [requested, setRequested] = useState<{ identity: string }>()
   useEffect(() => {
     if (identity === undefined || block?.localFileRef !== undefined) return
     let active = true
@@ -54,20 +79,20 @@ export function useArkmeOriginal(block: ArkmeContentBlock | undefined, autoRecei
         publishReception(identity, value)
         if (value.state === 'receiving') timer = setTimeout(() => { void poll(false) }, 750)
       } catch (error) {
-        if (active) setSnapshot({ identity, value: { state: 'failed', receivedBytes: 0, totalBytes: block?.size ?? 0, error: error instanceof Error ? error.message : '文件接收失败' } })
+        if (active && !controller.signal.aborted) publishReception(identity, { state: 'failed', receivedBytes: 0, totalBytes: block?.size ?? 0, error: error instanceof Error ? error.message : '文件接收失败' })
       }
     }
-    void poll(autoReceive || requested === identity)
+    void poll(autoReceive || requested?.identity === identity)
     return () => {
       active = false; controller.abort(); if (timer !== undefined) clearTimeout(timer)
       listeners.delete(update); if (listeners.size === 0) receptionListeners.delete(identity)
     }
-  }, [identity, block?.originalRef, block?.localFileRef, block?.size, autoReceive, requested, revision, refreshKey])
+  }, [identity, block?.originalRef, block?.localFileRef, block?.size, autoReceive, requested, refreshKey])
   const localRef = block?.localFileRef ?? reception.file?.fileRef
   return { reception, localRef, receive: () => {
     if (identity === undefined) return
     setSnapshot({ identity, value: { state: 'missing', receivedBytes: 0, totalBytes: block?.size ?? 0 } })
-    setRequested(identity); setRevision(value => value + 1)
+    setRequested({ identity })
   } }
 }
 
@@ -147,19 +172,20 @@ function fileActionNoun(block: Pick<ArkmeContentBlock, 'kind'>): string {
   return '文件'
 }
 
-export async function arkmeClipboardImageBlob(blob: Blob): Promise<Blob> {
+export async function arkmeClipboardImageBlob(source: Blob | HTMLImageElement): Promise<Blob> {
   const canvas = document.createElement('canvas')
-  const bitmap = await createImageBitmap(blob)
+  const image = 'naturalWidth' in source ? source : undefined
+  const bitmap = image === undefined ? await createImageBitmap(source as Blob) : undefined
   try {
-    canvas.width = bitmap.width; canvas.height = bitmap.height
+    canvas.width = image?.naturalWidth ?? bitmap!.width; canvas.height = image?.naturalHeight ?? bitmap!.height
     const context = canvas.getContext('2d')
     if (context === null) throw new Error('图片转换失败')
-    context.drawImage(bitmap, 0, 0)
+    context.drawImage(image ?? bitmap!, 0, 0)
     return await new Promise<Blob>((resolve, reject) => {
       canvas.toBlob(value => value === null ? reject(new Error('图片转换失败')) : resolve(value), 'image/png')
     })
   } finally {
-    bitmap.close()
+    bitmap?.close()
     canvas.width = 0; canvas.height = 0
   }
 }
@@ -252,9 +278,11 @@ function useArkmeFileDownload(block: ArkmeContentBlock, original: ReturnType<typ
   return { notice, saving, saved, save }
 }
 
-type ImageCopySources = { localOriginalRef: string | undefined; remoteOriginalRef: string | undefined; previewUrl: string | undefined }
+type ImageCopySources = { localOriginalRef: string | undefined; remoteOriginalRef: string | undefined; previewUrl: string | undefined; image?: (() => HTMLImageElement | null) | undefined }
 
 function useArkmeImageCopy(block: ArkmeContentBlock, sources: ImageCopySources, onNotice?: ArkmeFileActionNoticeHandler) {
+  const mediaAccess = useContext(ArkmeMediaAccessContext)
+  const accessUrl = mediaAccess?.url(block)
   const previewDocument = useContext(AttachmentPreviewSurface)
   const previewWindow = previewDocument?.defaultView
   const navigator = previewWindow?.navigator ?? globalThis.navigator
@@ -265,7 +293,7 @@ function useArkmeImageCopy(block: ArkmeContentBlock, sources: ImageCopySources, 
   useEffect(() => {
     setCopying(false)
     return () => { copyController.current?.abort(); copyController.current = undefined }
-  }, [imageIdentity])
+  }, [imageIdentity, accessUrl])
   const copy = async () => {
     if (block.kind !== 'image' || copyController.current !== undefined) return
     const clipboardWrite = typeof navigator === 'undefined' ? undefined : navigator.clipboard?.write?.bind(navigator.clipboard)
@@ -278,6 +306,12 @@ function useArkmeImageCopy(block: ArkmeContentBlock, sources: ImageCopySources, 
     copyController.current = controller
     setCopying(true)
     onNotice?.({ message: '复制中...', kind: 'progress' })
+    const auth = arkmeAuthStore.getSnapshot().auth
+    const stopAuth = arkmeAuthStore.subscribe(() => {
+      const next = arkmeAuthStore.getSnapshot().auth
+      if (auth?.status !== next?.status || auth?.userId !== next?.userId || auth?.environment !== next?.environment) controller.abort()
+    })
+    controller.signal.addEventListener('abort', stopAuth, { once: true })
     try {
       const urls = [...new Set([
         localOriginalRef === undefined ? undefined : arkmeLocalFileUrl(localOriginalRef),
@@ -288,6 +322,19 @@ function useArkmeImageCopy(block: ArkmeContentBlock, sources: ImageCopySources, 
         for (const url of urls) {
           try {
             controller.signal.throwIfAborted()
+            // Reuse only this candidate's fully loaded pixels; a preview never outranks the original.
+            // Guarded sources retain their existing authorized read and revocation owner.
+            const loaded = mediaAccess?.subscribeReadState === undefined ? sources.image?.() : undefined
+            if (loaded?.isConnected && loaded.complete && loaded.naturalWidth > 0 && loaded.naturalHeight > 0) {
+              try {
+                const expected = new URL(url, loaded.ownerDocument.baseURI).href
+                if (loaded.currentSrc === expected && loaded.src === expected) {
+                  const image = await arkmeClipboardImageBlob(loaded)
+                  controller.signal.throwIfAborted()
+                  return image
+                }
+              } catch { controller.signal.throwIfAborted() }
+            }
             const response = await fetch(url, { signal: controller.signal })
             if (!response.ok) throw new Error('图片不可用')
             const blob = await response.blob()
@@ -426,6 +473,56 @@ function ImageCopyAction({ block, sources, onNotice }: { block: ArkmeContentBloc
   )
 }
 
+function VideoCopyAction({ block, original, onNotice }: { block: ArkmeContentBlock; original: ReturnType<typeof useArkmeOriginal>; onNotice?: ArkmeFileActionNoticeHandler | undefined }) {
+  useArkmeLocale()
+  const access = useContext(ArkmeMediaAccessContext)
+  const bridge = arkmeVideoClipboardBridge()
+  const teamRef = block.mediaRef.startsWith('team-app-media.') ? block.mediaRef : undefined
+  // Team presentation has no ordinary originalRef. Reuse the same receiver only for this action.
+  const teamOriginal = useArkmeOriginal(block.kind === 'video' && teamRef !== undefined && bridge !== undefined
+    ? { ...block, originalRef: teamRef } : undefined)
+  const receiver = teamRef === undefined ? original : teamOriginal
+  const localRef = block.localFileRef ?? receiver.localRef
+  const mediaRef = teamRef ?? block.originalRef
+  const [copying, setCopying] = useState(false)
+  const active = useRef<AbortController>()
+  useEffect(() => {
+    setCopying(false)
+    return () => { active.current?.abort(); active.current = undefined }
+  }, [block.localFileRef, block.originalRef, block.mediaRef, access?.readScopeKey])
+  if (block.kind !== 'video') return null
+  const unavailable = bridge === undefined || (localRef === undefined && mediaRef === undefined)
+  const copy = async () => {
+    if (active.current || unavailable) return
+    const auth = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status !== 'authenticated') { onNotice?.({ message: '复制失败', kind: 'error' }); return }
+    const controller = new AbortController()
+    active.current = controller; setCopying(true)
+    onNotice?.({ message: '复制中...', kind: 'progress' })
+    const stopAuth = arkmeAuthStore.subscribe(() => {
+      const next = arkmeAuthStore.getSnapshot().auth
+      if (next?.status !== auth.status || next.userId !== auth.userId || next.environment !== auth.environment) controller.abort()
+    })
+    controller.signal.addEventListener('abort', stopAuth, { once: true })
+    try {
+      await copyArkmeVideo(bridge, `${auth.environment}:${auth.userId}`, async () => ({
+        fileRef: localRef ?? await waitForOriginal(mediaRef!, receiver.receive, controller.signal),
+        ...(mediaRef === undefined ? {} : { mediaRef }),
+      }), controller.signal)
+      onNotice?.({ message: '已复制', kind: 'success' })
+    } catch {
+      if (!controller.signal.aborted) onNotice?.({ message: '复制失败', kind: 'error' })
+      else if (active.current === controller) onNotice?.({ message: '复制已取消', kind: 'error' })
+    } finally {
+      controller.signal.removeEventListener('abort', stopAuth)
+      stopAuth()
+      if (active.current === controller) { active.current = undefined; setCopying(false) }
+    }
+  }
+  return <button type="button" aria-label={tr("复制视频")} title={bridge === undefined ? tr("当前客户端不支持复制视频") : tr("复制视频")} disabled={copying || unavailable}
+    onClick={() => { void copy() }} style={fileActionStateStyle(unavailable, copying)}><ImageCopyIcon /></button>
+}
+
 export function ArkmeFileActionNavButton({ label, direction, disabled, onClick }: { label: string; direction: 'left' | 'right'; disabled: boolean; onClick: () => void }) {
   return <button type="button" aria-label={label} disabled={disabled} onClick={onClick}
     style={fileActionStateStyle(disabled)}>
@@ -433,16 +530,18 @@ export function ArkmeFileActionNavButton({ label, direction, disabled, onClick }
   </button>
 }
 
-export function ArkmeFileActions({ block, original, copySourceUrl, onImageCopyNotice, onDownloadNotice, showDownloadStatus = true, hideDownloadAfterSave = true, style }: { block: ArkmeContentBlock; original: ReturnType<typeof useArkmeOriginal>; copySourceUrl?: string | undefined; onImageCopyNotice?: ArkmeFileActionNoticeHandler | undefined; onDownloadNotice?: ArkmeFileActionNoticeHandler | undefined; showDownloadStatus?: boolean; hideDownloadAfterSave?: boolean; style?: CSSProperties | undefined }) {
+export function ArkmeFileActions({ block, original, copySourceUrl, copyImage, onImageCopyNotice, onDownloadNotice, showDownloadStatus = true, hideDownloadAfterSave = true, style }: { block: ArkmeContentBlock; original: ReturnType<typeof useArkmeOriginal>; copySourceUrl?: string | undefined; copyImage?: (() => HTMLImageElement | null) | undefined; onImageCopyNotice?: ArkmeFileActionNoticeHandler | undefined; onDownloadNotice?: ArkmeFileActionNoticeHandler | undefined; showDownloadStatus?: boolean; hideDownloadAfterSave?: boolean; style?: CSSProperties | undefined }) {
   useArkmeLocale()
   const download = useArkmeFileDownload(block, original, onDownloadNotice)
   const sources: ImageCopySources = {
     localOriginalRef: original.localRef ?? block.localFileRef,
     remoteOriginalRef: block.originalRef,
     previewUrl: copySourceUrl ?? (block.mediaRef === '' || block.mediaRef === block.localFileRef ? undefined : `/arkme-self/api/media?ref=${encodeURIComponent(block.mediaRef)}`),
+    image: copyImage,
   }
   return <div style={{ ...fileActionGroupStyle, ...style }}>
     <ImageCopyAction block={block} sources={sources} onNotice={onImageCopyNotice} />
+    <VideoCopyAction block={block} original={original} onNotice={onImageCopyNotice} />
     <FileDownloadAction block={block} original={original} download={download} showStatus={showDownloadStatus} hideAfterSave={hideDownloadAfterSave} />
   </div>
 }
@@ -463,6 +562,7 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const { notice: actionNotice, showNotice: showActionNotice, clearNotice: clearActionNotice } = useArkmeFileActionNotice(standalone ? 2000 : 800)
   const download = useArkmeFileDownload(block, original, standalone ? showActionNotice : undefined)
   const panel = useRef<HTMLDivElement>(null)
+  const previewImage = useRef<HTMLImageElement>(null)
   const [text, setText] = useState<string>()
   const [error, setError] = useState('')
   const [openRequested, setOpenRequested] = useState(openLocalFile ? 1 : 0)
@@ -486,7 +586,7 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
   const previousDisabled = navigation === undefined ? onSelect === undefined || index <= 0 : navigation.previous === undefined
   const nextDisabled = navigation === undefined ? onSelect === undefined || index >= blocks.length - 1 : navigation.next === undefined
   useEffect(() => { setOpenRequested(openLocalFile ? 1 : 0); setError('') }, [fileIdentity, openLocalFile])
-  useEffect(() => { clearActionNotice() }, [block.mediaRef, clearActionNotice])
+  useEffect(() => { clearActionNotice() }, [block.mediaRef, mediaUrl(block), clearActionNotice])
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
     const surface = panel.current
@@ -544,7 +644,7 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
         {original.reception.error && <p role="alert">{original.reception.error}</p>}
         {nativeOpen.error && <p role="alert">{nativeOpen.error}</p>}
       </div>
-        : visualKind === 'image' ? <img src={url} alt={block.fileName} style={mediaStyle} />
+        : visualKind === 'image' ? <img ref={previewImage} src={url} alt={block.fileName} style={mediaStyle} />
           : visualKind === 'video' ? <video src={url} controls style={mediaStyle} />
             : block.mimeType.trim().toLowerCase().startsWith('audio/') && arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? <audio src={url} controls />
               : textFile ? <div style={{ maxHeight: fillTextWindow ? undefined : contentMaxHeight, flex: fillTextWindow ? '1 1 0' : undefined, minHeight: fillTextWindow ? 0 : undefined, overflow: 'auto', overflowWrap: 'anywhere' }}>{text === undefined ? !error && <p role="status">{tr("正在加载文件...")}</p> : /\.(md|markdown)$/i.test(block.fileName) ? <MarkdownText text={text} {...markdownLabelProps} /> : <pre style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>}</div>
@@ -572,7 +672,8 @@ export function ArkmeFileViewer({ block, onClose, blocks = [block], onSelect, op
         <ArkmeFileActionNavButton label={tr("下一个文件")} direction="right" disabled={nextDisabled} onClick={() => { if (!nextDisabled) { if (navigation) navigation.next?.(); else onSelect?.(blocks[index + 1]!) } }} /></>}
         {!filePanel && <>
           <span aria-hidden style={fileActionWideGapStyle} />
-          <ImageCopyAction block={block} sources={{ localOriginalRef: original.localRef ?? block.localFileRef, remoteOriginalRef: block.originalRef, previewUrl: mediaUrl(block) ?? (block.mediaRef === '' || block.mediaRef === block.localFileRef ? undefined : `/arkme-self/api/media?ref=${encodeURIComponent(block.mediaRef)}`) }} onNotice={showActionNotice} />
+          <ImageCopyAction block={block} sources={{ localOriginalRef: original.localRef ?? block.localFileRef, remoteOriginalRef: block.originalRef, previewUrl: mediaUrl(block) ?? (block.mediaRef === '' || block.mediaRef === block.localFileRef ? undefined : `/arkme-self/api/media?ref=${encodeURIComponent(block.mediaRef)}`), image: () => previewImage.current }} onNotice={showActionNotice} />
+          <VideoCopyAction block={block} original={original} onNotice={showActionNotice} />
           <span aria-hidden style={{ width: 12, flex: 'none' }} />
           <FileDownloadAction block={block} original={original} download={download} />
         </>}

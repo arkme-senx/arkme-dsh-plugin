@@ -1,10 +1,10 @@
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
-import { Fragment, useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
+import { Fragment, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { X } from '@phosphor-icons/react/dist/icons/X'
-import type { ArkmeSearchRecordItem, ArkmeSearchSceneKind, ArkmeSourceItem } from '../types.js'
+import type { ArkmeSearchRecordItem, ArkmeSearchSceneKind, ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeConversationHeaderIconButton } from './ArkmeGroupChatControls.js'
 import { arkmeUi } from './ui-controller.js'
@@ -12,6 +12,8 @@ import { SearchFileRow, SearchLinkRows, SearchMediaTile } from './ArkmeSearchCat
 import { RecordRow } from './ArkmeSearchSurface.js'
 import { arkmeContentMediaUrl, ArkmeMediaPreview, ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
+import { conversationSearchAttachments } from './conversation-search-port.js'
+import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview } from './attachment-preview-window.js'
 import { useConversationSearch, useConversationSearchDetail } from './use-conversation-search.js'
 import { useResizableNoteDetail } from './use-resizable-note-detail.js'
 import { useSelectedMessageSearch } from './message-selection-search.js'
@@ -28,6 +30,12 @@ function searchMonth(millis: number): string {
   const now = new Date()
   return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() ? '这个月' : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
 }
+function mediaFailureKey(item: ArkmeSearchRecordItem, assetUid: string): string {
+  return JSON.stringify([item.sourceKind, item.sourceUid, item.recordOwnerUserId, item.recordUid, assetUid])
+}
+// Each explicit result click replaces the selection, even if the open window
+// has navigated elsewhere since the same result was first opened.
+let previewSelection = 0
 const status: CSSProperties = { padding: 24, textAlign: 'center', color: arkmeTheme.secondary, fontSize: 13 }
 
 export function ArkmeConversationSearch({ source, host, accountKey, hideTrigger = false, open: controlledOpen, onOpenChange, label }: {
@@ -83,13 +91,30 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
   const [composing, setComposing] = useState(false)
   const [selected, setSelected] = useState<ArkmeSearchRecordItem>()
   const [selectedAssetUid, setSelectedAssetUid] = useState<string>()
+  const [selectedDetail, setSelectedDetail] = useState<ArkmeTimelineItem>()
+  const [mediaFailures, setMediaFailures] = useState(new Map<string, string>())
   const search = useConversationSearch(source.sourceRef, global, scene, query, composing)
-  useEffect(() => { setSelected(undefined) }, [source.sourceRef, global, scene, query])
+  useEffect(() => { setSelected(undefined); setSelectedDetail(undefined); setMediaFailures(new Map()) }, [source.sourceRef, global, scene, query])
   useEffect(() => { if (selected === undefined) queryInput.current?.focus() }, [selected])
   const showingMessage = selected !== undefined && selectedAssetUid === undefined
   const keyword = query.trim() !== ''
-  const selectHit = (item: ArkmeSearchRecordItem, assetUid?: string) => {
+  const selectHit = (item: ArkmeSearchRecordItem, assetUid?: string, detail?: ArkmeTimelineItem) => {
+    if (assetUid && detail && scene === 'image_video' && attachmentPreviewBridge()?.version === 1) {
+      const block = conversationSearchAttachments(detail).find(value => value.fileAssetUid === assetUid && value.mediaRef)
+      if (block) {
+        // Share the message-list window owner; this result snapshot survives closing
+        // search or switching chats without keeping the search panel mounted.
+        const identity = `search:${mediaFailureKey(item, assetUid)}:${++previewSelection}`
+        try {
+          showAttachmentPreview(identity, doc => { doc.title = block.fileName || tr('文件预览'); return <SearchMediaWindow key={identity} entries={attachments} item={item} assetUid={assetUid} detail={detail} /> })
+        } catch (error) {
+          setMediaFailures(previous => new Map(previous).set(mediaFailureKey(item, assetUid), error instanceof Error ? error.message : tr('媒体暂不可访问，点击重试')))
+        }
+        return
+      }
+    }
     setSelectedAssetUid(assetUid)
+    setSelectedDetail(detail)
     if (item.sourceKind !== 3 && item.targetSource !== undefined) {
       arkmeUi.showConversationTarget(item.targetSource, item.recordUid, item.sendAtMillis, item.recordOwnerUserId)
       onClose()
@@ -100,8 +125,8 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
       [...new Map((scene === 'file' ? item.files : item.media).map(asset => [asset.fileAssetUid, asset])).values()].map(asset => ({ item, uid: asset.fileAssetUid }))) : []
   const attachmentIndex = attachments.findIndex(entry => entry.item === selected && entry.uid === selectedAssetUid)
   const navigation = attachmentIndex < 0 ? undefined : {
-    ...(attachmentIndex === 0 ? {} : { previous: () => { const entry = attachments[attachmentIndex - 1]!; selectHit(entry.item, entry.uid) } }),
-    ...(attachmentIndex === attachments.length - 1 ? {} : { next: () => { const entry = attachments[attachmentIndex + 1]!; selectHit(entry.item, entry.uid) } }),
+    ...(attachmentIndex === 0 ? {} : { previous: () => { const entry = attachments[attachmentIndex - 1]!; selectHit(entry.item, entry.uid, entry.item === selected ? selectedDetail : undefined) } }),
+    ...(attachmentIndex === attachments.length - 1 ? {} : { next: () => { const entry = attachments[attachmentIndex + 1]!; selectHit(entry.item, entry.uid, entry.item === selected ? selectedDetail : undefined) } }),
   }
   return <aside ref={panel} aria-label={tr("聊天记录搜索")} style={{ position: 'absolute', top: ARKME_CONVERSATION_HEADER_HEIGHT, right: 0, bottom: 0, zIndex: 30,
     ...resize.style, display: 'flex', flexDirection: 'column', boxSizing: 'border-box', background: arkmeTheme.base, color: arkmeTheme.text, borderLeft: `1px solid ${arkmeTheme.border}` }}
@@ -126,7 +151,11 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
             borderRadius: 0 }}>{item.label}</button>)}
       </div>}
     </div>
-    {selected !== undefined && <SearchDetail key={`${selected.sourceKind}:${selected.sourceUid ?? ''}:${selected.recordOwnerUserId}:${selected.recordUid}`} item={selected} assetUid={selectedAssetUid} onSelectAsset={setSelectedAssetUid} navigation={navigation} onBack={() => setSelected(undefined)} onLocate={() => {
+    {selected !== undefined && <SearchDetail key={`${selected.sourceKind}:${selected.sourceUid ?? ''}:${selected.recordOwnerUserId}:${selected.recordUid}`} item={selected} assetUid={selectedAssetUid} initialDetail={selectedDetail} onSelectAsset={setSelectedAssetUid} navigation={navigation}
+      onUnavailable={!keyword && scene === 'image_video' && selectedAssetUid !== undefined ? message => {
+        setMediaFailures(previous => new Map(previous).set(mediaFailureKey(selected, selectedAssetUid), message))
+        setSelected(undefined); setSelectedDetail(undefined)
+      } : undefined} onBack={() => setSelected(undefined)} onLocate={() => {
       if (selected.targetSource !== undefined) { arkmeUi.showConversationTarget(selected.targetSource, selected.recordUid, selected.sendAtMillis, selected.recordOwnerUserId); onClose() }
     }} />}
     <div aria-label={tr("聊天搜索结果")} hidden={showingMessage} style={{ display: showingMessage ? 'none' : undefined, flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 12px 16px' }}
@@ -137,7 +166,9 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
       {search.page?.items.map((item, index, items) => <Fragment key={`${item.sourceKind}:${item.sourceUid ?? ''}:${item.recordOwnerUserId ?? ''}:${item.recordUid}`}>
         {!keyword && scene !== 'link' && (index === 0 || searchMonth(item.sendAtMillis) !== searchMonth(items[index - 1]!.sendAtMillis)) && <p style={{ gridColumn: '1 / -1', margin: '12px 0 8px', fontSize: 12, color: arkmeTheme.secondary }}>{searchMonth(item.sendAtMillis)}</p>}
         <div style={!keyword && scene === 'image_video' ? { display: 'contents' } : { marginBottom: scene === 'file' || scene === 'link' ? 0 : 8 }}>
-        {!keyword && scene === 'image_video' ? item.sourceKind === 3 ? item.media.length > 0 ? <ChatSearchMedia item={item} active={selected === undefined} onSelect={selectHit} /> : <button data-arkme-feedback="neutral" type="button" style={button} onClick={() => selectHit(item)}>{tr("查看媒体消息")}</button> : <div style={{ display: 'contents' }}>
+        {!keyword && scene === 'image_video' ? item.sourceKind === 3 ? item.media.length > 0 ? <ChatSearchMedia item={item} active={selected === undefined} onSelect={selectHit} failures={mediaFailures} onRetry={uid => {
+            setMediaFailures(previous => { const next = new Map(previous); next.delete(mediaFailureKey(item, uid)); return next })
+          }} /> : <button data-arkme-feedback="neutral" type="button" style={button} onClick={() => selectHit(item)}>{tr("查看媒体消息")}</button> : <div style={{ display: 'contents' }}>
           {item.media.map(asset => { const display = search.assets.get(asset.fileAssetUid); const url = display?.previewUrl ?? display?.downloadUrl
             const video = (display?.mimeType ?? asset.mimeType ?? '').startsWith('video/') || asset.fileKind === 3
             return <SearchMediaTile key={asset.fileAssetUid} url={url} unavailable={url === undefined} name={display?.fileName ?? asset.fileName ?? ''} video={video} durationSec={asset.durationMillis === undefined ? undefined : asset.durationMillis / 1000} onOpen={() => selectHit(item, asset.fileAssetUid)} />
@@ -161,30 +192,71 @@ export function ArkmeConversationSearchPanel({ source, scene, global, onScene, o
   </aside>
 }
 
-function ChatSearchMedia({ item, active, onSelect }: { item: ArkmeSearchRecordItem; active: boolean; onSelect(item: ArkmeSearchRecordItem, assetUid?: string): void }) {
+function ChatSearchMedia({ item, active, onSelect, failures, onRetry }: { item: ArkmeSearchRecordItem; active: boolean; onSelect(item: ArkmeSearchRecordItem, assetUid?: string, detail?: ArkmeTimelineItem): void; failures: ReadonlyMap<string, string>; onRetry(uid: string): void }) {
   useArkmeLocale()
   const element = useRef<HTMLDivElement>(null)
-  const { detail, error } = useConversationSearchDetail(item, element, active)
-  const blocks = detail?.contentBlocks?.filter(block => block.kind === 'image' || block.kind === 'video') ?? []
+  const { detail, error, retry } = useConversationSearchDetail(item, element, active)
+  const loading = detail === undefined && error === ''
+  const blocks = detail === undefined ? [] : conversationSearchAttachments(detail).filter(block => block.kind === 'image' || block.kind === 'video')
   const assets = [...new Map(item.media.map(asset => [asset.fileAssetUid, asset])).values()]
   return <div ref={element} style={{ display: 'contents' }}>
     {assets.map(asset => {
-      const block = blocks.find(value => value.fileAssetUid === asset.fileAssetUid)
+      const block = blocks.find(value => value.fileAssetUid === asset.fileAssetUid && value.mediaRef)
+      const failed = failures.has(mediaFailureKey(item, asset.fileAssetUid))
+      const reload = () => { if (!loading) { onRetry(asset.fileAssetUid); retry() } }
       return <SearchMediaTile key={asset.fileAssetUid} name={block?.fileName ?? asset.fileName ?? ''}
-        url={block === undefined ? undefined : arkmeContentMediaUrl(block)}
+        url={block === undefined || failed ? undefined : arkmeContentMediaUrl(block)}
         video={block !== undefined ? block.kind === 'video' : asset.fileKind === 3 || (asset.mimeType ?? '').startsWith('video/')}
         durationSec={block?.durationSec ?? (asset.durationMillis === undefined ? undefined : asset.durationMillis / 1000)}
-        unavailable={error !== '' || detail !== undefined && block === undefined} onOpen={() => onSelect(item, asset.fileAssetUid)} />
+        unavailable={failed || error !== '' || detail !== undefined && block === undefined} onRetry={reload} loading={loading}
+        onOpen={() => { if (block && detail && !failed) onSelect(item, asset.fileAssetUid, detail); else reload() }} />
     })}
   </div>
 }
 
-function SearchDetail({ item, assetUid, onSelectAsset, onBack, onLocate, navigation }: { navigation?: import('./ArkmeFileViewer.js').ArkmePreviewNavigation | undefined; item: ArkmeSearchRecordItem; assetUid: string | undefined; onSelectAsset(uid: string): void; onBack(): void; onLocate(): void }) {
+function SearchMediaWindow({ entries, item, assetUid, detail }: { entries: Array<{ item: ArkmeSearchRecordItem; uid: string }>; item: ArkmeSearchRecordItem; assetUid: string; detail: ArkmeTimelineItem }) {
+  const [selected, setSelected] = useState({ item, uid: assetUid })
+  const [initialDetail, setInitialDetail] = useState<ArkmeTimelineItem | undefined>(detail)
+  const index = entries.findIndex(entry => entry.item === selected.item && entry.uid === selected.uid)
+  const navigation = {
+    ...(index <= 0 ? {} : { previous: () => setSelected(entries[index - 1]!) }),
+    ...(index < 0 || index === entries.length - 1 ? {} : { next: () => setSelected(entries[index + 1]!) }),
+  }
+  return <div onKeyDownCapture={event => {
+    if (event.nativeEvent.isComposing) return
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeAttachmentPreview(); return }
+    const target = event.target as HTMLElement
+    if (event.altKey || event.ctrlKey || event.metaKey || target.closest?.('input,textarea,select,video,audio,[contenteditable="true"],[role="slider"]')) return
+    const move = event.key === 'ArrowLeft' ? navigation.previous : event.key === 'ArrowRight' ? navigation.next : undefined
+    if (move) { event.preventDefault(); event.stopPropagation(); move() }
+  }}>
+    <SearchDetail key={mediaFailureKey(selected.item, '')} item={selected.item} assetUid={selected.uid} initialDetail={selected.item === item ? initialDetail : undefined} onRetryDetail={() => setInitialDetail(undefined)} standalone navigation={navigation}
+      onSelectAsset={uid => setSelected(previous => ({ ...previous, uid }))} onBack={closeAttachmentPreview} onLocate={() => {}} />
+  </div>
+}
+
+function SearchDetail({ item, assetUid, initialDetail, onRetryDetail, onUnavailable, onSelectAsset, onBack, onLocate, navigation, standalone = false }: { navigation?: import('./ArkmeFileViewer.js').ArkmePreviewNavigation | undefined; item: ArkmeSearchRecordItem; assetUid: string | undefined; initialDetail?: ArkmeTimelineItem | undefined; onRetryDetail?: () => void; onUnavailable?: ((message: string) => void) | undefined; onSelectAsset(uid: string): void; onBack(): void; onLocate(): void; standalone?: boolean }) {
   useArkmeLocale()
-  const { detail, error, retry } = useConversationSearchDetail(item)
-  const preview = assetUid === undefined ? undefined : detail?.contentBlocks?.find(block => block.fileAssetUid === assetUid && (block.kind === 'image' || block.kind === 'video' || block.kind === 'file'))
+  const previewDocument = useContext(AttachmentPreviewSurface)
+  const loaded = useConversationSearchDetail(item, undefined, initialDetail === undefined)
+  const detail = initialDetail ?? loaded.detail
+  const { error } = loaded
+  const retry = () => { onRetryDetail?.(); loaded.retry() }
+  const blocks = detail === undefined ? [] : conversationSearchAttachments(detail)
+  const preview = assetUid === undefined ? undefined : blocks.find(block => block.fileAssetUid === assetUid && block.mediaRef && (block.kind === 'image' || block.kind === 'video' || block.kind === 'file'))
+  useEffect(() => { if (previewDocument && preview) previewDocument.title = preview.fileName || tr('文件预览') }, [previewDocument, preview])
+  useEffect(() => {
+    if (assetUid !== undefined && onUnavailable && (error || detail !== undefined && !preview)) onUnavailable(error || tr("媒体暂不可访问，点击重试"))
+  }, [assetUid, onUnavailable, error, detail, preview])
   if (assetUid !== undefined) {
-    if (preview !== undefined) return <ArkmeMediaPreview blocks={(detail?.contentBlocks ?? []).filter(block => preview.kind === 'file' ? block.kind === 'file' : block.kind === 'image' || block.kind === 'video')} selected={preview} navigation={navigation} onSelect={block => { if (block.fileAssetUid !== undefined) onSelectAsset(block.fileAssetUid) }} onClose={onBack} />
+    if (preview !== undefined) return <ArkmeMediaPreview key={assetUid} blocks={blocks.filter(block => preview.kind === 'file' ? block.kind === 'file' : block.kind === 'image' || block.kind === 'video')} selected={preview} navigation={navigation} openLocalFile={!standalone} onSelect={block => { if (block.fileAssetUid !== undefined) onSelectAsset(block.fileAssetUid) }} onClose={onBack} />
+    if (onUnavailable) return null
+    if (standalone) return <div style={status}>
+      {error || detail !== undefined ? <div role="alert">{error || tr('媒体暂不可访问，点击重试')}<button type="button" style={button} onClick={retry}>{tr('重试')}</button></div> : <div role="status">{tr('加载详情…')}</div>}
+      <button type="button" style={button} aria-label={tr('上一个媒体')} disabled={!navigation?.previous} onClick={navigation?.previous}>{tr('上一个媒体')}</button>
+      <button type="button" style={button} aria-label={tr('下一个媒体')} disabled={!navigation?.next} onClick={navigation?.next}>{tr('下一个媒体')}</button>
+      <button type="button" style={button} onClick={onBack}>{tr('关闭')}</button>
+    </div>
     return <div style={status}>
       {error !== '' ? <div role="alert">{error}<button data-arkme-feedback="neutral" type="button" style={button} onClick={retry}>{tr("重试")}</button></div>
         : detail === undefined ? <div role="status">{tr("加载详情…")}</div>
@@ -198,6 +270,6 @@ function SearchDetail({ item, assetUid, onSelectAsset, onBack, onLocate, navigat
     {error !== '' ? <div role="alert" style={status}>{error}<button data-arkme-feedback="neutral" type="button" style={button} onClick={retry}>{tr("重试")}</button></div>
       : detail === undefined ? <div role="status" style={status}>{tr("加载详情…")}</div>
         : <><p style={{ color: arkmeTheme.secondary, fontSize: 12 }}>{detail.senderName} · {new Date(detail.sendAtMillis).toLocaleString(arkmeIntlLocale())}</p>
-          <ArkmeMessageContent item={detail} presentation="detail" collapseText={false} {...(item.targetSource === undefined ? {} : { sourceRef: item.targetSource.sourceRef })} /></>}
+          <ArkmeMessageContent item={detail} presentation="detail" collapseText={false} sessionAttachmentPreview sourceIdentityKey={mediaFailureKey(item, '')} {...(item.targetSource === undefined ? {} : { sourceRef: item.targetSource.sourceRef })} /></>}
   </div>
 }

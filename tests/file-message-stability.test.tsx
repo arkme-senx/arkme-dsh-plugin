@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { ArkmeMessageContent, ArkmeMediaPreview } from '../src/client/ArkmeRichContent.js'
 import type { ArkmeTimelineItem } from '../src/types.js'
 
+// The node renderer has no mounted image; model the gallery button's DOM query.
+const imagePreviewClick = { currentTarget: { querySelector: () => null } }
+
 const complete: ArkmeTimelineItem = {
   itemUid: 'file-record', senderName: 'sender', isMe: false, sendAtMillis: 1,
   title: 'report.pdf', textContent: '', status: 1, version: 7,
@@ -140,7 +143,7 @@ describe('open preview follows current message media', () => {
     let view: ReactTestRenderer | undefined
     try {
       await act(async () => { view = create(<ArkmeMessageContent sourceRef="source-a" item={item} />) })
-      await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick())
+      await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick(imagePreviewClick))
       expect(view!.root.findByType(ArkmeMediaPreview).props.selected.dynamicPhoto).toBeUndefined()
       const updated = { ...cover, mediaRef: identity === 'asset' ? 'renewed-cover' : cover.mediaRef, dynamicPhoto: { logicalUid: 'pair' } }
       await act(async () => view!.update(<ArkmeMessageContent sourceRef="source-a" item={{ ...item, contentBlocks: [updated] }} />))
@@ -160,7 +163,7 @@ describe('open preview follows current message media', () => {
         ['source-a', { ...item, status: 2 }],
       ] as const) {
         await act(async () => view!.update(<ArkmeMessageContent sourceRef="source-a" item={item} />))
-        await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick())
+        await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick(imagePreviewClick))
         expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(1)
         await act(async () => view!.update(<ArkmeMessageContent sourceRef={nextSource} item={nextItem} />))
         expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
@@ -184,7 +187,7 @@ describe('stable conversation media identity', () => {
       let view: ReactTestRenderer | undefined
       try {
         await act(async () => { view = create(<ArkmeMessageContent sourceRef="old-ref" sourceIdentityKey="chat-a" item={item} />) })
-        await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick())
+        await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.jpg' }).props.onClick(imagePreviewClick))
         expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(1)
         const next = { ...item,
           ...(boundary === 'refresh' ? { contentBlocks: [{ ...cover, mediaRef: 'fresh-cover' }] } : {}),

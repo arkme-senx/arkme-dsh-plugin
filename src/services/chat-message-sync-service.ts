@@ -21,6 +21,8 @@ export class ChatMessageSyncService {
   private running: Promise<void> | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
   private dirty = false
+  private trigger: 'realtime' | 'catchup' = 'catchup'
+  private pendingTrigger: 'realtime' | 'catchup' | undefined
   private failures = 0
   private readonly unsubscribe?: () => void
   constructor(private readonly runtime: ServiceRuntime, private readonly timeline: UnifiedChatTimelineService,
@@ -29,7 +31,7 @@ export class ChatMessageSyncService {
     this.unsubscribe = runtime.subscribeAccountScope?.(() => { this.reset(); if (this.started) this.wake(0) })
   }
   private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[]): void {
-    this.progress = { ...progress, revision: ++this.revision }
+    this.progress = { ...progress, trigger: this.trigger, revision: ++this.revision }
     this.publish(this.progress, sourceKeys)
   }
   start(): () => void {
@@ -40,6 +42,7 @@ export class ChatMessageSyncService {
     this.generation++; this.controller.abort(); this.controller = new AbortController()
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined; this.dirty = false; this.failures = 0
+    this.trigger = 'catchup'; this.pendingTrigger = undefined
     if (this.progress.accountKey) this.update(idle())
     else this.progress = idle()
   }
@@ -48,15 +51,20 @@ export class ChatMessageSyncService {
     if (!this.started || this.disposed) return
     if (event.type === 'read-ack' && event.sourceKey && this.progress.accountKey) {
       void this.timeline.sync({ action: 'ack', account: this.progress.accountKey, sourceKey: event.sourceKey, through: event.effectiveReadSequence }).catch(() => undefined)
-      this.wake(5000)
+      this.wake(5000, 'realtime')
     }
     if (event.type === 'reconcile' && event.connected) this.wake(0)
     // One trailing account check per bounded burst, never one request per message.
-    else if (event.type === 'sessions-delta' || event.type === 'timeline-changed' || event.type === 'members-invalidated') this.wake(5000)
+    else if (event.type === 'sessions-delta' || event.type === 'timeline-changed' || event.type === 'members-invalidated') this.wake(5000, 'realtime')
   }
-  private wake(delay: number): void {
+  private wake(delay: number, trigger: 'realtime' | 'catchup' = 'catchup'): void {
     if (this.disposed || !this.started || this.progress.phase === 'unsupported') return
     this.dirty = true
+    // Recovery wins a coalesced burst; live traffic must not silence an active catch-up.
+    if (trigger === 'catchup') {
+      this.pendingTrigger = 'catchup'
+      if (this.running && this.trigger !== 'catchup') { this.trigger = 'catchup'; this.update(this.progress) }
+    } else this.pendingTrigger ??= 'realtime'
     if (this.running || this.timer) return
     this.timer = setTimeout(() => { this.timer = undefined; void this.launch() }, delay)
     this.timer.unref?.()
@@ -64,12 +72,13 @@ export class ChatMessageSyncService {
   private async launch(): Promise<void> {
     if (this.running || !this.started || this.disposed) return
     this.dirty = false
+    this.trigger = this.pendingTrigger ?? 'catchup'; this.pendingTrigger = undefined
     const generation = this.generation, signal = this.controller.signal
     const task = this.run(generation, signal)
     this.running = task
     try { await task } finally {
       if (this.running === task) this.running = undefined
-      if (this.dirty && this.started && !this.disposed && !this.timer) this.wake(generation === this.generation ? 5000 : 0)
+      if (this.dirty && this.started && !this.disposed && !this.timer) this.wake(generation === this.generation ? 5000 : 0, this.pendingTrigger ?? 'catchup')
     }
   }
   private assert(generation: number, signal: AbortSignal): void {
@@ -92,7 +101,11 @@ export class ChatMessageSyncService {
   }
   async retry(signal?: AbortSignal): Promise<ArkmeMessageSyncProgress> {
     const current = await this.status(signal)
-    if (this.running || current.phase === 'unsupported') return current
+    if (current.phase === 'unsupported') return current
+    if (this.running) {
+      if (this.trigger !== 'catchup') { this.trigger = 'catchup'; this.update(current); return { ...this.progress } }
+      return current
+    }
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined; this.failures = 0; this.started = true
     this.wake(0)
@@ -149,6 +162,7 @@ export class ChatMessageSyncService {
           const ticket = await this.timeline.syncTicket()
           const page = await this.request({ mode: 'unread_manifest', limit: 1000, checkpoint: plan.checkpoint, ...ranges }, session, signal)
           this.assert(generation, signal)
+          if (page.sessions.some(s => s.cacheRequired)) this.trigger = 'catchup'
           if (page.hasMore && !page.retry && page.checkpoint === plan.checkpoint && !page.sessions.some(s => s.cacheRequired)) throw new Error('message-sync-checkpoint-stale')
           await this.identify(page, session, key, signal)
           this.assert(generation, signal)
@@ -208,6 +222,7 @@ export class ChatMessageSyncService {
       plan = await this.timeline.sync<ChatSyncPlan>({ action: 'status', account })
       this.assert(generation, signal)
       if (plan.progress.pending > 0) {
+        this.trigger = 'catchup'
         this.update({ ...plan.progress, phase: 'paused' })
         this.scheduleRetry(Math.max(2000, (plan.progress.retryAtMillis ?? 0) - Date.now()))
       } else {
@@ -222,11 +237,13 @@ export class ChatMessageSyncService {
         : /storage|Timeline storage|SQLITE/.test(message) ? 'storage'
           : error instanceof ArkmePluginError && (error.upstreamStatus === 401 || error.code === 'login-expired') ? 'authentication' : 'network'
       const delay = Math.max(error instanceof ArkmePluginError ? error.retryAfterMillis ?? 0 : 0, Math.min(60000, 2000 * 2 ** Math.min(5, this.failures++)))
+      this.trigger = 'catchup'
       this.update({ ...(plan?.progress ?? (this.progress.accountKey === account ? this.progress : idle(account))), phase: 'paused', reason, retryAtMillis: Date.now() + delay })
       if (reason !== 'authentication') this.scheduleRetry(delay)
     }
   }
   private scheduleRetry(delay: number): void {
+    this.pendingTrigger = 'catchup'
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => { this.timer = undefined; void this.launch() }, delay)
     this.timer.unref?.()
