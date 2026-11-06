@@ -127,7 +127,6 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     const controller = new AbortController()
     let loading=false
     const refresh = async () => {
-      if(window.getSelection()?.toString())return
       if(loading||controller.signal.aborted)return
       loading=true
       const requestEpoch=accessEpoch.current
@@ -138,8 +137,9 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       } catch (error) { if (!controller.signal.aborted && currentKey.current === key && accessEpoch.current === requestEpoch) setNotice(message(error)) } finally {loading=false}
     }
     const timer=setInterval(()=>{if(document.visibilityState!=="hidden")void refresh()},15000)
-    void refresh(); if (typeof window !== 'undefined') window.addEventListener('focus', refresh);document.addEventListener('selectionchange',refresh)
-    return () => { clearInterval(timer);controller.abort(); if (typeof window !== 'undefined') window.removeEventListener('focus', refresh);document.removeEventListener('selectionchange',refresh) }
+    const selectionChanged=()=>{if(!window.getSelection()?.toString())void refresh()}
+    void refresh(); if (typeof window !== 'undefined') window.addEventListener('focus', refresh);document.addEventListener('selectionchange',selectionChanged)
+    return () => { clearInterval(timer);controller.abort(); if (typeof window !== 'undefined') window.removeEventListener('focus', refresh);document.removeEventListener('selectionchange',selectionChanged) }
   }, [key, idsKey, enabled, retry])
   useEffect(() => { setSelected(undefined); setSearch(''); setNotice('') }, [key, enabled])
   const display = (row: TranscriptInteractionRow, entry = entriesRef.current[row.id]) => entry && entry.originalVersion === row.sourceVersion ? (entry.legacy?.original === entry.original ? entry.legacy.text : entry.text) : row.text

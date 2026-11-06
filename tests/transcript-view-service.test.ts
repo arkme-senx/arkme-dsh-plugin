@@ -292,3 +292,19 @@ it('revoked call history reports source access loss through the same private err
   })
   await expect(f.service().saved('prod:7', JSON.stringify({ kind: 'call', callRef: 'opaque-call' }))).rejects.toMatchObject({ code: 'transcript-source-unavailable', httpStatus: 403 })
 })
+
+it('retains an accepted but revoked attempt until its receipt settles without a second write', async()=>{
+ const f=await fixture()
+ const denied=()=>new ArkmeUpstreamResponseError('arkme-code-1003','denied',false,502,{error_code:'source_unavailable'})
+ f.post.mockImplementation(async()=>{throw denied()})
+ await expect(f.service().change('prod:7',ref,command)).rejects.toMatchObject({code:'transcript-source-unavailable',httpStatus:403})
+ expect(await readFile(join(f.root,'state.json'),'utf8')).toContain('restore-once')
+ f.restart()
+ f.post.mockImplementation(async(path:string)=>{
+  if(path.endsWith('/receipt'))return {receipt:{operation_id:command.operation_id,accepted_revision:1,target}}
+  throw denied()
+ })
+ await expect(f.service().change('prod:7',ref,command)).rejects.toMatchObject({code:'transcript-source-unavailable',httpStatus:403})
+ expect(f.post.mock.calls.filter(([path])=>path.endsWith('/change'))).toHaveLength(1)
+ expect(await readFile(join(f.root,'state.json'),'utf8')).not.toContain('restore-once')
+})

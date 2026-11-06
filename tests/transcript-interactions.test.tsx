@@ -149,6 +149,23 @@ it.each(['replacement', 'history'] as const)('retires an open %s surface when ba
  expect(host.textContent).not.toContain('历史私人正文')
 })
 
+it('checks source access while private prose is selected without replacing an active selection',async()=>{
+ stored.set('recording:123:one',{revision:1,original,text:'私人词，私人词。',marks:[]})
+ await act(async()=>root.render(<Fixture/>));await select()
+ expect(document.getSelection()?.toString()).toBe('私人词')
+ stored.set('recording:123:one',{revision:2,original,text:'另一设备的新更正',marks:[]})
+ const before=mocks.call.mock.calls.filter(([op])=>op==='transcript.views.read').length
+ await act(async()=>{window.dispatchEvent(new Event('focus'))})
+ expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.read').length).toBeGreaterThan(before)
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('私人词，私人词。')
+ expect(document.getSelection()?.toString()).toBe('私人词')
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
+ await act(async()=>{window.dispatchEvent(new Event('focus'))})
+ expect(host.textContent).not.toContain('私人词')
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})
+
 it.each(['change','saved'] as const)('clears private projections when %s observes source revocation before the next watch', async operation => {
  stored.set('recording:123:one',{revision:1,original,text:'已确认私人正文',marks:[]})
  await act(async()=>root.render(<Fixture/>));expect(host.textContent).toContain('已确认私人正文')
