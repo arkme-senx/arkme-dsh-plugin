@@ -8,13 +8,13 @@ function fixture(response: unknown) {
   const projector = { projectPage: vi.fn(async (rows: Record<string, unknown>[]) => rows.map(raw => ({ textContent: raw.text_content, contentBlocks: raw.media_display_items ?? [] }))) }
   return { runtime, projector, service: new RecordEditHistoryService(runtime as never, projector as never), switchUser: () => { userId = 43 } }
 }
-const revision = (id: string, type = 1) => ({ revision_uid: id, record_uid: 'r1', revision_type: type, edit_at: 1700000000000, text_content: id })
+const revision = (id: string, type = 1) => ({ revision_uid: id, record_uid: 'r1', revision_type: type, version: type === 5 ? 1 : 10 - type, edit_at: 1700000000000, text_content: id })
 const target = { kind: 'owned' as const, viewerUserId: 42, recordUid: 'r1' }
 
 describe('Record edit history', () => {
   it('preserves the author snapshot of each revision', async () => {
     const f = fixture({ items: [
-      { ...revision('new'), sender_snapshot: { avatar: 'file_asset://new-avatar', nickname: '编辑时的名字' } },
+      { ...revision('new'), editor_snapshot: { avatar: 'file_asset://new-avatar', nickname: '编辑时的名字' } },
       { ...revision('old', 5), avatar: 'file_asset://original-avatar', nickname: '创建时的名字' },
     ], has_more: false })
     const page = await f.service.page(target)
@@ -24,13 +24,12 @@ describe('Record edit history', () => {
     ])
   })
 
-  it('finds an exact historical revision across pages without querying the current message', async () => {
-    const f = fixture({})
-    f.runtime.authenticatedPost.mockResolvedValueOnce({ items: [revision('new')], has_more: true, next_cursor_edit_at: 100 })
-      .mockResolvedValueOnce({ items: [{ ...revision('wanted', 5), edit_at: 50, edit_capture_context: { client_name: 'old device' } }], has_more: false })
+  it('reads an exact historical revision once without scanning or reading current content', async () => {
+    const f = fixture({ items: [{ ...revision('wanted', 5), edit_at: 50, edit_capture_context: { client_name: 'old device' } }], has_more: false })
     expect(await f.service.revision(target, 'wanted')).toMatchObject({ snapshot: { revision_uid: 'wanted', edit_capture_context: { client_name: 'old device' } } })
-    expect(f.runtime.authenticatedPost).toHaveBeenLastCalledWith('/api/v1/records/revisions/query', { record_uid: 'r1', limit: 50, cursor_edit_at: 100 }, { userId: 42 }, undefined)
+    expect(f.runtime.authenticatedPost).toHaveBeenCalledExactlyOnceWith('/api/v1/records/revisions/query', { record_uid: 'r1', revision_uid: 'wanted' }, { userId: 42 }, undefined)
     await expect(fixture({ items: [], has_more: false }).service.revision(target, 'missing')).rejects.toMatchObject({ code: 'record-revision-not-found' })
+    await expect(fixture({ items: [revision('other')], has_more: false }).service.revision(target, 'wanted')).rejects.toThrow()
   })
   it('prefers explicit manual edit facts over legacy status; never infers from versions', () => {
     expect(recordManualEditFact({ has_manual_edit: false, edit_status: 4 })).toBe(false)
@@ -44,7 +43,7 @@ describe('Record edit history', () => {
     const result = await f.service.page(target, 0)
     expect(result.items.map(item => item.revisionUid)).toEqual(['manual', 'voice', 'polish', 'rewrite', 'original'])
     expect(result.items.map(item => item.kind)).toEqual(['manual', 'transcription', 'polish', 'rewrite', 'original'])
-    expect(f.runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/revisions/query', { record_uid: 'r1', limit: 50 }, { userId: 42 }, undefined)
+    expect(f.runtime.authenticatedPost).toHaveBeenCalledWith('/api/v1/records/revisions/query', { record_uid: 'r1', limit: 50, cursor_version: 0 }, { userId: 42 }, undefined)
     expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
   })
   it('preserves future revision kinds instead of silently skipping an intervening change', async () => {
@@ -52,14 +51,14 @@ describe('Record edit history', () => {
     expect(result.items[0]?.kind).toBe('other')
   })
   it('routes chat through its relation gate without falling back to owned reads', async () => {
-    const f = fixture({ items: [], has_more: true, next_cursor_edit_at: 100 })
-    expect(await f.service.page({ kind: 'chat', viewerUserId: 42, recordUid: 'r1', chatSessionUid: 's1', relationUid: 'rel1', recordOwnerUserId: 42 }, 200)).toEqual({ items: [], hasMore: true, nextCursorEditAt: 100 })
-    expect(f.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/revisions/query', { chat_session_uid: 's1', rel_uid: 'rel1', limit: 50, cursor_edit_at: 200 }, { userId: 42 }, undefined)
+    const f = fixture({ items: [], has_more: true, next_cursor_version: 100 })
+    expect(await f.service.page({ kind: 'chat', viewerUserId: 42, recordUid: 'r1', chatSessionUid: 's1', relationUid: 'rel1', recordOwnerUserId: 42 }, 200)).toEqual({ items: [], hasMore: true, nextCursorVersion: 100 })
+    expect(f.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/revisions/query', { chat_session_uid: 's1', rel_uid: 'rel1', limit: 50, cursor_version: 200 }, { userId: 42 }, undefined)
     expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
   })
   it('rejects a mixed-record response and non-progressing page rather than showing wrong history', async () => {
     await expect(fixture({ items: [{ ...revision('bad'), record_uid: 'other' }], has_more: false }).service.page(target, 0)).rejects.toThrow()
-    await expect(fixture({ items: [], has_more: true, next_cursor_edit_at: 200 }).service.page(target, 200)).rejects.toThrow()
+    await expect(fixture({ items: [], has_more: true, next_cursor_version: 200 }).service.page(target, 200)).rejects.toThrow()
     await expect(fixture({}).service.page(target, 0)).rejects.toThrow()
   })
   it('rejects changed accounts and invalid cursors before querying', async () => {
@@ -101,4 +100,13 @@ describe('Record edit history', () => {
     const f = fixture({}); f.runtime.authenticatedPost.mockRejectedValue(new Error('无权访问'))
     await expect(f.service.page(target, 0)).rejects.toThrow('无权访问')
   })
+})
+
+it('delegates member history to Chat but refuses private revision capture before any snapshot request', async () => {
+  const f = fixture({ items: [], has_more: false })
+  const peer = { kind: 'chat' as const, viewerUserId: 42, recordUid: 'r1', chatSessionUid: 's1', relationUid: 'rel1', recordOwnerUserId: 43 }
+  await expect(f.service.page(peer)).resolves.toEqual({ items: [], hasMore: false })
+  await expect(f.service.revision(peer, 'r2')).rejects.toMatchObject({ code: 'record-snapshot-private' })
+  expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+  expect(f.runtime.authenticatedChatPost).toHaveBeenCalledTimes(1)
 })

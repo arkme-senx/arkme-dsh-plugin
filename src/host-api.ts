@@ -2583,7 +2583,7 @@ export async function dispatchArkmeHostOperation(
       requestSignal,
     )
     case 'source.record-edit-history': return await service.recordEditHistoryPage(
-      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), numberParam(params, 'cursorEditAt', 0), requestSignal,
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), numberParam(params, 'cursorVersion', 0), requestSignal,
     )
     case 'source.record-revision-snapshot': return await service.recordRevisionSnapshot(
       stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), stringParam(params, 'revisionUid'), requestSignal,
