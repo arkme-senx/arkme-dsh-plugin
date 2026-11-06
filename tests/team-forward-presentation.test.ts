@@ -25,3 +25,10 @@ it('renders ordinary source envelopes as Team-owned copies without making the or
  expect(projection).toMatchObject({title:'转发快记',items:[{senderName:'原作者',textContent:'权威冻结正文',sourceType:'team_message'}]})
  expect(projection.items[0]).not.toHaveProperty('senderUserId')
 })
+
+it('retains the existing public team attribution badges on frozen ordinary copies',()=>{
+ const result=projectTeamForward({forward_records:{source_type:'quick_records',items:[{owner_name:'同事',text:'团队原文',source_representation:{team_id:'7',actor_user_id:13,name:'接待团队',jotmo_id:'support'},origin_representation:{team_id:'8',name:'原始团队',jotmo_id:'origin'}}]}},()=>[])!
+ expect(result.items[0]).toMatchObject({senderName:'同事',sourceTeam:{name:'接待团队',jotmoId:'support'},originTeam:{name:'原始团队',jotmoId:'origin'}})
+ expect(result.items[0]?.sourceTeam).toEqual({name:'接待团队',jotmoId:'support'})
+ expect(result.items[0]).not.toHaveProperty('senderUserId')
+})

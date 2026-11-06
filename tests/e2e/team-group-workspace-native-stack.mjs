@@ -168,6 +168,7 @@ try{
  const targetPage=await host.readTeamMessages(target.ref,{limit:30});assert.equal(targetPage.messages.length,1)
  const [fullForward]=await host.preflightTeamMessages(target.ref,[{messageRef:targetPage.messages[0].ref,version:targetPage.messages[0].version}])
  assert.equal(fullForward.forwardRecords?.items[0]?.textContent,uiText)
+ assert.equal(fullForward.forwardRecords?.items[0]?.sourceTeam?.jotmoId,'stack_team_7')
  const forwardWire=calls.filter(c=>c.path.endsWith('/conversations/messages/forward')).at(-1)
  assert(forwardWire?.input.record_sources[0].access_ref,'selected group audience reaches Team/Record source preparation')
  proof.teamForward={result:forwarded,detail:fullForward.forwardRecords}
