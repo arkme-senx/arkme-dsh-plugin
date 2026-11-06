@@ -75,6 +75,22 @@ it('shows the complete server count and original underline with no replies loade
   expect(open).toHaveBeenCalledWith(original)
 })
 
+it('clears personal summary projections and never polls the human-member-only summary from a delegated source', async () => {
+  const render = (accessKind: 'personal_membership' | 'team_delegation') => root.render(
+    <MessageQuoteThreadsProvider scope="same-account:chat" sourceRef="source" accessKind={accessKind} chat items={[original, reply]} onOpenComments={() => {}}>
+      <ArkmeMessageContent item={original} sourceRef="source"/><MessageQuoteThreadBadge item={original}/>
+    </MessageQuoteThreadsProvider>)
+  await act(async () => { render('personal_membership'); await tick() })
+  await vi.waitFor(() => expect(host.querySelector('[data-arkme-quote-comments]')?.textContent).toContain('125'))
+  vi.mocked(callArkme).mockClear()
+  await act(async () => { render('team_delegation'); await tick() })
+  await act(async () => { document.dispatchEvent(new Event('scroll')); window.dispatchEvent(new Event('focus')); invalidateMessageQuoteSources(); await tick() })
+  expect(callArkme).not.toHaveBeenCalled()
+  expect(host.querySelector('[data-arkme-quote-comments]')).toBeNull()
+  expect([...highlights.values()].flatMap(value => value.ranges)).toHaveLength(0)
+  expect(host.textContent).not.toContain('重试')
+})
+
 it('exposes a keyboard-accessible retry after failure and recovers the complete count', async () => {
   vi.mocked(callArkme).mockRejectedValue(new Error('评论汇总读取失败，请重试'))
   await act(async () => { root.render(<MessageQuoteThreadsProvider scope="retry:chat" sourceRef="source" chat items={[original]} onOpenComments={() => {}}>

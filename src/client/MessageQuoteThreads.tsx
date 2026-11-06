@@ -4,7 +4,7 @@ import type { ArkmeMessageExtensionSummaryItem } from '../message-extension-summ
 import { WorldPublicationBadge } from './WorldPublicationControls.js'
 import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { ChatCircleText } from '@phosphor-icons/react/dist/icons/ChatCircleText'
-import type { ArkmeTimelineItem } from '../types.js'
+import type { ArkmeSourceItem, ArkmeTimelineItem } from '../types.js'
 import { registeredMessageTargets } from './ArkmeMessageTextSelection.js'
 import { quoteDigest, quoteHighlightRange } from './message-quote-selection.js'
 import { MessageQuoteThreadStore } from './message-quote-threads.js'
@@ -20,15 +20,17 @@ export function useMessageQuoteThreads() {
   const revision = useSyncExternalStore(value?.store.subscribe ?? subscribeEmpty, value?.store.getSnapshot ?? emptyRevision, emptyRevision)
   return { ...value, revision }
 }
-export function MessageQuoteThreadsProvider({ scope, sourceRef, chat, items, onOpenComments, children }: {
-  scope: string; sourceRef?: string | undefined; chat: boolean; items: readonly ArkmeTimelineItem[]; onOpenComments(item: ArkmeTimelineItem): void; children: ReactNode
+export function MessageQuoteThreadsProvider({ scope, sourceRef, accessKind, chat, items, onOpenComments, children }: {
+  scope: string; sourceRef?: string | undefined; accessKind?: ArkmeSourceItem['accessKind']; chat: boolean; items: readonly ArkmeTimelineItem[]; onOpenComments(item: ArkmeTimelineItem): void; children: ReactNode
 }) {
-  const store = useMemo(() => new MessageQuoteThreadStore(chat), [scope, chat])
+  const store = useMemo(() => new MessageQuoteThreadStore(chat), [scope, chat, accessKind])
   useSyncExternalStore(store.subscribe, store.getSnapshot, emptyRevision)
   const open = useRef(onOpenComments); open.current = onOpenComments
   const value = useMemo(() => ({ store, open: (item: ArkmeTimelineItem) => { store.requestComments(item); open.current(item) } }), [store])
   useEffect(() => { store.ingest(items) }, [store, items])
   useEffect(() => {
+    // The summary owner requires human membership; delegation grants no such role.
+    if (accessKind === 'team_delegation') return
     if (!chat || !sourceRef) return subscribeMessageQuoteInvalidations(() => store.invalidate())
     if (typeof document === 'undefined' || typeof window === 'undefined') return
     const controller = new AbortController()
@@ -48,7 +50,7 @@ export function MessageQuoteThreadsProvider({ scope, sourceRef, chat, items, onO
     window.addEventListener('focus', recover); document.addEventListener('visibilitychange', visible)
     document.addEventListener('scroll', scroll, true)
     return () => { controller.abort(); refresh.dispose(); window.removeEventListener('focus', recover); document.removeEventListener('visibilitychange', visible); document.removeEventListener('scroll', scroll, true) }
-  }, [store, sourceRef, chat, items])
+  }, [store, sourceRef, accessKind, chat, items])
   return <context.Provider value={value}><MessageQuoteUnderlines store={store} sourceRef={sourceRef}/>{children}{store.notice && <button type="button" aria-live="polite" onClick={() => invalidateMessageQuoteSources()} style={{ border: 0, background: 'transparent', color: arkmeTheme.secondary, font: 'inherit', cursor: 'pointer', padding: 6 }}>{store.notice}</button>}</context.Provider>
 }
 export function MessageQuoteThreadBadge({ item }: { item: ArkmeTimelineItem }) {

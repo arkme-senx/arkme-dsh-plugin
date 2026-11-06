@@ -9785,7 +9785,7 @@ export function ArkmeSurface({
       chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey}
       onFill={composerTextDisabled || activeRecordReeditComposer || archiveReadOnly ? undefined : fillThoughtSuggestion}>
       <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={active && activeConversation ? source?.sourceRef : undefined}
-        chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
+        accessKind={source?.accessKind} chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
         {surfaceContent}
       </MessageQuoteThreadsProvider>
     </RecordThoughtsProvider>
