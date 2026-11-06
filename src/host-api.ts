@@ -1,3 +1,5 @@
+import type { LocalRecorderOwner } from './local-recorder/owner.js'
+import { callLocalRecorder } from './local-recorder/routes.js'
 import { ARRANGEMENT_OCCURRENCE_ACTIONS } from './arrangement-occurrence.js'
 import { exportSelection } from './services/record-export-range-service.js'
 import { DayReviewConfirmation } from './calendar-day-review-confirmation.js'
@@ -900,6 +902,7 @@ function captchaParam(params: Record<string, unknown>): ArkmeCaptchaResult {
 }
 
 export interface ArkmeHostApiOptions {
+  localRecorder?: LocalRecorderOwner
   expectedPort: number
   allowNonLoopback: boolean
   migrationManager?: AppMigrationManager
@@ -1067,6 +1070,15 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       if (request.operation === 'calendar.day-review.confirmation') {
         if (origin === undefined) throw new ArkmePluginError('origin-required', '确认状态需要当前页面来源', false, 403)
         writeJson(res, 200, { ok: true, value: await dayReviewConfirmation.status(stringParam(params, 'confirmationId')) }, started)
+        return
+      }
+      if (request.operation.startsWith('recorders.local.')) {
+        if (!isLoopback(req.socket.remoteAddress) || origin === undefined
+          || new URL(origin).host !== req.headers.host || !['http:', 'https:'].includes(new URL(origin).protocol)) {
+          throw new ArkmePluginError('origin-required', '本地设备只能从当前本机页面操作', false, 403)
+        }
+        if (!options.localRecorder) throw new ArkmePluginError('local-recorder-unavailable', '请升级桌面端以使用本地设备', false, 501)
+        writeJson(res, 200, { ok: true, value: await callLocalRecorder(options.localRecorder, request.operation, params, controller.signal) }, started)
         return
       }
       const value = await measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
