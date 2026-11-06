@@ -14,10 +14,13 @@ import {subscribeTeamWorkspaceChanges} from './team-messaging-events.js'
 export function TeamGroupSourceCards({accountKey,conversation}:{accountKey:string;conversation:TeamConversation}) {
   useArkmeLocale()
   const [page,setPage]=useState<TeamGroupPage<TeamGroupSourceCard>>(),[error,setError]=useState(''),[busy,setBusy]=useState(false)
-  const request=useRef<AbortController>(),latest=useRef(page)
-  const load=useCallback(async(more=false)=>{
-    if(request.current)return
-    const controller=new AbortController();request.current=controller;setBusy(true);setError('')
+  const request=useRef<AbortController>(),lifecycle=useRef<AbortController>(),refreshPending=useRef(false),latest=useRef(page)
+  const load=useCallback(async(more=false):Promise<void>=>{
+    const life=lifecycle.current
+    if(!life||life.signal.aborted)return
+    if(request.current){if(!more)refreshPending.current=true;return}
+    if(more&&!latest.current?.hasMore)return
+    const controller=new AbortController();request.current=controller;refreshPending.current=false;setBusy(true);setError('')
     try {
       const next=await callArkme<TeamGroupPage<TeamGroupSourceCard>>('team.app.sources.cards',{expectedAccountKey:accountKey,conversationRef:conversation.ref,...(more?{cursor:latest.current?.nextCursor}:{})},controller.signal)
       if(controller.signal.aborted)return
@@ -25,17 +28,25 @@ export function TeamGroupSourceCards({accountKey,conversation}:{accountKey:strin
       const value={...next,items:[...new Map([...(more?latest.current?.items??[]:[]),...next.items].map(card=>[card.key,card])).values()]}
       latest.current=value;setPage(value)
     }catch(e){if(!controller.signal.aborted){setError(e instanceof Error?e.message:tr('来源群暂不可用'));setPage(undefined);latest.current=undefined}}
-    finally{if(request.current===controller)request.current=undefined;if(!controller.signal.aborted)setBusy(false)}
+    finally{
+      if(request.current===controller){
+        request.current=undefined
+        if(!life.signal.aborted){setBusy(false);if(refreshPending.current)void load()}
+      }
+    }
   },[accountKey,conversation.ref])
   useEffect(()=>{
+    const life=new AbortController();lifecycle.current=life;refreshPending.current=false
+    latest.current=undefined;setPage(undefined);setBusy(false);setError('')
     void load()
     const stop=subscribeTeamWorkspaceChanges(account=>{if(account===accountKey)void load()})
     const focus=()=>{void load()},timer=setInterval(()=>{if(document.visibilityState==='visible')void load()},60_000)
     window.addEventListener('focus',focus)
-    return()=>{request.current?.abort();request.current=undefined;stop();clearInterval(timer);window.removeEventListener('focus',focus)}
+    return()=>{life.abort();request.current?.abort();request.current=undefined;refreshPending.current=false;stop();clearInterval(timer);window.removeEventListener('focus',focus)}
   },[accountKey,load])
   const reply=async(card:TeamGroupSourceCard)=>{
-    if(request.current)return
+    const life=lifecycle.current
+    if(!life||life.signal.aborted||request.current)return
     const controller=new AbortController();request.current=controller;setBusy(true);setError('')
     try {
       const value=await callArkme<{source:ArkmeSourceItem;item:ArkmeTimelineItem}>('team.app.sources.locate',{expectedAccountKey:accountKey,anchorRef:card.latestRef},controller.signal)
@@ -45,7 +56,12 @@ export function TeamGroupSourceCards({accountKey,conversation}:{accountKey:strin
       arkmeComposerDraftStore.setExtensionTarget(key,value.item)
       arkmeUi.selectSource(value.source,true)
     }catch(e){if(!controller.signal.aborted)setError(e instanceof Error?e.message:tr('来源群暂不可用'))}
-    finally{if(request.current===controller)request.current=undefined;if(!controller.signal.aborted)setBusy(false)}
+    finally{
+      if(request.current===controller){
+        request.current=undefined
+        if(!life.signal.aborted){setBusy(false);if(refreshPending.current)void load()}
+      }
+    }
   }
   if(!page?.items.length&&!error&&!conversation.sourceOnly&&!conversation.hasGroupSources)return null
   return <section aria-label={tr('来源群聊')} style={{padding:'8px 16px',borderBottom:`1px solid ${arkmeTheme.borderSoft}`,fontSize:12,maxHeight:'25%',minHeight:0,overflowY:'auto',flexShrink:1}}>

@@ -25,7 +25,7 @@ import {openedTeamConversations} from './team-opened-conversations.js'
 export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChannel,selectedKey,onBack}:{accountKey:string;teamRef:string;channel?:TeamChannel|undefined;selectedKey?:string|undefined;onBack():void}) {
   useArkmeLocale()
   const [channel,setChannel]=useState(initialChannel),[rows,setRows]=useState<TeamWorkspaceEntry[]>([]),[page,setPage]=useState<TeamWorkspacePage>(),[loading,setLoading]=useState(false),[error,setError]=useState(''),[pinRows,setPinRows]=useState<TeamWorkspaceEntry[]>([]),[showRemoved,setShowRemoved]=useState(false)
-  const controller=useRef<AbortController>(),lifecycle=useRef<AbortController>(),latest=useRef(page),scroll=useRef<HTMLDivElement>(null),sentinel=useRef<HTMLDivElement>(null),restored=useRef(false)
+  const controller=useRef<AbortController>(),lifecycle=useRef<AbortController>(),refreshPending=useRef(false),latest=useRef(page),scroll=useRef<HTMLDivElement>(null),sentinel=useRef<HTMLDivElement>(null),restored=useRef(false)
   const scope=JSON.stringify([accountKey,channel?.jotmoId??teamRef])
   const preferences=useTeamDirectoryPreferences(accountKey)
   const privateDirectory=useSyncExternalStore(subscribeTeamDirectory,()=>readTeamDirectory(accountKey),()=>readTeamDirectory(accountKey))
@@ -61,11 +61,14 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
     })().catch(()=>{if(!request.signal.aborted)setPinRows([])})
     return()=>request.abort()
   },[accountKey,teamRef,rows,channel])
-  const load=useCallback(async(more=false)=>{
-    if(controller.current||lifecycle.current?.signal.aborted)return
+  const load=useCallback(async(more=false):Promise<void>=>{
+    const life=lifecycle.current
+    if(!life||life.signal.aborted)return
+    // A head invalidation supersedes paging; repeated hints need only one read.
+    if(controller.current){if(!more)refreshPending.current=true;return}
     const previous=latest.current
     if(more&&(!previous?.hasMore||!previous.complete))return
-    const request=new AbortController();controller.current=request;setLoading(true);setError('')
+    const request=new AbortController();controller.current=request;refreshPending.current=false;setLoading(true);setError('')
     try {
       const next=await callArkme<TeamWorkspacePage>('team.app.workspace',{expectedAccountKey:accountKey,teamRef,...(more?{cursor:previous!.nextCursor}:{})},request.signal)
       if(request.signal.aborted)return
@@ -76,18 +79,24 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
       if(request.signal.aborted)return
       setError(e instanceof Error?e.message:tr('团队目录暂时无法加载'))
       if(/team-(not_accessible|account-changed)|login-|team_group_(forbidden|membership_stale)/.test(String((e as {body?:{code?:string}})?.body?.code))){setRows([]);setPinRows([]);latest.current=undefined;setPage(undefined)}
-    } finally {if(controller.current===request)controller.current=undefined;if(!request.signal.aborted)setLoading(false)}
+    } finally {
+      if(controller.current===request){
+        controller.current=undefined
+        if(!life.signal.aborted){setLoading(false);if(refreshPending.current)void load()}
+      }
+    }
   },[accountKey,teamRef])
   useEffect(()=>{if(initialChannel)setChannel(initialChannel)},[initialChannel])
   useEffect(()=>{
-    const life=new AbortController();lifecycle.current=life
+    const life=new AbortController();lifecycle.current=life;refreshPending.current=false
+    latest.current=undefined;setPage(undefined);setRows([]);setPinRows([]);setLoading(false);setError('')
     if(!initialChannel)void callArkme<TeamChannel>('team.app.channel',{expectedAccountKey:accountKey,teamRef},life.signal).then(value=>{if(!life.signal.aborted){setChannel(value);arkmeUi.resolveTeamDirectory(teamRef,value)}}).catch(e=>{if(!life.signal.aborted)setError(e instanceof Error?e.message:tr('团队暂不可用'))})
     void load()
     const stop=subscribeTeamMessageChanges(account=>{if(account===accountKey)void load()})
     const stopWorkspace=subscribeTeamWorkspaceChanges(account=>{if(account===accountKey)void load()})
     const focus=()=>{void load()},timer=setInterval(()=>{if(document.visibilityState==='visible')void load()},60_000)
     window.addEventListener('focus',focus)
-    return()=>{life.abort();controller.current?.abort();stop();stopWorkspace();clearInterval(timer);window.removeEventListener('focus',focus)}
+    return()=>{life.abort();controller.current?.abort();controller.current=undefined;refreshPending.current=false;stop();stopWorkspace();clearInterval(timer);window.removeEventListener('focus',focus)}
   },[accountKey,teamRef,load])
   useLayoutEffect(()=>{
     if((!page&&!allRows.length)||!channel||restored.current||!scroll.current)return

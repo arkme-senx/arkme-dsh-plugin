@@ -11,7 +11,7 @@ const {call,prefs,legacy}=vi.hoisted(()=>({call:vi.fn(),prefs:{} as Record<strin
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
 vi.mock('../src/client/team-conversation-directory.js',()=>({readTeamDirectory:()=>legacy,subscribeTeamDirectory:()=>()=>{}}))
 vi.mock('../src/client/team-directory-preferences.js',async original=>({...await original<typeof import('../src/client/team-directory-preferences.js')>(),useTeamDirectoryPreferences:()=>prefs}))
-vi.mock('../src/client/TeamMessagingPanel.js',()=>({TeamConversationRow:({conversation,onClick}:{conversation:TeamConversation;onClick():void})=><button role="treeitem" onClick={onClick}>{conversation.visitor?.nickname}</button>}))
+vi.mock('../src/client/TeamMessagingPanel.js',()=>({TeamConversationRow:({conversation,onClick}:{conversation:TeamConversation;onClick():void})=><button role="treeitem" data-last-seq={conversation.lastSeq} onClick={onClick}>{conversation.visitor?.nickname}</button>}))
 const channel={teamRef:'selected-team',jotmoId:'support',name:'Support'} as TeamChannel
 const customer=(key:string,at:number)=>({entryKey:key,key,ref:`ref-${key}`,side:'team',channel,visitor:{nickname:key},lastSeq:1,updatedAt:at,unread:0} as TeamConversation)
 let host:HTMLDivElement,root:Root
@@ -61,4 +61,75 @@ it('removes previously displayed group rows when current admission becomes stale
  await act(async()=>window.dispatchEvent(new Event('focus')))
  expect(host.textContent).not.toContain('客户群')
  expect(host.querySelector('[role="alert"]')).not.toBeNull()
+})
+
+import {invalidateTeamMessages,invalidateTeamWorkspace} from '../src/client/team-messaging-events.js'
+for(const hint of ['message','workspace'])it(`retains a ${hint} refresh received during an older pending page`,async()=>{
+ let release!:(v:TeamWorkspacePage)=>void,reads=0
+ const pending=new Promise<TeamWorkspacePage>(resolve=>{release=resolve})
+ const fresh:TeamWorkspacePage={...page,items:[{kind:'customer',key:'new-contact',activityAt:400,conversation:customer('new-contact',400)}]}
+ call.mockImplementation(async operation=>operation==='team.app.workspace'?(++reads===1?pending:fresh):{schemaVersion:2,items:[],hasMore:false})
+ await mount()
+ expect(reads).toBe(1)
+ await act(async()=>{if(hint==='message')invalidateTeamMessages('test:90',false,{kind:'team.message.published'});else invalidateTeamWorkspace('test:90')})
+ await act(async()=>{release({...page,items:[]});await Promise.resolve()})
+ expect(reads,'the completed old page must be followed by the invalidated head read').toBe(2)
+ expect(host.textContent).toContain('new-contact')
+})
+
+it('keeps a first-publish head refresh while an older contact page is pending',async()=>{
+ const before={...customer('用户5',100),lastSeq:0,memberInitiated:true}
+ const oldPage={...page,items:[{kind:'customer' as const,key:before.key,activityAt:100,conversation:before}]}
+ const after={...before,lastSeq:1,updatedAt:200,preview:{text:'已发布的首条消息',status:'available',hasMedia:false}}
+ let release!:(p:TeamWorkspacePage)=>void,reads=0
+ const pending=new Promise<TeamWorkspacePage>(resolve=>{release=resolve})
+ call.mockImplementation(async op=>op==='team.app.workspace'?(++reads===1?oldPage:reads===2?pending:{...oldPage,items:[{kind:'customer',key:after.key,activityAt:200,conversation:after}]}):{schemaVersion:2,items:[],hasMore:false})
+ await mount();expect(host.querySelector('[data-last-seq]')?.getAttribute('data-last-seq')).toBe('0')
+ await act(async()=>window.dispatchEvent(new Event('focus')))
+ await act(async()=>invalidateTeamMessages('test:90',false,{kind:'team.message.published',conversationKeys:[before.key]}))
+ await act(async()=>release(oldPage))
+ expect(reads,'published data must supersede the page requested before publication').toBe(3)
+ expect(host.querySelector('[data-last-seq]')?.getAttribute('data-last-seq')).toBe('1')
+})
+
+
+it('coalesces head hints during paging and drains them even when the page fails',async()=>{
+ let reject!:(e:Error)=>void,reads=0
+ const pending=new Promise<TeamWorkspacePage>((_,fail)=>{reject=fail})
+ const fresh={...page,items:[{kind:'customer' as const,key:'fresh',activityAt:400,conversation:customer('fresh',400)}]}
+ call.mockImplementation(async op=>op==='team.app.workspace'?(++reads===1?{...page,hasMore:true,nextCursor:'older'}:reads===2?pending:fresh):{schemaVersion:2,items:[],hasMore:false})
+ await mount()
+ await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='加载更多')!.click())
+ await act(async()=>{for(let i=0;i<5;i++)invalidateTeamWorkspace('test:90');window.dispatchEvent(new Event('focus'))})
+ expect(reads).toBe(2)
+ await act(async()=>reject(new Error('old page unavailable')))
+ expect(reads).toBe(3)
+ expect(call.mock.calls.filter(([op])=>op==='team.app.workspace').map(([,params])=>params.cursor)).toEqual([undefined,'older',undefined])
+ expect(host.textContent).toContain('fresh')
+ expect(host.querySelector('[role="alert"]')).toBeNull()
+})
+
+it('starts the new account read immediately and never publishes or drains the disposed account',async()=>{
+ let release!:(p:TeamWorkspacePage)=>void
+ const pending=new Promise<TeamWorkspacePage>(resolve=>{release=resolve})
+ call.mockImplementation(async(op,params)=>op==='team.app.workspace'?(params.expectedAccountKey==='test:90'?pending:{...page,items:[]}):{schemaVersion:2,items:[],hasMore:false})
+ await mount()
+ await act(async()=>invalidateTeamWorkspace('test:90'))
+ const oldSignal=call.mock.calls.find(([op])=>op==='team.app.workspace')![2] as AbortSignal
+ await act(async()=>root.render(<TeamWorkspaceDirectory accountKey="test:91" teamRef={channel.teamRef} channel={channel} onBack={()=>{}}/>))
+ expect(oldSignal.aborted).toBe(true)
+ await act(async()=>release(page))
+ expect(call.mock.calls.filter(([op])=>op==='team.app.workspace').map(([,params])=>params.expectedAccountKey)).toEqual(['test:90','test:91'])
+ expect(host.textContent).not.toContain('客户群')
+})
+
+it('cancels an invalidated read on unmount without starting its queued refresh',async()=>{
+ let release!:(p:TeamWorkspacePage)=>void,reads=0
+ call.mockImplementation(async op=>op==='team.app.workspace'?(reads++,new Promise<TeamWorkspacePage>(resolve=>{release=resolve})):{schemaVersion:2,items:[],hasMore:false})
+ await mount()
+ await act(async()=>invalidateTeamWorkspace('test:90'))
+ await act(async()=>root.render(null))
+ await act(async()=>release(page))
+ expect(reads).toBe(1)
+ expect(host.textContent).toBe('')
 })
