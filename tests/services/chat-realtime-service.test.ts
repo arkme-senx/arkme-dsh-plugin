@@ -1404,6 +1404,19 @@ it.each(['current','other-account','aborted','disposed'] as const)('fences nativ
  service.dispose();runtime.dispose()
 })
 
+it.each(['current','other-account','aborted','disposed'] as const)('fences private extension hints to the receiving login: %s', async scenario => {
+ const runtime=new ServiceRuntime(config,{async read(){return {userId:42,accessToken:'access',refreshToken:'refresh'}},async write(){},async delete(){}} as ArkmeSessionStore,{} as StateStore)
+ const source=new SourceService(runtime,new ProfileService(runtime),{async summary(){return {recordCount:0,wordsCount:0,totalSec:0}},recordItem(){return undefined}})
+ const service=new ChatRealtimeService(runtime,source,{chatTimelineItems:vi.fn(async()=>[])})
+ const events:ArkmeChatClientEvent[]=[];service.subscribeChatRealtime(event=>events.push(event))
+ const controller=new AbortController();if(scenario==='aborted')controller.abort()
+ if(scenario==='disposed')service.dispose()
+ service.handleChatRealtimeNotice({cause:'projection-invalidation',state:{revision:1,connected:true,connectionGeneration:1},connectionUserId:scenario==='other-account'?43:42,connectionSignal:controller.signal,projectionInvalidation:{eventUid:'private-extension-event',projection:'chat_extensions',eventAtMillis:1}})
+ await new Promise(resolve=>setTimeout(resolve,10))
+ if(scenario==='current')expect(events).toEqual([expect.objectContaining({type:'projection-invalidated',projection:'chat_extensions'})]);else expect(events).toEqual([])
+ service.dispose();runtime.dispose()
+})
+
 it('forwards a real annotation SSE frame through the receiving account fence', async () => {
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
   const runtime = new ServiceRuntime(config, {
