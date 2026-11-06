@@ -1,6 +1,6 @@
 import type { ArkmeConversationMemberJoinEvent, ArkmeConversationMemberJoinPerson, ArkmeInterwovenMention, ArkmeMemberEvent, ArkmeTimelineItem } from './types.js'
 
-export const CHAT_TIMELINE_SOURCES = ['messages', 'interwoven', 'group_metadata', 'member_left', 'ai_polish', 'world_public', 'wechat_import', 'offline_context'] as const
+export const CHAT_TIMELINE_SOURCES = ['messages', 'interwoven', 'group_metadata', 'member_left', 'ai_polish', 'world_public', 'wechat_import', 'offline_context','team_membership'] as const
 export type ArkmeTimelineSource = typeof CHAT_TIMELINE_SOURCES[number]
 export type ArkmeTimelineMode = 'initial' | 'older' | 'newer' | 'around' | 'refresh'
 export interface ArkmeUnifiedTimelineQuery {

@@ -13,3 +13,10 @@ it('accepts only canonical system sources and authenticated purpose-scoped refer
  const token = new TimelineTokenCodec('key', JSON.stringify(['test', 1, 'chat'])).seal(JSON.stringify(['group_metadata', 'id']), 'cursor')
  expect(() => codec.open(token)).toThrow()
 })
+
+it('binds team system anchors to the selected admission frame',()=>{
+ const team=systemTimelineAnchorCodec('key','test',1,'chat','team42-admission2')
+ const ref=team.seal('team_membership','team-group:event')
+ expect(team.open(ref)).toEqual({anchor_source:'team_membership',anchor_id:'team-group:event'})
+ for(const other of [undefined,'team43-admission2','team42-admission3']) expect(()=>systemTimelineAnchorCodec('key','test',1,'chat',other).open(ref)).toThrow()
+})

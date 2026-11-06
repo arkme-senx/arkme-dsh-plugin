@@ -69,7 +69,7 @@ describe('record re-edit mention identities', () => {
     const result = await metadataFromInputs(payload, '@小明 原文', '@小明 @小红', [original,
       { mentionRef: 'signed-chat-ref', displayName: '小红', startIndex: 4, length: 3 },
     ], source, validate, 'plain')
-    expect(validate).toHaveBeenCalledWith([{ mentionRef: 'signed-chat-ref', startIndex: 4, length: 3 }], [])
+    expect(validate).toHaveBeenCalledWith([{ mentionRef: 'signed-chat-ref', startIndex: 4, length: 3 }], [],[])
     expect(result?.human_mentions).toHaveLength(2)
   })
   it.each([
@@ -157,7 +157,7 @@ describe('record re-edit mention identities', () => {
     const metadata = (written?.content_payload as Record<string, unknown>).mention_metadata
     if (remove) expect(metadata).toBeUndefined()
     else expect(metadata).toMatchObject({ human_mentions: [{ user_id: 17, start_index: 3, length: 3 }, ...(adding ? [{ user_id: 99, start_index: 7, length: 3 }] : [])] })
-    if (adding) expect(validate).toHaveBeenCalledWith(source, '😀 @小明 @小红 更新', [{ mentionRef: 'new-human', startIndex: 7, length: 3 }], [], session, 'plain')
+    if (adding) expect(validate).toHaveBeenCalledWith(source, '😀 @小明 @小红 更新', [{ mentionRef: 'new-human', startIndex: 7, length: 3 }], [], session, 'plain',[])
     service.dispose()
   })
 })

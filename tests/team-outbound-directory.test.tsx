@@ -39,6 +39,9 @@ beforeEach(() => {
     if (op === 'team.app.teams') return [{ ...channel, currentUserRole: 'member' }]
     if (op === 'team.app.outbound.open') return { state: 'ready', conversation }
     if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+    if (op === 'team.app.workspace') return { items: [], hasMore: false, complete: true, resetRequired: false, unavailableSources: [] }
+    if (op === 'team.app.workspace.request') return []
+    if (op === 'team.app.sources.cards') return { items: [], hasMore: false }
     if (op === 'team.app.conversations') return { items: [], hasMore: false }
     throw new Error(`Unexpected operation: ${op}`)
   })
@@ -63,11 +66,14 @@ it('clicking the group member contact opens the pane and selected second-column 
 
 it('scrolls the selected row into view without changing pin order, including after delayed initial scroll restoration', async () => {
   const oldRows = Array.from({ length: 10 }, (_, i) => ({ ...conversation, key: `existing-${i}`, ref: `ref-${i}`, updatedAt: 200 + i, lastSeq: 1 }))
-  let release!: (value: unknown) => void
-  const initial = new Promise(resolve => { release = resolve })
+  let release!: (value: {items: TeamConversation[]; hasMore: boolean}) => void
+  const initial = new Promise<{items: TeamConversation[]; hasMore: boolean}>(resolve => { release = resolve })
   mock.mockImplementation(async (op: string) => op === 'team.app.teams' ? [{ ...channel, currentUserRole: 'member' }]
     : op === 'team.app.outbound.open' ? { state: 'ready', conversation }
-    : op === 'team.app.timeline' ? { conversation, messages: [], hasMore: false, beforeSeq: 0 } : initial)
+    : op === 'team.app.timeline' ? { conversation, messages: [], hasMore: false, beforeSeq: 0 }
+    : op === 'team.app.sources.cards' ? { items: [], hasMore: false }
+    : op === 'team.app.workspace.request' ? []
+    : op === 'team.app.workspace' ? initial.then((page) => ({ ...page, complete: true, resetRequired: false, unavailableSources: [], items: page.items.map((conversation: TeamConversation) => ({ kind: 'customer', key: conversation.key, activityAt: conversation.updatedAt, conversation })) })) : initial)
   vi.spyOn(arkmeUi, 'readTeamDirectoryScroll').mockReturnValue(400)
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
     const isSelected = this.dataset.teamConversationKey === conversation.key

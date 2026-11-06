@@ -307,6 +307,11 @@ export class ChatRealtimeService {
     if (notice.cause === 'team-invalidation') {
       void this.runtime.accountScopedSession().then(async session => {
         if (!session || session.userId !== notice.connectionUserId || notice.connectionSignal?.aborted) return
+        if(notice.teamChange?.kind==='team.group.changed'&&notice.teamChange.groupUid) {
+          const sourceKey=await this.source.chatDirectorySourceKey(session.userId,notice.teamChange.groupUid)
+          if(notice.connectionSignal?.aborted)return
+          this.emitChatClientEvent({type:'members-invalidated',revision:this.nextChatClientRevision(),sourceKey})
+        }
         const change=notice.teamChange&&this.teamChange?await this.teamChange(notice.teamChange,session.userId).catch(()=>undefined):undefined
         const current=await this.runtime.accountScopedSession()
         if(current?.userId!==session.userId || current.refreshToken!==session.refreshToken || notice.connectionSignal?.aborted)return
@@ -1703,7 +1708,15 @@ export class ChatRealtimeService {
 
   emitChatClientEvent(event: ArkmeChatClientEvent): void {
     for (const listener of [...this.chatClientListeners]) listener(event)
+    if(['timeline-changed','members-invalidated','member-events-invalidated','message-arrived','message-preparing','thought-invalidated'].includes(event.type)&&'sourceKey' in event&&event.sourceKey) {
+      for(const sourceKey of this.audienceSourceAliases?.(event.sourceKey)??[]) {
+        const scoped={...event,sourceKey,revision:this.nextChatClientRevision()}
+        for(const listener of [...this.chatClientListeners])listener(scoped)
+      }
+    }
   }
+
+  audienceSourceAliases?: (sourceKey:string)=>string[]
 
   nextChatClientRevision(): number {
     this.chatClientRevision += 1

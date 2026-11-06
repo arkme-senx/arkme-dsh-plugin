@@ -192,6 +192,10 @@ interface ArkmeEnvelope<T> {
 type ArkmePostBody = Record<string, unknown> | FormData
 
 export interface ArkmeRemoteRequestOptions {
+  /** Exact top-level decimal-string IDs declared by this owner protocol. */
+  stringIdFields?:readonly string[]
+  /** Explicit Chat source frame; Host-only and never part of a consumer DTO. */
+  chatAccessRef?: string
   /** Reserved for realtime message projection; only exact read routes are eligible. */
   traffic?: 'message-sync'
   lane?: ArkmeRequestLane
@@ -667,7 +671,7 @@ export class ServiceRuntime {
     const projectionLane = this.messageSyncLane.getStore()
     // Match owner and exact read routes: mutations/auth refresh must keep their existing admission.
     const messageSync = baseUrl === this.config.chatBaseUrl
-      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
+      && ['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2','/api/v1/chat/timeline/unified/v3', '/api/v1/chat/timeline/tail', '/api/v1/chat/sync/account'].includes(path)
       || (projectionLane !== undefined || options.traffic === 'message-sync') && (
         baseUrl === this.config.authBaseUrl && path === '/api/v1/auth/get-public-users-by-ids'
         || baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/display-snapshots', '/api/v1/chats/detail'].includes(path)
@@ -699,7 +703,7 @@ export class ServiceRuntime {
       ...(read ? {
         lane: lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
         route,
-        key: `owner-read:${route}:${stableReadParameters(body)}`,
+        key: `owner-read:${route}:${stableReadParameters(body)}${options.stringIdFields?.length?`:string-ids:${[...options.stringIdFields].sort().join(",")}`:""}`,
         cacheMs: 0,
         failureCooldownMs: 0,
         cancelWhenUnobserved: true,
@@ -715,7 +719,7 @@ export class ServiceRuntime {
         let errorCode: string | undefined
         try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
           baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
-          preserveHttpError, preserveForbiddenError, requestTimeoutMs,
+          preserveHttpError, preserveForbiddenError, requestTimeoutMs, options.chatAccessRef,options.stringIdFields,
         )) } catch (error) {
           if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
           throw error
@@ -747,6 +751,8 @@ export class ServiceRuntime {
     preserveHttpError = false,
     preserveForbiddenError = false,
     requestTimeoutMs = this.config.requestTimeoutMs,
+    chatAccessRef?: string,
+    stringIdFields:readonly string[]=[],
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
@@ -766,12 +772,13 @@ export class ServiceRuntime {
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
         method: 'POST',
         headers: {
+          ...(chatAccessRef ? { 'X-Chat-Access-Ref': chatAccessRef } : {}),
           ...(multipart ? {} : { 'Content-Type': 'application/json' }),
           'Accept-Language': 'zh-CN',
           Usersource: '3',
           ...(bearer === undefined ? {} : { Authorization: `Bearer ${bearer}` }),
         },
-        body: multipart ? body : stringifyOwnerJson(body),
+        body: multipart ? body : stringifyOwnerJson(body,stringIdFields),
         signal: controller.signal,
       })
       if (response.status === 401 || (response.status === 403 && !preserveForbiddenError)) {
@@ -956,12 +963,12 @@ export class ServiceRuntime {
     defaultLane: ArkmeRequestLane,
     options: ArkmeRemoteRequestOptions,
   ): ArkmeRemoteRequestOptions {
-    return {
-      ...options,
-      scope: this.requestScope(session.userId),
-      service,
-      lane: options.lane ?? defaultLane,
+    let scope=this.requestScope(session.userId)
+    if(options.chatAccessRef!==undefined) {
+      if(!options.chatAccessRef||options.chatAccessRef.length>4096||/[\r\n]/.test(options.chatAccessRef))throw new ArkmePluginError('source-ref-invalid','团队群来源无效',false,400)
+      scope+=`:group:${createHash('sha256').update(options.chatAccessRef).digest('hex')}`
     }
+    return { ...options, scope, service, lane: options.lane ?? defaultLane }
   }
 
   async authenticatedAuthGet<T>(
@@ -1177,7 +1184,7 @@ export class ServiceRuntime {
     }
   }
 
-  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false): Promise<T> {
+  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false,wire:Pick<ArkmeRemoteRequestOptions,'stringIdFields'>={}): Promise<T> {
     const origin = this.config.teamBaseUrl
     if (!origin) throw new ArkmePluginError('team-service-unavailable', '团队服务地址未配置', false, 503)
     let session = initialSession ?? await this.requireSession()
@@ -1187,7 +1194,7 @@ export class ServiceRuntime {
       'analysis/result', 'analysis/words', 'dates', 'participants', 'exports/download',
     ].some(action => path === `/api/v1/team/conversations/history/${action}`)
     const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', {
-      bypassCache: true, cacheMs: 0,
+      ...wire,bypassCache: true, cacheMs: 0,
       ...(snapshotRead ? { requestTimeoutMs: Math.max(150_000, this.config.requestTimeoutMs) } : {}),
     })
     try {
@@ -1296,8 +1303,12 @@ export class ServiceRuntime {
     return await this.authenticatedMediaStream('record', path, { ...options, body })
   }
 
+  async authenticatedRecordSourceStream(body:Record<string,unknown>,options:{expectedUserId:number;range?:string;signal?:AbortSignal;method?:'GET'|'HEAD'}):Promise<Response> {
+    return this.authenticatedMediaStream('record','/api/v1/content/source-stream',{...options,body,sourceAttachment:true})
+  }
+
   private async authenticatedMediaStream(service: 'audio' | 'record', path: string, options: {
-    expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>
+    expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean
   }): Promise<Response> {
     const session = await this.requireSession()
     const opening = new AbortController()
@@ -1314,7 +1325,7 @@ export class ServiceRuntime {
   }
 
   private async openMediaStream(service: 'audio' | 'record', path: string, options: {
-    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>
+    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean
   }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
     const base = new URL(service === 'audio' ? this.config.audioBaseUrl : this.config.recordBaseUrl)
     const url = new URL(path, base)
@@ -1346,7 +1357,7 @@ export class ServiceRuntime {
       return await this.fetchImpl(url, {
         method: options.body === undefined ? options.method ?? 'GET' : 'POST',
         headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.range === undefined ? {} : { Range: options.range }), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
-        ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+        ...(options.body === undefined ? {} : { body: options.sourceAttachment ? stringifyOwnerJson(options.body) : JSON.stringify(options.body) }),
         redirect: 'error', signal,
       })
     }
@@ -1380,7 +1391,8 @@ export class ServiceRuntime {
       // Binary endpoints can return the same JSON error envelope as other
       // service APIs. Preserve it for the business owner, without allowing an
       // unbounded body or bypassing the opening deadline/account fence.
-      if (mime === 'application/json' && response.body !== null) {
+      const sourceAttachment=options.sourceAttachment===true&&response.headers.get('X-Jotmo-Source-Stream')==='1'
+      if (mime === 'application/json' && response.body !== null && !sourceAttachment) {
         const reader = response.body.getReader()
         const chunks: Uint8Array[] = []
         let size = 0
@@ -1411,9 +1423,9 @@ export class ServiceRuntime {
         }
         throw invalid()
       }
-      if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length <= 0
+      if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length < 0 || length===0&&!sourceAttachment
         || (options.maxBytes !== undefined && length > options.maxBytes)
-        || !(service === 'audio' ? ['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'] : ['image/png', 'image/jpeg', 'image/webp']).includes(mime)
+        || (options.sourceAttachment? !sourceAttachment||!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mime):!(service === 'audio' ? ['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'] : ['image/png', 'image/jpeg', 'image/webp']).includes(mime))
         || (options.method !== 'HEAD' && response.body === null)) throw invalid()
       if (response.status === 206) {
         const returned = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')

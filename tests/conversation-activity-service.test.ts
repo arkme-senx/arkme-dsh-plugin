@@ -106,3 +106,17 @@ describe('activity owner adapter', () => {
     f.post.mockResolvedValueOnce({ ...raw, ...patch }); await expect(f.service.source(input)).rejects.toThrow()
   }
  })
+
+ it.each(['read', 'participants', 'messages', 'source'] as const)('keeps the explicit delegation frame on %s and never retries personally',async operation=>{
+  const f=fixture('group_chat')
+  f.sources.openSourceRef.mockResolvedValue({kind:'group_chat',ownerRef:'chat1',groupDelegation:{accessRef:'signed-team-frame'}} as never)
+  f.post.mockImplementation(async path=>{
+   if(path.endsWith('/capabilities'))return capability
+   throw new Error('scope-revoked')
+  })
+  const input={...q,requestId:'00000000-0000-4000-8000-000000000000',resultId:'r1',wordKey:'word',messageSourceRef:'opaque',hour:9,weekday:2}
+  await expect(f.service[operation](input)).rejects.toThrow('scope-revoked')
+  expect(f.post).toHaveBeenCalled()
+  for(const call of f.post.mock.calls) expect(call[4]).toMatchObject({chatAccessRef:'signed-team-frame',cacheMs:0,bypassCache:true})
+  expect(f.post.mock.calls.filter(c=>!c[0].endsWith('/capabilities'))).toHaveLength(1)
+ })

@@ -1,5 +1,6 @@
 import type { TranscriptViewPort } from '../transcript-view-contract.js'
 export type { TranscriptViewTarget,TranscriptViewReference,TranscriptViewSourceReference,TranscriptViewCommand,TranscriptViewReadItem,TranscriptViewSnapshot,PersonalTranscriptEntry,TranscriptViewReceipt,TranscriptViewSavedPage } from '../transcript-view-contract.js'
+export type {ArkmeTeamMentionInput} from '../types.js'
 export type { ArkmeRecordEditHistoryPage, ArkmeRecordRevision, ArkmeRecordRevisionSnapshot } from '../record-edit-history.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
@@ -1036,14 +1037,14 @@ export class ArkmeSdk {
   private async requireTeamEntries(signal?: AbortSignal): Promise<void> {
     if ((await this.capabilities(signal)).features.teamEntryPreferencesV1 !== true) throw new Error('当前 Provider 不支持团队入口同步')
   }
-  async listTeamEntryPreferences(cursor?: string, signal?: AbortSignal): Promise<TeamEntryPreferencePage> {
-    await this.requireTeamEntries(signal); return await this.call('team.entries.list', { ...(cursor ? { cursor } : {}) }, signal)
+  async listTeamEntryPreferences(cursor?: string, signal?: AbortSignal, scope?:'workspace'): Promise<TeamEntryPreferencePage> {
+    await this.requireTeamEntries(signal); if(scope&&(await this.capabilities(signal)).features.teamGroupWorkspace!==1)throw new Error('当前 Provider 不支持团队工作区入口'); return await this.call('team.entries.list', { ...(cursor ? { cursor } : {}),...(scope?{scope}:{}) }, signal)
   }
-  async queryTeamEntryPreferences(entries: TeamEntryReference[], signal?: AbortSignal): Promise<TeamEntryPreferencePage> {
-    await this.requireTeamEntries(signal); return await this.call('team.entries.query', { entries }, signal)
+  async queryTeamEntryPreferences(entries: TeamEntryReference[], signal?: AbortSignal, scope?:'workspace'): Promise<TeamEntryPreferencePage> {
+    await this.requireTeamEntries(signal); if(scope&&(await this.capabilities(signal)).features.teamGroupWorkspace!==1)throw new Error('当前 Provider 不支持团队工作区入口'); return await this.call('team.entries.query', { entries,...(scope?{scope}:{}) }, signal)
   }
   async changeTeamEntryPreferences(command: TeamEntryPreferenceCommand, signal?: AbortSignal): Promise<TeamEntryPreferencePage> {
-    await this.requireTeamEntries(signal); return await this.call('team.entries.change', { command }, signal)
+    await this.requireTeamEntries(signal); if(command.scope&&(await this.capabilities(signal)).features.teamGroupWorkspace!==1)throw new Error('当前 Provider 不支持团队工作区入口'); return await this.call('team.entries.change', { command }, signal)
   }
   private async requireTeamNotifications(signal?:AbortSignal):Promise<void> {
     if ((await this.capabilities(signal)).features.teamNotificationPoliciesV1!==true) throw new Error('当前 Provider 不支持团队消息通知设置')
@@ -2535,6 +2536,14 @@ export class ArkmeSdk {
     if((await this.capabilities(signal)).features.teamGroupRepresentation!==1)throw new Error('当前 Provider 不支持群内团队身份')
     return await this.call('team.app.group.context',{sourceRef},signal)
   }
+  async teamGroups(request:import('../team-group-contract.js').TeamGroupRequest,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamGroupResponse>{
+    if((await this.capabilities(signal)).features.teamGroupWorkspace!==1)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持团队群工作区，请升级',retryable:false})
+    return await this.call('team.app.group.request',{request},signal)
+  }
+  async teamWorkspace(request:import('../team-group-contract.js').TeamWorkspaceRequest,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamWorkspaceResponse>{
+    if((await this.capabilities(signal)).features.teamGroupWorkspace!==1)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Provider 不支持团队群工作区，请升级',retryable:false})
+    return await this.call('team.app.workspace.request',{request},signal)
+  }
   async teamOutboundOpen(teamRef:string,recipient:import('../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../team-outbound-contract.js').TeamOutboundOpenResult>{
     if((await this.capabilities(signal)).features.teamOutboundReception!==1)throw new Error('当前 Provider 不支持主动团队接待，请升级')
     return await this.call('team.app.outbound.open',{teamRef,recipient,requestUid},signal)
@@ -2550,6 +2559,7 @@ export class ArkmeSdk {
       recordUid?: string
       relationUid?: string
       representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean
+      teamMentions?: readonly import('../types.js').ArkmeTeamMentionInput[]
       humanMentions?: readonly ArkmeHumanMentionInput[]
       botMentions?: readonly ArkmeBotMentionInput[]
       botRefs?: readonly string[]
@@ -2568,6 +2578,7 @@ export class ArkmeSdk {
       ...(options.representation===undefined?{}:{representation:options.representation}),
       ...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis}),
       ...(options.agentAuthored === true ? { agentAuthored: true } : {}),
+      ...(options.teamMentions === undefined ? {} : { teamMentions: options.teamMentions }),
       ...(options.humanMentions === undefined ? {} : { humanMentions: options.humanMentions }),
       ...(options.botMentions === undefined ? {} : { botMentions: options.botMentions }),
       ...(options.botRefs === undefined ? {} : { botRefs: options.botRefs }),
@@ -2587,10 +2598,15 @@ export class ArkmeSdk {
     return await this.call<ArkmeMessageCopyLinkResult>('source.message-copy-link', { sourceRef, actionRefs: refs }, signal)
   }
 
+  async sharedRecordingDetail(detailRef: string, options: { sourceRef?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeSharedRecordingPreview> {
+    if (!detailRef.trim() || detailRef.length > 4096) throw new TypeError('Arkme shared recording reference is invalid')
+    return this.call('source.shared-recording-detail', { detailRef: detailRef.trim(), ...(options.sourceRef === undefined ? {} : { sourceRef: options.sourceRef }) }, options.signal)
+  }
+
   async reportMessage(
     messageRef: string,
     reportType: ArkmeMessageReportType,
-    options: { reason?: string; requestUid?: string; signal?: AbortSignal } = {},
+    options: { sourceRef?:string;reason?: string; requestUid?: string; signal?: AbortSignal } = {},
   ): Promise<ArkmeMessageReportResult> {
     const normalizedMessageRef = messageRef.trim()
     const reason = options.reason?.trim() ?? ''
@@ -2607,6 +2623,7 @@ export class ArkmeSdk {
     return await this.call<ArkmeMessageReportResult>('source.message-report', {
       messageRef: normalizedMessageRef,
       reportType,
+      ...(options.sourceRef===undefined?{}:{sourceRef:options.sourceRef}),
       ...(reason === '' ? {} : { reason }),
       requestUid,
     }, options.signal)
@@ -2615,6 +2632,7 @@ export class ArkmeSdk {
   async withdrawGroupMessage(
     messageWithdrawalRef: string,
     signal?: AbortSignal,
+    sourceRef?:string,
   ): Promise<ArkmeMessageWithdrawalResult> {
     const normalized = messageWithdrawalRef.trim()
     if (normalized === '' || normalized.length > 4_096) {
@@ -2622,6 +2640,7 @@ export class ArkmeSdk {
     }
     return await this.call<ArkmeMessageWithdrawalResult>('source.message-withdraw', {
       messageWithdrawalRef: normalized,
+      ...(sourceRef===undefined?{}:{sourceRef}),
     }, signal)
   }
 
@@ -3238,10 +3257,18 @@ export class ArkmeSdk {
   }
 
   /** Search current-account server records, including retained DSH navigation identity. */
-  async searchRemote(query: string, options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordSearchResult> {
+  async searchRemote(query: string, options: { limit?: number; cursor?: string; sourceRef?: string; signal?: AbortSignal } = {}): Promise<ArkmeRecordSearchResult> {
     const { signal, ...params } = options
     if ((await this.capabilities(signal)).features.remoteRecordSearch !== true) throw new Error('当前 Provider 不支持远端快记搜索')
     return await this.call<ArkmeRecordSearchResult>('search.records', { query, ...params }, signal)
+  }
+
+  /** Browse one existing record scene, optionally within an opaque conversation frame. */
+  async searchScene(scene: import('../types.js').ArkmeSearchSceneKind, options: {limit?: number; cursor?: string; sourceRef?: string; signal?: AbortSignal} = {}): Promise<ArkmeRecordSearchResult> {
+    if(!['audio','link','image_video','file','long_article'].includes(scene)) throw new TypeError('Unknown record search scene')
+    const {signal,...params}=options
+    if((await this.capabilities(signal)).features.remoteRecordSearch!==true) throw new Error('当前 Provider 不支持远端快记搜索')
+    return this.call('search.scene',{scene,...params},signal)
   }
 
   async search(query: string, options: ArkmeSearchOptions & { signal?: AbortSignal } = {}): Promise<ArkmeCachedQueryResult> {
@@ -3470,6 +3497,8 @@ export type {TeamExtensionOptions,TeamExtensionPage} from '../team-message-contr
 export type {TeamMention} from '../team-app-contract.js'
 
 export type {TeamGroupContext,TeamGroupIdentity,TeamPublicCard,TeamRepresentationSelection,TeamRepresentationSnapshot,TeamRepresentationDisplay} from '../team-group-contract.js'
+export type {TeamGroupRequest,TeamGroupResponse,TeamGroupJoinContext,TeamGroupCommandInput,TeamGroupCommandResult,TeamGroupPage,TeamGroupParticipant,TeamGroupApproval} from '../team-group-contract.js'
+export type {TeamWorkspaceRequest,TeamWorkspaceResponse,TeamWorkspaceFolder,TeamWorkspaceEntry,TeamWorkspacePage,TeamGroupSourceCard,TeamGroupOccurrence,TeamGroupOccurrencePage} from '../team-group-contract.js'
 
 export type {TeamOutboundRecipient,TeamOutboundOpenResult} from '../team-outbound-contract.js'
 export type {TeamRecordMetadata,TeamCaptureContext,TeamMessageSnapshot,TeamEditMetadata,TeamEditReceipt,TeamEditCommand} from '../team-snapshot-contract.js'
