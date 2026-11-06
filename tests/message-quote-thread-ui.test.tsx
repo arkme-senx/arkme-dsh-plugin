@@ -35,8 +35,10 @@ it('underlines the exact occurrence in list and detail without replacing text no
     <MessageQuoteThreadBadge item={original}/>
   </MessageQuoteThreadsProvider>); await tick() })
   await act(tick)
+  // Digest verification and highlight publication are asynchronous; a fixed
+  // frame delay does not establish readiness under the full suite's load.
+  await vi.waitFor(() => expect([...highlights.values()].flatMap(x => x.ranges)).toHaveLength(2))
   const ranges = [...highlights.values()].flatMap(x => x.ranges)
-  expect(ranges).toHaveLength(2)
   for (const range of ranges) { expect(range.toString()).toBe('可以'); expect(range.startOffset).toBe(3) }
   const text = ranges[0]!.startContainer
   const selection = document.getSelection()!; selection.removeAllRanges(); selection.addRange(ranges[0]!.cloneRange())

@@ -1658,6 +1658,7 @@ arkoImagesV1?:true
     messageTextAnchorsV1?: true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
+    recordEditHistoryV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
@@ -4381,6 +4382,8 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'source.record-edit-history'
+  | 'source.record-revision-snapshot'
   | 'record.thoughts.query'
   | 'chat.thoughts.query'
   | 'composer.resources.list'
@@ -5068,8 +5071,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.related-quick-notes.from-message'
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
-  | 'source.record-edit-history'
-  | 'source.record-revision-snapshot'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

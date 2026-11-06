@@ -1512,6 +1512,7 @@ arkoImagesV1:true,
         messageTextAnchorsV1: true,
         arkoThoughtRepliesV1: true,
         arkoThoughtContinuationsV1: true,
+        recordEditHistoryV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
         worldReactionArchiveVersionsV1: true,
@@ -2158,17 +2159,14 @@ arkoImagesV1:true,
     return await this.interwoven.interwovenReadReceipts(sourceRef, momentRefs, signal)
   }
 
-  async recordEditHistoryPage(sourceRef: string, messageActionRef: string, cursorEditAt = 0, signal?: AbortSignal): Promise<ArkmeRecordEditHistoryPage> {
-    return await this.recordEditHistory.page(await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef), cursorEditAt, signal)
+  async recordEditHistoryPage(sourceRef: string, messageActionRef: string, cursorVersion = 0, signal?: AbortSignal): Promise<ArkmeRecordEditHistoryPage> {
+    return await this.recordEditHistory.page(await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef), cursorVersion, signal)
   }
 
   async recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal) {
     const target = await this.chat.recordEditHistoryTarget(sourceRef, messageActionRef)
-    if (target.kind === 'chat' && String(target.recordOwnerUserId) !== String(target.viewerUserId)) {
-      throw new ArkmePluginError('record-snapshot-private', '只能查看自己消息的记忆快照', false, 403)
-    }
-    const { snapshot, previous } = await this.recordEditHistory.revision(target, revisionUid, signal)
-    return await this.chat.projectRecordRevisionSnapshot(snapshot, target, signal, previous)
+    const { snapshot } = await this.recordEditHistory.revision(target, revisionUid, signal)
+    return await this.chat.projectRecordRevisionSnapshot(snapshot, target, signal)
   }
 
   async relatedQuickNotesFromMessage(sourceRef: string, messageActionRef: string, signal?: AbortSignal): Promise<ArkmeRelatedQuickNoteList> { return await this.relatedQuickNote.list(await this.chat.relatedQuickNoteLocator(sourceRef, messageActionRef), signal) }
