@@ -1033,7 +1033,7 @@ export interface ArkmeRecordingArrangementQuery {
 
 export type ArkmeRecordingArrangementPage =
   | { state: 'unavailable'; items: []; total: null; hasMore: false }
-  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string }
+  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string; coverageReasons?: string[] }
 
 export interface ArkmeArrangementEvidence {
   id: string

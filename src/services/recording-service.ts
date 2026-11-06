@@ -331,7 +331,7 @@ export class RecordingService {
     this.assertWorkbenchEnabled()
     const { selection, session } = await this.recordingCommandSelection(itemRefs)
     const result = await createMessageCopyLink(this.runtime, [{
-      kind: 'audio_session', session_id: selection.sessionId,
+      kind: 'audio_session', include_audio: true, session_id: selection.sessionId,
       selection: { kind: 'long_recording_segments', segments: selection.segments.map(item => ({
         child_id: item.childId, asr_item_index: item.asrItemIndex, transcript_source: item.transcriptSource,
       })) },

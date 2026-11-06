@@ -65,7 +65,7 @@ export interface ArkmeRecordExportOptions {
   previewUid?: string
   destinationRef?: string
 }
-export interface ArkmeRecordExportProgress { count: number }
+export interface ArkmeRecordExportProgress { count: number; phase?: 'preparing' | 'syncing' | 'writing' | 'confirming' }
 export interface ArkmeRecordExport {
   accountScope: string
   kind?: 'directory'

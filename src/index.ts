@@ -37,7 +37,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
 import { readDirectoryPage } from './directory-reader.js'
-import { openDshHostPath } from './dsh-host-capabilities.js'
+import { openDshHostPath, pickDshHostDirectory } from './dsh-host-capabilities.js'
 import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH, ARKME_HARNESS_ONBOARDING_CLIENT_PATH, ARKME_HARNESS_TRAJECTORY_CLIENT_PATH, ARKME_HARNESS_SIDEBAR_CLIENT_PATH, ARKME_NATIVE_SELECTION_CLIENT_PATH } from './harness-embed-contract.js'
 import {
   createHarnessEmbedRouteHandler,
@@ -318,11 +318,7 @@ export function apply(ctx: Context, config: Config): void {
   const sessionStore = new ObservedArkmeSessionStore(rawSessionStore)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files'), recordingImportDirectory: join(stateDirectory, 'recording-imports') }, sessionStore, localDatabase, fetch, pendingSessionStore, undefined, undefined, undefined, () => ctx.get('sessionQuery'))
-  service.attachExportDirectoryPicker(async signal => {
-    const capability = ctx.get('directoryPicker')?.capability()
-    if (!capability || capability.kind !== 'native') throw new Error('当前宿主没有本机目录选择能力，请在桌面客户端导出')
-    return capability.pick(signal)
-  })
+  service.attachExportDirectoryPicker(signal => pickDshHostDirectory(ctx, signal))
   const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
   const openApiMcpController = new ManagedOpenApiMcpController({
     mountMcp: config.openApiMcpEnabled,

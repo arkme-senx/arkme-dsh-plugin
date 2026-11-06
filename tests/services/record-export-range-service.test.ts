@@ -19,7 +19,7 @@ async function fixture(removalOnly = false) {
     if (path.endsWith('/capabilities')) return { protocol_version:2, date_range:true, incremental:true, explicit_saved_confirmation:true }
     if (path.endsWith('/prepare')) return { protocol_version: 2, can_export: true, baseline_required: false, plan, chain: { version: 1, saved_at: 1000 } }
     if (path.endsWith('/start')) return plan
-    if (path.endsWith('/page')) return { items: removalOnly ? [] : [{ record_uid: 'r1', version: 4, send_at: 1793700000000, title: '标题', text: '正文', file_refs: [] }], removed_uids: ['gone'], next_index: removalOnly ? 1 : 2, has_more: false }
+    if (path.endsWith('/page')) return { items: removalOnly ? [] : [{ record_uid: 'r1', version: 4, send_at: 1793700000000, title: '标题', text: '正文', topic_core: { topic_uid: 't', title: '当前主题' }, file_refs: [] }], removed_uids: ['gone'], next_index: removalOnly ? 1 : 2, has_more: false }
     if (path.endsWith('/finish')) return { quota_finalized: true }
     if (path.endsWith('/saved')) { saved = true; return { version: 2, saved_at: 2000 } }
     throw new Error(`Unexpected path ${path}`)
@@ -32,7 +32,7 @@ function zipEntry(bytes: Buffer, filename: string) {
   for (let i = 0; i < bytes.readUInt16LE(end + 10); i++) {
     const size = bytes.readUInt32LE(cursor + 20), names = bytes.readUInt16LE(cursor + 28), extra = bytes.readUInt16LE(cursor + 30), comment = bytes.readUInt16LE(cursor + 32), offset = bytes.readUInt32LE(cursor + 42)
     const name = bytes.subarray(cursor + 46, cursor + 46 + names).toString()
-    if (name === filename) { const start = offset + 30 + bytes.readUInt16LE(offset + 26) + bytes.readUInt16LE(offset + 28); const data = bytes.subarray(start, start + size); return bytes.readUInt16LE(cursor + 10) === 8 ? inflateRawSync(data) : data }
+    if (name === filename || (filename === '*.md' && name.endsWith('.md'))) { const start = offset + 30 + bytes.readUInt16LE(offset + 26) + bytes.readUInt16LE(offset + 28); const data = bytes.subarray(start, start + size); return bytes.readUInt16LE(cursor + 10) === 8 ? inflateRawSync(data) : data }
     cursor += 46 + names + extra + comment
   }
   throw new Error('Entry missing')
@@ -46,7 +46,10 @@ it.each([false, true])('creates a standalone v2 archive and advances only after 
   const file = await f.owner.read(result.fileRef), bytes = await readFile(file.path)
   const manifest = JSON.parse(zipEntry(bytes, 'manifest.json').toString())
   expect(manifest).toMatchObject({ schema_version: 2, selection, removed_uids: ['gone'], record_count: removalOnly ? 0 : 1 })
-  if (!removalOnly) expect(manifest.records[0]).toMatchObject({ record_uid: 'r1', version: 4, text: '正文' })
+  if (!removalOnly) {
+    expect(manifest.records[0]).toMatchObject({ record_uid: 'r1', version: 4, text: '正文' })
+    expect(zipEntry(bytes, '*.md').toString()).toContain('主题：当前主题\n\n标题\n\n正文')
+  }
   const finish = f.post.mock.calls.find(([path]) => path.endsWith('/finish'))![1] as any
   expect(finish).toMatchObject({ success: true, artifact_size: bytes.length, artifact_sha256: createHash('sha256').update(bytes).digest('hex') })
   await f.owner.read(result.fileRef); await f.owner.read(result.fileRef)
