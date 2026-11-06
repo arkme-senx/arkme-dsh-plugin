@@ -1,5 +1,7 @@
 import {teamGovernanceTools} from './contacts/team-governance.js'
 import {teamInternalGroupTools} from './contacts/team-internal-groups.js'
+
+import { recordHistoryToolModule } from './records/history.js'
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
 import { publicSocialToolModules } from './groups/public-social.js'
@@ -114,6 +116,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listImagesToolModule,
   createRecordToolModule,
   reeditRecordToolModule,
+  recordHistoryToolModule,
   ...botToolModules,
   worldRecentToolModule,
   worldReactionReadTool, worldReactionWriteTool, teamWorldReadTool, teamWorldWriteTool, worldReplyTool,

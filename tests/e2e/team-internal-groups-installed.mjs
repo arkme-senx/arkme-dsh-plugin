@@ -233,6 +233,11 @@ try{
   await addDialog.getByRole('button',{name:'确认添加（1）',exact:true}).click()
   await addDialog.getByText('同事1002：已添加',{exact:true}).waitFor();await addDialog.screenshot({path:join(capture,'member-rejoined.png')})
   await wait(()=>viewerSdk.readSource(memberRef),page=>page.items.length===0)
+  const forwardCallsBefore=calls.filter(call=>call.path==='/api/v1/chats/records/forward').length
+  await assert.rejects(()=>viewerSdk.forwardMessages(memberRef,[first.items[0].messageActionRef],{targetSourceRef:unaffected.sourceRef}))
+  const backendForwardRequests=calls.filter(call=>call.path==='/api/v1/chats/records/forward').length-forwardCallsBefore
+  assert.equal(backendForwardRequests,1,'stale opaque reference must reach the actual backend authority gate')
+  await writeFile(join(capture,'reentry-stale-forward-rejected.json'),JSON.stringify({rejected:true,source:'team_roster',usesPreDepartureMessageActionRef:true,backendForwardRequests},null,2))
   assert([403,404].includes((await viewerPage.request.get(mediaURL)).status()))
   const beforeOwner=JSON.parse((await forward('/fixture/group-state',{chat_session_uid:'t25-existing-group'})).text)
   await addDialog.getByRole('button',{name:'关闭',exact:true}).click()
@@ -259,7 +264,7 @@ try{
   const privateSource=(await viewerSdk.listSources('root',{refresh:true})).items.find(row=>row.kind==='private_chat'&&Number(row.peerUserId)===1001)
   assert(privateSource,'unrelated private chat must remain discoverable')
   assert.equal((await viewerSdk.readSource(privateSource.sourceRef)).items[0].textContent,'编辑后的群消息')
-  await writeFile(join(capture,'lifecycle.json'),JSON.stringify({create:true,link:true,role:true,owner:true,immediateRevocation:true,reentryFloor:true,archived:true,ordinaryHistoryPreserved:true,mediaRange:true,search:true,relatedQuickNotes:true,ordinaryUnaffected:true,hostRestart:true,beforeOwner,afterOwner},null,2))
+  await writeFile(join(capture,'lifecycle.json'),JSON.stringify({create:true,link:true,role:true,owner:true,immediateRevocation:true,reentryFloor:true,archived:true,ordinaryHistoryPreserved:true,staleForwardRejected:true,mediaRange:true,search:true,relatedQuickNotes:true,ordinaryUnaffected:true,hostRestart:true,beforeOwner,afterOwner},null,2))
  }
  sdk.dispose();await assert.rejects(()=>sdk.teamInternalGroup({teamRef,action:'recover'}));await assert.rejects(()=>sdk.teamGovernance({teamRef,action:'state'}))
  await writeFile(join(capture,'calls.json'),JSON.stringify(calls,null,2));await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',installedImmutableTgz:true,artifactSHA256:createHash('sha256').update(await readFile(artifact)).digest('hex'),sdkExistingGroupLink:true,realSessionDiscovery:true,writeHumanGrant:true,realChatGinMongo:true,externalTypedSdk:true,uiCreatePreviewConfirmReady:true,uiExistingGroupLink:realOwners,scope:realOwners?'real four owner HTTP adapters and actual SQL/Mongo/revisions/ES/Rabbit/Completion; only login/profile and object bytes fixture; no production calls':'organization/profile and empty legacy inventory use isolated ports; completion worker invoked through owner entry; no production calls'},null,2))

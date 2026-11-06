@@ -1,5 +1,7 @@
 export type {TeamGovernancePort, TeamGovernanceRequest, TeamGovernanceState, TeamGovernanceMembers, TeamGovernanceResult} from '../team-governance-contract.js'
 export type {TeamInternalGroupRequest, TeamInternalGroupResult, TeamInternalGroupPreview, TeamInternalGroupPort} from '../team-internal-group-contract.js'
+
+export type { ArkmeRecordEditHistoryPage, ArkmeRecordRevision, ArkmeRecordRevisionSnapshot } from '../record-edit-history.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
@@ -3267,6 +3269,26 @@ export class ArkmeSdk {
       ...(options.limit === undefined ? {} : { limit: options.limit }),
       ...(options.cursor?.trim() ? { cursor: options.cursor.trim() } : {}),
     }, options.signal)
+  }
+
+  async recordEditHistory(sourceRef: string, messageActionRef: string, cursorVersion = 0, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordEditHistoryPage> {
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑历史，请升级', retryable: false })
+    scoped.throwIfAborted()
+    const result = await this.call<import('../record-edit-history.js').ArkmeRecordEditHistoryPage>('source.record-edit-history', { sourceRef, messageActionRef, cursorVersion }, scoped)
+    scoped.throwIfAborted()
+    return result
+  }
+
+  async recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot> {
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.recordEditHistoryV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持编辑快照，请升级', retryable: false })
+    scoped.throwIfAborted()
+    const result = await this.call<import('../record-edit-history.js').ArkmeRecordRevisionSnapshot>('source.record-revision-snapshot', { sourceRef, messageActionRef, revisionUid }, scoped)
+    scoped.throwIfAborted()
+    return result
   }
 
   async createText(

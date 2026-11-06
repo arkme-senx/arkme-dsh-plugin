@@ -60,3 +60,28 @@ it('keeps the accepted card and stable comment identity when only the comment re
  expect(comments.map(call=>(call[1] as Record<string,unknown>).record_uid)).toEqual([commentUid,commentUid])
  expect(comments.map(call=>(call[1] as Record<string,unknown>).send_at)).toEqual([input.sendAtMillis,input.sendAtMillis])
 })
+
+it('forwards Record and Chat selectors to the Team owner and keeps comment retry identity',async()=>{
+ const f=fixture(),command={targetConversationRef:'team-target',expectedUserId:11,requestId:recordUid,sendAtMillis:input.sendAtMillis,commentText:'comment',sources:[{record_uid:'body',chat_session_uid:'chat',relation_uid:'relation'}]}
+ f.runtime.authenticatedTeamPost.mockImplementation(async(path:string)=>path.endsWith('/messages/send')?{message_uid:'comment',side:'team',state:'preparing',seq:0}:{message_uid:'accepted',side:'team',state:'published',seq:7})
+ const partial=await f.service.forwardRecords(command)
+ expect(partial.warningText).toContain('附言尚未确认')
+ expect(f.runtime.authenticatedTeamPost.mock.calls[0]?.[1]).toMatchObject({conversation_uid:'target-conversation',side:'team',record_sources:command.sources})
+ expect(f.runtime.authenticatedTeamPost.mock.calls[0]?.[1]).not.toHaveProperty('content')
+ f.runtime.authenticatedTeamPost.mockResolvedValue({message_uid:'accepted',side:'team',state:'published',seq:7})
+ expect((await f.service.forwardRecords(command)).warningText).toBeUndefined()
+ const requests=f.runtime.authenticatedTeamPost.mock.calls
+ expect(requests[0]?.[1]).toEqual(requests[2]?.[1]);expect(requests[1]?.[1]).toEqual(requests[3]?.[1])
+ expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled();expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+})
+it('rejects account switches before publication, unconfirmed Team receipts and aborts before IO',async()=>{
+ const f=fixture(),command={targetConversationRef:'team-target',expectedUserId:11,requestId:recordUid,sendAtMillis:input.sendAtMillis,sources:[{record_uid:'body',record_owner_user_id:11}]}
+ f.runtime.accountScopedSession.mockResolvedValueOnce({userId:22,refreshToken:'other'} as never)
+ await expect(f.service.forwardRecords(command)).rejects.toMatchObject({code:'team-account-changed'})
+ expect(f.runtime.authenticatedTeamPost).not.toHaveBeenCalled()
+ f.runtime.authenticatedTeamPost.mockResolvedValueOnce({message_uid:'pending',side:'team',state:'preparing',seq:0})
+ await expect(f.service.forwardRecords(command)).rejects.toMatchObject({code:'team-forward-outcome-unknown'})
+ const controller=new AbortController();controller.abort()
+ await expect(f.service.forwardRecords(command,controller.signal)).rejects.toBeTruthy()
+ expect(f.runtime.authenticatedTeamPost).toHaveBeenCalledOnce()
+})

@@ -112,6 +112,8 @@ import { ArkmeBotIdentityStyles, ArkmeBotSenderName } from './ArkmeBotIdentity.j
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { useForwardTargetDirectory } from './forward-target-directory.js'
+import { UnifiedForwardDialog } from './UnifiedForwardDialog.js'
+import { SourceForwardAttempt } from './source-forward-attempt.js'
 import { ArkmeRecordDeletionDialog } from './ArkmeRecordDeletionDialog.js'
 import { recordMutationFeedback, topicMutationBelongs } from './record-mutation-feedback.js'
 import { submitRecordMutation } from './record-mutation-submit.js'
@@ -2606,6 +2608,7 @@ export function ArkmeSurface({
   const nativeForwardRequestRef = useRef<NativeForwardRequest>()
   const [forwardTargetPicker, setForwardTargetPicker] = useState<{
     native?: NativeForwardRequest
+    sourceAttempt?: SourceForwardAttempt
     sourceKey: string
     itemUids: string[]
     items: ArkmeTimelineItem[]
@@ -2616,7 +2619,7 @@ export function ArkmeSurface({
     sendError: string
   }>()
   const forwardPickerOpen = forwardTargetPicker !== undefined
-  const forwardDirectory = useForwardTargetDirectory(authenticatedAccountKey, forwardPickerOpen)
+  const forwardDirectory = useForwardTargetDirectory(authenticatedAccountKey, forwardPickerOpen && !forwardTargetPicker?.sourceAttempt)
   const needsChatDirectory = activeConversation && detailState?.kind === 'success'
   const chatDirectory = useSyncExternalStore(
     needsChatDirectory ? arkmeChatDirectory.subscribe : NOOP_SUBSCRIBE,
@@ -7426,6 +7429,7 @@ export function ArkmeSurface({
     }
     const sourceKey = conversationKey
     setForwardTargetPicker({
+      sourceAttempt: new SourceForwardAttempt(source.sourceRef, forwardableItems.map(arkmeTimelineMessageActionRef), auth?.userId ?? 0, (command, signal) => callArkme<ArkmeSourceSendResult>('source.forward-messages', { ...command }, signal)),
       sourceKey,
       itemUids: forwardableItems.map(item => item.itemUid),
       items: [...forwardableItems],
@@ -7437,7 +7441,7 @@ export function ArkmeSurface({
     forwardPickerScopeRef.current?.abort()
     const controller = new AbortController()
     forwardPickerScopeRef.current = controller
-  }, [closeMessageMenu, conversationKey, items, reeditSubmissions.jobs, selectedMessageItems, showMessageActionStatus, source])
+  }, [closeMessageMenu, conversationKey, items, reeditSubmissions.jobs, selectedMessageItems, showMessageActionStatus, source, auth?.userId])
   useEffect(() => {
     if (forwardPickerOpen) return
     forwardPickerScopeRef.current?.abort()
@@ -8361,7 +8365,17 @@ export function ArkmeSurface({
 
   const directRecordingNotice = ui.mode !== 'recordings' || !active ? <ArkmeDirectRecordingStatus floating /> : null
 
-  const forwardDialogContent=forwardTargetPicker!==undefined&&(activeConversation||forwardTargetPicker.native!==undefined)?<ArkmeForwardTargetDialog
+  const forwardDialogContent=forwardTargetPicker?.sourceAttempt && authenticatedAccountKey && activeConversation ? <UnifiedForwardDialog
+    key={forwardTargetPicker.sourceKey} accountKey={authenticatedAccountKey} attempt={forwardTargetPicker.sourceAttempt} groupIdentity
+    previewTitle={arkmeForwardPreviewTitle(forwardPickerMessageItems, source)} previewSubtitle={arkmeForwardPreviewSubtitle(forwardPickerMessageItems)}
+    onClose={() => setForwardTargetPicker(undefined)} onComplete={targets => {
+      exitMessageSelectMode(); setForwardTargetPicker(undefined); closeMessageMenu()
+      showForwardSuccessFeedback(targets.flatMap(target => target.kind === 'source' ? [target.source] : []), targets.length, 0)
+      showMessageActionStatus('')
+      arkmeUi.chatChanged()
+      if (targets.some(target => target.kind === 'source' && arkmeSourceIdentityKey(target.source) === conversationKey)) void loadTimeline()
+    }}/>
+    : forwardTargetPicker!==undefined&&(activeConversation||forwardTargetPicker.native!==undefined)?<ArkmeForwardTargetDialog
     fixed={forwardTargetPicker.native!==undefined} keyword={forwardTargetPicker.keyword} busy={messageActionBusy==='forward'}
     onClose={()=>{if(messageActionBusy!=='forward')setForwardTargetPicker(undefined)}}
     onKeywordChange={keyword=>setForwardTargetPicker(current=>current?{...current,keyword}:current)}

@@ -44,6 +44,8 @@ export interface TeamChannel {
   canPause?: boolean
 }
 export interface TeamConversation {
+	/** Backend-confirmed member contact, independent of first publication. */
+	memberInitiated?: boolean
   entryKey?: string
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
