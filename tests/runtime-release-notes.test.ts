@@ -81,7 +81,19 @@ describe('OpenAI generation', () => {
     expect(result.notes).toBe('1. 新增聊天记录导出。')
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('https://api.openai.com/v1/responses')
-    expect(JSON.parse(init.body as string)).toMatchObject({ model: 'configured-model', store: false, text: { format: { type: 'json_schema', strict: true } } })
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: 'configured-model', store: false, reasoning: { effort: 'none' }, text: { format: { type: 'json_schema', strict: true } } })
+  })
+
+  it('allows two minutes per request within the five-minute generation deadline', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    try {
+      const fetchImpl = vi.fn(async () => modelResponse({ items }))
+      const result = await generateNotes(evidence, { apiKey: 'key', model: 'gpt-6-luna', fetchImpl })
+      expect(result.reason).toBe('generated')
+      expect(timeout.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([300_000, 120_000])
+    } finally {
+      timeout.mockRestore()
+    }
   })
 
   it('regenerates overlong items instead of truncating them', async () => {

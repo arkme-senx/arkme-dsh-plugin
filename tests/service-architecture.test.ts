@@ -29,7 +29,7 @@ const expectedPublicMethods = [
   'worldPublications', 'worldSoundExcerpts', 'worldSuggestions', 'worldSuggestionDraft', 'worldSubscriptions', 'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
-  'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',
+  'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities', 'sourceMessageExtensionSummaries',
   'deletedArrangements', 'deletedArrangementDetail', 'restoreArrangement',
   'arrangementOccurrenceRequest', 'arrangementRecognitionRequest', 'conversationArrangements', 'conversationArrangementDetail', 'conversationArrangementRecognition',
   // Independent World namespaces, authenticated original reads and selected-text forwarding.
