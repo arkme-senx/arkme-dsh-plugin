@@ -57,7 +57,8 @@ describe('cross-platform recorder protocol', () => {
     await expect(new RecorderProtocol(transport).read(BLOCK_SIZE * 4 + PAGE_SIZE, PAGE_SIZE * 63, signal(), true)).rejects.toThrow('校验')
   })
   it.each(['COM3', '/dev/cu.usbmodem12301'])('uses the same recognition rule on %s', path => {
-    expect(isRecorderPort({ path, vendorId: '1915', productId: '0001' })).toBe(true)
+    expect(isRecorderPort({ path, vendorId: '2FE3', productId: '0002', manufacturer: 'SQS' })).toBe(true)
+    expect(isRecorderPort({ path, vendorId: '1915', productId: '0001' })).toBe(false)
     expect(isRecorderPort({ path, vendorId: '10c4', productId: 'ea60' })).toBe(false)
   })
   it('decodes both production codecs and rejects damaged pages', () => {
@@ -146,7 +147,7 @@ describe('account-owned local device workflow', () => {
     const service = { requireSession: async () => ({ userId }), requestScope: (id: number) => `prod:${id}`,
       recordingImportUserId: async () => userId, acceptRecordingImport: accept,
       recordingImportReceipt: async (id: string) => receipts.get(id) ?? null } as unknown as ConstructorParameters<typeof LocalRecorderOwner>[1]
-    const port = { path: 'COM3', serialNumber: 'TEST', vendorId: '1915', productId: '0001' }
+    const port = { path: 'COM3', serialNumber: 'TEST', vendorId: '2fe3', productId: '0002', manufacturer: 'SQS' }
     const owner = new LocalRecorderOwner(path, service, { list: async () => connected ? [port] : [], open: async () => firmware.transport() }, true)
     const finish = async () => { await vi.waitFor(async () => expect((await owner.snapshot()).devices[0]?.job?.state).toBe('completed')) }
     return { owner, firmware, accept, finish, setUser: (value: number) => { userId = value }, disconnect: () => { connected = false } }

@@ -17,6 +17,8 @@ export class RecorderFirmware {
   generation = 1
   corruptHeader = false
   corruptData = false
+  ready = true
+  leadingBytes = Buffer.from('boot\n')
   noStream = false
   failBlock = -1
   opened = 0
@@ -55,7 +57,7 @@ export class RecorderFirmware {
         if (Math.floor(address / BLOCK_SIZE) === this.failBlock && length > 80) throw new Error('disconnected')
         let data: Buffer, status = 0
         if (command === 2) {
-          data = Buffer.alloc(24); data.writeUInt32LE(PAGE_SIZE, 4); data.writeUInt32LE(64, 8)
+          data = Buffer.alloc(24); data[2] = this.ready ? 1 : 0; data.writeUInt32LE(PAGE_SIZE, 4); data.writeUInt32LE(64, 8)
           data.writeUInt32LE(2048, 12); data.writeBigUInt64LE(BigInt(BLOCK_SIZE * 2048), 16)
         } else if (command === 3) data = Buffer.alloc(256)
         else if (command === 10) {
@@ -73,7 +75,7 @@ export class RecorderFirmware {
         if (command === 7 && status === 0) {
           const end = Buffer.alloc(16); end.write('AKRE'); end.writeUInt32LE(data.length, 8); end.writeUInt32LE(crc32(data), 12)
           response = Buffer.concat([header, data, end])
-        } else response = Buffer.concat([Buffer.from('boot\n'), header, data])
+        } else response = Buffer.concat([this.leadingBytes, header, data])
       },
       readExactly: async (length, signal) => {
         signal.throwIfAborted()

@@ -5,7 +5,7 @@
 ## 实现归属
 
 - `src/local-recorder/protocol.ts`：AKRQ/AKRS v1，只暴露 INFO、GET_STORAGE_SPACE、GET_BAD_BLOCK_TABLE、READ、READ_STREAM。校验响应序号、地址、长度、头 CRC、数据 CRC 和流式尾标记；旧固件不支持 READ_STREAM 时回退分块 READ。
-- `serial.ts`：Node SerialPort 13.0.0，在本机 Host 使用系统串口绑定。Windows COM 与 macOS USB 串口共用协议和存储代码；不向普通 CP210x 充电盒发送录音器指令。
+- `serial.ts`：Node SerialPort 13.0.0，在本机 Host 使用系统串口绑定。识别量产固件 SQS `2FE3:0002`，再通过 INFO 就绪及几何信息验证。Windows 保留 COM 名称，macOS 使用 `cu.usbmodem`。同一 USB 序列号的双 CDC 接口归为一台设备，有效握手后不再探测另一接口；不向普通 CP210x 充电盒发送录音器指令。macOS 在打开前以只读 `lsof` 检查整台设备的两个接口及 tty/cu 别名，其他客户端占用时提示等待其读取完成并退出；Windows 使用串口独占打开并提示占用/权限错误。初次打开清理主机输入队列，协议最多跳过一个完整流式区块及少量启动信息，兼容前一客户端中断读取的残留字节。
 - `volume.ts`：V2 录音卷、坏块与块 CRC。检查至少两份一致的格式副本，以格式和首个数据页共同识别存储卷，兼容旧固件重复使用 Generation 1。逐块校验后原子保存，后续同步复核本地缓存、重读尾块并读取新增块。缓存损坏从缺失位置之前恢复，不跳过未完成区块。
 - `catalog.ts`：恢复会话、实际缓存音频时长和设备时间锚点。时间无法恢复时返回 `null`，不使用连接时间或下载时间代替录音时间。
 - `owner.ts`：账号及服务环境隔离、设备任务、离线缓存、流式 PCM16 WAV 生成和现有导入队列适配。不同存储卷的历史缓存保留；不复制或修改原 Swift 客户端的资料库。

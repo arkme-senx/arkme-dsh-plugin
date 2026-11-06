@@ -8,7 +8,7 @@ import { MAX_RECORDING_IMPORT_BYTES, MAX_RECORDING_IMPORT_DURATION_MILLIS, valid
 import type { LocalRecorderAudio, LocalRecorderDevice, LocalRecorderSnapshot } from './contract.js'
 import { recorderCatalog } from './catalog.js'
 import { RecorderProtocol } from './protocol.js'
-import { recorderSerialProvider, isRecorderPort, type RecorderPort, type RecorderSerialProvider } from './serial.js'
+import { recorderSerialProvider, normalizeRecorderPort, recorderPortGroups, recorderPortGroupKey, RecorderPortUnavailableError, type RecorderPort, type RecorderSerialProvider } from './serial.js'
 import { atomicWrite, decodeRecorderAudio, digest, readRecorderBlock, recorderBlockPages, syncRecorderVolume, type RecorderManifest } from './volume.js'
 
 interface Account { scope: string; userId: number }
@@ -67,8 +67,8 @@ export class LocalRecorderOwner {
     let supported = this.supported, reason = supported ? '' : '本地设备目前支持 Windows 和 macOS 桌面端'
     if (this.supported) {
       try {
-        const paths = new Set((await this.serial.list()).map(port => port.path))
-        for (const [id, port] of this.ports) if (!paths.has(port.path)) this.ports.delete(id)
+        const ports = (await this.serial.list()).map(port => normalizeRecorderPort(port))
+        for (const [id, port] of this.ports) if (!ports.some(current => current.path === port.path && (!port.serialNumber || current.serialNumber === port.serialNumber))) this.ports.delete(id)
       } catch { supported = false; reason = '串口组件暂不可用，请更新桌面运行环境或检查驱动后重试。已缓存录音仍可播放。' }
     }
     let names: string[] = []
@@ -90,36 +90,55 @@ export class LocalRecorderOwner {
     const account = await this.account()
     this.discovering = true
     try {
-      const candidates = (await this.serial.list()).filter(isRecorderPort).slice(0, 16)
+      const groups = recorderPortGroups(await this.serial.list()).slice(0, 16), candidates = groups.flat()
       const visible = new Set(candidates.map(port => port.path))
       for (const [id, port] of this.ports) if (!visible.has(port.path)) this.ports.delete(id)
-      for (const candidate of candidates) {
+      const failures: unknown[] = []
+      let discovered = 0, attempts = 0
+      for (const group of groups) {
         signal.throwIfAborted(); await this.guard(account)
-        if (this.busyPorts.has(candidate.path)) continue
-        this.busyPorts.add(candidate.path)
-        let connection
-        try {
-          connection = await this.serial.open(candidate)
-          const protocol = new RecorderProtocol(connection)
-          const probeSignal = AbortSignal.any([signal, AbortSignal.timeout(3000)])
-          await protocol.info(probeSignal)
-          const id = digest(`arkme-recorder:${candidate.serialNumber || candidate.path}`)
-          let row: StoredDevice
-          try { row = await this.load(account, id) } catch {
-            row = { version: 1, device: { id, name: 'Arkme Recorder', serialNumber: candidate.serialNumber ?? null,
-              connected: true, storage: null, recordings: [], recordingCount: 0, updatedAtMillis: 0, job: null } }
-          }
-          try { row.device.storage = await protocol.storage(probeSignal) } catch (error) {
+        if (group.some(port => this.busyPorts.has(port.path))) continue
+        try { await this.serial.assertAvailable?.(group) }
+        catch (error) { failures.push(error); continue }
+        signal.throwIfAborted(); await this.guard(account)
+        if (group.some(port => this.busyPorts.has(port.path))) continue
+        for (const candidate of group) {
+          if (attempts >= 16) break
+          signal.throwIfAborted(); await this.guard(account)
+          if (this.busyPorts.has(candidate.path)) continue
+          attempts++
+          this.busyPorts.add(candidate.path)
+          let connection
+          try {
+            connection = await this.serial.open(candidate)
+            signal.throwIfAborted(); await this.guard(account)
+            const protocol = new RecorderProtocol(connection)
+            const probeSignal = AbortSignal.any([signal, AbortSignal.timeout(3000)])
+            await protocol.info(probeSignal)
+            const id = digest(`arkme-recorder:${candidate.serialNumber || candidate.path}`)
+            let row: StoredDevice
+            try { row = await this.load(account, id) } catch {
+              row = { version: 1, device: { id, name: 'Arkme Recorder', serialNumber: candidate.serialNumber ?? null,
+                connected: true, storage: null, recordings: [], recordingCount: 0, updatedAtMillis: 0, job: null } }
+            }
+            try { row.device.storage = await protocol.storage(probeSignal) } catch (error) {
+              signal.throwIfAborted()
+              // Older firmware can still sync; capacity remains explicitly unavailable.
+              row.device.storage = null
+            }
+            this.ports.set(id, candidate)
+            row.device.updatedAtMillis = Date.now(); await this.save(account, row)
+            discovered++; break
+          } catch (error) {
             signal.throwIfAborted()
-            // Older firmware can still sync; capacity remains explicitly unavailable.
-            row.device.storage = null
-          }
-          this.ports.set(id, candidate)
-          row.device.updatedAtMillis = Date.now(); await this.save(account, row)
-        } catch (error) {
-          signal.throwIfAborted()
-          for (const [id, port] of this.ports) if (port.path === candidate.path) this.ports.delete(id)
-        } finally { await connection?.close(); this.busyPorts.delete(candidate.path) }
+            failures.push(error)
+            for (const [id, port] of this.ports) if (port.path === candidate.path) this.ports.delete(id)
+          } finally { await connection?.close(); this.busyPorts.delete(candidate.path) }
+        }
+      }
+      if (!discovered && failures.length) {
+        const unavailable = failures.find(error => error instanceof RecorderPortUnavailableError)
+        throw fail(unavailable instanceof Error ? unavailable.message : '已发现录音器 USB 接口，但未能读取设备信息，请确认其他客户端已退出后重试')
       }
       return await this.snapshot()
     } finally { this.discovering = false }
@@ -129,6 +148,12 @@ export class LocalRecorderOwner {
     if (!this.supported || !candidate) throw fail('请先查找并连接录音器')
     if (this.jobs.has(key) || this.busyPorts.has(candidate.path)) throw fail('此录音器正在使用中')
     const row = await this.load(account, id), controller = new AbortController()
+    const group = recorderPortGroups(await this.serial.list()).find(ports => recorderPortGroupKey(ports[0]!) === recorderPortGroupKey(candidate))
+    if (!group?.some(port => port.path === candidate.path)) throw fail('录音器连接已变化，请重新查找设备')
+    try { await this.serial.assertAvailable?.(group) } catch (error) {
+      throw fail(error instanceof RecorderPortUnavailableError ? error.message : '无法访问录音器，请检查连接后重试')
+    }
+    await this.guard(account)
     if (this.busyPorts.has(candidate.path)) throw fail('此录音器正在使用中')
     this.busyPorts.add(candidate.path)
     row.device.job = { state: 'syncing', blocks: 0, detail: '正在读取录音卷' }
@@ -157,7 +182,8 @@ export class LocalRecorderOwner {
       row.device.job = { state: 'completed', blocks: row.manifest?.blocks.length ?? 0, detail: '同步完成' }
     } catch (error) {
       row.device.job = { state: signal.aborted ? 'stopped' : 'failed', blocks: row.manifest?.blocks.length ?? 0,
-        detail: signal.aborted ? '已停止，已读取内容保留，可继续同步' : '读取中断，已保留进度。请检查设备连接后继续同步。' }
+        detail: signal.aborted ? '已停止，已读取内容保留，可继续同步' : error instanceof RecorderPortUnavailableError
+          ? error.message : '读取中断，已保留进度。请检查设备连接后继续同步。' }
     } finally {
       await connection?.close()
       try {

@@ -50,10 +50,12 @@ export class RecorderProtocol {
         if (deadline.aborted) { deadline.removeEventListener('abort', abort); reject(deadline.reason); return }
         this.transport.write(request).then(resolve, reject).finally(() => deadline.removeEventListener('abort', abort))
       })
-      // Discard bounded boot/debug bytes before the response magic.
+      // A previous reader can close during one READ_STREAM block. Match the
+      // native reader's magic scan while bounding stale input to one full
+      // transfer (header + block + trailer) plus a small boot/debug allowance.
       let magic = Buffer.alloc(0)
       for (let count = 0; ; count++) {
-        if (count > 4096) throw new Error('未收到录音器响应')
+        if (count > BLOCK_SIZE + 28 + 16 + 4096) throw new Error('未收到录音器响应')
         magic = Buffer.concat([magic.subarray(-3), await this.transport.readExactly(1, deadline)])
         if (magic.toString('ascii') === 'AKRS') break
       }
@@ -82,6 +84,7 @@ export class RecorderProtocol {
     const data = await this.request(2, 0, 0, signal)
     if (data.length !== 24 || data.readUInt32LE(4) !== PAGE_SIZE || data.readUInt32LE(8) !== PAGES_PER_BLOCK
       || data.readUInt32LE(12) !== BLOCK_COUNT || safeUint64(data, 16) !== BLOCK_SIZE * BLOCK_COUNT) throw new Error('当前设备不是受支持的 Arkme 录音器')
+    if (!data[2]) throw new Error('录音器存储尚未就绪')
   }
   async badBlocks(signal: AbortSignal): Promise<Buffer> {
     const data = await this.request(3, 0, 0, signal)
