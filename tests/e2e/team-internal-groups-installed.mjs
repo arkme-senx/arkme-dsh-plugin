@@ -152,6 +152,7 @@ try{
  const beforeAssociationSource=(await sdk.listSources('root',{refresh:true})).items.find(row=>row.displayName==='界面关联的普通群')
  assert(beforeAssociationSource)
  const beforeAssociation=await sdk.readSource(beforeAssociationSource.sourceRef)
+ assert(beforeAssociation.items[0].contentBlocks.some(block=>block.kind==='image'),'ordinary group image must remain visible before association')
  const contentIdentity=page=>page.items.map(row=>({itemUid:row.itemUid,text:row.textContent,version:row.recordVersion??row.version}))
 
  await page.getByRole('button',{name:'群聊设置',exact:true}).click()

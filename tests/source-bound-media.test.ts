@@ -1,5 +1,5 @@
 import {it,expect,vi} from 'vitest'
-import {MediaService} from '../src/services/media-service.js'
+import {MediaService,chatMediaSource} from '../src/services/media-service.js'
 import {ServiceRuntime,type ArkmeServiceConfig,type StateStore} from '../src/services/service.js'
 import type {ArkmeSessionStore} from '../src/keychain-store.js'
 const config={environment:'test',authBaseUrl:'https://auth.test',recordBaseUrl:'https://record.test',chatBaseUrl:'https://chat.test',audioBaseUrl:'https://audio.test',requestTimeoutMs:5000,richMediaRenderEnabled:true} as ArkmeServiceConfig
@@ -34,10 +34,23 @@ it('streams each exact source with current authority, preserves numeric owner/Ra
 
 it('forwarded files use the containing mounted occurrence, including nested files, without substituting source owner rights',()=>{
  const runtime=new ServiceRuntime(config,{} as ArkmeSessionStore,{} as StateStore,vi.fn()),media=new MediaService(runtime,{} as never,{} as never,{} as never)
- const blocks=media.forwardContentBlocks([{source_attachment_ref:attachment,name:'nested.pdf',type:4,size:12,download_url:'https://unauthorized.test/file'}],42,{source:media.chatMediaSource(source)})
+ const blocks=media.forwardContentBlocks([{source_attachment_ref:attachment,name:'nested.pdf',type:4,size:12,download_url:'https://unauthorized.test/file'}],42,{source:chatMediaSource(source)})
  expect(blocks).toHaveLength(1);expect(blocks[0]).toMatchObject({kind:'file',fileName:'nested.pdf',size:12})
  expect(blocks[0]!.originalRef).not.toContain(owner)
- expect(media.forwardContentBlocks([{source_attachment_ref:'',name:'closed.pdf',type:4,download_url:'https://unauthorized.test/file'}],42,{source:media.chatMediaSource(source)})).toEqual([])
+ expect(media.forwardContentBlocks([{source_attachment_ref:'',name:'closed.pdf',type:4,download_url:'https://unauthorized.test/file'}],42,{source:chatMediaSource(source)})).toEqual([])
  expect(media.forwardContentBlocks([{source_attachment_ref:attachment,name:'closed.pdf',type:4}],42)).toEqual([])
+ media.dispose()
+})
+
+it.each(['group','private'])('keeps ordinary %s media and forwarded files when occurrence coordinates carry no source-media marker',chatSessionUid=>{
+ const runtime=new ServiceRuntime(config,{} as ArkmeSessionStore,{} as StateStore,vi.fn()),media=new MediaService(runtime,{} as never,{} as never,{} as never)
+ const ordinary={relation:{chat_session_uid:chatSessionUid,rel_uid:'ordinary-rel',record_owner_user_id:42,record_uid:'ordinary-record'},record:{payload:{owner_user_id:42,record_uid:'ordinary-record',version:1,media_display_items:[{file_asset_uid:'ordinary-image',file_kind:1,file_name:'photo.png',mime_type:'image/png',download_url:'https://ordinary.test/photo.png'}]}}}
+ const occurrence=chatMediaSource(ordinary)!
+ expect(media.richContentBlocks(ordinary,42,[],occurrence)).toMatchObject([{kind:'image',fileAssetUid:'ordinary-image',mediaRef:expect.any(String)}])
+ const files=[{type:4,name:'ordinary.pdf',download_url:'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/file.pdf?Signature=fixture'}]
+ expect(media.forwardContentBlocks(files,42,{source:occurrence})).toMatchObject([{kind:'file',fileName:'ordinary.pdf',mediaRef:expect.any(String)}])
+ // An explicit delegated frame or source marker must never reuse an ordinary URL.
+ expect(media.richContentBlocks(ordinary,42,[],{...occurrence,accessRef:'delegation',audienceKey:'team'})).toEqual([])
+ expect(media.forwardContentBlocks([{...files[0],source_attachment_ref:''}],42,{source:occurrence})).toEqual([])
  media.dispose()
 })

@@ -547,7 +547,9 @@ export function AddMembersDrawer(props: {
 }) {
   useArkmeLocale()
   type Focus = 'all' | 'group' | 'privateChat' | 'bot'
-  const [entryKind, setEntryKind] = useState<'people' | 'bot' | 'team'>('people')
+  const rosterManaged = props.source.teamRosterManaged === true
+  const [selectedEntryKind, setEntryKind] = useState<'people' | 'bot' | 'team'>('people')
+  const entryKind = rosterManaged ? 'bot' : selectedEntryKind
   const [query, setQuery] = useState('')
   const [snapshot, setSnapshot] = useState<ArkmeGroupMemberCandidateList>()
   const [groups, setGroups] = useState<ArkmeSourceItem[]>([])
@@ -574,7 +576,7 @@ export function AddMembersDrawer(props: {
       setExpandedGroups([])
       setLoadingGroups([])
       setBots(undefined)
-      setFocus('all')
+      setFocus(rosterManaged ? 'bot' : 'all')
       setSelected([])
       setSelectedBots([])
       setLoading(false)
@@ -584,7 +586,7 @@ export function AddMembersDrawer(props: {
     }
     const controller = new AbortController()
     let cancelled = false
-    setEntryKind('people')
+    setEntryKind(rosterManaged ? 'bot' : 'people')
     setQuery('')
     setSnapshot(undefined)
     setGroups([])
@@ -592,14 +594,14 @@ export function AddMembersDrawer(props: {
     setExpandedGroups([])
     setLoadingGroups([])
     setBots(undefined)
-    setFocus('all')
+    setFocus(rosterManaged ? 'bot' : 'all')
     setSelected([])
     setSelectedBots([])
     setSearchingGroups(false)
     setBusy(false)
     setLoading(true)
     void Promise.allSettled([
-      callArkme<ArkmeGroupMemberCandidateList>('group.member-candidates', {
+      rosterManaged ? Promise.resolve(undefined) : callArkme<ArkmeGroupMemberCandidateList>('group.member-candidates', {
         sourceRef: props.source.sourceRef, query: '', limit: 50,
       }, controller.signal),
       callArkme<ArkmeGroupBotCandidateList>('group.bots', { sourceRef: props.source.sourceRef }, controller.signal),
@@ -607,8 +609,10 @@ export function AddMembersDrawer(props: {
       .then(([peopleResult, botResult]) => {
         if (cancelled) return
         if (peopleResult.status === 'fulfilled') {
-          setSnapshot(peopleResult.value)
-          setGroups(peopleResult.value.groups)
+          if (peopleResult.value !== undefined) {
+            setSnapshot(peopleResult.value)
+            setGroups(peopleResult.value.groups)
+          }
         } else {
           props.onError(errorMessage(peopleResult.reason))
         }
@@ -616,7 +620,7 @@ export function AddMembersDrawer(props: {
       })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true; controller.abort() }
-  }, [props.open, props.source.sourceRef])
+  }, [props.open, props.source.sourceRef, rosterManaged])
 
   const mergeGroupCandidates = (items: ArkmeGroupMemberCandidateGroup[]) => {
     setGroupCandidates(current => {
@@ -627,7 +631,7 @@ export function AddMembersDrawer(props: {
   }
 
   const loadGroupMembers = (group: ArkmeSourceItem) => {
-    if (busy || loadingGroups.includes(group.sourceRef)) return
+    if (rosterManaged || busy || loadingGroups.includes(group.sourceRef)) return
     const controller = new AbortController()
     setLoadingGroups(value => [...value, group.sourceRef])
     void callArkme<ArkmeGroupMemberCandidateList>('group.member-candidates', {
@@ -652,14 +656,14 @@ export function AddMembersDrawer(props: {
   }
 
   useEffect(() => {
-    if (!props.open || groups.length === 0) return
+    if (!props.open || rosterManaged || groups.length === 0) return
     for (const group of groups.slice(0, 3)) {
       if (groupCandidates[group.sourceRef] === undefined && !loadingGroups.includes(group.sourceRef)) loadGroupMembers(group)
     }
-  }, [props.open, groups])
+  }, [props.open, groups, rosterManaged])
 
   useEffect(() => {
-    if (!props.open || !isSearchMode || groups.length === 0) return
+    if (!props.open || rosterManaged || !isSearchMode || groups.length === 0) return
     const controller = new AbortController()
     const timeout = setTimeout(() => {
       setSearchingGroups(true)
@@ -677,7 +681,7 @@ export function AddMembersDrawer(props: {
         .finally(() => { setSearchingGroups(false) })
     }, 220)
     return () => { clearTimeout(timeout); controller.abort() }
-  }, [props.open, props.source.sourceRef, query, groups])
+  }, [props.open, props.source.sourceRef, query, groups, rosterManaged])
 
   if (!props.open) return null
 
@@ -690,7 +694,7 @@ export function AddMembersDrawer(props: {
   for (const item of allGroupMembers) {
     if (!groupMemberByRef.has(item.candidateRef)) groupMemberByRef.set(item.candidateRef, item)
   }
-  const selectedCandidates = [...people, ...groupMemberByRef.values()].filter(item => selected.includes(item.candidateRef))
+  const selectedCandidates = rosterManaged ? [] : [...people, ...groupMemberByRef.values()].filter(item => selected.includes(item.candidateRef))
   const selectedCandidateByRef = new Map(selectedCandidates.map(item => [item.candidateRef, item]))
   const selectedBotItems = botItems.filter(item => selectedBots.includes(item.botRef))
   const visibleGroups = groups.filter(item => normalizedQuery === '' || item.displayName.toLocaleLowerCase().includes(normalizedQuery)
@@ -805,7 +809,7 @@ export function AddMembersDrawer(props: {
     <section style={{ ...styles.drawer, top: 0, width: 360, maxWidth: '92%', zIndex: 36, background: colors.panel, color: colors.text }} role="dialog" aria-modal="true" aria-label={tr("添加成员")}>
       <ArkmeRightPanelHeader title={tr("添加成员")} onClose={props.onClose} closeLabel={tr("关闭")} />
       <div role="tablist" aria-label={tr('成员类型')} style={{ display: 'flex', flex: 'none', gap: 4, padding: '8px 12px 0' }}>
-        {(['people', 'bot', 'team'] as const).map(kind => <button key={kind} role="tab" type="button" aria-selected={entryKind === kind} disabled={busy}
+        {(['people', 'bot', 'team'] as const).filter(kind => !rosterManaged || kind === 'bot').map(kind => <button key={kind} role="tab" type="button" aria-selected={entryKind === kind} disabled={busy}
           onClick={() => { setEntryKind(kind); setFocus(kind === 'bot' ? 'bot' : 'all'); setQuery('') }}
           style={{ flex: 1, padding: '8px 4px', border: 0, borderRadius: 8, background: entryKind === kind ? colors.subtle : 'transparent', color: entryKind === kind ? colors.text : colors.secondary, cursor: 'pointer' }}>
           {tr(kind === 'people' ? '联系人' : kind === 'bot' ? 'Bot' : '团队')}

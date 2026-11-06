@@ -2,7 +2,7 @@
 import {act} from 'react'
 import {createRoot, type Root} from 'react-dom/client'
 import {afterEach,beforeEach,expect,it,vi} from 'vitest'
-import {GroupMembersDrawer} from '../src/client/ArkmeGroupChatControls.js'
+import {GroupMembersDrawer,AddMembersDrawer} from '../src/client/ArkmeGroupChatControls.js'
 import type {ArkmeSourceItem} from '../src/types.js'
 
 const {call}=vi.hoisted(()=>({call:vi.fn()}))
@@ -35,3 +35,21 @@ it('aborts an ordinary-group team read when the same group becomes roster manage
  expect(call).toHaveBeenCalledTimes(1)
 })
 
+
+it('preserves Bot addition without offering manual people or team admission',async()=>{
+ const onAdded=vi.fn(),onError=vi.fn()
+ call.mockImplementation(async(operation:string)=>{
+  if(operation==='group.bots')return {groupSourceRef:source.sourceRef,displayName:source.displayName,canAddBots:true,items:[{botRef:'bot-ref',name:'原有机器人',description:'群助手',installed:false}]}
+  if(operation==='group.bot.add')return {installed:true}
+  throw new Error('unexpected '+operation)
+ })
+ await act(async()=>root.render(<AddMembersDrawer source={{...source,teamRosterManaged:true}} open accountScope="test:42" onClose={()=>{}} onAdded={onAdded} onError={onError}/>))
+ expect([...host.querySelectorAll('[role="tab"]')].map(node=>node.textContent)).toEqual(['Bot'])
+ const row=[...host.querySelectorAll('button')].find(node=>node.textContent?.includes('原有机器人'))!
+ await act(async()=>row.click())
+ const confirm=[...host.querySelectorAll('button')].find(node=>node.textContent==='确认添加（1）')!
+ expect(confirm).toBeDefined()
+ await act(async()=>confirm.click())
+ expect(call.mock.calls.map(([operation])=>operation)).toEqual(['group.bots','group.bot.add'])
+ expect(onAdded).toHaveBeenCalledOnce();expect(onError).not.toHaveBeenCalled()
+})
