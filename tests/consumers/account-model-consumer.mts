@@ -6,6 +6,12 @@ const scope='test:42',dates={fromDate:'2026-11-04',untilDate:'2026-11-05',timezo
 const settings=await sdk.accountModels(scope);assert.equal(settings.accountScope,scope)
 const preferences:AccountModelPreferences={default_route:'system-default',scenes:{},points_fallback:false}
 const saved=await sdk.accountModelPreferences(scope,settings.revision,preferences);assert.equal(saved.revision,settings.revision+1)
+assert.equal(saved.accountScope,scope)
+const bound=await sdk.saveAccountModel(scope,{uid:'',expected_revision:saved.revision,name:'SDK 安全绑定验收',execution:'cloud',protocol:'openai-chat',base_url:'https://example.com/v1',model_key:'sdk-fixture',connector_id:'',host_provider:'',api_key:'isolated-sdk-fixture-key',capabilities:settings.models[0]!.capabilities})
+const fixture=bound.models.find(model=>model.name==='SDK 安全绑定验收')!
+assert(fixture?.key_configured);assert.equal(bound.accountScope,scope);assert(!JSON.stringify(bound).includes('isolated-sdk-fixture-key'))
+const disabled=await sdk.disableAccountModel(scope,bound.revision,fixture.uid,true)
+assert.equal(disabled.accountScope,scope);assert.equal(disabled.revision,bound.revision+1);assert.equal(disabled.models.find(model=>model.uid===fixture.uid)?.disabled,true)
 const usage:ModelUsageQuery={start:'2026-11-04',end:'2026-11-07',mode:'statistics'}
 assert.equal((await sdk.accountModelUsage(scope,usage)).totals.unknown_calls,1)
 const summary=await sdk.aiPointsStatistics(scope,{...dates,grain:'day'});assert.equal(summary.chargedPoints,'0.1234567')

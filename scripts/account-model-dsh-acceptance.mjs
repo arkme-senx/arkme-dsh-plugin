@@ -29,7 +29,8 @@ export function apply(ctx,config){void(async()=>{
  service.accountModels=async(expected)=>{assert(!expected||expected===scope);return structuredClone(settings)}
  service.modelDirectory=async()=>({accountScope:scope,models:[],failures:[]})
  service.accountModelPreferences=async(expected,revision,preferences)=>{assert.equal(expected,scope);assert.equal(revision,settings.revision);calls.push('preferences');settings={...settings,revision:revision+1,preferences};return structuredClone(settings)}
- service.disableAccountModel=async(expected,revision,uid,disabled)=>{assert.equal(expected,scope);assert.equal(revision,settings.revision);assert.equal(uid,'owned');calls.push('disable');settings={...settings,revision:revision+1,models:[{...model,disabled}]};return structuredClone(settings)}
+ service.saveAccountModel=async(expected,input)=>{assert.equal(expected,scope);assert.equal(input.expected_revision,settings.revision);const bound={...model,uid:'sdk-fixture',route:'user-api/sdk-fixture',version_route:'user-api/sdk-fixture/version',name:input.name,model_key:input.model_key};settings={...settings,revision:settings.revision+1,models:[...settings.models,bound]};return structuredClone(settings)}
+ service.disableAccountModel=async(expected,revision,uid,disabled)=>{assert.equal(expected,scope);assert.equal(revision,settings.revision);assert(settings.models.some(model=>model.uid===uid));calls.push('disable');settings={...settings,revision:revision+1,models:settings.models.map(model=>model.uid===uid?{...model,disabled}:model)};return structuredClone(settings)}
  service.accountModelUsage=async(expected)=>{assert.equal(expected,scope);return{accountScope:scope,start:'2026-11-04',end:'2026-11-05',grain:'day',before:1793870000000,earliest_at:1,retention_days:180,totals,timeline:[],scenes:[],models:[],operations:[],calls:[]}}
  const factAt=Date.parse('2026-11-04T08:00:00+08:00'),cutoff=1793870000000
  const includes=query=>factAt>=Date.parse(query.fromDate+'T00:00:00+08:00')&&factAt<Date.parse(query.untilDate+'T00:00:00+08:00')
@@ -50,11 +51,11 @@ export function apply(ctx,config){void(async()=>{
 
  const origin=`http://127.0.0.1:${ctx.webServer.port}`
  const consumer=await promisify(execFile)(process.execPath,[config.consumer,origin],{timeout:20000});assert(consumer.stdout.includes('ACCOUNT_MODEL_CONSUMER_PASSED'),consumer.stdout+consumer.stderr)
- let confirmations=0,completed=false
+ let confirmations=0,completed=false,activeTool='arkme_account_model_preference',activeArguments={route:'system-default'},activeLabel='模型偏好'
  ctx.llm.registerAdapter(['account-model-acceptance'],{providerInfo:id=>({id,name:id}),providerRetryPolicy:()=>undefined,listModels:async()=>[{id:'local',name:'local'}],resolveModel:async(provider,id)=>({provider,id,name:id}),async prepareCall(provider,model){return{model:await this.resolveModel(provider,model),stream:options=>this.stream(options)}},async *stream(options){
  const last=options.messages.at(-1)
- if(last?.role==='tool'){const text=last.content.filter(x=>x.type==='text').map(x=>x.text).join('\n');assert(!last.isError,text);if(text.includes('confirmation_required'))confirmations++;else{assert(text.includes('模型偏好'),text);completed=true}const answer=completed?'模型偏好已更新':'是否确认修改默认模型？';yield{type:'block-start',index:0,blockType:'text'};yield{type:'text-delta',index:0,text:answer};yield{type:'block-end',index:0,block:{type:'text',text:answer}};yield{type:'finish',reason:{kind:'stop'}};return}
- assert(options.tools.some(x=>x.name==='arkme_account_model_preference'));const id=randomUUID(),args=JSON.stringify({route:'system-default'});yield{type:'block-start',index:0,blockType:'tool-call'};yield{type:'tool-call-delta',index:0,id,name:'arkme_account_model_preference',argumentsDelta:args};yield{type:'block-end',index:0,block:{type:'tool-call',id,name:'arkme_account_model_preference',arguments:args}};yield{type:'finish',reason:{kind:'tool-calls'}}
+ if(last?.role==='tool'){const text=last.content.filter(x=>x.type==='text').map(x=>x.text).join('\n');assert(!last.isError,text);if(text.includes('confirmation_required'))confirmations++;else{assert(text.includes(activeLabel),text);completed=true}const answer=completed?'模型设置已更新':'是否确认修改模型设置？';yield{type:'block-start',index:0,blockType:'text'};yield{type:'text-delta',index:0,text:answer};yield{type:'block-end',index:0,block:{type:'text',text:answer}};yield{type:'finish',reason:{kind:'stop'}};return}
+ assert(options.tools.some(x=>x.name===activeTool));const id=randomUUID(),args=JSON.stringify(activeArguments);yield{type:'block-start',index:0,blockType:'tool-call'};yield{type:'tool-call-delta',index:0,id,name:activeTool,argumentsDelta:args};yield{type:'block-end',index:0,block:{type:'tool-call',id,name:activeTool,arguments:args}};yield{type:'finish',reason:{kind:'tool-calls'}}
  }})
  const handle=await ctx.agents.create({sessionId:`account-model-${randomUUID()}`,meta:{cwd:config.workspace},agentOptions:{provider:'account-model-acceptance',model:'local'}}),{agent}=handle
  const until=async predicate=>{const deadline=Date.now()+20000;while(!predicate()){if(Date.now()>deadline)throw new Error('session acceptance timeout');await new Promise(r=>setTimeout(r,25))}}
@@ -65,8 +66,13 @@ export function apply(ctx,config){void(async()=>{
  const before=(await service.accountModels(scope)).revision
  agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'修改全局默认模型'}]}));await until(()=>confirmations===1);await agent.whenIdle();assert.equal((await service.accountModels(scope)).revision,before)
  agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'确认修改全局默认模型'}]}));await until(()=>completed);await agent.whenIdle();assert.equal((await service.accountModels(scope)).revision,before+1)
+ const beforeDisable=await service.accountModels(scope),owned=beforeDisable.models.find(model=>!model.disabled);assert(owned)
+ activeTool='arkme_account_model_disable';activeArguments={uid:owned.uid,disabled:true};activeLabel='模型状态';confirmations=0;completed=false
+ agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'停用验收模型'}]}));await until(()=>confirmations===1);await agent.whenIdle();assert.equal((await service.accountModels(scope)).revision,beforeDisable.revision)
+ agent.followup(createUserMessage({source:{kind:'user'},content:[{type:'text',text:'确认停用验收模型'}]}));await until(()=>completed);await agent.whenIdle()
+ const afterDisable=await service.accountModels(scope);assert.equal(afterDisable.revision,beforeDisable.revision+1);assert.equal(afterDisable.models.find(model=>model.uid===owned.uid)?.disabled,true)
  await ctx.sessions.flush(agent.session);await handle.dispose()
- await writeFile(config.output,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',artifact:true,toolDiscovery:names.filter(x=>/arkme_(account_model|ai_points_stat|ai_points_consumption_range)/.test(x)),grantedRead:true,humanConfirmation:true,publicConsumer:true,unknownUsage:true,owner:backend?'real Gin JWT + Mongo account/execution/usage + MySQL points; supplier and login issuance fixtures':'synthetic; Go owner contracts tested separately'},null,2)+'\n')
+ await writeFile(config.output,JSON.stringify({runtime:'official DSH 0.2.1-rc.2',artifact:true,toolDiscovery:names.filter(x=>/arkme_(account_model|ai_points_stat|ai_points_consumption_range)/.test(x)),grantedRead:true,humanConfirmation:true,humanConfirmedWrites:['preference','disable'],publicConsumer:true,sdkBindingAndDisable:true,unknownUsage:true,owner:backend?'real Gin identity client + authority/lease issuer fixture + Mongo account/execution/usage + MySQL points; supplier mode explicit':'synthetic; Go owner contracts tested separately'},null,2)+'\n')
  console.log('HPK01_DSH_ACCEPTANCE_PASSED '+origin)
  if(config.liveCommands){
   // This opt-in harness uses the installed native adapter, never a supplier
