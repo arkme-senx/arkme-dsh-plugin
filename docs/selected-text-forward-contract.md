@@ -22,6 +22,8 @@ Provider capabilities 的 selectedTextForwardV1 用于 SDK 合同探测，不是
 
 prepare 在打开选择器前解析一次已有来源引用，之后每个目标使用同一冻结选段。录音分页视图利用 Audio owner 的标量边界，把选区一次映射到完整片段的规范投影；不按相同文字搜索位置，不增加持久化定位字段。每个目标有独立且稳定的 recordUid、relationUid、sendAtMillis。首个发送意图冻结后，重试复用原参数；成功目标不重发，未知结果不生成新身份。
 
+发给自己的本地待发送记录同样校验冻结正文、摘录结构和发送时间。意图不同时在派发前返回 `record-intent-conflict`，不重放旧请求，也不转成可重试的结果未知；相同意图继续复用原待发送 owner。
+
 私聊、群聊使用现有 native send；自己、默认分类、个人话题使用现有 Record 入口。Record 复用 creation anchor，Chat 复用 send_intent_digest。已完成的重试返回接受事实，不覆盖后续编辑、恢复删除或重建已移除的话题关系。审核任务登记失败仍交给原有幂等审核 owner 补齐，不另建队列或状态机。
 
 ## 原文定位
