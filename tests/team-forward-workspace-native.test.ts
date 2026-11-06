@@ -7,7 +7,7 @@ import { ArkmeService } from '../src/arkme-service.js'
 import { ArkmeStateStore } from '../src/state-store.js'
 import type { ArkmeServiceConfig } from '../src/services/service.js'
 import type { TeamGroupJoinContext, TeamGroupCommandResult, TeamWorkspaceFolder, TeamWorkspacePage } from '../src/team-group-contract.js'
-import type { TeamPage, TeamConversation } from '../src/team-app-contract.js'
+import type { TeamPage, TeamConversation, TeamTimeline } from '../src/team-app-contract.js'
 import { SourceForwardAttempt } from '../src/client/source-forward-attempt.js'
 import { projectUnifiedForwardTargets, forwardTargetKey } from '../src/client/unified-forward-targets.js'
 import { mergeTeamDirectoryRows } from '../src/client/team-conversation-directory.js'
@@ -86,8 +86,17 @@ it.skipIf(!fixture)('forwards through both real delegated group authorities whil
       const result = await attempt.send({ kind: 'source', source: row.source }, '', new AbortController().signal)
       expect(result.localState).toBe('synced'); expect(result.representation?.jotmoId).toBe(jotmoId)
     }
+    const published = conversations.items.find(row => row.lastSeq > 0)!
+    expect(published).toBeTruthy()
+    const teamTimeline = await service.executeTeamApp('team.app.timeline', { conversationRef: published.ref, limit: 50 }) as TeamTimeline
+    const teamMessage = teamTimeline.messages.find(row => row.contentStatus === 'available')!
+    expect(teamMessage).toBeTruthy()
+    for (const target of [groupA, groupB]) {
+      const sent = await service.forwardTeamMessages({ conversationRef: published.ref, selections: [{ messageRef: teamMessage.ref, version: teamMessage.version }], target: { kind: 'source', sourceRef: target.source.sourceRef }, requestId: randomUUID(), recordUid: randomUUID(), sendAtMillis: Date.now() })
+      expect(sent.localState).toBe('synced')
+    }
     const forwarded = calls.filter(call => call.path.endsWith('/records/forward'))
-    expect(forwarded).toHaveLength(2); expect(forwarded.every(call => call.scoped)).toBe(true)
+    expect(forwarded).toHaveLength(4); expect(forwarded.every(call => call.scoped)).toBe(true)
     actor = 13
     await expect(service.readSource(groupA.source.sourceRef, { limit: 10 })).rejects.toBeTruthy()
     const colleagueFolders = await service.executeTeamApp('team.app.workspace.folders', {}) as TeamWorkspaceFolder[]
