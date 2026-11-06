@@ -122,6 +122,11 @@ try {
   assert(calls.slice(beforeSourceOpen).some(call=>/team-group\/(access|scopes\/query)$/.test(call.path)&&call.scoped),'original group rechecks the team audience before using an existing window')
   await page.getByText(`${team.name}团队加入了群聊`,{exact:true}).waitFor()
   assert(calls.slice(beforeSourceOpen).filter(call=>/\/chats\/(detail|session\/statistics)$/.test(call.path)).every(call=>call.scoped),'group settings and daily counts retain the same frame')
+  const fixedIdentity=page.getByLabel(`群聊发言身份：我 · ${team.name}团队`,{exact:true})
+  await fixedIdentity.waitFor()
+  assert.equal(await fixedIdentity.innerText(),'我','delegation retains the original compact self presentation')
+  assert.equal(await fixedIdentity.locator('[aria-label="我的头像"]').count(),1,'the real actor avatar remains visible')
+  assert.equal(await fixedIdentity.getAttribute('aria-haspopup'),null,'a fixed delegated audience cannot switch to personal sending')
   await page.screenshot({path:join(capture,'original-team-source.png')})
   assert.equal((await invoke('arkme_team_workspace',{request:{operation:'page',teamRef:verified.teamRef}})).isError,false)
   // A different human request has its own real session; the earlier unconfirmed

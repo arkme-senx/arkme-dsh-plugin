@@ -166,7 +166,13 @@ function ScopedIdentityPicker({ accountKey, sourceRef, selfAvatarRef, disabled =
   const retry = context.error && <span role="status" style={styles.hint}>{tr('团队身份暂不可用')}
     <button type="button" style={styles.link} title={context.error} onClick={context.retry}>{tr('重试')}</button></span>
   if (!value && context.error) return retry
-  if(fixed||value?.selection.groupMembershipUid)return <><span title={tr('从团队工作区参与群聊，固定代表该团队发言')} style={styles.trigger}><Users size={14}/>{tr('我 · {v0}团队',{v0:(fixed??value)!.team.name})}</span>{retry}</>
+  const displayedIdentity = fixed ?? value
+  const selectedLabel = displayedIdentity ? tr('我 · {v0}团队', { v0: displayedIdentity.team.name }) : tr('我')
+  const avatar = <span style={{ position: 'relative', display: 'inline-flex' }}><ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} />
+    {displayedIdentity && <span style={styles.teamBadge}><Users size={10} weight="fill" /></span>}
+  </span>
+  if(fixed||value?.selection.groupMembershipUid)return <><span aria-label={tr('群聊发言身份：{v0}', { v0: selectedLabel })}
+    title={`${selectedLabel} · ${tr('从团队工作区参与群聊，固定代表该团队发言')}`} style={styles.trigger}>{avatar}<span>{tr('我')}</span></span>{retry}</>
   const actions: SelfRoleMenuAction[] = [
     { id: 'personal', label: tr('我'), description: tr('个人身份'), icon: <ArkmeUserAvatar avatarRef={selfAvatarRef} size={28} label={tr('我的头像')} />, onSelect: () => { onSelect?.(undefined); close() } },
     { type: 'separator', id: 'separator' },
@@ -180,15 +186,12 @@ function ScopedIdentityPicker({ accountKey, sourceRef, selfAvatarRef, disabled =
     })),
     ...(context.refreshing ? [{ type: 'label' as const, id: 'refreshing', text: tr('正在核验团队身份…') }] : []),
   ]
-  const selectedLabel = value ? tr('我 · {v0}团队', { v0: value.team.name }) : tr('我')
   return <>
     <ArkmeSelfRoleMenu open={open} onClose={close} selectedIds={[value ? `team:${value.team.jotmoId}` : 'personal']} showSelectionIndicator actions={actions} anchor={
       <button type="button" disabled={disabled} data-arkme-feedback="neutral" aria-label={tr('群聊发言身份：{v0}', { v0: selectedLabel })}
         title={value ? `${selectedLabel} · ${tr('代表团队发言')}` : tr('个人身份')} aria-haspopup="dialog" aria-expanded={open}
         style={styles.trigger} onPointerDown={event => event.stopPropagation()} onClick={() => { if (!open) context.retry(); setOpen(current => !current) }}>
-        <span style={{ position: 'relative', display: 'inline-flex' }}><ArkmeUserAvatar avatarRef={selfAvatarRef} size={20} label={tr('我的头像')} />
-          {value && <span style={styles.teamBadge}><Users size={10} weight="fill" /></span>}
-        </span><span>{tr('我')}</span><CaretDown size={10} />
+        {avatar}<span>{tr('我')}</span><CaretDown size={10} />
       </button>
     } />
     {retry}

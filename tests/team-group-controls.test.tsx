@@ -203,6 +203,23 @@ it('preserves the original compact self trigger and team menu wording after a re
   expect(document.querySelector('[data-role-action="team:our_team"]')?.textContent).toContain('我 · 即我团队')
   expect(document.querySelector('[data-role-action="team:our_team"]')?.textContent).not.toContain('真实姓名')
 })
+it.each(['current', 'retained'] as const)('keeps the original compact personal identity for a %s delegated audience without offering a personal switch', async mode => {
+  const team = { ...teams[0]!, name: '这是需要完整保留在发送提示中的很长团队名称' }
+  const identity = { team, selection: { ...selection, groupMembershipUid: 'admission', groupMembershipRevision: 1 } }
+  if (mode === 'current') call.mockResolvedValue({ ...eligible, fixedIdentity: identity })
+  else call.mockRejectedValue(new Error('读取失败'))
+  const onSelect = vi.fn()
+  await mount(<TeamGroupIdentityPicker accountKey="prod:90" sourceRef="group-ref" value={identity} onSelect={onSelect} />)
+  const avatar = host.querySelector('[aria-label="我的头像"]')
+  expect(avatar).not.toBeNull()
+  const trigger = avatar!.parentElement!.parentElement!
+  expect(trigger.textContent).toBe('我')
+  expect(trigger.title).toContain(team.name)
+  expect(trigger.title).toContain('固定代表该团队发言')
+  expect(host.querySelector('[aria-haspopup="dialog"]')).toBeNull()
+  expect(host.querySelector('[data-role-action="personal"]')).toBeNull()
+  expect(onSelect).not.toHaveBeenCalledWith(undefined)
+})
 it('preserves the explicit retry action without clearing a frozen selected identity', async () => {
   call.mockRejectedValue(new Error('读取失败'))
   const onSelect=vi.fn()
