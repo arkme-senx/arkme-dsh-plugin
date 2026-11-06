@@ -3833,7 +3833,7 @@ arkoImagesV1:true,
   async worldSoundExcerpts(input:import('./world-sound-contract.js').WorldSoundRequest,signal?:AbortSignal){
     return new WorldSoundService(this.runtime,{
       recording:refs=>this.recording.soundExcerptSelection(refs),call:(ref,ids)=>this.callHistory.soundExcerptSelection(ref,ids),
-      team:(ref,actor)=>this.teamApp.worldTeamID(ref,actor),recordUID:async ref=>(await this.world.publicationPrincipal(ref,signal)).uid,
+      team:(ref,actor)=>this.teamApp.worldTeamID(ref,actor),recordUID:ref=>this.world.publicationUID(ref),
       recordRef:uid=>this.world.publicationReference(uid),
     }).execute(input,signal)
   }

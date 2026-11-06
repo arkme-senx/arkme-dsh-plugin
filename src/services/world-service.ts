@@ -599,6 +599,13 @@ export class WorldService {
     return this.worldRecordRef((await this.runtime.requireSession()).userId, uid)
   }
 
+  /** Decode the viewer-bound handle; the target operation owns live authority.
+   * Pending/withdrawn publications deliberately have no anonymous read grant. */
+  async publicationUID(recordRef: string): Promise<string> {
+    const session = await this.runtime.requireSession()
+    return this.openWorldRecordRef(recordRef, session.userId).recordUid
+  }
+
   async listWorldReplies(recordRef: string, options: { limit?: number; cursor?: string; signal?: AbortSignal } = {}): Promise<import('../types.js').ArkmeWorldRepliesPage> {
     const session = await this.runtime.requireSession()
     const parent = this.openWorldRecordRef(recordRef, session.userId)

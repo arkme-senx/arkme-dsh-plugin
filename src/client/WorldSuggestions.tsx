@@ -139,5 +139,5 @@ function SuggestionsPanel({ account, onClose, onCount }: { account: string; onCl
   </ArkmeDetailShell>
 }
 function failureText(code: string) {
-  return ({ source_changed: '部分原文已变化，请重新分析', scope_too_large: '快记较多，请缩小时间范围', output_invalid: '模型结果未通过校验', insufficient_balance: '模型额度不足', execution_unavailable: '服务暂时不可用', balance_reserved: '额度正在核对，稍后会自动继续', model_outcome_uncertain: '正在核对原调用结果，请勿重复发起分析', model_connector_offline: '本机模型暂时离线，恢复后会继续核对', model_unavailable: '模型暂时不可用，稍后会自动核对' } as Record<string, string>)[code] ?? '请刷新任务状态后重试'
+  return ({ source_changed: '部分原文已变化，请重新分析', scope_too_large: '快记较多，请缩小时间范围', output_invalid: '模型结果未通过校验', insufficient_balance: '模型额度不足', execution_unavailable: '服务暂时不可用', balance_reserved: '额度正在核对，稍后会自动继续', model_outcome_uncertain: '正在核对原调用结果，请勿重复发起分析', model_connector_offline: '本机模型暂时离线，请恢复后重新分析', model_unavailable: '所选模型暂不可用，请核对模型状态' } as Record<string, string>)[code] ?? '请刷新任务状态后重试'
 }

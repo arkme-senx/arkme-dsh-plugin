@@ -38,6 +38,15 @@ describe('sound contracts and account isolation',()=>{
   const source=vi.fn();const service=new WorldSoundService(runtime,{recording:source,call:source,team:source,recordUID:source,recordRef:source})
   await expect(service.execute({accountKey:'test:2',action:'capabilities'})).rejects.toThrow();expect(source).not.toHaveBeenCalled()
  })
+ it('does not dispatch an old-account withdrawal after slow reference resolution switches accounts',async()=>{
+  let actor=1
+  const post=vi.fn().mockResolvedValue({record_uid:'world-sound-'+'a'.repeat(64),check_status:2,public_requested:false,can_manage:true})
+  const runtime={config:{environment:'test'},stateStore:{uniqueCode:async()=> 'secret'},requireSession:async()=>({userId:actor,refreshToken:String(actor)}),authenticatedWorldPost:post} as never
+  const source=vi.fn();const recordUID=vi.fn(async()=>{actor=2;return 'world-sound-'+'a'.repeat(64)})
+  const service=new WorldSoundService(runtime,{recording:source,call:source,team:source,recordUID,recordRef:async()=> 'safe-ref'})
+  await expect(service.execute({accountKey:'test:1',action:'management',recordRef:'old-ref',withdraw:true})).rejects.toThrow()
+  expect(post).not.toHaveBeenCalled()
+ })
 })
 
 describe('frontend-first deployment readiness',()=>{

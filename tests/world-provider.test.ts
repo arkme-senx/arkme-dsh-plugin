@@ -52,6 +52,32 @@ function controlledImage(record = 'public-record-1', index = 0, version = 'a'.re
   return `https://world.test/api/public/v1/public-record/media?record_uid=${record}&version=${version}&kind=image&index=${index}`
 }
 
+it('uses the formal sound owner to read and withdraw a pending receipt without an anonymous publication lookup', async () => {
+  const uid = `world-sound-${'a'.repeat(64)}`
+  const sessions = new MemorySessionStore()
+  sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+    const path = new URL(String(input)).pathname
+    if (path === '/api/v1/public-record/my-list') return json({ code: 200, data: { list: [{ record_uid: uid, user_id: 10001, text_content: '本人稿件句柄', images: [], videos: [], voices: [] }], total: 1 } })
+    if (path === '/api/v1/world/sound-excerpts/management') {
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer access' })
+      const body = JSON.parse(String(init?.body))
+      expect(body.record_uid).toBe(uid)
+      return json({ code: 200, data: { record_uid: uid, check_status: 1, public_requested: !body.withdraw, can_manage: true } })
+    }
+    // A pending publication has no anonymous read grant. The actual Host must
+    // send its opaque handle directly to the authenticated management owner.
+    return json({ code: 404, message: 'not public' }, 404)
+  })
+  const service = new ArkmeService(config, sessions, stateStore as never, fetcher)
+  try {
+    const ref = (await service.listMyWorldFeed()).items[0]!.recordRef
+    expect(await service.worldSoundExcerpts({ action: 'management', accountKey: 'test:10001', recordRef: ref })).toMatchObject({ checkStatus: 1, publicRequested: true, canManage: true })
+    expect(await service.worldSoundExcerpts({ action: 'management', accountKey: 'test:10001', recordRef: ref, withdraw: true })).toMatchObject({ publicRequested: false })
+    expect(fetcher.mock.calls.some(([input]) => new URL(String(input)).pathname === '/api/public/v1/world/read')).toBe(false)
+  } finally { service.dispose() }
+})
+
 describe('world Provider projection', () => {
   it('lists only the authenticated account World posts through the mobile my-list contract', async () => {
     const sessions = new MemorySessionStore()

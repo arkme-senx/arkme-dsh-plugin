@@ -52,3 +52,11 @@ it('reports unavailable capability without generation controls', async () => {
   expect(document.body.textContent).toContain('分享建议服务尚未就绪')
   expect([...document.querySelectorAll('button')].some(b => b.textContent === '开始分析')).toBe(false)
 })
+
+it('gives an actionable terminal failure without promising an automatic rerun', async () => {
+  mocks.call.mockImplementation(async (_op, p) => p.action === 'capabilities' ? { version: 1, supported: true } : p.action === 'models' ? { items: [] } : p.action === 'state' ? { ...state(), job: { ref: 'job-ref', requestId: 'accepted-request', status: 'failed', phase: 'failed', failure: 'model_connector_offline', scanned: 1, processed: 0, matched: 0 } } : {})
+  await click('✨ 分享建议 1'); await settle()
+  expect(document.body.textContent).toContain('本机模型暂时离线，请恢复后重新分析')
+  expect(document.body.textContent).not.toContain('恢复后会继续核对')
+  expect(mocks.call.mock.calls.filter(c => c[1].action === 'create')).toHaveLength(0)
+})

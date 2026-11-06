@@ -30,8 +30,13 @@ export class WorldSoundService {
   async execute(input:WorldSoundRequest,signal?:AbortSignal):Promise<unknown>{
     const session=await this.runtime.requireSession(),account=`${this.runtime.config.environment}:${session.userId}`
     if(!input||input.accountKey!==account)throw invalid()
+    const guard=async()=>{
+      signal?.throwIfAborted()
+      const current=await this.runtime.requireSession()
+      if(current.userId!==session.userId||current.refreshToken!==session.refreshToken||account!==`${this.runtime.config.environment}:${current.userId}`)throw invalid()
+    }
     const post=async(path:string,body:Record<string,unknown>,write=false)=>{
-      try{return obj(await this.runtime.authenticatedWorldPost(`/api/v1/world/sound-excerpts/${path}`,body,session,signal,{lane:write?'write':'interactive-read',bypassCache:true,cacheMs:0,...(write?{requestTimeoutMs:160_000}:{})}))}
+      try{await guard();const result=obj(await this.runtime.authenticatedWorldPost(`/api/v1/world/sound-excerpts/${path}`,body,session,signal,{lane:write?'write':'interactive-read',bypassCache:true,cacheMs:0,...(write?{requestTimeoutMs:160_000}:{})}));await guard();return result}
       catch(error){
         if(error instanceof ArkmePluginError&&[404,501,503].includes(error.upstreamStatus??error.httpStatus)){
           if(path==='capabilities')return {version:1,recording:false,call:false}
@@ -63,7 +68,7 @@ export class WorldSoundService {
       const uid=await this.ports.recordUID(input.recordRef)
       result=await this.receipt(await post('management',{record_uid:uid,withdraw:input.withdraw===true},input.withdraw===true))
     }else throw invalid()
-    signal?.throwIfAborted();const current=await this.runtime.requireSession();if(current.userId!==session.userId)throw invalid();return result
+    await guard();return result
   }
-  private async receipt(v:Record<string,unknown>){if(typeof v.record_uid!=='string'||!/^world-sound-[a-f0-9]{64}$/.test(v.record_uid)||![1,2,3,4].includes(Number(v.check_status))||typeof v.public_requested!=='boolean')throw invalid();return {recordRef:await this.ports.recordRef(v.record_uid),checkStatus:Number(v.check_status),publicRequested:v.public_requested}}
+  private async receipt(v:Record<string,unknown>){if(typeof v.record_uid!=='string'||!/^world-sound-[a-f0-9]{64}$/.test(v.record_uid)||![1,2,3,4].includes(Number(v.check_status))||typeof v.public_requested!=='boolean'||typeof v.can_manage!=='boolean')throw invalid();return {recordRef:await this.ports.recordRef(v.record_uid),checkStatus:Number(v.check_status),publicRequested:v.public_requested,canManage:v.can_manage}}
 }

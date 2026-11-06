@@ -32,7 +32,7 @@ it('keeps the exact uncertain command, displays audit status and withdraws witho
     if (op === 'team.app.teams') return []
     if (input.action === 'prepare') return { draftRef: 'sealed-draft', excerpt }
     if (input.action === 'publish' && !submits++) throw new Error('结果未知')
-    return { recordRef: 'record', checkStatus: input.action === 'management' && !input.withdraw ? 2 : 1, publicRequested: !input.withdraw }
+    return { recordRef: 'record', checkStatus: input.action === 'management' && !input.withdraw ? 2 : 1, publicRequested: !input.withdraw, canManage: true }
   })
   const close = vi.fn(), preview = vi.fn()
   await mount(<WorldSoundPublishDialog selection={{ kind: 'call', callRef: 'call', segmentIds: ['stable'] }} onClose={close} onPreview={preview} />)
@@ -70,4 +70,14 @@ it('aborts preparation and hides the previous account when switching accounts', 
   await act(async () => arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 8 }))
   expect(signal?.aborted).toBe(true)
   expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+
+it('lets a publisher check a read-only receipt without offering team withdrawal', async () => {
+  call.mockImplementation(async (op, input) => op === 'team.app.teams' ? [] : input.action === 'prepare' ? { draftRef: 'sealed-draft', excerpt } : { recordRef: 'record', checkStatus: 1, publicRequested: true, canManage: false })
+  await mount(<WorldSoundPublishDialog selection={{ kind: 'call', callRef: 'call', segmentIds: ['stable'] }} onClose={() => {}} onPreview={() => {}} />)
+  await click('提交审核'); await click('检查审核状态')
+  expect(document.body.textContent).toContain('审核中，目前仅自己可见')
+  expect([...document.querySelectorAll('button')].some(button => button.textContent === '取消公开发布')).toBe(false)
+  expect(call.mock.calls.filter(([, input]) => input.action === 'management')).toHaveLength(1)
+  expect(call.mock.calls.filter(([, input]) => input.withdraw === true)).toHaveLength(0)
 })

@@ -16,10 +16,15 @@ import { pathToFileURL } from 'node:url'
 const cli = process.env.ARKME_OFFICIAL_DSH_CLI, artifact = process.env.ARKME_PACKED_ARTIFACT
 assert(cli && artifact && process.env.PLAYWRIGHT_MODULE_ANCHOR, 'Official CLI, immutable tgz and Playwright toolchain anchor required')
 assert.match(artifact, /\.tgz$/u)
+const realWorld = process.env.ARKME_REPORT_CHAIN_WORLD, realRecord = process.env.ARKME_REPORT_CHAIN_RECORD
+if (realWorld || realRecord) {
+  for (const origin of [realWorld, realRecord]) { const u = new URL(origin); assert.equal(u.protocol, 'http:'); assert.equal(u.hostname, '127.0.0.1') }
+}
+const syntheticBackend = !realWorld
 const root = await mkdtemp(join(tmpdir(), 'world report official ')), home = join(root, 'home'), profile = join(home, 'profiles', 'web')
 const capture = process.env.ARKME_E2E_CAPTURE_DIR || join(root, 'capture')
 await mkdir(capture, { recursive: true })
-await writeFile(join(capture, 'context.json'), JSON.stringify({ root, profile, artifact: resolve(artifact), sha256: createHash('sha256').update(await readFile(artifact)).digest('hex'), syntheticBackend: true }, null, 2))
+await writeFile(join(capture, 'context.json'), JSON.stringify({ root, profile, artifact: resolve(artifact), sha256: createHash('sha256').update(await readFile(artifact)).digest('hex'), syntheticBackend }, null, 2))
 const cert = join(root, 'cert.pem'), key = join(root, 'key.pem')
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1', '-keyout', key, '-out', cert], { stdio: 'ignore' })
 const actor = 99101, revision = 'a'.repeat(32)
@@ -44,7 +49,13 @@ const server = createServer({ key: await readFile(key), cert: await readFile(cer
       assert.equal(body.content_revision, revision); assert([1, 2, 3, 4, 5, 6].includes(body.report_type)); assert(body.reason)
       const prior = reports.get(body.request_uid)
       if (prior) assert.deepEqual(prior.body, body, 'Uncertain retries must preserve the original command')
-      else reports.set(body.request_uid, { body, id: 1000000000001 + reports.size })
+      if (realWorld) {
+        const upstream = await fetch(realWorld + path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Internal-Secret': 'isolated-report-chain', 'X-User-Id': String(actor) }, body: JSON.stringify(body) })
+        const result = await upstream.json()
+        assert.equal(upstream.status, 200); assert.equal(result.code, 200); assert.equal(result.data?.submitted, true, JSON.stringify(result))
+        if (prior) assert.equal(result.data.report_id, prior.id, 'Real Record must return the first acceptance receipt')
+        reports.set(body.request_uid, { body, id: result.data.report_id })
+      } else if (!prior) reports.set(body.request_uid, { body, id: 1000000000001 + reports.size })
       if (body.record_uid === 'report-ui' && dropUiResponse) { dropUiResponse = false; res.writeHead(503); res.end(); return }
       data = { submitted: true, report_id: reports.get(body.request_uid).id }
     }
@@ -117,9 +128,22 @@ try {
   assert.equal((await sdk.worldReport({ action: 'pending', expectedUserId: actor, recordRef: target.recordRef })).submitted, true)
   await sdk.worldReport({ action: 'acknowledge', expectedUserId: actor, recordRef: target.recordRef, requestUid: request.requestUid })
   assert.equal(reports.size, 3)
+  let persisted
+  if (realRecord) {
+    const response = await fetch(realRecord + '/api/internal/v1/report-chain/evidence', { method: 'POST', headers: { 'X-Internal-Secret': 'isolated-report-chain' } })
+    assert.equal(response.status, 200); persisted = await response.json()
+    assert.equal(persisted.length, 3, 'Three logical commands must create exactly three real Mongo reports')
+    for (const row of persisted) {
+      const original = [...reports.values()].find(value => value.id === row.id)
+      assert(original); assert.equal(row.reporter_id, actor); assert.equal(row.owner_id, 99102)
+      assert.equal(row.obj_uid, original.body.record_uid); assert.equal(row.report_type, original.body.report_type); assert.equal(row.reason, original.body.reason)
+      assert.equal(row.submission.evidence.content_revision, revision); assert.equal(row.submission.evidence.principal.kind, 'person'); assert.equal(row.submission.evidence.principal.id, 99102)
+    }
+    await writeFile(join(capture, 'real-record-evidence.json'), JSON.stringify(persisted, null, 2))
+  }
   await page.evaluate(() => fetch('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'auth.logout', params: {} }) }))
-  await writeFile(join(capture, 'result.json'), JSON.stringify({ officialAgent: true, humanConfirmation: true, ui: true, uncertainRecovery: true, installedSdk: true, syntheticBackend: true, reportCount: reports.size, requests }, null, 2))
-  console.log(JSON.stringify({ acceptance: 'world-report-official-tgz', capture, profile, passed: true, syntheticBackend: true }))
+  await writeFile(join(capture, 'result.json'), JSON.stringify({ officialAgent: true, humanConfirmation: true, ui: true, uncertainRecovery: true, installedSdk: true, syntheticBackend, reportCount: reports.size, requests }, null, 2))
+  console.log(JSON.stringify({ acceptance: 'world-report-official-tgz', capture, profile, passed: true, syntheticBackend }))
 } finally {
   if (page && !page.isClosed()) {
     await page.evaluate(() => fetch('/arkme-self/api', { method: 'POST', signal: AbortSignal.timeout(3000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'auth.logout', params: {} }) })).catch(() => {})

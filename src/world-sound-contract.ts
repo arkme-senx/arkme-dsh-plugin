@@ -8,7 +8,7 @@ export type WorldSoundRequest = { accountKey: string } & (
   | { action: 'management'; recordRef: string; withdraw?: boolean }
 )
 export interface WorldSoundPrepared { draftRef: string; excerpt: WorldSoundExcerpt }
-export interface WorldSoundReceipt { recordRef: string; checkStatus: number; publicRequested: boolean }
+export interface WorldSoundReceipt { recordRef: string; checkStatus: number; publicRequested: boolean; canManage: boolean }
 export type WorldSoundResponse<R extends WorldSoundRequest> = R extends {action:'prepare'} ? WorldSoundPrepared : R extends {action:'capabilities'} ? {version:1; recording:boolean; call:boolean} : WorldSoundReceipt
 
 /** Backend-only selectors never cross the Host boundary in a public response. */
