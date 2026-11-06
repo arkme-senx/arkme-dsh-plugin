@@ -63,7 +63,9 @@ export interface ArkmeMediaDescriptor {
   stableKey?: string
 }
 
-type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never; worldSound?: never }
+type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never; speechAudioPath?: never }
+  | { recordingClip: RecordingPlaybackRef; remoteUrl?: never; worldSound?: never; speechAudioPath?: never }
+  | { speechAudioPath: string; recordingClip?: never; remoteUrl?: never; worldSound?: never }
 type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
 type IssuableMediaDescriptor = Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'> & MediaSource
 
@@ -527,8 +529,8 @@ export class MediaService {
     if (originalOnly && descriptor.purpose !== 'original') {
       throw new ArkmePluginError('original-unavailable', '原文件不可用，请刷新后重试；不会用预览图代替原文件', false, 404)
     }
-    if (descriptor.recordingClip !== undefined) {
-      const response = await this.runtime.authenticatedAudioStream(recordingPlaybackPath(descriptor.recordingClip), {
+    if (descriptor.recordingClip !== undefined || descriptor.speechAudioPath !== undefined) {
+      const response = await this.runtime.authenticatedAudioStream(descriptor.speechAudioPath ?? recordingPlaybackPath(descriptor.recordingClip!), {
         expectedUserId: session.userId, method, ...(range === undefined ? {} : { range }),
         ...(signal === undefined ? {} : { signal }),
       })
@@ -724,6 +726,17 @@ export class MediaService {
     return this.issueMediaRef(userId, {
       recordingClip: clip, mimeType: 'application/octet-stream', fileName: 'recording-audio', size: 0,
     }, `recording:${recordingPlaybackPath(clip)}`)
+  }
+
+  /** A current-owner source ref is a relative authenticated Audio capability.
+   * Raw storage addresses and transcript placeholders never enter the browser. */
+  async issueSpeechPlaybackMediaRef(viewerUserId: number, sourceRef: string, contentPath: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    if (session.userId !== viewerUserId) throw new ArkmePluginError('speech-account-changed', '账号已变化，请重新打开说话统计', false, 409)
+    if (!/^[A-Za-z0-9_-]{16,4096}$/.test(sourceRef) || contentPath !== `/api/v1/speech-statistics/audio/${sourceRef}`)
+      throw new ArkmePluginError('speech-contract', '原音播放范围无效，请更新统计', false, 502)
+    return this.issueMediaRef(viewerUserId, { speechAudioPath: contentPath, mimeType: 'audio/flac', fileName: 'recording-speech-audio', size: 0 }, `speech:${sourceRef}`)
   }
 
   async readImage(

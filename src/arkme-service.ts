@@ -1047,7 +1047,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
     this.conversationActivity = new ConversationActivityService(this.runtime, this.source)
     this.conversationWords = new ConversationWordFrequencyService(this.runtime, this.source)
-    this.speechStatistics = new RecordingSpeechStatisticsService(this.runtime, this.recording)
+    this.speechStatistics = new RecordingSpeechStatisticsService(this.runtime, this.recording, this.media)
     this.calendarDayReview = new CalendarDayReviewService(this.runtime, this.recording, this.record, this.source, this.callHistory, this.privacy)
     this.unmarkedSpeaker = new UnmarkedSpeakerService(this.runtime, this.media)
     this.speakerDirectory = new SpeakerDirectoryService(this.runtime, this.recording, this.unmarkedSpeaker, this.media)
@@ -1223,6 +1223,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async conversationWordsParticipants(input: unknown, signal?: AbortSignal) { return this.conversationWords.participants(input, signal) }
   async conversationWordsMessages(input: unknown, signal?: AbortSignal) { return this.conversationWords.messages(input, signal) }
   async conversationWordsSource(input: unknown, signal?: AbortSignal) { return this.conversationWords.source(input, signal) }
+  async recordingSpeechCapabilities(signal?: AbortSignal) { return this.speechStatistics.capabilities(signal) }
   async recordingSpeechState(input: unknown, signal?: AbortSignal) { return this.speechStatistics.state(input, signal) }
   async recordingSpeechCreate(input: unknown, signal?: AbortSignal) { return this.speechStatistics.create(input, signal) }
   async recordingSpeechOccurrences(input: unknown, signal?: AbortSignal) { return this.speechStatistics.occurrences(input, signal) }
@@ -1455,6 +1456,7 @@ arkoImagesV1:true,
         aiPoints: true,
         automaticCapabilitiesV1: true,
         recordingVoiceTriggersV2: true,
+        recordingSpeechStatistics: 2,
         imageRead: true,
         recordCalendar: true,
         imageLibrary: true,

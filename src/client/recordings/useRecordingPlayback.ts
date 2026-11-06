@@ -10,6 +10,7 @@ export interface RecordingPlaybackController {
   isLoading: boolean
   error: string
   playItem(item: ArkmeRecordingWorkbenchItem, seekAtMillis?: number): Promise<void>
+  playMedia(playback: ArkmeRecordingPlayback, mediaStartAtMillis: number, seekAtMillis: number): Promise<void>
   playAt(items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number): Promise<void>
   selectAt(items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number): Promise<void>
   pause(): void
@@ -19,7 +20,7 @@ export interface RecordingPlaybackController {
 }
 
 export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: ArkmeRecordingWorkbenchItem, signal: AbortSignal) => Promise<readonly ArkmeRecordingWorkbenchItem[]>, currentItems?: readonly ArkmeRecordingWorkbenchItem[]): RecordingPlaybackController {
-  const audioRef = useRef<{ audio: HTMLAudioElement; item: ArkmeRecordingWorkbenchItem; playback: ArkmeRecordingPlayback }>()
+  const audioRef = useRef<{ audio: HTMLAudioElement; item?: ArkmeRecordingWorkbenchItem; playback: ArkmeRecordingPlayback }>()
   const cleanupRef = useRef<() => void>()
   const requestAbortRef = useRef<AbortController>()
   const requestRevisionRef = useRef(0)
@@ -59,34 +60,31 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
 
   useEffect(() => stop, [stop])
 
-  const openItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis: number) => {
+  const openTarget = async (target: { key: string; startAtMillis: number; item?: ArkmeRecordingWorkbenchItem }, seekAtMillis: number,
+    resolve: (signal: AbortSignal) => Promise<ArkmeRecordingPlayback>) => {
     const requestRevision = ++requestRevisionRef.current
     requestAbortRef.current?.abort()
     const requestController = new AbortController()
     requestAbortRef.current = requestController
     setError(''); releaseMedia(false)
-    setActiveItemRef(item.itemRef)
+    setActiveItemRef(target.key)
     setPositionAtMillis(seekAtMillis)
     setIsLoading(true)
     try {
-      const playback = await callArkme<ArkmeRecordingPlayback>(
-        'recordings.playback.open',
-        { itemRef: item.itemRef },
-        requestController.signal,
-      )
+      const playback = await resolve(requestController.signal)
       if (requestRevisionRef.current !== requestRevision) return
       const audio = new Audio(`${mediaPath}?ref=${encodeURIComponent(playback.playbackRef)}`)
-      audioRef.current = { audio, item, playback }
+      audioRef.current = { audio, ...(target.item ? { item: target.item } : {}), playback }
       const relativeSeekMillis = Math.min(
         playback.endOffsetMillis,
-        Math.max(playback.startOffsetMillis, playback.startOffsetMillis + seekAtMillis - item.startAtMillis),
+        Math.max(playback.startOffsetMillis, playback.startOffsetMillis + seekAtMillis - target.startAtMillis),
       )
       audio.currentTime = relativeSeekMillis / 1000
       setPositionAtMillis(seekAtMillis)
       const onTimeUpdate = () => {
         if (audioRef.current?.audio !== audio) return
         const mediaPositionMillis = audio.currentTime * 1_000
-        setPositionAtMillis(item.startAtMillis + mediaPositionMillis - playback.startOffsetMillis)
+        setPositionAtMillis(target.startAtMillis + mediaPositionMillis - playback.startOffsetMillis)
         if (!audio.paused && mediaPositionMillis >= playback.endOffsetMillis) void continueQueue()
       }
       const onPlay = () => { if (audioRef.current?.audio === audio) setIsPlaying(true) }
@@ -109,7 +107,7 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
         audio.removeEventListener('ended', onEnded)
         audio.removeEventListener('error', onError)
       }
-      setActiveItemRef(item.itemRef)
+      setActiveItemRef(target.key)
       await audio.play()
     } catch (reason) {
       if (requestRevisionRef.current !== requestRevision) return
@@ -125,9 +123,19 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     }
   }
 
+  const openItem = (item: ArkmeRecordingWorkbenchItem, seekAtMillis: number) => openTarget(
+    { key: item.itemRef, startAtMillis: item.startAtMillis, item }, seekAtMillis,
+    signal => callArkme<ArkmeRecordingPlayback>('recordings.playback.open', { itemRef: item.itemRef }, signal),
+  )
+
+  const playMedia = async (playback: ArkmeRecordingPlayback, mediaStartAtMillis: number, seekAtMillis: number) => {
+    queueRef.current = undefined
+    await openTarget({ key: playback.playbackRef, startAtMillis: mediaStartAtMillis }, seekAtMillis, async signal => { signal.throwIfAborted(); return playback })
+  }
+
   const continueQueue = async () => {
     const queue = queueRef.current
-    if (queue === undefined) return
+    if (queue === undefined) { releaseMedia(false); return }
     let next = queue.items[queue.index + 1]
     if (next === undefined && queue.continuePages && followingRef.current !== undefined) {
       const revision = ++requestRevisionRef.current
@@ -206,9 +214,9 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     const selectedItem = ordered[index]!
     const active = audioRef.current
     if (active !== undefined && !active.audio.paused
-      && active.item.itemRef === selectedItem.itemRef
-      && active.item.startAtMillis === selectedItem.startAtMillis
-      && active.item.endAtMillis === selectedItem.endAtMillis) {
+      && active.item?.itemRef === selectedItem.itemRef
+      && active.item?.startAtMillis === selectedItem.startAtMillis
+      && active.item?.endAtMillis === selectedItem.endAtMillis) {
       try {
         // Absolute day time and owner-relative media offset are different coordinates.
         active.audio.currentTime = Math.min(active.playback.endOffsetMillis, Math.max(
@@ -276,5 +284,5 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     }
   }
 
-  return { activeItemRef, positionAtMillis, isPlaying, isLoading, error, playItem, playAt, selectAt, pause, toggleAt, toggle, stop }
+  return { activeItemRef, positionAtMillis, isPlaying, isLoading, error, playItem, playMedia, playAt, selectAt, pause, toggleAt, toggle, stop }
 }

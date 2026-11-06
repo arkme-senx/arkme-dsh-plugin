@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar'
-import { speechFrequency, speechRate, type SpeechMode, type SpeechOccurrence, type SpeechOccurrences, type SpeechQuery, type SpeechResult, type SpeechTerm } from '../../recording-speech-statistics.js'
-import type { ExploreSource } from '../../explore-contract.js'
+import { speechFrequency, speechRate, type SpeechMode, type SpeechOccurrence, type SpeechOccurrences, type SpeechQuery, type SpeechResult, type SpeechTerm, type SpeechSource } from '../../recording-speech-statistics.js'
 import { ArkmeDetailShell } from '../ArkmeDetailShell.js'
 import { callArkme } from '../api.js'
 import { arkmeTheme } from '../arkme-theme.js'
@@ -9,7 +8,7 @@ import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 import { useSpeechStatistics } from './use-speech-statistics.js'
 
-export type SpeechSource = Extract<ExploreSource, { kind: 'recording' }>
+export type { SpeechSource } from '../../recording-speech-statistics.js'
 const style = `
 .speech-stats{font-size:13px;line-height:1.6;color:${arkmeTheme.text}}
 .speech-stats button{font:inherit;color:inherit;cursor:pointer;border:1px solid ${arkmeTheme.borderSoft};border-radius:7px;background:transparent;padding:4px 9px}
@@ -53,7 +52,7 @@ export function RecordingSpeechStatistics({ query, refreshRevision, onClose, onS
     sourceRequest.current?.abort(); const c = new AbortController(); sourceRequest.current = c
     setOpening(occurrence.key); setSourceError('')
     try {
-      const source = await withArkmeReadDeadline(signal => callArkme<SpeechSource>('recordings.speech-statistics.source', { ...query, resultId: result.id, sourceRef: occurrence.sourceRef }, signal), c.signal)
+      const source = await withArkmeReadDeadline(signal => callArkme<SpeechSource>('recordings.speech-statistics.source', { ...query, resultId: result.id, sourceRef: occurrence.sourceRef, action }, signal), c.signal)
       if (!c.signal.aborted) onSource(source, action)
     } catch (e) { if (!c.signal.aborted) setSourceError(e instanceof Error ? e.message : tr('原音暂不可用')) }
     finally { if (!c.signal.aborted) setOpening('') }
@@ -70,7 +69,7 @@ export function RecordingSpeechStatistics({ query, refreshRevision, onClose, onS
     {owner.loading && !owner.state && <p role="status">{tr('正在读取说话统计…')}</p>}
     {owner.state && !owner.state.supported && <div className="speech-empty"><ChartBar size={36} /><strong>{tr('原音说话统计尚未接通')}</strong><p>{tr('接通后，将根据你当天的真实发音，分析常用表达和口语习惯。')}</p><p className="speech-muted">{tr('每次出现都可试听原音，并定位到转写原文。')}</p></div>}
     {owner.state?.job && <p role="status">{tr(stages[owner.state.job.stage])}{owner.state.job.total > 0 && ` · ${owner.state.job.completed}/${owner.state.job.total}`}</p>}
-    {result && (owner.state?.stale || owner.locallyStale) && <p role="status">{tr('录音或人物标记已变化，当前展示上次结果，请重新分析。')}</p>}
+    {(owner.state?.stale || owner.state?.job?.stale || owner.locallyStale) && <p role="status">{tr(result ? '录音或人物标记已变化，当前展示上次结果，请重新分析。' : '录音或人物标记已变化，请重新分析。')}</p>}
     {result && <>
       <div className="speech-coverage"><div>{tr('已分析本人语音')} {minutes(result.coverage.analyzedMillis)} / {minutes(result.coverage.eligibleMillis)} {tr('分钟')}</div>
         <div className="speech-muted">{result.coverage.pendingSegments > 0 && <span>{tr('待处理')} {result.coverage.pendingSegments} {tr('段')} · </span>}{result.coverage.missingAudioSegments > 0 && <span>{tr('缺少原音')} {result.coverage.missingAudioSegments} {tr('段')} · </span>}{result.coverage.uncertainSpeakerSegments > 0 && <span>{tr('本人身份待确认')} {result.coverage.uncertainSpeakerSegments} {tr('段')}</span>}</div>
@@ -118,7 +117,7 @@ export function SpeechTermDetail({ query, result, term, mode, opening, onOpen }:
     <p className="speech-muted">{term.pendingCount > 0 && <>{tr('另有')} {term.pendingCount} {tr('次待核验，未计入确定次数')}。 </>}{rate !== null && <>{tr('每 10 分钟本人语音约')} {rate} {tr('次')}{mode === 'habit' && `（${tr('口头衔接')}）`}</>}</p>
     {data?.items.map(o => <article className="speech-occurrence" key={o.key}><time className="speech-muted">{new Intl.DateTimeFormat(arkmeIntlLocale(), { timeZone: query.timezone, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(o.startAtMillis)}</time> <small>{tr(o.verification === 'pending' ? '待核验' : o.use === 'habit' ? '口头衔接' : '已核验')}</small><p>{o.text}</p>
       {o.originalText !== o.text && <details><summary className="speech-muted">{tr('与原转写不同')}</summary><p className="speech-muted">{o.originalText || tr('原转写未包含这段表达')}</p></details>}
-      <div className="speech-controls"><button disabled={!o.sourceRef || !!opening} onClick={() => onOpen(o, 'play')}>{tr(opening === o.key ? '正在打开…' : '试听原音')}</button><button disabled={!o.sourceRef || !!opening} onClick={() => onOpen(o, 'locate')}>{tr('定位原文')}</button>{!o.sourceRef && <small>{tr('原音位置暂不可用')}</small>}</div>
+      <div className="speech-controls"><button disabled={!o.sourceRef || !!opening} onClick={() => onOpen(o, 'play')}>{tr(opening === o.key ? '正在打开…' : '试听原音')}</button><button disabled={!o.sourceRef || !o.originalText.trim() || !!opening} onClick={() => onOpen(o, 'locate')}>{tr('定位原文')}</button>{!o.sourceRef && <small>{tr('原音位置暂不可用')}</small>}</div>
     </article>)}
     {loading && <p role="status">{tr('正在读取出现记录…')}</p>}{error && <p role="alert">{error} <button onClick={() => void load(data?.nextCursor ?? null)}>{tr('重试')}</button></p>}
     {!loading && !error && data?.items.length === 0 && <p>{tr('暂无可查看的出现记录')}</p>}

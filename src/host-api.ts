@@ -1957,6 +1957,7 @@ export async function dispatchArkmeHostOperation(
     case 'chat.word-frequency.participants': return await service.conversationWordsParticipants(params, requestSignal)
     case 'chat.word-frequency.messages': return await service.conversationWordsMessages(params, requestSignal)
     case 'chat.word-frequency.source': return await service.conversationWordsSource(params, requestSignal)
+    case 'recordings.speech-statistics.capabilities': return await service.recordingSpeechCapabilities(requestSignal)
     case 'recordings.speech-statistics.state': return await service.recordingSpeechState(params, requestSignal)
     case 'recordings.speech-statistics.create': return await service.recordingSpeechCreate(params, requestSignal)
     case 'recordings.speech-statistics.occurrences': return await service.recordingSpeechOccurrences(params, requestSignal)

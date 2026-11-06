@@ -6,6 +6,12 @@ import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDire
 
 /** Import commands and scoped speaker/entity reads; no retired transcript/calendar/cursor ports. */
 export interface ArkmeRecordingToolPort extends RecordingEntityPort {
+  recordingSpeechCapabilities(signal?: AbortSignal): Promise<import('../../recording-speech-statistics.js').SpeechCapabilities>
+  recordingSpeechState(input: import('../../recording-speech-statistics.js').SpeechQuery, signal?: AbortSignal): Promise<import('../../recording-speech-statistics.js').SpeechState>
+  recordingSpeechCreate(input: import('../../recording-speech-statistics.js').SpeechCreate, signal?: AbortSignal): Promise<import('../../recording-speech-statistics.js').SpeechState>
+  recordingSpeechOccurrences(input: import('../../recording-speech-statistics.js').SpeechOccurrencesQuery, signal?: AbortSignal): Promise<import('../../recording-speech-statistics.js').SpeechOccurrences>
+  recordingSpeechSource(input: import('../../recording-speech-statistics.js').SpeechSourceQuery, signal?: AbortSignal): Promise<import('../../recording-speech-statistics.js').SpeechSource>
+
  recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<import('../../recording-file-storage.js').RecordingFileStoragePage>
   recordingSpeakerEvidenceQuery(query: import('../../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../../recording-evidence-contract.js').RecordingEvidenceResult>

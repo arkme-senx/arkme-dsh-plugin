@@ -1,5 +1,12 @@
-/** Proposed audio-owner v1 contract. Counts must come from audio evidence, never client ASR text. */
+import type { ExploreSource } from './explore-contract.js'
+import type { ArkmeRecordingPlayback } from './types.js'
+
+/** Audio-owner v2 contract. Counts come from original audio, never client ASR text. */
 export interface SpeechQuery { accountScope: string; date: string; timezone: string }
+export interface SpeechCapabilities { version: 2; accountScope: string; supported: boolean }
+export interface SpeechCreate extends SpeechQuery { requestId: string }
+export interface SpeechOccurrencesQuery extends SpeechQuery { resultId: string; termKey: string; mode: SpeechMode; cursor?: string | null }
+export interface SpeechSourceQuery extends SpeechQuery { resultId: string; sourceRef: string; action: 'play' | 'locate' }
 export type SpeechMode = 'habit' | 'all'
 export interface SpeechTerm { key: string; text: string; verifiedCount: number; habitCount: number; pendingCount: number }
 export interface SpeechResult {
@@ -9,28 +16,34 @@ export interface SpeechResult {
 }
 export interface SpeechState {
   supported: boolean; stale: boolean; result: SpeechResult | null
-  job: { id: string; stage: 'queued' | 'recognizing' | 'verifying' | 'counting' | 'failed'; completed: number; total: number } | null
+  job: { id: string; stage: 'queued' | 'recognizing' | 'verifying' | 'counting' | 'failed'; completed: number; total: number; stale: boolean } | null
 }
 export interface SpeechOccurrence {
   key: string; startAtMillis: number; endAtMillis: number; text: string; originalText: string
   verification: 'verified' | 'pending'; use: 'habit' | 'lexical' | 'uncertain'; sourceRef: string | null
 }
 export interface SpeechOccurrences { items: SpeechOccurrence[]; total: number; nextCursor: string | null }
+export interface SpeechSource {
+  playback: ArkmeRecordingPlayback
+  mediaStartAtMillis: number
+  focusAtMillis: number
+  target: Extract<ExploreSource, { kind: 'recording' }> | null
+}
 const invalid = (): never => { throw new Error('说话统计数据不完整或版本不匹配，请刷新后重试') }
 export const speechObject = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : invalid()
-export const speechText = (v: unknown, max = 512): string => typeof v === 'string' && v.trim() && v.length <= max ? v : invalid()
+export const speechText = (v: unknown, max = 512): string => typeof v === 'string' && v.trim() && (v.length <= max || Array.from(v).length <= max) ? v : invalid()
 const count = (v: unknown): number => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : invalid()
 const bool = (v: unknown): boolean => typeof v === 'boolean' ? v : invalid()
-const list = (v: unknown, max: number): unknown[] => Array.isArray(v) && v.length <= max ? v : invalid()
+const list = (v: unknown, max: number): unknown[] => Array.isArray(v) && (v.length <= max || Array.from(v).length <= max) ? v : invalid()
 export function parseSpeechQuery(input: unknown): SpeechQuery {
   const v = speechObject(input), date = speechText(v.date, 10), timezone = speechText(v.timezone, 100)
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || new Date(`${date}T12:00:00Z`).toISOString().slice(0, 10) !== date) invalid()
   new Intl.DateTimeFormat('en', { timeZone: timezone }).format(0)
   return { accountScope: speechText(v.accountScope, 100), date, timezone }
 }
-export function speechEnvelope(q: SpeechQuery) { return { schema_version: 1, scope: 'self_speech_day', date: q.date, time_zone: q.timezone } }
+export function speechEnvelope(q: SpeechQuery) { return { schema_version: 2, scope: 'self_speech_day', date: q.date, time_zone: q.timezone } }
 export function assertSpeechEnvelope(v: Record<string, unknown>, q: SpeechQuery) {
-  if (v.schema_version !== 1 || v.scope !== 'self_speech_day' || v.date !== q.date || v.time_zone !== q.timezone) invalid()
+  if (v.schema_version !== 2 || v.scope !== 'self_speech_day' || v.date !== q.date || v.time_zone !== q.timezone) invalid()
 }
 export const unavailableSpeechState = (): SpeechState => ({ supported: false, stale: false, result: null, job: null })
 export function parseSpeechState(value: unknown, q: SpeechQuery): SpeechState {
@@ -53,7 +66,7 @@ export function parseSpeechState(value: unknown, q: SpeechQuery): SpeechState {
   if (v.job !== null) {
     const j = speechObject(v.job), stage = speechText(j.stage) as NonNullable<SpeechState['job']>['stage']
     if (!['queued', 'recognizing', 'verifying', 'counting', 'failed'].includes(stage)) invalid()
-    job = { id: speechText(j.id), stage, completed: count(j.completed), total: count(j.total) }
+    job = { id: speechText(j.id), stage, completed: count(j.completed), total: count(j.total), stale: bool(j.stale) }
     if (job.completed > job.total) invalid()
   }
   return { supported: true, stale: bool(v.stale), result, job }

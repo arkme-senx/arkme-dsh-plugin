@@ -9,7 +9,7 @@ export function useSpeechStatistics(q: SpeechQuery, refreshRevision: string) {
   const [state, setState] = useState<SpeechState>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false), [uncertain, setUncertain] = useState(false)
   const readController = useRef<AbortController>(), writeController = useRef<AbortController>(), busy = useRef(false)
-  const storageKey = `arkme:speech-statistics-request:v1:${q.accountScope}:${q.date}:${q.timezone}`
+  const storageKey = `arkme:speech-statistics-request:v2:${q.accountScope}:${q.date}:${q.timezone}`
   const pending = useRef('')
   const [locallyStale, setLocallyStale] = useState(false)
   const previousResult = useRef<string>()
@@ -36,7 +36,7 @@ export function useSpeechStatistics(q: SpeechQuery, refreshRevision: string) {
     if (previousRevision.current === refreshRevision) return
     previousRevision.current = refreshRevision; setLocallyStale(true); void read()
   }, [refreshRevision, read])
-  const running = !!state?.job && state.job.stage !== 'failed'
+  const running = !!state?.job && state.job.stage !== 'failed' && !state.job.stale
   useEffect(() => {
     if (!running || loading || submitting || error) return
     const refresh = () => { if (document.visibilityState === 'visible') void read() }

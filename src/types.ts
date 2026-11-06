@@ -1591,6 +1591,7 @@ arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
     recordingVoiceTriggersV2?: true
+    recordingSpeechStatistics?: 2
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -4638,6 +4639,7 @@ export type ArkmePluginOperation =
   | 'chat.word-frequency.participants'
   | 'chat.word-frequency.messages'
   | 'chat.word-frequency.source'
+  | 'recordings.speech-statistics.capabilities'
   | 'recordings.speech-statistics.state'
   | 'recordings.speech-statistics.create'
   | 'recordings.speech-statistics.occurrences'

@@ -1,3 +1,5 @@
+import type { SpeechCapabilities, SpeechQuery, SpeechCreate, SpeechState, SpeechOccurrencesQuery, SpeechOccurrences, SpeechSourceQuery, SpeechSource } from '../recording-speech-statistics.js'
+export type { SpeechCapabilities, SpeechQuery, SpeechCreate, SpeechState, SpeechTerm, SpeechResult, SpeechOccurrence, SpeechOccurrencesQuery, SpeechOccurrences, SpeechSourceQuery, SpeechSource } from '../recording-speech-statistics.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
 export type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
@@ -915,6 +917,38 @@ export class ArkmeSdk {
     return capabilities
   }
 
+  private speechSignal(signal?: AbortSignal): AbortSignal { return AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])]) }
+  async speechStatisticsCapabilities(signal?: AbortSignal): Promise<SpeechCapabilities> {
+    signal = this.speechSignal(signal)
+    if ((await this.capabilities(signal)).features.recordingSpeechStatistics !== 2) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持本人原音统计 v2', retryable: false })
+    return this.call('recordings.speech-statistics.capabilities', undefined, signal)
+  }
+  private async requireSpeechStatistics(input: SpeechQuery, signal: AbortSignal) {
+    const capability = await this.speechStatisticsCapabilities(signal)
+    if (!capability.supported) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '原音统计服务尚未就绪', retryable: true })
+    if (capability.version !== 2 || capability.accountScope !== input.accountScope) throw new ArkmeClientError({ code: 'ACCOUNT_CHANGED', message: '账号或统计协议已变化，请重新打开', retryable: false })
+  }
+  async speechStatisticsState(input: SpeechQuery, signal?: AbortSignal): Promise<SpeechState> {
+    signal = this.speechSignal(signal); await this.requireSpeechStatistics(input, signal)
+    return this.call('recordings.speech-statistics.state', { ...input }, signal)
+  }
+  /** Explicit human generation in the current trusted DSH browser origin.
+   * Node consumers must use the granted session Tool or open their plugin UI;
+   * this SDK never manufactures Origin to bypass the Host write boundary.
+   * Retrying keeps the caller's original requestId, including after completion.
+   */
+  async createSpeechStatistics(input: SpeechCreate, signal?: AbortSignal): Promise<SpeechState> {
+    signal = this.speechSignal(signal); await this.requireSpeechStatistics(input, signal)
+    return this.call('recordings.speech-statistics.create', { ...input }, signal)
+  }
+  async speechStatisticsOccurrences(input: SpeechOccurrencesQuery, signal?: AbortSignal): Promise<SpeechOccurrences> {
+    signal = this.speechSignal(signal); await this.requireSpeechStatistics(input, signal)
+    return this.call('recordings.speech-statistics.occurrences', { ...input }, signal)
+  }
+  async speechStatisticsSource(input: SpeechSourceQuery, signal?: AbortSignal): Promise<SpeechSource> {
+    signal = this.speechSignal(signal); await this.requireSpeechStatistics(input, signal)
+    return this.call('recordings.speech-statistics.source', { ...input }, signal)
+  }
   private async requireRecordingVoice(signal?: AbortSignal) {
     if ((await this.capabilities(signal)).features.recordingVoiceTriggersV2 !== true) throw new Error('当前 Provider 不支持录音语音触发 v2')
   }

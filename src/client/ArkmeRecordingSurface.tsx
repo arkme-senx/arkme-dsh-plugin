@@ -1220,16 +1220,14 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     return true
   }
   const openSpeechSource = (source: SpeechSource, action: 'play' | 'locate') => {
-    const item = source.items.find(value => value.itemId === source.focusItemId)
-    if (!item || !item.isSelf) throw new Error(tr('人物标记已变化，请更新统计'))
     if (action === 'play') {
-      const target = source.playbackTargets?.find(value => value.itemId === item.itemId)?.item ?? (item.transcriptSource === 'system' ? item : undefined)
-      if (!target) throw new Error(tr('这段原文暂无可播放的音频'))
-      void playback.playItem(target, item.startAtMillis)
+      void playback.playMedia(source.playback, source.mediaStartAtMillis, source.focusAtMillis)
     } else {
-      if (source.segment) arkmeUi.showRecordingTarget(source.dateStamp, item.startAtMillis, source.segment)
+      const target = source.target, item = target?.items.find(value => value.itemId === target.focusItemId)
+      if (!target || !item) throw new Error(tr('原转写未包含这段表达，暂无可定位的原文'))
+      if (target.segment) arkmeUi.showRecordingTarget(target.dateStamp, source.focusAtMillis, target.segment)
       else if (transcriptItems.some(value => value.itemId === item.itemId)) {
-        setActiveTab('transcript'); setTranscriptNavigation({ dateStamp: source.dateStamp, itemId: item.itemId })
+        setActiveTab('transcript'); setTranscriptNavigation({ dateStamp: target.dateStamp, itemId: item.itemId })
       } else throw new Error(tr('当前转写中找不到精确位置，请切换到对应转写版本'))
       setSpeechScope('')
     }

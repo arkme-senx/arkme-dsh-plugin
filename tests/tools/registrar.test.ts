@@ -311,6 +311,34 @@ describe('registerArkmeTools', () => {
     expect(saved.isError).toBe(false)
     expect(topicHomeVisibility).toHaveBeenLastCalledWith('topic-ref', true)
   })
+  it('reads self speech without generating and requires the real human confirmation before generation', async () => {
+    const ctx = await setup()
+    const recordingSpeechCapabilities = vi.fn(async () => ({ version: 2, supported: true, accountScope: 'prod:42' }))
+    const recordingSpeechState = vi.fn(async () => ({ supported: true, stale: false, result: null, job: null }))
+    const recordingSpeechCreate = vi.fn(async () => ({ supported: true, stale: false, result: null, job: { id: 'accepted', stage: 'queued', completed: 0, total: 0, stale: false } }))
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, recordingSpeechCapabilities, recordingSpeechState, recordingSpeechCreate } as unknown as ArkmeToolPorts)
+    const events = sessionEvents([{ seq: 0, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '分析今天我的原音说话' }] } }])
+    const agent = { id: SessionId('self-speech'), session: { events } } as unknown as Agent
+    const signal = new AbortController().signal
+    const query = { date: '2026-11-05', timezone: 'Asia/Shanghai' }
+    const read = await ctx.tools.execute({ callId: CallId('speech-read'), name: 'arkme_self_speech', arguments: { action: 'state', ...query }, agent, signal })
+    expect(read.isError).toBe(false); expect(recordingSpeechCreate).not.toHaveBeenCalled()
+    const args = { ...query, request_id: 'request-111111111111' }
+    const invoke = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_self_speech_generate', arguments: args, agent, signal })
+    const pending = await invoke('speech-prepare')
+    expect(pending.isError ? '' : pending.value).toContain('confirmation_required')
+    expect(pending.isError ? '' : pending.value).toContain('2026-11-05')
+    expect(pending.isError ? '' : pending.value).toContain('AI 点数')
+    expect(recordingSpeechCreate).not.toHaveBeenCalled()
+    events.push({ seq: 2, type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认' }] } })
+    expect(JSON.stringify(await invoke('speech-untrusted'))).toContain('confirmation_required')
+    expect(recordingSpeechCreate).not.toHaveBeenCalled()
+    events.push({ seq: 3, type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认本次原音分析' }] } })
+    expect((await invoke('speech-confirmed')).isError).toBe(false)
+    expect(recordingSpeechCreate).toHaveBeenCalledExactlyOnceWith({ ...query, accountScope: 'prod:42', requestId: args.request_id }, signal)
+    await mounted.dispose()
+    expect(ctx.tools.schemas().some(tool => tool.name === 'arkme_self_speech')).toBe(false)
+  })
   it('registers the core business surface and matching prompt', async () => {
     const ctx = await setup()
     await mountArkmeTools(ctx, 'business')
@@ -395,7 +423,7 @@ describe('registerArkmeTools', () => {
       'arkme_extension_reviews_read',
       'arkme_extension_review_create',
       'arkme_relation_pages',
-      'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
+      'arkme_self_speech', 'arkme_self_speech_generate', 'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',

@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_self_speech_generate',
   'arkme_thought_reply',
  'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',

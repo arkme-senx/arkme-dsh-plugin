@@ -5,7 +5,7 @@ import { ArkmePluginError, type ServiceRuntime } from '../src/services/service.j
 
 const q: SpeechQuery = { accountScope: 'prod:7', date: '2026-10-16', timezone: 'Asia/Shanghai' }
 const env = speechEnvelope(q)
-const capability = { schema_version: 1, scope: 'self_speech_day', supported: true, audio_verbatim: true, self_only: true, source_navigation: true, idempotent_create: true }
+const capability = { schema_version: 2, scope: 'self_speech_day', supported: true, audio_verbatim: true, self_only: true, source_navigation: true, idempotent_create: true }
 const term = { key: 'k1', text: '那个', verifiedCount: 6, habitCount: 2, pendingCount: 3 }
 const result = { id: 'r1', evidence_basis: 'audio_verbatim', speaker_scope: 'self', generatedAtMillis: 100, identityVersion: 'i1', audioVersion: 'a1',
   coverage: { analyzedMillis: 600000, eligibleMillis: 1200000, pendingSegments: 3, missingAudioSegments: 2, uncertainSpeakerSegments: 4 }, terms: [term] }
@@ -16,8 +16,9 @@ function fixture() {
   const runtime = { config: { environment: 'prod' }, requireSession: async () => ({ userId }), authenticatedAudioPost: post,
     subscribeAccountScope: (fn: () => void) => { epoch = fn; return () => {} } } as unknown as ServiceRuntime
   const recording = { exploreRecordingEvidence: vi.fn(async () => ({ kind: 'recording' as const, dateStamp: 1, focusItemId: 'item', items: [{ itemId: 'item', isSelf: true, startAtMillis: Date.parse('2026-10-16T12:00:00+08:00') }] })) }
-  const service = new RecordingSpeechStatisticsService(runtime, recording as never)
-  return { service, post, recording, change: () => { userId = 8; epoch() } }
+  const media = { issueSpeechPlaybackMediaRef: vi.fn(async () => 'opaque-media') }
+  const service = new RecordingSpeechStatisticsService(runtime, recording as never, media)
+  return { service, post, recording, media, change: () => { userId = 8; epoch() } }
 }
 describe('audio grounded speech statistics contract', () => {
   it('keeps verified, contextual filler, and pending counts distinct; normalizes to analyzed speech', () => {
@@ -73,14 +74,51 @@ describe('plugin speech owner adapter', () => {
     f.post.mockImplementationOnce(async () => { f.change(); return capability })
     await expect(f.service.state(q)).rejects.toThrow('账号已变化')
   })
-  it('uses original ASR evidence for navigation and refuses a no-longer-self source', async () => {
-    const f = fixture(), owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: 1, transcript_source: 'system' }
-    f.post.mockResolvedValue({ ...env, available: true, result_id: 'r1', source_ref: 'ref', original_quote: '同生', owner_ref: owner })
-    await f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref' })
-    expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledWith(owner, '同生', undefined)
-    f.recording.exploreRecordingEvidence.mockResolvedValueOnce({ kind: 'recording', dateStamp: 1, focusItemId: 'item', items: [{ itemId: 'item', isSelf: false, startAtMillis: 1 }] })
-    await expect(f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref' })).rejects.toThrow('不再标记为本人')
+  it('uses exact original evidence for optional navigation and requires current range authority', async () => {
+    const f = fixture(), owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: Date.parse('2026-10-16T12:00:00+08:00'), transcript_source: 'system' }
+    const start = Date.parse('2026-10-16T12:00:00+08:00')
+    const response = { ...env, available: true, self_range: true, result_id: 'r1', source_ref: 'ref',
+      playback: { start_at_millis: start, end_at_millis: start + 5000, focus_at_millis: start + 1000, content_type: 'audio/flac', content_path: '/api/v1/speech-statistics/audio/ref' },
+      target: { original_quote: '同生', owner_ref: owner, window: {dateStamp:Date.parse('2026-10-16T00:00:00+08:00'),endStamp:Date.parse('2026-10-17T00:00:00+08:00'),timeZone:q.timezone,date:q.date} } }
+    f.post.mockResolvedValue(response)
+    await f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref', action: 'locate' })
+    expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledWith(owner, '同生', undefined, expect.objectContaining({date:q.date,timeZone:q.timezone}))
+    f.post.mockResolvedValue({ ...response, self_range: false })
+    await expect(f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref', action: 'play' })).rejects.toThrow('已变化')
     f.post.mockResolvedValue({ ...env, available: true, result_id: 'r2', source_ref: 'ref' })
-    await expect(f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref' })).rejects.toThrow('已变化')
+    await expect(f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref', action: 'play' })).rejects.toThrow('已变化')
   })
+  it('plays a verified source range even when original ASR omitted the expression', async () => {
+    const f = fixture(), start = Date.parse('2026-10-16T00:00:00+08:00')
+    f.post.mockResolvedValue({ ...env, available: true, self_range: true, result_id: 'r1', source_ref: 'ref',
+      playback: { start_at_millis: start - 1000, end_at_millis: start + 3000, focus_at_millis: start + 500, content_type: 'audio/flac', content_path: '/api/v1/speech-statistics/audio/ref' }, target: null })
+    const source = await f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref', action: 'play' })
+    expect(source).toMatchObject({ focusAtMillis: start + 500, mediaStartAtMillis: start - 1000, target: null, playback: { playbackRef: 'opaque-media' } })
+    expect(f.recording.exploreRecordingEvidence).not.toHaveBeenCalled()
+  })
+  it('uses occurrence time for the selected day instead of the enclosing original transcript start', async () => {
+    const f = fixture(), focus = Date.parse('2026-10-16T00:00:00.500+08:00')
+    f.post.mockResolvedValue({ ...env, available: true, self_range: true, result_id: 'r1', source_ref: 'ref',
+      playback: { start_at_millis: focus - 2000, end_at_millis: focus + 3000, focus_at_millis: focus, content_type: 'audio/flac', content_path: '/api/v1/speech-statistics/audio/ref' },
+      target: { window: {dateStamp:Date.parse('2026-10-15T00:00:00+08:00'),endStamp:Date.parse('2026-10-16T00:00:00+08:00'),timeZone:q.timezone,date:'2026-10-15'}, original_quote: '原句', owner_ref: { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: focus - 2000, transcript_source: 'system' } } })
+    f.recording.exploreRecordingEvidence.mockResolvedValueOnce({ kind: 'recording', dateStamp: 1, focusItemId: 'item', items: [{ itemId: 'item', isSelf: true, startAtMillis: focus - 2000 }] })
+    await expect(f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref', action: 'locate' })).resolves.toMatchObject({ focusAtMillis: focus })
+  })
+})
+
+it('keeps an old stale result separate from a current non-stale job', () => {
+  const parsed = parseSpeechState({ ...state, stale: true, job: { id: 'new', stage: 'recognizing', completed: 1, total: 2, stale: false } }, q)
+  expect(parsed.stale).toBe(true)
+  expect(parsed.job?.stale).toBe(false)
+})
+it('rejects v1 source negotiation without accepting an invented v2 payload', async () => {
+  const f = fixture(); f.post.mockResolvedValueOnce({ ...capability, schema_version: 1 })
+  await expect(f.service.capabilities()).rejects.toThrow('不兼容')
+})
+
+it('acknowledges the same completed receipt while withdrawn source content stays hidden', async () => {
+  const f=fixture(), requestId='revoked-111111111111'
+  f.post.mockResolvedValueOnce(capability).mockResolvedValueOnce({...env,request_id:requestId,result:null,job:null,stale:true})
+  await expect(f.service.create({...q,requestId})).resolves.toMatchObject({stale:true,result:null,job:null})
+  expect(f.post).toHaveBeenLastCalledWith('/api/v1/speech-statistics/create', {...env,request_id:requestId},expect.any(Object),undefined,expect.any(Object))
 })
