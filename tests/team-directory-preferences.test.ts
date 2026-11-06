@@ -107,6 +107,17 @@ it('explicit navigation restores a backend-confirmed silent member contact and i
   expect(teamEntryHidden(f.store.read('a'), { kind: 'conversation', conversation: silent })).toBe(false)
   expect(teamEntryHidden(f.store.read('a'), { kind: 'folder', group: groupTeamConversations([silent])[0]! })).toBe(false)
 })
+
+it.each([false, true])('restores a group-only folder according to its published activity (%s)', async hasPublished => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
+  const { latest: _latest, ...group } = folder.kind === 'folder' ? folder.group : groupTeamConversations([conversation])[0]!
+  const target: TeamEntryTarget = { kind: 'folder', group: { ...group, conversations: [], hasPublished, groupCount: 1 } }
+  await f.store.restoreNavigation('a', async () => target)
+  const changes = f.transport.mock.calls.filter(([op]) => op.endsWith('.change'))
+  expect(changes).toHaveLength(hasPublished ? 1 : 0)
+  if (hasPublished) expect(teamEntryHidden(f.store.read('a'), target)).toBe(false)
+})
 it('explicit historical navigation restores a zero-counter folder and its child atomically', async () => {
   const f = fixture()
   f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
