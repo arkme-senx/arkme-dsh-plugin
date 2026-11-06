@@ -25,7 +25,7 @@ const expectedPublicMethods = [
   'attachExportDirectoryPicker', 'dataExportDirectoryPick', 'dataExportDirectoryOpen',
   'composerResources', 'prepareComposerDocument', 'recordRevisionSnapshot', 'searchConversationLocations',
   'teamOutboundOpen','groupIdentityContext', 'teamPublicCard',
-  'worldPublications', 'worldSoundExcerpts', 'worldSuggestions', 'worldSuggestionDraft', 'worldSubscriptions', 'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
+  'worldReport', 'worldPublications', 'worldSoundExcerpts', 'worldSuggestions', 'worldSuggestionDraft', 'worldSubscriptions', 'teamWorld', 'listWorldReplies', 'worldReactionArchive', 'worldReactionVersions', 'worldCommentNotifications',
   'arkoLifecycle', 'arkoChangeLifecycle', 'arkoRecentlyDeleted',
   'loginByPassword',
   'captureSourceMessageAnchor', 'sourceMessageExtensionCapabilities',

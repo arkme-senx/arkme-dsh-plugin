@@ -33,6 +33,7 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+ worldReportCommand?(scope: string, uid: string, change?: {put: import("../world-report-contract.js").WorldReportCommand} | {ack:string} | {reject:string} | {accepted:string;reportId:number}): Promise<import("../world-report-contract.js").WorldReportCommand | undefined>
   recordingVoiceDraft?(scope: string, change?: import('../recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceDraft>
  teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>
  retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>

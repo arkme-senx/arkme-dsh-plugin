@@ -123,7 +123,7 @@ function SuggestionsPanel({ account, onClose, onCount }: { account: string; onCl
       </div>
       {supported === true && <p style={muted}>点击分析会使用所选模型的额度。最多筛选 500 条快记；不会自动发布。</p>}
       {pending && <p role="status" style={muted}>上次提交结果待核对。再次点击会核对同一请求，不会另建一轮分析。</p>}
-      {state?.job && <p role="status" style={muted}>{active(state.job) ? `${state.job.phase === 'collecting' ? '正在读取快记' : '正在分析'} · 已检查 ${state.job.scanned} 条，已分析 ${state.job.processed} 条` : state.job.status === 'succeeded' ? `分析完成 · ${state.candidateCount} 条建议` : state.job.status === 'cancelled' ? '本次分析已停止，上一份有效建议仍保留。' : '本次分析未完成，上一份有效建议仍保留。'}{state.job.failure && <span>（{failureText(state.job.failure)}）</span>}</p>}
+      {state?.job && <p role="status" style={muted}>{active(state.job) ? `${state.job.phase === 'collecting' ? '正在读取快记' : state.job.phase === 'reconciling' ? '正在恢复本次分析' : '正在分析'} · 已检查 ${state.job.scanned} 条，已分析 ${state.job.processed} 条` : state.job.status === 'succeeded' ? `分析完成 · ${state.candidateCount} 条建议` : state.job.status === 'cancelled' ? '本次分析已停止，上一份有效建议仍保留。' : '本次分析未完成，上一份有效建议仍保留。'}{state.job.failure && <span>（{failureText(state.job.failure)}）</span>}</p>}
       {error && <p role="alert" style={{ ...muted, color: theme.accent }}>{error}</p>}
       {!!state?.unavailableCount && <p style={muted}>有 {state.unavailableCount} 条建议的原文已变化、不可访问或已公开，本次已隐藏。</p>}
       {state && state.items.length === 0 && !active(state.job) && <p style={{ ...muted, padding: '20px 0' }}>{state.job?.status === 'succeeded' ? '这次暂无适合公开分享的快记。可以调整范围后再分析。' : '点击开始分析，发现你的快记中值得分享的内容。'}</p>}
@@ -139,5 +139,5 @@ function SuggestionsPanel({ account, onClose, onCount }: { account: string; onCl
   </ArkmeDetailShell>
 }
 function failureText(code: string) {
-  return ({ source_changed: '部分原文已变化，请重新分析', scope_too_large: '快记较多，请缩小时间范围', output_invalid: '模型结果未通过校验', insufficient_balance: '模型额度不足', execution_unavailable: '服务暂时不可用' } as Record<string, string>)[code] ?? '请刷新任务状态后重试'
+  return ({ source_changed: '部分原文已变化，请重新分析', scope_too_large: '快记较多，请缩小时间范围', output_invalid: '模型结果未通过校验', insufficient_balance: '模型额度不足', execution_unavailable: '服务暂时不可用', balance_reserved: '额度正在核对，稍后会自动继续', model_outcome_uncertain: '正在核对原调用结果，请勿重复发起分析', model_connector_offline: '本机模型暂时离线，恢复后会继续核对', model_unavailable: '模型暂时不可用，稍后会自动核对' } as Record<string, string>)[code] ?? '请刷新任务状态后重试'
 }

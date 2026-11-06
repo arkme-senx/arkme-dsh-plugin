@@ -36,6 +36,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+ worldReportPending?: unknown
   recordingVoiceDrafts?: unknown
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
   teamMemberAdditions?: unknown
@@ -389,6 +390,7 @@ function parseState(raw: string): PersistedState {
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
     offlineContextJournal:source.offlineContextJournal,
+ worldReportPending:source.worldReportPending,
  ...(source.teamOutboundByAccount === undefined ? {} : {teamOutboundByAccount:source.teamOutboundByAccount as NonNullable<PersistedState['teamOutboundByAccount']>}),
     pendingByUser,
     longArticleDraftsByUser,
@@ -480,6 +482,37 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
 }
 
 export class ArkmeStateStore {
+  async worldReportCommand(scope: string, uid: string, change?: { put: import('./world-report-contract.js').WorldReportCommand } | { ack: string } | {reject:string} | {accepted:string;reportId:number}): Promise<import('./world-report-contract.js').WorldReportCommand | undefined> {
+    const { validWorldReportCommand, sameWorldReportCommand } = await import('./world-report-contract.js')
+    if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope) || !uid || uid.length > 128) throw new Error('举报账号或公开内容无效')
+    let result: import('./world-report-contract.js').WorldReportCommand | undefined
+    const access = (state: PersistedState) => {
+      const root = state.worldReportPending ?? {}
+      if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('举报恢复信息损坏，已保留原请求')
+      const accounts = root as Record<string, unknown>
+      const value = accounts[scope] ?? {}
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('举报恢复信息损坏，已保留原请求')
+      const entries = Object.assign(Object.create(null), value) as Record<string, unknown>
+      const prior = entries[uid]
+      if (prior !== undefined && (!validWorldReportCommand(prior) || prior.recordUid !== uid)) throw new Error('举报恢复信息损坏，已保留原请求')
+      if (change && 'put' in change) {
+        if (!validWorldReportCommand(change.put) || change.put.recordUid !== uid) throw new Error('举报请求无效')
+        if (prior !== undefined && !sameWorldReportCommand(prior as import("./world-report-contract.js").WorldReportCommand,change.put)) throw new Error('请先核对上次提交的举报')
+        entries[uid] = prior === undefined ? structuredClone(change.put) : prior
+      } else if (change && 'accepted' in change && validWorldReportCommand(prior) && prior.requestUid === change.accepted) {
+        if(!Number.isSafeInteger(change.reportId)||change.reportId<=0)throw new Error('举报回执无效')
+        if(prior.receipt && prior.receipt.reportId!==change.reportId)throw new Error('举报回执发生冲突')
+        entries[uid]={...prior,receipt:{reportId:change.reportId}}
+      } else if (change && 'ack' in change && validWorldReportCommand(prior) && prior.requestUid === change.ack && prior.receipt) delete entries[uid]
+      else if (change && 'reject' in change && validWorldReportCommand(prior) && prior.requestUid === change.reject && !prior.receipt) delete entries[uid]
+      accounts[scope] = entries
+      state.worldReportPending = accounts
+      result = entries[uid] === undefined ? undefined : structuredClone(entries[uid]) as import('./world-report-contract.js').WorldReportCommand
+    }
+    if (change) await this.update(access); else await this.read(access)
+    return result
+  }
+
   async recordingVoiceDraft(scope: string, change?: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('./recording-voice-trigger-contract.js').RecordingVoiceDraft> {
     const { defaultRecordingVoiceRule, recordingVoiceRules } = await import('./recording-voice-trigger-contract.js')
     if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw new Error('语音触发账号无效')

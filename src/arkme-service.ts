@@ -1518,6 +1518,7 @@ arkoImagesV1:true,
         teamWorldV1: true,
         worldSoundExcerptsV1: true,
         worldSuggestionsV1: true,
+ worldReportsV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         ...(this.config.markdownLongArticlesEnabled === true ? { markdownLongArticles: true as const } : {}),
@@ -2480,6 +2481,7 @@ arkoImagesV1:true,
     })
   }
 
+  async worldReport(input: import('./world-report-contract.js').WorldReportRequest, signal?: AbortSignal) { return this.world.worldReport(input, signal) }
   async readWorldRecord(recordRef: string, signal?: AbortSignal) { return await this.world.readWorldRecord(recordRef, signal) }
   async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal) { return this.world.shareWorldRecord(recordRef, expectedUserId, signal) }
   async forwardWorldRecord(recordRef: string, expectedUserId: number, options: { targetSourceRef: string; recordUid: string; commentText: string; signal?: AbortSignal }) {

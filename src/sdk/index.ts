@@ -2865,6 +2865,14 @@ export class ArkmeSdk {
   async worldPublications<R extends import('../world-publication-contract.js').WorldPublicationRequest>(input: R, signal?: AbortSignal): Promise<import('../world-publication-contract.js').WorldPublicationResponse<R>> {
     return this.call('world.publications', input, signal)
   }
+  async worldReport(input: import('../world-report-contract.js').WorldReportRequest, signal?: AbortSignal): Promise<import('../world-report-contract.js').WorldReportResult> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    signal.throwIfAborted()
+    if ((await this.capabilities(signal)).features.worldReportsV1 !== true) throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持公开内容举报，请升级',retryable:false})
+    signal.throwIfAborted()
+    return this.call('world.report', input, signal)
+  }
+
   async worldSuggestions<R extends import('../world-suggestions-contract.js').WorldSuggestionsRequest>(input: R, signal?: AbortSignal): Promise<import('../world-suggestions-contract.js').WorldSuggestionsResponse<R>> {
     if ((await this.capabilities(signal)).features.worldSuggestionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持分享建议，请升级', retryable: false })
     return this.call('world.suggestions', input, signal)
@@ -3441,3 +3449,5 @@ export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '..
 export type { WorldPublication, WorldPublicationRequest, WorldPublicationResponse, WorldPublicationSourceTarget } from '../world-publication-contract.js'
 export type {WorldSoundSegment,WorldSoundExcerpt,WorldSoundSelection,WorldSoundRequest,WorldSoundPrepared,WorldSoundReceipt,WorldSoundResponse} from '../world-sound-contract.js'
 export type { WorldSuggestion, WorldSuggestionJob, WorldSuggestionModel, WorldSuggestionPrepared, WorldSuggestionsState, WorldSuggestionsRequest, WorldSuggestionsResponse } from '../world-suggestions-contract.js'
+
+export type { WorldReportRequest, WorldReportResult, WorldReportPending } from "../world-report-contract.js"

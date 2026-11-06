@@ -9,6 +9,7 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeWorldToolPort {
+ worldReport(input: import("../../world-report-contract.js").WorldReportRequest, signal?:AbortSignal):Promise<import("../../world-report-contract.js").WorldReportResult>
   worldSuggestions(input: import('../../world-suggestions-contract.js').WorldSuggestionsRequest, signal?: AbortSignal): Promise<unknown>
   worldSoundExcerpts(input:import('../../world-sound-contract.js').WorldSoundRequest,signal?:AbortSignal):Promise<unknown>
   worldCommentNotifications(options?: { limit?: number; cursor?: string; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeWorldCommentNotificationPage>

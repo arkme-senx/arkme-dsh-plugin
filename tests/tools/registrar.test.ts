@@ -82,6 +82,31 @@ async function mountArkmeTools(
 }
 
 describe('registerArkmeTools', () => {
+  it('requires a trusted human confirmation of the exact World report despite model-provided confirmed:true', async () => {
+    const ctx = await setup(), worldReport = vi.fn(async () => ({ submitted: true }))
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, worldReport } as unknown as ArkmeToolPorts)
+    const events = sessionEvents(), agent = { id: SessionId('world-report-confirmation'), session: { events } } as unknown as Agent
+    const input = { action: 'submit', confirmed: true, recordRef: 'opaque-world-record', expectedUserId: 42, requestUid: 'original_report_0001', reportType: 6, reason: '核对过的问题说明' }
+    const args = { request_json: JSON.stringify(input) }
+    const run = (id: string) => ctx.tools.execute({ callId: CallId(id), name: 'arkme_world_report', arguments: args, agent, signal: new AbortController().signal })
+    const prepared = JSON.stringify(await run('prepare'))
+    expect(prepared).toContain('confirmation_required'); expect(prepared).toContain('诈骗信息'); expect(prepared).toContain(input.reason)
+    expect(worldReport).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'plugin' }, content: [{ type: 'text', text: '确认举报' }] } })
+    expect(JSON.stringify(await run('untrusted'))).toContain('confirmation_required'); expect(worldReport).not.toHaveBeenCalled()
+    events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认按这段说明举报' }] } })
+    expect((await run('confirmed')).isError).toBe(false)
+    expect(worldReport).toHaveBeenCalledExactlyOnceWith(input, expect.any(AbortSignal))
+    await mounted.dispose()
+  })
+  it.each(['pending', 'acknowledge'])('does not require a new conversational confirmation for report %s', async action => {
+    const ctx = await setup(), worldReport = vi.fn(async () => ({}))
+    const mounted = await mountArkmeTools(ctx, 'business', { ...ports, worldReport } as unknown as ArkmeToolPorts)
+    const input = { action, recordRef: 'opaque-world-record', expectedUserId: 42, requestUid: 'original_report_0001' }
+    const result = await ctx.tools.execute({ callId: CallId('local-' + action), name: 'arkme_world_report', arguments: { request_json: JSON.stringify(input) }, agent: { id: SessionId('local-report'), session: { events: sessionEvents() } } as unknown as Agent, signal: new AbortController().signal })
+    expect(result.isError).toBe(false); expect(worldReport).toHaveBeenCalledOnce()
+    await mounted.dispose()
+  })
   it('requires a later trusted human confirmation before replying to an Arko thought', async () => {
     const ctx = await setup(), extendSourceMessage = vi.fn(async () => ({ recordUid: 'reply', localState: 'synced' }))
     const mounted = await mountArkmeTools(ctx, 'business', { ...ports, extendSourceMessage } as unknown as ArkmeToolPorts)
@@ -378,7 +403,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_reply',
       'arkme_world_sound_read',
       'arkme_world_sound_write',
-      'arkme_world_suggestions_read', 'arkme_world_suggestions_change',
+      'arkme_world_report', 'arkme_world_suggestions_read', 'arkme_world_suggestions_change',
       'arkme_world_mine',
       'arkme_world_user',
       'arkme_world_voiceprint_social_context',

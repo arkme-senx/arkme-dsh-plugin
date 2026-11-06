@@ -450,6 +450,60 @@ export class WorldService {
     return item
   }
 
+  async worldReport(input: import('../world-report-contract.js').WorldReportRequest, signal?: AbortSignal): Promise<import('../world-report-contract.js').WorldReportResult> {
+    signal?.throwIfAborted()
+    if (!input || typeof input.recordRef !== 'string' || !Number.isSafeInteger(input.expectedUserId) || !['pending','submit','acknowledge'].includes(input.action)) throw new ArkmePluginError('world-report-invalid','举报请求无效',false,400)
+    const epoch = this.epoch, session = await this.runtime.requireSession()
+    if (input.expectedUserId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开举报', false, 409)
+    const current = async () => {
+      signal?.throwIfAborted()
+      if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开举报', false, 409)
+    }
+    const uid = this.openWorldRecordRef(input.recordRef, session.userId).recordUid
+    const scope = `${this.runtime.config.environment}:${session.userId}`
+    const persist = this.runtime.stateStore.worldReportCommand?.bind(this.runtime.stateStore)
+    if (!persist) throw new ArkmePluginError('world-report-unavailable', '举报恢复存储不可用', false, 503)
+    let pending = await persist(scope, uid)
+    await current()
+    const publicPending = (v: import('../world-report-contract.js').WorldReportCommand) => ({requestUid:v.requestUid, reportType:v.reportType, reason:v.reason})
+    if (input.action === 'pending') return pending ? {pending:publicPending(pending),...(pending.receipt ? {submitted:true as const}:{})} : {}
+    if (input.action === 'acknowledge') {
+      if (typeof input.requestUid!=='string') throw new ArkmePluginError('world-report-invalid','举报请求无效',false,400)
+      if(pending?.requestUid===input.requestUid&&!pending.receipt)throw new ArkmePluginError('world-report-unconfirmed','举报提交结果尚未确认，请核对上次提交',true,409)
+      await persist(scope,uid,{ack:input.requestUid})
+      await current()
+      return {}
+    }
+    if (input.action !== 'submit' || input.confirmed !== true || !Number.isInteger(input.reportType) || input.reportType < 1 || input.reportType > 6 || typeof input.reason !== 'string' || !input.reason.trim() || [...input.reason.trim()].length > 500 || typeof input.requestUid !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/u.test(input.requestUid)) throw new ArkmePluginError('world-report-invalid', '请选择举报类型并填写 1 至 500 字问题说明', false, 400)
+    if (pending) {
+      if (pending.requestUid !== input.requestUid || pending.reportType !== input.reportType || pending.reason !== input.reason.trim()) throw new ArkmePluginError('world-report-pending', '请先核对上次提交的举报', false, 409)
+    } else {
+      const response = await this.runtime.post<Record<string, unknown>>(this.runtime.config.worldBaseUrl, '/api/public/v1/world/read', {record_uid:uid}, undefined, [200], signal)
+      const raw = this.mixedItem(response), owner = Number(raw.user_id), revision = stringValue(raw.content_revision)
+      if (stringValue(raw.record_uid) !== uid || !/^[a-f0-9]{32}$/u.test(revision) || raw.is_public === false || [1,4].includes(Number(raw.check_status)) || !raw.team_author && (!Number.isSafeInteger(owner) || owner <= 0 || owner === session.userId)) throw new ArkmePluginError('world-report-unavailable', '这条公开内容已不可用，请刷新世界', false, 404)
+      pending = {recordUid:uid, contentRevision:revision, requestUid:input.requestUid, reportType:input.reportType, reason:input.reason.trim()}
+      await current()
+      pending = (await persist(scope, uid, {put:pending}))!
+    }
+    await current()
+    if(pending.receipt)return {submitted:true}
+    try {
+      const result = await this.runtime.authenticatedWorldPost<{submitted?:boolean;rejected?:string;report_id?:number}>('/api/v1/world/reports/create', {record_uid:pending.recordUid,content_revision:pending.contentRevision,request_uid:pending.requestUid,report_type:pending.reportType,reason:pending.reason},session,signal)
+      if (result?.submitted === false && ['target_changed','request_conflict','invalid_request'].includes(result?.rejected ?? '')) {
+        await persist(scope,uid,{reject:pending.requestUid})
+        throw new ArkmePluginError('world-report-rejected','这次举报未被受理，公开版本或请求已变化，请刷新后重试',false,409)
+      }
+      if (result?.submitted !== true || result.rejected !== undefined || !Number.isSafeInteger(result.report_id) || result.report_id! <= 0) throw new Error('unconfirmed report')
+      // Retain the original request and receipt until its caller has observed success.
+      await persist(scope,uid,{accepted:pending.requestUid,reportId:result.report_id!})
+    } catch (error) {
+      if (error instanceof ArkmePluginError && (error.code === 'world-account-changed' || error.code === 'world-report-rejected' || error.code.startsWith('auth-'))) throw error
+      throw new ArkmePluginError('world-report-unconfirmed', '举报提交结果尚未确认，请核对上次提交', true, 502)
+    }
+    await current()
+    return {submitted:true}
+  }
+
   /** Share the existing public URL, never a private Record or a copied media snapshot. */
   async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeWorldShareResult> {
     const epoch = this.epoch, session = await this.runtime.requireSession()

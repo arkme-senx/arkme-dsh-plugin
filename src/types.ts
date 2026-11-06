@@ -1664,6 +1664,7 @@ arkoImagesV1?:true
     teamWorldV1?: true
     worldSoundExcerptsV1?: true
     worldSuggestionsV1?: true
+ worldReportsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -4663,6 +4664,7 @@ export type ArkmePluginOperation =
   | 'world.publications'
   | 'world.sound-excerpts'
   | 'world.suggestions'
+  | 'world.report'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'

@@ -1,5 +1,21 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  "举报服务尚未接通，填写内容已保留，请稍后重试": "Content reporting is not connected yet. Your details are kept. Please try again later.",
+  "团队内容举报服务尚未接通，填写内容已保留，请稍后重试": "Team content reporting is not connected yet. Your details are kept. Please try again later.",
+  "举报提交结果尚未确认，请勿重复提交": "The report outcome is unconfirmed. Please do not submit again.",
+  "举报已提交": "Report submitted",
+  "声音或媒体内容": "Audio or media content",
+  "问题说明（必填）": "Details (required)",
+  "请选择你要举报的类型": "Select a report category",
+  "更多动态操作": "More post actions",
+  "世界内容操作": "Post actions",
+  "举报反馈": "Report content",
+  "诈骗信息": "Fraud",
+  "骚扰我": "Harassment",
+  "违规营销": "Spam or prohibited marketing",
+  "人身攻击": "Personal attacks",
+  "违法信息": "Illegal content",
+  "网络暴力": "Cyberbullying",
   '回复 Arko': 'Reply to Arko',
   '暂时无法回复 Arko，输入内容会保留': 'Replies to Arko are not available yet. Your draft is kept.',
   "所选文本": "Selected text",
@@ -967,5 +983,9 @@ export const actionEnglish: Record<string,string> = {
   "正在核验原文访问权限…": "Checking access to the original…",
   "个人摘录仍保留，当前未打开原文。": "Your personal excerpt is retained. The original has not been opened.",
   "重新核验": "Check again",
-  "旧摘录仍保存在本机。原记录已有改动或引用中含旧标签、提及，需核对后再同步引用样式。": "This older excerpt remains on this device. The record changed or has existing tags or mentions inside the quote, so its structure needs review before syncing."
+  "旧摘录仍保存在本机。原记录已有改动或引用中含旧标签、提及，需核对后再同步引用样式。": "This older excerpt remains on this device. The record changed or has existing tags or mentions inside the quote, so its structure needs review before syncing.",
+  '核对上次提交': 'Check previous submission',
+  '举报提交结果尚未确认，请核对上次提交': 'The report result is unconfirmed. Check the previous submission.',
+  '举报恢复信息暂不可用': 'Report recovery is temporarily unavailable.',
+  '这次举报未被受理，公开版本或请求已变化，请刷新后重试': 'This report was not accepted. The public version or request changed. Refresh and try again.',
 }

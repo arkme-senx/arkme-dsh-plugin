@@ -12,6 +12,7 @@ import {
 } from '../shared/conversational-confirmation.js'
 import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation } from './group-governance-confirmation.js'
 import { arkmeToolCatalog } from './catalog.js'
+import { WORLD_REPORT_REASONS } from '../../world-report-contract.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_thought_reply',
@@ -33,7 +34,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_team_notification_policy_set',
   'arkme_team_entry_preference_change',
   'arkme_reactions_write',
-  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply', 'arkme_world_sound_write', 'arkme_world_suggestions_change',
+  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply', 'arkme_world_sound_write', 'arkme_world_suggestions_change', 'arkme_world_report',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
@@ -104,6 +105,10 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_world_report') {
+    const request = JSON.parse(String(args.request_json)) as { reportType?: number; reason?: string }
+    return `是否以“${WORLD_REPORT_REASONS[Number(request.reportType) - 1] ?? '未知类型'}”举报刚才选定的公开内容？问题说明：“${cleanArgument(request.reason, 1000)}”。提交后由平台审核。`
+  }
   if (name === 'arkme_world_suggestions_change') {
     const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
     return request.action === 'create' ? `是否分析最近 ${Number(request.days)} 天的本人快记，生成仅自己可见的分享建议？模型分析会使用当前账号的模型额度，不会自动公开内容。`
@@ -287,6 +292,11 @@ function withCoreConversationalConfirmation(
       }
       if (definition.name === 'arkme_topic_home_visibility' && (args as Record<string, unknown>).show_in_home === undefined) {
         return await definition.execute(args, exec)
+      }
+      if (definition.name === 'arkme_world_report') {
+        const request = JSON.parse(String((args as Record<string, unknown>).request_json)) as { action?: string }
+        // Recovery reads and local receipt acknowledgement never submit a report.
+        if (request.action === 'pending' || request.action === 'acknowledge') return await definition.execute(args, exec)
       }
       if (definition.name === 'arkme_realtime_dictation') {
         const request = JSON.parse(String((args as Record<string, unknown>).request_json)) as { action?: string }
