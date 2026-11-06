@@ -88,7 +88,7 @@ try{
  proof.workspace=workspace;const customer=workspace.items.find(t=>t.kind==='customer');assert.equal(customer.conversation.sourceOnly,true);assert.equal(customer.conversation.lastSeq,0)
  const consumer=join(profile,'native workspace consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({type:'module',private:true}));await copyFile(join(repo,'tests/consumers/team-group-workspace/consumer.ts'),join(consumer,'consumer.ts'))
  execFileSync(process.execPath,[join(repo,'node_modules/typescript/bin/tsc'),'--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--strict','--skipLibCheck','--outDir',join(consumer,'out'),join(consumer,'consumer.ts')],{stdio:'pipe',cwd:consumer})
- const {verifyInstalledTeamWorkspace}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
+ const {verifyInstalledTeamWorkspace,verifyInstalledTeamHistory}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
  proof.sdk=await verifyInstalledTeamWorkspace(async(path,init)=>{const result=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await result.body(),{status:result.status(),headers:result.headers()})},(await personal()).sourceRef)
  await ownerPost('team','/fixture/add-late-colleague',{},11)
  await login(14)
@@ -123,6 +123,16 @@ try{
  const replyItem=(await host.readSource(delegated,{limit:100})).items.find(t=>t.itemUid===childRecordUid);assert(replyItem);assert.equal(replyItem.representation?.jotmoId,'stack_team_7');assert.equal(replyItem.isMe,true)
  const detail=await host.messageSnapshotDetail(delegated,replyItem.messageActionRef);assert.equal(detail.textContent,uiText)
  proof.reply={item:replyItem,detail}
+ const historyStart=calls.length
+ proof.history=await verifyInstalledTeamHistory(async(path,init)=>{const result=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await result.body(),{status:result.status(),headers:result.headers()})},delegated,replyItem.messageActionRef)
+ assert(ctx.tools.schemas(agent).some(t=>t.name==='arkme_record_history'))
+ const historyCallId=randomUUID(),historyArgs={source_ref:delegated,message_action_ref:replyItem.messageActionRef,revision_uid:proof.history.revisionUid}
+ const historyCall=agent.session.append('tool/call',{turn:1,step:2,callId:historyCallId,name:'arkme_record_history',arguments:JSON.stringify(historyArgs)})
+ const historyTool=await ctx.tools.execute({agent,name:'arkme_record_history',callId:historyCallId,arguments:historyArgs,signal:AbortSignal.timeout(10000)})
+ assert.equal(historyTool.isError,true,JSON.stringify(historyTool))
+ agent.session.append('tool/result',{turn:1,step:2,message:createToolResultMessage({callId:historyCallId,content:historyTool.content,isError:historyTool.isError})},{surfaceOp:'append',sourceEventSeqs:[historyCall.seq]})
+ const historyCalls=calls.slice(historyStart).filter(c=>c.path.endsWith('/revisions/query'))
+ assert(historyCalls.length>=3);assert(historyCalls.every(c=>c.path==='/api/v1/chats/records/revisions/query'&&c.scoped),'all history reads preserve the selected team audience')
  const accepted=await ownerPost('chat','/api/v1/chats/records/detail',{chat_session_uid:group,record_uid:childRecordUid,rel_uid:childRelationUid,record_owner_user_id:13},4);assert.equal(accepted.item.relation.sender_user_id,13);assert.equal(accepted.item.relation.representation.team_id,'7')
  await approve({relationUid:childRelationUid});await page.reload();await page.getByText('接待团队7',{exact:true}).first().click();await page.getByText('隔离转发目标',{exact:true}).first().click();await page.getByText(uiText,{exact:true}).first().waitFor();await page.getByText('暂时无法读取线下交流，请重试。',{exact:true}).waitFor({state:'hidden'});await page.screenshot({path:join(capture,'native-delegated-reply.png')});assert.equal(await page.getByRole('alert').filter({hasText:'无操作权限'}).count(),0,'an authorized delegated reply must not display a permission failure after reloading')
  const privateHistory=await host.executeTeamApp('team.app.conversations',{teamRef:colleagueTeamRef,side:'team',limit:1});assert.equal(privateHistory.items.length,0,'restoration fixture has group history only')
@@ -146,6 +156,7 @@ try{
  assert.equal(coworkerGroupCalls.filter(c=>c.code===1004).length,0,'current delegated operations must not fail the personal member gate')
  await ownerPost('team','/fixture/remove-member',{team_id:7,user_id:13},11)
  await assert.rejects(host.readSource(delegated),error=>error.code==='arkme-code-1004')
+ await assert.rejects(host.recordRevisionSnapshot(delegated,replyItem.messageActionRef,proof.history.revisionUid),error=>error.code==='arkme-code-1004')
  await login(4);assert.notEqual((await host.readSource((await personal()).sourceRef)).source.accessKind,'team_delegation','independent human membership survives organization revocation')
  assert.equal(calls.filter(c=>/conversations\/open/.test(c.path)||c.path.includes('/message-channel/')&&!c.path.endsWith('/message-channel/get')||c.path==='/api/v1/records/detail').length,0,'source cards and team-card navigation never open a DM, mutate its channel or use personal Record fallback')
  assert(calls.filter(c=>c.path.endsWith('/message-channel/get')).every(c=>c.actor===13&&String(c.input.team_id)==='7'),'existing team navigation only reads its own channel settings')
