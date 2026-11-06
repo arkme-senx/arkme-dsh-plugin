@@ -186,6 +186,37 @@ it('a cloud pin cannot activate an empty conversation', async () => {
   expect(readTeamDirectory('empty-pinned').items).toEqual([])
 })
 
+it('a cold directory restores a backend-confirmed silent member contact without a process-local open', async () => {
+  const silent = { ...item('team', 20), lastSeq: 0, unread: 0, needsReply: false, memberInitiated: true }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([])
+  mock.mockImplementation(async (_op, p) => ({ items: p.side === 'team' ? [silent] : [], hasMore: false }))
+  for (let attempt = 0; attempt < 2; attempt++) {
+    openedTeamConversations.reset()
+    const stop = startTeamDirectory('restarted-member'); stops.push(stop)
+    await vi.waitFor(() => expect(readTeamDirectory('restarted-member').items).toHaveLength(1))
+    expect(readTeamDirectory('restarted-member').items[0]).toMatchObject(silent)
+    expect(openedTeamConversations.read('restarted-member')).toEqual([])
+    stop()
+  }
+  expect(mock.mock.calls.some(([op]) => op === 'team.app.outbound.open' || op === 'team.app.send')).toBe(false)
+})
+
+it('a confirmed silent member pin is discoverable outside ordinary pages without admitting passive previews', async () => {
+  const silent = { ...item('team', 20), lastSeq: 0, unread: 0, needsReply: false, memberInitiated: true }
+  const passive = { ...item('external'), key: 'passive-key', ref: 'passive-ref', lastSeq: 0, memberInitiated: true }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([{ kind: 'conversation', ref: silent.ref }, { kind: 'conversation', ref: passive.ref }])
+  const { teamEntryKey } = await import('../src/client/team-directory-preferences.js')
+  vi.spyOn(teamDirectoryPreferences, 'read').mockReturnValue({ [teamEntryKey({ kind: 'conversation', conversation: silent })]: { pinned: true, dismissed: false } })
+  mock.mockImplementation(async (op, p) => op === 'team.app.timeline'
+    ? { conversation: p.conversationRef === silent.ref ? silent : passive } : { items: [], hasMore: false })
+  stops.push(startTeamDirectory('silent-pin'))
+  await vi.waitFor(() => expect(readTeamDirectory('silent-pin').items).toEqual([silent]))
+})
+
 it('a denied preference authority verdict retires ordinary previews without hiding the other side', async () => {
   vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
   vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()

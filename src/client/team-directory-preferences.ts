@@ -112,7 +112,9 @@ export class TeamDirectoryPreferenceStore {
   restoreNavigation(account: string, resolve: () => Promise<TeamEntryTarget | undefined>, signal?: AbortSignal): Promise<void> {
     return this.command(account, [], 'restore', async () => {
       const target = await resolve()
-      if (!target || (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) <= 0) return []
+      if (!target) return []
+      const conversation = target.kind === 'folder' ? target.group.latest : target.conversation
+      if (conversation.lastSeq <= 0 && !(conversation.side === 'team' && conversation.memberInitiated === true)) return []
       return this.restoreEntries(target)
     }, signal)
   }
