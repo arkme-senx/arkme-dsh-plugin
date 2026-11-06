@@ -19,11 +19,11 @@ vi.mock('../src/client/ArkmeDshMenu.js',()=>({ArkmeActionMenu:({actions,onClose}
 let root:Root,host:HTMLDivElement
 const stored=new Map<string,LocalTranscriptEntry>()
 const original='重复词，重复词。'
-function Fixture({text=original,scope='recording:123',enabled=true,omitFirst=false,playable=true,privateRows='all'}:{text?:string;scope?:string;enabled?:boolean;omitFirst?:boolean;playable?:boolean;privateRows?:'all'|'none'|'second'}) {
- const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].map(row=>({...row,sourceVersion:createHash('sha256').update(row.text).digest('hex'),viewRef:privateRows==='none'||privateRows==='second'&&row.id==='one'?undefined:JSON.stringify({scope,id:row.id,text:row.text})})).filter(row=>!omitFirst||row.id!=='one')
- const actions=useTranscriptInteractions({scope,rows,enabled,onPlay:mocks.play})
+function Fixture({text=original,scope='recording:123',enabled=true,omitFirst=false,playable=true,savedSource=true,privateRows='all',emptyRows=false}:{text?:string;scope?:string;enabled?:boolean;omitFirst?:boolean;playable?:boolean;savedSource?:boolean;privateRows?:'all'|'none'|'second';emptyRows?:boolean}) {
+ const rows=[{id:'one',text,speaker:'说话人一',at:1000,playable},{id:'two',text:'第二段',speaker:'说话人二',at:2000,playable:true}].map(row=>({...row,sourceVersion:createHash('sha256').update(row.text).digest('hex'),viewRef:privateRows==='none'||privateRows==='second'&&row.id==='one'?undefined:JSON.stringify({scope,id:row.id,text:row.text})})).filter(row=>!emptyRows&&(!omitFirst||row.id!=='one'))
+ const actions=useTranscriptInteractions({scope,rows,enabled,onPlay:mocks.play,...(savedSource?{savedRef:JSON.stringify({kind:'recording',sessionRef:scope})}:{})})
  return <><ArkmeMessageTextSelectionToolbar replySourceRef="ordinary-chat" />{actions.host}
- {rows.map(row=><article key={row.id} onContextMenu={e=>actions.contextMenu(row,e)}>{actions.checkbox(row)}{actions.renderText(row)}</article>)}{actions.controls}</>
+ {actions.sourceControls}{rows.map(row=><article key={row.id} onContextMenu={e=>actions.contextMenu(row,e)}>{actions.checkbox(row)}{actions.renderText(row)}</article>)}{actions.controls}</>
 }
 async function select(start=4,end=7,index=0){
  const element=host.querySelectorAll('[data-arkme-text-selection]')[index]!,range=document.createRange()
@@ -42,7 +42,7 @@ beforeEach(()=>{
  stored.clear();mocks.copy.mockReset().mockResolvedValue(undefined);mocks.play.mockReset()
  mocks.call.mockReset().mockImplementation(async(op:string,p:any)=>{
   if(op==='transcript.views.capabilities')return {supported:true,protocol_version:1}
-  const project=(ref:string):PersonalTranscriptEntry=>{const r=JSON.parse(ref),entry=stored.get(r.scope+':'+r.id)??{revision:0,original:r.text,text:r.text,marks:[]},changed=entry.original!==r.text;return {...entry,text:changed?r.text:entry.text,original:r.text,originalVersion:createHash('sha256').update(r.text).digest('hex'),originalDigest:'a'.repeat(64),originalChanged:changed}}
+  const project=(ref:string):PersonalTranscriptEntry=>{const r=JSON.parse(ref),entry=stored.get(r.scope+':'+r.id)??{revision:0,original:r.text,text:r.text,marks:[]},changed=entry.original!==r.text;return {...entry,text:changed?r.text:entry.text,original:r.text,originalVersion:createHash('sha256').update(r.text).digest('hex'),originalDigest:'a'.repeat(64),originalChanged:changed,...(changed?{previousText:entry.text}:{})}}
   if(op==='transcript.views.read')return Object.fromEntries(p.items.map((item:any)=>[item.id,project(item.ref)]))
   if(op==='transcript.views.saved')return {historical:true,items:[],next_cursor:''}
   if(op==='transcript.views.change'){
@@ -68,7 +68,7 @@ it('replaces just the second occurrence, restores after remount, and can restore
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
  await act(async()=>root.unmount());root=createRoot(host);await act(async()=>root.render(<Fixture/>))
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
- await click('个人更正 · 恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+ await click('已更正');await click('恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
 it('saves private marks in the cloud and cancels the same mark without changing text',async()=>{
  await act(async()=>root.render(<Fixture/>));await select();await click('标记')
@@ -93,8 +93,28 @@ it('searches only the active transcript and selects/plays multiple rows in time 
 it('does not apply local corrections to a changed cloud original or another scope',async()=>{
  stored.set('recording:123:one',{revision:1,original,text:'旧更正',marks:[]})
  await act(async()=>root.render(<Fixture text="云端新原文"/>));expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('云端新原文')
- expect(host.textContent).toContain('原文已更新')
+ expect(host.querySelectorAll('article button')).toHaveLength(0)
  await act(async()=>root.render(<Fixture scope="call:123"/>));expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})
+
+it.each(['source-update', 'remote-restore'] as const)('retires a comparison that no longer describes the displayed row after %s', async reason => {
+ stored.set('recording:123:one',{revision:1,original,text:'当前私人更正',marks:[]})
+ await act(async()=>root.render(<Fixture/>));await click('已更正')
+ expect(document.querySelector('[role="dialog"]')?.textContent).toContain('当前私人更正')
+ if(reason==='source-update') {
+  const normal=mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation((op,p)=>op==='transcript.views.read'?new Promise(()=>{}):normal(op,p))
+  await act(async()=>root.render(<Fixture text="更新后的原文"/>))
+ } else {
+  stored.set('recording:123:one',{revision:2,original,text:original,marks:[]})
+  await act(async()=>window.dispatchEvent(new Event('focus')))
+ }
+ expect(document.querySelector('[role="dialog"]')).toBeNull()
+ if(reason==='remote-restore') {
+  stored.set('recording:123:one',{revision:3,original,text:'稍后另一设备的新更正',marks:[]})
+  await act(async()=>window.dispatchEvent(new Event('focus')))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+ }
 })
 
 it('does not measure or load marks for offscreen transcript content skipped by the browser',async()=>{
@@ -134,19 +154,23 @@ it('drops the private wording when the Host reports an account change before the
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
 
-it.each(['replacement', 'history'] as const)('retires an open %s surface when background read observes source revocation', async surface => {
+it.each(['replacement', 'history', 'correction'] as const)('retires an open %s surface when background read observes source revocation', async surface => {
+ if(surface==='correction')stored.set('recording:123:one',{revision:1,original,text:'对话框中的私人更正',marks:[]})
  await act(async()=>root.render(<Fixture/>))
  if(surface==='replacement') {await select();await click('替换');await input('未提交私人草稿')}
+ else if(surface==='correction')await click('已更正')
  else {
   const normal=mocks.call.getMockImplementation()!
-  mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[{segment_uid:'old',text:'历史私人正文',revision:1,marks:[]}],next_cursor:''}:normal(op,p))
-  await click('已保存的个人更正');expect(host.textContent).toContain('历史私人正文')
+  mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[{kind:'recording',source_uid:'source',segment_uid:'old',original:'之前的原文',original_version:'v1',text:'历史私人正文',revision:1,marks:[]}],next_cursor:''}:normal(op,p))
+  await click('我的修改');expect(document.body.textContent).toContain('历史私人正文')
  }
  const normal=mocks.call.getMockImplementation()!
  mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
  await act(async()=>{document.getSelection()?.removeAllRanges();window.dispatchEvent(new Event('focus'))})
  expect(document.querySelector('textarea')).toBeNull()
- expect(host.textContent).not.toContain('历史私人正文')
+ expect(document.querySelector('[role="dialog"]')).toBeNull()
+ expect(document.body.textContent).not.toContain('对话框中的私人更正')
+ expect(document.body.textContent).not.toContain('历史私人正文')
 })
 
 it('checks source access while private prose is selected without replacing an active selection',async()=>{
@@ -170,8 +194,10 @@ it.each(['change','saved'] as const)('clears private projections when %s observe
  stored.set('recording:123:one',{revision:1,original,text:'已确认私人正文',marks:[]})
  await act(async()=>root.render(<Fixture/>));expect(host.textContent).toContain('已确认私人正文')
  const normal=mocks.call.getMockImplementation()!
- mocks.call.mockImplementation(async(op,p)=>{if(op===`transcript.views.${operation}`)throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
- await click(operation==='change'?'个人更正 · 恢复原文':'已保存的个人更正')
+ // Closing the modal restores focus and may refresh. Hold that later read so
+ // only the operation's denial, before another authorization decision, can pass.
+ mocks.call.mockImplementation(async(op,p)=>{if(op===`transcript.views.${operation}`)throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});if(op==='transcript.views.read')return new Promise(()=>{});return normal(op,p)})
+ if(operation==='change'){await click('已更正');await click('恢复原文')}else await click('我的修改')
  expect(host.textContent).not.toContain('已确认私人正文')
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
@@ -186,4 +212,45 @@ it.each(['none','second'] as const)('keeps raw transcript actions without privat
  expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toEqual([])
  if(privateRows==='none')expect(mocks.call).not.toHaveBeenCalled()
  else {await select(0,2,1);expect([...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)).toContain('标记');await click('标记');expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toHaveLength(1)}
+})
+
+it('keeps ordinary prose free of per-row history and exposes one correctly scoped source control',async()=>{
+ await act(async()=>root.render(<Fixture/>))
+ expect([...document.querySelectorAll('button')].filter(b=>b.textContent==='历史更正')).toHaveLength(0)
+ expect([...document.querySelectorAll('button')].filter(b=>b.textContent==='我的修改')).toHaveLength(1)
+ expect(host.querySelectorAll('article button')).toHaveLength(0)
+ await act(async()=>root.render(<Fixture savedSource={false}/>))
+ expect([...document.querySelectorAll('button')].filter(b=>b.textContent==='我的修改')).toHaveLength(0)
+})
+it('shows only the chosen row correction rather than reading the entire source as its history',async()=>{
+ stored.set('recording:123:one',{revision:1,original,text:'重复词，新词。',marks:[]})
+ await act(async()=>root.render(<Fixture/>));await click('已更正')
+ const dialog=document.querySelector('[role="dialog"]')!
+ expect(dialog).not.toBeNull();expect(dialog.textContent).toContain('原文');expect(dialog.textContent).toContain('我的更正')
+ expect(dialog.textContent).toContain('重复词，新词。');expect(dialog.textContent).toContain(original)
+ expect(mocks.call.mock.calls.some(([op])=>op==='transcript.views.saved')).toBe(false)
+ expect(mocks.play).not.toHaveBeenCalled()
+ await click('恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+ expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+
+it('keeps the explicit source recovery entry reachable when no current physical row remains',async()=>{
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[{kind:'recording',source_uid:'source',segment_uid:'retired',original:'旧识别文本',original_version:'v1',text:'保留的个人更正',revision:1,marks:[]}],next_cursor:''}:normal(op,p))
+ await act(async()=>root.render(<Fixture emptyRows/>));expect(host.querySelectorAll('article')).toHaveLength(0)
+ await click('我的修改');expect(document.body.textContent).toContain('保留的个人更正')
+ expect(mocks.call.mock.calls.find(([op])=>op==='transcript.views.saved')?.[1].ref).toBe(JSON.stringify({kind:'recording',sessionRef:'recording:123'}))
+})
+
+it.each(['corrected','restored'] as const)('does not label a source-version refresh as a live correction (%s)',async state=>{
+ const previousOriginal='之前的原文',previousText=state==='corrected'?'保留的更正':'之前的原文'
+ stored.set('recording:123:one',{revision:2,original:previousOriginal,text:previousText,marks:[]})
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[{kind:'recording',source_uid:'source',segment_uid:'one',original:previousOriginal,original_version:'old',text:previousText,revision:2,marks:[]}],next_cursor:''}:normal(op,p))
+ await act(async()=>root.render(<Fixture text="更新后的原文"/>))
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('更新后的原文')
+ expect(host.querySelectorAll('article button')).toHaveLength(0)
+ await click('我的修改')
+ if(state==='corrected')expect(document.querySelector('[role="dialog"]')?.textContent).toContain('保留的更正')
+ else expect(document.querySelector('[role="dialog"]')?.textContent).toContain('还没有更正或标记')
 })

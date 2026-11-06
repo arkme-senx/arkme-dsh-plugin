@@ -1,4 +1,5 @@
-import { TranscriptViewHistory } from './TranscriptViewHistory.js'
+import { tr } from './locale.js'
+import { TranscriptPersonalChanges, TranscriptCorrectionDetails } from './TranscriptPersonalChanges.js'
 import type { PersonalTranscriptEntry, TranscriptViewCommand } from '../transcript-view-contract.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
@@ -72,7 +73,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   const [notice, setNotice] = useState(''), [retry, setRetry] = useState(0)
   const menuRef = useRef<TranscriptMenuHandle>(null)
   const [selected, setSelected] = useState<Set<string>>()
-  const [historyRef, setHistoryRef] = useState<{key:string;ref:string}>()
+  const [panel, setPanel] = useState<{key:string;kind:'source';ref:string}|{key:string;kind:'row';id:string}>()
   const [search, setSearch] = useState(''), [matchIndex, setMatchIndex] = useState(0)
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
@@ -83,7 +84,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       accessEpoch.current++
       entriesRef.current = {}
       setState({key, entries:{}})
-      setHistoryRef(undefined)
+      setPanel(undefined)
       setSelected(undefined)
       notify = true
     }
@@ -205,13 +206,12 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     }
     return <span data-transcript-scope={sourceRef} data-transcript-row={row.id}>
       <TextTarget target={target(row)}>{child}</TextTarget>
-      {entry && !entry.legacy && (entry.text !== entry.original || entry.originalChanged) && <button type="button" style={smallButton}
-        title={`原文：${entry.original}\n个人更正：${entry.previousText??entry.text}\n点击恢复当前云端原文`}
-        onClick={event => { event.stopPropagation(); void change(row, entry, { restore: true }).catch(e => setNotice(message(e))) }}>
-        {entry.originalChanged ? '原文已更新 · 恢复原文' : '个人更正 · 恢复原文'}
+      {entry && !entry.legacy && entry.originalVersion === row.sourceVersion && entry.text !== entry.original && <button type="button" style={smallButton}
+        title={tr("查看原文与我的更正")}
+        onClick={event => { event.stopPropagation(); setPanel({key,kind:'row',id:row.id}) }}>
+        {tr('已更正')}
       </button>}
-      {entry?.pendingCommand && row.viewRef && <button type="button" style={smallButton} title={`待确认操作：${entry.pendingCommand.action} ${entry.pendingCommand.replacement ?? entry.pendingCommand.anchor?.text ?? ''}`} onClick={() => {void callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command:{operation_id:crypto.randomUUID(),expected_revision:entry.revision,original_version:entry.originalVersion,action:'retry_pending'}}).then(next=>accept({[row.id]:next},true)).catch(error=>{failure(error);setRetry(v=>v+1)})}}>重试上次提交</button>}
-      {row.viewRef&&<button type="button" style={smallButton} onClick={()=>{setHistoryRef({key,ref:row.viewRef!})}}>历史更正</button>}
+      {entry?.pendingCommand && row.viewRef && <button type="button" style={smallButton} title={tr('上次保存结果尚未确认，点击重试')} onClick={() => {void callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command:{operation_id:crypto.randomUUID(),expected_revision:entry.revision,original_version:entry.originalVersion,action:'retry_pending'}}).then(next=>accept({[row.id]:next},true)).catch(error=>{failure(error);setRetry(v=>v+1)})}}>{tr('重试上次提交')}</button>}
       {entry?.legacy && <button type="button" style={smallButton} title={`本机更正：${entry.legacy.text}\n原数据将保留，确认后仅同步到自己的账号`}
         onClick={event=>{event.stopPropagation();if(!row.viewRef)return;void callArkme<PersonalTranscriptEntry>('transcript.views.import',{accountKey:account,scope,item:{id:row.id,ref:row.viewRef},operationId:crypto.randomUUID()}).then(next=>accept({[row.id]:next},true)).catch(failure)}}>本机更正 · 同步到账号</button>}
       {entry?.legacy&&<button type="button" style={smallButton} title="保留本机旧数据，使用当前账号的云端原文" onClick={()=>{void change(row,entry,{restore:true}).catch(error=>setNotice(message(error)))}}>使用云端原文</button>}
@@ -226,6 +226,14 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   }
   const selectedRows = rows.filter(row => selected?.has(row.id)).sort((a,b) => a.at - b.at)
   const toggle = (id: string) => setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  const correctionRow = panel?.key === key && panel.kind === 'row' ? rows.find(row => row.id === panel.id) : undefined
+  const correctionEntry = correctionRow ? entries[correctionRow.id] : undefined
+  const correctionVisible = !!correctionEntry && !correctionEntry.legacy && correctionEntry.originalVersion === correctionRow?.sourceVersion && correctionEntry.text !== correctionEntry.original
+  useEffect(() => {
+    if (panel?.kind === 'row' && !correctionVisible) setPanel(undefined)
+  }, [panel, correctionVisible])
+  const sourceControls = enabled && account && savedRef ? <button type="button" style={controlButton}
+    onClick={() => setPanel({key,kind:'source',ref:savedRef})}>{tr('我的修改')}</button> : null
   const host = enabled && typeof document !== 'undefined' && document.body && typeof window !== 'undefined' ? <>
     <ArkmeMessageTextSelectionToolbar key={`toolbar:${key}:${epoch}`} selectionDomain="transcript" replySourceRef={sourceRef} markStorage="cloud" selfNote={{ sourceLabel: scope.startsWith('call:') ? '通话转写' : '录音转写', accountKey: account }}
       onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} canMark={canChange} canReplace={canChange}
@@ -244,6 +252,10 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
         } }
       }} />
     {marks.layer}
+    {panel?.key === key && panel.kind === 'source' && <TranscriptPersonalChanges key={'changes:'+key+':'+epoch+':'+panel.ref}
+      sourceRef={panel.ref} onFailure={error => failure(error, false)} onClose={() => setPanel(undefined)} />}
+    {correctionVisible && correctionRow && correctionEntry && <TranscriptCorrectionDetails key={'correction:'+key+':'+epoch+':'+correctionRow.id}
+      entry={correctionEntry} onRestore={signal => change(correctionRow, correctionEntry, {restore:true}, signal)} onClose={() => setPanel(undefined)} />}
     <TranscriptContextMenu key={`menu:${key}:${epoch}`} ref={menuRef} rows={rows}
       onCopy={row => { void copyText(display(row)).catch(e => { if (alive.current && currentKey.current === key) setNotice(message(e)) }) }}
       onSelect={row => { if (latest.current.onMultiSelect) latest.current.onMultiSelect(row.id); else setSelected(new Set([row.id])) }}
@@ -251,9 +263,6 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     {notice && <div role="alert" style={{ position: 'fixed', bottom: 20, right: 20, zIndex: 1000, maxWidth: 'min(420px, calc(100vw - 40px))', padding: '8px 12px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, background: arkmeTheme.menu, fontSize: 12, color: arkmeTheme.danger }}>{notice}<button type="button" style={smallButton} onClick={() => setRetry(v => v + 1)}>重试</button></div>}
   </> : null
   const controls = <>
-    {enabled&&account&&(savedRef||rows.some(row=>row.viewRef))&&<button type="button" style={smallButton} onClick={()=>{const ref=savedRef??rows.find(row=>row.viewRef)?.viewRef;if(ref)setHistoryRef({key,ref})}}>已保存的个人更正</button>}
-    {historyRef?.key === key && <TranscriptViewHistory key={historyRef.ref} sourceRef={historyRef.ref} onFailure={error => failure(error, false)} onClose={() => setHistoryRef(undefined)} />}
-
     {search && <div role="search" style={{ position: 'sticky', bottom: 0, background: arkmeTheme.menu, padding: 8, borderRadius: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12 }}>
       <input style={{ minWidth: 100, flex: 1, border: `1px solid ${arkmeTheme.border}`, borderRadius: 6, background: arkmeTheme.input, color: arkmeTheme.text, padding: '5px 8px' }} aria-label="查找通话转写" value={search} onChange={e => { setSearch(e.target.value); setMatchIndex(0) }} />
       <span>{results.length ? Math.min(matchIndex + 1, results.length) : 0}/{results.length}</span>
@@ -268,6 +277,6 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       <button type="button" style={controlButton} onClick={() => setSelected(undefined)}>取消</button>
     </div>}
   </>
-  return { host, controls, renderText, contextMenu,ready:rows.every(row=>!row.viewRef||entries[row.id]?.originalVersion===row.sourceVersion),error:notice, text: (row: TranscriptInteractionRow) => display(row), copyRows, selected, toggle,
+  return { host, controls, sourceControls, renderText, contextMenu,ready:rows.every(row=>!row.viewRef||entries[row.id]?.originalVersion===row.sourceVersion),error:notice, text: (row: TranscriptInteractionRow) => display(row), copyRows, selected, toggle,
     checkbox: (row: TranscriptInteractionRow) => selected ? <input type="checkbox" aria-label={`选择 ${row.speaker} 的转写片段`} checked={selected.has(row.id)} onClick={e => e.stopPropagation()} onChange={() => toggle(row.id)} /> : null }
 }

@@ -365,6 +365,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
             <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
               <h3 style={styles.transcriptTitle}>{tr("通话转写")}</h3>
               <span style={styles.transcriptCount}>{detail.transcriptSegments.length} {tr("段对话")}</span>
+              <span style={{ marginLeft: 'auto' }}>{transcriptInteraction.sourceControls}</span>
             </header>
             {detail.transcriptSegments.map((segment, index) => {
               const mine = segment.speakerUserId !== undefined && detail.participants.some(participant => participant.isCurrentUser && participant.userId === segment.speakerUserId)
@@ -419,6 +420,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
           {detailState === 'ready' && detail !== undefined && detail.transcriptSegments.length === 0 && <section style={styles.transcript} aria-label={tr("通话转写")}>
             <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
               <h3 style={styles.transcriptTitle}>{tr("通话转写")}</h3>
+              <span style={{ marginLeft: 'auto' }}>{transcriptInteraction.sourceControls}</span>
               <span style={styles.transcriptCount}>{tr("0 段对话")}</span>
             </header>
             <p role="status" style={styles.transcriptEmpty}>{detail.transcriptFailed ? tr("转写失败") : detail.transcriptPending ? '转写处理中' : tr("暂无转写内容")}</p>
