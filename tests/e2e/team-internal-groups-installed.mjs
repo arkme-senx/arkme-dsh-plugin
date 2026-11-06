@@ -249,7 +249,7 @@ try{
   await memberRow.getByRole('button',{name:'转让团队',exact:true}).click()
   await page.getByRole('dialog',{name:/转让团队/}).getByRole('button',{name:'确认',exact:true}).click()
   await wait(()=>viewerSdk.pageSourceMembers(memberRef),page=>page.selfRole==='owner')
-  const afterOwner=JSON.parse((await forward('/fixture/group-state',{chat_session_uid:'t25-existing-group'})).text)
+  const afterOwner=await wait(async()=>JSON.parse((await forward('/fixture/group-state',{chat_session_uid:'t25-existing-group'})).text),state=>state.owner_user_id===1002&&state.members.find(m=>m.user_id===1002)?.role===1)
   assert.deepEqual(afterOwner.members.find(m=>m.user_id===1002).roster_grant,beforeOwner.members.find(m=>m.user_id===1002).roster_grant)
   const oldOwnerHistory=await sdk.readSource(source.sourceRef);assert.equal(oldOwnerHistory.items[0].textContent,'编辑后的群消息')
   assert.equal((await viewerSdk.readSource(memberRef)).items.length,0)
