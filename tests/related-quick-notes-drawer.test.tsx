@@ -299,7 +299,7 @@ describe('normal timeline related quick note drawer', () => {
       expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'record.app.detail')).toHaveLength(1)
       await act(async () => view.root.findByProps({ 'aria-label': '已编辑' }).props.onClick())
       expect(mocks.callArkme).toHaveBeenCalledWith('source.record-edit-history', {
-        sourceRef, messageActionRef: timelineItem.messageActionRef, cursorEditAt: 0,
+        sourceRef, messageActionRef: timelineItem.messageActionRef, cursorVersion: 0,
       }, expect.any(AbortSignal))
       expect(view.root.findByProps({ 'aria-label': '编辑记录' })).toBeDefined()
     } finally { act(() => view.unmount()) }
@@ -588,6 +588,21 @@ describe('normal timeline related quick note drawer', () => {
     act(() => view.unmount())
   })
 
+  it('preserves another member history entry while keeping its private snapshot action unavailable', async () => {
+    mocks.callArkme.mockImplementation(async (op: string) => op === 'source.record-edit-history'
+      ? { items: [{ revisionUid: 'peer-rev', version: 2, kind: 'manual', editAtMillis: 1710000000000, content: { textContent: '对方有权公开的历史正文', contentBlocks: [] } }], hasMore: false }
+      : { items: [], total: 0, extensions: [], extensionCount: 0 })
+    let view!: ReactTestRenderer
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: false, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+    await act(async () => view.root.findByProps({ 'aria-label': '已编辑' }).props.onClick())
+    expect(JSON.stringify(view.toJSON())).toContain('对方有权公开的历史正文')
+    const event = { preventDefault: vi.fn(), stopPropagation: vi.fn(), clientX: 50, clientY: 50 }
+    act(() => view.root.findByProps({ 'data-arkme-history-bubble': true }).props.onContextMenu(event))
+    expect(view.root.findAllByProps({ role: 'menuitem' })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.record-revision-snapshot')).toBe(false)
+    act(() => view.unmount())
+  })
+
   it('opens edited history only for manual edits and returns to the detail', async () => {
     mocks.callArkme.mockImplementation(async (op: string) => op === 'source.record-edit-history'
       ? { items: [{ revisionUid: 'rev-1', kind: 'manual', editAtMillis: 1710000000000, content: { title: '', textContent: '历史快记', contentBlocks: [] } }], hasMore: false }
@@ -595,11 +610,11 @@ describe('normal timeline related quick note drawer', () => {
     let view!: ReactTestRenderer
     await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: false }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
     expect(view.root.findAllByType('button').some(node => node.props['aria-label'] === '已编辑')).toBe(false)
-    await act(async () => view.update(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />))
+    await act(async () => view.update(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />))
     await act(async () => view.root.findAllByType('button').find(node => node.props['aria-label'] === '已编辑')!.props.onClick())
     expect(view.root.findAllByType('button').some(node => node.children.includes('查看此版全文'))).toBe(false)
     expect(JSON.stringify(view.toJSON())).toContain('历史快记')
-    expect(view.root.findByProps({ 'data-arkme-history-row': true }).props.style.flexDirection).toBe('row')
+    expect(view.root.findByProps({ 'data-arkme-history-row': true }).props.style.flexDirection).toBe('row-reverse')
     await act(async () => view.root.findByProps({ 'aria-label': '返回快记详情' }).props.onClick())
     expect(JSON.stringify(view.toJSON())).toContain('源快记正文')
     act(() => view.unmount())
@@ -611,7 +626,7 @@ describe('normal timeline related quick note drawer', () => {
       : { items: [], total: 0, extensions: [], extensionCount: 0 })
     const bodies: Array<{ scrollTop: number }> = []
     let view!: ReactTestRenderer
-    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />, {
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />, {
       createNodeMock: element => {
         if (element.type === 'div' && element.props.style?.padding === '24px 22px') {
           const body = { scrollTop: 0 }; bodies.push(body); return body
@@ -633,7 +648,7 @@ describe('normal timeline related quick note drawer', () => {
       ? { items: [{ revisionUid: 'rev', kind: 'manual', editAtMillis: 1710000000000, content: { textContent: 'old', contentBlocks: [] } }], hasMore: false }
       : { items: [], total: 0, extensions: [], extensionCount: 0 })
     let view!: ReactTestRenderer
-    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
     act(() => view.root.findByType(ArkmeRichComposerInput).props.onTextChange('未发送的延展'))
     await act(async () => { await view.root.findByProps({ 'data-arkme-detail-extension-file-input': 'true' }).props.onChange({ currentTarget: { files: [{ name: 'draft.png', type: 'image/png', size: 12 }], value: '' } }) })
     await act(async () => view.root.findAllByType('button').find(node => node.props['aria-label'] === '已编辑')!.props.onClick())
@@ -656,7 +671,7 @@ describe('normal timeline related quick note drawer', () => {
     })
     const onSent = vi.fn()
     let view!: ReactTestRenderer
-    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} onExtensionSent={onSent} />) })
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} onExtensionSent={onSent} />) })
     act(() => view.root.findByType(ArkmeRichComposerInput).props.onTextChange('发送中的延展'))
     act(() => view.root.findByProps({ 'aria-label': '发送延展' }).props.onClick())
     await act(async () => view.root.findAllByType('button').find(node => node.props['aria-label'] === '已编辑')!.props.onClick())
@@ -678,7 +693,7 @@ describe('normal timeline related quick note drawer', () => {
       ? { items: [{ revisionUid: 'rev', kind: 'manual', editAtMillis: 1710000000000, content: { textContent: 'old', contentBlocks: [] } }], hasMore: false }
       : { items: [], total: 0, extensions: [], extensionCount: 0 })
     let view!: ReactTestRenderer
-    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
+    await act(async () => { view = create(<ArkmeTimelineDetailDrawer item={{ ...timelineItem, isMe: true, hasManualEdit: true }} sourceRef="source-a" showOriginal={false} onClose={() => {}} onToggleOriginal={() => {}} />) })
     let staging!: Promise<void>
     await act(async () => { staging = view.root.findByProps({ 'data-arkme-detail-extension-file-input': 'true' }).props.onChange({ currentTarget: { files: [{ name: 'pending.png', type: 'image/png', size: 12 }], value: '' } }) })
     await act(async () => view.root.findAllByType('button').find(node => node.props['aria-label'] === '已编辑')!.props.onClick())

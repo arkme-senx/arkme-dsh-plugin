@@ -56,12 +56,12 @@ export const forwardTargetDirectory: ForwardTargetDirectoryPort = {
 
 const EMPTY: ForwardTargetDirectorySnapshot = { chats: [], self: undefined, loading: false, error: '' }
 
-export function useForwardTargetDirectory(account: string | undefined, enabled: boolean) {
+export function useForwardTargetDirectory(account: string | undefined, enabled: boolean, refreshRevision = 0) {
   const [state, setState] = useState<{ account: string; snapshot: ForwardTargetDirectorySnapshot }>()
   useEffect(() => {
     if (!enabled || account === undefined) { setState(undefined); return }
     return forwardTargetDirectory.observe(account, snapshot => setState({ account, snapshot }))
-  }, [account, enabled])
+  }, [account, enabled, refreshRevision])
   if (!enabled || account === undefined) return EMPTY
   const snapshot = state?.account === account ? state.snapshot : forwardTargetDirectory.snapshot(account)
   return snapshot

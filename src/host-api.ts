@@ -2589,7 +2589,7 @@ export async function dispatchArkmeHostOperation(
       requestSignal,
     )
     case 'source.record-edit-history': return await service.recordEditHistoryPage(
-      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), numberParam(params, 'cursorEditAt', 0), requestSignal,
+      stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), numberParam(params, 'cursorVersion', 0), requestSignal,
     )
     case 'source.record-revision-snapshot': return await service.recordRevisionSnapshot(
       stringParam(params, 'sourceRef'), stringParam(params, 'messageActionRef'), stringParam(params, 'revisionUid'), requestSignal,
@@ -2755,12 +2755,15 @@ export async function dispatchArkmeHostOperation(
         ...(typeof params.targetSourceRef === 'string' ? { targetSourceRef: params.targetSourceRef } : {}),
       }, requestSignal)
     }
-    case 'source.forward-messages': return await service.forwardSourceMessages(
+    case 'source.forward-messages': {
+      if (params.targetConversationRef !== undefined && (typeof params.targetConversationRef !== 'string' || !params.targetConversationRef.trim() || params.targetSourceRef !== undefined)) throw new ArkmePluginError('message-actions-target-invalid', '转发目标无效，请重新选择', false, 400)
+      return await service.forwardSourceMessages(
       stringParam(params, 'sourceRef'),
       messageActionRefsParam(params),
       {
         ...(params.representation===undefined?{}:{representation:readTeamRepresentationSelection(params.representation)!}),
         ...(stringParam(params, 'targetSourceRef') === '' ? {} : { targetSourceRef: stringParam(params, 'targetSourceRef') }),
+        ...(params.targetConversationRef === undefined ? {} : { targetConversationRef: params.targetConversationRef as string }),
         ...(stringParam(params, 'recordUid') === '' ? {} : { recordUid: stringParam(params, 'recordUid') }),
         ...(stringParam(params, 'relationUid') === '' ? {} : { relationUid: stringParam(params, 'relationUid') }),
         ...(stringParam(params, 'commentText') === '' ? {} : { commentText: stringParam(params, 'commentText') }),
@@ -2769,6 +2772,7 @@ export async function dispatchArkmeHostOperation(
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    }
     case 'native-chat.annotations': return await service.nativeAnnotations(params.request as import('./native-annotations.js').NativeAnnotationRequest, requestSignal)
     case 'codex.local-mark.capabilities': return await service.codexLocalMarkCapabilities(stringParam(params, 'sourceRef'), requestSignal)
     case 'codex.local-mark.list': return await service.codexLocalMarks(stringParam(params, 'sourceRef'), stringListParam(params, 'markRefs'), requestSignal)

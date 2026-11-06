@@ -4307,7 +4307,7 @@ describe('conversation send directory projection', () => {
     await act(async () => { pending.resolve({ status: 1 }) })
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(1)
     expect(second.findByProps({ 'aria-label': '转发中' }).props.disabled).toBe(true)
-    await act(async () => { nextPending.resolve({ status: 1 }) })
+    await act(async () => { nextPending.resolve({ sourceRef: other.sourceRef, itemUid: 'accepted-next-account', status: 1, localState: 'synced' }) })
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
@@ -4798,6 +4798,13 @@ describe('conversation send directory projection', () => {
     const sends = mocks.callArkme.mock.calls.filter(call => call[0] === 'source.forward-messages')
     expect(sends).toHaveLength(1)
     expect(sends[0]?.[1]).toMatchObject({ targetSourceRef: target.sourceRef })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(1)
+    // Keep the refused recipient visible. Retrying the successful recipient
+    // after deselecting the failed one must reuse its confirmed receipt.
+    expect(renderedText(dialog)).toContain('拒收')
+    await act(async () => { await dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean' && renderedText(node).includes(other.displayName))[0]!.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'source.forward-messages')).toHaveLength(1)
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 

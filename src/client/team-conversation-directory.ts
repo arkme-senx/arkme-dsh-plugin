@@ -154,8 +154,9 @@ export function startTeamDirectory(key: string): () => void {
               return [(await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: target.ref, limit: 1, expectedAccountKey: key }, controller.signal)).conversation]
             } catch { return [] }
           }))
-          // A preference is presentation only; successful publication activates a conversation.
-          extra.push(...batch.flat().filter(c => c.lastSeq > 0))
+          // A pin does not activate a preview. Only publication or a validated
+          // member-initiated contact can appear outside the ordinary page.
+          extra.push(...batch.flat().filter(c => c.lastSeq > 0 || c.side === 'team' && c.memberInitiated === true))
         }
         if (controller.signal.aborted || account !== key || token !== revision) return
         for (const c of extra) if (!pins.has(c.key) && allowed(c)) pins.set(c.key, c)

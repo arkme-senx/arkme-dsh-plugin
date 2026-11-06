@@ -11,6 +11,8 @@ import type {
 } from '../../record-reedit-contract.js'
 
 export interface ArkmeRecordToolPort {
+  recordEditHistoryPage(sourceRef: string, messageActionRef: string, cursorVersion?: number, signal?: AbortSignal): Promise<import('../../record-edit-history.js').ArkmeRecordEditHistoryPage>
+  recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal): Promise<import('../../record-edit-history.js').ArkmeRecordRevisionSnapshot>
   refreshLatest(): Promise<void>
   syncHistory(maxPages?: number, signal?: AbortSignal): Promise<{ pages: number; complete: boolean }>
   queryCached(options: {

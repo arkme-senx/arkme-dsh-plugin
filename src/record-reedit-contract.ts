@@ -170,6 +170,8 @@ export interface ArkmeRecordReeditSubmissionView {
 
 /** Host command data; presentation never selects the content to write. */
 export interface ArkmeRecordReeditCommand {
+  revisionUid?: string
+  editorSnapshot?: { avatar?: string; nickname?: string }
   context: ArkmeRecordReeditPreparedContext
   draft: import('./types.js').ArkmeRecordReeditDraft
 }

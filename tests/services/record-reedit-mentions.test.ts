@@ -126,11 +126,12 @@ describe('record re-edit mention identities', () => {
     const runtime = { config: { maxTextLength: 20000 }, stateStore: new ArkmeStateStore(root),
       requireSession: async () => session,
       authenticatedPost: async (path: string, body: Record<string, unknown>) => {
+        if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: written?.revision_uid === body.revision_uid, accepted_version: 2, current_version: 2 }
         if (path === '/api/v1/records/update') {
           writes += 1
           written = body; core = { ...core, ...body, version: 2 }
           if (mode === 'unknown') throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })
-          return { record_core: core, revision_uid: 'revision-2' }
+          return { record_core: core, revision_uid: body.revision_uid }
         }
         return { record_core: core }
       },

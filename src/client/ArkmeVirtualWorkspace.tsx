@@ -1136,11 +1136,6 @@ export function ArkmeNavigation({
   const arkoLatestAtMillis = arkoPreviewSnapshot.userId === auth?.userId
     ? arkoPreviewSnapshot.latestAtMillis
     : undefined
-  const hasDirectoryData = sources.length > 0 || chatDirectory.sources.length > 0
-    || bots.length > 0 || (chatDirectory.projection?.bots.length ?? 0) > 0
-    || Boolean(sendToSelfSource ?? chatDirectory.projection?.sendToSelf
-      ?? arkoProfile ?? chatDirectory.projection?.arkoProfile
-      ?? arkoLatestPreview ?? chatDirectory.projection?.arkoPreview)
   const directorySources = useMemo(
     () => arkmeSelfDirectorySources(sources),
     [sources],
@@ -2353,8 +2348,8 @@ export function ArkmeNavigation({
           activateEntry: activateDirectoryEntry,
           renderRow: renderArkmeDirectoryRow,
         })}
-        {!hasDirectoryData && (rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed') && <>
-          <div style={{ ...styles.status, color: '#c2413b' }}>{tr("会话加载失败，请重试")}</div>
+        {(rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed') && <>
+          <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{tr("会话加载失败，请重试")}</div>
           <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
         </>}
         <ArkmeConversationRemovalStyles />

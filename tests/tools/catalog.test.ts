@@ -71,6 +71,7 @@ describe('Arkme tool catalog', () => {
       'arkme_images_list',
       'arkme_record_create',
       'arkme_record_reedit',
+      'arkme_record_history',
       'arkme_bots_list',
       'arkme_bot_create',
       'arkme_bot_openclaw_connect',

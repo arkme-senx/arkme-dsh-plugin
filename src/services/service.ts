@@ -632,10 +632,11 @@ export class ServiceRuntime {
       '/api/v1/dsh-remote/desktops/list', '/api/v1/dsh-remote/sessions/account-list', '/api/v1/dsh-remote/workspaces/list',
     ]).has(path)) return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
+      '/api/v1/chats/records/revisions/query',
       '/api/v1/chats/members/records/aggregate', '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
     if (baseUrl === this.config.recordBaseUrl && new Set([
-      '/api/v1/records/forward/capability', '/api/v1/search/records/scene/query', '/api/v1/reactions/query', '/api/v1/reactions/team/query', '/api/v1/reactions/team/actors/query', '/api/v1/reactions/team/groups/query', '/api/v1/reactions/notifications/query',
+      '/api/v1/records/revisions/query', '/api/v1/records/forward/capability', '/api/v1/search/records/scene/query', '/api/v1/reactions/query', '/api/v1/reactions/team/query', '/api/v1/reactions/team/actors/query', '/api/v1/reactions/team/groups/query', '/api/v1/reactions/notifications/query',
       '/api/v1/reactions/actors/query', '/api/v1/reactions/groups/query',
       '/api/v1/reactions/history/query', '/api/v1/reactions/received/query',
       '/api/v1/reactions/history-policy/query', '/api/v1/reactions/library/query',
