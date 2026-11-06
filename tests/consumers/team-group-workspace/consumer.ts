@@ -43,3 +43,17 @@ export async function verifyInstalledOldBackend(fetchImpl:typeof fetch,personalS
   return {context:context.state,timelineItems:timeline.items.length,workspace:code}
  }finally{sdk.dispose()}
 }
+
+
+export async function verifyInstalledTeamHistory(fetchImpl:typeof fetch,sourceRef:string,messageActionRef:string) {
+ const sdk=new ArkmeSdk({fetchImpl})
+ try {
+  const page=await sdk.recordEditHistory(sourceRef,messageActionRef)
+  assert(page.items.length===0,'an unedited message has no fabricated revision facts')
+  const revisionUid='019d8592-ebb4-7232-90f2-999999999999'
+  let code=''
+  try{await sdk.recordRevisionSnapshot(sourceRef,messageActionRef,revisionUid)}catch(error){code=String((error as {body?:{code?:string}}).body?.code)}
+  assert(code==='record-revision-not-found','exact revision reaches the authorized team frame and reports the missing revision')
+  return {revisionUid,empty:true,exactMissing:code}
+ }finally{sdk.dispose()}
+}

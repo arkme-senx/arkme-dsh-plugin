@@ -3738,7 +3738,7 @@ nextPublic = next
     const reference = await this.openMessageActionRef(messageActionRef, session.userId, source)
     const identity = { viewerUserId: session.userId, recordUid: reference.recordUid }
     return reference.sourceKind === 'record' ? { ...identity, kind: 'owned' }
-      : { ...identity, kind: 'chat', chatSessionUid: reference.chatSessionUid, relationUid: reference.relationUid, recordOwnerUserId: reference.recordOwnerUserId, ...(source.groupDelegation ? {chatAccessRef: source.groupDelegation.accessRef} : {}) }
+      : { ...identity, kind: 'chat', chatSessionUid: reference.chatSessionUid, relationUid: reference.relationUid, recordOwnerUserId: reference.recordOwnerUserId, ...(source.groupDelegation ? {chatAccessRef: source.groupDelegation.accessRef,audienceKey:await this.source.sourceScopeKey(source)} : {}) }
   }
 
   async reactionTarget(sourceRef: string, messageActionRef: string): Promise<import('./reaction-service.js').ReactionWireTarget> {
@@ -4581,7 +4581,7 @@ nextPublic = next
           ...(options.commentText ? { commentText: options.commentText } : {}),
           sources: references.map(reference => ({ record_uid: reference.recordUid,
             ...(reference.sourceKind === 'record' ? { record_owner_user_id: session.userId } : {}),
-            ...(reference.sourceKind === 'chat_relation' ? { chat_session_uid: reference.chatSessionUid, relation_uid: reference.relationUid } : {}),
+            ...(reference.sourceKind === 'chat_relation' ? { chat_session_uid: reference.chatSessionUid, relation_uid: reference.relationUid, ...(source.groupDelegation?{access_ref:source.groupDelegation.accessRef}:{}) } : {}),
           })),
         }, options.signal)
       }

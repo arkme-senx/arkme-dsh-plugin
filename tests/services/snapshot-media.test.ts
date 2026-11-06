@@ -104,3 +104,14 @@ describe('snapshot media through existing APIs', () => {
     await expect(changed.media.hydrateRecordSnapshotMediaPage([snapshot([ref('f')])], session)).rejects.toThrow()
   })
 })
+
+
+it.each([42,99])('does not hydrate delegated history through personal media authority even for owner %s',async owner=>{
+ const f=fixture(),delegated={...chat,recordOwnerUserId:owner,chatAccessRef:'opaque-team-audience'}
+ const raw=snapshot([ref('historical')])
+ const inline={...raw,media_display_items:[{...ref('historical'),download_url:'https://example.test/author-private-asset'}]}
+ expect(await f.media.hydrateRecordSnapshotMediaPage([raw,inline],session,delegated)).toEqual([[],[]])
+ expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
+ expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+ expect(f.runtime.authenticatedAuthGet).not.toHaveBeenCalled()
+})

@@ -1,4 +1,5 @@
 import { arkmeAuthStore } from './auth-store.js'
+import { hasTeamDirectEntry } from '../team-app-contract.js'
 import { teamDirectoryPreferences, type TeamEntryTarget } from './team-directory-preferences.js'
 import { invalidateTeamMessages, openTeamMessages, type TeamMessageIntent } from './team-messaging-events.js'
 import { callArkme } from './api.js'
@@ -24,7 +25,7 @@ async function readOpen(account: string, intent: PublicIntent, signal: AbortSign
 }
 async function folderTarget(account: string, teamRef: string, signal: AbortSignal): Promise<TeamEntryTarget | undefined> {
   const page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef, side: 'team', limit: 1, expectedAccountKey: account }, signal)
-  const group = groupTeamConversations(page.items.filter(c => c.lastSeq > 0 || c.side === 'team' && c.memberInitiated === true))[0]
+  const group = groupTeamConversations(page.items.filter(hasTeamDirectEntry))[0]
   if (group) return { kind: 'folder', group }
   try {
     const folders = await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request', { expectedAccountKey: account, request: { operation: 'folders', teamRef } }, signal)

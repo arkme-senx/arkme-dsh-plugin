@@ -212,10 +212,10 @@ describe('member initiated team conversation handoff boundary', () => {
   const memberTeam = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 'member' }
   const recipient = { kind: 'chat-member', sourceRef: 'source-ref', memberRef: 'member-ref' }
   it('requires authenticated membership, freezes the target and opens the original team reception', async () => {
-    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [memberTeam] } : {conversation:{...conversation,channel:{...channel,...memberTeam},team_id:17,external_user_id:'123',side:'team',visitor:{kind:'person',account_state:'active',member_type:'free'}}})
+    const f = fixture(path => path.endsWith('/list-mine') ? { teams: [memberTeam] } : {conversation:{...conversation,channel:{...channel,...memberTeam},team_id:17,external_user_id:'123',side:'team',member_initiated:true,last_seq:0,visitor:{kind:'person',account_state:'active',member_type:'free'}}})
     const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
     const result = await f.service.execute('team.app.outbound.open', { expectedAccountKey: 'test:90', teamRef: teams[0]!.teamRef, recipient, requestUid: 'attempt-1' })
-    expect(result).toMatchObject({state:'ready',conversation:{side:'team',visitor:{personRef:expect.any(String)}}})
+    expect(result).toMatchObject({state:'ready',conversation:{side:'team',memberInitiated:true,lastSeq:0,visitor:{personRef:expect.any(String)}}})
     expect(f.requests.map(v => v.path)).toEqual(['/api/v1/team/list-mine', '/api/v1/team/list-mine','/api/v1/team/conversations/open-by-member'])
     expect(f.requests[2]!.body).toEqual({team_id:17,external_user_id:'123'})
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
