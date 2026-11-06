@@ -1,6 +1,7 @@
-import { WorldSubscriptionService } from './services/world-subscription-service.js'
 import { WorldSoundService } from './services/world-sound-service.js'
+import { WorldSuggestionsService } from './services/world-suggestions-service.js'
 import { AccountModelService } from './services/account-model-service.js'
+import { WorldSubscriptionService } from './services/world-subscription-service.js'
 import { WorldPublicationService } from './services/world-publication-service.js'
 import{readSelectedTextNoteQuote}from'./selected-text-note.js'
 import { ConversationArrangementService } from "./services/conversation-arrangement-service.js"
@@ -532,6 +533,7 @@ export class ArkmeService {
   private readonly botConversation: BotConversationService
   private readonly outgoingCall: OutgoingCallService
   private readonly world: WorldService
+  private readonly worldSuggestionsOwner: WorldSuggestionsService
   private readonly directoryExport: RecordDirectoryExportService
   private readonly recordExport: RecordExportService
   private readonly arkoTimeline: ArkoTimelineService
@@ -667,7 +669,13 @@ export class ArkmeService {
     return await this.executeTeamApp(action==='retry'?'team.app.send.retry-task':'team.app.send.cancel-task',{conversationRef,taskRef},signal) as TeamSendTask
   }
   async fetchTeamMedia(mediaRef: string, range: string | undefined, signal: AbortSignal) { return await this.teamApp.fetchMedia(mediaRef, range, signal) }
-  async worldPublications(input: import('./world-publication-contract.js').WorldPublicationRequest, signal?: AbortSignal) { return new WorldPublicationService(this.runtime, this.record, this.chat, this.world, this.teamWorldOwner).execute(input, signal) }
+  async worldSuggestions(input: import('./world-suggestions-contract.js').WorldSuggestionsRequest, signal?: AbortSignal) { return this.worldSuggestionsOwner.execute(input, signal) }
+  async worldSuggestionDraft(origin: import('./world-publish-source.js').WorldPublishOrigin, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession()
+    const source = await this.worldSuggestionsOwner.resolve(`${this.runtime.config.environment}:${session.userId}`, origin, signal)
+    return { ...source, sourceRef: origin.sourceRef, itemUid: origin.itemUid }
+  }
+  async worldPublications(input: import('./world-publication-contract.js').WorldPublicationRequest, signal?: AbortSignal) { return new WorldPublicationService(this.runtime, this.record, this.chat, this.world, this.teamWorldOwner, (origin, account, requestSignal) => this.worldSuggestionsOwner.resolve(account, origin, requestSignal)).execute(input, signal) }
   async teamWorld(input: import('./team-world-contract.js').TeamWorldRequest, signal?: AbortSignal) { return this.teamWorldOwner.execute(input, signal) }
   async executeTeamApp(operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (operation === 'team.app.world.view') {
@@ -899,6 +907,10 @@ export class ArkmeService {
     )
     this.recordExport = new RecordExportService(this.runtime)
     this.directoryExport = new RecordDirectoryExportService(this.runtime)
+    this.worldSuggestionsOwner = new WorldSuggestionsService(this.runtime, {
+      selfSource: async signal => (await this.source.selfTarget(signal)).sourceRef,
+      source: (sourceRef, uid, signal) => this.record.worldPublishSource(sourceRef, uid, signal),
+    })
     this.teamWorldOwner = new TeamWorldService(this.runtime, {
       publicPreviews: (refs, signal) => this.world.readPublicPreviews(refs, signal),
       actorNames: async (ids, signal) => {
@@ -920,7 +932,9 @@ export class ArkmeService {
           if (identity.ownerKind === 'agent') return { kind: 'arko', session_uid: String(identity.agentSessionId), message_uid: String(identity.agentMessageId) }
           return this.bot.teamWorldSource(origin.sourceRef, identity, signal)
         }
-        const source = await this.record.worldPublishSource(origin.sourceRef, origin.itemUid, signal)
+        const source = origin.kind === 'suggestion'
+          ? await this.worldSuggestionsOwner.resolve(`${this.runtime.config.environment}:${(await this.runtime.requireSession()).userId}`, origin, signal)
+          : await this.record.worldPublishSource(origin.sourceRef, origin.itemUid, signal)
         if (source.version !== version) throw new ArkmePluginError('world-source-changed', '原内容已变化，请重新打开发布窗口', false, 409)
         return { kind: 'record', record_uid: source.itemUid, version: source.version }
       },
@@ -1142,7 +1156,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async dataDeletedRecords(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).deleted(scope, signal) }
   async dataExport(options: import('./data-management.js').ArkmeRecordExportOptions, signal?: AbortSignal, progress?: (value: import('./data-management.js').ArkmeRecordExportProgress) => void) { return options.destinationRef ? this.directoryExport.run(options,signal,progress) : this.recordExport.run(options, signal, progress) }
   async dataExportPreflight(scope: string, signal?: AbortSignal) { return await new DataManagementService(this.runtime).exportPreflight(scope, signal) }
-  async dataExportRangePreview(scope: string, selection: unknown, order: 1 | 2, signal?: AbortSignal, destinationRef?:string) { return destinationRef ? this.directoryExport.preview(scope,selection,order,destinationRef,signal) : this.recordExport.preview(scope,selection,order,signal) }
+  async dataExportRangePreview(scope: string, selection: unknown, order: 1 | 2, signal?: AbortSignal, destinationRef?:string, options?: { directory?: boolean; refresh?: boolean }) { return destinationRef || options?.directory ? this.directoryExport.preview(scope,selection,order,destinationRef,signal,options?.refresh) : this.recordExport.preview(scope,selection,order,signal) }
   attachExportDirectoryPicker(picker:(signal:AbortSignal)=>Promise<string|null>){this.directoryExport.attach(picker,async(path,signal)=>{if(!this.localFileOpener)throw new Error('当前宿主无法打开文件夹');await this.localFileOpener(path,signal)})}
   async dataExportDirectoryPick(scope:string,signal?:AbortSignal){return this.directoryExport.pick(scope,signal)}
   async dataExportDirectoryOpen(scope:string,ref:string,signal?:AbortSignal){return this.directoryExport.open(scope,ref,signal)}
@@ -1520,6 +1534,7 @@ arkoImagesV1:true,
         worldReactionArchiveVersionsV1: true,
         teamWorldV1: true,
         worldSoundExcerptsV1: true,
+        worldSuggestionsV1: true,
         groupOwnerGovernance: true,
         ...(this.config.markdownQuickNotesEnabled === true ? { markdownQuickNotes: true as const } : {}),
         ...(this.config.markdownLongArticlesEnabled === true ? { markdownLongArticles: true as const } : {}),
@@ -1629,6 +1644,7 @@ arkoImagesV1:true,
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.worldSuggestionsOwner.dispose()
     this.recordExport.dispose(); this.directoryExport.dispose()
     this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
@@ -2044,6 +2060,10 @@ arkoImagesV1:true,
     const result = await this.archives.set(input, signal)
     if (result.stateChanged) await this.realtime.invalidateTopicDirectoryProjection()
     return result
+  }
+
+  async hiddenTopicSource(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem | null> {
+    return await this.source.hiddenTopicSource(sourceRef, signal)
   }
 
   async topicHomeVisibility(sourceRef: string, showInHome?: boolean, signal?: AbortSignal): Promise<{ showInHome: boolean }> {

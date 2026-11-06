@@ -47,6 +47,17 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 原文件|Original files
 不含隐私锁定内容。导出成功后自动保存增量进度。|Privacy-locked content is excluded. Incremental progress is saved automatically after a successful export.
 正在写入本地文件夹|Writing to the local folder
+正在确认导出信息…|Checking export details…
+增量导出|Incremental export
+按日期导出|Export by date
+全部导出|Export all
+正在准备导出…|Preparing export…
+正在同步快记和原文件…|Syncing notes and original files…
+正在生成并校验备份文件…|Generating and verifying backup files…
+正在确认备份已保存…|Confirming the saved backup…
+已同步 {v0} 条快记|Synced {v0} notes
+正在取消导出…|Canceling export…
+取消请求已发出，已保存内容保留；若仍在收尾，请稍后重试。|Cancellation requested. Saved content is retained; retry after any ongoing cleanup.
 导出已取消，已下载的原文件保留供重试。|Export canceled. Downloaded originals are kept for retry.
 已导出到本地文件夹|Exported to the local folder
 内容与原文件已保存，无需另行下载。|Content and originals are saved. No separate download is needed.
@@ -293,7 +304,12 @@ AI 自动分析|Automatic AI analysis
 我发送的位置|Locations I sent
 发给我的位置|Locations sent to me
 群聊中的位置|Locations in group chats
-历史录音来源尚不完整，当前仅显示已确认的安排。|Historical recording links are incomplete. Only confirmed plans are shown.
+部分历史安排无法确认来源日期，当前仅显示已确认属于当天的安排。|Some historical plans have no confirmed source date. Only plans confirmed for this day are shown.
+部分总结尚未完成安排识别，当前仅显示已确认的安排。|Plan recognition is incomplete for some summaries. Only confirmed plans are shown.
+当天暂无可用于核对识别结果的已完成总结。|No completed summary is available to verify plan recognition for this day.
+部分总结暂不可核验，尚不能确认当天安排已全部识别。|Some summaries cannot be verified yet. Complete plan recognition for this day is not confirmed.
+部分安排的原总结暂不可核验，当前仅显示已确认的安排。|The original summaries for some plans cannot be verified yet. Only confirmed plans are shown.
+当天录音安排的识别完整性尚未确认，当前仅显示已确认的安排。|Complete plan recognition for this day is not confirmed. Only confirmed plans are shown.
 识别安排|Detected plans
 查看当天录音识别的安排|View plans detected from this day's recordings
 当天录音识别的安排|Plans from this day's recordings

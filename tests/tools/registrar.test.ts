@@ -378,6 +378,7 @@ describe('registerArkmeTools', () => {
       'arkme_world_reply',
       'arkme_world_sound_read',
       'arkme_world_sound_write',
+      'arkme_world_suggestions_read', 'arkme_world_suggestions_change',
       'arkme_world_mine',
       'arkme_world_user',
       'arkme_world_voiceprint_social_context',

@@ -669,9 +669,9 @@ export class ArkmeSdk {
     return value
   }
   async openRecordExportDirectory(expectedAccountScope:string,destinationRef:string,signal?:AbortSignal){return this.call('data.export.directory.open',{expectedAccountScope,destinationRef},signal)}
-  async previewRecordExport(expectedAccountScope: string, selection: ArkmeExportSelection, orderKind: 1 | 2, signal?: AbortSignal, destinationRef?:string): Promise<ArkmeRangeExportPreview> {
+  async previewRecordExport(expectedAccountScope: string, selection: ArkmeExportSelection, orderKind: 1 | 2, signal?: AbortSignal, destinationRef?:string, options?: { directory?: boolean; refresh?: boolean }): Promise<ArkmeRangeExportPreview> {
     const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
-    const result = await this.call<ArkmeRangeExportPreview>('data.export.range.preview', { expectedAccountScope, selection, orderKind, ...(destinationRef?{destinationRef}:{}) }, scoped)
+    const result = await this.call<ArkmeRangeExportPreview>('data.export.range.preview', { expectedAccountScope, selection, orderKind, ...(destinationRef?{destinationRef}:{}), directory: options?.directory, refresh: options?.refresh }, scoped)
     if (result.accountScope !== expectedAccountScope || result.supported !== true) throw new ArkmeClientError({ code: 'local-response-invalid', message: '导出范围响应无效', retryable: false })
     return result
   }
@@ -712,7 +712,7 @@ export class ArkmeSdk {
     await this.requireArkoHistory(signal)
     return this.exportWithProgress<ArkmeArkoExport>('arko.export', {}, signal, onProgress)
   }
-  private async exportWithProgress<T extends ArkmeArkoExport>(operation: 'arko.export' | 'data.export', params: Record<string, unknown>, signal?: AbortSignal, onProgress?: (value: ArkmeArkoExportProgress) => void): Promise<T> {
+  private async exportWithProgress<T extends ArkmeArkoExport>(operation: 'arko.export' | 'data.export', params: Record<string, unknown>, signal?: AbortSignal, onProgress?: (value: ArkmeRecordExportProgress) => void): Promise<T> {
     if (!onProgress) return this.call(operation, params, signal)
     const response = await this.fetchImpl(this.route, { method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', Accept: 'application/x-ndjson' }, body: JSON.stringify({ operation, params }), ...(signal ? { signal } : {}) })
@@ -739,12 +739,14 @@ export class ArkmeSdk {
         while ((newline = pending.indexOf('\n')) >= 0) {
           if (newline > 16 * 1024 || result) throw invalid()
           const line = pending.slice(0, newline); pending = pending.slice(newline + 1)
-          const frame = JSON.parse(line) as { kind?: string; count?: number; value?: ArkmeArkoExport; error?: ArkmePluginErrorBody }
+          const frame = JSON.parse(line) as { kind?: string; count?: number; phase?: ArkmeRecordExportProgress['phase']; value?: ArkmeArkoExport & { kind?: string }; error?: ArkmePluginErrorBody }
           if (frame.kind === 'error' && frame.error) throw new ArkmeClientError(frame.error)
           if (frame.kind === 'progress' && Number.isSafeInteger(frame.count) && frame.count! >= count) {
             count = frame.count!
-            try { onProgress({ count }) } catch { /* A view observer cannot disrupt the owner. */ }
-          } else if (frame.kind === 'result' && frame.value && Number.isSafeInteger(frame.value.count) && frame.value.count >= count
+            if (operation === 'data.export' && frame.phase !== undefined && !['preparing', 'syncing', 'writing', 'confirming'].includes(frame.phase)) throw invalid()
+            try { onProgress({ count, ...(operation === 'data.export' && frame.phase !== undefined ? { phase: frame.phase } : {}) }) } catch { /* A view observer cannot disrupt the owner. */ }
+          } else if (frame.kind === 'result' && frame.value && Number.isSafeInteger(frame.value.count) && frame.value.count >= 0
+            && (frame.value.count >= count || operation === 'data.export' && typeof params.destinationRef === 'string' && frame.value.kind === 'directory')
             && typeof frame.value.fileRef === 'string' && typeof frame.value.fileName === 'string') result = frame.value
           else throw invalid()
         }
@@ -2893,6 +2895,10 @@ export class ArkmeSdk {
   async worldPublications<R extends import('../world-publication-contract.js').WorldPublicationRequest>(input: R, signal?: AbortSignal): Promise<import('../world-publication-contract.js').WorldPublicationResponse<R>> {
     return this.call('world.publications', input, signal)
   }
+  async worldSuggestions<R extends import('../world-suggestions-contract.js').WorldSuggestionsRequest>(input: R, signal?: AbortSignal): Promise<import('../world-suggestions-contract.js').WorldSuggestionsResponse<R>> {
+    if ((await this.capabilities(signal)).features.worldSuggestionsV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持分享建议，请升级', retryable: false })
+    return this.call('world.suggestions', input, signal)
+  }
 
   async worldSoundExcerpts<R extends import('../world-sound-contract.js').WorldSoundRequest>(input:R,signal?:AbortSignal):Promise<import('../world-sound-contract.js').WorldSoundResponse<R>>{
     if((await this.capabilities(signal)).features.worldSoundExcerptsV1!==true)throw new ArkmeClientError({code:'CAPABILITY_UNSUPPORTED',message:'当前 Arkme Provider 不支持声音摘录，请升级',retryable:false})
@@ -3464,3 +3470,4 @@ export type { WorldReactionVersionsRequest, WorldReactionVersionsPage } from '..
 
 export type { WorldPublication, WorldPublicationRequest, WorldPublicationResponse, WorldPublicationSourceTarget } from '../world-publication-contract.js'
 export type {WorldSoundSegment,WorldSoundExcerpt,WorldSoundSelection,WorldSoundRequest,WorldSoundPrepared,WorldSoundReceipt,WorldSoundResponse} from '../world-sound-contract.js'
+export type { WorldSuggestion, WorldSuggestionJob, WorldSuggestionModel, WorldSuggestionPrepared, WorldSuggestionsState, WorldSuggestionsRequest, WorldSuggestionsResponse } from '../world-suggestions-contract.js'

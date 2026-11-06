@@ -1032,7 +1032,7 @@ export interface ArkmeRecordingArrangementQuery {
 
 export type ArkmeRecordingArrangementPage =
   | { state: 'unavailable'; items: []; total: null; hasMore: false }
-  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string }
+  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string; coverageReasons?: string[] }
 
 export interface ArkmeArrangementEvidence {
   id: string
@@ -1665,6 +1665,7 @@ arkoImagesV1?:true
     worldReactionArchiveVersionsV1?: true
     teamWorldV1?: true
     worldSoundExcerptsV1?: true
+    worldSuggestionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -2537,6 +2538,8 @@ export interface ArkmeContentBlock {
   /** Original bytes, distinct from an image preview. */
   originalRef?: string
   localFileRef?: string
+  attachmentUid?: string
+  attachmentState?: 'pending' | 'failed'
   uploadProgress?: import('./file-transfer-contract.js').ArkmeFileProgress
   /** One logical photo; the companion is not a second visible attachment. */
   dynamicPhoto?: { logicalUid: string; motionFileAssetUid?: string; motion?: Omit<ArkmeContentBlock, 'dynamicPhoto' | 'renderRole'> & { kind: 'video' } }
@@ -4668,6 +4671,7 @@ export type ArkmePluginOperation =
   | 'images.list'
   | 'world.publications'
   | 'world.sound-excerpts'
+  | 'world.suggestions'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'
@@ -4906,6 +4910,7 @@ export type ArkmePluginOperation =
   | 'topic.hierarchy.move'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'topic.hidden-source'
   | 'official-notifications.list'
   | 'official-notifications.summary'
   | 'official-notifications.detail'

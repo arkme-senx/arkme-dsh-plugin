@@ -4,6 +4,26 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LocalSessionDiscovery, localHistoryAccountRef } from '../src/local-session-discovery.js'
 
+const directoryOrder = vi.hoisted(() => ({ root: '', last: false, read: 0, closed: 0, onEntry: undefined as (() => void) | undefined }))
+vi.mock('node:fs/promises', async original => {
+  const fs = await original<typeof import('node:fs/promises')>()
+  return { ...fs, opendir: async (...args: Parameters<typeof fs.opendir>) => {
+    const dir = await fs.opendir(...args)
+    if (String(args[0]) !== directoryOrder.root) return dir
+    const entries: import('node:fs').Dirent<string | Buffer>[] = []
+    for await (const entry of dir) entries.push(entry)
+    const priority = new Set(['artifacts', '.git', 'arkme-self', 'dsh-account-scopes.json'])
+    entries.sort((a, b) => {
+      const rank = Number(priority.has(String(a.name))) - Number(priority.has(String(b.name)))
+      return (directoryOrder.last ? rank : -rank) || String(a.name).localeCompare(String(b.name))
+    })
+    return { async *[Symbol.asyncIterator]() {
+      try { for (const entry of entries) { directoryOrder.read++; directoryOrder.onEntry?.(); yield entry } }
+      finally { directoryOrder.closed++ }
+    } }
+  } }
+})
+
 const roots: string[] = []
 const identity = { accountId: '42', environment: 'prod' as const, runtimeRef: 'old-runtime', sessionRef: 'old-session' }
 const signal = () => new AbortController().signal
@@ -23,7 +43,10 @@ async function fixture() {
   }
   return { home, options, instance }
 }
-afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
+afterEach(async () => {
+  Object.assign(directoryOrder, { root: '', last: false, read: 0, closed: 0, onEntry: undefined })
+  await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })))
+})
 
 describe('same-user legacy source discovery', () => {
   it('finds a custom application root by its real registry and remembers the location', async () => {
@@ -68,14 +91,64 @@ describe('same-user legacy source discovery', () => {
     expect(discovery.inventoryState).toBe('complete')
     discovery.close()
   })
-  it('prioritizes application data and counts inspected directories instead of exhausting the budget on the frontier', async () => {
+  it.each([false, true])('prioritizes application data with application entries enumerated last=%s', async last => {
     const { home, options, instance } = await fixture()
+    directoryOrder.root = home; directoryOrder.last = last
     const old = await instance('artifacts/old/app-data')
     for (let i = 0; i < 60; i++) await mkdir(join(home, `ordinary-${i}`, 'nested'), { recursive: true })
     const discovery = new LocalSessionDiscovery({ ...options, limits: { directories: 50 } })
     expect(await discovery.find(identity, signal())).toEqual([{ dshHome: old.dshHome, runtimeRef: identity.runtimeRef, sessionRef: identity.sessionRef }])
     expect(discovery.inventoryState).toBe('limited')
     discovery.close()
+  })
+  it('bounds enumeration of ordinary files while finding a late application layout', async () => {
+    const { home, options, instance } = await fixture(), old = await instance('artifacts/old/app-data')
+    for (let i = 0; i < 60; i++) await writeFile(join(home, `ordinary-${i}`), 'not read')
+    directoryOrder.root = home; directoryOrder.last = true
+    const discovery = new LocalSessionDiscovery({ ...options, limits: { directories: 50 } })
+    try {
+      expect(await discovery.find(identity, signal())).toEqual([{ dshHome: old.dshHome, runtimeRef: identity.runtimeRef, sessionRef: identity.sessionRef }])
+      expect(directoryOrder.read).toBeLessThanOrEqual(50)
+      expect(directoryOrder.closed).toBe(1)
+      expect(discovery.inventoryState).toBe('limited')
+    } finally { discovery.close() }
+  })
+  it('retains the repository boundary when its marker falls beyond the enumeration limit', async () => {
+    const { home, options, instance } = await fixture(), old = await instance('artifacts/old/app-data')
+    await mkdir(join(home, '.git')); await instance('000-source')
+    for (let i = 0; i < 60; i++) await mkdir(join(home, `ordinary-${i}`))
+    directoryOrder.root = home; directoryOrder.last = true
+    const discovery = new LocalSessionDiscovery({ ...options, limits: { directories: 50 } })
+    try {
+      expect(await discovery.find(identity, signal())).toEqual([{ dshHome: old.dshHome, runtimeRef: identity.runtimeRef, sessionRef: identity.sessionRef }])
+      expect(directoryOrder.read).toBeLessThanOrEqual(50)
+    } finally { discovery.close() }
+  })
+  it('does not follow a late application-layout symlink outside the authorized home', async () => {
+    const { home, options } = await fixture(), foreign = await fixture(), old = await foreign.instance('foreign')
+    for (let i = 0; i < 60; i++) await mkdir(join(home, `ordinary-${i}`))
+    await symlink(old.root, join(home, 'artifacts'))
+    directoryOrder.root = home; directoryOrder.last = true
+    const discovery = new LocalSessionDiscovery({ ...options, limits: { directories: 50 } })
+    const reads = vi.spyOn(discovery as any, 'json')
+    try {
+      expect(await discovery.find(identity, signal())).toEqual([])
+      expect(reads.mock.calls.some(([path]) => String(path).startsWith(foreign.home))).toBe(false)
+    } finally { discovery.close() }
+  })
+  it('closes bounded enumeration on cancellation before probing additional layouts', async () => {
+    const { home, options, instance } = await fixture()
+    await instance('artifacts/old/app-data')
+    for (let i = 0; i < 60; i++) await mkdir(join(home, `ordinary-${i}`))
+    const controller = new AbortController()
+    directoryOrder.root = home; directoryOrder.last = true
+    directoryOrder.onEntry = () => { if (directoryOrder.read === 3) controller.abort(new Error('left discovery')) }
+    const discovery = new LocalSessionDiscovery({ ...options, limits: { directories: 50 } })
+    try {
+      await expect(discovery.find(identity, controller.signal)).rejects.toThrow('left discovery')
+      expect(directoryOrder.read).toBe(3)
+      expect(directoryOrder.closed).toBe(1)
+    } finally { discovery.close() }
   })
   it('shares account-scoped inventory across missing sessions but revalidates ownership on every hit', async () => {
     const { options, instance } = await fixture(), old = await instance('old')

@@ -18,7 +18,11 @@ it.skipIf(!process.env.DSH_HISTORY_REPAIR_ACCEPTANCE_FILE)('repairs through real
   let repair: LocalHistoryCloudRepair | undefined
   try {
     await mkdir(oldHome, { recursive: true }); await mkdir(currentHome, { recursive: true })
-    await writeFile(join(home, 'old', 'Arkme Harness', 'dsh-account-scopes.json'), JSON.stringify({ version: 1, containers: { scope_old: { owner: { kind: 'account', accountRef: localHistoryAccountRef('42') } } } }))
+    const accountRef = localHistoryAccountRef('42')
+    await writeFile(join(home, 'old', 'Arkme Harness', 'dsh-account-scopes.json'), JSON.stringify({
+      version: 1, activeContainerRef: 'scope_old', accounts: { [accountRef]: 'scope_old' },
+      containers: { scope_old: { createdAtMillis: 1, updatedAtMillis: 1, owner: { kind: 'account', accountRef } } },
+    }))
     const state = join(oldHome, 'arkme-self', 'test', 'dsh-remote'); await mkdir(state, { recursive: true })
     await writeFile(join(state, 'runtime-state.json'), JSON.stringify({ schemaVersion: 2, accounts: { '42': { runtimes: { web: { runtimeRef: fixture.runtimeRef } }, projections: { web: { sessions: [{ sessionRef: id }] } } } } }))
     await old.plugin(jsonl, { root: join(oldHome, 'sessions') })

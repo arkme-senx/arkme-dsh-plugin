@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WorldPublicationBadge, WorldPublicationActions } from '../src/client/WorldPublicationControls.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { worldPublications } from '../src/client/world-publications.js'
+import { MessageQuoteThreadsProvider, MessageQuoteThreadTimestamp, MessageWorldPublicationBadge, useMessageQuoteThreads } from '../src/client/MessageQuoteThreads.js'
+import type { ArkmeTimelineItem } from '../src/types.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: (...args: unknown[]) => mocks.call(...args) }))
 let host: HTMLDivElement, root: Root
@@ -97,4 +99,57 @@ it('does not cancel when the confirmation is dismissed and hides the previous ac
   expect(mocks.call.mock.calls.filter((c) => c[1].action === 'unpublish')).toHaveLength(0)
   await act(async () => arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 9 }))
   expect(document.querySelector('[data-world-publication-badge]')).toBeNull()
+})
+
+it('keeps an ordinary message clock in the compact layout before and after its public corner badge arrives', async () => {
+  const item: ArkmeTimelineItem = { itemUid: 'note', status: 1, isMe: true, title: '', textContent: '两台电脑够用了', sendAtMillis: 1793862060000, messageActionRef: 'action' }
+  const render = (record: ArkmeTimelineItem) => <div className="arkme-timed-bubble">
+    <MessageWorldPublicationBadge item={record} sourceRef="self"/>
+    <div data-arkme-message-content="message"><p data-arkme-plain-text>{record.textContent}</p></div>
+    <MessageQuoteThreadTimestamp item={record}/>
+  </div>
+  await act(async () => root.render(render(item)))
+  const bubble = host.querySelector<HTMLElement>('.arkme-timed-bubble')!
+  const clock = bubble.querySelector('time')!
+  // No empty span can turn the inline clock back into a separate footer row.
+  expect(clock.parentElement).toBe(bubble)
+  await settle()
+  const badge = bubble.querySelector<HTMLElement>('[data-world-publication-corner]')!
+  expect(badge).not.toBeNull()
+  expect(badge.style.position).toBe('absolute')
+  expect(badge.style.pointerEvents).toBe('none')
+  expect(badge.querySelector('svg')?.getAttribute('width')).toBe('9')
+  expect(badge.nextElementSibling?.getAttribute('data-arkme-message-content')).toBe('message')
+  expect(clock.parentElement).toBe(bubble)
+  expect(mocks.call.mock.calls.every(call => call[1].action === 'sources')).toBe(true)
+  await act(async () => arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 9 }))
+  expect(bubble.querySelector('[data-world-publication-corner]')).toBeNull()
+  expect(clock.parentElement).toBe(bubble)
+})
+
+it('reserves the measured comment metadata width and releases it when the message is removed', async () => {
+  const item: ArkmeTimelineItem = { itemUid: 'note', status: 1, isMe: true, title: '', textContent: '消息正文', sendAtMillis: 1793862060000 }
+  let resize = () => {}, disconnected = false
+  vi.stubGlobal('ResizeObserver', class {
+    constructor(callback: () => void) { resize = callback }
+    observe() {}
+    disconnect() { disconnected = true }
+  })
+  function Summary() {
+    const { store } = useMessageQuoteThreads()
+    useEffect(() => { store?.acceptContext(item, { parentRecordUid: 'note', extensionCount: 12345, extensions: [] }) }, [store])
+    return null
+  }
+  await act(async () => root.render(<MessageQuoteThreadsProvider scope="test:8" chat={false} items={[item]} onOpenComments={() => {}}>
+    <Summary/><div className="arkme-timed-bubble"><div data-arkme-message-content="message"><p data-arkme-plain-text>消息正文</p></div><MessageQuoteThreadTimestamp item={item}/></div>
+  </MessageQuoteThreadsProvider>))
+  const bubble = host.querySelector<HTMLElement>('.arkme-timed-bubble')!
+  const group = bubble.querySelector<HTMLElement>('[data-arkme-message-time-group]')!
+  expect(group.textContent).toContain('12345')
+  vi.spyOn(group, 'getBoundingClientRect').mockReturnValue({ width: 115.5 } as DOMRect)
+  await act(async () => resize())
+  expect(bubble.style.getPropertyValue('--arkme-message-time-space')).toBe('124px')
+  await act(async () => root.render(null))
+  expect(disconnected).toBe(true)
+  expect(bubble.style.getPropertyValue('--arkme-message-time-space')).toBe('')
 })

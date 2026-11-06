@@ -26,7 +26,7 @@ function usePublications(target?: PublicationTarget) {
   const state = useSyncExternalStore(subscribe, snapshot, snapshot)
   return { account, key, state, enabled: !!account && !!stable }
 }
-export function WorldPublicationBadge({ target }: { target?: PublicationTarget | undefined }) {
+export function WorldPublicationBadge({ target, corner = false }: { target?: PublicationTarget | undefined; corner?: boolean }) {
   const { state, enabled } = usePublications(target)
   const active = state.publications.filter((p) => p.requested)
   if (!enabled || !active.length) return null
@@ -36,15 +36,17 @@ export function WorldPublicationBadge({ target }: { target?: PublicationTarget |
       title={label}
       aria-label={label}
       data-world-publication-badge
+      data-world-publication-corner={corner ? '' : undefined}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        marginLeft: 5,
-        color: c.secondary,
+        marginLeft: corner ? 0 : 5,
+        color: corner ? c.caption : c.secondary,
         verticalAlign: 'middle',
+        ...(corner ? { position: 'absolute', top: 3, right: 3, width: 9, height: 9, pointerEvents: 'none' } as const : {}),
       }}
     >
-      <Globe size={13} aria-hidden />
+      <Globe size={corner ? 9 : 13} aria-hidden />
     </span>
   )
 }
