@@ -9,7 +9,7 @@ import type { TimelineCachePort, TimelineCacheCommand } from '../src/timeline-ca
 import type { ArkmeTimelineItem, ArkmeTimelinePage } from '../src/types.js'
 const cleanup: Array<() => void> = []
 afterEach(() => { for (const close of cleanup.splice(0)) close() })
-const response = (text = 'old', extra = {}) => ({ protocol_version: 2, chat_session_uid: 'chat',
+const response = (text = 'old', extra = {}) => ({ protocol_version: 3, chat_session_uid: 'chat',
   timeline_items: [{ event_id: 'event', kind: 'wechat_import', source: 'wechat_import', occurred_at: 10, order_tie: 'event', content_status: 'available', payload: { text_content: text } }],
   sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', item_count: source === 'wechat_import' ? 1 : 0 })),
   complete: true, window_token: 'window', older_has_more: false, newer_has_more: false, has_more: false, newer_cursor: 'tail', ...extra })

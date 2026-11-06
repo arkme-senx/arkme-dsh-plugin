@@ -456,3 +456,12 @@ it('uses cloud failure and retry semantics for a custom transport with a local-f
  expect(session.snapshots.get(underlineTargetKey(t))?.items).toEqual([mark])
  session.dispose()
 })
+
+it('private transcript transport retains acknowledged marks on transient read failure but clears revoked access', async () => {
+  const list = vi.fn().mockRejectedValueOnce(new Error('network')).mockRejectedValueOnce(Object.assign(new Error('revoked'), {body:{code:'transcript-source-unavailable',httpStatus:403}}))
+  const session = new MessageUnderlineSession('self',42,vi.fn(),'cloud',{retainOnReadError:true,capabilities:vi.fn(),list,change:vi.fn()})
+  session.capability={supported:true,maxLength:2000,storage:'cloud'}
+  session.snapshots.set(underlineTargetKey(target),initial)
+  await session.read([target]);expect(session.snapshots.get(underlineTargetKey(target))).toBe(initial)
+  await session.read([target]);expect(session.snapshots.size).toBe(0);session.dispose()
+})

@@ -6,7 +6,7 @@ import { ArkmeUpstreamResponseError } from '../src/services/service.js'
 import { OfflineContextService } from '../src/services/offline-context-service.js'
 
 const statuses = () => CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready' as const, itemCount: 0 }))
-function response() { return { protocol_version: 2, chat_session_uid: 'chat', timeline_items: [], sources: statuses().map(s => ({ source: s.source, status: s.status, item_count: 0 })), complete: true, window_token: 'window', has_more: false, older_has_more: false, newer_has_more: false } }
+function response() { return { protocol_version: 3, chat_session_uid: 'chat', timeline_items: [], sources: statuses().map(s => ({ source: s.source, status: s.status, item_count: 0 })), complete: true, window_token: 'window', has_more: false, older_has_more: false, newer_has_more: false } }
 function event(eventId: string, source: ArkmeUnifiedTimelineEvent['source'] = 'messages', occurredAtMillis = 10): ArkmeUnifiedTimelineEvent {
   return { eventId, source, occurredAtMillis, orderTie: eventId, contentStatus: 'available', kind: 'notice', text: eventId }
 }
@@ -134,7 +134,7 @@ describe('unified timeline owner contract', () => {
       { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
       { projectChatTimelineItems: async () => [] } as never, {} as never)
     const result = await service.read('ref')
-    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chat/timeline/unified/v2')
+    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chat/timeline/unified/v3')
     expect(result.items).toEqual([])
     expect(result.unified?.events).toEqual([expect.objectContaining({ kind: 'notice', contentStatus: 'unavailable' })])
     expect(JSON.stringify(result)).not.toContain('do not expose')
@@ -156,7 +156,7 @@ describe('unified timeline owner contract', () => {
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'chat-timeline-window-invalid' })
     post.mockRejectedValue(new ArkmeUpstreamResponseError('arkme-code-2002', 'bad', false, 502, { reason: 'other' }))
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'arkme-code-2002' })
-    expect(post.mock.calls.every(call => call[0] === '/api/v1/chat/timeline/unified/v2')).toBe(true)
+    expect(post.mock.calls.every(call => call[0] === '/api/v1/chat/timeline/unified/v3')).toBe(true)
   })
 })
 

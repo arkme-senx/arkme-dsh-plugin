@@ -28,6 +28,20 @@ describe('reaction Host, SDK and Tool contracts', () => {
   await expect(service.request(input)).rejects.toThrow('invalid reference')
   expect(post).toHaveBeenCalledTimes(1)
  })
+ it.each([undefined, 'interactive'] as const)('keeps delegated query partitions authorized with deferred read priority %s', async readPriority => {
+  const post = vi.fn(async () => ({ items: [] }))
+  const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never,
+   async target => ({ ...wire, ...(target.id === 'ordinary' ? {} : { chatAccessRef: target.id }) }))
+  const targets = ['ordinary', 'delegated-a', 'delegated-b'].map(id => ({ ...target, id }))
+  const signal = new AbortController().signal
+  await service.request({ action: 'query', accountKey: 'test:7', targets, actorPresentation: 'deferred', ...(readPriority ? { readPriority } : {}) }, signal)
+  const lane = readPriority ? 'interactive-read' : 'background-read'
+  expect(post).toHaveBeenCalledTimes(3)
+  expect(post).toHaveBeenCalledWith('/api/v1/reactions/query', { targets: [wire] }, { userId: 7 }, signal, { lane })
+  for (const chatAccessRef of ['delegated-a', 'delegated-b']) {
+   expect(post).toHaveBeenCalledWith('/api/v1/reactions/query', { targets: [wire] }, { userId: 7 }, signal, { chatAccessRef, cacheMs: 0, bypassCache: true, lane })
+  }
+ })
  it.each(['background', 'write', null, true])('rejects invalid readPriority %s before any target or owner read', async readPriority => {
   const post = vi.fn(), resolve = vi.fn()
   const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never, resolve)

@@ -1,3 +1,4 @@
+import { callArkme } from '../src/client/api.js'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -25,6 +26,7 @@ beforeEach(() => {
   highlights = new Map(); vi.stubGlobal('CSS', { highlights })
   vi.stubGlobal('Highlight', class { constructor(...ranges: Range[]) { this.ranges = ranges } ranges: Range[] })
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(10, 20, 200, 100))
+  vi.mocked(callArkme).mockImplementation(async () => [{ actionRef: 'action', summary: { accessible: true, complete: true, commentCount: 125, quoteCount: 125, sourceRecordVersion: 1, anchors: [quote] } }] as never)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); document.getSelection()?.removeAllRanges(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -35,8 +37,10 @@ it('underlines the exact occurrence in list and detail without replacing text no
     <MessageQuoteThreadBadge item={original}/>
   </MessageQuoteThreadsProvider>); await tick() })
   await act(tick)
+  // Digest verification and highlight publication are asynchronous; a fixed
+  // frame delay does not establish readiness under the full suite's load.
+  await vi.waitFor(() => expect([...highlights.values()].flatMap(x => x.ranges)).toHaveLength(2))
   const ranges = [...highlights.values()].flatMap(x => x.ranges)
-  expect(ranges).toHaveLength(2)
   for (const range of ranges) { expect(range.toString()).toBe('可以'); expect(range.startOffset).toBe(3) }
   const text = ranges[0]!.startContainer
   const selection = document.getSelection()!; selection.removeAllRanges(); selection.addRange(ranges[0]!.cloneRange())
@@ -44,6 +48,7 @@ it('underlines the exact occurrence in list and detail without replacing text no
   expect(selection.toString()).toBe('可以'); expect(text.isConnected).toBe(true)
   await act(async () => (host.querySelector('[data-arkme-quote-comments]') as HTMLButtonElement).click())
   expect(open).toHaveBeenCalledWith(original)
+  vi.mocked(callArkme).mockImplementation(async () => new Promise(() => {}))
   await act(async () => { invalidateMessageQuoteSources(); await tick() })
   expect(host.querySelector('[data-arkme-quote-comments]')).toBeNull()
   expect([...highlights.values()].flatMap(x => x.ranges)).toHaveLength(0)
@@ -55,4 +60,32 @@ it('never applies a historical anchor to edited source text or an explicitly una
   </MessageQuoteThreadsProvider>); await tick() })
   await act(tick)
   expect([...highlights.values()].flatMap(x => x.ranges)).toHaveLength(0)
+})
+
+it('shows the complete server count and original underline with no replies loaded', async () => {
+  const open = vi.fn()
+  await act(async () => { root.render(<MessageQuoteThreadsProvider scope="cold-account:chat" sourceRef="source" chat items={[original]} onOpenComments={open}>
+    <ArkmeMessageContent item={original} sourceRef="source"/><MessageQuoteThreadBadge item={original}/>
+  </MessageQuoteThreadsProvider>); await tick() })
+  await act(tick)
+  expect(host.querySelector('[data-arkme-quote-comments]')?.textContent).toContain('125')
+  await act(async () => { await tick(); await tick(); await tick() })
+  await vi.waitFor(() => expect([...highlights.values()].flatMap(x => x.ranges)).toHaveLength(1))
+  await act(async () => (host.querySelector('[data-arkme-quote-comments]') as HTMLButtonElement).click())
+  expect(open).toHaveBeenCalledWith(original)
+})
+
+it('exposes a keyboard-accessible retry after failure and recovers the complete count', async () => {
+  vi.mocked(callArkme).mockRejectedValue(new Error('评论汇总读取失败，请重试'))
+  await act(async () => { root.render(<MessageQuoteThreadsProvider scope="retry:chat" sourceRef="source" chat items={[original]} onOpenComments={() => {}}>
+    <ArkmeMessageContent item={original} sourceRef="source"/><MessageQuoteThreadBadge item={original}/>
+  </MessageQuoteThreadsProvider>); await tick() })
+  await act(tick)
+  const retry = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('重试'))!
+  expect(retry.getAttribute('role')).toBeNull()
+  expect(retry.getAttribute('aria-live')).toBe('polite')
+  expect(host.querySelector('[data-arkme-quote-comments]')).toBeNull()
+  vi.mocked(callArkme).mockResolvedValue([{ actionRef: 'action', summary: { accessible: true, complete: true, commentCount: 125, quoteCount: 125, sourceRecordVersion: 1, anchors: [quote] } }] as never)
+  await act(async () => { retry.click(); await tick(); await tick(); await tick() })
+  await vi.waitFor(() => expect(host.querySelector('[data-arkme-quote-comments]')?.textContent).toContain('125'))
 })

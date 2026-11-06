@@ -1499,6 +1499,8 @@ export interface ArkmeCallParticipant {
 }
 
 export interface ArkmeCallTranscriptSegment {
+ privateViewTarget?: import("./transcript-view-contract.js").TranscriptViewTarget
+ privateViewVersion?: string
   /** Present only when the source supplies a stable segment identity. */
   sourceSegmentId?: string
   segmentId: string
@@ -1591,6 +1593,7 @@ arkoImagesV1?:true
     aiPoints?: true
     automaticCapabilitiesV1?: true
     recordingVoiceTriggersV2?: true
+    personalTranscriptViewsV1?: true
     imageRead: true
     /** Record-calendar bucket and day-record reads backed by the Arkme record service. */
     recordCalendar?: true
@@ -1617,6 +1620,7 @@ arkoImagesV1?:true
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
     teamGroupRepresentation?: 1
+    teamGroupWorkspace?: 1
     teamProfiles?: true
     teamMemberManagementV1?: true
     teamExternalChats?: true
@@ -1656,8 +1660,10 @@ arkoImagesV1?:true
     directMessageAdmission?: true
     publicSocialV1?: true
     messageTextAnchorsV1?: true
+    messageExtensionSummariesV1?: true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
+    recordEditHistoryV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
@@ -1885,6 +1891,8 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  accessKind?:'personal_membership'|'team_delegation'
+  teamWorkspace?:{ref:string;jotmoId:string}
   /** Viewer-visible private counterpart nickname, independent of the preferred remark. */
   privateNickname?: string
   /** Record-owned topic container kind; never a chat kind or creation source. */
@@ -1896,6 +1904,8 @@ export interface ArkmeSourceItem {
   directMessageAdmissionApplicable?: boolean
   /** Stable Host-projected directory identity. Consumers must treat it as opaque when present. */
   sourceKey?: string
+  /** Canonical Chat identity for invalidating all audience views; never an access grant. */
+  canonicalChatSourceKey?: string
   /** Private-chat peer identity when this source is a one-to-one chat. */
   peerUserId?: number
   /** Private-chat counterpart membership from Chat; never the viewer's membership. */
@@ -2145,7 +2155,7 @@ export interface ArkmeMessageSnapshotDetail {
 }
 
 export interface ArkmeTimelineMentionTarget {
-  kind: 'member' | 'all' | 'bot'
+  kind: 'member' | 'all' | 'bot' | 'team'
   startIndex: number
   length: number
   displayName: string
@@ -2608,6 +2618,7 @@ export interface ArkmeRichSendInput extends TeamRepresentationSendOptions {
   captureContext?: ArkmeRecordCaptureContext
   assets?: ArkmeUploadedAsset[]
   backgroundSound?: ArkmeRichBackgroundSoundInput
+  teamMentions?: ArkmeTeamMentionInput[]
   humanMentions?: ArkmeHumanMentionInput[]
   botMentions?: ArkmeBotMentionInput[]
 }
@@ -2620,6 +2631,8 @@ interface ArkmeHumanMentionRange {
 export type ArkmeHumanMentionInput =
   | (ArkmeHumanMentionRange & { mentionRef: string; memberRef?: never; all?: never })
   | (ArkmeHumanMentionRange & { all: true; mentionRef?: never; memberRef?: never })
+
+export interface ArkmeTeamMentionInput {teamMentionRef:string;startIndex:number;length:number}
 
 export interface ArkmeBotMentionInput {
   botRef: string
@@ -3392,6 +3405,7 @@ export interface ArkmeRecordingSummaryModelRouteUpdate {
 }
 
 export interface ArkmeRecordingTranscriptItem {
+ privateViewVersion?: string
   /** Confirmed acoustic source, independent of who the voice belongs to. */
   soundSource?: ArkmeRecordingSoundSource
   /** Includes a confirmed playback subrange after provider resegmentation. */
@@ -3415,6 +3429,7 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+ privateViewVersion?: string
   /** Available only for complete projections; paged reads obtain counts when editing. */
   sameSpeakerItemCount?: number
   /** User-confirmed source, independent of the speaker identity. */
@@ -4321,7 +4336,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'chat_extensions' | 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
 } | {
@@ -4381,12 +4396,16 @@ export type ArkmeChatClientEvent = {
 })
 
 export type ArkmePluginOperation =
+  | 'source.record-edit-history'
+  | 'source.record-revision-snapshot'
   | 'record.thoughts.query'
   | 'chat.thoughts.query'
   | 'composer.resources.list'
   | 'composer.document.prepare'
   | 'team.app.outbound.open'
   | 'team.app.group.context'
+  | 'team.app.group.request'
+  | 'team.app.workspace.request'
   | 'team.app.public-card'
   | 'recordings.voice-triggers'
   | 'recordings.voice-triggers.rules.set'
@@ -4449,8 +4468,10 @@ export type ArkmePluginOperation =
   | 'source.message-thoughts.query'
   | 'source.message-thought-continuations.query'
   | 'source.message-thought-continuations.retry'
-  | 'transcript.local.read'
-  | 'transcript.local.change'
+  | 'transcript.views.saved' | 'transcript.views.receipt' | 'transcript.views.capabilities'
+  | 'transcript.views.read'
+  | 'transcript.views.change'
+  | 'transcript.views.import'
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
@@ -4609,6 +4630,7 @@ export type ArkmePluginOperation =
   | 'records.refresh'
   | 'records.search'
   | 'search.records'
+  | 'search.scene'
   | 'search.conversations'
   | 'records.list'
   | 'records.tags.list'
@@ -4770,9 +4792,11 @@ export type ArkmePluginOperation =
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
+  | 'source.message-extension.summaries'
   | 'source.message-extension.context'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
+  | 'source.shared-recording-detail'
   | 'source.message-snapshot.detail'
   | 'source.message-location.set'
   | 'source.link-metadata.resolve'
@@ -5068,8 +5092,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.related-quick-notes.from-message'
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
-  | 'source.record-edit-history'
-  | 'source.record-revision-snapshot'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

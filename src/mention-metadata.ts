@@ -29,6 +29,7 @@ export function arkmeMentionMetadataMentionsViewer(
   record: Record<string, unknown>,
   payload: Record<string, unknown>,
   viewerUserId: number,
+  delegatedTeamId?:string,
 ): boolean {
   if (viewerUserId <= 0) return false
   const metadata = arkmeMentionMetadataFromRecord(record, payload)
@@ -37,5 +38,6 @@ export function arkmeMentionMetadataMentionsViewer(
     const mentionedUserId = integerLikeValue(mention.user_id ?? mention.userId)
     if (mentionedUserId === 0 || mentionedUserId === viewerUserId) return true
   }
+  if(delegatedTeamId&&listValue(metadata.team_mentions).some(raw=>objectValue(raw).team_id===delegatedTeamId))return true
   return false
 }

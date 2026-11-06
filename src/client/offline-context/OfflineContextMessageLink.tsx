@@ -11,7 +11,7 @@ const sdk = createArkmeSdk()
 /** Batch only loaded messages; a linked card may live outside the loaded window. */
 export function useOfflineContextMessageLinks(source: ArkmeSourceItem | undefined, items: ArkmeTimelineItem[], revision: string) {
   const refs = JSON.stringify([...new Set(items.flatMap(item => item.offlineContextMessageRef ? [item.offlineContextMessageRef] : []))].sort())
-  const sourceRef = source?.kind === 'private_chat' || source?.kind === 'group_chat' ? source.sourceRef : ''
+  const sourceRef = source?.accessKind!=='team_delegation'&&(source?.kind === 'private_chat' || source?.kind === 'group_chat') ? source.sourceRef : ''
   const key = `${sourceRef}:${refs}`
   const invalidation = useSyncExternalStore(arkmeChatTimelineDelta.subscribe, () => arkmeChatTimelineDelta.getSnapshotForSource(source?.sourceKey ?? sourceRef).invalidationRevision, () => 0)
   const [result, setResult] = useState<{ key: string; entries: OfflineContextEntry[] }>()

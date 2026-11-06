@@ -1248,3 +1248,16 @@ describe('Arkme conversation tools', () => {
     expect(names).toContain('arkme_ai_video')
   })
 })
+
+it('keeps source search and all scene reads on the opaque conversation frame',async()=>{
+ const service=fakeService(),tool=createArkmeCoreToolDefinitions(service).find(d=>d.name==='arkme_records_search')!,signal=new AbortController().signal
+ await tool.execute({query:'复盘',source_ref:'opaque-team-source'},{signal} as never)
+ expect(service.searchRemote).toHaveBeenLastCalledWith({query:'复盘',limit:10,sourceRef:'opaque-team-source',signal})
+ for(const scene of ['audio','link','image_video','file','long_article']){
+  await tool.execute({scene,source_ref:'opaque-team-source',cursor:'same-query-page'},{signal} as never)
+  expect(service.searchScene).toHaveBeenLastCalledWith({scene,sourceRef:'opaque-team-source',cursor:'same-query-page',limit:10,signal})
+ }
+ await expect(tool.execute({query:'内容',source_ref:'opaque-team-source',sync_all:true},{signal} as never)).rejects.toThrow('不能用于个人缓存搜索')
+ await expect(tool.execute({query:'内容',scene:'file',source_ref:'opaque-team-source'},{signal} as never)).rejects.toThrow('不能同时使用')
+ expect(service.queryCached).not.toHaveBeenCalled()
+})

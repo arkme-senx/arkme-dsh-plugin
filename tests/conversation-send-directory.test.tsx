@@ -2045,7 +2045,7 @@ describe('conversation send directory projection', () => {
       cursor?: { beforeSequence?: number; afterSequence?: number }
     }) => {
       if (operation === 'sources.self-target') return sendToSelf
-      if (operation === 'team.app.group.context') return { state: 'backend_pending', membershipPolicy: 'unknown', teams: [] }
+      if (operation === 'team.app.group.context') return { state: 'ready', membershipPolicy: 'independent', groupJoinAt: 9, teams: [] }
       if (operation === 'provider.instance') return { instanceId: 'forward-directory-test' }
       if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
@@ -4447,7 +4447,7 @@ describe('conversation send directory projection', () => {
     await act(async () => { pending.resolve({ status: 1 }) })
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(1)
     expect(second.findByProps({ 'aria-label': '转发中' }).props.disabled).toBe(true)
-    await act(async () => { nextPending.resolve({ status: 1 }) })
+    await act(async () => { nextPending.resolve({ sourceRef: other.sourceRef, itemUid: 'accepted-next-account', status: 1, localState: 'synced' }) })
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
@@ -4985,6 +4985,13 @@ describe('conversation send directory projection', () => {
     const sends = mocks.callArkme.mock.calls.filter(call => call[0] === 'source.forward-messages')
     expect(sends).toHaveLength(2)
     expect(sends.some(([, params]) => params.targetSourceRef === target.sourceRef)).toBe(true)
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(1)
+    // Keep the refused recipient visible. Retrying the successful recipient
+    // after deselecting the failed one must reuse its confirmed receipt.
+    expect(renderedText(dialog)).toContain('拒收')
+    await act(async () => { await dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean' && renderedText(node).includes(other.displayName))[0]!.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'source.forward-messages')).toHaveLength(2)
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
@@ -5798,7 +5805,7 @@ describe('conversation send directory projection', () => {
     const tisonOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
       option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(tisonOption).toBeDefined()
-    expect(JSON.stringify(renderer!.toJSON())).toContain('Bot 加载失败，仍可选择已有对象')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('部分候选加载失败，仍可选择已有对象')
     await act(async () => {
       tisonOption!.props.onMouseDown({ preventDefault: vi.fn() })
       await Promise.resolve()

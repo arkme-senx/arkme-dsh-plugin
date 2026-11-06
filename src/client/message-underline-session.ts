@@ -3,6 +3,8 @@ import { acceptUnderlineSnapshot, type MessageUnderlineSnapshot, type MessageUnd
 import { messageSelectionReference, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
 
 export interface MessageMarkTransport {
+  /** An account-private owner retains acknowledged marks through transport failure. */
+  retainOnReadError?:boolean
   subscribe?(invalidate: () => void): () => void
   capabilities(sourceRef: string, signal: AbortSignal): Promise<MessageUnderlineCapabilities>
   list(sourceRef: string, refs: string[], signal: AbortSignal): Promise<{ actionRef: string; snapshot: MessageUnderlineSnapshot }[]>
@@ -14,7 +16,7 @@ export function underlineTargetKey(target: MessageSelectionTarget) {
 }
 function accessLost(error: unknown) {
   const value = ((error as { body?: unknown })?.body ?? error) as { httpStatus?: number; status?: number; code?: string }
-  return [401, 403].includes(value?.httpStatus ?? value?.status ?? 0) || /auth|forbidden|permission|login|account-unavailable|account-changed|not_accessible/u.test(value?.code ?? '')
+  return [401, 403].includes(value?.httpStatus ?? value?.status ?? 0) || /auth|forbidden|permission|login|account-unavailable|account-changed|not_accessible|transcript-source-unavailable/u.test(value?.code ?? '')
 }
 export class MessageUnderlineSession {
   readonly controller = new AbortController()
@@ -107,7 +109,7 @@ export class MessageUnderlineSession {
       if (!this.controller.signal.aborted) {
         // A failed cloud lookup cannot confirm source visibility. Invalidate
         // pending completions too: rollback must not restore the cleared text.
-        if (this.cloudStorage || accessLost(error)) {
+        if (accessLost(error) || this.cloudStorage&&!this.transport?.retainOnReadError) {
           this.accessEpoch++
           this.snapshots.clear()
         }
@@ -144,7 +146,7 @@ export class MessageUnderlineSession {
       this.failures.delete(key); this.notice = result.syncNotice ?? (this.pending.size > 1 ? ((this.capability?.storage ?? this.storage) === 'local' ? '正在保存本机标记…' : '正在同步标记…') : ''); this.retry = undefined
     } catch (error) {
       if (this.controller.signal.aborted || accessEpoch !== this.accessEpoch) return
-      if (this.cloudStorage || accessLost(error)) {
+      if (accessLost(error) || this.cloudStorage&&!this.transport?.retainOnReadError) {
         this.accessEpoch++
         this.snapshots.clear()
       }

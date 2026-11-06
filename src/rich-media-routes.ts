@@ -218,10 +218,11 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
         'Content-Type': contentType,
         'Cache-Control': response.headers.get('cache-control')?.includes('no-store')
           ? 'private, no-store' : cacheableImage ? 'private, max-age=86400, immutable' : 'private, max-age=60',
-        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(descriptor.fileName)}`,
+        'Content-Disposition': `${descriptor.sourceBound&&!/^(image|audio|video)\//i.test(contentType)?'attachment':'inline'}; filename*=UTF-8''${encodeURIComponent(descriptor.fileName)}`,
         'X-Content-Type-Options': 'nosniff',
         'Accept-Ranges': response.headers.get('accept-ranges') ?? 'bytes',
       }
+      if(descriptor.sourceBound)headers['Content-Security-Policy']="sandbox; default-src 'none'"
       for (const name of ['content-length', 'content-range']) {
         const value = response.headers.get(name)
         if (value !== null) headers[name] = value

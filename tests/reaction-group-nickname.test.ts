@@ -3,7 +3,7 @@ import { ArkmeService } from '../src/arkme-service.js'
 import { ChatService } from '../src/services/chat-service.js'
 
 it.each(['group_chat', 'private_chat', 'send_to_self'])('reads only actual group nicknames for %s in bounded batches', async kind => {
-  const memberRead = vi.fn(async (_session, group, _path, body) => ({ chat_session_uid: group, items: body.user_ids.map((userId: number) => ({ user_id: userId, status: 1, display_name_snapshot: userId === 1 ? '项目负责人' : '', remark: '私人备注' })) }))
+  const memberRead = vi.fn(async (_session, source, _path, body) => ({ chat_session_uid: source.ownerRef, items: body.user_ids.map((userId: number) => ({ user_id: userId, status: 1, display_name_snapshot: userId === 1 ? '项目负责人' : '', remark: '私人备注' })) }))
   const owner = { runtime: { requireSession: async () => ({ userId: 1 }) }, source: { openSourceRef: async () => ({ kind, ownerRef: 'group' }) }, memberRead }
   const names = await ChatService.prototype.reactionActorLabels.call(owner as never, 'signed', Array.from({ length: 51 }, (_, index) => index + 1))
   expect(names.get(1)).toEqual(kind === 'send_to_self' ? undefined : { remark: '', groupNickname: kind === 'group_chat' ? '项目负责人' : '' })
