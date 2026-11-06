@@ -1,6 +1,7 @@
 import type { TranscriptViewPort } from '../transcript-view-contract.js'
 export type { TranscriptViewTarget,TranscriptViewReference,TranscriptViewSourceReference,TranscriptViewCommand,TranscriptViewReadItem,TranscriptViewSnapshot,PersonalTranscriptEntry,TranscriptViewReceipt,TranscriptViewSavedPage } from '../transcript-view-contract.js'
 export type {ArkmeTeamMentionInput} from '../types.js'
+export type { ArkmeMessageExtensionSummary, ArkmeMessageExtensionSummaryItem } from '../message-extension-summary.js'
 export type { ArkmeRecordEditHistoryPage, ArkmeRecordRevision, ArkmeRecordRevisionSnapshot } from '../record-edit-history.js'
 export type { RecordingVoiceRule, RecordingVoiceSettings, RecordingVoiceCandidate, RecordingVoicePage, RecordingVoiceDetail } from '../recording-voice-trigger-contract.js'
 export type {RecordExcerpt,RecordExcerptSource,RecordExcerptOriginal} from '../record-excerpt.js'
@@ -2706,6 +2707,17 @@ export class ArkmeSdk {
   async accountModelUsage(expectedAccountScope:string,query:import('../account-models.js').ModelUsageQuery,signal?:AbortSignal):Promise<import('../account-models.js').ModelUsagePage>{return this.call('models.usage.query',{expectedAccountScope,query},signal)}
   async modelDirectory(expectedAccountScope: string, signal?: AbortSignal, options?: { officialOnly?: boolean }): Promise<import('../model-directory.js').UnifiedModelCatalog> {
     return this.call('models.directory', { expectedAccountScope, ...(options?.officialOnly === true ? { officialOnly: true } : {}) }, signal)
+  }
+
+  async sourceMessageExtensionSummaries(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<import('../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]> {
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.messageExtensionSummariesV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Arkme Provider 不支持完整评论汇总，请升级', retryable: false })
+    if (!sourceRef.trim() || !actionRefs.length || actionRefs.length > 40 || actionRefs.some(ref => !ref.trim())) throw new TypeError('Expected authorized source and message action references')
+    scoped.throwIfAborted()
+    const result = await this.call<import('../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]>('source.message-extension.summaries', { sourceRef, actionRefs }, scoped)
+    scoped.throwIfAborted()
+    return result
   }
 
   async sourceMessageExtensionContext(

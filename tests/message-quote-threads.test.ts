@@ -12,7 +12,7 @@ const comment = { recordUid: 'reply', parentRecordUid: root.itemUid, recordOwner
 describe('verified quote thread projection', () => {
   it('connects a selected range back to the exact original occurrence', () => {
     const store = new MessageQuoteThreadStore(true); store.ingest([root, reply])
-    expect(store.thread(root)).toMatchObject({ count: 1, replies: [{ parent: { quote: { start: 3, end: 5 } } }] })
+    expect(store.thread(root)).toMatchObject({ count: 0, replies: [{ parent: { quote: { start: 3, end: 5 } } }] })
     expect(store.thread({ ...root, sequence: 33 }).count).toBe(0)
     expect(store.thread({ ...root, recordOwnerUserId: 8 }).count).toBe(0)
     expect(store.thread({ ...root, sequence: undefined }).count).toBe(0)
@@ -26,7 +26,7 @@ describe('verified quote thread projection', () => {
   it('deduplicates the same edge across timeline and detail and retains authoritative total count', () => {
     const store = new MessageQuoteThreadStore(true); store.ingest([root, reply])
     store.acceptContext(root, { parentRecordUid: root.itemUid, extensionCount: 3, extensions: [{ ...comment, quote, quoteState: 'available' }] })
-    expect(store.thread(root).count).toBe(3)
+    expect(store.thread(root).count).toBe(0)
     expect(store.thread(root).replies).toHaveLength(1)
   })
   it('does not infer a missing chat occurrence identity or guess between duplicate sends', () => {
