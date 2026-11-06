@@ -1439,7 +1439,8 @@ export async function dispatchArkmeHostOperation(
     case 'data.export.preflight': return await service.dataExportPreflight(stringParam(params, 'expectedAccountScope'), requestSignal)
     case 'data.export.range.preview': {
       if (![1, 2].includes(params.orderKind as number)) throw new ArkmePluginError('record-export-range-invalid', '记录顺序无效', false, 400)
-      return await service.dataExportRangePreview(stringParam(params, 'expectedAccountScope'), exportSelection(params.selection), params.orderKind as 1 | 2, requestSignal, typeof params.destinationRef==='string'?params.destinationRef:undefined)
+      for (const key of ['directory', 'refresh']) if (params[key] !== undefined && typeof params[key] !== 'boolean') throw new ArkmePluginError('record-export-range-invalid', '导出预览参数无效', false, 400)
+      return await service.dataExportRangePreview(stringParam(params, 'expectedAccountScope'), exportSelection(params.selection), params.orderKind as 1 | 2, requestSignal, typeof params.destinationRef==='string'?params.destinationRef:undefined, { directory: params.directory === true, ...(typeof params.refresh === 'boolean' ? { refresh: params.refresh } : {}) })
     }
     case 'data.export.saved': {
       if (params.confirmed !== true) throw new ArkmePluginError('record-export-confirmation-required', '请确认已保存这份备份', false, 400)

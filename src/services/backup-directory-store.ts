@@ -1,3 +1,4 @@
+import { recordExportTopicMarkdown } from '../record-export-topic.js';
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants, createReadStream } from 'node:fs';
@@ -141,6 +142,17 @@ export class BackupDirectoryStore {
     }
     stage(job: string, item: Record<string, any>) { this.db!.prepare('INSERT INTO staged VALUES(?,?,?,?) ON CONFLICT(job,uid) DO UPDATE SET send_at=excluded.send_at,payload=excluded.payload').run(job, String(item.record_uid), Number(item.send_at), JSON.stringify(item)); }
     remove(job: string, uid: string) { this.db!.prepare('INSERT INTO staged VALUES(?,?,0,NULL) ON CONFLICT(job,uid) DO UPDATE SET payload=NULL').run(job, uid); }
+    stagePage(job: string, items: Record<string, any>[], removed: string[]) {
+        if (items.length + removed.length > 100) throw backupFailure('导出分页超出上限');
+        const db = this.db!;
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            const insert = db.prepare('INSERT INTO staged VALUES(?,?,?,?) ON CONFLICT(job,uid) DO UPDATE SET send_at=excluded.send_at,payload=excluded.payload');
+            for (const item of items) insert.run(job, String(item.record_uid), Number(item.send_at), JSON.stringify(item));
+            for (const uid of removed) insert.run(job, uid, 0, null);
+            db.exec('COMMIT');
+        } catch (error) { db.exec('ROLLBACK'); throw error; }
+    }
     discard(job: string) { this.db!.prepare('DELETE FROM staged WHERE job=?').run(job); }
     file(path: string): BackupFile | undefined { const v = this.db!.prepare('SELECT path,size,sha256 FROM files WHERE path=?').get(path); return v ? { path: String(v.path), size: Number(v.size), sha256: String(v.sha256) } : undefined; }
     async filePath(relative: string): Promise<string> {
@@ -265,6 +277,12 @@ export class BackupDirectoryStore {
             for (const row of staged)
                 yield JSON.parse(String(row.payload));
         })() : this.records(order, from, to);
+        let chunks: Buffer[] = [], buffered = 0;
+        const flush = async () => {
+            signal?.throwIfAborted();
+            if (buffered) await out.writeFile(Buffer.concat(chunks, buffered));
+            chunks = []; buffered = 0;
+        };
         try {
             const header = Buffer.from('# 即我备份\n\n');
             await out.writeFile(header);
@@ -289,7 +307,7 @@ export class BackupDirectoryStore {
                         seenFiles.add(relative);
                     }
                 }
-                let text = `## ${new Date(Number(item.send_at)).toLocaleString()}\n\n` + [item.title, item.text].filter(Boolean).join('\n\n') + '\n\n';
+                let text = `## ${new Date(Number(item.send_at)).toLocaleString()}\n\n` + recordExportTopicMarkdown(item.topic_core) + [item.title, item.text].filter(Boolean).join('\n\n') + '\n\n';
                 for (const raw of item.file_refs ?? []) {
                     const f = object(raw);
                     text += Number(f.file_kind) === 2 ? `[语音](./${String(f.backup_path)})\n` : `![图片](./${String(f.backup_path)})\n`;
@@ -297,12 +315,14 @@ export class BackupDirectoryStore {
                 ;
                 text += '\n';
                 const chunk = Buffer.from(text);
-                await out.writeFile(chunk);
+                chunks.push(chunk); buffered += chunk.length;
+                if (buffered >= 64 * 1024) await flush();
                 hash.update(chunk);
                 signal?.throwIfAborted();
                 size += chunk.length;
                 count++;
             }
+            await flush();
             await out.sync();
         }
         finally {

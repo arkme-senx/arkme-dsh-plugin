@@ -115,6 +115,7 @@ describe('RecordService', () => {
       updatedAtMillis: 100,
     })
     const source = {
+      async topicHierarchyKey() { return 'opaque-topic' },
       async openSourceRef(sourceRef: string) {
         return {
           version: 1 as const,
@@ -129,7 +130,8 @@ describe('RecordService', () => {
       config: { richMediaSendEnabled: true },
       stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost() {
+      async authenticatedPost(path: string) {
+        if (path.endsWith('/metadata')) return { topic_core: { topic_uid: 'topic-1', kind: 1, privacy_state: 1, show_in_home: true } }
         return {
           record_core: {
             record_uid: 'record-1', template_kind: 1, display_kind: 1,
@@ -1354,4 +1356,21 @@ it('does not cancel a concurrent authorized write when a DSH user input is persi
     finish()
     expect(await pending).toEqual({ value: 'confirmed' })
   } finally { finish(); await pending; runtime.dispose() }
+})
+
+it.each([
+  ['send_to_self', { topic_uid: 't', title: '当前名' }, 42, '当前名'],
+  ['topic', { topic_uid: 't', title: '' }, 42, ''],
+  ['send_to_self', undefined, 42, undefined],
+  ['send_to_self', { topic_uid: 't', title: '私密', privacy_state: 2 }, 42, undefined],
+  ['private_chat', { topic_uid: 't', title: '私人主题' }, 42, undefined],
+  ['group_chat', { topic_uid: 't', title: '他人私人主题' }, 99, undefined],
+])('projects only visible owned personal topics for long article export: %s %j', async (kind, topic, owner, title) => {
+  const post = vi.fn(async (path: string) => path.endsWith('/metadata') ? { topic_core: { topic_uid: 't', kind: 1, privacy_state: 1, show_in_home: true } } : ({ record_core: { record_uid: 'r', template_kind: 8, owner_user_id: owner,
+    origin_container_ref: 't', status: 1, title: '长文', text_content: '正文', content_payload: {} }, topic_core: topic }))
+  const service = new RecordService({ requireSession: async () => ({ userId: 42 }), authenticatedPost: post, stateStore: {} } as never, { richContentBlocks: () => [], recordMediaUnavailable: () => false } as never,
+    { openSourceRef: async () => ({ kind, ownerRef: 't' }), topicHierarchyKey: async () => 'opaque-topic' } as never)
+  const detail = await service.longArticleDetail('source', 'r')
+  expect(detail.actionItem?.selfTopic).toEqual(title === undefined ? undefined : { topicHierarchyKey: 'opaque-topic', title })
+  expect(post).toHaveBeenCalledTimes(title === undefined ? 1 : 2)
 })
