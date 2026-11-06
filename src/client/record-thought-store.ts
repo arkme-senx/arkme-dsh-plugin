@@ -1,6 +1,7 @@
 import type { ArkmeRecordThought, ArkmeRecordThoughts, ArkmeThoughtStreamUpdate } from '../record-thought-contract.js'
+import { isArkmeTransientReadFailure } from './read-retry.js'
 
-export interface RecordThoughtState { items: readonly ArkmeRecordThought[]; loading: boolean; error: string; loaded?: boolean; focusRevision?: number }
+export interface RecordThoughtState { items: readonly ArkmeRecordThought[]; loading: boolean; error: string; loaded?: boolean; focusRevision?: number; rejected?: boolean }
 const EMPTY: RecordThoughtState = Object.freeze({ items: [], loading: false, error: '' })
 type Watch = { listeners: Set<() => void>; sentAt: number; version: number; actionRef?: string | undefined; timelineItemKey?: string | undefined }
 type Reader = (scope: string, recordUids: string[], signal: AbortSignal, actionRefs: string[]) => Promise<ArkmeRecordThoughts>
@@ -29,7 +30,7 @@ export class RecordThoughtStore {
     const watch = this.watchers.get(uid) ?? { listeners: new Set(), sentAt, version }
     const changed = this.versions.get(uid) !== version
     if (changed && this.versions.has(uid)) {
-      this.publish(uid, { items: [], loading: false, error: '' }); this.ephemeral.delete(uid)
+      this.publish(uid, { items: [], loading: false, error: '', ...(this.get(uid).rejected ? { rejected: true } : {}) }); this.ephemeral.delete(uid)
     }
     this.versions.set(uid, version)
     watch.actionRef = actionRef; watch.timelineItemKey = timelineItemKey
@@ -54,9 +55,11 @@ export class RecordThoughtStore {
     for (const uid of uids) if (this.inFlightUids.has(uid)) this.pending.add(uid)
     this.queue(uids)
   }
+  /** Revalidate a new reference for the same identity without replacing visible state. */
+  rebind(): void { this.stop(); if (this.active) this.refresh() }
   applyStream(update: ArkmeThoughtStreamUpdate): void {
     const uid = update.recordUid
-    if (!this.active || !this.watchers.has(uid)) return
+    if (!this.active || !this.watchers.has(uid) || this.get(uid).rejected) return
     if (!Number.isSafeInteger(update.sourceVersion) || update.sourceVersion!<=0 || update.sourceVersion !== this.versions.get(uid)) { if(update.phase!=='generating') this.refresh(uid); return }
     const previous = this.ephemeral.get(uid)
     // A reconnect may resume in the middle. Never append a duplicated or missing range.
@@ -75,7 +78,7 @@ export class RecordThoughtStore {
     for (const [uid, watch] of this.watchers) if (!timelineItemKey || watch.timelineItemKey === timelineItemKey) {
       this.ephemeral.delete(uid)
       this.invalidationEpochs.set(uid, (this.invalidationEpochs.get(uid) ?? 0) + 1)
-      this.publish(uid, { items: [], loading: false, error: '' })
+      this.publish(uid, { items: [], loading: false, error: '', ...(this.get(uid).rejected ? { rejected: true } : {}) })
       this.refresh(uid)
     }
   }
@@ -136,10 +139,14 @@ export class RecordThoughtStore {
         else this.ephemeral.delete(uid)
         this.publish(uid, { items, loaded: true, loading: false, error: '' })
       }
-    } catch {
+    } catch (error) {
       if (!controller.signal.aborted) this.failures++
-      if (!controller.signal.aborted && generation === this.generation) for (const uid of uids)
-        this.publish(uid, { ...this.get(uid), loading: false, error: '想法暂时无法读取' })
+      const denied = error !== null && typeof error === 'object' && (error as { body?: { retryable?: unknown } }).body?.retryable === false
+      const retain = !denied && isArkmeTransientReadFailure(error)
+      if (!controller.signal.aborted && generation === this.generation) for (const uid of uids) {
+        if (!retain) { this.ephemeral.delete(uid); this.readAt.delete(uid); if (this.focusUid === uid) this.focusUid = undefined }
+        this.publish(uid, { ...this.get(uid), ...(!retain ? { items: [], rejected: true } : {}), loading: false, error: '想法暂时无法读取' })
+      }
     } finally {
       if (this.controller === controller) {
         this.controller = undefined; this.inFlightUids.clear()

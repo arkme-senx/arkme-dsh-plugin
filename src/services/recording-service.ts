@@ -330,13 +330,19 @@ export class RecordingService {
     this.assertWorkbenchEnabled()
     const { selection, session } = await this.recordingCommandSelection(itemRefs)
     const result = await createMessageCopyLink(this.runtime, [{
-      kind: 'audio_session', session_id: selection.sessionId,
+      kind: 'audio_session', include_audio: true, session_id: selection.sessionId,
       selection: { kind: 'long_recording_segments', segments: selection.segments.map(item => ({
         child_id: item.childId, asr_item_index: item.asrItemIndex, transcript_source: item.transcriptSource,
       })) },
     }], session, signal)
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('recording-share-account-changed', '账号已切换，请重新选择录音', false, 409)
     return result
+  }
+
+  async soundExcerptSelection(itemRefs: string[]): Promise<import('../world-sound-contract.js').WorldSoundOwnerSelection> {
+    if(!Array.isArray(itemRefs)||itemRefs.some(ref=>typeof ref!=='string'||ref.length>16384))throw new ArkmePluginError('world-sound-invalid','录音选段无效',false,400)
+    const {selection}=await this.recordingCommandSelection(itemRefs)
+    return {source:'recording',session_id:selection.sessionId,segments:selection.segments.map(s=>({child_id:s.childId,asr_item_index:s.asrItemIndex,transcript_source:s.transcriptSource}))}
   }
 
   private async recordingCommandSelection(itemRefs: readonly string[]) {

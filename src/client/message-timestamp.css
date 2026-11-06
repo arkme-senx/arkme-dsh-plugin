@@ -1,5 +1,6 @@
 .arkme-timed-bubble { position: relative; }
-.arkme-message-timestamp {
+.arkme-message-timestamp,
+[data-arkme-message-time-group] {
   display: block;
   width: max-content;
   max-width: 100%;
@@ -13,9 +14,12 @@
   user-select: none;
   cursor: default;
 }
+[data-arkme-message-time-group] { display: flex; align-items: center; max-width: none; }
+[data-arkme-message-time-group] > .arkme-message-timestamp { position: static; margin: 0; }
 /* Reserve the end of the final text line, without creating a footer row. */
-.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-plain-text]:only-child) > .arkme-message-timestamp,
-.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-message-text-flow]:not([data-arkme-text-collapsible]):only-child):has(.arkme-markdown > p:last-child) > .arkme-message-timestamp {
+/* A positioned corner badge can precede the content without changing flow. */
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:nth-last-child(2) > [data-arkme-plain-text]:only-child) > :is(.arkme-message-timestamp, [data-arkme-message-time-group]),
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:nth-last-child(2) > [data-arkme-message-text-flow]:not([data-arkme-text-collapsible]):only-child):has(.arkme-markdown > p:last-child) > :is(.arkme-message-timestamp, [data-arkme-message-time-group]) {
   position: absolute;
   right: 13px;
   bottom: 10px;
@@ -23,35 +27,35 @@
 }
 /* Keep Markdown's reservation even while collapsed so its overflow measurement
    cannot oscillate when the timestamp pushes the final word onto a new line. */
-.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-plain-text]:only-child) > [data-arkme-message-content] > [data-arkme-plain-text]::after,
-.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:first-child:nth-last-child(2) > [data-arkme-message-text-flow]:only-child) .arkme-markdown > p:last-child::after {
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:nth-last-child(2) > [data-arkme-plain-text]:only-child) > [data-arkme-message-content] > [data-arkme-plain-text]::after,
+.arkme-timed-bubble:has(> [data-arkme-message-content="message"]:nth-last-child(2) > [data-arkme-message-text-flow]:only-child) .arkme-markdown > p:last-child::after {
   content: '';
   display: inline-block;
-  width: 42px;
+  width: var(--arkme-message-time-space, 42px);
   height: 1px;
 }
 /* Existing controls/metadata already supply a final row. Keep their hit areas
    clear of the clock; these rules only apply when that content is last. */
-.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-text-collapsible]:last-child) > .arkme-message-timestamp,
-.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > .arkme-message-timestamp,
-.arkme-timed-bubble:has(> [data-arkme-message-content="article"]:nth-last-child(2) > [data-arkme-long-article]:last-child) > .arkme-message-timestamp,
-.arkme-timed-bubble:has(> [data-arkme-message-reactions]:nth-last-child(2)) > .arkme-message-timestamp {
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-text-collapsible]:last-child) > :is(.arkme-message-timestamp, [data-arkme-message-time-group]),
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > :is(.arkme-message-timestamp, [data-arkme-message-time-group]),
+.arkme-timed-bubble:has(> [data-arkme-message-content="article"]:nth-last-child(2) > [data-arkme-long-article]:last-child) > :is(.arkme-message-timestamp, [data-arkme-message-time-group]),
+.arkme-timed-bubble:has(> [data-arkme-message-reactions]:nth-last-child(2)) > :is(.arkme-message-timestamp, [data-arkme-message-time-group]) {
   position: absolute;
   right: 13px;
   bottom: 10px;
   margin: 0;
 }
 .arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-text-collapsible]:last-child > [data-arkme-text-toggle] {
-  margin-right: 42px;
+  margin-right: var(--arkme-message-time-space, 42px);
 }
 .arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child {
   width: 100% !important;
 }
 .arkme-timed-bubble > [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child [data-arkme-file-meta],
 .arkme-timed-bubble > [data-arkme-message-content="article"]:nth-last-child(2) > [data-arkme-long-article]:last-child [data-arkme-article-meta] {
-  padding-right: 42px;
+  padding-right: var(--arkme-message-time-space, 42px);
 }
-.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > .arkme-message-timestamp {
+.arkme-timed-bubble:has(> [data-arkme-message-content]:nth-last-child(2) > [data-arkme-file-card]:last-child) > :is(.arkme-message-timestamp, [data-arkme-message-time-group]) {
   bottom: 18px;
 }
 /* A flex spacer participates in wrapping so reactions never cover the time.
@@ -61,12 +65,12 @@
 }
 .arkme-timed-bubble > [data-arkme-message-reactions]:nth-last-child(2)::after {
   content: '';
-  flex: 0 0 38px;
+  flex: 0 0 calc(var(--arkme-message-time-space, 42px) - 4px);
   height: 14px;
   margin-left: auto;
   align-self: flex-end;
 }
 /* A thought owns a footer row; its clock needs no reservation in the body. */
-[data-arkme-thought-message-footer] .arkme-message-timestamp { position:static;margin:0; }
+[data-arkme-thought-message-footer] :is(.arkme-message-timestamp, [data-arkme-message-time-group]) { position:static;margin:0; }
 .arkme-timed-bubble:has(> [data-arkme-thought-message-footer]) > [data-arkme-message-content] > [data-arkme-plain-text]::after,
 .arkme-timed-bubble:has(> [data-arkme-thought-message-footer]) > [data-arkme-message-content] .arkme-markdown > p:last-child::after { display:none; }

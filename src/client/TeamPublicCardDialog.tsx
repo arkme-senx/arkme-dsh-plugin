@@ -1,3 +1,4 @@
+import { WorldSubscribeButton } from './WorldSubscriptions.js'
 import { openTeamEntryMessages } from './team-entry-navigation.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import type { TeamPublicCard } from '../team-group-contract.js'
@@ -12,31 +13,31 @@ import { TeamMembershipForm } from './redesign/contacts/TeamDirectoryActions.js'
 import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import { arkmeUi } from './ui-controller.js'
 
-type Props = { accountKey: string; jotmoId: string; currentChannel?: TeamChannel; onClose(): void }
+type Props = { accountKey: string; jotmoId: string; teamRef?:string|undefined;currentChannel?: TeamChannel; onClose(): void }
 export function TeamPublicCardDialog(props: Props) {
-  return <ScopedCard key={JSON.stringify([props.accountKey, props.jotmoId])} {...props} />
+  return <ScopedCard key={JSON.stringify([props.accountKey, props.teamRef??props.jotmoId])} {...props} />
 }
 
-function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
+function ScopedCard({ accountKey, jotmoId, teamRef,currentChannel, onClose }: Props) {
   useArkmeLocale()
   const [card, setCard] = useState<TeamPublicCard>(), [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [creating, setCreating] = useState(false)
   const inCurrentConversation = currentChannel?.jotmoId === jotmoId
   useEffect(() => {
-    if(currentChannel?.jotmoId===jotmoId){
+    if(!teamRef&&currentChannel?.jotmoId===jotmoId){
       setError('');setCard({name:currentChannel.name,jotmoId,avatar:currentChannel.avatar,contact:currentChannel.enabled&&currentChannel.publicRef?{state:'available',publicRef:currentChannel.publicRef}:{state:'disabled'}});return
     }
     const controller = new AbortController()
     setCard(undefined); setError('')
-    void callArkme<TeamPublicCard>('team.app.public-card', { expectedAccountKey: accountKey, jotmoId }, controller.signal).then(value => {
+    void callArkme<TeamPublicCard>('team.app.public-card', { expectedAccountKey: accountKey, jotmoId,...(teamRef?{teamRef}:{}) }, controller.signal).then(value => {
       if (controller.signal.aborted) return
-      if (value.jotmoId !== jotmoId || value.contact?.state !== 'unavailable' && !value.name || !['available', 'disabled', 'unavailable'].includes(value.contact?.state)
+      if ((!teamRef&&value.jotmoId !== jotmoId) || value.contact?.state !== 'unavailable' && !value.name || !['available', 'disabled', 'unavailable'].includes(value.contact?.state)
         || (value.contact.state === 'available' && !value.contact.publicRef)) throw new Error(tr('团队资料返回异常，请重试'))
       setCard(value)
     }).catch(caught => { if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : tr('团队资料加载失败，请重试')) })
     return () => controller.abort()
-  }, [accountKey, jotmoId, attempt, currentChannel])
+  }, [accountKey, jotmoId, teamRef,attempt, currentChannel])
   const contact = () => {
     if (!card) return
     if(card.navigation?.kind==='inbox'&&card.navigation.teamRef){onClose();openTeamEntryMessages({kind:'team',teamRef:card.navigation.teamRef}, accountKey);return}
@@ -73,6 +74,7 @@ function ScopedCard({ accountKey, jotmoId, currentChannel, onClose }: Props) {
         </div></div>}
         {card.description&&<p style={styles.hint}>{card.description}</p>}
         <div style={{ ...styles.contact, gap: 12 }}>
+          {card.contact.state !== 'unavailable' && <WorldSubscribeButton target={{ kind: 'team', jotmoId: card.jotmoId }} />}
           <button type="button" style={styles.link} onClick={() => { onClose(); arkmeUi.showTeamWorld({ name: card.name, jotmoId: card.jotmoId, avatar: card.avatar }) }}>{tr('团队的世界')}</button>
           {!inCurrentConversation && <button type="button" disabled={card.navigation?.kind!=='inbox'&&(card.contact.state === 'disabled'||card.contact.state==='unavailable')} style={styles.link} onClick={contact}>{tr(card.navigation?.kind==='inbox'?'查看团队对话':'联系团队')}</button>}
         </div>

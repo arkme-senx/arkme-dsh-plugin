@@ -95,8 +95,12 @@ describe('profile/settings navigation', () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('导出数据').click())
     expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['data.export.preflight'])
-    expect(host.textContent).toContain('导出备份')
-    expect(host.textContent).toContain('10条快记')
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('增量导出')
+    expect(button('选择文件夹')).toBeDefined()
+    expect(button('导出到文件夹').disabled).toBe(true)
+    await act(async () => button('导出到文件夹').click())
+    expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['data.export.preflight'])
+
   })
   it('renders usage in settings and unmounts account content immediately on logout', async () => {
     await act(async () => root.render(<ArkmeAccountUsageSettings />))

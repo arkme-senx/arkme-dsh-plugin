@@ -6,8 +6,9 @@ const mock = vi.hoisted(() => vi.fn())
 vi.mock('../src/client/api.js', () => ({ callArkme: mock }))
 import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
 import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
+import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
 let stops: Array<() => void> = []
-afterEach(() => { stops.forEach(stop => stop()); stops = []; mock.mockReset(); vi.restoreAllMocks() })
+afterEach(() => { stops.forEach(stop => stop()); stops = []; openedTeamConversations.reset(); mock.mockReset(); vi.restoreAllMocks() })
 const channel = { teamRef: 'ref', name: '团队', jotmoId: 'team_id', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
 const item = (side: 'team' | 'external', time = 1): TeamConversation => ({ ref: `${side}-ref`, key: `${side}-key`, channel, side, lastSeq: 1, latestTeamReplySeq: 0, myReadSeq: 0, unread: 1, needsReply: true, blocked: false, revision: 1, updatedAt: time })
 it('merges Team rows only in presentation and preserves pinned rows and ordinary identities', () => {
@@ -26,7 +27,7 @@ it('a failure on one side preserves known rows and allows the other side to refr
   })
   await refreshTeamDirectory('a')
   expect(readTeamDirectory('a').items.map(c => c.updatedAt)).toEqual([3, 1])
-  expect(mock.mock.calls.every(([op]) => op === 'team.app.conversations' || op.startsWith('team.app.entries.'))).toBe(true)
+  expect(mock.mock.calls.every(([op]) => op === 'team.app.conversations' || op==='team.app.workspace.request' || op.startsWith('team.app.entries.'))).toBe(true)
 })
 it('account switch discards late responses from the old account', async () => {
   let resolve!: (value: unknown) => void
@@ -185,6 +186,37 @@ it('a cloud pin cannot activate an empty conversation', async () => {
   expect(readTeamDirectory('empty-pinned').items).toEqual([])
 })
 
+it('a cold directory restores a backend-confirmed silent member contact without a process-local open', async () => {
+  const silent = { ...item('team', 20), lastSeq: 0, unread: 0, needsReply: false, memberInitiated: true }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([])
+  mock.mockImplementation(async (_op, p) => ({ items: p.side === 'team' ? [silent] : [], hasMore: false }))
+  for (let attempt = 0; attempt < 2; attempt++) {
+    openedTeamConversations.reset()
+    const stop = startTeamDirectory('restarted-member'); stops.push(stop)
+    await vi.waitFor(() => expect(readTeamDirectory('restarted-member').items).toHaveLength(1))
+    expect(readTeamDirectory('restarted-member').items[0]).toMatchObject(silent)
+    expect(openedTeamConversations.read('restarted-member')).toEqual([])
+    stop()
+  }
+  expect(mock.mock.calls.some(([op]) => op === 'team.app.outbound.open' || op === 'team.app.send')).toBe(false)
+})
+
+it('a confirmed silent member pin is discoverable outside ordinary pages without admitting passive previews', async () => {
+  const silent = { ...item('team', 20), lastSeq: 0, unread: 0, needsReply: false, memberInitiated: true }
+  const passive = { ...item('external'), key: 'passive-key', ref: 'passive-ref', lastSeq: 0, memberInitiated: true }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([{ kind: 'conversation', ref: silent.ref }, { kind: 'conversation', ref: passive.ref }])
+  const { teamEntryKey } = await import('../src/client/team-directory-preferences.js')
+  vi.spyOn(teamDirectoryPreferences, 'read').mockReturnValue({ [teamEntryKey({ kind: 'conversation', conversation: silent })]: { pinned: true, dismissed: false } })
+  mock.mockImplementation(async (op, p) => op === 'team.app.timeline'
+    ? { conversation: p.conversationRef === silent.ref ? silent : passive } : { items: [], hasMore: false })
+  stops.push(startTeamDirectory('silent-pin'))
+  await vi.waitFor(() => expect(readTeamDirectory('silent-pin').items).toEqual([silent]))
+})
+
 it('a denied preference authority verdict retires ordinary previews without hiding the other side', async () => {
   vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
   vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
@@ -261,4 +293,153 @@ it('a changed off-page pin cannot regain its old preview on a receipt or failed 
   await refreshTeamDirectory('changed-pin', false, true)
   expect(readTeamDirectory('changed-pin').items[0]!.unread).toBe(0)
   expect(readTeamDirectory('changed-pin').items[0]!.preview?.text).toBe('')
+})
+
+it('uses real group-only folders and merges later group activity without inventing a private conversation',()=>{
+ const folder={channel,activityAt:50,preview:'小王 [售后]：收到',unread:2,groupCount:1,hasPublished:true,groups:[{sourceKey:'canonical-group',unread:2,lastSeq:12}]}
+ const groups=groupTeamConversations([],true,[folder])
+ expect(groups).toHaveLength(1)
+ expect(groups[0]).toMatchObject({conversations:[],unread:2,activeAt:50,preview:folder.preview,hasPublished:true})
+ expect(groups[0]!.latest).toBeUndefined()
+ const merged=groupTeamConversations([item('team',10)],true,[folder])
+ expect(merged).toHaveLength(1);expect(merged[0]).toMatchObject({unread:3,activeAt:50,preview:folder.preview})
+ const rows=mergeTeamDirectoryRows([{activeAtMillis:20,pinned:false}],[],true,{},[folder])
+ expect(rows[0]).toMatchObject({kind:'team-folder',activeAtMillis:50})
+})
+
+it('publishes group-only folders independently and drops their body on a failed fresh authority read',async()=>{
+ const folder={channel,activityAt:50,preview:'已批准群消息',unread:2,groupCount:1,hasPublished:true,groups:[{sourceKey:'canonical-group',unread:2,lastSeq:12}]}
+ mock.mockImplementation(async(operation,{side})=>operation==='team.app.workspace.request'?[folder]:{items:side?[item(side)]:[],hasMore:false})
+ stops.push(startTeamDirectory('folders-only'))
+ await vi.waitFor(()=>expect(readTeamDirectory('folders-only').workspaceFolders).toEqual([folder]))
+ mock.mockImplementation(async(operation,{side})=>{if(operation==='team.app.workspace.request')throw new Error('来源权限暂时无法确认');return {items:side?[item(side)]:[],hasMore:false}})
+ await refreshTeamDirectory('folders-only')
+ expect(readTeamDirectory('folders-only').workspaceFolders).toEqual([])
+ expect(readTeamDirectory('folders-only').items).toHaveLength(2)
+ expect(readTeamDirectory('folders-only').foldersError).toBe('来源权限暂时无法确认')
+})
+
+it('a confirmed contact is visible during a pending list read and survives an absent server row', async () => {
+  const empty = { ...item('team', 50), lastSeq: 0, unread: 0 }
+  let release!: (value: unknown) => void
+  mock.mockReturnValue(new Promise(resolve => { release = resolve }))
+  stops.push(startTeamDirectory('new-contact'))
+  openedTeamConversations.retain('new-contact', empty)
+  expect(readTeamDirectory('new-contact')).toMatchObject({ loading: true, items: [empty] })
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  invalidateTeamMessages('new-contact')
+  release({ items: [], hasMore: false })
+  await vi.waitFor(() => expect(readTeamDirectory('new-contact').loading).toBe(false))
+  expect(readTeamDirectory('new-contact').items).toHaveLength(1)
+  expect(readTeamDirectory('new-contact').items[0]).toMatchObject({ key: empty.key, lastSeq: 0, unread: 0 })
+  await refreshTeamDirectory('new-contact')
+  expect(readTeamDirectory('new-contact').items).toHaveLength(1)
+})
+
+it('first publication replaces the opened row once, and a stale reopen cannot roll back its message or read state', async () => {
+  const empty = { ...item('team', 5), lastSeq: 0, unread: 0 }
+  openedTeamConversations.retain('publication', empty)
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  stops.push(startTeamDirectory('publication'))
+  await vi.waitFor(() => expect(readTeamDirectory('publication').hasLoaded).toBe(true))
+  const published = { ...empty, lastSeq: 2, myReadSeq: 2, unread: 0, revision: 3, updatedAt: 10, preview: { status: 'available', text: '首条真实消息', hasMedia: false } }
+  mock.mockImplementation(async (_, p) => ({ items: p.side === 'team' ? [published] : [], hasMore: false }))
+  await refreshTeamDirectory('publication')
+  openedTeamConversations.retain('publication', { ...empty, updatedAt: 50 })
+  expect(readTeamDirectory('publication').items).toEqual([expect.objectContaining(published)])
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  await refreshTeamDirectory('publication')
+  expect(readTeamDirectory('publication').items).toEqual([expect.objectContaining(published)])
+})
+
+it('opened off-page rows share receipt, revocation and recall authority with ordinary rows', async () => {
+  const c = { ...item('team'), preview: { status: 'available', text: '须撤回的摘要', hasMedia: false } }
+  openedTeamConversations.retain('opened-authority', c)
+  let accessible = true, offline = false
+  mock.mockImplementation(async (op) => {
+    if (op === 'team.app.read-states') return [{ key: c.key, accessible, lastSeq: 1, myReadSeq: 1, unread: 0 }]
+    if (offline) throw new Error('offline')
+    return { items: [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('opened-authority'))
+  await vi.waitFor(() => expect(readTeamDirectory('opened-authority').hasLoaded).toBe(true))
+  await refreshTeamDirectory('opened-authority', false, true)
+  expect(readTeamDirectory('opened-authority').items[0]?.unread).toBe(0)
+  offline = true
+  invalidateTeamMessages('opened-authority', false, { kind: 'team.message.changed', conversationKeys: [c.key] })
+  await vi.waitFor(() => expect(readTeamDirectory('opened-authority').loading).toBe(false))
+  expect(readTeamDirectory('opened-authority').items[0]?.preview?.text).toBe('')
+  accessible = false
+  await refreshTeamDirectory('opened-authority', false, true)
+  expect(readTeamDirectory('opened-authority').items).toEqual([])
+  expect(openedTeamConversations.read('opened-authority')).toEqual([])
+})
+
+it('preference authority and channel revocation remove retained contacts too', async () => {
+  const c = { ...item('team'), lastSeq: 0, unread: 0 }
+  vi.spyOn(teamDirectoryPreferences, 'hydrate').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'reconcile').mockResolvedValue()
+  vi.spyOn(teamDirectoryPreferences, 'missingPins').mockReturnValue([])
+  vi.spyOn(teamDirectoryPreferences, 'canPresent').mockReturnValue(false)
+  openedTeamConversations.retain('denied-open', c)
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  stops.push(startTeamDirectory('denied-open'))
+  await vi.waitFor(() => expect(openedTeamConversations.read('denied-open')).toEqual([]))
+  expect(readTeamDirectory('denied-open').items).toEqual([])
+  openedTeamConversations.retain('denied-open', c)
+  discardTeamDirectory('denied-open', c)
+  expect(readTeamDirectory('denied-open').items).toEqual([])
+  expect(openedTeamConversations.read('denied-open')).toEqual([])
+})
+
+it('clears opened contacts on account or provider reset and ignores an old owner cleanup', async () => {
+  const c = { ...item('team'), lastSeq: 0, unread: 0 }
+  mock.mockResolvedValue({ items: [], hasMore: false })
+  const stopOld = startTeamDirectory('opened-old'); stops.push(stopOld)
+  openedTeamConversations.retain('opened-old', c)
+  stops.push(startTeamDirectory('opened-new'))
+  expect(openedTeamConversations.read('opened-old')).toEqual([])
+  openedTeamConversations.retain('opened-new', c)
+  stopOld()
+  expect(readTeamDirectory('opened-new').items).toEqual([expect.objectContaining(c)])
+  openedTeamConversations.reset()
+  expect(readTeamDirectory('opened-new').items).toEqual([])
+})
+
+it('keeps the ordinary directory and private preference protocol when workspace routes are absent', async () => {
+  mock.mockImplementation(async (operation, p) => {
+    if (operation === 'team.app.workspace.request') throw Object.assign(new Error('unsupported'), { body: { code: 'team-workspace-unsupported' } })
+    if (operation.startsWith('team.app.entries.')) return { schemaVersion: 1, items: [], hasMore: false }
+    return { items: [item(p.side)], hasMore: false }
+  })
+  stops.push(startTeamDirectory('legacy-backend'))
+  await vi.waitFor(() => expect(readTeamDirectory('legacy-backend').hasLoaded).toBe(true))
+  expect(readTeamDirectory('legacy-backend')).toMatchObject({ workspaceSupported: false, items: expect.any(Array) })
+  expect(readTeamDirectory('legacy-backend').items).toHaveLength(2)
+  expect(readTeamDirectory('legacy-backend').foldersError).toBeUndefined()
+  await vi.waitFor(() => expect(mock.mock.calls.some(([op]) => op === 'team.app.entries.list')).toBe(true))
+  expect(mock.mock.calls.filter(([op]) => op.startsWith('team.app.entries.')).every(([,p]) => !p.scope)).toBe(true)
+})
+it('keeps real workspace failures visible instead of pretending the old server was detected', async () => {
+  mock.mockImplementation(async (operation, p) => {
+    if (operation === 'team.app.workspace.request') throw Object.assign(new Error('denied'), { body: { code: 'team-not_accessible' } })
+    return { items: p.side ? [item(p.side)] : [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('denied-backend'))
+  await vi.waitFor(() => expect(readTeamDirectory('denied-backend').hasLoaded).toBe(true))
+  expect(readTeamDirectory('denied-backend').workspaceSupported).toBeUndefined()
+  expect(readTeamDirectory('denied-backend').foldersError).toBe('denied')
+})
+
+it('publishes existing private rows while the optional workspace discovery is still pending',async()=>{
+ let resolve!:(value:unknown)=>void
+ const workspace=new Promise(ok=>{resolve=ok})
+ mock.mockImplementation(async(op,p)=>op==='team.app.workspace.request'?workspace:op.startsWith('team.app.entries.')?{schemaVersion:1,items:[],hasMore:false}:{items:[item(p.side)],hasMore:false})
+ stops.push(startTeamDirectory('slow-workspace'))
+ await vi.waitFor(()=>expect(readTeamDirectory('slow-workspace').hasLoaded).toBe(true))
+ expect(readTeamDirectory('slow-workspace').items).toHaveLength(2)
+ expect(readTeamDirectory('slow-workspace').workspaceSupported).toBeUndefined()
+ resolve([])
+ await vi.waitFor(()=>expect(readTeamDirectory('slow-workspace').workspaceSupported).toBe(true))
+ expect(readTeamDirectory('slow-workspace').items).toHaveLength(2)
 })

@@ -751,9 +751,15 @@ describe('conversation send directory projection', () => {
       })
     })
     if (history) await act(async () => { arkmeUi.showConversationTarget(target, 'bottom-history', 11, 7) })
-    act(() => {
+    await act(async () => {
       body.scrollTop = 200
       renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll()
+      // This renderer's default RAF stub records callbacks without running them.
+      // Deliver the scheduled paint before checking the scroll affordance.
+      if (vi.isMockFunction(requestAnimationFrame)) {
+        const callback = vi.mocked(requestAnimationFrame).mock.calls.at(-1)?.[0]
+        callback?.(0)
+      }
     })
     return body
   }
@@ -1602,7 +1608,7 @@ describe('conversation send directory projection', () => {
     vi.useFakeTimers()
     Object.assign(window, {
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
     })
     try {
       timeline = [{
@@ -1704,7 +1710,7 @@ describe('conversation send directory projection', () => {
     vi.useFakeTimers()
     Object.assign(window, {
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
     })
     const draftWrite = deferred<{ saved: true; draftRevision: number }>()
     const recordWrite = deferred<import('../src/record-reedit-contract.js').ArkmeRecordReeditSubmissionView>()
@@ -1946,7 +1952,7 @@ describe('conversation send directory projection', () => {
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
       open: vi.fn(),
       confirm: vi.fn(() => true),
       localStorage: {
@@ -1990,7 +1996,7 @@ describe('conversation send directory projection', () => {
       cursor?: { beforeSequence?: number; afterSequence?: number }
     }) => {
       if (operation === 'sources.self-target') return sendToSelf
-      if (operation === 'team.app.group.context') return { state: 'backend_pending', membershipPolicy: 'unknown', teams: [] }
+      if (operation === 'team.app.group.context') return { state: 'ready', membershipPolicy: 'independent', groupJoinAt: 9, teams: [] }
       if (operation === 'provider.instance') return { instanceId: 'forward-directory-test' }
       if (operation === 'user.profile' || operation === 'user.profile.refresh') return {
         profile: {
@@ -4301,7 +4307,7 @@ describe('conversation send directory projection', () => {
     await act(async () => { pending.resolve({ status: 1 }) })
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(1)
     expect(second.findByProps({ 'aria-label': '转发中' }).props.disabled).toBe(true)
-    await act(async () => { nextPending.resolve({ status: 1 }) })
+    await act(async () => { nextPending.resolve({ sourceRef: other.sourceRef, itemUid: 'accepted-next-account', status: 1, localState: 'synced' }) })
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
@@ -4792,6 +4798,13 @@ describe('conversation send directory projection', () => {
     const sends = mocks.callArkme.mock.calls.filter(call => call[0] === 'source.forward-messages')
     expect(sends).toHaveLength(1)
     expect(sends[0]?.[1]).toMatchObject({ targetSourceRef: target.sourceRef })
+    expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(1)
+    // Keep the refused recipient visible. Retrying the successful recipient
+    // after deselecting the failed one must reuse its confirmed receipt.
+    expect(renderedText(dialog)).toContain('拒收')
+    await act(async () => { await dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean' && renderedText(node).includes(other.displayName))[0]!.props.onClick() })
+    await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
+    expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'source.forward-messages')).toHaveLength(1)
     expect(renderer!.root.findAllByProps({ 'aria-labelledby': 'arkme-forward-target-title' })).toHaveLength(0)
   })
 
@@ -5605,7 +5618,7 @@ describe('conversation send directory projection', () => {
     const tisonOption = renderer!.root.findAllByProps({ role: 'option' }).find(option =>
       option.findAll(node => node.type === 'span' && node.children.join('') === 'Tison（我的私有备注）').length > 0)
     expect(tisonOption).toBeDefined()
-    expect(JSON.stringify(renderer!.toJSON())).toContain('Bot 加载失败，仍可选择已有对象')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('部分候选加载失败，仍可选择已有对象')
     await act(async () => {
       tisonOption!.props.onMouseDown({ preventDefault: vi.fn() })
       await Promise.resolve()
@@ -7983,7 +7996,7 @@ describe('conversation send directory projection', () => {
     const newerObservers: IntersectionObserverCallback[] = []
     vi.stubGlobal('IntersectionObserver', class {
       constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        if (options?.rootMargin === '120px 0px 0px') olderObservers.push(callback)
+        if (options?.rootMargin === '800px 0px 0px') olderObservers.push(callback)
         if (options?.rootMargin === '0px 0px 120px') newerObservers.push(callback)
       }
       observe() {}
@@ -8104,7 +8117,7 @@ describe('conversation send directory projection', () => {
       const callbacks: IntersectionObserverCallback[] = []
       vi.stubGlobal('IntersectionObserver', class {
         constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-          if (options?.rootMargin === '120px 0px 0px') callbacks.push(callback)
+          if (options?.rootMargin === '800px 0px 0px') callbacks.push(callback)
         }
         observe() {} disconnect() {}
       })
@@ -8884,7 +8897,7 @@ describe('conversation send directory projection', () => {
     vi.useFakeTimers()
     Object.assign(window, {
       setTimeout: globalThis.setTimeout,
-      clearTimeout: globalThis.clearTimeout,
+      clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval,
     })
     try {
       timeline = [{
@@ -9642,7 +9655,7 @@ describe('conversation send directory projection', () => {
 
   it('lets copied-link loading time out and retry without accepting a late response', async () => {
     vi.useFakeTimers()
-    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, innerWidth: 1000 })
+    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, innerWidth: 1000 })
     const original = mocks.callArkme.getMockImplementation()!
     let resolveFirst!: (value: unknown) => void
     let firstSignal: AbortSignal | undefined
@@ -9828,7 +9841,7 @@ describe('conversation send directory projection', () => {
 
   it('keeps copied-link content and draft usable when a post-send refresh times out', async () => {
     vi.useFakeTimers()
-    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, innerWidth: 1000 })
+    Object.assign(window, { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout, setInterval: globalThis.setInterval, clearInterval: globalThis.clearInterval, innerWidth: 1000 })
     const original = mocks.callArkme.getMockImplementation()!
     let resolveCalls = 0
     let refreshSignal: AbortSignal | undefined

@@ -219,6 +219,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'topic.create'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'topic.hidden-source'
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'

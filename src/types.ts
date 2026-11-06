@@ -833,7 +833,9 @@ export interface ArkmeWorldFeedItem {
   videoCount: number
   voiceCount: number
   extendCount: number
-  recordType?: 'extension_publication'
+  recordType?: 'extension_publication' | 'sound_excerpt'
+  soundExcerpt?: import('./world-sound-contract.js').WorldSoundExcerpt
+  soundStatus?: 'pending'|'published'|'rejected'|'withdrawn'
   extensionPublication?: ArkmeWorldExtensionPublication
 }
 
@@ -1030,11 +1032,11 @@ export interface ArkmeRecordingArrangementQuery {
 
 export type ArkmeRecordingArrangementPage =
   | { state: 'unavailable'; items: []; total: null; hasMore: false }
-  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string }
+  | { state: 'ready' | 'processing' | 'partial'; items: ArkmeArrangementItem[]; total: number; hasMore: boolean; nextOffset?: number; snapshotVersion: string; coverageReasons?: string[] }
 
 export interface ArkmeArrangementEvidence {
   id: string
-  kind: 'record' | 'audio_summary' | 'call' | 'input' | 'voice_input' | 'agent' | 'manual'
+  kind: 'record' | 'team_message' | 'audio_summary' | 'call' | 'input' | 'voice_input' | 'agent' | 'manual'
   role: 'initial' | 'supplement' | 'related'
   text: string
   canOpen: boolean
@@ -1046,7 +1048,7 @@ export interface ArkmeArrangementEvidence {
 }
 export type ArrangementQuoteState = 'exact' | 'unlocated' | 'ambiguous' | 'version_changed' | 'pending'
 export type ArkmeArrangementSourceRead =
-  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation; quoteState?: ArrangementQuoteState }
+  | { evidenceId: string; state: 'ready'; text: string; conversation?: ArkmeArrangementSourceConversation; teamConversation?: { conversation: import('./team-app-contract.js').TeamConversation; message: import('./team-app-contract.js').TeamMessage }; quoteState?: ArrangementQuoteState }
   | { evidenceId: string; state: 'unavailable'; reason: string }
 export interface ArkmeArrangementSourceConversation {
   source: ArkmeSourceItem
@@ -1072,6 +1074,7 @@ export interface ArkmeConversationArrangementPage {
   nextCursor: string
 }
 export type ArkmeArrangementSourceTarget =
+  | { kind: 'team_conversation'; conversation: import('./team-app-contract.js').TeamConversation; message: import('./team-app-contract.js').TeamMessage }
   | { kind: 'document'; title: string; text: string }
   | { kind: 'record'; item: ArkmeTimelineItem }
   | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number; recordOwnerUserId?: number }
@@ -1600,6 +1603,7 @@ arkoImagesV1?:true
     arkoLifecycleV1?: true
     recordExportV1?: true
     arkoHistoryReadsV1?: true
+    arkoInteractionTimelineV1?: true
     officialNotificationsV1?: true
     entityArchive?: true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
@@ -1613,6 +1617,7 @@ arkoImagesV1?:true
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
     teamGroupRepresentation?: 1
+    teamGroupWorkspace?: 1
     teamProfiles?: true
     teamMemberManagementV1?: true
     teamExternalChats?: true
@@ -1655,10 +1660,13 @@ arkoImagesV1?:true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
     arkoReplyManagementV1?: true
+    recordEditHistoryV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
     teamWorldV1?: true
+    worldSoundExcerptsV1?: true
+    worldSuggestionsV1?: true
     /** Group owners can withdraw peer messages, remove members, and manage future join restrictions. */
     groupOwnerGovernance?: true
     markdownQuickNotes?: true
@@ -1880,6 +1888,8 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  accessKind?:'personal_membership'|'team_delegation'
+  teamWorkspace?:{ref:string;jotmoId:string}
   /** Viewer-visible private counterpart nickname, independent of the preferred remark. */
   privateNickname?: string
   /** Record-owned topic container kind; never a chat kind or creation source. */
@@ -1891,6 +1901,8 @@ export interface ArkmeSourceItem {
   directMessageAdmissionApplicable?: boolean
   /** Stable Host-projected directory identity. Consumers must treat it as opaque when present. */
   sourceKey?: string
+  /** Canonical Chat identity for invalidating all audience views; never an access grant. */
+  canonicalChatSourceKey?: string
   /** Private-chat peer identity when this source is a one-to-one chat. */
   peerUserId?: number
   /** Private-chat counterpart membership from Chat; never the viewer's membership. */
@@ -2140,7 +2152,7 @@ export interface ArkmeMessageSnapshotDetail {
 }
 
 export interface ArkmeTimelineMentionTarget {
-  kind: 'member' | 'all' | 'bot'
+  kind: 'member' | 'all' | 'bot' | 'team'
   startIndex: number
   length: number
   displayName: string
@@ -2527,6 +2539,8 @@ export interface ArkmeContentBlock {
   /** Original bytes, distinct from an image preview. */
   originalRef?: string
   localFileRef?: string
+  attachmentUid?: string
+  attachmentState?: 'pending' | 'failed'
   uploadProgress?: import('./file-transfer-contract.js').ArkmeFileProgress
   /** One logical photo; the companion is not a second visible attachment. */
   dynamicPhoto?: { logicalUid: string; motionFileAssetUid?: string; motion?: Omit<ArkmeContentBlock, 'dynamicPhoto' | 'renderRole'> & { kind: 'video' } }
@@ -2601,6 +2615,7 @@ export interface ArkmeRichSendInput extends TeamRepresentationSendOptions {
   captureContext?: ArkmeRecordCaptureContext
   assets?: ArkmeUploadedAsset[]
   backgroundSound?: ArkmeRichBackgroundSoundInput
+  teamMentions?: ArkmeTeamMentionInput[]
   humanMentions?: ArkmeHumanMentionInput[]
   botMentions?: ArkmeBotMentionInput[]
 }
@@ -2613,6 +2628,8 @@ interface ArkmeHumanMentionRange {
 export type ArkmeHumanMentionInput =
   | (ArkmeHumanMentionRange & { mentionRef: string; memberRef?: never; all?: never })
   | (ArkmeHumanMentionRange & { all: true; mentionRef?: never; memberRef?: never })
+
+export interface ArkmeTeamMentionInput {teamMentionRef:string;startIndex:number;length:number}
 
 export interface ArkmeBotMentionInput {
   botRef: string
@@ -4378,12 +4395,16 @@ export type ArkmePluginOperation =
   | 'arko.reply-prompts.save'
   | 'arko.reply-prompts.reset'
   | 'arko.replies.page'
+  | 'source.record-edit-history'
+  | 'source.record-revision-snapshot'
   | 'record.thoughts.query'
   | 'chat.thoughts.query'
   | 'composer.resources.list'
   | 'composer.document.prepare'
   | 'team.app.outbound.open'
   | 'team.app.group.context'
+  | 'team.app.group.request'
+  | 'team.app.workspace.request'
   | 'team.app.public-card'
   | 'recordings.voice-triggers'
   | 'recordings.voice-triggers.rules.set'
@@ -4521,6 +4542,12 @@ export type ArkmePluginOperation =
   | 'remote.getStatus'
   | 'remote.renameDesktop'
   | 'billing.quota'
+  | 'models.account.query'
+  | 'models.account.save'
+  | 'models.account.disable'
+  | 'models.preferences.save'
+  | 'models.usage.query'
+  | 'models.connector.enroll'
   | 'models.directory'
   | 'billing.products'
   | 'membership.current'
@@ -4529,6 +4556,8 @@ export type ArkmePluginOperation =
   | 'account.capabilities.update'
   | 'account.points.query'
   | 'account.points.consumption'
+  | 'account.points.statistics'
+  | 'account.points.consumption.range'
   | 'account.usage.tokens'
   | 'account.usage.storage'
   | 'account.usage.voice'
@@ -4540,6 +4569,8 @@ export type ArkmePluginOperation =
   | 'data.export.preflight'
   | 'data.export.range.preview'
   | 'data.export.saved'
+  | 'data.export.directory.pick'
+  | 'data.export.directory.open'
   | 'data.export'
   | 'data.recover'
   | 'billing.order.create'
@@ -4596,6 +4627,7 @@ export type ArkmePluginOperation =
   | 'records.refresh'
   | 'records.search'
   | 'search.records'
+  | 'search.scene'
   | 'search.conversations'
   | 'records.list'
   | 'records.tags.list'
@@ -4647,6 +4679,9 @@ export type ArkmePluginOperation =
   | 'user.arkme-id.set'
   | 'image.read'
   | 'images.list'
+  | 'world.publications'
+  | 'world.sound-excerpts'
+  | 'world.suggestions'
   | 'world.record.read'
   | 'world.share'
   | 'world.forward'
@@ -4672,6 +4707,7 @@ export type ArkmePluginOperation =
   | 'world.notification-sources'
   | 'world.comment-notifications'
   | 'world.notification-target'
+  | 'world.subscriptions'
   | 'world.interactions.summary'
   | 'world.interactions.mark-viewed'
   | 'world.interactions.create-text'
@@ -4704,6 +4740,8 @@ export type ArkmePluginOperation =
   | 'arrangements.source.open'
   | 'arrangements.source.read'
   | 'arrangements.conversation.list'
+  | 'arrangements.conversation.recognition.get'
+  | 'arrangements.conversation.recognition.set'
   | 'arrangements.conversation.detail'
   | 'arrangements.mutate'
   | 'arrangements.create'
@@ -4754,6 +4792,7 @@ export type ArkmePluginOperation =
   | 'source.message-extension.context'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
+  | 'source.shared-recording-detail'
   | 'source.message-snapshot.detail'
   | 'source.message-location.set'
   | 'source.link-metadata.resolve'
@@ -4882,6 +4921,7 @@ export type ArkmePluginOperation =
   | 'topic.hierarchy.move'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'topic.hidden-source'
   | 'official-notifications.list'
   | 'official-notifications.summary'
   | 'official-notifications.detail'
@@ -4900,6 +4940,9 @@ export type ArkmePluginOperation =
   | 'arko.lifecycle.query'
   | 'arko.lifecycle.change'
   | 'arko.deleted'
+  | 'arko.interactions'
+  | 'arko.interaction.open'
+  | 'arko.timeline.cache'
   | 'arko.messages'
   | 'arko.search'
   | 'arko.context'
@@ -5045,8 +5088,6 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.related-quick-notes.from-message'
   | 'source.related-quick-notes.from-moment'
   | 'source.related-quick-note.detail'
-  | 'source.record-edit-history'
-  | 'source.record-revision-snapshot'
   | 'extensions.catalog.list'
   | 'extensions.classification.tree'
   | 'extensions.classification.items'

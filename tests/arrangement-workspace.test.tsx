@@ -7,6 +7,8 @@ vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/client/arrangement-completion-sound.js', () => ({ prepareArrangementCompletionSound: mocks.prepare }))
 vi.mock('../src/client/ArkmeArrangementContent.js', () => ({ ArkmeArrangementContent: (props: unknown) => <div data-detail-content={JSON.stringify(props)} /> }))
 vi.mock('../src/client/ui-controller.js', () => ({ arkmeUi: { openDshSettings: vi.fn() } }))
+import { ArkmeArrangementDetailPane } from '../src/client/ArkmeArrangementDetailPane.js'
+vi.mock('react-dom', async importOriginal => ({ ...await importOriginal<typeof import('react-dom')>(), createPortal: (children: unknown) => children }))
 import { ArkmeArrangementWorkspace } from '../src/client/ArkmeArrangementWorkspace.js'
 
 const now = new Date(2026,9,25,12).getTime()
@@ -55,7 +57,8 @@ it('gives immediate check feedback, plays only after confirmed completion, then 
   expect(mocks.play).toHaveBeenCalledTimes(1)
   expect(button('撤销').props.disabled).toBe(false)
   expect(root!.root.findAllByProps({'data-arrangement-task':'one'})).toHaveLength(0)
-  mocks.call.mockImplementation(async op => op === 'arrangements.mutate' ? {item:item('one',{updatedAtMillis:now+1}),outcome:'confirmed'} : {})
+  mocks.call.mockImplementation(async op => op === 'arrangements.detail' ? item('one',{status:'completed',updatedAtMillis:now})
+    : op === 'arrangements.mutate' ? {item:item('one',{updatedAtMillis:now+1}),outcome:'confirmed'} : {})
   await act(async () => { button('撤销').props.onClick(); await tick() })
   expect(task('one')).toBeTruthy()
   expect(mocks.call).toHaveBeenCalledWith('arrangements.mutate', {arrangementRef:'one',intent:'cancel-complete'}, expect.any(AbortSignal))
@@ -134,6 +137,7 @@ it('retains already-loaded rows when the next page fails', async () => {
 })
 it('adjusts an offset after completion so the next page does not skip a task', async () => {
   mocks.call.mockImplementation(async (op,params) => {
+    if (op === 'arrangements.detail') return item(params.arrangementRef)
     if (op === 'arrangements.mutate') return {item:item('r0',{status:'completed'}),outcome:'confirmed'}
     if (params.status !== 'following') return {items:[],total:0,hasMore:false}
     if (params.offset > 0) return {items:[item('last')],total:50,hasMore:false}
@@ -161,4 +165,58 @@ it('cancels old account reads and never reuses another account list', async () =
   expect(signal?.aborted).toBe(true)
   await act(async () => { finish({items:[item('private-old-account')],total:1,hasMore:false}); await tick() })
   expect(JSON.stringify(root!.toJSON())).not.toContain('private-old-account')
+})
+
+
+it('workspace undo restores identified state rather than silently moving it to following', async () => {
+  let current = item('one', { status: 'identified' })
+  mocks.call.mockImplementation(async (op,params) => {
+    if (op === 'arrangements.detail') return {...current}
+    if (op === 'arrangements.mutate') {
+      current = {...current, status: params.intent === 'complete' ? 'completed' : params.intent === 'cancel-complete' ? 'following' : 'identified'}
+      return {outcome:'confirmed',item:{...current}}
+    }
+    const rows = params.status === current.status ? [{...current}] : []
+    return {items:rows,total:rows.length,hasMore:false}
+  })
+  await mount()
+  await act(async () => { checkbox().props.onClick(); await tick() })
+  expect(current.status).toBe('completed')
+  await act(async () => { button('撤销').props.onClick(); await tick() })
+  expect(current.status).toBe('identified')
+  expect(mocks.call.mock.calls.filter(c => c[0] === 'arrangements.mutate').map(c => c[1].intent)).toEqual(['complete','cancel-complete','cancel-follow'])
+})
+
+
+it.each(['following', 'completed'] as const)('replaces the deletion notice only after a confirmed restore to %s', async targetStatus => {
+  let deleted = false
+  let restored = false
+  let finishRestore!: (value: unknown) => void
+  const live = item('one', { status: targetStatus, updatedAtMillis: now + 1 })
+  const removed = { ...live, status: 'deleted', restore: { expectedVersion: now, targetStatus, historicalFallback: false } }
+  mocks.call.mockImplementation(async (op, params) => {
+    if (op === 'arrangements.mutate') { deleted = true; return { deleted: true } }
+    if (op === 'arrangements.restore') return new Promise(resolve => { finishRestore = resolve })
+    if (op === 'arrangements.deleted.detail') return removed
+    if (op === 'arrangements.detail') return restored ? live : item()
+    if (op === 'arrangements.deleted.list') return { items: deleted ? [removed] : [], total: deleted ? 1 : 0, hasMore: false }
+    return { items: !deleted && params.status === 'following' ? [item()] : [], total: !deleted && params.status === 'following' ? 1 : 0, hasMore: false }
+  })
+  await mount()
+  await act(async () => { task('one').findByProps({className:'arkme-arrangement-task-body'}).props.onClick(); await tick() })
+  await act(async () => { root!.root.findByType(ArkmeArrangementDetailPane).props.onDelete(item()); await tick() })
+  await act(async () => { button('删除').props.onClick(); await tick() })
+  expect(text(root!.root.findByProps({className:'arkme-arrangement-feedback'}))).toBe('已移入已删除')
+  await act(async () => { button('已删除').props.onClick(); await tick() })
+  await act(async () => { task('one').findByProps({className:'arkme-arrangement-task-body'}).props.onClick(); await tick() })
+  await act(async () => { button('恢复安排').props.onClick(); await tick() })
+  await act(async () => { button('确认恢复').props.onClick(); await tick() })
+  expect(JSON.stringify(root!.toJSON())).not.toContain('已恢复安排')
+  await act(async () => { deleted = false; restored = true; finishRestore({state:'completed',item:live}); await tick() })
+  expect(text(root!.root.findByProps({className:'arkme-arrangement-feedback'}))).toBe('已恢复安排')
+  expect(JSON.stringify(root!.toJSON())).not.toContain('已移入已删除')
+  expect(root!.root.findAllByProps({'data-arrangement-task':'one'})).toHaveLength(0)
+  expect(root!.root.findByType(ArkmeArrangementDetailPane).props.item.status).toBe(targetStatus)
+  await act(async () => { root!.root.findByProps({'aria-label':'关闭提示'}).props.onClick(); await tick() })
+  expect(root!.root.findAllByProps({className:'arkme-arrangement-feedback'})).toHaveLength(0)
 })

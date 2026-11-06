@@ -12,6 +12,13 @@ it('passes paginated conversation-name reads and cancellation without trusting c
   expect(service.searchConversationNames).toHaveBeenCalledExactlyOnceWith({ query: '周鹏', cursor: 'next', signal })
 })
 
+it('resolves hidden topic identity with the Host session and cancellation, ignoring caller user IDs', async () => {
+  const signal = new AbortController().signal
+  const service = { hiddenTopicSource: vi.fn(async () => null) }
+  await expect(dispatchArkmeHostOperation(service as never, 'topic.hidden-source', { sourceRef: 'signed-topic', userId: 999 }, undefined, undefined, undefined, undefined, signal)).resolves.toBeNull()
+  expect(service.hiddenTopicSource).toHaveBeenCalledExactlyOnceWith('signed-topic', signal)
+})
+
 it('passes home preference read cancellation through the Host owner', async () => {
   const controller = new AbortController()
   const service = { topicHomeVisibility: vi.fn() }
@@ -1806,7 +1813,7 @@ it('routes long article images and durable draft metadata without trusting prepa
   const service = fakeService()
   const signal = new AbortController().signal
   await dispatchArkmeHostOperation(service as never, 'source.record-edit-history', {
-    sourceRef: 'source', messageActionRef: 'action', cursorEditAt: 100, recordUid: 'forged', userId: 999,
+    sourceRef: 'source', messageActionRef: 'action', cursorVersion: 100, recordUid: 'forged', userId: 999,
   }, undefined, undefined, undefined, undefined, signal)
   expect(service.recordEditHistoryPage).toHaveBeenCalledWith('source', 'action', 100, signal)
  })

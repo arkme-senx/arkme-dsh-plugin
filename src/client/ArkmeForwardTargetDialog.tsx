@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import {useEffect, useRef, type ReactNode} from 'react'
 import {forwardTargetStyles as styles} from './forward-target-styles.js'
 import {ArkmeForwardSearch} from './ArkmeForwardSearch.js'
@@ -30,7 +31,7 @@ export function ArkmeForwardTargetDialog({fixed=false,keyword,busy,onClose,onKey
     else if(event.shiftKey&&(document.activeElement===first||document.activeElement===dialog.current)){event.preventDefault();last?.focus()}
     else if(!event.shiftKey&&(document.activeElement===last||document.activeElement===dialog.current)){event.preventDefault();first.focus()}
    }}>
-   <header style={styles.forwardTargetHeader}><span aria-hidden/><h3 id={titleId} style={styles.forwardTargetTitle}>{tr('转发给')}</h3><button data-arkme-feedback="neutral" type="button" style={styles.forwardTargetClose} disabled={busy} aria-label={tr('关闭转发对象选择')} onClick={onClose}>×</button></header>
+   <header style={styles.forwardTargetHeader}><span aria-hidden/><h3 id={titleId} style={styles.forwardTargetTitle}>{tr('转发给')}</h3><ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.forwardTargetClose} disabled={busy} aria-label={tr('关闭转发对象选择')} onClick={onClose} /></header>
    <div style={styles.forwardTargetSearchWrap}><ArkmeForwardSearch value={keyword} disabled={busy} onChange={event=>onKeywordChange(event.currentTarget.value)}/></div>
    <div style={styles.forwardTargetBody}>{children}</div>
    {(selectedAvatars!==undefined||previewContent!==undefined)&&<footer style={styles.forwardTargetFooter}>

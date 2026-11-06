@@ -46,7 +46,7 @@ describe.skipIf(!fixtureDirectory)('recording input through the real cross-repos
     const audioFetch: typeof fetch = async (input, init) => {
       const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url)
       if (url.origin !== audioOrigin.origin) throw new Error('E2E must not access external services')
-      if (url.pathname.endsWith('/one-day-trans')) calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) })
+      if (['/one-day-trans', '/recordings/query', '/recordings/transcript/query', '/recordings/transcript/metadata'].some(path => url.pathname.endsWith(path))) calls.push({ path: url.pathname, body: JSON.parse(String(init?.body)) })
       return await nativeFetch(url, init)
     }
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
@@ -122,23 +122,29 @@ describe.skipIf(!fixtureDirectory)('recording input through the real cross-repos
       // real worker receipt. The same mounted UI must settle without a click.
       arkmeUi.showRecordingTarget(fixture.late_day_start, fixture.late_day_start)
       await render()
-      await waitUntil(() => metrics().includes('转写输入时长 暂不可用') && metrics().includes('处理中，统计待更新'))
+      await waitUntil(() => metrics().includes('转写输入时长 统计中') && metrics().includes('处理中，统计待更新'))
       await writeFile(join(fixtureDirectory!, 'release-late-receipt'), 'ready\n', { mode: 0o600 })
       await expectDuration(fixture.expected.late_day_ms)
 
       // The product exposes sources side by side. Open its actual comparison
       // action with a separately seeded, completed Doubao text fixture; this
       // must neither start a provider task nor alter the system input total.
-      const compareButton = container.querySelector<HTMLButtonElement>('button[aria-label="对比"]')
+      await waitUntil(() => container.querySelector<HTMLButtonElement>('button[aria-label="转写对比"]')?.disabled === false)
+      const compareButton = container.querySelector<HTMLButtonElement>('button[aria-label="转写对比"]')
       expect(compareButton?.disabled).toBe(false)
       await act(async () => { compareButton!.click() })
-      await waitUntil(() => container.querySelector('[role="dialog"][aria-label="转写对比"]') !== null)
-      const dialog = container.querySelector('[role="dialog"][aria-label="转写对比"]')!
+      await waitUntil(() => document.querySelector('[role="dialog"][aria-label="选择转写对比"]') !== null)
+      const choices = document.querySelector('[role="dialog"][aria-label="选择转写对比"]')!
+      const doubao = Array.from(choices.querySelectorAll('button')).find(button => button.textContent?.includes('豆包'))
+      expect(doubao).toBeDefined()
+      await act(async () => { doubao!.click() })
+      await waitUntil(() => document.querySelector('[role="dialog"][aria-label="转写对比"]') !== null)
+      const dialog = document.querySelector('[role="dialog"][aria-label="转写对比"]')!
       expect(dialog.textContent).toContain('系统转写')
       expect(dialog.textContent).toContain('豆包转写')
       expect(dialog.textContent).toContain('验收豆包旁路正文')
       expect(metrics()).toContain(`转写输入时长 ${fixture.expected.late_day_ms / 1000}秒`)
-      await act(async () => { container.querySelector<HTMLButtonElement>('button[aria-label="关闭转写对比"]')!.click() })
+      await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="关闭转写对比"]')!.click() })
 
       await selectDate(fixture.day_start)
       await expectDuration(fixture.expected.current_day_ms)
@@ -178,13 +184,14 @@ describe.skipIf(!fixtureDirectory)('recording input through the real cross-repos
       expect(metrics()).toContain(`转写输入时长 ${fixture.expected.current_day_ms / 1000}秒`)
 
       await selectDate(fixture.active_day_start)
-      await waitUntil(() => metrics().includes('转写输入时长 暂不可用') && metrics().includes('处理中，统计待更新'))
+      await waitUntil(() => metrics().includes('转写输入时长 统计中') && metrics().includes('处理中，统计待更新'))
       const activeChildren = await audioDay(fixture.active_day_start)
       expect(activeChildren.find(child => child.id === fixture.active_child_id)?.asr_input_metrics?.state).toBe('processing')
       await selectDate(fixture.historical_day_start)
-      await waitUntil(() => metrics().includes('转写输入时长 暂不可用') && !metrics().includes('处理中，统计待更新'))
+      await waitUntil(() => metrics().includes('转写输入时长 历史计量缺失') && !metrics().includes('处理中，统计待更新'))
       await selectDate(fixture.empty_day_start)
       await expectDuration(0)
+      expect(calls.length).toBeGreaterThan(0)
       expect(calls.every(call => Number(call.body.end_at) > Number(call.body.start_at))).toBe(true)
       expect(JSON.stringify(current.transcript.dailyMetrics)).not.toMatch(/execution_id|session_id|child_id|token/)
       await writeFile(join(fixtureDirectory!, 'plugin-result.json'), JSON.stringify({

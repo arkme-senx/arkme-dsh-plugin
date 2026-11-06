@@ -156,6 +156,8 @@ describe('notification directory stability', () => {
     const context = () => row().props.onContextMenu({ preventDefault() {}, stopPropagation() {}, clientX: 40, clientY: 60,
       currentTarget: { focus() {}, getBoundingClientRect: () => ({ left: 20, top: 40 }) } })
     const before = arkmeUi.getViewSnapshot()
+    const orderedEntries = () => renderer!.root.findAllByProps({ role: 'treeitem' })
+      .map(node => node.props['data-arkme-builtin-entry'] ?? node.props['aria-label'])
     await act(async () => context())
     const menu = () => renderer!.root.findByProps({ role: 'menu' })
     expect(menu().findAllByProps({ role: 'menuitem' }).map(node => node.props['aria-label'])).toEqual(['预览', '置顶对话'])
@@ -165,19 +167,20 @@ describe('notification directory stability', () => {
     expect(mocks.callArkme).toHaveBeenCalledWith('directory.preferences.set', {
       accountKey: 'test:7001', entries: { [`builtin:${entry}`]: { pinned: true, pinnedAt: expect.any(Number) } },
     }, expect.any(AbortSignal))
-    expect(renderer!.root.findAllByProps({ role: 'treeitem' })[0]!.props['data-arkme-builtin-entry']).toBe(entry)
+    expect(orderedEntries().slice(0, 2)).toEqual(['置顶对话', entry])
     expect(arkmeUi.getViewSnapshot()).toBe(before)
     await act(async () => { renderer!.unmount(); renderer = create(<Workspace showHarnessEntry />) })
-    expect(renderer!.root.findAllByProps({ role: 'treeitem' })[0]!.props['data-arkme-builtin-entry']).toBe(entry)
+    expect(orderedEntries().slice(0, 2)).toEqual(['置顶对话', entry])
     await act(async () => context())
     await act(async () => menu().findByProps({ 'aria-label': '取消置顶' }).props.onClick())
     expect(builtinDirectoryPreferences.read('test:7001')[entry]).toBeUndefined()
+    expect(orderedEntries().indexOf(entry)).toBeGreaterThan(orderedEntries().indexOf('较早对话'))
     expect(builtinDirectoryPreferences.read('test:7002')[entry]).toBeUndefined()
     expect(mocks.callArkme.mock.calls.some(([op]) => String(op).includes('bot-pin') || String(op).includes('policy.set'))).toBe(false)
   })
 
   it('keeps Team entries available without phone binding and avoids duplicate official entries', async () => {
-    vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('document', { visibilityState: 'visible', querySelector: () => null, addEventListener: vi.fn(), removeEventListener: vi.fn() })
     let phoneMasked: string | undefined
     const conversation: TeamConversation = {
       key: 'official-team', ref: 'official-team-ref', side: 'external',

@@ -3,31 +3,47 @@ import { localDirectoryPreferences } from './local-directory-preferences.js'
 import { callArkme } from './api.js'
 import type { TeamAppOperation, TeamChannel, TeamConversation } from '../team-app-contract.js'
 import type { TeamEntryAction, TeamEntryReference, TeamEntryPreferencePage, TeamEntryPreferenceSnapshot } from '../team-entry-preference-contract.js'
+import type { ArkmeSourceItem } from '../types.js'
 import type { TeamConversationGroup } from './team-conversation-directory.js'
 
-export type TeamEntryTarget = { kind: 'folder'; group: TeamConversationGroup } | { kind: 'conversation'; conversation: TeamConversation }
+export type TeamGroupEntryTarget={kind:'group';source:ArkmeSourceItem;entryKey:string;entryRef:string;channel?:TeamChannel|undefined}
+export type TeamEntryTarget = TeamGroupEntryTarget | { kind: 'folder'; group: TeamConversationGroup } | { kind: 'conversation'; conversation: TeamConversation }
 type Preference = { pinned: boolean; dismissed: boolean }
 export type TeamDirectoryPreferences = Readonly<Record<string, Preference>>
 const empty: TeamDirectoryPreferences = Object.freeze({})
 export const teamConversationEntryKey = (c: TeamConversation) => c.entryKey ?? JSON.stringify(['conversation', c.side, c.channel.jotmoId, c.key])
 export const teamFolderEntryKey = (channel: TeamChannel | string) => typeof channel === 'string' ? JSON.stringify(['folder', channel]) : channel.entryKey ?? JSON.stringify(['folder', channel.jotmoId])
-export const teamEntryKey = (target: TeamEntryTarget) => target.kind === 'folder' ? teamFolderEntryKey(target.group.channel) : teamConversationEntryKey(target.conversation)
-export const teamEntryConversations = (target: TeamEntryTarget) => target.kind === 'folder' ? target.group.conversations : [target.conversation]
+export const teamEntryKey = (target: TeamEntryTarget) => target.kind==='group'?target.entryKey:target.kind === 'folder' ? teamFolderEntryKey(target.group.channel) : teamConversationEntryKey(target.conversation)
+export const teamEntryConversations = (target: TeamEntryTarget) => target.kind==='group'?[]:target.kind === 'folder' ? target.group.conversations : [target.conversation]
 export const teamEntryHidden = (preferences: TeamDirectoryPreferences, target: TeamEntryTarget) => preferences[teamEntryKey(target)]?.dismissed === true
 export const teamEntryPinned = (preferences: TeamDirectoryPreferences, target: TeamEntryTarget) => preferences[teamEntryKey(target)]?.pinned === true
 type Transport = (operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal) => Promise<TeamEntryPreferencePage>
-type State = { saved: Map<string, TeamEntryPreferenceSnapshot>; aliases: Map<string, string>; optimistic: Map<string, { token: number; value: Preference }>; view: TeamDirectoryPreferences; queue: Promise<unknown>; loading?: Promise<void> | undefined; loaded: boolean; error: string; notice: string }
+type State = { workspace: boolean; saved: Map<string, TeamEntryPreferenceSnapshot>; aliases: Map<string, string>; optimistic: Map<string, { token: number; value: Preference }>; view: TeamDirectoryPreferences; queue: Promise<unknown>; loading?: Promise<void> | undefined; loaded: boolean; error: string; notice: string }
 
 /** Server snapshots decide visibility. Browser memory only projects pending explicit user commands. */
 export class TeamDirectoryPreferenceStore {
   private states = new Map<string, State>()
   private listeners = new Set<() => void>()
   private token = 0
+  private workspaceAccounts = new Set<string>()
+  setWorkspaceAvailable(account: string, available: boolean) {
+    if (this.workspaceAccounts.has(account) === available) return
+    const previous = this.state(account)
+    if (available) this.workspaceAccounts.add(account); else this.workspaceAccounts.delete(account)
+    const next = this.state(account)
+    // Availability changes presentation scope, never the order of user commands.
+    next.queue = Promise.allSettled([next.queue, previous.queue]).then(() => {})
+    this.publish(next)
+  }
+  private send(state: State, operation: TeamAppOperation, params: Record<string, unknown>, signal?: AbortSignal) {
+    return this.transport(operation, { ...params, ...(state.workspace ? { scope: 'workspace' } : {}) }, signal)
+  }
   constructor(private transport: Transport, private operationId = () => crypto.randomUUID()) {}
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private state(account: string) {
-    let state = this.states.get(account)
-    if (!state) { state = { saved: new Map(), aliases: new Map(), optimistic: new Map(), view: empty, queue: Promise.resolve(), loaded: false, error: '', notice: '' }; this.states.set(account, state) }
+    const workspace = this.workspaceAccounts.has(account), scope = JSON.stringify([account, workspace])
+    let state = this.states.get(scope)
+    if (!state) { state = { workspace, saved: new Map(), aliases: new Map(), optimistic: new Map(), view: empty, queue: Promise.resolve(), loaded: false, error: '', notice: '' }; this.states.set(scope, state) }
     return state
   }
   read = (account: string): TeamDirectoryPreferences => account ? this.state(account).view : empty
@@ -57,11 +73,11 @@ export class TeamDirectoryPreferenceStore {
     state.view = view; for (const listener of this.listeners) listener()
   }
   private accept(state: State, page: TeamEntryPreferencePage, aliases: string[] = []) {
-    if (page.schemaVersion !== 1) throw new Error('服务端尚不支持团队入口同步')
+    if (page.schemaVersion !== 1 && page.schemaVersion!==2) throw new Error('服务端尚不支持团队入口同步')
     page.items.forEach((item, index) => {
       const old = state.saved.get(item.key)
       // Compare complete snapshots; never combine a newer preference with an older activity watermark.
-      if (!item.accessible || !old || item.version >= old.version && item.activitySeq >= old.activitySeq) state.saved.set(item.key, item)
+      if (!item.accessible || !old || item.version >= old.version && (page.schemaVersion===2 || item.activitySeq >= old.activitySeq)) state.saved.set(item.key, item)
       if (aliases[index]) { state.aliases.set(aliases[index]!, item.key) }
     })
     state.error = page.syncError ?? ''; if (page.migrationNotice) state.notice = page.migrationNotice; this.publish(state)
@@ -72,11 +88,11 @@ export class TeamDirectoryPreferenceStore {
     if (state.loading) return state.loading
     if (state.loaded && !force) return Promise.resolve()
     const run = state.queue.catch(() => {}).then(async () => {
-      if (!state.loaded) this.accept(state, await this.transport('team.app.entries.cached', { expectedAccountKey: account }))
+      if (!state.loaded) this.accept(state, await this.send(state, 'team.app.entries.cached', { expectedAccountKey: account }))
       let cursor: string | undefined
       const seen = new Set<string>()
       do {
-        const page = await this.transport('team.app.entries.list', { expectedAccountKey: account, ...(cursor ? { cursor } : {}) })
+        const page = await this.send(state, 'team.app.entries.list', { expectedAccountKey: account, ...(cursor ? { cursor } : {}) })
         this.accept(state, page)
         if (page.hasMore && (!page.nextCursor || seen.has(page.nextCursor))) throw new Error('入口偏好分页异常')
         cursor = page.hasMore ? page.nextCursor : undefined
@@ -88,7 +104,7 @@ export class TeamDirectoryPreferenceStore {
     state.queue = state.loading; return state.loading
   }
   private remember(target: TeamEntryTarget) {
-    const key = teamEntryKey(target), ref: TeamEntryReference = target.kind === 'folder' ? { kind: 'folder', ref: target.group.channel.teamRef } : { kind: 'conversation', ref: target.conversation.ref }
+    const key = teamEntryKey(target), ref: TeamEntryReference = target.kind==='group'?{kind:'group',ref:target.entryRef}:target.kind === 'folder' ? { kind: 'folder', ref: target.group.channel.teamRef } : { kind: 'conversation', ref: target.conversation.ref }
     return { key, ref }
   }
   pin(account: string, target: TeamEntryTarget, pinned: boolean) { return this.change(account, [target], pinned ? 'pin' : 'unpin') }
@@ -96,7 +112,7 @@ export class TeamDirectoryPreferenceStore {
   restoreTarget(account: string, target: TeamEntryTarget, publishedOnly = false): Promise<void> {
     // Existing conversation sequences include historical publications. A folder's
     // new activity counter may legitimately still be zero for that history.
-    if (publishedOnly && (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) <= 0) return Promise.resolve()
+    if (publishedOnly && target.kind!=='group' && (target.kind === 'folder' ? (target.group.hasPublished?1:target.group.latest?.lastSeq??0) : target.conversation.lastSeq) <= 0) return Promise.resolve()
     return this.command(account, this.restoreEntries(target), 'restore')
   }
   private restoreEntries(target: TeamEntryTarget) {
@@ -112,7 +128,12 @@ export class TeamDirectoryPreferenceStore {
   restoreNavigation(account: string, resolve: () => Promise<TeamEntryTarget | undefined>, signal?: AbortSignal): Promise<void> {
     return this.command(account, [], 'restore', async () => {
       const target = await resolve()
-      if (!target || (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) <= 0) return []
+      if (!target) return []
+      if (target.kind !== 'group') {
+        const conversation = target.kind === 'folder' ? target.group.latest : target.conversation
+        const published = target.kind === 'folder' ? target.group.hasPublished : target.conversation.lastSeq > 0
+        if (!published && !(conversation?.side === 'team' && conversation.memberInitiated === true)) return []
+      }
       return this.restoreEntries(target)
     }, signal)
   }
@@ -136,15 +157,15 @@ export class TeamDirectoryPreferenceStore {
         if (!entries.length) return
         params = { entries: entries.map(e => e.ref), expectedAccountKey: account }
         // Recheck before a new explicit command. The Host replays any persisted response-loss command first.
-        this.accept(state, await this.transport('team.app.entries.query', params, signal), entries.map(e => e.key))
+        this.accept(state, await this.send(state, 'team.app.entries.query', params, signal), entries.map(e => e.key))
         signal?.throwIfAborted()
         const chosen = action === 'restore' ? entries.filter(e => state.saved.get(state.aliases.get(e.key) ?? e.key)?.dismissed) : entries
         if (!chosen.length) return
         const changes = chosen.map(e => ({ target: e.ref, action, expectedVersion: state.saved.get(state.aliases.get(e.key) ?? e.key)?.version ?? 0 }))
-        this.accept(state, await this.transport('team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }, signal))
+        this.accept(state, await this.send(state, 'team.app.entries.change', { operationId: this.operationId(), changes, expectedAccountKey: account }, signal))
       } catch (error) {
         if (signal?.aborted) return
-        if (params) try { this.accept(state, await this.transport('team.app.entries.query', params, signal), entries.map(e => e.key)) } catch { /* Durable Host command remains frozen for reconnect. */ }
+        if (params) try { this.accept(state, await this.send(state, 'team.app.entries.query', params, signal), entries.map(e => e.key)) } catch { /* Durable Host command remains frozen for reconnect. */ }
         state.error = '入口设置同步未确认，请重试'
         throw error
       } finally {
@@ -160,7 +181,13 @@ export class TeamDirectoryPreferenceStore {
       entries.set(teamConversationEntryKey(c), { kind: 'conversation', ref: c.ref })
       if (c.side === 'team') entries.set(teamFolderEntryKey(c.channel), { kind: 'folder', ref: c.channel.teamRef })
     }
-    const rows = [...entries]
+    await this.reconcileReferences(account,[...entries],signal)
+  }
+  async reconcileTargets(account:string,targets:TeamEntryTarget[],signal:AbortSignal) {
+    await this.reconcileReferences(account,targets.map(t=>{const e=this.remember(t);return [e.key,e.ref]}),signal)
+  }
+  private async reconcileReferences(account:string, rows:[string,TeamEntryReference][],signal:AbortSignal) {
+    const state=this.state(account)
     for (let i = 0; i < rows.length; i += 100) {
       const batch = rows.slice(i, i + 100)
       // Authority denials have no preference version. Apply all reads and writes
@@ -168,7 +195,7 @@ export class TeamDirectoryPreferenceStore {
       // Queue one batch at a time, allowing user commands between large pages.
       const run = state.queue.catch(() => {}).then(async () => {
         signal.throwIfAborted()
-        const page = await this.transport('team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
+        const page = await this.send(state, 'team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
         signal.throwIfAborted(); this.accept(state, page, batch.map(e => e[0]))
       })
       state.queue = run
@@ -177,7 +204,14 @@ export class TeamDirectoryPreferenceStore {
   }
   missingPins(account: string, conversations: TeamConversation[]): TeamEntryReference[] {
     const present = new Set(conversations.flatMap(c => [teamConversationEntryKey(c), ...(c.side === 'team' ? [teamFolderEntryKey(c.channel)] : [])]))
-    return [...this.state(account).saved.values()].filter(s => s.accessible && s.pinned && !s.dismissed && !present.has(s.key)).map(s => s.target)
+    return [...this.state(account).saved.values()].filter(s => s.target.kind!=='group' && s.accessible && s.pinned && !s.dismissed && !present.has(s.key)).map(s => s.target)
+  }
+  workspacePins(account:string,folderKey:string,present:Set<string>):TeamEntryReference[] {
+    return [...this.state(account).saved.values()].filter(s=>s.folderKey===folderKey&&s.accessible&&s.pinned&&!s.dismissed&&!present.has(s.key)&&s.target.kind!=='folder').map(s=>s.target)
+  }
+  canPresentTarget(account:string,target:TeamEntryTarget) {
+    const state=this.state(account),key=teamEntryKey(target)
+    return state.saved.get(state.aliases.get(key)??key)?.accessible!==false && teamEntryConversations(target).every(c=>this.canPresent(account,c))
   }
 }
 export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) => callArkme(operation, params, signal))

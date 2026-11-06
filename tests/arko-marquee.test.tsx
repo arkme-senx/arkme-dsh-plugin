@@ -1,3 +1,4 @@
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { ArkmeArkoHistoryTools } from '../src/client/ArkmeArkoHistoryTools.js'
 import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { ArkmeMessageSelectionControl, messageSelectionStyles } from '../src/client/message-selection-presentation.js'
@@ -35,6 +36,7 @@ const item = (id: number, extra: Partial<ArkmeArkoHistoryItem> = {}): ArkmeArkoH
   messageActionConversationRef: 'session-88', messageActionCapabilities: { copyLink: true, forward: true }, ...extra,
 })
 beforeEach(() => {
+ arkoTimelineMemory.clear()
   arkoModelCache.clear()
   history = [item(1), item(2, { messageActionRef: undefined, messageActionConversationRef: undefined }), item(3, { role: 'divider' })]
   vi.stubGlobal('requestAnimationFrame', () => 0); vi.stubGlobal('cancelAnimationFrame', vi.fn())

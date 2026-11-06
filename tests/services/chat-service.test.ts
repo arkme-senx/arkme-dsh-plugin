@@ -3711,7 +3711,7 @@ it('projects the accepted Team snapshot on a native send receipt without trustin
     authenticatedChatPost: vi.fn(async () => ({ record_uid: 'record', rel_uid: 'rel', audit_status: 1, seq: 7, representation: raw })) }
   const codec = new GroupRepresentationCodec(runtime as never)
   const { name: _name, jotmoId: _id, ...selection } = (await codec.snapshot({ ...raw, name: '点击时的旧团队名' }, 42))!
-  const chat = new ChatService(runtime as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
+  const chat = new ChatService(runtime as never, {openSourceRef:async()=>({kind:'group_chat',ownerRef:'group'})} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
     { scheduleChatSessionProjection: vi.fn() } as never)
   const result = await chat.sendChatSourceTextRaw('source', 'group', '正文', 'record', 'rel', session,
     undefined, undefined, undefined, { representation: selection, sendAtMillis: 123 })
@@ -3725,7 +3725,7 @@ it('checks the frozen team identity when confirming a long article receipt', asy
  const {GroupRepresentationCodec}=await import('../../src/services/group-representation.js')
  const raw={team_id:'9223372036854775807',membership_kind:'member',membership_revision:3,group_join_at:9,name:'团队',jotmo_id:'team'}
  let acceptedRepresentation={...raw}
- const runtime={requireSession:async()=>({userId:42}),stateStore:{uniqueCode:async()=> 'team-article-receipt'},authenticatedChatPost:async()=>({accepted:true,seq:9,representation:acceptedRepresentation})}
+ const runtime={config,requireSession:async()=>({userId:42}),stateStore:{uniqueCode:async()=> 'team-article-receipt'},authenticatedChatPost:async()=>({accepted:true,seq:9,representation:acceptedRepresentation})}
  const codec=new GroupRepresentationCodec(runtime as never),snapshot=(await codec.snapshot(raw,42))!
  const {name:_name,jotmoId:_jotmo,...representation}=snapshot
  const chat=new ChatService(runtime as never,{openSourceRef:async()=>({kind:'group_chat',ownerRef:'chat'})} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never,{} as never)
@@ -3737,8 +3737,8 @@ it('checks the frozen team identity when confirming a long article receipt', asy
 
 
 describe('received Markdown long article detail', () => {
-  function fixture(kind = 'private_chat') {
-    const raw = { relation: { rel_uid: 'rel-snapshot-1' }, record: { payload: {
+  function fixture(kind = 'private_chat',proxy=false) {
+    const raw = { relation: { rel_uid: 'rel-snapshot-1',chat_session_uid:'chat-1',record_uid:'record-snapshot-1',record_owner_user_id:99,sender_user_id:99,seq:9 }, record: { status:1,payload: {
       record_uid: 'record-snapshot-1', owner_user_id: 99, creator_user_id: 99,
       template_kind: 2, display_kind: 1, title: '对方长文',
       text_content: '# 标题\n![图片](arkme-asset:image-1)',
@@ -3746,18 +3746,44 @@ describe('received Markdown long article detail', () => {
       version: 3, record_duration_millis: 100, edit_duration_millis: 20,
     } } }
     const runtime = {
+      config,
       stateStore: { uniqueCode: async () => 'snapshot-test-signing-key' },
       requireSession: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }),
       authenticatedChatPost: vi.fn(async () => ({ item: raw })),
       authenticatedPost: vi.fn(),
     }
     const media = { richContentBlocks: vi.fn(() => [{ kind: 'image', fileAssetUid: 'image-1', mediaRef: 'controlled' }]), recordMediaUnavailable: () => false }
-    const source = { openSourceRef: async () => ({ kind, ownerRef: 'chat-1' }) }
+    const frame={accessRef:'private-frame',teamId:'42',membershipKind:'member' as const,membershipRevision:7,groupMembershipUid:'admission',groupMembershipRevision:1,visibleFromSeq:9}
+    const source = { openSourceRef: async () => ({ kind, ownerRef: 'chat-1',...(proxy?{groupDelegation:frame}:{}) }),sourceScopeKey:async()=> 'team-source-scope' }
     const record = new RecordService(runtime as never, media as never, source as never)
     const chat = new ChatService(runtime as never, source as never, {} as never, media as never, record, {} as never, {} as never, {} as never, {} as never)
-    const actionRef = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99, displayKind: 1 })
+    const actionRef = snapshotActionRef({ senderUserId: 99, recordOwnerUserId: 99, displayKind: 1,...(proxy?{audienceKey:'team-source-scope'}:{}) })
     return { chat, runtime, raw, actionRef, media }
   }
+  it('keeps delegated Markdown images on exact approved source media and carries its frame',async()=>{
+    const x=fixture('group_chat',true)
+    await x.chat.longArticleDetail('source','record-snapshot-1',undefined,x.actionRef)
+    expect(x.media.richContentBlocks).toHaveBeenCalledWith(x.raw,42,[],expect.objectContaining({accessRef:'private-frame',chatSessionUid:'chat-1',relationUid:'rel-snapshot-1',recordOwnerUserId:99,recordUid:'record-snapshot-1',version:3,audienceKey:'team-source-scope'}))
+    expect(x.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/detail',expect.anything(),expect.anything(),undefined,expect.objectContaining({chatAccessRef:'private-frame'}))
+    expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
+  })
+  it('reads an authors own delegated article through the mounted source even without a preexisting action ref',async()=>{
+    const x=fixture('group_chat',true)
+    x.raw.record.payload.owner_user_id=42;x.raw.record.payload.creator_user_id=42;x.raw.relation.record_owner_user_id=42;x.raw.relation.sender_user_id=42
+    const detail=await x.chat.longArticleDetail('source','record-snapshot-1')
+    expect(detail.actionItem?.messageActionRef).toBeTruthy()
+    expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
+    expect(x.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/records/detail',expect.objectContaining({record_owner_user_id:42}),expect.anything(),undefined,expect.objectContaining({chatAccessRef:'private-frame'}))
+  })
+  it('never reads private capture context or owner media for a delegated authors own snapshot',async()=>{
+    const x=fixture('group_chat',true)
+    x.raw.record.payload.owner_user_id=42;x.raw.record.payload.creator_user_id=42;x.raw.relation.record_owner_user_id=42;x.raw.relation.sender_user_id=42
+    const action=snapshotActionRef({audienceKey:'team-source-scope',displayKind:1})
+    await x.chat.messageSnapshotDetail('source',action,{includeAttachments:true})
+    await x.chat.messageSnapshotDetail('source',action)
+    expect(x.runtime.authenticatedPost).not.toHaveBeenCalled()
+    expect(x.media.richContentBlocks).toHaveBeenCalledWith(x.raw,42,[],expect.objectContaining({accessRef:'private-frame',recordOwnerUserId:42,version:3}))
+  })
   it.each(['private_chat', 'group_chat'])('reads other authors through the authorized %s relation', async kind => {
     const x = fixture(kind)
     await expect(x.chat.longArticleDetail('source', 'record-snapshot-1', undefined, x.actionRef)).resolves.toMatchObject({

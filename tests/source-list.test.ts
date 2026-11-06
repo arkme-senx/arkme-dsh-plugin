@@ -89,6 +89,7 @@ describe('Arkme send-to-self source list', () => {
     expect(isArkmeChatDirectorySource(topic)).toBe(false)
     expect(isArkmeChatDirectorySource(privateChat)).toBe(true)
     expect(isArkmeChatDirectorySource(groupChat)).toBe(true)
+    expect(isArkmeChatDirectorySource({ ...groupChat, accessKind: 'team_delegation' })).toBe(false)
   })
 
   it('prefixes group chat previews when the backend marks an unread mention', () => {

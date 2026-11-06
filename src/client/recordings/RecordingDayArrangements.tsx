@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeRecordingArrangementPage } from '../../types.js'
 import { callArkme } from '../api.js'
 import { ArkmeArrangementContent } from '../ArkmeArrangementContent.js'
@@ -10,6 +10,15 @@ import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 import { arkmeUi } from '../ui-controller.js'
 import '../arrangement-board.css'
+
+const coverageMessages: Record<string, string> = {
+  unknown_origin: '部分历史安排无法确认来源日期，当前仅显示已确认属于当天的安排。',
+  extraction_incomplete: '部分总结尚未完成安排识别，当前仅显示已确认的安排。',
+  no_summary: '当天暂无可用于核对识别结果的已完成总结。',
+  summary_unavailable: '部分总结暂不可核验，尚不能确认当天安排已全部识别。',
+  source_unavailable: '部分安排的原总结暂不可核验，当前仅显示已确认的安排。',
+}
+const unknownCoverageMessage = '当天录音安排的识别完整性尚未确认，当前仅显示已确认的安排。'
 
 type Props = { dateStamp: number; accountScope: string; active: boolean; refreshRevision: string }
 
@@ -91,7 +100,7 @@ function RecordingArrangementDrawer({ dateStamp, page, loading, error, expanded,
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
       }
     }}>
-      <header><h2>{tr('识别安排')}</h2><button ref={close} type="button" aria-label={tr('关闭')} onClick={onClose}><X size={20} aria-hidden /></button></header>
+      <header><h2>{tr('识别安排')}</h2><ArkmeCloseButton ref={close} type="button" aria-label={tr('关闭')} onClick={onClose} /></header>
       <div className="arkme-recording-arrangements-body">
         <p className="arkme-recording-arrangements-date">{date}</p>
         <p>{tr('由当天录音总结识别，与安排板块保持同步。')}</p>
@@ -100,7 +109,9 @@ function RecordingArrangementDrawer({ dateStamp, page, loading, error, expanded,
         {error && <p role="alert">{tr('识别安排加载失败，请刷新重试。')}</p>}
         {page?.state === 'unavailable' && <p role="status">{tr('当天录音与安排的关联暂不可用，已有安排仍可在安排板块查看。')}</p>}
         {page?.state === 'processing' && <p role="status">{tr('录音安排仍在整理，当前数量可能不完整。')}</p>}
-        {page?.state === 'partial' && <p role="status">{tr('历史录音来源尚不完整，当前仅显示已确认的安排。')}</p>}
+        {page?.state === 'partial' && [...new Set(page.coverageReasons?.length
+          ? page.coverageReasons.map(reason => typeof coverageMessages[reason] === 'string' ? coverageMessages[reason]! : unknownCoverageMessage)
+          : [unknownCoverageMessage])].map(message => <p role="status" key={message}>{tr(message)}</p>)}
         {!loading && page?.state === 'ready' && page.total === 0 && <p role="status">{tr('当天录音尚未识别出安排')}</p>}
         <div className="arkme-day-arrangements">{page?.items.map(item => <article className="arkme-arrangement-card" key={item.arrangementRef}>
           <button type="button" className="arkme-day-arrangement-summary" aria-expanded={expanded === item.arrangementRef} onClick={() => onToggle(item.arrangementRef)}>

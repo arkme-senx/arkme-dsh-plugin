@@ -1,3 +1,6 @@
+import { AccountModelConnector } from './account-model-connector.js'
+import { registerAccountModelAdapter,registerAccountModelDefault } from './account-model-adapter.js'
+import type {} from '@deepseek-ai/dsh-host-directory-picker'
 import {createScreenshotEditorRoutes} from './screenshot-editor-route.js'
 import { RealtimeDictationSocket } from './realtime-dictation-socket.js'
 import { resolveHostPolicy } from './host-policy.js'
@@ -34,7 +37,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { registerDSHAgentInputRecordSync } from './dsh-agent-input-sync.js'
 import { createArkmeHostApi } from './host-api.js'
 import { readDirectoryPage } from './directory-reader.js'
-import { openDshHostPath } from './dsh-host-capabilities.js'
+import { openDshHostPath, pickDshHostDirectory } from './dsh-host-capabilities.js'
 import { ARKME_HARNESS_EMBED_PATH, ARKME_HARNESS_MODEL_CLIENT_PATH, ARKME_HARNESS_ONBOARDING_CLIENT_PATH, ARKME_HARNESS_TRAJECTORY_CLIENT_PATH, ARKME_HARNESS_SIDEBAR_CLIENT_PATH, ARKME_NATIVE_SELECTION_CLIENT_PATH } from './harness-embed-contract.js'
 import {
   createHarnessEmbedRouteHandler,
@@ -315,6 +318,7 @@ export function apply(ctx: Context, config: Config): void {
   const sessionStore = new ObservedArkmeSessionStore(rawSessionStore)
   const pendingSessionStore = createArkmeSessionStore(`${config.keychainServicePrefix}.${config.environment}.pending-binding`)
   const service = new ArkmeService({ ...config, fileStateDirectory: join(stateDirectory, 'files'), recordingImportDirectory: join(stateDirectory, 'recording-imports') }, sessionStore, localDatabase, fetch, pendingSessionStore, undefined, undefined, undefined, () => ctx.get('sessionQuery'))
+  service.attachExportDirectoryPicker(signal => pickDshHostDirectory(ctx, signal))
   const openApiMcpCredentialNamespace = `${config.keychainServicePrefix}.${config.environment}.openapi-mcp`
   const openApiMcpController = new ManagedOpenApiMcpController({
     mountMcp: config.openApiMcpEnabled,
@@ -487,7 +491,13 @@ export function apply(ctx: Context, config: Config): void {
   }, 'dsh-arkme: desktop account scope attestation')
   ctx.effect(() => service.accountScope.subscribe(() => { void service.deviceLockStatus().catch(() => undefined) }), 'dsh-arkme: desktop device lock lifecycle')
   ctx.inject(['llm'], modelCtx => {
+    const scope=async()=>{const session=await sessionStore.read();if(!session||!service.accountScope.ready())throw new Error('请先登录即我');return `${config.environment}:${session.userId}`}
+    const connector=new AccountModelConnector(modelCtx,service,config.intelligentBaseUrl,createArkmeSecureValueStore(`${config.keychainServicePrefix}.model-connector.${config.environment}`),join(stateDirectory, 'account-model-usage'),scope)
+    registerAccountModelDefault(modelCtx,service,createArkmeSecureValueStore(`${config.keychainServicePrefix}.model-default.${config.environment}`),scope)
+    modelCtx.effect(()=>connector.start(),'dsh-arkme: local account model connector')
+    modelCtx.on('llm/stream',(options,next)=>connector.observe(options,next))
     const funding = registerManagedTurnFunding(modelCtx, config.intelligentBaseUrl)
+ registerAccountModelAdapter(modelCtx,service,config.intelligentBaseUrl,async()=>{const session=await sessionStore.read();if(!session)throw new Error('请先登录即我');return `${config.environment}:${session.userId}`})
     registerManagedAiProvider(modelCtx, {
       intelligentBaseUrl: config.intelligentBaseUrl,
       credentialOwner: service,

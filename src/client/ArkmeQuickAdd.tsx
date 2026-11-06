@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { IconNewChatOutlineMedium, IconPlusOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { PhoneCall } from '@phosphor-icons/react/dist/icons/PhoneCall'
@@ -362,7 +363,7 @@ export function ArkmeGroupCreateDialog({ onClose, onSourceCreated, onBusyChange,
       {browsing && accountScope ? <PublicSocialDirectory accountScope={accountScope} mode="groups" onBack={() => setBrowsing(false)} backLabel="返回创建群聊" onSourceActivated={async source => { await onSourceCreated(source); onClose() }} /> : <>
       <div style={style.dialogHeader}>
         <h2 id="arkme-quick-add-title" style={style.heading}>{tr("创建群聊")}</h2>
-        <button data-arkme-feedback="neutral" type="button" style={style.close} aria-label={tr("关闭")} disabled={busy} onClick={onClose}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={style.close} aria-label={tr("关闭")} disabled={busy} onClick={onClose} />
       </div>
       <label style={style.label}>{tr("群聊名称")}<input
           ref={firstInput} style={style.input} value={name} disabled={busy}

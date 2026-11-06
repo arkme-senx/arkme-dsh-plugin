@@ -1,9 +1,11 @@
 import { arkmeAuthStore } from './auth-store.js'
 import { teamDirectoryPreferences, type TeamEntryTarget } from './team-directory-preferences.js'
-import { openTeamMessages, type TeamMessageIntent } from './team-messaging-events.js'
+import { invalidateTeamMessages, openTeamMessages, type TeamMessageIntent } from './team-messaging-events.js'
 import { callArkme } from './api.js'
 import { groupTeamConversations } from './team-conversation-directory.js'
 import type { TeamChannel, TeamConversation, TeamOpen, TeamPage } from '../team-app-contract.js'
+import type { TeamWorkspaceFolder } from '../team-group-contract.js'
+import { openedTeamConversations } from './team-opened-conversations.js'
 
 type PublicIntent = Extract<TeamMessageIntent, { kind: 'link' | 'official' }>
 type Opening = { account: string; controller: AbortController; promise: Promise<TeamOpen>; settled: boolean }
@@ -22,8 +24,19 @@ async function readOpen(account: string, intent: PublicIntent, signal: AbortSign
 }
 async function folderTarget(account: string, teamRef: string, signal: AbortSignal): Promise<TeamEntryTarget | undefined> {
   const page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef, side: 'team', limit: 1, expectedAccountKey: account }, signal)
-  const group = groupTeamConversations(page.items.filter(c => c.lastSeq > 0))[0]
-  return group ? { kind: 'folder', group } : undefined
+  const group = groupTeamConversations(page.items.filter(c => c.lastSeq > 0 || c.side === 'team' && c.memberInitiated === true))[0]
+  if (group) return { kind: 'folder', group }
+  try {
+    const folders = await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request', { expectedAccountKey: account, request: { operation: 'folders', teamRef } }, signal)
+    signal.throwIfAborted()
+    if (!Array.isArray(folders)) throw new Error('团队群文件夹暂时无法刷新')
+    // The shared Host owner resolves the opaque team identity for this account.
+    const workspace = groupTeamConversations([], true, folders)[0]
+    return workspace ? { kind: 'folder', group: workspace } : undefined
+  } catch (error) {
+    if ((error as { body?: { code?: string } })?.body?.code === 'team-workspace-unsupported') return undefined
+    throw error
+  }
 }
 function prepareRestore(account: string, intent: TeamMessageIntent): void {
   if (intent.kind === 'inbox') return
@@ -58,6 +71,19 @@ export function openTeamEntryMessages(intent: TeamMessageIntent, expectedAccount
   const navigation = { ...intent }
   if (account) prepareRestore(account, navigation)
   openTeamMessages(navigation)
+}
+
+/** Only a successful member-initiated contact publishes a zero-message directory row. */
+export function openConfirmedTeamContact(account: string, conversation: TeamConversation): boolean {
+  if (!account || currentAccount() !== account || conversation.side !== 'team' || !conversation.ref || !conversation.key || !conversation.channel?.jotmoId) return false
+  openedTeamConversations.retain(account, conversation)
+  // This is the explicit contact command, unlike mounting an empty pane or previewing a link.
+  void teamDirectoryPreferences.restoreTarget(account, { kind: 'conversation', conversation }).then(() => {
+    if (!teamDirectoryPreferences.canPresent(account, conversation)) openedTeamConversations.remove(account, conversation.key)
+  }).catch(() => { /* Preference IO cannot hold navigation; the preference owner exposes its error. */ })
+  invalidateTeamMessages(account)
+  openTeamMessages({ kind: 'conversation', conversation })
+  return true
 }
 
 /** Use the same opening result and preserve the panel's existing cancellation. */

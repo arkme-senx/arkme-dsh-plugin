@@ -163,7 +163,7 @@ const config: ArkmeServiceConfig = {
 }
 
 function unifiedResponse(sessionUid: string, data: { items: any[]; has_more?: boolean; next_before_seq?: number }) {
-  return { protocol_version: 2, chat_session_uid: sessionUid, complete: true,
+  return { protocol_version: 3, chat_session_uid: sessionUid, complete: true,
     sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'messages' ? 'ready' : 'not_applicable', item_count: source === 'messages' ? data.items.length : 0 })),
     timeline_items: data.items.map((payload, index) => {
       const relation = { ...payload.relation, rel_uid: payload.relation.rel_uid || payload.relation.record_uid }
@@ -241,21 +241,27 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetcher = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => json({ code: 200, data: { items: [{
-      revision_uid: 'rev-old', record_uid: 'record-1', revision_type: 1, edit_at: 1712990001000, text_content: 'old text',
+      revision_uid: 'rev-old', record_uid: 'record-1', revision_type: 1, version: 2, edit_at: 1712990001000, text_content: 'old text',
       content_payload: { media_refs: [{ file_asset_uid: 'old-image', sort_order: 0 }] },
       media_display_items: [{ file_asset_uid: 'old-image', file_kind: 1, file_name: 'old.png', preview_url: 'https://media.test/old.png' }],
     }], has_more: false } }))
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetcher)
-    const payload = Buffer.from(JSON.stringify({ version: 1, sourceKind: 'chat_relation', userId: 10001,
-      sourceOwnerRef: 'chat-1', chatSessionUid: 'chat-1', relationUid: 'rel-1', recordUid: 'record-1',
-      recordOwnerUserId: 20002, senderUserId: 20002, senderName: 'someone',
-    })).toString('base64url')
-    const action = `arkme-message-action-v1.${payload}.${createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')}`
+    const signedAction = (ownerUserId: number) => {
+      const payload = Buffer.from(JSON.stringify({ version: 1, sourceKind: 'chat_relation', userId: 10001,
+        sourceOwnerRef: 'chat-1', chatSessionUid: 'chat-1', relationUid: 'rel-1', recordUid: 'record-1',
+        recordOwnerUserId: ownerUserId, senderUserId: ownerUserId, senderName: 'author',
+      })).toString('base64url')
+      return `arkme-message-action-v1.${payload}.${createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')}`
+    }
+    const action = signedAction(10001)
     try {
       const result = await service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action)
       expect(result.items[0]).toMatchObject({ revisionUid: 'rev-old', content: { textContent: 'old text', contentBlocks: [{ fileAssetUid: 'old-image' }] } })
       expect(JSON.stringify(result)).not.toContain('https://media.test')
       expect(fetcher.mock.calls[0]?.[0]).toContain('/api/v1/chats/records/revisions/query')
+      const peerAction = signedAction(20002)
+      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction)).resolves.toMatchObject({ items: [{ revisionUid: 'rev-old' }] })
+      await expect(service.recordRevisionSnapshot(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction, 'rev-old')).rejects.toMatchObject({ code: 'record-snapshot-private' })
       const count = fetcher.mock.calls.length
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-2', 'other'), action)).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action + 'x')).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
@@ -2946,7 +2952,7 @@ describe('ArkmeService', () => {
           { user_id: 50005, nick_name: '公开用户昵称小赵' },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [
           {
             relation: { rel_uid: 'chat-relation-1', record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
@@ -4124,7 +4130,7 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'record-history-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 500, seq: 8 },
           record: {
@@ -4236,7 +4242,7 @@ describe('ArkmeService', () => {
         display_name: '海底捞',
         version: 2,
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'agent-record-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 1787036400000, seq: 11 },
           record: { status: 1, payload: { text_content: '缓存名字代发', creation_source: 1 } },
@@ -4549,7 +4555,7 @@ describe('ArkmeService', () => {
           { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
         ],
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, { items: [], has_more: false }) })
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, { items: [], has_more: false }) })
       throw new Error(`unexpected ${url}`)
     })
 
@@ -6311,7 +6317,7 @@ describe('ArkmeService', () => {
         const url = String(input)
         if (url === signedUrl) return new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } })
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
-        if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+        if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
           items: [{
             relation: { record_uid: 'record-media', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 100, seq: 3 },
             record: { status: 1, payload: {
@@ -6661,7 +6667,7 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
     const deleteBodies: unknown[] = []
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (url.endsWith('/timeline/unified/v2')) {
+      if (url.endsWith('/timeline/unified/v3')) {
         return json({ code: 200, data: unifiedResponse('chat-delete', { items, has_more: false }) })
       }
       if (url.endsWith('/api/v1/records/delete')) {

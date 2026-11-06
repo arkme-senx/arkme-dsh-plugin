@@ -31,10 +31,11 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_team_members_add',
   'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_outbound_open',
+  'arkme_team_groups_change',
   'arkme_team_notification_policy_set',
   'arkme_team_entry_preference_change',
   'arkme_reactions_write',
-  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply',
+  'arkme_world_reactions_write', 'arkme_team_world_write', 'arkme_world_reply', 'arkme_world_sound_write', 'arkme_world_suggestions_change',
   'arkme_dsh_annotations_write',
   'arkme_bot_conversation_pin',
   'arkme_direct_message_refusal_set',
@@ -57,7 +58,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_self_nickname_set',
   'arkme_group_join_restriction_set',
   'arkme_social_write',
-  'arkme_message_withdraw',
+  'arkme_message_withdraw', 'arkme_message_report',
   'arkme_contact_add',
   'arkme_team_join',
   'arkme_contact_private_chat_open',
@@ -106,6 +107,17 @@ function cleanArgument(value: unknown, maxLength: number): string {
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
   if (name === 'arkme_set_arko_reply_prompt') return `是否${args.reset === true ? '恢复官方' : '保存刚才编辑的'} Arko 回复指令（${cleanArgument(args.scene, 32)}）？保存后将对当前账号的后续回复生效。`
+  if (name === 'arkme_world_suggestions_change') {
+    const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
+    return request.action === 'create' ? `是否分析最近 ${Number(request.days)} 天的本人快记，生成仅自己可见的分享建议？模型分析会使用当前账号的模型额度，不会自动公开内容。`
+      : request.action === 'cancel' ? '是否停止这次分享建议分析？已发生的模型用量不受影响。' : '是否将这条分享建议设为暂不分享？原文会保留。'
+  }
+  if (name === 'arkme_world_sound_write') {
+    const request = JSON.parse(String(args.request_json)) as { action?: string }
+    return request.action === 'management'
+      ? '是否确认取消刚才这份声音摘录的公开发布？'
+      : '是否确认将已核对的原声选段和转写提交世界审核，并在通过后公开？'
+  }
   if (name === 'arkme_thought_reply') return `是否按原想法的可见范围发送这条回复：“${cleanArgument(args.text, 120)}”？私密续帖仅你可见。`
   if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'
   if(name==='arkme_codex_work_record_change')return '是否确认执行刚才选择的 Codex 操作？私人标记仅自己可见；分享链接或转发会向所选受众公开相应内容。'
@@ -125,6 +137,11 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_external_chat_share') return args.operation === 'unshare' ? '是否取消这段对外私聊的团队共享？双方原私聊仍会保留。' : '是否将这段私聊共享到选定团队？全体现任成员将能查看完整历史和后续消息，包括隐私锁定消息及附件。'
   if (name === 'arkme_team_entry_preference_change') return '是否确认修改刚才指定团队入口的本人置顶或移除设置？此设置会在你的设备同步，不删除消息、不退出团队，也不修改已读或免打扰。'
   if (name === 'arkme_team_outbound_open') return '是否使用刚才选定的团队与客户打开团队接待？只有之后发送首条消息才会触达客户。'
+  if(name==='arkme_team_groups_change') {
+    const command=args.command as Record<string,unknown>|undefined
+    const labels:Record<string,string>={join:'申请加入',leave:'退出',remove:'移除团队参与者',approve:'批准团队入群申请',reject:'拒绝团队入群申请'}
+    return `是否对刚才选定的群聊执行“${labels[String(command?.action)]??'团队入群操作'}”？团队加入后，当前有效同事可查看并参与团队本次入群以来的群聊。`
+  }
   if (name === 'arkme_team_notification_policy_set') return `是否确认${args.muted === true ? '开启' : '关闭'}刚才选定团队对话的个人消息免打扰？消息和未读记录仍会保留。`;
   if (name === 'arkme_team_members_add') return '确认将选定的同事直接加入团队？他们将获得团队共享内容的访问权限。';
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
@@ -174,7 +191,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_user_ban') return '是否确认封禁这个私聊用户？确认后将无法重新登录；Backend、聊天和录音请求立即受限；其他仅离线验 JWT 的服务中，旧 Access Token 最迟约 1 小时失效。'
   if (name === 'arkme_user_unban') return '是否确认解封这个私聊用户？确认后该用户可重新登录并恢复操作。'
   if (name === 'arkme_file_prepare') return `是否确认将“${cleanArgument(args.file_name, 100)}”暂存到本地？这一步不会上传或发送。`
-  if (name === 'arkme_files_send') return `是否确认向刚才指定的 Arkme 会话发送这 ${Array.isArray(args.file_refs) ? args.file_refs.length : 0} 个文件及附带文字？确认后开始上传。`
+  if (name === 'arkme_files_send') return `是否确认向刚才指定的 Arkme 会话发送这 ${Array.isArray(args.file_refs) ? args.file_refs.length : 0} 个文件及附带文字？确认后开始发送。`
   if (name === 'arkme_file_task') return cleanArgument(args.action, 30) === 'open-local'
     ? '是否确认使用本机默认应用打开这个 Arkme 文件？'
     : `是否确认执行文件任务操作“${cleanArgument(args.action, 30)}”？移除本地任务不会撤回已发送的消息。`
@@ -193,6 +210,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
       ? '是否确认禁止这位用户以后再次加入该群？此操作本身不会移除当前活跃成员。'
       : '是否确认解除这位用户的群聊加入限制？'
   }
+  if (name === 'arkme_message_report') return '是否确认向平台举报刚才指定的这条群消息？这不会删除原消息。'
   if (name === 'arkme_message_withdraw') {
     return '是否确认撤回这条群消息？撤回后所有群成员都无法再查看，但不会移除或限制发送者。'
   }

@@ -11,12 +11,14 @@ export type TeamAppOperation = `team.app.${
   | 'snapshot.capabilities' | 'snapshot.seal' | 'snapshot.read' | 'snapshot.receipt'
   | 'history' | 'history.chunk' | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
+  | 'feature-links.get' | 'feature-links.save'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
   | 'entries.cached' | 'entries.query' | 'entries.list' | 'entries.change'
   | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
   | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'visitor.world-target' | 'person.world-target' | 'people.remarks' | 'outbound.open'
-  | 'group.context' | 'group.join' | 'group.directory'
+  | 'group.context' | 'group.join' | 'group.directory' | 'group.request' | 'group.join-context' | 'group.command' | 'group.status' | 'group.participants' | 'group.approvals'
+  | 'workspace' | 'workspace.folders' | 'workspace.request' | 'sources.cards' | 'sources.occurrences' | 'sources.locate'
   | 'internal-group.prepare'
   | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
   | 'world.view'
@@ -42,6 +44,10 @@ export interface TeamChannel {
   canPause?: boolean
 }
 export interface TeamConversation {
+  sourceOnly?:boolean
+  hasGroupSources?:boolean
+	/** Backend-confirmed member contact, independent of first publication. */
+	memberInitiated?: boolean
   entryKey?: string
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
@@ -116,6 +122,7 @@ export interface TeamExtensionPage { message: TeamMessage; items: TeamMessage[];
 
 /** A scoped invalidation hint, never a read grant or raw backend locator. */
 export interface TeamMessageChangeHint {
+  canonicalChatSourceKey?:string
   kind: string
   messageRevision?: number
   conversationRevision?: number

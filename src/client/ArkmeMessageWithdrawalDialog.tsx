@@ -15,6 +15,7 @@ export function arkmeCanWithdrawTimelineMessage(
 
 export function ArkmeMessageWithdrawalDialog(props: {
   item: ArkmeTimelineItem
+  sourceRef?:string
   onClose: () => void
   onWithdrawn: (result: ArkmeMessageWithdrawalResult) => void
 }) {
@@ -40,6 +41,7 @@ export function ArkmeMessageWithdrawalDialog(props: {
     try {
       const result = await callArkme<ArkmeMessageWithdrawalResult>('source.message-withdraw', {
         messageWithdrawalRef,
+        ...(props.sourceRef===undefined?{}:{sourceRef:props.sourceRef}),
       }, controller.signal)
       if (mountedRef.current) props.onWithdrawn(result)
     } catch (caught) {
@@ -49,7 +51,7 @@ export function ArkmeMessageWithdrawalDialog(props: {
       submittingRef.current = false
       if (mountedRef.current) setSubmitting(false)
     }
-  }, [props.item.messageWithdrawalRef, props.onWithdrawn])
+  }, [props.item.messageWithdrawalRef, props.onWithdrawn, props.sourceRef])
 
   const preview = props.item.textContent.trim() || props.item.title.trim() || '非文本消息'
   return <ArkmeConfirmDialog

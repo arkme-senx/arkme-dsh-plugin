@@ -240,6 +240,9 @@ function directorySourceIdentity(source: ArkmeSourceItem): string {
 type DirectorySourceScalarField = Exclude<keyof ArkmeSourceItem, 'avatarRefs' | 'groupAvatar' | 'privateInteraction'>
 
 const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> = {
+  canonicalChatSourceKey:true,
+  accessKind:true,
+  teamWorkspace:true,
   privateNickname: true,
   directMessageAdmissionApplicable: true,
   topicKind: true,
@@ -649,7 +652,9 @@ export class ArkmeChatDirectoryStore {
     for (let attempt = 0; ; attempt += 1) {
       if (generation !== this.generation) return undefined
       try {
-        return await this.loadPage(cursor, force)
+        const page = await this.loadPage(cursor, force)
+        if (!page || !Array.isArray(page.items) || typeof page.hasMore !== 'boolean') throw new Error('目录返回异常，请重试')
+        return page
       } catch (error) {
         if (generation !== this.generation) return undefined
         const delay = ROOT_READ_RETRY_DELAYS_MS[attempt]
@@ -1314,8 +1319,8 @@ export class ArkmeInterwovenInvalidationStore {
   private readonly sourceSnapshots = new Map<string, { globalRevision: number; sourceRevision: number; snapshot: ArkmeInterwovenInvalidationSnapshot }>()
   private readonly listeners = new Set<() => void>()
   readonly getSnapshot = (): ArkmeInterwovenInvalidationSnapshot => this.snapshot
-  readonly getSnapshotForSource = (sourceKey: string): ArkmeInterwovenInvalidationSnapshot => {
-    const sourceRevision = this.sourceRevisions.get(sourceKey) ?? 0
+  readonly getSnapshotForSource = (sourceKey: string, canonicalChatSourceKey?:string): ArkmeInterwovenInvalidationSnapshot => {
+    const sourceRevision = Math.max(this.sourceRevisions.get(sourceKey) ?? 0, canonicalChatSourceKey ? this.sourceRevisions.get(canonicalChatSourceKey) ?? 0 : 0)
     const cached = this.sourceSnapshots.get(sourceKey)
     if (cached?.globalRevision === this.globalRevision && cached.sourceRevision === sourceRevision) return cached.snapshot
     const snapshot = { revision: Math.max(this.globalRevision, sourceRevision) }

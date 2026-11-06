@@ -6,8 +6,14 @@ import { TeamPublicCardDialog } from '../src/client/TeamPublicCardDialog.js'
 import { arkmeContactsTab } from '../src/client/redesign/contacts/contacts-tab-store.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
-const { call, open, changed } = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn(), changed: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: call }))
+const { call, open, changed, subscriptionState } = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn(), changed: vi.fn(), subscriptionState: vi.fn() }))
+vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: any[]) => {
+  if (operation === 'world.subscriptions' && args[0]?.action === 'state') {
+    const auth = arkmeAuthStore.getSnapshot().auth
+    return subscriptionState(...args, auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : '')
+  }
+  return call(operation, ...args)
+} }))
 vi.mock('../src/client/team-messaging-events.js', () => ({ openTeamMessages: open, invalidateTeamMessages: changed, subscribeTeamMessageChanges: () => () => {} }))
 let host: HTMLDivElement, root: Root
 const close = vi.fn()
@@ -15,10 +21,21 @@ const card = { name: '即我', jotmoId: 'our_team', contact: { state: 'available
 const mount = async (accountKey = 'prod:90') => act(async () => { arkmeAuthStore.setAuth({status:'authenticated',environment:'prod',userId:Number(accountKey.split(':')[1])}); root.render(<TeamPublicCardDialog accountKey={accountKey} jotmoId="our_team" onClose={close} />) })
 function button(label: string) { return [...document.querySelectorAll('button')].find(node => node.textContent === label)! }
 beforeEach(() => {
+  subscriptionState.mockReset().mockResolvedValue({ subscribed: false })
+  arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 90 })
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); call.mockReset().mockResolvedValue(card); open.mockReset(); close.mockReset(); changed.mockReset()
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers() })
+afterEach(async () => {
+  await act(async () => root.unmount())
+  for (const [params, signal, account] of subscriptionState.mock.calls) {
+    expect(account).not.toBe('')
+    expect(params).toMatchObject({ accountKey: account, action: 'state' })
+    expect(signal).toBeInstanceOf(AbortSignal)
+  }
+  expect(call.mock.calls.filter(([op]) => op === 'world.subscriptions')).toHaveLength(0)
+  host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers()
+})
 
 it('only opens the existing team-link flow on explicit contact, without sending or auto-opening while reading', async () => {
   await mount()
@@ -130,4 +147,12 @@ it('keeps the form after creation failure and ignores a late creation response a
   await mount('prod:91'); expect(signal.aborted).toBe(true)
   await act(async () => resolve({ teamRef: 'stale-team' }))
   expect(navigate).not.toHaveBeenCalled(); expect(changed).not.toHaveBeenCalled()
+})
+
+it('uses the exact Team reference for group participants when the public handle has changed',async()=>{
+ call.mockResolvedValue({...card,jotmoId:'new_team'})
+ await act(async()=>root.render(<TeamPublicCardDialog accountKey="prod:90" teamRef="exact-team-reference" jotmoId="old_team" onClose={close}/>))
+ expect(call.mock.calls[0]![1]).toEqual({expectedAccountKey:'prod:90',jotmoId:'old_team',teamRef:'exact-team-reference'})
+ expect(document.body.textContent).toContain('@new_team')
+ expect(button('联系团队').disabled).toBe(false)
 })

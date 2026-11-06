@@ -2,6 +2,8 @@ import { act,create,type ReactTestRenderer,type ReactTestInstance } from 'react-
 import { afterEach,beforeEach,expect,it,vi } from 'vitest'
 import { CodexActivityPreview,CodexActivityLabel } from '../src/client/redesign/contacts/CodexActivityPreview.js'
 import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCodexActivity } from '../src/client/redesign/contacts/use-codex-activity.js'
+import { codexActivityAtMillis } from '../src/client/redesign/contacts/codex-activity.js'
 
 const api=vi.hoisted(()=>vi.fn())
 vi.mock('../src/client/api.js',()=>({callArkme:api}))
@@ -74,4 +76,20 @@ it('does not show completed when source state is unknown',()=>{
   }]}}/>)})
   expect(text(renderer!.root)).toBe('任务状态待核实')
   expect(renderer!.root.findByType(StateDot).props.state).toBe('warning')
+})
+
+it('retains verified time across incomplete or failed reads, but retires it on a complete empty catalog',async()=>{
+  function Time(){const snapshot=useCodexActivity('prod:11',11,true);return <output>{codexActivityAtMillis(snapshot)}</output>}
+  const original=tasks[0]!.updatedAt
+  await act(async()=>{renderer=create(<Time/>)} )
+  expect(text(renderer!.root)).toBe(String(original))
+  api.mockResolvedValue({self,localOnly:false,installations:[],tasks:[],cloud:{status:'offline',pending:0,blocked:0,page:1}})
+  await act(async()=>{await vi.advanceTimersByTimeAsync(10_000)})
+  expect(text(renderer!.root)).toBe(String(original))
+  api.mockRejectedValue(Error('offline'))
+  await act(async()=>{await vi.advanceTimersByTimeAsync(10_000)})
+  expect(text(renderer!.root)).toBe(String(original))
+  api.mockResolvedValue({self,localOnly:true,installations:[],tasks:[]})
+  await act(async()=>{await vi.advanceTimersByTimeAsync(10_000)})
+  expect(text(renderer!.root)).toBe('0')
 })

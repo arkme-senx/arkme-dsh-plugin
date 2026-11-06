@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import type { ArkmeExtensionSource } from '../extensions/types.js'
@@ -12,7 +13,7 @@ export function ArkmeExtensionShareDialog({ url, notice, onClose, onCopy }: {
     <section style={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="arkme-extension-share-title">
       <header style={styles.header}>
         <h3 id="arkme-extension-share-title" style={styles.title}>{tr("分享扩展")}</h3>
-        <button type="button" style={styles.close} aria-label={tr("关闭分享弹窗")} onClick={onClose}>×</button>
+        <ArkmeCloseButton type="button" style={styles.close} aria-label={tr("关闭分享弹窗")} onClick={onClose} />
       </header>
       <div style={styles.label}>{tr("网页链接")}</div>
       <div style={styles.linkRow}>

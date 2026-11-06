@@ -4,7 +4,7 @@ import { ArkmePluginError, ArkmeUpstreamResponseError } from './service.js'
 import type { StateStore } from './service.js'
 import type { TeamEntryReference, TeamEntryPreferencePage, TeamEntryPreferenceSnapshot, TeamEntryAction } from '../team-entry-preference-contract.js'
 
-type WireEntry = { entry_kind: 'team_folder' | 'team_conversation'; team_id: RecordOwnerId; conversation_uid?: string; side?: 'team' | 'external' }
+type WireEntry = { entry_kind: 'team_folder' | 'team_conversation' | 'team_group'; team_id: RecordOwnerId; group_uid?:string; conversation_uid?: string; side?: 'team' | 'external' }
 type WireSnapshot = { entry: WireEntry; accessible: boolean; pinned: boolean; dismissed: boolean; version: number; activity_seq: number }
 type WireCommand = { operation_id: string; changes: { entry: WireEntry; action: TeamEntryAction; expected_version: number }[] }
 type Saved = { snapshots: Record<string, WireSnapshot>; pending: Record<string, WireCommand> }
@@ -15,12 +15,13 @@ const text = (x: unknown) => typeof x === 'string' ? x : ''
 const integer = (x: unknown) => typeof x === 'number' && Number.isSafeInteger(x) && x >= 0
 const invalid = () => new ArkmePluginError('team-entry-invalid', '团队入口参数无效，请重新打开', false, 400)
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-export function teamEntryCloudKey(actor: number, kind: 'folder' | 'conversation', id: string | number, side = ''): string {
+export function teamEntryCloudKey(actor: number, kind: 'folder' | 'conversation' | 'group', id: string | number, side = ''): string {
   return createHash('sha256').update(JSON.stringify(['team-entry', actor, kind, String(id), side])).digest('hex')
 }
-const key = (actor: number, e: WireEntry) => teamEntryCloudKey(actor, e.entry_kind === 'team_folder' ? 'folder' : 'conversation', e.entry_kind === 'team_folder' ? e.team_id : e.conversation_uid!, e.side)
+const key = (actor: number, e: WireEntry) => teamEntryCloudKey(actor, e.entry_kind === 'team_group'?'group':e.entry_kind === 'team_folder' ? 'folder' : 'conversation', e.entry_kind === 'team_group'?`${e.team_id}:${e.group_uid}`:e.entry_kind === 'team_folder' ? e.team_id : e.conversation_uid!, e.side)
 function wireEntry(raw: unknown): WireEntry {
   const e = object(raw)
+  if(e.entry_kind==='team_group'&&recordOwnerId(e.team_id)!==0&&text(e.group_uid).trim()===e.group_uid&&text(e.group_uid).length>0&&text(e.group_uid).length<=512&&!e.conversation_uid&&!e.side)return {entry_kind:'team_group',team_id:recordOwnerId(e.team_id),group_uid:text(e.group_uid)}
   if (e.entry_kind === 'team_folder' && recordOwnerId(e.team_id) !== 0 && !e.conversation_uid && !e.side) return { entry_kind: 'team_folder', team_id: recordOwnerId(e.team_id) }
   if (e.entry_kind === 'team_conversation' && uuid.test(text(e.conversation_uid)) && ['team', 'external'].includes(text(e.side)) && (e.team_id === undefined || e.team_id === 0 || recordOwnerId(e.team_id) !== 0)) return { entry_kind: 'team_conversation', team_id: recordOwnerId(e.team_id), conversation_uid: text(e.conversation_uid), side: e.side as 'team' | 'external' }
   throw invalid()
@@ -40,16 +41,16 @@ export class TeamEntryPreferenceService {
     this.legacy.set(`${actor}:${key(actor, entry)}`, { entry, key: legacyKey })
     while (this.legacy.size > 10_000) this.legacy.delete(this.legacy.keys().next().value!)
   }
-  private async resolve(raw: unknown, actor: number): Promise<WireEntry> {
+  async resolve(raw: unknown, actor: number): Promise<WireEntry> {
     const e = object(raw)
-    if (e.kind !== 'folder' && e.kind !== 'conversation' || !text(e.ref)) throw invalid()
-    const v = await this.refs.open(e.kind === 'folder' ? 'team' : 'conversation', e.ref, actor)
-    return wireEntry(e.kind === 'folder' ? { entry_kind: 'team_folder', team_id: v.team_id } : { entry_kind: 'team_conversation', conversation_uid: v.conversation_uid, side: v.side })
+    if (!['folder','conversation','group'].includes(text(e.kind)) || !text(e.ref)) throw invalid()
+    const v = await this.refs.open(e.kind==='group'?'entry-group':e.kind === 'folder' ? 'team' : 'conversation', e.ref, actor)
+    return wireEntry(e.kind==='group'?{entry_kind:'team_group',team_id:v.team_id,group_uid:v.group_uid}:e.kind === 'folder' ? { entry_kind: 'team_folder', team_id: v.team_id } : { entry_kind: 'team_conversation', conversation_uid: v.conversation_uid, side: v.side })
   }
   private async present(actor: number, s: WireSnapshot): Promise<TeamEntryPreferenceSnapshot> {
-    const e = s.entry, kind = e.entry_kind === 'team_folder' ? 'folder' : 'conversation'
-    const ref = await this.refs.seal(kind === 'folder' ? 'team' : 'conversation', kind === 'folder' ? { team_id: e.team_id } : { conversation_uid: e.conversation_uid, side: e.side }, actor)
-    return { key: key(actor, e), target: { kind, ref }, accessible: s.accessible, pinned: s.pinned, dismissed: s.dismissed, version: s.version, activitySeq: s.activity_seq }
+    const e = s.entry, kind = e.entry_kind==='team_group'?'group':e.entry_kind === 'team_folder' ? 'folder' : 'conversation'
+    const ref = await this.refs.seal(kind==='group'?'entry-group':kind === 'folder' ? 'team' : 'conversation',kind==='group'?{team_id:e.team_id,group_uid:e.group_uid}: kind === 'folder' ? { team_id: e.team_id } : { conversation_uid: e.conversation_uid, side: e.side }, actor)
+    return { ...(e.side!=='external'&&e.team_id?{folderKey:teamEntryCloudKey(actor,'folder',e.team_id)}:{}),key: key(actor, e), target: { kind, ref }, accessible: s.accessible, pinned: s.pinned, dismissed: s.dismissed, version: s.version, activitySeq: s.activity_seq }
   }
   execute(operation: string, p: Record<string, unknown>, actor: number, environment: string, post: Post): Promise<TeamEntryPreferencePage> {
     const account = `${environment}:${actor}`
@@ -61,7 +62,16 @@ export class TeamEntryPreferenceService {
   private async run(operation: string, p: Record<string, unknown>, actor: number, account: string, post: Post): Promise<TeamEntryPreferencePage> {
     const storage = this.storage.teamEntryPreferenceState?.bind(this.storage)
     if (!storage) throw new ArkmePluginError('team-entry-storage-unavailable', '入口同步存储暂不可用', true, 503)
-    const raw = object(await storage(account)), saved: Saved = { snapshots: {}, pending: {} }
+    const workspace=p.scope==='workspace',protocol=workspace?2:1
+    // Commands created under the published private-entry protocol retain their
+    // endpoint and idempotency key when the workspace becomes available.
+    if (workspace && !operation.endsWith('.cached')) {
+      const privateState = object(await storage(account))
+      if (Object.keys(object(privateState.pending)).length) await this.run('team.app.entries.list', {}, actor, account, post)
+    }
+    const storeAccount=workspace?`${account}:workspace`:account
+    const upstream:Post=(path,body,read)=>post(workspace&&path!=='entry-preferences/import'?path.replace('entry-preferences/','entry-preferences/v2/'):path,body,read)
+    const raw = object(await storage(storeAccount)), saved: Saved = { snapshots: {}, pending: {} }
     for (const [id, v] of Object.entries(object(raw.snapshots))) { try { const s = wireSnapshot(v); if (id === key(actor, s.entry)) saved.snapshots[id] = s } catch { /* Disposable invalid cache never becomes a write. */ } }
     for (const [id, v] of Object.entries(object(raw.pending))) {
       const command = object(v)
@@ -77,20 +87,20 @@ export class TeamEntryPreferenceService {
       // Disposable read projections are bounded independently of the frozen command.
       const ids = Object.keys(saved.snapshots)
       for (let i = 0; i < ids.length - 4000; i++) delete saved.snapshots[ids[i]!]
-      return storage(account, saved)
+      return storage(storeAccount, saved)
     }
-    if (operation.endsWith('.cached')) return { schemaVersion: 1, items: await Promise.all(Object.values(saved.snapshots).map(s => this.present(actor, s))), hasMore: false, ...(Object.keys(saved.pending).length ? { syncError: '有入口设置尚未确认同步，可联网后核对。' } : {}) }
+    if (operation.endsWith('.cached')) return { schemaVersion: protocol, items: await Promise.all(Object.values(saved.snapshots).map(s => this.present(actor, s))), hasMore: false, ...(Object.keys(saved.pending).length ? { syncError: '有入口设置尚未确认同步，可联网后核对。' } : {}) }
     const accept = (rows: unknown) => {
       if (!Array.isArray(rows)) throw invalid()
       for (const raw of rows) {
         const s = wireSnapshot(raw), id = key(actor, s.entry), old = saved.snapshots[id]
-        if (!s.accessible || !old || s.version >= old.version && s.activity_seq >= old.activity_seq) saved.snapshots[id] = s
+        if (!s.accessible || !old || s.version >= old.version && (workspace || s.activity_seq >= old.activity_seq)) saved.snapshots[id] = s
       }
     }
     const send = async (command: WireCommand) => {
       try {
-        const data = await post('entry-preferences/change', command as unknown as Record<string, unknown>)
-        if (data.schema_version !== 1) throw invalid()
+        const data = await upstream('entry-preferences/change', command as unknown as Record<string, unknown>)
+        if (data.schema_version !== protocol) throw invalid()
         accept(data.items); delete saved.pending[command.operation_id]; await persist(); return data
       } catch (error) {
         if (error instanceof ArkmeUpstreamResponseError) {
@@ -113,13 +123,13 @@ export class TeamEntryPreferenceService {
       const command: WireCommand = { operation_id: text(p.operationId), changes }
       saved.pending[command.operation_id] = command; await persist()
       const data = await send(command)
-      return { schemaVersion: 1, items: await Promise.all((data.items as unknown[]).map(raw => this.present(actor, wireSnapshot(raw)))), hasMore: false }
+      return { schemaVersion: protocol, items: await Promise.all((data.items as unknown[]).map(raw => this.present(actor, wireSnapshot(raw)))), hasMore: false }
     }
     const entries = operation.endsWith('.query')
       ? Array.isArray(p.entries) && p.entries.length > 0 && p.entries.length <= 100 ? await Promise.all(p.entries.map(e => this.resolve(e, actor))) : (() => { throw invalid() })()
       : undefined
-    let data = await post(entries ? 'entry-preferences/query' : 'entry-preferences/list', entries ? { entries } : { cursor: p.cursor ? text((await this.refs.open('entry-cursor', p.cursor, actor)).cursor) : '', limit: 100 }, true)
-    if (data.schema_version !== 1 || !Array.isArray(data.items)) throw new ArkmePluginError('team-entry-unsupported', '服务端尚不支持团队入口跨端同步', false, 409)
+    let data = await upstream(entries ? 'entry-preferences/query' : 'entry-preferences/list', entries ? { entries } : { cursor: p.cursor ? text((await this.refs.open('entry-cursor', p.cursor, actor)).cursor) : '', limit: 100 }, true)
+    if (data.schema_version !== protocol || !Array.isArray(data.items)) throw new ArkmePluginError('team-entry-unsupported', '服务端尚不支持团队入口跨端同步', false, 409)
     let migrationNotice = ''
     if (entries && this.storage.localDirectoryPreferences) {
       const old = await this.storage.localDirectoryPreferences(account), imports: Record<string, unknown>[] = []
@@ -131,9 +141,9 @@ export class TeamEntryPreferenceService {
         if (s.entry.entry_kind === 'team_folder' && local.removal) migrationNotice = '旧文件夹移除记录无法确认历史新消息，已保留为可见，可重新移除。'
         imports.push({ entry: s.entry, pinned: local.pinned, ...(s.entry.entry_kind === 'team_conversation' && Number.isSafeInteger(legacySequence) && Number(legacySequence) <= s.activity_seq ? { dismissed_through: legacySequence } : {}) })
       }
-      if (imports.length) { await post('entry-preferences/import', { items: imports }); data = await post('entry-preferences/query', { entries }, true) }
+      if (imports.length) { await upstream('entry-preferences/import', { items: imports }); data = await upstream('entry-preferences/query', { entries }, true) }
     }
     accept(data.items); await persist()
-    return { schemaVersion: 1, items: await Promise.all((data.items as unknown[]).map(raw => this.present(actor, wireSnapshot(raw)))), hasMore: data.has_more === true, ...(text(data.next_cursor) ? { nextCursor: await this.refs.seal('entry-cursor', { cursor: text(data.next_cursor) }, actor) } : {}), ...(migrationNotice ? { migrationNotice } : {}) }
+    return { schemaVersion: protocol, items: await Promise.all((data.items as unknown[]).map(raw => this.present(actor, wireSnapshot(raw)))), hasMore: data.has_more === true, ...(text(data.next_cursor) ? { nextCursor: await this.refs.seal('entry-cursor', { cursor: text(data.next_cursor) }, actor) } : {}), ...(migrationNotice ? { migrationNotice } : {}) }
   }
 }

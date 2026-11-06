@@ -1,14 +1,17 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { UserCircle } from '@phosphor-icons/react/UserCircle'
+import { Cube } from '@phosphor-icons/react/Cube'
+import { HARNESS_MODELS_SETTINGS_OPEN, HARNESS_MODELS_SETTINGS_CLOSE } from '../harness-embed-contract.js'
+import { ArkmeModelSettings, type ModelSettingsTab } from './ArkmeModelSettings.js'
 import { ChartBar } from '@phosphor-icons/react/ChartBar'
 import { Database } from '@phosphor-icons/react/Database'
 import { Gear } from '@phosphor-icons/react/Gear'
 import { Info } from '@phosphor-icons/react/Info'
-import { X } from '@phosphor-icons/react/X'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
 import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
@@ -20,6 +23,7 @@ import settingsCss from './settings-dialog.css?inline'
 type Section = ArkmeSettingsSection | 'general' | 'about'
 const sections = [
   { id: 'arkme-account', label: '我的账户', Icon: UserCircle },
+  { id: 'arkme-models', label: '模型', Icon: Cube },
   { id: 'arkme-usage', label: '用量与额度', Icon: ChartBar },
   { id: 'arkme-data', label: '数据管理', Icon: Database },
   { id: 'general', label: '通用设置', Icon: Gear },
@@ -50,8 +54,8 @@ function CommonPreferences({ preferences }: { preferences: Preferences }) {
   </div>
 }
 
-export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect }: {
-  section: Section; preferences: Preferences; onClose(): void; onSelect(section: Section): void
+export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect, modelTab = 'official' }: {
+  section: Section; preferences: Preferences; onClose(): void; onSelect(section: Section): void; modelTab?: ModelSettingsTab
 }) {
   useArkmeLocale()
   const content = useRef<HTMLDivElement>(null)
@@ -65,10 +69,11 @@ export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect }:
         data-arkme-feedback="neutral" aria-current={section === item.id ? 'page' : undefined}
         data-modal-autofocus={section === item.id ? '' : undefined} onClick={() => onSelect(item.id)}><Icon size={20} aria-hidden /><span>{tr(item.label)}</span></button>)}</div></nav>
       <div className="arkme-settings-main">
-        <div className="arkme-settings-toolbar"><button type="button" className="arkme-settings-close" aria-label={tr('关闭')}
-          data-arkme-feedback="neutral" onClick={onClose}><X size={20} aria-hidden /></button></div>
+        <div className="arkme-settings-toolbar"><ArkmeCloseButton type="button" className="arkme-settings-close" aria-label={tr('关闭')}
+          data-arkme-feedback="neutral" onClick={onClose} /></div>
         <div className="arkme-settings-dialog-content" ref={content}>
         {section === 'arkme-account' && <ArkmeSettingsSurface />}
+        {section === 'arkme-models' && <ArkmeModelSettings initialTab={modelTab} />}
         {section === 'arkme-usage' && <ArkmeAccountUsageSettings />}
         {section === 'arkme-data' && <ArkmeDataManagementSettings />}
         {section === 'general' && <><CommonPreferences preferences={preferences} /><ArkmeSettingsSurface view="general" /></>}
@@ -81,12 +86,25 @@ export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect }:
 
 function SettingsHost({ preferences }: { preferences: Preferences }) {
   const [section, setSection] = useState<Section>()
+  const [modelTab, setModelTab] = useState<ModelSettingsTab>('official')
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const account = auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined
-  useEffect(() => arkmeUi.bindSettingsOpener(next => setSection(next ?? 'arkme-account')), [])
+  useEffect(() => arkmeUi.bindSettingsOpener(next => { setModelTab('official'); setSection(next ?? 'arkme-account') }), [])
+  useEffect(() => {
+    const open = (event: Event) => {
+      if ((event as CustomEvent<{accountScope?: string}>).detail?.accountScope !== account || !account) return
+      setModelTab('custom'); setSection('arkme-models')
+    }
+    const close = (event: Event) => {
+      if ((event as CustomEvent<{accountScope?: string}>).detail?.accountScope === account && account) setSection(undefined)
+    }
+    document.addEventListener(HARNESS_MODELS_SETTINGS_OPEN, open)
+    document.addEventListener(HARNESS_MODELS_SETTINGS_CLOSE, close)
+    return () => { document.removeEventListener(HARNESS_MODELS_SETTINGS_OPEN, open); document.removeEventListener(HARNESS_MODELS_SETTINGS_CLOSE, close) }
+  }, [account])
   useEffect(() => { setSection(undefined) }, [account])
   return section === undefined ? null : <ArkmeSettingsDialog section={section} preferences={preferences}
-    onSelect={setSection} onClose={() => setSection(undefined)} />
+    modelTab={modelTab} onSelect={next => { setModelTab('official'); setSection(next) }} onClose={() => setSection(undefined)} />
 }
 
 export function installArkmeSettingsDialog(ctx: Context): () => void {

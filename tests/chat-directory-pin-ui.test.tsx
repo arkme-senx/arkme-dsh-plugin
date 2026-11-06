@@ -92,6 +92,28 @@ afterEach(async () => {
 })
 
 describe('conversation pin interaction', () => {
+  it('keeps cached conversations visible with a retry action when refreshing fails', async () => {
+    await act(async () => { renderer!.unmount() })
+    arkmeChatDirectory.activateAccount(undefined)
+    arkmeChatDirectory.activateAccount('test:7001')
+    arkmeChatDirectory.publish([source])
+    const original = mocks.callArkme.getMockImplementation()!
+    let unavailable = true
+    mocks.callArkme.mockImplementation(async (operation, ...args) => {
+      if (operation === 'sources.list' && unavailable) throw new Error('service unavailable')
+      return original(operation, ...args)
+    })
+    await act(async () => { renderer = create(<ArkmeNavigation />) })
+    expect(row()).toBeDefined()
+    const retry = renderer!.root.findAllByType('button').find(node => node.props.children === '重新加载')
+    expect(retry).toBeDefined()
+    unavailable = false
+    await act(async () => { retry!.props.onClick() })
+    expect(row()).toBeDefined()
+    expect(renderer!.root.findAllByType('button').some(node => node.props.children === '重新加载')).toBe(false)
+    expect(mocks.callArkme).toHaveBeenCalledWith('sources.list', expect.objectContaining({ refresh: true }))
+  })
+
   it('does not show Codex for a logged-in new user and shows it after confirmed enrollment',async()=>{
     const fallback=mocks.callArkme.getMockImplementation()!
     let bound=false
@@ -576,18 +598,20 @@ it('restores cached Bots on the first mount instead of clearing them in the acco
   expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(node => node.props['aria-label'] === 'Cached Bot')).toBe(true)
 })
 
-it('shows a blocking directory error only when there is no usable cached or remote content', async () => {
+it('shows failed directory recovery alongside cached chats and personal records', async () => {
   const failed = { revision: 101, phase: 'failed' as const, cachedAtMillis: 1, bots: [], visibility: [], error: 'offline' }
   await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [source], hasMore: true, projection: failed }) })
-  expect(JSON.stringify(renderer!.toJSON())).not.toContain('会话加载失败，请重试')
+  expect(row()).toBeDefined()
+  expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('会话加载失败，请重试')
   await act(async () => {
     arkmeChatDirectory.clear()
     arkmeChatDirectory.applyHostPage({ directory: 'root', items: [], hasMore: true, projection: failed })
   })
   expect(JSON.stringify(renderer!.toJSON())).toContain('会话加载失败，请重试')
   await act(async () => { renderer!.update(<ArkmeNavigation sendToSelfSource={{ ...source, kind: 'send_to_self', latestPreview: 'cached personal record' }} />) })
-  expect(JSON.stringify(renderer!.toJSON())).not.toContain('会话加载失败，请重试')
-  expect(JSON.stringify(renderer!.toJSON())).not.toContain('重新加载')
+  expect(JSON.stringify(renderer!.toJSON())).toContain('cached personal record')
+  expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('会话加载失败，请重试')
+  expect(renderer!.root.findAllByType('button').some(node => node.props.children === '重新加载')).toBe(true)
 })
 
 it('restores the scroll position before showing a retained conversation list', async () => {
