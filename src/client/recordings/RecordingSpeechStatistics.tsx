@@ -61,7 +61,7 @@ export function RecordingSpeechStatistics({ query, refreshRevision, onClose, onS
     closeLabel={tr('关闭说话统计')} onClose={onClose} className="speech-stats" style={{ position: 'fixed', top: 0, bottom: 0, right: 0, zIndex: 1001 }}
     widthPreferenceKey="arkme:speech-statistics-width:v1" resizeLabel={tr('调整说话统计宽度')}
     {...(term ? { onBack: () => { setSelected(''); setSourceError(''); sourceRequest.current?.abort(); setOpening('') }, backLabel: tr('返回词云') } : {})}>
-    <div className="speech-controls"><span className="speech-muted" style={{ marginRight: 'auto' }}>{tr('仅分析本人')}</span>
+    <div className="speech-controls"><span className="speech-muted" style={{ marginRight: 'auto' }}>{tr('仅分析本人')} · {tr('表达用法分类可能使用 AI 点数')}</span>
       <button disabled={owner.loading || owner.submitting} onClick={() => void owner.read()}>{tr('检查更新')}</button>
       <button disabled={!owner.state?.supported || owner.loading || owner.submitting || (owner.running && !owner.uncertain)} onClick={() => void owner.generate()}>{tr(owner.submitting ? '正在提交…' : owner.uncertain ? '核对提交' : owner.running ? '分析中' : result ? '重新分析' : '开始分析')}</button></div>
     {owner.error && <p role="alert" className="speech-error">{owner.error}</p>}

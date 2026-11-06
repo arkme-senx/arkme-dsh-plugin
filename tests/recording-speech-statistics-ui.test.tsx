@@ -30,6 +30,7 @@ it('shows no fabricated values and disables generation when unsupported', async 
 it('starts with the habit cloud; all-word counts and pending values remain separate', async () => {
   await render()
   expect([...host.querySelectorAll('.speech-cloud button')].map(x => x.textContent)).toEqual(['然后4', '那个2'])
+  expect(host.textContent).toContain('表达用法分类可能使用 AI 点数')
   expect(host.textContent).toContain('已分析本人语音 10 / 20 分钟')
   await act(async () => button('全部词频').click())
   expect([...host.querySelectorAll('.speech-cloud button')].map(x => x.textContent)).toEqual(['工作8', '那个6', '然后4'])

@@ -119,6 +119,7 @@ export function apply(ctx){void(async()=>{
   await page.getByRole('button', { name: '我的说话统计', exact: true }).click()
   await page.getByRole('button', { name: '全部词频', exact: true }).click()
   await page.getByRole('button', { name: /嗯，2 次/ }).waitFor()
+  await page.getByText('表达用法分类可能使用 AI 点数', { exact: false }).waitFor()
   const initial = await page.evaluate(async query => { const r = await fetch('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation: 'recordings.speech-statistics.state', params: query }) }); return r.json() }, { accountScope: `test:${fixture.user_id}`, date: fixture.query.date, timezone: fixture.query.time_zone })
   const initialResultId = initial.value.result.id
   const submitted = page.waitForResponse(r => r.url().endsWith('/arkme-self/api') && r.request().postDataJSON()?.operation === 'recordings.speech-statistics.create')
@@ -221,13 +222,27 @@ export function apply(ctx){void(async()=>{
   const lexical = state.result.terms.find(term => term.text === '那个')
   const lexicalPage = await sdk.speechStatisticsOccurrences({ ...query, resultId: state.result.id, termKey: lexical.key, mode: 'all' })
   const retainedSource = await sdk.speechStatisticsSource({ ...query, resultId: state.result.id, sourceRef: lexicalPage.items.at(-1).sourceRef, action: 'play' })
-  const retainedBytes = await page.evaluate(async url => { const r = await fetch(url); return { status: r.status, type: r.headers.get('content-type'), length: (await r.arrayBuffer()).byteLength } }, sdk.mediaUrl(retainedSource.playback.playbackRef))
-  assert.equal(retainedBytes.status, 200); assert.match(retainedBytes.type, /audio/); assert.ok(retainedBytes.length > 100)
+  const retainedUrl = sdk.mediaUrl(retainedSource.playback.playbackRef)
+  const retainedBytes = await page.evaluate(async url => { const r = await fetch(url), bytes = new Uint8Array(await r.arrayBuffer()); return { status: r.status, type: r.headers.get('content-type'), length: bytes.length, header: String.fromCharCode(...bytes.slice(0, 4)) } }, retainedUrl)
+  assert.equal(retainedBytes.status, 200); assert.match(retainedBytes.type, /audio/); assert.ok(retainedBytes.length > 100); assert.equal(retainedBytes.header, 'fLaC')
+  const retainedDecoded = await page.evaluate(async url => {
+    const audio = new Audio(); audio.preload = 'auto'
+    try {
+      await new Promise((done, fail) => {
+        const timer = setTimeout(() => fail(new Error('retained FLAC decode timed out')), 10000)
+        audio.addEventListener('loadeddata', () => { clearTimeout(timer); done() }, { once: true })
+        audio.addEventListener('error', () => { clearTimeout(timer); fail(new Error('retained FLAC decode failed')) }, { once: true })
+        audio.src = url; audio.load()
+      })
+      return Number.isFinite(audio.duration) && audio.duration > 0 && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+    } finally { audio.removeAttribute('src'); audio.load() }
+  }, retainedUrl)
+  assert.equal(retainedDecoded, true)
   sdk.dispose(); await assert.rejects(() => sdk.speechStatisticsState(query))
   const unsupported = createArkmeSdk({ fetchImpl: async () => Response.json({ ok: true, value: { contractVersion: 1, features: { recordingSpeechStatistics: 1 } } }) })
   await assert.rejects(() => unsupported.speechStatisticsCapabilities(), /v2/); unsupported.dispose()
   assert.ok(!calls.some(call => /strategy-comparison\/start|del-session|uploads\//.test(call.path)))
-  await writeFile(join(capture, 'acceptance.json'), JSON.stringify({ officialRuntime: '0.2.1-rc.2', artifact: resolve(artifact), profile, realSession: true, trustedConfirmation: true, packedSdkConsumer: true, originalOmittedPlayback: true, originalCrossMidnightLocation: true, originalDayWindow: located.value.target.window, existingTranscriptPlayback: true, uiCreateQueuedToReady: true, countsMatchServer: true, realModelAndAllowance: fixture.live_model === true, expiredOriginalRetainedPlayback: true, sameReceipt: state.result.id, browserErrors: errors, mediaEvents: await page.evaluate(() => window.__speechMediaEvents), calls: calls.map(call => call.path) }, null, 2))
+  await writeFile(join(capture, 'acceptance.json'), JSON.stringify({ officialRuntime: '0.2.1-rc.2', artifact: resolve(artifact), profile, realSession: true, trustedConfirmation: true, packedSdkConsumer: true, originalOmittedPlayback: true, originalCrossMidnightLocation: true, originalDayWindow: located.value.target.window, existingTranscriptPlayback: true, uiCreateQueuedToReady: true, countsMatchServer: true, billingDisclosure: true, realModelAndAllowance: fixture.live_model === true, expiredOriginalRetainedPlayback: true, sameReceipt: state.result.id, browserErrors: errors, mediaEvents: await page.evaluate(() => window.__speechMediaEvents), calls: calls.map(call => call.path) }, null, 2))
   console.log('SPEECH_INSTALLED_ACCEPTANCE_OK', capture)
 } catch (error) {
   if (page) { await writeFile(join(capture, 'failure.txt'), await page.locator('body').innerText()).catch(() => undefined); await page.screenshot({ path: join(capture, 'failure.png') }).catch(() => undefined) }
