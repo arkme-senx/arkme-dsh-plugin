@@ -20,3 +20,5 @@
 集成树 typecheck 通过；完整分片曾因资源协调中止，已完成片出现超时/性能失败和一次与并行构建争用同一 lib 的验收调度错误，待隔离复验，不能标为通过。macOS 为实际安装验收；现有安全存储支持 macOS/Windows，Windows 实机尚缺证据，Linux 单测 CI 不代表 Linux 登录运行平台。
 
 工作区本轮证据：`analysis/hpk05-release-review-20261106`；Meta active change 的 `review-release-20261106.md` 补充新问题、修复和运行边界，原 `review-20261106.md` 保留完整场景到代码映射。本轮修正 Relation 已解析官方选模被旧策略覆盖的问题；脚本改为原子发布并支持已有回执核验，不重复派发付费调用。
+
+本轮结论为暂不建议上线。最终远端核对另集成 Intelligent `1dcc0cc7`、Audio `0b1e347b`、Relation `09fc3eeb` 的已发布身份鉴权增量，涉及上述 HTTP 入口与 Intelligent SSE session lease，尚未完成该新集成树的测试。以上 Go 运行证据锁定初轮基线，不作为新鉴权基线已通过的证明；不新增本地 JWT 回退或绕开中间件。
