@@ -118,10 +118,10 @@ export async function generateNotes(evidence, { apiKey, model, fetchImpl = globa
       if (deadline.aborted) throw new Error('OpenAI generation deadline exceeded')
       try {
         response = await fetchImpl('https://api.openai.com/v1/responses', {
-          method: 'POST', signal: AbortSignal.any([deadline, AbortSignal.timeout(45_000)]),
+          method: 'POST', signal: AbortSignal.any([deadline, AbortSignal.timeout(2 * 60_000)]),
           headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ model, store: false, instructions: instructions + (repair ? '\n上次输出不合规，请依据证据重新压缩文字，禁止直接截断。' : ''),
-            input: JSON.stringify(input), max_output_tokens: 3000,
+            input: JSON.stringify(input), max_output_tokens: 3000, reasoning: { effort: 'none' },
             text: { format: { type: 'json_schema', name: 'arkme_release_notes', strict: true, schema } } }),
         })
         if (response.ok || (response.status !== 429 && response.status < 500)) break
