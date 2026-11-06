@@ -84,17 +84,22 @@ export class TeamSendReadFence {
 /** One authority check lifetime, shared by frozen local references and independent previews. */
 export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:ArkmeMediaReadState)=>void):()=>void {
   const controller=new AbortController()
-  let generation=0,available=false
+  let generation=0,available=false,checking=false
+  let request:AbortController|undefined
   const validate=()=>{
     if(controller.signal.aborted)return
     const token=++generation
+    request?.abort()
+    request=new AbortController()
+    checking=true
     available=false
     listener({status:'checking'})
-    if (!target.accountKey || !target.conversationRef || target.version<=0) { listener({status:'revoked'}); return }
-    void callArkme('team.app.preflight',{conversationRef:target.conversationRef,selections:[{messageRef:target.messageRef,version:target.version}],expectedAccountKey:target.accountKey},controller.signal)
-      .then(()=>{if(!controller.signal.aborted&&token===generation){available=true;listener({status:'available'})}})
+    if (!target.accountKey || !target.conversationRef || target.version<=0) { checking=false;listener({status:'revoked'}); return }
+    void callArkme('team.app.preflight',{conversationRef:target.conversationRef,selections:[{messageRef:target.messageRef,version:target.version}],expectedAccountKey:target.accountKey},request.signal)
+      .then(()=>{if(!controller.signal.aborted&&token===generation){checking=false;available=true;listener({status:'available'})}})
       .catch(error=>{
         if(controller.signal.aborted||token!==generation)return
+        checking=false
         const code=(error as {body?:{code?:string}})?.body?.code
         if (['team-message_recalled','team-not_accessible','team-version_conflict','team-reference-invalid','team-account-changed','login-required'].includes(code??'')) listener({status:'revoked'})
         else listener({status:'unavailable',retry:validate})
@@ -103,8 +108,8 @@ export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:
   const stop=subscribeTeamMessageChanges((account,receiptOnly,change)=>{
     if(account===target.accountKey&&!receiptOnly&&teamChangeAffectsSource(change,target))validate()
   })
-  const recover=()=>{if(!available)validate()}
+  const recover=()=>{if(!available&&!checking)validate()}
   window.addEventListener('online',validate);window.addEventListener('focus',recover)
   validate()
-  return ()=>{++generation;controller.abort();stop();window.removeEventListener('online',validate);window.removeEventListener('focus',recover)}
+  return ()=>{++generation;controller.abort();request?.abort();stop();window.removeEventListener('online',validate);window.removeEventListener('focus',recover)}
 }

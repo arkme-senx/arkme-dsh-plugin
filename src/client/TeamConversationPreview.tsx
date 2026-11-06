@@ -2,7 +2,8 @@ import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
 import type { TeamConversation, TeamTimeline } from '../team-app-contract.js'
-import { TeamMessageContent } from './TeamMessageContent.js'
+import { TeamMessageContent,teamAttachmentNavigationEntries } from './TeamMessageContent.js'
+import {ArkmeAttachmentNavigationProvider} from './attachment-preview-navigation.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
@@ -123,14 +124,16 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
     {page?.hasMore && !error && <button style={button} disabled={loading} onClick={() => setRequest(value => ({ before: page.beforeSeq, attempt: value.attempt + 1 }))}>{loading ? '正在加载…' : '加载更早消息'}</button>}
     {loading && !page && <p role="status">正在加载消息…</p>}
     {!loading && !error && !page?.messages.length && <p>暂无消息</p>}
+    <ArkmeAttachmentNavigationProvider scopeKey={JSON.stringify([accountKey,conversation.side,conversation.key])} entries={teamAttachmentNavigationEntries(page?.messages??[],conversation,accountKey)}>
     {page?.messages.map(message => <article key={message.key} style={{ display: 'flex', flexDirection: message.own ? 'row-reverse' : 'row', gap: 8, marginTop: 14 }}>
       <ArkmeUserAvatar size={30} label={message.sender.nickname} avatarRef={message.sender.imageRef} imageKey={message.sender.imageKey} imagePort={teamAvatarImages} />
       <div style={{ maxWidth: 'calc(100% - 38px)', minWidth: 0 }}>
         <div style={{ fontSize: 11, color: arkmeTheme.secondary, marginBottom: 4 }}>{message.sender.nickname} · {new Date(message.createdAt).toLocaleString()}</div>
         <div style={{ padding: '8px 10px', borderRadius: 10, background: message.own ? arkmeTheme.messageOwn : arkmeTheme.messageOther }}>
-          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent readOnly message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>消息已删除或暂不可用</span>}
+          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent readOnly attachmentNavigationKey={message.key} message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>消息已删除或暂不可用</span>}
         </div>
       </div>
     </article>)}
+    </ArkmeAttachmentNavigationProvider>
   </div>
 }

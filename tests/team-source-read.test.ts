@@ -107,3 +107,16 @@ it('rechecks an unknown reconnect, leaves healthy focus alone, and aborts the di
  stop();expect(call.mock.calls[0]![2].aborted).toBe(true)
  const count=call.mock.calls.length;invalidateTeamMessages('test:42');expect(call).toHaveBeenCalledTimes(count)
 })
+it('joins focus recovery while checking and aborts a superseded source read',async()=>{
+ const pending:Array<{resolve(value:unknown):void}>=[]
+ call.mockImplementation(()=>new Promise(resolve=>pending.push({resolve})))
+ const listener=vi.fn();stop=watchTeamSourceRead(target,listener)
+ window.dispatchEvent(new Event('focus'));window.dispatchEvent(new Event('focus'))
+ expect(call).toHaveBeenCalledTimes(1)
+ const previous=call.mock.calls[0]![2] as AbortSignal
+ invalidateTeamMessages(target.accountKey)
+ expect(call).toHaveBeenCalledTimes(2);expect(previous.aborted).toBe(true)
+ pending[0]!.resolve([]);await Promise.resolve()
+ expect(listener).toHaveBeenLastCalledWith({status:'checking'})
+ pending[1]!.resolve([]);await vi.waitFor(()=>expect(listener).toHaveBeenLastCalledWith({status:'available'}))
+})

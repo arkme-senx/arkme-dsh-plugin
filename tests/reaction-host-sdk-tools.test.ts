@@ -14,6 +14,44 @@ describe('reaction Host, SDK and Tool contracts', () => {
   await service.request({ action: 'query', accountKey: 'test:7', targets: [target] })
   expect(post.mock.calls[1]?.[4]).toBeUndefined()
  })
+ it('keeps an explicit deferred query interactive without changing owner identity or authorization', async () => {
+  const post = vi.fn(async () => ({ items: [] }))
+  const resolve = vi.fn(async () => wire)
+  const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never, resolve)
+  const input = { action: 'query' as const, accountKey: 'test:7', targets: [target], actorPresentation: 'deferred' as const, readPriority: 'interactive' as const }
+  const signal = new AbortController().signal
+  await service.request(input, signal)
+  expect(post).toHaveBeenCalledExactlyOnceWith('/api/v1/reactions/query', { targets: [wire] }, { userId: 7 }, signal, { lane: 'interactive-read' })
+  await expect(service.request({ ...input, accountKey: 'test:8' })).rejects.toThrow('账号')
+  expect(post).toHaveBeenCalledTimes(1)
+  resolve.mockRejectedValueOnce(new Error('invalid reference'))
+  await expect(service.request(input)).rejects.toThrow('invalid reference')
+  expect(post).toHaveBeenCalledTimes(1)
+ })
+ it.each(['background', 'write', null, true])('rejects invalid readPriority %s before any target or owner read', async readPriority => {
+  const post = vi.fn(), resolve = vi.fn()
+  const service = new ReactionService({ config: { environment: 'test' }, requireSession: async () => ({ userId: 7 }), authenticatedPost: post } as never, resolve)
+  await expect(service.request({ action: 'query', accountKey: 'test:7', targets: [target], actorPresentation: 'deferred', readPriority } as never)).rejects.toMatchObject({ code: 'reaction-query-invalid' })
+  expect(post).not.toHaveBeenCalled(); expect(resolve).not.toHaveBeenCalled()
+ })
+ it('passes the optional interactive read intent through the SDK and read Tool', async () => {
+  const input = { action: 'query' as const, accountKey: 'test:7', targets: [target], actorPresentation: 'deferred' as const, readPriority: 'interactive' as const }
+  const requests: { operation: string; params: unknown }[] = []
+  const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
+   const request = JSON.parse(String(init?.body)); requests.push(request)
+   return new Response(JSON.stringify({ ok: true, value: request.operation === 'provider.capabilities' ? { contractVersion: ARKME_PROVIDER_CONTRACT_VERSION, features: { reactionsV1: true } } : { items: [] } }), { headers: { 'content-type': 'application/json' } })
+  } })
+  await sdk.reactions(input)
+  expect(requests.at(-1)).toMatchObject({ operation: 'reactions', params: input })
+  const reactions = vi.fn(async () => ({ items: [] }))
+  const tools = createArkmeCoreToolDefinitions({ reactions } as never)
+  const read = tools.find(tool => tool.name === 'arkme_reactions_read')!
+  const exec = { signal: new AbortController().signal } as never
+  await read.execute({ request_json: JSON.stringify(input) }, exec)
+  expect(reactions).toHaveBeenCalledExactlyOnceWith(input, exec.signal)
+  await expect(read.execute({ request_json: JSON.stringify({ ...input, action: 'set' }) }, exec)).rejects.toThrow()
+  expect(reactions).toHaveBeenCalledTimes(1)
+ })
  it('hydrates only readable history in one batch and strips internal target and sender IDs', async () => {
   const row={event_uid:key,target:wire,expression:{text:'收到'},active:true,at:10,restricted:false,source_kind:'group_chat',sender_user_id:9,text:'[图片]'}
   const context=vi.fn(async()=>[{sourceName:'项目群',authorName:'张三'}])

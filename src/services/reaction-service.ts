@@ -45,6 +45,7 @@ export class ReactionService {
     const session = await this.runtime.requireSession()
     const accountKey = `${this.runtime.config.environment}:${session.userId}`
     if (!input || input.accountKey !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化，请重新打开表态', false)
+    if (input.action === 'query' && input.readPriority !== undefined && input.readPriority !== 'interactive') throw new ArkmePluginError('reaction-query-invalid', '表态读取优先级无效', false)
     // Mounted surfaces can include ordinary and Team targets, or both Team
     // perspectives. Partition by verified owner scope rather than mixing them
     // into a legacy endpoint or silently sharing an actor visibility policy.
@@ -115,7 +116,8 @@ export class ReactionService {
     const before = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${before.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
     const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`${this.endpoint?.prefix ?? '/api/v1/reactions/'}${path}`, body, session, signal,
-      input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' } : undefined)))
+      input.action === 'query' && input.readPriority === 'interactive' ? { lane: 'interactive-read' }
+        : input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' } : undefined)))
     if (this.endpoint && result.contract !== this.endpoint.contract) throw new ArkmePluginError('world-reactions-contract-invalid', '世界表态数据暂时无法读取，请刷新后重试', false, 502)
     const current = await this.runtime.requireSession()
     if (signal?.aborted || `${this.runtime.config.environment}:${current.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)

@@ -1,4 +1,4 @@
-import type { ArkmeFileAssetDisplayItem, ArkmeRecordSearchResult, ArkmeSearchRecordItem, ArkmeSearchSceneKind, ArkmeTimelineAroundPage, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeContentBlock, ArkmeMessageSnapshotDetail, ArkmeFileAssetDisplayItem, ArkmeRecordSearchResult, ArkmeSearchRecordItem, ArkmeSearchSceneKind, ArkmeTimelineAroundPage, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
 
 export type ConversationSearchScope = { kind: 'global' } | { kind: 'conversation'; sourceRef: string }
@@ -8,6 +8,11 @@ export interface ConversationSearchReadPort {
   search(scope: ConversationSearchScope, query: ConversationSearchQuery, cursor: string | undefined, signal: AbortSignal): Promise<ArkmeRecordSearchResult>
   readChatMessage(item: ArkmeSearchRecordItem, signal: AbortSignal): Promise<ArkmeTimelineItem>
   readOwnAssetDisplays(fileAssetUids: string[], signal: AbortSignal, onBatch: (items: ArkmeFileAssetDisplayItem[]) => void): Promise<void>
+}
+
+/** Dynamic-photo motion is already authorized with its cover, but has its own search asset identity. */
+export function conversationSearchAttachments(item: Pick<ArkmeTimelineItem, 'contentBlocks'>): ArkmeContentBlock[] {
+  return (item.contentBlocks ?? []).flatMap(block => block.dynamicPhoto?.motion ? [block, block.dynamicPhoto.motion] : [block])
 }
 
 export const conversationSearchReadPort: ConversationSearchReadPort = {
@@ -26,9 +31,21 @@ export const conversationSearchReadPort: ConversationSearchReadPort = {
       sourceRef: item.targetSource.sourceRef, itemUid: item.recordUid, recordOwnerUserId: item.recordOwnerUserId,
       beforeLimit: 1, afterLimit: 1,
     }, signal)
-    const target = page.items.find(value => value.itemUid === item.recordUid)
+    signal.throwIfAborted()
+    const target = page.items.find(value => value.itemUid === item.recordUid
+      && (value.recordOwnerUserId === undefined || String(value.recordOwnerUserId) === String(item.recordOwnerUserId)))
     if (target === undefined) throw new Error('原消息已删除或暂不可访问')
-    return target
+    const expected = [...(item.media ?? []), ...(item.files ?? []), ...(item.voice ? [item.voice] : [])]
+    const displayed = new Set(conversationSearchAttachments(target).filter(block => block.mediaRef).map(block => block.fileAssetUid))
+    if (!target.messageActionRef || expected.every(asset => displayed.has(asset.fileAssetUid))) return target
+    // Around pages may omit delivery URLs. Reuse the relation-bound attachment
+    // owner; another sender's assets must never use the viewer's private file API.
+    const snapshot = await callArkme<ArkmeMessageSnapshotDetail>('source.message-snapshot.detail', {
+      sourceRef: item.targetSource.sourceRef, actionRef: target.messageActionRef, includeAttachments: true,
+    }, signal)
+    signal.throwIfAborted()
+    if (snapshot.itemUid !== item.recordUid) throw new Error('原消息附件身份不匹配，请重试')
+    return { ...target, contentBlocks: snapshot.contentBlocks ?? [], ...(snapshot.mediaUnavailable === undefined ? {} : { mediaUnavailable: snapshot.mediaUnavailable }) }
   },
   async readOwnAssetDisplays(fileAssetUids, signal, onBatch) {
     const uids = [...new Set(fileAssetUids)]

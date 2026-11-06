@@ -970,6 +970,8 @@ V3 原生|V3 native
 暂无插件|No extensions
 该作者暂未发布公开插件|This creator has no public extensions yet
 重新加载|Reload
+查看|View
+媒体暂不可访问，点击重试|Media is temporarily unavailable. Click to retry
 该扩展的制品上传或发布尚未完成，目前没有可安装版本。|This extension has not finished uploading or publishing. No installable version is available.
 关于|About
 已安装版本|Installed version
@@ -1384,6 +1386,11 @@ TA 公开分享的内容|Publicly shared content
 修改备注|Edit contact name
 备注名|Contact name
 图片加载失败|Image failed to load
+图片加载中…|Loading image…
+附件上传中|Attachment is uploading
+附件上传失败|Attachment upload failed
+附件暂不可用，请重新加载|Attachment is unavailable. Reload to retry.
+附件已移除或暂不可用|The attachment was removed or is unavailable.
 正在加载 TA 的世界…|Loading their world…
 暂无公开快记|No public notes
 群内昵称|Group nickname
@@ -1606,6 +1613,9 @@ Arkme 客户端|Arkme app
 分享网页链接|Share web link
 文件快速查找|Find files
 复制图片|Copy image
+复制视频|Copy video
+当前客户端不支持复制视频|This client does not support copying videos
+复制已取消|Copy cancelled
 文件预览|File preview
 文件操作|File actions
 打开文件|Open file

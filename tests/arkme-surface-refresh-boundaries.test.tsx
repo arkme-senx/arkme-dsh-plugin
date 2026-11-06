@@ -30,6 +30,9 @@ import { arkmeChatDirectory, arkmeChatTimelineDelta, arkmeInterwovenInvalidation
 import { suspendArkmeVisibleReadIntent } from '../src/client/read-intent-visibility.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
+// The node renderer has no mounted image; model the gallery button's DOM query.
+const imagePreviewClick = { currentTarget: { querySelector: () => null } }
+
 describe('Arkme surface refresh boundaries', () => {
   let renderer: ReactTestRenderer | undefined
   beforeEach(() => {
@@ -286,7 +289,7 @@ describe('Arkme surface refresh boundaries', () => {
       await Promise.resolve()
     })
 
-    await act(async () => { renderer!.root.findByProps({ 'aria-label': '预览图片 overlay.png' }).props.onClick() })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '预览图片 overlay.png' }).props.onClick(imagePreviewClick) })
     expect(renderer.root.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(1)
     const updateReference = () => arkmeUi.updateSelectedSourceProjection({ ...source, sourceRef: 'source-overlay-new', latestSequence: 2, activeAtMillis: 2 })
     const appendMessage = () => arkmeChatTimelineDelta.publish([{ source: { ...source, sourceRef: 'source-overlay-new', latestSequence: 2 },
@@ -305,7 +308,7 @@ describe('Arkme surface refresh boundaries', () => {
       await Promise.resolve()
     })
     const detail = renderer.root.findByType(ArkmeTimelineDetailDrawer)
-    await act(async () => { detail.findByProps({ 'aria-label': '预览图片 overlay.png' }).props.onClick() })
+    await act(async () => { detail.findByProps({ 'aria-label': '预览图片 overlay.png' }).props.onClick(imagePreviewClick) })
     expect(detail.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(1)
     const detailReadCount = () => state.callArkme.mock.calls.filter(([operation]) => operation === 'source.message-extension.context' || operation === 'source.related-quick-notes.from-message').length
     const readsBeforeReferenceUpdate = detailReadCount()
@@ -316,7 +319,7 @@ describe('Arkme surface refresh boundaries', () => {
     expect(detail.findAll(node => node.props.role === 'dialog' && node.props['aria-label'] === 'overlay.png')).toHaveLength(1)
     expect(detailReadCount()).toBeGreaterThan(readsBeforeReferenceUpdate)
     await act(async () => { detail.findByProps({ 'aria-label': '关闭预览' }).props.onClick() })
-    await act(async () => { detail.findByProps({ 'aria-label': '预览图片 extension.png' }).props.onClick() })
+    await act(async () => { detail.findByProps({ 'aria-label': '预览图片 extension.png' }).props.onClick(imagePreviewClick) })
     await act(async () => {
       arkmeChatTimelineDelta.publish([{ source, items: [{ ...item, messageActionRef: 'action-updated', textContent: 'updated text' }] }])
       arkmeUi.updateSelectedSourceProjection({ ...source, sourceRef: 'source-extension-refresh', latestSequence: 4, activeAtMillis: 4 })

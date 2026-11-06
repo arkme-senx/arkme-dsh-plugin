@@ -563,28 +563,46 @@ export class SourceService {
     return { items, hasMore: page.hasMore, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }
   }
 
-  /** Resolve a bounded set in one directory walk, reusing viewer-scoped source projections. */
+  /** Resolve only missing identities, without scanning or hydrating unrelated directory pages. */
   async chatSourcesBySessionUids(uids: readonly string[], signal?: AbortSignal): Promise<Map<string, ArkmeSourceItem>> {
     const session = await this.runtime.requireSession()
+    const assertCurrent = async () => {
+      signal?.throwIfAborted()
+      const current = await this.runtime.requireSession()
+      signal?.throwIfAborted()
+      if (current.userId !== session.userId) throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+    }
     const pending = new Set(uids.filter(uid => uid.trim() !== ''))
     const result = new Map<string, ArkmeSourceItem>()
-    const collect = () => {
-      for (const uid of pending) {
-        const source = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
-        if (source !== undefined) { result.set(uid, source); pending.delete(uid) }
+    for (const uid of pending) {
+      const cached = this.cachedChatSource(session.userId, uid)
+      if (cached !== undefined) { result.set(uid, cached); pending.delete(uid) }
+    }
+    for (const batch of chunksOf([...pending].sort(), 50)) {
+      await assertCurrent()
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/display-snapshots', { chat_session_uids: batch }, session, signal, { lane: 'interactive-read' },
+      )
+      await assertCurrent()
+      const seen = new Set<string>()
+      const invalid = () => new ArkmePluginError('chat-display-snapshot-invalid', '会话展示信息不完整，请重试', true, 502)
+      if (!Array.isArray(data.items) || data.items.length > batch.length) throw invalid()
+      const bundles = data.items.map(raw => {
+        const bundle = objectValue(raw), uid = stringValue(objectValue(bundle.session).chat_session_uid).trim()
+        if (!batch.includes(uid) || seen.has(uid)) throw invalid()
+        seen.add(uid)
+        return { uid, bundle }
+      })
+      const resolved = new Map<string, ArkmeSourceItem>()
+      for (const { uid, bundle } of bundles) resolved.set(uid,
+        await this.chatSourceFromBundle(bundle, session, this.cachedChatSource(session.userId, uid), []))
+      await assertCurrent()
+      for (const [uid, source] of resolved) {
+        this.setChatSource(session.userId, uid, source)
+        result.set(uid, this.cachedChatSource(session.userId, uid)!)
       }
     }
-    collect()
-    let cursor: string | undefined
-    for (let pageIndex = 0; pending.size > 0 && pageIndex < 20; pageIndex += 1) {
-      if (signal?.aborted) throw signal.reason
-      const page = await this.listSources('root', { limit: 50,
-        ...(cursor === undefined ? {} : { cursor }), ...(signal === undefined ? {} : { signal }),
-      })
-      collect()
-      if (!page.hasMore || page.nextCursor === undefined) break
-      cursor = page.nextCursor
-    }
+    await assertCurrent()
     return result
   }
 

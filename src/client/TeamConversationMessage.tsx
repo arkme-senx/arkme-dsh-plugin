@@ -26,10 +26,11 @@ import { arkmeConversationMessageLayout as layout } from './conversation-message
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
-export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onRecall, onReceipts, onError, selecting = false, selected = false, onSelect, onToggle, onDetail, onReply, onOpenReply, accountKey, conversationKey, onAsk, askBusy, onCopyLink, onForward, located = false, onSnapshot, reactionSelfName, reactionSelfAvatarRef, resolveReactionActor }: {
+export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onRecall, onReceipts, onError, selecting = false, selected = false, onSelect, onToggle, onDetail, onReply, onOpenReply, accountKey, conversationKey, onAsk, askBusy, onCopyLink, onForward, located = false, onSnapshot, reactionSelfName, reactionSelfAvatarRef, resolveReactionActor,attachmentNavigationKey }: {
   message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; receiptStore: TeamReceiptStore; busy: boolean
   selecting?: boolean; selected?: boolean; onSelect?(): void; onToggle?(): void; onDetail?(): void
   accountKey?:string;conversationKey?:string
+  attachmentNavigationKey?:string|undefined
   reactionSelfName?: string | undefined; reactionSelfAvatarRef?: string | undefined
   resolveReactionActor?: ((actor: ReactionActor) => ReactionActor | undefined) | undefined
   located?: boolean; onSnapshot?(): void
@@ -95,7 +96,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
             const rect = event.currentTarget.getBoundingClientRect()
             setMenu(captureMessageContextMenu({ clientX: rect.left, clientY: rect.bottom, preventDefault: () => event.preventDefault(), stopPropagation: () => event.stopPropagation() }, event.currentTarget))
           } }}>
-          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.state === 'recalled' ? message.own ? '你撤回了一条消息' : '对方撤回了一条消息' : message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
+          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} attachmentNavigationKey={attachmentNavigationKey} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.state === 'recalled' ? message.own ? '你撤回了一条消息' : '对方撤回了一条消息' : message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
           {reactionTarget&&!selecting&&<ArkmeReactionSelections scope={accountKey!} target={reactionTarget}
             actorName={reactionSelfName || (message.own ? message.sender.nickname : '') || '我'} actorAvatarRef={reactionSelfAvatarRef}
             onAdd={()=>setReactionRequest('toggle')} />}

@@ -85,6 +85,8 @@ import { NATIVE_FORWARD_ENTRY, isNativeForwardCaller, nativeForwardPreview, type
 import { longArticleWindowBridge, openLongArticleWindow } from './long-article-window.js'
 import { attachmentPreviewBridge } from './attachment-preview-window.js'
 import { openSessionAttachmentPreview } from './ArkmeRichContent.js'
+import {ArkmeAttachmentNavigationProvider,isAttachmentNavigationBlock,type ArkmeAttachmentNavigationEntry} from './attachment-preview-navigation.js'
+import {retainPartialTimelineMedia} from './timeline-media.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { captureMessageContextMenu } from './message-text-selection.js'
@@ -2552,7 +2554,7 @@ export function ArkmeSurface({
   useEffect(() => authenticatedAccountKey ? reactionNotifications.acquire(authenticatedAccountKey) : undefined, [authenticatedAccountKey])
   const [reactionMenuRequest, setReactionMenuRequest] = useState<{ scope: string; occurrenceKey: string; toggle?: boolean }>()
   const [messageMenu, setMessageMenu] = useState<{
-    occurrenceKey: string
+    renderKey: string
     left: number
     top: number
     anchor: HTMLElement
@@ -6534,6 +6536,30 @@ export function ArkmeSurface({
   )
   const cachedWindowSyncFailed = conversationWindowRequested() && error === '' && timelineError !== '' && liveDisplayRows.length > 0
   const displayRows = liveDisplayRows
+  const attachmentScope=`${authenticatedAccountKey}:${conversationKey}`
+  const attachmentMessages=useRef<{scope:string;items:Map<string,ArkmeTimelineItem>}>({scope:'',items:new Map()})
+  const attachmentEntries=useMemo(()=>{
+    const previous=attachmentMessages.current.scope===attachmentScope?attachmentMessages.current.items:new Map<string,ArkmeTimelineItem>()
+    const current=new Map<string,ArkmeTimelineItem>(),entries:ArkmeAttachmentNavigationEntry[]=[]
+    if(sourceIsChat)for(const row of displayRows){
+      if(row.kind!=='message'||row.item.status!==1)continue
+      const key=conversationMessageRenderKey(row.item)
+      const item=reeditItems.has(row.item)?row.item:retainPartialTimelineMedia(previous.get(key),row.item)
+      current.set(key,item)
+      const blocks=[...(item.contentBlocks??[])].filter(isAttachmentNavigationBlock).sort((left,right)=>left.sortOrder-right.sortOrder)
+      if(blocks.length)entries.push({key,source:`${conversationKey}:${key}`,version:String(item.recordVersion??item.version??''),blocks,
+        ...(source&&item.messageActionRef?{load:async(signal:AbortSignal)=>{
+          const detail=await callArkme<ArkmeMessageSnapshotDetail>('source.message-snapshot.detail',{sourceRef:source.sourceRef,actionRef:item.messageActionRef,includeAttachments:true},signal)
+          signal.throwIfAborted()
+          const auth=arkmeAuthStore.getSnapshot().auth
+          if(auth?.status!=='authenticated'||`${auth.environment}:${auth.userId}`!==authenticatedAccountKey)throw new Error('账号已切换')
+          if(detail.itemUid!==item.itemUid)throw new Error('原消息附件身份不匹配，请重试')
+          return detail.contentBlocks??[]
+        }}:{})})
+    }
+    attachmentMessages.current={scope:attachmentScope,items:current}
+    return entries
+  },[attachmentScope,conversationKey,displayRows,reeditItems,sourceIsChat,source,authenticatedAccountKey])
   useLayoutEffect(() => {
     const pending = pendingConversationTargetLocateRef.current
     const body = bodyRef.current
@@ -6634,12 +6660,12 @@ export function ArkmeSurface({
   const messageMenuItem = useMemo(
     () => messageMenu === undefined
       ? undefined
-      : displayItems.find(item => arkmeTimelineOccurrenceKey(item) === messageMenu.occurrenceKey),
+      : displayItems.find(item => conversationMessageRenderKey(item) === messageMenu.renderKey),
     [displayItems, messageMenu],
   )
   useEffect(() => {
     const visibleOccurrenceKeys = new Set(displayItems.map(arkmeTimelineOccurrenceKey))
-    setMessageMenu(current => current === undefined || visibleOccurrenceKeys.has(current.occurrenceKey) ? current : undefined)
+    setMessageMenu(current => current === undefined || displayItems.some(item => conversationMessageRenderKey(item) === current.renderKey) ? current : undefined)
     setSnapshot(current => current === undefined || visibleOccurrenceKeys.has(arkmeTimelineOccurrenceKey(current.item)) ? current : undefined)
     setMessageReportItem(current => current === undefined || visibleOccurrenceKeys.has(arkmeTimelineOccurrenceKey(current)) ? current : undefined)
     setMessageWithdrawalItem(current => current === undefined || visibleOccurrenceKeys.has(arkmeTimelineOccurrenceKey(current)) ? current : undefined)
@@ -7128,7 +7154,9 @@ export function ArkmeSurface({
 
     setMemberMenu(undefined)
     setMessageMenu({
-      occurrenceKey: arkmeTimelineOccurrenceKey(item),
+      // The merge owner retains this key when an optimistic send gains its
+      // canonical timeline occurrence. Actions still read the latest item.
+      renderKey: conversationMessageRenderKey(item),
       // Keep a mounted bubble as the picker anchor after its context menu closes.
       anchor: anchor ?? host,
       ...point,
@@ -7439,17 +7467,13 @@ export function ArkmeSurface({
     forwardPickerScopeRef.current?.abort()
     forwardPickerScopeRef.current = undefined
   }, [forwardPickerOpen])
-  const toggleForwardTarget = useCallback(async (target: ArkmeSourceItem) => {
+  const toggleForwardTarget = useCallback((target: ArkmeSourceItem) => {
     if (forwardTargetPicker === undefined || messageActionBusy === 'forward') return
     const request = forwardPickerScopeRef.current
     const isCurrent = () => request !== undefined && !request.signal.aborted
       && forwardPickerScopeRef.current === request
       && arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) === authenticatedAccountKey
     const selected = forwardTargetPicker.selectedTargetKeys.includes(arkmeForwardTargetKey(target))
-    if (!selected && target.directMessageAdmissionApplicable === true) {
-      try { await requireDirectMessageSendAllowed(target, request?.signal) }
-      catch (error) { if (isCurrent()) showMessageActionStatus(errorMessage(error)); return }
-    }
     if (!isCurrent()) return
     if (!selected && forwardTargetPicker.selectedTargetKeys.length >= MAX_FORWARD_TARGET_SELECTION) {
       showMessageActionStatus(tr("最多选择 {v0} 个转发对象", { v0: String(MAX_FORWARD_TARGET_SELECTION) }))
@@ -8209,6 +8233,7 @@ export function ArkmeSurface({
                             <ArkmeMessageContent
                               key={`message-content:${conversationOverlayKey}`}
                               sessionAttachmentPreview
+                              attachmentNavigationKey={conversationMessageRenderKey(item)}
                               item={item}
                               mediaSelectionIsExplicit={reeditItems.has(item)}
                               onCallDetailOpen={videoUrl => { timelineActions.current.openNoteDetail(item, videoUrl) }}
@@ -8239,7 +8264,7 @@ export function ArkmeSurface({
                               }}
                             />
                             {!isSharedRecordingCard && <ArkmeTimelineAgentSourceBadge item={item} />}
-                            {canReact && authenticatedAccountKey && activeSelectMode === undefined && <ArkmeReactionSelections scope={authenticatedAccountKey} target={reactionTarget}
+                            {canReact && authenticatedAccountKey && <ArkmeReactionSelections scope={authenticatedAccountKey} target={reactionTarget}
                               actorName={selfProfile?.displayName.trim() || selfProfile?.nickname.trim() || '我'}
                               actorGroupNickname={source.kind === 'group_chat' ? selfConversationMember?.memberName : undefined}
                               actorAvatarRef={selfProfile?.avatarRef}
@@ -8876,7 +8901,7 @@ export function ArkmeSurface({
               <span style={styles.timelineSkeletonAvatar} />
               <span style={{ ...styles.timelineSkeletonBubble, width: `${width}%` }} />
             </div>)}</div>}
-            {displayRows.length > 0 && <ul ref={recordsRef} data-arkme-message-selection-scope data-arkme-message-selecting={activeSelectMode !== undefined} className={`arkme-conversation-records${timelineRevealKey === conversationKey
+            <ArkmeAttachmentNavigationProvider scopeKey={attachmentScope} entries={attachmentEntries}>{displayRows.length > 0 && <ul ref={recordsRef} data-arkme-message-selection-scope data-arkme-message-selecting={activeSelectMode !== undefined} className={`arkme-conversation-records${timelineRevealKey === conversationKey
               ? ' arkme-conversation-records-reveal'
               : ''}`} style={styles.records}>
 
@@ -8890,7 +8915,7 @@ export function ArkmeSurface({
                 {renderedMessageRows}
               </WindowedTimelineRows> : renderedMessageRows}
 
-            </ul>}
+            </ul>}</ArkmeAttachmentNavigationProvider>
             <div ref={newerSentinelRef} style={styles.sentinel} />
             {newerHasMore && newerLoadFailed && <div role="status" data-arkme-newer-load-error style={styles.notice}>
               {tr('暂时无法加载后续消息')}
@@ -8962,8 +8987,8 @@ export function ArkmeSurface({
             </button>
           </div>}
           {((activeSelectMode === undefined && askDsh.status) || messageActionStatus) && <div role="status" aria-live="polite" style={styles.messageActionToast}>{(activeSelectMode === undefined && askDsh.status) || messageActionStatus}</div>}
-          {/* Match the desktop input Stack: the editor stays mounted beneath the selection overlay. */}
-          <div ref={selectionStartAreaRef} className="arkme-conversation-input-slot" style={{ position: 'relative', flex: 'none', ...(activeSelectMode === undefined ? {} : { minHeight: askDsh.status ? 160 : 130 }) }}>
+          {/* The mounted composer and its info row own the selection overlay's height. */}
+          <div ref={selectionStartAreaRef} className="arkme-conversation-input-slot" style={{ position: 'relative', flex: 'none', ...(activeSelectMode !== undefined && archiveReadOnly && activeRecordReeditComposer === undefined ? { minHeight: askDsh.status ? 160 : 130 } : {}) }}>
           {archiveReadOnly && source !== undefined && <div
             aria-hidden={activeSelectMode !== undefined || undefined}
             {...(activeSelectMode === undefined ? {} : { inert: '' })}
@@ -9314,10 +9339,6 @@ export function ArkmeSurface({
             />}
           </ArkmeComposerCard>
           </div></footer>}
-          {activeSelectMode !== undefined && selectedMessageCount > 0 && !selectedMessagesSupportSnapshotBatch && <div
-            role="status" style={{ padding: '6px 16px', color: arkmeTheme.secondary, fontSize: 12 }}
-          >{selectedMessageCount > 100 ? `已选择 ${selectedMessageCount} 条消息，批量操作最多支持 100 条，请减少选择后操作`
-            : '选中的消息包含暂不支持复制链接或转发的内容，可取消这些消息后操作'}</div>}
           {activeSelectMode !== undefined && <ArkmeMessageSelectionBar style={styles.selectBar} count={selectedMessageCount} actions={[
             source !== undefined && isArkmeSelfWorkspaceSource(source) && {
               id: 'assign', label: tr('指定主题'), icon: <ArkmeSelectActionIcon kind="assign" size={20} />,
@@ -9340,6 +9361,10 @@ export function ArkmeSurface({
             { id: 'close', label: ARKME_MESSAGE_SELECT_ACTION_LABELS[3], icon: <ArkmeSelectActionIcon kind="close" size={18} />,
               disabled: messageActionBusy !== undefined, onSelect: exitMessageSelectMode },
           ]}>
+            {selectedMessageCount > 0 && !selectedMessagesSupportSnapshotBatch && <div
+              role="status" style={{ flexBasis: '100%', boxSizing: 'border-box', padding: '6px 16px', textAlign: 'center', color: arkmeTheme.secondary, fontSize: 12 }}
+            >{selectedMessageCount > 100 ? `已选择 ${selectedMessageCount} 条消息，批量操作最多支持 100 条，请减少选择后操作`
+              : '选中的消息包含暂不支持复制链接或转发的内容，可取消这些消息后操作'}</div>}
             {askDsh.status && <div role="status" aria-live="polite" style={{ flexBasis: '100%', textAlign: 'center', color: arkmeTheme.secondary, fontSize: 12, overflowWrap: 'anywhere' }}>{askDsh.status}</div>}
           </ArkmeMessageSelectionBar>}
           </div>
@@ -9350,7 +9375,7 @@ export function ArkmeSurface({
         {activeConversation && messageMenu !== undefined && messageMenuItem !== undefined && <ArkmeMessageContextMenu
           selectedText={messageMenu.selectedText} copyIcon={<ArkmeMessageActionIcon kind="copy" />}
           onCopySelection={text => { void copyMessageTextValue(text) }} onCopyMessage={() => { void copyMessageText(messageMenuItem) }}
-          point={{ x: messageMenu.left, y: messageMenu.top }} onClose={closeMessageMenu}
+          point={{ x: messageMenu.left, y: messageMenu.top }} pointAnchor={messageMenu.anchor} onClose={closeMessageMenu}
           actions={conversationMessageMenu([
             !!messageMenuItem.messageActionRef && authenticatedAccountKey !== undefined && activeSelectMode === undefined && { id: 'reaction', label: '表态', icon: <ReactionAddIcon />, onSelect: () => {
               setReactionMenuRequest({ scope: authenticatedAccountKey, occurrenceKey: arkmeTimelineOccurrenceKey(messageMenuItem) })
@@ -9702,7 +9727,7 @@ export function ArkmeSurface({
         onBackRelated={backMomentRelated}
         onRetryRelated={() => { void loadMomentRelated(selectedMoment) }}
         onRetryRelatedDetail={item => { void loadMomentRelatedDetail(item) }}
-        {...(detailGroupTarget === undefined ? {} : { onOpenGroup: () => {
+        {...(detailGroupTarget === undefined ? {} : { groupTarget: detailGroupTarget, onOpenGroup: () => {
           closeMomentDetail()
           arkmeUi.selectSource(detailGroupTarget)
         } })}

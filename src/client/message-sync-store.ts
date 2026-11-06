@@ -21,7 +21,7 @@ export class MessageSyncDisplay {
     if (progress.accountKey !== this.account || this.latest && progress.revision < this.latest.revision) return
     if (!Number.isSafeInteger(progress.total) || !Number.isSafeInteger(progress.completed) || progress.total < 0 || progress.completed < 0 || progress.completed > progress.total) return
     this.latest = progress
-    const active = (progress.phase === 'syncing' || progress.phase === 'paused') && progress.total > progress.completed
+    const active = (progress.phase === 'paused' || progress.phase === 'syncing' && progress.trigger !== 'realtime') && progress.total > progress.completed
     if (active) {
       if (this.hiding) { this.cancel(); this.hiding = false }
       if (this.view.visible) { this.publish({ visible: true, progress }); return }

@@ -1568,10 +1568,14 @@ export class MediaService {
       }, fileAssetUid === '' ? undefined : `original\0${fileAssetUid}`)
       return [{
         kind,
+        ...(stringValue(upload.attachment_uid) === '' ? {} : { attachmentUid: stringValue(upload.attachment_uid) }),
         ...(originalRef === undefined ? {} : { originalRef }),
         mediaRef: this.issueMediaRef(viewerUserId, {
           remoteUrl, mimeType, fileName, size: Math.max(0, Math.trunc(numberValue(item.size))),
-        }, kind === 'image' && fileAssetUid !== '' ? fileAssetUid : undefined),
+        }, fileAssetUid === '' ? undefined : kind === 'image' ? fileAssetUid : kind === 'video' ? `video\0${fileAssetUid}` : undefined,
+        // Refresh the grant in place so timeline refreshes do not restart video decoding.
+        // Preserve the existing video lifetime despite now having a stable identity.
+        kind === 'video' ? 30 * 60_000 : undefined),
         ...(fileAssetUid === '' ? {} : { fileAssetUid }),
         fileName,
         mimeType,

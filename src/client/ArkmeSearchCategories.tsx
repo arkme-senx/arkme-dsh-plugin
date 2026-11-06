@@ -45,20 +45,20 @@ export function searchDuration(seconds: number): string {
   if (value >= 3600) units.unshift(Math.floor(value / 3600))
   return units.map(unit => String(unit).padStart(2, '0')).join(':')
 }
-export function SearchMediaTile({ url, video, durationSec, name, onOpen, unavailable = false }: {
-  url?: string | undefined; video: boolean; durationSec?: number | undefined; name: string; onOpen(): void; unavailable?: boolean
+export function SearchMediaTile({ url, video, durationSec, name, onOpen, unavailable = false, onRetry, loading = false }: {
+  url?: string | undefined; video: boolean; durationSec?: number | undefined; name: string; onOpen(): void; unavailable?: boolean; onRetry?: () => void; loading?: boolean
 }) {
   useArkmeLocale()
   const [failed, setFailed] = useState(false)
   const [measured, setMeasured] = useState(0)
   useEffect(() => { setFailed(false); setMeasured(0) }, [url])
   const duration = durationSec || measured
-  return <button type="button" data-search-media-tile aria-label={`查看${video ? tr("视频") : tr("图片")} ${name}`} onClick={onOpen}
+  return <button type="button" data-search-media-tile disabled={loading} aria-busy={loading} aria-label={`${onRetry && (unavailable || failed) ? tr("重新加载") : tr("查看")}${video ? tr("视频") : tr("图片")} ${name}`} onClick={onRetry && (unavailable || failed) ? () => { setFailed(false); setMeasured(0); onRetry() } : onOpen}
     style={{ ...plain, position: 'relative', padding: 0, borderRadius: 0, overflow: 'hidden', aspectRatio: '1', minWidth: 0, background: arkmeTheme.subtle }}>
-    {url && !failed ? video
+    {!loading && url && !failed ? video
       ? <video src={url} muted playsInline preload="metadata" onError={() => setFailed(true)} onLoadedMetadata={event => { if (Number.isFinite(event.currentTarget.duration)) setMeasured(event.currentTarget.duration) }} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       : <img src={url} alt={name} loading="lazy" onError={() => setFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      : <span style={{ color: arkmeTheme.tertiary, fontSize: 11 }}>{unavailable || failed ? '点击查看原媒体' : tr("加载中…")}</span>}
+      : <span style={{ color: arkmeTheme.tertiary, fontSize: 11 }}>{!loading && (unavailable || failed) ? onRetry ? tr("媒体暂不可访问，点击重试") : '点击查看原媒体' : tr("加载中…")}</span>}
     {video && duration > 0 && <span style={{ position: 'absolute', left: 6, bottom: 8, height: 20, display: 'flex', alignItems: 'center', gap: 2, padding: '0 5px', borderRadius: 4, background: 'rgba(0,0,0,.4)', color: '#fff', fontSize: 11, fontWeight: 600 }}>
       <img src={assetUrl(play)} alt="" aria-hidden width={6} height={8} />{duration > 0 ? searchDuration(duration) : tr("视频")}
     </span>}

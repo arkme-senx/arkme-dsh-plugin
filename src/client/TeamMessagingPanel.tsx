@@ -44,7 +44,8 @@ import { RegionMarquee } from './selection/RegionMarquee.js'
 import { TeamMessageDetail } from './TeamMessageDetail.js'
 import { useTeamPersonNames } from './use-team-person-names.js'
 import { useTeamReactionActors } from './use-team-reaction-actors.js'
-import { TeamMessageContent, teamMessagePresentation, teamReplyPresentation, teamPendingReply } from './TeamMessageContent.js'
+import { TeamMessageContent, teamMessagePresentation, teamReplyPresentation, teamPendingReply,teamAttachmentNavigationEntries } from './TeamMessageContent.js'
+import {ArkmeAttachmentNavigationProvider} from './attachment-preview-navigation.js'
 import { arkmeMessageCopyText } from './message-copy-text.js'
 import { copyText } from './clipboard-text.js'
 import { AskDshIcon } from './AskDshIcon.js'
@@ -1134,9 +1135,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current); bottomVisibility.measure() }} aria-label={tr("团队消息记录")}>
       <div ref={recordsRef}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
+      <ArkmeAttachmentNavigationProvider scopeKey={JSON.stringify([accountKey,conversation.side,conversation.key])} entries={teamAttachmentNavigationEntries(displayedMessages,conversation,accountKey)}>
       {displayedMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(displayedMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
-        <TeamConversationMessage reactionSelfName={reactionActors.selfName} reactionSelfAvatarRef={reactionActors.selfAvatarRef} resolveReactionActor={reactionActors.resolveActor} accountKey={accountKey} conversationKey={conversation.key} message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
+        <TeamConversationMessage attachmentNavigationKey={m.key} reactionSelfName={reactionActors.selfName} reactionSelfAvatarRef={reactionActors.selfAvatarRef} resolveReactionActor={reactionActors.resolveActor} accountKey={accountKey} conversationKey={conversation.key} message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
           avatar={current.side === 'team' && !selection.ids
             ? visitorActions.avatar(<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />, m.side === 'external' ? undefined : m.sender)
             : <TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}
@@ -1155,6 +1157,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           {!task.cancelRequested && task.state === 'failed' && <button type="button" data-arkme-feedback="neutral" onClick={() => {void actOnTask(task,'cancel')}}>{tr('取消发送')}</button>}
         </ArkmeSendTaskStatus>)}
       </Fragment>)}
+      </ArkmeAttachmentNavigationProvider>
       <div ref={bottom} className="team-read-sentinel" />
       </div>
     </div>

@@ -8,6 +8,9 @@ import { ArkmeMemberRecordsPanel } from '../src/client/ArkmeChatMemberActions.js
 import type { ArkmeConversationMemberRecordMode } from '../src/types.js'
 import { ArkmeMediaPreview } from '../src/client/ArkmeRichContent.js'
 
+// The node renderer has no mounted image; model the gallery button's DOM query.
+const imagePreviewClick = { currentTarget: { querySelector: () => null } }
+
 it('keeps member history and its preview on reference rotation, but reloads a different query', async () => {
   vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), requestAnimationFrame: () => 1, cancelAnimationFrame: vi.fn() })
   vi.stubGlobal('document', { body: { style: {} } })
@@ -20,7 +23,7 @@ it('keeps member history and its preview on reference rotation, but reloads a di
     mode={mode} onClose={() => {}} />
   try {
     await act(async () => { view = create(render('old')) })
-    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick())
+    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick(imagePreviewClick))
     expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(1)
     const reads = api.call.mock.calls.length
     await act(async () => view!.update(render('new')))
@@ -29,14 +32,14 @@ it('keeps member history and its preview on reference rotation, but reloads a di
     await act(async () => view!.update(render('new', 'chat-a', 'member-b')))
     expect(api.call).toHaveBeenLastCalledWith('source.member-records', expect.objectContaining({ sourceRef: 'new', memberRef: 'member-b' }), expect.any(AbortSignal))
     expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
-    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick())
+    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick(imagePreviewClick))
     await act(async () => view!.update(render('other', 'chat-b', 'member-b')))
     expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
-    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick())
+    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick(imagePreviewClick))
     await act(async () => view!.update(render('other-new', 'chat-b', 'member-b', 'mentioned')))
     expect(api.call).toHaveBeenLastCalledWith('source.member-records', expect.objectContaining({ sourceRef: 'other-new', mode: 'mentioned' }), expect.any(AbortSignal))
     expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
-    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick())
+    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 photo.png' }).props.onClick(imagePreviewClick))
     api.call.mockRejectedValue(new ArkmeClientError({ code: 'chat-member-ref-stale', message: '该成员已不属于当前会话', retryable: false }))
     await act(async () => view!.update(render('revoked', 'chat-b', 'member-b', 'mentioned')))
     expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(0)
@@ -78,7 +81,7 @@ it('refreshes the loaded range atomically, retries a failed refresh and retains 
   try {
     await act(async () => { view = create(render('old')) })
     await older()
-    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 history.png' }).props.onClick())
+    await act(async () => view!.root.findByProps({ 'aria-label': '预览图片 history.png' }).props.onClick(imagePreviewClick))
     await act(async () => view!.update(render('new')))
     expect(view!.root.findAllByType(ArkmeMediaPreview)).toHaveLength(1)
     expect(JSON.stringify(view!.toJSON())).toContain('message-10')

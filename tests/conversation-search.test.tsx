@@ -9,7 +9,7 @@ vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme, ArkmeClient
 vi.mock('../src/client/ui-controller.js', () => ({ arkmeUi: { showConversationTarget: mocks.locate } }))
 vi.mock('../src/client/ArkmeRichContent.js', async importOriginal => ({
   arkmeContentMediaUrl: (await importOriginal<typeof import('../src/client/ArkmeRichContent.js')>()).arkmeContentMediaUrl,
-  ArkmeMessageContent: ({ item }: { item: { textContent: string } }) => <div>{item.textContent}</div>,
+  ArkmeMessageContent: ({ item, sessionAttachmentPreview }: { item: { textContent: string }; sessionAttachmentPreview?: boolean }) => <div data-session-attachment-preview={sessionAttachmentPreview}>{item.textContent}</div>,
   ArkmeMediaPreview: ({ selected, navigation, onClose }: { selected: { fileAssetUid: string }; navigation?: { next?: () => void }; onClose(): void }) => { mocks.preview(selected.fileAssetUid); return <><div aria-label="媒体预览">{selected.fileAssetUid}</div><button onClick={navigation?.next}>下一附件</button><button onClick={onClose}>关闭预览</button></> },
 }))
 
@@ -81,6 +81,33 @@ describe('conversation search parity', () => {
     expect(root.root.findByProps({ 'aria-label': '聊天搜索结果' }).props.hidden).toBe(false)
   })
 
+  it('keeps missing media in its tile with explicit retry and opens only the recovered attachment', async () => {
+    let reads = 0
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'source.timeline-around') return { items: [{ itemUid: 'one', contentBlocks: ++reads === 1 ? [] : [{ kind: 'image', fileAssetUid: 'asset', mediaRef: 'recovered', fileName: '照片' }] }] }
+      return { ...result(), items: [{ ...result().items[0], media: [{fileAssetUid:'asset',fileName:'照片'}] }] }
+    })
+    await mount()
+    expect(JSON.stringify(root.toJSON())).toContain('点击重试')
+    expect(root.root.findAllByType('button').some(node => node.props.children === '返回结果')).toBe(false)
+    await act(async () => root.root.findByProps({'aria-label':'重新加载图片 照片'}).props.onClick())
+    expect(reads).toBe(2)
+    expect(root.root.findAllByProps({'aria-label':'媒体预览'})).toHaveLength(0)
+    await act(async () => root.root.findByProps({'aria-label':'查看图片 照片'}).props.onClick())
+    expect(root.root.findByProps({'aria-label':'媒体预览'}).props.children).toBe('asset')
+    expect(reads).toBe(2)
+    expect(root.root.findByProps({'aria-label':'聊天搜索结果'}).props.hidden).toBe(false)
+  })
+  it('previews an authorized dynamic-photo motion by its own asset identity', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if(operation === 'source.timeline-around') return {items:[{itemUid:'one',contentBlocks:[{kind:'image',fileAssetUid:'cover',mediaRef:'cover-ref',dynamicPhoto:{logicalUid:'pair',motion:{kind:'video',fileAssetUid:'motion',mediaRef:'motion-ref',fileName:'动态部分'}}}]}]}
+      return {...result(),items:[{...result().items[0],media:[{fileAssetUid:'motion',fileKind:3,fileName:'动态部分'}]}]}
+    })
+    await mount()
+    await act(async()=>root.root.findByProps({'aria-label':'查看视频 动态部分'}).props.onClick())
+    expect(root.root.findByProps({'aria-label':'媒体预览'}).props.children).toBe('motion')
+    expect(mocks.callArkme.mock.calls.filter(([operation])=>operation==='source.timeline-around')).toHaveLength(1)
+  })
   it('uses the authorized media kind when search metadata is stale', async () => {
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'source.timeline-around') return { items: [{ itemUid: 'one', contentBlocks: [{ kind: 'image', mediaRef: 'signed-image', fileAssetUid: 'asset', fileName: '图片' }] }] }
@@ -329,16 +356,41 @@ describe('conversation search parity', () => {
     mocks.callArkme.mockImplementation(async (operation: string, params: Record<string, unknown>, signal: AbortSignal) => {
       if (operation === 'source.timeline-around') {
         if (params.itemUid === 'two') { pendingSignals.push(signal); return new Promise(() => {}) }
-        return { items: [{ itemUid: 'one', senderName: '小林', textContent: '完整正文', sendAtMillis: 1, contentBlocks: [] }] }
+        return { items: [{ itemUid: 'one', senderName: '小林', textContent: '完整正文', sendAtMillis: 1, contentBlocks: [{kind:'image',fileAssetUid:'one',mediaRef:'one'}] }] }
       }
       return { ...result(), items: ['one', 'two'].map(id => ({ ...result(id).items[0], media: [{ fileAssetUid: id }] })) }
     })
     await mount()
     await act(async () => root.root.findAllByType('button').find(node => node.props['aria-label'] === '查看图片 ')!.props.onClick())
     expect(pendingSignals[0]!.aborted).toBe(true)
-    expect(JSON.stringify(root.toJSON())).toContain('该附件已不存在或暂不可访问')
-    await click('返回结果')
-    expect(mocks.callArkme.mock.calls.filter(([op, params]) => op === 'source.timeline-around' && params.itemUid === 'one')).toHaveLength(2)
+    expect(root.root.findByProps({'aria-label':'媒体预览'}).props.children).toBe('one')
+    await click('关闭预览')
+    expect(mocks.callArkme.mock.calls.filter(([op, params]) => op === 'source.timeline-around' && params.itemUid === 'one')).toHaveLength(1)
+  })
+
+  it('does not restart a pending tile read when repeatedly clicked', async () => {
+    const signals: AbortSignal[] = []
+    mocks.callArkme.mockImplementation(async (operation: string, _params: unknown, signal: AbortSignal) => {
+      if(operation === 'source.timeline-around') { signals.push(signal); return new Promise(()=>{}) }
+      return {...result(),items:[{...result().items[0],media:[{fileAssetUid:'asset',fileName:'照片'}]}]}
+    })
+    await mount()
+    const tile = root.root.findByProps({'aria-label':'查看图片 照片'})
+    expect(tile.props.disabled).toBe(true)
+    await act(async()=>{tile.props.onClick();tile.props.onClick()})
+    expect(signals).toHaveLength(1); expect(signals[0]!.aborted).toBe(false)
+  })
+
+  it('retries a failed thumbnail even when hydration returns the same signed URL', async () => {
+    mocks.callArkme.mockImplementation(async (operation: string) => operation === 'source.timeline-around'
+      ? {items:[{itemUid:'one',contentBlocks:[{kind:'image',fileAssetUid:'asset',mediaRef:'same',fileName:'照片'}]}]}
+      : {...result(),items:[{...result().items[0],media:[{fileAssetUid:'asset',fileName:'照片'}]}]})
+    await mount()
+    await act(async()=>root.root.findByType('img').props.onError())
+    expect(root.root.findAllByType('img')).toHaveLength(0)
+    await act(async()=>root.root.findByProps({'aria-label':'重新加载图片 照片'}).props.onClick())
+    expect(root.root.findByType('img').props.src).toContain('same')
+    expect(mocks.callArkme.mock.calls.filter(([op])=>op==='source.timeline-around')).toHaveLength(2)
   })
 
   it('keeps owner-distinct records when record IDs match across pages', async () => {
@@ -370,6 +422,7 @@ describe('conversation search parity', () => {
     await act(async () => hit!.props.onClick())
     expect(mocks.callArkme).toHaveBeenLastCalledWith('source.timeline-around', { sourceRef: 'signed-group', itemUid: 'one', recordOwnerUserId: 42, beforeLimit: 1, afterLimit: 1 }, expect.any(AbortSignal))
     expect(JSON.stringify(root.toJSON())).toContain('完整正文')
+    expect(root.root.findByProps({'data-session-attachment-preview':true})).toBeDefined()
     await click('定位到消息')
     expect(mocks.locate).toHaveBeenCalledWith(source, 'one', 1, 42)
   })
