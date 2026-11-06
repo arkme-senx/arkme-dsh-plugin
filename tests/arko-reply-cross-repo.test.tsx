@@ -71,7 +71,7 @@ it.skipIf(!directory)('actual UI, SDK and Host use authenticated Go handlers, en
         expect(history.items.find(i => i.scene === 'group_mention')?.source.displayName).toBe('闭环验收群');
         expect(history.items.find(i => i.scene === 'direct_mention')?.source.displayName).toBe('小林');
         expect(host.textContent).toContain('群聊公开回应 · 闭环验收群');
-        expect(host.textContent).toContain('私聊主动回应 · 小林');
+        expect(host.textContent).toContain('私聊主动 @回应 · 小林');
         await fetch(chatOwner.url + '/__test/leave', { method: 'POST' });
         expect((await sdk.arkoRepliesPage({ scene: 'all' }, 'test:11')).items).toHaveLength(2);
         userId = 12;
