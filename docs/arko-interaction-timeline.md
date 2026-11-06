@@ -32,9 +32,9 @@ Intelligent 提供 POST /api/v1/arko/interactions/query 及 /api/v1/arko/interac
 
 chatthought 在 cb/cv/db/dv 中仅保留一份成功正文；fa/frv/fgen 保存完成时间、源版本及代次，iu 仅作索引归属。新代开始或失败保留上一成功结果，当前 Content/Display/ReplyTarget 仍要求 ready。撤销已完成代或源失效会清除该结果。已经清除且未保留的历史正文无法凭空恢复。
 
-不新增集合或 SQL 表。Mongo 三个索引服务于个人结果、聊天结果、续答的账号/完成时间读取；SQL migration 28 仅为 Agent 增加账号/场景/状态/完成时间索引。显式准备工具默认 dry-run，单批最多 100 条，使用 checkpoint/CAS 并复用等价索引；运行时不建索引、不双读旧字段、不增加开关或轮询 worker。
+不新增集合或 SQL 表。Mongo 三个索引服务于个人结果、聊天结果、续答的账号/完成时间读取；SQL migration 28 仅为 Agent 增加账号/场景/状态/完成时间索引。Mongo 索引由 Intelligent 初始化自动补齐并复用等价键；SQL 28 延续既有版本迁移链路。CMD 仅迁移历史数据，默认 dry-run、单批最多 100 条、使用 checkpoint/CAS；普通请求不执行 DDL、不双读旧字段、不增加开关或轮询 worker。
 
-发布前应按后端实现文档完成依赖与数据准备。启动异步两秒内只读检查索引元数据；失败只使新互动接口暂不可用。回退保留已有结果及新增索引，不自动执行 down/drop。本任务开发不代表测试服或生产发布。
+发布按后端实现文档完成 owner 依赖及必要历史迁移。启动异步初始化 Mongo 索引并校验既有 SQL 迁移就绪；失败只使新互动接口暂不可用，普通 HTTP 不受该初始化阻塞。回退保留已有结果及新增索引，不自动执行 down/drop。本任务开发不代表测试服或生产发布。
 
 ## 验证边界
 
