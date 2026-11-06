@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { TeamConversation, TeamOpen } from '../src/team-app-contract.js'
+import type { TeamWorkspaceFolder } from '../src/team-group-contract.js'
 const mock = vi.hoisted(() => ({ call: vi.fn(), open: vi.fn(), restore: vi.fn(), navigation: vi.fn(), invalidate: vi.fn(), canPresent: vi.fn(), auth: { status: 'authenticated', environment: 'test', userId: 11 } as Record<string, unknown>, listeners: new Set<() => void>() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 vi.mock('../src/client/auth-store.js', () => ({ arkmeAuthStore: { getSnapshot: () => ({ auth: mock.auth }), subscribe: (listener: () => void) => { mock.listeners.add(listener); return () => mock.listeners.delete(listener) } } }))
@@ -10,12 +11,48 @@ import { openedTeamConversations } from '../src/client/team-opened-conversations
 import * as navigation from '../src/client/team-entry-navigation.js'
 const { openTeamEntryMessages } = navigation
 const c: TeamConversation = { ref: 'conversation', key: 'key', side: 'team', channel: { teamRef: 'folder', name: '团队', jotmoId: 'team', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }, lastSeq: 3, latestTeamReplySeq: 0, myReadSeq: 0, unread: 3, needsReply: true, blocked: false, revision: 1, updatedAt: 1 }
+
+it.each(['team', 'link'] as const)('explicit %s restores a published group-only folder through the account-scoped team owner', async kind => {
+  const channel = { ...c.channel, entryKey: 'selected-folder' }
+  const folder: TeamWorkspaceFolder = { channel: { ...channel, teamRef: 'fresh-opaque-team-ref' }, activityAt: 20,
+    preview: '群内公开消息', unread: 0, groupCount: 1, hasPublished: true, groups: [{ sourceKey: 'group', unread: 0, lastSeq: 10 }] }
+  mock.call.mockImplementation(async op => {
+    if (op === 'team.app.open') return { channel, openInbox: true }
+    if (op === 'team.app.conversations') return { items: [], hasMore: false }
+    if (op === 'team.app.workspace.request') return [folder]
+    throw new Error(op)
+  })
+  openTeamEntryMessages(kind === 'team' ? { kind, teamRef: channel.teamRef } : { kind, publicRef: 'public-ref' })
+  await vi.waitFor(() => expect(mock.restore).toHaveBeenCalledWith('test:11', expect.objectContaining({
+    kind: 'folder', group: expect.objectContaining({ channel: folder.channel, hasPublished: true, conversations: [] }),
+  }), true))
+  expect(mock.call.mock.calls.find(([op]) => op === 'team.app.workspace.request')?.[1]).toEqual({ expectedAccountKey: 'test:11', request: { operation: 'folders', teamRef: channel.teamRef } })
+})
+
+it.each(['team-workspace-unsupported', 'team-not_accessible', 'network-error', 'empty'])(
+  'a group-only folder is not restored through %s', async failure => {
+    const channel = { ...c.channel, entryKey: 'selected-folder' }
+    mock.call.mockImplementation(async op => {
+      if (op === 'team.app.conversations') return { items: [], hasMore: false }
+      if (op === 'team.app.workspace.request') {
+        if (failure !== 'empty') throw Object.assign(new Error(failure), { body: { code: failure } })
+        return []
+      }
+      throw new Error(op)
+    })
+    openTeamEntryMessages({ kind: 'team', teamRef: channel.teamRef, channel })
+    await vi.waitFor(() => expect(mock.listeners.size).toBe(0))
+    expect(mock.restore).not.toHaveBeenCalled()
+    expect(mock.call.mock.calls.filter(([op]) => op === 'team.app.workspace.request')).toHaveLength(1)
+  },
+)
 beforeEach(() => {
   openedTeamConversations.reset(); mock.restore.mockResolvedValue(undefined); mock.canPresent.mockReturnValue(true)
   mock.auth = { status: 'authenticated', environment: 'test', userId: 11 }
   mock.navigation.mockImplementation(async (account, resolve, signal) => {
     const target = await resolve()
-    if (target && (target.kind === 'folder' ? target.group.latest.lastSeq : target.conversation.lastSeq) > 0 && !signal?.aborted) await mock.restore(account, target, true)
+    const published = target?.kind === 'folder' ? target.group.hasPublished : target?.conversation.lastSeq > 0
+    if (published && !signal?.aborted) await mock.restore(account, target, true)
   })
 })
 afterEach(() => { vi.resetAllMocks(); mock.listeners.clear(); openedTeamConversations.reset() })

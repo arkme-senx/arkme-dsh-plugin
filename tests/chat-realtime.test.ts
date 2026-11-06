@@ -56,6 +56,21 @@ const timelineChangedHint = {
 }
 
 describe('Arkme Chat realtime', () => {
+  it.each(['team.group.changed','team.group.source.changed'])('keeps %s separate from private-message identity and preserves int64 principal precision',kind=>{
+    const event={t:28,event_uid:'group-hint',event_at:100,kind,chat_session_uid:'group',principal_id:'9223372036854775806',revision:1}
+    const decode=(value:unknown)=>decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(value)}`)
+    expect(decode(event)).toEqual({eventUid:'group-hint',eventAtMillis:100,receiptOnly:false,change:{kind,groupUid:'group'}})
+    expect(decode({...event,reconcile:true})).toEqual({eventUid:'group-hint',eventAtMillis:100,receiptOnly:false})
+    for(const bad of [{principal_id:'0'},{principal_id:'042'},{principal_id:'9223372036854775808'},{principal_id:42},{conversation_uid:'private'},{message_uid:'private'},{seq:1},{published_at:100},{team_id:42},{reconcile:'true'}])expect(decode({...event,...bad})).toBeUndefined()
+  })
+  it('uses a canonical group timeline hint without inventing a team/customer source edge',()=>{
+    const event={t:28,event_uid:'timeline',event_at:100,kind:'team.group.timeline.changed',chat_session_uid:'group',revision:7}
+    const decode=(value:unknown)=>decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(value)}`)
+    expect(decode(event)).toMatchObject({change:{kind:event.kind,groupUid:'group'}})
+    expect(decode({...event,reconcile:true})).toEqual({eventUid:'timeline',eventAtMillis:100,receiptOnly:false})
+    expect(decode({...event,principal_id:'42'})).toBeUndefined()
+    expect(decode({...event,conversation_uid:'private'})).toBeUndefined()
+  })
   it('keeps private Team entry hints distinct from material changes and validates overflow metadata', () => {
     const event = { t: 28, event_uid: 'entry-hint', event_at: 123456, kind: 'team.entry-preference.changed', team_id: 7, revision: 2 }
     const decode = (value: unknown) => decodeArkmeTeamNotificationDataLine(`data: ${JSON.stringify(value)}`)
@@ -292,7 +307,7 @@ describe('Arkme Chat realtime', () => {
     expect(init?.method).toBe('POST')
     expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer access-secret')
     expect(new Headers(init?.headers).get(ARKME_RUNTIME_INSTANCE_ID_HEADER)).toBe(ARKME_RUNTIME_INSTANCE_ID)
-    expect(new Headers(init?.headers).get(ARKME_TEAM_HINT_VERSION_HEADER)).toBe('2')
+    expect(new Headers(init?.headers).get(ARKME_TEAM_HINT_VERSION_HEADER)).toBe('3')
     expect(ARKME_RUNTIME_INSTANCE_ID).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
     stream.close()
     unsubscribe()

@@ -201,15 +201,26 @@ function decodeDataLine(line: string): Record<string, unknown> | undefined {
 }
 
 export const ARKME_TEAM_NOTIFICATION_BIZ_TYPE = 28
-export interface ArkmeTeamChangeHint { kind:string; messageUid?:string; conversationUid?:string; messageRevision?:number; sequence?:number; conversationRevision?:number }
+export interface ArkmeTeamChangeHint { kind:string; groupUid?:string;messageUid?:string; conversationUid?:string; messageRevision?:number; sequence?:number; conversationRevision?:number }
 export interface ArkmeTeamPublicationHint { eventUid:string;conversationUid:string;messageUid:string;seq:number;publishedAt:number;expiresAt:number }
 export function decodeArkmeTeamNotificationDataLine(line: string): { eventUid: string; eventAtMillis: number; receiptOnly: boolean; publication?:ArkmeTeamPublicationHint; change?:ArkmeTeamChangeHint } | undefined {
   const v = decodeDataLine(line)
   if (!v || positiveInteger(v.t) !== ARKME_TEAM_NOTIFICATION_BIZ_TYPE) return undefined
-  if (Object.keys(v).some(key => !['t','event_uid','kind','team_id','conversation_uid','message_uid','revision','event_at','seq','published_at','expires_at','message_revision','reconcile'].includes(key))) return undefined
-  if (!['team.reaction.changed','team.annotation.changed','team.message.changed','team.receipt.changed','team.access.changed','team.channel.changed','team.profile.changed','team.notification-policy.changed','team.entry-preference.changed','team.message.published'].includes(String(v.kind))) return undefined
+  if (Object.keys(v).some(key => !['t','event_uid','kind','team_id','conversation_uid','message_uid','revision','event_at','seq','published_at','expires_at','message_revision','reconcile','chat_session_uid','principal_id'].includes(key))) return undefined
+  if (!['team.group.timeline.changed','team.group.changed','team.group.source.changed','team.reaction.changed','team.annotation.changed','team.message.changed','team.receipt.changed','team.access.changed','team.channel.changed','team.profile.changed','team.notification-policy.changed','team.entry-preference.changed','team.message.published'].includes(String(v.kind))) return undefined
   const eventUid=nonEmptyString(v.event_uid),eventAtMillis=positiveInteger(v.event_at)
   if(!eventUid||!eventAtMillis||!positiveInteger(v.revision))return undefined
+  if(v.kind==='team.group.timeline.changed') {
+    const groupUid=nonEmptyString(v.chat_session_uid)
+    if(!groupUid||groupUid.length>256||v.principal_id!==undefined||v.team_id!==undefined||v.conversation_uid!==undefined||v.message_uid!==undefined||v.seq!==undefined||v.reconcile!==undefined&&v.reconcile!==true||v.published_at!==undefined||v.expires_at!==undefined||v.message_revision!==undefined)return undefined
+    return v.reconcile===true?{eventUid,eventAtMillis,receiptOnly:false}:{eventUid,eventAtMillis,receiptOnly:false,change:{kind:v.kind,groupUid}}
+  }
+  if(v.kind==='team.group.changed'||v.kind==='team.group.source.changed') {
+    const groupUid=nonEmptyString(v.chat_session_uid),id=typeof v.principal_id==='string'?v.principal_id:''
+    if(!groupUid||groupUid.length>256||!/^[1-9][0-9]{0,18}$/.test(id)||BigInt(id)>9223372036854775807n||v.team_id!==undefined||v.conversation_uid!==undefined||v.message_uid!==undefined||v.seq!==undefined||v.reconcile!==undefined&&v.reconcile!==true||v.published_at!==undefined||v.expires_at!==undefined||v.message_revision!==undefined)return undefined
+    return v.reconcile===true?{eventUid,eventAtMillis,receiptOnly:false}:{eventUid,eventAtMillis,receiptOnly:false,change:{kind:v.kind,groupUid}}
+  }
+  if(v.chat_session_uid!==undefined||v.principal_id!==undefined)return undefined
   if(v.message_revision!==undefined && (!Number.isSafeInteger(v.message_revision) || Number(v.message_revision)<0 || Number(v.message_revision)>0 && (v.kind!=='team.message.changed'||!nonEmptyString(v.message_uid)||!positiveInteger(v.seq))))return undefined
   if(v.reconcile!==undefined && typeof v.reconcile!=='boolean' || v.reconcile===true && ['team.message.published','team.receipt.changed'].includes(String(v.kind)))return undefined
   if(v.kind==='team.entry-preference.changed' && (!positiveInteger(v.team_id) || v.conversation_uid !== undefined || v.message_uid !== undefined)) return undefined
@@ -664,7 +675,7 @@ export class ArkmeChatRealtimeRuntime {
           Authorization: `Bearer ${session.accessToken}`,
           'Content-Type': 'application/json',
           [ARKME_RUNTIME_INSTANCE_ID_HEADER]: ARKME_RUNTIME_INSTANCE_ID,
-          [ARKME_TEAM_HINT_VERSION_HEADER]: '2',
+          [ARKME_TEAM_HINT_VERSION_HEADER]: '3',
           Usersource: '3',
         },
         ...(this.options.receiveStream ? {} : { body: '{}' }),
@@ -692,7 +703,7 @@ export class ArkmeChatRealtimeRuntime {
       this.reportIdentityCapability(response)
       acceptedAtMillis = this.now()
       const responseDateMillis = Date.parse(response.headers.get('date') ?? '')
-      const scopedTeamHints = response.headers.get(ARKME_TEAM_HINT_VERSION_HEADER) === '2'
+      const scopedTeamHints = ['2','3'].includes(response.headers.get(ARKME_TEAM_HINT_VERSION_HEADER)??'')
       const connectionStartedAtMillis = Number.isFinite(responseDateMillis) && responseDateMillis > 0
         ? responseDateMillis : undefined
       this.connected = true
