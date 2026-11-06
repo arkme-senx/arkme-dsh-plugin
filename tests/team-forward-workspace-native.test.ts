@@ -91,6 +91,28 @@ it.skipIf(!fixture)('forwards through both real delegated group authorities whil
     const teamTimeline = await service.executeTeamApp('team.app.timeline', { conversationRef: published.ref, limit: 50 }) as TeamTimeline
     const teamMessage = teamTimeline.messages.find(row => row.contentStatus === 'available')!
     expect(teamMessage).toBeTruthy()
+    // Ordinary personal snapshots use quick_records, and timeline responses
+    // intentionally omit full items. Exercise that contract through real owners.
+    const self = await service.selfTarget(), personalUids = [randomUUID(), randomUUID()]
+    const personalTexts = personalUids.map((_, index) => `frozen personal ${index} ${randomUUID()}`)
+    for (let index = 0; index < personalUids.length; index++) await service.sendSourceText(self.sourceRef, personalTexts[index]!, { recordUid: personalUids[index] })
+    await post('record', '/fixture/complete', {})
+    const personalPage = await until(() => service.readSource(self.sourceRef, { limit: 100 }), page => personalUids.every(uid => page.items.some(row => row.itemUid === uid && !!row.messageActionRef)))
+    const actions = personalUids.map(uid => personalPage.items.find(row => row.itemUid === uid)!.messageActionRef!)
+    for (const size of [1, 2]) {
+      const options = { targetConversationRef: published.ref, expectedUserId: actor, recordUid: randomUUID(), sendAtMillis: Date.now() }
+      const accepted = await service.forwardSourceMessages(self.sourceRef, actions.slice(0, size), options)
+      const repeated = await service.forwardSourceMessages(self.sourceRef, actions.slice(0, size), options)
+      expect(repeated.itemUid).toBe(accepted.itemUid); expect(repeated.sequence).toBe(accepted.sequence)
+      const page = await service.executeTeamApp('team.app.timeline', { conversationRef: published.ref, limit: 100 }) as TeamTimeline
+      const card = page.messages.find(row => row.seq === accepted.sequence)!
+      expect(card.forwardRecords?.items).toEqual([])
+      expect(card.forwardRecords?.summaryLines).toHaveLength(size)
+      expect(card.forwardRecords?.summaryLines.join('\n')).toContain(personalTexts[0])
+      const full = await service.preflightTeamMessages(published.ref, [{ messageRef: card.ref, version: card.version }])
+      expect(full[0]?.forwardRecords?.items.map(item => item.textContent)).toEqual(personalTexts.slice(0, size))
+      expect(full[0]?.forwardRecords?.items.every(item => item.senderUserId === undefined)).toBe(true)
+    }
     for (const target of [groupA, groupB]) {
       const sent = await service.forwardTeamMessages({ conversationRef: published.ref, selections: [{ messageRef: teamMessage.ref, version: teamMessage.version }], target: { kind: 'source', sourceRef: target.source.sourceRef }, requestId: randomUUID(), recordUid: randomUUID(), sendAtMillis: Date.now() })
       expect(sent.localState).toBe('synced')

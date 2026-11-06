@@ -859,6 +859,26 @@ it('binds a frozen Team card to owner-blind target media and removes source acto
  expect(JSON.stringify(card.forwardRecords)).not.toContain('private-signed')
 })
 
+it('projects ordinary forward summaries on the timeline and loads frozen detail only for the selected occurrence',async()=>{
+ const forward={source_type:'quick_records',render_kind:'forward_records',title:'转发快记',summary_lines:['原作者：冻结正文']}
+ const full={...message,record:{...message.record,text_content:'转发快记',media:[],content_payload:{payload_kind:1,forward_records:{...forward,items:[{owner_name:'原作者',text:'冻结正文'}]}}}}
+ const summary={...full,record:{...full.record,content_payload:{payload_kind:1,forward_records:forward}}}
+ const f=fixture(path=>({channel,conversation,messages:[path.endsWith('/batch-get')?full:summary]}))
+ try {
+  const conversationRef=(await open(f)).conversation!.ref
+  const page=await f.service.execute('team.app.timeline',{conversationRef}) as TeamTimeline
+  const card=page.messages[0]!
+  expect(card.content?.text_content).toBe('转发快记')
+  expect(card.forwardRecords).toMatchObject({title:'转发快记',summaryLines:['原作者：冻结正文'],items:[]})
+  expect(f.requests.some(request=>request.path.endsWith('/batch-get'))).toBe(false)
+  const details=await f.service.execute('team.app.preflight',{conversationRef,selections:[{messageRef:card.ref,version:card.version}]}) as import('../src/team-app-contract.js').TeamMessage[]
+  expect(details[0]?.forwardRecords?.items[0]).toMatchObject({senderName:'原作者',textContent:'冻结正文'})
+  expect(f.requests.at(-1)?.body).toEqual({conversation_uid:conversation.conversation_uid,side:'external',items:[{message_uid:message.message_uid,expected_record_version:3}]})
+  f.changeAccount()
+  await expect(f.service.execute('team.app.preflight',{conversationRef,selections:[{messageRef:card.ref,version:card.version}]})).rejects.toThrow()
+ } finally {f.runtime.dispose()}
+})
+
 it('projects scoped conversation cursor metadata without fetching bodies and rejects incomplete batches', async () => {
   let broken = false
   const f=fixture((path,body)=>path.endsWith('/read-state/query-list')
