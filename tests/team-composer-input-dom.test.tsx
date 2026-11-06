@@ -5,6 +5,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
+import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
+import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
 import type { TeamConversation } from '../src/team-app-contract.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn(), stage: vi.fn(), policy: vi.fn() }))
 vi.mock('../src/client/social-action-guard.js', () => ({requirePhoneForSocialAction: async()=>{}, isSocialBindingRequired:()=>false}))
@@ -41,6 +43,34 @@ beforeEach(async () => {
   await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" onChanged={()=>{}} /></>))
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
+it.each([false,true])('source customer explicit contact shares directory restoration only on success (failure=%s)',async failure=>{
+  const direct={...conversation,side:'team' as const,sourceOnly:false,memberInitiated:true}
+  const sourceOnly={...direct,sourceOnly:true,memberInitiated:false}
+  const restore=vi.spyOn(teamDirectoryPreferences,'restoreTarget').mockResolvedValue(undefined)
+  openedTeamConversations.reset()
+  const previous=mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async(op:string,params:any)=>{
+    if(op==='team.app.outbound.open'){
+      if(failure)throw new Error('联系失败')
+      return {state:'ready',conversation:direct}
+    }
+    if(op==='team.app.timeline')return {conversation:direct,messages:[],hasMore:false,beforeSeq:0}
+    return previous(op,params)
+  })
+  try{
+    await act(async()=>root.render(<TeamConversationPane conversation={sourceOnly} accountKey="test:7777" onChanged={()=>{}}/>))
+    expect(restore).not.toHaveBeenCalled()
+    await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='改为私信此用户')!.click())
+    expect(restore).toHaveBeenCalledTimes(failure?0:1)
+    if(!failure){
+      expect(restore).toHaveBeenCalledWith('test:7777',{kind:'conversation',conversation:direct})
+      expect(openedTeamConversations.read('test:7777')).toContainEqual(direct)
+      expect(host.querySelector('[data-team-composer="message"]')).not.toBeNull()
+    }
+    expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(false)
+    expect(direct.lastSeq).toBe(0);expect(direct.unread).toBe(0)
+  }finally{restore.mockRestore();openedTeamConversations.reset()}
+})
 it('places related arrangements above the team composer and hides it while editing',async()=>{
   const shortcuts=host.querySelector<HTMLElement>('[data-arkme-composer-shortcuts]')!
   expect(shortcuts).not.toBeNull();expect(shortcuts.textContent).toContain('相关安排');expect(shortcuts.hidden).toBe(false)

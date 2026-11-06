@@ -443,3 +443,26 @@ it('publishes existing private rows while the optional workspace discovery is st
  await vi.waitFor(()=>expect(readTeamDirectory('slow-workspace').workspaceSupported).toBe(true))
  expect(readTeamDirectory('slow-workspace').items).toHaveLength(2)
 })
+
+
+it.each(['success','failure','unsupported'] as const)('does not let an older detached folder %s overwrite a newer refresh',async outcome=>{
+ let finish!:(value:unknown)=>void,fail!:(reason:Error)=>void,reads=0
+ const pending=new Promise((resolve,reject)=>{finish=resolve;fail=reject})
+ vi.spyOn(teamDirectoryPreferences,'hydrate').mockResolvedValue()
+ vi.spyOn(teamDirectoryPreferences,'reconcile').mockResolvedValue()
+ vi.spyOn(teamDirectoryPreferences,'missingPins').mockReturnValue([])
+ mock.mockImplementation(async(op,{side})=>op==='team.app.workspace.request'?(++reads===1?pending:[]):{items:side==='external'?[item('external')]:[],hasMore:false})
+ stops.push(startTeamDirectory('folder-order'))
+ // Optional folder IO must not hold the existing personal directory readiness.
+ await vi.waitFor(()=>expect(readTeamDirectory('folder-order')).toMatchObject({hasLoaded:true,items:[expect.objectContaining({side:'external'})]}))
+ const firstSignal=mock.mock.calls.find(([op])=>op==='team.app.workspace.request')![2] as AbortSignal
+ await refreshTeamDirectory('folder-order')
+ expect(reads).toBe(2)
+ if(outcome==='success')finish([{teamRef:'old-team-ref',channel,groupCount:1,activityAt:100,unreadCount:1}])
+ else fail(Object.assign(new Error('old folder request failed'),outcome==='unsupported'?{body:{code:'team-workspace-unsupported'}}:{}))
+ await new Promise(resolve=>setTimeout(resolve,0))
+ expect(readTeamDirectory('folder-order').workspaceFolders).toEqual([])
+ expect(readTeamDirectory('folder-order').foldersError).toBeUndefined()
+ expect(readTeamDirectory('folder-order').workspaceSupported).toBe(true)
+ expect(firstSignal.aborted).toBe(true)
+})

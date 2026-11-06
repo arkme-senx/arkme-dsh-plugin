@@ -110,3 +110,16 @@ it('delegates member history to Chat but refuses private revision capture before
   expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
   expect(f.runtime.authenticatedChatPost).toHaveBeenCalledTimes(1)
 })
+
+
+it.each(['page','revision'] as const)('keeps the delegated audience on the %s history read and bypasses personal caches',async mode=>{
+ const f=fixture({items:[revision('wanted')],has_more:false})
+ const delegated={kind:'chat' as const,viewerUserId:42,recordUid:'r1',chatSessionUid:'s1',relationUid:'rel1',recordOwnerUserId:42,chatAccessRef:'opaque-current-team-audience'}
+ const signal=new AbortController().signal
+ if(mode==='page')await f.service.page(delegated,0,signal)
+ else await f.service.revision(delegated,'wanted',signal)
+ expect(f.runtime.authenticatedChatPost).toHaveBeenCalledExactlyOnceWith('/api/v1/chats/records/revisions/query',
+  {chat_session_uid:'s1',rel_uid:'rel1',...(mode==='page'?{limit:50,cursor_version:0}:{revision_uid:'wanted'})},
+  {userId:42},signal,{chatAccessRef:'opaque-current-team-audience',cacheMs:0,bypassCache:true})
+ expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+})

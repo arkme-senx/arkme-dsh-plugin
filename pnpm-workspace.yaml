@@ -6,6 +6,7 @@ autoInstallPeers: false
 
 # DSH JSONL persistence needs this locked native binding to verify its prebuild.
 allowBuilds:
+  '@serialport/bindings-cpp@13.0.0': true
   koffi@3.1.1: true
   # These locked packages ship their runtime artifacts; their install hooks only
   # print messages. Explicitly deny them so strict CI installs stay reproducible.

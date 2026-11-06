@@ -17,7 +17,7 @@ function clientUid(request:string):string {
 
 export interface RecordTeamForwardInput {
  targetConversationRef:string;expectedUserId:number;requestId:string;sendAtMillis:number;commentText?:string
- sources:{record_uid:string;record_owner_user_id?:number;chat_session_uid?:string;relation_uid?:string}[]
+ sources:{record_uid:string;record_owner_user_id?:number;chat_session_uid?:string;relation_uid?:string;access_ref?:string}[]
 }
 
 /** Each destination keeps its native acceptance, identity and recovery owner.
