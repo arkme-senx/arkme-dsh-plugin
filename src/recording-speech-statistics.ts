@@ -1,5 +1,5 @@
 import type { ExploreSource } from './explore-contract.js'
-import type { ArkmeRecordingPlayback } from './types.js'
+import type { ArkmeRecordingPlayback, ArkmeRecordingWindow } from './types.js'
 
 /** Audio-owner v2 contract. Counts come from original audio, never client ASR text. */
 export interface SpeechQuery { accountScope: string; date: string; timezone: string }
@@ -27,7 +27,7 @@ export interface SpeechSource {
   playback: ArkmeRecordingPlayback
   mediaStartAtMillis: number
   focusAtMillis: number
-  target: Extract<ExploreSource, { kind: 'recording' }> | null
+  target: (Extract<ExploreSource, { kind: 'recording' }> & { window: ArkmeRecordingWindow }) | null
 }
 const invalid = (): never => { throw new Error('说话统计数据不完整或版本不匹配，请刷新后重试') }
 export const speechObject = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : invalid()

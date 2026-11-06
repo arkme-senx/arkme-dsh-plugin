@@ -96,13 +96,16 @@ describe('plugin speech owner adapter', () => {
     expect(source).toMatchObject({ focusAtMillis: start + 500, mediaStartAtMillis: start - 1000, target: null, playback: { playbackRef: 'opaque-media' } })
     expect(f.recording.exploreRecordingEvidence).not.toHaveBeenCalled()
   })
-  it('uses occurrence time for the selected day instead of the enclosing original transcript start', async () => {
-    const f = fixture(), focus = Date.parse('2026-10-16T00:00:00.500+08:00')
-    f.post.mockResolvedValue({ ...env, available: true, self_range: true, result_id: 'r1', source_ref: 'ref',
+  it.each([['Asia/Shanghai', '+08:00'], ['Pacific/Kiritimati', '+14:00'], ['America/New_York', '-04:00']])('keeps occurrence time separate from the original transcript window in %s', async (timezone, offset) => {
+    const f = fixture(), query = { ...q, timezone }, focus = Date.parse(`2026-10-16T00:00:00.500${offset}`)
+    const window = { dateStamp: Date.parse(`2026-10-15T00:00:00${offset}`), endStamp: Date.parse(`2026-10-16T00:00:00${offset}`), timeZone: timezone, date: '2026-10-15' }
+    const owner = { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: focus - 2000, transcript_source: 'system' }
+    f.post.mockResolvedValue({ ...speechEnvelope(query), available: true, self_range: true, result_id: 'r1', source_ref: 'ref',
       playback: { start_at_millis: focus - 2000, end_at_millis: focus + 3000, focus_at_millis: focus, content_type: 'audio/flac', content_path: '/api/v1/speech-statistics/audio/ref' },
-      target: { window: {dateStamp:Date.parse('2026-10-15T00:00:00+08:00'),endStamp:Date.parse('2026-10-16T00:00:00+08:00'),timeZone:q.timezone,date:'2026-10-15'}, original_quote: '原句', owner_ref: { container_id: 's', child_id: 'c', item_ordinal: 0, start_at: focus - 2000, transcript_source: 'system' } } })
-    f.recording.exploreRecordingEvidence.mockResolvedValueOnce({ kind: 'recording', dateStamp: 1, focusItemId: 'item', items: [{ itemId: 'item', isSelf: true, startAtMillis: focus - 2000 }] })
-    await expect(f.service.source({ ...q, resultId: 'r1', sourceRef: 'ref', action: 'locate' })).resolves.toMatchObject({ focusAtMillis: focus })
+      target: { window, original_quote: '原句', owner_ref: owner } })
+    f.recording.exploreRecordingEvidence.mockResolvedValueOnce({ kind: 'recording', dateStamp: window.dateStamp, focusItemId: 'item', items: [{ itemId: 'item', isSelf: true, startAtMillis: focus - 2000 }] })
+    await expect(f.service.source({ ...query, resultId: 'r1', sourceRef: 'ref', action: 'locate' })).resolves.toMatchObject({ focusAtMillis: focus, target: { window } })
+    expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledWith(owner, '原句', undefined, window)
   })
 })
 

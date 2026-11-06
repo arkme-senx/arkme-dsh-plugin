@@ -24,7 +24,7 @@ const capture = process.env.ARKME_E2E_CAPTURE_DIR || join(root, 'capture')
 await mkdir(capture, { recursive: true })
 const cert = join(root, 'cert.pem'), key = join(root, 'key.pem')
 execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost,IP:127.0.0.1', '-keyout', key, '-out', cert], { stdio: 'ignore' })
-const calls = [], errors = []
+const calls = [], errors = [], browserDayReads = []
 const server = createServer({ key: await readFile(key), cert: await readFile(cert) }, async (req, res) => {
   try {
     const chunks = []; for await (const chunk of req) chunks.push(chunk)
@@ -99,6 +99,12 @@ export function apply(ctx){void(async()=>{
   const { chromium } = createRequire(resolve(anchor))('playwright')
   browser = await chromium.launch({ channel: 'chrome' })
   page = await browser.newPage({ viewport: { width: 1680, height: 1000 } })
+  page.on('request', request => {
+    if (request.url().endsWith('/arkme-self/api') && request.method() === 'POST') {
+      const body = request.postDataJSON()
+      if (body?.operation === 'recordings.day') browserDayReads.push({ window: body.params?.window })
+    }
+  })
   await page.addInitScript(() => {
     window.__speechMediaEvents = []
     const play = HTMLMediaElement.prototype.play
@@ -119,6 +125,7 @@ export function apply(ctx){void(async()=>{
   await page.getByRole('button', { name: '重新分析', exact: true }).click()
   const accepted = await (await submitted).json()
   assert.equal(accepted.ok, true); assert.ok(accepted.value.job)
+  await page.getByRole('button', { name: '重新分析', exact: true }).waitFor({ state: 'hidden' })
   const uiRequestId = calls.filter(call => call.path.endsWith('/speech-statistics/create')).at(-1).body.request_id
   assert.notEqual(uiRequestId, fixture.request_id)
   await page.getByRole('button', { name: '重新分析', exact: true }).waitFor({ timeout: 120000 })
@@ -150,6 +157,31 @@ export function apply(ctx){void(async()=>{
   assert.equal(await page.getByRole('button', { name: '定位原文', exact: true }).first().isDisabled(), true)
   await page.screenshot({ path: join(capture, 'speech-original-omitted-playback.png') })
   await page.getByRole('button', { name: '关闭说话统计', exact: true }).click()
+  // The spoken occurrence belongs to today, but its enclosing original ASR
+  // row starts before midnight. Exercise the actual locate button and verify
+  // that the existing day reader receives the original IANA date window.
+  await page.getByRole('button', { name: '我的说话统计', exact: true }).click()
+  await page.getByRole('button', { name: '全部词频', exact: true }).click()
+  await page.getByRole('button', { name: /那个，3 次/ }).click()
+  const hostRead = (operation, params) => page.evaluate(async ({ operation, params }) => {
+    const response = await fetch('/arkme-self/api', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ operation, params }) })
+    return response.json()
+  }, { operation, params })
+  const locatedQuery = { accountScope: `test:${fixture.user_id}`, date: fixture.query.date, timezone: fixture.query.time_zone, resultId: uiState.value.result.id }
+  const lexicalTerm = uiState.value.result.terms.find(term => term.text === '那个')
+  const locationPage = await hostRead('recordings.speech-statistics.occurrences', { ...locatedQuery, termKey: lexicalTerm.key, mode: 'all' })
+  assert.equal(locationPage.ok, true)
+  const locationIndex = locationPage.value.items.findIndex(item => item.originalText.trim())
+  assert.ok(locationIndex >= 0)
+  const located = await hostRead('recordings.speech-statistics.source', { ...locatedQuery, sourceRef: locationPage.value.items[locationIndex].sourceRef, action: 'locate' })
+  assert.equal(located.ok, true); assert.ok(located.value.target)
+  assert.notEqual(located.value.target.window.date, fixture.query.date)
+  const dayReadStart = browserDayReads.length
+  await page.locator('.speech-occurrence').nth(locationIndex).getByRole('button', { name: '定位原文', exact: true }).click()
+  await page.getByRole('button', { name: '关闭说话统计', exact: true }).waitFor({ state: 'hidden' })
+  await page.waitForFunction(itemId => [...document.querySelectorAll('[data-recording-transcript-item]')].some(row => row.dataset.recordingTranscriptItem === itemId), located.value.target.focusItemId)
+  assert.ok(browserDayReads.slice(dayReadStart).some(read => JSON.stringify(read.window) === JSON.stringify(located.value.target.window)), 'UI discarded the original transcript date window')
+  await page.screenshot({ path: join(capture, 'speech-locate-original.png') })
   const originalRows = page.locator('[data-recording-transcript-item]')
   await originalRows.first().waitFor()
   await originalRows.first().locator('.arkme-recording-transcript-content').dblclick()
@@ -195,7 +227,7 @@ export function apply(ctx){void(async()=>{
   const unsupported = createArkmeSdk({ fetchImpl: async () => Response.json({ ok: true, value: { contractVersion: 1, features: { recordingSpeechStatistics: 1 } } }) })
   await assert.rejects(() => unsupported.speechStatisticsCapabilities(), /v2/); unsupported.dispose()
   assert.ok(!calls.some(call => /strategy-comparison\/start|del-session|uploads\//.test(call.path)))
-  await writeFile(join(capture, 'acceptance.json'), JSON.stringify({ officialRuntime: '0.2.1-rc.2', artifact: resolve(artifact), profile, realSession: true, trustedConfirmation: true, packedSdkConsumer: true, originalOmittedPlayback: true, existingTranscriptPlayback: true, uiCreateQueuedToReady: true, countsMatchServer: true, realModelAndAllowance: fixture.live_model === true, expiredOriginalRetainedPlayback: true, sameReceipt: state.result.id, browserErrors: errors, mediaEvents: await page.evaluate(() => window.__speechMediaEvents), calls: calls.map(call => call.path) }, null, 2))
+  await writeFile(join(capture, 'acceptance.json'), JSON.stringify({ officialRuntime: '0.2.1-rc.2', artifact: resolve(artifact), profile, realSession: true, trustedConfirmation: true, packedSdkConsumer: true, originalOmittedPlayback: true, originalCrossMidnightLocation: true, originalDayWindow: located.value.target.window, existingTranscriptPlayback: true, uiCreateQueuedToReady: true, countsMatchServer: true, realModelAndAllowance: fixture.live_model === true, expiredOriginalRetainedPlayback: true, sameReceipt: state.result.id, browserErrors: errors, mediaEvents: await page.evaluate(() => window.__speechMediaEvents), calls: calls.map(call => call.path) }, null, 2))
   console.log('SPEECH_INSTALLED_ACCEPTANCE_OK', capture)
 } catch (error) {
   if (page) { await writeFile(join(capture, 'failure.txt'), await page.locator('body').innerText()).catch(() => undefined); await page.screenshot({ path: join(capture, 'failure.png') }).catch(() => undefined) }

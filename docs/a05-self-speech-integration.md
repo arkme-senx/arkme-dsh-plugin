@@ -9,13 +9,13 @@
 | SDK | 公开能力、查询、创建、出现页及来源类型；当前账号、AbortSignal、dispose | 仓外 consumer 只依赖安装包公开导出，编译并执行；能力版本拒绝、生命周期及同一收据回归 |
 | Host owner | RecordingSpeechStatisticsService 统一账号、服务版本、命令及来源语义 | UI/SDK/Tools 共用 owner，跨面读取相同结果；精确授权、账号切换及来源测试 |
 
-协议为 v2。Source.playback 不依赖 ASR 条目；target 只能指向现存真实原文，可空。SDK 生成沿用受信任 DSH 浏览器 Origin 边界；Node 外部插件通过获权的会话 Tool 或插件 UI 发起。SDK 不制造 Origin 请求头。原文的自然日窗口由后端提供，允许真实原文起于统计日之前。
+协议为 v2。Source.playback 不依赖 ASR 条目；target 只能指向现存真实原文，可空。SDK 生成沿用受信任 DSH 浏览器 Origin 边界；Node 外部插件通过获权的会话 Tool 或插件 UI 发起。SDK 不制造 Origin 请求头。原文的自然日窗口由后端提供并保留在 target.window，允许真实原文起于统计日之前；定位使用原文条目的时间和既有日期窗口接口，试听仍使用原音词发生时间。
 
 新增录音只影响结果新鲜度，不中断已接收任务。已接收来源的身份/媒体变化或撤权会阻止继续处理和回查；撤权隐藏旧词表。完成后重放 request_id 仍返回原命令，不会再次生成。
 
 跨仓验收入口覆盖官方 DSH 安装包 UI/Tool/SDK、真实 Audio HTTP/Mongo、原音 SenseVoice、Intelligent 转发、实际 DeepSeek 和隔离 MySQL 额度账本；外部登录与目录使用隔离 fixture。真实模型的最大 50 条分类批次已验证；单独检验无额度零调用、结算预占归零和已付费结果重放。三个 AliMeeting 人工转写片段及 21 个窗口边界位置用于原音回归；不能外推整体精度或召回率。
 
-验证运行时为未修改的官方 DSH 0.2.1-rc.2。用户指定的 origin/dev 已同步至 e2ca7421b09ab9e55c0e0999ea85939ea815f57f；3.0.54 来自上游合并，本任务未修改根 README、版本号或 lockfile。测试使用临时独立 Profile，未替换常驻 DSH。真实页面证据和日志由任务验收产物保存。
+验证运行时为未修改的官方 DSH 0.2.1-rc.2。用户指定的 origin/dev 已同步至 7c10b957bd95fda76e958fb54c084a003a3627ae；3.0.54 来自上游合并，本任务未修改根 README、版本号或 lockfile。测试使用临时独立 Profile，未替换常驻 DSH。真实页面证据和日志由任务验收产物保存。
 
 合并前审核分别记录完整回归、定向合同、typecheck、build、不可变安装包及真实会话证据；失败、跳过和复验不会混写为一次全部通过。资源争用时出现过宽扫描超时，涉及的六个文件 158 项单独复验通过。完整最终结果以同任务 Meta 审查报告为准。
 

@@ -1225,9 +1225,9 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     } else {
       const target = source.target, item = target?.items.find(value => value.itemId === target.focusItemId)
       if (!target || !item) throw new Error(tr('原转写未包含这段表达，暂无可定位的原文'))
-      if (target.segment) arkmeUi.showRecordingTarget(target.dateStamp, source.focusAtMillis, target.segment)
+      if (target.segment) arkmeUi.showRecordingTarget(target.dateStamp, item.startAtMillis, target.segment, target.window)
       else if (transcriptItems.some(value => value.itemId === item.itemId)) {
-        setActiveTab('transcript'); setTranscriptNavigation({ dateStamp: target.dateStamp, itemId: item.itemId })
+        setActiveTab('transcript'); setTranscriptNavigation({ dateStamp: selectedDate.getTime(), itemId: item.itemId })
       } else throw new Error(tr('当前转写中找不到精确位置，请切换到对应转写版本'))
       setSpeechScope('')
     }

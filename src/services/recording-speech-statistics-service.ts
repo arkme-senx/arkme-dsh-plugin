@@ -100,7 +100,7 @@ export class RecordingSpeechStatisticsService {
       const window = { dateStamp, endStamp, timeZone: q.timezone, date: speechText(range.date, 10) }
       // Only a real original quote authorizes a transcript target. The corrected
       // word and an empty ASR quote cannot manufacture a Workbench item.
-      target = await this.recording.exploreRecordingEvidence(owner, speechText(original.original_quote, 10000), signal, window)
+      target = { ...await this.recording.exploreRecordingEvidence(owner, speechText(original.original_quote, 10000), signal, window), window }
     }
     await guard()
     return { playback: { playbackRef, mimeType: 'audio/flac', startOffsetMillis: 0, endOffsetMillis: end - start }, mediaStartAtMillis: start, focusAtMillis: focusAt, target }
