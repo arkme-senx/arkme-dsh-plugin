@@ -6,7 +6,7 @@ import { ArkmePluginError } from '../services/service.js'
 import { recordingCreateRequestUID } from '../recording-import-identity.js'
 import { MAX_RECORDING_IMPORT_BYTES, MAX_RECORDING_IMPORT_DURATION_MILLIS, validRecordingImportTaskId } from '../recording-import-contract.js'
 import type { LocalRecorderAudio, LocalRecorderDevice, LocalRecorderSnapshot } from './contract.js'
-import { recorderCatalog } from './catalog.js'
+import { RecorderCatalog } from './catalog.js'
 import { RecorderProtocol } from './protocol.js'
 import { recorderSerialProvider, normalizeRecorderPort, recorderPortGroups, recorderPortGroupKey, RecorderPortUnavailableError, type RecorderPort, type RecorderSerialProvider } from './serial.js'
 import { atomicWrite, decodeRecorderAudio, digest, readRecorderBlock, recorderBlockPages, syncRecorderVolume, type RecorderManifest } from './volume.js'
@@ -156,7 +156,8 @@ export class LocalRecorderOwner {
     await this.guard(account)
     if (this.busyPorts.has(candidate.path)) throw fail('此录音器正在使用中')
     this.busyPorts.add(candidate.path)
-    row.device.job = { state: 'syncing', blocks: 0, detail: '正在读取录音卷' }
+    row.device.job = { state: 'syncing', blocks: 0, detail: '正在读取录音卷', transfer: {
+      phase: 'checking', startedAtMillis: Date.now(), elapsedMillis: 0, readMillis: 0, readBytes: 0, scannedBlocks: 0, totalBlocks: null } }
     try { await this.save(account, row) } catch (error) { this.busyPorts.delete(candidate.path); throw error }
     const promise = this.runSync(account, candidate, row, controller.signal).finally(() => {
       this.jobs.delete(key); this.busyPorts.delete(candidate.path)
@@ -166,32 +167,62 @@ export class LocalRecorderOwner {
   }
   private async runSync(account: Account, candidate: RecorderPort, row: StoredDevice, signal: AbortSignal) {
     let connection
+    const catalog = new RecorderCatalog(), directory = this.deviceDirectory(account, row.device.id)
+    const transfer = row.device.job!.transfer!
+    let lastPublished = 0
+    const publish = async (force = false) => {
+      if (!force && Date.now() - lastPublished < 750) return
+      await this.guard(account)
+      if (row.manifest) {
+        const current = catalog.recordings(row.manifest)
+        row.device.recordings = [...row.device.recordings.filter(recording => !recording.id.startsWith(`${row.manifest!.volume}.`)), ...current]
+        row.device.recordingCount = row.device.recordings.length
+      }
+      transfer.elapsedMillis = Math.max(0, Date.now() - transfer.startedAtMillis)
+      row.device.updatedAtMillis = Math.max(Date.now(), row.device.updatedAtMillis + 1)
+      await this.save(account, row); lastPublished = Date.now()
+    }
     try {
       connection = await this.serial.open(candidate)
+      const read = connection.readExactly.bind(connection)
+      connection.readExactly = async (length, abort) => {
+        const began = performance.now()
+        try { const bytes = await read(length, abort); transfer.readBytes += bytes.length; return bytes }
+        finally { transfer.readMillis += Math.max(0, performance.now() - began) }
+      }
       const protocol = new RecorderProtocol(connection)
       await protocol.info(signal)
-      await syncRecorderVolume(protocol, this.deviceDirectory(account, row.device.id), signal, async (manifest, detail) => {
+      await syncRecorderVolume(protocol, directory, signal, async (manifest, detail) => {
         if (row.manifest && row.manifest.volume !== manifest.volume) {
           row.archives ??= []
           if (!row.archives.some(old => old.volume === row.manifest!.volume)) row.archives.push(row.manifest)
         }
-        row.manifest = manifest; row.device.job = { state: 'syncing', blocks: manifest.blocks.length, detail }
-        await this.save(account, row)
-      }, () => this.guard(account))
+        row.manifest = manifest
+        await catalog.update(directory, manifest, signal)
+        row.device.job = { state: 'syncing', blocks: manifest.blocks.length, detail, transfer }
+        await publish(detail === '同步完成' || detail === '设备中暂无录音')
+      }, () => this.guard(account), async progress => {
+        const firstRead = transfer.totalBlocks === null && progress.totalBlocks !== null
+        Object.assign(transfer, progress)
+        if (row.device.job) row.device.job.detail = progress.phase === 'checking' ? '正在验证录音卷' : progress.phase === 'indexing'
+          ? '正在更新录音列表' : `正在读取区块 ${progress.scannedBlocks + 1}/${progress.totalBlocks}`
+        if (firstRead) { transfer.elapsedMillis = Math.max(0, Date.now() - transfer.startedAtMillis); await this.save(account, row) }
+      })
       try { row.device.storage = await protocol.storage(signal) } catch { signal.throwIfAborted() }
-      row.device.job = { state: 'completed', blocks: row.manifest?.blocks.length ?? 0, detail: '同步完成' }
+      transfer.phase = 'completed'
+      if (transfer.totalBlocks !== null) transfer.scannedBlocks = transfer.totalBlocks
+      row.device.job = { state: 'completed', blocks: row.manifest?.blocks.length ?? 0, detail: '同步完成', transfer }
     } catch (error) {
-      row.device.job = { state: signal.aborted ? 'stopped' : 'failed', blocks: row.manifest?.blocks.length ?? 0,
+      transfer.phase = signal.aborted ? 'stopped' : 'failed'
+      row.device.job = { state: signal.aborted ? 'stopped' : 'failed', blocks: row.manifest?.blocks.length ?? 0, transfer,
         detail: signal.aborted ? '已停止，已读取内容保留，可继续同步' : error instanceof RecorderPortUnavailableError
           ? error.message : '读取中断，已保留进度。请检查设备连接后继续同步。' }
     } finally {
       await connection?.close()
       try {
-        if (row.manifest) {
-          const current = await recorderCatalog(this.deviceDirectory(account, row.device.id), row.manifest)
-          row.device.recordings = [...row.device.recordings.filter(recording => !recording.id.startsWith(`${row.manifest!.volume}.`)), ...current]
-        }
-        row.device.updatedAtMillis = Date.now(); await this.save(account, row)
+        await this.guard(account)
+        if (row.manifest) await catalog.update(directory, row.manifest)
+        await publish(true)
       } catch { /* Account switch or invalid cache: retain the last committed index. */ }
     }
   }

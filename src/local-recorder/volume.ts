@@ -43,6 +43,7 @@ export interface CachedRecorderBlock { physical: number; sequence: number; hash:
 export interface RecorderManifest {
   version: 1; volume: string; generation: number; identity: string; blocks: CachedRecorderBlock[]
 }
+export interface RecorderScanProgress { phase: 'checking' | 'reading' | 'indexing'; scannedBlocks: number; totalBlocks: number | null }
 const bad = (bitmap: Buffer, block: number) => Boolean(bitmap[Math.floor(block / 8)]! & (1 << (block % 8)))
 export async function readRecorderVolume(protocol: RecorderProtocol, signal: AbortSignal) {
   const factory = await protocol.badBlocks(signal), candidates = new Map<string, { count: number; payload: Buffer }>()
@@ -77,7 +78,9 @@ export async function readRecorderVolume(protocol: RecorderProtocol, signal: Abo
 }
 /** Checkpoint only complete validated blocks. Re-read the last indexed block on every sync. */
 export async function syncRecorderVolume(protocol: RecorderProtocol, directory: string, signal: AbortSignal,
-  checkpoint: (manifest: RecorderManifest, detail: string) => Promise<void>, guard: () => Promise<void>): Promise<RecorderManifest> {
+  checkpoint: (manifest: RecorderManifest, detail: string) => Promise<void>, guard: () => Promise<void>,
+  progress?: (value: RecorderScanProgress) => Promise<void>): Promise<RecorderManifest> {
+  await progress?.({ phase: 'checking', scannedBlocks: 0, totalBlocks: null })
   const volume = await readRecorderVolume(protocol, signal)
   let oldest = volume.first
   while (oldest < BLOCK_COUNT && volume.bad(oldest)) oldest++
@@ -103,8 +106,12 @@ export async function syncRecorderVolume(protocol: RecorderProtocol, directory: 
   // first hole rather than skipping data simply because its index exists.
   manifest = { ...manifest, blocks: verified }
   const start = manifest.blocks.length ? Math.max(...manifest.blocks.map(block => block.physical)) : volume.first
+  const totalBlocks = BLOCK_COUNT - start
+  let scannedBlocks = 0
   for (let physical = start; physical < BLOCK_COUNT; physical++) {
     signal.throwIfAborted(); await guard()
+    scannedBlocks = physical - start + 1
+    await progress?.({ phase: 'reading', scannedBlocks: physical - start, totalBlocks })
     if (volume.bad(physical)) continue
     const header = parseRecorderPage(await protocol.read(physical * BLOCK_SIZE, 80, signal))
     if (!header) break
@@ -119,8 +126,10 @@ export async function syncRecorderVolume(protocol: RecorderProtocol, directory: 
     blocks.push({ physical, sequence: header.blockSequence, hash }); blocks.sort((a, b) => a.sequence - b.sequence)
     manifest = { ...manifest, blocks }
     await atomicWrite(join(volumeDirectory, 'index.json'), JSON.stringify(manifest))
+    await progress?.({ phase: 'indexing', scannedBlocks: physical - start + 1, totalBlocks })
     await checkpoint(manifest, `已同步 ${blocks.length} 个区块`)
   }
+  await progress?.({ phase: 'indexing', scannedBlocks, totalBlocks: scannedBlocks })
   await checkpoint(manifest, manifest.blocks.length ? '同步完成' : '设备中暂无录音')
   return manifest
 }

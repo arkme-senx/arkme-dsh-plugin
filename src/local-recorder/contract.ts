@@ -5,6 +5,8 @@ export interface LocalRecorderStorage {
   remainingBytes: number
   remainingSeconds: number
   generation: number
+  physicalBytes?: number
+  audioRemainingBytes?: number
 }
 export interface LocalRecorderRecording {
   id: string
@@ -13,6 +15,18 @@ export interface LocalRecorderRecording {
   durationMillis: number
   complete: boolean
   cached: boolean
+  /** Optional for indexes created by older clients. Values describe verified cached pages. */
+  info?: {
+    audioBytes: number; cachedDurationMillis: number; endAtMillis: number | null
+    batteryStartMV: number | null; batteryEndMV: number | null; firmwareVersion: number | null
+    gainStartDb: number | null; gainChanges: number; vadEnabled: boolean | null; vadThreshold: number | null
+    stopReason: number | null; blockCount: number; crcVerified: boolean
+  }
+}
+export interface LocalRecorderTransfer {
+  phase: 'checking' | 'reading' | 'indexing' | 'completed' | 'stopped' | 'failed'
+  startedAtMillis: number; elapsedMillis: number; readMillis: number; readBytes: number
+  scannedBlocks: number; totalBlocks: number | null
 }
 export interface LocalRecorderDevice {
   id: string
@@ -23,7 +37,7 @@ export interface LocalRecorderDevice {
   recordings: LocalRecorderRecording[]
   recordingCount: number
   updatedAtMillis: number
-  job: { state: 'syncing' | 'completed' | 'stopped' | 'failed'; blocks: number; detail: string } | null
+  job: { state: 'syncing' | 'completed' | 'stopped' | 'failed'; blocks: number; detail: string; transfer?: LocalRecorderTransfer } | null
 }
 export interface LocalRecorderSnapshot {
   supported: boolean

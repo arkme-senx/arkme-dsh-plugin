@@ -28,6 +28,7 @@ export class RecorderStatusError extends Error {
   constructor(readonly status: number) { super(`录音器返回状态 ${status}`) }
 }
 export class RecorderProtocol {
+  private capacityBytes: number | undefined
   private sequence = 1
   private busy = false
   constructor(readonly transport: RecorderTransport) {}
@@ -85,6 +86,7 @@ export class RecorderProtocol {
     if (data.length !== 24 || data.readUInt32LE(4) !== PAGE_SIZE || data.readUInt32LE(8) !== PAGES_PER_BLOCK
       || data.readUInt32LE(12) !== BLOCK_COUNT || safeUint64(data, 16) !== BLOCK_SIZE * BLOCK_COUNT) throw new Error('当前设备不是受支持的 Arkme 录音器')
     if (!data[2]) throw new Error('录音器存储尚未就绪')
+    this.capacityBytes = safeUint64(data, 16)
   }
   async badBlocks(signal: AbortSignal): Promise<Buffer> {
     const data = await this.request(3, 0, 0, signal)
@@ -99,6 +101,7 @@ export class RecorderProtocol {
       || data[1] === 1 && used + remaining !== total) throw new Error('容量信息不一致')
     return { status: data[1] === 1 || data[1] === 2 ? 'ready' as const : data[1] === 0 ? 'unformatted' as const : 'unavailable' as const,
       totalBytes: total * PAGE_SIZE, usedBytes: used * PAGE_SIZE, remainingBytes: remaining * PAGE_SIZE,
+      ...(this.capacityBytes !== undefined ? { physicalBytes: this.capacityBytes } : {}), audioRemainingBytes: safeUint64(data, 16),
       remainingSeconds: data.readUInt32LE(24), generation: data.readUInt32LE(28) }
   }
   async read(address: number, length: number, signal: AbortSignal, stream = false): Promise<Buffer> {
