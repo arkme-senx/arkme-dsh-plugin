@@ -6,7 +6,7 @@ import { recordSenderSnapshot } from '../record-sender-snapshot.js'
 /** Produced only after existing account/source-bound message reference verification. */
 export type RecordEditHistoryTarget = { viewerUserId: number; recordUid: string } & (
   | { kind: 'owned' }
-  | { kind: 'chat'; chatAccessRef?:string; chatSessionUid: string; relationUid: string; recordOwnerUserId: RecordOwnerId }
+  | { kind: 'chat'; chatAccessRef?:string; audienceKey?:string; chatSessionUid: string; relationUid: string; recordOwnerUserId: RecordOwnerId }
 )
 
 export interface RecordRevisionContentProjector {

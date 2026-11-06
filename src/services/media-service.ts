@@ -1306,9 +1306,12 @@ export class MediaService {
   async hydrateRecordSnapshotMediaPage(
     snapshots: Record<string, unknown>[],
     session: ArkmeSessionCredentials,
-    chat?: { chatSessionUid: string; recordUid: string; recordOwnerUserId: number | string; relationUid: string },
+    chat?: { chatAccessRef?: string; chatSessionUid: string; recordUid: string; recordOwnerUserId: number | string; relationUid: string },
     signal?: AbortSignal,
   ): Promise<unknown[][]> {
+    // Team history uses source-bound descriptors. A personal member or file
+    // lookup cannot grant historical media, including the author's own files.
+    if(chat?.chatAccessRef)return snapshots.map(()=>[])
     const refsBySnapshot = snapshots.map(snapshot => this.recordMediaRefs(snapshot))
     if (this.runtime.config.richMediaRenderEnabled === false) return snapshots.map(() => [])
     const refs = [...new Map(refsBySnapshot.flat().map(ref => [stringValue(ref.file_asset_uid), ref])).values()]
