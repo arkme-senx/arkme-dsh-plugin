@@ -19,3 +19,9 @@ it('uses the existing long article alias projection and explicitly marks nested 
  const bounded=projectTeamForward(nested,()=>[])!
  expect(bounded.items).toHaveLength(100);expect(bounded.truncated).toBe(true)
 })
+
+it('renders ordinary source envelopes as Team-owned copies without making the original actors actionable',()=>{
+ const projection=projectTeamForward({forward_records:{source_type:'quick_records',title:'转发快记',created_at:100,items:[{owner_id:77,record_uid:'private-original',owner_name:'原作者',text:'权威冻结正文'}]}},()=>[])!
+ expect(projection).toMatchObject({title:'转发快记',items:[{senderName:'原作者',textContent:'权威冻结正文',sourceType:'team_message'}]})
+ expect(projection.items[0]).not.toHaveProperty('senderUserId')
+})

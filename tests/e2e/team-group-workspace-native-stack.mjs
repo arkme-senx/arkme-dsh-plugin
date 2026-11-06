@@ -39,7 +39,7 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
    for(const key of ['content-type','x-chat-access-ref','range','if-range','if-match','if-none-match'])if(request.headers[key])headers[key]=request.headers[key]
    const result=await fetch(owners[owner]+request.url,{method:request.method,headers,...(request.method==='GET'||request.method==='HEAD'?{}:{body:bytes})})
    const outgoing={};for(const key of ['content-type','content-range','content-length','etag','accept-ranges'])if(result.headers.has(key))outgoing[key]=result.headers.get(key)
-   const resultBytes=Buffer.from(await result.arrayBuffer());call.status=result.status;if(result.headers.get('content-type')?.includes('application/json'))call.code=JSON.parse(resultBytes.toString()).code;if(path.endsWith('/extensions/children/create')||path.endsWith('/conversations/messages/send'))call.result=JSON.parse(resultBytes.toString());response.writeHead(result.status,outgoing);response.end(resultBytes);return
+   const resultBytes=Buffer.from(await result.arrayBuffer());call.status=result.status;if(result.headers.get('content-type')?.includes('application/json'))call.code=JSON.parse(resultBytes.toString()).code;if(path.endsWith('/extensions/children/create')||path.endsWith('/conversations/messages/send')||path.endsWith('/conversations/messages/forward'))call.result=JSON.parse(resultBytes.toString());response.writeHead(result.status,outgoing);response.end(resultBytes);return
   }
   let data={items:[],users:[],has_more:false}
   if(path.endsWith('/the-best-api-for-testing')){actor=Number(input.user_id);data={access_token:token(actor),refresh_token:'isolated-stack'}}
@@ -154,6 +154,23 @@ try{
  assert.equal(coworkerGroupCalls.filter(c=>c.path.includes('/read-receipts/')).length,0,'delegation must not query personal member receipts')
  assert.equal(coworkerGroupCalls.filter(c=>!c.scoped&&c.path.endsWith('/timeline/tail')).length,0,'delegated sends must not start personal directory/body synchronization')
  assert.equal(coworkerGroupCalls.filter(c=>c.code===1004).length,0,'current delegated operations must not fail the personal member gate')
+ // A separate explicit forward can create a Team message; source-card discovery above did not.
+ const openedTarget=await ownerPost('team','/api/v1/team/conversations/open-by-member',{team_id:7,external_user_id:'5'})
+ assert.equal(openedTarget.conversation.last_seq,0)
+ const targets=await host.executeTeamApp('team.app.conversations',{teamRef:colleagueTeamRef,side:'team',limit:30})
+ const target=targets.items.find(row=>row.visitor?.nickname==='用户5');assert(target?.memberInitiated)
+ const forwardOptions={targetConversationRef:target.ref,expectedUserId:13,recordUid:randomUUID(),sendAtMillis:Date.now()}
+ const forwarded=await until(async()=>{
+  try{return await host.forwardSourceMessages(delegated,[replyItem.messageActionRef],forwardOptions)}
+  catch(error){if(error.retryable!==true&&error.code!=='team-forward-outcome-unknown')throw error;await ownerPost('record','/fixture/complete',{});return undefined}
+ },value=>value?.localState==='synced','delegated source to Team forward')
+ assert.equal(forwarded.sequence,1)
+ const targetPage=await host.readTeamMessages(target.ref,{limit:30});assert.equal(targetPage.messages.length,1)
+ const [fullForward]=await host.preflightTeamMessages(target.ref,[{messageRef:targetPage.messages[0].ref,version:targetPage.messages[0].version}])
+ assert.equal(fullForward.forwardRecords?.items[0]?.textContent,uiText)
+ const forwardWire=calls.filter(c=>c.path.endsWith('/conversations/messages/forward')).at(-1)
+ assert(forwardWire?.input.record_sources[0].access_ref,'selected group audience reaches Team/Record source preparation')
+ proof.teamForward={result:forwarded,detail:fullForward.forwardRecords}
  await ownerPost('team','/fixture/remove-member',{team_id:7,user_id:13},11)
  await assert.rejects(host.readSource(delegated),error=>error.code==='arkme-code-1004')
  await assert.rejects(host.recordRevisionSnapshot(delegated,replyItem.messageActionRef,proof.history.revisionUid),error=>error.code==='arkme-code-1004')

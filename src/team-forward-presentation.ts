@@ -10,7 +10,8 @@ const list=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)?value.
  * authenticated target adapter; source owners never become actionable users. */
 export function projectTeamForward(raw:unknown,files:(items:Record<string,unknown>[],longArticle:boolean)=>ArkmeContentBlock[]):ArkmeForwardRecordsPreview|undefined {
  const payload=object(object(raw).forward_records)
- if(payload.source_type!=='team_message')return undefined
+ // The frozen source can be ordinary Records; the delivered occurrence and media remain Team-owned.
+ if(!['team_message','quick_records'].includes(text(payload.source_type)))return undefined
  const items:ArkmeForwardRecordPreviewItem[]=[]
  let truncated=false
  const visit=(node:Record<string,unknown>,depth:number)=>{

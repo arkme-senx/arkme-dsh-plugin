@@ -4552,7 +4552,7 @@ nextPublic = next
           ...(options.commentText ? { commentText: options.commentText } : {}),
           sources: references.map(reference => ({ record_uid: reference.recordUid,
             ...(reference.sourceKind === 'record' ? { record_owner_user_id: session.userId } : {}),
-            ...(reference.sourceKind === 'chat_relation' ? { chat_session_uid: reference.chatSessionUid, relation_uid: reference.relationUid } : {}),
+            ...(reference.sourceKind === 'chat_relation' ? { chat_session_uid: reference.chatSessionUid, relation_uid: reference.relationUid, ...(source.groupDelegation?{access_ref:source.groupDelegation.accessRef}:{}) } : {}),
           })),
         }, options.signal)
       }
