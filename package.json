@@ -309,5 +309,8 @@
     "@deepseek-ai/dsh-api-gateway": {
       "optional": true
     }
-  }
+  },
+  "bundledDependencies": [
+    "serialport"
+  ]
 }
