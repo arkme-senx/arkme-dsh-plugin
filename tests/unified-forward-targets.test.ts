@@ -34,3 +34,19 @@ it('preserves folder navigation, per-conversation pins, hidden entries and searc
   expect(searchForwardRows(rows, 'support', preferences)).toHaveLength(2)
   expect(projectUnifiedForwardTargets([], [a, b], { [teamFolderEntryKey(a.channel)]: { pinned: false, dismissed: true } }, true)).toEqual([])
 })
+
+it('includes group-only team folders and uses their activity for the same root ordering', () => {
+  const channel = { name: 'group-only', jotmoId: 'group-only', teamRef: 'team-group-only', enabled: true }
+  const folder = { channel, activityAt: 60, preview: 'group activity', unread: 0, groupCount: 1, hasPublished: true,
+    groups: [{ sourceKey: 'delegated-group', unread: 0, lastSeq: 1 }] }
+  const ordinary = [source('ordinary', 40)], teams = [team('visitor', 'team', 5, 'support')]
+  const withGroup = { ...folder, channel: teams[0]!.channel, activityAt: 50 }
+  const rows = projectUnifiedForwardTargets(ordinary, teams, {}, true, [folder, withGroup])
+  const sidebar = mergeTeamDirectoryRows(ordinary, teams, true, {}, [folder, withGroup])
+  expect(rows.map(row => row.kind === 'folder' ? row.group.channel.name : forwardTargetName(row.target)))
+    .toEqual(sidebar.map(row => 'source' in row ? row.source.displayName : row.kind === 'team-folder' ? row.group.channel.name : row.conversation.channel.name))
+  expect(rows.map(row => row.kind === 'folder' ? row.group.channel.name : forwardTargetName(row.target))).toEqual(['group-only', 'support', 'ordinary'])
+  expect(searchForwardRows(rows, 'group-only', {})).toMatchObject([{ kind: 'folder', group: { conversations: [] } }])
+  expect(projectUnifiedForwardTargets(ordinary, teams, { [teamFolderEntryKey(channel)]: { pinned: false, dismissed: true } }, true, [folder]))
+    .not.toContainEqual(expect.objectContaining({ kind: 'folder', group: expect.objectContaining({ key: 'group-only' }) }))
+})

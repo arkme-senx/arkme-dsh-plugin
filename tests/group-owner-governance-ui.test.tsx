@@ -62,6 +62,13 @@ describe('group owner governance UI', () => {
     expect(onWithdrawn).toHaveBeenCalledWith(result)
   })
 
+  it('preserves the selected team source when submitting owner withdrawal', async () => {
+    mocks.callArkme.mockResolvedValue({ withdrawnAtMillis: 123, alreadyWithdrawn: false })
+    await act(async () => { renderer = create(<ArkmeMessageWithdrawalDialog item={message} sourceRef="original-team-source" onClose={vi.fn()} onWithdrawn={vi.fn()} />) })
+    await act(async () => { renderer!.root.findAllByType('button').find(node => node.children.includes('确认撤回'))!.props.onClick(); await Promise.resolve() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.message-withdraw', { sourceRef: 'original-team-source', messageWithdrawalRef: message.messageWithdrawalRef }, expect.any(AbortSignal))
+  })
+
   it('keeps removal separate from the optional future-join restriction and deduplicates submit', async () => {
     mocks.callArkme.mockImplementation(async () => await new Promise(() => undefined))
     const onClose = vi.fn()

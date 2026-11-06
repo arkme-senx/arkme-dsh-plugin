@@ -18,6 +18,10 @@ import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { invalidateTeamMessages } from './team-messaging-events.js'
 import { tr } from './locale.js'
+import { useForwardTeamWorkspace } from './use-forward-team-workspace.js'
+import { mergeTeamWorkspaceRows, teamWorkspaceTarget } from './team-workspace-rows.js'
+import { openedTeamConversations } from './team-opened-conversations.js'
+import { teamDirectoryPreferences, teamEntryHidden, teamEntryPinned } from './team-directory-preferences.js'
 
 export interface UnifiedForwardAttempt {
   readonly commentText: string | undefined
@@ -62,11 +66,27 @@ export function UnifiedForwardDialog({ accountKey, attempt, previewTitle, previe
     } catch (reason) { if (current() && !request.signal.aborted) setError(reason instanceof Error ? reason.message : tr('加载失败')) }
     finally { if (current() && !request.signal.aborted) setTopicLoading(false) }
   }
-  const group = directory.rows.find(row => row.kind === 'folder' && folder?.kind === 'team' && row.group.key === folder.key)
+  const groups = directory.rows.flatMap(row => row.kind === 'folder' ? [row.group] : [])
+  const workspace = useForwardTeamWorkspace(accountKey, groups, folder?.kind === 'team' ? folder.key : undefined, directory.workspaceSupported)
+  const group = groups.find(group => folder?.kind === 'team' && group.key === folder.key)
+  const childrenFor = (group: typeof groups[number]): ForwardTargetRow[] => {
+    const view = workspace.views[group.key]
+    if (!view) return forwardTeamChildren(group, directory.preferences)
+    return mergeTeamWorkspaceRows({ channel: group.channel, rows: view.rows, pinRows: view.pinRows,
+      conversations: directory.conversations, opened: openedTeamConversations.read(accountKey), hasPage: !!view.page, preferences: directory.preferences,
+      canPresent: target => teamDirectoryPreferences.canPresentTarget(accountKey, target) })
+      .filter(row => !teamEntryHidden(directory.preferences, teamWorkspaceTarget(row, group.channel))
+        && (row.kind === 'customer' || arkmeSourceAllowsUserWrite(row.source)))
+      .map(row => ({ kind: 'target', target: row.kind === 'customer' ? { kind: 'team', conversation: row.conversation } : { kind: 'source', source: row.source, workspace: group.channel },
+        pinned: teamEntryPinned(directory.preferences, teamWorkspaceTarget(row, group.channel)), activeAtMillis: row.activityAt }))
+  }
+  const activeWorkspace = group && directory.workspaceSupported ? workspace.views[group.key] : undefined
+  const workspaceLoading = !!group && directory.workspaceSupported && (!activeWorkspace || activeWorkspace.loading)
+  const workspaceError = activeWorkspace?.error ?? ''
   const rawRows: ForwardTargetRow[] = folder?.kind === 'self' ? topics.map(source => ({ kind: 'target', target: { kind: 'source', source }, pinned: source.isPinned === true, activeAtMillis: source.activeAtMillis }))
-    : group?.kind === 'folder' ? forwardTeamChildren(group.group, directory.preferences) : directory.rows
-  const rows = searchForwardRows(rawRows, keyword, directory.preferences)
-  const liveTargets = directory.rows.flatMap(row => row.kind === 'target' ? [row.target] : forwardTeamChildren(row.group, directory.preferences).flatMap(child => child.kind === 'target' ? [child.target] : []))
+    : group ? childrenFor(group) : directory.rows
+  const rows = searchForwardRows(rawRows, keyword, directory.preferences, childrenFor)
+  const liveTargets = directory.rows.flatMap(row => row.kind === 'target' ? [row.target] : childrenFor(row.group).flatMap(child => child.kind === 'target' ? [child.target] : []))
     .concat(topics.map(source => ({ kind: 'source' as const, source })))
   const latest = new Map(liveTargets.map(target => [forwardTargetKey(target), target]))
   const latestTargets = useRef(latest)
@@ -120,17 +140,20 @@ export function UnifiedForwardDialog({ accountKey, attempt, previewTitle, previe
   const dialog = <ArkmeForwardTargetDialog fixed={fixed} keyword={keyword} busy={sending} onClose={onClose} onKeywordChange={setKeyword}
     previewTitle={previewTitle} previewSubtitle={previewSubtitle} selectedAvatars={avatars} comment={attempt.commentText ?? comment} commentFrozen={attempt.commentText !== undefined}
     onCommentChange={setComment} error={error} onSubmit={() => { void send() }}
-    identityControls={groupIdentity ? [...selected].flatMap(([key, target]) => target.kind === 'source' && target.source.kind === 'group_chat' ? [<div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>{target.source.displayName}</span><TeamGroupIdentityPicker accountKey={accountKey} sourceRef={target.source.sourceRef} value={identities[key]} disabled={sending || attempt.hasAttempt(key)} onSelect={value => setIdentities(previous => ({ ...previous, [key]: value }))}/></div>] : []) : undefined}>
-    {folder && <button type="button" disabled={sending} onClick={() => { topicRequest.current?.abort(); setFolder(undefined); setKeyword('') }}>{tr('返回转发对象')}</button>}
+    navigation={folder ? <button data-arkme-feedback="neutral" type="button" style={styles.forwardTargetBack} disabled={sending} aria-label={tr('返回转发对象')} onClick={() => { topicRequest.current?.abort(); setFolder(undefined); setKeyword('') }}><span aria-hidden>←</span>{tr('返回转发对象')}</button> : undefined}
+    identityControls={[...selected].flatMap(([key, target]) => target.kind === 'source' && target.source.kind === 'group_chat' && (groupIdentity || target.source.accessKind === 'team_delegation') ? [<div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><span>{target.source.displayName}</span><TeamGroupIdentityPicker accountKey={accountKey} sourceRef={target.source.sourceRef} value={identities[key]} disabled={sending || attempt.hasAttempt(key)} onSelect={value => setIdentities(previous => ({ ...previous, [key]: value }))}/></div>] : [])}>
     <ul style={styles.forwardTargetList} aria-label={tr('转发对象列表')}>
 
       {renderedRows}
-      {!rows.length && <li role="status" style={styles.forwardTargetStatus}>{tr(topicLoading || directory.loading ? '正在加载转发对象...' : '暂无可转发对象')}</li>}
+      {!rows.length && <li role="status" style={styles.forwardTargetStatus}>{tr(topicLoading || directory.loading || workspaceLoading ? '正在加载转发对象...' : '暂无可转发对象')}</li>}
       {folder?.kind === 'self' && topicCursor && <li><button type="button" disabled={sending || topicLoading} onClick={() => { void loadTopics(topicCursor) }}>{tr('更多')}</button></li>}
-      {folder?.kind !== 'self' && directory.hasMore && <li><button type="button" disabled={sending || directory.loading} onClick={() => { void directory.refresh(true).catch(() => setError(tr('目标列表刷新失败，请重试'))) }}>{tr('更多团队会话')}</button></li>}
+      {group && directory.workspaceSupported
+        ? activeWorkspace?.page?.hasMore && activeWorkspace.page.complete && !activeWorkspace.page.resetRequired && <li><button type="button" disabled={sending || workspaceLoading} onClick={() => { void workspace.load(group.key, true) }}>{tr('更多团队会话')}</button></li>
+        : folder?.kind !== 'self' && directory.hasMore && <li><button type="button" disabled={sending || directory.loading} onClick={() => { void directory.refresh(true).catch(() => setError(tr('目标列表刷新失败，请重试'))) }}>{tr('更多团队会话')}</button></li>}
+
     </ul>
     {[...selected].map(([key, target]) => results.has(key) ? <div role="status" key={key} style={styles.forwardTargetStatus}>{forwardTargetName(target)}：{results.get(key)}</div> : null)}
-    {(directory.error || error && !selected.size) && <div role="alert" style={styles.forwardTargetStatus}>{directory.error || error}<button type="button" disabled={sending} onClick={() => { if (folder?.kind === 'self') void loadTopics(); else void directory.refresh(false, true).catch(() => setError(tr('目标列表刷新失败，请重试'))) }}>{tr('重试')}</button></div>}
+    {(workspaceError || directory.error || error && !selected.size) && <div role="alert" style={styles.forwardTargetStatus}>{workspaceError || directory.error || error}<button type="button" disabled={sending} onClick={() => { if (folder?.kind === 'self') void loadTopics(); else if (group && directory.workspaceSupported) void workspace.load(group.key); else void directory.refresh(false, true).catch(() => setError(tr('目标列表刷新失败，请重试'))) }}>{tr('重试')}</button></div>}
   </ArkmeForwardTargetDialog>
   return fixed && typeof document !== 'undefined' ? createPortal(dialog, document.body) : dialog
 }

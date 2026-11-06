@@ -39,7 +39,7 @@ export class ConversationLocationService {
   constructor(private runtime: ServiceRuntime, private source: SourceService, private privacy: ArkmePrivacyVisibilityService,
     private ownSnapshot: (recordUid: string, signal?: AbortSignal) => Promise<{ locationCapture?: ArkmeRecordLocationCapture; locationLabel?: string }>) {}
   private origin() { return JSON.stringify([this.runtime.config?.recordBaseUrl, this.runtime.config?.chatBaseUrl]) }
-  private identity(source: ArkmeSourceRefPayload) { return `${source.kind}:${source.ownerRef}` }
+  private async identity(source: ArkmeSourceRefPayload) { return source.groupDelegation ? await this.source.sourceScopeKey(source) : `${source.kind}:${source.ownerRef}` }
   private invalidCursor(): never { throw new ArkmePluginError('conversation-location-cursor-invalid', '位置读取进度已过期，请刷新后重试', true, 409) }
 
   async page(query: ConversationLocationQuery, signal?: AbortSignal): Promise<ConversationLocationPage> {
@@ -47,7 +47,7 @@ export class ConversationLocationService {
       || query.cursor !== undefined && (typeof query.cursor !== 'string' || query.cursor.length > 100)) this.invalidCursor()
     const session = await this.runtime.requireSession(), origin = this.origin()
     const root = await this.source.openSourceRef(query.sourceRef, session.userId)
-    const identity = this.identity(root), now = Date.now()
+    const identity = await this.identity(root), now = Date.now()
     for (const [key, value] of this.cursors) if (now - value.at >= CURSOR_TTL) this.cursors.delete(key)
     let streams: Stream[]
     if (query.cursor) {
@@ -63,7 +63,7 @@ export class ConversationLocationService {
     if (query.cursor && root.kind === 'topic' && (await readTopicMetadata(this.runtime, session, root.ownerRef, signal)).privacyState === 2) {
       throw new ArkmePluginError('topic-privacy-locked', '隐私锁主题不能查看位置', false, 403)
     }
-    const locked = await this.privacy.lockedRecordUids(session, signal)
+    const locked = root.groupDelegation ? new Set<string>() : await this.privacy.lockedRecordUids(session, signal)
     const source = await this.source.sourceItem(root)
     const stream = streams[0]
     if (!stream) return { items: [], scanned: 0, hasMore: false }
@@ -73,7 +73,7 @@ export class ConversationLocationService {
     if (chat) {
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chat/timeline/page', {
         chat_session_uid: root.ownerRef, before_seq: stream.beforeSequence ?? 0, limit: LIMIT,
-      }, session, signal, { lane: 'interactive-read' })
+      }, session, signal, { lane: 'interactive-read', ...(root.groupDelegation ? {chatAccessRef:root.groupDelegation.accessRef,bypassCache:true} : {}) })
       if (!Array.isArray(data.items)) throw new ArkmePluginError('conversation-location-page-invalid', '聊天位置数据不完整，请重试', true, 502)
       rows = data.items; hasMore = data.has_more === true
       const before = num(data.next_before_seq)
@@ -144,7 +144,7 @@ export class ConversationLocationService {
     list(payload.location_mentions).forEach((value, index) => { const point = position(obj(value)); if (point) add(point, 'message', `message:${index}`) })
     // Received rows are limited to the chat's explicitly shared content. Never
     // call a sender's personal record/context endpoint to populate this map.
-    if (!mine || !owned) return items
+    if (root.groupDelegation || !mine || !owned) return items
     const capture = obj(core.capture_context ?? obj(core.extra).capture_context)
     if (capture.schema_version === 1 && (core.has_manual_edit === false || core.version === 1)) {
       if (capture.location_state === 'not_recorded') return items

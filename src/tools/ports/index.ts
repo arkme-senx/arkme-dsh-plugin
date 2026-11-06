@@ -1,3 +1,4 @@
+import type { TranscriptViewPort } from '../../transcript-view-contract.js'
 import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
 import type { PublicSocialPort } from '../../public-social-contract.js'
 import type { ArkmeRecordExportPort } from '../../data-management.js'
@@ -36,6 +37,7 @@ import type { ArkmeUserBanToolPort } from './user-ban.js'
 import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admission.js'
 
 export interface ArkmeCoreToolPorts extends
+  TranscriptViewPort,
   CodexWorkRecordsPort,
   PublicSocialPort,
   ArkmeRecordExportPort,

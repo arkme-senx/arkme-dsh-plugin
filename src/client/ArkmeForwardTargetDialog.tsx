@@ -8,7 +8,7 @@ import {tr} from './locale.js'
 
 /** Shared presentation only. Destination authority, selection and retries stay
  * in each caller's existing forwarding owner. */
-export function ArkmeForwardTargetDialog({fixed=false,keyword,busy,onClose,onKeywordChange,previewTitle,previewSubtitle,previewContent,identityControls,selectedAvatars,comment,commentFrozen=false,onCommentChange,error,onSubmit,children}:{fixed?:boolean;keyword:string;busy:boolean;onClose():void;onKeywordChange(value:string):void;previewTitle:string;previewSubtitle:string;previewContent?:ReactNode;identityControls?:ReactNode;selectedAvatars?:ReactNode;comment:string;commentFrozen?:boolean;onCommentChange(value:string):void;error:string;onSubmit():void;children:ReactNode}){
+export function ArkmeForwardTargetDialog({fixed=false,keyword,busy,onClose,onKeywordChange,previewTitle,previewSubtitle,previewContent,navigation,identityControls,selectedAvatars,comment,commentFrozen=false,onCommentChange,error,onSubmit,children}:{fixed?:boolean;keyword:string;busy:boolean;onClose():void;onKeywordChange(value:string):void;previewTitle:string;previewSubtitle:string;previewContent?:ReactNode;navigation?:ReactNode;identityControls?:ReactNode;selectedAvatars?:ReactNode;comment:string;commentFrozen?:boolean;onCommentChange(value:string):void;error:string;onSubmit():void;children:ReactNode}){
  const titleId='arkme-forward-target-title',dialog=useRef<HTMLElement>(null)
  const controls=()=>[...(dialog.current?.querySelectorAll<HTMLElement>('button, input, textarea, a[href], select, summary, [tabindex]')??[])]
   .filter(control=>control.tabIndex>=0&&!control.matches(':disabled')&&!control.closest('[hidden], [inert]')&&getComputedStyle(control).display!=='none'&&getComputedStyle(control).visibility!=='hidden')
@@ -33,6 +33,7 @@ export function ArkmeForwardTargetDialog({fixed=false,keyword,busy,onClose,onKey
    }}>
    <header style={styles.forwardTargetHeader}><span aria-hidden/><h3 id={titleId} style={styles.forwardTargetTitle}>{tr('转发给')}</h3><ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.forwardTargetClose} disabled={busy} aria-label={tr('关闭转发对象选择')} onClick={onClose} /></header>
    <div style={styles.forwardTargetSearchWrap}><ArkmeForwardSearch value={keyword} disabled={busy} onChange={event=>onKeywordChange(event.currentTarget.value)}/></div>
+   {navigation!==undefined&&<nav aria-label={tr('转发对象导航')} style={styles.forwardTargetNavigation}>{navigation}</nav>}
    <div style={styles.forwardTargetBody}>{children}</div>
    {(selectedAvatars!==undefined||previewContent!==undefined)&&<footer style={styles.forwardTargetFooter}>
     {selectedAvatars!==undefined&&<div style={styles.forwardTargetRecipients}><span>{tr('发送给：')}</span><span style={styles.forwardTargetAvatarStack}>{selectedAvatars}</span></div>}

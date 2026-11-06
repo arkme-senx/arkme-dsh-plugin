@@ -5,6 +5,8 @@ import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {ArkmeForwardTargetDialog} from '../src/client/ArkmeForwardTargetDialog.js'
 import {TeamForwardDialog} from '../src/client/TeamForwardDialog.js'
 import {TeamForwardAttempt} from '../src/client/team-forward-attempt.js'
+import {UnifiedForwardDialog} from '../src/client/UnifiedForwardDialog.js'
+import {SourceForwardAttempt} from '../src/client/source-forward-attempt.js'
 import type {ArkmeSourceItem} from '../src/types.js'
 import type {TeamConversation} from '../src/team-app-contract.js'
 
@@ -32,6 +34,40 @@ const dialog=()=>document.querySelector<HTMLElement>('[role="dialog"]')!
 const row=(name:string)=>[...dialog().querySelectorAll<HTMLButtonElement>('button[aria-pressed]')].find(button=>button.textContent?.includes(name))!
 const click=async(button:HTMLElement)=>{await act(async()=>button.click())}
 const sendButton=()=>dialog().querySelector<HTMLButtonElement>('button[aria-label="发送转发"]')!
+
+it.each(['ordinary','team'] as const)('keeps %s forwarding subfolder navigation outside the scrolling targets and retains selections on return',async owner=>{
+ const conversation={...team('访客'),channel:{...team('访客').channel,name:'我的团队',jotmoId:'support',teamRef:'own-team'}}
+ const group={key:'support',channel:conversation.channel,conversations:[conversation],latest:conversation,unread:0,attentionUnread:0,unreadExact:true}
+ mocks.directory.mockImplementation(()=>({rows:[{kind:'target',target:{kind:'source',source:source('自己','send_to_self')},pinned:false,activeAtMillis:1},{kind:'folder',group,pinned:false,activeAtMillis:1}],preferences:{},loading:false,hasMore:false,error:'',refresh:mocks.refresh}))
+ mocks.native.mockResolvedValue(page([source('本人主题','topic')]))
+ let release!:(value:unknown)=>void
+ const sender=vi.fn().mockResolvedValue({itemUid:'sent',localState:'synced'}).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve}))
+ await act(async()=>root.render(owner==='ordinary'
+  ? <UnifiedForwardDialog accountKey="test:11" attempt={new SourceForwardAttempt('source',['action'],11,sender)} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>
+  : <TeamForwardDialog accountKey="test:11" attempt={new TeamForwardAttempt('source',[{messageRef:'message',version:1}],sender)} previewTitle="消息" previewSubtitle="" onClose={()=>{}} onComplete={()=>{}}/>))
+ const navigation=()=>dialog().querySelector<HTMLElement>('nav[aria-label="转发对象导航"]')
+ const back=()=>navigation()!.querySelector<HTMLButtonElement>('[aria-label="返回转发对象"]')!
+ const expand=()=>click(dialog().querySelector<HTMLElement>('[aria-label="展开团队 我的团队"]')!)
+ const checkNavigation=()=>{
+  const targets=dialog().querySelector('[aria-label="转发对象列表"]')!,scrolling=targets.parentElement!
+  expect(navigation()).not.toBeNull()
+  expect(scrolling.contains(back())).toBe(false)
+  expect(navigation()!.nextElementSibling).toBe(scrolling)
+ }
+ expect(navigation()).toBeNull()
+ await expand();checkNavigation();await click(row('我的团队 · 访客'))
+ await click(back());expect(navigation()).toBeNull()
+ await expand();expect(row('我的团队 · 访客').getAttribute('aria-pressed')).toBe('true')
+ await click(back());await click(dialog().querySelector<HTMLElement>('[aria-label="选择本人主题"]')!)
+ checkNavigation();await click(row('本人主题'))
+ await click(back());expect(navigation()).toBeNull()
+ await click(dialog().querySelector<HTMLElement>('[aria-label="选择本人主题"]')!)
+ expect(row('本人主题').getAttribute('aria-pressed')).toBe('true')
+ act(()=>sendButton().click())
+ expect(back().disabled).toBe(true)
+ await act(async()=>release({itemUid:'sent',localState:'synced'}))
+ expect(back().disabled).toBe(false)
+})
 
 it('uses native targets and real Team targets, retains partial failures and retries only unresolved commands',async()=>{
  const sender=vi.fn().mockResolvedValueOnce({itemUid:'native',localState:'synced'}).mockRejectedValueOnce(new Error('响应丢失')).mockResolvedValue({itemUid:'team',localState:'synced'})

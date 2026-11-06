@@ -28,11 +28,12 @@ export function useUnifiedForwardDirectory(accountKey: string) {
     .map(source => ({ source, pinned: source.isPinned === true, activeAtMillis: source.activeAtMillis })),
     arkmeComposerDraftStore, Number(accountKey.slice(accountKey.lastIndexOf(':') + 1)))
   // The second column keeps the personal directory as a separate entry above conversations.
-  const rows = projectUnifiedForwardTargets(ordinary, teams.items, preferences, teams.hasLoaded && !teams.hasMore && !teams.error)
+  const rows = projectUnifiedForwardTargets(ordinary, teams.items, preferences, teams.hasLoaded && !teams.hasMore && !teams.error && !teams.foldersError, teams.workspaceFolders)
   if (native.self) rows.unshift({ kind: 'target', target: { kind: 'source', source: native.self },
     pinned: native.self.isPinned === true, activeAtMillis: native.self.activeAtMillis })
   return { rows, preferences, loading: native.loading || teams.loading, hasMore: teams.hasMore,
-    error: [native.error, teams.error].filter(Boolean).join('；'),
+    workspaceSupported: teams.workspaceSupported === true, conversations: teams.items,
+    error: [native.error, teams.error, teams.foldersError].filter(Boolean).join('；'),
     refresh: async (more = false, retry = false) => {
       if (retry) setRefreshRevision(value => value + 1)
       await Promise.all([...(more ? [] : [arkmeChatDirectory.refreshRoot({ silent: true, force: retry })]), refreshTeamDirectory(accountKey, more)])
