@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "3.0.58",
+  "version": "3.0.59",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -89,10 +89,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 3.0.58 更新",
-      "summary": "fix(release): 使用固定归档工具恢复录音器修复发布",
-      "publishedAt": "2026-11-06T12:34:29.704Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.58"
+      "title": "Arkme 插件 3.0.59 更新",
+      "summary": "修复会话分页限流兼容并发布",
+      "publishedAt": "2026-11-07T11:56:44.934Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.59"
     },
     "localHistory": {
       "version": 1
