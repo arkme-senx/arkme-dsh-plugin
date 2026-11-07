@@ -18,6 +18,16 @@ const PAGE_SIZE = 20
 const MAX_ROWS = 20_000
 const keyOf = (source: ArkmeSourceItem) => source.sourceKey ?? source.sourceRef
 
+function directoryFailureDetails(error: unknown) {
+  if (!(error instanceof ArkmePluginError)) return { code: 'unexpected' }
+  return {
+    code: /^[a-z][a-z0-9-]{0,63}$/.test(error.code) ? error.code : 'unknown',
+    retryable: error.retryable,
+    httpStatus: error.httpStatus,
+    upstreamStatus: error.upstreamStatus,
+  }
+}
+
 /** Merge pages and live changes without interpreting page absence as removal. */
 export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, incoming: ArkmeSourceItem, keepLive = false, keepLiveName = false): ArkmeSourceItem {
   if (previous === undefined) return incoming
@@ -245,12 +255,14 @@ export class ConversationDirectoryService {
     void this.rawBaseline.catch(() => undefined)
     const rawSources = new Map<string, ArkmeSourceItem>()
     void this.firstPage.catch(() => undefined)
+    let stage = 'source-page'
     const pending = (async () => {
       let cursor: string | undefined
       const visited = new Set<string>()
       let first = true
       let visibilityFailed = false
       do {
+        stage = 'source-page'
         signal.throwIfAborted()
         if (visited.size >= MAX_ROWS / PAGE_SIZE) throw new Error("Directory page budget exceeded; synchronization incomplete")
         const atRevision = this.revision
@@ -260,8 +272,10 @@ export class ConversationDirectoryService {
         for (const item of page.items) rawSources.set(keyOf(item), item)
         if (!page.hasMore) { this.rawBaselineComplete = true; baselineReady({ directory: 'root', items: [...rawSources.values()], hasMore: false }) }
         const visibleCandidates = page.items.map(item => mergeDirectorySource(this.sources.get(keyOf(item)), item, (this.mutations.get(keyOf(item)) ?? 0) > atRevision))
+        stage = 'source-visibility'
         const visibility = await this.preferences.query(visibleCandidates.map(item => item.sourceRef), [], signal).catch(error => {
           if (signal.aborted || (error instanceof ArkmePluginError && !error.retryable && [401, 403, 409].includes(error.httpStatus))) throw error
+          if (!visibilityFailed) console.warn('dsh-arkme: directory_scan_degraded', { stage, ...directoryFailureDetails(error) })
           visibilityFailed = true
           this.refreshError = '会话列表状态同步失败，等待重试'
           return { items: visibleCandidates.map(item => ({ entryKind: 'source' as const, entryRef: item.sourceRef, hidden: this.visibility.get(`source:${item.sourceRef}`)?.hidden ?? false })) }
@@ -278,8 +292,10 @@ export class ConversationDirectoryService {
         await new Promise<void>(resolve => { setTimeout(resolve, 0) })
       } while (true)
       // Bot discovery is independent of the ordinary first page.
+      stage = 'bot-directory'
       const bots = await this.readBots(signal)
       if (generation !== this.generation) return
+      stage = 'bot-visibility'
       await this.rememberBots(bots.items, userId)
       if (generation !== this.generation) return
       this.phase = visibilityFailed ? 'failed' : 'complete'
@@ -302,6 +318,7 @@ export class ConversationDirectoryService {
       this.avatarWork = avatarWork
     })().catch(error => {
       if (generation === this.generation) {
+        if (!signal.aborted) console.warn('dsh-arkme: directory_scan_failed', { stage, ...directoryFailureDetails(error) })
         this.recoveryScan = true
         this.phase = 'failed'; this.error = error instanceof Error ? error.message : '目录同步失败'
         this.refreshError = this.error
@@ -616,11 +633,13 @@ export class ConversationDirectoryService {
   private flushChanges(): void {
     const generation = this.generation
     const signal = this.controller.signal
+    let stage = 'session'
     const pending = (async () => {
       const session = await this.runtime.requireSession()
       if (generation !== this.generation) return
       if (session.userId !== this.userId) { this.reset(); return }
       if (this.recoveryScan) {
+        stage = 'recovery-scan'
         this.recoveryScan = false
         if (this.scan === undefined) this.startScan()
         else this.rescanRequested = true
@@ -629,6 +648,7 @@ export class ConversationDirectoryService {
       }
       let reconciledMissing = false
       while (this.pendingChanges.size > 0) {
+        stage = 'source-lookup'
         signal.throwIfAborted()
         const batch = [...this.pendingChanges.entries()].slice(0, CHANGE_BATCH_SIZE)
         const atRevision = this.revision
@@ -645,6 +665,7 @@ export class ConversationDirectoryService {
         const matched = new Set<string>()
         const visible: ArkmeConversationDirectoryVisibilityItem[] = []
         if (expected.size > 0) {
+          stage = 'preference-query'
           const result = await this.preferences.queryAffected(sources.map(row => row.sourceRef),
             this.bots.map(bot => bot.botRef), expected, signal)
           visible.push(...result.items)
@@ -653,6 +674,7 @@ export class ConversationDirectoryService {
         const policyChanges = batch.filter(([, change]) => change.policyUpdatedAtMillis > 0)
         const pins: Array<{ row: ArkmeSourceItem; pinned: boolean; updatedAt: number }> = []
         if (policyChanges.length > 0) {
+          stage = 'pin-snapshot'
           const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/display-snapshots',
             { chat_session_uids: policyChanges.map(([, change]) => change.entityUid) }, session, signal,
             { lane: 'interactive-read', bypassCache: true })
@@ -673,6 +695,7 @@ export class ConversationDirectoryService {
             pins.push({ row, pinned: policy.pin_state === 2, updatedAt: updatedAt as number })
           }
         }
+        stage = 'session'
         const currentSession = await this.runtime.accountScopedSession()
         if (generation !== this.generation) return
         if (currentSession?.userId !== session.userId) { this.reset(); return }
@@ -694,6 +717,7 @@ export class ConversationDirectoryService {
         const unknown = visibilityChanges.some(([key]) => !matched.has(key))
           || policyChanges.some(([, change]) => !sourceByUid.has(change.entityUid))
         if (unknown && !reconciledMissing) {
+          stage = 'recovery-scan'
           if (this.scan === undefined) this.startScan()
           else this.rescanRequested = true
           while (this.scan !== undefined) await this.scan
@@ -712,7 +736,10 @@ export class ConversationDirectoryService {
       if (generation !== this.generation || signal.aborted) return
       this.refreshError = error instanceof Error ? error.message : '会话列表状态同步失败'
       this.refreshRetries++
-      console.warn('dsh-arkme: directory_refresh_failed', { attempt: this.refreshRetries, pending: this.pendingChanges.size, fullScan: this.recoveryScan })
+      console.warn('dsh-arkme: directory_refresh_failed', {
+        stage, ...directoryFailureDetails(error),
+        attempt: this.refreshRetries, pending: this.pendingChanges.size, fullScan: this.recoveryScan,
+      })
       this.publish([])
     }).finally(() => {
       if (this.changeWork !== pending) return

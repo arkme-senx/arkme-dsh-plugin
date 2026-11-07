@@ -42,6 +42,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { createHomeTourTrace } from './home-tour-diagnostics.js'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { createPortal } from 'react-dom'
+import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
 import { MagnifyingGlass } from '@phosphor-icons/react/dist/icons/MagnifyingGlass'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
@@ -922,6 +923,29 @@ export function ArkmeTopicCreateFooter({ onCreate }: { onCreate: () => void }) {
   </div>
 }
 
+function ArkmeDirectorySyncStatus({ refreshing, onRetry }: { refreshing: boolean; onRetry: () => void }) {
+  const [visible, setVisible] = useState(false)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    // Short failures can be resolved by the directory owner's existing retry.
+    const timer = setTimeout(() => setVisible(true), 4000)
+    return () => clearTimeout(timer)
+  }, [])
+  if (!visible) return null
+  const label = tr("会话暂未同步")
+  return <div data-arkme-directory-sync-status>
+    <ArkmeActionMenu label={label} open={open} onClose={() => setOpen(false)} align="end" autoFocus
+      anchor={<button data-arkme-feedback="neutral" type="button" aria-label={label} title={label}
+        aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+        <ArrowsClockwise size={14} aria-hidden />
+      </button>}
+      actions={[
+        { type: 'label', id: 'sync-status', text: label },
+        { id: 'retry-sync', label: tr("重试同步"), disabled: refreshing, onSelect: () => { setOpen(false); onRetry() } },
+      ]} />
+  </div>
+}
+
 const arkmeSourceSortOptions: ReadonlyArray<{ value: ArkmeSourceSort, label: string }> = [
   { value: 'latest', get label() { return tr("最新") } },
   { value: 'most', get label() { return tr("最多") } },
@@ -1125,7 +1149,7 @@ export function ArkmeNavigation({
     baselineReady: chatDirectory.baselineReady,
     isRefreshing: chatDirectory.isRefreshing,
     hasSources: sources.length > 0,
-    error,
+    error: chatDirectory.rootReadError ?? '',
   })
   const arkoProfile = arkoProfileSnapshot.userId === auth?.userId
     ? arkoProfileSnapshot.profile
@@ -2216,6 +2240,17 @@ export function ArkmeNavigation({
     arko: Math.max(arkoLatestAtMillis ?? 0, arkoDraft.activityAtMillis),
     self: Math.max(effectiveSelfSource?.activeAtMillis ?? 0, selfDraft?.activityAtMillis ?? 0),
   }
+  const rootSyncFailed = active && authenticated && !lockedDirectory && directory === 'root'
+    && currentAccountKey !== undefined && directoryAccountKey === currentAccountKey
+    && (rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed')
+  const hasUsableDirectory = rootDirectoryRows.length > 0 || effectiveSelfSource !== undefined || !!arkoLatestPreview
+    || showHarnessEntry && (builtinActivity.harness > 0 || codexEntryVisible && codexActivityAtMillis(codexActivity) > 0)
+  const retryRootSync = () => {
+    if (!arkmeChatDirectory.getSnapshot().isRefreshing) void arkmeChatDirectory.refreshRoot({ force: true }).catch(() => undefined)
+  }
+  const syncStatus = rootSyncFailed && hasUsableDirectory
+    ? <ArkmeDirectorySyncStatus key={currentAccountKey} refreshing={chatDirectory.isRefreshing} onRetry={retryRootSync} />
+    : null
   const orderedDirectoryRows = orderConversationDirectoryRows([
     ...rootDirectoryRows.map(row => ({ activeAtMillis: row.activeAtMillis, pinned: row.pinned, node: renderConversationDirectoryRow(row) })),
     ...(['harness', 'arko', 'self'] as const).filter(entry => entry !== 'harness' || showHarnessEntry).map(entry => ({
@@ -2261,13 +2296,16 @@ export function ArkmeNavigation({
       {onClose !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.headerButton} aria-label={tr("关闭 Arkme")} title={tr("关闭 Arkme")} onClick={onClose}>×</button>}
     </header>}
     {directory === 'root' && embeddedProductShell && <div className="arkme-directory-search-toolbar" data-arkme-window-drag-region="conversation" data-arkme-window-drag-directory="" style={styles.conversationToolbar}>
-      <button data-arkme-feedback="neutral" type="button" data-arkme-directory-search style={{ ...directorySearchLayout.field, ...styles.embeddedSearchField }}
-        aria-label={tr("搜索对话或消息")} title={tr("搜索对话或消息")} aria-haspopup="dialog"
-        onClick={() => { if (lockedDirectory) showLogin(); else setGlobalSearchOpen(true) }}
-      >
-        <MagnifyingGlass size={16} style={directorySearchLayout.icon} aria-hidden />
-        <span data-arkme-directory-search-label style={styles.searchLabel}>{tr("搜索对话或消息")}</span>
-      </button>
+      <div className="arkme-directory-search-control">
+        <button data-arkme-feedback="neutral" type="button" data-arkme-directory-search style={{ ...directorySearchLayout.field, ...styles.embeddedSearchField }}
+          aria-label={tr("搜索对话或消息")} title={tr("搜索对话或消息")} aria-haspopup="dialog"
+          onClick={() => { if (lockedDirectory) showLogin(); else setGlobalSearchOpen(true) }}
+        >
+          <MagnifyingGlass size={16} style={directorySearchLayout.icon} aria-hidden />
+          <span data-arkme-directory-search-label style={styles.searchLabel}>{tr("搜索对话或消息")}</span>
+        </button>
+        {syncStatus}
+      </div>
       {active && authenticated && <ArkmeQuickAddButton
         accountScope={currentAccountKey}
         longArticleAccountKey={currentAccountKey}
@@ -2286,6 +2324,7 @@ export function ArkmeNavigation({
       {lockedDirectory && <button data-arkme-feedback="neutral" type="button" style={styles.createTaskButton} aria-label={tr("添加联系人、群聊或 Bot")} onClick={showLogin}><Plus size={19} /></button>}
       {onCreateTask !== undefined && <button data-arkme-feedback="neutral" type="button" style={styles.createTaskButton} aria-label={tr("新任务")} onClick={onCreateTask}><Plus size={19} /></button>}
     </div>}
+    {!embeddedProductShell && syncStatus}
     {lockedDirectory ? <>
       <ArkmeOverlayScrollArea style={{ ...styles.list, ...styles.conversationList }} role="tree" aria-label={tr("Arkme 会话")}>
         {showHarnessEntry && <DeepSeekHarnessRow
@@ -2348,12 +2387,13 @@ export function ArkmeNavigation({
           activateEntry: activateDirectoryEntry,
           renderRow: renderArkmeDirectoryRow,
         })}
-        {(rootDirectoryState === 'error' || chatDirectory.projection?.phase === 'failed') && <>
-          <div role="alert" style={{ ...styles.status, color: '#c2413b' }}>{tr("会话加载失败，请重试")}</div>
-          <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry} onClick={() => { void loadDirectory('root', undefined, true) }}>{tr("重新加载")}</button>
-        </>}
         <ArkmeConversationRemovalStyles />
         <ArkmeDirectoryWindow revealKey={unreadJumpTarget?.key} activeKey={activeConversationKey}>{ordinaryDirectoryRows}</ArkmeDirectoryWindow>
+        {rootSyncFailed && !hasUsableDirectory && <>
+          <div role="alert" style={{ ...styles.status, color: arkmeTheme.danger }}>{tr("会话加载失败，请重试")}</div>
+          <button data-arkme-feedback="neutral" type="button" style={styles.rootDirectoryRetry}
+            disabled={chatDirectory.isRefreshing} onClick={retryRootSync}>{tr("重新加载")}</button>
+        </>}
         {teamDirectory.hasMore && currentAccountKey && <button type="button" disabled={teamDirectory.loading} style={styles.rootDirectoryRetry} onClick={() => { void refreshTeamDirectory(currentAccountKey, true) }}>{tr("加载更多团队对话")}</button>}
         {privateInteractionDirectory.error && <button type="button" onClick={privateInteractionDirectory.retry}
           style={{ padding: '8px 12px', border: 0, background: 'transparent', color: 'var(--arkme-text-secondary)', fontSize: 12 }}>
@@ -2398,7 +2438,7 @@ export function ArkmeNavigation({
         />
       })}
 
-      {error !== '' && rootDirectoryState !== 'error' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
+      {error !== '' && <div style={{ ...styles.status, color: '#c2413b' }}>{error}</div>}
     </ArkmeOverlayScrollArea>
     {directory === 'send_to_self' && authenticated && <ArkmeTopicCreateFooter onCreate={() => { openTopicCreate(null) }} />}
     </>}
