@@ -336,11 +336,12 @@ export class ServiceRuntime {
     accountSessions?: ArkmeAccountSessionOwner,
   ) {
     this.accountSessions = accountSessions ?? new ArkmeAccountSessionOwner(sessionStore)
-    this.requestCoordinator = new ArkmeRequestCoordinator({
-      // Chat allows five list reads per second per account across devices. Keep
-      // headroom and pace actual transports, including retries and other list readers.
-      routeLimits: { [`${config.chatBaseUrl.replace(/\/+$/, '')}/api/v1/chats/list`]: { ratePerSecond: 4 } },
-    })
+    const chatBaseUrl = config.chatBaseUrl?.replace(/\/+$/, '')
+    // Chat allows five list reads per second per account across devices. Keep
+    // headroom and pace actual transports, including retries and other list readers.
+    this.requestCoordinator = new ArkmeRequestCoordinator(chatBaseUrl ? {
+      routeLimits: { [`${chatBaseUrl}/api/v1/chats/list`]: { ratePerSecond: 4 } },
+    } : undefined)
   }
 
   async startAccountScope(): Promise<void> { await this.accountSessions.start() }

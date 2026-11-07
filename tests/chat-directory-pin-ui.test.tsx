@@ -107,6 +107,7 @@ describe('conversation pin interaction', () => {
     await act(async () => { renderer = create(<ArkmeNavigation embeddedProductShell />) })
     const cachedRow = row()
     expect(cachedRow).toBeDefined()
+    const initialRender = JSON.stringify(renderer!.toJSON())
     expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
     const toolbar = renderer!.root.findByProps({ className: 'arkme-directory-search-toolbar' })
     expect(toolbar.findAllByProps({ 'aria-label': '会话暂未同步' })).toHaveLength(0)
@@ -120,6 +121,8 @@ describe('conversation pin interaction', () => {
     expect(row()).toBe(cachedRow)
     expect(toolbar.findAllByProps({ 'aria-label': '会话暂未同步' })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('service unavailable')
+    expect(initialRender).not.toContain('service unavailable')
     expect(mocks.callArkme).toHaveBeenCalledWith('sources.list', expect.objectContaining({ refresh: true }))
   })
 
