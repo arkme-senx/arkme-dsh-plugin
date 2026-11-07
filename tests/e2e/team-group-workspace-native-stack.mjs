@@ -44,6 +44,7 @@ const api=createServer({key:await readFile(process.env.ARKME_E2E_TLS_KEY),cert:a
   let data={items:[],users:[],has_more:false}
   if(path.endsWith('/the-best-api-for-testing')){actor=Number(input.user_id);data={access_token:token(actor),refresh_token:'isolated-stack'}}
   else if(path.endsWith('/get-user-info'))data={user_id:actor,nick_name:`验收用户${actor}`,jotmo_id:`native_user_${actor}`,phone:'13800000000'}
+  else if(path==='/api/v1/auth/get-public-users-by-ids')data={items:input.user_ids.map(user_id=>({user_id,nick_name:`用户${user_id}`,jotmo_id:`native_user_${user_id}`}))}
   response.writeHead(200,{'content-type':'application/json'});response.end(JSON.stringify({code:200,data}))
  }catch(error){response.writeHead(500);response.end(JSON.stringify({error:String(error)}))}
 })
@@ -88,8 +89,13 @@ try{
  proof.workspace=workspace;const customer=workspace.items.find(t=>t.kind==='customer');assert.equal(customer.conversation.sourceOnly,true);assert.equal(customer.conversation.lastSeq,0)
  const consumer=join(profile,'native workspace consumer');await mkdir(consumer,{recursive:true});await writeFile(join(consumer,'package.json'),JSON.stringify({type:'module',private:true}));await copyFile(join(repo,'tests/consumers/team-group-workspace/consumer.ts'),join(consumer,'consumer.ts'))
  execFileSync(process.execPath,[join(repo,'node_modules/typescript/bin/tsc'),'--module','NodeNext','--moduleResolution','NodeNext','--target','ES2022','--strict','--skipLibCheck','--outDir',join(consumer,'out'),join(consumer,'consumer.ts')],{stdio:'pipe',cwd:consumer})
- const {verifyInstalledTeamWorkspace,verifyInstalledTeamHistory}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
+ const {verifyInstalledTeamWorkspace,verifyInstalledTeamHistory,verifyInstalledTeamAiAccess}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href)
  proof.sdk=await verifyInstalledTeamWorkspace(async(path,init)=>{const result=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await result.body(),{status:result.status(),headers:result.headers()})},(await personal()).sourceRef)
+ await page.reload();await page.getByText('接待团队7',{exact:true}).first().click();await page.getByText('隔离转发目标',{exact:true}).first().click()
+ await page.getByRole('button',{name:'群聊设置',exact:true}).click()
+ await page.getByRole('menuitem').filter({hasText:'AI 表达润色'}).waitFor()
+ assert(!(await page.getByRole('menuitem').filter({hasText:'AI 表达润色'}).innerText()).includes('加载失败'),'a dual member still sees the real AI settings')
+ await page.screenshot({path:join(capture,'native-dual-member-ai-settings.png')});await page.keyboard.press('Escape')
  await ownerPost('team','/fixture/add-late-colleague',{},11)
  await login(14)
  const lateFolders=await host.executeTeamApp('team.app.workspace.folders',{}),lateTeamRef=lateFolders.find(t=>t.groupCount===1).channel.teamRef
@@ -102,6 +108,7 @@ try{
  const delegated=groupEntry.source.sourceRef,timeline=await host.readSource(delegated,{limit:100})
  assert.equal(timeline.source.accessKind,'team_delegation');assert(!timeline.items.some(t=>t.textContent===oldText),'admission floor excludes existing messages');assert(timeline.items.some(t=>t.textContent===newText),'current coworker reads admitted public message')
  const members=await host.listSourceMembers(delegated),memberPage=await host.pageSourceMembers(delegated,{limit:100});assert.equal(members.items.length,3,'the delegated source must load real human members through current access authority');assert.equal(memberPage.items.length,3);assert.equal(memberPage.selfRole,'unknown','delegation must not invent a personal governance role');proof.members={humanCount:members.items.length,selfRole:memberPage.selfRole}
+ proof.teamOnlyAi=await verifyInstalledTeamAiAccess(async(path,init)=>{const result=await page.request.fetch(new URL(path,url).href,{method:init?.method,data:init?.body,headers:{...init?.headers,Origin:url}});return new Response(await result.body(),{status:result.status(),headers:result.headers()})},delegated)
  const {agent}=await ctx.agents.create({sessionId:`native-${randomUUID()}`,meta:{cwd:home}});await agent.whenIdle()
  assert(ctx.tools.schemas(agent).some(t=>t.name==='arkme_team_workspace'))
  const callId=randomUUID(),args={request:{operation:'page',teamRef:colleagueTeamRef}},call=agent.session.append('tool/call',{turn:1,step:1,callId,name:'arkme_team_workspace',arguments:JSON.stringify(args)})
@@ -113,6 +120,23 @@ try{
  const cards=page.getByRole('region',{name:'来源群聊',exact:true});await cards.getByRole('button',{name:'回复到此群',exact:true}).waitFor();await page.screenshot({path:join(capture,'native-customer-source-card.png')})
  await cards.getByRole('button',{name:'回复到此群',exact:true}).click()
  await page.getByRole('button',{name:'查看群成员',exact:true}).waitFor()
+ const aiSettingsResponse=page.waitForResponse(response=>{try{return response.request().postDataJSON()?.operation==='source.ai-polish.settings'}catch{return false}})
+ await page.getByRole('button',{name:'群聊设置',exact:true}).click()
+ const groupMenu=page.getByRole('menu');await groupMenu.waitFor()
+ const aiSettingsBody=await(await aiSettingsResponse).json();assert.equal(aiSettingsBody.ok,false);assert.equal(aiSettingsBody.error.code,'group-ai-polish-membership-required')
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)))
+ assert.equal(await groupMenu.getByRole('menuitem').filter({hasText:'AI 表达润色'}).count(),0,'the unavailable AI settings entry is absent')
+ assert(!(await page.locator('body').innerText()).includes('AI 润色设置需要本人具有真人群成员资格'),'opening the settings menu must not report an expected capability absence as a page error')
+ await page.screenshot({path:join(capture,'native-team-only-settings.png')})
+ assert.equal(await groupMenu.getByRole('menuitem',{name:'退出群聊',exact:true}).count(),0,'a delegated source must not show personal leave')
+ assert.equal(await groupMenu.getByRole('menuitem',{name:'解散群聊',exact:true}).count(),0,'a delegated source must not show personal dissolve')
+ await page.keyboard.press('Escape')
+ await page.getByRole('button',{name:'查看群成员',exact:true}).click()
+ const drawer=page.getByLabel('群成员',{exact:true})
+ await until(()=>drawer.locator('[data-arkme-group-member-row]').count(),v=>v===3,'delegated human members rendered')
+ assert.equal(await drawer.getByRole('alert').count(),0,'the real delegated page must pass the shared UI member validator')
+ await page.screenshot({path:join(capture,'native-delegated-members.png')})
+ await page.getByRole('button',{name:'关闭群成员',exact:true}).click()
  const uiText=`同事13原群接手 ${randomUUID()}`,editor=page.locator('.arkme-conversation-textarea[contenteditable="true"]');await editor.fill(uiText);await editor.press('Enter')
  const uiCall=await until(async()=>calls.find(c=>c.path.endsWith('/extensions/children/create')&&c.input.text_content===uiText&&c.result?.data?.accepted===true),Boolean,'UI delegated reply')
  assert(uiCall.scoped);assert.equal(uiCall.input.representation.team_id,'7')
@@ -175,9 +199,21 @@ try{
  await ownerPost('team','/fixture/remove-member',{team_id:7,user_id:13},11)
  await assert.rejects(host.readSource(delegated),error=>error.code==='arkme-code-1004')
  await assert.rejects(host.recordRevisionSnapshot(delegated,replyItem.messageActionRef,proof.history.revisionUid),error=>error.code==='arkme-code-1004')
+ await login(14);await page.reload();await page.getByText('接待团队7',{exact:true}).first().click();await page.getByText('隔离转发目标',{exact:true}).first().click()
+ await page.getByRole('button',{name:'查看群成员',exact:true}).click()
+ await page.getByRole('button',{name:'接待团队7的团队操作',exact:true}).click()
+ await page.getByRole('menuitem',{name:'团队退出群聊',exact:true}).click()
+ const leaveDialog=page.getByRole('dialog',{name:'退出群聊？',exact:true});await leaveDialog.waitFor()
+ assert((await leaveDialog.innerText()).includes('同事将无法继续通过该团队查看或回复本群消息'))
+ await page.screenshot({path:join(capture,'native-team-leave-confirm.png')})
+ await leaveDialog.getByRole('button',{name:'退出群聊',exact:true}).click();await leaveDialog.waitFor({state:'hidden'})
+ await assert.rejects(host.readSource(lateGroup.source.sourceRef),error=>error.code==='arkme-code-2002','the removed admission invalidates its exact access revision')
+ proof.teamLeave={actor:14,wholeTeamAccessRevoked:true}
  await login(4);assert.notEqual((await host.readSource((await personal()).sourceRef)).source.accessKind,'team_delegation','independent human membership survives organization revocation')
+ const afterLeave=await host.executeTeamApp('team.app.group.participants',{sourceRef:(await personal()).sourceRef})
+ assert(!afterLeave.items.some(team=>team.jotmoId==='stack_team_7'),'the selected team admission is removed for every coworker')
  assert.equal(calls.filter(c=>/conversations\/open/.test(c.path)||c.path.includes('/message-channel/')&&!c.path.endsWith('/message-channel/get')||c.path==='/api/v1/records/detail').length,0,'source cards and team-card navigation never open a DM, mutate its channel or use personal Record fallback')
- assert(calls.filter(c=>c.path.endsWith('/message-channel/get')).every(c=>c.actor===13&&String(c.input.team_id)==='7'),'existing team navigation only reads its own channel settings')
+ assert(calls.filter(c=>c.path.endsWith('/message-channel/get')).every(c=>[4,13,14].includes(c.actor)&&String(c.input.team_id)==='7'),'all tested coworkers only read their own team channel settings')
  await writeFile(join(capture,'proof.json'),JSON.stringify(proof,null,2));console.log(JSON.stringify({acceptance:'team-group-workspace-native-stack',owners:'real Chat/Team/Record HTTP+Mongo+Completion+Rabbit',ui:'admission/customer card/delegated original-group reply',sdk:'external compiled installed public SDK',tools:'official DSH real session discovery/read',boundary:'floor, non-human-membership, exact author, revocation, no private customer message',externalSeams:'account identity, blob, moderation and SSE transport only'}))
  }
 }catch(error){console.error(error);await mkdir(capture,{recursive:true});if(error?.stdout)console.error(String(error.stdout));if(page){await writeFile(join(capture,'failure.txt'),await page.locator('body').innerText());await page.screenshot({path:join(capture,'failure.png')})}process.exitCode=1}

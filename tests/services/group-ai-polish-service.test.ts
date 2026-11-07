@@ -18,7 +18,8 @@ describe('GroupAiPolishService', () => {
   const cleanups: Array<() => void> = []
   afterEach(() => { cleanups.splice(0).forEach(cleanup => cleanup()) })
 
-  async function fixture() {
+  async function fixture(delegated = false) {
+    const frame = { accessRef: 'current-team-frame', teamId: '7', membershipKind: 'member' as const, membershipRevision: 2, groupMembershipUid: 'admission', groupMembershipRevision: 1, visibleFromSeq: 1 }
     const state = {
       canManage: true, enabled: false, activeRuleUid: '', viewerRole: 3,
       rules: [{
@@ -26,6 +27,7 @@ describe('GroupAiPolishService', () => {
         extra: undefined as Record<string, unknown> | undefined,
       }],
       failEnable: false, ignoreEnable: false, failReadback: false, updated: false,
+      settingsCode: 200, revoked: false, revokeAfterSettings: false,
     }
     const requests: Array<{ path: string; body: Record<string, unknown> }> = []
     const sessions: ArkmeSessionStore = {
@@ -39,7 +41,12 @@ describe('GroupAiPolishService', () => {
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ path, body })
       const json = (data: unknown) => new Response(JSON.stringify({ code: 200, data }))
+      if (path.endsWith('/team-group/access')) return state.revoked
+        ? new Response(JSON.stringify({ code: 1004, message: '无操作权限' }))
+        : json({ state: 'ready', access_kind: 'team_delegation', membership_policy: 'independent', representation: { team_id: frame.teamId, membership_kind: frame.membershipKind, membership_revision: frame.membershipRevision, group_membership_uid: frame.groupMembershipUid, group_membership_revision: frame.groupMembershipRevision } })
       if (path.endsWith('/settings/query')) {
+        if (state.revokeAfterSettings) state.revoked = true
+        if (state.settingsCode !== 200) return new Response(JSON.stringify({ code: state.settingsCode, message: '读取失败' }))
         if (state.updated && state.failReadback) throw new Error('offline')
         return json({ can_manage: state.canManage, viewer_role: state.viewerRole,
           config: { enabled: state.enabled, active_rule_uid: state.activeRuleUid }, rules: state.rules })
@@ -70,13 +77,46 @@ describe('GroupAiPolishService', () => {
     const source = new SourceService(runtime, new ProfileService(runtime), {
       async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
     })
-    const ref = await source.sealSourceRef(42, 'group_chat', 'group-1', '产品群')
+    const ref = await source.sealSourceRef(42, 'group_chat', 'group-1', '产品群', delegated ? { groupDelegation: frame } : {})
     const service = new GroupAiPolishService(runtime, source, {
       async sendChatSourceTextRaw() { throw new Error('must not send') },
     })
     cleanups.push(() => { service.dispose(); runtime.dispose() })
     return { service, state, requests, ref }
   }
+
+  it('reports unavailable personal AI settings for a valid team-only viewer without returning fabricated configuration', async () => {
+    const { service, state, ref, requests } = await fixture(true)
+    state.settingsCode = 2001
+    await expect(service.inspectGroupAiPolish(ref)).rejects.toMatchObject({ code: 'group-ai-polish-membership-required', retryable: false })
+    expect(requests[0]?.path).toBe('/api/v1/chats/team-group/access')
+  })
+
+  it('retains the actual configuration and permissions for a team viewer who is also a human group member', async () => {
+    const { service, state, ref, requests } = await fixture(true)
+    state.enabled = true; state.activeRuleUid = 'saved-1'
+    await expect(service.inspectGroupAiPolish(ref)).resolves.toMatchObject({ enabled: true, canManage: true, viewerRole: 3, activeRuleName: '友好' })
+    expect(requests.filter(request => request.path.endsWith('/team-group/access'))).toHaveLength(2)
+  })
+
+  it.each([false, true])('does not mask a revoked team source as unavailable, including revocation during the read (%s)', async duringRead => {
+    const { service, state, ref } = await fixture(true)
+    state.revoked = !duringRead; state.revokeAfterSettings = duringRead
+    await expect(service.inspectGroupAiPolish(ref)).rejects.toMatchObject({ code: 'arkme-code-1004' })
+  })
+
+  it('preserves personal-source and other upstream errors', async () => {
+    const personal = await fixture(); personal.state.settingsCode = 2001
+    await expect(personal.service.inspectGroupAiPolish(personal.ref)).rejects.toMatchObject({ code: 'arkme-code-2001' })
+    const delegated = await fixture(true); delegated.state.settingsCode = 1002
+    await expect(delegated.service.inspectGroupAiPolish(delegated.ref)).rejects.toMatchObject({ code: 'arkme-code-1002' })
+  })
+
+  it('does not classify a missing group or concurrent admission revocation as missing human membership', async () => {
+    const { service, state, ref } = await fixture(true)
+    state.settingsCode = 2001; state.revokeAfterSettings = true
+    await expect(service.inspectGroupAiPolish(ref)).rejects.toMatchObject({ code: 'arkme-code-1004' })
+  })
 
   it('lets an ordinary member enable the sole saved rule without generating or saving it', async () => {
     const { service, requests, ref } = await fixture()

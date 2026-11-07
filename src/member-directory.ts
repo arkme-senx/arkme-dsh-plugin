@@ -85,7 +85,7 @@ export function validateMemberUpdate(update: ArkmeConversationMemberUpdate): voi
     if (!Array.isArray(update.unavailableProfileMemberRefs)
       || update.unavailableProfileMemberRefs.some(ref => !update.items.some(item => item.memberRef === ref))
       || update.items.some(item => cachedMemberItem(item) === undefined)) throw new Error('成员资料响应无效')
-  } else if (update.kind !== 'membership' || !['owner', 'admin', 'member'].includes(update.selfRole) || typeof update.hasMore !== 'boolean' || update.items.length + update.removedMemberRefs.length > 100) throw new Error('成员分页响应无效')
+  } else if (update.kind !== 'membership' || !['owner', 'admin', 'member', 'unknown'].includes(update.selfRole) || typeof update.hasMore !== 'boolean' || update.items.length + update.removedMemberRefs.length > 100) throw new Error('成员分页响应无效')
 }
 
 function joinPerson(value: ArkmeConversationMemberJoinPerson): ArkmeConversationMemberJoinPerson {
