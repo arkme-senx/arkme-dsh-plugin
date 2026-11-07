@@ -450,6 +450,49 @@ export class WorldService {
     return item
   }
 
+  /** Report only a freshly verified public projection. No private Record read or caller-supplied owner. */
+  async reportWorldRecord(recordRef: string, expectedUserId: number, reportType: number, reason: string, requestUid: string, signal?: AbortSignal): Promise<{ submitted: true }> {
+    const epoch = this.epoch, session = await this.runtime.requireSession(), text = reason.trim()
+    if (expectedUserId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开举报', false, 409)
+    if (!Number.isInteger(reportType) || reportType < 1 || reportType > 6 || !text || [...text].length > 500 || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestUid)) {
+      throw new ArkmePluginError('world-report-invalid', '请选择举报类型并填写 1 至 500 字问题说明', false, 400)
+    }
+    const uid = this.openWorldRecordRef(recordRef, session.userId).recordUid
+    const response = await this.runtime.post<Record<string, unknown>>(this.runtime.config.worldBaseUrl, '/api/public/v1/world/read', { record_uid: uid }, undefined, [200], signal)
+    const raw = this.mixedItem(response), owner = Number(raw.user_id)
+    if (stringValue(raw.record_uid) !== uid || uid.length > 128 || !isPublicRecordUid(uid) || raw.is_public === false || [1, 4].includes(Number(raw.check_status))) throw new ArkmePluginError('world-report-unavailable', '这条公开内容已不可用，请刷新世界', false, 404)
+    if (!raw.team_author && (!Number.isSafeInteger(owner) || owner <= 0 || owner === session.userId)) throw new ArkmePluginError('world-report-target-invalid', '这条内容暂不支持举报', false, 400)
+    const current = async () => {
+      signal?.throwIfAborted()
+      if (epoch !== this.epoch || (await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('world-account-changed', '账号已变化，请重新打开举报', false, 409)
+    }
+    await current()
+    try {
+      try {
+        // Unified publication contract, including team principals. Never use a team ID as a person ID.
+        const result = await this.runtime.authenticatedWorldPost<Record<string, unknown>>('/api/v1/world/reports/create', { record_uid: uid, report_type: reportType, reason: text, request_uid: requestUid, ...(stringValue(raw.content_revision).trim() ? { content_revision: stringValue(raw.content_revision).trim() } : {}) }, session, signal)
+        if (result?.submitted !== true) throw new ArkmePluginError('world-report-unconfirmed', '举报提交结果尚未确认，请勿重复提交', false, 502)
+      } catch (error) {
+        if (!(error instanceof ArkmePluginError) || ![404, 501].includes(error.upstreamStatus ?? error.httpStatus ?? 0)) throw error
+        if (raw.team_author) throw new ArkmePluginError('world-report-not-ready', '团队内容举报服务尚未接通，填写内容已保留，请稍后重试', true, 503)
+        await current()
+        // Existing production Record contract, also used by mobile public-record reports.
+        await this.runtime.authenticatedPost('/api/v1/reports/create', { owner_id: owner, obj_type: 1, obj_id: 0, obj_uid: uid, rm_subject_id: 0, report_type: reportType, reason: text }, session, signal)
+      }
+    } catch (error) {
+      if (error instanceof ArkmePluginError) {
+        if (error.code === 'world-report-not-ready' || error.code === 'world-account-changed' || error.code.startsWith('auth-')) throw error
+        if ([404, 501].includes(error.upstreamStatus ?? error.httpStatus ?? 0)) throw new ArkmePluginError('world-report-not-ready', '举报服务尚未接通，填写内容已保留，请稍后重试', true, 503)
+        const status = error.upstreamStatus ?? error.httpStatus ?? 0
+        if (status >= 400 && status < 500 && status !== 408) throw error
+        if (error.code.startsWith('arkme-code-') && !error.retryable) throw error
+      }
+      throw new ArkmePluginError('world-report-unconfirmed', '举报提交结果尚未确认，请勿重复提交', false, 502)
+    }
+    await current()
+    return { submitted: true }
+  }
+
   /** Share the existing public URL, never a private Record or a copied media snapshot. */
   async shareWorldRecord(recordRef: string, expectedUserId: number, signal?: AbortSignal): Promise<ArkmeWorldShareResult> {
     const epoch = this.epoch, session = await this.runtime.requireSession()
