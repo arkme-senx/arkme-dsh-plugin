@@ -315,7 +315,7 @@ export class ServiceRuntime {
   memberCacheEpoch(): number { return this.memberCacheRevision }
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
   invalidateMemberCache(): void { this.memberCacheRevision += 1 }
-  readonly requestCoordinator = new ArkmeRequestCoordinator()
+  readonly requestCoordinator: ArkmeRequestCoordinator
   // One bounded pool for message bodies and their awaited projection reads.
   // Background member rosters and other UI reads never inherit this context.
   private readonly messageSyncCoordinator = new ArkmeRequestCoordinator({
@@ -336,6 +336,11 @@ export class ServiceRuntime {
     accountSessions?: ArkmeAccountSessionOwner,
   ) {
     this.accountSessions = accountSessions ?? new ArkmeAccountSessionOwner(sessionStore)
+    this.requestCoordinator = new ArkmeRequestCoordinator({
+      // Chat allows five list reads per second per account across devices. Keep
+      // headroom and pace actual transports, including retries and other list readers.
+      routeLimits: { [`${config.chatBaseUrl.replace(/\/+$/, '')}/api/v1/chats/list`]: { ratePerSecond: 4 } },
+    })
   }
 
   async startAccountScope(): Promise<void> { await this.accountSessions.start() }

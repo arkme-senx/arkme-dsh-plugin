@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
 import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
@@ -14,6 +15,8 @@ type PendingDirectoryChange = { entityKind: 1 | 2; entityUid: string; revision: 
 const MAX_PENDING_CHANGES = 1_000
 const CHANGE_BATCH_SIZE = 50
 const MAX_REFRESH_RETRIES = 5
+const MAX_PAGE_RATE_LIMIT_RETRIES = 2
+const MAX_PAGE_RATE_LIMIT_DELAY_MS = 30_000
 const PAGE_SIZE = 20
 const MAX_ROWS = 20_000
 const keyOf = (source: ArkmeSourceItem) => source.sourceKey ?? source.sourceRef
@@ -25,7 +28,14 @@ function directoryFailureDetails(error: unknown) {
     retryable: error.retryable,
     httpStatus: error.httpStatus,
     upstreamStatus: error.upstreamStatus,
+    failureKind: error.failureKind,
+    retryAfterMillis: error.retryAfterMillis,
   }
+}
+
+function isDirectoryRateLimit(error: unknown): error is ArkmePluginError {
+  return error instanceof ArkmePluginError && error.retryable
+    && (error.failureKind === 'rate_limited' || error.upstreamStatus === 429)
 }
 
 /** Merge pages and live changes without interpreting page absence as removal. */
@@ -113,6 +123,7 @@ export class ConversationDirectoryService {
   private readonly pendingChanges = new Map<string, PendingDirectoryChange>()
   private changeWork: Promise<void> | undefined
   private recoveryScan = false
+  private pageRateLimitExhausted = false
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private refreshRetries = 0
   private refreshError: string | undefined
@@ -132,7 +143,7 @@ export class ConversationDirectoryService {
   reset(): void {
     if (this.refreshTimer !== undefined) clearTimeout(this.refreshTimer)
     this.refreshTimer = undefined; this.changeWork = undefined; this.pendingChanges.clear()
-    this.recoveryScan = false; this.refreshRetries = 0; this.refreshError = undefined
+    this.recoveryScan = false; this.pageRateLimitExhausted = false; this.refreshRetries = 0; this.refreshError = undefined
     this.controller.abort()
     this.controller = new AbortController()
     this.generation++
@@ -195,11 +206,12 @@ export class ConversationDirectoryService {
   private async readSnapshot(force: boolean): Promise<ArkmeSourceList> {
     await this.activate()
     const generation = this.generation
-    if (force) this.resumeChanges()
     const cached = this.snapshot()
     const hasCache = cached.items.length > 0 || cached.projection!.bots.length > 0
-    if (this.scan === undefined && (force || this.phase === 'cached' || this.phase === 'failed' && this.refreshTimer === undefined && this.refreshRetries < MAX_REFRESH_RETRIES)) this.startScan()
-    if (force && this.scan !== undefined && cached.projection?.phase === 'syncing') this.rescanRequested = true
+    const canRecover = this.phase === 'failed' && !this.pageRateLimitExhausted
+      && this.refreshTimer === undefined && this.refreshRetries < MAX_REFRESH_RETRIES
+    if (this.scan === undefined && (force || this.phase === 'cached' || canRecover)) this.startScan()
+    if (force) this.resumeChanges()
     if (hasCache) return structuredClone(cached)
     await this.firstPage
     if (generation !== this.generation) throw new ArkmePluginError('login-context-changed', '账号已切换', false, 409)
@@ -212,8 +224,8 @@ export class ConversationDirectoryService {
     // A completed raw baseline must not be reused by a later connection while Bot discovery is pending.
     if (this.rawBaselineComplete && this.scan !== undefined) await this.scan.catch(() => undefined)
     await this.activate()
-    this.resumeChanges()
     if (this.scan === undefined) this.startScan()
+    this.resumeChanges()
     return structuredClone(await this.rawBaseline!)
   }
 
@@ -241,11 +253,31 @@ export class ConversationDirectoryService {
 
   async settled(): Promise<void> { while (this.scan !== undefined) await this.scan; while (this.avatarWork !== undefined) await this.avatarWork; while (this.diskWriting) await this.persistence }
 
+  private async readScanPage(cursor: string | undefined, signal: AbortSignal): Promise<ArkmeSourceList> {
+    const options = { limit: PAGE_SIZE, refresh: true, firstPaint: true, background: cursor !== undefined,
+      ...(cursor === undefined ? {} : { cursor }), signal }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.source.listSources('root', options)
+      } catch (error) {
+        signal.throwIfAborted()
+        if (!isDirectoryRateLimit(error) || attempt >= MAX_PAGE_RATE_LIMIT_RETRIES) throw error
+        const wait = Math.max(error.retryAfterMillis ?? 0, 1000 * 2 ** attempt)
+        if (!(wait <= MAX_PAGE_RATE_LIMIT_DELAY_MS)) throw error
+        // The transport has exhausted its short retry budget. Keep the scan's
+        // cursor, accepted pages and baseline waiters while we cool this page.
+        await delay(wait, undefined, { signal })
+      }
+    }
+  }
+
   private startScan(): void {
     const generation = this.generation
     const userId = this.userId!
     const signal = this.controller.signal
     this.phase = 'loading'; this.error = undefined; this.rawBaselineComplete = false
+    this.recoveryScan = false
+    this.pageRateLimitExhausted = false
     let ready!: () => void
     let failed!: (error: unknown) => void
     this.firstPage = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject })
@@ -266,7 +298,7 @@ export class ConversationDirectoryService {
         signal.throwIfAborted()
         if (visited.size >= MAX_ROWS / PAGE_SIZE) throw new Error("Directory page budget exceeded; synchronization incomplete")
         const atRevision = this.revision
-        const page = await this.source.listSources('root', { limit: PAGE_SIZE, refresh: true, firstPaint: true, background: !first, ...(cursor === undefined ? {} : { cursor }), signal })
+        const page = await this.readScanPage(cursor, signal)
         if (generation !== this.generation || (await this.runtime.requireSession()).userId !== userId) throw new DOMException('Account changed', 'AbortError')
         if (page.hasMore && (page.nextCursor === undefined || visited.has(page.nextCursor))) throw new ArkmePluginError('directory-cursor-invalid', '会话目录分页未完成：游标无效', true, 502)
         for (const item of page.items) rawSources.set(keyOf(item), item)
@@ -300,6 +332,10 @@ export class ConversationDirectoryService {
       if (generation !== this.generation) return
       this.phase = visibilityFailed ? 'failed' : 'complete'
       if (visibilityFailed) this.recoveryScan = true
+      if (!this.recoveryScan && this.pendingChanges.size === 0) {
+        this.refreshError = undefined
+        this.refreshRetries = 0
+      }
       this.apply([])
       // Image bytes share the decoration lifecycle, never the notification baseline wait.
       const refs = new Set(this.bots.flatMap(bot => bot.avatarRef ? [bot.avatarRef] : []))
@@ -319,7 +355,10 @@ export class ConversationDirectoryService {
     })().catch(error => {
       if (generation === this.generation) {
         if (!signal.aborted) console.warn('dsh-arkme: directory_scan_failed', { stage, ...directoryFailureDetails(error) })
-        this.recoveryScan = true
+        // Replaying the entire directory after a sustained rate limit would
+        // multiply the traffic that just hit the quota.
+        this.pageRateLimitExhausted = stage === 'source-page' && isDirectoryRateLimit(error)
+        if (!this.pageRateLimitExhausted) this.recoveryScan = true
         this.phase = 'failed'; this.error = error instanceof Error ? error.message : '目录同步失败'
         this.refreshError = this.error
         this.publish([])
