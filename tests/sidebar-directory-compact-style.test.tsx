@@ -234,7 +234,7 @@ describe('compact conversation directory styles', () => {
       expect(muted.firstElementChild!.lastElementChild!.textContent).toBe('')
       const search = directory.querySelector('button[aria-label="搜索对话或消息"]')!
       expect(search.getAttribute('aria-haspopup')).toBe('dialog')
-      const toolbar = search.parentElement!
+      const toolbar = search.closest('.arkme-directory-search-toolbar')!
       // Match the contacts toolbar's shared grid while retaining the scroll
       // viewport and full-width conversation-card layout from master.
       expect((toolbar as HTMLElement).style.margin).toBe('24px 16px 16px')
