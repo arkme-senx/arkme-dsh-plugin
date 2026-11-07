@@ -116,6 +116,89 @@ describe('local-first directory', () => {
     expect((await test.owner.read()).items).toHaveLength(240)
   })
 
+  it('retains its first page and joins repeated refreshes while a rate-limited cursor waits', async () => {
+    const limited = gate<number>()
+    const attempts: (string | undefined)[] = []
+    const starts: number[] = []
+    const test = setup(async cursor => {
+      attempts.push(cursor)
+      starts.push(performance.now())
+      if (cursor === undefined) return page([row(1)], 'next')
+      if (attempts.length === 2) {
+        limited.resolve(performance.now())
+        throw new ArkmePluginError('arkme-code-1002', '请求较频繁', true, 502,
+          { failureKind: 'rate_limited', retryAfterMillis: 1150 })
+      }
+      return page([row(2)])
+    })
+    expect((await test.owner.read()).items).toEqual([row(1)])
+    const failureAt = await limited.promise
+    const baseline = test.owner.complete()
+    const repeated = await Promise.all([test.owner.read(true), test.owner.read(true)])
+    expect(repeated.map(value => value.items.map(item => item.sourceKey))).toEqual([['key-1'], ['key-1']])
+    expect(attempts).toEqual([undefined, 'next'])
+    expect((await baseline).items).toEqual([row(1), row(2)])
+    await test.owner.settled()
+    expect(attempts).toEqual([undefined, 'next', 'next'])
+    expect(starts[2]! - failureAt).toBeGreaterThanOrEqual(1145)
+    expect(test.emitted.every(value => value.projection?.phase !== 'failed')).toBe(true)
+    expect(test.emitted.at(-1)?.projection?.phase).toBe('complete')
+  })
+
+  it('cancels a pending cursor retry when the account changes', async () => {
+    const limited = gate<void>()
+    const test = setup(async cursor => {
+      if (cursor === undefined) return page([row(1)], 'next')
+      limited.resolve()
+      throw new ArkmePluginError('arkme-http-error', 'too many requests', true, 502,
+        { upstreamStatus: 429, retryAfterMillis: 10_000 })
+    })
+    await test.owner.read()
+    await limited.promise
+    const baseline = test.owner.complete()
+    const settled = test.owner.settled()
+    // Let complete join the old account's scan before changing the account.
+    await new Promise<void>(resolve => setImmediate(resolve))
+    test.switchUser(2)
+    await expect(baseline).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(settled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(test.source.listSources).toHaveBeenCalledTimes(2)
+    expect(test.emitted.every(value => value.projection?.phase !== 'failed')).toBe(true)
+  })
+
+  it('leaves cached pages usable after a long rate limit without an automatic full rescan', async () => {
+    vi.useFakeTimers()
+    const test = setup(async cursor => {
+      if (cursor === undefined) return page([row(1)], 'next')
+      throw new ArkmePluginError('arkme-code-1002', '请求较频繁', true, 502,
+        { failureKind: 'rate_limited', retryAfterMillis: 60_000 })
+    })
+    await test.owner.read()
+    const settled = expect(test.owner.settled()).rejects.toMatchObject({ failureKind: 'rate_limited' })
+    await vi.advanceTimersByTimeAsync(120_000)
+    await settled
+    expect(await test.owner.read()).toMatchObject({ items: [row(1)], projection: { phase: 'failed' } })
+    expect(test.source.listSources).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses one scan when manual retry supersedes scheduled full recovery', async () => {
+    vi.useFakeTimers()
+    const cached = { ...page([row(1)]), projection: { revision: 1, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+    let available = false
+    const test = setup(async () => {
+      if (!available) throw new Error('offline')
+      return page([row(1)])
+    }, cached)
+    await test.owner.read()
+    await expect(test.owner.settled()).rejects.toThrow('offline')
+    available = true
+    await test.owner.read(true)
+    await vi.advanceTimersByTimeAsync(2000)
+    await test.owner.settled()
+    expect(test.source.listSources).toHaveBeenCalledTimes(2)
+    expect(test.emitted.at(-1)?.projection?.phase).toBe('complete')
+  })
+
   it('joins notification and browser reads in one scan', async () => {
     const remote = gate<ArkmeSourceList>(); const test = setup(() => remote.promise)
     const baseline = test.owner.complete(); const first = test.owner.read()

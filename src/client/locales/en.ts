@@ -1202,6 +1202,8 @@ Enter发送 / Shift+Enter换行|Enter to send / Shift+Enter for a new line
 搜索对话或消息|Search chats or messages
 登录解锁更多功能|Sign in for more features
 会话加载失败，请重试|Failed to load conversation. Please retry.
+会话暂未同步|Conversations haven’t synced yet
+重试同步|Retry sync
 加载或播放失败，请点击播放重试。|Could not load or play audio. Click Play to retry.
 下载|Download
 我的声音|My voice

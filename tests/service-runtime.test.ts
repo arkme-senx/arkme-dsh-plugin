@@ -153,6 +153,28 @@ describe('registered owner read recovery', () => {
     expect(fetcher).toHaveBeenCalledTimes(3)
     runtime.dispose()
   })
+  it('paces foreground and background chat list reads through the same account budget', async () => {
+    vi.useFakeTimers()
+    const requests: Array<{ limit: number; at: number }> = []
+    const fetcher = vi.fn(async (_input, init) => {
+      requests.push({ limit: JSON.parse(String(init?.body)).limit, at: Date.now() })
+      return ok()
+    })
+    const runtime = runtimeFixture(fetcher)
+    const initial = Date.now()
+    try {
+      const reads = [
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 20 }, session, undefined, { lane: 'interactive-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 21 }, session, undefined, { lane: 'background-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 22 }, { ...session, userId: 43 }),
+      ]
+      await vi.advanceTimersByTimeAsync(249)
+      expect(requests).toEqual([{ limit: 20, at: initial }, { limit: 22, at: initial }])
+      await vi.advanceTimersByTimeAsync(1)
+      await Promise.all(reads)
+      expect(requests[2]).toEqual({ limit: 21, at: initial + 250 })
+    } finally { runtime.dispose() }
+  })
   it.each([60_000, 2_147_483_647, 3_000_000_000])('owns exhausted recovery without timer overflow for retry hint %s', async retryAfter => {
     vi.useFakeTimers()
     const timers = vi.spyOn(globalThis, 'setTimeout')

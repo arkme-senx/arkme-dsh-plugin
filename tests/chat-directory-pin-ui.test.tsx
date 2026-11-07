@@ -94,6 +94,7 @@ afterEach(async () => {
 describe('conversation pin interaction', () => {
   it('keeps cached conversations visible with a retry action when refreshing fails', async () => {
     await act(async () => { renderer!.unmount() })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     arkmeChatDirectory.activateAccount(undefined)
     arkmeChatDirectory.activateAccount('test:7001')
     arkmeChatDirectory.publish([source])
@@ -103,14 +104,22 @@ describe('conversation pin interaction', () => {
       if (operation === 'sources.list' && unavailable) throw new Error('service unavailable')
       return original(operation, ...args)
     })
-    await act(async () => { renderer = create(<ArkmeNavigation />) })
-    expect(row()).toBeDefined()
-    const retry = renderer!.root.findAllByType('button').find(node => node.props.children === '重新加载')
-    expect(retry).toBeDefined()
+    await act(async () => { renderer = create(<ArkmeNavigation embeddedProductShell />) })
+    const cachedRow = row()
+    expect(cachedRow).toBeDefined()
+    expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+    const toolbar = renderer!.root.findByProps({ className: 'arkme-directory-search-toolbar' })
+    expect(toolbar.findAllByProps({ 'aria-label': '会话暂未同步' })).toHaveLength(0)
+    await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
+    const status = toolbar.findAllByType('button').find(node => node.props['aria-label'] === '会话暂未同步')
+    expect(status).toBeDefined()
+    await act(async () => { status!.props.onClick() })
+    const retry = renderer!.root.findByProps({ role: 'menuitem', 'aria-label': '重试同步' })
     unavailable = false
     await act(async () => { retry!.props.onClick() })
-    expect(row()).toBeDefined()
-    expect(renderer!.root.findAllByType('button').some(node => node.props.children === '重新加载')).toBe(false)
+    expect(row()).toBe(cachedRow)
+    expect(toolbar.findAllByProps({ 'aria-label': '会话暂未同步' })).toHaveLength(0)
+    expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
     expect(mocks.callArkme).toHaveBeenCalledWith('sources.list', expect.objectContaining({ refresh: true }))
   })
 
@@ -598,20 +607,44 @@ it('restores cached Bots on the first mount instead of clearing them in the acco
   expect(renderer!.root.findAllByProps({ role: 'treeitem' }).some(node => node.props['aria-label'] === 'Cached Bot')).toBe(true)
 })
 
-it('shows failed directory recovery alongside cached chats and personal records', async () => {
+it('keeps background failures out of cached chat and personal-record rows, and exposes a cold retry', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
   const failed = { revision: 101, phase: 'failed' as const, cachedAtMillis: 1, bots: [], visibility: [], error: 'offline' }
   await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [source], hasMore: true, projection: failed }) })
   expect(row()).toBeDefined()
-  expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('会话加载失败，请重试')
+  expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+  const complete = { ...failed, revision: 102, phase: 'complete' as const }
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3999)
+    arkmeChatDirectory.applyHostPage({ directory: 'root', items: [source], hasMore: false, projection: complete })
+  })
+  await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+  expect(renderer!.root.findAllByProps({ 'aria-label': '会话暂未同步' })).toHaveLength(0)
   await act(async () => {
     arkmeChatDirectory.clear()
     arkmeChatDirectory.applyHostPage({ directory: 'root', items: [], hasMore: true, projection: failed })
   })
   expect(JSON.stringify(renderer!.toJSON())).toContain('会话加载失败，请重试')
-  await act(async () => { renderer!.update(<ArkmeNavigation sendToSelfSource={{ ...source, kind: 'send_to_self', latestPreview: 'cached personal record' }} />) })
+  const coldRetry = renderer!.root.findAllByType('button').find(node => node.props.children === '重新加载')
+  expect(coldRetry?.props.disabled).toBe(false)
+  await act(async () => { renderer!.update(<ArkmeNavigation embeddedProductShell sendToSelfSource={{ ...source, kind: 'send_to_self', latestPreview: 'cached personal record' }} />) })
+  await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
   expect(JSON.stringify(renderer!.toJSON())).toContain('cached personal record')
-  expect(renderer!.root.findByProps({ role: 'alert' }).children).toContain('会话加载失败，请重试')
-  expect(renderer!.root.findAllByType('button').some(node => node.props.children === '重新加载')).toBe(true)
+  expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
+  expect(renderer!.root.findAllByType('button').some(node => node.props['aria-label'] === '会话暂未同步')).toBe(true)
+  await act(async () => { arkmeChatDirectory.applyHostPage({ directory: 'root', items: [], hasMore: false, projection: complete }) })
+  expect(renderer!.root.findAllByProps({ 'aria-label': '会话暂未同步' })).toHaveLength(0)
+  await act(async () => {
+    renderer!.update(<ArkmeNavigation embeddedProductShell />)
+    arkmeChatDirectory.applyHostPage({ directory: 'root', items: [], hasMore: true, projection: { ...failed, revision: 103 } })
+  })
+  const fallback = mocks.callArkme.getMockImplementation()!
+  mocks.callArkme.mockImplementation(async (op, params) => op === 'sources.list' && params.refresh
+    ? { directory: 'root', items: [source], hasMore: false, projection: { ...complete, revision: 104 } }
+    : fallback(op, params))
+  await act(async () => { renderer!.root.findAllByType('button').find(node => node.props.children === '重新加载')!.props.onClick() })
+  expect(row()).toBeDefined()
+  expect(renderer!.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
 })
 
 it('restores the scroll position before showing a retained conversation list', async () => {
