@@ -1375,9 +1375,11 @@ export function ArkmeNavigation({
     directoryRequestAbortRef.current = controller
     setError('')
     try {
-      const loaded: ArkmeSourceItem[] = next === 'root'
-        ? await arkmeChatDirectory.refreshRoot({ force })
+      // The directory store owns root sync errors, including recovery after a retry.
+      const loaded = next === 'root'
+        ? await arkmeChatDirectory.refreshRoot({ force }).catch(() => undefined)
         : []
+      if (loaded === undefined) return
       if (next === 'send_to_self') {
         const auth = arkmeAuthStore.getSnapshot().auth
         if (auth?.status !== 'authenticated' || auth.userId === undefined) return
