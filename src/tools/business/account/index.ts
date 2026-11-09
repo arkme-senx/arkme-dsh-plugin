@@ -1,3 +1,4 @@
+import { loginDeviceToolModules } from './login-devices.js'
 import { deviceLockToolModules } from './device-lock.js'
 import { automaticCapabilityToolModules } from './automatic-capabilities.js'
 import { accountModelToolModules } from './models.js'
@@ -10,6 +11,7 @@ import { backgroundSoundPreferenceToolModules } from './background-sound.js'
 export const accountBusinessToolModules: readonly ArkmeToolModule[] = [
   userProfileToolModule,
   ...deviceLockToolModules,
+  ...loginDeviceToolModules,
   ...aiPointsToolModules,
   ...accountModelToolModules,
   ...automaticCapabilityToolModules,

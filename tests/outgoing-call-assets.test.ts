@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -206,4 +207,21 @@ describe('outgoing call assets', () => {
     expect(hint).toContain('diagLog("local_terminal_web_host_hint"')
     expect(bundle).not.toContain('getElapsedLabel')
   })
+})
+
+
+it('passes only explicit suppression to the vendor SDK while preserving push metadata', async () => {
+  const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
+  const source = bundle.slice(bundle.indexOf('function buildOfflinePushInfo('), bundle.indexOf('function resolveRoomId('))
+  const build = runInNewContext(source + '; buildOfflinePushInfo', {
+    safeString: (value: unknown) => typeof value === 'string' ? value : '',
+    CALL_MEDIA: { audio: 'audio', video: 'video' }, IOS_OFFLINE_PUSH_TYPE_VOIP: 1,
+  })
+  for (const value of [undefined, false, true, 'true']) {
+    const result = build({ offlinePushInfo: { isDisablePush: value, title: 'Caller', extension: 'context' } })
+    expect(result.isDisablePush).toBe(value === true)
+    expect(result.title).toBe('Caller')
+    expect(result.extension).toBe('context')
+    expect(result.iOSPushType).toBe(1)
+  }
 })

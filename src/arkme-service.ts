@@ -1,3 +1,5 @@
+import { LoginDevicesService } from './services/login-devices-service.js'
+import type { LoginDeviceRequest } from './login-devices-contract.js'
 import { WorldSoundService } from './services/world-sound-service.js'
 import { WorldSuggestionsService } from './services/world-suggestions-service.js'
 import { AccountModelService } from './services/account-model-service.js'
@@ -515,6 +517,7 @@ export class ArkmeService {
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
+  private readonly loginDeviceService: LoginDevicesService
   private readonly deviceLock: DeviceLockService
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
@@ -1079,6 +1082,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.loginDeviceService = new LoginDevicesService(this.runtime)
     this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
@@ -1370,6 +1374,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
+  async loginDevices(request: LoginDeviceRequest, signal?: AbortSignal) { return this.loginDeviceService.execute(request, signal) }
+
   async deviceLockStatus() { return await this.deviceLock.refresh() }
   async lockDevice() { return await this.deviceLock.lock() }
   async requestDeviceUnlock() { return await this.deviceLock.requestUnlock() }
@@ -1472,6 +1478,7 @@ arkoImagesV1:true,
         accountModelsV1:true,
         aiPointsStatisticsV1:true,
         automaticCapabilitiesV1: true,
+        loginDevicesV1: true,
         recordingVoiceTriggersV2: true,
         personalTranscriptViewsV1: true,
         imageRead: true,

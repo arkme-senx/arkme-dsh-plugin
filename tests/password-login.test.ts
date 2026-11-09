@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AuthService } from '../src/services/auth-service.js'
-import { ArkmePluginError, type ServiceRuntime } from '../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime } from '../src/services/service.js'
 import type { ProfileService } from '../src/services/profile-service.js'
 import { dispatchArkmeHostOperation } from '../src/host-api.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
@@ -25,6 +25,17 @@ function fixture(bindingRequired = false) {
 }
 
 describe('password login', () => {
+  it('preserves the verification requirement instead of reporting an incorrect password', async () => {
+    const runtime = new ServiceRuntime({ authBaseUrl: 'https://auth.example', requestTimeoutMs: 1000 } as never,
+      { read: async () => undefined, delete: vi.fn(), write: vi.fn() } as never, {} as never,
+      async () => new Response(JSON.stringify({ code: 1001, message: '请使用验证码或扫码重新验证此设备' }), { headers: { 'X-Jotmo-Auth-Failure': 'device_verification_required' } }))
+    const f = fixture()
+    try {
+      f.runtime.post.mockImplementation((...args: unknown[]) => runtime.post(...args as Parameters<ServiceRuntime['post']>) as never)
+      await expect(f.auth.loginByPassword('review', 'pwd')).rejects.toMatchObject({ code: 'device-verification-required' })
+      expect(f.runtime.writeSession).not.toHaveBeenCalled()
+    } finally { runtime.dispose() }
+  })
   it('uses the mobile contract, preserves password whitespace and returns no credentials', async () => {
     const { auth, runtime } = fixture()
     const signal = new AbortController().signal

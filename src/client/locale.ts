@@ -1,3 +1,4 @@
+import { loginDevicesEnglish } from './locales/login-devices-en.js'
 import { useSyncExternalStore } from 'react'
 import { arkmeEnglish } from './locales/en.js'
 import { mobileEnglish } from './locales/mobile-en.js'
@@ -43,7 +44,7 @@ export function useArkmeLocale(): ArkmeLocale {
 
 /** For application-owned copy only. Never pass messages, names or transcripts. */
 export function tr(source: string, values?: Record<string, string | number>): string {
-  const translated = active === 'en' ? arkmeEnglish[source] ?? mobileEnglish[source] ?? actionEnglish[source] ?? dynamicEnglish[source] ?? publicSocialEnglish[source] ?? privateGroupEnglish[source] ?? identityShareEnglish[source] ?? source : source
+  const translated = active === 'en' ? loginDevicesEnglish[source] ?? arkmeEnglish[source] ?? mobileEnglish[source] ?? actionEnglish[source] ?? dynamicEnglish[source] ?? publicSocialEnglish[source] ?? privateGroupEnglish[source] ?? identityShareEnglish[source] ?? source : source
   return values === undefined ? translated : translated.replace(/\{(\w+)\}/g, (match, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match)
 }

@@ -1,3 +1,5 @@
+import type { LoginDeviceRequest, LoginDeviceResult } from '../login-devices-contract.js'
+export type * from '../login-devices-contract.js'
 import type { TranscriptViewPort } from '../transcript-view-contract.js'
 export type { TranscriptViewTarget,TranscriptViewReference,TranscriptViewSourceReference,TranscriptViewCommand,TranscriptViewReadItem,TranscriptViewSnapshot,PersonalTranscriptEntry,TranscriptViewReceipt,TranscriptViewSavedPage } from '../transcript-view-contract.js'
 export type {ArkmeTeamMentionInput} from '../types.js'
@@ -1302,6 +1304,11 @@ export class ArkmeSdk {
   async auditExtension(extensionId: string, signal?: AbortSignal): Promise<ArkmeExtensionAuditResult> {
     if (extensionId.trim() === '') throw new TypeError('Arkme extension ID must not be empty')
     return await this.call<ArkmeExtensionAuditResult>('extensions.audit.check', { extensionId: extensionId.trim() }, signal)
+  }
+
+  async loginDevices(request: LoginDeviceRequest, signal?: AbortSignal): Promise<LoginDeviceResult> {
+    if ((await this.capabilities(signal)).features.loginDevicesV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前服务不支持登录设备管理', retryable: false })
+    return this.call('account.devices', request, signal)
   }
 
   async deviceLockStatus(signal?: AbortSignal): Promise<ArkmeDeviceLockSnapshot> { return await this.call('device.lock.status', undefined, signal) }

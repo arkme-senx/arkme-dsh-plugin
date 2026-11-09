@@ -1278,7 +1278,7 @@ describe('ArkmeService', () => {
     }
   })
 
-  it('prepares an outgoing video call from a fresh Arkme private-chat source', async () => {
+  it.each([undefined, [], ['peer__c2'], ['other']])('prepares an outgoing call with recipient push policy %j', async (mutedAccounts) => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -1304,6 +1304,7 @@ describe('ArkmeService', () => {
       } })
       if (url.endsWith('/api/v1/trtc/create-room')) return json({ code: 200, data: {
         room_id: 'room-private-1', shared_topic_id: 99, callee_accounts: ['peer__c2'],
+        call_push_disabled_accounts: mutedAccounts,
       } })
       throw new Error(`unexpected URL ${url}`)
     })
@@ -1325,6 +1326,7 @@ describe('ArkmeService', () => {
     expect(requests.at(-1)?.body).toMatchObject({
       chat_session_uid: 'chat-private-1',
       callee_user_ids: [20002],
+      include_call_notification_policy: true,
       call_media_type: 1,
       caller_name: '我的昵称',
     })
@@ -1344,11 +1346,17 @@ describe('ArkmeService', () => {
         roomId: 'room-private-1',
         mediaType: 'video',
         calleeAccounts: ['peer__c2'],
+        offlinePushInfo: { isDisablePush: mutedAccounts?.includes('peer__c2') ?? false },
         calleeName: '小林',
         callerName: '我的昵称',
         timeoutSec: 30,
       },
     })
+    const data = JSON.parse(result.call.userData)
+    expect(data.sharedTopicId).toBe(99)
+    expect(data.callerName).toBe('我的昵称')
+    expect(data.arkmeCallNotification).toEqual(mutedAccounts?.includes('peer__c2')
+      ? { version: 1, roomId: 'room-private-1', mutedAccounts: ['peer__c2'] } : undefined)
   })
 
   it('rejects a non-private outgoing source before contacting remote services', async () => {
