@@ -19,17 +19,31 @@ it.skipIf(!directory)('runs the existing UI through Host, JWT/Gin, SQL/Mongo and
  let credentials={userId:11,accessToken:ready.token11,refreshToken:'synthetic-no-refresh'}
  const localDatabase=new ArkmeLocalDatabase(state,new ArkmeStateStore(state))
  const service=new ArkmeService(config as never,{async read(){return credentials},async write(value){credentials=value as typeof credentials},async delete(){throw new Error('unexpected logout')}},localDatabase)
- const calls:Array<{operation:string;params:Record<string,unknown>}>=[],errors:string[]=[]
+ const calls:Array<{operation:string;params:Record<string,unknown>}>=[],errors:string[]=[],auxiliaryFailures:string[]=[]
  const server=createServer(async(request,response)=>{
+  if(request.method!=='POST'){response.writeHead(405);response.end();return}
   let operation=''
+  let params:Record<string,unknown>={}
   try{
    let raw='';for await(const part of request)raw+=part
-   const parsed=JSON.parse(raw);operation=parsed.operation;const params=parsed.params??{};calls.push({operation,params})
+   const parsed=JSON.parse(raw);operation=parsed.operation;params=parsed.params??{};calls.push({operation,params})
    // Independent ordinary-chat metadata has no bearing on the H business path.
    const ordinary:Record<string,unknown>={'arko.session':{sessionId:88,name:'Arko',created:false},'arko.messages':{items:[{messageId:1,sessionId:88,role:'user',text:'普通直接聊天仍可用',reasoning:'',createdRecordUids:[],createdAtMillis:1,status:1}],hasMore:false,scanned:1,consistency:'live'},'arko.models':{options:[],effectiveRouteKey:''},'arko.profile':{displayName:'Arko',version:1},'user.profile':{profile:{userId:11,displayName:'验收用户'}}}
    const value=operation in ordinary?ordinary[operation]:await dispatchArkmeHostOperation(service,operation,params)
    response.setHeader('Content-Type','application/json');response.end(JSON.stringify({ok:true,value}))
-  }catch(error){const value=error as {code?:string;message:string;retryable?:boolean};errors.push(`[${operation}] ${String((error as Error).stack??value.message)}`);response.setHeader('Content-Type','application/json');response.end(JSON.stringify({ok:false,error:{code:value.code??'test-chain-failure',message:value.message,retryable:value.retryable??false}}))}
+  }catch(error){
+   const value=error as {code?:string;message:string;retryable?:boolean;upstreamStatus?:number}
+   const failure=`[${operation}] ${String((error as Error).stack??value.message)}`
+   // Sidebar loads unrelated data alongside the composer. Those services are outside this stack.
+   const auxiliary=/^(world\.|bots\.list$|group\.bots$)/.test(operation)
+    || (['reactions','user.profile.refresh'].includes(operation)&&value.upstreamStatus===404)
+    || (operation==='arrangements.conversation.recognition.get'&&value.code==='conversation-recognition-unavailable')
+   const coldLocalRead=operation==='source.timeline'&&value.code==='chat-timeline-cache-miss'
+    && (params.cursor as {unified?:{cacheOnly?:boolean}}|undefined)?.unified?.cacheOnly===true
+   if(auxiliary)auxiliaryFailures.push(failure)
+   else if(!coldLocalRead)errors.push(failure)
+   response.setHeader('Content-Type','application/json');response.end(JSON.stringify({ok:false,error:{code:value.code??'test-chain-failure',message:value.message,retryable:value.retryable??false}}))
+  }
  })
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve))
  const hostPort=(server.address() as {port:number}).port
@@ -62,10 +76,13 @@ it.skipIf(!directory)('runs the existing UI through Host, JWT/Gin, SQL/Mongo and
    expect(await page.locator('[data-arkme-chat-suggestion-dialog]').count()).toBe(0)
    await page.getByRole('button',{name:'关闭详情',exact:true}).last().click()
   }
+  await page.evaluate(()=>(window as any).hpkUseProductionComposer(true))
   await page.locator('[data-arko-interaction]').filter({hasText:'scene-5 完成结果'}).locator('button').first().click()
   await page.locator('[data-arkme-chat-suggestion-dialog]').waitFor()
   await page.getByRole('button',{name:'填入输入框',exact:true}).click()
-  expect(await page.evaluate(()=>String((window as any).hpkDraft()))).toContain('scene-5 完成结果')
+  await page.waitForFunction(()=>String((window as any).hpkDraft()).includes('scene-5 完成结果'))
+  await page.waitForFunction(()=>document.activeElement?.classList.contains('arkme-conversation-textarea'))
+  await page.evaluate(()=>(window as any).hpkUseProductionComposer(false))
   const settings=async(enabled:boolean,version:number)=>{
    await setCapability(enabled,version)
    await page.evaluate(()=>(window as any).hpkRecheck())
@@ -98,10 +115,8 @@ it.skipIf(!directory)('runs the existing UI through Host, JWT/Gin, SQL/Mongo and
   await expect(dispatchArkmeHostOperation(service,'arko.interaction.open',opened[6]!.params)).rejects.toMatchObject({code:'arko-interaction-unavailable'})
   await page.getByText('普通直接聊天仍可用',{exact:true}).waitFor()
   expect(calls.some(call=>['arko.ask','source.send','source.message-extension.extend'].includes(call.operation))).toBe(false)
-  // World, Bot and account-avatar services are outside this isolated stack.
-  const auxiliaryFailures=errors.filter(error=>/^\[(world\.|bots\.list|group\.bots)/.test(error))
-  expect(errors.filter(error=>!auxiliaryFailures.includes(error))).toEqual([])
-  const report={productionUi:true,productionHostDispatch:true,realJwtGin:true,realMongoMySQL:true,realRecordChatOwners:true,exactResults:results,suggestionUsesExistingDialog:true,fillDraftWithoutSend:true,capabilityDisableReenable:true,coldDeniedPhysicalTailRestored:true,earliestRemovedResultRestored:true,exactWideBotOwner:true,offlineGeometryAndSummaryGate:true,reconnectReauthorized:true,sourceEditRevokesPersonalAndContinuation:true,membershipRevokesChatAndAgent:true,staleReferencesDenied:true,modelCalls:0,operations:calls.map(row=>row.operation),auxiliaryFailures,businessErrors:[]}
+  expect(errors).toEqual([])
+  const report={productionUi:true,productionHostDispatch:true,realJwtGin:true,realMongoMySQL:true,realRecordChatOwners:true,exactResults:results,suggestionUsesExistingDialog:true,fillDraftWithoutSend:true,productionComposerFocused:true,capabilityDisableReenable:true,coldDeniedPhysicalTailRestored:true,earliestRemovedResultRestored:true,exactWideBotOwner:true,offlineGeometryAndSummaryGate:true,reconnectReauthorized:true,sourceEditRevokesPersonalAndContinuation:true,membershipRevokesChatAndAgent:true,staleReferencesDenied:true,modelCalls:0,operations:calls.map(row=>row.operation),auxiliaryFailures,businessErrors:[]}
   await writeFile(join(dir,'browser-evidence.json'),JSON.stringify(report,null,2)+'\n')
   await page.screenshot({path:join(dir,'browser-final.png'),fullPage:true})
  }catch(error){await writeFile(join(dir,'browser-errors.json'),JSON.stringify({errors,calls,dom:await page?.locator('body').innerText().catch(()=>''),html:await page?.content().catch(()=>'')},null,2)+'\n');throw error}

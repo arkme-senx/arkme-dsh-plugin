@@ -3,15 +3,38 @@ import { arkoInteractionJump } from './arko-interaction-jump.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeArkoInteraction, ArkmeArkoInteractionTarget } from '../arko-timeline-contract.js'
+import type { ArkmeRecordThought } from '../record-thought-contract.js'
+import type { ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
 import { arkmeUi } from './ui-controller.js'
-import { ArkoChatSuggestionDialog } from './ArkoChatSuggestion.js'
-import { arkmeComposerDraftStore, arkmeSourceComposerDraftKey } from './composer-draft-store.js'
+import { RecordThoughtSuggestionDialog } from './RecordThoughts.js'
+import { useDirectMessageAdmission } from './direct-message-admission.js'
 import { tr } from './locale.js'
 import { recordOwnerId } from '../record-owner-id.js'
 
-export function ArkoInteractionRow({ item, scope, verified = true }: { item: ArkmeArkoInteraction; scope: string; verified?: boolean }) {
+export interface ArkoSuggestionComposer {
+  canFill(scope: string, source: ArkmeSourceItem): boolean
+  fill(scope: string, source: ArkmeSourceItem, text: string): boolean
+}
+
+function InteractionSuggestion({ source, thought, scope, interactionKey, loading, error, composer, onRetry, onClose }: {
+  source: ArkmeSourceItem; thought: ArkmeRecordThought; scope: string; interactionKey: string
+  loading: boolean; error: string; composer?: ArkoSuggestionComposer | undefined
+  onRetry(): void; onClose(): void
+}) {
+  const conversation = source.conversationRef ? { ...source, sourceRef: source.conversationRef } : source
+  const admission = useDirectMessageAdmission(scope, conversation, source.directMessageAdmissionApplicable === true)
+  const fill = composer && !admission.blocked && composer.canFill(scope, source)
+    ? (text: string) => { if (composer.fill(scope, source, text)) onClose() }
+    : undefined
+  return <RecordThoughtSuggestionDialog thought={thought} scopeKey={`${scope}:${interactionKey}`}
+    loading={loading} error={error} onRetry={onRetry} onClose={onClose} onFill={fill}/>
+}
+
+export function ArkoInteractionRow({ item, scope, verified = true, suggestionComposer }: {
+  item: ArkmeArkoInteraction; scope: string; verified?: boolean; suggestionComposer?: ArkoSuggestionComposer | undefined
+}) {
   const [target, setTarget] = useState<ArkmeArkoInteractionTarget & { interactionRef: string }>(), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const controller = useRef<AbortController>()
   useEffect(() => {
@@ -42,12 +65,8 @@ export function ArkoInteractionRow({ item, scope, verified = true }: { item: Ark
       <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>{verified ? item.summary : ""}</span><span aria-hidden>›</span>
     </button>
     {error && <div role="status" style={{ fontSize: 12, color: theme.tertiary }}>{error}</div>}
-    {verified && target?.interactionRef===item.interactionRef && target.accountScope===scope && target.thought && <ArkoChatSuggestionDialog thought={target.thought} scopeKey={`${scope}:${item.interactionKey}`} loading={busy} error={error}
-      onRetry={() => { void open() }} onClose={() => setTarget(undefined)} onFill={text => {
-        const userId = Number(scope.split(':')[1]), key = arkmeSourceComposerDraftKey(userId, target.source)
-        const previous = arkmeComposerDraftStore.get(key).text
-        arkmeComposerDraftStore.setText(key, previous.trim() ? `${previous}\n${text}` : text)
-        setTarget(undefined); arkmeUi.selectSource(target.source)
-      }}/>}
+    {verified && target?.interactionRef===item.interactionRef && target.accountScope===scope && target.thought &&
+      <InteractionSuggestion source={target.source} thought={target.thought} scope={scope} interactionKey={item.interactionKey}
+        loading={busy} error={error} composer={suggestionComposer} onRetry={() => { void open() }} onClose={() => setTarget(undefined)}/>}
   </li>
 }

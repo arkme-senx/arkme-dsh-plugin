@@ -2072,7 +2072,7 @@ export function ArkmeSurface({
   const quoteReplySupport = useQuoteReplySupport(`${authenticatedAccountKey}:${conversationKey}`, source?.sourceRef, !!composerExtensionTarget?.quote, sourceIsChat ? '回复' : '延展')
   const { composer: recordReeditComposer, composerRef: recordReeditComposerRef, setComposer: setRecordReeditComposer,
     updateCandidate: updateRecordReeditCandidate, activateScope: activateRecordReeditScope,
-    findCandidate: findRecordReeditCandidate, detachCandidate: detachRecordReeditCandidate } = useRecordReeditEditors()
+    findCandidate: findRecordReeditCandidate, hasSelectedEditor, detachCandidate: detachRecordReeditCandidate } = useRecordReeditEditors()
   const seenReeditCommits = useRef(new Set<string>())
   const pendingReeditHighlights = useRef(new Set<string>())
   const recordReeditGenerationRef = useRef(0)
@@ -6049,20 +6049,44 @@ export function ArkmeSurface({
     if (cursor !== undefined) focusEditedComposer(cursor)
   }, [activeRecordReeditComposer, composerDraftKey, composerMentionsEnabled, draft.length,
     focusEditedComposer, insertReeditMentionAt, syncComposerUserInput])
+  const suggestionDraftKey = composerTextDisabled || activeRecordReeditComposer || archiveReadOnly ? undefined : composerDraftKey
   const fillThoughtSuggestion = useCallback((text: string, mentionAsen?: boolean) => {
-    if (!composerDraftKey || directAdmission.blocked || activeRecordReeditComposer || archiveReadOnly) return
-    const current = arkmeComposerDraftStore.get(composerDraftKey).text
+    if (!suggestionDraftKey) return
+    const current = arkmeComposerDraftStore.get(suggestionDraftKey).text
     syncComposerUserInput(true)
     let cursor: number | undefined
-    if (mentionAsen) cursor = arkmeComposerDraftStore.insertBotMention(composerDraftKey, 'asen', '阿森', current.length, current.length)
+    if (mentionAsen) cursor = arkmeComposerDraftStore.insertBotMention(suggestionDraftKey, 'asen', '阿森', current.length, current.length)
     else {
       const next = current.trim() ? `${current}\n${text}` : text
-      arkmeComposerDraftStore.setText(composerDraftKey, next)
+      arkmeComposerDraftStore.setText(suggestionDraftKey, next)
       cursor = next.length
     }
     setDrawer(undefined); setDetailBackStack([]); pendingExtensionParentDetailRef.current = undefined
     if (cursor !== undefined) focusEditedComposer(cursor)
-  }, [composerDraftKey, directAdmission.blocked, activeRecordReeditComposer, archiveReadOnly, syncComposerUserInput, focusEditedComposer])
+  }, [suggestionDraftKey, syncComposerUserInput, focusEditedComposer])
+  // The destination composer owns the draft and focus once it mounts.
+  const pendingArkoSuggestion = useRef<{ accountKey: string; sourceKey: string; text: string }>()
+  const canFillArkoSuggestion = (accountKey: string, target: ArkmeSourceItem) =>
+    accountKey === authenticatedAccountKey && target.kind === 'private_chat'
+      && !!arkmeSourceComposerDraftKey(authenticatedUserId, target)
+      && !hasSelectedEditor({ accountKey, sourceKey: arkmeSourceIdentityKey(target) })
+  const fillArkoSuggestion = (accountKey: string, target: ArkmeSourceItem, text: string) => {
+    if (!canFillArkoSuggestion(accountKey, target)
+      || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== accountKey
+      || arkmeUi.getSnapshot().mode !== 'arko') return false
+    pendingArkoSuggestion.current = { accountKey, sourceKey: arkmeSourceIdentityKey(target), text }
+    arkmeUi.selectSource(target)
+    return true
+  }
+  useEffect(() => {
+    const pending = pendingArkoSuggestion.current
+    if (!pending) return
+    pendingArkoSuggestion.current = undefined
+    if (activeConversation && ui.mode === 'source'
+      && pending.accountKey === authenticatedAccountKey && pending.sourceKey === conversationKey
+      && arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) === pending.accountKey
+      && !hasSelectedEditor(pending)) fillThoughtSuggestion(pending.text)
+  }, [activeConversation, authenticatedAccountKey, conversationKey, fillThoughtSuggestion, hasSelectedEditor, ui.mode])
   const insertMentionCandidate = useCallback((member: ArkmeMentionCandidate) => {
     if (mentionTrigger === undefined) return
     if (activeRecordReeditComposer !== undefined && member.kind !== 'member') {
@@ -8881,7 +8905,8 @@ export function ArkmeSurface({
             onPrivateChatOpened={activateSource}
           />
           : ui.mode === 'voiceprint' ? <ArkmeVoiceprintSurface onBack={() => { arkmeUi.showRecordings() }} />
-          : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)} />
+          : ui.mode === 'arko' ? <ArkmeArkoSurface key={arkmeArkoSurfaceKey(auth)}
+            suggestionComposer={{ canFill: canFillArkoSuggestion, fill: fillArkoSuggestion }} />
           : botConversationVisible && ui.selectedBot !== undefined ? <ArkmeBotConversationSurface
             key={ui.selectedBot.botRef} bot={ui.selectedBot} onConversationActivity={bot => { arkmeUi.openBotConversation(bot) }} onDeleted={() => { arkmeUi.showHarness() }}
           />
@@ -9814,7 +9839,7 @@ export function ArkmeSurface({
   return (
     <RecordThoughtsProvider accountScope={authenticatedAccountKey} enabled={active && activeConversation && authenticated && (isArkmeSelfWorkspaceSource(source) || sourceIsChat)}
       chat={sourceIsChat} source={source} sourceRef={source?.sourceRef} sourceKey={conversationKey}
-      onFill={composerTextDisabled || activeRecordReeditComposer || archiveReadOnly ? undefined : fillThoughtSuggestion}>
+      onFill={suggestionDraftKey ? fillThoughtSuggestion : undefined}>
       <MessageQuoteThreadsProvider scope={`${authenticatedAccountKey}:${conversationKey}`} sourceRef={active && activeConversation ? source?.sourceRef : undefined}
         accessKind={source?.accessKind} chat={sourceIsChat} items={items} onOpenComments={item => { timelineActions.current.openNoteDetail(item) }}>
         {surfaceContent}

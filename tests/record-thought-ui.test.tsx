@@ -488,3 +488,18 @@ it('keeps the selected result when the detail body remounts after its navigation
   expect(host.textContent).toContain('必须保留的精确 Agent 结果')
  }finally{const value=jump.snapshot();if(value)await act(async()=>jump.consume(value.revision))}
 })
+
+it('replaces a selected result in its original slot without moving the other replies', async () => {
+  const first = { id: 'first', recordUid: item.itemUid, biz: 1 as const, status: 'ready' as const, content: '原第一条' }
+  const second = { ...first, id: 'second', content: '原第二条' }
+  mocks.callArkme.mockResolvedValue({ accountScope: 'production:42', items: [first, second] })
+  const render = (interaction?: typeof first) => <RecordThoughtsProvider accountScope="production:42" enabled>
+    <RecordThoughtContent item={item} interaction={interaction}/>
+  </RecordThoughtsProvider>
+  await act(async () => root.render(render()))
+  await load()
+  await act(async () => root.render(render({ ...second, content: '精确打开的第二条' })))
+  expect([...host.querySelectorAll('[data-arkme-thought-reply]')].map(row => row.getAttribute('data-arkme-thought-reply')))
+    .toEqual(['first', 'second'])
+  expect(host.querySelector('[data-arkme-thought-reply="second"]')?.textContent).toContain('精确打开的第二条')
+})

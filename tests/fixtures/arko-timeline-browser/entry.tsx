@@ -1,6 +1,7 @@
 import React,{useEffect,useState,useSyncExternalStore} from 'react'
 import {createRoot} from 'react-dom/client'
 import {ArkmeArkoSurface} from '../../../src/client/ArkmeArkoSurface.js'
+import {ArkmeSurface} from '../../../src/client/ArkmeSidebar.js'
 import {ArkmeTimelineDetailDrawer} from '../../../src/client/ArkmeNoteDetails.js'
 import {RecordThoughtsProvider} from '../../../src/client/RecordThoughts.js'
 import {arkmeAuthStore} from '../../../src/client/auth-store.js'
@@ -17,6 +18,8 @@ globals.hpkDraft=()=>{const source=arkmeUi.getSnapshot().selectedSource;return s
 function App(){
  const ui=useSyncExternalStore(arkmeUi.subscribe,arkmeUi.getSnapshot,arkmeUi.getSnapshot)
  const [detail,setDetail]=useState<{key:number;item:ArkmeTimelineItem}>(),[error,setError]=useState('')
+ const [productionComposer,setProductionComposer]=useState(false)
+ globals.hpkUseProductionComposer=(enabled:boolean)=>{arkmeUi.showArko();setProductionComposer(enabled)}
  useEffect(()=>{
   const source=ui.selectedSource,target=ui.conversationTarget
   if(!source||!target){setDetail(undefined);return}
@@ -31,6 +34,7 @@ function App(){
   }).catch(error=>{if(!controller.signal.aborted)setError(String(error))})
   return()=>controller.abort()
  },[ui.selectedSource,ui.conversationTarget])
+ if(productionComposer)return <main style={{fontFamily:'system-ui',height:'95vh'}}><ArkmeSurface productChrome={false}/></main>
  return <main style={{fontFamily:'system-ui',height:'95vh'}}><ArkmeArkoSurface/>{error&&<p data-chain-error>{error}</p>}
  {detail&&ui.selectedSource&&<RecordThoughtsProvider accountScope="test:11" enabled sourceRef={ui.selectedSource.sourceRef} sourceKey={arkmeSourceIdentityKey(ui.selectedSource)} source={ui.selectedSource} chat={['private_chat','group_chat'].includes(ui.selectedSource.kind)}>
  <ArkmeTimelineDetailDrawer key={detail.key} item={detail.item} sourceRef={ui.selectedSource.sourceRef} sourceIdentityKey={arkmeSourceIdentityKey(ui.selectedSource)} sourceKind={ui.selectedSource.kind} showOriginal={false} onClose={()=>arkmeUi.showArko()} onToggleOriginal={()=>{}}/>

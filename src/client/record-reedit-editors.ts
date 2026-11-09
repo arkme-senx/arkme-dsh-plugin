@@ -43,7 +43,7 @@ export function hydrateRecordReeditEditor(current: ArkmeRecordReeditComposerStat
   }
 }
 
-const scopeKey = (scope: RecordReeditScope) => JSON.stringify([scope.accountKey, scope.sourceKey])
+const scopeKey = (scope: Pick<RecordReeditScope, 'accountKey' | 'sourceKey'>) => JSON.stringify([scope.accountKey, scope.sourceKey])
 const editorKey = (scope: RecordReeditScope, itemUid: string) => JSON.stringify([scopeKey(scope), itemUid])
 
 interface Editors {
@@ -101,6 +101,8 @@ export function useRecordReeditEditors() {
   }, [publish])
   const findCandidate = useCallback((scope: RecordReeditScope, itemUid: string) =>
     stateRef.current.candidates.get(editorKey(scope, itemUid)), [])
+  const hasSelectedEditor = useCallback((scope: Pick<RecordReeditScope, 'accountKey' | 'sourceKey'>) =>
+    stateRef.current.selected.has(scopeKey(scope)), [])
   const detachCandidate = useCallback((target: ArkmeRecordReeditComposerState) => {
     const previous = stateRef.current
     const key = editorKey(target, target.item.itemUid)
@@ -110,5 +112,5 @@ export function useRecordReeditEditors() {
     publish({ ...previous, selected, currentKey: previous.currentKey === key ? undefined : previous.currentKey })
   }, [publish])
   return { composer: state.currentKey === undefined ? undefined : state.candidates.get(state.currentKey),
-    composerRef, setComposer, updateCandidate, activateScope, findCandidate, detachCandidate }
+    composerRef, setComposer, updateCandidate, activateScope, findCandidate, hasSelectedEditor, detachCandidate }
 }

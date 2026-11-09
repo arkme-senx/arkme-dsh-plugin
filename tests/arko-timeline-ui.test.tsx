@@ -13,6 +13,21 @@ vi.mock('../src/client/api.js',async original=>({...await original<typeof import
 const cache = ():ArkmeArkoTimelineCache=>({schemaVersion:2,savedAtMillis:Date.now(),messages:[{id:'history:1',messageId:1,sessionId:88,role:'user',text:'已加载的普通聊天',status:'done',createdAtMillis:1000}],interactions:[{interactionKey:'thought-1',interactionRef:'opaque',occurredAtMillis:2000,kind:'self',sourceName:'复盘',summary:'已加载的互动',suggestion:false}],session:{sessionId:88,name:'Arko',created:false},historyCursor:'old-chat-page',interactionCursor:'old-interaction-page',viewport:{scrollTop:123,followTail:false}})
 beforeEach(()=>{arkoTimelineMemory.clear();vi.useFakeTimers();vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);vi.stubGlobal('IntersectionObserver',class { observe(){} disconnect(){} });vi.stubGlobal('requestAnimationFrame',()=>0);vi.stubGlobal('cancelAnimationFrame',vi.fn());arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:10001})})
 afterEach(()=>{arkoTimelineMemory.clear();vi.useRealTimers();vi.unstubAllGlobals();vi.clearAllMocks()})
+it('restores a v1 window while keeping its cached interaction text gated', async () => {
+  vi.mocked(callArkme).mockImplementation(async method => {
+    if (method === 'arko.timeline.cache') return { ...cache(), schemaVersion: 1 } as never
+    return new Promise(() => {}) as never
+  })
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<ArkmeArkoSurface/>))
+    expect(host.textContent).toContain('已加载的普通聊天')
+    expect(host.querySelector<HTMLButtonElement>('[data-arko-interaction] button')?.disabled).toBe(true)
+    expect(host.textContent).not.toContain('已加载的互动')
+    expect(host.textContent).not.toContain('复盘')
+  } finally { await act(async () => root.unmount()); host.remove() }
+})
 it('paints both ready streams while cloud reads are pending and preserves loaded cursors on return',async()=>{
  arkoTimelineMemory.set('test:10001',cache())
  vi.mocked(callArkme).mockImplementation(async(method)=>{if(method==='arko.timeline.cache')return undefined as never;return new Promise(()=>{}) as never})
@@ -241,6 +256,37 @@ it.each(['proof-lost','result-changed'])('closes an open suggestion when %s and 
   await act(async()=>root.render(<ArkoInteractionRow item={next} scope="test:10001" verified/>))
   expect(document.querySelector('[role="dialog"]')).toBeNull()
  }finally{await act(async()=>root.unmount());host.remove()}
+})
+
+it.each(['allowed', 'refused', 'editing'] as const)('shares the suggestion analysis and gates filling for %s', async state => {
+  const item = { ...cache().interactions[0]!, suggestion: true }
+  const source = { sourceRef: `private-${state}`, kind: 'private_chat', displayName: '私聊', directMessageAdmissionApplicable: true }
+  const fill = vi.fn(() => true)
+  const canFill = vi.fn(() => state !== 'editing')
+  vi.mocked(callArkme).mockImplementation(async method => {
+    if (method === 'chat.direct-message-admission') return { canSend: state !== 'refused', ownRevision: 1, counterpartRevision: 1 } as never
+    return { accountScope: 'test:10001', source, itemUid: 'root', interactionKey: item.interactionKey,
+      occurredAtMillis: 2000, suggestion: true,
+      thought: { id: 'thought', recordUid: 'root', biz: 1, scene: 5, status: 'ready', content: '旧格式建议',
+        display: { context: '原会话分析', warnings: [], suggestions: [{ style: '', items: ['候选一', '候选二'] }] } },
+    } as never
+  })
+  const host = document.createElement('ul'); document.body.append(host)
+  const root = createRoot(host)
+  try {
+    await act(async () => root.render(<ArkoInteractionRow item={item} scope="test:10001" suggestionComposer={{ canFill, fill }}/>))
+    await act(async () => host.querySelector('button')!.click())
+    const dialog = document.querySelector('[data-arkme-chat-suggestion-dialog]')!
+    const button = (label: string) => [...dialog.querySelectorAll('button')].find(el => el.textContent === label)!
+    expect(dialog.querySelector('details')?.open).toBe(false)
+    expect(dialog.querySelector('details')?.textContent).toContain('原会话分析')
+    expect(button('填入输入框').disabled).toBe(state !== 'allowed')
+    await act(async () => button('换一句').click())
+    expect(dialog.textContent).toContain('候选二')
+    await act(async () => button('填入输入框').click())
+    if (state === 'allowed') expect(fill).toHaveBeenCalledExactlyOnceWith('test:10001', source, '候选二')
+    else expect(fill).not.toHaveBeenCalled()
+  } finally { await act(async () => root.unmount()); host.remove() }
 })
 
 it('rediscovers an older result that became readable again inside a restored window',async()=>{

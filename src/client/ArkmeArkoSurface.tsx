@@ -2,7 +2,7 @@ import { parseArkoTimelineCache } from '../arko-timeline-cache.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { subscribeThoughtInvalidation } from './thought-invalidations.js'
 import { arkoTimelineMemory } from './arko-timeline-memory.js'
-import { ArkoInteractionRow } from './ArkoInteractionRow.js'
+import { ArkoInteractionRow, type ArkoSuggestionComposer } from './ArkoInteractionRow.js'
 import type { ArkmeArkoTimelineCache, ArkmeArkoInteractionPage, ArkmeArkoInteraction } from '../arko-timeline-contract.js'
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import type { ArkmeArkoLifecycleItem, ArkmeArkoLifecycleSnapshot } from '../arko-lifecycle-contract.js'
@@ -397,7 +397,7 @@ function isImageTurnDraft(draft: ArkmeComposerDraftSnapshot, turn: ArkmeArkoPend
     && draft.attachments.every((attachment, index) => attachment.localFile?.fileRef === images[index]!.fileRef)
 }
 
-export function ArkmeArkoSurface() {
+export function ArkmeArkoSurface({ suggestionComposer }: { suggestionComposer?: ArkoSuggestionComposer | undefined }) {
   useArkmeLocale()
   const shellRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -1507,7 +1507,7 @@ export function ArkmeArkoSurface() {
         <WindowedTimelineRows scrollport={bodyRef} rowIds={timelineRows.map(row=>({id:row.key}))} anchorId={locationTarget!==undefined ? `history:${locationTarget}` : viewportAnchor}>
         {timelineRows.map((row, index) => {
           const startsDay = (row.kind==='interaction'||row.message.role!=='divider') && (index===0 || dayKey(timelineRows[index-1]!.at)!==dayKey(row.at))
-          if (row.kind === 'interaction') return <Fragment key={row.key}>{startsDay && <li style={arkmeConversationMessageLayout.date}><ArkmeConversationDate at={row.at}/></li>}<ArkoInteractionRow item={row.interaction} scope={accountKey!} verified={verifiedInteractions.get(row.interaction.interactionKey)===row.interaction.interactionRef}/></Fragment>
+          if (row.kind === 'interaction') return <Fragment key={row.key}>{startsDay && <li style={arkmeConversationMessageLayout.date}><ArkmeConversationDate at={row.at}/></li>}<ArkoInteractionRow item={row.interaction} scope={accountKey!} verified={verifiedInteractions.get(row.interaction.interactionKey)===row.interaction.interactionRef} suggestionComposer={suggestionComposer}/></Fragment>
           const item = row.message
           const previousRow = timelineRows[index - 1]
           const previous = previousRow?.kind === 'message' ? previousRow.message : undefined

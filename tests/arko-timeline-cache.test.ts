@@ -19,6 +19,21 @@ it('restores a private atomic account/environment cache across store instances a
  expect(JSON.parse(await readFile(join(dir,files[0]!), 'utf8')).scope).toBe('test:11')
  await expect(store.access('../bad')).rejects.toThrow()
 })
+it('restores a v1 disk snapshot with its chats, interaction identities and viewport intact', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'arko-cache-v1-'))
+  dirs.push(dir)
+  const store = new ArkoTimelineCacheStore(dir)
+  const current = {
+    ...snapshot(),
+    interactions: [{ interactionKey: 'slot', interactionRef: 'old-ref', occurredAtMillis: 900,
+      sourceName: '会话', kind: 'chat' as const, summary: '旧互动', suggestion: true }],
+    interactionCursor: 'older-interactions',
+  }
+  await store.access('test:11', current)
+  const path = join(dir, (await readdir(dir))[0]!)
+  await writeFile(path, JSON.stringify({ scope: 'test:11', value: { ...current, schemaVersion: 1 } }))
+  expect(await new ArkoTimelineCacheStore(dir).access('test:11')).toEqual({ ...current, interactionStartMillis: 900 })
+})
 it('treats corrupt, oversized and mis-scoped files as misses and releases the writer after rejection',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'arko-cache-'));dirs.push(dir);const store=new ArkoTimelineCacheStore(dir);await store.access('test:11',snapshot());const file=join(dir,(await readdir(dir))[0]!)
  await writeFile(file,'{bad');expect(await store.access('test:11')).toBeUndefined()

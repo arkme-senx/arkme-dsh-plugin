@@ -5,8 +5,9 @@ export const ARKO_TIMELINE_CACHE_MAX_INTERACTIONS = 400
 /** Cache is disposable presentation, never pending-send evidence or an authority. */
 export function parseArkoTimelineCache(value: unknown): ArkmeArkoTimelineCache | undefined {
   if (!value || typeof value !== 'object') return
-  const raw = value as ArkmeArkoTimelineCache
-  if (raw.schemaVersion !== 2 || !Number.isSafeInteger(raw.savedAtMillis) || raw.savedAtMillis <= 0
+  const raw = value as Omit<ArkmeArkoTimelineCache, 'schemaVersion'> & { schemaVersion: unknown }
+  // The scan boundary added in v2 is optional. Restore both formats through the same validation.
+  if ((raw.schemaVersion !== 1 && raw.schemaVersion !== 2) || !Number.isSafeInteger(raw.savedAtMillis) || raw.savedAtMillis <= 0
     || !Array.isArray(raw.messages) || !Array.isArray(raw.interactions) || raw.messages.length > 20000 || raw.interactions.length > 4000) return
   const validMessage = (x: ArkmeArkoTimelineCache['messages'][number]) => x && typeof x.id === 'string' && x.id.length <= 512
     && ['user','assistant','divider'].includes(x.role) && typeof x.text === 'string' && x.text.length <= 262144 && ['done','error','sending'].includes(x.status)

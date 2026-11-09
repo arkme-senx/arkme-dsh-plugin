@@ -1,7 +1,7 @@
 import { arkoInteractionJump } from './arko-interaction-jump.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type ReactNode } from 'react'
 import type { ArkmeRecordThought, ArkmeRecordThoughts } from '../record-thought-contract.js'
 import type { ArkmeTimelineItem, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
@@ -82,6 +82,12 @@ function useThought(item: RecordItem) {
 }
 const buttonStyle = { border: 0, background: 'transparent', padding: 0, color: arkmeTheme.accent, font: 'inherit', fontSize: 12, cursor: 'pointer' } as const
 const visibleThoughts = (items: readonly ArkmeRecordThought[]) => items.filter(item => item.status !== 'invalidated')
+function withInteractionThought(items: readonly ArkmeRecordThought[], interaction: ArkmeRecordThought | undefined) {
+  if (!interaction) return items
+  return items.some(item => item.id === interaction.id)
+    ? items.map(item => item.id === interaction.id ? interaction : item)
+    : [...items, interaction]
+}
 /** Share the existing account-scoped read when composing human and Arko replies. */
 function useSelectedInteractionThought(item: RecordItem) {
   const context=useContext(Context)
@@ -103,7 +109,7 @@ function useSelectedInteractionThought(item: RecordItem) {
 }
 export function useRecordThoughtReplySummary(item: RecordItem) {
   const state = useThought(item), selected=useSelectedInteractionThought(item)
-  const thoughts=visibleThoughts(selected ? [selected,...state.items.filter(row=>row.id!==selected.id)] : state.items)
+  const thoughts = visibleThoughts(withInteractionThought(state.items, selected))
   const count = thoughts.filter(thought => !state.chat || thought.scene !== 5).length
   return { count, hasContent: thoughts.length > 0 || !!state.error, selectedInteraction: selected }
 }
@@ -160,15 +166,19 @@ function ThoughtAnalysis({ thought, headline = true, warnings = true }: { though
     {warnings && display.warnings.length > 0 && <div style={{ margin: '10px 0' }}><div style={{ color: arkmeTheme.tertiary, fontSize: 12 }}>{tr('需要留意')}</div>{display.warnings.map((warning, index) => <div key={index}>{warning}</div>)}</div>}
   </div>
 }
+export function RecordThoughtSuggestionDialog(props: Omit<ComponentProps<typeof ArkoChatSuggestionDialog>, 'analysis'>) {
+  const { thought } = props
+  const display = thought.display
+  const hasAnalysis = display && [display.context, display.surface, display.underlying, display.emotion,
+    display.expectation, display.lastAction, display.suggestedNext, display.tone].some(Boolean)
+  return <ArkoChatSuggestionDialog {...props}
+    analysis={hasAnalysis ? <ThoughtAnalysis thought={thought} headline={false} warnings={false}/> : undefined}/>
+}
 function ChatSuggestionSelection({ item, id, scopeKey, onClose }: { item: RecordItem; id: string; scopeKey: string; onClose(): void }) {
   const state = useThought(item), thought = visibleThoughts(state.items).find(row => row.id === id && row.scene === 5)
   useEffect(() => { if (!thought) onClose() }, [thought, onClose])
   if (!thought) return null
-  const display = thought.display
-  const hasAnalysis = display && [display.context, display.surface, display.underlying, display.emotion,
-    display.expectation, display.lastAction, display.suggestedNext, display.tone].some(Boolean)
-  return <ArkoChatSuggestionDialog thought={thought} scopeKey={scopeKey} loading={state.loading} error={state.error}
-    analysis={hasAnalysis ? <ThoughtAnalysis thought={thought} headline={false} warnings={false}/> : undefined}
+  return <RecordThoughtSuggestionDialog thought={thought} scopeKey={scopeKey} loading={state.loading} error={state.error}
     onRetry={state.retry} onClose={onClose}
     onFill={state.onFill ? text => { onClose(); state.onFill?.(text) } : undefined}/>
 }
@@ -182,7 +192,7 @@ export function RecordThoughtContent({ item, embedded = false, onReply, selected
   const state = useThought(item)
   const selectedInteraction=useSelectedInteractionThought(item)
   const override=items===undefined ? interaction ?? selectedInteraction : undefined
-  const allThoughts = visibleThoughts(items ?? (override ? [override,...state.items.filter(row=>row.id!==override.id)] : state.items))
+  const allThoughts = visibleThoughts(items ?? withInteractionThought(state.items, override))
   const advice = items === undefined && state.chat ? allThoughts.filter(thought => thought.scene === 5) : []
   const thoughts = allThoughts.filter(thought => !advice.includes(thought))
   const section = useRef<HTMLElement>(null)
