@@ -7,6 +7,19 @@ type Provider = {
   filterEvents(sessionId: string, filters: object[]): Promise<Hit[]>
 }
 
+/** Public DSH reads may ignore cancellation; stop waiting without applying their late result. */
+async function boundedRead<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  signal.throwIfAborted()
+  return await new Promise<T>((resolve, reject) => {
+    const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason) }
+    signal.addEventListener('abort', abort, { once: true })
+    void Promise.resolve().then(() => { signal.throwIfAborted(); return read() }).then(
+      value => { signal.removeEventListener('abort', abort); resolve(value) },
+      error => { signal.removeEventListener('abort', abort); reject(error) },
+    )
+  })
+}
+
 /** Resolve sync identity using the public index and exact deterministic record IDs. */
 export async function resolveDshSearchOrigins(provider: unknown, items: ArkmeSearchRecordItem[], signal?: AbortSignal): Promise<ArkmeSearchRecordItem[]> {
   const pending = new Set(items.filter(item => item.creationSource === 3 && item.dshOrigin === undefined).map(item => item.recordUid))
@@ -27,16 +40,16 @@ export async function resolveDshSearchOrigins(provider: unknown, items: ArkmeSea
   }
   let complete = true
   try {
-    const sessions = await api.listSessions(context.signal)
+    const sessions = await boundedRead(() => api.listSessions!(context.signal), context.signal)
     context.signal.throwIfAborted()
     const candidates = sessions.filter(item => item.header.cwd !== undefined)
       .sort((a, b) => (b.header.createdAt ?? 0) - (a.header.createdAt ?? 0))
-    // Public filterEvents cannot abort an in-progress read; do not start another after the deadline.
+    // Public filterEvents cannot abort an in-progress read; bound its wait and never start another after the deadline.
     for (const item of candidates) {
       if (pending.size === 0) break
       context.signal.throwIfAborted()
       try {
-        const events = await api.filterEvents(item.header.id, filters)
+        const events = await boundedRead(() => api.filterEvents!(item.header.id, filters), context.signal)
         for (const hit of events) {
           accept(hit, item.header.id)
           if (pending.size === 0) break

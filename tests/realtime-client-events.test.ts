@@ -21,7 +21,7 @@ import {
   useArkmeRealtimeClientEvents,
 } from '../src/client/realtime-client-events.js'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../src/types.js'
-import {subscribeTeamMessageChanges} from '../src/client/team-messaging-events.js'
+import {subscribeTeamMessageChanges,subscribeTeamWorkspaceChanges} from '../src/client/team-messaging-events.js'
 
 it('delivers opaque Team change scope and retains conservative reconnect invalidation',async()=>{
   let socket!:FakeWebSocket
@@ -30,7 +30,7 @@ it('delivers opaque Team change scope and retains conservative reconnect invalid
   vi.spyOn(arkmeAuthStore,'refresh').mockResolvedValue()
   vi.spyOn(clientApi,'callArkme').mockResolvedValue({items:[],hasMore:false})
   function Harness(){useArkmeRealtimeClientEvents({status:'authenticated',userId:42,environment:'test'},1,false);return null}
-  const changed=vi.fn(),stop=subscribeTeamMessageChanges(changed)
+  const changed=vi.fn(),workspace=vi.fn(),stop=subscribeTeamMessageChanges(changed),stopWorkspace=subscribeTeamWorkspaceChanges(workspace)
   let renderer!:ReactTestRenderer
   try{
     await act(async()=>{renderer=create(createElement(Harness))})
@@ -41,7 +41,12 @@ it('delivers opaque Team change scope and retains conservative reconnect invalid
     expect(changed).toHaveBeenLastCalledWith('test:42',true,undefined)
     await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'reconcile',revision:3})} as MessageEvent<string>))
     expect(changed).toHaveBeenLastCalledWith('test:42',false,undefined)
-  }finally{stop();await act(async()=>renderer?.unmount())}
+    const privateCalls=changed.mock.calls.length
+    await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'team-invalidated',revision:4,change:{kind:'team.group.source.changed'}})} as MessageEvent<string>))
+    await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'team-invalidated',revision:5,change:{kind:'team.group.changed'}})} as MessageEvent<string>))
+    expect(workspace).toHaveBeenLastCalledWith('test:42',undefined)
+    expect(changed).toHaveBeenCalledTimes(privateCalls)
+  }finally{stop();stopWorkspace();await act(async()=>renderer?.unmount())}
 })
 
 const selectedBot: ArkmeBotSummary = {

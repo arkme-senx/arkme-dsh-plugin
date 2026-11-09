@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import { patchChatPolicy } from '../src/services/chat-policy.js'
 import { ArkmeRequestQueueOverflowError } from '../src/request-coordinator.js'
+import { ReactionService } from '../src/services/reaction-service.js'
 import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
 import { ProfileService } from '../src/services/profile-service.js'
 import { LoginDevicesService } from '../src/services/login-devices-service.js'
@@ -179,6 +180,28 @@ describe('registered owner read recovery', () => {
     await expect(result).resolves.toEqual({ items: [] })
     expect(fetcher).toHaveBeenCalledTimes(3)
     runtime.dispose()
+  })
+  it('paces foreground and background chat list reads through the same account budget', async () => {
+    vi.useFakeTimers()
+    const requests: Array<{ limit: number; at: number }> = []
+    const fetcher = vi.fn(async (_input, init) => {
+      requests.push({ limit: JSON.parse(String(init?.body)).limit, at: Date.now() })
+      return ok()
+    })
+    const runtime = runtimeFixture(fetcher)
+    const initial = Date.now()
+    try {
+      const reads = [
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 20 }, session, undefined, { lane: 'interactive-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 21 }, session, undefined, { lane: 'background-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 22 }, { ...session, userId: 43 }),
+      ]
+      await vi.advanceTimersByTimeAsync(249)
+      expect(requests).toEqual([{ limit: 20, at: initial }, { limit: 22, at: initial }])
+      await vi.advanceTimersByTimeAsync(1)
+      await Promise.all(reads)
+      expect(requests[2]).toEqual({ limit: 21, at: initial + 250 })
+    } finally { runtime.dispose() }
   })
   it.each([60_000, 2_147_483_647, 3_000_000_000])('owns exhausted recovery without timer overflow for retry hint %s', async retryAfter => {
     vi.useFakeTimers()
@@ -632,6 +655,36 @@ describe('ServiceRuntime', () => {
 
 describe('reaction request scheduling', () => {
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  it('promotes an explicit deferred query already queued behind passive reads without duplicating the owner request', async () => {
+    vi.useFakeTimers()
+    let release!: () => void
+    const blocker = new Promise<void>(resolve => { release = resolve })
+    const paths: string[] = []
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname; paths.push(path)
+      if (path.startsWith('/occupied/')) await blocker
+      return new Response(JSON.stringify({ code: 0, data: { items: [] } }))
+    })
+    const runtime = runtimeFixture(fetcher, { read: async () => session, write: async () => {}, delete: async () => {} })
+    const service = new ReactionService(runtime, async () => ({ record_uid: 'record', owned: true }))
+    const query = { action: 'query' as const, accountKey: 'test:42', targets: [{ id: 'clicked', sourceRef: 'source', messageActionRef: 'message' }], actorPresentation: 'deferred' as const }
+    const pending: Promise<unknown>[] = [0, 1].map(index => runtime.authenticatedPost(`/occupied/${index}`, {}, session, undefined, { lane: 'background-read' }))
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(paths).toHaveLength(2)
+      pending.push(service.request(query))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(paths).toHaveLength(2)
+      pending.push(service.request({ ...query, readPriority: 'interactive' }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(paths.filter(path => path === '/api/v1/reactions/query')).toHaveLength(1)
+      await Promise.all(pending.slice(2))
+      expect(runtime.requestCoordinator.snapshotStats()['interactive-read:record']?.started).toBe(1)
+    } finally {
+      release(); await vi.advanceTimersByTimeAsync(1000)
+      await Promise.allSettled(pending); runtime.dispose()
+    }
+  })
   it('shares identical reads, isolates accounts, and keeps notification polling off the write lane', async () => {
     vi.useFakeTimers()
     let finish!: () => void

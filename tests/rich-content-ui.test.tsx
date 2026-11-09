@@ -14,6 +14,15 @@ import { ArkmeLivePhotoBadge } from '../src/client/ArkmeLivePhotoBadge.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu, arkmeShouldToggleMessageSelectFromRowClick } from '../src/client/ArkmeSidebar.js'
 
+function imageNodeAttributes() {
+  const attributes = new Map<string, string>()
+  return {
+    hasAttribute: (name: string) => attributes.has(name),
+    setAttribute: (name: string, value: string) => { attributes.set(name, value) },
+    removeAttribute: (name: string) => { attributes.delete(name) },
+  }
+}
+
 describe('Arkme rich content presentation', () => {
   it('keeps forwarded articles as cards without a duplicate attachment gallery', () => {
     const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
@@ -57,6 +66,7 @@ describe('Arkme rich content presentation', () => {
     })
     let width = 400
     const imageNode = {
+      ...imageNodeAttributes(),
       naturalWidth: 200, naturalHeight: 100,
       parentElement: { getBoundingClientRect: () => ({ left: 10, top: 20 }) },
       getBoundingClientRect: () => ({ left: 10, top: 20, width, height: 400 }),
@@ -203,6 +213,7 @@ describe('Arkme rich content presentation', () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? {
+              ...imageNodeAttributes(),
               naturalWidth: 1600, naturalHeight: 800, animate,
               getBoundingClientRect: () => {
                 const style = view!.root.findByType('img').props.style
@@ -242,7 +253,7 @@ describe('Arkme rich content presentation', () => {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
-            ? { naturalWidth: width, naturalHeight: height }
+            ? { ...imageNodeAttributes(), naturalWidth: width, naturalHeight: height }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: coveredWidth, scrollHeight: coveredHeight, scrollLeft: 0, scrollTop: 0 },
         })
       })
@@ -274,7 +285,7 @@ describe('Arkme rich content presentation', () => {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
-            ? { naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
+            ? { ...imageNodeAttributes(), naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
             : null,
         })
       })
@@ -309,7 +320,7 @@ describe('Arkme rich content presentation', () => {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
-            ? { naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
+            ? { ...imageNodeAttributes(), naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
         })
       })

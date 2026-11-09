@@ -17,12 +17,13 @@ export const withdrawMessageToolModule = defineArkmeCoreToolModule({
       name: 'arkme_message_withdraw',
       description: 'Withdraw one other member\'s group-chat message as the active group owner. Use only an unchanged message_withdrawal_ref returned by arkme_source_read and only after the human explicitly requests this concrete withdrawal. Do not remove or restrict the sender unless separately requested.',
       parameters: {
+        source_ref:{type:'string',description:'Original source_ref from the same source read; required for a delegated team-group reference.'},
         message_withdrawal_ref: { type: 'string', required: true, description: 'Opaque message_withdrawal_ref returned for the concrete group-chat message.' },
       },
       output: TEXT_OUTPUT,
       async execute(args, exec) {
         return taggedJSON('Arkme 消息撤回结果', await ports.withdrawGroupMessage(
-          args.message_withdrawal_ref, { signal: exec.signal },
+          args.message_withdrawal_ref, { signal: exec.signal,...(typeof args.source_ref==='string'?{sourceRef:args.source_ref}:{}) },
         ))
       },
     })

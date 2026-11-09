@@ -370,6 +370,18 @@ export class CallHistoryService {
     return this.detailByRoomId(roomId, { version: 1, userId: session.userId, roomId, stableId: `trtc:${roomId}`, issuedAtMillis: Date.now() }, session, signal, true, source)
   }
 
+  async privateTranscriptSource(callRef:string){const session=await this.runtime.requireSession(),call=await this.openCallRef(callRef,session.userId);return {kind:'call' as const,source_uid:call.roomId}}
+  async validatePrivateTranscriptImport(callRef:string,target:import('../transcript-view-contract.js').TranscriptViewTarget,scope:string,id:string,signal?:AbortSignal){
+    await this.privateTranscriptTarget(callRef,target)
+    const detail=await this.callDetail(callRef,signal)
+    const segment=detail.transcriptSegments.find(row=>row.segmentId===id)
+    if(scope!==`call:${detail.stableId}`||!segment?.privateViewTarget||segment.privateViewTarget.kind!==target.kind||segment.privateViewTarget.source_uid!==target.source_uid||segment.privateViewTarget.segment_uid!==target.segment_uid)throw new ArkmePluginError('transcript-import-source-invalid','本机更正与所选通话片段不一致，原数据已保留',false,400)
+  }
+  async privateTranscriptTarget(callRef:string,target:import('../transcript-view-contract.js').TranscriptViewTarget) {
+    const session=await this.runtime.requireSession(),call=await this.openCallRef(callRef,session.userId)
+    if(target.kind!=='call'||target.source_uid!==call.roomId||!/^[a-f0-9]{64}$/.test(target.segment_uid))throw new ArkmePluginError('transcript-source-invalid','通话片段来源无效',false,400)
+    return target
+  }
   async excerptSource(callRef:string,segmentId:string):Promise<import('../record-excerpt.js').RecordExcerptSource> {
     const session=await this.runtime.requireSession(),target=await this.openCallRef(callRef,session.userId)
     if(!segmentId||segmentId.length>1024)throw new ArkmePluginError('excerpt-source-unavailable','通话缺少精确片段位置',false,404)
@@ -788,6 +800,8 @@ export class CallHistoryService {
         const absoluteStart = start >= 100_000_000_000
         const absoluteEnd = end >= 100_000_000_000
         return {
+          ...(rawItem.private_view_target && typeof rawItem.private_view_target === 'object' ? {privateViewTarget:rawItem.private_view_target as import('../transcript-view-contract.js').TranscriptViewTarget}:{}),
+          ...(typeof rawItem.private_view_version === 'string' ? {privateViewVersion:rawItem.private_view_version}:{}),
           segmentId,
           ...(sourceSegmentId?{sourceSegmentId}:{}),
           ...(audioUrl ? { audioUrl } : {}),

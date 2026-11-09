@@ -16,6 +16,8 @@ export interface ArkmeLocalFile {
   mimeType: string
   size: number
   fileKind: 1 | 2 | 3 | 4
+  /** Set by the file owner. Missing on legacy files; never evidence of current remote access. */
+  origin?: 'local' | 'received'
 }
 
 export interface ArkmeFileProgress {

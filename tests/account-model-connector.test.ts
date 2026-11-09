@@ -1,4 +1,6 @@
 import {expect,it,vi,afterEach} from 'vitest'
+import {ArkmeAccountSessionOwner} from '../src/account-session-owner.js'
+import type {ArkmeSessionCredentials} from '../src/keychain-store.js'
 import {AccountModelConnector} from '../src/account-model-connector.js'
 const scope=async()=> 'prod:11'
 afterEach(()=>vi.unstubAllGlobals())
@@ -15,4 +17,30 @@ it('reports preparation failure without dispatching a native or point model',asy
 })
 it('re-enrolls an explicitly revoked Host without exposing the new secret through the browser projection',async()=>{
  let secret=JSON.stringify({id:'old',secret:'old-key'});const settings={accountScope:'prod:11',revision:2,enabled:true,models:[],scenes:[],preferences:{default_route:'',scenes:{},points_fallback:false},connectors:[{uid:'old',name:'Host',revoked:true}]};const service={accountModels:vi.fn(async()=>settings),accountModelHostRequest:vi.fn(async()=>({id:'new',secret:'host-only-secret'}))};const store={read:async()=>secret,write:async(_k:string,value:string)=>{secret=value}};const connector=new AccountModelConnector({}as never,service as never,'https://isolated.example',store as never,'/tmp/not-used',scope);const result=await connector.enroll('prod:11');expect(service.accountModelHostRequest).toHaveBeenCalledOnce();expect(JSON.parse(secret).id).toBe('new');expect(JSON.stringify(result)).not.toContain('host-only-secret')
+})
+it('starts native model IO even when scope/settings never resolve and execution readiness is off',async()=>{
+ const settings=vi.fn(()=>new Promise(()=>{})),ctx={logger:{warn:vi.fn()}}
+ const connector=new AccountModelConnector(ctx as never,{accountModels:settings} as never,'https://unused',{}as never,'/tmp/not-used',()=>new Promise(()=>{}))
+ let calls=0
+ const options={provider:'native',model:'local',messages:[]} as never
+ const iterator=connector.observe(options,async function*(){calls++;yield{type:'finish',reason:{kind:'stop'}}as never})[Symbol.asyncIterator]()
+ const first=await Promise.race([iterator.next(),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('observer blocked native IO')),1000))])
+ expect(first.done).toBe(false);expect(calls).toBe(1);expect(settings).not.toHaveBeenCalled();await iterator.return?.()
+})
+it('records unknown native usage independently of cloud readiness and without prompting a second model call',async()=>{
+ const settings=vi.fn(async()=>({enabled:false})),connector=new AccountModelConnector({logger:{warn:vi.fn()}}as never,{accountModels:settings}as never,'https://unused',{}as never,'/tmp/not-used',scope)
+ const events:any[]=[];(connector as any).enqueue=async(s:string,event:unknown)=>{events.push({scope:s,event})}
+ for await(const _ of connector.observe({provider:'native',model:'local',messages:[]}as never,async function*(){yield{type:'finish',reason:{kind:'stop'}}as never})){}
+ await new Promise(resolve=>setTimeout(resolve,0))
+ expect(events).toHaveLength(1);expect(events[0].scope).toBe('prod:11');expect(events[0].event.usage_field_mask).toBe(0);expect(settings).not.toHaveBeenCalled()
+})
+
+it('keeps a native call on its originally attested account when the account switches during IO',async()=>{
+ let value:ArkmeSessionCredentials|undefined={userId:11,accessToken:'test-a',refreshToken:'test-a'}
+ const owner=new ArkmeAccountSessionOwner({read:async()=>value,write:async next=>{value=next},delete:async()=>{value=undefined}});await owner.start()
+ const snapshot=async()=>{const user=owner.readyAccountUserId();if(user===undefined)throw new Error('not attested');return `prod:${user}`}
+ const connector=new AccountModelConnector({logger:{warn:vi.fn()}}as never,{}as never,'https://unused',{}as never,'/tmp/not-used',snapshot),events:any[]=[]
+ ;(connector as any).enqueue=async(scope:string,event:unknown)=>{events.push({scope,event})}
+ for await(const _ of connector.observe({provider:'native',model:'local',messages:[]}as never,async function*(){await owner.write({userId:22,accessToken:'test-b',refreshToken:'test-b'});yield{type:'finish',reason:{kind:'stop'}}as never})){}
+ await new Promise(resolve=>setTimeout(resolve,0));expect(owner.readyAccountUserId()).toBe(22);expect(events).toHaveLength(1);expect(events[0].scope).toBe('prod:11')
 })

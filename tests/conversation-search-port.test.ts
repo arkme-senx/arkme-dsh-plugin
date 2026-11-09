@@ -68,3 +68,47 @@ describe('conversation search read boundary', () => {
   })
 
 })
+
+it('recovers missing received attachments through the signed message owner instead of private asset lookup', async () => {
+ const signal = new AbortController().signal
+ const target = { itemUid: 'record', recordOwnerUserId: 77, messageActionRef: 'signed-relation', contentBlocks: [] }
+ const block = { kind: 'image', fileAssetUid: 'photo', mediaRef: 'authorized-grant' }
+ call.mockResolvedValueOnce({ items: [target] }).mockResolvedValueOnce({ itemUid: 'record', contentBlocks: [block] })
+ expect(await port.readChatMessage({ ...hit, media: [{ fileAssetUid: 'photo' }], files: [] }, signal)).toMatchObject({ ...target, contentBlocks: [block] })
+ expect(call.mock.calls.map(([operation]) => operation)).toEqual(['source.timeline-around', 'source.message-snapshot.detail'])
+ expect(call).toHaveBeenLastCalledWith('source.message-snapshot.detail', { sourceRef: hit.targetSource!.sourceRef, actionRef: 'signed-relation', includeAttachments: true }, signal)
+})
+it('recognizes an already authorized dynamic-photo motion without a redundant detail read', async () => {
+ const target = { itemUid: 'record', contentBlocks: [{ kind: 'image', fileAssetUid: 'cover', mediaRef: 'cover-ref', dynamicPhoto: { logicalUid: 'pair', motion: { kind: 'video', fileAssetUid: 'motion', mediaRef: 'motion-ref' } } }] }
+ call.mockResolvedValue({ items: [target] })
+ expect(await port.readChatMessage({ ...hit, media: [{ fileAssetUid: 'motion' }], files: [] }, new AbortController().signal)).toBe(target)
+ expect(call).toHaveBeenCalledOnce()
+})
+it('rejects mismatched owner or snapshot identity instead of previewing a neighboring attachment', async () => {
+ const signal = new AbortController().signal
+ call.mockResolvedValueOnce({ items: [{ itemUid: 'record', recordOwnerUserId: 88, contentBlocks: [] }] })
+ await expect(port.readChatMessage(hit, signal)).rejects.toThrow('原消息')
+ call.mockResolvedValueOnce({ items: [{ itemUid: 'record', recordOwnerUserId: 77, messageActionRef: 'signed', contentBlocks: [] }] })
+  .mockResolvedValueOnce({ itemUid: 'other-record', contentBlocks: [{kind:'image',fileAssetUid:'photo',mediaRef:'wrong'}] })
+ await expect(port.readChatMessage({ ...hit, media: [{fileAssetUid:'photo'}],files:[] }, signal)).rejects.toThrow('身份')
+})
+it('does not start attachment hydration after cancellation of the anchor read', async () => {
+ const controller = new AbortController()
+ call.mockImplementationOnce(async () => { controller.abort(); return {items:[{itemUid:'record',messageActionRef:'signed',contentBlocks:[]}]} })
+ await expect(port.readChatMessage({...hit,media:[{fileAssetUid:'photo'}]},controller.signal)).rejects.toMatchObject({name:'AbortError'})
+ expect(call).toHaveBeenCalledOnce()
+})
+it('keeps a rejected relation read retryable without trying another owner or attachment API', async () => {
+ call.mockResolvedValueOnce({items:[{itemUid:'record',messageActionRef:'signed',contentBlocks:[]}]})
+  .mockRejectedValueOnce(new Error('message-snapshot-detail-unavailable'))
+ await expect(port.readChatMessage({...hit,media:[{fileAssetUid:'photo'}]},new AbortController().signal)).rejects.toThrow('message-snapshot-detail-unavailable')
+ expect(call.mock.calls.map(([op])=>op)).toEqual(['source.timeline-around','source.message-snapshot.detail'])
+})
+it('does not identify a forward child by matching its filename to a source asset', async () => {
+ const blocks=[{kind:'image',mediaRef:'forward-local-ref',fileName:'same.png'}]
+ call.mockResolvedValueOnce({items:[{itemUid:'record',messageActionRef:'signed',contentBlocks:blocks}]})
+  .mockResolvedValueOnce({itemUid:'record',contentBlocks:blocks})
+ const value=await port.readChatMessage({...hit,media:[{fileAssetUid:'source-photo',fileName:'same.png'}]},new AbortController().signal)
+ expect(value.contentBlocks).toEqual(blocks)
+ expect(value.contentBlocks?.[0]).not.toHaveProperty('fileAssetUid')
+})

@@ -379,6 +379,23 @@ span.arkme-forward-search {
 [data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 120px !important; }
 /* Only the search label condenses. Conversation rows retain their left anchor
    and continuously truncate text instead of switching to an avatar-only layout. */
+.arkme-directory-search-control { position: relative; display: flex; flex: 1; min-width: 40px; }
+[data-arkme-directory-sync-status] { position: absolute; z-index: 1; inset-inline-end: 6px; top: 50%; transform: translateY(-50%); }
+section > [data-arkme-directory-sync-status] { top: 6px; transform: none; }
+[data-arkme-directory-sync-status] button[aria-haspopup="menu"] {
+  display: grid; place-items: center; width: 26px; height: 26px;
+  padding: 0; border: 0; border-radius: 7px; cursor: pointer;
+  background-color: transparent; color: var(--dsw-alias-label-secondary, #68707c);
+}
+.arkme-directory-search-control:has(> [data-arkme-directory-sync-status]) [data-arkme-directory-search-label] { margin-inline-end: 23px; }
+[data-arkme-directory-compact="true"] .arkme-directory-search-control { flex: none; }
+[data-arkme-directory-compact="true"] .arkme-directory-search-control > [data-arkme-directory-sync-status] {
+  top: -5px; inset-inline-end: -4px; transform: none;
+}
+[data-arkme-directory-compact="true"] [data-arkme-directory-sync-status] button[aria-haspopup="menu"] {
+  width: 20px; height: 20px; border-radius: 6px;
+  background-color: var(--dsw-alias-bg-layer-2, #f3f4f6);
+}
 [data-arkme-directory-compact="true"] [data-arkme-directory-search] { flex: none !important; width: 40px; padding: 0 !important; justify-content: center; }
 [data-arkme-directory-compact="true"] [data-arkme-directory-search-label] { display: none !important; }
 

@@ -36,8 +36,11 @@ it('shares both forwarding surfaces, with theme-aware contrast and native border
     expect(source).toContain('<ArkmeForwardSearch')
     expect(source).not.toMatch(/<input[^>]*aria-label="搜索转发对象"/)
   }
-  for (const file of ['ArkmeSidebar', 'TeamForwardDialog']) {
+  for (const file of ['ArkmeSidebar', 'UnifiedForwardDialog']) {
     expect(readFileSync(`src/client/${file}.tsx`, 'utf8')).toContain('<ArkmeForwardTargetDialog')
+  }
+  for (const file of ['ArkmeSidebar', 'TeamForwardDialog']) {
+    expect(readFileSync(`src/client/${file}.tsx`, 'utf8')).toContain('<UnifiedForwardDialog')
   }
   const css = readFileSync('src/client/redesign/arkme-redesign.css', 'utf8')
   const declarations = css.match(/\.arkme-forward-search\s*\{([^}]+)\}/)![1]!

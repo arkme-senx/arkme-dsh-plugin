@@ -12,6 +12,8 @@ export interface ArkmeMessageSyncProgress {
   terminal: number
   retryAtMillis?: number
   reason?: 'network' | 'storage' | 'authentication' | 'upstream' | 'capacity'
+  /** Why the current Host pump runs; normal realtime cache maintenance need not interrupt the UI. */
+  trigger?: 'realtime' | 'catchup'
 }
 
 export type ChatSyncState = 'available' | 'removed' | 'restricted' | 'pending' | 'missing'

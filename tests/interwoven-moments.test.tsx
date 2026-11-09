@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { act, create } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
+import { ArkmeDirectorySourceAvatar } from '../src/client/ArkmeAvatar.js'
 import type { ArkmeInterwovenMention, ArkmeRelatedQuickNoteList, ArkmeSourceItem, ArkmeTimelineItem } from '../src/types.js'
 import {
   ArkmeInterwovenDetailAside,
@@ -244,6 +245,28 @@ describe('interwoven UI', () => {
     expect(markup).toContain('max-width:min(680px, 100%)')
     expect(markup).toContain('var(--dsw-alias-label-secondary')
     expect(markup).toContain('data-arkme-conversation-row="moment:one"')
+  })
+
+  it.each(['unique', 'missing', 'ambiguous'] as const)('uses only the resolved group avatar in detail (%s)', async match => {
+    const group = { ...source('group-one', 'group_chat', '项目群'), avatarRefs: ['member-avatar'] }
+    const sources = match === 'missing' ? [] : match === 'ambiguous' ? [group, { ...group, sourceRef: 'group-two' }] : [group]
+    const groupTarget = resolveInterwovenGroupTarget(sources, '项目群')
+    const onOpenGroup = vi.fn()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<ArkmeInterwovenDetailAside
+      state={{ kind: 'success', detail: { momentId: 'one', groupName: '项目群', senderName: '小林',
+        senderIsMe: false, occurredAtMillis: 1, title: '', textContent: '正文', status: 1, degraded: false } }}
+      onClose={vi.fn()} onRetry={vi.fn()}
+      {...(groupTarget === undefined ? {} : { groupTarget, onOpenGroup })} />) })
+    const badge = renderer.root.findByProps({ 'data-arkme-interwoven-group-target': '项目群' })
+    expect(badge.props.disabled).toBe(groupTarget === undefined)
+    if (groupTarget) {
+      expect(badge.findByType(ArkmeDirectorySourceAvatar).props.source).toBe(groupTarget)
+      expect(badge.findByType(ArkmeDirectorySourceAvatar).props.size).toBe(16)
+      await act(async () => badge.props.onClick())
+      expect(onOpenGroup).toHaveBeenCalledOnce()
+    } else expect(badge.findAllByType(ArkmeDirectorySourceAvatar)).toHaveLength(0)
+    await act(async () => renderer.unmount())
   })
 
   it('renders distinct loading, error, success and degraded detail states', () => {

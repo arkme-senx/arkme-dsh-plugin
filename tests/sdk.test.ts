@@ -1294,3 +1294,20 @@ it('discovers account recording preferences separately from comparisons and rout
   const old = createArkmeSdk({ fetchImpl: async () => success({ contractVersion: 1, features: { recordingStrategiesV1: true } }) })
   await expect(old.recordingStrategies({ action: 'preference' })).rejects.toThrow('不支持')
 })
+
+it('exposes source-scoped search and scenes through the public SDK contract',async()=>{
+ const calls:Array<{operation:string;params:unknown}>=[],signal=new AbortController().signal
+ const sdk=createArkmeSdk({fetchImpl:async(_input,init)=>{
+  const call=JSON.parse(String(init?.body));calls.push(call)
+  return success(call.operation==='provider.capabilities'?{contractVersion:1,features:{remoteRecordSearch:true}}:{items:[],sourceAggregates:[],hasMore:false,queryGuard:{state:'complete'}})
+ }})
+ await sdk.searchRemote('复盘',{sourceRef:'opaque-team-source',cursor:'same-query-page',signal})
+ await sdk.searchScene('file',{sourceRef:'opaque-team-source',limit:20,signal})
+ expect(calls.filter(c=>c.operation!=='provider.capabilities')).toEqual([
+  {operation:'search.records',params:{query:'复盘',sourceRef:'opaque-team-source',cursor:'same-query-page'}},
+  {operation:'search.scene',params:{scene:'file',sourceRef:'opaque-team-source',limit:20}},
+ ])
+ await expect(sdk.searchScene('wrong' as never)).rejects.toThrow('Unknown record search scene')
+ const old=createArkmeSdk({fetchImpl:async()=>success({contractVersion:1,features:{}})})
+ await expect(old.searchScene('file')).rejects.toThrow('不支持远端快记搜索')
+})

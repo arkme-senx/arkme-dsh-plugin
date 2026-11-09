@@ -1,4 +1,5 @@
 import type { LoginDevicePort } from '../../login-devices-contract.js'
+import type { TranscriptViewPort } from '../../transcript-view-contract.js'
 import type{CodexWorkRecordsPort}from'../../codex-work-records-port.js'
 import type { PublicSocialPort } from '../../public-social-contract.js'
 import type { ArkmeRecordExportPort } from '../../data-management.js'
@@ -38,6 +39,7 @@ import type { ArkmeDirectMessageAdmissionPort } from '../../direct-message-admis
 
 export interface ArkmeCoreToolPorts extends
   LoginDevicePort,
+  TranscriptViewPort,
   CodexWorkRecordsPort,
   PublicSocialPort,
   ArkmeRecordExportPort,

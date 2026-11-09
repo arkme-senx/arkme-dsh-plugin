@@ -10,7 +10,8 @@ const list=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)?value.
  * authenticated target adapter; source owners never become actionable users. */
 export function projectTeamForward(raw:unknown,files:(items:Record<string,unknown>[],longArticle:boolean)=>ArkmeContentBlock[]):ArkmeForwardRecordsPreview|undefined {
  const payload=object(object(raw).forward_records)
- if(payload.source_type!=='team_message')return undefined
+ // The frozen source can be ordinary Records; the delivered occurrence and media remain Team-owned.
+ if(!['team_message','quick_records'].includes(text(payload.source_type)))return undefined
  const items:ArkmeForwardRecordPreviewItem[]=[]
  let truncated=false
  const visit=(node:Record<string,unknown>,depth:number)=>{
@@ -22,7 +23,11 @@ export function projectTeamForward(raw:unknown,files:(items:Record<string,unknow
    const blocks=files(media,longArticle)
    let body=text(item.text)
    if(longArticle&&item.text_format==='markdown')body=remapLongArticleAssets(body,new Map(media.map((file,index)=>[`arkme-asset:${text(file.file_asset_uid)}`,`arkme-asset:media-${index}`])))
-   items.push({senderName:text(item.owner_name)||text(item.source_display_name)||'用户',sendAtMillis:number(item.send_at),title:text(item.title),textContent:body,textFormat:item.text_format==='markdown'?'markdown':'plain',sourceType:'team_message',displayKind:number(item.display_kind),templateKind:number(item.template_kind),...(blocks.length?{contentBlocks:blocks}:{}),...(media.length>blocks.length?{mediaUnavailable:true as const}:{})})
+   const sourceTeam=object(item.source_representation),originTeam=object(item.origin_representation)
+   items.push({senderName:text(item.owner_name)||text(item.source_display_name)||'用户',
+    ...(text(sourceTeam.name)&&text(sourceTeam.jotmo_id)?{sourceTeam:{name:text(sourceTeam.name),jotmoId:text(sourceTeam.jotmo_id)}}:{}),
+    ...(text(originTeam.name)&&text(originTeam.jotmo_id)?{originTeam:{name:text(originTeam.name),jotmoId:text(originTeam.jotmo_id)}}:{}),
+    sendAtMillis:number(item.send_at),title:text(item.title),textContent:body,textFormat:item.text_format==='markdown'?'markdown':'plain',sourceType:'team_message',displayKind:number(item.display_kind),templateKind:number(item.template_kind),...(blocks.length?{contentBlocks:blocks}:{}),...(media.length>blocks.length?{mediaUnavailable:true as const}:{})})
   }
  }
  visit(payload,0)

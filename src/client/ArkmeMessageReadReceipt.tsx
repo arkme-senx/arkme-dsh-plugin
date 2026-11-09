@@ -106,7 +106,7 @@ export function ArkmeMessageReadReceipt(props: {
   const buttonRef = useRef<HTMLButtonElement>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const target = useMemo<ArkmeMessageReadReceiptTarget | undefined>(() => {
-    if (!props.item.isMe || props.item.sequence === undefined || props.item.sequence <= 0
+    if (props.source.accessKind === 'team_delegation' || !props.item.isMe || props.item.sequence === undefined || props.item.sequence <= 0
       || (props.source.kind !== 'private_chat' && props.source.kind !== 'group_chat')) return undefined
     return {
       sourceRef: props.source.sourceRef,
@@ -115,7 +115,7 @@ export function ArkmeMessageReadReceipt(props: {
       itemUid: props.item.itemUid,
       sequence: props.item.sequence,
     }
-  }, [props.item.isMe, props.item.itemUid, props.item.sequence, props.source.kind, props.source.sourceKey, props.source.sourceRef])
+  }, [props.item.isMe, props.item.itemUid, props.item.sequence, props.source.kind, props.source.accessKind, props.source.sourceKey, props.source.sourceRef])
   useSyncExternalStore(
     arkmeMessageReadReceipts.subscribe,
     arkmeMessageReadReceipts.getSnapshot,
@@ -143,7 +143,7 @@ export function ArkmeMessageReadReceipt(props: {
     }
   }, [target])
 
-  const defaultUnread = props.defaultUnread === true && props.item.isMe
+  const defaultUnread = props.source.accessKind !== 'team_delegation' && props.defaultUnread === true && props.item.isMe
     && (props.source.kind === 'private_chat' || props.source.kind === 'group_chat')
   if (target === undefined && !defaultUnread) return null
   const entry = target === undefined ? undefined : arkmeMessageReadReceipts.get(target)
@@ -197,7 +197,7 @@ export function ArkmeMessageReadReceiptLine(props: {
 }) {
   useArkmeLocale()
   const elementRef = useRef<HTMLDivElement>(null)
-  return <ArkmeMentionReadProvider source={props.source} item={props.item} elementRef={elementRef}><div
+  const line = <div
     ref={elementRef}
     data-arkme-message-content-line={props.item.itemUid}
     style={{
@@ -210,5 +210,7 @@ export function ArkmeMessageReadReceiptLine(props: {
   >
     {props.item.isMe && <ArkmeMessageReadReceipt source={props.source} item={props.item} defaultUnread={props.defaultUnread === true} />}
     {props.children}
-  </div></ArkmeMentionReadProvider>
+  </div>
+  return props.source.accessKind === 'team_delegation' ? line
+    : <ArkmeMentionReadProvider source={props.source} item={props.item} elementRef={elementRef}>{line}</ArkmeMentionReadProvider>
 }

@@ -184,6 +184,7 @@ export function createArkmeLocalFileHandler(service: ArkmeService, options: Arkm
       res.writeHead(range ? 206 : 200, {
         'Content-Type': file.mimeType, 'Content-Length': end - start + 1,
         'Content-Disposition': `${attachment ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+        'X-Arkme-File-Origin': file.origin === 'local' || file.origin === 'received' ? file.origin : 'unknown',
         'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'",
         'Accept-Ranges': 'bytes', ...(range ? { 'Content-Range': `bytes ${start}-${end}/${file.size}` } : {}),
       })
@@ -217,10 +218,11 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
         'Content-Type': contentType,
         'Cache-Control': response.headers.get('cache-control')?.includes('no-store')
           ? 'private, no-store' : cacheableImage ? 'private, max-age=86400, immutable' : 'private, max-age=60',
-        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(descriptor.fileName)}`,
+        'Content-Disposition': `${descriptor.sourceBound&&!/^(image|audio|video)\//i.test(contentType)?'attachment':'inline'}; filename*=UTF-8''${encodeURIComponent(descriptor.fileName)}`,
         'X-Content-Type-Options': 'nosniff',
         'Accept-Ranges': response.headers.get('accept-ranges') ?? 'bytes',
       }
+      if(descriptor.sourceBound)headers['Content-Security-Policy']="sandbox; default-src 'none'"
       for (const name of ['content-length', 'content-range']) {
         const value = response.headers.get(name)
         if (value !== null) headers[name] = value

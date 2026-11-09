@@ -6,6 +6,12 @@ import { arkmeSourceIdentityKey } from './source-identity.js'
 
 type Snapshot = { accountKey?: string; rows: ArkmeSourceItem[]; error?: string }
 type ReadPriority = 'background' | 'foreground'
+const emptyDirectory: Snapshot = { rows: [] }
+const directorySnapshots = new Map<string, { owner: object; snapshot: Snapshot }>()
+const directoryListeners = new Set<() => void>()
+export const subscribePrivateInteractionDirectory = (listener: () => void) => { directoryListeners.add(listener); return () => { directoryListeners.delete(listener) } }
+export const readPrivateInteractionDirectory = (accountKey: string) => directorySnapshots.get(accountKey)?.snapshot ?? emptyDirectory
+const publishDirectory = () => { for (const listener of directoryListeners) listener() }
 
 /** Automatic events coalesce; an explicit retry can replace a background read. */
 export function watchPrivateInteractionDirectory({ read, publish, subscribe, delay = 150 }: {
@@ -128,6 +134,7 @@ export function usePrivateInteractionDirectory(accountKey: string | undefined, e
   }, [accountKey, enabled])
   useEffect(() => {
     if (!enabled || accountKey === undefined) return
+    const cacheOwner = {}
     setSnapshot({ accountKey, rows: [] })
     const watcher = watchPrivateInteractionDirectory({
       read: async (cursor, version, signal, priority) => await callArkme<ArkmePrivateInteractionDirectoryPage>('private-interaction.directory', {
@@ -135,12 +142,17 @@ export function usePrivateInteractionDirectory(accountKey: string | undefined, e
         limit: 100, ...(cursor ? { cursor } : {}), ...(version ? { expectedVersion: version } : {}),
       }, signal, priority === 'background' ? { priority } : undefined),
       subscribe: listener => arkmeInterwovenInvalidation.subscribe(listener),
-      publish: (rows, error) => setSnapshot({ accountKey, rows, ...(error ? { error } : {}) }),
+      publish: (rows, error) => {
+        const snapshot = { accountKey, rows, ...(error ? { error } : {}) }
+        directorySnapshots.set(accountKey, { owner: cacheOwner, snapshot }); publishDirectory()
+        setSnapshot(snapshot)
+      },
     })
     owner.current = { accountKey, watcher }
     return () => {
       if (owner.current?.watcher === watcher) owner.current = undefined
       watcher.dispose()
+      if (directorySnapshots.get(accountKey)?.owner === cacheOwner) { directorySnapshots.delete(accountKey); publishDirectory() }
     }
   }, [accountKey, enabled])
   return { ...(enabled && snapshot.accountKey === accountKey ? snapshot : { rows: [] }), retry }

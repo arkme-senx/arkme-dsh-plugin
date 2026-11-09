@@ -575,3 +575,34 @@ it('projects remote pending/failed slots without URLs, grants or missing-asset q
   ])
   expect(media.recordMediaUnavailable(raw, blocks)).toBe(false)
 })
+
+it.each(['image/png', 'video/mp4'])('retains the real logical slot as a %s attachment becomes ready', mimeType => {
+  const media = new MediaService({config:{}} as ServiceRuntime, {} as never, {} as never, {} as never)
+  const kind=mimeType.startsWith('image/')?1:3
+  const name=kind===1?'same.png':'same.mp4'
+  const pendingRefs=['slot-a','slot-b'].map((uid,sort_order)=>({file_asset_uid:'',file_name:name,sort_order,
+    upload:{attachment_uid:uid,generation:1,state:'pending',kind,size:10}}))
+  const pending=media.richContentBlocks({content_payload:{media_refs:pendingRefs}},42)
+  // The owner may complete either same-named slot first; file name or position
+  // cannot establish which pending attachment acquired this asset.
+  const readyRefs=pendingRefs.map((ref,index)=>({...ref,file_asset_uid:`asset-${index}`,upload:{...ref.upload,state:'ready'}}))
+  const display=readyRefs.map(ref=>({file_asset_uid:ref.file_asset_uid,file_kind:kind,mime_type:mimeType,size:10,
+    preview_url:`https://fixture.invalid/${ref.file_asset_uid}`,download_url:`https://fixture.invalid/${ref.file_asset_uid}`}))
+  const ready=media.richContentBlocks({record_core:{content_payload:{media_refs:readyRefs}}},42,display)
+  expect(pending.map(block=>block.attachmentUid)).toEqual(['slot-a','slot-b'])
+  expect(ready.map(block=>block.attachmentUid)).toEqual(['slot-a','slot-b'])
+  expect(ready.map(block=>block.fileAssetUid)).toEqual(['asset-0','asset-1'])
+  expect(ready.map(block=>block.sortOrder)).toEqual([0,1])
+  for(const block of ready){
+    expect(block.mediaRef).toMatch(/^arkme-media-v1\./)
+    expect(block).not.toHaveProperty('attachmentState')
+  }
+})
+
+it.each([undefined,{}, {state:'ready'}, {state:'ready',attachment_uid:''}])('does not synthesize a slot for a ready attachment without one: %j', upload => {
+  const media=new MediaService({config:{}} as ServiceRuntime,{} as never,{} as never,{} as never)
+  const blocks=media.richContentBlocks({content_payload:{media_refs:[{file_asset_uid:'real-asset',file_name:'same.png',
+    ...(upload===undefined?{}:{upload})}]}},42,[{file_asset_uid:'real-asset',file_kind:1,mime_type:'image/png',preview_url:'https://fixture.invalid/image'}])
+  expect(blocks).toHaveLength(1)
+  expect(blocks[0]).not.toHaveProperty('attachmentUid')
+})

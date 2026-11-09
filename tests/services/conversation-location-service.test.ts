@@ -13,7 +13,7 @@ function setup(kind = 'send_to_self', locked: string[] = []) {
     ownerRef: ref, displayName: ref })
   const source = { openSourceRef: vi.fn(async (ref: string) => opened(ref)), sourceItem: vi.fn(async (raw: any) => ({ sourceRef: raw.ownerRef, kind: raw.kind, displayName: raw.displayName })),
     topicSubtreeSources: vi.fn(async () => [{ sourceRef: 'topic-root' }, { sourceRef: 'topic-child' }]) }
-  const post = vi.fn(async (_path: string, _body: any) => ({ items: [core('one')], has_more: false }) as any)
+  const post = vi.fn(async (_path: string, _body: any, _session?: unknown, _signal?: unknown, _options?: unknown) => ({ items: [core('one')], has_more: false }) as any)
   const runtime = { config: { recordBaseUrl: 'record', chatBaseUrl: 'chat' }, requireSession: async () => ({ userId }),
     authenticatedPost: post, authenticatedChatPost: post } as unknown as ServiceRuntime
   const snapshot = vi.fn(async (_uid: string) => ({ locationCapture: { latitude: 30, longitude: 114, capturedAtMillis: 1793600000000 }, locationLabel: '快照地点' }))
@@ -113,4 +113,21 @@ describe('conversation location history ownership', () => {
     const first = await service.page({ sourceRef: 'chat' })
     await expect(service.page({ sourceRef: 'chat', cursor: first.nextCursor! })).rejects.toThrow('位置读取进度已过期')
   })
+})
+
+it('keeps group location pages in the selected admission and never reads personal GPS snapshots',async()=>{
+ const f=setup('group_chat')
+ f.source.openSourceRef.mockImplementation(async ref=>({version:1,userId:42,kind:'group_chat',ownerRef:'group',displayName:'群',groupDelegation:{accessRef:ref,teamId:ref==='teamB'?'43':'42',membershipKind:'member',membershipRevision:1,groupMembershipUid:ref==='teamB'?'B':'A',groupMembershipRevision:1,visibleFromSeq:57}}) as never)
+ Object.assign(f.source,{sourceScopeKey:async(raw:any)=>'scope:'+raw.groupDelegation.groupMembershipUid})
+ f.post.mockResolvedValue({items:[{relation:{sender_user_id:42,record_owner_user_id:42,record_uid:'message',seq:60,rel_uid:'rel'},record:{status:1,payload:core('message')}}],has_more:true,next_before_seq:59})
+ const first=await f.service.page({sourceRef:'teamA'})
+ expect(first.items).toHaveLength(1)
+ expect(first.items[0]?.locationKind).toBe('message')
+ expect(f.snapshot).not.toHaveBeenCalled()
+ expect(f.post.mock.calls[0]?.[4]).toMatchObject({chatAccessRef:'teamA',bypassCache:true})
+ await expect(f.service.page({sourceRef:'teamB',cursor:first.nextCursor})).rejects.toThrow('位置读取进度已过期')
+ f.post.mockResolvedValue({items:[],has_more:false})
+ await f.service.page({sourceRef:'teamA-rotated',cursor:first.nextCursor})
+ expect(f.post.mock.calls.at(-1)?.[4]).toMatchObject({chatAccessRef:'teamA-rotated'})
+ expect(f.snapshot).not.toHaveBeenCalled()
 })

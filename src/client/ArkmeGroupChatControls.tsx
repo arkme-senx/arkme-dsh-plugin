@@ -1,4 +1,7 @@
+import {useGroupTeamMentions} from './use-group-team-mentions.js'
+import {GroupTeamsSection} from './GroupTeamsSection.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
+
 import { ArkmePeoplePickerSearch } from './ArkmePeoplePickerSearch.js'
 import { useConversationRecognitionAction } from './ConversationRecognitionControl.js'
 import { ConversationSettingSwitch } from './ConversationSettingSwitch.js'
@@ -64,6 +67,7 @@ import { arkmeGroupBotAvatarIdentity, arkmeInvalidateBotAvatarResolution, type A
 import { useGroupBots, arkmeGroupBotsChanged } from './use-group-bots.js'
 import { TeamGroupJoinPanel } from './TeamGroupControls.js'
 import { TeamInternalGroupDialog } from './TeamInternalGroupDialog.js'
+import { isGroupAiPolishMembershipRequired } from '../group-ai-polish-access.js'
 
 const colors = {
   panel: arkmeTheme.layer2,
@@ -445,6 +449,7 @@ export function GroupMembersDrawer(props: {
   const resize = useResizableNoteDetail(panelRef, 'arkme:group-members-width:v1', '调整群成员宽度', 262)
   const snapshot = useConversationMembers(props.accountScope, props.source, props.open)
   const bots = useGroupBots(props.accountScope, props.source.sourceRef, props.open)
+  const teams=useGroupTeamMentions(props.accountScope??'',props.source.sourceRef,props.open)
   const loading = snapshot.refreshing
   useEffect(() => {
     if (!props.open) return
@@ -463,7 +468,7 @@ export function GroupMembersDrawer(props: {
     <aside ref={panelRef} style={{ ...styles.drawer, ...resize.style }} aria-label={tr("群成员")}>
     {resize.handle}
     <ArkmeRightPanelHeader title={<>{tr("群成员")}{visibleSnapshot !== undefined && <span style={{ fontSize: 12, fontWeight: 400, whiteSpace: 'nowrap' }}>
-      {`（${bots.ready ? tr('{v0}人 · {v1} Bot', { v0: items.length, v1: bots.items.length }) : tr('{v0}人', { v0: items.length })}）`}
+      {`（${bots.ready ? tr('{v0}人 · {v1} Bot', { v0: items.length, v1: bots.items.length }) : tr('{v0}人', { v0: items.length })}${teams.ready&&teams.items.length>0?` · ${tr('{v0}团队',{v0:teams.items.length})}`:''}）`}
     </span>}</>}
       onClose={props.onClose} closeLabel={tr("关闭群成员")}
       actions={<button data-arkme-feedback="neutral" type="button" style={{ ...styles.closeButton, height: 30, marginTop: -3, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>{tr("添加")}</button>} />
@@ -472,11 +477,14 @@ export function GroupMembersDrawer(props: {
       {snapshot.error !== undefined && <button data-arkme-feedback="neutral" type="button" role="alert" style={styles.restrictionRetry}
         onClick={() => { if (props.accountScope !== undefined) void arkmeConversationMembers.ensure(props.accountScope, props.source, true) }}
       >{snapshot.error}{tr("，点击重试")}</button>}
-      {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 && bots.ready && bots.items.length === 0 ? <div style={styles.empty}>{tr("暂无群成员")}</div> : null}
+      {snapshot.ready && !loading && snapshot.error === undefined && items.length === 0 && bots.ready && bots.items.length === 0 && (teams.ready||teams.unavailable) && teams.items.length===0 ? <div style={styles.empty}>{tr("暂无群成员")}</div> : null}
       {items.map(member => <GroupMemberRow key={member.memberRef} member={member}
         onMemberOpen={props.onMemberOpen} onMemberContextMenu={props.onMemberContextMenu} onMemberHover={props.onMemberHover} />)}
       {bots.items.map(bot => <GroupBotRow key={bot.directoryKey || bot.botRef} bot={bot}
         onBotOpen={props.onBotOpen} onBotContextMenu={props.onBotContextMenu} onBotHover={props.onBotHover} />)}
+      {props.accountScope&&<GroupTeamsSection accountKey={props.accountScope} source={props.source} teams={teams.items} canManage={teams.canManage} leaveAvailable={teams.leaveAvailable} ready={teams.ready} refresh={teams.retry} styles={styles}/>}
+      {teams.loading&&<div style={styles.loading}>{tr('正在读取群团队…')}</div>}
+      {teams.error&&<button type="button" role="alert" style={styles.restrictionRetry} onClick={teams.retry}>{tr('团队列表加载失败，点击重试')}</button>}
       {bots.loading && !bots.ready && <div style={styles.loading}>{tr('正在读取群 Bot…')}</div>}
       {bots.error !== undefined && <button type="button" role="alert" style={styles.restrictionRetry}
         title={bots.error} onClick={bots.refresh}>{tr('Bot 列表加载失败，点击重试')}</button>}
@@ -804,7 +812,7 @@ export function AddMembersDrawer(props: {
           {tr(kind === 'people' ? '联系人' : kind === 'bot' ? 'Bot' : '团队')}
         </button>)}
       </div>
-      {entryKind === 'team' ? props.accountScope ? <TeamGroupJoinPanel key={JSON.stringify([props.accountScope, props.source.sourceRef])} accountKey={props.accountScope} source={props.source} />
+      {entryKind === 'team' ? props.accountScope ? <TeamGroupJoinPanel key={JSON.stringify([props.accountScope, props.source.sourceKey??props.source.conversationRef??props.source.sourceRef])} accountKey={props.accountScope} source={props.source} />
         : <p role="alert" style={{ padding: 16 }}>{tr('请登录后再添加团队')}</p> : <>
       <ArkmePeoplePickerSearch value={query} onChange={setQuery} disabled={busy}/>
       <div style={{ overflowY: 'auto', minHeight: 120, flex: 1, padding: '0 12px' }}>
@@ -1291,6 +1299,11 @@ function GroupSettingsMenu(props: {
       })
       .catch(caught => {
         if (!active || (controller.signal.aborted && !timedOut)) return
+        if (props.source.accessKind === 'team_delegation' && isGroupAiPolishMembershipRequired(caught)) {
+          setLocalAiPolishSettings(undefined)
+          setAiPolishLoadState('idle')
+          return
+        }
         setAiPolishLoadState('error')
         props.onError(timedOut ? 'AI 润色设置读取超时，请重试' : errorMessage(caught))
       })
@@ -1371,7 +1384,7 @@ function GroupSettingsMenu(props: {
   const polishStatus = localAiPolishSettings === undefined
     ? aiPolishLoadState === 'error' ? '加载失败' : '读取中'
     : localAiPolishSettings.enabled ? localAiPolishSettings.activeRuleName || '已开启' : '不润色'
-  entries.push({
+  if (props.source.accessKind !== 'team_delegation' || localAiPolishSettings !== undefined || aiPolishLoadState === 'error') entries.push({
     id: 'ai-polish',
     label: <span
       data-arkme-group-ai-polish-entry="true"
@@ -1405,12 +1418,14 @@ function GroupSettingsMenu(props: {
     { id: 'export', label: props.exportBusy
       ? `正在导出${props.exportProcessed > 0 ? ` · ${String(props.exportProcessed)} 条` : ''}`
       : '导出', icon: <DownloadSimple size={20} weight="regular" aria-hidden />, disabled: props.exportBusy },
+  )
+  if (effective.canLeave || effective.canDissolve) entries.push(
     { type: 'separator', id: 'leave-separator' },
     {
       id: 'leave', danger: true,
       label: <span style={{ color: arkmeTheme.danger }}>{effective.canDissolve ? '解散群聊' : tr("退出群聊")}</span>,
       icon: <span style={{ color: arkmeTheme.danger }}><ClientIcon src={icons.exit} size={16} /></span>,
-      disabled: busy || (!effective.canLeave && !effective.canDissolve),
+      disabled: busy,
     },
   )
 

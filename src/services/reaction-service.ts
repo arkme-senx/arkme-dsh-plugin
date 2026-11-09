@@ -25,7 +25,7 @@ function state(raw: unknown) {
 function library(raw: unknown) { const value = objectValue(raw); return { revision: integer(value.revision), items: array(value.items, 58).map(expression) } }
 function boolean(raw: unknown): boolean { return typeof raw === 'boolean' ? raw : invalid() }
 
-export interface ReactionWireTarget { chat_session_uid?: string; rel_uid?: string; record_uid?: string; owned?: boolean; team_conversation_uid?:string; team_message_uid?:string; team_side?:'team'|'external'; world_context_uid?: string; content_revision?: string }
+export interface ReactionWireTarget { chatAccessRef?: string; chat_session_uid?: string; rel_uid?: string; record_uid?: string; owned?: boolean; team_conversation_uid?:string; team_message_uid?:string; team_side?:'team'|'external'; world_context_uid?: string; content_revision?: string }
 function targetKey(target: ReactionWireTarget): string {
   if (target.team_conversation_uid) return JSON.stringify(['team',target.team_conversation_uid,target.team_message_uid])
   const parts: (string | boolean)[] = [target.chat_session_uid ?? '', target.rel_uid ?? '', target.record_uid ?? '', target.owned === true]
@@ -45,15 +45,18 @@ export class ReactionService {
     const session = await this.runtime.requireSession()
     const accountKey = `${this.runtime.config.environment}:${session.userId}`
     if (!input || input.accountKey !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化，请重新打开表态', false)
+    if (input.action === 'query' && input.readPriority !== undefined && input.readPriority !== 'interactive') throw new ArkmePluginError('reaction-query-invalid', '表态读取优先级无效', false)
+    const resolvedTargets=new Map<ReactionTargetRef,ReactionWireTarget>()
     // Mounted surfaces can include ordinary and Team targets, or both Team
     // perspectives. Partition by verified owner scope rather than mixing them
     // into a legacy endpoint or silently sharing an actor visibility policy.
-    if(input.action==='query'&&Array.isArray(input.targets)&&input.targets.length<=50&&input.targets.some(t=>t.teamConversationRef)){
+    if(input.action==='query'&&Array.isArray(input.targets)&&input.targets.length<=50){
       const ids=new Set<string>(),partitions=new Map<string,ReactionTargetRef[]>()
       for(const target of input.targets){
         if(ids.has(target.id))throw new ArkmePluginError('reaction-query-duplicate','表态目标重复',false);ids.add(target.id)
-        const wire=target.teamConversationRef?await this.resolve(target):undefined
-        const scope=wire?.team_side?`team:${wire.team_side}`:'legacy'
+        const wire=await this.resolve(target)
+        resolvedTargets.set(target,wire)
+        const scope=wire.team_side?`team:${wire.team_side}`:JSON.stringify(['legacy',wire.chatAccessRef??''])
         partitions.set(scope,[...(partitions.get(scope)??[]),target])
       }
       if(partitions.size>1){
@@ -62,18 +65,23 @@ export class ReactionService {
       }
     }
     let teamSide:'team'|'external'|undefined
+    let chatAccessRef:string|undefined
     let path: string, body: Record<string, unknown>
     const ids = new Map<string, string[]>()
     const resolve = async (target: ReactionTargetRef) => {
       const team=typeof target?.teamConversationRef==='string'&&typeof target.teamMessageRef==='string'&&!target.sourceRef&&!target.messageActionRef&&!target.worldRecordRef
       const ordinary=!!target&&!target.teamConversationRef&&!target.teamMessageRef&&(typeof target.worldRecordRef==='string'&&!target.sourceRef&&!target.messageActionRef||!target.worldRecordRef&&typeof target.sourceRef==='string'&&typeof target.messageActionRef==='string')
       if (!target || typeof target.id!=='string'||!target.id||target.id.length>1024||(!team&&!ordinary))throw new ArkmePluginError('reaction-target-invalid','表态目标无效',false)
-      const wire=await measureReaction('target-resolve',{},()=>this.resolve(target))
+      const wire=resolvedTargets.get(target)??await measureReaction('target-resolve',{},()=>this.resolve(target))
       if(team){
         if(!wire.team_conversation_uid||!wire.team_message_uid||!['team','external'].includes(wire.team_side??'')||teamSide&&teamSide!==wire.team_side)return invalid()
         teamSide=wire.team_side
       } else if(wire.team_conversation_uid||wire.team_message_uid||wire.team_side)return invalid()
-      const {team_side:_,...body}=wire
+      if(wire.chatAccessRef!==undefined) {
+        if(chatAccessRef!==undefined&&chatAccessRef!==wire.chatAccessRef)throw new ArkmePluginError('reaction-source-mismatch','表态目标的团队来源不一致',false,403)
+        chatAccessRef=wire.chatAccessRef
+      }
+      const {team_side:_,chatAccessRef:_frame,...body}=wire
       return body
     }
     switch (input.action) {
@@ -114,8 +122,10 @@ export class ReactionService {
     if(teamSide){path=`team/${path}`;body={...body,side:teamSide}}
     const before = await this.runtime.requireSession()
     if (`${this.runtime.config.environment}:${before.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)
+    const readOptions = input.action === 'query' && input.readPriority === 'interactive' ? { lane: 'interactive-read' as const }
+      : input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' as const } : undefined
     const result = objectValue(await measureReaction('reaction-owner', { action: input.action }, () => this.runtime.authenticatedPost(`${this.endpoint?.prefix ?? '/api/v1/reactions/'}${path}`, body, session, signal,
-      input.action === 'query' && input.actorPresentation === 'deferred' ? { lane: 'background-read' } : undefined)))
+      chatAccessRef ? { chatAccessRef, cacheMs: 0, bypassCache: true, ...readOptions } : readOptions)))
     if (this.endpoint && result.contract !== this.endpoint.contract) throw new ArkmePluginError('world-reactions-contract-invalid', '世界表态数据暂时无法读取，请刷新后重试', false, 502)
     const current = await this.runtime.requireSession()
     if (signal?.aborted || `${this.runtime.config.environment}:${current.userId}` !== accountKey) throw new ArkmePluginError('reaction-account-changed', '账号已变化', false)

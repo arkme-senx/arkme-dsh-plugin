@@ -22,7 +22,7 @@ let host: HTMLDivElement, root: Root
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
-  vi.mocked(callArkme).mockResolvedValue({ items: [bot('通知'), bot('助手', 'openclaw'), bot('未加入', 'openclaw', false)] })
+  vi.mocked(callArkme).mockImplementation(async operation=>operation==='team.app.group.participants'?{items:[],hasMore:false,canManage:false,leaveAvailable:true}:{ items: [bot('通知'), bot('助手', 'openclaw'), bot('未加入', 'openclaw', false)] })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.resetAllMocks(); vi.unstubAllGlobals() })
 function Probe({ account = 'account', group = 'group', active = true }: { account?: string; group?: string; active?: boolean }) {

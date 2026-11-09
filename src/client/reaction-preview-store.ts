@@ -236,7 +236,9 @@ export class ReactionPreviewStore {
       if (!this.states.has(target.id)) {
         // A user action must not depend on viewport admission or unrelated
         // messages succeeding. The write lock bounds this to one extra read.
-        const page = await this.transport({ action: 'query', accountKey: scope, targets: [target] }, signal) as { items: ReactionSnapshot[] }
+        // The click needs authorized state/revision, not actor names or avatars.
+        // Keep foreground admission even though presentation is deferred.
+        const page = await this.transport({ action: 'query', accountKey: scope, targets: [target], actorPresentation: 'deferred', readPriority: 'interactive' }, signal) as { items: ReactionSnapshot[] }
         if (signal.aborted) return false
         const loaded = page.items.find(item => item.target_id === target.id)
         if (!loaded) throw new Error('消息已不可访问')

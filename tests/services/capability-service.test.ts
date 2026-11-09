@@ -8,7 +8,7 @@ function fixture() {
   const state = row()
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/query')) {
-      expect(body).toEqual({ catalog_version: 2 })
+      expect(body).toEqual({ catalog_version: 3 })
       return [{ ...state }]
     }
     if (state.version !== body.expected_version) throw new Error('conflict')
@@ -106,7 +106,7 @@ describe('automatic capability owner', () => {
   })
 })
 
-it.each(['offline_context', 'recording_voice_trigger'] as const)('%s uses the existing consent/version owner without activating personal profile', async key => {
+it.each(['offline_context', 'recording_voice_trigger', 'event_insight', 'anniversary_insight'] as const)('%s uses the existing consent/version owner without activating personal profile', async key => {
   const state = { key, title: key === 'offline_context' ? '线下交流关联' : '录音语音触发', enabled: false, version: 0, enabled_at: 0 }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/query')) return [state]

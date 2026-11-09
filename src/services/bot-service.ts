@@ -445,6 +445,7 @@ export class BotService {
     const data = await this.runtime.authenticatedBotPost<Record<string, unknown>>(
       '/api/v1/bot/group/list', groupTargetBody, session, options.signal,
     )
+    if(group.groupDelegation)await this.source.authorizeGroupDelegation(group,session,options.signal)
     const items: ArkmeGroupBotList['items'] = []
     for (const value of listValue(data.bots)) {
       const raw = objectValue(value)
@@ -519,6 +520,7 @@ export class BotService {
     if (source.kind !== 'group_chat') {
       throw new ArkmePluginError('bot-group-source-invalid', 'Bot 只能安装到群聊', false)
     }
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,await this.runtime.requireSession())
     return source
   }
 
@@ -573,8 +575,10 @@ export class BotService {
         lane: 'interactive-read',
         key: `group-bot-target:${group.ownerRef}`,
         failureCooldownMs: 2_000,
+        ...(group.groupDelegation?{chatAccessRef:group.groupDelegation.accessRef,bypassCache:true,cacheMs:0}:{}),
       },
-    ).catch(() => undefined)
+    ).catch(error => {if(group.groupDelegation)throw error;return undefined})
+    if(group.groupDelegation)await this.source.authorizeGroupDelegation(group,session,signal)
     const botGroupTarget = detail === undefined ? undefined : arkmeGroupBotBindingTargetFromBundle(detail)
     return arkmeGroupBotBindingBody(botGroupTarget === undefined ? group : { ...group, botGroupTarget })
   }

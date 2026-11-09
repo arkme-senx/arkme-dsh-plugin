@@ -9,7 +9,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { registerArkmeTools } from '../src/tools/registry/registrar.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
 import { dispatchArkmeHostOperation } from '../src/host-api.js'
-const progress = { accountKey: 'test:1', cycle: 1, revision: 1, phase: 'syncing', completed: 2, total: 10, pending: 8, terminal: 0 }
+const progress = { accountKey: 'test:1', cycle: 1, revision: 1, phase: 'syncing', completed: 2, total: 10, pending: 8, terminal: 0, trigger: 'realtime' }
 afterEach(() => { vi.unstubAllGlobals() })
 it('official DSH sessions discover/call status and explicit-grant retry through the same Host owner', async () => {
   const ctx = new Context(); await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
@@ -20,7 +20,7 @@ it('official DSH sessions discover/call status and explicit-grant retry through 
     const session = ctx.sessions.create(), agent = { id: session.id, session }
     expect(ctx.tools.schemas(agent as never).map(t=>t.name)).toContain('arkme_message_sync_status')
     const result = await ctx.tools.execute({ callId: CallId('sync-status'), agent: agent as never, signal: new AbortController().signal, name: 'arkme_message_sync_status', arguments: {} })
-    expect(result.isError).toBe(false); expect(String(result.value)).toContain('"completed": 2')
+    expect(result.isError).toBe(false); expect(String(result.value)).toContain('"completed": 2'); expect(String(result.value)).toContain('"trigger": "realtime"')
     await expect(dispatchArkmeHostOperation(owner as never, 'chat.sync.status', {})).resolves.toEqual(progress)
     await expect(dispatchArkmeHostOperation(owner as never, 'chat.sync.retry', {})).resolves.toEqual(progress)
     expect(status).toHaveBeenCalledTimes(2); expect(retry).toHaveBeenCalledTimes(1)

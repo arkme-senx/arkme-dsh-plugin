@@ -43,9 +43,7 @@ export function ArkmePointsHistoryDialog({ scope, revision, onClose, returnFocus
   const selected = selection === null ? null : window.periods.some(period => period.key === selection) ? selection! : window.periods.at(-1)!.key
   const [category, setCategory] = useState<PointsCategory>(), [limit, setLimit] = useState(20)
   const [result, setResult] = useState<Result>()
-  const reader = useMemo(() => new PointsHistoryReader(scope, (month, beforeId, signal, limit) => callArkme<ArkmeAiPointsPage>('account.points.consumption', {
-    expectedAccountScope: scope, month, limit, ...(beforeId ? { beforeId } : {}),
-  }, signal), Date.now, {
+  const reader = useMemo(() => new PointsHistoryReader(scope, {
     summary: (query, signal) => callArkme<ArkmeAiPointsStatistics>('account.points.statistics', { expectedAccountScope: scope, ...query }, signal),
     range: (query, signal) => callArkme<ArkmeAiPointsRangePage>('account.points.consumption.range', { expectedAccountScope: scope, ...query }, signal),
   }), [scope, revision, reload])

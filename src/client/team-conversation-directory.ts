@@ -1,14 +1,15 @@
+import type {TeamWorkspaceFolder} from '../team-group-contract.js'
 import { withoutTeamConversationMaterial } from '../team-message-projection.js'
 import {teamChangeAffectsConversationPreview} from './team-source-read.js'
 import { mergeTeamNotificationPolicy } from '../team-notification-contract.js'
 import { callArkme } from './api.js'
-import { subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { subscribeTeamMessageChanges,subscribeTeamWorkspaceChanges } from './team-messaging-events.js'
 import type { TeamChannel, TeamConversation, TeamPage, TeamSide, TeamConversationReadState } from '../team-app-contract.js'
 import { teamDirectoryPreferences, teamEntryHidden, teamEntryPinned, type TeamDirectoryPreferences } from './team-directory-preferences.js'
 import { openedTeamConversations, mergeOpenedTeamConversation } from './team-opened-conversations.js'
 
-type Snapshot = { items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
-const empty: Snapshot = Object.freeze({ items: [], hasMore: false, loading: false, hasLoaded: false })
+type Snapshot = { workspaceSupported?:boolean; workspaceFolders:TeamWorkspaceFolder[]; foldersError?:string; items: TeamConversation[]; hasMore: boolean; loading: boolean; hasLoaded: boolean; error?: string }
+const empty: Snapshot = Object.freeze({ workspaceFolders:[], items: [], hasMore: false, loading: false, hasLoaded: false })
 const listeners = new Set<() => void>()
 let account = '', snapshot = empty, request: ((more?: boolean, readStateOnly?: boolean) => Promise<void>) | undefined
 let discard: ((conversation: TeamConversation) => void) | undefined
@@ -33,6 +34,7 @@ export function startTeamDirectory(key: string): () => void {
     return [...items.values()].sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
   }
   let running = false, again = false, fullAgain = false, revision = 0
+  let folderRequest: AbortController | undefined
   account = key; openedTeamConversations.activate(key); snapshot = { ...empty, items: itemsNow() }; emit()
   const stopOpened = openedTeamConversations.subscribe(changed => {
     if (changed !== key || controller.signal.aborted || account !== key) return
@@ -46,6 +48,31 @@ export function startTeamDirectory(key: string): () => void {
     const token = revision
     if (!readStateOnly) { snapshot = { ...snapshot, loading: true }; emit() }
     let failure: string | undefined, accessLost = false
+    void(async()=>{
+      if(more||readStateOnly)return
+      // Folder IO stays optional, but a newer head owns its result and error.
+      folderRequest?.abort()
+      const folders=new AbortController();folderRequest=folders
+      try {
+        const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,request:{operation:'folders'}},folders.signal)
+        if(!Array.isArray(value))throw new Error('团队群文件夹暂时无法刷新')
+        if(!folders.signal.aborted&&account===key&&token===revision){const {foldersError:_,...current}=snapshot;snapshot={...current,workspaceSupported:true,workspaceFolders:value};teamDirectoryPreferences.setWorkspaceAvailable(key,true)}
+      } catch(e) {
+        if(!folders.signal.aborted&&account===key&&token===revision) {
+          if ((e as {body?:{code?:string}})?.body?.code === 'team-workspace-unsupported') {
+            const {foldersError:_,...current}=snapshot
+            snapshot={...current,workspaceSupported:false,workspaceFolders:[]}
+            teamDirectoryPreferences.setWorkspaceAvailable(key,false)
+          } else snapshot={...snapshot,workspaceFolders:[],foldersError:e instanceof Error?e.message:'团队群文件夹暂时无法刷新'}
+        }
+      } finally {
+        if(folderRequest===folders)folderRequest=undefined
+        if(!folders.signal.aborted&&account===key&&token===revision&&snapshot.hasLoaded) {
+          emit()
+          void teamDirectoryPreferences.hydrate(key,true).then(()=>teamDirectoryPreferences.reconcile(key,itemsNow(),controller.signal)).catch(()=>{})
+        }
+      }
+    })()
     await Promise.all((['team', 'external'] as const).map(async side => {
       const previous = pages.get(side)
       if (more && !previous?.hasMore) return
@@ -108,7 +135,7 @@ export function startTeamDirectory(key: string): () => void {
     if (controller.signal.aborted || account !== key) return
     if (accessLost) ++revision
     const items = itemsNow()
-    snapshot = { items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
+    snapshot = { ...(snapshot.workspaceSupported===undefined?{}:{workspaceSupported:snapshot.workspaceSupported}),workspaceFolders:snapshot.workspaceFolders,...(snapshot.foldersError?{foldersError:snapshot.foldersError}:{}),items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
     if (!readStateOnly && token === revision) {
       // Optional preference IO runs after publishing ordinary directory rows.
       void (async () => {
@@ -132,8 +159,9 @@ export function startTeamDirectory(key: string): () => void {
               return [(await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: target.ref, limit: 1, expectedAccountKey: key }, controller.signal)).conversation]
             } catch { return [] }
           }))
-          // A preference is presentation only; successful publication activates a conversation.
-          extra.push(...batch.flat().filter(c => c.lastSeq > 0))
+          // A pin does not activate a preview. Only publication or a validated
+          // member-initiated contact can appear outside the ordinary page.
+          extra.push(...batch.flat().filter(c => c.lastSeq > 0 || c.side === 'team' && c.memberInitiated === true))
         }
         if (controller.signal.aborted || account !== key || token !== revision) return
         for (const c of extra) if (!pins.has(c.key) && allowed(c)) pins.set(c.key, c)
@@ -167,40 +195,50 @@ export function startTeamDirectory(key: string): () => void {
     }
     void refresh(false, receiptOnly === true)
   })
+  const stopWorkspace=subscribeTeamWorkspaceChanges(changed=>{if(changed===key){++revision;snapshot={...snapshot,workspaceFolders:[]};emit();void refresh()}})
   const focus = () => { void refresh() }
   const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh() }, 60_000)
   window.addEventListener('focus', focus)
   void refresh()
   return () => {
-    controller.abort(); stop(); stopOpened(); clearInterval(timer); window.removeEventListener('focus', focus)
+    controller.abort(); folderRequest?.abort(); stop(); stopOpened(); stopWorkspace(); clearInterval(timer); window.removeEventListener('focus', focus)
     if (request === refresh) { account = ''; request = undefined; discard = undefined; snapshot = empty; openedTeamConversations.reset(key); emit() }
   }
 }
 
 export interface TeamConversationGroup {
-  key: string; channel: TeamChannel; conversations: TeamConversation[]; latest: TeamConversation
+  key: string; channel: TeamChannel; conversations: TeamConversation[]; latest?: TeamConversation
+  activeAt:number; preview?:string; hasPublished:boolean; groupCount:number
   unread: number; attentionUnread: number; unreadExact: boolean
 }
-export function groupTeamConversations(conversations: readonly TeamConversation[], complete = true): TeamConversationGroup[] {
+export function groupTeamConversations(conversations: readonly TeamConversation[], complete = true, workspaceFolders:readonly TeamWorkspaceFolder[] = []): TeamConversationGroup[] {
   const groups = new Map<string, Map<string, TeamConversation>>()
   for (const c of conversations) {
     if (c.side !== 'team') continue
     const group = groups.get(c.channel.jotmoId) ?? new Map<string, TeamConversation>()
     group.set(c.key, c); groups.set(c.channel.jotmoId, group)
   }
-  return [...groups].map(([key, group]) => {
+  const result:TeamConversationGroup[] = [...groups].map(([key, group]) => {
     const rows = [...group.values()].sort((a,b)=>b.updatedAt-a.updatedAt || a.key.localeCompare(b.key)), latest = rows[0]!
-    return {key,channel:latest.channel,conversations:rows,latest,unread:rows.reduce((count,c)=>count+Math.max(0,c.unread),0),attentionUnread:rows.reduce((count,c)=>count+(c.notificationPolicy?.muted?0:Math.max(0,c.unread)),0),unreadExact:complete}
-  }).sort((a,b)=>b.latest.updatedAt-a.latest.updatedAt || a.key.localeCompare(b.key))
+    return {key,channel:latest.channel,conversations:rows,latest,activeAt:latest.updatedAt,hasPublished:rows.some(c=>c.lastSeq>0),groupCount:0,unread:rows.reduce((count,c)=>count+Math.max(0,c.unread),0),attentionUnread:rows.reduce((count,c)=>count+(c.notificationPolicy?.muted?0:Math.max(0,c.unread)),0),unreadExact:complete}
+  })
+  for(const folder of workspaceFolders) {
+    const current=result.find(group=>group.key===folder.channel.jotmoId)
+    if(current) {
+      current.unread+=folder.unread;current.attentionUnread+=folder.unread;current.groupCount=folder.groupCount;current.hasPublished||=folder.hasPublished
+      if(folder.activityAt>=current.activeAt){current.activeAt=folder.activityAt;current.preview=folder.preview}
+    } else result.push({key:folder.channel.jotmoId,channel:folder.channel,conversations:[],activeAt:folder.activityAt,preview:folder.preview,hasPublished:folder.hasPublished,groupCount:folder.groupCount,unread:folder.unread,attentionUnread:folder.unread,unreadExact:complete})
+  }
+  return result.sort((a,b)=>b.activeAt-a.activeAt||a.key.localeCompare(b.key))
 }
 
 type TeamDirectoryRow = { kind:'team'; conversation:TeamConversation; activeAtMillis:number; pinned:boolean }
   | { kind:'team-folder'; group:TeamConversationGroup; activeAtMillis:number; pinned:boolean }
 /** Internal visitors share one team entry; external-facing conversations retain their direct entry. */
-export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[], complete = true, preferences: TeamDirectoryPreferences = {}): (T | TeamDirectoryRow)[] {
+export function mergeTeamDirectoryRows<T extends { activeAtMillis: number; pinned: boolean }>(ordinary: readonly T[], teams: TeamConversation[], complete = true, preferences: TeamDirectoryPreferences = {}, workspaceFolders:readonly TeamWorkspaceFolder[] = []): (T | TeamDirectoryRow)[] {
   const result: (T | TeamDirectoryRow)[] = [...ordinary]
   const teamRows: TeamDirectoryRow[] = [
-    ...groupTeamConversations(teams,complete).filter(group=>!teamEntryHidden(preferences,{kind:'folder',group})).map(group=>({kind:'team-folder' as const,group,activeAtMillis:group.latest.updatedAt,pinned:teamEntryPinned(preferences,{kind:'folder',group})})),
+    ...groupTeamConversations(teams,complete,workspaceFolders).filter(group=>!teamEntryHidden(preferences,{kind:'folder',group})).map(group=>({kind:'team-folder' as const,group,activeAtMillis:group.activeAt,pinned:teamEntryPinned(preferences,{kind:'folder',group})})),
     ...teams.filter(c=>c.side==='external' && !teamEntryHidden(preferences,{kind:'conversation',conversation:c})).map(conversation=>({kind:'team' as const,conversation,activeAtMillis:conversation.updatedAt,pinned:teamEntryPinned(preferences,{kind:'conversation',conversation})})),
   ]
   for (const row of teamRows.sort((a,b)=>b.activeAtMillis-a.activeAtMillis)) {

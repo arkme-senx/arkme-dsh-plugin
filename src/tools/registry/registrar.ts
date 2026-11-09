@@ -14,12 +14,14 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_transcript_view_change',
   'arkme_thought_reply',
  'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',
   'arkme_recording_strategy_start',
   'arkme_realtime_dictation',
   'arkme_recording_strategy_preference',
+  'arkme_recording_analysis',
   'arkme_arko_change_lifecycle',
   'arkme_device_lock', 'arkme_device_unlock_request',
   'arkme_login_device_change', 'arkme_login_device_notifications',
@@ -31,6 +33,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_team_members_add',
   'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_outbound_open',
+  'arkme_team_groups_change',
   'arkme_team_notification_policy_set',
   'arkme_team_entry_preference_change',
   'arkme_reactions_write',
@@ -43,6 +46,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_official_notifications_read',
   'arkme_background_sound_disable',
   'arkme_disable_automatic_ai',
+  'arkme_account_model_preference', 'arkme_account_model_disable',
   'arkme_file_prepare',
   'arkme_files_send',
   'arkme_file_task',
@@ -57,7 +61,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_group_self_nickname_set',
   'arkme_group_join_restriction_set',
   'arkme_social_write',
-  'arkme_message_withdraw',
+  'arkme_message_withdraw', 'arkme_message_report',
   'arkme_contact_add',
   'arkme_team_join',
   'arkme_contact_private_chat_open',
@@ -105,6 +109,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_transcript_view_change') return '是否更新你自己的录音或通话转写更正/标记？原始转写与其他人的视图保持独立。'
   if (name === 'arkme_world_suggestions_change') {
     const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
     return request.action === 'create' ? `是否分析最近 ${Number(request.days)} 天的本人快记，生成仅自己可见的分享建议？模型分析会使用当前账号的模型额度，不会自动公开内容。`
@@ -115,6 +120,13 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
     return request.action === 'management'
       ? '是否确认取消刚才这份声音摘录的公开发布？'
       : '是否确认将已核对的原声选段和转写提交世界审核，并在通过后公开？'
+  }
+  if (name === 'arkme_recording_analysis') {
+    const scene = args.kind === 'timeline' ? '录音时间线' : '录音总结'
+    if (args.action === 'select') return `是否保存${scene}的后续生成模型偏好？这不会开始生成或扣除 AI 积分。`
+    if (args.action === 'continue') return `是否继续刚才选定的${scene}失败版本？保留原输入、模型和已完成的付费步骤，后续模型用量沿用原版本的计费方式。`
+    const billing = String(args.route_key).startsWith('user-api/') ? '模型费用由你绑定的供应商账户结算。' : '模型用量使用当前账号的 AI 积分。'
+    return `是否使用刚才选定的模型生成新的${scene}版本？${billing}`
   }
   if (name === 'arkme_thought_reply') return `是否按原想法的可见范围发送这条回复：“${cleanArgument(args.text, 120)}”？私密续帖仅你可见。`
   if(name==='arkme_codex_image_read')return '是否允许当前 AI 读取这张仅本人可见的 Codex 图片？图片将传给当前模型处理。'
@@ -135,6 +147,11 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_external_chat_share') return args.operation === 'unshare' ? '是否取消这段对外私聊的团队共享？双方原私聊仍会保留。' : '是否将这段私聊共享到选定团队？全体现任成员将能查看完整历史和后续消息，包括隐私锁定消息及附件。'
   if (name === 'arkme_team_entry_preference_change') return '是否确认修改刚才指定团队入口的本人置顶或移除设置？此设置会在你的设备同步，不删除消息、不退出团队，也不修改已读或免打扰。'
   if (name === 'arkme_team_outbound_open') return '是否使用刚才选定的团队与客户打开团队接待？只有之后发送首条消息才会触达客户。'
+  if(name==='arkme_team_groups_change') {
+    const command=args.command as Record<string,unknown>|undefined
+    const labels:Record<string,string>={join:'申请加入',leave:'退出',remove:'移除团队参与者',approve:'批准团队入群申请',reject:'拒绝团队入群申请'}
+    return `是否对刚才选定的群聊执行“${labels[String(command?.action)]??'团队入群操作'}”？团队加入后，当前有效同事可查看并参与团队本次入群以来的群聊。`
+  }
   if (name === 'arkme_team_notification_policy_set') return `是否确认${args.muted === true ? '开启' : '关闭'}刚才选定团队对话的个人消息免打扰？消息和未读记录仍会保留。`;
   if (name === 'arkme_team_members_add') return '确认将选定的同事直接加入团队？他们将获得团队共享内容的访问权限。';
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
@@ -203,6 +220,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
       ? '是否确认禁止这位用户以后再次加入该群？此操作本身不会移除当前活跃成员。'
       : '是否确认解除这位用户的群聊加入限制？'
   }
+  if (name === 'arkme_message_report') return '是否确认向平台举报刚才指定的这条群消息？这不会删除原消息。'
   if (name === 'arkme_message_withdraw') {
     return '是否确认撤回这条群消息？撤回后所有群成员都无法再查看，但不会移除或限制发送者。'
   }
