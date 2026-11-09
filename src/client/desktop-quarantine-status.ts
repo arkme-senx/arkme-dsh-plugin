@@ -13,9 +13,17 @@ export function parseArkmeDesktopQuarantineStatus(value: unknown): ArkmeDesktopQ
       || typeof entry.dismissed !== 'boolean'
       || typeof entry.resolved !== 'boolean'
       || (entry.extensionId !== undefined && typeof entry.extensionId !== 'string')) return undefined
+    const source = entry.localSource
+    let localSource: ArkmeDesktopQuarantineEntryView['localSource']
+    if (source !== undefined) {
+      if (!isObject(source) || (source.kind !== 'directory' && source.kind !== 'archive')
+        || typeof source.path !== 'string' || !source.path) return undefined
+      localSource = { kind: source.kind, path: source.path }
+    }
     entries.push({
       packageName: entry.packageName,
       ...(typeof entry.extensionId === 'string' ? { extensionId: entry.extensionId } : {}),
+      ...(localSource && { localSource }),
       dismissed: entry.dismissed,
       resolved: entry.resolved,
     })
@@ -26,6 +34,8 @@ export function parseArkmeDesktopQuarantineStatus(value: unknown): ArkmeDesktopQ
   }
   return {
     active: value.active,
+    ...(typeof value.createdAtMillis === 'number' && Number.isFinite(new Date(value.createdAtMillis).getTime())
+      ? { createdAtMillis: value.createdAtMillis } : {}),
     ...(typeof value.quarantineId === 'string' ? { quarantineId: value.quarantineId } : {}),
     ...(value.mode === 'targeted' || value.mode === 'local-safe-mode' ? { mode: value.mode } : {}),
     ...(typeof value.failureSummary === 'string' ? { failureSummary: value.failureSummary } : {}),
