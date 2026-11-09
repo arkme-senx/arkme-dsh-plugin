@@ -53,7 +53,15 @@ it('keeps verified local marks durable before cloud repair and resumes the same 
   const pending = await f.service.execute({ action: 'add', messageRef: context.messageRef, operationId: 'durable-add', anchor }) as NativeAnnotationSnapshot
   expect(pending.items).toEqual([expect.objectContaining({ pending: true, anchor })])
   expect(f.marks.cloudOperations(JSON.stringify(['test',42]))).toHaveLength(1)
-  for (let i = 0; i < 510; i++) f.marks.writeCloudCache(JSON.stringify(['test',42]), `evict:${i}`, {})
+  // Seed a full cache in one disk write, then exercise eviction through the store.
+  const scope = JSON.stringify(['test', 42])
+  f.db.prepare(`
+    WITH RECURSIVE entries(i) AS (VALUES(1) UNION ALL SELECT i + 1 FROM entries WHERE i < 500)
+    INSERT INTO native_annotation_cache(scope, key, payload, updated_at)
+    SELECT ?, 'evict:' || i, '{}', ? FROM entries
+  `).run(scope, Date.now())
+  f.marks.writeCloudCache(scope, 'evict:501', {})
+  expect(f.marks.readCloudCache(scope, 'evict:1')).toBeUndefined()
   f.close(); f = fixture(path)
   f.post.mockRejectedValue(new ArkmePluginError('ANNOTATION_SOURCE_NOT_READY', 'pending', true, 409))
   const restarted = f.service; configure(restarted)
@@ -89,7 +97,7 @@ function fixture(path = ':memory:') {
   vi.spyOn(runtime, 'requireSession').mockResolvedValue(session); vi.spyOn(runtime, 'accountScopedSession').mockResolvedValue(session)
   const post = vi.spyOn(runtime, 'authenticatedDshRemotePost')
   const service = new NativeAnnotationsService(runtime)
-  return { service, runtime, marks, post, session, close }
+  return { service, runtime, marks, post, session, close, db }
 }
 function wire(revision: number, annotations: unknown[] = []) { return { message_ref: messageRef, revision, complete: true, accessible: true, annotations } }
 function wireMark() { return { annotation_uid: 'mark-1', actor_user_id: 42, actor_name: '你', anchor, state: 'available' } }
