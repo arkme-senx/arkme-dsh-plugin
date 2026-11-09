@@ -118,11 +118,13 @@ describe('Arko emoji input and send boundary', () => {
     })
   }
 
-  it('preserves unsupported image-only drafts without sending a text-only request', async () => {
+  it('retains an image draft when the Host rejects the live model capability', async () => {
     await imageDraft(false)
+    ask.mockRejectedValueOnce(new ArkmeClientError({ code: 'arko-images-unavailable', message: '当前模型的图片能力尚未接通', retryable: false }))
     expect(button('发送').disabled).toBe(false)
     await send()
-    expect(ask).not.toHaveBeenCalled()
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ text: '', imageFileRefs: [imageFile.fileRef] }))
+    expect(ask.mock.calls[0]![0]).not.toHaveProperty('modelRouteKey')
     expect(host.textContent).toContain('图片能力尚未接通')
     expect(arkmeComposerDraftStore.get(draftKey).attachments).toHaveLength(1)
     expect(await readArkoPendingTurn(10001)).toBeUndefined()

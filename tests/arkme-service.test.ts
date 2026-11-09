@@ -5223,19 +5223,18 @@ describe('ArkmeService', () => {
     expect(requests.map(request => [request.method, request.url.split('?')[0]])).toEqual([
       ['POST', 'https://intelligent.test/api/v1/qa/latest-session'],
       ['POST', 'https://intelligent.test/api/v1/qa/new-session'],
-      ['POST', 'https://intelligent.test/api/v1/agent/model/list'],
       ['POST', 'https://intelligent.test/api/v1/qa/new-msg-v2'],
       ['GET', 'https://intelligent.test/api/v1/qa/stream-v2'],
     ])
-    expect(requests[3]?.body).toMatchObject({
+    expect(requests[2]?.body).toMatchObject({
       model: 2,
       session_id: 88,
       content: '帮我总结今天的快记',
       extra: '{}',
       client_turn_uid: '11111111-1111-4111-8111-111111111111',
       client_capabilities: ['dsh.arko.v1'],
-      model_route_key: 'dashscope/qwen3.8-max',
     })
+    expect(requests[2]?.body).not.toHaveProperty('model_route_key')
     expect(requests.every(request => request.authorization === 'Bearer access')).toBe(true)
   })
 
