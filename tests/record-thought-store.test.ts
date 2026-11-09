@@ -88,7 +88,7 @@ it('cancels an obsolete binding read while retaining the shared cache and one ac
 it.each(['denied', 'account-mismatch'] as const)('clears cached and streamed content after %s until a fresh owner read succeeds', async mode => {
   const read = vi.fn(async () => ({ accountScope: scope, items: [thought()] }))
   const store = create(read); store.subscribe('note', 1, 1, () => {}); await vi.advanceTimersByTimeAsync(32)
-  const delta = { recordUid: 'note', streamId: 'stream', biz: 2 as const, delta: '旧', contentBytes: 3, phase: 'generating' as const }
+  const delta = { sourceVersion: 1, recordUid: 'note', streamId: 'stream', biz: 2 as const, delta: '旧', contentBytes: 3, phase: 'generating' as const }
   store.applyStream(delta)
   if (mode === 'denied') read.mockRejectedValueOnce(Object.assign(new TypeError('Failed to fetch'), { body: { retryable: false } }))
   else read.mockResolvedValueOnce({ accountScope: 'production:7', items: [thought()] })
@@ -104,7 +104,7 @@ it.each(['denied', 'account-mismatch'] as const)('clears cached and streamed con
   expect(store.get('note').items[0]?.content).toBe('新')
 })
 
-it('drops cached legacy content immediately on edit and does not restore the same stale thought', async () => {
+it('drops cached content immediately on edit and waits for a matching canonical source version', async () => {
   let content = '一个想法', version=1
   const store = create(async () => ({ accountScope: scope, items: [{ ...thought(), sourceVersion:version,currentSourceVersion:version,content }] }))
   const off = store.subscribe('note', 1, 1, () => {}); await vi.advanceTimersByTimeAsync(32); off()
