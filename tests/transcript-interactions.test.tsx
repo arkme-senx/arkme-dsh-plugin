@@ -9,6 +9,8 @@ import { changeLocalTranscript } from './helpers/legacy-transcript-owner.js'
 import type { LocalTranscriptEntry } from '../src/local-transcript-state.js'
 import { quoteSourceContent } from '../src/message-quote.js'
 import { useTranscriptInteractions } from '../src/client/TranscriptInteractions.js'
+import { ArkmeCallDetailContent } from '../src/client/ArkmeCallDetailContent.js'
+import type { ArkmeCallDetail } from '../src/types.js'
 import { ArkmeMessageTextSelectionToolbar, registeredMessageTargets } from '../src/client/ArkmeMessageTextSelection.js'
 const mocks=vi.hoisted(()=>({call:vi.fn(),copy:vi.fn(),play:vi.fn(),auth:{auth:{status:'authenticated',userId:11,environment:'prod'}}}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.call}))
@@ -42,9 +44,8 @@ beforeEach(()=>{
  stored.clear();mocks.copy.mockReset().mockResolvedValue(undefined);mocks.play.mockReset()
  mocks.call.mockReset().mockImplementation(async(op:string,p:any)=>{
   if(op==='transcript.views.capabilities')return {supported:true,protocol_version:1}
-  const project=(ref:string):PersonalTranscriptEntry=>{const r=JSON.parse(ref),entry=stored.get(r.scope+':'+r.id)??{revision:0,original:r.text,text:r.text,marks:[]},changed=entry.original!==r.text;return {...entry,text:changed?r.text:entry.text,original:r.text,originalVersion:createHash('sha256').update(r.text).digest('hex'),originalDigest:'a'.repeat(64),originalChanged:changed}}
+  const project=(ref:string):PersonalTranscriptEntry=>{const r=JSON.parse(ref),entry=stored.get(r.scope+':'+r.id)??{revision:0,original:r.text,text:r.text,marks:[]},changed=entry.original!==r.text;return {...entry,text:changed?r.text:entry.text,original:r.text,originalVersion:createHash('sha256').update(r.text).digest('hex'),originalDigest:'a'.repeat(64),originalChanged:changed,...(changed?{previousText:entry.text}:{})}}
   if(op==='transcript.views.read')return Object.fromEntries(p.items.map((item:any)=>[item.id,project(item.ref)]))
-  if(op==='transcript.views.saved')return {historical:true,items:[],next_cursor:''}
   if(op==='transcript.views.change'){
    const row=JSON.parse(p.ref),key=row.scope+':'+row.id,c=p.command as TranscriptViewCommand,previous=stored.get(key),current=project(p.ref)
    const mark=c.action==='add_mark'?{kind:'add' as const,operationId:c.operation_id,anchor:c.anchor!}:c.action==='remove_mark'?{kind:'remove' as const,operationId:c.operation_id,annotationId:c.annotation_id!}:undefined
@@ -63,12 +64,23 @@ it('shows exactly one toolbar, copies only the selection, and selects the curren
  await click('复制');expect(mocks.copy).toHaveBeenCalledWith('重复词')
  await select();await click('全选');expect(document.getSelection()?.toString()).toBe(original)
 })
-it('replaces just the second occurrence, restores after remount, and can restore original',async()=>{
- await act(async()=>root.render(<Fixture/>));await select();await click('替换');await input('新词');await click('替换')
- expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
- await act(async()=>root.unmount());root=createRoot(host);await act(async()=>root.render(<Fixture/>))
- expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('重复词，新词。')
- await click('个人更正 · 恢复原文');expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+it('replaces the second single-character selection and restores directly from the row after remount', async () => {
+ const text = '是，是。'
+ await act(async () => root.render(<Fixture text={text} />))
+ await select(2, 3)
+ await click('替换'); await input('对'); await click('替换')
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('是，对。')
+ await act(async () => root.unmount()); root = createRoot(host)
+ await act(async () => root.render(<Fixture text={text} />))
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('是，对。')
+ const restore = [...host.querySelectorAll('button')].find(button => button.textContent === '个人更正 · 恢复原文')!
+ expect(restore.title).toContain('原文：是，是。')
+ await act(async () => { restore.click(); restore.click() })
+ expect(mocks.call.mock.calls.filter(([operation, params]) => operation === 'transcript.views.change' && params.command.action === 'restore')).toHaveLength(1)
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(text)
+ expect(host.querySelectorAll('article button')).toHaveLength(0)
+ expect(document.querySelector('[role="dialog"]')).toBeNull()
+ expect(mocks.play).not.toHaveBeenCalled()
 })
 it('saves private marks in the cloud and cancels the same mark without changing text',async()=>{
  await act(async()=>root.render(<Fixture/>));await select();await click('标记')
@@ -93,7 +105,7 @@ it('searches only the active transcript and selects/plays multiple rows in time 
 it('does not apply local corrections to a changed cloud original or another scope',async()=>{
  stored.set('recording:123:one',{revision:1,original,text:'旧更正',marks:[]})
  await act(async()=>root.render(<Fixture text="云端新原文"/>));expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('云端新原文')
- expect(host.textContent).toContain('原文已更新')
+ expect(host.querySelector('article button')?.textContent).toBe('原文已更新 · 恢复原文')
  await act(async()=>root.render(<Fixture scope="call:123"/>));expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
 
@@ -134,19 +146,16 @@ it('drops the private wording when the Host reports an account change before the
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
 
-it.each(['replacement', 'history'] as const)('retires an open %s surface when background read observes source revocation', async surface => {
- await act(async()=>root.render(<Fixture/>))
- if(surface==='replacement') {await select();await click('替换');await input('未提交私人草稿')}
- else {
-  const normal=mocks.call.getMockImplementation()!
-  mocks.call.mockImplementation(async(op,p)=>op==='transcript.views.saved'?{historical:true,items:[{segment_uid:'old',text:'历史私人正文',revision:1,marks:[]}],next_cursor:''}:normal(op,p))
-  await click('已保存的个人更正');expect(host.textContent).toContain('历史私人正文')
- }
- const normal=mocks.call.getMockImplementation()!
- mocks.call.mockImplementation(async(op,p)=>{if(op==='transcript.views.read')throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
- await act(async()=>{document.getSelection()?.removeAllRanges();window.dispatchEvent(new Event('focus'))})
+it('closes the existing replacement editor when a background read observes source revocation', async () => {
+ await act(async () => root.render(<Fixture />))
+ await select(); await click('替换'); await input('未提交私人草稿')
+ const normal = mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async (op, p) => {
+  if (op === 'transcript.views.read') throw Object.assign(new Error('来源已撤权'), { body: { code: 'transcript-source-unavailable', httpStatus: 403 } })
+  return normal(op, p)
+ })
+ await act(async () => { document.getSelection()?.removeAllRanges(); window.dispatchEvent(new Event('focus')) })
  expect(document.querySelector('textarea')).toBeNull()
- expect(host.textContent).not.toContain('历史私人正文')
 })
 
 it('checks source access while private prose is selected without replacing an active selection',async()=>{
@@ -166,12 +175,15 @@ it('checks source access while private prose is selected without replacing an ac
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
 
-it.each(['change','saved'] as const)('clears private projections when %s observes source revocation before the next watch', async operation => {
+it('clears private projections when direct restore observes source revocation', async () => {
  stored.set('recording:123:one',{revision:1,original,text:'已确认私人正文',marks:[]})
- await act(async()=>root.render(<Fixture/>));expect(host.textContent).toContain('已确认私人正文')
- const normal=mocks.call.getMockImplementation()!
- mocks.call.mockImplementation(async(op,p)=>{if(op===`transcript.views.${operation}`)throw Object.assign(new Error('来源已撤权'),{body:{code:'transcript-source-unavailable',httpStatus:403}});return normal(op,p)})
- await click(operation==='change'?'个人更正 · 恢复原文':'已保存的个人更正')
+ await act(async () => root.render(<Fixture />)); expect(host.textContent).toContain('已确认私人正文')
+ const normal = mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async (op, p) => {
+  if (op === 'transcript.views.change') throw Object.assign(new Error('来源已撤权'), { body: { code: 'transcript-source-unavailable', httpStatus: 403 } })
+  return normal(op, p)
+ })
+ await click('个人更正 · 恢复原文')
  expect(host.textContent).not.toContain('已确认私人正文')
  expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
@@ -186,4 +198,62 @@ it.each(['none','second'] as const)('keeps raw transcript actions without privat
  expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toEqual([])
  if(privateRows==='none')expect(mocks.call).not.toHaveBeenCalled()
  else {await select(0,2,1);expect([...document.querySelectorAll('[aria-label="选中文字操作"] button')].map(b=>b.textContent)).toContain('标记');await click('标记');expect(mocks.call.mock.calls.filter(([op])=>op==='transcript.views.change')).toHaveLength(1)}
+})
+
+it('retains the original reading and menu surfaces for ordinary recording rows', async () => {
+ await act(async () => root.render(<Fixture />))
+ expect(host.querySelectorAll('article button')).toHaveLength(0)
+ expect(host.textContent).not.toMatch(/历史更正|我的修改/)
+ await openContext()
+ expect([...document.querySelectorAll('[role="menuitem"]')].map(button => button.textContent)).toEqual(['复制', '多选', '播放'])
+ expect(mocks.call.mock.calls.some(([operation]) => operation === 'transcript.views.saved')).toBe(false)
+})
+
+it.each(['corrected', 'restored'] as const)('can reset a private view after the source version changes (%s)', async state => {
+ const previousOriginal = '之前的原文'
+ stored.set('recording:123:one', { revision: 2, original: previousOriginal, text: state === 'corrected' ? '保留的更正' : previousOriginal, marks: [] })
+ await act(async () => root.render(<Fixture text="更新后的原文" />))
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe('更新后的原文')
+ await click('原文已更新 · 恢复原文')
+ expect(stored.get('recording:123:one')).toMatchObject({ original: '更新后的原文', text: '更新后的原文' })
+ expect(host.querySelectorAll('article button')).toHaveLength(0)
+})
+
+it('announces the same current private wording that the call bubble displays, then follows restoration', async () => {
+ const raw='识别原文', privateText='个人更正后的通话文字'
+ const detail:ArkmeCallDetail={stableId:'room-one',callRef:'call-ref',title:'通话详情',mediaType:'audio',startedAtMillis:1000,acceptedAtMillis:1000,endedAtMillis:5000,durationSeconds:4,callResult:'NormalEnd',resultLabel:'已接通',summaryStatus:'done',summaryText:'摘要',transcriptPending:false,transcriptFailed:false,participants:[],transcriptSegments:[{segmentId:'one',speakerDisplayName:'同事',text:raw,startMillis:0,endMillis:1000,audioUrl:'https://example.invalid/audio.wav',privateViewTarget:{kind:'call',source_uid:'room-one',segment_uid:'one'},privateViewVersion:'v1'}]}
+ let current:PersonalTranscriptEntry={revision:1,original:raw,text:privateText,originalVersion:'v1',originalDigest:'a'.repeat(64),originalChanged:false,marks:[]}
+ const normal=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,p)=>{
+  if(op==='transcript.views.read')return Object.fromEntries(p.items.map((item:any)=>[item.id,current]))
+  if(op==='transcript.views.change'){current={...current,revision:2,text:raw};return current}
+  return normal(op,p)
+ })
+ await act(async()=>root.render(<ArkmeCallDetailContent selectedItem={{callRef:'call-ref',peerDisplayName:'同事',mediaType:'audio',acceptedAtMillis:1000,durationSeconds:4,summaryPreview:''}} detail={detail} detailState="ready"/>))
+ const bubble=host.querySelector('[data-arkme-call-utterance="one"] [role="button"]')!
+ expect(bubble.querySelector('[data-arkme-text-selection]')?.textContent).toBe(privateText)
+ expect(bubble.getAttribute('aria-label')).toContain(privateText)
+ expect(bubble.getAttribute('aria-label')).not.toContain(raw)
+ await click('个人更正 · 恢复原文')
+ expect(bubble.querySelector('[data-arkme-text-selection]')?.textContent).toBe(raw)
+ expect(bubble.getAttribute('aria-label')).toContain(raw)
+ expect(detail.transcriptSegments[0]!.text).toBe(raw)
+})
+
+
+it('keeps the original visible when returning to a recording before its private access is rechecked', async () => {
+ stored.set('recording:123:one', { revision: 1, original, text: '日期切换前的私人更正', marks: [] })
+ await act(async () => root.render(<Fixture />))
+ expect(host.textContent).toContain('日期切换前的私人更正')
+ await act(async () => root.render(<Fixture scope="recording:456" privateRows="none" />))
+ const normal = mocks.call.getMockImplementation()!
+ let deny!: (error: Error) => void
+ mocks.call.mockImplementation((operation, params) => operation === 'transcript.views.read'
+  ? new Promise((_, reject) => { deny = reject })
+  : normal(operation, params))
+ await act(async () => root.render(<Fixture />))
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+ expect(host.textContent).not.toContain('恢复原文')
+ await act(async () => deny(Object.assign(new Error('来源已撤权'), { body: { code: 'transcript-source-unavailable', httpStatus: 403 } })))
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
 })
