@@ -406,7 +406,7 @@ describe('outgoing call runtime', () => {
     runtime.dispose()
   })
 
-  it.each(['audio', 'video'] as const)('treats iframe idle state as terminal after a %s call was sent', async (mediaType) => {
+  it.each(['audio', 'video'] as const)('treats iframe idle state as terminal only after a %s call was sent', async (mediaType) => {
     const timeouts: Array<() => void> = []
     const result = structuredClone(prepareResult)
     result.call.mediaType = mediaType
@@ -430,6 +430,11 @@ describe('outgoing call runtime', () => {
 
     controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType })
     await settle()
+    expect(sentCommand(target, 'bootstrap')).toBe(true)
+    expect(sentCommand(target, 'call')).toBe(false)
+    runtime.handleBridgeMessage({ type: 'state', phase: 'idle', hasActiveCall: false, statusText: '正在初始化桌面通话...' })
+    expect(runtime.getSnapshot()).toMatchObject({ visible: true, phase: 'bootstrapping' })
+
     runtime.handleBridgeMessage({ type: 'ready' })
 
     expect(sentCommand(target, 'call')).toBe(true)

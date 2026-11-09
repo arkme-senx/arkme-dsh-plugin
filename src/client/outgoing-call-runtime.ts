@@ -13,6 +13,7 @@ import {
   requestDesktopCallMediaPermissions,
   sendDesktopCallCommand,
   type DesktopCallBridgeEvent,
+  type NativeCallEndpoint,
   type DesktopCallMediaPermissionResult,
 } from './outgoing-call-bridge.js'
 import { outgoingCallUi, type OutgoingCallUiController, type OutgoingCallUiRequest } from './outgoing-call-ui-controller.js'
@@ -107,7 +108,7 @@ export class OutgoingCallRuntime {
   private readonly stopTimeout: typeof globalThis.clearTimeout
   private listeners = new Set<() => void>()
   private snapshot: OutgoingCallRuntimeSnapshot = INITIAL_SNAPSHOT
-  private frame: HTMLIFrameElement | null = null
+  private frame: HTMLIFrameElement | NativeCallEndpoint | null = null
   private prepared: BrowserPrepared | undefined
   private intent: ArkmeOutgoingCallIntentClaim | undefined
   private leaseCallRequestId = ''
@@ -266,14 +267,14 @@ export class OutgoingCallRuntime {
     void this.pollToolIntent().catch(() => undefined)
   }
 
-  attachFrame(frame: HTMLIFrameElement | null): void {
+  attachFrame(frame: HTMLIFrameElement | NativeCallEndpoint | null): void {
     this.frame = frame
     this.diag('frame_attached', { hasFrame: frame !== null })
     this.flushBootstrap()
   }
 
   handleWindowMessage(event: MessageEvent): void {
-    const source = this.frame?.contentWindow
+    const source = this.frame && 'contentWindow' in this.frame ? this.frame.contentWindow : null
     if (source === null || source === undefined || this.snapshot.callRequestId === '') return
     const message = parseDesktopCallBridgeEvent(event, {
       expectedSource: source,
@@ -337,6 +338,7 @@ export class OutgoingCallRuntime {
       this.update({ phase: 'active', statusText: '通话中' })
       return
     }
+    // Outgoing calls acquire their lease before the iframe finishes initializing.
     if (
       message.type === 'state' &&
       (this.callSent || (this.leaseCallRequestId !== '' && ['incoming', 'calling', 'active'].includes(this.snapshot.phase))) &&
