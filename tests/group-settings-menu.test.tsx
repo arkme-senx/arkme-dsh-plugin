@@ -109,6 +109,71 @@ describe('group settings menu', () => {
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('修改群名称')
   })
 
+  it('hides personal leave and dissolve when viewing a group through team delegation', async () => {
+    const delegated = { ...source, sourceRef: 'delegated-group', accessKind: 'team_delegation' as const }
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return {
+        target: delegated, selfRole: 'unknown', selfStatus: 'unknown', canRename: false,
+        canDissolve: false, canLeave: false, messageDnd: false,
+      }
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(delegated)) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).not.toContain('leave')
+    expect(menuIds()).not.toContain('leave-separator')
+    expect(menuIds()).toContain('export')
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'group.leave' || operation === 'group.dissolve')).toBe(false)
+  })
+
+  it('keeps personal leave hidden while its capability is loading or unavailable', async () => {
+    let reject!: (error: Error) => void
+    mocks.callArkme.mockImplementation(async (operation: string) => {
+      if (operation === 'group.settings') return await new Promise((_resolve, fail) => { reject = fail })
+      if (operation === 'source.ai-polish.settings') return aiSettings
+      throw new Error(`unexpected ${operation}`)
+    })
+    await act(async () => { renderer = create(controls(source)) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).not.toContain('leave')
+    await act(async () => { reject(new Error('settings unavailable')) })
+    expect(menuIds()).not.toContain('leave')
+    expect(menuIds()).not.toContain('leave-separator')
+  })
+
+  it('hides unavailable AI settings for a team-only viewer without reporting a page error or retaining old settings', async () => {
+    const delegated = { ...source, accessKind: 'team_delegation' as const }
+    const onError = vi.fn()
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
+      if (operation === 'source.ai-polish.settings') throw Object.assign(new Error('需要真人群成员资格'), { body: { code: 'group-ai-polish-membership-required', retryable: false } })
+      return await original(operation, ...args)
+    })
+    await act(async () => { renderer = create(controls(delegated, { onError })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).not.toContain('ai-polish')
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('retains real AI settings for a dual member and keeps real service failures visible', async () => {
+    const delegated = { ...source, accessKind: 'team_delegation' as const }
+    const onError = vi.fn()
+    await act(async () => { renderer = create(controls(delegated, { onError })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).toContain('ai-polish')
+    expect(onError).not.toHaveBeenCalled()
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
+      if (operation === 'source.ai-polish.settings') throw new Error('service unavailable')
+      return await original(operation, ...args)
+    })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    expect(menuIds()).toContain('ai-polish')
+    expect(onError).toHaveBeenCalledWith('service unavailable')
+  })
+
   it('opens the nickname editor immediately even while group settings are unavailable', async () => {
     const onError = vi.fn()
     let rejectSettings!: (error: Error) => void
@@ -130,7 +195,7 @@ describe('group settings menu', () => {
     expect(onError).toHaveBeenCalledWith('群设置读取失败')
   })
 
-  it('keeps primary menu rows stable when owner permissions arrive and refreshes without clearing them', async () => {
+  it('adds the confirmed membership action and retains known capabilities during a refresh', async () => {
     let resolveSettings!: (value: unknown) => void
     mocks.callArkme.mockImplementation(async (operation: string) => {
       if (operation === 'group.settings') return await new Promise(resolve => { resolveSettings = resolve })
@@ -144,23 +209,24 @@ describe('group settings menu', () => {
     expect(menuItem('群管理').props.disabled).toBe(true)
     await act(async () => { resolveSettings({ target: source, selfRole: 'owner', selfStatus: 'active',
       canRename: true, canDissolve: true, canLeave: false, messageDnd: false }) })
-    expect(menuIds()).toEqual(initialIds)
+    const loadedIds = [...initialIds, 'leave-separator', 'leave']
+    expect(menuIds()).toEqual(loadedIds)
     expect(menuItem('群管理').props.disabled).toBe(false)
     await openManagement()
     expect(menuItem('修改群名称').props.disabled).toBe(false)
     expect(menuItem('禁止加入名单').props.disabled).toBe(false)
     expect(menuItem('关联为团队内部群').props.disabled).toBe(false)
     await act(async () => { menuItem('返回群聊设置').props.onClick() })
-    expect(menuIds()).toEqual(initialIds)
+    expect(menuIds()).toEqual(loadedIds)
     await act(async () => { toggle() })
     await act(async () => { toggle() })
     expect(menuItem('群管理').props.disabled).toBe(false)
-    expect(menuIds()).toEqual(initialIds)
+    expect(menuIds()).toEqual(loadedIds)
     expect(mocks.callArkme.mock.calls.filter(call => call[0] === 'group.settings')).toHaveLength(2)
     await act(async () => { resolveSettings({ target: source, selfRole: 'member', selfStatus: 'active',
       canRename: false, canDissolve: false, canLeave: true, messageDnd: false }) })
     expect(menuItem('群管理').props.disabled).toBe(true)
-    expect(menuIds()).toEqual(initialIds)
+    expect(menuIds()).toEqual(loadedIds)
   })
 
   it('opens an internal-group preview from group management without altering the group', async () => {
@@ -456,7 +522,7 @@ describe('group settings menu', () => {
       node.findAll(child => child.children.includes('修改群名称')).length > 0)).toBe(false)
     const membershipButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('退出群聊')).length > 0)
-    expect(membershipButton?.props.disabled).toBe(true)
+    expect(membershipButton).toBeUndefined()
   })
 
   it('lets only the owner inspect and lift future join restrictions', async () => {
@@ -662,7 +728,7 @@ describe('group settings menu', () => {
     expect(renderer!.root.findByProps({ 'aria-label': '消息免打扰' }).props['aria-checked']).toBe(false)
     const leaveButton = renderer!.root.findAllByProps({ role: 'menuitem' }).find(node =>
       node.findAll(child => child.children.includes('退出群聊')).length > 0)
-    expect(leaveButton?.props.disabled).toBe(true)
+    expect(leaveButton).toBeUndefined()
   })
 
   it('updates an open notification switch when the source carries newer policy evidence', async () => {

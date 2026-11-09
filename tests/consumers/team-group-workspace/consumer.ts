@@ -1,4 +1,4 @@
-import {ArkmeSdk, type TeamGroupJoinContext, type TeamWorkspacePage, type TeamWorkspaceFolder} from '@senguoyun/dsh-arkme/sdk'
+import {ArkmeSdk, isGroupAiPolishMembershipRequired, type TeamGroupJoinContext, type TeamWorkspacePage, type TeamWorkspaceFolder} from '@senguoyun/dsh-arkme/sdk'
 
 function assert(value:unknown,message:string):asserts value {if(!value)throw new Error(message)}
 
@@ -22,12 +22,24 @@ export async function verifyInstalledTeamWorkspace(fetchImpl:typeof fetch,person
     assert(cards.items[0]?.source.accessKind==='team_delegation','source card retains current group audience')
     const timeline=await sdk.readSource(group.source.sourceRef,{limit:20})
     assert(timeline.source.accessKind==='team_delegation','read preserves audience')
+    const personalAi=await sdk.groupAiPolishSettings(personalSourceRef),teamViewAi=await sdk.groupAiPolishSettings(group.source.sourceRef)
+    assert(personalAi.enabled===teamViewAi.enabled&&personalAi.canManage===teamViewAi.canManage,'a dual member retains the actual AI configuration and permissions')
     const unavailable=new ArkmeSdk({fetchImpl:async()=>new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{}}}))})
     let rejected=false
     try {await unavailable.teamWorkspace({operation:'folders'})}catch{rejected=true}finally{unavailable.dispose()}
     assert(rejected,'missing capability fails explicitly')
     return {sourceRef:group.source.sourceRef,teamRef:context.teams[0].teamRef}
   } finally {sdk.dispose()}
+}
+
+export async function verifyInstalledTeamAiAccess(fetchImpl:typeof fetch,sourceRef:string) {
+ const sdk=new ArkmeSdk({fetchImpl})
+ try {
+  let unavailable=false
+  try{await sdk.groupAiPolishSettings(sourceRef)}catch(error){unavailable=isGroupAiPolishMembershipRequired(error)}
+  assert(unavailable,'a team-only viewer receives the explicit membership requirement, not fabricated AI settings')
+  return {unavailable:true}
+ }finally{sdk.dispose()}
 }
 
 export async function verifyInstalledOldBackend(fetchImpl:typeof fetch,personalSourceRef:string) {
