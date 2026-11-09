@@ -13,7 +13,7 @@ const mock = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 let root: Root, host: HTMLDivElement, current: string, failRead: boolean, failSave: boolean
 function settings(module: ExploreModelModule, scope = 'production:42'): ExploreSettings {
-  return { ref: JSON.stringify({ module, scope }), accountScope: scope, sources: [], models: ['a', 'b'].map(key => ({ key, ref: `${module}/${key}`, label: `分析模型 ${key.toUpperCase()}`, selected: current === key, provider: 'dashscope' })) }
+  return { ref: JSON.stringify({ module, scope }), accountScope: scope, sources: [], models: ['a', 'b'].map(key => ({ key, ref: `${module}/${key}`, label: `分析模型 ${key.toUpperCase()}`, available:true, selected: current === key, provider: 'dashscope' })) }
 }
 const options = () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')]
 const button = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent?.trim() === name || item.getAttribute('aria-label') === name)!
@@ -104,19 +104,13 @@ it('does not infer common routes or billing from identical model names', () => {
   expect(models[0]!.id).not.toBe(models[1]!.id); expect(models[0]!.billing).toBeUndefined()
   expect(models[0]!.version).toBeUndefined(); expect(models[0]!.dsh).toBeUndefined()
 })
-it('reuses an existing catalog row only for the exact public Intelligent route', async () => {
-  const data = settings('profile'); data.models[0]!.routeKey = 'dashscope/a'
-  const local = exploreModelChoices('profile', data)
-  const existing = { id: 'recording-a', origin: 'official' as const, name: '原目录名称', channel: '百炼', identifier: 'a', recording: 'dashscope/a' }
-  const combined = mergeModelChoices([existing], local)
-  expect(combined).toHaveLength(2); expect(combined[0]).toMatchObject({ ...existing, explore: 'profile/a' })
-  expect(mergeModelChoices([{...existing,channel:'分析模型',recording:undefined,exploreRouteKey:'dashscope/a'} as never],local)[0]?.channel).toBe('百炼')
-  const original = mock.call.getMockImplementation()!
-  mock.call.mockImplementation((op, ...args) => op === 'explore.settings' ? Promise.resolve(data)
-    : op === 'models.directory' ? Promise.resolve({ accountScope: 'production:42', observedAt: 1, models: [existing], failures: [] }) : original(op, ...args))
-  await render(); await open()
-  expect(options()).toHaveLength(2)
-  expect(options().find(option => option.getAttribute('aria-selected') === 'true')?.querySelector('.arkme-unified-model-primary')?.textContent).toBe('原目录名称')
-  expect(document.activeElement).toBe(options().find(option => option.getAttribute('aria-selected') === 'true'))
-  expect(document.querySelector('.arkme-unified-model-confirm')).toBeNull()
+it('merges official rows only for the same published offering, never by route alone', () => {
+  const data = settings('profile')
+  const binding={catalogReleaseId:'1',offeringRevisionId:'2',publicModelCode:'a'}
+  data.models[0]!.binding=binding
+  const local=exploreModelChoices('profile',data)
+  const existing={id:local[0]!.id,origin:'official' as const,name:'原目录名称',channel:'百炼',identifier:'a',recording:'dashscope/a'}
+  expect(mergeModelChoices([existing],local)).toHaveLength(2)
+  expect(mergeModelChoices([{...existing,id:'route-only'}],local)).toHaveLength(3)
+  expect(mergeModelChoices([{...existing,id:JSON.stringify(['published','2','2','a'])}],local)).toHaveLength(3)
 })
