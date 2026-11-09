@@ -338,7 +338,9 @@ export class OutgoingCallRuntime {
       return
     }
     if (
-      message.type === 'state' && (this.callSent || this.leaseCallRequestId !== '') && message.hasActiveCall === false &&
+      message.type === 'state' &&
+      (this.callSent || (this.leaseCallRequestId !== '' && ['incoming', 'calling', 'active'].includes(this.snapshot.phase))) &&
+      message.hasActiveCall === false &&
       (message.phase === 'idle' || message.phase === 'ending')
     ) {
       this.diag('state_terminal_detected', {

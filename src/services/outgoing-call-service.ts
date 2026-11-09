@@ -214,6 +214,7 @@ export class OutgoingCallService {
           shared_topic_id: 0,
           chat_session_uid: source.ownerRef,
           callee_user_ids: [counterpartUserId],
+          include_call_notification_policy: true,
           call_media_type: input.mediaType === 'video' ? 1 : 0,
           caller_name: callerName,
           ...(callerAvatarRef === '' ? {} : {
@@ -242,9 +243,11 @@ export class OutgoingCallService {
         calleeCount: calleeAccounts.length,
       })
       const sharedTopicId = numberValue(room.shared_topic_id)
+      const mutedCalleeAccounts = calleeAccounts.filter(account => listValue(room.call_push_disabled_accounts).includes(account))
       const userData = JSON.stringify({
         sharedTopicId: sharedTopicId > 0 ? sharedTopicId : 0,
         sourceTag: 'arkme-private-chat-header',
+        ...(mutedCalleeAccounts.length === 0 ? {} : { arkmeCallNotification: { version: 1, roomId, mutedAccounts: mutedCalleeAccounts } }),
         callerName,
         callerAvatar: '',
       })
@@ -274,6 +277,7 @@ export class OutgoingCallService {
           timeoutSec: 30,
           userData,
           offlinePushInfo: {
+            isDisablePush: mutedCalleeAccounts.length === calleeAccounts.length,
             title: callerName,
             description,
             extension: userData,
