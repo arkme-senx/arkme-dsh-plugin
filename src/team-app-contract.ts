@@ -94,8 +94,10 @@ export interface TeamReceipts {
   members: TeamReceiptMember[]
 }
 export interface TeamMembers {
+  /** Present only for an authorized Team-side conversation-scoped read. */
+  visitor?: TeamIdentity
   membershipRevision: number; canAddMembers: boolean
-  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync; personKey?: string; personRef?: string; isMe?: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
   /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
   avatarState?: 'pending' | 'ready' | 'unavailable'
 }

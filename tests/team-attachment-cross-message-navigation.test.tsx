@@ -38,12 +38,14 @@ beforeEach(()=>{
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals()})
 
-it('projects only loaded, published visual messages without borrowing actions or issuing reads',()=>{
+it('projects ready visual messages and identity-only revalidation markers without issuing reads',()=>{
  const mixed={...a,media:[...a.media,{...a.media[0]!,key:'audio',ref:'audio',mimeType:'audio/mp4'},{...a.media[0]!,key:'file',ref:'file',mimeType:'application/zip'}]}
  const entries=content.teamAttachmentNavigationEntries([mixed,{...b,key:'pending',version:0},{...b,key:'sending',state:'sending'},{...b,key:'recalled',state:'recalled'},{...b,key:'deleted',contentStatus:'deleted'},{...b,key:'validating',contentStatus:'revalidating'},{...b,key:'excerpt',historyPreview:true},message('audio-only',4,'audio/mp4'),message('video',5,'video/mp4')],conversation,'test:42')
- expect(entries.map(entry=>entry.key)).toEqual(['a','video'])
+ expect(entries.map(entry=>entry.key)).toEqual(['a','validating','video'])
  expect(entries[0]).toMatchObject({source:'a:a',version:'2',blocks:[{kind:'image',mediaRef:'ref-a'}]})
- expect(entries[1]!.blocks[0]!.kind).toBe('video')
+ expect(entries[1]).toMatchObject({key:'validating',revalidating:true,blocks:[]})
+ expect(entries[1]!.mediaAccess).toBeUndefined()
+ expect(entries[2]!.blocks[0]!.kind).toBe('video')
  expect(entries[0]!.mediaAccess?.imagePresentation).toBeUndefined()
  expect(mocks.call).not.toHaveBeenCalled()
 })
@@ -97,7 +99,8 @@ it.each(['pane','preview'] as const)('connects the %s to loaded neighbours, pagi
  const read=mocks.call.getMockImplementation()!
  mocks.call.mockImplementation((op:string,...args:unknown[])=>op==='team.app.timeline'?new Promise(()=>{}):read(op,...args))
  await act(async()=>invalidateTeamMessages('test:42',false,{kind:'team.message.changed',conversationKeys:[conversation.key],messageKey:'b'}))
- expect(owner.getSnapshot().map(entry=>entry.key)).toEqual(['a','c'])
+ expect(owner.getSnapshot().map(entry=>entry.key)).toEqual(['a','b','c'])
+ expect(owner.getSnapshot()[1]).toMatchObject({key:'b',revalidating:true,version:'2'})
  mocks.call.mockImplementation(read)
  await act(async()=>root.render(render({...conversation,key:'other-conversation',ref:'other-conversation-ref'})))
  expect(observed).not.toBe(owner)

@@ -8,6 +8,7 @@ import { TeamVisitorRecords } from '../src/client/TeamVisitorRecords.js'
 import { useTeamPersonNames } from '../src/client/use-team-person-names.js'
 import { TeamMessageDetail } from '../src/client/TeamMessageDetail.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 const { call } = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: call }))
 const conversation = { ref:'conversation', key:'key', side:'team', channel:{ name:'测试团队' }, visitor:{nickname:'访客'} } as TeamConversation
@@ -15,6 +16,7 @@ const person: TeamIdentity = { nickname:'同事昵称', personKey:'colleague', p
 const message = (key: string, who = person): TeamMessage => ({key,ref:key,seq:1,revision:1,side:'team',sender:who,own:false,state:'published',createdAt:1792400000000,
   canEdit:false,canDelete:false,contentStatus:'available',version:1,media:[],content:{template_kind:1,text_content:`正文 ${key}`}})
 let host: HTMLDivElement, root: Root
+const observers = new Set<{ element?: Element; callback: IntersectionObserverCallback }>()
 const onRecords = vi.fn(), onClose = vi.fn(), onLocate = vi.fn()
 function Actions({who = person}: {who?:TeamIdentity}) {
   const actions = useTeamVisitorActions({conversation,accountKey:'prod:90',onRecords,onOpen() {}})
@@ -25,10 +27,15 @@ function Names({account = 'prod:90', people = [person]}: {account?:string;people
   return <>{people.map(p=><span key={p.personKey}>{name(p).nickname}</span>)}</>
 }
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true); vi.stubGlobal('IntersectionObserver',class {observe(){}disconnect(){}})
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true); vi.stubGlobal('IntersectionObserver',class {
+    element?: Element
+    constructor(public callback: IntersectionObserverCallback) { observers.add(this) }
+    observe(element: Element) { this.element = element }
+    disconnect() { observers.delete(this) }
+  })
   vi.clearAllMocks(); call.mockReset(); host=document.createElement('div');document.body.append(host);root=createRoot(host)
 })
-afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals()})
+afterEach(async()=>{await act(async()=>root.unmount());host.remove();observers.clear();arkmeAuthStore.setAuth({status:'logged-out',environment:'prod'});vi.restoreAllMocks();vi.unstubAllGlobals()})
 const button=(text:string)=>[...document.querySelectorAll('button')].find(b=>b.textContent===text)!
 it('uses a verified internal person ref for private chat, and the same person for records',async()=>{
   const activate=vi.spyOn(arkmeUi,'activateNotificationSource').mockImplementation(()=>{})
@@ -93,11 +100,19 @@ it('uses the common author/time layout, no redundant title, resizable shell and 
   expect(host.querySelector('textarea')).toBeNull()
 })
 it('hydrates only the visible identity-filtered page through the existing authorized batch read and renders original media',async()=>{
+  arkmeAuthStore.setAuth({status:'authenticated',environment:'prod',userId:90})
   const full={...message('photo'),media:[{key:'image',ref:'image-ref',name:'原图.png',mimeType:'image/png',size:20,url:'https://example.invalid/photo.png'}]}
   call.mockImplementation(async(op:string)=>op==='team.app.preflight'?[full]:{state:'ready',messages:[{...message('photo'),historyPreview:true,historyMedia:[{name:'原图.png',kind:'image'}]}],words:[],days:[],participants:[],hasMore:false})
   await act(async()=>root.render(<TeamVisitorRecords conversation={conversation} accountKey="prod:90" person={person} onClose={onClose} onLocate={onLocate}/>))
   expect(call).toHaveBeenCalledWith('team.app.preflight',{conversationRef:'conversation',expectedAccountKey:'prod:90',selections:[{messageRef:'photo',version:1}]},expect.any(AbortSignal))
-  expect(host.querySelector('img[src="https://example.invalid/photo.png"]')).toBeTruthy()
+  expect(host.querySelector('img[src="https://example.invalid/photo.png"]')).toBeNull()
+  expect(host.querySelector('[data-arkme-image-loading]')).toBeTruthy()
+  await act(async()=>{for(const observer of [...observers])observer.callback([{target:observer.element,isIntersecting:true}] as IntersectionObserverEntry[],{} as IntersectionObserver)})
+  const image=host.querySelector<HTMLImageElement>('img[src="https://example.invalid/photo.png"]')!
+  expect(image).toBeTruthy();expect(image.style.visibility).toBe('hidden')
+  await act(async()=>image.dispatchEvent(new Event('load')))
+  expect(image.style.visibility).not.toBe('hidden')
+  expect(host.querySelector('[data-arkme-image-loading]')).toBeNull()
   expect(button('查看原消息')).toBeTruthy();expect(call.mock.calls.some(([op])=>op==='team.app.timeline')).toBe(false)
 })
 it('clears a page when its exact version cannot be hydrated and retries using a fresh query',async()=>{

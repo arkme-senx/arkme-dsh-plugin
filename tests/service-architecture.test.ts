@@ -66,7 +66,7 @@ const expectedPublicMethods = [
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
   'teamSnapshotCapabilities','freezeTeamMetadata','readTeamMessageSnapshot','editTeamMessage','readTeamEditReceipt','freezeTeamEditMetadata',
   'teamHistory','readTeamHistoryExportChunk',
-  'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
+  'listTeamConversations','readTeamExtensions','readTeamMessages','readTeamMentionCandidates','sendTeamMessage','teamMessageTasks','updateTeamSend',
   'preflightTeamMessages','readTeamMarks','changeTeamMark','recallTeamMessage', 'reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',

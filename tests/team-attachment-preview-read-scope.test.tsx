@@ -3,7 +3,7 @@ import {act, StrictMode, useContext} from 'react'
 import {createRoot, type Root} from 'react-dom/client'
 import {afterEach, beforeEach, expect, it, vi} from 'vitest'
 import {TeamMessageContent} from '../src/client/TeamMessageContent.js'
-import {ArkmeMediaAccessContext, type ArkmeMediaAccess} from '../src/client/media-access.js'
+import {ArkmeMediaAccessContext, type ArkmeMediaAccess, type ArkmeMediaReadState} from '../src/client/media-access.js'
 import {ArkmeMediaPreview, openSessionAttachmentPreview} from '../src/client/ArkmeRichContent.js'
 import {closeAttachmentPreview} from '../src/client/attachment-preview-window.js'
 import {bindAttachmentPreviewAccount} from '../src/client/attachment-preview-auth-binding.js'
@@ -146,6 +146,80 @@ it('loads only the clicked Team image while hidden, then reveals the same elemen
  await act(async()=>invalidateTeamMessages('test:42'))
  expect(doc.querySelector('img[alt="first.png"]')).toBeNull()
  expect(element.hasAttribute('src')).toBe(false)
+})
+it('presents a newly authorized Team image at 200ms while actions wait for the 1000ms preflight',async()=>{
+ vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']})
+ try{
+  call.mockImplementation(()=>new Promise(resolve=>setTimeout(()=>resolve([message]),1000)))
+  await act(async()=>root.render(<TeamMessageContent message={message} conversationRef="conversation-ref" conversationKey="conversation-key"/>))
+  const image={...block,kind:'image' as const,fileName:'early.png',mimeType:'image/png'}
+  await act(async()=>openSessionAttachmentPreview([image],image,'early-image',false,access))
+  const element=doc.querySelector<HTMLImageElement>('img[alt="early.png"]')!
+  const actions=doc.querySelector<HTMLFieldSetElement>('fieldset')!
+  expect(element.closest('[hidden]')).not.toBeNull();expect(actions.disabled).toBe(true)
+  setTimeout(()=>element.dispatchEvent(new Event('load')),200)
+  await act(async()=>vi.advanceTimersByTimeAsync(200))
+  console.info('TEAM_FIRST_IMAGE_GATE',JSON.stringify({imageLoadMs:200,preflightMs:1000,visibleAt200:!element.closest('[hidden]'),actionsDisabledAt200:actions.disabled}))
+  expect(element.closest('[hidden]')).toBeNull();expect(actions.disabled).toBe(true)
+  expect(doc.querySelector('p[role="status"]')).toBeNull()
+  const fetch=vi.fn();vi.stubGlobal('fetch',fetch)
+  await act(async()=>doc.querySelector<HTMLButtonElement>('button[aria-label="复制图片"]')!.click())
+  expect(fetch).not.toHaveBeenCalled()
+  await act(async()=>vi.advanceTimersByTimeAsync(799));expect(actions.disabled).toBe(true)
+  await act(async()=>vi.advanceTimersByTimeAsync(1))
+  expect(doc.querySelector('img[alt="early.png"]')).toBe(element);expect(actions.disabled).toBe(false)
+  expect(call).toHaveBeenCalledTimes(1)
+ }finally{vi.useRealTimers()}
+})
+it('retires visible bytes immediately on a second checking before the initial preflight settles',async()=>{
+ const pending:Array<{resolve(value:unknown):void}>=[]
+ call.mockImplementation(()=>new Promise(resolve=>pending.push({resolve})))
+ await act(async()=>root.render(<TeamMessageContent message={message} conversationRef="conversation-ref" conversationKey="conversation-key"/>))
+ const image={...block,kind:'image' as const,fileName:'early.png',mimeType:'image/png'}
+ await act(async()=>openSessionAttachmentPreview([image],image,'early-image',false,access))
+ const element=doc.querySelector<HTMLImageElement>('img[alt="early.png"]')!
+ await act(async()=>element.dispatchEvent(new Event('load')))
+ await act(async()=>{
+  invalidateTeamMessages('test:42',false,{kind:'team.message.changed',messageKey:message.key})
+  expect(element.hasAttribute('src')).toBe(false)
+ })
+ expect(doc.querySelector('img')).toBeNull();expect(pending).toHaveLength(2)
+ await act(async()=>{element.dispatchEvent(new Event('load'));pending[0]!.resolve([message])})
+ expect(doc.querySelector('img')).toBeNull()
+ await act(async()=>pending[1]!.resolve([message]))
+ expect(doc.querySelector('img[alt="early.png"]')).not.toBe(element)
+})
+it('does not let an earlier A load reveal a new A visit or a different read scope',async()=>{
+ call.mockImplementation(()=>new Promise(()=>{}))
+ await act(async()=>root.render(<TeamMessageContent message={message} conversationRef="conversation-ref" conversationKey="conversation-key"/>))
+ const images=['a','b'].map(name=>({...block,kind:'image' as const,mediaRef:name,fileName:`${name}.png`,mimeType:'image/png'}))
+ const owned={...access!,url:(value:{mediaRef:string})=>`/authorized-${value.mediaRef}`}
+ const show=async(index:number,scope=owned)=>{await act(async()=>openSessionAttachmentPreview(images,images[index]!,'same-source',false,scope))}
+ await show(0);const first=doc.querySelector<HTMLImageElement>('img')!
+ await act(async()=>first.dispatchEvent(new Event('load')));expect(first.closest('[hidden]')).toBeNull()
+ await show(1);await show(0);const next=doc.querySelector<HTMLImageElement>('img')!
+ expect(next).not.toBe(first);expect(next.closest('[hidden]')).not.toBeNull();expect(call).toHaveBeenCalledTimes(1)
+ await act(async()=>first.dispatchEvent(new Event('load')));expect(next.closest('[hidden]')).not.toBeNull()
+ await act(async()=>next.dispatchEvent(new Event('load')));expect(next.closest('[hidden]')).toBeNull()
+ await show(0,{...owned,readScopeKey:'next-version'});const changed=doc.querySelector<HTMLImageElement>('img')!
+ expect(changed).not.toBe(next);expect(changed.closest('[hidden]')).not.toBeNull()
+ await act(async()=>next.dispatchEvent(new Event('load')));expect(changed.closest('[hidden]')).not.toBeNull()
+ expect(call).toHaveBeenCalledTimes(2)
+})
+it('restarts the image after checking and available arrive in the same React batch',async()=>{
+ let publish!:(state:ArkmeMediaReadState)=>void
+ const owned:ArkmeMediaAccess={readScopeKey:'batched-source',prepareImageWhileChecking:true,url:()=>'/authorized-image',subscribeReadState(listener){publish=listener;listener({status:'checking'});return()=>{}}}
+ const image={...block,kind:'image' as const,fileName:'batched.png',mimeType:'image/png'}
+ await act(async()=>openSessionAttachmentPreview([image],image,'batched-image',false,owned))
+ const first=doc.querySelector<HTMLImageElement>('img')!
+ const available={status:'available'} as const
+ await act(async()=>{first.dispatchEvent(new Event('load'));publish(available)})
+ expect(first.closest('[hidden]')).toBeNull()
+ await act(async()=>{publish({status:'checking'});expect(first.hasAttribute('src')).toBe(false);publish(available)})
+ const next=doc.querySelector<HTMLImageElement>('img')!
+ expect(next).not.toBe(first);expect(next.getAttribute('src')).toBe('/authorized-image')
+ await act(async()=>first.dispatchEvent(new Event('load')))
+ expect(doc.querySelector('img')).toBe(next);expect(next.getAttribute('src')).toBe('/authorized-image')
 })
 it('discards a hidden image on failed permission, retries safely, and closes a revoked pending scope',async()=>{
  const pending:Array<{resolve(value:unknown):void;reject(reason:unknown):void}>=[]

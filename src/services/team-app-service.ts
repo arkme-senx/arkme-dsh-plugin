@@ -449,6 +449,10 @@ export class TeamAppService {
 
   async execute(operation: TeamAppOperation, p: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     const session = await this.assertViewer(p.expectedAccountKey), actor = session.userId
+    // Parallel candidate reads share only this consumer lifetime. On rejection,
+    // detach its sibling through the existing read coordinator's AbortSignal.
+    const candidates = operation === 'team.app.members' && p.mentionCandidates === true ? new AbortController() : undefined
+    if (candidates) signal = signal ? AbortSignal.any([signal,candidates.signal]) : candidates.signal
     const assertAccount = async () => {
       signal?.throwIfAborted()
       const current = await this.runtime.accountScopedSession()
@@ -477,6 +481,8 @@ export class TeamAppService {
         if (reasons[reason]) throw new ArkmePluginError(`team-${reason}`, reasons[reason], ['dependency_unavailable', 'rate_limited', 'reply_conflict'].includes(reason), reason === 'dependency_unavailable' ? 503 : reason === 'rate_limited' ? 429 : 409, { cause: error })
       }
       throw error
+    } finally {
+      candidates?.abort()
     }
   }
 
@@ -927,9 +933,39 @@ export class TeamAppService {
       }
       case 'team.app.members': {
         const id = await teamID()
-        const [data, mine] = await Promise.all([post('members/snapshot', { team_id: id, limit: num(p.limit) || 50, ...(p.pageCursor ? { cursor: (await this.open('member-cursor', p.pageCursor, actor)).cursor } : {}) }, true), post('list-mine', {}, true)])
+        const mentionsOnly = p.mentionCandidates === true
+        if (mentionsOnly && p.conversationRef === undefined) throw invalid()
+        let context: Record<string, unknown> | undefined, visitor: TeamIdentity | undefined
+        if (p.conversationRef !== undefined) {
+          context = await this.open('conversation', p.conversationRef, actor)
+          const team = await this.open('team', p.teamRef, actor)
+          if (context.side !== 'team' || context.environment !== this.runtime.config.environment || team.environment !== this.runtime.config.environment
+            || p.limit !== undefined && (!Number.isSafeInteger(p.limit) || Number(p.limit) < 1 || Number(p.limit) > 100)) throw invalid()
+        }
+        const readContext = async () => {
+          if (!context) return
+          const data = await post('conversations/timeline/page', { conversation_uid: context.conversation_uid, side: 'team', before_seq: 0, limit: 1 }, true)
+          const current = obj(data.conversation), peer = obj(current.visitor)
+          if (current.conversation_uid !== context.conversation_uid || current.side !== 'team' || String(obj(current.channel).team_id) !== String(id)) throw invalid()
+          if (peer.kind === 'person' && peer.account_state === 'active' && recordOwnerId(current.external_user_id)) {
+            visitor = await this.identity(peer, actor, {id: current.external_user_id, context})
+          }
+        }
+        const cursor = p.pageCursor ? await this.open('member-cursor', p.pageCursor, actor) : undefined
+        if (cursor && (context ? cursor.environment !== this.runtime.config.environment || String(cursor.team_id) !== String(id) || cursor.conversation_uid !== context.conversation_uid : cursor.conversation_uid !== undefined)) throw invalid()
+        const readMembers = () => post('members/snapshot', { team_id: id, limit: num(p.limit) || 50, ...(cursor ? { cursor: cursor.cursor } : {}) }, true)
+        // Each endpoint authorizes this viewer independently. Candidates leave this
+        // owner only after both the current conversation and membership agree.
+        const [data, mine] = mentionsOnly
+          ? await Promise.all([readMembers(), readContext().then(() => ({}))])
+          : (await readContext(), await Promise.all([readMembers(), post('list-mine', {}, true)]))
         if (!Number.isSafeInteger(data.member_count) || Number(data.member_count) < 1 || !Number.isSafeInteger(data.membership_revision) || Number(data.membership_revision) < 0 || typeof data.can_add_members !== 'boolean' || typeof data.has_more !== 'boolean' || !Array.isArray(data.items) || data.has_more && !str(data.next_cursor)) throw invalid()
-        const selected = list(mine.teams).find(v => String(v.team_id) === String(id))
+        if (mentionsOnly) {
+          const items = await Promise.all(list(data.items).filter(v => recordOwnerId(v.user_id)).map(v => this.identity({kind:'person',nickname:str(v.display_name)||'用户',avatar_url:v.avatar_url}, actor, {id:v.user_id,context:context!})))
+          if (!cursor && visitor?.personRef && !items.some(v => v.personKey === visitor!.personKey)) items.push(visitor)
+          return {items,hasMore:data.has_more,...(data.next_cursor ? {nextCursor:await this.ref('member-cursor',{cursor:data.next_cursor,team_id:id,conversation_uid:context!.conversation_uid},actor)} : {})} satisfies import('../team-message-contract.js').TeamMentionCandidatePage
+        }
+        const selected = list((mine as Record<string, unknown>).teams).find(v => String(v.team_id) === String(id))
         if (!selected) throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         const members = list(data.items)
         // Membership renders immediately; the App can enrich this page separately.
@@ -962,9 +998,14 @@ export class TeamAppService {
             avatarState = 'unavailable'
           }
         }
-        return { team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
-          ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor }, actor) } : {}),
+        return { ...(visitor ? {visitor} : {}), team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
+          ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor, ...(context ? {team_id: id, conversation_uid: context.conversation_uid} : {}) }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
+            ...(context && recordOwnerId(v.user_id) ? {
+              personKey: await this.key(`person:${recordOwnerId(v.user_id)}`, actor),
+              personRef: await this.ref('person', {conversation_uid: context.conversation_uid, side: 'team', user_id: recordOwnerId(v.user_id)}, actor),
+              isMe: String(v.user_id) === String(actor),
+            } : {}),
             key: await this.key(`member:${String(id)}:${recordOwnerId(v.user_id)}`, actor),
             userRef: await this.ref('member', { team_id: id, user_id: recordOwnerId(v.user_id) }, actor), displayName: str(v.display_name) || '用户',
             ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id), ...presentations.get(str(v.jotmo_id)) } : {}),
