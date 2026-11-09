@@ -1,17 +1,19 @@
 import type { ArkmeUploadCompletion } from './services/media-service.js'
 import type { DatabaseSync } from 'node:sqlite'
+import { randomUUID } from 'node:crypto'
 import type { ArkmeSelfRoleSnapshot } from './types.js'
 
 export interface CloudSelfRoleSnapshot { role_id: string; name: string; avatar_file_asset_uid?: string }
 export interface CloudSelfRole extends CloudSelfRoleSnapshot { name_at: number; avatar_at: number; deleted_at: number; version: number; deleted: boolean; update_at: number }
 export interface SelfRoleWrite extends ArkmeSelfRoleSnapshot { nameAt: number; avatarAt: number; deletedAt: number }
+export interface SelfRoleFillAttempt { recordUid: string; snapshot: ArkmeSelfRoleSnapshot; token: string; failures: number; status: number; version: number }
 interface Row { role_id: string; name: string; avatar_ref: string | null; name_at: number; avatar_at: number; deleted_at: number; cloud_payload: string | null }
 const desired = (r: Row): SelfRoleWrite => ({roleId:r.role_id,name:r.name,...(r.avatar_ref ? {avatarRef:r.avatar_ref}:{}),nameAt:r.name_at,avatarAt:r.avatar_at,deletedAt:r.deleted_at})
 const content = (w: SelfRoleWrite): string => JSON.stringify([w.roleId,w.name,w.avatarRef??'',w.nameAt,w.avatarAt,w.deletedAt])
 const fromCloud = (r: CloudSelfRole): SelfRoleWrite => ({roleId:r.role_id,name:r.name,...(r.avatar_file_asset_uid ? {avatarRef:`file_asset://${r.avatar_file_asset_uid}`} : {}),nameAt:r.name_at,avatarAt:r.avatar_at,deletedAt:r.deleted_at})
 const newer = (time: number,value:string,oldTime:number,oldValue:string) => time > oldTime || (time === oldTime && Buffer.compare(Buffer.from(value),Buffer.from(oldValue)) > 0)
 
-/** Attribute timestamps make retries idempotent; no persisted request or conflict state. */
+/** Attribute timestamps and bounded binding recovery stay with the local owner. */
 export class SelfRoleSyncStore {
   constructor(private readonly db: DatabaseSync, private readonly transaction: (action: () => void) => void) {
     const columns = new Set((db.prepare('PRAGMA table_info(self_role)').all() as Array<{name:string}>).map(r=>r.name))
@@ -22,6 +24,10 @@ export class SelfRoleSyncStore {
     db.exec('UPDATE self_role SET name_at=updated_at_millis,avatar_at=updated_at_millis WHERE name_at=0')
     const bindings = new Set((db.prepare('PRAGMA table_info(self_role_record)').all() as Array<{name:string}>).map(r=>r.name))
     if (!bindings.has('cloud_ack')) db.exec('ALTER TABLE self_role_record ADD COLUMN cloud_ack INTEGER NOT NULL DEFAULT 0')
+    for (const [name, type] of Object.entries({fill_token:"TEXT NOT NULL DEFAULT ''",fill_due_at:'INTEGER NOT NULL DEFAULT 0',fill_failures:'INTEGER NOT NULL DEFAULT 0',fill_status:'INTEGER NOT NULL DEFAULT 0',fill_version:'INTEGER NOT NULL DEFAULT 0'})) {
+      if (!bindings.has(name)) db.exec(`ALTER TABLE self_role_record ADD COLUMN ${name} ${type}`)
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS self_role_fill_due ON self_role_record(user_id,fill_due_at,record_uid) WHERE cloud_ack=0 AND fill_status<>4')
     db.exec("CREATE TABLE IF NOT EXISTS self_role_avatar_asset (user_id INTEGER NOT NULL,local_ref TEXT NOT NULL,asset_uid TEXT NOT NULL DEFAULT '',completion_json TEXT,PRIMARY KEY(user_id,local_ref))")
   }
   dirtyRoleIds(userId:number):string[] {
@@ -74,7 +80,30 @@ export class SelfRoleSyncStore {
       VALUES(?,?,?,?,?,?,1) ON CONFLICT(user_id,record_uid) DO UPDATE SET role_id=excluded.role_id,role_name=excluded.role_name,avatar_ref=excluded.avatar_ref,cloud_ack=1`)
       .run(userId,recordUid,snapshot.roleId,snapshot.name,snapshot.avatarRef ?? null,Date.now())
   }
-  acknowledgeBinding(userId: number,recordUid: string): void { this.db.prepare('UPDATE self_role_record SET cloud_ack=1 WHERE user_id=? AND record_uid=?').run(userId,recordUid) }
+  dueBindings(userId: number, now: number): string[] {
+    return (this.db.prepare('SELECT record_uid FROM self_role_record WHERE user_id=? AND cloud_ack=0 AND fill_status<>4 AND fill_due_at<=? ORDER BY fill_due_at,record_uid LIMIT 100').all(userId,now) as Array<{record_uid:string}>).map(r=>r.record_uid)
+  }
+  /** Claim and snapshot are one statement. The token is stable for this binding;
+   * a deleted/rebound row gets a different
+   * token even when its frozen fields and millisecond timestamp are identical. */
+  claimBinding(userId: number, recordUid: string, now: number, dueOnly = false): SelfRoleFillAttempt | undefined {
+    const token=randomUUID()
+    const row=this.db.prepare(`UPDATE self_role_record SET fill_token=CASE WHEN fill_token='' THEN ? ELSE fill_token END,fill_due_at=? WHERE user_id=? AND record_uid=? AND cloud_ack=0 AND fill_status<>4 ${dueOnly?'AND fill_due_at<=?':''}
+      RETURNING role_id,role_name,avatar_ref,fill_token,fill_failures,fill_status,fill_version`).get(token,now+60_000,userId,recordUid,...(dueOnly?[now]:[])) as {role_id:string;role_name:string;avatar_ref:string|null;fill_token:string;fill_failures:number;fill_status:number;fill_version:number}|undefined
+    return row?{recordUid,token:row.fill_token,snapshot:{roleId:row.role_id,name:row.role_name,...(row.avatar_ref?{avatarRef:row.avatar_ref}:{})},failures:row.fill_failures,status:row.fill_status,version:row.fill_version}:undefined
+  }
+  ownsBinding(userId: number, attempt: SelfRoleFillAttempt): boolean {
+    return this.db.prepare('SELECT 1 FROM self_role_record WHERE user_id=? AND record_uid=? AND cloud_ack=0 AND fill_token=?').get(userId,attempt.recordUid,attempt.token)!==undefined
+  }
+  deferBinding(userId: number, attempt: SelfRoleFillAttempt, now: number, status=attempt.status, version=attempt.version): void {
+    const failures=Math.min(attempt.failures+1,31)
+    const delay=status===2||status===3?300_000:Math.min(1_800_000,60_000*2**Math.min(failures-1,5))
+    this.db.prepare('UPDATE self_role_record SET fill_due_at=?,fill_failures=?,fill_status=?,fill_version=? WHERE user_id=? AND record_uid=? AND cloud_ack=0 AND fill_token=?')
+      .run(status===4?Number.MAX_SAFE_INTEGER:now+delay,failures,status,version,userId,attempt.recordUid,attempt.token)
+  }
+  acknowledgeBinding(userId: number,recordUid: string,token: string): void {
+    this.db.prepare('UPDATE self_role_record SET cloud_ack=1 WHERE user_id=? AND record_uid=? AND cloud_ack=0 AND fill_token=?').run(userId,recordUid,token)
+  }
 }
 
 export function selfRoleSnapshotFromCloud(value: unknown): ArkmeSelfRoleSnapshot | undefined {
