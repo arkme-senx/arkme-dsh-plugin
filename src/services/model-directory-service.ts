@@ -1,3 +1,4 @@
+import { accountModelSupportsDsh } from '../account-models.js'
 import { publishedChoiceId } from '../model-execution.js'
 import { dshModelChoices, arkoModelChoices, recordingModelChoices, mergeModelChoices, type UnifiedModelCatalog } from '../model-directory.js'
 import type { ArkmeArkoModelCatalog, ArkmeRecordingSummaryModelConfig } from '../types.js'
@@ -30,7 +31,7 @@ export class ModelDirectoryService {
       this.readers.arko(signal).then(value => ({ models: arkoModelChoices(value), failures: [] })),
       Promise.all([this.readers.recording(signal,'summary'),this.readers.recording(signal,'timeline')]).then(([summary,timeline]) => ({models:mergeModelChoices(recordingModelChoices(summary,'summary'),recordingModelChoices(timeline,'timeline')),failures:[]})),
       ...(!officialOnly && this.readers.account ? [this.readers.account(signal).then(value=>({models:value.models.filter(model=>!model.disabled).map(model=>({id:JSON.stringify(['account',model.uid]),origin:'user-provided' as const,name:model.name,identifier:model.route,channel:model.execution==='cloud'?'账号绑定 API':'本机连接器',billing:'provider-account' as const,exploreRouteKey:model.route,images:model.capabilities.images,
-        ...(model.capabilities.stream?{dsh:model.execution==='cloud'?{provider:'arkme-user-api',model:model.route}:{provider:model.host_provider!,model:model.model_key}}:{}),...(model.capabilities.tools?{arko:model.route}:{}),recording:model.route})),failures:[]}))] : []),
+        ...(accountModelSupportsDsh(model)?{dsh:model.execution==='cloud'?{provider:'arkme-user-api',model:model.route}:{provider:model.host_provider!,model:model.model_key}}:{}),...(model.capabilities.tools?{arko:model.route}:{}),recording:model.route})),failures:[]}))] : []),
       ...(this.readers.explore ? [this.readers.explore(signal)] : []),
     ])
     signal?.throwIfAborted()
