@@ -61,7 +61,8 @@ function ArkoReplyManagerBody({ accountScope, onClose }: { accountScope: string;
       if(scope.current!==accountScope)return
       setBook(previous=>previous?{...previous,items:previous.items.map(item=>item.scene===result.current.scene?result.current:item)}:previous)
       if(result.conflict){setError(tr('提示词已在其他设备更新。当前输入已保留，请核对后再次保存。'));return}
-      setForm(result.current.effectiveBody);setNotice(tr('已保存并在云端生效'))
+      setForm(value => value === input.body ? result.current.effectiveBody : value)
+      setNotice(tr('已保存并在云端生效'))
     }catch(caught){if(!controller.signal.aborted)setError(caught instanceof Error?caught.message:tr('提示词未能保存，当前输入已保留'))}
     finally{if(!controller.signal.aborted)setSaving(false)}
   }
@@ -85,7 +86,7 @@ function ArkoReplyManagerBody({ accountScope, onClose }: { accountScope: string;
   }
   const title = target ? tr(arkoReplySceneInfo[target].title) : more ? tr('提示词') : tr('回复管理')
   const changedCount=book?.items.filter(item=>item.userBody!==null).length ?? 0
-  const feedback=<>{error && <p role="alert" style={{ ...note, color: theme.danger }}>{tr(error)}{promptReadFailed && <button type="button" onClick={loadPrompts} style={{ ...quiet, marginLeft: 8 }}>{tr('重试')}</button>}</p>}{notice && <p role="status" style={note}>{notice}</p>}</>
+  const feedback=<>{error && <p role="alert" style={{ ...note, color: theme.danger }}>{tr(error)}{promptReadFailed && <button type="button" onClick={loadPrompts} style={{ ...quiet, marginLeft: 8 }}>{tr('重试')}</button>}</p>}{notice && !dirty && <p role="status" style={note}>{notice}</p>}</>
   const rows = [
     ...history.thoughts.map(entry => ({ key: entry.key, title: arkoReplySceneInfo[entry.scene].title, source: entry.source.displayName, at: entry.sourceOrderAtMillis, content: entry.preview || entry.thought.content,
       open: () => openThought(entry), disabled: false })),

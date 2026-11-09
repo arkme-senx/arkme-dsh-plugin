@@ -47,6 +47,32 @@ it('preserves edited text on conflict and requires a deliberate retry against th
 it('keeps input and exposes failure when cloud save fails',async()=>{
  await render();await edit();await act(async()=>change('不要丢失'));mocks.call.mockRejectedValueOnce(Error('网络不可用'));await click(button('保存修改'));expect(host.querySelector('textarea')!.value).toBe('不要丢失');expect(host.textContent).toContain('网络不可用');expect(books.get('prod:1')![0]!.revision).toBe(0)
 })
+it('preserves edits made while a previous save is pending', async () => {
+  await render()
+  await edit()
+  await act(async () => change('第一版'))
+  const save = mocks.call.getMockImplementation()!
+  let finish!: () => void
+  const pending = new Promise<void>(resolve => { finish = resolve })
+  mocks.call.mockImplementationOnce(async (...args) => {
+    await pending
+    return save(...args)
+  })
+
+  await click(button('保存修改'))
+  expect(button('保存修改').disabled).toBe(true)
+  await act(async () => change('保存期间继续编辑'))
+  await act(async () => finish())
+
+  expect(books.get('prod:1')![0]!.userBody).toBe('第一版')
+  expect(host.querySelector('textarea')!.value).toBe('保存期间继续编辑')
+  expect(host.textContent).not.toContain('已保存并在云端生效')
+  expect(button('保存修改').disabled).toBe(false)
+
+  await click(button('保存修改'))
+  expect(books.get('prod:1')![0]!.userBody).toBe('保存期间继续编辑')
+  expect(host.textContent).toContain('已保存并在云端生效')
+})
 it('explains the execution limit and counts Unicode characters consistently with the backend',async()=>{
  await render();await edit();await act(async()=>change('🐱'.repeat(6001)))
  expect(button('保存修改').disabled).toBe(true)
