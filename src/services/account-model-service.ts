@@ -1,5 +1,6 @@
 import type { AccountModelSettings, AccountModelSave, AccountModelPreferences, ModelUsagePage, ModelUsageQuery } from '../account-models.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
+import { accountModelSupportsScene } from '../account-models.js'
 import {parseModelUsagePage} from './model-usage-contract.js'
 
 export class AccountModelService {
@@ -26,8 +27,42 @@ export class AccountModelService {
     })
     return {accountScope:scope,revision:data.revision,enabled:data.enabled,models,connectors:(data.connectors??[]).map(item=>({uid:item.uid,name:item.name,revoked:item.revoked})),preferences:{default_route:data.preferences.default_route,scenes:Object.fromEntries(Object.entries(data.preferences.scenes).filter(([key,value])=>key.length<=96&&typeof value==='string'&&value.length<=256)),points_fallback:false},scenes:data.scenes.map(item=>({key:item.key,name:item.name,group:item.group,biz_code:item.biz_code,tools:item.tools,images:item.images,json:item.json,...(item.stream === true ? { stream: true } : {})}))}
   }
-  async save(scope: string, input: AccountModelSave, signal?: AbortSignal) { return await this.request<AccountModelSettings>(scope, 'settings/save', input as unknown as Record<string, unknown>, signal) }
-  async preferences(scope: string, revision: number, preferences: AccountModelPreferences, signal?: AbortSignal) { return await this.request<AccountModelSettings>(scope, 'preferences/save', { expected_revision: revision, preferences }, signal) }
+  async save(scope: string, input: AccountModelSave, signal?: AbortSignal) {
+    if (input.execution === 'cloud' && input.protocol === 'openai-responses' && input.capabilities.output_tokens < 16) {
+      let endpoint: URL | undefined
+      try { endpoint = new URL(input.base_url.trim()) } catch { /* The owner validates malformed endpoints. */ }
+      if (endpoint?.origin === 'https://api.openai.com' && endpoint.pathname.replace(/\/+$/, '') === '/v1') {
+        throw new ArkmePluginError('model-output-limit', 'OpenAI Responses 的输出上限至少为 16 Token，请调整后保存', false, 400)
+      }
+    }
+    if (input.uid) {
+      const settings = await this.settings(scope, signal)
+      const current = settings.models.find(model => model.uid === input.uid)
+      if (current) {
+        const updated = { ...current, capabilities: input.capabilities }
+        for (const scene of settings.scenes) {
+          const route = settings.preferences.scenes[scene.key] || settings.preferences.default_route
+          if (route === current.route && accountModelSupportsScene(current, scene) && !accountModelSupportsScene(updated, scene)) {
+            throw new ArkmePluginError('model-capability-mismatch', `该模型正在用于${scene.name}，请先为该场景选择其他模型，再修改能力`, false, 400)
+          }
+        }
+      }
+    }
+    return await this.request<AccountModelSettings>(scope, 'settings/save', input as unknown as Record<string, unknown>, signal)
+  }
+  async preferences(scope: string, revision: number, preferences: AccountModelPreferences, signal?: AbortSignal) {
+    const settings = await this.settings(scope, signal)
+    if (settings.revision !== revision) throw new ArkmePluginError('model-settings-conflict', '配置已更新，请刷新后检查当前选择', true, 409)
+    for (const scene of settings.scenes) {
+      const next = preferences.scenes[scene.key] || preferences.default_route
+      const previous = settings.preferences.scenes[scene.key] || settings.preferences.default_route
+      const model = settings.models.find(item => item.route === next)
+      if (next !== previous && model && !accountModelSupportsScene(model, scene)) {
+        throw new ArkmePluginError('model-capability-mismatch', `所选模型无法用于${scene.name}，请为该场景单独选择支持所需能力的模型`, false, 400)
+      }
+    }
+    return await this.request<AccountModelSettings>(scope, 'preferences/save', { expected_revision: revision, preferences }, signal)
+  }
   async disable(scope: string, revision: number, uid: string, disabled: boolean, signal?: AbortSignal) { return await this.request<AccountModelSettings>(scope, 'settings/disable', { expected_revision: revision, uid, disabled }, signal) }
   async usage(scope: string, query: ModelUsageQuery, signal?: AbortSignal): Promise<ModelUsagePage> { return parseModelUsagePage(await this.request<unknown>(scope, 'usage/query', query as Record<string, unknown>, signal),scope) }
 }

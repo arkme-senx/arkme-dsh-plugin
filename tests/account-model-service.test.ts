@@ -19,3 +19,26 @@ it('uses the DSH tools and stream requirements even with an older settings paylo
   expect(accountModelSupportsScene(model, scene)).toBe(true)
   expect(accountModelSupportsScene(withoutStream, { ...scene, key: 'arko' })).toBe(true)
 })
+
+it('validates inherited capabilities before writing global preferences', async () => {
+  const f = fixture()
+  const plain = { ...model, capabilities: { ...model.capabilities, tools: false, stream: false } }
+  const settings = { ...data(), models: [plain], preferences: { default_route: 'system-default', scenes: {}, points_fallback: false }, scenes: [
+    { key: 'dsh', name: 'DSH 对话', group: 'dsh', biz_code: 0, tools: true, stream: true, images: false, json: false },
+  ] }
+  f.post.mockResolvedValue(settings as never)
+  await expect(f.service.preferences('production:11', 1, { default_route: model.route, scenes: {}, points_fallback: false })).rejects.toMatchObject({ code: 'model-capability-mismatch' })
+  expect(f.post.mock.calls.every(args => args[0].endsWith('settings/query'))).toBe(true)
+  await f.service.preferences('production:11', 1, { default_route: model.route, scenes: { dsh: 'system-default' }, points_fallback: false })
+  expect(f.post.mock.calls.some(args => args[0].endsWith('preferences/save'))).toBe(true)
+})
+
+it('explains the Responses minimum before sending a credential binding', async () => {
+  const f = fixture()
+  await expect(f.service.save('production:11', {
+    ...model, uid: '', expected_revision: 1, api_key: 'fixture-only',
+    execution: 'cloud', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1',
+    capabilities: { ...model.capabilities, output_tokens: 8 },
+  })).rejects.toMatchObject({ code: 'model-output-limit' })
+  expect(f.post).not.toHaveBeenCalled()
+})
