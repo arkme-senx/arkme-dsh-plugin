@@ -36,7 +36,8 @@ const item = (id: number, extra: Partial<ArkmeArkoHistoryItem> = {}): ArkmeArkoH
   messageActionConversationRef: 'session-88', messageActionCapabilities: { copyLink: true, forward: true }, ...extra,
 })
 beforeEach(() => {
- arkoTimelineMemory.clear()
+  vi.stubGlobal('window', new EventTarget())
+  arkoTimelineMemory.clear()
   arkoModelCache.clear()
   history = [item(1), item(2, { messageActionRef: undefined, messageActionConversationRef: undefined }), item(3, { role: 'divider' })]
   vi.stubGlobal('requestAnimationFrame', () => 0); vi.stubGlobal('cancelAnimationFrame', vi.fn())

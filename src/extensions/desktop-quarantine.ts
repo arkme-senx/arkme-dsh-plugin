@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { open, readFile, readdir, rename, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { ArkmeExtensionInstallStore } from './install-store.js'
 import type { ArkmeInstalledExtension } from './types.js'
 
@@ -42,6 +42,7 @@ export interface DesktopExtensionQuarantineReceipt {
 export interface ArkmeDesktopQuarantineEntryView {
   packageName: string
   extensionId?: string
+  localSource?: { kind: 'directory' | 'archive'; path: string }
   dismissed: boolean
   resolved: boolean
 }
@@ -50,6 +51,7 @@ export interface ArkmeDesktopQuarantineStatus {
   active: boolean
   quarantineId?: string
   mode?: 'targeted' | 'local-safe-mode'
+  createdAtMillis?: number
   failureSummary?: string
   failureLogTail?: string
   entries: ArkmeDesktopQuarantineEntryView[]
@@ -74,6 +76,14 @@ interface ArkmeDesktopExtensionQuarantineOptions {
 interface StoredReceipt {
   path: string
   receipt: DesktopExtensionQuarantineReceipt
+}
+
+function localSourceView(home: string, spec: string): Pick<ArkmeDesktopQuarantineEntryView, 'localSource'> {
+  const match = /^(?:link|file):(.+)$/u.exec(spec)
+  const local = match?.[1]?.trim()
+  if (!local) return {}
+  const path = resolve(home, 'profiles', 'web', local)
+  return { localSource: { kind: /\.(tgz|tar\.gz)$/i.test(path) ? 'archive' : 'directory', path } }
 }
 
 export class ArkmeDesktopExtensionQuarantine {
@@ -117,12 +127,14 @@ export class ArkmeDesktopExtensionQuarantine {
       active: true,
       quarantineId: stored.receipt.quarantineId,
       mode: stored.receipt.mode,
+      createdAtMillis: stored.receipt.createdAtMillis,
       failureSummary: stored.receipt.failureSummary,
       failureLogTail: stored.receipt.failureLogTail,
       entries: stored.receipt.entries
         .filter(entry => entry.resolvedAtMillis === undefined)
         .map(entry => ({
           packageName: entry.packageName,
+          ...localSourceView(this.options.dshHome, entry.dependencySpec),
           ...(this.installedByPackage(entry.packageName) === undefined
             ? {}
             : { extensionId: this.installedByPackage(entry.packageName)!.extensionId }),

@@ -1,5 +1,18 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+发生时间|Time recorded
+当前状态|Current status
+已停用，停用后 Arkme 已启动|Disabled. Arkme started after disabling the extension.
+插件名称|Plugin name
+插件来源|Plugin source
+安装包|Package archive
+本地目录|Local directory
+未记录|Not recorded
+Harness 原始错误|Original Harness error
+已复制诊断|Diagnostics copied
+复制诊断给 Agent|Copy diagnostics for the agent
+复制失败，可手动选择并复制详细原因。|Copy failed. Select and copy the diagnostic details manually.
+请根据以上诊断找到原插件项目。如果来源是安装包，请先定位源码。检查 Web 入口、激活函数和依赖服务的注册时机，复现后再修改。如果错误中出现 loading，它只表示检查当时的状态，请验证具体原因。修复并重新构建后，请告诉我何时点击「重新启用并重启」，以及用哪个实际操作验证插件功能。|Use these diagnostics to locate the original plugin project. If the source is a package archive, locate its source code first. Check the web entry point, activation function and when required services register. Reproduce the failure before editing. If the error says loading, verify the cause behind that observation. After fixing and rebuilding, tell me when to re-enable and restart, and how to verify the plugin works.
 可用模型|Available models
 即我可用模型|Arkme models
 查看官方模型，可在对应功能中选用|Explore official models to use in the corresponding features

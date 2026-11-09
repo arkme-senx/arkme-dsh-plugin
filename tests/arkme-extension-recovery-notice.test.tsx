@@ -4,6 +4,7 @@ import {
   ArkmeExtensionRecoveryNotice,
   type ArkmeExtensionRecoveryNoticeRequest,
 } from '../src/client/ArkmeExtensionRecoveryNotice.js'
+import * as clipboard from '../src/client/clipboard-text.js'
 import type { ArkmeDesktopQuarantineStatus } from '../src/extensions/desktop-quarantine.js'
 
 function text(renderer: ReactTestRenderer): string {
@@ -44,6 +45,33 @@ describe('Arkme desktop extension recovery notice', () => {
     expect(request).toHaveBeenCalledWith('extensions.quarantine.reenable', {
       packageName: '@example/peer-portrait',
     })
+  })
+
+  it('copies the displayed receipt and repair request without re-enabling the plugin', async () => {
+    const copy = vi.spyOn(clipboard, 'copyText')
+      .mockRejectedValueOnce(new Error('clipboard unavailable')).mockResolvedValue(undefined)
+    try {
+      const request = vi.fn<ArkmeExtensionRecoveryNoticeRequest>(async () => status({
+        createdAtMillis: 1794204300000,
+        entries: [{ packageName: '@local/arkme-arrangement-line', dismissed: false, resolved: false }],
+        failureLogTail: 'web boot: 1 entry did not activate\n@local/arkme-arrangement-line: loading',
+      }))
+      let renderer!: ReactTestRenderer
+      await act(async () => { renderer = create(<ArkmeExtensionRecoveryNotice request={request} />) })
+      const click = async (action: string) => await act(async () => {
+        renderer.root.findByProps({ 'data-arkme-quarantine-action': action }).props.onClick()
+      })
+      await click('details')
+      const details = renderer.root.findByType('pre').children.join('')
+      expect(details).toContain('插件来源  未记录')
+      await click('copy')
+      expect(text(renderer)).toContain('复制失败')
+      await click('copy')
+      expect(copy.mock.calls[1]?.[0]).toMatch(/^发生时间/)
+      expect(copy.mock.calls[1]?.[0]).toContain(details + '\n\n请根据以上诊断')
+      expect(text(renderer)).toContain('已复制诊断')
+      expect(request).toHaveBeenCalledTimes(1)
+    } finally { copy.mockRestore() }
   })
 
   it('explains local safe mode, lists every disabled package, and dismisses every entry', async () => {
