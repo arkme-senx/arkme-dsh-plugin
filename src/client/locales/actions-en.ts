@@ -1,5 +1,11 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '原文': 'Original',
+  '个人更正': 'Personal correction',
+  '个人更正 · 恢复原文': 'Personal correction · Restore original',
+  '原文已更新 · 恢复原文': 'Original updated · Restore original',
+  '上次保存结果尚未确认，点击重试': 'The last save is not confirmed. Click to retry',
+  '重试上次提交': 'Retry last save',
   '回复 Arko': 'Reply to Arko',
   '暂时无法回复 Arko，输入内容会保留': 'Replies to Arko are not available yet. Your draft is kept.',
   "所选文本": "Selected text",

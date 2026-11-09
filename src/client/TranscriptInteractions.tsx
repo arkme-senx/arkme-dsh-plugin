@@ -1,4 +1,4 @@
-import { TranscriptViewHistory } from './TranscriptViewHistory.js'
+import { tr } from './locale.js'
 import type { PersonalTranscriptEntry, TranscriptViewCommand } from '../transcript-view-contract.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
@@ -53,8 +53,8 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
 })
 
 /** Private transcript views share selection UI; ASR and chat facts retain their owners. */
-export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true, onPlay, onStop, playing = false, onMultiSelect, onFind, onPublish }: {
-  scope: string; rows: TranscriptInteractionRow[]; savedRef?:string;enabled?: boolean
+export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay, onStop, playing = false, onMultiSelect, onFind, onPublish }: {
+  scope: string; rows: TranscriptInteractionRow[]; enabled?: boolean
   onPlay(ids: string[]): void; onStop?(): void; playing?: boolean; onMultiSelect?(id: string): void; onFind?(text: string): void; onPublish?(ids:string[]):void
 }) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -66,13 +66,13 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   currentKey.current=key
   const epoch=accessEpoch.current
   const latest = useRef({ rows, onPlay, onMultiSelect, onFind }); latest.current = { rows, onPlay, onMultiSelect, onFind }
-  const [state, setState] = useState<{ key: string; entries: Record<string, PersonalTranscriptEntry> }>({ key, entries: {} })
-  const entries = state.key === key ? state.entries : {}
+  const [state, setState] = useState<{ epoch: number; entries: Record<string, PersonalTranscriptEntry> }>({ epoch, entries: {} })
+  const entries = state.epoch === epoch ? state.entries : {}
   const entriesRef = useRef(entries); entriesRef.current = entries
   const [notice, setNotice] = useState(''), [retry, setRetry] = useState(0)
   const menuRef = useRef<TranscriptMenuHandle>(null)
   const [selected, setSelected] = useState<Set<string>>()
-  const [historyRef, setHistoryRef] = useState<{key:string;ref:string}>()
+  const restoring = useRef(new Set<string>())
   const [search, setSearch] = useState(''), [matchIndex, setMatchIndex] = useState(0)
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
@@ -82,8 +82,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     if (body?.code === 'transcript-source-unavailable' || body?.code === 'transcript-account-changed' || [401,403].includes(body?.httpStatus ?? 0)) {
       accessEpoch.current++
       entriesRef.current = {}
-      setState({key, entries:{}})
-      setHistoryRef(undefined)
+      setState({ epoch: accessEpoch.current, entries: {} })
       setSelected(undefined)
       notify = true
     }
@@ -94,12 +93,13 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     const selection=typeof window==='undefined'?null:window.getSelection?.();const anchor=selection?.toString()?(selection.anchorNode instanceof Element?selection.anchorNode:selection.anchorNode?.parentElement)?.closest<HTMLElement>('[data-transcript-row]'):null;const selectedId=anchor?.dataset.transcriptScope===sourceRef?anchor.dataset.transcriptRow:undefined;
     if (!alive.current || currentKey.current !== key || accessEpoch.current !== epoch) return
     setState(old => {
-      const merged = { ...(old.key === key ? old.entries : {}) }
-      let changed = old.key !== key
+      if (accessEpoch.current !== epoch) return old
+      const merged = { ...(old.epoch === epoch ? old.entries : {}) }
+      let changed = old.epoch !== epoch
       for (const [id, entry] of Object.entries(next)) if ((force||id!==selectedId)&&(!merged[id] || merged[id]!.revision <= entry.revision && JSON.stringify(merged[id]) !== JSON.stringify(entry))) { merged[id] = entry; changed = true }
       if (!changed) return old
       entriesRef.current = merged
-      return { key, entries: merged }
+      return { epoch, entries: merged }
     })
   }
   const read = async (ids: string[], signal?: AbortSignal,watch=false) => {
@@ -119,6 +119,14 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       ...(patch.mark?.kind==='add'?{anchor:patch.mark.anchor}:{}),...(patch.mark?.kind==='remove'?{annotation_id:patch.mark.annotationId}:{})}
     const result=await callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command},signal).catch(error => { failure(error, false); throw error })
     guard();accept({[row.id]:result},true);return result
+  }
+  const restore = (row: TranscriptInteractionRow, entry: PersonalTranscriptEntry) => {
+    const target = JSON.stringify([account, row.viewRef])
+    if (restoring.current.has(target)) return
+    restoring.current.add(target)
+    void change(row, entry, { restore: true })
+      .catch(failure)
+      .finally(() => { restoring.current.delete(target) })
   }
   const currentRead=useRef(read);currentRead.current=read
   const idsKey = JSON.stringify(rows.map(row => [row.id,row.sourceVersion,row.viewRef]))
@@ -205,16 +213,16 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     }
     return <span data-transcript-scope={sourceRef} data-transcript-row={row.id}>
       <TextTarget target={target(row)}>{child}</TextTarget>
-      {entry && !entry.legacy && (entry.text !== entry.original || entry.originalChanged) && <button type="button" style={smallButton}
-        title={`原文：${entry.original}\n个人更正：${entry.previousText??entry.text}\n点击恢复当前云端原文`}
-        onClick={event => { event.stopPropagation(); void change(row, entry, { restore: true }).catch(e => setNotice(message(e))) }}>
-        {entry.originalChanged ? '原文已更新 · 恢复原文' : '个人更正 · 恢复原文'}
-      </button>}
-      {entry?.pendingCommand && row.viewRef && <button type="button" style={smallButton} title={`待确认操作：${entry.pendingCommand.action} ${entry.pendingCommand.replacement ?? entry.pendingCommand.anchor?.text ?? ''}`} onClick={() => {void callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command:{operation_id:crypto.randomUUID(),expected_revision:entry.revision,original_version:entry.originalVersion,action:'retry_pending'}}).then(next=>accept({[row.id]:next},true)).catch(error=>{failure(error);setRetry(v=>v+1)})}}>重试上次提交</button>}
-      {row.viewRef&&<button type="button" style={smallButton} onClick={()=>{setHistoryRef({key,ref:row.viewRef!})}}>历史更正</button>}
+      {enabled && row.viewRef && entry && !entry.legacy && entry.originalVersion === row.sourceVersion
+        && (entry.originalChanged || entry.text !== entry.original) && <button type="button" style={smallButton}
+          title={`${tr('原文')}：${entry.original}\n${tr('个人更正')}：${entry.previousText ?? entry.text}`}
+          onClick={event => { event.stopPropagation(); restore(row, entry) }}>
+          {tr(entry.originalChanged ? '原文已更新 · 恢复原文' : '个人更正 · 恢复原文')}
+        </button>}
+      {entry?.pendingCommand && row.viewRef && <button type="button" style={smallButton} title={tr('上次保存结果尚未确认，点击重试')} onClick={() => {void callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command:{operation_id:crypto.randomUUID(),expected_revision:entry.revision,original_version:entry.originalVersion,action:'retry_pending'}}).then(next=>accept({[row.id]:next},true)).catch(error=>{failure(error);setRetry(v=>v+1)})}}>{tr('重试上次提交')}</button>}
       {entry?.legacy && <button type="button" style={smallButton} title={`本机更正：${entry.legacy.text}\n原数据将保留，确认后仅同步到自己的账号`}
         onClick={event=>{event.stopPropagation();if(!row.viewRef)return;void callArkme<PersonalTranscriptEntry>('transcript.views.import',{accountKey:account,scope,item:{id:row.id,ref:row.viewRef},operationId:crypto.randomUUID()}).then(next=>accept({[row.id]:next},true)).catch(failure)}}>本机更正 · 同步到账号</button>}
-      {entry?.legacy&&<button type="button" style={smallButton} title="保留本机旧数据，使用当前账号的云端原文" onClick={()=>{void change(row,entry,{restore:true}).catch(error=>setNotice(message(error)))}}>使用云端原文</button>}
+      {entry?.legacy&&<button type="button" style={smallButton} title="保留本机旧数据，使用当前账号的云端原文" onClick={event => { event.stopPropagation(); restore(row, entry) }}>使用云端原文</button>}
     </span>
   }
   const contextMenu = (row: TranscriptInteractionRow, event: MouseEvent) => {
@@ -251,9 +259,6 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     {notice && <div role="alert" style={{ position: 'fixed', bottom: 20, right: 20, zIndex: 1000, maxWidth: 'min(420px, calc(100vw - 40px))', padding: '8px 12px', border: `1px solid ${arkmeTheme.border}`, borderRadius: 8, background: arkmeTheme.menu, fontSize: 12, color: arkmeTheme.danger }}>{notice}<button type="button" style={smallButton} onClick={() => setRetry(v => v + 1)}>重试</button></div>}
   </> : null
   const controls = <>
-    {enabled&&account&&(savedRef||rows.some(row=>row.viewRef))&&<button type="button" style={smallButton} onClick={()=>{const ref=savedRef??rows.find(row=>row.viewRef)?.viewRef;if(ref)setHistoryRef({key,ref})}}>已保存的个人更正</button>}
-    {historyRef?.key === key && <TranscriptViewHistory key={historyRef.ref} sourceRef={historyRef.ref} onFailure={error => failure(error, false)} onClose={() => setHistoryRef(undefined)} />}
-
     {search && <div role="search" style={{ position: 'sticky', bottom: 0, background: arkmeTheme.menu, padding: 8, borderRadius: 8, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, fontSize: 12 }}>
       <input style={{ minWidth: 100, flex: 1, border: `1px solid ${arkmeTheme.border}`, borderRadius: 6, background: arkmeTheme.input, color: arkmeTheme.text, padding: '5px 8px' }} aria-label="查找通话转写" value={search} onChange={e => { setSearch(e.target.value); setMatchIndex(0) }} />
       <span>{results.length ? Math.min(matchIndex + 1, results.length) : 0}/{results.length}</span>

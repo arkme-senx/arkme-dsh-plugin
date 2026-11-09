@@ -187,19 +187,19 @@ export class OutgoingCallService {
         supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
         ?? supplement.pending_name ?? counterpart.visible_phone,
       ).trim()
-      const callerProfile = (await this.profile.refreshProfile()).profile
+      const [caller, publicProfiles, credentials] = await Promise.all([
+        this.profile.refreshProfileForSession(session),
+        this.profile.publicProfilesByUserIds([counterpartUserId], session, input.signal),
+        this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+          '/api/v1/trtc/credentials', {}, session, input.signal,
+        ),
+      ])
+      const callerProfile = caller.profile
       if (callerProfile === null) {
         throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料响应不完整', false, 502)
       }
-      const publicProfiles = await this.profile.publicProfilesByUserIds([counterpartUserId], session, input.signal)
       const peerProfile = publicProfiles.get(counterpartUserId)
       const displayName = detailDisplayName || peerProfile?.displayName || source.displayName || 'Arkme 用户'
-      const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
-        '/api/v1/trtc/credentials',
-        {},
-        session,
-        input.signal,
-      )
       const sdkAppId = numberValue(credentials.sdk_app_id)
       const trtcUserId = stringValue(credentials.user_id).trim()
       const userSig = stringValue(credentials.user_sig).trim()
@@ -214,6 +214,7 @@ export class OutgoingCallService {
           shared_topic_id: 0,
           chat_session_uid: source.ownerRef,
           callee_user_ids: [counterpartUserId],
+          include_call_notification_policy: true,
           call_media_type: input.mediaType === 'video' ? 1 : 0,
           caller_name: callerName,
           ...(callerAvatarRef === '' ? {} : {
@@ -242,9 +243,11 @@ export class OutgoingCallService {
         calleeCount: calleeAccounts.length,
       })
       const sharedTopicId = numberValue(room.shared_topic_id)
+      const mutedCalleeAccounts = calleeAccounts.filter(account => listValue(room.call_push_disabled_accounts).includes(account))
       const userData = JSON.stringify({
         sharedTopicId: sharedTopicId > 0 ? sharedTopicId : 0,
         sourceTag: 'arkme-private-chat-header',
+        ...(mutedCalleeAccounts.length === 0 ? {} : { arkmeCallNotification: { version: 1, roomId, mutedAccounts: mutedCalleeAccounts } }),
         callerName,
         callerAvatar: '',
       })
@@ -274,6 +277,7 @@ export class OutgoingCallService {
           timeoutSec: 30,
           userData,
           offlinePushInfo: {
+            isDisablePush: mutedCalleeAccounts.length === calleeAccounts.length,
             title: callerName,
             description,
             extension: userData,

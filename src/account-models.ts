@@ -6,7 +6,7 @@ export interface AccountModel {
   capabilities: AccountModelCapabilities
 }
 export interface AccountModelPreferences { default_route: string; scenes: Record<string, string>; points_fallback: false }
-export interface AccountModelScene { key: string; name: string; group: string; biz_code: number; tools: boolean; images: boolean; json: boolean }
+export interface AccountModelScene { key: string; name: string; group: string; biz_code: number; tools: boolean; images: boolean; json: boolean; stream?: boolean }
 export interface AccountModelSettings {
   accountScope: string; revision: number; enabled: boolean; models: AccountModel[]; preferences: AccountModelPreferences
   connectors: { uid: string; name: string; revoked: boolean }[]; scenes: AccountModelScene[]
@@ -24,5 +24,21 @@ export interface ModelUsageGroup extends ModelUsageTotals { key: string; name?: 
 export interface ModelUsageOperation extends ModelUsageTotals { calls_cursor: string; key: { operation: string; scene: string; model: string }; name: string; source: string; at: number }
 export interface ModelUsageCall { event_uid: string; operation_uid: string; created_at: number; model_display_name: string; model_key: string; model_source: string; scene_key: string; call_status: number; usage_status: number; usage_field_mask: number; prompt_tokens: number; completion_tokens: number; cached_tokens: number; cache_creation_input_tokens: number; duration_ms: number; error_type: string }
 export interface ModelUsagePage { accountScope: string; start: string; end: string; grain: string; before: number; retention_days: number; earliest_at: number; totals: ModelUsageTotals; timeline: ModelUsageGroup[]; scenes: ModelUsageGroup[]; models: ModelUsageGroup[]; operations: ModelUsageOperation[]; calls: ModelUsageCall[]; next_cursor?: string }
-export function accountModelSupportsScene(model: AccountModel, scene: AccountModelScene): boolean { return !model.disabled && model.capabilities.text && (!scene.tools || model.capabilities.tools) && (!scene.images || model.capabilities.images) && (!scene.json || model.capabilities.json) }
+const dshModelRequirements = { tools: true, stream: true, images: false, json: false }
+
+type ModelRequirements = Pick<AccountModelScene, 'tools' | 'stream' | 'images' | 'json'>
+
+function supports(model: AccountModel, requirements: ModelRequirements): boolean {
+  const c = model.capabilities
+  return !model.disabled && c.text && (!requirements.tools || c.tools) && (!requirements.stream || c.stream)
+    && (!requirements.images || c.images) && (!requirements.json || c.json)
+}
+
+export function accountModelSupportsScene(model: AccountModel, scene: AccountModelScene): boolean {
+  return supports(model, scene.key === 'dsh' ? { ...scene, tools: dshModelRequirements.tools, stream: dshModelRequirements.stream } : scene)
+}
+
+export function accountModelSupportsDsh(model: AccountModel): boolean {
+  return supports(model, dshModelRequirements)
+}
 export function accountModelEffectiveRoute(settings: AccountModelSettings, scene: string): string { return settings.preferences.scenes[scene] || settings.preferences.default_route || 'system-default' }

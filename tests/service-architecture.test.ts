@@ -7,9 +7,10 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'loginDevices',
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
-  'recordingFileStorage',
+  'recordingFileStorage', 'recordingAnalysis',
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'sourceMessageThoughts', // Signed-message reader shared by public SDK and Tools.
@@ -156,9 +157,10 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'login-devices-service.ts',
   'transcript-view-service.ts',
   'progressive-attachments.ts',
-  'account-model-service.ts',
+  'account-model-service.ts', 'model-usage-contract.ts',
   'identity-share-service.ts',
   'arrangement-occurrence-contract.ts', 'service-error.ts',
   'recording-file-storage-service.ts',

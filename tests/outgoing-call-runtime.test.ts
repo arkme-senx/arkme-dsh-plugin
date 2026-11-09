@@ -36,6 +36,24 @@ function sentCommand(target: ReturnType<typeof iframe>, type: string): boolean {
 }
 
 describe('outgoing call runtime', () => {
+  it('keeps an initialized lease while the engine reports idle before dialing', async () => {
+    const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? structuredClone(prepareResult) : undefined)
+    const controller = new OutgoingCallUiController()
+    const runtime = new OutgoingCallRuntime({ api, controller, randomId: () => 'request-1' })
+    const target = iframe()
+    runtime.mount()
+    runtime.attachFrame(target.frame)
+    try {
+      controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType: 'audio' })
+      await settle()
+      runtime.handleBridgeMessage({ type: 'state', phase: 'idle', hasActiveCall: false, statusText: '正在初始化桌面通话...' })
+      expect(runtime.getSnapshot()).toMatchObject({ visible: true, phase: 'bootstrapping' })
+      expect(api).not.toHaveBeenCalledWith('calls.outgoing.release', expect.anything())
+      runtime.handleBridgeMessage({ type: 'ready' })
+      expect(sentCommand(target, 'call')).toBe(true)
+    } finally { runtime.dispose() }
+  })
+
   it('does not send a call when engine ready arrives during the cancellation grace period', async () => {
     const api = vi.fn(async (operation: string) => operation === 'calls.outgoing.prepare' ? structuredClone(prepareResult) : undefined)
     const controller = new OutgoingCallUiController()
@@ -388,7 +406,7 @@ describe('outgoing call runtime', () => {
     runtime.dispose()
   })
 
-  it.each(['audio', 'video'] as const)('treats iframe idle state as terminal after a %s call was sent', async (mediaType) => {
+  it.each(['audio', 'video'] as const)('treats iframe idle state as terminal only after a %s call was sent', async (mediaType) => {
     const timeouts: Array<() => void> = []
     const result = structuredClone(prepareResult)
     result.call.mediaType = mediaType
@@ -412,6 +430,11 @@ describe('outgoing call runtime', () => {
 
     controller.request({ sourceRef: 'signed-private-ref', displayName: '小林', mediaType })
     await settle()
+    expect(sentCommand(target, 'bootstrap')).toBe(true)
+    expect(sentCommand(target, 'call')).toBe(false)
+    runtime.handleBridgeMessage({ type: 'state', phase: 'idle', hasActiveCall: false, statusText: '正在初始化桌面通话...' })
+    expect(runtime.getSnapshot()).toMatchObject({ visible: true, phase: 'bootstrapping' })
+
     runtime.handleBridgeMessage({ type: 'ready' })
 
     expect(sentCommand(target, 'call')).toBe(true)

@@ -9,7 +9,7 @@ it('shares the Host owner and account scope across SDK point queries and support
     aiPointsConsumption: async (...args: unknown[]) => { calls.push(args); return { unit: 'ai_points', items: [], nextBeforeId: '' } },
   }
   const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
-    expect(init?.signal).toBe(signal)
+    expect(init?.signal).toBeInstanceOf(AbortSignal)
     const body = JSON.parse(String(init?.body))
     const value = body.operation === 'provider.capabilities' ? { contractVersion: 1, features: { aiPoints: true } }
       : await dispatchArkmeHostOperation(owner as never, body.operation, body.params)
@@ -35,9 +35,9 @@ it('forwards aggregate and filtered detail queries through the same Host with ca
     aiPointsConsumptionRange: async (...args: unknown[]) => { calls.push(args); return { items: [] } },
   }
   const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
-    expect(init?.signal).toBe(signal)
+    expect(init?.signal).toBeInstanceOf(AbortSignal)
     const body = JSON.parse(String(init?.body))
-    const value = await dispatchArkmeHostOperation(owner as never, body.operation, body.params, undefined, undefined, undefined, undefined, signal)
+    const value = body.operation==='provider.capabilities'?{contractVersion:1,features:{aiPointsStatisticsV1:true}}:await dispatchArkmeHostOperation(owner as never, body.operation, body.params, undefined, undefined, undefined, undefined, signal)
     return new Response(JSON.stringify({ ok: true, value }))
   } })
   const dates = { fromDate: '2026-11-01', untilDate: '2026-11-05', timezone: 'Asia/Shanghai' as const }
@@ -47,4 +47,10 @@ it('forwards aggregate and filtered detail queries through the same Host with ca
     [{ ...dates, grain: 'day' }, 'prod:7', signal],
     [{ ...dates, businessCodes: ['arkme', ''], beforeId: '9007199254740993', settledBefore: 1793787390768, limit: 20 }, 'prod:7', signal],
   ])
+})
+
+it('rejects unsupported statistics providers before any summary/detail request',async()=>{
+ const calls:string[]=[];const sdk=createArkmeSdk({fetchImpl:async(_,init)=>{calls.push(JSON.parse(String(init?.body)).operation);return new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{aiPoints:true}}}))}})
+ await expect(sdk.aiPointsStatistics('prod:7',{fromDate:'2026-11-01',untilDate:'2026-11-02',timezone:'Asia/Shanghai',grain:'day'})).rejects.toMatchObject({body:{code:'CAPABILITY_UNSUPPORTED'}})
+ expect(calls).toEqual(['provider.capabilities']);sdk.dispose()
 })

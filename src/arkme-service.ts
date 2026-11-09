@@ -1,3 +1,5 @@
+import { LoginDevicesService } from './services/login-devices-service.js'
+import type { LoginDeviceRequest } from './login-devices-contract.js'
 import { WorldSoundService } from './services/world-sound-service.js'
 import { WorldSuggestionsService } from './services/world-suggestions-service.js'
 import { AccountModelService } from './services/account-model-service.js'
@@ -483,7 +485,10 @@ export class ArkmeService {
   private readonly accountModelListeners = new Set<() => void>()
   onAccountModelsChanged(listener: () => void): () => void { this.accountModelListeners.add(listener); return () => { this.accountModelListeners.delete(listener) } }
   private notifyAccountModelsChanged(): void { for (const listener of this.accountModelListeners) listener() }
-  accountModels(scope: string, signal?: AbortSignal) { return new AccountModelService(this.runtime).settings(scope, signal) }
+  async accountModels(scope?: string, signal?: AbortSignal) {
+ if(scope===undefined){const session=await this.runtime.requireSession();scope=`${this.runtime.config.environment}:${session.userId}`}
+ return new AccountModelService(this.runtime).settings(scope, signal)
+}
   async saveAccountModel(scope: string, input: import('./account-models.js').AccountModelSave, signal?: AbortSignal) { await new AccountModelService(this.runtime).save(scope, input, signal); this.notifyAccountModelsChanged(); return await this.accountModels(scope, signal) }
   async accountModelPreferences(scope: string, revision: number, preferences: import('./account-models.js').AccountModelPreferences, signal?: AbortSignal) { await new AccountModelService(this.runtime).preferences(scope, revision, preferences, signal); this.notifyAccountModelsChanged(); return await this.accountModels(scope, signal) }
   async disableAccountModel(scope: string, revision: number, uid: string, disabled: boolean, signal?: AbortSignal) { await new AccountModelService(this.runtime).disable(scope, revision, uid, disabled, signal); this.notifyAccountModelsChanged(); return await this.accountModels(scope, signal) }
@@ -494,7 +499,7 @@ export class ArkmeService {
   async enrollModelConnector(scope: string) { if(!this.modelConnectorEnroller) throw new ArkmePluginError('connector-unavailable','当前 Host 不支持模型连接器',false,503);return await this.modelConnectorEnroller(scope) }
   async modelDirectory(expectedScope: string, signal?: AbortSignal, officialOnly = false) {
     return new ModelDirectoryService(this.runtime, { account: signal=>this.accountModels(expectedScope,signal), dsh: this.modelDirectoryReader,
-      arko: signal => this.arko.arkoModelCatalog(signal), recording: signal => this.recording.recordingSummaryModelConfig(signal),
+      arko: signal => this.arko.arkoModelCatalog(signal), recording: (signal,kind) => this.recording.recordingSummaryModelConfig(signal,kind),
       explore: signal => this.explore.modelDirectory(expectedScope, signal) }).read(expectedScope, signal, officialOnly)
   }
   private readonly aiVideo: AiVideoService
@@ -512,6 +517,7 @@ export class ArkmeService {
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
+  private readonly loginDeviceService: LoginDevicesService
   private readonly deviceLock: DeviceLockService
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
@@ -1076,6 +1082,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.loginDeviceService = new LoginDevicesService(this.runtime)
     this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
@@ -1367,6 +1374,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
+  async loginDevices(request: LoginDeviceRequest, signal?: AbortSignal) { return this.loginDeviceService.execute(request, signal) }
+
   async deviceLockStatus() { return await this.deviceLock.refresh() }
   async lockDevice() { return await this.deviceLock.lock() }
   async requestDeviceUnlock() { return await this.deviceLock.requestUnlock() }
@@ -1466,7 +1475,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         analyticsV1: true,
 arkoImagesV1:true,
         aiPoints: true,
+        accountModelsV1:true,
+        aiPointsStatisticsV1:true,
         automaticCapabilitiesV1: true,
+        loginDevicesV1: true,
         recordingVoiceTriggersV2: true,
         personalTranscriptViewsV1: true,
         imageRead: true,
@@ -1506,6 +1518,7 @@ arkoImagesV1:true,
         recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
+recordingAnalysisV1: true,
         recordingStrategiesV1: true,
         recordingFileStorageV1: true,
         recordingStrategyRecordingsV1: true,
@@ -1758,8 +1771,8 @@ arkoImagesV1:true,
   async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
-  /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal) }
-  /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal) }
+  /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal, kind: ArkmeRecordingProjectionKind = 'summary'): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal,kind) }
+  /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal, kind: ArkmeRecordingProjectionKind = 'summary'): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal,kind) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
@@ -2043,6 +2056,7 @@ arkoImagesV1:true,
   }
 
   offlineContext(input: OfflineContextRequest,signal?:AbortSignal) { return this.offlineContexts.offlineContext(input,signal) }
+  recordingAnalysis(input: import('./recording-analysis-contract.js').RecordingAnalysisInput, signal?: AbortSignal) { return this.recording.recordingAnalysis(input, signal) }
   recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal) { return this.recordingWorkflowService.request(input, signal) }
 
   listOfficialNotifications(cursor?: string, signal?: AbortSignal) { return this.officialNotifications.list(cursor, signal) }

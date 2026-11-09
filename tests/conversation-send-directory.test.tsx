@@ -5936,6 +5936,30 @@ describe('conversation send directory projection', () => {
     expect(arkmeChatDirectory.getSnapshot()).toEqual(directoryBeforeSend)
   })
 
+  it.each(['membership', 'transient'] as const)('refreshes delegated AI presentation correctly after a %s failure', async failure => {
+    vi.useFakeTimers()
+    const delegated = { ...group, accessKind: 'team_delegation' as const }
+    const original = mocks.callArkme.getMockImplementation()!
+    let failed = false
+    const settings = { sourceRef: delegated.sourceRef, groupName: delegated.displayName, enabled: true, canManage: true, viewerRole: 3, activeRuleName: '真实规则', rules: [], updatedAtMillis: 1 }
+    mocks.callArkme.mockImplementation(async (operation: string, ...args: unknown[]) => {
+      if (operation === 'source.timeline') return { source: delegated, items: [], hasMore: false, aiPolishSettings: failed && failure === 'membership' ? undefined : settings }
+      if (operation === 'source.ai-polish.settings') {
+        if (failed) throw failure === 'membership'
+          ? Object.assign(new Error('需要真人成员资格'), { body: { code: 'group-ai-polish-membership-required', retryable: false } })
+          : new Error('service unavailable')
+        return settings
+      }
+      return await original(operation, ...args)
+    })
+    arkmeChatDirectory.publish([delegated, other]); arkmeUi.selectSource(delegated)
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(JSON.stringify(renderer!.toJSON())).toContain('AI润色已开启')
+    failed = true
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_001) })
+    expect(JSON.stringify(renderer!.toJSON()).includes('AI润色已开启')).toBe(failure === 'transient')
+  })
+
   it('keeps the list mounted and avoids a timeline reload when an AI-polished send advances the selected projection', async () => {
     const previousItem: ArkmeTimelineItem = {
       itemUid: 'message-784', sequence: 784, senderName: '我', isMe: true,
