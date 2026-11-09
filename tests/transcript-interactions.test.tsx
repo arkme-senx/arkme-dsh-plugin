@@ -239,3 +239,21 @@ it('announces the same current private wording that the call bubble displays, th
  expect(bubble.getAttribute('aria-label')).toContain(raw)
  expect(detail.transcriptSegments[0]!.text).toBe(raw)
 })
+
+
+it('keeps the original visible when returning to a recording before its private access is rechecked', async () => {
+ stored.set('recording:123:one', { revision: 1, original, text: '日期切换前的私人更正', marks: [] })
+ await act(async () => root.render(<Fixture />))
+ expect(host.textContent).toContain('日期切换前的私人更正')
+ await act(async () => root.render(<Fixture scope="recording:456" privateRows="none" />))
+ const normal = mocks.call.getMockImplementation()!
+ let deny!: (error: Error) => void
+ mocks.call.mockImplementation((operation, params) => operation === 'transcript.views.read'
+  ? new Promise((_, reject) => { deny = reject })
+  : normal(operation, params))
+ await act(async () => root.render(<Fixture />))
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+ expect(host.textContent).not.toContain('恢复原文')
+ await act(async () => deny(Object.assign(new Error('来源已撤权'), { body: { code: 'transcript-source-unavailable', httpStatus: 403 } })))
+ expect(host.querySelector('[data-arkme-text-selection]')?.textContent).toBe(original)
+})

@@ -66,8 +66,8 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
   currentKey.current=key
   const epoch=accessEpoch.current
   const latest = useRef({ rows, onPlay, onMultiSelect, onFind }); latest.current = { rows, onPlay, onMultiSelect, onFind }
-  const [state, setState] = useState<{ key: string; entries: Record<string, PersonalTranscriptEntry> }>({ key, entries: {} })
-  const entries = state.key === key ? state.entries : {}
+  const [state, setState] = useState<{ epoch: number; entries: Record<string, PersonalTranscriptEntry> }>({ epoch, entries: {} })
+  const entries = state.epoch === epoch ? state.entries : {}
   const entriesRef = useRef(entries); entriesRef.current = entries
   const [notice, setNotice] = useState(''), [retry, setRetry] = useState(0)
   const menuRef = useRef<TranscriptMenuHandle>(null)
@@ -82,7 +82,7 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
     if (body?.code === 'transcript-source-unavailable' || body?.code === 'transcript-account-changed' || [401,403].includes(body?.httpStatus ?? 0)) {
       accessEpoch.current++
       entriesRef.current = {}
-      setState({key, entries:{}})
+      setState({ epoch: accessEpoch.current, entries: {} })
       setSelected(undefined)
       notify = true
     }
@@ -93,12 +93,13 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
     const selection=typeof window==='undefined'?null:window.getSelection?.();const anchor=selection?.toString()?(selection.anchorNode instanceof Element?selection.anchorNode:selection.anchorNode?.parentElement)?.closest<HTMLElement>('[data-transcript-row]'):null;const selectedId=anchor?.dataset.transcriptScope===sourceRef?anchor.dataset.transcriptRow:undefined;
     if (!alive.current || currentKey.current !== key || accessEpoch.current !== epoch) return
     setState(old => {
-      const merged = { ...(old.key === key ? old.entries : {}) }
-      let changed = old.key !== key
+      if (accessEpoch.current !== epoch) return old
+      const merged = { ...(old.epoch === epoch ? old.entries : {}) }
+      let changed = old.epoch !== epoch
       for (const [id, entry] of Object.entries(next)) if ((force||id!==selectedId)&&(!merged[id] || merged[id]!.revision <= entry.revision && JSON.stringify(merged[id]) !== JSON.stringify(entry))) { merged[id] = entry; changed = true }
       if (!changed) return old
       entriesRef.current = merged
-      return { key, entries: merged }
+      return { epoch, entries: merged }
     })
   }
   const read = async (ids: string[], signal?: AbortSignal,watch=false) => {
