@@ -54,7 +54,8 @@ function visibleText(node: ReactTestInstance): string { return node.children.map
 function shortcut() { const item = renderer.root.findByType(ConversationActionsMenu).props.items.find((item: { id: string }) => item.id === 'capabilities'); return { label: item.label, props: { onClick: item.invoke, disabled: item.disabled } } }
 
 beforeEach(() => {
- arkoTimelineMemory.clear()
+  vi.stubGlobal('window', new EventTarget())
+  arkoTimelineMemory.clear()
   arkoModelCache.clear()
   arkmeArkoProfileStore.activateUser(undefined)
   sessionAvailable = true
@@ -326,7 +327,8 @@ describe('Arko capability shortcut', () => {
     await mount()
     await act(async () => { shortcut().props.onClick() })
     expect(ask).toHaveBeenCalledTimes(1)
-    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ text: '你能帮我干什么', sessionId: 88, modelRouteKey: 'model-a' }))
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ text: '你能帮我干什么', sessionId: 88 }))
+    expect(ask.mock.calls[0]![0]).not.toHaveProperty('modelRouteKey')
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe(draft)
     expect(JSON.stringify(renderer.toJSON())).toContain('你能帮我干什么')
   })
@@ -454,7 +456,8 @@ describe('Arko capability shortcut', () => {
       runUid: 'old-run', runStatus: 'waiting_user', createdRecordUids: [] }]
     await mount()
     await act(async () => { shortcut().props.onClick() })
-    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 88, modelRouteKey: 'model-a' }))
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 88 }))
+    expect(ask.mock.calls[0]![0]).not.toHaveProperty('modelRouteKey')
     expect(ask.mock.calls[0]![0]).not.toHaveProperty('replyToRunUid')
     expect(ask.mock.calls[0]![0]).not.toHaveProperty('replyToAssistantMsgId')
   })
@@ -533,7 +536,9 @@ describe('Arko capability shortcut', () => {
     expect(renderer.root.findByProps({ 'aria-label': '发送' }).props.disabled).toBe(true)
     await act(async () => { complete({ ...models, effectiveRouteKey: 'model-b' }) })
     await act(async () => { shortcut().props.onClick() })
-    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ modelRouteKey: 'model-b' }))
+    expect(callArkme).toHaveBeenCalledWith('arko.model.activate', { routeKey: 'model-b' })
+    expect(ask).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 88, text: '你能帮我干什么' }))
+    expect(ask.mock.calls[0]![0]).not.toHaveProperty('modelRouteKey')
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe('草稿')
   })
 
