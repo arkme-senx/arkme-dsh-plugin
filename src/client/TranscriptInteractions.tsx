@@ -1,12 +1,10 @@
 import { tr } from './locale.js'
-import { TranscriptPersonalChanges, TranscriptCorrectionDetails } from './TranscriptPersonalChanges.js'
 import type { PersonalTranscriptEntry, TranscriptViewCommand } from '../transcript-view-contract.js'
 import type { ArkmeMessageQuote } from '../message-quote.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { CheckSquare } from '@phosphor-icons/react/dist/icons/CheckSquare'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
-import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import type { ArkmeTimelineItem } from '../types.js'
 import type { MessageUnderlineChange } from '../message-annotations.js'
 import type { MessageUnderlineSnapshot } from '../message-annotations.js'
@@ -40,8 +38,7 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
   onCopy(row: TranscriptInteractionRow): void
   onSelect(row: TranscriptInteractionRow): void
   onPlay(row: TranscriptInteractionRow): void
-  onChanges?(row: TranscriptInteractionRow): void
-}>(function TranscriptContextMenu({ rows, onCopy, onSelect, onPlay, onChanges }, ref) {
+}>(function TranscriptContextMenu({ rows, onCopy, onSelect, onPlay }, ref) {
   const [point, setPoint] = useState<TranscriptMenuPoint>()
   useImperativeHandle(ref, () => ({ open: setPoint }), [])
   const row = point ? rows.find(row => row.id === point.id) : undefined
@@ -52,13 +49,12 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
     { id: 'copy', label: '复制', icon: <Copy />, onSelect: () => { close(); onCopy(row) } },
     { id: 'select', label: '多选', icon: <CheckSquare />, onSelect: () => { close(); onSelect(row) } },
     { id: 'play', label: '播放', icon: <Play />, disabled: !row.playable, onSelect: () => { close(); onPlay(row) } },
-    ...(onChanges && row.viewRef ? [{ id: 'changes', label: tr('这份录音的修改'), icon: <PencilSimple />, onSelect: () => { close(); onChanges(row) } }] : []),
   ]} />
 })
 
 /** Private transcript views share selection UI; ASR and chat facts retain their owners. */
-export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true, onPlay, onStop, playing = false, onMultiSelect, onFind, onPublish }: {
-  scope: string; rows: TranscriptInteractionRow[]; savedRef?:string;enabled?: boolean
+export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay, onStop, playing = false, onMultiSelect, onFind, onPublish }: {
+  scope: string; rows: TranscriptInteractionRow[]; enabled?: boolean
   onPlay(ids: string[]): void; onStop?(): void; playing?: boolean; onMultiSelect?(id: string): void; onFind?(text: string): void; onPublish?(ids:string[]):void
 }) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -76,7 +72,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   const [notice, setNotice] = useState(''), [retry, setRetry] = useState(0)
   const menuRef = useRef<TranscriptMenuHandle>(null)
   const [selected, setSelected] = useState<Set<string>>()
-  const [panel, setPanel] = useState<{key:string;kind:'source';ref:string}|{key:string;kind:'row';id:string}>()
+  const restoring = useRef(new Set<string>())
   const [search, setSearch] = useState(''), [matchIndex, setMatchIndex] = useState(0)
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
@@ -87,7 +83,6 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       accessEpoch.current++
       entriesRef.current = {}
       setState({key, entries:{}})
-      setPanel(undefined)
       setSelected(undefined)
       notify = true
     }
@@ -124,6 +119,14 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     const result=await callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command},signal).catch(error => { failure(error, false); throw error })
     guard();accept({[row.id]:result},true);return result
   }
+  const restore = (row: TranscriptInteractionRow, entry: PersonalTranscriptEntry) => {
+    const target = JSON.stringify([account, row.viewRef])
+    if (restoring.current.has(target)) return
+    restoring.current.add(target)
+    void change(row, entry, { restore: true })
+      .catch(failure)
+      .finally(() => { restoring.current.delete(target) })
+  }
   const currentRead=useRef(read);currentRead.current=read
   const idsKey = JSON.stringify(rows.map(row => [row.id,row.sourceVersion,row.viewRef]))
   useEffect(() => {
@@ -145,7 +148,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     void refresh(); if (typeof window !== 'undefined') window.addEventListener('focus', refresh);document.addEventListener('selectionchange',selectionChanged)
     return () => { clearInterval(timer);controller.abort(); if (typeof window !== 'undefined') window.removeEventListener('focus', refresh);document.removeEventListener('selectionchange',selectionChanged) }
   }, [key, idsKey, enabled, retry])
-  useEffect(() => { setSelected(undefined); setSearch(''); setNotice(''); setPanel(undefined) }, [key, enabled])
+  useEffect(() => { setSelected(undefined); setSearch(''); setNotice('') }, [key, enabled])
   const display = (row: TranscriptInteractionRow, entry = entriesRef.current[row.id]) => entry && entry.originalVersion === row.sourceVersion ? (entry.legacy?.original === entry.original ? entry.legacy.text : entry.text) : row.text
   const target = (row: TranscriptInteractionRow): MessageSelectionTarget => {
     const text = display(row)
@@ -209,15 +212,16 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
     }
     return <span data-transcript-scope={sourceRef} data-transcript-row={row.id}>
       <TextTarget target={target(row)}>{child}</TextTarget>
-      {entry && !entry.legacy && entry.originalVersion === row.sourceVersion && entry.text !== entry.original && <button type="button" style={smallButton}
-        title={tr("查看原文与我的更正")}
-        onClick={event => { event.stopPropagation(); setPanel({key,kind:'row',id:row.id}) }}>
-        {tr('已更正')}
-      </button>}
+      {enabled && row.viewRef && entry && !entry.legacy && entry.originalVersion === row.sourceVersion
+        && (entry.originalChanged || entry.text !== entry.original) && <button type="button" style={smallButton}
+          title={`${tr('原文')}：${entry.original}\n${tr('个人更正')}：${entry.previousText ?? entry.text}`}
+          onClick={event => { event.stopPropagation(); restore(row, entry) }}>
+          {tr(entry.originalChanged ? '原文已更新 · 恢复原文' : '个人更正 · 恢复原文')}
+        </button>}
       {entry?.pendingCommand && row.viewRef && <button type="button" style={smallButton} title={tr('上次保存结果尚未确认，点击重试')} onClick={() => {void callArkme<PersonalTranscriptEntry>('transcript.views.change',{accountKey:account,ref:row.viewRef,command:{operation_id:crypto.randomUUID(),expected_revision:entry.revision,original_version:entry.originalVersion,action:'retry_pending'}}).then(next=>accept({[row.id]:next},true)).catch(error=>{failure(error);setRetry(v=>v+1)})}}>{tr('重试上次提交')}</button>}
       {entry?.legacy && <button type="button" style={smallButton} title={`本机更正：${entry.legacy.text}\n原数据将保留，确认后仅同步到自己的账号`}
         onClick={event=>{event.stopPropagation();if(!row.viewRef)return;void callArkme<PersonalTranscriptEntry>('transcript.views.import',{accountKey:account,scope,item:{id:row.id,ref:row.viewRef},operationId:crypto.randomUUID()}).then(next=>accept({[row.id]:next},true)).catch(failure)}}>本机更正 · 同步到账号</button>}
-      {entry?.legacy&&<button type="button" style={smallButton} title="保留本机旧数据，使用当前账号的云端原文" onClick={()=>{void change(row,entry,{restore:true}).catch(error=>setNotice(message(error)))}}>使用云端原文</button>}
+      {entry?.legacy&&<button type="button" style={smallButton} title="保留本机旧数据，使用当前账号的云端原文" onClick={event => { event.stopPropagation(); restore(row, entry) }}>使用云端原文</button>}
     </span>
   }
   const contextMenu = (row: TranscriptInteractionRow, event: MouseEvent) => {
@@ -229,14 +233,6 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
   }
   const selectedRows = rows.filter(row => selected?.has(row.id)).sort((a,b) => a.at - b.at)
   const toggle = (id: string) => setSelected(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
-  const correctionRow = panel?.key === key && panel.kind === 'row' ? rows.find(row => row.id === panel.id) : undefined
-  const correctionEntry = correctionRow ? entries[correctionRow.id] : undefined
-  const correctionVisible = !!correctionEntry && !correctionEntry.legacy && correctionEntry.originalVersion === correctionRow?.sourceVersion && correctionEntry.text !== correctionEntry.original
-  useEffect(() => {
-    if (panel?.kind === 'row' && !correctionVisible) setPanel(undefined)
-  }, [panel, correctionVisible])
-  const sourceControls = enabled && account && savedRef ? <button type="button" style={controlButton}
-    onClick={() => setPanel({key,kind:'source',ref:savedRef})}>{tr('我的修改')}</button> : null
   const host = enabled && typeof document !== 'undefined' && document.body && typeof window !== 'undefined' ? <>
     <ArkmeMessageTextSelectionToolbar key={`toolbar:${key}:${epoch}`} selectionDomain="transcript" replySourceRef={sourceRef} markStorage="cloud" selfNote={{ sourceLabel: scope.startsWith('call:') ? '通话转写' : '录音转写', accountKey: account }}
       onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} canMark={canChange} canReplace={canChange}
@@ -255,12 +251,7 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
         } }
       }} />
     {marks.layer}
-    {panel?.key === key && panel.kind === 'source' && <TranscriptPersonalChanges key={'changes:'+key+':'+epoch+':'+panel.ref}
-      sourceRef={panel.ref} onFailure={error => failure(error, false)} onClose={() => setPanel(undefined)} />}
-    {correctionVisible && correctionRow && correctionEntry && <TranscriptCorrectionDetails key={'correction:'+key+':'+epoch+':'+correctionRow.id}
-      entry={correctionEntry} onRestore={signal => change(correctionRow, correctionEntry, {restore:true}, signal)} onClose={() => setPanel(undefined)} />}
     <TranscriptContextMenu key={`menu:${key}:${epoch}`} ref={menuRef} rows={rows}
-      {...(scope.startsWith('recording:') && !savedRef ? { onChanges: (row: TranscriptInteractionRow) => { if (row.viewRef) setPanel({key,kind:'source',ref:row.viewRef}) } } : {})}
       onCopy={row => { void copyText(display(row)).catch(e => { if (alive.current && currentKey.current === key) setNotice(message(e)) }) }}
       onSelect={row => { if (latest.current.onMultiSelect) latest.current.onMultiSelect(row.id); else setSelected(new Set([row.id])) }}
       onPlay={row => latest.current.onPlay([row.id])} />
@@ -281,6 +272,6 @@ export function useTranscriptInteractions({ scope, rows,savedRef, enabled = true
       <button type="button" style={controlButton} onClick={() => setSelected(undefined)}>取消</button>
     </div>}
   </>
-  return { host, controls, sourceControls, renderText, contextMenu,ready:rows.every(row=>!row.viewRef||entries[row.id]?.originalVersion===row.sourceVersion),error:notice, text: (row: TranscriptInteractionRow) => display(row), copyRows, selected, toggle,
+  return { host, controls, renderText, contextMenu,ready:rows.every(row=>!row.viewRef||entries[row.id]?.originalVersion===row.sourceVersion),error:notice, text: (row: TranscriptInteractionRow) => display(row), copyRows, selected, toggle,
     checkbox: (row: TranscriptInteractionRow) => selected ? <input type="checkbox" aria-label={`选择 ${row.speaker} 的转写片段`} checked={selected.has(row.id)} onClick={e => e.stopPropagation()} onChange={() => toggle(row.id)} /> : null }
 }

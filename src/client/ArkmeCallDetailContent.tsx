@@ -103,7 +103,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
     standaloneVideo.current?.pause()
   })
   const interactionRows: TranscriptInteractionRow[] = (detail?.transcriptSegments ?? []).map(segment => ({ id: segment.segmentId, ...(detail?.callRef&&segment.privateViewTarget&&segment.privateViewVersion?{viewRef:JSON.stringify({kind:"call",callRef:detail.callRef,target:segment.privateViewTarget}),sourceVersion:segment.privateViewVersion}:{}), text: segment.text, speaker: segment.speakerDisplayName, at: detail!.startedAtMillis + segment.startMillis, playable: !!segment.audioUrl,...(detail?.callRef&&segment.sourceSegmentId?{excerptOrigin:{kind:'call' as const,itemRef:JSON.stringify([detail.callRef,segment.sourceSegmentId])}}:{}) }))
-  const transcriptInteraction = useTranscriptInteractions({...(detail?.callRef?{savedRef:JSON.stringify({kind:'call',callRef:detail.callRef})}:{}), scope: `call:${detail?.stableId ?? ''}`, rows: interactionRows,
+  const transcriptInteraction = useTranscriptInteractions({ scope: `call:${detail?.stableId ?? ''}`, rows: interactionRows,
     enabled: active && !selectedIsSample && !!detail?.stableId,
     playing: !!transcriptPlayback.state && transcriptPlayback.state.status !== 'failed', onStop: transcriptPlayback.stop,
     onPlay: ids => transcriptPlayback.playItems((detail?.transcriptSegments ?? []).filter(segment => ids.includes(segment.segmentId)).sort((a,b) => a.startMillis - b.startMillis)),
@@ -365,7 +365,6 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
             <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
               <h3 style={styles.transcriptTitle}>{tr("通话转写")}</h3>
               <span style={styles.transcriptCount}>{detail.transcriptSegments.length} {tr("段对话")}</span>
-              <span style={{ marginLeft: 'auto' }}>{transcriptInteraction.sourceControls}</span>
             </header>
             {detail.transcriptSegments.map((segment, index) => {
               const mine = segment.speakerUserId !== undefined && detail.participants.some(participant => participant.isCurrentUser && participant.userId === segment.speakerUserId)
@@ -420,7 +419,6 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
           {detailState === 'ready' && detail !== undefined && detail.transcriptSegments.length === 0 && <section style={styles.transcript} aria-label={tr("通话转写")}>
             <header style={styles.transcriptHeader} data-arkme-call-transcript-header="aligned">
               <h3 style={styles.transcriptTitle}>{tr("通话转写")}</h3>
-              <span style={{ marginLeft: 'auto' }}>{transcriptInteraction.sourceControls}</span>
               <span style={styles.transcriptCount}>{tr("0 段对话")}</span>
             </header>
             <p role="status" style={styles.transcriptEmpty}>{detail.transcriptFailed ? tr("转写失败") : detail.transcriptPending ? '转写处理中' : tr("暂无转写内容")}</p>

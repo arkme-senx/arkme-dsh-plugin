@@ -6,7 +6,6 @@ import type { PublicRecordingImportCurrentItem, PublicRecordingImportHistoryItem
 const mock = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: mock.call }))
 import { ArkmeRecordingFiles } from '../src/client/recordings/ArkmeRecordingFiles.js'
-import { arkmeAuthStore } from '../src/client/auth-store.js'
 
 const day = new Date(2026, 9, 12).getTime()
 const file = (patch: Partial<PublicRecordingImportHistoryItem> = {}): PublicRecordingImportHistoryItem => ({ taskKey: 'one', sessionRef: 'ref1', ownership: 'self', fileName: '会议.m4a', fileSize: 1048576, parsedSize: 100, durationMillis: 60000, startAtMillis: day, endAtMillis: day + 60000, progress: 1, status: 'completed', statusDetail: '', createdAtMillis: day, updatedAtMillis: day, ...patch })
@@ -471,48 +470,4 @@ it.each(['available','unavailable'] as const)('gates the single-file comparison 
   const request=mock.call.mock.calls.find(([op])=>op==='recordings.strategies')!
   expect(request[1]).toMatchObject({ action:'sources',sessionRef:'ref1',includeAvailability:true })
   expect(request[1]).not.toHaveProperty('startAtMillis')
-})
-
-
-it('opens personal changes for the chosen recording session rather than mixing files on the same day', async () => {
-  const previous = arkmeAuthStore.getSnapshot().auth
-  arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-  completed = [file(), file({ taskKey: 'two', sessionRef: 'ref2', fileName: '第二份.m4a' })]
-  const original = mock.call.getMockImplementation()!
-  mock.call.mockImplementation((operation, input, signal) => operation === 'transcript.views.saved'
-    ? { historical: true, items: [{ kind: 'recording', source_uid: 'source', segment_uid: 'one', original_version: 'v1', original: '原文', text: JSON.parse(input.ref).sessionRef + '的更正', revision: 1, marks: [] }], next_cursor: '' }
-    : original(operation, input, signal))
-  try {
-    await render(); await openMenu(); await click('我的修改')
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('ref1的更正')
-    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭我的修改"]')!.click())
-    await openMenu('第二份.m4a'); await click('我的修改')
-    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('ref2的更正')
-    expect(document.querySelector('[role="dialog"]')?.textContent).not.toContain('ref1的更正')
-    expect(mock.call.mock.calls.filter(([op]) => op === 'transcript.views.saved').map(([, input]) => JSON.parse(input.ref)))
-      .toEqual([{ kind: 'recording', sessionRef: 'ref1' }, { kind: 'recording', sessionRef: 'ref2' }])
-    expect(changed).not.toHaveBeenCalled()
-  } finally {
-    await act(async () => root.render(null))
-    arkmeAuthStore.setAuth(previous ?? { status: 'logged-out', environment: 'test' })
-  }
-})
-
-
-it.each(['inactive', 'day'] as const)('retires a recording changes modal after %s navigation and does not reopen it later', async reason => {
-  const previous = arkmeAuthStore.getSnapshot().auth
-  arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
-  const normal = mock.call.getMockImplementation()!
-  mock.call.mockImplementation((operation, input, signal) => operation === 'transcript.views.saved'
-    ? { historical: true, items: [], next_cursor: '' } : normal(operation, input, signal))
-  try {
-    await render(); await openMenu(); await click('我的修改')
-    expect(document.querySelector('[role="dialog"]')).not.toBeNull()
-    await render(reason === 'inactive' ? { active: false } : { dateStamp: day + 86400000 })
-    expect(document.querySelector('[role="dialog"]')).toBeNull()
-    await render(); expect(document.querySelector('[role="dialog"]')).toBeNull()
-  } finally {
-    await act(async () => root.render(null))
-    arkmeAuthStore.setAuth(previous ?? { status: 'logged-out', environment: 'test' })
-  }
 })
