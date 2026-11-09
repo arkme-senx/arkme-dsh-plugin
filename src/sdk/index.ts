@@ -528,6 +528,11 @@ export class ArkmeClientError extends Error {
 
 export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
 
+/** Browser scheduling hint only; never part of the Host operation payload. */
+export interface ArkmeSdkTransportOptions {
+  priority?: 'high' | 'low' | 'auto'
+}
+
 export interface ArkmeSdkOptions {
   route?: string
   fetchImpl?: typeof fetch
@@ -1031,6 +1036,10 @@ export class ArkmeSdk {
   private async requireTeamHistory(signal?:AbortSignal):Promise<void>{if((await this.capabilities(signal)).features.teamHistoryV1!==true)throw new Error('当前 Provider 不支持团队历史检索，请升级')}
   async teamHistory(conversationRef:string,action:import('../team-history-contract.js').TeamHistoryAction,options:import('../team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('../team-history-contract.js').TeamHistoryResponse>{await this.requireTeamHistory(signal);return await this.call('team.history',{conversationRef,action,options},signal)}
   async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('../team-history-contract.js').TeamHistoryExportChunk>{await this.requireTeamHistory(signal);return await this.call('team.history.export-chunk',{resultRef,...(cursor?{cursor}:{})},signal)}
+  async readTeamMentionCandidates(conversationRef:string,teamRef:string,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<import('../team-message-contract.js').TeamMentionCandidatePage>{
+    if ((await this.capabilities(signal)).features.teamMentionCandidates!==1) throw new Error('当前 Provider 不支持团队提及候选，请升级')
+    return await this.call('team.messages.mention-candidates',{conversationRef,teamRef,options},signal)
+  }
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline>{await this.requireTeamMessages(signal);if(options.personRef)await this.requireTeamMentions(signal);return await this.call('team.messages.read',{conversationRef,options},signal)}
   async sendTeamMessage(command:TeamSendInput,signal?:AbortSignal):Promise<TeamSendTask>{await this.requireTeamMessages(signal);if(command.content.mentions?.length)await this.requireTeamMentions(signal);return await this.call('team.messages.send',{command},signal)}
   async teamMessageTasks(conversationRef:string,signal?:AbortSignal):Promise<TeamSendTask[]>{await this.requireTeamMessages(signal);return await this.call('team.messages.tasks',{conversationRef},signal)}
@@ -3477,6 +3486,7 @@ export class ArkmeSdk {
     operation: ArkmePluginOperation,
     params?: Record<string, unknown>,
     signal?: AbortSignal,
+    transport?: ArkmeSdkTransportOptions,
   ): Promise<T> {
     const response = await this.fetchImpl(this.route, {
       method: 'POST',
@@ -3484,6 +3494,7 @@ export class ArkmeSdk {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ operation, ...(params === undefined ? {} : { params }) }),
       ...(signal === undefined ? {} : { signal }),
+      ...(transport?.priority === undefined ? {} : { priority: transport.priority }),
     })
     let body: ArkmePluginResponse<T>
     try {
@@ -3511,11 +3522,14 @@ export async function callArkme<T>(
   operation: ArkmePluginOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
+  transport?: ArkmeSdkTransportOptions,
 ): Promise<T> {
   if (operation === 'calendar.day-review.create') return await defaultSdk.createDayReview(params as unknown as DayReviewCreateInput, signal) as T
   if (operation === 'calendar.day-review.resume') return await defaultSdk.resumeDayReview(params as unknown as DayReviewQuery & { jobId: string }, signal) as T
   if (operation === 'calendar.day-review.reconcile') return await defaultSdk.reconcileDayReview(params as unknown as DayReviewQuery, signal) as T
-  return await defaultSdk.call<T>(operation, params, signal)
+  return transport === undefined
+    ? await defaultSdk.call<T>(operation, params, signal)
+    : await defaultSdk.call<T>(operation, params, signal, transport)
 }
 export type { ArkmeDirectoryPage, ArkmeDirectorySectionKind, ArkmeDirectoryItem } from '../types.js'
 

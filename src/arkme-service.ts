@@ -640,6 +640,10 @@ export class ArkmeService {
   }
   async teamHistory(conversationRef:string,action:import('./team-history-contract.js').TeamHistoryAction,options:import('./team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryResponse>{return await this.executeTeamApp('team.app.history',{conversationRef,action,options},signal) as import('./team-history-contract.js').TeamHistoryResponse}
   async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryExportChunk>{return await this.executeTeamApp('team.app.history.chunk',{resultRef,...(cursor?{cursor}:{})},signal) as import('./team-history-contract.js').TeamHistoryExportChunk}
+  async readTeamMentionCandidates(conversationRef:string,teamRef:string,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamMentionCandidatePage> {
+    if (!conversationRef || !teamRef) throw new TypeError('Team mention candidates require conversation and Team references')
+    return await this.executeTeamApp('team.app.members',{conversationRef,teamRef,pageCursor:options.cursor,limit:options.limit,mentionCandidates:true},signal) as import('./team-message-contract.js').TeamMentionCandidatePage
+  }
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -1492,6 +1496,7 @@ arkoImagesV1:true,
         teamMessageSnapshot: 1,
         teamHistoryV1: true,
         teamPersonMentions: 1,
+        teamMentionCandidates: 1,
         teamNotificationPoliciesV1: true,
         teamEntryPreferencesV1: true,
         groupSelfNickname: true,

@@ -918,9 +918,9 @@ export function ArkmeLogin(props: ArkmeLoginProps) {
             <span className="dsh-arkme-login-check" aria-hidden>✓</span>
             <span>{t('agreement.prefix')}</span>
           </label>
-          <a className="dsh-arkme-login-link" href="https://www.arkme.ai/article/user-aggrement-v1.html" target="_blank" rel="noreferrer">{t('agreement.user')}</a>
+          <a className="dsh-arkme-login-link" href={brand.userAgreementUrl} target="_blank" rel="noreferrer">{t('agreement.user')}</a>
           <span>{t('agreement.separator')}</span>
-          <a className="dsh-arkme-login-link" href="https://www.arkme.ai/article/privacy-aggrement-v1.html" target="_blank" rel="noreferrer">{t('agreement.privacy')}</a>
+          <a className="dsh-arkme-login-link" href={brand.privacyPolicyUrl} target="_blank" rel="noreferrer">{t('agreement.privacy')}</a>
         </div>
       </div>
     </section>

@@ -48,13 +48,14 @@ it('continues bounded visible pixels immediately without a new grant, and keeps 
  await act(async()=>doc.querySelector('img[alt="photo.png"]')!.dispatchEvent(new Event('load')))
  expect(doc.querySelector('[data-arkme-presented-image]')).toBeNull();expect(canvas.width).toBe(0);expect(canvas.height).toBe(0)
 })
-it('keeps the first pixels and gated actions when original bytes load before authorization',async()=>{
+it('replaces the first pixels after the authorized byte load while actions still wait for preflight',async()=>{
  await mount();await open()
  const canvas=doc.querySelector<HTMLCanvasElement>('[data-arkme-presented-image]')!
  const original=doc.querySelector<HTMLImageElement>('img[alt="photo.png"]')!
  await act(async()=>original.dispatchEvent(new Event('load')))
- expect(doc.querySelector('[data-arkme-presented-image]')).toBe(canvas)
- expect(original.closest('[hidden][inert]')).not.toBeNull()
+ expect(doc.querySelector('[data-arkme-presented-image]')).toBeNull()
+ expect(original.closest('[hidden][inert]')).toBeNull()
+ expect(canvas.width).toBe(0);expect(doc.querySelector('fieldset')?.disabled).toBe(true)
  await act(async()=>pending[0]!.resolve([message]))
  expect(doc.querySelector('[data-arkme-presented-image]')).toBeNull()
  expect(canvas.width).toBe(0);expect(original.closest('[hidden]')).toBeNull()

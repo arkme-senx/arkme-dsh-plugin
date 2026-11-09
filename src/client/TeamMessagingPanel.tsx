@@ -1,3 +1,7 @@
+import {ArkmeMentionSuggestions} from './ArkmeMentionSuggestions.js'
+import {useMentionSuggestions} from './use-mention-suggestions.js'
+import {useTeamMentionCandidates} from './use-team-mention-candidates.js'
+import {arkmeComposerMentionTrigger,type ArkmeComposerMentionTrigger,type ArkmeMentionCandidate} from './mention-candidates.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Cloud } from '@phosphor-icons/react/dist/icons/Cloud'
 import {TeamGroupSourceCards} from './TeamGroupSourceCards.js'
@@ -877,6 +881,25 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const withVisitorIdentity = rawVisitor
   const personName = useTeamPersonNames(rawCurrent, accountKey, [...visibleMessages.map(m => m.sender), ...(receiptState.value?.members ?? []), ...(withVisitorIdentity ? [withVisitorIdentity] : [])])
   const current = withVisitorIdentity ? { ...rawCurrent, visitor: personName(withVisitorIdentity) } : rawCurrent
+  const [mentionInput,setMentionInput]=useState<{scope:object;trigger:ArkmeComposerMentionTrigger}|undefined>()
+  const [dismissedMention,setDismissedMention]=useState('')
+  const mentionTrigger=mentionInput?.scope===composerScope?mentionInput.trigger:undefined
+  const mentionKey=mentionTrigger?JSON.stringify([mentionTrigger.startIndex,mentionTrigger.query]):''
+  const mentionsAvailable=current.side==='team'&&current.channel.enabled&&!current.blocked&&!loadError&&!sourceOnly
+  const mentionsEnabled=mentionsAvailable&&!capturePreparing&&!busy&&!draft.attempt&&!draft.pendingEdit
+  const mentionOpen=mentionsEnabled&&composerFocused&&!!mentionTrigger&&dismissedMention!==mentionKey
+  const dismissMention=()=>{setDismissedMention(mentionKey);setMentionInput(undefined)}
+  const mentionCandidates=useTeamMentionCandidates(current,accountKey,composerScope,mentionOpen,mentionTrigger?.query??'',dismissMention,mentionsAvailable)
+  const mentionSession=useMentionSuggestions(`${accountKey}:${conversation.key}:${mentionCandidates.pageKey}`,mentionOpen?mentionTrigger:undefined,mentionCandidates.candidates,mentionCandidates.loading)
+  const selectMention=(candidate:ArkmeMentionCandidate)=>{
+    if(!mentionTrigger||candidate.kind!=='member'||!mentionCandidates.canSelect(candidate))return
+    const inserted=insertArkmeComposerMentionToken(richDraft,{mentionRef:candidate.mentionRef},candidate.displayName,mentionTrigger.startIndex,mentionTrigger.endIndex)
+    if(!inserted)return
+    const serialized=serializeArkmeComposerDraft({...richDraft,...inserted})
+    if(serialized.text.length>20_000)return
+    updateText(serialized.text,teamMentions(serialized.mentions));dismissMention();editor.current?.focus()
+    setSelectionRequest({text:inserted.text,start:inserted.caretIndex,end:inserted.caretIndex})
+  }
   const personRecordsRevision = useMemo(() => JSON.stringify([timeline?.conversation.revision ?? conversation.revision,
     (timeline?.messages ?? []).map(message => [message.key,message.version,message.contentStatus,message.state])]), [timeline,conversation.revision])
   const visitorActions = useTeamVisitorActions({ conversation: current, accountKey,
@@ -1031,13 +1054,36 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           <button type="button" aria-label={tr('移除待发送文档')} disabled={draft.document.sending} onClick={() => { const next = { ...draftRef.current }; delete next.document; persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next) }}>×</button>
         </div>}
         {(!current.channel.enabled || current.blocked) && <p>{tr(current.blocked ? '此对话已被屏蔽，双方暂时不能发送或编辑消息' : '团队已暂停接收新消息')}</p>}
-        <div className="arkme-conversation-input-card"><ArkmeRichComposerInput ref={editor} className="arkme-conversation-textarea" key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={detail && !detail.forwardRecords ? tr('延展此快记...') : arkmeComposerPlaceholderText({kind:'team_conversation',recipient:current.side === 'team' ? 'person' : 'team',displayName:current.side === 'team' ? current.visitor?.nickname ?? '' : current.channel.name})} value={richDraft.text} mentions={richDraft.mentions} emojis={richDraft.emojis} maxLength={20_000 - ((editing?.text ?? draft.text).length - richDraft.text.length)}
+        <div className="arkme-conversation-input-card" style={{position:'relative'}}>
+        {detailReady&&mentionOpen&&<div style={{position:'absolute',left:0,right:0,bottom:'calc(100% + 8px)',zIndex:22,padding:6,border:`1px solid ${arkmeTheme.border}`,borderRadius:12,background:arkmeTheme.layer1,boxShadow:'0 8px 24px rgba(0,0,0,.15)'}}>
+          <ArkmeMentionSuggestions session={mentionSession} style={{}} loading={mentionCandidates.loading} error={mentionCandidates.error} onRetry={mentionCandidates.retry} onSelect={selectMention}
+            rowStyles={{row:{width:'100%',height:40,display:'flex',alignItems:'center',gap:8,border:0,padding:'4px 8px',background:'transparent',color:arkmeTheme.text,textAlign:'left',cursor:'pointer'},rowActive:{background:arkmeTheme.hover},avatar:{width:28,height:28},botAvatar:{width:28,height:28},text:{display:'flex',flexDirection:'column',minWidth:0},name:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontSize:13},secondary:{fontSize:11}}}/>
+          {(mentionCandidates.hasMore||mentionCandidates.hasPrevious)&&<div style={{display:'flex',justifyContent:'space-between',gap:8,fontSize:12}} onMouseDown={event=>event.preventDefault()}>
+            <span>{tr('筛选当前页成员')}</span>
+            {mentionCandidates.hasPrevious&&<button type="button" disabled={mentionCandidates.loading} onClick={mentionCandidates.first}>{tr('回到第一页')}</button>}
+            {mentionCandidates.hasMore&&<button type="button" aria-label={tr('下一页成员')} disabled={mentionCandidates.loading} onClick={mentionCandidates.next}>{tr('下一页成员')}</button>}
+          </div>}
+        </div>}
+        <ArkmeRichComposerInput ref={editor} className="arkme-conversation-textarea" key={editing ? editing.message.key : 'draft'} ariaLabel={tr(editing ? '修改消息内容' : '团队消息内容')} placeholder={detail && !detail.forwardRecords ? tr('延展此快记...') : arkmeComposerPlaceholderText({kind:'team_conversation',recipient:current.side === 'team' ? 'person' : 'team',displayName:current.side === 'team' ? current.visitor?.nickname ?? '' : current.channel.name})} value={richDraft.text} mentions={richDraft.mentions} emojis={richDraft.emojis} maxLength={20_000 - ((editing?.text ?? draft.text).length - richDraft.text.length)}
           disabled={capturePreparing || !!editing && (busy || !!draft.pendingEdit)}
           style={{ ...composerLayout.textarea, ...resize.editorStyle, background: 'transparent', color: arkmeTheme.text }}
-          selectionRequest={selectionRequest} onSelectionChange={(_text,start,end) => { editorSelection.current = {start,end} }}
-          onFocus={() => setComposerFocused(true)} onBlur={() => setComposerFocused(false)}
+          selectionRequest={selectionRequest} onSelectionChange={(text,start,end) => {
+            editorSelection.current = {start,end}
+            const trigger=arkmeComposerMentionTrigger(text,start,end)
+            const insideToken=trigger&&reconcileArkmeComposerMentions(richDraft.text,text,richDraft.mentions).some(mention=>trigger.startIndex>=mention.startIndex&&trigger.startIndex<mention.startIndex+mention.length)
+            setMentionInput(trigger&&!insideToken?{scope:composerScope,trigger}:undefined)
+            if(!trigger||JSON.stringify([trigger.startIndex,trigger.query])!==dismissedMention)setDismissedMention('')
+          }}
+          onFocus={() => {setComposerFocused(true);mentionCandidates.prepare()}} onBlur={() => setComposerFocused(false)}
           onTextChange={(text, emojis) => {const value=serializeArkmeComposerDraft({...richDraft,text,mentions:reconcileArkmeComposerMentions(richDraft.text,text,richDraft.mentions),emojis:emojis ?? reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)});updateText(value.text,teamMentions(value.mentions))}}
-          onKeyDown={event => { if (detailReady && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send(defaultReply) } }}
+          onKeyDown={event => {
+            if(event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return
+            if(detailReady&&mentionOpen){
+              if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismissMention();return}
+              if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();mentionSession.move(event.key==='ArrowDown'?1:-1);return}
+              if((event.key==='Enter'||event.key==='Tab')&&!event.shiftKey){event.preventDefault();if(mentionSession.activeCandidate)selectMention(mentionSession.activeCandidate);return}
+            }
+            if (detailReady && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send(defaultReply) } }}
           onPaste={event => {
             if (!detailReady || editing || busy || draft.attempt || !current.channel.enabled || current.blocked) return
             const files = arkmeClipboardFiles(event.clipboardData)

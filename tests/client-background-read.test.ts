@@ -153,3 +153,39 @@ it('never queues or coalesces mutations even if a caller mistakenly provides a b
     expect(provider).toHaveBeenCalledTimes(7)
   } finally { release(); await Promise.all(active) }
 })
+
+
+it.each(['image.read', 'team.app.image', 'world.interactions.list'] as const)('passes low Fetch priority only for explicitly background %s reads', async operation => {
+  provider.mockResolvedValue({})
+  const params = { reference: 'opaque' }
+  await callArkme(operation, params, undefined, background)
+  expect(provider).toHaveBeenCalledOnce()
+  expect(provider.mock.calls[0]![3]).toEqual({ priority: 'low' })
+  expect(provider.mock.calls[0]![1]).not.toHaveProperty('priority')
+})
+
+it.each(['team.app.timeline', 'team.app.preflight'] as const)('gives %s high Fetch priority without changing its signal or account binding', async operation => {
+  provider.mockResolvedValue({})
+  const signal = new AbortController().signal
+  await callArkme(operation, { conversationRef: 'conversation' }, signal)
+  await callArkme(operation, { conversationRef: 'conversation' }, signal, background)
+  expect(provider).toHaveBeenCalledTimes(2)
+  for (const args of provider.mock.calls) {
+    expect(args).toEqual([operation, { conversationRef: 'conversation', expectedAccountKey: 'test:4' }, signal, { priority: 'high' }])
+  }
+})
+
+it.each(['source.send-text', 'auth.logout', 'team.app.open', 'auth.status', 'unknown.operation'])('does not lower %s when a background hint is unsupported', async operation => {
+  provider.mockResolvedValue({})
+  await callArkme(operation as Parameters<typeof callArkme>[0], {}, undefined, background)
+  expect(provider).toHaveBeenCalledOnce()
+  expect(provider.mock.calls[0]![3]).toBeUndefined()
+})
+
+it('leaves ordinary reads unchanged and rejects stale Team scope before high-priority dispatch', async () => {
+  provider.mockResolvedValue({})
+  await callArkme('image.read', { imageRef: 'image' })
+  expect(provider).toHaveBeenCalledExactlyOnceWith('image.read', { imageRef: 'image' }, undefined)
+  await expect(callArkme('team.app.timeline', { expectedAccountKey: 'test:5' })).rejects.toMatchObject({ body: { code: 'team-account-changed' } })
+  expect(provider).toHaveBeenCalledOnce()
+})

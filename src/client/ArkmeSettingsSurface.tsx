@@ -5,6 +5,7 @@ import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.j
 import { ArkmeSettingsToggleRow } from './ArkmeSettingsToggleRow.js'
 import { ArkmeReactionHistoryLock } from './ArkmeReactionHistorySettings.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { useArkmeBrand } from './product-brand.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { CircleNotch } from '@phosphor-icons/react/CircleNotch'
@@ -739,7 +740,7 @@ export function arkmeNotificationPermissionLabel(permission: ArkmeDesktopNotific
 }
 
 export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 'general' | 'about' } = {}) {
-  useArkmeLocale()
+  const brand = useArkmeBrand()
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
@@ -1126,8 +1127,8 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
       {view === 'about' && <>
       <ArkmeAboutProduct />
       <SettingsGroup id="arkme-settings-about">
-        <SettingsRow title={tr("用户协议")} description={tr("查看 Arkme 用户协议")} href="https://www.arkme.ai/article/user-aggrement-v1.html" />
-        <SettingsRow title={tr("隐私条款")} description={tr("查看 Arkme 隐私条款")} href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
+        <SettingsRow title={tr("用户协议")} description={tr("查看 {v0} 用户协议", { v0: brand.name })} href={brand.userAgreementUrl} />
+        <SettingsRow title={tr("隐私条款")} description={tr("查看 {v0} 隐私条款", { v0: brand.name })} href={brand.privacyPolicyUrl} />
       </SettingsGroup>
       <ArkmeAboutDetails accountScope={authenticatedAccountKey} />
       </>}

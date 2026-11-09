@@ -1,10 +1,13 @@
 import { ArkmeRequestCoordinator } from '../request-coordinator.js'
 
-// This budget is only for optional built-in UI reads before they reach fetch.
+// Optional JSON reads and Team gallery images retain separate, bounded permits.
 // Host owns upstream rate limiting; local cached responses must not be throttled.
 const concurrencyOnly = { ratePerSecond: Number.MAX_SAFE_INTEGER, burst: Number.MAX_SAFE_INTEGER, maxQueued: 512 }
 export const backgroundUiReads = new ArkmeRequestCoordinator({
-  laneLimits: { 'background-read': { ...concurrencyOnly, maxConcurrent: 2 } },
+  laneLimits: {
+    'background-read': { ...concurrencyOnly, maxConcurrent: 2 },
+    image: { ...concurrencyOnly, maxConcurrent: 2 },
+  },
   defaultServiceLimit: { ...concurrencyOnly, maxConcurrent: 2 },
 })
 

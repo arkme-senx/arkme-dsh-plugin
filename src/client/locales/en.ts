@@ -915,6 +915,10 @@ GitHub 仓库（可选）|GitHub repository (optional)
 重试预览|Retry preview
 群成员|Group members
 正在读取群成员…|Loading group members…
+筛选当前页成员|Filter members on this page
+回到第一页|Back to first page
+下一页成员|Next page of members
+当前 Provider 不支持团队提及候选，请升级|This provider does not support Team mention candidates. Please update.
 ，点击重试|. Click to retry.
 暂无群成员|No group members
 已添加|Added
@@ -2073,8 +2077,8 @@ Arkme 账号|Arkme account
 返回快记详情|Back to note details
 返回相关快记列表|Back to related notes
 选择生成模型|Choose generation model
-查看 Arkme 用户协议|View Arkme terms of service
-查看 Arkme 隐私条款|View Arkme privacy policy
+查看 {v0} 用户协议|View {v0} terms of service
+查看 {v0} 隐私条款|View {v0} privacy policy
 返回 Arkme 会话列表|Back to Arkme conversations
 关闭 Arkme|Close Arkme
 关闭快记详情|Close note details
