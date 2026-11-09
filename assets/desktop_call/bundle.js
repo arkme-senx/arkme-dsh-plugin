@@ -46526,6 +46526,7 @@ function postLocalTerminalToWebHost(type, message) {
     message: safeString(message)
   });
   const posted = postToWebHostBridge(payload);
+  if (!posted && window.arkmeCallTransport) window.arkmeCallTransport.emit(payload);
   diagLog("local_terminal_web_host_hint", {
     type,
     posted,

@@ -187,19 +187,19 @@ export class OutgoingCallService {
         supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
         ?? supplement.pending_name ?? counterpart.visible_phone,
       ).trim()
-      const callerProfile = (await this.profile.refreshProfile()).profile
+      const [caller, publicProfiles, credentials] = await Promise.all([
+        this.profile.refreshProfileForSession(session),
+        this.profile.publicProfilesByUserIds([counterpartUserId], session, input.signal),
+        this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+          '/api/v1/trtc/credentials', {}, session, input.signal,
+        ),
+      ])
+      const callerProfile = caller.profile
       if (callerProfile === null) {
         throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料响应不完整', false, 502)
       }
-      const publicProfiles = await this.profile.publicProfilesByUserIds([counterpartUserId], session, input.signal)
       const peerProfile = publicProfiles.get(counterpartUserId)
       const displayName = detailDisplayName || peerProfile?.displayName || source.displayName || 'Arkme 用户'
-      const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
-        '/api/v1/trtc/credentials',
-        {},
-        session,
-        input.signal,
-      )
       const sdkAppId = numberValue(credentials.sdk_app_id)
       const trtcUserId = stringValue(credentials.user_id).trim()
       const userSig = stringValue(credentials.user_sig).trim()

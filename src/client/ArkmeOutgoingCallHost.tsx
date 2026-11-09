@@ -5,6 +5,7 @@ import type { ArkmeClientConfig } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { OutgoingCallRuntime } from './outgoing-call-runtime.js'
+import { connectNativeCallWindow, nativeCallWindow } from './native-call-window.js'
 import { arkmeAuthStore } from './auth-store.js'
 
 export function outgoingCallModalLayout(compact: boolean, fullscreen: boolean): CSSProperties {
@@ -50,10 +51,11 @@ export function ArkmeOutgoingCallHost() {
   const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
+    const disconnect = nativeCallWindow && connectNativeCallWindow(runtime, nativeCallWindow)
     runtime.configureReceiver(userId, scope)
     runtime.mount()
     const onMessage = (event: MessageEvent) => { runtime.handleWindowMessage(event) }
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && runtime.getSnapshot().visible) runtime.cancel() }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !nativeCallWindow && runtime.getSnapshot().visible) runtime.cancel() }
     window.addEventListener('message', onMessage)
     window.addEventListener('keydown', onKeyDown)
     void callArkme<ArkmeClientConfig>('auth.config')
@@ -63,9 +65,11 @@ export function ArkmeOutgoingCallHost() {
       window.removeEventListener('message', onMessage)
       window.removeEventListener('keydown', onKeyDown)
       runtime.dispose()
+      disconnect?.()
     }
   }, [runtime, userId, scope])
 
+  if (nativeCallWindow) return null
   if ((!snapshot.visible && !snapshot.retainFrame) || typeof document === 'undefined') return null
   const compact = snapshot.compact && !snapshot.fullscreen
   const retainedFrame = !snapshot.visible && snapshot.retainFrame

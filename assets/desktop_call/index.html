@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link id="call-engine-module" rel="modulepreload" href="./bundle.js?v=5b8cfcc2adcbe86809624c01caf3535982f2aae0613eb5dca93952dcf403fe64" />
     <title>Jotmo 通话</title>
     <style>
       html, body, #app { width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
@@ -15,7 +16,7 @@
         let context = {};
         try {
           const parsed = JSON.parse(window.name || "{}");
-          context = { callRequestId: String(parsed.callRequestId || "") };
+          context = { callRequestId: String(parsed.callRequestId || (window.arkmeCallTransport && new URLSearchParams(location.search).get("callRequestId")) || "") };
         } catch (_) {
           context = {};
         }
@@ -25,6 +26,10 @@
         window.JotmoDesktopCallBridge = {
           postMessage(message) {
             const payload = typeof message === "string" ? message : JSON.stringify(message);
+            if (window.arkmeCallTransport) {
+              window.arkmeCallTransport.emit(payload);
+              return;
+            }
             parent.postMessage({
               channel: "jotmo-desktop-call",
               callRequestId: context.callRequestId,
@@ -53,6 +58,14 @@
           },
         };
 
+        if (window.arkmeCallTransport) {
+          const drag = document.createElement("div");
+          drag.setAttribute("aria-hidden", "true");
+          drag.style.cssText = "position:fixed;top:0;left:0;right:56px;height:24px;z-index:10;-webkit-app-region:drag";
+          document.body.append(drag);
+          window.arkmeCallTransport.attach(command => window.__JOTMO_DESKTOP_CALL_HOST__.onHostMessage(command));
+        }
+
         const blockGlobal = (name) => {
           try {
             Object.defineProperty(globalThis, name, {
@@ -66,7 +79,7 @@
           }
         };
         ["process", "global", "module", "require"].forEach(blockGlobal);
-        const bundleUrl = `./bundle.js?callRequestId=${encodeURIComponent(context.callRequestId || "idle")}`;
+        const bundleUrl = document.getElementById("call-engine-module").href;
         import(bundleUrl).catch((error) => {
           window.__JOTMO_DESKTOP_CALL_HOST__.postFlutterMessage(JSON.stringify({
             type: "fatal_error",

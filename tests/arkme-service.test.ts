@@ -1315,13 +1315,13 @@ describe('ArkmeService', () => {
       callRequestId: 'request-1',
     })
 
-    expect(requests.map(item => item.url)).toEqual([
-      'https://chat.test/api/v1/chats/detail',
+    expect(requests[0]?.url).toBe('https://chat.test/api/v1/chats/detail')
+    expect(requests.at(-1)?.url).toBe('https://webrtc.test/api/v1/trtc/create-room')
+    expect(requests.slice(1, -1).map(item => item.url).sort()).toEqual([
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
       'https://auth.test/api/v1/auth/get-user-info',
-      'https://auth.test/api/v1/auth/get-public-users-by-ids',
-      'https://auth.test/api/v1/auth/get-public-users-by-ids',
       'https://webrtc.test/api/v1/trtc/credentials',
-      'https://webrtc.test/api/v1/trtc/create-room',
     ])
     expect(requests.at(-1)?.body).toMatchObject({
       chat_session_uid: 'chat-private-1',
