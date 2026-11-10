@@ -10,6 +10,7 @@ const capabilityTitles: Partial<Record<ArkmeCapabilitySetting['key'], string>> =
   goal_insight: '自动分析目标',
   event_insight: '自动整理事件',
   anniversary_insight: '自动分析纪念日',
+  record_entity: '自动识别快记实体',
   recording_voice_trigger: '录音口令记事',
 }
 
@@ -23,6 +24,7 @@ const capabilityGuidance: Record<ArkmeCapabilitySetting['key'], string> = {
   goal_insight: '「探索 → 目标」',
   event_insight: '「探索 → 事件」',
   anniversary_insight: '「探索 → 纪念日」',
+  record_entity: '从新快记中识别人物、地点等实体。',
   recording_voice_trigger: '录音日历「更多 → 语音触发」',
 }
 

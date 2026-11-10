@@ -71,7 +71,7 @@ export function ArkmePointsConsumption({ scope, revision }: { scope: string; rev
 function consumptionLabel(code: string): string {
   if (code === 'agent') return 'Agent'
   if (code === 'arkme') return 'DSH 对话'
-  const labels: Record<string, string> = { audio_entity: '录音实体识别', personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标', offline_context: '线下交流关联（自动）', offline_context_manual: '线下交流关联（主动操作）', recording_voice_trigger: '录音口令记事', event_insight: '事件整理', anniversary_insight: '纪念日自动分析', recording_summary: '录音总结与时间轴', recording_day_digest: '录音分析', insight_goal: '手动分析目标', insight_anniversary: '手动分析纪念日' }
+  const labels: Record<string, string> = { audio_entity: '录音实体识别', record_entity: '快记实体识别', personal_profile: '个人档案', record_thought: '阿森有想法（快记）', chat_thought: '阿森有想法（聊天）', arrangement_recognition: '安排', goal_insight: '目标', offline_context: '线下交流关联（自动）', offline_context_manual: '线下交流关联（主动操作）', recording_voice_trigger: '录音口令记事', event_insight: '事件整理', anniversary_insight: '纪念日自动分析', recording_summary: '录音总结与时间轴', recording_day_digest: '录音分析', insight_goal: '手动分析目标', insight_anniversary: '手动分析纪念日' }
   return labels[code] ?? 'AI 调用'
 }
 export function PointsConsumptionRows({ items, limit, label = consumptionLabel }: { items: ArkmeAiPointsConsumption[]; limit?: number; label?: (code: string) => string }) {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { CapabilityService, parseCapability } from '../../src/services/capability-service.js'
-import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 
 const row = () => ({ key: 'record_thought', title: '快记建议', enabled: false, version: 0, enabled_at: 0 })
 function fixture() {
@@ -8,7 +8,7 @@ function fixture() {
   const state = row()
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/query')) {
-      expect(body).toEqual({ catalog_version: 3 })
+      expect(body).toEqual({ catalog_version: 4 })
       return [{ ...state }]
     }
     if (state.version !== body.expected_version) throw new Error('conflict')
@@ -97,6 +97,14 @@ describe('automatic capability owner', () => {
     await expect(f.service.query('prod:1')).rejects.toMatchObject({ code: 'capability-account-changed' })
     expect(f.post).toHaveBeenCalledOnce()
   })
+  it('keeps existing switches available on older settings owners', async () => {
+    const f = fixture()
+    f.post.mockRejectedValueOnce(new ArkmePluginError('arkme-code-40001', 'unsupported catalog', false, 400))
+    f.post.mockResolvedValueOnce([row()])
+    expect((await f.service.query('prod:1')).settings.map(setting => setting.key)).toEqual(['record_thought'])
+    expect(f.post.mock.calls[1]?.[1]).toEqual({ catalog_version: 3 })
+  })
+
   it('never invents enabled state from incomplete or duplicate owner data', async () => {
     expect(() => parseCapability({ ...row(), enabled: true })).toThrow()
     expect(() => parseCapability({ ...row(), version: 1.1 })).toThrow()
@@ -106,7 +114,7 @@ describe('automatic capability owner', () => {
   })
 })
 
-it.each(['offline_context', 'recording_voice_trigger', 'event_insight', 'anniversary_insight'] as const)('%s uses the existing consent/version owner without activating personal profile', async key => {
+it.each(['offline_context', 'recording_voice_trigger', 'event_insight', 'anniversary_insight', 'record_entity'] as const)('%s uses the existing consent/version owner without activating personal profile', async key => {
   const state = { key, title: key === 'offline_context' ? '线下交流关联' : '录音语音触发', enabled: false, version: 0, enabled_at: 0 }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/query')) return [state]
