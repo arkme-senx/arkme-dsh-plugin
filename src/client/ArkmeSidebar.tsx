@@ -2358,6 +2358,15 @@ export function ArkmeSurface({
     if (hideSyncWindow) return []
     return syncChanges?.size ? rawItems.flatMap(item => projectCommittedChatMessage(item, syncChanges) ?? []) : rawItems
   }, [hideSyncWindow, rawItems, syncChanges])
+  useLayoutEffect(() => {
+    if (hideSyncWindow || timelineStateKey !== conversationKey || !syncChanges?.size) return
+    const itemsChanged = items.length !== rawItems.length || items.some((item, index) => item !== rawItems[index])
+    if (!itemsChanged && unifiedWindow === rawUnifiedWindow) return
+    setTimelineView(current => current.sourceKey === timelineStateKey
+      && current.items === rawItems && current.unified === rawUnifiedWindow
+      ? { ...current, items, unified: unifiedWindow }
+      : current)
+  }, [conversationKey, hideSyncWindow, items, rawItems, rawUnifiedWindow, syncChanges, timelineStateKey, unifiedWindow])
   const aiPolishSettingsRef = useRef(aiPolishSettings)
   const aiPolishNoticesRef = useRef(aiPolishNotices)
   aiPolishSettingsRef.current = aiPolishSettings

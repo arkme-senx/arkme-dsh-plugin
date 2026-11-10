@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { projectCommittedChatWindow, UnifiedTimelineLiveTail } from '../src/client/unified-timeline-live-tail.js'
+import { ArkmeChatTimelineDeltaStore } from '../src/client/chat-directory-store.js'
 import { ConversationReadAckQueue } from '../src/client/conversation-read-ack-queue.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import type { ArkmeTimelineItem } from '../src/types.js'
@@ -114,4 +115,13 @@ it('projects committed edits and removals in a historical window without changin
   expect(projected.events).toMatchObject([{ eventId: 'event-5', item: { sequence: 5, textContent: 'edited' } }, { eventId: 'event-7' }])
   expect(projected).toMatchObject({ newerHasMore: true, windowTokens: ['confirmed'], olderCursor: 'older' })
   expect(projectCommittedChatWindow(history, changes).events).toEqual(projected.events)
+})
+
+it('keeps an entire manifest page of removals available to a mounted window', () => {
+  const store = new ArkmeChatTimelineDeltaStore()
+  store.applySyncProjections([{ sourceKey: 'chat', changes: Array.from({ length: 1000 }, (_, i) => ({
+    itemKey: `relation-${i + 1}`, revision: i + 1, version: 1,
+  })) }])
+  const changes = store.getSnapshotForSource('chat').syncChanges!
+  expect(projectCommittedChatWindow(window([1, 1000, 1001]), changes).events.map(row => row.eventId)).toEqual(['event-1001'])
 })
