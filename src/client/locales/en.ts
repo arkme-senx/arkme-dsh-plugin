@@ -10,7 +10,10 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 未记录|Not recorded
 Harness 原始错误|Original Harness error
 已复制诊断|Diagnostics copied
-复制诊断给 Agent|Copy diagnostics for the agent
+复制诊断信息|Copy diagnostics
+发送给 Deepseek Harness 排查|Investigate with Deepseek Harness
+正在准备诊断信息…|Preparing diagnostics…
+诊断信息已填入，请确认后发送|Diagnostics are ready. Review and send.
 复制失败，可手动选择并复制详细原因。|Copy failed. Select and copy the diagnostic details manually.
 请根据以上诊断找到原插件项目。如果来源是安装包，请先定位源码。检查 Web 入口、激活函数和依赖服务的注册时机，复现后再修改。如果错误中出现 loading，它只表示检查当时的状态，请验证具体原因。修复并重新构建后，请告诉我何时点击「重新启用并重启」，以及用哪个实际操作验证插件功能。|Use these diagnostics to locate the original plugin project. If the source is a package archive, locate its source code first. Check the web entry point, activation function and when required services register. Reproduce the failure before editing. If the error says loading, verify the cause behind that observation. After fixing and rebuilding, tell me when to re-enable and restart, and how to verify the plugin works.
 可用模型|Available models
