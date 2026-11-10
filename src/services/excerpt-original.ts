@@ -34,7 +34,7 @@ export async function readExcerptOriginal(runtime:ServiceRuntime,raw:unknown,rea
       case 'codex_event':{
         const data=obj(await runtime.authenticatedTeamPost('/api/v1/team-codex/events/detail',{source_id:s.source_id,task_id:s.task_id,event_id:s.event_id},session,scoped,true))
         if(typeof data.text!=='string'||data.text_format!=='plain'&&data.text_format!=='markdown')throw unavailable()
-        return {title:'Codex 原文',text:quoteCanonicalText({textContent:data.text,textFormat:data.text_format}),textFormat:'plain',at:Number(data.at)||0}
+        return {title:'Codex 原文',text:data.text,textFormat:data.text_format,at:Number(data.at)||0}
       }
       case 'team_message':{
         const data=obj(await runtime.authenticatedTeamPost('/api/v1/team/conversations/timeline/locate',{conversation_uid:s.team_conversation_uid,message_uid:s.team_message_uid,side:s.side??'team',limit:1},session,scoped,true))
@@ -67,7 +67,10 @@ export function matchExcerptOriginal(original:RecordExcerptOriginal,quote:Select
  const a=quote.sourceSelection
  if(!a)return original
  const item={textContent:original.text,textFormat:original.textFormat??'plain'}
- const canonical=quoteCanonicalText(item),digest=createHash('sha256').update(quoteSourceContent(item)).digest('hex')
+ const canonical=quoteCanonicalText(item)
+ // Codex captures offsets and digest from its visible prose, including for Markdown.
+ const digestSource=quote.source?.kind==='codex_event'?{textContent:canonical,textFormat:'plain' as const}:item
+ const digest=createHash('sha256').update(quoteSourceContent(digestSource)).digest('hex')
  const boundary=(n:number)=>n>=0&&n<=canonical.length&&!(n>0&&n<canonical.length&&/[\uDC00-\uDFFF]/.test(canonical[n]!))
  if(digest!==a.source_digest||a.record_version!==undefined&&a.record_version!==original.recordVersion||!boundary(a.start)||!boundary(a.end)||canonical.slice(a.start,a.end)!==normalizeQuoteText(quote.text))throw new ArkmePluginError('excerpt-source-changed','原文版本或选区已变化；已发送摘录仍保留',false,409)
  return {...original,selection:{start:a.start,end:a.end}}

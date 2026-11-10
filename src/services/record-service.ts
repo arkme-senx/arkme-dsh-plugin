@@ -326,6 +326,10 @@ function normalizedRecordCaptureContext(input: ArkmeRecordCaptureContext | undef
   return Object.keys(normalized).length === 0 ? undefined : normalized
 }
 
+function isRecordCreateRejection(error: unknown): boolean {
+  return error instanceof ArkmeUpstreamResponseError && error.code === 'arkme-code-40001' && !error.writeOutcomeUnknown
+}
+
 export class RecordService {
   private readonly reeditEditors = new Map<string, { owner: RecordReeditOwnerSnapshot; view: ArkmeRecordReeditEditorSnapshot }>()
   private readonly submissions: RecordReeditSubmissions
@@ -1607,7 +1611,7 @@ export class RecordService {
   async createText(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number; signal?:AbortSignal } = {},
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
     if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
@@ -1631,6 +1635,7 @@ export class RecordService {
     const excerpt = readRecordExcerpt(options.excerpt,normalizedText)
     if(options.excerpt && !excerpt)throw new ArkmePluginError('self-note-invalid','摘录结构无效，未发送',false,400)
     const previous=(await this.runtime.stateStore.listPending(session.userId)).find(p=>p.recordUid===normalizedUid)
+    options.signal?.throwIfAborted()
     if(previous){
       const changedExcerptTime = excerpt !== undefined && options.sendAtMillis !== undefined
         && previous.sendAtMillis !== options.sendAtMillis
@@ -1659,7 +1664,7 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number; signal?:AbortSignal } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
       const result = await this.createText(recordUid, textContent, options)
@@ -1915,9 +1920,9 @@ export class RecordService {
         },
         session,
       ) } catch(error) {
-        // A Host/UI receipt may be lost after the durable outbox was acknowledged.
-        // Reconcile the exact immutable excerpt with its real owner; never recreate or overwrite it.
-        if(!pending.excerpt||!(error instanceof ArkmeUpstreamResponseError)||error.code!=='arkme-code-40001'||error.writeOutcomeUnknown)throw error
+        // Legacy notes lack a Record create anchor. Forwarded excerpts must
+        // use the owner's immutable command receipt, including its send time.
+        if (!pending.excerpt || pending.excerpt.kind === 'forward' || !isRecordCreateRejection(error)) throw error
         const existing=await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail',{record_uid:pending.recordUid},session,undefined,{bypassCache:true,cacheMs:0,lane:'interactive-read'})
         const core=objectValue(existing.record_core),excerpt=readRecordExcerpt(objectValue(core.content_payload).excerpt,stringValue(core.text_content))
         if(core.record_uid!==pending.recordUid||Number(core.owner_user_id)!==session.userId||Number(core.status)!==1||Number(core.content_access_state??existing.content_access_state)!==1||arkmePrivacyLockedRecord(existing)||core.text_content!==pending.textContent||JSON.stringify(excerpt)!==JSON.stringify(pending.excerpt))throw error
@@ -1934,7 +1939,11 @@ export class RecordService {
       await this.runtime.stateStore.markSynced(session.userId, pending.recordUid, result.status)
       return result
     } catch (error) {
-      await this.runtime.stateStore.markAttempt(session.userId, pending.recordUid, safeFailureMessage(error))
+      if (pending.excerpt?.kind === 'forward' && isRecordCreateRejection(error)) {
+        await this.runtime.stateStore.discardPending(session.userId, pending)
+      } else {
+        await this.runtime.stateStore.markAttempt(session.userId, pending.recordUid, safeFailureMessage(error))
+      }
       throw error
     }
   }

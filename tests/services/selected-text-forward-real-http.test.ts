@@ -36,6 +36,12 @@ it.skipIf(!dir)('sends four target kinds through the actual Host owner, Record/C
     expect(trace).toHaveLength(requests)
    }
    const first=await a.forwardSelectedText(command);expect(first.localState,JSON.stringify(trace)).toBe('synced');const retry=await a.forwardSelectedText(command);expect(retry.itemUid).toBe(first.itemUid)
+   if(kind==='send_to_self'){
+    const retrySourceRef=await (b as any).source.sealSourceRef(11,kind,owner,'隔离目标')
+    const retryCommand={...command,targetSourceRef:retrySourceRef}
+    await expect(b.forwardSelectedText({...retryCommand,sendAtMillis:command.sendAtMillis+1})).rejects.toMatchObject({code:'arkme-code-40001'})
+    expect((await b.forwardSelectedText(retryCommand)).itemUid).toBe(first.itemUid)
+   }
    if(kind==='send_to_self'||kind==='topic'){
     expect(first.status).toBe(1)
     const read=await b.personalRecordDetail(first.itemUid);expect(read.localSelfQuote).toMatchObject({kind:'forward',quote:{text:quote.text,sourceSelection:quote.sourceSelection},noteText:command.commentText,storage:'cloud'})

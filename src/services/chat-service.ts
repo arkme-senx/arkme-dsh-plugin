@@ -4694,11 +4694,12 @@ nextPublic = next
     const session=await this.runtime.requireSession()
     if(session.userId!==options.expectedUserId)throw new ArkmePluginError('selected-text-account-changed','账号已变化',false,409)
     const target=await this.source.openSourceRef(sourceRef,session.userId)
+    options.signal?.throwIfAborted()
     const own=text.slice(excerpt.note_start)
     const tags=arkmeHashTagContentPayload(own)
     const payload={payload_kind:1,schema_version:1,text_state:1,text_format:'plain',...(tags??{}),...(tags?.hash_tags?{hash_tags:(tags.hash_tags as {start_index:number}[]).map(t=>({...t,start_index:t.start_index+excerpt.note_start}))}:{}),excerpt}
     if(target.kind==='send_to_self'||target.kind==='default_category') {
-      const result=await this.record.createTextForConversation(options.recordUid,text,{expectedUserId:session.userId,excerpt,...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis})})
+      const result=await this.record.createTextForConversation(options.recordUid,text,{expectedUserId:session.userId,excerpt,...(options.signal?{signal:options.signal}:{}),...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis})})
       if(result.localState==='synced') {
         try { await this.realtime.invalidateRecordProjection({contentOnly:true}) } catch { /* Accepted owner truth survives a local refresh failure. */ }
       }
@@ -4706,7 +4707,8 @@ nextPublic = next
     }
     if(target.kind==='topic') {
       const senderSnapshot=await this.profile.recordSenderSnapshot?.(session)
-      const data=await this.record.createPersonalRecord<Record<string,unknown>>('/api/v1/topics/records/create',{topic_uid:target.ownerRef,record_uid:options.recordUid,template_kind:1,title:'',text_content:text,content_payload:payload,...(senderSnapshot?{sender_snapshot:senderSnapshot}:{}),send_at:options.sendAtMillis},session)
+      options.signal?.throwIfAborted()
+      const data=await this.record.createPersonalRecord<Record<string,unknown>>('/api/v1/topics/records/create',{topic_uid:target.ownerRef,record_uid:options.recordUid,template_kind:1,title:'',text_content:text,content_payload:payload,...(senderSnapshot?{sender_snapshot:senderSnapshot}:{}),send_at:options.sendAtMillis},session,options.signal)
       await this.record.syncCreatedRecordTags(stringValue(data.record_uid),own,session.userId,options.signal,undefined,excerpt.note_start)
       try { await this.realtime.invalidateRecordProjection({contentOnly:true}) } catch { /* Accepted owner truth survives a local refresh failure. */ }
       return {sourceRef,itemUid:stringValue(data.record_uid),status:numberValue(data.record_status),localState:'synced'}

@@ -5,6 +5,7 @@ import {matchExcerptOriginal} from '../../src/services/excerpt-original.js'
 import {createHash} from 'node:crypto'
 import type {ServiceRuntime} from '../../src/services/service.js'
 import {RecordService} from '../../src/services/record-service.js'
+import {ChatService} from '../../src/services/chat-service.js'
 const quote={version:1 as const,sourceLabel:'群聊',senderName:'原作者',sourceAtMillis:1000,text:'引用 😀\n'}
 const input={expectedAccountKey:'prod:11',recordUid:'019d8592-ebb4-7232-90f2-000000000001',relationUid:'019d8592-ebb4-7232-90f2-000000000002',sendAtMillis:1000,commentText:'',quote}
 function fixture(){const session={userId:11,refreshToken:'session'};return {config:{environment:'prod',maxTextLength:20000},requireSession:vi.fn(async()=>session),accountScopedSession:vi.fn(async()=>session)} as unknown as ServiceRuntime}
@@ -47,4 +48,21 @@ it('keeps a pending self excerpt bound to the original send time and exposes int
  expect(dispatch).not.toHaveBeenCalled()
  await expect(record.createTextForConversation(input.recordUid,pending.textContent,{excerpt:pending.excerpt,sendAtMillis:input.sendAtMillis})).resolves.toMatchObject({localState:'synced',recordUid:input.recordUid})
  expect(dispatch).toHaveBeenCalledOnce()
+})
+
+
+it('does not send a topic excerpt if cancelled while resolving the sender snapshot', async () => {
+ const controller = new AbortController()
+ const record = {createPersonalRecord: vi.fn()}
+ const runtime = fixture()
+ const chat = new ChatService(runtime,
+  {openSourceRef: async () => ({kind: 'topic', ownerRef: 'topic'})} as never,
+  {recordSenderSnapshot: async () => controller.abort()} as never,
+  {} as never, record as never, {} as never, {} as never, {} as never, {} as never)
+ const target = {kind: 'topic', ownerRef: 'topic'}
+ await expect(sendSelectedTextForward(runtime, input, target, (text, userId, excerpt) =>
+  chat.sendSourceExcerpt('topic-ref', text, excerpt, {
+   recordUid: input.recordUid, expectedUserId: userId, sendAtMillis: input.sendAtMillis, signal: controller.signal,
+  }), controller.signal)).rejects.toMatchObject({name: 'AbortError'})
+ expect(record.createPersonalRecord).not.toHaveBeenCalled()
 })

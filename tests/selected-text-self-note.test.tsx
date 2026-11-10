@@ -47,8 +47,7 @@ it.each(['私聊', '群聊', '发给自己', 'Arko', '团队消息', '录音转�
   await vi.waitFor(() => expect(present).toHaveBeenCalledOnce())
   expect((present.mock.calls[0] as unknown as any[])[0].preview.quote).toMatchObject({ text: '部分原文', sourceLabel: label, senderName: '原作者' })
   cleanup()
-  expect(callArkme).toHaveBeenCalledOnce()
-  expect(vi.mocked(callArkme).mock.calls[0]?.[0]).toBe('selected-text.prepare')
+  expect(callArkme).not.toHaveBeenCalled()
 })
 it('does not use stale quote content after the message text changes', () => {
   const saved = { quote, noteText: '旧笔记', header: selectedTextNoteHeader(quote), storage: 'local' as const }
@@ -88,4 +87,36 @@ it('closes original content and aborts its read when the saved occurrence or acc
   expect(vi.mocked(callArkme).mock.calls[1]?.[1]).toEqual({recordUid:'same',sourceRef:'source-2',messageActionRef:'occurrence-2'})
   await act(async()=>arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:22} as never))
   expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+
+
+it.each([
+  { text: '前文\n\n相同词\n相同词 https://example.com', textFormat: 'plain' as const },
+  { text: '前文\n\n**相同词**\n\n**相同词** [链接](https://example.com)', textFormat: 'markdown' as const },
+])('preserves paragraphs and links while highlighting the exact original range ($textFormat)', async original => {
+  class TestHighlight {
+    constructor(readonly range: Range) {}
+  }
+  const highlights = new Map<string, TestHighlight>()
+  vi.stubGlobal('Highlight', TestHighlight)
+  vi.stubGlobal('CSS', { highlights })
+  const canonical = quoteCanonicalText({ textContent: original.text, textFormat: original.textFormat })
+  const start = canonical.lastIndexOf('相同词')
+  vi.mocked(callArkme).mockResolvedValue({ title: '原文', ...original, selection: { start, end: start + 3 } })
+  await act(async () => root.render(<ExcerptOriginal recordUid="excerpt"/>))
+  await act(async () => host.querySelector('button')!.click())
+  const dialog = document.querySelector('[role="dialog"]')!
+  const link = dialog.querySelector('a')!
+  expect(link.href).toBe('https://example.com/')
+  const range = [...highlights.values()][0]?.range
+  expect(range?.toString()).toBe('相同词')
+  if (original.textFormat === 'plain') {
+    expect(link.parentElement!.textContent).toBe(original.text)
+    expect(range!.startOffset).toBe(original.text.lastIndexOf('相同词'))
+  } else {
+    expect(dialog.querySelectorAll('p')).toHaveLength(3)
+    expect(range!.startContainer.parentElement!.closest('strong')).toBe(dialog.querySelector('p:last-of-type strong'))
+  }
+  await act(async () => [...dialog.querySelectorAll('button')].find(button => button.textContent === '关闭')!.click())
+  expect(highlights.size).toBe(0)
 })

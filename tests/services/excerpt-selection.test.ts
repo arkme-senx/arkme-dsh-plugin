@@ -24,3 +24,17 @@ it('rebases a paged recording view by owner scalar offsets across emoji and whit
  expect(quoteCanonicalText({textContent:full}).slice(selection.start,selection.end)).toBe(selected)
  expect(()=>rebaseExcerptSelection(full,0,Array.from(fragment).length,quote)).toThrow()
 })
+
+
+it('checks a Codex visible-prose digest while returning the formatted original', () => {
+ const original={title:'Codex 原文',text:'前文\n\n**选段** [链接](https://example.com)',textFormat:'markdown' as const}
+ const visible=quoteCanonicalText({textContent:original.text,textFormat:original.textFormat})
+ const source={kind:'codex_event' as const,source_id:'source',task_id:'task',event_id:'event'}
+ const start=visible.indexOf('选段'),end=start+2
+ const quote={
+  version:1 as const,sourceLabel:'Codex',senderName:'作者',sourceAtMillis:1,text:'选段',source,
+  sourceSelection:{projection:'arkme-text-v1' as const,source_digest:createHash('sha256').update(quoteSourceContent({textContent:visible})).digest('hex'),start,end},
+ }
+ expect(matchExcerptOriginal(original,quote)).toEqual({...original,selection:{start,end}})
+ expect(()=>matchExcerptOriginal({...original,text:'变更 '+original.text},quote)).toThrow(/版本或选区/)
+})

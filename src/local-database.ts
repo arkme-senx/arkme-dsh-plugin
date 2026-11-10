@@ -892,6 +892,18 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     this.secureDatabaseFiles()
   }
 
+  async discardPending(userId: number, pending: ArkmePendingWrite): Promise<void> {
+    await this.ensureMigrated(userId)
+    const result = this.database.prepare(`
+      DELETE FROM record_cache
+      WHERE user_id = ? AND record_uid = ? AND sync_state IN ('pending', 'failed')
+        AND send_at_millis = ? AND text_content = ? AND content_payload_json IS ?
+    `).run(userId, pending.recordUid, pending.sendAtMillis, pending.textContent,
+      pending.excerpt ? JSON.stringify({excerpt: pending.excerpt}) : null)
+    if (Number(result.changes) > 0) this.bumpRevision(userId)
+    this.secureDatabaseFiles()
+  }
+
   async listExtensionReviewOperations(userId: number): Promise<ArkmeExtensionReviewOperation[]> {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
@@ -1099,7 +1111,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const result = this.database.prepare(`
       UPDATE record_cache
       SET sync_state = 'failed', attempts = attempts + 1, last_error = ?, updated_at_millis = ?
-      WHERE user_id = ? AND record_uid = ?
+      WHERE user_id = ? AND record_uid = ? AND sync_state IN ('pending', 'failed')
     `).run(error.slice(0, 500), Date.now(), userId, recordUid)
     if (Number(result.changes) > 0) this.bumpRevision(userId)
     this.secureDatabaseFiles()
@@ -1162,9 +1174,14 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const captureContextJson = pending.captureContext === undefined ? null : JSON.stringify(pending.captureContext)
     const contentPayloadJson = pending.excerpt ? JSON.stringify({excerpt:pending.excerpt}) : null
     if (pending.excerpt && !readRecordExcerpt(pending.excerpt,pending.textContent)) throw new Error('摘录待发送数据无效')
-    const existing = this.database.prepare('SELECT text_content,content_payload_json,sync_state FROM record_cache WHERE user_id=? AND record_uid=?').get(userId,pending.recordUid)
+    const existing = this.database.prepare('SELECT text_content,content_payload_json,sync_state,send_at_millis FROM record_cache WHERE user_id=? AND record_uid=?').get(userId,pending.recordUid)
+    // A receipt retry must leave a confirmed cache projection intact.
+    if (existing?.sync_state === 'synced' && pending.excerpt?.kind === 'forward') return
     if (existing && existing.sync_state !== 'synced' && (pending.excerpt || existing.content_payload_json)) {
-      if (existing.text_content !== pending.textContent || existing.content_payload_json !== contentPayloadJson) throw new Error('发送内容已冻结，请使用原内容重试')
+      if (existing.text_content !== pending.textContent || existing.content_payload_json !== contentPayloadJson
+        || (pending.excerpt?.kind === 'forward' && existing.send_at_millis !== pending.sendAtMillis)) {
+        throw new Error('发送内容已冻结，请使用原内容重试')
+      }
       return
     }
     this.database.prepare(`

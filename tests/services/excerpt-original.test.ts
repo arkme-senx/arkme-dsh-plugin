@@ -53,10 +53,10 @@ it('reads the current v4 DSH history through the same existing preference as ann
  await expect(readExcerptOriginal(runtime,source,readers)).resolves.toMatchObject({text:'当前来源'})
 })
 
-it.each(['plain','markdown'] as const)('reprojects Codex %s source to the same plain reading text used by selection',async text_format=>{
+it.each(['plain','markdown'] as const)('keeps the authorized Codex %s source intact for the reader',async text_format=>{
  const {runtime,readers}=fixture()
  vi.mocked(runtime.authenticatedTeamPost).mockResolvedValue({text:'**原文** 😀',text_format})
- await expect(readExcerptOriginal(runtime,{kind:'codex_event',source_id:'s',task_id:'t',event_id:'e'},readers)).resolves.toMatchObject({text:text_format==='plain'?'**原文** 😀':'原文 😀',textFormat:'plain'})
+ await expect(readExcerptOriginal(runtime,{kind:'codex_event',source_id:'s',task_id:'t',event_id:'e'},readers)).resolves.toMatchObject({text:'**原文** 😀',textFormat:text_format})
 })
 
 it.each(['source','final occurrence'])('closes the entire original read after an A-B-A account transition during %s',async phase=>{

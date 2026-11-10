@@ -1,4 +1,4 @@
-import {useLayoutEffect,useEffect,useRef,useState,useSyncExternalStore} from 'react'
+import {useLayoutEffect,useEffect,useId,useRef,useState,useSyncExternalStore} from 'react'
 import {createPortal} from 'react-dom'
 import type {RecordExcerptOriginal} from '../record-excerpt.js'
 import {tr,useArkmeLocale} from './locale.js'
@@ -7,6 +7,33 @@ import {arkmeAuthStore} from './auth-store.js'
 import {arkmeTheme} from './arkme-theme.js'
 import {quoteCanonicalText} from '../message-quote.js'
 import {ArkmeRichText} from './ArkmeRichText.js'
+import {ArkmeMarkdownBody} from './ArkmeMarkdownBody.js'
+import {quoteDomProjection,quoteDomRange} from './message-quote-selection.js'
+
+function ExcerptOriginalBody({original}:{original:RecordExcerptOriginal}) {
+ const body=useRef<HTMLDivElement>(null)
+ const name=`arkme-excerpt-original-${useId().replace(/[^a-z0-9]/gi,'')}`
+ useLayoutEffect(()=>{
+  const element=body.current,selection=original.selection
+  const {Highlight,CSS}=element?.ownerDocument.defaultView??{}
+  if(!element||!selection||!Highlight||!CSS?.highlights)return
+  const projection=quoteDomProjection(element)
+  const expected=quoteCanonicalText({textContent:original.text,textFormat:original.textFormat??'plain'})
+  if(projection.text!==expected)return
+  const range=quoteDomRange(element,projection,selection.start,selection.end)
+  if(!range)return
+  CSS.highlights.set(name,new Highlight(range))
+  return ()=>{CSS.highlights.delete(name)}
+ },[name,original])
+ return <>
+  {original.selection&&<style>{`::highlight(${name}) { background: ${arkmeTheme.warningSoft}; color: inherit; }`}</style>}
+  <div ref={body} style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',marginTop:16}}>
+   {original.textFormat==='markdown'
+    ? <ArkmeMarkdownBody text={original.text} highlightMentions={false}/>
+    : <ArkmeRichText text={original.text} linkLabelMode="raw"/>}
+  </div>
+ </>
+}
 
 /** Each open reads the saved locator and source ACL again. No offline fallback. */
 export function ExcerptOriginal({recordUid,sourceRef,messageActionRef}:{recordUid:string;sourceRef?:string;messageActionRef?:string}) {
@@ -35,6 +62,6 @@ export function ExcerptOriginal({recordUid,sourceRef,messageActionRef}:{recordUi
  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><strong>{result?.title??tr('引用原文')}</strong><button type="button" onClick={close}>{tr('关闭')}</button></div>
  {busy&&<p role="status">{tr('正在核验原文访问权限…')}</p>}
  {error&&<><p role="alert">{error}</p><p>{tr('已发送摘录仍保留，当前未打开原文。')}</p><button type="button" onClick={()=>void load()}>{tr('重新核验')}</button></>}
- {result&&<div style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',marginTop:16}}>{result.selection?(()=>{const text=quoteCanonicalText({textContent:result.text,textFormat:result.textFormat??'plain'});return <>{text.slice(0,result.selection.start)}<mark>{text.slice(result.selection.start,result.selection.end)}</mark>{text.slice(result.selection.end)}</>})():<ArkmeRichText text={result.text} linkLabelMode="raw"/>}</div>}
+ {result&&<ExcerptOriginalBody original={result}/>}
  </div></div>,document.body)}</>
 }
