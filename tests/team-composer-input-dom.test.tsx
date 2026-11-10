@@ -40,7 +40,7 @@ beforeEach(async () => {
     :op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}
     :op==='team.app.send.enqueue'?{...params,taskRef:'task',conversationKey:'key',createdAtMillis:Date.now(),state:'queued',files:[local],attempts:0,nextAttemptAt:0}:[])
   host=document.createElement('div');document.body.append(host);root=createRoot(host)
-  await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" onChanged={()=>{}} /></>))
+  await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" /></>))
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
 it.each([false,true])('source customer explicit contact shares directory restoration only on success (failure=%s)',async failure=>{
@@ -58,7 +58,7 @@ it.each([false,true])('source customer explicit contact shares directory restora
     return previous(op,params)
   })
   try{
-    await act(async()=>root.render(<TeamConversationPane conversation={sourceOnly} accountKey="test:7777" onChanged={()=>{}}/>))
+    await act(async()=>root.render(<TeamConversationPane conversation={sourceOnly} accountKey="test:7777"/>))
     expect(restore).not.toHaveBeenCalled()
     await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='改为私信此用户')!.click())
     expect(restore).toHaveBeenCalledTimes(failure?0:1)

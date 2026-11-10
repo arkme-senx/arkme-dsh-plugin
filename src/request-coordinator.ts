@@ -27,6 +27,7 @@ export interface ArkmeRequestCoordinatorOptions {
   maxConcurrent?: number
   maxQueued?: number
   defaultRouteLimit?: Partial<ArkmeRequestLimit>
+  routeLimits?: Readonly<Record<string, Partial<ArkmeRequestLimit>>>
   laneLimits?: Partial<Record<ArkmeRequestLane, Partial<ArkmeRequestLimit>>>
   serviceLimits?: Partial<Record<ArkmeRequestService, Partial<ArkmeRequestLimit>>>
   defaultServiceLimit?: Partial<ArkmeRequestLimit>
@@ -212,11 +213,13 @@ export class ArkmeRequestCoordinator {
   private readonly maxConcurrent: number
   private readonly maxQueued: number
   private readonly defaultRouteLimit: Partial<ArkmeRequestLimit> | undefined
+  private readonly routeLimitOverrides: ArkmeRequestCoordinatorOptions['routeLimits']
 
   constructor(options: ArkmeRequestCoordinatorOptions = {}) {
     this.maxConcurrent = positiveInteger(options.maxConcurrent, Number.MAX_SAFE_INTEGER)
     this.maxQueued = positiveInteger(options.maxQueued, Number.MAX_SAFE_INTEGER)
     this.defaultRouteLimit = options.defaultRouteLimit
+    this.routeLimitOverrides = options.routeLimits
     this.now = options.now ?? Date.now
     this.random = options.random ?? Math.random
     const now = this.now()
@@ -408,11 +411,15 @@ export class ArkmeRequestCoordinator {
     controllers.add(controller)
     this.activeControllersByScope.set(scope, controllers)
     let release: (() => void) | undefined
-    const routeKey = request.route === undefined ? undefined : `${scope}\u0000${request.route}`
-    let route = routeKey === undefined ? undefined : this.routeLimits.get(routeKey)
-    if (routeKey !== undefined && route === undefined) {
-      route = resolveLimit({ maxConcurrent: 1, ratePerSecond: 5, burst: 1, maxQueued: 128 }, this.defaultRouteLimit, this.now())
-      this.routeLimits.set(routeKey, route)
+    let route: ResolvedLimit | undefined
+    if (request.route !== undefined) {
+      const routeKey = `${scope}\u0000${request.route}`
+      route = this.routeLimits.get(routeKey)
+      if (route === undefined) {
+        route = resolveLimit({ maxConcurrent: 1, ratePerSecond: 5, burst: 1, maxQueued: 128 },
+          { ...this.defaultRouteLimit, ...this.routeLimitOverrides?.[request.route] }, this.now())
+        this.routeLimits.set(routeKey, route)
+      }
     }
     let attempts = 0
     let lastError: unknown

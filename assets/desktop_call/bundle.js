@@ -46393,6 +46393,7 @@ function buildOfflinePushInfo(payload = {}, mediaType = CALL_MEDIA.audio) {
   const extension = safeString(rawInfo.extension ?? rawInfo.ext) || safeString(payload.userData);
   const rawIOSPushType = Number(rawInfo.iOSPushType);
   return {
+    isDisablePush: rawInfo.isDisablePush === true,
     title,
     description,
     extension,
@@ -46525,6 +46526,7 @@ function postLocalTerminalToWebHost(type, message) {
     message: safeString(message)
   });
   const posted = postToWebHostBridge(payload);
+  if (!posted && window.arkmeCallTransport) window.arkmeCallTransport.emit(payload);
   diagLog("local_terminal_web_host_hint", {
     type,
     posted,

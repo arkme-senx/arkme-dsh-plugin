@@ -8,3 +8,14 @@ it('never exposes secret or retained-version fields to Web, even in an overbroad
 it('fences both account changes and same-account session replacement across in-flight requests',async()=>{const f=fixture();await expect(f.service.settings('production:12')).rejects.toMatchObject({code:'model-account-changed'});expect(f.post).not.toHaveBeenCalled();f.post.mockImplementation(async()=>{f.session.refreshToken='new-session';return data()});await expect(f.service.settings('production:11')).rejects.toMatchObject({code:'model-account-changed'})})
 it('keeps an explicit system default separate from global inheritance and excludes incompatible capabilities',async()=>{const f=fixture(),settings=await f.service.settings('production:11');expect(accountModelEffectiveRoute(settings,'dsh')).toBe('system-default');expect(accountModelEffectiveRoute(settings,'arko')).toBe(model.route);expect(accountModelSupportsScene(model,{key:'arrangement',name:'安排',group:'arrangement',biz_code:217,tools:false,images:false,json:true})).toBe(false)})
 it('never dispatches an already canceled save or query',async()=>{const f=fixture(),controller=new AbortController();controller.abort();await expect(f.service.settings('production:11',controller.signal)).rejects.toThrow();expect(f.post).not.toHaveBeenCalled()})
+
+
+it('uses the DSH tools and stream requirements even with an older settings payload', () => {
+  const scene = { key: 'dsh', name: 'DSH', group: 'dsh', biz_code: 0, tools: true, images: false, json: false }
+  const withoutStream = { ...model, capabilities: { ...model.capabilities, stream: false } }
+  const withoutTools = { ...model, capabilities: { ...model.capabilities, tools: false } }
+  expect(accountModelSupportsScene(withoutStream, scene)).toBe(false)
+  expect(accountModelSupportsScene(withoutTools, scene)).toBe(false)
+  expect(accountModelSupportsScene(model, scene)).toBe(true)
+  expect(accountModelSupportsScene(withoutStream, { ...scene, key: 'arko' })).toBe(true)
+})

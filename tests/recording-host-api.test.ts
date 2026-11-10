@@ -79,8 +79,8 @@ describe('recording UI-only host operations', () => {
 
     expect(recordingCalendar).toHaveBeenCalledWith(10, 20, controller.signal)
     expect(recordingDay).toHaveBeenCalledWith(10, controller.signal)
-    expect(recordingSummaryModelConfig).toHaveBeenCalledWith(controller.signal)
-    expect(setRecordingSummaryModelRoute).toHaveBeenCalledWith('dashscope/glm-5', controller.signal)
+    expect(recordingSummaryModelConfig).toHaveBeenCalledWith(controller.signal, 'summary')
+    expect(setRecordingSummaryModelRoute).toHaveBeenCalledWith('dashscope/glm-5', controller.signal, 'summary')
     expect(generateRecordingProjection).toHaveBeenCalledWith(10, 'summary', 'dashscope/glm-5', controller.signal)
   })
 

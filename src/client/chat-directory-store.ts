@@ -34,6 +34,7 @@ interface ArkmeChatDirectoryStoreOptions {
 
 export interface ArkmeChatDirectorySnapshot {
   projection?: ArkmeSourceList["projection"]
+  rootReadError?: string
   revision: number
   sources: ArkmeSourceItem[]
   baselineReady: boolean
@@ -442,6 +443,7 @@ export class ArkmeChatDirectoryStore {
   private localVisibility: NonNullable<ArkmeSourceList['projection']>['visibility'] = []
   private baselineReady = false
   private isRefreshing = false
+  private rootReadError: string | undefined
   private pendingMutations: ArkmeChatDirectoryMutation[] = []
   private readonly readWatermarks = new Map<string, ArkmeChatReadWatermark>()
   private readonly optimisticReadWatermarks = new Map<string, ArkmeChatReadWatermark>()
@@ -501,13 +503,14 @@ export class ArkmeChatDirectoryStore {
     this.refreshedAtMillis = 0
     this.baselineReady = false
     this.isRefreshing = false
+    this.rootReadError = undefined
     this.pendingMutations = []
     this.readWatermarks.clear()
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
     this.readingIntent = undefined
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing || hadLocalMetadata) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing || this.snapshot.rootReadError !== undefined || hadLocalMetadata) this.commit([])
   }
 
   /** Every first read/push in an account generation waits for the same instance check. */
@@ -538,6 +541,7 @@ export class ArkmeChatDirectoryStore {
     }
     if (options.silent !== true) this.setRefreshing(true)
     const generation = this.generation
+    const projectionRevision = this.projection?.revision ?? -1
     const pending = (async () => {
       if (this.prepareLoad !== undefined) await this.prepareRoot()
       if (generation !== this.generation) return [...this.snapshot.sources]
@@ -563,12 +567,19 @@ export class ArkmeChatDirectoryStore {
         cursor = page.nextCursor
       }
       this.refreshedAtMillis = this.now()
+      this.rootReadError = undefined
       this.publish(loaded)
       return [...this.snapshot.sources]
     })()
     this.refreshInFlight = pending
     try {
       return await pending
+    } catch (error) {
+      const recovered = this.projection?.phase === 'complete' && this.projection.revision > projectionRevision
+      if (generation === this.generation && this.isRefreshing && !recovered) {
+        this.rootReadError = (error instanceof Error ? error.message.trim() : '') || '会话目录读取失败'
+      }
+      throw error
     } finally {
       if (this.refreshInFlight === pending) {
         this.refreshInFlight = undefined
@@ -596,6 +607,7 @@ export class ArkmeChatDirectoryStore {
       else if (visibility.size !== count) this.commit(this.snapshot.sources)
       return
     }
+    if (projection.phase === 'complete') this.rootReadError = undefined
     const visibility = new Map((this.projection?.visibility ?? this.localVisibility).map(item => [`${item.entryKind}:${item.entryRef}`, item]))
     let visibilityChanged = false
     const previousByKey = new Map<string, ArkmeSourceItem>()
@@ -773,6 +785,7 @@ export class ArkmeChatDirectoryStore {
     }
     this.snapshot = {
       ...(this.projection === undefined ? {} : { projection: this.projection }),
+      ...(this.rootReadError === undefined ? {} : { rootReadError: this.rootReadError }),
       revision: this.snapshot.revision + 1,
       sources: sameSources ? this.snapshot.sources : [...sources],
       baselineReady: this.baselineReady,
@@ -1025,16 +1038,17 @@ export class ArkmeChatDirectoryStore {
     this.refreshedAtMillis = 0
     this.baselineReady = false
     this.isRefreshing = false
+    this.rootReadError = undefined
     this.pendingMutations = []
     this.readWatermarks.clear()
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
     this.sourceKeysByRef.clear()
-    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing) this.commit([])
+    if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing || this.snapshot.rootReadError !== undefined) this.commit([])
   }
 
   private setRefreshing(isRefreshing: boolean): void {
-    if (this.isRefreshing === isRefreshing) return
+    if (this.isRefreshing === isRefreshing && this.snapshot.rootReadError === this.rootReadError) return
     this.isRefreshing = isRefreshing
     this.commit(this.snapshot.sources)
   }

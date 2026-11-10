@@ -478,7 +478,7 @@ export function ContactDirectorySurface({
       onToggle={handleToggle}
       onRetry={section => { delete staleRestartsRef.current[section]; load(section, 'replace', true) }}
       onLoadMore={section => { load(section, 'append') }}
-      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { invalidateTeamMessages(accountKey) }} onSelect={handleSelect} />}
+      teamActions={<TeamDirectoryActions key={accountKey} accountKey={accountKey} onChanged={() => { invalidateTeamMessages(accountKey, false, {kind:'team.directory.changed'}) }} onSelect={handleSelect} />}
       onSelect={handleSelect}
       onOpenGroup={onOpenGroup}
       onOpenBot={onOpenBot}

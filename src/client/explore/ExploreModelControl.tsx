@@ -41,7 +41,7 @@ export function ExploreModelControl({ module, accountScope, onChanged }: {
       title={tr('当前分析模型')} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       <span>{label}</span><CaretDown size={13} aria-hidden/>
     </button>
-    {open && <UnifiedModelPicker scene="explore" scopeLabel={EXPLORE_LABELS[module]} models={models} currentId={currentId}
+    {open && <UnifiedModelPicker scene={({profile:'explore-profile',events:'explore-event',goals:'explore-goal',anniversaries:'explore-anniversary'} as const)[module]} scopeLabel={EXPLORE_LABELS[module]} models={models} currentId={currentId}
       ariaLabel={tr('选择{v0}分析模型', { v0: tr(EXPLORE_LABELS[module]) })} anchor={trigger.current ?? undefined} busy={saving}
       error={error || (data && !models.length ? tr('当前板块暂无可选模型') : '')} onRefresh={read} confirmLabel="应用并重新分析"
       confirmationDescription="切换模型可能启动后台分析并产生 AI 用量，已有结果会保留。" onClose={() => setOpen(false)}

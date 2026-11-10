@@ -41,6 +41,7 @@ export class TeamReceiptStore {
     return () => { this.owners--; queueMicrotask(() => { if (!this.owners) this.dispose() }) }
   }
   constructor(private accountKey: string) {}
+  get inactive() { return this.controller.signal.aborted }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   subscribeAccessLost = (listener: () => void) => { this.accessListeners.add(listener); return () => { this.accessListeners.delete(listener) } }
   subscribeReadState = (listener: (state: {lastSeq:number; myReadSeq:number; unread:number; notificationPolicy?:TeamNotificationPolicy}) => void) => { this.readListeners.add(listener); return () => { this.readListeners.delete(listener) } }

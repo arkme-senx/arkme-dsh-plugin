@@ -98,7 +98,8 @@ jobs:
           pnpm run typecheck
           pnpm run verify:call-assets
           pnpm run build
-          npm pack --dry-run --ignore-scripts
+          pack_directory=$(mktemp -d)
+          pnpm --config.verifyDepsBeforeRun=warn --config.ignore-scripts=true pack --pack-destination "$pack_directory"
       - name: 创建并合并版本拉取请求
         if: steps.source.outputs.release_sha == ''
         id: automatic
@@ -201,7 +202,7 @@ jobs:
         id: pack
         run: |
           pack_directory=$(mktemp -d)
-          npm pack --ignore-scripts --pack-destination "$pack_directory" >/dev/null
+          pnpm --config.verifyDepsBeforeRun=warn --config.ignore-scripts=true pack --pack-destination "$pack_directory" >/dev/null
           tarball_count=$(find "$pack_directory" -maxdepth 1 -type f -name '*.tgz' | wc -l | tr -d ' ')
           if [ "$tarball_count" -ne 1 ]; then
             echo "固定打包目录中应当恰好生成一个 .tgz，实际为 $tarball_count 个。" >&2
@@ -272,11 +273,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_CREATOR: ${{ github.event.pull_request.merged_by.login }}
         run: |
           payload=$(jq -n \
             --arg release_sha "$RELEASE_SHA" \
             --arg version "$VERSION" \
-            '{event_type: "arkme-plugin-release-prepared", client_payload: {release_sha: $release_sha, version: $version}}')
+            --arg build_creator "$BUILD_CREATOR" \
+            '{event_type: "arkme-plugin-release-prepared", client_payload: {release_sha: $release_sha, version: $version, build_creator: $build_creator}}')
           printf '%s' "$payload" | gh api --method POST "repos/${GH_REPO}/dispatches" --input -
 
   sync-dev:

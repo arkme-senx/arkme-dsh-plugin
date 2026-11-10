@@ -114,7 +114,9 @@ describe('OpenAI generation', () => {
   it('retries transient failures twice and falls back without leaking service errors', async () => {
     const fetchImpl = vi.fn(async () => new Response('secret error detail', { status: 429 }))
     const warn = vi.fn(), sleep = vi.fn()
-    expect((await generateNotes(evidence, { apiKey: 'key', model: 'model', fetchImpl, warn, sleep })).notes).toBe(fallbackNotes)
+    const result = await generateNotes(evidence, { apiKey: 'key', model: 'model', fetchImpl, warn, sleep })
+    expect(result).toMatchObject({ notes: fallbackNotes, failure: { stage: 'batch 1/1', detail: 'OpenAI HTTP 429' } })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('OpenAI HTTP 429'))
     expect(fetchImpl).toHaveBeenCalledTimes(3)
     expect(sleep).toHaveBeenCalledTimes(2)
     expect(JSON.stringify(warn.mock.calls)).not.toContain('secret error detail')
@@ -129,6 +131,26 @@ describe('OpenAI generation', () => {
     expect(result.notes).toBe('1. 新增聊天记录导出。')
     expect(fetchImpl).toHaveBeenCalledTimes(4) // 3 bounded chunks + merge
     expect(result.candidates).toHaveLength(3)
+  })
+
+  it('recovers validated candidates in release order when the merge returns no items', async () => {
+    const fix = { ...items[0], kind: 'fix', text: '修复转发入口。' }
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(modelResponse({ items: [fix] }))
+      .mockResolvedValueOnce(modelResponse({ items: [fix, ...items] }))
+      .mockResolvedValueOnce(modelResponse({ items: [] }))
+    const result = await generateNotes([{ ...evidence[0], text: 'x'.repeat(40000) }], { apiKey: 'key', model: 'model', fetchImpl })
+    expect(result).toMatchObject({ notes: '1. 新增聊天记录导出。\n2. 修复转发入口。', items: [...items, fix], reason: 'empty-merge-used-candidates' })
+    expect(result.candidates).toHaveLength(3)
+  })
+
+  it('identifies malformed model JSON at the merge stage without exposing its content', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(modelResponse({ items }))
+      .mockResolvedValueOnce(modelResponse({ items }))
+      .mockResolvedValueOnce(Response.json({ status: 'completed', output: [{ content: [{ type: 'output_text', text: 'private' }] }] }))
+    const result = await generateNotes([{ ...evidence[0], text: 'x'.repeat(40000) }], { apiKey: 'key', model: 'model', fetchImpl })
+    expect(result.failure).toEqual({ stage: 'merge', detail: 'Invalid model output JSON' })
   })
 
   it('uses the fallback for empty changes, missing config and incomplete responses', async () => {
@@ -160,6 +182,20 @@ describe('release range and durable recovery', () => {
     expect(second.notes).toBe(first.notes)
     expect(fetchImpl).toHaveBeenCalledOnce()
     expect(await readFile(join(project.directory, 'notes.txt'), 'utf8')).toBe(first.notes)
+  })
+
+  it('persists the failure detail on disk and on a retry after Backend creation', async () => {
+    const project = await fixture()
+    const backend = async (id: string) => id === runtimeVersionID('0.1.0')
+      ? { ...activated, id, version: '0.1.0', source_revision: project.baseSHA } : undefined
+    const options = { cwd: project.root, directory: project.directory, version, sourceSHA: project.sha, backend, github: async () => [],
+      modelOptions: { apiKey: 'key', model: 'model', fetchImpl: async () => new Response('private', { status: 403 }) } }
+    await prepareRelease(options)
+    const readFailure = async () => JSON.parse(await readFile(join(project.directory, 'record.json'), 'utf8')).failure
+    const expected = { stage: 'batch 1/1', detail: 'OpenAI HTTP 403' }
+    expect(await readFailure()).toEqual(expected)
+    await prepareRelease({ ...options, backend: async () => ({ ...activated, notes: fallbackNotes, source_revision: project.sha }) })
+    expect(await readFailure()).toEqual(expected)
   })
 
   it('rejects a conflicting Tag before generating or publishing anything', async () => {

@@ -1,6 +1,6 @@
 {
   "name": "@senguoyun/dsh-arkme",
-  "version": "3.0.57",
+  "version": "3.0.59",
   "description": "Arkme account, records, chat and interwoven-moments integration for DeepSeek Harness",
   "license": "UNLICENSED",
   "repository": {
@@ -89,10 +89,10 @@
     "updateNotice": {
       "schemaVersion": 1,
       "level": "normal",
-      "title": "Arkme 插件 3.0.57 更新",
-      "summary": "test(release): 修正导入操作契约扫描并恢复插件发布",
-      "publishedAt": "2026-11-06T09:58:38.018Z",
-      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.57"
+      "title": "Arkme 插件 3.0.59 更新",
+      "summary": "修复会话分页限流兼容并发布",
+      "publishedAt": "2026-11-07T11:56:44.934Z",
+      "releaseNotesUrl": "https://github.com/arkme-senx/arkme-dsh-plugin/releases/tag/v3.0.59"
     },
     "localHistory": {
       "version": 1
@@ -299,7 +299,8 @@
     "tsdown": "0.22.2",
     "typescript": "6.0.3",
     "vitest": "4.1.8",
-    "zustand": "4.5.7"
+    "zustand": "4.5.7",
+    "tar": "7.5.22"
   },
   "packageManager": "pnpm@11.7.0",
   "engines": {
@@ -309,5 +310,8 @@
     "@deepseek-ai/dsh-api-gateway": {
       "optional": true
     }
-  }
+  },
+  "bundledDependencies": [
+    "serialport"
+  ]
 }

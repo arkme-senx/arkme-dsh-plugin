@@ -5,6 +5,7 @@ import { ArkmeRequestQueueOverflowError } from '../src/request-coordinator.js'
 import { ReactionService } from '../src/services/reaction-service.js'
 import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
 import { ProfileService } from '../src/services/profile-service.js'
+import { LoginDevicesService } from '../src/services/login-devices-service.js'
 import {
   ArkmePluginError,
   ServiceRuntime,
@@ -47,6 +48,33 @@ function runtimeFixture(
 }
 
 afterEach(() => { vi.useRealTimers() })
+
+it('coalesces login device reads without caching and keeps the remaining observer alive', async () => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let transportSignal: AbortSignal | undefined
+  const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    transportSignal = init?.signal ?? undefined
+    await gate
+    return new Response(JSON.stringify({ code: 200, data: { items: [], total: 0, count_complete: false, next_client_id: 0, server_time: 1, capabilities: {} } }))
+  })
+  const runtime = runtimeFixture(fetcher, { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} })
+  try {
+    const devices = new LoginDevicesService(runtime), controller = new AbortController()
+    const input = { action: 'list' as const, accountScope: 'test:42' }
+    const first = devices.execute(input, controller.signal), second = devices.execute(input)
+    const cancelled = expect(first).rejects.toBeDefined()
+    await vi.waitFor(() => expect(runtime.requestStats()['interactive-read:auth']?.joined).toBe(1))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    controller.abort()
+    await cancelled
+    expect(transportSignal?.aborted).toBe(false)
+    release()
+    await expect(second).resolves.toMatchObject({ total: 0 })
+    await devices.execute(input)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  } finally { release(); runtime.dispose() }
+})
 
 describe('registered owner read recovery', () => {
   it.each([false, true])('finishes profile recovery before contact degradation and preserves known names: exhausted=%s', async exhausted => {
@@ -152,6 +180,28 @@ describe('registered owner read recovery', () => {
     await expect(result).resolves.toEqual({ items: [] })
     expect(fetcher).toHaveBeenCalledTimes(3)
     runtime.dispose()
+  })
+  it('paces foreground and background chat list reads through the same account budget', async () => {
+    vi.useFakeTimers()
+    const requests: Array<{ limit: number; at: number }> = []
+    const fetcher = vi.fn(async (_input, init) => {
+      requests.push({ limit: JSON.parse(String(init?.body)).limit, at: Date.now() })
+      return ok()
+    })
+    const runtime = runtimeFixture(fetcher)
+    const initial = Date.now()
+    try {
+      const reads = [
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 20 }, session, undefined, { lane: 'interactive-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 21 }, session, undefined, { lane: 'background-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 22 }, { ...session, userId: 43 }),
+      ]
+      await vi.advanceTimersByTimeAsync(249)
+      expect(requests).toEqual([{ limit: 20, at: initial }, { limit: 22, at: initial }])
+      await vi.advanceTimersByTimeAsync(1)
+      await Promise.all(reads)
+      expect(requests[2]).toEqual({ limit: 21, at: initial + 250 })
+    } finally { runtime.dispose() }
   })
   it.each([60_000, 2_147_483_647, 3_000_000_000])('owns exhausted recovery without timer overflow for retry hint %s', async retryAfter => {
     vi.useFakeTimers()
@@ -709,5 +759,27 @@ describe('speaker directory HTTP contract', () => {
     await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
       .rejects.toMatchObject({ code: `arkme-code-${code}` })
     runtime.dispose()
+  })
+})
+
+describe('device revocation response compatibility', () => {
+  it.each(['business-denied', 'unavailable', 'revoked', 'refresh-unavailable'] as const)('keeps extension auth and business errors separate: %s', async mode => {
+    let stored: ArkmeSessionCredentials | undefined = { userId: 42, accessToken: 'active', refreshToken: 'refresh' }
+    const removed = vi.fn(async () => { stored = undefined })
+    const calls: string[] = []
+    const runtime = new ServiceRuntime({ ...config, extensionPublishBaseUrl: 'https://extensions.test' }, {
+      async read() { return stored }, async write(value) { stored = value }, delete: removed,
+    }, {} as StateStore, vi.fn(async input => {
+      const url = String(input); calls.push(url)
+      if (url.includes('/auth/new-short')) return new Response('', { status: mode === 'refresh-unavailable' ? 503 : 403, headers: mode === 'refresh-unavailable' ? {} : { 'X-Jotmo-Auth-Failure': 'session_ended' } })
+      return new Response('', { status: mode === 'unavailable' ? 503 : 403, headers: mode === 'revoked' || mode === 'refresh-unavailable' ? { 'X-Jotmo-Auth-Failure': 'session_ended' } : {} })
+    }))
+    try {
+      await expect(runtime.extensionPost('/api/v1/extensions/mine', {})).rejects.toMatchObject({ code: mode === 'revoked' ? 'login-expired' : 'arkme-http-error' })
+      expect(calls.filter(url => url.includes('/auth/new-short'))).toHaveLength(mode === 'revoked' || mode === 'refresh-unavailable' ? 1 : 0)
+      expect(removed).toHaveBeenCalledTimes(mode === 'revoked' ? 1 : 0)
+      expect(stored === undefined).toBe(mode === 'revoked')
+      expect(calls.filter(url => url.includes('/extensions/mine'))).toHaveLength(1)
+    } finally { runtime.dispose() }
   })
 })

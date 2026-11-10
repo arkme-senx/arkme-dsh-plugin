@@ -1,4 +1,3 @@
-import { invalidateTeamMessages } from './team-messaging-events.js'
 import { useTeamHistoryPage } from './team-history-client.js'
 import { useEffect, useRef, useState } from 'react'
 import type { TeamConversation, TeamIdentity, TeamMessage } from '../team-app-contract.js'
@@ -30,7 +29,7 @@ export function TeamVisitorRecords({ conversation, accountKey, person, mode = 'o
     setLocating(true); setLocateError('')
     const signal = controller.current.signal
     try { await onLocate(message, signal); if (!signal.aborted) onClose() }
-    catch (caught) { if (!signal.aborted) { setLocateError(caught instanceof Error ? caught.message : tr('定位原消息失败')); invalidateTeamMessages(accountKey) } }
+    catch (caught) { if (!signal.aborted) setLocateError(caught instanceof Error ? caught.message : tr('定位原消息失败')) }
     finally { if (!signal.aborted) setLocating(false) }
   }
   const name = person?.nickname || conversation.visitor?.nickname || tr('用户')

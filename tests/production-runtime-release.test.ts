@@ -117,7 +117,7 @@ if (process.env.FIXTURE_RESERVED === 'true') console.log('123')
     expect((await git(project.checkout, 'tag', '--list')).stdout).toBe('')
   })
 
-  it('dispatches the prepared version and SHA without any npm publish output', async () => {
+  it.each(['release-maintainer', ''])('dispatches the prepared version, SHA and build creator %j without npm publish output', async (buildCreator) => {
     const project = await fixture()
     const payloadPath = join(project.root, 'dispatch.json')
     await writeFile(join(project.bin, 'gh'), `#!/usr/bin/env node
@@ -132,11 +132,11 @@ fs.writeFileSync(process.env.FIXTURE_DISPATCH_REQUEST, fs.readFileSync(0))
       cwd: project.checkout,
       env: {
         ...gitEnv, PATH: `${project.bin}:${process.env.PATH}`, GH_REPO: 'arkme-senx/arkme-dsh-plugin',
-        RELEASE_SHA: project.sha, VERSION: '0.1.46', FIXTURE_DISPATCH_REQUEST: payloadPath,
+        RELEASE_SHA: project.sha, VERSION: '0.1.46', BUILD_CREATOR: buildCreator, FIXTURE_DISPATCH_REQUEST: payloadPath,
       },
     })
     expect(JSON.parse(await readFile(payloadPath, 'utf8'))).toEqual({
-      event_type: 'arkme-plugin-release-prepared', client_payload: { release_sha: project.sha, version: '0.1.46' },
+      event_type: 'arkme-plugin-release-prepared', client_payload: { release_sha: project.sha, version: '0.1.46', build_creator: buildCreator },
     })
   })
 

@@ -5,6 +5,7 @@ import {afterEach,beforeEach,expect,it,vi} from 'vitest'
 import {ArkmeForwardTargetDialog} from '../src/client/ArkmeForwardTargetDialog.js'
 import {TeamForwardDialog} from '../src/client/TeamForwardDialog.js'
 import {TeamForwardAttempt} from '../src/client/team-forward-attempt.js'
+import {subscribeTeamMessageChanges} from '../src/client/team-messaging-events.js'
 import {UnifiedForwardDialog} from '../src/client/UnifiedForwardDialog.js'
 import {SourceForwardAttempt} from '../src/client/source-forward-attempt.js'
 import type {ArkmeSourceItem} from '../src/types.js'
@@ -191,4 +192,17 @@ it('opens a Team folder whose public identifier is self without entering persona
  await click(dialog().querySelector<HTMLElement>('[aria-label="展开团队 我的团队"]')!)
  expect(row('我的团队 · 访客')).toBeTruthy()
  expect(mocks.native).not.toHaveBeenCalled()
+})
+
+it('refreshes the team target after forwarding while retaining source reads',async()=>{
+ const sender=vi.fn().mockResolvedValue({itemUid:'sent',localState:'synced'})
+ const attempt=new TeamForwardAttempt('source-conversation',[{messageRef:'message',version:1}],sender)
+ const changed=vi.fn(),complete=vi.fn(),stop=subscribeTeamMessageChanges(changed)
+ try {
+  await act(async()=>root.render(<TeamForwardDialog accountKey="test:11" attempt={attempt} previewTitle="转发消息" previewSubtitle="正文" onClose={()=>{}} onComplete={complete}/>))
+  await click(row('客服'));await click(sendButton())
+  expect(sender.mock.calls[0]![0].target).toEqual({kind:'team',conversationRef:'team-ref-客服'})
+  expect(complete).toHaveBeenCalledOnce()
+  expect(changed).toHaveBeenCalledExactlyOnceWith('test:11',false,{kind:'team.message.published',conversationKeys:['客服']})
+ } finally { stop() }
 })

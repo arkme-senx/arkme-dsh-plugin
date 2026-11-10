@@ -50,7 +50,7 @@ function ScopedCard({ accountKey, jotmoId, teamRef,currentChannel, onClose }: Pr
   // Replace the card rather than stacking two modal focus traps. Cancelling
   // reveals the same card and leaves the underlying conversation/draft intact.
   if (creating) return <TeamMembershipForm key={accountKey} mode="create" accountKey={accountKey}
-    onClose={() => setCreating(false)} onChanged={() => { invalidateTeamMessages(accountKey); arkmeContactsTab.invalidateDirectoryCache() }}
+    onClose={() => setCreating(false)} onChanged={() => { invalidateTeamMessages(accountKey, false, {kind:'team.directory.changed'}); arkmeContactsTab.invalidateDirectoryCache() }}
     onSelect={selection => {
       arkmeContactsTab.activateAccount(accountKey)
       arkmeContactsTab.setSectionExpanded('teams', true)

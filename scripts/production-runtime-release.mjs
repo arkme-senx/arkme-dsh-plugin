@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { collectEvidence, fallbackNotes, generateNotes, git, summarizeNotes, validateNotes } from './runtime-release-notes.mjs'
+import { ReleaseNotesError, collectEvidence, fallbackNotes, generateNotes, git, summarizeNotes, validateNotes } from './runtime-release-notes.mjs'
 
 const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const shaPattern = /^[0-9a-f]{40}$/
@@ -32,13 +32,13 @@ export async function requestJSON(url, { token, method = 'GET', body, allow404 =
         headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })
-    } catch { if (attempt === 2) throw new Error('Release service transport failed') }
+    } catch { if (attempt === 2) throw new ReleaseNotesError('Release service transport failed') }
     if (response?.status === 404 && allow404) return undefined
     if (response?.ok) return response.json()
-    if (response && response.status !== 429 && response.status < 500) throw new Error(`Release service HTTP ${response.status}`)
+    if (response && response.status !== 429 && response.status < 500) throw new ReleaseNotesError(`Release service HTTP ${response.status}`)
     if (attempt < 2) await sleep(1000 * (attempt + 1))
   }
-  throw new Error('Release service unavailable after retries')
+  throw new ReleaseNotesError('Release service unavailable after retries')
 }
 
 export function services(env, fetchImpl = globalThis.fetch) {
@@ -75,11 +75,11 @@ export async function collectPullRequests({ cwd, baseSHA, sourceSHA, github }) {
   if (!baseSHA) return []
   // Restrict PR reads to merged commits in the actual range, not repository-wide recent PRs.
   const hashes = (await git(cwd, 'log', '--format=%H', `${baseSHA}..${sourceSHA}`)).split('\n').filter(Boolean)
-  if (hashes.length > 200) throw new Error('PR evidence exceeds commit limit')
+  if (hashes.length > 200) throw new ReleaseNotesError('PR evidence exceeds commit limit')
   const found = new Map()
   for (const sha of hashes) {
     const prs = await github(`commits/${sha}/pulls?per_page=100`)
-    if (prs.length === 100) throw new Error('PR evidence exceeds page limit')
+    if (prs.length === 100) throw new ReleaseNotesError('PR evidence exceeds page limit')
     for (const pr of prs) {
       if (pr.merged_at && pr.base?.ref === 'master') found.set(pr.number, { number: pr.number, title: pr.title, body: pr.body })
     }
@@ -115,18 +115,21 @@ export async function prepareRelease({ cwd, directory, version, sourceSHA, backe
   if (existing) {
     // Backend is the durable source of truth after version creation, including unknown publish outcomes.
     validateNotes(existing.notes)
-    record = { schemaVersion: 1, version, sourceSHA, base: record?.base ?? null, notes: existing.notes, reason: 'backend-recovery', items: record?.items ?? [] }
+    record = { ...record, schemaVersion: 1, version, sourceSHA, base: record?.base ?? null, notes: existing.notes, reason: 'backend-recovery', items: record?.items ?? [] }
     if (wasActivated(existing)) record.activation = { versionId: existing.id, versionCode: existing.last_activated_version_code }
   } else if (!record) {
     const base = await findBaseline({ cwd, version, sourceSHA, backend, legacyIDs })
     let generated
+    let stage = 'pull-request-evidence'
     try {
       const pullRequests = await collectPullRequests({ cwd, baseSHA: base?.sha, sourceSHA, github })
+      stage = 'product-diff-evidence'
       const evidence = await collectEvidence({ cwd, baseSHA: base?.sha, sourceSHA, pullRequests })
       generated = await generateNotes(evidence, { ...modelOptions, warn })
-    } catch {
-      warn('Change evidence unavailable or exceeds limits; using fallback')
-      generated = { notes: fallbackNotes, items: [], reason: 'evidence-unavailable' }
+    } catch (error) {
+      const failure = { stage, detail: error instanceof ReleaseNotesError ? error.message : 'Failed to read change evidence' }
+      warn(`Release notes ${stage}: ${failure.detail}; using fallback`)
+      generated = { notes: fallbackNotes, items: [], reason: 'evidence-unavailable', failure }
     }
     record = { schemaVersion: 1, version, sourceSHA, base, ...generated }
   }

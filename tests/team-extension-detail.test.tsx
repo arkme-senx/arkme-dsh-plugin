@@ -39,6 +39,22 @@ it('clears visible source and child snapshots as soon as access needs revalidati
  expect(host.textContent).toContain('无权访问')
 })
 
+it('cancels the outstanding detail read on confirmed conversation revocation and waits for retry', async () => {
+ await mount()
+ let finish!: (page: unknown) => void
+ read.mockImplementation(() => new Promise(resolve => {finish=resolve}))
+ await act(async () => invalidateTeamMessages('test:11',false,{kind:'team.message.published',conversationKeys:[conversation.key]}))
+ const count = read.mock.calls.length, pending = finish
+ await act(async () => invalidateTeamMessages('test:11',false,{kind:'team.access.revoked',conversationKeys:[conversation.key]}))
+ expect(read).toHaveBeenCalledTimes(count)
+ await act(async () => pending({message:source,items:[first],totalCount:1,hasMore:false,nextSeq:2,throughSeq:20}))
+ expect(host.textContent).not.toContain('原消息正文')
+ expect(host.textContent).not.toContain('第一条延展')
+ read.mockResolvedValue({message:source,items:[first],totalCount:1,hasMore:false,nextSeq:2,throughSeq:20})
+ await click('重试')
+ expect(host.textContent).toContain('原消息正文')
+})
+
 it('clears prior content when a later page is denied without a push event',async()=>{
  await mount();read.mockRejectedValue(new Error('无权访问'))
  await click('加载更多')
@@ -84,6 +100,22 @@ it('keeps the source and loaded replies mounted while a new occurrence refreshes
  expect(read.mock.calls.at(-1)?.[2]).toEqual({throughSeq:0})
  await act(async()=>complete({message:source,items:[first,second],totalCount:2,hasMore:false,nextSeq:3,throughSeq:21}))
  expect(host.querySelector('[data-team-extension-item=first]')).toBe(reply)
+})
+
+it('loads newly published extensions past the previous snapshot while retaining the open detail', async () => {
+ await mount()
+ const article = host.querySelector('[data-team-extension-item=first]')
+ let finish!: (page: unknown) => void
+ read.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+ const count = read.mock.calls.length
+ await act(async () => invalidateTeamMessages('test:11', false, {kind:'team.message.published', conversationKeys:['other']}))
+ expect(read).toHaveBeenCalledTimes(count)
+ await act(async () => invalidateTeamMessages('test:11', false, {kind:'team.message.published', conversationKeys:[conversation.key]}))
+ expect(read).toHaveBeenCalledTimes(count + 1)
+ expect(read.mock.lastCall?.[2].throughSeq ?? 0).toBe(0)
+ expect(host.querySelector('[data-team-extension-item=first]')).toBe(article)
+ await act(async () => finish({message:source, items:[first,second], totalCount:2, hasMore:false, nextSeq:3, throughSeq:21}))
+ expect(host.textContent).toContain('第二条延展')
 })
 
 it('invalidates one reply without hiding its independent source and sibling',async()=>{

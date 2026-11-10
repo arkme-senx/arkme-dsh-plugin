@@ -83,7 +83,7 @@ it('assigns each entry its own account, exact message version, URL and cancellab
 
 it.each(['pane','preview'] as const)('connects the %s to loaded neighbours, paging updates and isolated owner lifetimes',async mode=>{
  const render=(scope=conversation)=>mode==='pane'
-  ? <TeamConversationPane key={scope.key} accountKey="test:42" conversation={scope} onChanged={()=>{}}/>
+  ? <TeamConversationPane key={scope.key} accountKey="test:42" conversation={scope}/>
   : <TeamConversationPreview key={scope.key} accountKey="test:42" target={{kind:'conversation',conversation:scope}} onClose={()=>{}}/>
  mocks.call.mockImplementation(async(op:string,p:any)=>{if(op==='team.app.timeline')return p.conversationRef===conversation.ref?(p.beforeSeq?page([a]):page([b,c],true)): {...page([message('other',9)]),conversation:{...conversation,key:'other-conversation',ref:'other-conversation-ref'}};if(op==='team.app.read')return {};throw new Error(op)})
  await act(async()=>root.render(render()))

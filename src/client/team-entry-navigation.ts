@@ -82,7 +82,7 @@ export function openConfirmedTeamContact(account: string, conversation: TeamConv
   void teamDirectoryPreferences.restoreTarget(account, { kind: 'conversation', conversation }).then(() => {
     if (!teamDirectoryPreferences.canPresent(account, conversation)) openedTeamConversations.remove(account, conversation.key)
   }).catch(() => { /* Preference IO cannot hold navigation; the preference owner exposes its error. */ })
-  invalidateTeamMessages(account)
+  invalidateTeamMessages(account, false, {kind:'team.directory.changed',conversationKeys:[conversation.key]})
   openTeamMessages({ kind: 'conversation', conversation })
   return true
 }

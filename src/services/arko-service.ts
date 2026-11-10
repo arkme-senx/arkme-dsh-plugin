@@ -1,3 +1,4 @@
+import { executionMetadata } from '../model-execution.js'
 import { ArkoLifecycle } from './arko-lifecycle.js'
 import type { ArkmeArkoLifecycleCommand } from '../arko-lifecycle-contract.js'
 import { join } from 'node:path'
@@ -123,6 +124,7 @@ function arkoModelOptionFromData(value: unknown): ArkmeArkoModelOption {
     displayName,
     provider,
     description,
+    ...executionMetadata({...data, available:true}),
     costDescription: stringValue(data.cost_description),
     recommended: booleanValue(data.recommended),
     selected: booleanValue(data.selected),
@@ -559,17 +561,9 @@ export class ArkoService {
     if (hasContinuationRun !== hasContinuationMessage) {
       throw new ArkmePluginError('arko-continuation-invalid', 'Arko 续接参数不完整', false)
     }
-    let modelRouteKey = previous?.turn.modelRouteKey ?? options.modelRouteKey?.trim() ?? ''
+    const modelRouteKey = previous?.turn.modelRouteKey ?? options.modelRouteKey?.trim() ?? ''
     if (hasContinuationRun && modelRouteKey !== '') {
       throw new ArkmePluginError('arko-continuation-model-invalid', '继续 Arko 任务时不能切换模型', false)
-    }
-    if (!hasContinuationRun && modelRouteKey === '') {
-      try {
-        const catalog = await this.arkoModelCatalog(options.signal)
-        modelRouteKey = catalog.effectiveRouteKey
-      } catch {
-        // Model selection is an enhancement. The server still resolves the saved selection from its published catalog.
-      }
     }
     if (modelRouteKey !== '' && (modelRouteKey.length > 128 || !ARKO_MODEL_ROUTE_PATTERN.test(modelRouteKey))) {
       throw new ArkmePluginError('arko-model-route-invalid', '请选择有效的 Arko 模型', false)
@@ -586,7 +580,10 @@ export class ArkoService {
         throw new ArkmePluginError('arko-image-invalid', '请选择有效的图片附件', false)
       }
       // A cached UI capability must not allow an obsolete backend to accept text only.
-      const capability = hasContinuationRun ? { protocolVersion: 1 as const, maxImages: 9, maxImageBytes: 20*1024*1024, maxTotalBytes: 180*1024*1024, mimeTypes: [...ARKO_IMAGE_MIME_TYPES] } : (await this.arkoModelCatalog(options.signal)).options.find(option => option.routeKey === modelRouteKey)?.imageInput
+      const catalog = hasContinuationRun ? undefined : await this.arkoModelCatalog(options.signal)
+      const capability = catalog === undefined
+        ? { protocolVersion: 1 as const, maxImages: 9, maxImageBytes: 20*1024*1024, maxTotalBytes: 180*1024*1024, mimeTypes: [...ARKO_IMAGE_MIME_TYPES] }
+        : catalog.options.find(option => option.routeKey === (modelRouteKey || catalog.effectiveRouteKey))?.imageInput
       if (capability === undefined || this.images === undefined) {
         throw new ArkmePluginError('arko-images-unavailable', arkoImageInputError(undefined, [{ mimeType: '', size: 0, fileName: '' }])!, false)
       }
@@ -656,11 +653,15 @@ export class ArkoService {
       session,
       signal,
     ).catch(async error => {
-      if (!(error instanceof ArkmePluginError) || error.code !== 'arkme-code-1108') throw error
-      // A lifecycle rejection proves no admission. Remove this frozen intent;
-      // the caller preserves input and needs a new, explicit send after refresh.
+      if (!(error instanceof ArkmePluginError)
+        || !['arkme-code-1108', 'arkme-code-1202', 'arkme-code-1206', 'arkme-code-1207'].includes(error.code)) throw error
+      // These intake errors prove the turn was never accepted. Release its
+      // frozen request so that the user can change the model or attachments.
       await this.runtime.stateStore.acknowledgeArkoTurn(stored.turn.userId, stored.turn.clientTurnUid).catch(() => undefined)
-      throw new ArkmePluginError('arko-history-changed', '对话历史已更改，本次未发送；请刷新后重新发送', false, 409)
+      if (error.code === 'arkme-code-1108') {
+        throw new ArkmePluginError('arko-history-changed', '对话历史已更改，本次未发送；请刷新后重新发送', false, 409)
+      }
+      throw new ArkmePluginError(error.code, error.message, false)
     })
     const userMsgId = numberValue(accepted.user_msg_id)
     const assistantMsgId = numberValue(accepted.assistant_msg_id)

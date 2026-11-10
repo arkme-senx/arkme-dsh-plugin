@@ -888,15 +888,15 @@ describe('RecordingService', () => {
       defaultRouteKey: 'dashscope/qwen3-max', effectiveRouteKey: 'dashscope/glm-5',
       personalRouteKey: 'dashscope/glm-5',
       options: [
-        { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max' },
-        { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5' },
+        { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max', available:false, unavailableReason:'catalog_unavailable' },
+        { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5', available:false, unavailableReason:'catalog_unavailable' },
       ],
     })
     await expect(service.setRecordingSummaryModelRoute(' dashscope/qwen3-max ')).resolves.toEqual({
       effectiveRouteKey: 'dashscope/qwen3-max',
     })
     expect(requests.at(-1)).toEqual({
-      path: '/api/v1/audio-summary/model-config/set', body: { route_key: 'dashscope/qwen3-max' },
+      path: '/api/v1/audio-summary/model-config/set', body: { route_key: 'dashscope/qwen3-max', kind:2 },
     })
   })
 
@@ -2830,4 +2830,53 @@ describe('recording import admission boundary', () => {
       expect(await store.listRecordingImportJobs(42)).toEqual([])
     } finally { service.dispose() }
   })
+})
+
+it('requires the published model binding before recording generation reads material or writes', async()=>{
+ const post=vi.fn()
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId:11,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:post}
+ const service=new RecordingService(runtime as never,dependencies())
+ await expect(service.recordingAnalysis({action:'generate',kind:'summary',accountScope:'test:11',routeKey:'dashscope/chosen',dateStamp:0} as never)).rejects.toMatchObject({code:'recording-analysis-invalid'})
+ expect(post).not.toHaveBeenCalled()
+})
+
+it.each([{provider:'user-api',available:true,allowed:true},{provider:'user-api',available:false,allowed:false},{provider:'dashscope',available:true,allowed:false}])('accepts an unbound account route only when its scene owner confirms user-api execution ($provider/$available)', async ({provider,available,allowed}) => {
+ const routeKey='user-api/019a4c10-0000-7000-8000-000000000001'
+ const post=vi.fn(async()=>({allowed_route_options:[{route_key:routeKey,provider,available}]}))
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId:11,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:post}
+ const service=new RecordingService(runtime as never,dependencies())
+ const generate=vi.spyOn(service,'generateRecordingProjection').mockResolvedValue({state:'processing',items:[]})
+ try {
+  const request=service.recordingAnalysis({action:'generate',kind:'timeline',accountScope:'test:11',routeKey,dateStamp:0} as never)
+  if(allowed) {
+   await expect(request).resolves.toMatchObject({accountScope:'test:11',section:{state:'processing'}})
+   expect(generate).toHaveBeenCalledExactlyOnceWith(0,'timeline',routeKey,undefined,undefined,undefined,'test:11')
+  } else {
+   await expect(request).rejects.toMatchObject({code:'recording-analysis-invalid'})
+   expect(generate).not.toHaveBeenCalled()
+  }
+ } finally {service.dispose()}
+})
+
+it('rejects account-model generation when the account changes during the catalog read',async()=>{
+ let userId=11
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:async()=>{
+  userId=22
+  return {allowed_route_options:[{route_key:'user-api/owned',provider:'user-api'}]}
+ }}
+ const service=new RecordingService(runtime as never,dependencies())
+ const generate=vi.spyOn(service,'generateRecordingProjection')
+ try {
+  await expect(service.recordingAnalysis({action:'generate',kind:'summary',accountScope:'test:11',routeKey:'user-api/owned',dateStamp:0})).rejects.toMatchObject({code:'recording-analysis-account-changed'})
+  expect(generate).not.toHaveBeenCalled()
+ } finally {service.dispose()}
+})
+
+it.each(['select','generate'] as const)('recording %s never writes to an account that changed between owner and adapter',async action=>{
+ let reads=0
+ const post=vi.fn()
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId:++reads===1?11:22,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:post}
+ const service=new RecordingService(runtime as never,dependencies())
+ await expect(service.recordingAnalysis({action,kind:'summary',accountScope:'test:11',routeKey:'dashscope/chosen',binding:{catalogReleaseId:'11',offeringRevisionId:'22',publicModelCode:'chosen'},dateStamp:new Date(2026,10,4).getTime()})).rejects.toMatchObject({code:'recording-analysis-account-changed'})
+ expect(post).not.toHaveBeenCalled()
 })

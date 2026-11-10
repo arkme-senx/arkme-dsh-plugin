@@ -133,5 +133,6 @@ export interface TeamMessageChangeHint {
   conversationRevision?: number
   sequence?: number
   messageKey?: string
+  messageKeys?: readonly string[]
   conversationKeys?: string[]
 }

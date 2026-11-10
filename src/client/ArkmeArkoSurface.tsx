@@ -76,7 +76,7 @@ import { ArkmeComposerToolButton } from './ArkmeComposerToolButton.js'
 import { ArkmeComposerPlusIcon } from './ArkmeComposerToolIcon.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ArkoImageDraftStrip, ArkoMessageImages, useArkoImageDraft } from './ArkoImageAttachments.js'
-import { arkoImageInputError, ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
+import { ARKO_IMAGE_MIME_TYPES } from '../arko-image-contract.js'
 import { localFileBlock } from './file-send-tasks.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { arkmeEmojiPlainText, type ArkmeEmoji } from './arkme-emoji.js'
@@ -444,15 +444,29 @@ export function ArkmeArkoSurface() {
   const [session, setSession] = useState<ArkmeArkoSession | undefined>(initialTimeline.current?.session)
   useSyncExternalStore(arkoModelCache.subscribe, arkoModelCache.getRevision, arkoModelCache.getRevision)
   const catalog = arkoModelCache.get(accountKey)
-  useEffect(() => {
-    if (accountKey === undefined) return
-    let active = true
-    setModelError('')
-    void arkoModelCache.load(accountKey, () => callArkme<ArkmeArkoModelCatalog>('arko.models')).catch(caught => {
-      if (active && arkoModelCache.get(accountKey) === undefined) setModelError(errorMessage(caught))
-    })
-    return () => { active = false }
+  const hasModelCatalog = catalog !== undefined
+  const refreshModelCatalog = useCallback((refresh = false) => {
+    if (accountKey === undefined) return Promise.resolve()
+    return arkoModelCache.load(accountKey, async () => {
+      const value = await callArkme<ArkmeArkoModelCatalog>('arko.models')
+      const auth = arkmeAuthStore.getSnapshot().auth
+      if (auth?.status !== 'authenticated' || `${auth.environment}:${auth.userId}` !== accountKey) {
+        throw new Error('账号已切换，请重新选择模型')
+      }
+      return value
+    }, refresh)
   }, [accountKey])
+  useEffect(() => {
+    let active = true
+    const report = (caught: unknown) => {
+      if (active && arkoModelCache.get(accountKey) === undefined) setModelError(errorMessage(caught))
+    }
+    const refreshOnFocus = () => { void refreshModelCatalog(true).catch(report) }
+    setModelError('')
+    void refreshModelCatalog().catch(report)
+    window.addEventListener('focus', refreshOnFocus)
+    return () => { active = false; window.removeEventListener('focus', refreshOnFocus) }
+  }, [accountKey, hasModelCatalog, refreshModelCatalog])
   const [messages, setMessages] = useState<ArkoMessage[]>(initialTimeline.current?.messages ?? [])
   const interactionReadQueue = useRef<Promise<unknown>>(Promise.resolve())
   const readInteractions = useCallback((query: import('../arko-timeline-contract.js').ArkmeArkoInteractionQuery, signal: AbortSignal) => {
@@ -619,6 +633,7 @@ export function ArkmeArkoSurface() {
   const closeModelMenu = useCallback(() => setModelAnchor(null), [])
   const toggleModelMenu = (anchor: HTMLButtonElement) => {
     setModelError('')
+    if (!modelDialogOpen) void refreshModelCatalog(true).catch(caught => setModelError(errorMessage(caught)))
     setModelAnchor(current => current === anchor ? null : anchor)
   }
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
@@ -1255,9 +1270,6 @@ export function ArkmeArkoSurface() {
       return
     }
     if (attachments.length !== images.length) { setError('图片草稿无效，请重新添加图片'); return }
-    const imageError = latestContinuation(messages, session.sessionId) === undefined ? arkoImageInputError(catalog?.options.find(option => option.routeKey === catalog.effectiveRouteKey)?.imageInput, images) : undefined
-    if (imageError !== undefined) { setError(imageError); return }
-
     sendInFlightRef.current = true
     cancelWindowRead()
     setHistoryWindow(undefined); setLocationTarget(undefined); historyViewRef.current = false; followTailRef.current = true
@@ -1273,9 +1285,7 @@ export function ArkmeArkoSurface() {
         createdAtMillis,
         localUserMessageId: crypto.randomUUID(),
         localAssistantMessageId: crypto.randomUUID(),
-        ...(continuation === undefined ? {
-          ...(catalog === undefined ? {} : { modelRouteKey: catalog.effectiveRouteKey }),
-        } : {
+        ...(continuation === undefined ? {} : {
           replyToRunUid: continuation.runUid,
           replyToAssistantMsgId: continuation.assistantMsgId,
         }),
@@ -1307,7 +1317,7 @@ export function ArkmeArkoSurface() {
     } finally {
       sendInFlightRef.current = false
     }
-  }, [cancelWindowRead, catalog, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
+  }, [cancelWindowRead, composerDraftKey, messages, profileUserId, scrollToBottom, sendDisabled, session, submitTurn])
 
   const selectModel = useCallback(async (routeKey: string) => {
     if (selectingModel || accountKey === undefined) return false

@@ -124,6 +124,12 @@ export class ArkmeAccountSessionOwner {
 
   ready(): boolean { return this.readyIdentity !== undefined }
 
+  /** Capture the attested account before IO; never reread credentials after a switch. */
+  readyAccountUserId(): number | undefined {
+    return this.readyIdentity?.startsWith('account:') ? Number(this.readyIdentity.slice('account:'.length)) : undefined
+  }
+
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
     listener()
