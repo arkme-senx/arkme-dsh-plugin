@@ -7,7 +7,7 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { createHash, randomUUID } from 'node:crypto'
-import { accountModelSupportsDsh, type AccountModel, type AccountModelSettings } from './account-models.js'
+import { accountModelSupportsDsh, accountModelDshIssues, type AccountModel, type AccountModelSettings } from './account-models.js'
 import { readSessionEvents } from './dsh-session-events.js'
 import { turnOperationId } from './managed-ai/operation.js'
 import type { ArkmeService } from './arkme-service.js'
@@ -35,7 +35,6 @@ export class AccountModelAdapter extends LlmAdapter {
     const scope = await this.owner.currentScope(), data = await this.owner.accountModels(scope, signal)
     const model = data.models.find(model => model.route === id && model.execution === 'cloud')
     if (!model || !data.enabled || model.disabled) throw new LlmError('账号模型不可用，请到即我设置检查绑定', 'MODEL_UNAVAILABLE')
-    if (!accountModelSupportsDsh(model)) throw new LlmError('DSH 对话需要模型支持工具调用和流式输出，请在使用偏好中选择支持这两项能力的模型', 'MODEL_UNAVAILABLE')
     return { model, scope }
   }
   async resolveModel(_provider: string, id: string, signal?: AbortSignal): Promise<LlmResolvedModelInfo> { return info((await this.selected(id, signal)).model) }
@@ -78,9 +77,12 @@ export class AccountModelAdapter extends LlmAdapter {
     let model = this.turns.get(key)
     if (!model) {
       if (this.turns.size >= 512) throw new LlmError('模型任务快照已达本机上限，请重启 Host 后继续新任务', 'MODEL_LIMIT')
+      // New turns validate the current configuration; continuing tool steps
+      // use the already frozen version even after a capability edit.
+      const issues = accountModelDshIssues(current)
+      if (issues.length) throw new LlmError(`DSH 对话：${issues.join('、')}。请在使用偏好中选择其他模型`, 'MODEL_UNAVAILABLE')
       model = structuredClone(current); this.turns.set(key,model)
     }
-    if (!model.capabilities.stream) throw new LlmError('该模型不支持流式对话', 'MODEL_UNAVAILABLE')
     const prepared = await this.delegate(model,token,operation,options.signal)
     yield* prepared.stream({...options,maxTokens:Math.min(options.maxTokens ?? model.capabilities.output_tokens,model.capabilities.output_tokens)})
   }

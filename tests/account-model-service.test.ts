@@ -65,15 +65,12 @@ const sharedScenes = [
 const sharedPreferences = { default_route: model.route, scenes: { dsh: model.route, official: 'system-default' }, points_fallback: false }
 const saveInput = () => ({ ...model, expected_revision: 1, api_key: '', connector_id: '', host_provider: '' })
 
-it('reports all newly affected functions for a shared model, including explicit and inherited bindings', async () => {
+it('saves capabilities without blocking on existing business bindings or adding a settings read', async () => {
   const f = fixture()
   f.post.mockResolvedValue({ ...data(), scenes: sharedScenes, preferences: sharedPreferences } as never)
-  await expect(f.service.save('production:11', { ...saveInput(), capabilities: { ...model.capabilities, tools: false } })).rejects.toMatchObject({
-    code: 'model-capability-mismatch',
-    message: '此次能力修改会影响：DSH 对话、Arko 对话。请保留所需能力，或在「使用偏好」中为这些功能更换模型。',
-  })
-  expect(f.post).toHaveBeenCalledTimes(1)
-  expect(f.post.mock.calls[0]![0]).toBe('/api/v1/user-models/settings/query')
+  const input = { ...saveInput(), capabilities: { ...model.capabilities, tools: false } }
+  await f.service.save('production:11', input)
+  expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/v1/user-models/settings/save', input, f.session, undefined)
 })
 
 it('allows the same model to remain selected by multiple functions when capabilities still satisfy them', async () => {
@@ -84,13 +81,32 @@ it('allows the same model to remain selected by multiple functions when capabili
   expect(f.post).toHaveBeenLastCalledWith('/api/v1/user-models/settings/save', input, f.session, undefined)
 })
 
-it('reports every incompatible changed preference without including official overrides or unchanged effective choices', async () => {
+it('reports exact missing requirements for all applied account choices, including unchanged bindings', async () => {
   const f = fixture()
   const plain = { ...model, capabilities: { ...model.capabilities, tools: false } }
   f.post.mockResolvedValue({ ...data(), models: [plain], scenes: sharedScenes, preferences: { default_route: 'system-default', scenes: { images: model.route }, points_fallback: false } } as never)
   await expect(f.service.preferences('production:11', 1, { ...sharedPreferences, scenes: { ...sharedPreferences.scenes, images: model.route } })).rejects.toMatchObject({
     code: 'model-capability-mismatch',
-    message: '当前模型选择不满足以下功能的要求：DSH 对话、Arko 对话。请为这些功能选择合适的模型。',
+    message: '暂时无法应用：DSH 对话：缺少工具调用；Arko 对话：缺少工具调用；已有图片限制的场景：缺少图片。请为这些功能选择其他模型。',
   })
   expect(f.post).toHaveBeenCalledTimes(1)
+})
+
+it('preserves owner-provided recording requirements and blocks only preference application', async () => {
+  const f = fixture()
+  const scene = { key: 'recording-summary', name: '录音日总结', group: 'recording', biz_code: 1, tools: false, images: false, json: false, min_output_tokens: 512, min_input_tokens: 513, secret: 'never-leak' }
+  const own = { ...model, capabilities: { ...model.capabilities, output_tokens: 128 } }
+  f.post.mockResolvedValue({ ...data(), models: [own], scenes: [scene] } as never)
+  const settings = await f.service.settings('production:11')
+  expect(settings.scenes[0]).toMatchObject({ min_output_tokens: 512, min_input_tokens: 513 })
+  expect(JSON.stringify(settings)).not.toContain('never-leak')
+  await expect(f.service.preferences('production:11', 1, sharedPreferences)).rejects.toMatchObject({ message: '暂时无法应用：录音日总结：输出上限需至少 512 Token。请为这些功能选择其他模型。' })
+  expect(accountModelSupportsScene({ ...own, capabilities: { ...own.capabilities, context_tokens: 1024, output_tokens: 512 } }, scene)).toBe(false)
+  expect(accountModelSupportsScene({ ...own, capabilities: { ...own.capabilities, context_tokens: 1025, output_tokens: 512 } }, scene)).toBe(true)
+})
+
+it('rejects malformed scene limits instead of silently dropping admission requirements', async () => {
+  const f = fixture()
+  f.post.mockResolvedValue({ ...data(), scenes: [{ ...sharedScenes[0], min_output_tokens: '512' }] } as never)
+  await expect(f.service.settings('production:11')).rejects.toMatchObject({ code: 'model-settings-invalid' })
 })

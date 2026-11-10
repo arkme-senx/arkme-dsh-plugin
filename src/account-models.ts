@@ -6,7 +6,7 @@ export interface AccountModel {
   capabilities: AccountModelCapabilities
 }
 export interface AccountModelPreferences { default_route: string; scenes: Record<string, string>; points_fallback: false }
-export interface AccountModelScene { key: string; name: string; group: string; biz_code: number; tools: boolean; images: boolean; json: boolean; stream?: boolean }
+export interface AccountModelScene { key: string; name: string; group: string; biz_code: number; tools: boolean; images: boolean; json: boolean; stream?: boolean; min_output_tokens?: number; min_input_tokens?: number }
 export interface AccountModelSettings {
   accountScope: string; revision: number; enabled: boolean; models: AccountModel[]; preferences: AccountModelPreferences
   connectors: { uid: string; name: string; revoked: boolean }[]; scenes: AccountModelScene[]
@@ -26,19 +26,47 @@ export interface ModelUsageCall { event_uid: string; operation_uid: string; crea
 export interface ModelUsagePage { accountScope: string; start: string; end: string; grain: string; before: number; retention_days: number; earliest_at: number; totals: ModelUsageTotals; timeline: ModelUsageGroup[]; scenes: ModelUsageGroup[]; models: ModelUsageGroup[]; operations: ModelUsageOperation[]; calls: ModelUsageCall[]; next_cursor?: string }
 const dshModelRequirements = { tools: true, stream: true, images: false, json: false }
 
-type ModelRequirements = Pick<AccountModelScene, 'tools' | 'stream' | 'images' | 'json'>
+type ModelRequirements = Pick<AccountModelScene, 'tools' | 'stream' | 'images' | 'json' | 'min_output_tokens' | 'min_input_tokens'>
+type ModelCapabilityView = Pick<AccountModel, 'capabilities'> & { disabled?: boolean }
+const capabilityLabels = { text: '文本', tools: '工具调用', stream: '流式输出', images: '图片', json: 'JSON 输出' } as const
 
-function supports(model: AccountModel, requirements: ModelRequirements): boolean {
+function requirements(scene: AccountModelScene): ModelRequirements {
+  return scene.key === 'dsh' ? { ...scene, tools: true, stream: true } : scene
+}
+
+function missingRequirements(model: ModelCapabilityView, required: ModelRequirements): string[] {
+  if (model.disabled) return ['模型已停用']
   const c = model.capabilities
-  return !model.disabled && c.text && (!requirements.tools || c.tools) && (!requirements.stream || c.stream)
-    && (!requirements.images || c.images) && (!requirements.json || c.json)
+  const missing: string[] = []
+  for (const key of Object.keys(capabilityLabels) as (keyof typeof capabilityLabels)[]) {
+    if ((key === 'text' || required[key]) && !c[key]) missing.push(`缺少${capabilityLabels[key]}`)
+  }
+  if (required.min_output_tokens && c.output_tokens < required.min_output_tokens) missing.push(`输出上限需至少 ${required.min_output_tokens} Token`)
+  if (required.min_input_tokens && c.context_tokens - c.output_tokens < required.min_input_tokens) missing.push(`上下文上限减去输出上限需至少 ${required.min_input_tokens} Token`)
+  return missing
 }
 
-export function accountModelSupportsScene(model: AccountModel, scene: AccountModelScene): boolean {
-  return supports(model, scene.key === 'dsh' ? { ...scene, tools: dshModelRequirements.tools, stream: dshModelRequirements.stream } : scene)
+export function accountModelSceneIssues(model: ModelCapabilityView, scene: AccountModelScene): string[] {
+  return missingRequirements(model, requirements(scene))
 }
 
+export function accountModelSceneRequirements(scene: AccountModelScene): string {
+  const required = requirements(scene)
+  const labels: string[] = ['文本']
+  for (const key of ['tools', 'stream', 'images', 'json'] as const) if (required[key]) labels.push(capabilityLabels[key])
+  if (required.min_output_tokens) labels.push(`输出上限至少 ${required.min_output_tokens} Token`)
+  if (required.min_input_tokens) labels.push(`上下文上限减去输出上限至少 ${required.min_input_tokens} Token`)
+  return labels.join('、')
+}
+
+export function accountModelSupportsScene(model: ModelCapabilityView, scene: AccountModelScene): boolean {
+  return accountModelSceneIssues(model, scene).length === 0
+}
+
+export function accountModelDshIssues(model: AccountModel): string[] {
+  return missingRequirements(model, dshModelRequirements)
+}
 export function accountModelSupportsDsh(model: AccountModel): boolean {
-  return supports(model, dshModelRequirements)
+  return accountModelDshIssues(model).length === 0
 }
 export function accountModelEffectiveRoute(settings: AccountModelSettings, scene: string): string { return settings.preferences.scenes[scene] || settings.preferences.default_route || 'system-default' }
