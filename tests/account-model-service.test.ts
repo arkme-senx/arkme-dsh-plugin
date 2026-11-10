@@ -54,3 +54,43 @@ it('saves official preferences without adding a settings-query dependency', asyn
   expect(f.post).toHaveBeenCalledTimes(1)
   expect(f.post).toHaveBeenCalledWith('/api/v1/user-models/preferences/save', { expected_revision: 1, preferences }, f.session, undefined)
 })
+
+const sharedScenes = [
+  { key: 'dsh', name: 'DSH 对话', group: 'dsh', biz_code: 0, tools: true, images: false, json: false },
+  { key: 'arko', name: 'Arko 对话', group: 'arko', biz_code: 1, tools: true, images: false, json: false },
+  { key: 'summary', name: '普通总结', group: 'summary', biz_code: 2, tools: false, images: false, json: false },
+  { key: 'official', name: '官方场景', group: 'official', biz_code: 3, tools: true, images: false, json: false },
+  { key: 'images', name: '已有图片限制的场景', group: 'images', biz_code: 4, tools: false, images: true, json: false },
+]
+const sharedPreferences = { default_route: model.route, scenes: { dsh: model.route, official: 'system-default' }, points_fallback: false }
+const saveInput = () => ({ ...model, expected_revision: 1, api_key: '', connector_id: '', host_provider: '' })
+
+it('reports all newly affected functions for a shared model, including explicit and inherited bindings', async () => {
+  const f = fixture()
+  f.post.mockResolvedValue({ ...data(), scenes: sharedScenes, preferences: sharedPreferences } as never)
+  await expect(f.service.save('production:11', { ...saveInput(), capabilities: { ...model.capabilities, tools: false } })).rejects.toMatchObject({
+    code: 'model-capability-mismatch',
+    message: '此次能力修改会影响：DSH 对话、Arko 对话。请保留所需能力，或在「使用偏好」中为这些功能更换模型。',
+  })
+  expect(f.post).toHaveBeenCalledTimes(1)
+  expect(f.post.mock.calls[0]![0]).toBe('/api/v1/user-models/settings/query')
+})
+
+it('allows the same model to remain selected by multiple functions when capabilities still satisfy them', async () => {
+  const f = fixture()
+  f.post.mockResolvedValue({ ...data(), scenes: sharedScenes, preferences: sharedPreferences } as never)
+  const input = { ...saveInput(), name: 'Renamed shared model' }
+  await f.service.save('production:11', input)
+  expect(f.post).toHaveBeenLastCalledWith('/api/v1/user-models/settings/save', input, f.session, undefined)
+})
+
+it('reports every incompatible changed preference without including official overrides or unchanged effective choices', async () => {
+  const f = fixture()
+  const plain = { ...model, capabilities: { ...model.capabilities, tools: false } }
+  f.post.mockResolvedValue({ ...data(), models: [plain], scenes: sharedScenes, preferences: { default_route: 'system-default', scenes: { images: model.route }, points_fallback: false } } as never)
+  await expect(f.service.preferences('production:11', 1, { ...sharedPreferences, scenes: { ...sharedPreferences.scenes, images: model.route } })).rejects.toMatchObject({
+    code: 'model-capability-mismatch',
+    message: '当前模型选择不满足以下功能的要求：DSH 对话、Arko 对话。请为这些功能选择合适的模型。',
+  })
+  expect(f.post).toHaveBeenCalledTimes(1)
+})

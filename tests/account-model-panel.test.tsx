@@ -100,3 +100,22 @@ it('keeps a disabled saved global binding visible instead of presenting the offi
   expect(option.props.disabled).toBe(true)
   expect(option.children.join('')).toContain('已停用')
 })
+
+it('shows the complete owner-generated affected-function list even when it exceeds the generic error length limit', async () => {
+  const names = Array.from({ length: 40 }, (_, index) => `受影响的业务功能${index + 1}`)
+  const message = `此次能力修改会影响：${names.join('、')}。请保留所需能力，或在「使用偏好」中为这些功能更换模型。`
+  expect(message.length).toBeGreaterThan(300)
+  const attempts = fixture(Object.assign(new Error(message), { body: { code: 'model-capability-mismatch' } }))
+  await mount()
+  await act(async () => button('保存使用偏好').props.onClick())
+  expect(attempts).toHaveLength(1)
+  const notices = tree.root.findAllByProps({ role: 'status' })
+  expect(notices.some(node => node.children.join('') === message)).toBe(true)
+})
+
+it('retains the generic fallback for unrelated oversized errors', async () => {
+  fixture(Object.assign(new Error('opaque '.repeat(100)), { body: { code: 'arkme-http-error' } }))
+  await mount()
+  await act(async () => button('保存使用偏好').props.onClick())
+  expect(tree.root.findAllByProps({ role: 'status' }).some(node => node.children.join('') === '暂时无法完成，请稍后重试')).toBe(true)
+})

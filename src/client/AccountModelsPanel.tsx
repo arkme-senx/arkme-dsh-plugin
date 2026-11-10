@@ -10,7 +10,12 @@ import css from './account-models.css?inline'
 
 type Tab = 'custom' | 'preferences' | 'usage'
 const defaultForm = (): AccountModelSave => ({ uid: '', expected_revision: 0, name: '', execution: 'cloud', protocol: 'openai-chat', base_url: '', model_key: '', connector_id: '', host_provider: '', api_key: '', capabilities: { text: true, images: false, tools: true, json: true, stream: true, context_tokens: 32768, output_tokens: 4096 } })
-function message(error: unknown): string { const value = error as { message?: unknown }; return typeof value?.message === 'string' && value.message.length < 300 ? value.message : tr('暂时无法完成，请稍后重试') }
+function message(error: unknown): string {
+  const value = error as { message?: unknown; body?: { code?: string } }
+  // This owner-generated message lists every affected function; do not hide
+  // the list behind a generic error when several functions share a model.
+  return typeof value?.message === 'string' && (value.message.length < 300 || value.body?.code === 'model-capability-mismatch') ? value.message : tr('暂时无法完成，请稍后重试')
+}
 
 export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) {
   const [data, setData] = useState<AccountModelSettings>(), [loadError, setLoadError] = useState(''), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [notice, setNotice] = useState('')

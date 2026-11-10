@@ -40,12 +40,14 @@ export class AccountModelService {
       const current = settings.models.find(model => model.uid === input.uid)
       if (current) {
         const updated = { ...current, capabilities: input.capabilities }
+        const affected: string[] = []
         for (const scene of settings.scenes) {
           const route = settings.preferences.scenes[scene.key] || settings.preferences.default_route
           if (route === current.route && accountModelSupportsScene(current, scene) && !accountModelSupportsScene(updated, scene)) {
-            throw new ArkmePluginError('model-capability-mismatch', `该模型正在用于${scene.name}，请先为该场景选择其他模型，再修改能力`, false, 400)
+            affected.push(scene.name)
           }
         }
+        if (affected.length) throw new ArkmePluginError('model-capability-mismatch', `此次能力修改会影响：${affected.join('、')}。请保留所需能力，或在「使用偏好」中为这些功能更换模型。`, false, 400)
       }
     }
     return await this.request<AccountModelSettings>(scope, 'settings/save', input as unknown as Record<string, unknown>, signal)
@@ -57,14 +59,16 @@ export class AccountModelService {
     if (routes.some(route => typeof route === 'string' && route.startsWith('user-api/'))) {
       const settings = await this.settings(scope, signal)
       if (settings.revision !== revision) throw new ArkmePluginError('model-settings-conflict', '配置已更新，请刷新后检查当前选择', true, 409)
+      const affected: string[] = []
       for (const scene of settings.scenes) {
         const next = preferences.scenes[scene.key] || preferences.default_route
         const previous = settings.preferences.scenes[scene.key] || settings.preferences.default_route
         const model = settings.models.find(item => item.route === next)
         if (next !== previous && model && !accountModelSupportsScene(model, scene)) {
-          throw new ArkmePluginError('model-capability-mismatch', `所选模型无法用于${scene.name}，请为该场景单独选择支持所需能力的模型`, false, 400)
+          affected.push(scene.name)
         }
       }
+      if (affected.length) throw new ArkmePluginError('model-capability-mismatch', `当前模型选择不满足以下功能的要求：${affected.join('、')}。请为这些功能选择合适的模型。`, false, 400)
     }
     return await this.request<AccountModelSettings>(scope, 'preferences/save', { expected_revision: revision, preferences }, signal)
   }
