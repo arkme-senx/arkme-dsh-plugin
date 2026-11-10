@@ -1,6 +1,7 @@
 import { parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncProjection, type ChatSyncSession, type ChatSyncUnreadPreview } from '../chat-message-sync.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
+import { isBackendRouteUnavailable } from './service-error.js'
 import type { UnifiedChatTimelineService } from './unified-chat-timeline-service.js'
 import type { SourceService } from './source-service.js'
 import type { ChatService } from './chat-service.js'
@@ -8,6 +9,7 @@ import type { ArkmeChatClientEvent } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 
 const ROUTE = '/api/v1/chat/sync/account'
+const SESSION_ROUTE = '/api/v1/chat/sync/session'
 const idle = (accountKey = ''): ArkmeMessageSyncProgress => ({ accountKey, cycle: 0, revision: 0, phase: 'idle', completed: 0, total: 0, pending: 0, terminal: 0 })
 
 /** One lifecycle per Host; a UI mount, Tool call or SDK consumer never owns a second pump. */
@@ -26,6 +28,8 @@ export class ChatMessageSyncService {
   private pendingTrigger: 'realtime' | 'catchup' | undefined
   private failures = 0
   private transportProbeUsed = false
+  private preferredConversation: { userId: number; uid: string } | undefined
+  private scopedSyncUnavailable = false
   private readonly unsubscribe?: () => void
   constructor(private readonly runtime: ServiceRuntime, private readonly timeline: UnifiedChatTimelineService,
     private readonly source: SourceService, private readonly chat: ChatService,
@@ -46,6 +50,7 @@ export class ChatMessageSyncService {
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined; this.timerKind = undefined; this.dirty = false; this.failures = 0
     this.trigger = 'catchup'; this.pendingTrigger = undefined; this.transportProbeUsed = false
+    this.preferredConversation = undefined; this.scopedSyncUnavailable = false
     if (this.progress.accountKey) this.update(idle())
     else this.progress = idle()
   }
@@ -59,6 +64,9 @@ export class ChatMessageSyncService {
     if (event.type === 'reconcile' && event.connected) this.wake(0)
     // One trailing account check per bounded burst, never one request per message.
     else if (event.type === 'sessions-delta' || event.type === 'timeline-changed' || event.type === 'members-invalidated') this.wake(5000, 'realtime')
+  }
+  preferConversation(userId: number, uid?: string): void {
+    this.preferredConversation = uid ? { userId, uid } : undefined
   }
   /** A successful Chat read can prove recovery before the realtime stream reopens. */
   resumeTransport(): void {
@@ -126,10 +134,10 @@ export class ChatMessageSyncService {
     this.wake(0)
     return current
   }
-  private async request(body: Record<string, unknown>, session: ArkmeSessionCredentials, signal: AbortSignal): Promise<ChatSyncPage> {
-    const raw = await this.runtime.authenticatedChatPost<unknown>(ROUTE, body, session, signal, {
+  private async request(body: Record<string, unknown>, session: ArkmeSessionCredentials, signal: AbortSignal, route = ROUTE): Promise<ChatSyncPage> {
+    const raw = await this.runtime.authenticatedChatPost<unknown>(route, body, session, signal, {
       lane: 'background-read', traffic: 'message-sync', cancelWhenUnobserved: true,
-      key: `account-message-sync:${JSON.stringify(body)}`,
+      key: `${route}:${JSON.stringify(body)}`,
     })
     const page = parseChatSyncPage(raw, body.mode === 'unread_manifest')
     if (!signal.aborted) this.transportProbeUsed = false
@@ -172,32 +180,56 @@ export class ChatMessageSyncService {
       const key = await this.runtime.stateStore.uniqueCode()
       if (plan.progress.phase === 'discovering') {
         let ranges: Record<string, unknown> = plan.checkpoint ? {} : await this.timeline.sync({ action: 'ranges', account, epoch: plan.epoch })
+        let priority = this.trigger === 'catchup' && !this.scopedSyncUnavailable && this.preferredConversation?.userId === session.userId
+          ? this.preferredConversation.uid : undefined
         // Each page yields network admission and the writer before the next read.
         for (let pages = 0; ; pages++) {
           this.assert(generation, signal)
           if (pages >= 10000) throw new Error('message-sync-capacity')
           const ticket = await this.timeline.syncTicket()
-          const page = await this.request({ mode: 'unread_manifest', limit: 1000, checkpoint: plan.checkpoint, ...ranges }, session, signal)
+          const uid = priority
+          priority = undefined
+          const args = { mode: 'unread_manifest', limit: uid ? 100 : 1000, checkpoint: plan.checkpoint, ...ranges }
+          let page: ChatSyncPage
+          try {
+            page = await this.request(uid ? { ...args, chat_session_uid: uid } : args, session, signal, uid ? SESSION_ROUTE : ROUTE)
+          } catch (error) {
+            this.assert(generation, signal)
+            if (!uid || !isBackendRouteUnavailable(error)) throw error
+            this.scopedSyncUnavailable = true
+            continue
+          }
           this.assert(generation, signal)
+          if (uid && page.sessions.some(entry => entry.uid !== uid)) throw new Error('message-sync-session-mismatch')
           if (page.sessions.some(s => s.cacheRequired)) this.trigger = 'catchup'
-          if (page.hasMore && !page.retry && page.checkpoint === plan.checkpoint && !page.sessions.some(s => s.cacheRequired)) throw new Error('message-sync-checkpoint-stale')
-          await this.identify(page, session, key, signal)
-          this.assert(generation, signal)
-          const { bodies: _bodies, ...stored } = page
-          plan = await this.timeline.sync<ChatSyncPlan>({ action: 'manifest', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket, now: Date.now() })
-          this.assert(generation, signal)
-          if (plan.projections?.length) this.update(plan.progress, undefined, plan.projections)
-          if (page.sessions.some(s => s.cacheRequired) && !('cached' in ranges)) ranges = await this.timeline.sync({ action: 'ranges', account, epoch: plan.epoch })
-          ranges = 'cached' in ranges ? { cached: ranges.cached } : {}
-          if (page.retry) throw new Error('message-sync-upstream-pending')
-          if (!page.hasMore) break
-          // Each committed manifest page authorizes a bounded body batch.
-          // Publish it before scanning other membership windows.
-          if (page.sessions.some(entry => entry.accessible && entry.work.some(work => work.state === 'available'))) {
-            const ready = await this.timeline.sync<ChatSyncBatch[]>({
-              action: 'pending', account, epoch: plan.epoch, now: Date.now(), limit: 100,
-            })
-            if (ready.length) plan = await this.hydratePending(ready, plan, account, session, key, generation, signal)
+          if (!uid && page.hasMore && !page.retry && page.checkpoint === plan.checkpoint && !page.sessions.some(s => s.cacheRequired)) throw new Error('message-sync-checkpoint-stale')
+          try {
+            await this.identify(page, session, key, signal)
+            this.assert(generation, signal)
+            const { bodies: _bodies, ...stored } = page
+            plan = await this.timeline.sync<ChatSyncPlan>({ action: 'manifest', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket, now: Date.now() })
+            this.assert(generation, signal)
+            if (plan.projections?.length) this.update(plan.progress, undefined, plan.projections)
+            if (page.sessions.some(s => s.cacheRequired) && !('cached' in ranges)) {
+              ranges = await this.timeline.sync({ action: 'ranges', account, epoch: plan.epoch })
+              priority = uid
+            }
+            ranges = 'cached' in ranges ? { cached: ranges.cached } : {}
+            if (page.retry) throw new Error('message-sync-upstream-pending')
+            if (!uid && !page.hasMore) break
+            // Each committed manifest page authorizes a bounded body batch.
+            // Publish it before scanning other membership windows.
+            if (page.sessions.some(entry => entry.accessible && entry.work.some(work => work.state === 'available'))) {
+              const ready = await this.timeline.sync<ChatSyncBatch[]>({
+                action: 'pending', account, epoch: plan.epoch, now: Date.now(), limit: 100, ...(uid === undefined ? {} : { uid }),
+              })
+              if (ready.length) plan = await this.hydratePending(ready, plan, account, session, key, generation, signal)
+            }
+          } catch (error) {
+            this.assert(generation, signal)
+            // Live invalidations can win the SQLite fence while this optional
+            // read is in flight. The account scan can continue at its committed checkpoint.
+            if (!uid || !(error instanceof Error) || error.message !== 'message-sync-stale') throw error
           }
         }
         plan = await this.timeline.sync<ChatSyncPlan>({ action: 'freeze', account, epoch: plan.epoch })
