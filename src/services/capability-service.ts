@@ -23,7 +23,12 @@ export class CapabilityService {
     const { session, scope } = await this.session(expectedScope)
     // Optional feature settings must not publish a Record-wide cooldown that
     // delays normal reads or writes. Existing request admission still applies.
-    const raw = await this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/query', { catalog_version: 3 }, session, signal, { lane: 'interactive-read', bypassCache: true, publishServiceCooldown: false })
+    const queryCatalog = (version: number) => this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/query', { catalog_version: version }, session, signal, { lane: 'interactive-read', bypassCache: true, publishServiceCooldown: false })
+    const raw = await queryCatalog(4).catch(async error => {
+      if (!(error instanceof ArkmePluginError) || error.code !== 'arkme-code-40001') throw error
+      await this.session(scope)
+      return queryCatalog(3)
+    })
     await this.session(scope)
     if (!Array.isArray(raw)) return invalid()
     const settings = raw.map(parseCapability)

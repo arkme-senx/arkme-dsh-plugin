@@ -44,6 +44,18 @@ it('requires human billing consent, carries the observed version, and closes dir
   expect(document.querySelector('[role="dialog"]')).toBeNull()
   expect(writes()[1]?.[1]).toMatchObject({ enabled: false, expectedVersion: 1 })
 })
+it('shows the quick-note entity switch off and requires consent before enabling it', async () => {
+  mocks.call.mockResolvedValue({ accountScope: 'prod:1', settings: [{ key: 'record_entity', title: '快记实体识别', enabled: false, version: 0, enabledAt: 0 }] })
+  await render()
+  const toggle = host.querySelector<HTMLButtonElement>('[role="switch"]')!
+  expect(toggle.getAttribute('aria-label')).toBe('自动识别快记实体')
+  expect(toggle.getAttribute('aria-checked')).toBe('false')
+  await click(toggle)
+  expect(writes()).toHaveLength(0)
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('开启后新增的快记')
+  await click(button('同意并开启'))
+  expect(writes()[0]?.[1]).toMatchObject({ key: 'record_entity', enabled: true, expectedVersion: 0, billingConsent: true })
+})
 it('does not overwrite a newer cross-device close with stale consent', async () => {
   await render(); await click(host.querySelector('[role="switch"]')!)
   version = 2

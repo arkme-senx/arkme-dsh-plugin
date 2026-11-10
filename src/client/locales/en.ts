@@ -189,6 +189,10 @@ AI 自动分析|Automatic AI analysis
 自动分析录音与聊天内容，识别相关的线下交流。开启后会分析历史录音和聊天内容，运行时消耗 AI 额度。|Automatically analyze recordings and chats to identify related in-person conversations. Enabling this also analyzes historical recordings and chats and uses AI allowance.
 自动整理个人档案|Automatically organize my profile
 自动识别安排|Automatically recognize plans
+自动识别快记实体|Automatically recognize entities in notes
+从新快记中识别人物、地点等实体。|Recognize people, places, and other entities in new notes.
+识别开启后新增的快记中的人物、地点等实体，使用 AI 额度。|Recognize people, places, and other entities in notes added after enabling. Uses AI allowance.
+快记实体识别|Note entity recognition
 自动分析目标|Automatically analyze goals
 录音口令记事|Voice-command notes
 在私聊和群聊消息下方提供建议，仅你可见。|Offers suggestions beneath private and group chat messages, visible only to you.
