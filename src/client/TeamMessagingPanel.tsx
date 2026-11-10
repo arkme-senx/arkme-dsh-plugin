@@ -225,23 +225,23 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   const preferences = useTeamDirectoryPreferences(accountKey)
   const directory = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot)
-  const [selected, setSelected] = useState<TeamConversation>()
+  const [opened, setOpened] = useState<{ accountKey: string; intent: TeamMessageIntent; conversation: TeamConversation }>()
+  const selected = intent.kind === 'conversation' ? intent.conversation
+    : opened?.accountKey === accountKey && opened.intent === intent ? opened.conversation : undefined
   const [channel, setChannel] = useState<TeamChannel>()
   const [error, setError] = useState(''), [loading, setLoading] = useState(false), [attempt, setAttempt] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
-    setSelected(undefined); setChannel(undefined); setError(''); setLoading(true)
+    setOpened(undefined); setChannel(undefined); setError(''); setLoading(true)
     const run = async () => {
-      if (intent.kind === 'conversation') {
-        setSelected(intent.conversation); return
-      }
+      if (intent.kind === 'conversation') return
       if (intent.kind === 'inbox') { void refreshTeamDirectory(accountKey); return }
       if (intent.kind === 'team') return
       const value = await loadTeamEntryOpen(accountKey, intent, controller.signal)
       if (controller.signal.aborted) return
       setChannel(value.channel)
       if (value.conversation) {
-        setSelected(value.conversation)
+        setOpened({ accountKey, intent, conversation: value.conversation })
       }
       else if (value.openInbox === true) openTeamMessages({kind:'team',teamRef:value.channel.teamRef,channel:value.channel})
       else throw new Error(tr('暂时无法打开对话，请重试'))
@@ -380,7 +380,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   useEffect(() => {
     const controller = new AbortController()
     setRecordPropertiesCapability({scope:propertiesScope,ready:false})
-    void callArkme<{recordPropertiesVersion?:number}>('team.app.snapshot.capabilities',{expectedAccountKey:accountKey},controller.signal)
+    void callArkme<{recordPropertiesVersion?:number}>('team.app.snapshot.capabilities',{expectedAccountKey:accountKey},controller.signal,{priority:'background'})
       .then(cap => {if (!controller.signal.aborted) setRecordPropertiesCapability({scope:propertiesScope,ready:cap.recordPropertiesVersion === 1})})
       .catch(() => {})
     return () => controller.abort()
@@ -417,7 +417,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const latest = useRef(timeline); latest.current = timeline
   const draftRef = useRef(draft); draftRef.current = draft
   const resumeSend = useRef<() => Promise<void>>(async () => {})
-  const recovering = useRef(false), recoverAgain = useRef(false)
+  const recovering = useRef(false), recoverAgain = useRef(false), recoveryStarted = useRef(false)
   const accessLost = useRef(onAccessLost); accessLost.current = onAccessLost
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
   useEffect(() => () => { ctrl.current.abort(); attachmentQueue.current?.dispose(); for (const item of draftRef.current.attachments ?? []) releaseArkmeComposerAttachment(item) }, [])
@@ -505,7 +505,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     try {
       do {
         recoverAgain.current = false
-        delivery.refresh()
+        // The delivery owner already starts its first read on mount.
+        if (recoveryStarted.current) delivery.refresh()
+        recoveryStarted.current = true
         const fresh = await refresh()
         const attempt = draftRef.current.attempt
         if (fresh && attempt && fresh.conversation.channel.enabled && !fresh.conversation.blocked
@@ -515,7 +517,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       } while (recoverAgain.current && !ctrl.current.signal.aborted)
     } finally { recovering.current = false }
   }, [refresh])
-  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly, change) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else {
+  useLayoutEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly, change) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else {
       sendReadFence.invalidate(change)
       generation.current++
       const old=latest.current

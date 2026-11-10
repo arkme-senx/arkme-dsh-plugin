@@ -100,7 +100,7 @@ export class TeamReceiptStore {
         await this.enqueue(async () => {
           if (this.controller.signal.aborted) return
           try {
-            const result = await callArkme<TeamReceiptSummaryBatch>('team.app.receipt-summaries', {messageRefs:batch.map(m => m.ref), expectedAccountKey:this.accountKey},this.controller.signal)
+            const result = await callArkme<TeamReceiptSummaryBatch>('team.app.receipt-summaries', {messageRefs:batch.map(m => m.ref), expectedAccountKey:this.accountKey},this.controller.signal,{priority:'background'})
             if (this.controller.signal.aborted) return
             const byKey = new Map(result.items.map(item => [item.key,item]))
             if (byKey.size !== batch.length || batch.some(m => !byKey.has(m.key))) throw new Error('阅读状态返回不完整')

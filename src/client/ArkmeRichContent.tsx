@@ -10,7 +10,7 @@ import { arkmeMessageCopyText } from './message-copy-text.js'
 import { ArkmeMediaAccessContext, useArkmeMediaUrl, type ArkmeMediaAccess,type ArkmeMediaReadState } from './media-access.js'
 import {TeamGalleryImage} from './team-gallery-image.js'
 import { openLongArticleWindow } from './long-article-window.js'
-import { AttachmentPreviewSurface, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview, closeAttachmentPreviewSource } from './attachment-preview-window.js'
+import { AttachmentPreviewSurface, AttachmentPreviewImageContext, type AttachmentPreviewImages, attachmentPreviewBridge, showAttachmentPreview, closeAttachmentPreview, closeAttachmentPreviewSource } from './attachment-preview-window.js'
 import {ArkmeAttachmentNavigationContext,attachmentNavigationBlockKey,attachmentNavigationBlocksEqual,isAttachmentNavigationBlock,type ArkmeAttachmentNavigation,type ArkmeAttachmentNavigationEntry} from './attachment-preview-navigation.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useArkmeLivePhotoPlayback } from './live-photo-playback.js'
@@ -701,11 +701,48 @@ export function arkmeContainedImageRect(viewportWidth: number, viewportHeight: n
   }
 }
 
-export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, previewUrl, openLocalFile = true, forceDownload = false, navigation, active = true, onImageError, onImageLoad, imageVisible = true }: {
+interface PreviewImageReuse {
+  key:string
+  store:AttachmentPreviewImages
+  current():boolean
+  subscribeInvalidation(listener:()=>void):()=>void
+}
+
+/** React owns the container; the window owns at most four neighboring images.
+ * Reattaching that exact element does not assign src or start a second GET. */
+function ReusablePreviewImage({reuse,url,name,style,imageRef,onLoad,onError}:{reuse:PreviewImageReuse;url:string;name:string;style:CSSProperties;imageRef:{current:HTMLImageElement|null};onLoad:((reused?:boolean)=>void)|undefined;onError:(()=>void)|undefined}) {
+  const container=useRef<HTMLSpanElement>(null)
+  const latest=useRef({reuse,name,style,onLoad,onError});latest.current={reuse,name,style,onLoad,onError}
+  const decorate=(image:HTMLImageElement)=>{
+    image.alt=latest.current.name;image.draggable=false;image.setAttribute('fetchpriority','high');image.style.cssText=''
+    for(const [key,value] of Object.entries(latest.current.style))if(value!==undefined)(image.style as unknown as Record<string,string>)[key]=typeof value==='number'&&value!==0?`${value}px`:String(value)
+  }
+  useLayoutEffect(()=>{
+    const parent=container.current;if(!parent)return
+    const retained=reuse.store.take(reuse.key),image=retained??parent.ownerDocument.createElement('img')
+    imageRef.current=image;decorate(image)
+    const load=()=>latest.current.onLoad?.(retained!==undefined),error=()=>latest.current.onError?.()
+    image.addEventListener('load',load);image.addEventListener('error',error);parent.append(image)
+    if(retained){if(!reuse.store.isPending(image)&&image.complete&&image.naturalWidth>0&&image.naturalHeight>0)latest.current.onLoad?.(true)}
+    else image.setAttribute('src',url)
+    return()=>{
+      image.removeEventListener('load',load);image.removeEventListener('error',error);imageRef.current=null;image.remove()
+      reuse.store.releaseActive(image)
+      const owner=latest.current.reuse
+      const expected=new URL(url,parent.ownerDocument.baseURI).href
+      if(image.src!==expected||image.currentSrc!==expected||!reuse.store.retain(reuse.key,image,owner.current,owner.subscribeInvalidation))image.removeAttribute('src')
+    }
+  },[reuse.store,reuse.key,url])
+  useLayoutEffect(()=>{if(imageRef.current)decorate(imageRef.current)})
+  return <span ref={container} style={{display:'contents'}} />
+}
+
+export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, previewUrl, openLocalFile = true, forceDownload = false, navigation, active = true, onImageError, onImageLoad, imageVisible = true, imageReuse }: {
   active?: boolean
   imageVisible?: boolean
   onImageError?: (() => void) | undefined
-  onImageLoad?: (() => void) | undefined
+  onImageLoad?: ((reused?:boolean) => void) | undefined
+  imageReuse?: PreviewImageReuse | undefined
   navigation?: import('./ArkmeFileViewer.js').ArkmePreviewNavigation | undefined
   blocks: ArkmeContentBlock[]
   selected: ArkmeContentBlock
@@ -725,7 +762,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
   const dialogRef = useRef<HTMLDivElement>(null)
   const filePreview = selected.kind === 'file' || forceDownload
   const viewportRef = useRef<HTMLDivElement>(null)
-  const previewImageRef = useRef<HTMLImageElement>(null)
+  const previewImageRef = useRef<HTMLImageElement|null>(null)
   const liveControlRef = useRef<HTMLDivElement>(null)
   const zoomAnimationRef = useRef<Animation>()
   const zoomFromRef = useRef<ImagePreviewRect>()
@@ -751,6 +788,7 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
   const nextDisabled = navigation === undefined ? index >= blocks.length - 1 : navigation.next === undefined
 
   useEffect(() => {
+    if(imageReuse)return // The window's bounded image owner releases this DOM.
     const image = previewImageRef.current
     // StrictMode replays setup after cleanup without replacing the image node.
     if (image && !image.hasAttribute('src') && originalUrl) image.setAttribute('src', originalUrl)
@@ -979,16 +1017,17 @@ export function ArkmeMediaPreview({ blocks, selected, onSelect, onClose, preview
             onPointerCancel={endImageDrag}
           >
             <div style={{ ...(imageMode === 'contained' ? styles.previewCanvasContained : { width: zoomSize?.width, height: zoomSize?.height, minWidth: '100%', minHeight: '100%', display: 'grid', placeItems: 'center' }), position: 'relative' }}>
-              <img
+              {imageReuse?<ReusablePreviewImage reuse={imageReuse} url={originalUrl} name={selected.fileName} imageRef={previewImageRef} onLoad={onImageLoad} onError={onImageError}
+                style={{ ...(imageMode === 'contained' ? styles.previewImageContained : { display:'block',width:zoomSize?.width,height:zoomSize?.height,maxWidth:'none',userSelect:'none' }),cursor:'inherit' }} />:<img
                 ref={previewImageRef}
                 {...{fetchpriority:'high'}}
                 src={originalUrl}
                 alt={selected.fileName}
                 onError={onImageError}
-                onLoad={onImageLoad}
+                onLoad={()=>onImageLoad?.(false)}
                 draggable={false}
                 style={{ ...(imageMode === 'contained' ? styles.previewImageContained : { display: 'block', width: zoomSize?.width, height: zoomSize?.height, maxWidth: 'none', userSelect: 'none' as const }), cursor: 'inherit' }}
-              />
+              />}
               {hasLiveControl && <div ref={liveControlRef} data-arkme-live-photo-overlay style={{ position: 'absolute', display: 'flex', visibility: 'hidden', transform: 'translateY(-100%)', zIndex: 1 }} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
                 {livePhoto.control}
               </div>}
@@ -1427,24 +1466,49 @@ interface SessionAttachmentNavigation {owner:ArkmeAttachmentNavigation;entryKey:
 const noNavigationEntries:readonly ArkmeAttachmentNavigationEntry[]=[]
 const noNavigationSnapshot=()=>noNavigationEntries
 const noNavigationSubscribe=()=>()=>{}
+function attachmentPreviewScope(source:string,forceDownload:boolean,mediaAccess:ArkmeMediaAccess|undefined,navigation:SessionAttachmentNavigation|undefined):string {
+  return JSON.stringify([source,forceDownload,mediaAccess?.readScopeKey,navigation?.owner.scopeKey,navigation?.entryKey,navigation?.version,navigation?.readGeneration])
+}
+function attachmentPreviewImageKey(block:ArkmeContentBlock,source:string,forceDownload:boolean,access:ArkmeMediaAccess|undefined,navigation:SessionAttachmentNavigation|undefined):string|undefined {
+  if(access?.prepareImageWhileChecking!==true||block.kind!=='image'||forceDownload||block.originalRef||block.localFileRef||block.dynamicPhoto||block.attachmentState)return
+  return JSON.stringify([attachmentPreviewScope(source,forceDownload,access,navigation),block.attachmentUid??block.fileAssetUid??block.mediaRef,access.url(block)])
+}
+function attachmentPreviewNeighbors(navigation:SessionAttachmentNavigation,selected:ArkmeContentBlock) {
+  const values=navigation.owner.getSnapshot().flatMap(entry=>entry.blocks.filter(isAttachmentNavigationBlock).map(block=>({entry,block})))
+  const at=values.findIndex(value=>value.entry.key===navigation.entryKey&&value.entry.version===navigation.version&&attachmentNavigationBlocksEqual(value.entry,value.block,selected))
+  return at<0?[]:[values[at+1],values[at-1],values[at+2],values[at-2]].filter((value):value is NonNullable<typeof value>=>!!value).map(value=>{
+    const presentation=navigation.owner.presentation(value.entry.key,value.entry.version,value.block)
+    return {...value,block:presentation?.selected??value.block,access:presentation?.mediaAccess??value.entry.mediaAccess}
+  })
+}
 export function openSessionAttachmentPreview(blocks: ArkmeContentBlock[], selected: ArkmeContentBlock, source: string, forceDownload = false, mediaAccess?: ArkmeMediaAccess, image?:HTMLImageElement,navigation?:SessionAttachmentNavigation): void {
   if(navigation){const {owner,entryKey}=navigation;navigation={...navigation,readGeneration:owner.getSnapshot().find(entry=>entry.key===entryKey)?.readGeneration??0}}
-  const scope = JSON.stringify([source, forceDownload, mediaAccess?.readScopeKey,navigation?.owner.scopeKey,navigation?.entryKey,navigation?.version,navigation?.readGeneration])
+  const scope = attachmentPreviewScope(source,forceDownload,mediaAccess,navigation)
   const closeScope = `${source}:${scope}`
   const identity = `${closeScope}:${selected.attachmentUid ?? selected.fileAssetUid ?? selected.mediaRef}`
-  showAttachmentPreview(identity, doc => {
+  showAttachmentPreview(identity, (doc,images) => {
+    const imageReuseKey=attachmentPreviewImageKey(selected,source,forceDownload,mediaAccess,navigation)
+    const neighborKeys=navigation?attachmentPreviewNeighbors(navigation,selected).flatMap(({entry,block,access})=>{
+      const key=attachmentPreviewImageKey(block,entry.source,false,access,{owner:navigation.owner,entryKey:entry.key,version:entry.version,readGeneration:entry.readGeneration??0})
+      return key===undefined?[]:[`${key}:0`]
+    }):undefined
+    images.select(imageReuseKey===undefined?undefined:`${imageReuseKey}:0`,neighborKeys)
     let presented:HTMLImageElement|undefined
     let presentedUrl:string|undefined
     if(!forceDownload&&selected.kind==='image'&&image?.isConnected&&image.complete&&image.naturalWidth>0&&image.naturalHeight>0&&mediaAccess?.imagePresentation?.current()){
       try {const expected=new URL(mediaAccess.url(selected),image.ownerDocument.baseURI).href;if(image.src===expected&&image.currentSrc===expected){presented=image;presentedUrl=expected}}catch{/* No presentation handoff for an invalid URL. */}
     }
     doc.title = selected.fileName || '文件预览'
-    return <ArkmeMediaAccessContext.Provider value={mediaAccess}><SessionAttachmentPreview key={scope} blocks={blocks} initial={selected} source={source} closeScope={closeScope} forceDownload={forceDownload} presented={{image:presented,url:presentedUrl}} navigation={navigation} /></ArkmeMediaAccessContext.Provider>
+    return <ArkmeMediaAccessContext.Provider value={mediaAccess}><SessionAttachmentPreview key={scope} blocks={blocks} initial={selected} source={source} closeScope={closeScope} forceDownload={forceDownload} presented={{image:presented,url:presentedUrl}} navigation={navigation} imageReuseKey={imageReuseKey} /></ArkmeMediaAccessContext.Provider>
   })
 }
-function SessionAttachmentPreview({blocks, initial: initialSelected, source, closeScope, forceDownload,presented,navigation}: {blocks: ArkmeContentBlock[]; initial: ArkmeContentBlock; source: string; closeScope:string; forceDownload: boolean;presented:{image:HTMLImageElement|undefined;url:string|undefined};navigation:SessionAttachmentNavigation|undefined}) {
+function SessionAttachmentPreview({blocks, initial: initialSelected, source, closeScope, forceDownload,presented,navigation,imageReuseKey}: {blocks: ArkmeContentBlock[]; initial: ArkmeContentBlock; source: string; closeScope:string; forceDownload: boolean;presented:{image:HTMLImageElement|undefined;url:string|undefined};navigation:SessionAttachmentNavigation|undefined;imageReuseKey:string|undefined}) {
   const mediaAccess = useContext(ArkmeMediaAccessContext)
+  const imageStore=useContext(AttachmentPreviewImageContext)
+  const transition=useSyncExternalStore(imageStore?.subscribeTransition??noNavigationSubscribe,imageStore?.getTransition??(()=>undefined))
+  const transitionSurface=useRef<HTMLDivElement>(null)
   const entries=useSyncExternalStore(navigation?.owner.subscribe??noNavigationSubscribe,navigation?.owner.getSnapshot??noNavigationSnapshot)
+  useLayoutEffect(()=>imageStore?.prune(),[imageStore,entries])
   const entry=entries.find(value=>value.key===navigation?.entryKey)
   const initialKey=entry?attachmentNavigationBlockKey(entry,initialSelected):initialSelected.attachmentUid??initialSelected.fileAssetUid??initialSelected.mediaRef
   const initialPending=!!initialSelected.attachmentState&&!initialSelected.localFileRef
@@ -1500,7 +1564,7 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
   // A revisited asset mounts a new image. Only this opening's load can retire
   // its handoff canvas; an earlier A load must not satisfy an A-B-A visit.
   const [readGeneration,setReadGeneration]=useState(0)
-  const [loadedPresentation,setLoadedPresentation]=useState<{presentation:typeof presented;generation:number}>()
+  const [loadedPresentation,setLoadedPresentation]=useState<{presentation:typeof presented;generation:number;reused:boolean}>()
   const imageLoaded=loadedPresentation?.presentation===presented&&loadedPresentation.generation===readGeneration
   const checkingCount=useRef(0)
   const clearFirstImage=()=>{const canvas=firstCanvas.current;if(canvas){canvas.width=0;canvas.height=0}setFirstImage(undefined)}
@@ -1510,8 +1574,18 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
   const available=readState.status==='available'&&!navigationRevalidating&&!navigationRenewed
   // This opening's no-store GET authorizes its own bytes. Actions still wait
   // for preflight; only the first check may present a successfully loaded image.
-  const presentLoadedImage=!requireValidatedRead.current&&!navigationRevalidating&&!navigationRenewed&&prepareImage&&initialCheck.current&&readState.status==='checking'&&imageLoaded
+  const presentLoadedImage=!requireValidatedRead.current&&!loadedPresentation?.reused&&!navigationRevalidating&&!navigationRenewed&&prepareImage&&initialCheck.current&&readState.status==='checking'&&imageLoaded
   const showFullPreview=(available||presentLoadedImage)&&!pendingAttachment&&(!firstImage||imageLoaded)
+  const showTransition=!!transition&&prepareImage&&!(showFullPreview&&imageLoaded)&&!imageFailed&&selected.attachmentState!=='failed'&&readState.status!=='unavailable'
+  useLayoutEffect(()=>{
+    if(!showTransition||!transition||!transitionSurface.current)return
+    const canvas=transition.canvas
+    canvas.setAttribute('data-arkme-transition-image','');canvas.setAttribute('role','img');canvas.setAttribute('aria-label',transition.label)
+    Object.assign(canvas.style,styles.previewImageContained,{position:'absolute',inset:'0'})
+    transitionSurface.current.append(canvas)
+    return()=>canvas.remove()
+  },[transition,showTransition])
+  useLayoutEffect(()=>{if(transition&&(!prepareImage||showFullPreview&&imageLoaded||imageFailed||selected.attachmentState==='failed'||readState.status==='unavailable'))imageStore?.clearTransition()},[transition,prepareImage,showFullPreview,imageLoaded,imageFailed,selected.attachmentState,readState.status,imageStore])
   useLayoutEffect(()=>{
     presented.image=undefined
     const canvas=firstCanvas.current, owner=mediaAccess?.imagePresentation
@@ -1537,6 +1611,14 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
   // Later invalidation must unmount active actions, aborting copy/save as before.
   const renderMedia=!navigationRevalidating&&!navigationRenewed&&!pendingAttachment&&!imageFailed&&(available||prepareImage&&initialCheck.current&&readState.status==='checking')
   const previewDocument=useContext(AttachmentPreviewSurface)
+  const windowActivity=()=>previewDocument?.visibilityState!=='visible'?'hidden':previewDocument.hasFocus()?'active':'visible'
+  const [previewActivity,setPreviewActivity]=useState(windowActivity)
+  useEffect(()=>{
+    const view=previewDocument?.defaultView??window
+    const update=()=>setPreviewActivity(windowActivity())
+    update();previewDocument?.addEventListener('visibilitychange',update);view.addEventListener('focus',update);view.addEventListener('blur',update)
+    return()=>{previewDocument?.removeEventListener('visibilitychange',update);view.removeEventListener('focus',update);view.removeEventListener('blur',update)}
+  },[previewDocument])
   const previewSurface=useRef<HTMLDivElement>(null)
   const errorSurface=useRef<HTMLDivElement>(null)
   useEffect(()=>{
@@ -1552,6 +1634,7 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
     else if(state.status!=='available')clearFirstImage()
     if(state.status!=='checking')initialCheck.current=false
     if(state.status!=='available'&&!initialCheck.current){
+      imageStore?.stopPreparing(true)
       // Retire only this mounted scope's image, before React commits removal.
       for(const image of previewSurface.current?.querySelectorAll('img')??[])image.removeAttribute('src')
     }
@@ -1560,8 +1643,13 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
     }
     if(state.status==='revoked')closeAttachmentPreviewSource(closeScope)
     else setReadState(state)
-  }),[mediaAccess?.readScopeKey??mediaAccess,closeScope,previewDocument])
-  const select = (block: ArkmeContentBlock) => openSessionAttachmentPreview(sessionBlocks, block, source, forceDownload, mediaAccess,undefined,navigation)
+  }),[mediaAccess?.readScopeKey??mediaAccess,closeScope,previewDocument,imageStore])
+  const holdCurrentImage=()=>{
+    if(!imageReuse||!available||!showFullPreview||!imageLoaded)return
+    const image=previewSurface.current?.querySelector<HTMLImageElement>('img')
+    if(image)imageStore?.hold(image,imageReuse.current,imageReuse.subscribeInvalidation)
+  }
+  const select = (block: ArkmeContentBlock) => {holdCurrentImage();openSessionAttachmentPreview(sessionBlocks, block, source, forceDownload, mediaAccess,undefined,navigation)}
   const index = sessionBlocks.findIndex(block => (block.attachmentUid ?? block.fileAssetUid ?? block.mediaRef) === (selected.attachmentUid ?? selected.fileAssetUid ?? selected.mediaRef))
   const ordered=entries.flatMap(value=>value.blocks.filter(isAttachmentNavigationBlock).map(block=>({entry:value,block})))
   const position=entry?ordered.findIndex(value=>value.entry.key===entry.key&&attachmentNavigationBlocksEqual(entry,value.block,selected)):-1
@@ -1573,6 +1661,7 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
     const values=current.flatMap(value=>value.blocks.filter(isAttachmentNavigationBlock).map(block=>({entry:value,block})))
     const at=values.findIndex(value=>value.entry.key===origin.key&&attachmentNavigationBlocksEqual(origin,value.block,selected))
     const target=at<0?undefined:values[at+offset];if(!target)return
+    holdCurrentImage()
     const presentation=navigation.owner.presentation(target.entry.key,target.entry.version,target.block)
     if(presentation){
       openSessionAttachmentPreview(presentation.blocks,presentation.selected,target.entry.source,false,presentation.mediaAccess,presentation.image,{owner:navigation.owner,entryKey:target.entry.key,version:target.entry.version})
@@ -1582,6 +1671,42 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
     openSessionAttachmentPreview(ownBlock?sessionBlocks:target.entry.blocks,ownBlock??target.block,target.entry.source,false,ownBlock?mediaAccess:target.entry.mediaAccess,undefined,{owner:navigation.owner,entryKey:target.entry.key,version:target.entry.version})
   }
   const previewNavigation=navigation?{...(position>0?{previous:()=>move(-1)}:{}),...(position>=0&&position<ordered.length-1?{next:()=>move(1)}:{})}:undefined
+  const retainedImageCurrent=()=>{
+    if(!available||mediaAccess?.imagePresentation&&!mediaAccess.imagePresentation.current())return false
+    if(!navigation)return !!mediaAccess?.imagePresentation
+    if(!navigation.owner.isAttached())return false
+    const latest=navigation.owner.getSnapshot().find(value=>value.key===navigation.entryKey)
+    return !!latest&&!latest.revalidating&&latest.version===navigation.version&&(latest.readGeneration??0)===(navigation.readGeneration??0)&&latest.blocks.some(block=>attachmentNavigationBlocksEqual(latest,block,selected))
+  }
+  const imageReuse:PreviewImageReuse|undefined=imageStore&&imageReuseKey&&prepareImage&&(mediaAccess?.imagePresentation||navigation)?{
+    key:`${imageReuseKey}:${readGeneration}`,store:imageStore,
+    current:retainedImageCurrent,
+    subscribeInvalidation:listener=>{
+      const stopPresentation=mediaAccess?.imagePresentation?.subscribeInvalidation(listener)
+      const stopNavigation=navigation?.owner.subscribe(()=>{if(!retainedImageCurrent())listener()})
+      return()=>{stopPresentation?.();stopNavigation?.()}
+    },
+  }:undefined
+  useEffect(()=>{
+    if(!imageStore||!navigation||!previewDocument)return
+    if(previewActivity!=='active'){imageStore.stopPreparing(previewActivity==='hidden');return}
+    if(!available||!showFullPreview||!imageLoaded||!prepareImage){imageStore.stopPreparing();return}
+    const candidates=attachmentPreviewNeighbors(navigation,selected).flatMap(({entry:target,block,access})=>{
+      const key=attachmentPreviewImageKey(block,target.source,false,access,{owner:navigation.owner,entryKey:target.key,version:target.version,readGeneration:target.readGeneration??0})
+      if(key===undefined||!access||target.revalidating)return []
+      const current=()=>{
+        if(access.imagePresentation&&!access.imagePresentation.current())return false
+        const live=navigation.owner.getSnapshot().find(value=>value.key===target.key)
+        return navigation.owner.isAttached()&&!!live&&!live.revalidating&&live.version===target.version&&(live.readGeneration??0)===(target.readGeneration??0)&&live.blocks.some(value=>attachmentNavigationBlocksEqual(live,value,block))
+      }
+      return [{key:`${key}:0`,url:access.url(block),size:block.size,current,subscribeInvalidation:(listener:()=>void)=>{
+        const stopPresentation=access.imagePresentation?.subscribeInvalidation(listener)
+        const stopNavigation=navigation.owner.subscribe(()=>{if(!current())listener()})
+        return()=>{stopPresentation?.();stopNavigation()}
+      }}]
+    })
+    imageStore.prepare(previewDocument,candidates)
+  },[imageStore,navigation?.owner,navigation?.entryKey,navigation?.version,entries,selected,previewDocument,previewActivity,available,showFullPreview,imageLoaded,prepareImage])
   if(navigationInvalid||slotContinuation||navigationRenewed)return null
   return <div ref={previewSurface} onKeyDownCapture={event => {
     const target = event.target as HTMLElement
@@ -1591,16 +1716,17 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
     if (next >= 0 && next < blocks.length) { event.preventDefault(); event.stopPropagation(); select(blocks[next]!) }
   }}>
     {renderMedia&&<ArkmeMediaPreview key={JSON.stringify([imageKey,readGeneration])} blocks={sessionBlocks} selected={selected} onSelect={select} onClose={closeAttachmentPreview} forceDownload={forceDownload} openLocalFile={false} active={available} navigation={previewNavigation}
-        imageVisible={showFullPreview}
-        onImageError={selected.kind==='image'&&!forceDownload?()=>{clearFirstImage();setLoadedPresentation(undefined);setFailedImage(imageKey)}:undefined} onImageLoad={()=>setLoadedPresentation({presentation:presented,generation:readGeneration})} />
+        imageVisible={showFullPreview} imageReuse={imageReuse}
+        onImageError={selected.kind==='image'&&!forceDownload?()=>{clearFirstImage();setLoadedPresentation(undefined);setFailedImage(imageKey)}:undefined} onImageLoad={reused=>setLoadedPresentation({presentation:presented,generation:readGeneration,reused:reused===true})} />
     }
-    {(firstImage?.key===imageKey||renderMedia&&!showFullPreview)&&<div style={{...styles.previewOverlay,background:renderMedia?'transparent':styles.previewOverlay?.background,pointerEvents:'none'}}><div style={styles.previewBody}><div style={{...styles.previewStage,display:'grid',placeItems:'center'}}>
+    {showTransition&&<div aria-busy="true" style={{...styles.previewOverlay,background:renderMedia?'transparent':styles.previewOverlay?.background,pointerEvents:'none'}}><div style={styles.previewBody}><div ref={transitionSurface} style={styles.previewStage}/></div></div>}
+    {!showTransition&&(firstImage?.key===imageKey||renderMedia&&!showFullPreview)&&<div style={{...styles.previewOverlay,background:renderMedia?'transparent':styles.previewOverlay?.background,pointerEvents:'none'}}><div style={styles.previewBody}><div style={{...styles.previewStage,display:'grid',placeItems:'center'}}>
       {firstImage?.key===imageKey
         ? <canvas ref={firstCanvas} data-arkme-presented-image role="img" aria-label={selected.fileName} style={{...styles.previewImageContained,position:'absolute',inset:0}} />
         : <p role="status">{tr('图片加载中…')}</p>}
     </div></div></div>}
-    {pendingAttachment&&<div style={styles.previewOverlay}><div ref={errorSurface} role="dialog" aria-label={selected.fileName} tabIndex={-1} style={{display:'grid',gap:16,justifyItems:'center',color:arkmeTheme.text}}>
-      <p role={resolved?.error||selected.attachmentState==='failed'?'alert':'status'}>{resolved?.loading||!resolved?tr('图片加载中…'):resolved.error??tr(selected.attachmentState==='failed'?'附件上传失败':'附件上传中')}</p>
+    {pendingAttachment&&<div style={{...styles.previewOverlay,...(showTransition?{background:'transparent'}:{})}}><div ref={errorSurface} role="dialog" aria-label={selected.fileName} tabIndex={-1} style={{display:'grid',gap:16,justifyItems:'center',color:arkmeTheme.text}}>
+      {!showTransition&&<p role={resolved?.error||selected.attachmentState==='failed'?'alert':'status'}>{resolved?.loading||!resolved?tr('图片加载中…'):resolved.error??tr(selected.attachmentState==='failed'?'附件上传失败':'附件上传中')}</p>}
       <button type="button" disabled={resolved?.loading} onClick={()=>setReadAttempt(value=>value+1)}>{tr(resolved?.error?'重试':'重新加载')}</button>
       <div style={{display:'flex',gap:12}}><ArkmeFileActionNavButton label={tr('上一个媒体')} direction="left" disabled={!previewNavigation?.previous} onClick={()=>previewNavigation?.previous?.()} />
         <ArkmeFileActionNavButton label={tr('下一个媒体')} direction="right" disabled={!previewNavigation?.next} onClick={()=>previewNavigation?.next?.()} />
@@ -1609,7 +1735,7 @@ function SessionAttachmentPreview({blocks, initial: initialSelected, source, clo
     {available&&imageFailed?<div ref={errorSurface} tabIndex={-1}><p role="alert">{tr('图片加载失败')}<button type="button" onClick={()=>{setFailedImage(undefined);if(initialPending){setAttachmentRead(undefined);setReadAttempt(value=>value+1)}}}>{tr('重试')}</button><button type="button" onClick={closeAttachmentPreview}>{tr('关闭预览')}</button></p>
       {(blocks.length>1||previewNavigation?.previous||previewNavigation?.next)&&<div style={{display:'flex',gap:12}}><ArkmeFileActionNavButton label={tr('上一个媒体')} direction="left" disabled={previewNavigation?!previewNavigation.previous:index<=0} onClick={()=>{if(previewNavigation)previewNavigation.previous?.();else if(index>0)select(blocks[index-1]!)}} />
         <ArkmeFileActionNavButton label={tr('下一个媒体')} direction="right" disabled={previewNavigation?!previewNavigation.next:index>=blocks.length-1} onClick={()=>{if(previewNavigation)previewNavigation.next?.();else if(index<blocks.length-1)select(blocks[index+1]!)}} /></div>}</div>
-      : !available&&!renderMedia&&!pendingAttachment&&<><p role={readState.status==='unavailable'?'alert':'status'}>{tr(readState.status==='unavailable'?'内容暂不可用，请重试':prepareImage?'图片加载中…':'正在确认访问权限…')}{readState.status==='unavailable'&&<button type="button" onClick={()=>{setFailedImage(undefined);readState.retry()}}>{tr('重试')}</button>}</p>
+      : !available&&!renderMedia&&!pendingAttachment&&<>{!showTransition&&<p role={readState.status==='unavailable'?'alert':'status'}>{tr(readState.status==='unavailable'?'内容暂不可用，请重试':prepareImage?'图片加载中…':'正在确认访问权限…')}{readState.status==='unavailable'&&<button type="button" onClick={()=>{setFailedImage(undefined);readState.retry()}}>{tr('重试')}</button>}</p>}
         {(blocks.length>1||previewNavigation?.previous||previewNavigation?.next)&&<div style={{display:'flex',gap:12}}><ArkmeFileActionNavButton label={tr('上一个媒体')} direction="left" disabled={previewNavigation?!previewNavigation.previous:index<=0} onClick={()=>{if(previewNavigation)previewNavigation.previous?.();else if(index>0)select(blocks[index-1]!)}} />
           <ArkmeFileActionNavButton label={tr('下一个媒体')} direction="right" disabled={previewNavigation?!previewNavigation.next:index>=blocks.length-1} onClick={()=>{if(previewNavigation)previewNavigation.next?.();else if(index<blocks.length-1)select(blocks[index+1]!)}} /></div>}</>}
   </div>

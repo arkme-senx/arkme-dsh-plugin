@@ -15,6 +15,7 @@ export interface ArkmeAttachmentNavigationEntry {
 }
 export interface ArkmeAttachmentNavigation {
   scopeKey:string
+  isAttached():boolean
   getSnapshot():readonly ArkmeAttachmentNavigationEntry[]
   subscribe(listener:()=>void):()=>void
   registerPresentation(key:string,version:string,read:AttachmentPresentationReader):()=>void
@@ -41,12 +42,13 @@ export function isAttachmentNavigationBlock(block:ArkmeContentBlock):boolean {re
  * conversation creates a new owner; an existing child retains its bounded range. */
 export function ArkmeAttachmentNavigationProvider({scopeKey,entries,children}:{scopeKey:string;entries:ArkmeAttachmentNavigationEntry[];children:ReactNode}) {
   const owner=useMemo(()=>{
+    let attached=false
     let snapshot:readonly ArkmeAttachmentNavigationEntry[]=entries.filter(entry=>!entry.revalidating)
     const listeners=new Set<()=>void>()
     // Mounted DOM readers only, never bytes or authorization. Unmount removes
     // the reader while an independent window can retain its loaded range.
     const presentations=new Map<string,{version:string;read:AttachmentPresentationReader}>()
-    return {scopeKey,getSnapshot:()=>snapshot,subscribe:(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener)}},
+    return {scopeKey,isAttached:()=>attached,getSnapshot:()=>snapshot,subscribe:(listener:()=>void)=>{listeners.add(listener);return()=>{listeners.delete(listener)}},
       registerPresentation(key:string,version:string,read:AttachmentPresentationReader){
         const value={version,read};presentations.set(key,value)
         return()=>{if(presentations.get(key)===value)presentations.delete(key)}
@@ -56,10 +58,12 @@ export function ArkmeAttachmentNavigationProvider({scopeKey,entries,children}:{s
         if(!entry||entry.revalidating||entry.version!==version||mounted?.version!==version||!entry.blocks.some(candidate=>attachmentNavigationBlocksEqual(entry,candidate,block)))return undefined
         return mounted.read(entry,block)
       },
+      attach(){attached=true},
       detach(){
+        attached=false
         const retained=snapshot.filter(entry=>!entry.revalidating)
-        if(retained.length===snapshot.length)return
-        snapshot=retained;for(const listener of listeners)listener()
+        if(retained.length!==snapshot.length)snapshot=retained
+        for(const listener of listeners)listener()
       },
       update(next:ArkmeAttachmentNavigationEntry[]){
         if(snapshot===next)return
@@ -75,6 +79,6 @@ export function ArkmeAttachmentNavigationProvider({scopeKey,entries,children}:{s
       }}
   },[scopeKey])
   useLayoutEffect(()=>{owner.update(entries)},[owner,entries])
-  useLayoutEffect(()=>()=>owner.detach(),[owner])
+  useLayoutEffect(()=>{owner.attach();return()=>owner.detach()},[owner])
   return <ArkmeAttachmentNavigationContext.Provider value={owner}>{children}</ArkmeAttachmentNavigationContext.Provider>
 }

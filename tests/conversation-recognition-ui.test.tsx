@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const mock = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mock.call }))
 import { useConversationRecognitionAction } from '../src/client/ConversationRecognitionControl.js'
+import { useConversationRecognition } from '../src/client/use-conversation-recognition.js'
 import { ArkmeConversationArrangements } from '../src/client/ArkmeConversationArrangements.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 import type { TeamConversation } from '../src/team-app-contract.js'
@@ -35,6 +36,19 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers() })
 async function render(scope: 'chat'|'team' = 'chat') { await act(async () => { root.render(<Harness scope={scope} />) }); await act(async () => { await vi.advanceTimersByTimeAsync(260) }) }
 async function toggle() { await act(async () => host.querySelector<HTMLElement>('[role="switch"][aria-label="安排识别"]')!.click()) }
+it('budgets passive preparation but upgrades an explicit refresh and ignores the retired read', async () => {
+  let state!: ReturnType<typeof useConversationRecognition>
+  function Preparation() { state=useConversationRecognition(account, source.sourceRef, 'team', true); return <p>{String(state.value?.enabled)}</p> }
+  const reads: Array<{signal:AbortSignal;resolve(value:unknown):void}>=[]
+  mock.call.mockImplementation((_op,_params,signal)=>new Promise(resolve=>reads.push({signal,resolve})))
+  await act(async()=>root.render(<Preparation/>))
+  expect(reads).toHaveLength(1);expect(mock.call.mock.calls[0]?.[3]).toEqual({priority:'background'})
+  await act(async()=>{void state.refresh()})
+  expect(reads[0]!.signal.aborted).toBe(true);expect(reads).toHaveLength(2)
+  expect(mock.call.mock.calls[1]?.[3]).toBeUndefined()
+  await act(async()=>reads[1]!.resolve(value()));expect(host.textContent).toBe('true')
+  await act(async()=>reads[0]!.resolve({...value(),enabled:false}));expect(host.textContent).toBe('true')
+})
 it('shares confirmed state between the menu and shortcut, and restores it on enable', async () => {
   await render(); expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('true'); expect(host.textContent).toContain('相关安排')
   await toggle(); expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false'); expect(host.textContent).not.toContain('相关安排')
@@ -50,6 +64,8 @@ it('reads back a lost write response without retrying the write', async () => {
   await render(); loseResponse = true; await toggle()
   expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false'); expect(host.textContent).not.toContain('相关安排')
   expect(mock.call.mock.calls.filter(([op]) => op.endsWith('.set'))).toHaveLength(1)
+  expect(mock.call.mock.calls.find(([op])=>op.endsWith('.set'))?.[3]).toBeUndefined()
+  expect(mock.call.mock.calls.filter(([op])=>op.endsWith('.get')).at(-1)?.[3]).toBeUndefined()
 })
 it('shows benefit text without toggling when the info icon is clicked', async () => {
   await render(); await act(async () => { const info=host.querySelector<HTMLElement>('[aria-label="安排识别说明"]')!; info.dispatchEvent(new MouseEvent('mouseover',{bubbles:true})); info.click() })
