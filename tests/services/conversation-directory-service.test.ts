@@ -31,6 +31,31 @@ function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: Ark
 }
 
 describe('local-first directory', () => {
+  it.each([false, true])('refreshes only the affected unread row and respects a concurrent read (read=%s)', async read => {
+    const current = row(1, { latestSequence: 4, readSequence: 4, latestPreview: 'previous' })
+    const test = setup(async () => page([current, row(2)]))
+    await test.owner.read()
+    await test.owner.settled()
+    const snapshot = gate<{ items: Array<{ session: { chat_session_uid: string }; current_policy: { user_id: number; pin_state: number; update_at: number }; unread_snapshot: { session_last_seq: number; read_seq: number; unread_count: number } }> }>()
+    test.runtime.authenticatedChatPost.mockImplementationOnce(() => snapshot.promise)
+    const signal = new AbortController().signal
+    const request = test.owner.refreshSyncedUnread({ userId: 1, accessToken: '', refreshToken: '' }, [{
+      uid: '1', sourceKey: current.sourceKey!, sequence: 7,
+      item: { itemUid: 'm', senderName: 'peer', isMe: false, sendAtMillis: 10, title: '', textContent: 'committed', status: 1 },
+    }], signal)
+    if (read) await test.owner.accept({ type: 'read-ack', revision: 1, sourceRef: current.sourceRef, sourceKey: current.sourceKey, effectiveReadSequence: 7, unreadCount: 0 })
+    snapshot.resolve({ items: [{ session: { chat_session_uid: '1' }, current_policy: { user_id: 1, pin_state: 1, update_at: 1 },
+      unread_snapshot: { session_last_seq: 7, read_seq: 4, unread_count: 3 } }] })
+    await request
+    expect(test.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/display-snapshots',
+      { chat_session_uids: ['1'] }, expect.anything(), signal, expect.objectContaining({ lane: 'background-read' }))
+    expect((await test.owner.read()).items.find(item => item.sourceKey === 'key-1')).toMatchObject({
+      unreadCount: read ? 0 : 3, latestPreview: read ? 'previous' : 'committed',
+      activeAtMillis: read ? 1 : 10,
+    })
+    expect(test.source.listSources).toHaveBeenCalledTimes(1)
+  })
+
   it('allows a current nickname page through a concurrent read acknowledgement', async () => {
     const remote = gate<ArkmeSourceList>()
     const initial = row(1, { displayName: '旧名字', privateNickname: '旧名字', latestSequence: 7 })

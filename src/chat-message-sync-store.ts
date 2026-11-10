@@ -1,5 +1,5 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite'
-import type { ArkmeMessageSyncProgress, ChatSyncCommand, ChatSyncLocalPage, ChatSyncPlan, ChatSyncProjection, ChatSyncSession, ChatSyncWork } from './chat-message-sync.js'
+import type { ArkmeMessageSyncProgress, ChatSyncCommand, ChatSyncLocalPage, ChatSyncPlan, ChatSyncProjection, ChatSyncUnreadPreview, ChatSyncSession, ChatSyncWork } from './chat-message-sync.js'
 import type { ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
 const MAX_WORK = 100_000
@@ -143,6 +143,7 @@ export class ChatMessageSyncStore {
       return { resume, cached }
     }
     const projections: ChatSyncProjection[] = []
+    const unreadPreviews: ChatSyncUnreadPreview[] = []
     this.db.exec('BEGIN IMMEDIATE')
     try {
       if (command.action === 'begin') {
@@ -165,7 +166,7 @@ export class ChatMessageSyncStore {
         if (command.action === 'manifest' || command.action === 'commit') {
           if (row.checkpoint !== command.expectedCheckpoint || (command.action === 'manifest') !== command.page.manifest) throw new Error('message-sync-checkpoint-stale')
           for (const session of command.page.sessions) {
-            const projection = this.applySession(command, session, row)
+            const projection = this.applySession(command, session, row, unreadPreviews)
             if (projection.reset || projection.changes.length) projections.push(projection)
           }
           if (command.action === 'manifest') this.prepare('UPDATE message_sync_accounts SET checkpoint=? WHERE account=?').run(command.page.checkpoint, account)
@@ -181,10 +182,10 @@ export class ChatMessageSyncStore {
       this.enforceBudget()
       const result = this.status(account)
       this.db.exec('COMMIT')
-      return projections.length ? { ...result, projections } : result
+      return { ...result, ...(projections.length ? { projections } : {}), ...(unreadPreviews.length ? { unreadPreviews } : {}) }
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
-  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row): ChatSyncProjection {
+  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row, unreadPreviews: ChatSyncUnreadPreview[]): ChatSyncProjection {
     const { account, ticket, now } = command
     const scope = session.scope!, sourceKey = session.sourceKey!
     if (!scope || !sourceKey) throw new Error('message-sync-scope-missing')
@@ -215,6 +216,7 @@ export class ChatMessageSyncStore {
       if (!accountRow.discovering) this.prepare('UPDATE message_sync_accounts SET completed=completed+?,terminal=terminal+? WHERE account=?').run(Number(unsettled.n), Number(unsettled.n), account)
       return projection
     }
+    let latestUnread: ChatSyncUnreadPreview | undefined
     for (let work of session.work) {
       const old = this.prepare('SELECT * FROM message_sync_work WHERE account=? AND uid=? AND id=?').get(account, session.uid, work.id)
       const terminal = work.state === 'removed' || work.state === 'restricted'
@@ -241,6 +243,9 @@ export class ChatMessageSyncStore {
         if (!exists || Number(exists.ticket) <= ticket && Number(exists.version) <= work.version) {
           this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,'messages',?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET
             payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(work.event), work.version, ticket)
+          if (unread && work.unread && work.sequence > (latestUnread?.sequence ?? 0)) {
+            latestUnread = { uid: session.uid, sourceKey, sequence: work.sequence, item: work.event.item }
+          }
           // Newly downloaded tails already use the committed-body wakeup.
           if (exists || Number(old?.stored_revision ?? -1) >= 0) {
             projection.changes.push({ itemKey, revision: work.revision, version: work.version, item: work.event.item })
@@ -265,6 +270,7 @@ export class ChatMessageSyncStore {
         Number(accountRow.cycle), counted, committed && counted ? 1 : done, committed ? 0 : 1, attempts, retry)
       if (committed && counted && !done && !accountRow.discovering) this.prepare('UPDATE message_sync_accounts SET completed=completed+1,terminal=terminal+? WHERE account=?').run(terminal ? 1 : 0, account)
     }
+    if (latestUnread) unreadPreviews.push(latestUnread)
     if (Number(this.prepare('SELECT COUNT(*) AS n FROM message_sync_work').get()!.n) > MAX_WORK || Number(this.prepare('SELECT COUNT(*) AS n FROM message_sync_sessions').get()!.n) > MAX_SESSIONS) throw new Error('message-sync-capacity')
     return projection
   }

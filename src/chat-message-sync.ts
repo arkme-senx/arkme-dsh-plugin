@@ -39,9 +39,13 @@ export interface ChatSyncProjection {
   reset?: 'accessible' | 'restricted'
   changes: Array<{ itemKey: string; revision: number; version: number; item?: ArkmeTimelineItem }>
 }
+export interface ChatSyncUnreadPreview {
+  uid: string; sourceKey: string; sequence: number; item: ArkmeTimelineItem
+}
 export interface ChatSyncPlan {
   progress: ArkmeMessageSyncProgress; checkpoint: string; epoch: number; active: boolean
   projections?: ChatSyncProjection[]
+  unreadPreviews?: ChatSyncUnreadPreview[]
 }
 export interface ChatSyncBatch { uid: string; kind: number; membership: number; work: ChatSyncWork[] }
 export interface ChatSyncLocalPage { events: ArkmeUnifiedTimelineEvent[]; before?: number; revision: number }

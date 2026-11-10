@@ -4,7 +4,9 @@ import { projectArkmeConversationAttention } from '../conversation-attention.js'
 import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
-import type { SourceService } from './source-service.js'
+import type { ChatSyncUnreadPreview } from '../chat-message-sync.js'
+import type { ArkmeSessionCredentials } from '../keychain-store.js'
+import { arkmeTimelineConversationPreview, type SourceService } from './source-service.js'
 import type { ConversationDirectoryVisibilityService } from './conversation-directory-visibility-service.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 import type { ArkmeChatPolicyUpdatedHint, ArkmeConversationListPreferenceUpdatedHint } from '../chat-realtime.js'
@@ -87,6 +89,7 @@ function projectReadAck(source: ArkmeSourceItem, ack: { effectiveReadSequence: n
 
 /** One account lifecycle owns cache restoration, a twenty-row scan, and directory deltas. */
 export class ConversationDirectoryService {
+  onChatPageAvailable?: () => void
   private userId: number | undefined
   private disposed = false
   private generation = 0
@@ -124,6 +127,7 @@ export class ConversationDirectoryService {
   private changeWork: Promise<void> | undefined
   private recoveryScan = false
   private pageRateLimitExhausted = false
+  private syncedUnreadFlight: Promise<unknown> | undefined
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private refreshRetries = 0
   private refreshError: string | undefined
@@ -300,6 +304,7 @@ export class ConversationDirectoryService {
         const atRevision = this.revision
         const page = await this.readScanPage(cursor, signal)
         if (generation !== this.generation || (await this.runtime.requireSession()).userId !== userId) throw new DOMException('Account changed', 'AbortError')
+        this.onChatPageAvailable?.()
         if (page.hasMore && (page.nextCursor === undefined || visited.has(page.nextCursor))) throw new ArkmePluginError('directory-cursor-invalid', '会话目录分页未完成：游标无效', true, 502)
         for (const item of page.items) rawSources.set(keyOf(item), item)
         if (!page.hasMore) { this.rawBaselineComplete = true; baselineReady({ directory: 'root', items: [...rawSources.values()], hasMore: false }) }
@@ -786,6 +791,53 @@ export class ConversationDirectoryService {
       this.scheduleChanges(Math.min(30_000, 1_000 * 2 ** this.refreshRetries))
     })
     this.changeWork = pending
+  }
+
+  async refreshSyncedUnread(session: ArkmeSessionCredentials, previews: ChatSyncUnreadPreview[], signal: AbortSignal): Promise<void> {
+    if (session.userId !== this.userId || this.disposed || signal.aborted || this.syncedUnreadFlight) return
+    const generation = this.generation
+    const atRevision = this.revision
+    const targets = new Map(previews.flatMap(entry => {
+      const current = this.sources.get(entry.sourceKey)
+      if (!current || this.sourceRemovals.has(entry.sourceKey) || entry.sequence <= (current.readSequence ?? 0)
+        || entry.sequence <= (current.latestSequence ?? 0) && (current.unreadCount ?? 0) > 0
+          && entry.item.sendAtMillis < current.activeAtMillis) return []
+      return [[entry.uid, entry] as const]
+    }))
+    if (!targets.size) return
+    const flight = this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/display-snapshots', { chat_session_uids: [...targets.keys()] }, session, signal,
+      { lane: 'background-read', traffic: 'message-sync', bypassCache: true },
+    )
+    this.syncedUnreadFlight = flight
+    const data = await flight.finally(() => {
+      if (this.syncedUnreadFlight === flight) this.syncedUnreadFlight = undefined
+    })
+    if (signal.aborted || this.disposed || generation !== this.generation || session.userId !== this.userId) return
+    if (!Array.isArray(data.items) || data.items.length > targets.size) return
+    const rows: ArkmeSourceItem[] = []
+    for (const raw of data.items) {
+      const bundle = objectValue(raw)
+      const uid = objectValue(bundle.session).chat_session_uid
+      const target = typeof uid === 'string' ? targets.get(uid) : undefined
+      if (!target) continue
+      const { sourceKey, sequence, item } = target
+      const current = this.sources.get(sourceKey)
+      if (!current || this.sourceRemovals.has(sourceKey)) continue
+      const unread = objectValue(bundle.unread_snapshot)
+      const { session_last_seq: latest, read_seq: read, unread_count: count } = unread
+      if (typeof latest !== 'number' || !Number.isSafeInteger(latest) || latest < Math.max(sequence, current.latestSequence ?? 0)
+        || typeof read !== 'number' || !Number.isSafeInteger(read) || read < (current.readSequence ?? 0) || read > latest
+        || typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) continue
+      const currentActivity = Math.max(current.activeAtMillis, current.latestActivityAtMillis ?? 0)
+      const preview = latest === sequence && item.sendAtMillis >= currentActivity
+        ? { activeAtMillis: item.sendAtMillis, latestActivityAtMillis: item.sendAtMillis, latestActivityKind: 'record' as const,
+            latestPreview: item.forwardRecords === undefined ? arkmeTimelineConversationPreview(item) : `[转发] ${item.forwardRecords.title}` }
+        : {}
+      rows.push({ ...current, ...preview, latestSequence: latest, readSequence: read,
+        ...projectArkmeChatAttentionFromMuted(count, current.isMuted === true) })
+    }
+    if (rows.length) this.apply(rows, [], atRevision)
   }
 
   async accept(event: ArkmeChatClientEvent): Promise<void> {

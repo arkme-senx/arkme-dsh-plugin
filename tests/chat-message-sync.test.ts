@@ -219,7 +219,10 @@ it('publishes same-sequence edits and permission changes only from the committed
     s.begin()
     s.page([session([work()])])
     s.action('freeze')
-    expect(s.page([session([body(work())])], false).projections).toBeUndefined()
+    const created = s.page([session([body(work())])], false)
+    expect(created.projections).toBeUndefined()
+    expect(created.unreadPreviews).toMatchObject([{ uid: 'chat', sourceKey: 'source:chat', sequence: work().sequence,
+      item: { timelineItemKey: 'key:one', recordVersion: 1 } }])
     s.action('finish')
     s.begin()
     const edited = { ...work(), revision: 2, version: 2 }

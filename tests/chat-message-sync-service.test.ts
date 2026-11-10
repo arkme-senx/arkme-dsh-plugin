@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { UnifiedTimelineCache } from '../src/unified-timeline-cache.js'
 import { ChatMessageSyncService } from '../src/services/chat-message-sync-service.js'
+import { ArkmePluginError } from '../src/services/service.js'
 import type { ArkmeMessageSyncProgress, ChatSyncCommand } from '../src/chat-message-sync.js'
 import { MessageSyncDisplay } from '../src/client/message-sync-store.js'
 import type { ArkmeChatClientEvent } from '../src/types.js'
@@ -67,16 +68,18 @@ it('aborts outstanding HTTP and rejects late old-account progress after account 
     expect(s.committedHints).toEqual([])
   } finally { s.close() }
 })
-it('keeps explicit cached ranges on every discovery continuation and freezes only after the final page', async () => {
-  let pages=0
+it('commits bodies from the first page before requesting the next membership page', async () => {
+  let pages=0, bodyCheckpoint: string | undefined
   const s=setup(async(_route,data)=>{
     if(data.mode==='unread_manifest') {
       expect(data.cached).toEqual({}); pages++
+      if (pages === 2) expect(s.committedHints).toEqual([{ sourceKeys: ['source:chat'], readable: 1 }])
       return {manifest_only:true,checkpoint:`cp${pages}`,has_more:pages===1,retry:false,sessions:[{...head,manifest:pages===1?[row(1)]:[]}]}
     }
-    return {manifest_only:false,checkpoint:'cp2',has_more:false,retry:false,sessions:[{...head,items:[{...row(1),relation:{rel_uid:'1',seq:1},record:{}}]}]}
+    bodyCheckpoint = data.checkpoint
+    return {manifest_only:false,checkpoint:'cp1',has_more:false,retry:false,sessions:[{...head,items:[{...row(1),relation:{rel_uid:'1',seq:1},record:{}}]}]}
   })
-  try {s.service.start();await vi.waitFor(()=>expect(s.updates.at(-1)).toMatchObject({phase:'idle',completed:1,total:1}));expect(pages).toBe(2)}
+  try {s.service.start();await vi.waitFor(()=>expect(s.updates.at(-1)).toMatchObject({phase:'idle',completed:1,total:1}));expect(pages).toBe(2);expect(bodyCheckpoint).toBe('cp1')}
   finally{s.close()}
 })
 
@@ -182,4 +185,63 @@ it('shows explicit cache recovery discovered by a realtime wake without changing
     expect(display.snapshot().visible).toBe(false)
     expect(post).toHaveBeenCalledTimes(4)
   } finally { release?.(); s.close(); display.dispose(); vi.useRealTimers() }
+})
+
+it.each([true, false])('reconnect wakes transport backoff only (transport=%s)', async transport => {
+  vi.useFakeTimers()
+  const post = vi.fn(async () => {
+    if (post.mock.calls.length === 1) throw transport
+      ? new ArkmePluginError('arkme-network-error', 'offline', true, 502)
+      : new ArkmePluginError('arkme-http-error', 'limited', true, 502, { upstreamStatus: 429, retryAfterMillis: 10000 })
+    return { manifest_only: true, checkpoint: 'cp', has_more: false, retry: false, sessions: [] }
+  })
+  const s = setup(post)
+  try {
+    s.service.start()
+    await vi.advanceTimersByTimeAsync(0)
+    s.service.accept({ type: 'reconcile', revision: 1, connected: true, connectionGeneration: 2 })
+    await vi.advanceTimersByTimeAsync(10)
+    expect(post).toHaveBeenCalledTimes(transport ? 2 : 1)
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(post).toHaveBeenCalledTimes(2)
+  } finally { s.close(); vi.useRealTimers() }
+})
+
+it('runs a fresh pass immediately when reconnect arrives during an older manifest', async () => {
+  vi.useFakeTimers()
+  let release: (() => void) | undefined
+  const post = vi.fn(async () => {
+    if (post.mock.calls.length === 1) await new Promise<void>(resolve => { release = resolve })
+    return { manifest_only: true, checkpoint: 'cp', has_more: false, retry: false, sessions: [] }
+  })
+  const s = setup(post)
+  try {
+    s.service.start()
+    await vi.advanceTimersByTimeAsync(0)
+    s.service.accept({ type: 'reconcile', revision: 1, connected: true, connectionGeneration: 2 })
+    release!()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(post).toHaveBeenCalledTimes(2)
+  } finally { release?.(); s.close(); vi.useRealTimers() }
+})
+
+it('uses a Chat availability hint for one early transport probe per failure streak', async () => {
+  vi.useFakeTimers()
+  const post = vi.fn(async () => {
+    if (post.mock.calls.length <= 2) throw new ArkmePluginError('arkme-network-error', 'offline', true, 502)
+    return { manifest_only: true, checkpoint: 'cp', has_more: false, retry: false, sessions: [] }
+  })
+  const s = setup(post)
+  try {
+    s.service.start()
+    await vi.advanceTimersByTimeAsync(0)
+    s.service.resumeTransport()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(post).toHaveBeenCalledTimes(2)
+    s.service.resumeTransport()
+    await vi.advanceTimersByTimeAsync(10)
+    expect(post).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(post).toHaveBeenCalledTimes(3)
+  } finally { s.close(); vi.useRealTimers() }
 })
