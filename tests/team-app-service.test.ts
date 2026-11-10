@@ -46,6 +46,18 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
+it('uses the Host background lane for automatic directory reads only', async () => {
+  const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { items: [] })
+  const { conversation: row } = await open(f)
+  const run = vi.spyOn(f.runtime.requestCoordinator, 'run')
+  try {
+    await f.service.execute('team.app.conversations', { side: 'team', background: true })
+    await f.service.execute('team.app.conversations', { side: 'external' })
+    await f.service.execute('team.app.read', { conversationRef: row!.ref, readSeq: 1, background: true })
+    expect(run.mock.calls.map(([request]) => request.lane)).toEqual(['background-read', 'interactive-read', 'write'])
+  } finally { f.runtime.dispose() }
+})
+
 it('projects realtime locators into the same opaque viewer keys used by current Team reads',async()=>{
  const f=fixture(path=>path.endsWith('/open')?{channel,conversation}:{conversation,messages:[message]})
  const opened=await open(f),c=opened.conversation!

@@ -316,6 +316,8 @@ export class ServiceRuntime {
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
   invalidateMemberCache(): void { this.memberCacheRevision += 1 }
   readonly requestCoordinator: ArkmeRequestCoordinator
+  // Media holds permits until body completion, independently of short JSON reads.
+  private readonly mediaStreamCoordinator = new ArkmeRequestCoordinator()
   // One bounded pool for message bodies and their awaited projection reads.
   // Background member rosters and other UI reads never inherit this context.
   private readonly messageSyncCoordinator = new ArkmeRequestCoordinator({
@@ -483,6 +485,7 @@ export class ServiceRuntime {
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateScope(scope)
     this.messageSyncCoordinator.invalidateScope(scope)
+    this.mediaStreamCoordinator.invalidateScope(scope)
   }
 
   invalidateKey(scope: string, key: string): void {
@@ -503,6 +506,7 @@ export class ServiceRuntime {
     this.calendarRevisions.clear()
     this.requestCoordinator.dispose()
     this.messageSyncCoordinator.dispose()
+    this.mediaStreamCoordinator.dispose()
   }
 
   async requireSession(): Promise<ArkmeSessionCredentials> {
@@ -1196,7 +1200,7 @@ export class ServiceRuntime {
     }
   }
 
-  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false,wire:Pick<ArkmeRemoteRequestOptions,'stringIdFields'>={}): Promise<T> {
+  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false,wire:Pick<ArkmeRemoteRequestOptions,'stringIdFields'>={}, background = false): Promise<T> {
     const origin = this.config.teamBaseUrl
     if (!origin) throw new ArkmePluginError('team-service-unavailable', '团队服务地址未配置', false, 503)
     let session = initialSession ?? await this.requireSession()
@@ -1205,7 +1209,8 @@ export class ServiceRuntime {
     const snapshotRead = typeof body.result_id === 'string' && body.result_id.length > 0 && [
       'analysis/result', 'analysis/words', 'dates', 'participants', 'exports/download',
     ].some(action => path === `/api/v1/team/conversations/history/${action}`)
-    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', {
+    const lane = read ? (background ? 'background-read' : 'interactive-read') : 'write'
+    const options = () => this.authenticatedRequestOptions(session, 'team', lane, {
       ...wire,bypassCache: true, cacheMs: 0,
       ...(snapshotRead ? { requestTimeoutMs: Math.max(150_000, this.config.requestTimeoutMs) } : {}),
     })
@@ -1329,7 +1334,7 @@ export class ServiceRuntime {
     try {
       // Admission, token recovery and first headers are bounded independently
       // of media duration. The opened body owns its progress/idle lifetime.
-      return await this.requestCoordinator.runStream({
+      return await this.mediaStreamCoordinator.runStream({
         scope: this.requestScope(session.userId), lane: 'interactive-read', service, signal,
         operation: signal => this.openMediaStream(service, path, { ...options, signal }, session),
       })

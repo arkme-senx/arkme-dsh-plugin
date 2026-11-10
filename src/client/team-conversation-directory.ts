@@ -33,7 +33,10 @@ export function startTeamDirectory(key: string): () => void {
     for (const c of openedTeamConversations.read(key)) items.set(c.key, mergeOpenedTeamConversation(c, items.get(c.key) ?? c))
     return [...items.values()].sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
   }
-  let running = false, again = false, fullAgain = false, revision = 0, preferenceRefresh = 0
+  let running: 'refresh' | 'more' | undefined
+  let revision = 0, preferenceRefresh = 0
+  let pendingRefresh: { readStateOnly: boolean; background: boolean } | undefined
+  let pendingMore = false
   let folderRequest: AbortController | undefined
   let foldersReady: Promise<void> | undefined
   account = key; openedTeamConversations.activate(key); snapshot = { ...empty, items: itemsNow() }; emit()
@@ -42,11 +45,20 @@ export function startTeamDirectory(key: string): () => void {
     ++revision
     snapshot = { ...snapshot, items: itemsNow() }; emit()
   })
-  const refresh = async (more = false, readStateOnly = false) => {
+  const refresh = async (more = false, readStateOnly = false, background = false) => {
     if (controller.signal.aborted || account !== key) return
-    if (running) { if (!more) { again = true; fullAgain ||= !readStateOnly }; return }
-    running = true
+    if (running) {
+      if (more) {
+        if (running !== 'more') pendingMore = true
+      } else pendingRefresh = {
+        readStateOnly: readStateOnly && (pendingRefresh?.readStateOnly ?? true),
+        background: background && (pendingRefresh?.background ?? true),
+      }
+      return
+    }
+    running = more ? 'more' : 'refresh'
     const token = revision
+    const priority = background ? { background: true } : {}
     if (!readStateOnly) { snapshot = { ...snapshot, loading: true }; emit() }
     let failure: string | undefined, accessLost = false
     if (!more && !readStateOnly) foldersReady = (async () => {
@@ -54,7 +66,7 @@ export function startTeamDirectory(key: string): () => void {
       folderRequest?.abort()
       const folders=new AbortController();folderRequest=folders
       try {
-        const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,request:{operation:'folders'}},folders.signal)
+        const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,...priority,request:{operation:'folders'}},folders.signal)
         if(!Array.isArray(value))throw new Error('团队群文件夹暂时无法刷新')
         if(!folders.signal.aborted&&account===key&&token===revision){const {foldersError:_,...current}=snapshot;snapshot={...current,workspaceSupported:true,workspaceFolders:value};teamDirectoryPreferences.setWorkspaceAvailable(key,true)}
       } catch(e) {
@@ -84,7 +96,7 @@ export function startTeamDirectory(key: string): () => void {
           const states = new Map<string, TeamConversationReadState>()
           for (let i = 0; i < targets.length; i += 100) {
             const rows = await callArkme<TeamConversationReadState[]>('team.app.read-states', {
-              conversationRefs: targets.slice(i, i + 100).map(c => c.ref), expectedAccountKey: key,
+              conversationRefs: targets.slice(i, i + 100).map(c => c.ref), expectedAccountKey: key, ...priority,
             }, controller.signal)
             for (const state of rows) states.set(state.key, state)
           }
@@ -103,7 +115,7 @@ export function startTeamDirectory(key: string): () => void {
           return
         }
         if (more && !previous?.nextCursor) throw new Error('消息分页异常，请重试')
-        let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
+        let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...priority, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
         if (more && page.hasMore && page.nextCursor === previous?.nextCursor) throw new Error('消息分页异常，请重试')
         const previousByKey=new Map(previous?.items.map(c=>[c.key,c])??[])
         const items = new Map([...(more ? previous?.items ?? [] : []), ...page.items.map(c=>({...c,notificationPolicy:mergeTeamNotificationPolicy(previousByKey.get(c.key)?.notificationPolicy,c.notificationPolicy)}))].map(c => [c.key, c]))
@@ -111,7 +123,7 @@ export function startTeamDirectory(key: string): () => void {
         while (!more && items.size < (previous?.items.length ?? 0) && page.hasMore) {
           if (!page.nextCursor || seen.has(page.nextCursor)) throw new Error('消息分页异常，请重试')
           seen.add(page.nextCursor)
-          page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, cursor: page.nextCursor }, controller.signal)
+          page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...priority, cursor: page.nextCursor }, controller.signal)
           for (const c of page.items) items.set(c.key, {...c,notificationPolicy:mergeTeamNotificationPolicy(items.get(c.key)?.notificationPolicy,c.notificationPolicy)})
         }
         if (!controller.signal.aborted && account === key && token === revision) {
@@ -132,7 +144,7 @@ export function startTeamDirectory(key: string): () => void {
         }
       }
     }))
-    running = false
+    running = undefined
     if (controller.signal.aborted || account !== key) return
     if (accessLost) ++revision
     const items = itemsNow()
@@ -142,9 +154,9 @@ export function startTeamDirectory(key: string): () => void {
       void (async () => {
         await foldersReady
         if (!preferencesCurrent()) return
-        await teamDirectoryPreferences.hydrate(key, true)
+        await teamDirectoryPreferences.hydrate(key, true, background)
         if (!preferencesCurrent()) return
-        await teamDirectoryPreferences.reconcile(key, itemsNow(), controller.signal)
+        await teamDirectoryPreferences.reconcile(key, itemsNow(), controller.signal, background)
         if (!preferencesCurrent()) return
         // A preference query also carries an authority verdict. A denial must
         // retire old previews, rather than appear as an ordinary default row.
@@ -159,8 +171,8 @@ export function startTeamDirectory(key: string): () => void {
         for (let i = 0; i < targets.length; i += 10) {
           const batch = await Promise.all(targets.slice(i, i + 10).map(async target => {
             try {
-              if (target.kind === 'folder') return (await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef: target.ref, side: 'team', limit: 1, expectedAccountKey: key }, controller.signal)).items
-              return [(await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: target.ref, limit: 1, expectedAccountKey: key }, controller.signal)).conversation]
+              if (target.kind === 'folder') return (await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef: target.ref, side: 'team', limit: 1, expectedAccountKey: key, ...priority }, controller.signal)).items
+              return [(await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: target.ref, limit: 1, expectedAccountKey: key, ...priority }, controller.signal)).conversation]
             } catch { return [] }
           }))
           // A pin does not activate a preview. Only publication or a validated
@@ -175,7 +187,18 @@ export function startTeamDirectory(key: string): () => void {
         snapshot = { ...snapshot, items: itemsNow() }; emit()
       })().catch(() => { /* Optional sync errors are exposed by the preference owner. */ })
     }
-    if (again) { const full = fullAgain; again = false; fullAgain = false; await refresh(false, !full) }
+    if (pendingRefresh?.background === false) {
+      const { readStateOnly } = pendingRefresh
+      pendingRefresh = undefined
+      await refresh(false, readStateOnly)
+    } else if (pendingMore) {
+      pendingMore = false
+      await refresh(true)
+    } else if (pendingRefresh) {
+      const { readStateOnly } = pendingRefresh
+      pendingRefresh = undefined
+      await refresh(false, readStateOnly, true)
+    }
   }
   request = refresh
   discard = conversation => {
@@ -185,7 +208,7 @@ export function startTeamDirectory(key: string): () => void {
     const page = pages.get(conversation.side)
     if (page) pages.set(conversation.side, { ...page, items: page.items.filter(c => c.channel.jotmoId !== conversation.channel.jotmoId) })
     snapshot = { ...snapshot, items: snapshot.items.filter(c => c.side !== conversation.side || c.channel.jotmoId !== conversation.channel.jotmoId) }; emit()
-    void refresh()
+    void refresh(false, false, true)
   }
   const stop = subscribeTeamMessageChanges((changed, receiptOnly,change) => {
     if (changed !== key) return
@@ -197,11 +220,11 @@ export function startTeamDirectory(key: string): () => void {
       openedTeamConversations.reconcile(key, invalidate)
       snapshot={...snapshot,items:snapshot.items.map(invalidate)};emit()
     }
-    void refresh(false, receiptOnly === true)
+    void refresh(false, receiptOnly === true, true)
   })
-  const stopWorkspace=subscribeTeamWorkspaceChanges(changed=>{if(changed===key){++revision;snapshot={...snapshot,workspaceFolders:[]};emit();void refresh()}})
-  const focus = () => { void refresh() }
-  const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh() }, 60_000)
+  const stopWorkspace=subscribeTeamWorkspaceChanges(changed=>{if(changed===key){++revision;snapshot={...snapshot,workspaceFolders:[]};emit();void refresh(false, false, true)}})
+  const focus = () => { void refresh(false, false, true) }
+  const timer = setInterval(() => { if (document.visibilityState === 'visible') focus() }, 60_000)
   window.addEventListener('focus', focus)
   void refresh()
   return () => {
