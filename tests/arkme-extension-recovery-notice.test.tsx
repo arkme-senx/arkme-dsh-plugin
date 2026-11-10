@@ -127,3 +127,18 @@ describe('Arkme desktop extension recovery notice', () => {
     }
   })
 })
+
+it('shows the diagnostic actions together and reports unavailable DSH without changing quarantine', async () => {
+  const request = vi.fn<ArkmeExtensionRecoveryNoticeRequest>(async () => status())
+  let renderer!: ReactTestRenderer
+  await act(async () => { renderer = create(<ArkmeExtensionRecoveryNotice request={request} />) })
+  await act(async () => { renderer.root.findByProps({'data-arkme-quarantine-action':'details'}).props.onClick() })
+  expect(text(renderer)).toContain('复制诊断信息')
+  expect(text(renderer)).toContain('发送给 Deepseek Harness 排查')
+  const button = renderer.root.findByProps({'data-arkme-quarantine-action':'ask-dsh'})
+  await act(async () => { button.props.onClick() })
+  expect(text(renderer)).toContain('请先登录')
+  expect(button.props.disabled).toBe(false)
+  expect(request).toHaveBeenCalledTimes(1)
+  await act(async () => { renderer.unmount() })
+})
