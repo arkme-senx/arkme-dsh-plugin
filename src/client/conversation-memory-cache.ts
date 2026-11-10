@@ -260,6 +260,12 @@ export class ArkmeConversationMemoryCache {
     for (const [key, snapshot] of this.timelines) this.timelines.set(key, { ...snapshot, fetchedAtMillis: 0, recordRevision: -1 })
   }
 
+  forgetTimeline(conversationKey: string): void {
+    this.timelines.delete(conversationKey)
+    this.timelineBytes.delete(conversationKey)
+    this.appliedTimelineDeltas.delete(conversationKey)
+  }
+
   clear(): void {
     this.timelines.clear()
     this.timelineBytes.clear()

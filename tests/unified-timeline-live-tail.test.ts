@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import { UnifiedTimelineLiveTail } from '../src/client/unified-timeline-live-tail.js'
+import { projectCommittedChatWindow, UnifiedTimelineLiveTail } from '../src/client/unified-timeline-live-tail.js'
+import { ArkmeChatTimelineDeltaStore } from '../src/client/chat-directory-store.js'
 import { ConversationReadAckQueue } from '../src/client/conversation-read-ack-queue.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import type { ArkmeTimelineItem } from '../src/types.js'
@@ -102,4 +103,25 @@ it('bounds acknowledgement starts and flushes only the latest observed cursor on
     expect(calls).toEqual([1, 101, 102])
     expect(vi.getTimerCount()).toBe(0)
   } finally { vi.useRealTimers() }
+})
+
+it('projects committed edits and removals in a historical window without changing its coverage', () => {
+  const history = { ...window([5, 6, 7]), newerHasMore: true }
+  const changes = new Map([
+    ['relation-5', { itemKey: 'relation-5', revision: 10, version: 2, item: { ...item(5), recordVersion: 2, textContent: 'edited' } }],
+    ['relation-6', { itemKey: 'relation-6', revision: 11, version: 0 }],
+  ])
+  const projected = projectCommittedChatWindow(history, changes)
+  expect(projected.events).toMatchObject([{ eventId: 'event-5', item: { sequence: 5, textContent: 'edited' } }, { eventId: 'event-7' }])
+  expect(projected).toMatchObject({ newerHasMore: true, windowTokens: ['confirmed'], olderCursor: 'older' })
+  expect(projectCommittedChatWindow(history, changes).events).toEqual(projected.events)
+})
+
+it('keeps an entire manifest page of removals available to a mounted window', () => {
+  const store = new ArkmeChatTimelineDeltaStore()
+  store.applySyncProjections([{ sourceKey: 'chat', changes: Array.from({ length: 1000 }, (_, i) => ({
+    itemKey: `relation-${i + 1}`, revision: i + 1, version: 1,
+  })) }])
+  const changes = store.getSnapshotForSource('chat').syncChanges!
+  expect(projectCommittedChatWindow(window([1, 1000, 1001]), changes).events.map(row => row.eventId)).toEqual(['event-1001'])
 })
