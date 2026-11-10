@@ -1412,6 +1412,7 @@ describe('conversation send directory projection', () => {
     const composerSurface = renderer!.root.findByProps({ 'data-arkme-primary-composer': 'true' })
     expect(renderedComposerStyle(composerSurface)).toMatchObject({ borderRadius: '0 0 15px 15px' })
     expect(composerSurface.findByType(ArkmeRichComposerInput).props.value).toBe('本机重新编辑草稿')
+    expect(composerSurface.findByType(ArkmeRichComposerInput).props.selectionRequest).toEqual({ atEnd: true })
     expect(composerSurface.findByProps({ 'aria-label': '保存重新编辑' })).toBeDefined()
     expect(arkmeComposerDraftStore.get(normalDraftKey).text).toBe('未发送的普通消息')
 

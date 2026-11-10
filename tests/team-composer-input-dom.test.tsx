@@ -7,7 +7,7 @@ import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
 import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
 import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
-import type { TeamConversation } from '../src/team-app-contract.js'
+import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn(), stage: vi.fn(), policy: vi.fn() }))
 vi.mock('../src/client/social-action-guard.js', () => ({requirePhoneForSocialAction: async()=>{}, isSocialBindingRequired:()=>false}))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -71,6 +71,36 @@ it.each([false,true])('source customer explicit contact shares directory restora
     expect(direct.lastSeq).toBe(0);expect(direct.unread).toBe(0)
   }finally{restore.mockRestore();openedTeamConversations.reset()}
 })
+it('focuses the end of a Team message when its edit menu action opens', async () => {
+  const text = '原团队消息😀'
+  const message: TeamMessage = {
+    ref: 'owned', key: 'owned', seq: 1, revision: 1, version: 1, side: 'team',
+    sender: { nickname: '成员' }, own: true, state: 'published', createdAt: 1,
+    canEdit: true, canDelete: true, content: { text_content: text, template_kind: 1 }, contentStatus: 'available', media: [],
+  }
+  const team = { ...conversation, side: 'team' as const }
+  const original = mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation((op: string, ...args: unknown[]) => op === 'team.app.timeline'
+    ? Promise.resolve({ conversation: team, messages: [message], hasMore: false, beforeSeq: 0 })
+    : original(op, ...args))
+  await act(async () => root.render(<TeamConversationPane key="edit" conversation={team} accountKey="test:7777" />))
+  const bubble = host.querySelector('[data-team-message-key="owned"] [aria-label="消息操作"]')!
+  await act(async () => {
+    bubble.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+  })
+  const action = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.trim() === '重新编辑')!
+  expect(action).toBeDefined()
+  await act(async () => action.click())
+
+  const range = document.getSelection()!.getRangeAt(0)
+  const before = range.cloneRange()
+  before.selectNodeContents(editor())
+  before.setEnd(range.startContainer, range.startOffset)
+  expect(document.activeElement).toBe(editor())
+  expect(range.collapsed).toBe(true)
+  expect(before.toString()).toBe(text)
+})
+
 it('places related arrangements above the team composer and hides it while editing',async()=>{
   const shortcuts=host.querySelector<HTMLElement>('[data-arkme-composer-shortcuts]')!
   expect(shortcuts).not.toBeNull();expect(shortcuts.textContent).toContain('相关安排');expect(shortcuts.hidden).toBe(false)
