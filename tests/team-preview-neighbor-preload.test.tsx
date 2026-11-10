@@ -252,4 +252,3 @@ it('keeps the retained neighbor subscribed to revocation while the visible windo
  await act(async()=>{vi.mocked(doc.hasFocus).mockReturnValue(true);window.dispatchEvent(new Event('focus'))})
  expect(prepared('b')).toBeUndefined();expect(child.closed).toBe(false)
 })
-
