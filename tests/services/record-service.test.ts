@@ -153,7 +153,7 @@ describe('RecordService', () => {
     })
   })
 
-  it('prepares and commits a record re-edit while preserving owner-controlled content fields', async () => {
+  it.each([undefined, 0, 3])('preserves owner-controlled fields when editing with group epoch %s', async editEpoch => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-'))
     const stateStore = new ArkmeStateStore(root)
     const calls: Array<{ path: string; body: Record<string, unknown> }> = []
@@ -172,6 +172,7 @@ describe('RecordService', () => {
       },
       record_duration_millis: 3_200, edit_duration_millis: 800, send_at: 123_000,
       status: 1, version: 7, content_access_state: 1,
+      ...(editEpoch === undefined ? {} : { edit_protocol_version: 2, edit_epoch: editEpoch }),
     }
     const runtime = {
       config: { maxTextLength: 20_000, richMediaSendEnabled: true },
@@ -223,6 +224,7 @@ describe('RecordService', () => {
         }],
       },
       record_duration_millis: 3_200, edit_duration_known: false, revision_uid: expect.any(String), version: 7,
+      ...(editEpoch === undefined ? {} : { edit_protocol_version: 2, expected_edit_epoch: editEpoch }),
     })
     await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })

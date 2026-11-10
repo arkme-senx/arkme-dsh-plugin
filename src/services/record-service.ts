@@ -804,6 +804,15 @@ export class RecordService {
     ) }
     const body = this.recordReeditUpdateBody(owner, draft.title, draft.textContent, mentionUpdate)
     if (command.revisionUid) body.revision_uid = command.revisionUid
+    const core = objectValue(owner.attachmentData.record_core)
+    if (owner.source.kind === 'group_chat' && core.edit_protocol_version === 2) {
+      const epoch = core.edit_epoch
+      if (typeof epoch !== 'number' || !Number.isSafeInteger(epoch) || epoch < 0) {
+        throw new ArkmePluginError('record-reedit-detail-invalid', '群聊快记编辑状态无效，请刷新后重试', true, 502)
+      }
+      body.edit_protocol_version = 2
+      body.expected_edit_epoch = epoch
+    }
     if (command.editorSnapshot) body.editor_snapshot = command.editorSnapshot
     delete body.edit_duration_millis
     body.edit_duration_known = draft.capture?.durationMillis !== undefined
