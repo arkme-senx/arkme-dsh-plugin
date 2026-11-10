@@ -126,7 +126,7 @@ it.each([
     if (cause === 'reconnect') s.service.accept({ type: 'reconcile', revision: 2, connected: true, connectionGeneration: 2 })
     else await s.service.retry()
     s.service.accept({ ...timelineHint, revision: 3 })
-    await vi.advanceTimersByTimeAsync(running ? 400 : 6500)
+    await vi.advanceTimersByTimeAsync(400)
     expect(s.updates.at(-1)).toMatchObject({ phase: 'syncing', trigger: 'catchup' })
     expect(display.snapshot().visible).toBe(true)
     release!(); await vi.advanceTimersByTimeAsync(350)

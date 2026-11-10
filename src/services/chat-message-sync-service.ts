@@ -1,4 +1,4 @@
-import { parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncSession } from '../chat-message-sync.js'
+import { parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncProjection, type ChatSyncSession } from '../chat-message-sync.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
 import type { UnifiedChatTimelineService } from './unified-chat-timeline-service.js'
@@ -20,6 +20,7 @@ export class ChatMessageSyncService {
   private controller = new AbortController()
   private running: Promise<void> | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
+  private timerKind: 'realtime' | 'catchup' | 'retry' | undefined
   private dirty = false
   private trigger: 'realtime' | 'catchup' = 'catchup'
   private pendingTrigger: 'realtime' | 'catchup' | undefined
@@ -27,12 +28,12 @@ export class ChatMessageSyncService {
   private readonly unsubscribe?: () => void
   constructor(private readonly runtime: ServiceRuntime, private readonly timeline: UnifiedChatTimelineService,
     private readonly source: SourceService, private readonly chat: ChatService,
-    private readonly publish: (progress: ArkmeMessageSyncProgress, sourceKeys?: string[]) => void) {
+    private readonly publish: (progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[]) => void) {
     this.unsubscribe = runtime.subscribeAccountScope?.(() => { this.reset(); if (this.started) this.wake(0) })
   }
-  private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[]): void {
+  private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[]): void {
     this.progress = { ...progress, trigger: this.trigger, revision: ++this.revision }
-    this.publish(this.progress, sourceKeys)
+    this.publish(this.progress, sourceKeys, projections)
   }
   start(): () => void {
     if (!this.started && !this.disposed) { this.started = true; this.wake(0) }
@@ -41,7 +42,7 @@ export class ChatMessageSyncService {
   reset(): void {
     this.generation++; this.controller.abort(); this.controller = new AbortController()
     if (this.timer) clearTimeout(this.timer)
-    this.timer = undefined; this.dirty = false; this.failures = 0
+    this.timer = undefined; this.timerKind = undefined; this.dirty = false; this.failures = 0
     this.trigger = 'catchup'; this.pendingTrigger = undefined
     if (this.progress.accountKey) this.update(idle())
     else this.progress = idle()
@@ -65,8 +66,14 @@ export class ChatMessageSyncService {
       this.pendingTrigger = 'catchup'
       if (this.running && this.trigger !== 'catchup') { this.trigger = 'catchup'; this.update(this.progress) }
     } else this.pendingTrigger ??= 'realtime'
-    if (this.running || this.timer) return
-    this.timer = setTimeout(() => { this.timer = undefined; void this.launch() }, delay)
+    if (this.running) return
+    if (this.timer) {
+      // Reconnect can promote a routine check. A server or failure backoff still applies.
+      if (delay !== 0 || trigger !== 'catchup' || this.timerKind !== 'realtime') return
+      clearTimeout(this.timer)
+    }
+    this.timerKind = trigger
+    this.timer = setTimeout(() => { this.timer = undefined; this.timerKind = undefined; void this.launch() }, delay)
     this.timer.unref?.()
   }
   private async launch(): Promise<void> {
@@ -107,7 +114,7 @@ export class ChatMessageSyncService {
       return current
     }
     if (this.timer) clearTimeout(this.timer)
-    this.timer = undefined; this.failures = 0; this.started = true
+    this.timer = undefined; this.timerKind = undefined; this.failures = 0; this.started = true
     this.wake(0)
     return current
   }
@@ -168,6 +175,8 @@ export class ChatMessageSyncService {
           this.assert(generation, signal)
           const { bodies: _bodies, ...stored } = page
           plan = await this.timeline.sync<ChatSyncPlan>({ action: 'manifest', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket, now: Date.now() })
+          this.assert(generation, signal)
+          if (plan.projections?.length) this.update(plan.progress, undefined, plan.projections)
           if (page.sessions.some(s => s.cacheRequired) && !('cached' in ranges)) ranges = await this.timeline.sync({ action: 'ranges', account, epoch: plan.epoch })
           ranges = 'cached' in ranges ? { cached: ranges.cached } : {}
           if (page.retry) throw new Error('message-sync-upstream-pending')
@@ -215,7 +224,7 @@ export class ChatMessageSyncService {
             this.assert(generation, signal)
             // Notify only after commit. Consumers reread durable bodies, never
             // publish the HTTP payload that may have lost an invalidation race.
-            this.update(plan.progress, page.sessions.flatMap(entry => entry.sourceKey ? [entry.sourceKey] : []))
+            this.update(plan.progress, page.sessions.flatMap(entry => entry.sourceKey ? [entry.sourceKey] : []), plan.projections)
           }
         } finally { await Promise.allSettled(flights.map(f => f.response)) }
       }
@@ -245,7 +254,8 @@ export class ChatMessageSyncService {
   private scheduleRetry(delay: number): void {
     this.pendingTrigger = 'catchup'
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => { this.timer = undefined; void this.launch() }, delay)
+    this.timerKind = 'retry'
+    this.timer = setTimeout(() => { this.timer = undefined; this.timerKind = undefined; void this.launch() }, delay)
     this.timer.unref?.()
   }
   private validateBodies(sessions: ChatSyncSession[], wanted: Record<string, string[]>): void {

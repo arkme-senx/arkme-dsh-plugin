@@ -1,3 +1,4 @@
+import type { ChatSyncProjection } from '../chat-message-sync.js'
 import type { ArkmeTimelineItem } from '../types.js'
 import { compareUnifiedTimelineEvents, type ArkmeUnifiedTimelineWindow } from '../unified-chat-timeline.js'
 import { MAX_ACTIVE_TIMELINE_EVENTS } from './unified-timeline-window.js'
@@ -9,10 +10,37 @@ export function removeUnifiedTimelineItems(window: ArkmeUnifiedTimelineWindow, k
   return events.length === window.events.length ? window : { ...window, events }
 }
 
+export function projectCommittedChatMessage(
+  item: ArkmeTimelineItem,
+  changes: ReadonlyMap<string, ChatSyncProjection['changes'][number]>,
+): ArkmeTimelineItem | undefined {
+  const change = item.timelineItemKey ? changes.get(item.timelineItemKey) : undefined
+  if (!change) return item
+  if (change.version !== 0 && (item.recordVersion ?? item.version ?? 0) > change.version) return item
+  return change.item
+}
+
+export function projectCommittedChatWindow(
+  window: ArkmeUnifiedTimelineWindow,
+  changes: ReadonlyMap<string, ChatSyncProjection['changes'][number]>,
+): ArkmeUnifiedTimelineWindow {
+  let changed = false
+  const events = window.events.flatMap<ArkmeUnifiedTimelineWindow['events'][number]>(event => {
+    if (event.kind !== 'message') return [event]
+    const item = projectCommittedChatMessage(event.item, changes)
+    if (item === event.item) return [event]
+    changed = true
+    return item ? [{ ...event, item, contentStatus: 'available' as const }] : []
+  })
+  return changed ? { ...window, events } : window
+}
+
 /** Mounted-conversation overlay, never a durable window or a pagination owner. */
 export class UnifiedTimelineLiveTail {
   private revision = 0
   private readonly pending = new Map<string, { revision: number; item: ArkmeTimelineItem }>()
+
+  clear(): void { this.pending.clear() }
 
   get readRevision(): number { return this.revision }
   get hasPending(): boolean { return this.pending.size > 0 }

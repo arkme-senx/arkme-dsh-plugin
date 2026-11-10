@@ -1,3 +1,4 @@
+import type { ChatSyncProjection } from '../chat-message-sync.js'
 import { retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { mergeBotDirectorySnapshots } from '../bot-chat-directory-projection.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
@@ -1067,6 +1068,9 @@ export interface ArkmeChatTimelineDeltaSnapshot {
 export interface ArkmeChatTimelineSourceDeltaSnapshot {
   revision: number
   localCacheRevision?: number
+  syncReset?: { access: NonNullable<ChatSyncProjection['reset']> }
+  syncChanges?: ReadonlyMap<string, ChatSyncProjection['changes'][number]>
+  syncChangeBytes?: number
   items: import('../types.js').ArkmeTimelineItem[]
   removedItemKeys: string[]
   invalidationRevision: number
@@ -1082,6 +1086,7 @@ const EMPTY_CHAT_TIMELINE_SOURCE_DELTA: ArkmeChatTimelineSourceDeltaSnapshot = {
 const MAX_SCOPED_REALTIME_SOURCES = 256
 const MAX_TIMELINE_REMOVED_ITEM_KEYS = 512
 const MAX_TIMELINE_CHANGE_CURSORS = MAX_TIMELINE_REMOVED_ITEM_KEYS * 2
+const MAX_COMMITTED_SYNC_BYTES = 8 * 1024 * 1024
 
 type ArkmeChatTimelineChangeKind = 'deleted' | 'recovered' | 'reedited' | 'extended'
 
@@ -1102,6 +1107,7 @@ function retainNewestMapEntries<Value>(map: Map<string, Value>): void {
 export class ArkmeChatTimelineDeltaStore {
   private snapshot: ArkmeChatTimelineDeltaSnapshot = { revision: 0, itemsBySourceKey: {} }
   private readonly sourceSnapshots = new Map<string, ArkmeChatTimelineSourceDeltaSnapshot>()
+  private readonly syncBodySizes = new WeakMap<object, number>()
   private readonly changeCursorsBySource = new Map<string, Map<string, ArkmeChatTimelineChangeCursor>>()
   private accountScopeKey: string | undefined
   private readonly listeners = new Set<() => void>()
@@ -1131,6 +1137,54 @@ export class ArkmeChatTimelineDeltaStore {
       this.sourceSnapshots.set(sourceKey, { ...previous, revision: previous.revision + 1, invalidationRevision: previous.invalidationRevision + 1 })
     }
     retainNewestMapEntries(this.sourceSnapshots)
+    this.snapshot = { ...this.snapshot, revision: this.snapshot.revision + 1 }
+    for (const listener of this.listeners) listener()
+  }
+  applySyncProjections(projections: readonly ChatSyncProjection[]): void {
+    for (const { sourceKey, reset, changes } of projections) {
+      const previous = this.getSnapshotForSource(sourceKey)
+      const next = new Map(reset ? undefined : previous.syncChanges)
+      for (const change of changes) {
+        const old = next.get(change.itemKey)
+        if (old && old.revision > change.revision) continue
+        next.delete(change.itemKey)
+        next.set(change.itemKey, change)
+      }
+      let overflow = false
+      while (next.size > MAX_TIMELINE_REMOVED_ITEM_KEYS) {
+        const oldestBody = [...next].find(([, change]) => change.item)?.[0]
+        next.delete(oldestBody ?? next.keys().next().value!)
+        overflow = true
+      }
+      let bytes = 0
+      for (const { item } of next.values()) {
+        if (!item) continue
+        let size = this.syncBodySizes.get(item)
+        if (size === undefined) {
+          size = JSON.stringify(item).length * 2
+          this.syncBodySizes.set(item, size)
+        }
+        bytes += size
+      }
+      this.sourceSnapshots.delete(sourceKey)
+      this.sourceSnapshots.set(sourceKey, {
+        ...previous, syncChanges: next, syncChangeBytes: bytes,
+        ...(overflow ? { revision: previous.revision + 1, invalidationRevision: previous.invalidationRevision + 1 } : {}),
+        ...(reset ? { syncReset: { access: reset }, items: [], removedItemKeys: [] } : {}),
+      })
+      if (reset) this.changeCursorsBySource.delete(sourceKey)
+    }
+    retainNewestMapEntries(this.sourceSnapshots)
+    let bytes = [...this.sourceSnapshots.values()].reduce((sum, source) => sum + (source.syncChangeBytes ?? 0), 0)
+    for (const [key, source] of this.sourceSnapshots) {
+      if (bytes <= MAX_COMMITTED_SYNC_BYTES) break
+      if (!source.syncChangeBytes || !source.syncChanges) continue
+      const tombstones = new Map([...source.syncChanges].filter(([, change]) => !change.item))
+      this.sourceSnapshots.set(key, { ...source, syncChanges: tombstones, syncChangeBytes: 0,
+        revision: source.revision + 1, invalidationRevision: source.invalidationRevision + 1 })
+      bytes -= source.syncChangeBytes
+    }
+    this.retainChangeCursorsForKnownSources()
     this.snapshot = { ...this.snapshot, revision: this.snapshot.revision + 1 }
     for (const listener of this.listeners) listener()
   }
@@ -1165,6 +1219,8 @@ export class ArkmeChatTimelineDeltaStore {
         && JSON.stringify(previous.removedItemKeys) === JSON.stringify(removedItemKeys)) continue
       this.sourceSnapshots.delete(sourceKey)
       this.sourceSnapshots.set(sourceKey, {
+        ...(previous?.syncReset ? { syncReset: previous.syncReset } : {}),
+        ...(previous?.syncChanges ? { syncChanges: previous.syncChanges, syncChangeBytes: previous.syncChangeBytes ?? 0 } : {}),
         revision: (previous?.revision ?? 0) + 1,
         ...(previous?.localCacheRevision ? { localCacheRevision: previous.localCacheRevision } : {}),
         items: [...visibleItems],
@@ -1219,6 +1275,7 @@ export class ArkmeChatTimelineDeltaStore {
     this.changeCursorsBySource.set(sourceKey, cursors)
     this.sourceSnapshots.delete(sourceKey)
     this.sourceSnapshots.set(sourceKey, {
+      ...previous,
       revision: previous.revision + 1,
       ...(previous.localCacheRevision ? { localCacheRevision: previous.localCacheRevision } : {}),
       items: previous.items.filter(item => !boundedRemovedItemKeySet.has(item.timelineItemKey ?? '')),

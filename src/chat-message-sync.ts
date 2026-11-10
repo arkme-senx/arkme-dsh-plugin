@@ -1,3 +1,4 @@
+import type { ArkmeTimelineItem } from './types.js'
 import type { ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
 /** Public facts. Counts describe one frozen cohort, never read acknowledgements. */
@@ -33,7 +34,15 @@ export interface ChatSyncPage {
   /** Raw authorized bodies exist only between transport and Host projection. */
   bodies: Map<string, Record<string, unknown>[]>
 }
-export interface ChatSyncPlan { progress: ArkmeMessageSyncProgress; checkpoint: string; epoch: number; active: boolean }
+export interface ChatSyncProjection {
+  sourceKey: string
+  reset?: 'accessible' | 'restricted'
+  changes: Array<{ itemKey: string; revision: number; version: number; item?: ArkmeTimelineItem }>
+}
+export interface ChatSyncPlan {
+  progress: ArkmeMessageSyncProgress; checkpoint: string; epoch: number; active: boolean
+  projections?: ChatSyncProjection[]
+}
 export interface ChatSyncBatch { uid: string; kind: number; membership: number; work: ChatSyncWork[] }
 export interface ChatSyncLocalPage { events: ArkmeUnifiedTimelineEvent[]; before?: number; revision: number }
 export type ChatSyncCommand =
