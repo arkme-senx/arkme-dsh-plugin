@@ -55,7 +55,7 @@ export type ChatSyncCommand =
   | { action: 'ack'; account: string; sourceKey: string; through: number }
   | { action: 'manifest' | 'commit'; account: string; epoch: number; expectedCheckpoint: string; page: Omit<ChatSyncPage, 'bodies'>; ticket: number; now: number }
   | { action: 'freeze' | 'finish'; account: string; epoch: number }
-  | { action: 'pending'; account: string; epoch: number; now: number; limit: number }
+  | { action: 'pending'; account: string; epoch: number; now: number; limit: number; uid?: string }
   | { action: 'ranges'; account: string; epoch: number }
   | { action: 'read'; scope: string; anchorId?: string; limit: number; before?: number }
 

@@ -27,7 +27,7 @@ function setup(post: (...args: any[]) => Promise<unknown>, observe?: (progress: 
       observe?.(progress)
       if (sourceKeys?.length) committedHints.push({ sourceKeys, readable: (cache.sync({ action: 'read', scope: JSON.stringify(['test', account, 'chat']), limit: 100 }) as import('../src/chat-message-sync.js').ChatSyncLocalPage | undefined)?.events.length ?? 0 })
     })
-  return { service, updates, committedHints, runtime, switchAccount() { account++; service.reset() }, close() { service.dispose(); cache.close(); rmSync(path, { force: true, recursive: true }) } }
+  return { service, updates, committedHints, runtime, cache, switchAccount() { account++; service.reset() }, close() { service.dispose(); cache.close(); rmSync(path, { force: true, recursive: true }) } }
 }
 it('has one Host pump, 100-body batches, at most two background reads and no directory/read-ACK calls', async () => {
   let active = 0, peak = 0
@@ -244,4 +244,68 @@ it('uses a Chat availability hint for one early transport probe per failure stre
     await vi.advanceTimersByTimeAsync(4000)
     expect(post).toHaveBeenCalledTimes(3)
   } finally { s.close(); vi.useRealTimers() }
+})
+
+it('commits the preferred conversation before scanning the account, with one checkpoint', async () => {
+  const requests: string[] = []
+  const s = setup(async (route, data) => {
+    if (route.endsWith('/session')) {
+      requests.push('session')
+      expect(data).toMatchObject({ mode: 'unread_manifest', limit: 100, chat_session_uid: 'chat', checkpoint: '' })
+      return { manifest_only: true, checkpoint: 'preferred', has_more: false, retry: false, sessions: [{ ...head, manifest: [row(1)] }] }
+    }
+    expect(data.checkpoint).toBe('preferred')
+    if (data.mode === 'bodies') {
+      requests.push('body')
+      expect(data.bodies).toEqual({ chat: ['1'] })
+      return { manifest_only: false, checkpoint: 'preferred', has_more: false, retry: false, sessions: [{ ...head, items: [{ ...row(1), relation: { rel_uid: '1', seq: 1 }, record: {} }] }] }
+    }
+    requests.push('account')
+    expect(s.committedHints).toEqual([{ sourceKeys: ['source:chat'], readable: 1 }])
+    return { manifest_only: true, checkpoint: 'account', has_more: false, retry: false, sessions: [] }
+  })
+  try {
+    s.service.preferConversation(1, 'chat')
+    s.service.start()
+    await vi.waitFor(() => expect(s.updates.at(-1)).toMatchObject({ phase: 'idle', total: 1, completed: 1 }))
+    expect(requests).toEqual(['session', 'body', 'account'])
+  } finally { s.close() }
+})
+
+it('falls back to account recovery when an older server lacks scoped sync', async () => {
+  const routes: string[] = []
+  const s = setup(async route => {
+    routes.push(route)
+    if (route.endsWith('/session')) throw new ArkmePluginError('arkme-http-error', 'route missing', false, 502, { upstreamStatus: 404 })
+    return { manifest_only: true, checkpoint: 'account', has_more: false, retry: false, sessions: [] }
+  })
+  try {
+    s.service.preferConversation(1, 'chat')
+    s.service.start()
+    await vi.waitFor(() => expect(s.updates.at(-1)).toMatchObject({ phase: 'idle', cycle: 1 }))
+    s.service.accept({ type: 'reconcile', revision: 1, connected: true, connectionGeneration: 2 })
+    await vi.waitFor(() => expect(s.updates.at(-1)).toMatchObject({ phase: 'idle', cycle: 2 }))
+    expect(routes).toEqual(['/api/v1/chat/sync/session', '/api/v1/chat/sync/account', '/api/v1/chat/sync/account'])
+  } finally { s.close() }
+})
+
+
+it('continues the account scan immediately when a live invalidation fences off a preferred response', async () => {
+  const routes: string[] = []
+  const s = setup(async (route, data) => {
+    routes.push(route)
+    expect(data.checkpoint).toBe('')
+    if (route.endsWith('/session')) {
+      s.cache.invalidate(JSON.stringify(['test', 1, 'chat']), 'key:1', true)
+      return { manifest_only: true, checkpoint: 'stale-preferred', has_more: false, retry: false, sessions: [{ ...head, manifest: [row(1)] }] }
+    }
+    return { manifest_only: true, checkpoint: 'account', has_more: false, retry: false, sessions: [] }
+  })
+  try {
+    s.service.preferConversation(1, 'chat')
+    s.service.start()
+    await vi.waitFor(() => expect(s.updates.at(-1)).toMatchObject({ phase: 'idle', pending: 0 }))
+    expect(routes).toEqual(['/api/v1/chat/sync/session', '/api/v1/chat/sync/account'])
+    expect(s.updates.some(update => update.phase === 'paused')).toBe(false)
+  } finally { s.close() }
 })

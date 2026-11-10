@@ -2714,6 +2714,10 @@ recordingAnalysisV1: true,
   async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (!options.background && (!options.cursor || options.cursor.unified?.mode === 'initial') && !options.signal?.aborted) {
+      const memberChat = (source.kind === 'private_chat' || source.kind === 'group_chat') && !source.groupDelegation
+      this.messageSync.preferConversation(session.userId, memberChat ? source.ownerRef : undefined)
+    }
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
       this.realtime.preferChatProjection(session.userId, source.ownerRef)

@@ -104,15 +104,20 @@ export class ChatMessageSyncStore {
     }
     if (command.action === 'pending') {
       this.assert(account, command.epoch)
-      const cursor = String(this.get(account).dispatch_uid)
-      const select = this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid>? AND retry_at<=? ORDER BY uid LIMIT ?`)
-      let sessions = select.all(account, cursor, command.now, 50)
-      if (sessions.length < 50) sessions = sessions.concat(this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid<=? AND retry_at<=? ORDER BY uid LIMIT ?`).all(account, cursor, command.now, 50 - sessions.length))
+      let sessions: Row[]
+      if (command.uid !== undefined) {
+        sessions = [{ uid: command.uid }]
+      } else {
+        const cursor = String(this.get(account).dispatch_uid)
+        const select = this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid>? AND retry_at<=? ORDER BY uid LIMIT ?`)
+        sessions = select.all(account, cursor, command.now, 50)
+        if (sessions.length < 50) sessions = sessions.concat(this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid<=? AND retry_at<=? ORDER BY uid LIMIT ?`).all(account, cursor, command.now, 50 - sessions.length))
+      }
       const rows: Row[] = [], quota = Math.max(1, Math.floor(Math.min(400, command.limit) / Math.max(1, sessions.length)))
       const pending = this.prepare(`SELECT w.*,s.kind,s.membership FROM message_sync_work w JOIN message_sync_sessions s ON s.account=w.account AND s.uid=w.uid
         WHERE w.account=? AND w.uid=? AND w.pending=1 AND w.retry_at<=? AND s.accessible=1 ORDER BY w.sequence LIMIT ?`)
       for (const session of sessions) rows.push(...pending.all(account, String(session.uid), command.now, quota))
-      if (sessions.length) this.prepare('UPDATE message_sync_accounts SET dispatch_uid=? WHERE account=?').run(String(sessions.at(-1)!.uid), account)
+      if (command.uid === undefined && sessions.length) this.prepare('UPDATE message_sync_accounts SET dispatch_uid=? WHERE account=?').run(String(sessions.at(-1)!.uid), account)
       const bySession = new Map<string, { uid: string; kind: number; membership: number; work: ChatSyncWork[] }>()
       for (const r of rows) {
         const uid = String(r.uid), entry = bySession.get(uid) ?? { uid, kind: Number(r.kind), membership: Number(r.membership), work: [] }
