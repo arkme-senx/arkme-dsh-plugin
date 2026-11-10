@@ -17,7 +17,7 @@ import {ArkmeRecordInputCaptureOwner,arkmeBackgroundSoundCaptureEnabled,arkmeMic
 import {ArkmeBackgroundSoundWaveform} from './ArkmeBackgroundSoundWaveform.js'
 import { TeamSourceReadScope } from './TeamSourceReadScope.js'
 import { mergeTeamMessages, teamMessageProjection, withoutTeamConversationMaterial } from '../team-message-projection.js'
-import {invalidateTeamMessageRead,teamChangeAffectsConversationPreview,TeamSendReadFence} from './team-source-read.js'
+import {invalidateTeamMessageRead,isTeamAccessDenied,teamChangeAffectsConversationPreview,teamChangeInConversation,TeamSendReadFence} from './team-source-read.js'
 import {prepareTeamCapture} from './team-message-snapshot.js'
 import {useTeamMessageSnapshot} from './use-team-message-snapshot.js'
 import type {TeamEditReceipt} from '../team-snapshot-contract.js'
@@ -103,7 +103,7 @@ import { createArkmeSdk } from '../sdk/index.js'
 import type { ArkmeContentBlock, ArkmeUploadedAsset } from '../types.js'
 import type { ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { TeamApplication, TeamChannel, TeamContent, TeamConversation, TeamIdentity, TeamMessage, TeamPage, TeamTimeline } from '../team-app-contract.js'
-import { invalidateTeamMessages, openTeamMessages, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
+import { invalidateTeamMessageKeys, openTeamMessages, refreshPublishedTeamMessages, revokeTeamConversationRead, subscribeTeamMessageChanges, type TeamMessageIntent } from './team-messaging-events.js'
 import { loadTeamDraft, persistTeamDraft, restoreTeamDraftContent, updateTeamDraftText, validTeamDraftStart, teamDraftStartForInput, type TeamDraft as Draft } from './team-message-draft.js'
 import { loadTeamEntryOpen, openConfirmedTeamContact, retryTeamEntryOpen } from './team-entry-navigation.js'
 import { TeamConversationMessage } from './TeamConversationMessage.js'
@@ -139,7 +139,6 @@ import { insertArkmeComposerMentionToken, reconcileArkmeComposerMentions, arkmeA
 
 
 function errorText(error: unknown): string { return error instanceof Error ? tr(error.message) : tr("操作失败，请重试") }
-function inaccessible(error: unknown): boolean { return /team-(not_accessible|account-changed)|login-/.test(String((error as { body?: { code?: string } })?.body?.code)) }
 
 // The accepted command is immutable; text typed afterwards belongs to the next draft.
 function pendingTeamMessage(draft: Draft, conversation: TeamConversation, media: Map<string, string>, sender?: TeamIdentity): TeamMessage | undefined {
@@ -253,7 +252,6 @@ export function TeamMessagingPanel({ accountKey, intent }: { accountKey: string;
   }, [accountKey, intent, attempt])
   if (selected) return <div className="team-message-panel">
     <TeamConversationPane key={`${accountKey}:${selected.side}:${selected.key}`} accountKey={accountKey} conversation={selected}
-      onChanged={() => { invalidateTeamMessages(accountKey) }}
       onReadChanged={() => { void refreshTeamDirectory(accountKey, false, true) }}
       onAccessLost={() => { discardTeamDirectory(accountKey, selected); arkmeUi.forgetTeamConversation(selected.channel) }} />
   </div>
@@ -290,7 +288,7 @@ export function teamDraftContent(draft: Pick<Draft, 'text' | 'assets' | 'mention
     ...(draft.assets.length ? { content_payload: { payload_kind: 2, schema_version: 1, text_state: draft.text.trim() ? 1 : 3,
       media_refs: draft.assets.map((f, index) => ({ file_asset_uid: f.fileAssetUid, render_role: 1, sort_order: index, file_name: f.fileName })) } } : {}) }
 }
-export function TeamConversationPane({ conversation, accountKey, onChanged, onReadChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onChanged(): void; onReadChanged?(): void; onAccessLost?(): void }) {
+export function TeamConversationPane({ conversation, accountKey, onReadChanged, onAccessLost }: { conversation: TeamConversation; accountKey: string; onReadChanged?(): void; onAccessLost?(): void }) {
   const workspace = useSyncExternalStore(subscribeTeamDirectory, () => readTeamDirectory(accountKey), () => readTeamDirectory(accountKey))
   useArkmeLocale()
   const [markScope,setMarkScope]=useState<'local'|'team'|'conversation'>('local')
@@ -347,7 +345,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     isAuthoritative: message => message.state === 'recalled' || message.version > 0 || message.contentStatus === 'deleted',
     merge: mergeTeamMessages,
   }))
-  const receiptStore = useMemo(() => new TeamReceiptStore(accountKey), [accountKey, conversation.key])
+  const [receiptEpoch, setReceiptEpoch] = useState(0)
+  const receiptStore = useMemo(() => new TeamReceiptStore(accountKey), [accountKey, conversation.key, receiptEpoch])
   const [receiptMessage, setReceiptMessage] = useState<TeamMessage>()
   const receiptState = useSyncExternalStore(receiptStore.subscribe, () => receiptMessage ? receiptStore.get(receiptMessage.key) : emptyTeamReceipt, () => emptyTeamReceipt)
   useEffect(() => receiptStore.retain(), [receiptStore])
@@ -422,12 +421,12 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   useEffect(() => { try { persistTeamDraft(localStorage, storageKey, draft) } catch { setError(tr("草稿未能保存到本机，请勿关闭窗口")) } }, [storageKey, draft])
   useEffect(() => () => { ctrl.current.abort(); attachmentQueue.current?.dispose(); for (const item of draftRef.current.attachments ?? []) releaseArkmeComposerAttachment(item) }, [])
   const revokeAccess = useCallback(() => {
+    generation.current++
     recordCapture.sync({draftKey:recordDraftKey,isActive:false,hasUserContent:false})
     accessLost.current?.(); confirmed.current.clear(); setOutgoing(undefined);
     latest.current = undefined; setTimeline(undefined); receiptRef.current = undefined;
     setReceiptMessage(undefined); setEditing(undefined);
   }, [recordCapture,recordDraftKey])
-  useEffect(() => receiptStore.subscribeAccessLost(revokeAccess), [receiptStore, revokeAccess])
   useEffect(() => receiptStore.subscribeReadState(state => {
     const old = latest.current
     // A receipt read started before a new message cannot clear its unread count.
@@ -438,12 +437,8 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   }),[receiptStore])
   const receiptRef = useRef(receiptMessage); receiptRef.current = receiptMessage
   const receiptAnchor = useRef<HTMLElement | null>(null)
-  const readReceipts = useCallback((message: TeamMessage, more = false) => {
-    receiptRef.current = message; setReceiptMessage(message)
-    return receiptStore.load(message, more, true)
-  }, [receiptStore])
   const replyBack=useRef<{ref:string;key:string}>()
-  const refresh = useCallback(async (beforeSeq = 0, replace = false) => {
+  const refresh = useCallback(async (beforeSeq = 0, replace = false, refreshReceipts = true) => {
     if(sourceOnly) {
       const empty:TeamTimeline={conversation,messages:[],hasMore:false,beforeSeq:0}
       latest.current=empty;setTimeline(empty);return empty
@@ -457,7 +452,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       while (!beforeSeq && oldest > 0 && data.hasMore && data.beforeSeq > oldest) {
         const before = data.beforeSeq
         if (ctrl.current.signal.aborted || token !== generation.current) return
-        data = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, beforeSeq: before }, ctrl.current.signal)
+        data = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: before }, ctrl.current.signal)
         if (data.hasMore && (!data.beforeSeq || data.beforeSeq >= before)) throw new Error(tr("消息分页异常，请重试"))
         for (const message of data.messages) messages.set(message.key, message)
       }
@@ -472,11 +467,27 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       if (openedReceipt && (openedReceipt.state !== 'published' || openedReceipt.contentStatus !== 'available')) {
         receiptRef.current = undefined; setReceiptMessage(undefined)
       }
-      receiptStore.refreshVisible(true)
+      if (refreshReceipts) {
+        if (receiptStore.inactive) setReceiptEpoch(epoch => epoch + 1)
+        else receiptStore.refreshVisible(true)
+      }
       if (!windowBefore && beforeSeq && head.lastSeq > (data.messages.at(-1)?.seq ?? 0)) void refresh()
       return data
-    } catch (e) { if (!ctrl.current.signal.aborted && token === generation.current) { setLoadError(errorText(e)); setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old); if (inaccessible(e)) { revokeAccess(); receiptStore.dispose() } } }
-  }, [conversation.ref, receiptStore, revokeAccess,sourceOnly])
+    } catch (e) {
+      if (ctrl.current.signal.aborted || token !== generation.current) return
+      if (isTeamAccessDenied(e)) revokeTeamConversationRead(accountKey, conversation.key)
+      else setTimeline(old=>old && old.conversation.visitor ? {...old,conversation:{...old.conversation,visitor:{...old.conversation.visitor,memberType:'unknown'}}}:old)
+      setLoadError(errorText(e))
+    }
+  }, [accountKey, conversation.key, conversation.ref, receiptStore, sourceOnly])
+  // A receipt denial may concern one occurrence. Only the timeline can revoke
+  // conversation access. This confirmation must not restart the failed receipts.
+  useEffect(() => receiptStore.subscribeAccessLost(() => { void refresh(0, false, false) }), [receiptStore, refresh])
+  const readReceipts = (message: TeamMessage, more = false) => {
+    receiptRef.current = message; setReceiptMessage(message)
+    if (receiptStore.inactive) return refresh()
+    return receiptStore.load(message, more, true)
+  }
   const returnToLatest = async () => {
     if (historyWindow.current) {
       const previousWindow = historyWindow.current
@@ -515,20 +526,31 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       } while (recoverAgain.current && !ctrl.current.signal.aborted)
     } finally { recovering.current = false }
   }, [refresh])
-  useEffect(() => { void recover(); return subscribeTeamMessageChanges((account, receiptOnly, change) => { if (account === accountKey) { if (receiptOnly) receiptStore.refreshVisible(true); else {
-      sendReadFence.invalidate(change)
-      generation.current++
-      const old=latest.current
-      if(old){
-        const messages=old.messages.map(row=>{
-          const next=invalidateTeamMessageRead(row,change,conversation.key)
-          if(row.own&&next!==row)confirmed.current.retain(conversation.key,next)
-          return next
-        })
-        const next={...old,conversation:teamChangeAffectsConversationPreview(change,old.conversation)?withoutTeamConversationMaterial(old.conversation):old.conversation,messages};latest.current=next;setTimeline(next)
-      }
-      void recover()
-    } } }) }, [recover, accountKey, receiptStore, sendReadFence])
+  useLayoutEffect(() => subscribeTeamMessageChanges((account, receiptOnly, change) => {
+    if (account !== accountKey || !teamChangeInConversation(change, conversation.key)) return
+    if (receiptOnly) { receiptStore.refreshVisible(true); return }
+    sendReadFence.invalidate(change)
+    if (change?.kind === 'team.access.revoked') {
+      setLoadError(tr('你已无权访问该团队消息，请刷新列表'))
+      revokeAccess()
+      receiptStore.dispose()
+      return
+    }
+    generation.current++
+    const old = latest.current
+    if (old && change?.kind !== 'team.message.published') {
+      const messages = old.messages.map(row => {
+        const next = invalidateTeamMessageRead(row, change, conversation.key)
+        if (row.own && next !== row) confirmed.current.retain(conversation.key, next)
+        return next
+      })
+      const next = {...old, conversation:teamChangeAffectsConversationPreview(change,old.conversation)?withoutTeamConversationMaterial(old.conversation):old.conversation, messages}
+      latest.current = next
+      setTimeline(next)
+    }
+    void recover()
+  }), [recover, accountKey, conversation.key, receiptStore, revokeAccess, sendReadFence])
+  useEffect(() => { void recover() }, [recover])
   useEffect(() => {
     const recoverOnline = () => { void recover() }
     window.addEventListener('focus', recoverOnline)
@@ -548,11 +570,19 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     const token = ++generation.current
     const requestSignal = AbortSignal.any([signal, ctrl.current.signal])
     requestSignal.throwIfAborted()
-    const page = await callArkme<TeamTimeline>('team.app.locate', { conversationRef: conversation.ref, messageRef: ref }, requestSignal)
+    const page = await callArkme<TeamTimeline>('team.app.locate', { conversationRef: conversation.ref, messageRef: ref }, requestSignal).catch(error => {
+      // The locate endpoint also denies individual occurrences. Only the page
+      // endpoint can confirm whether the entire conversation lost access.
+      if (!requestSignal.aborted && token === generation.current && isTeamAccessDenied(error)) invalidateTeamMessageKeys(accountKey, conversation.key, [key])
+      throw error
+    })
     requestSignal.throwIfAborted()
     if (token !== generation.current) throw new Error(tr('消息窗口已更新，请重新定位'))
     const found = page.messages.find(message => message.key === key)
-    if (!found || found.state !== 'published' || found.contentStatus !== 'available') throw new Error(tr('原消息已删除或暂时无法访问'))
+    if (!found || found.state !== 'published' || found.contentStatus !== 'available') {
+      invalidateTeamMessageKeys(accountKey, conversation.key, [key])
+      throw new Error(tr('原消息已删除或暂时无法访问'))
+    }
     historyWindow.current = (page.messages.at(-1)?.seq ?? 0) < page.conversation.lastSeq ? (page.messages.at(-1)?.seq ?? 0) + 1 : 0
     // One authorized window for every history entry; never scan intervening pages.
     pendingJump.current = key; latest.current = page; setTimeline(page)
@@ -604,21 +634,27 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
   const observedCompletions = useRef(new Set<string>())
   useLayoutEffect(() => {
     let changed = false
+    const changedKeys: string[] = []
     for (const task of delivery.tasks) {
       if (task.state !== 'sent' || !task.message || observedCompletions.current.has(task.taskRef)) continue
       observedCompletions.current.add(task.taskRef)
       changed = true
       if (Date.now() - (task.completedAtMillis ?? task.createdAtMillis) > ARKME_CONVERSATION_TIMELINE_FRESH_MILLIS * 4) continue
-      if (task.message.state === 'recalled') { confirmed.current.retain(conversation.key,teamMessageProjection(task.message)); continue }
+      if (task.message.state === 'recalled') {
+        changedKeys.push(task.message.key)
+        confirmed.current.retain(conversation.key, teamMessageProjection(task.message))
+        continue
+      }
       // A minimal send ACK omits parent details. Keep the accepted reply until
       // an authorized timeline snapshot replaces this local presentation.
       const readable = !task.message.contentStatus || task.message.contentStatus === 'available'
+      if (!readable) changedKeys.push(task.message.key)
       const reply = readable ? task.message.reply ?? teamPendingReply(task.reply) : undefined
       const {content: _content, reply: _reply, ...identity} = task.message
       confirmed.current.retain(conversation.key, sendReadFence.projectAcknowledgement({ ...identity, ...(readable ? {content: task.message.content ?? task.sendContent ?? task.content} : {}), contentStatus: task.message.contentStatus || 'available',
         ...(!task.message.contentStatus ? {own:true,side:conversation.side,createdAt:task.message.createdAt || task.createdAtMillis} : {}),
         ...(reply ? {reply} : {}),
-        media: !readable ? [] : task.message.contentStatus ? task.message.media : task.files.filter(file => !task.backgroundSound?.fileRefs.includes(file.fileRef)).map(file => ({ref:file.fileRef,key:file.fileRef,url:createArkmeSdk().localFileUrl(file.fileRef),name:file.fileName,mimeType:file.mimeType,size:file.size,kind:file.fileKind})) }, task.clientUid, latest.current?.messages.find(row => row.key === task.message!.key)))
+        media: !readable ? [] : task.message.contentStatus ? task.message.media : task.files.filter(file => !task.backgroundSound?.fileRefs.includes(file.fileRef)).map(file => ({ref:file.fileRef,key:file.fileRef,url:createArkmeSdk().localFileUrl(file.fileRef),name:file.fileName,mimeType:file.mimeType,size:file.size,kind:file.fileKind})) }, task.clientUid, readable ? latest.current?.messages.find(row => row.key === task.message!.key) : undefined))
     }
     if (changed) {
       const old = latest.current
@@ -626,9 +662,10 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         const next = { ...old, messages: confirmed.current.merge(conversation.key, old.messages) }
         latest.current = next; setTimeline(next)
       }
-      void refresh(); onChanged()
+      if (changedKeys.length) invalidateTeamMessageKeys(accountKey, conversation.key, changedKeys)
+      else refreshPublishedTeamMessages(accountKey, conversation.key)
     }
-  }, [delivery.tasks, conversation.key, refresh, onChanged, sendReadFence])
+  }, [delivery.tasks, accountKey, conversation.key, sendReadFence])
   const recall = async () => {
     if (!recallTarget || busy) return
     const scope=currentScope.current, target=recallTarget
@@ -639,8 +676,9 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       confirmed.current.retain(conversation.key,result.message)
       const old=latest.current
       if (old) { const next={...old,messages:mergeTeamMessages(old.messages,[result.message])};latest.current=next;setTimeline(next) }
-      setRecallTarget(undefined);invalidateTeamMessages(accountKey,false,{kind:'team.message.changed',messageKey:result.message.key,conversationKeys:[conversation.key]});onChanged();void refresh()
-    } catch(error) { if(scope===currentScope.current&&!ctrl.current.signal.aborted) { if(inaccessible(error)) revokeAccess(); setError(errorText(error)) } }
+      setRecallTarget(undefined)
+      invalidateTeamMessageKeys(accountKey, conversation.key, [result.message.key])
+    } catch(error) { if(scope===currentScope.current&&!ctrl.current.signal.aborted) { if(isTeamAccessDenied(error)) invalidateTeamMessageKeys(accountKey, conversation.key, [target.key]); setError(errorText(error)) } }
     finally {if(scope===currentScope.current)setBusy(false)}
   }
   const sendDocument = async () => {
@@ -656,6 +694,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       persistTeamDraft(localStorage, storageKey, next); draftRef.current = next; setDraft(next)
     }
     try {
+      sendReadFence.begin(document.uid)
       setDocument(value => ({ ...value, sending: true, error: '' }))
       await requirePhoneForSocialAction('发送消息', ctrl.current.signal)
       if (!sameAccount()) return
@@ -831,15 +870,22 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         } else if(command.protocolVersion===1) {
           const receipt=await callArkme<TeamEditReceipt>('team.app.snapshot.receipt',{conversationRef:conversation.ref,messageRef:command.messageRef,revisionUid:command.revisionUid,expectedAccountKey:accountKey},ctrl.current.signal)
           if(receipt.revisionUid!==command.revisionUid)throw new Error(tr('编辑回执不一致，请重试核对'))
-          if(receipt.accepted){const next={...draftRef.current};delete next.pendingEdit;persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next);setEditing(undefined);await refresh();onChanged();return}
+          if(receipt.accepted){
+            const next={...draftRef.current};delete next.pendingEdit;persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next);setEditing(undefined)
+            if (!ctrl.current.signal.aborted) invalidateTeamMessageKeys(accountKey, conversation.key, [command.messageKey])
+            return
+          }
         }
         await callArkme('team.app.edit',{conversationRef:conversation.ref,messageRef:command.messageRef,version:command.version,content:command.content,...(command.protocolVersion===1?{revisionUid:command.revisionUid}:{}),...(command.metadataRef?{metadataRef:command.metadataRef}:{}),expectedAccountKey:accountKey},ctrl.current.signal)
+        if (ctrl.current.signal.aborted) return
         const next={...draftRef.current};delete next.pendingEdit;persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next)
+        invalidateTeamMessageKeys(accountKey, conversation.key, [command.messageKey])
       }
-      setEditing(undefined); await refresh(); onChanged()
+      setEditing(undefined)
     } catch (e) {
       if (!ctrl.current.signal.aborted) {
         setError(errorText(e))
+        if (editing && isTeamAccessDenied(e)) invalidateTeamMessageKeys(accountKey, conversation.key, [editing.message.key])
         if ((e as { body?: { code?: string } })?.body?.code === 'team-version_conflict') {
           const pending=draftRef.current.pendingEdit
           let notAccepted=!pending||pending.protocolVersion===0
@@ -851,12 +897,23 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
       }
     } finally { if (!ctrl.current.signal.aborted) setBusy(false) }
   }
+  const readMessageForEdit = async (target: TeamMessage, signal: AbortSignal) => {
+    const token = generation.current, request = AbortSignal.any([signal,ctrl.current.signal])
+    const page = await callArkme<TeamTimeline>('team.app.timeline', {
+      conversationRef:conversation.ref, expectedAccountKey:accountKey, beforeSeq:target.seq + 1,
+    }, request).catch(error => {
+      if (!request.aborted && token === generation.current && isTeamAccessDenied(error)) revokeTeamConversationRead(accountKey, conversation.key)
+      throw error
+    })
+    request.throwIfAborted()
+    if (token !== generation.current) throw new Error(tr('消息已变化或不可编辑，请重新选择'))
+    return page.messages.find(row => row.key === target.key)
+  }
   const reloadEdit = async () => {
     if (!editing || busy) return
     setBusy(true)
     try {
-      const page = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, beforeSeq: editing.message.seq + 1 }, ctrl.current.signal)
-      const current = page.messages.find(m => m.key === editing.message.key)
+      const current = await readMessageForEdit(editing.message,ctrl.current.signal)
       if (!current?.canEdit || current.state !== 'published' || current.contentStatus !== 'available' || !current.content) throw new Error(tr("此消息已不可编辑，草稿已保留"))
       if (!ctrl.current.signal.aborted) { setEditing({ ...editing, message: current, needsReload: false, latestText: current.content.text_content ?? '' }); setError('') }
     } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) }
@@ -928,7 +985,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     const timer = setTimeout(() => setLocatedKey(undefined), 2400)
     return () => clearTimeout(timer)
   }, [locatedKey])
-  const selection = useTeamMessageSelection({ accountKey, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal, refresh, onChanged })
+  const selection = useTeamMessageSelection({ accountKey, conversationKey: conversation.key, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal })
   const displayedMessages = visibleMessages.filter(selection.keeps).map(m => { const sender = personName(m.sender); return sender === m.sender ? m : { ...m, sender } })
   const reactionActors = useTeamReactionActors(accountKey,
     [...displayedMessages.map(message => message.sender), ...(receiptState.value?.members ?? []).map(personName)],
@@ -1131,7 +1188,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
     </div>
   return <section ref={paneHost} className="team-conversation-pane" data-arkme-active-conversation-identity={`team:${conversation.side}:${conversation.key}`} style={{ position: 'relative', minHeight: 0 }}>
     {messageMarks.layer}
-    {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version} revision={forwardAttempt.messages[0].revision}>{readable=><TeamForwardDialog accountKey={accountKey} attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit();onChanged();void refresh()}}/>}</TeamSourceReadScope>}
+    {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version} revision={forwardAttempt.messages[0].revision}>{readable=><TeamForwardDialog accountKey={accountKey} attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit()}}/>}</TeamSourceReadScope>}
     {copyLinkNotice&&<div role="status">{copyLinkNotice}</div>}
     {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
       onReply={(target,quote)=>{const message=timeline?.messages.find(m=>m.key===target.item.itemUid);if(message)chooseReply(message,quote)}}
@@ -1147,8 +1204,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
         const old = latest.current?.messages.find(message => message.key === target.item.itemUid)
         if (!old || editing || busy || !old.canEdit || !current.channel.enabled || current.blocked) throw new Error('请先完成当前编辑，并确认此消息仍可编辑')
         const range = resolveMessageTextReplacement(target.item, quote)
-        const page = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: old.seq + 1 }, signal)
-        const message = page.messages.find(value => value.key === old.key)
+        const message = await readMessageForEdit(old,signal)
         if (!message?.canEdit || message.state !== 'published' || message.contentStatus !== 'available' || !message.content
           || message.version !== old.version || message.content.text_content !== target.item.textContent) throw new Error('消息已变化或不可编辑，请重新选择')
         const content = message.content
@@ -1160,7 +1216,7 @@ export function TeamConversationPane({ conversation, accountKey, onChanged, onRe
           if (next.text === content.text_content) return
           await callArkme('team.app.edit', { messageRef: message.ref, expectedAccountKey: accountKey, version: message.version, content: { ...content, text_content: next.text } }, signal)
           if (signal.aborted) return
-          await refresh(); onChanged()
+          invalidateTeamMessageKeys(accountKey, conversation.key, [message.key])
         } }
       }} />}
     <header style={messageLayout.header}>
@@ -1315,7 +1371,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
       if(data.canManage) await loadApplications(undefined,token)
       else setApplications(undefined)
       if (!ctrl.current.signal.aborted && token===generation.current) setError('')
-    } catch (e) { if (!ctrl.current.signal.aborted && token===generation.current) {setError(errorText(e)); if(inaccessible(e)){setChannel(undefined);setApplications(undefined)}} }
+    } catch (e) { if (!ctrl.current.signal.aborted && token===generation.current) {setError(errorText(e)); if(isTeamAccessDenied(e)){setChannel(undefined);setApplications(undefined)}} }
   }
   useEffect(() => { void refresh(); return subscribeTeamMessageChanges((account, receiptOnly) => { if (account === accountKey && !receiptOnly) void refresh() }) }, [teamRef, accountKey])
   const mutate = async (run: () => Promise<unknown>) => { setBusy(true); try { await run(); if (ctrl.current.signal.aborted) return; setConfirm(undefined); await refresh(); onChanged() } catch (e) { if (!ctrl.current.signal.aborted) setError(errorText(e)) } finally { if (!ctrl.current.signal.aborted) setBusy(false) } }

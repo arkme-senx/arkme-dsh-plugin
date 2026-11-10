@@ -380,7 +380,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     </section>
     {editing&&<TeamProfileEditor profile={editing} onClose={()=>setEditing(undefined)} onUpdated={profile=>{
       setEditing(undefined);if(profile)setState(current=>current.page?{...current,page:{...current.page,team:{...current.page.team,name:profile.name,profileRevision:profile.profileRevision,canEditProfile:profile.canEditProfile,avatar:profile.avatar}}}:current)
-      arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey)
+      arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey, false, {kind:'team.profile.changed'})
     }}/>}
     {syncTeam && <TeamCodexSyncDialog team={syncTeam} onClose={() => setSyncTeam(undefined)} onViewConversations={() => {
       setSyncTeam(undefined)
@@ -392,7 +392,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
 
     {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onClose={() => setInternalGroupOpen(false)} />}
     {/* A fresh directory read may reseal the same team. Keep this open command scoped to its original reference. */}
-    {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey) }} onClose={() => setMemberAdditionRef(undefined)} />}
+    {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey, false, {kind:'team.directory.changed'}) }} onClose={() => setMemberAdditionRef(undefined)} />}
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>

@@ -114,7 +114,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     if (locateLock.current) return
     locateLock.current = true; setOpening(message.key); setNotice('')
     try { await onLocate(message, lifetime.current.signal); if (!lifetime.current.signal.aborted) setOpen(undefined) }
-    catch (e) { if (!lifetime.current.signal.aborted) { setNotice(errorText(e)); invalidateTeamMessages(accountKey) } }
+    catch (e) { if (!lifetime.current.signal.aborted) setNotice(errorText(e)) }
     finally { locateLock.current = false; if (!lifetime.current.signal.aborted) setOpening('') }
   }
   const openPrivate = async (mediaType?: 'audio' | 'video') => {

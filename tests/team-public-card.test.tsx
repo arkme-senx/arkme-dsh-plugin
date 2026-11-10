@@ -128,7 +128,7 @@ it('uses the existing checked creation API only on submit, then selects the new 
   expect(creates[0]![1]).toMatchObject({ expectedAccountKey: 'prod:90', name: '新团队', jotmoId: 'my_new_team', requestUid: expect.any(String) })
   expect(arkmeContactsTab.getSnapshot().selection).toEqual({ kind: 'team', teamRef: 'new-team' })
   expect(arkmeContactsTab.getSnapshot().expandedSections.teams).toBe(true)
-  expect(changed).toHaveBeenCalledWith('prod:90'); expect(navigate).toHaveBeenCalledOnce()
+  expect(changed).toHaveBeenCalledWith('prod:90', false, {kind:'team.directory.changed'}); expect(navigate).toHaveBeenCalledOnce()
   expect(open).not.toHaveBeenCalled()
 })
 
