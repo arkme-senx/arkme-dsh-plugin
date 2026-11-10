@@ -81,7 +81,7 @@ try{
  const {verify}=await import(pathToFileURL(join(consumer,'out/consumer.js')).href);assert.equal((await verify(fetchImpl)).state,'none')
  const {ArkmeSdk}=await import(pathToFileURL(req.resolve('@senguoyun/dsh-arkme/sdk')).href),sdk=new ArkmeSdk({fetchImpl})
  const tp=await sdk.getTeamProfile('t25_test'),teamRef=tp.profileRef
- const {agent}=await ctx.agents.create({sessionId:`t25-${randomUUID()}`,meta:{cwd:root}});await agent.whenIdle()
+ let {agent}=await ctx.agents.create({sessionId:`t25-${randomUUID()}`,meta:{cwd:root}});await agent.whenIdle()
  const names=ctx.tools.schemas(agent).map(x=>x.name);for(const n of ['arkme_team_internal_group_preview','arkme_team_internal_group_status','arkme_team_internal_group_confirm'])assert(names.includes(n))
  let step=0
  const invoke=async(name,args)=>{const callId=randomUUID(),seq=++step,call=agent.session.append('tool/call',{turn:1,step:seq,callId,name,arguments:JSON.stringify(args)});const result=await ctx.tools.execute({agent,name,callId,arguments:args,signal:AbortSignal.timeout(15000)});agent.session.append('tool/result',{turn:1,step:seq,message:createToolResultMessage({callId,content:result.content,isError:result.isError})},{surfaceOp:'append',sourceEventSeqs:[call.seq]});return result}
@@ -176,6 +176,36 @@ try{
 
  await page.getByText('团队身份暂不可用',{exact:true}).waitFor({state:'hidden'})
  await page.screenshot({path:join(capture,'linked-ordinary-history.png')})
+ if(process.env.ARKME_ROSTER_WORKSPACE==='1') {
+  const workspace=await wait(()=>sdk.teamWorkspace({operation:'page',teamRef}),p=>p.complete&&p.items.some(item=>item.kind==='group'&&item.source.displayName==='界面关联的普通群'))
+  const group=workspace.items.find(item=>item.kind==='group'&&item.source.displayName==='界面关联的普通群')
+  assert.equal(group.source.sourceKey,beforeAssociationSource.sourceKey)
+  assert.equal(group.source.teamRosterManaged,true)
+  assert.notEqual(group.source.accessKind,'team_delegation')
+  assert.deepEqual(contentIdentity(await sdk.readSource(group.source.sourceRef)),contentIdentity(beforeAssociation))
+  const folders=await sdk.teamWorkspace({operation:'folders'})
+  assert(folders.some(folder=>folder.channel.jotmoId==='t25_test'&&folder.groupCount>=3&&folder.unread===0))
+  ;({agent}=await ctx.agents.create({sessionId:`t25-workspace-${randomUUID()}`,meta:{cwd:root}}));await agent.whenIdle()
+  const toolWorkspace=await invoke('arkme_team_workspace',{request:{operation:'page',teamRef}})
+  assert.equal(toolWorkspace.isError,false,JSON.stringify(toolWorkspace))
+  await page.locator('[data-team-folder="t25_test"]').click()
+  const groupRow=page.locator('[data-team-group-source-key]').filter({hasText:'界面关联的普通群'})
+  await groupRow.click()
+  await conversation.getByText('编辑后的群消息',{exact:true}).waitFor()
+  assert.equal(await groupRow.getAttribute('aria-selected'),'true','opening the canonical group keeps the mixed directory visible')
+  await page.getByRole('button',{name:'群聊设置',exact:true}).click()
+  await page.getByRole('menuitem',{name:'群管理',exact:true}).click()
+  assert.equal(await page.getByRole('menuitem',{name:'关联为团队内部群',exact:true}).count(),0)
+  await page.keyboard.press('Escape')
+  await page.getByRole('button',{name:'查看群成员',exact:true}).click()
+  const membersDrawer=page.getByRole('complementary',{name:'群成员',exact:true})
+  await membersDrawer.getByText(/成员由团队管理/).waitFor()
+  await page.screenshot({path:join(capture,'workspace-roster-members.png')})
+  await page.getByRole('button',{name:'查看团队成员',exact:true}).click()
+  await page.locator('.arkme-team-member-row').filter({hasText:'同事1002'}).waitFor()
+  await page.screenshot({path:join(capture,'workspace-team-members.png')})
+ }
+
  // OpenAPI and the UI retain the same ordinary current content after association.
  const evidenceResponse=await forward('/api/internal/v1/chat/openapi/messages/batch-get',{items:[{item_id:'approved-history',chat_session_uid:'t25-existing-ui-group',sequence:1}]},1001,{'X-Internal-Secret':'t25-full-owner-test','X-User-Id':'1001'})
  const evidence=JSON.parse(evidenceResponse.text)

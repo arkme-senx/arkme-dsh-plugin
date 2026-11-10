@@ -17,7 +17,7 @@ import { arkmeContactsTab } from './contacts-tab-store.js'
 import { discardTeamDirectory, readTeamDirectory } from '../../team-conversation-directory.js'
 import type { TeamMembers } from '../../../team-app-contract.js'
 import { TeamMessageChannelDialog } from './TeamMessageChannelDialog.js'
-import { invalidateTeamMessages, subscribeTeamMessageChanges } from '../../team-messaging-events.js'
+import { invalidateTeamMessages, invalidateTeamWorkspace, subscribeTeamMessageChanges } from '../../team-messaging-events.js'
 import { useArkmeLocale } from '../../locale.js'
 import { teamText as tr } from '../../team-messaging-i18n.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -397,7 +397,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
       onClose={() => setMessageChannelOpen(false)} onChanged={() => { void load(undefined, true) }}
       onViewConversations={() => { setMessageChannelOpen(false); openTeamEntryMessages({kind:'team',teamRef:page.team.teamRef}) }} />}
 
-    {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onReady={() => {void arkmeChatDirectory.refreshRoot({force:true}).catch(()=>undefined)}} onClose={() => setInternalGroupOpen(false)} />}
+    {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onReady={() => { invalidateTeamWorkspace(accountKey); void arkmeChatDirectory.refreshRoot({force:true}).catch(()=>undefined) }} onClose={() => setInternalGroupOpen(false)} />}
     {/* A fresh directory read may reseal the same team. Keep this open command scoped to its original reference. */}
     {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey, false, {kind:'team.directory.changed'}) }} onClose={() => setMemberAdditionRef(undefined)} />}
     {page.canDissolve && <div className="arkme-team-detail-footer">

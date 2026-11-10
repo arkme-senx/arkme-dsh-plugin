@@ -1,3 +1,5 @@
+import { arkmeUi } from './ui-controller.js'
+import { arkmeContactsTab } from './redesign/contacts/contacts-tab-store.js'
 import {useGroupTeamMentions} from './use-group-team-mentions.js'
 import {GroupTeamsSection} from './GroupTeamsSection.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
@@ -471,8 +473,20 @@ export function GroupMembersDrawer(props: {
       {`（${bots.ready ? tr('{v0}人 · {v1} Bot', { v0: items.length, v1: bots.items.length }) : tr('{v0}人', { v0: items.length })}${props.source.teamRosterManaged!==true&&teams.ready&&teams.items.length>0?` · ${tr('{v0}团队',{v0:teams.items.length})}`:''}）`}
     </span>}</>}
       onClose={props.onClose} closeLabel={tr("关闭群成员")}
-      actions={<button data-arkme-feedback="neutral" type="button" style={{ ...styles.closeButton, height: 30, marginTop: -3, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>{tr("添加")}</button>} />
+      actions={<button data-arkme-feedback="neutral" type="button" style={{ ...styles.closeButton, height: 30, marginTop: -3, width: 'auto', padding: '0 6px', fontSize: 14, fontWeight: 700, color: colors.primary }} onClick={props.onAdd}>{tr(props.source.teamRosterManaged ? "添加 Bot" : "添加")}</button>} />
     <div style={styles.drawerBody}>
+      {props.source.teamRosterManaged && <div style={styles.loading}>
+        {tr('成员由团队管理')}
+        {props.accountScope && props.source.rosterTeamRef && <button type="button" style={{ ...styles.closeButton, width: 'auto', color: colors.primary }} onClick={() => {
+          arkmeContactsTab.activateAccount(props.accountScope)
+          arkmeUi.showContacts()
+          arkmeContactsTab.setSectionExpanded('teams', true)
+          arkmeContactsTab.select({
+            kind: 'team', teamRef: props.source.rosterTeamRef!, view: 'members',
+            ...(props.source.rosterTeamKey ? { teamKey: props.source.rosterTeamKey } : {}),
+          })
+        }}>{tr('查看团队成员')}</button>}
+      </div>}
       {loading && items.length === 0 ? <div style={styles.loading}>{tr("正在读取群成员…")}</div> : null}
       {snapshot.error !== undefined && <button data-arkme-feedback="neutral" type="button" role="alert" style={styles.restrictionRetry}
         onClick={() => { if (props.accountScope !== undefined) void arkmeConversationMembers.ensure(props.accountScope, props.source, true) }}
@@ -1374,7 +1388,7 @@ function GroupSettingsMenu(props: {
     ...(recognitionAction.error ? [{ id: 'recognition-error', label: <span role="status">{recognitionAction.error}</span>, disabled: true }] : []),
     { id: 'self-nickname', label: '修改群昵称', icon: <ClientIcon src={icons.selfNickname} size={16} /> },
   ]
-  if (props.onPublicSettingsOpen) entries.push({ id: 'public-settings', label: '公开与展示', icon: <ClientIcon src={icons.members} size={16} /> })
+  if (props.onPublicSettingsOpen && !props.source.teamRosterManaged) entries.push({ id: 'public-settings', label: '公开与展示', icon: <ClientIcon src={icons.members} size={16} /> })
   if (props.onCopyLink) entries.push({ id: 'copy-group-link', label: '复制群聊链接', icon: <ClientIcon src={icons.members} size={16} /> })
   entries.push({
     id: 'message-dnd',
@@ -1411,8 +1425,8 @@ function GroupSettingsMenu(props: {
     { id: 'back', label: <span ref={managementFocusRef}>{tr('返回群聊设置')}</span>, icon: <CaretRight size={16} style={{ transform: 'rotate(180deg)' }} aria-hidden /> },
     { type: 'separator', id: 'management-separator' },
     { id: 'rename', label: '修改群名称', icon: <ClientIcon src={icons.rename} size={16} />, disabled: !effective.canRename },
-    { id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden />, disabled: !canManage },
-    ...(props.onInternalGroupOpen ? [{ id: 'internal-group', label: '关联为团队内部群', icon: <ClientIcon src={icons.members} size={16} />, disabled: !canManage }] : []),
+    ...(props.source.teamRosterManaged ? [] : [{ id: 'restrictions', label: '禁止加入名单', icon: <Prohibit size={16} aria-hidden />, disabled: !canManage }]),
+    ...(props.onInternalGroupOpen && !props.source.teamRosterManaged && props.source.accessKind !== 'team_delegation' ? [{ id: 'internal-group', label: '关联为团队内部群', icon: <ClientIcon src={icons.members} size={16} />, disabled: !canManage }] : []),
   ]
   entries.push(
     { type: 'separator', id: 'export-separator' },
@@ -1470,7 +1484,7 @@ function GroupSettingsMenu(props: {
         return
       }
       if (id === 'internal-group') {
-        if (canManage) { close(); props.onInternalGroupOpen?.() }
+        if (canManage && !props.source.teamRosterManaged && props.source.accessKind !== 'team_delegation') { close(); props.onInternalGroupOpen?.() }
         return
       }
       if (id === 'leave') { close(); void leaveOrDissolve() }
@@ -1860,7 +1874,7 @@ export function ArkmeGroupChatControls(props: {
         open={membersOpen}
         accountScope={props.accountScope}
         onClose={() => { setMembersOpen(false) }}
-        onAdd={() => { setInviteOpen(true) }}
+        onAdd={() => { if (props.source.teamRosterManaged) setAddMembersOpen(true); else setInviteOpen(true) }}
         onMemberOpen={props.onMemberOpen}
         onMemberContextMenu={props.onMemberContextMenu}
         onMemberHover={props.onMemberHover}

@@ -180,7 +180,7 @@ export type ArkmeDirectoryItem =
   | { kind: 'bot'; bot: ArkmeBotSummary }
   | { kind: 'unmarked-speaker'; candidateRef: string; /** Stable read-only identity, not a mutation credential. */ identityKey?: string; speakerToken?: string; displayName: string; subtitle: string; appearanceDays?: number; latestAtMillis?: number }
   | { kind: 'manual-speaker'; speakerKey: string; speakerRef: string; displayName: string }
-  | { kind: 'team'; teamRef: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
+  | { kind: 'team'; teamRef: string; teamKey?: string; displayName: string; publicId: string; role: ArkmeTeamRole; avatar?: ArkmeTeamAvatar }
   | { kind: 'contact'; contactRef: string; displayName: string; nickname: string; remark: string; accountName?: string; avatarRef?: string; avatarFallback?: ArkmeGroupAvatarFallback; letter: string }
 
 export interface ArkmeDirectoryPage {
@@ -1920,6 +1920,9 @@ export interface ArkmeGroupAvatarPresentation {
 export interface ArkmeSourceItem {
   /** Irreversible Team roster authority for this group, observed from Chat. */
   teamRosterManaged?: true
+  /** Existing Team members page reference for this canonical group. */
+  rosterTeamRef?: string
+  rosterTeamKey?: string
   /** Current Team admission history boundary, supplied by Chat. */
   sourceVisibleFromSeq?: number
   accessKind?:'personal_membership'|'team_delegation'

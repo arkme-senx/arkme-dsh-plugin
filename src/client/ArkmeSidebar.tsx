@@ -286,7 +286,7 @@ import { useSendToSelfTour } from './ArkmeSendToSelfTour.js'
 import {
   ArkmeTopicDirectoryPopover, type ArkmeSelfSourcesResolution, type ArkmeTopicCreateOpener,
 } from './ArkmeTopicDirectoryPopover.js'
-import {subscribeTeamWorkspaceChanges} from './team-messaging-events.js'
+import {invalidateTeamWorkspace,subscribeTeamWorkspaceChanges} from './team-messaging-events.js'
 import {refreshTeamDirectory} from './team-conversation-directory.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { ArkmeProductNavigation } from './ArkmeProductNavigation.js'
@@ -9062,6 +9062,7 @@ export function ArkmeSurface({
               timelineRequestsRef.current.clear()
               timelineGenerationRef.current += 1
               updateSourceProjection({...source,teamRosterManaged:true})
+              if (authenticatedAccountKey) invalidateTeamWorkspace(authenticatedAccountKey, source.canonicalChatSourceKey)
               const empty: ArkmeConversationTimelineSnapshot = {mode:'latest',items:[],aiPolishNotices:[],hasMore:false,newerHasMore:false,fetchedAtMillis:0}
               conversationCacheRef.current.storeTimeline(conversationKey, empty)
               setTimelineView({...empty,sourceKey:conversationKey,mode:'latest',aroundSequenceRange:undefined,aiPolishSettings:undefined,nextCursor:undefined,newerCursor:undefined,newerHasMore:false})

@@ -260,3 +260,19 @@ it('keeps the account-scoped team navigation through profile refresh and removes
  state=reduce(state,{type:'reset-account',accountKey:'account-b'},{type:'load-start',section:'teams',accountKey:'account-b',generation:1,mode:'replace'},{type:'load-success',section:'teams',accountKey:'account-b',generation:1,mode:'replace',page:page('teams',[refreshed])})
  expect(state.sections.teams.items[0]).toMatchObject({teamRef:'rotating-access-ref'})
 })
+
+it('keeps an externally opened Team selection across a fresh sealed directory reference', () => {
+  const selection = {kind:'team' as const,teamRef:'from-original-group',teamKey:'stable-team',view:'members' as const}
+  const team = {kind:'team' as const,teamRef:'from-fresh-directory',teamKey:'stable-team',displayName:'内部群团队',publicId:'our_team',role:'owner' as const}
+  const state = reduce(createContactDirectoryState('account-a'),
+    {type:'select',selection},
+    {type:'load-start',section:'teams',accountKey:'account-a',generation:1,mode:'replace'},
+    {type:'load-success',section:'teams',accountKey:'account-a',generation:1,mode:'replace',page:page('teams',[team])},
+  )
+  expect(state.selection).toEqual(selection)
+  const removed = reduce(state,
+    {type:'load-start',section:'teams',accountKey:'account-a',generation:2,mode:'replace'},
+    {type:'load-success',section:'teams',accountKey:'account-a',generation:2,mode:'replace',page:page('teams',[])},
+  )
+  expect(removed.selection).toEqual({kind:'none'})
+})

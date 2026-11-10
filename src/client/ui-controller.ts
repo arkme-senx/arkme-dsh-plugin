@@ -64,7 +64,7 @@ export interface ArkmeUiState {
   selectedSource?: ArkmeSourceItem
   selectedBot?: ArkmeBotSummary
   teamIntent?: TeamMessageIntent
-  teamDirectory?: { teamRef?: string; channel?: TeamChannel }
+  teamDirectory?: { teamRef?: string; channel?: TeamChannel; rosterSourceKey?: string }
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
@@ -478,12 +478,12 @@ export class ArkmeUiController {
   }
 
   resolveTeamDirectory(teamRef: string, channel: TeamChannel): void {
-    if ((this.state.mode !== 'team' && !(this.state.mode==='source'&&this.state.selectedSource?.accessKind==='team_delegation')) || this.state.teamDirectory?.teamRef !== teamRef) return
+    if ((this.state.mode !== 'team' && this.state.mode !== 'source') || this.state.teamDirectory?.teamRef !== teamRef) return
     const remembered = this.lastTeamConversations.get(channel.jotmoId)
     const intent = this.state.teamIntent
     if (remembered && intent?.kind === 'team' && intent.teamRef === teamRef) {
       this.showTeamConversation({kind:'conversation',conversation:{...remembered,channel}})
-    } else this.publish({...this.state,teamDirectory:{teamRef:channel.teamRef,channel}})
+    } else this.publish({...this.state,teamDirectory:{...this.state.teamDirectory,teamRef:channel.teamRef,channel}})
   }
 
   closeTeamDirectory(): void {
@@ -576,18 +576,28 @@ export class ArkmeUiController {
     this.publish(rest)
   }
 
-  selectSource(source: ArkmeSourceItem,focusComposer=false): void {
+  selectWorkspaceSource(source: ArkmeSourceItem): void {
+    const folder = this.state.teamDirectory
+    if (source.teamRosterManaged && source.sourceKey && folder) {
+      this.selectSource(source, false, { ...folder, rosterSourceKey: source.sourceKey })
+    } else {
+      this.selectSource(source)
+    }
+  }
+
+  selectSource(source: ArkmeSourceItem,focusComposer=false,rosterDirectory?: ArkmeUiState['teamDirectory']): void {
     this.leaveContacts()
     this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
-    const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
-    const teamDirectory=this.directoryForSource(source)
+    const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, teamDirectory: _teamDirectory, ...rest } = this.state
+    const teamDirectory = rosterDirectory ?? this.directoryForSource(source)
     this.publish({ ...rest, mode: 'source', selectedSource: source,...(teamDirectory?{teamDirectory}:{}),...(focusComposer?{composerFocusRevision:(this.state.composerFocusRevision??0)+1}:{}) })
   }
 
   private directoryForSource(source:ArkmeSourceItem):ArkmeUiState['teamDirectory'] {
     if(source.accessKind!=='team_delegation'||!source.teamWorkspace)return undefined
-    return this.state.teamDirectory?.channel?.jotmoId===source.teamWorkspace.jotmoId?this.state.teamDirectory:{teamRef:source.teamWorkspace.ref}
+    const folder = this.state.teamDirectory
+    return folder?.channel?.jotmoId === source.teamWorkspace.jotmoId ? { teamRef: folder.teamRef ?? source.teamWorkspace.ref, channel: folder.channel } : { teamRef: source.teamWorkspace.ref }
   }
 
   updateSelectedSourceProjection(source: ArkmeSourceItem): boolean {
@@ -616,6 +626,7 @@ export class ArkmeUiController {
       extensionDetailId: _extensionDetailId,
       extensionAuthorFilter: _extensionAuthorFilter,
       webLoginDialogOpen: _webLoginDialogOpen,
+      teamDirectory: _teamDirectory,
       ...rest
     } = this.state
     this.publish({
@@ -680,7 +691,12 @@ export class ArkmeUiController {
   private publish(next: ArkmeUiState): void {
     if (next.mode !== 'team') {
       const {teamIntent:_intent,teamDirectory,...rest}=next
-      next={...rest,...(next.mode==='source'&&next.selectedSource?.accessKind==='team_delegation'&&next.selectedSource.teamWorkspace&&teamDirectory?{teamDirectory}:{})}
+      const source = next.selectedSource
+      const keepDirectory = next.mode === 'source' && source && teamDirectory && (
+        source.accessKind === 'team_delegation' && source.teamWorkspace ||
+        source.teamRosterManaged && source.sourceKey && teamDirectory.rosterSourceKey === source.sourceKey
+      )
+      next = { ...rest, ...(keepDirectory ? { teamDirectory } : {}) }
     }
     if (next.mode !== 'world') {
       const { worldInitialScope: _scope, worldNavigationRevision: _revision, worldTeamTarget: _team, ...rest } = next

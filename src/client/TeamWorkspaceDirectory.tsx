@@ -132,9 +132,9 @@ export function TeamWorkspaceDirectory({accountKey,teamRef,channel:initialChanne
 
 function TeamWorkspaceGroupRow({accountKey,target,selected}:{accountKey:string;target:Extract<TeamEntryTarget,{kind:'group'}>;selected:boolean}) {
   const actions=useTeamConversationEntryActions(accountKey,target),source=target.source
-  return <><button type="button" role="treeitem" aria-selected={selected} data-team-group-source-key={source.sourceKey} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} style={{...styles.chatRow,...(selected?{background:arkmeTheme.active}:{}),...actions.rowStyle}} onClick={()=>{void actions.open(()=>arkmeUi.selectSource(source))}}>
+  return <><button type="button" role="treeitem" aria-selected={selected} data-team-group-source-key={source.sourceKey} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} style={{...styles.chatRow,...(selected?{background:arkmeTheme.active}:{}),...actions.rowStyle}} onClick={()=>{void actions.open(()=>arkmeUi.selectWorkspaceSource(source))}}>
     <span style={styles.sourceAvatarWrap}><ArkmeSourceAvatar kind="group" groupAvatar={source.groupAvatar} avatarRefs={source.avatarRefs} size={38}/>{source.unreadCount>0&&<span style={styles.mentionUnread}>{source.unreadCount>99?'99+':source.unreadCount}</span>}</span>
-    <span data-arkme-conversation-content style={styles.chatContent}><span style={styles.chatTop}><span style={styles.entryName}>{source.displayName}</span><ArkmeTopicTagBadge label={tr('群聊')} truncate/><span style={{...styles.chatTime,marginLeft:'auto'}}>{conversationTimeLabel(source.activeAtMillis)}</span></span><span style={styles.chatBottom}><span style={styles.preview}>{source.latestPreview||tr('代表团队参与群聊')}</span></span></span>
+    <span data-arkme-conversation-content style={styles.chatContent}><span style={styles.chatTop}><span style={styles.entryName}>{source.displayName}</span><ArkmeTopicTagBadge label={tr('群聊')} truncate/><span style={{...styles.chatTime,marginLeft:'auto'}}>{conversationTimeLabel(source.activeAtMillis)}</span></span><span style={styles.chatBottom}><span style={styles.preview}>{source.latestPreview||tr(source.teamRosterManaged ? '团队内部群' : '代表团队参与群聊')}</span></span></span>
     {actions.pinned&&<ArkmePinnedCorner/>}{actions.feedback}
   </button>{actions.overlays}</>
 }

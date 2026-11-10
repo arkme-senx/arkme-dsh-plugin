@@ -22,7 +22,7 @@ export type ArkmeDirectorySelection =
   | { kind: 'none' }
   | Extract<ArkmeDirectoryItem, { kind: 'group' | 'bot' | 'manual-speaker' }>
   | { kind: 'contact'; contactRef: string }
-  | { kind: 'team'; teamRef: string; view?: 'members' | 'activity' }
+  | { kind: 'team'; teamRef: string; teamKey?: string; view?: 'members' | 'activity' }
   | { kind: 'unmarked-speaker'; candidateRef: string }
 
 export interface ContactDirectorySectionState {
@@ -172,6 +172,13 @@ function completionMatches(
     && current.generation === generation
 }
 
+export function matchesDirectoryTeam(
+  item: Extract<ArkmeDirectoryItem, { kind: 'team' }>,
+  selection: Extract<ArkmeDirectorySelection, { kind: 'team' }>,
+): boolean {
+  return item.teamRef === selection.teamRef || !!selection.teamKey && item.teamKey === selection.teamKey
+}
+
 function selectionAfterReplacement(
   selection: ArkmeDirectorySelection,
   section: ArkmeDirectorySectionKind,
@@ -194,7 +201,7 @@ function selectionAfterReplacement(
       : { kind: 'none' }
   }
   if (section === 'teams' && selection.kind === 'team') {
-    return items.some(item => item.kind === 'team' && item.teamRef === selection.teamRef)
+    return items.some(item => item.kind === 'team' && matchesDirectoryTeam(item, selection))
       ? selection
       : { kind: 'none' }
   }

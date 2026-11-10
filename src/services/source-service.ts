@@ -1,4 +1,5 @@
 import {recordOwnerId, type RecordOwnerId} from '../record-owner-id.js'
+import { sealTeamReference, teamEntityKey } from './team-reference.js'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { arkmeChatActivityPreview, retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { SharedReadGroup } from '../shared-read-group.js'
@@ -1836,7 +1837,7 @@ export class SourceService {
         }),
         sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
         kind,
-        ...(kind === 'group_chat' && (cached?.teamRosterManaged === true || chatSession.membership_policy === 'team_roster') ? {teamRosterManaged:true as const, sourceVisibleFromSeq: numberValue(objectValue(bundle.current_member).visible_from_seq ?? cached?.sourceVisibleFromSeq)} : {}),
+        ...await this.rosterSourceMetadata(chatSession, bundle, cached, session.userId),
         directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
         displayName,
         ...(kind === 'private_chat' && privateNickname !== '' ? { privateNickname } : {}),
@@ -2326,6 +2327,38 @@ export class SourceService {
     }
   }
 
+  private async rosterSourceMetadata(
+    chatSession: Record<string, unknown>, bundle: Record<string, unknown>, cached: ArkmeSourceItem | undefined, viewer: number,
+  ): Promise<Pick<ArkmeSourceItem, 'teamRosterManaged' | 'rosterTeamRef' | 'rosterTeamKey' | 'sourceVisibleFromSeq'>> {
+    if (chatSession.session_kind !== 2 || chatSession.membership_policy !== 'team_roster' && cached?.teamRosterManaged !== true) return {}
+    const teamId = recordOwnerId(chatSession.bound_team_id)
+    const [rosterTeamRef, rosterTeamKey] = await Promise.all([
+      cached?.rosterTeamRef ?? (teamId ? sealTeamReference(this.runtime, teamId, viewer) : undefined),
+      cached?.rosterTeamKey ?? (teamId ? teamEntityKey(this.runtime, teamId, viewer) : undefined),
+    ])
+    return {
+      teamRosterManaged: true,
+      ...(rosterTeamRef ? { rosterTeamRef } : {}),
+      ...(rosterTeamKey ? { rosterTeamKey } : {}),
+      sourceVisibleFromSeq: numberValue(objectValue(bundle.current_member).visible_from_seq ?? cached?.sourceVisibleFromSeq),
+    }
+  }
+
+  async rosterDirectorySources(
+    bundles: Record<string, unknown>[], session: ArkmeSessionCredentials, signal?: AbortSignal,
+  ): Promise<ArkmeSourceItem[]> {
+    const groupIds = new Map<number, string>()
+    const sources = await Promise.all(bundles.map((bundle, index) => {
+      const chat = objectValue(bundle.session)
+      const uid = stringValue(chat.chat_session_uid)
+      if (!uid || chat.session_kind !== 2 || chat.membership_policy !== 'team_roster') throw new Error('invalid roster directory source')
+      groupIds.set(index, uid)
+      return this.chatSourceFromBundle(bundle, session, this.cachedChatSource(session.userId, uid), [], { previewSnapshot: true })
+    }))
+    await this.hydrateSourceAvatars(sources, new Map(), groupIds, session, signal)
+    return sources
+  }
+
   async chatSourceFromBundle(
     bundle: Record<string, unknown>,
     session: ArkmeSessionCredentials,
@@ -2407,7 +2440,7 @@ export class SourceService {
       }),
       sourceKey: await this.chatDirectorySourceKey(session.userId, uid),
       kind,
-      ...(kind === 'group_chat' && (cached?.teamRosterManaged === true || chatSession.membership_policy === 'team_roster') ? {teamRosterManaged:true as const, sourceVisibleFromSeq: numberValue(objectValue(bundle.current_member).visible_from_seq ?? cached?.sourceVisibleFromSeq)} : {}),
+      ...await this.rosterSourceMetadata(chatSession, bundle, cached, session.userId),
       directMessageAdmissionApplicable: sessionKind === 1 && numberValue(counterpart.user_id) > 0,
       displayName,
       ...(kind === 'private_chat' && privateNickname !== '' ? { privateNickname } : {}),

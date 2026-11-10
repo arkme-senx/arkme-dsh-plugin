@@ -809,6 +809,7 @@ export class ArkmeService {
       privateRemarksByUserIds: (ids, options) => this.source.privateRemarksByUserIds(ids, options),
       openSourceRef: (ref, userId) => this.source.openSourceRef(ref, userId),
       sourceItem:source=>this.source.sourceItem(source),
+      rosterDirectorySources:(...args)=>this.source.rosterDirectorySources(...args),
       sealSourceRef:(...args)=>this.source.sealSourceRef(...args),
       chatDirectorySourceKey:(...args)=>this.source.chatDirectorySourceKey(...args),
       groupDirectoryAvatars:(...args)=>this.source.groupDirectoryAvatars(...args),

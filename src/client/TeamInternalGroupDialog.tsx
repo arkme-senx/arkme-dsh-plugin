@@ -126,6 +126,13 @@ function Preview({value:v}:{value:TeamInternalGroupPreview}) {
         {v.roleChanges.map(p=>row(tr('角色调整'),`${p.name}：${tr(roleName[p.before])} → ${tr(roleName[p.after])}`))}
         {v.botCount>0&&row(tr('机器人'),tr('保留 {v0} 个',{v0:v.botCount}))}
       </dl>
+      {(v.retain.length > 0 || v.bots.length > 0) && <details style={styles.details}>
+        <summary>{tr('查看保留名单')}</summary>
+        <dl style={{margin:0}}>
+          {v.retain.length > 0 && row(tr('保留成员'), v.retain.map(person => person.name).join('、'))}
+          {v.bots.length > 0 && row(tr('机器人'), v.bots.map(bot => bot.name).join('、'))}
+        </dl>
+      </details>}
     </section>
     <section aria-label={tr('确认前请留意')} style={styles.rules}>
       <h3 style={styles.heading}>{tr('确认前请留意')}</h3>

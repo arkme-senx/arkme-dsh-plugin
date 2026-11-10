@@ -1,3 +1,4 @@
+import { matchesDirectoryTeam } from './contact-directory-state.js'
 import { subscribeTeamMessageChanges, invalidateTeamMessages } from '../../team-messaging-events.js'
 import { TeamDirectoryActions } from './TeamDirectoryActions.js'
 import { tr, useArkmeLocale } from '../../locale.js'
@@ -76,7 +77,7 @@ function itemIsSelected(item: ArkmeDirectoryItem, selection: ArkmeDirectorySelec
   return (item.kind === 'group' && selection.kind === 'group' && item.sourceRef === selection.sourceRef)
     || (item.kind === 'bot' && selection.kind === 'bot' && item.bot.botRef === selection.bot.botRef)
     || (item.kind === 'contact' && selection.kind === 'contact' && item.contactRef === selection.contactRef)
-    || (item.kind === 'team' && selection.kind === 'team' && item.teamRef === selection.teamRef)
+    || (item.kind === 'team' && selection.kind === 'team' && matchesDirectoryTeam(item, selection))
     || (item.kind === 'manual-speaker' && selection.kind === 'manual-speaker' && item.speakerKey === selection.speakerKey)
     || (item.kind === 'unmarked-speaker'
       && selection.kind === 'unmarked-speaker'
@@ -347,7 +348,7 @@ export function ContactDirectorySurface({
         || (kind === 'contacts' && selected.kind === 'contact'
         && !section.items.some(item => item.kind === 'contact' && item.contactRef === selected.contactRef))
         || (kind === 'teams' && selected.kind === 'team'
-          && !section.items.some(item => item.kind === 'team' && item.teamRef === selected.teamRef))
+          && !section.items.some(item => item.kind === 'team' && matchesDirectoryTeam(item, selected)))
       if ((query === '' && !resolvingSelection) || section.accountKey !== accountKey
         || (section.status !== 'ready' && section.status !== 'empty')
         || !section.hasMore || section.nextCursor === undefined) continue

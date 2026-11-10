@@ -8,7 +8,7 @@ const {call}=vi.hoisted(()=>({call:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
 const team={teamRef:'sealed-team',jotmoId:'our_team',name:'即我',currentUserRole:'owner',createdAtMillis:1,updatedAtMillis:1}
 const source:ArkmeSourceItem={kind:'group_chat',sourceRef:'group-ref',displayName:'产品群',activeAtMillis:1,unreadCount:0}
-const preview={state:'preview',mode:'create',label:'即我内部群',previewRef:'sealed-preview',requestUid:'original',expiresAt:Date.now()+300000,add:[{key:'a',name:'小林'}],remove:[{key:'r',name:'小王'}],retainCount:2,botCount:1,owner:{key:'o',name:'负责人'},ownerChanged:true,roleChanges:[{key:'r',name:'小赵',before:'admin',after:'member'}],closePublicAccess:true}
+const preview={state:'preview',mode:'create',label:'即我内部群',previewRef:'sealed-preview',requestUid:'original',expiresAt:Date.now()+300000,add:[{key:'a',name:'小林'}],remove:[{key:'r',name:'小王'}],retainCount:2,botCount:1,retain:[],bots:[],owner:{key:'o',name:'负责人'},ownerChanged:true,roleChanges:[{key:'r',name:'小赵',before:'admin',after:'member'}],closePublicAccess:true}
 let host:HTMLDivElement,root:Root
 const mount=async(element:React.ReactNode)=>act(async()=>root.render(element))
 function button(label:string){const v=[...document.querySelectorAll('button')].find(x=>x.textContent===label);if(!v)throw new Error(label);return v}
@@ -94,7 +94,7 @@ it('shows a focused result instead of a disabled form after completion',async()=
  expect(button('完成').disabled).toBe(false)
 })
 it('does not fill an unchanged roster with zero-count notices',async()=>{
- call.mockImplementation(async op=>op==='team.app.teams'?[team]:op==='team.app.internal-group.recover'?{state:'none'}:{...preview,add:[],remove:[],roleChanges:[],retainCount:3,botCount:0,closePublicAccess:false})
+ call.mockImplementation(async op=>op==='team.app.teams'?[team]:op==='team.app.internal-group.recover'?{state:'none'}:{...preview,add:[],remove:[],roleChanges:[],retainCount:3,botCount:0,retain:[],bots:[],closePublicAccess:false})
  await mount(create());await click('下一步')
  expect(document.body.textContent).toContain('保留 3 人')
  expect(document.body.textContent).not.toContain('新增 0 人');expect(document.body.textContent).not.toContain('移出 0 人')

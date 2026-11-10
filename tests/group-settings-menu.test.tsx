@@ -233,7 +233,7 @@ describe('group settings menu', () => {
     mocks.callArkme.mockImplementation(async operation => operation === 'group.settings'
       ? { target: source, selfRole: 'owner', selfStatus: 'active', canRename: true, canDissolve: true, canLeave: false, messageDnd: false }
       : operation === 'team.app.teams' ? [{ teamRef: 'team-ref', jotmoId: 'team', name: '团队', currentUserRole: 'owner' }]
-      : operation === 'source.ai-polish.settings' ? aiSettings : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'link',label:'当前群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false})
+      : operation === 'source.ai-polish.settings' ? aiSettings : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'link',label:'当前群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,retain:[],bots:[],owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false})
     await act(async () => { renderer = create(controls(source)) })
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
     await openManagement()
@@ -245,6 +245,18 @@ describe('group settings menu', () => {
       .toMatchObject({ mode: 'link', sourceRef: source.sourceRef, teamRef: 'team-ref', expectedAccountKey: 'test:42' })
     expect(JSON.stringify(renderer!.toJSON())).toContain('保留成员的合法历史权限不变')
     expect(mocks.callArkme.mock.calls.some(([op]) => ['group.members.add', 'group.members.remove'].includes(op))).toBe(false)
+  })
+
+  it('does not offer association again for the current Team roster owner', async () => {
+    mocks.callArkme.mockImplementation(async operation => operation === 'group.settings'
+      ? { target: source, selfRole: 'owner', selfStatus: 'active', canRename: true, canDissolve: false, canLeave: false, messageDnd: false }
+      : aiSettings)
+    await act(async () => { renderer = create(controls({ ...source, teamRosterManaged: true })) })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '群聊设置' }).props.onClick() })
+    await openManagement()
+    expect(menuIds()).not.toContain('internal-group')
+    expect(menuIds()).not.toContain('restrictions')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('关联为团队内部群')
   })
 
   it('exports the current group from the shared three-dot menu', async () => {

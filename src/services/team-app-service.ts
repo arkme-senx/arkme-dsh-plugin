@@ -1,3 +1,4 @@
+import { teamEntityKey } from './team-reference.js'
 import { changeTeamGovernance } from './team-governance.js'
 import {TeamInternalGroups} from './team-internal-groups.js'
 import { isBackendRouteUnavailable } from './service-error.js'
@@ -111,7 +112,7 @@ export class TeamAppService {
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
   constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort & Partial<Pick<import('./profile-service.js').ProfileService, 'publicProfileSummariesByUserIds'>>,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService, 'chatSharedRecordingPreview'|'readSourceAround'>>,
-    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'|'sealSourceRef'|'sourceItem'|'groupDirectoryAvatars'|'chatDirectorySourceKey'>>,
+    private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'|'sealSourceRef'|'sourceItem'|'rosterDirectorySources'|'groupDirectoryAvatars'|'chatDirectorySourceKey'>>,
     private readonly memberCandidates?: TeamMemberCandidatePort,
  private readonly outboundTargets?: import('../team-outbound-contract.js').TeamOutboundTargetPort) {
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid)
@@ -261,7 +262,7 @@ export class TeamAppService {
   private async team(raw: unknown, actor: number): Promise<ArkmeTeam & {key:string}> {
     const v = obj(raw)
     if (!recordOwnerId(v.team_id)) throw invalid()
-    return { key: await this.key(`team:${String(v.team_id)}`, actor), teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
+    return { key: await teamEntityKey(this.runtime, v.team_id, actor), teamRef: await this.ref('team', { team_id: recordOwnerId(v.team_id) }, actor), name: str(v.name), jotmoId: str(v.jotmo_id),
       profileRevision:num(v.profile_revision),canEditProfile:v.can_edit_profile===true,avatar:await this.avatar(v,actor),
       currentUserRole: role(v.role), createdAtMillis: num(v.ca), updatedAtMillis: num(v.ua) }
   }
@@ -654,22 +655,48 @@ export class TeamAppService {
       latestRef:await this.ref('source-anchor',{conversation,card:raw.card_uid,team:member.team_id,group:raw.group_uid,membership:raw.membership_uid,sequence:latest.sequence,relation:latest.relation_uid},actor)}
   }
 
-  private async workspaceRows(raw:Record<string,unknown>,actor:number,teamId:string,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamWorkspaceEntry[]> {
-    const items=await Promise.all(list(raw.items).map(async row=>{
-        const key=await this.key(`workspace:${str(row.key)}`,actor),activityAt=num(row.activity_at)
-        if(row.conversation_kind==='team_group')return {kind:'group' as const,key,activityAt,source:await this.groupSource(obj(row.group),actor,teamId),entryKey:teamEntryCloudKey(actor,'group',`${teamId}:${str(obj(row.group).chat_session_uid)}`),entryRef:await this.ref('entry-group',{team_id:recordOwnerId(teamId),group_uid:obj(row.group).chat_session_uid},actor)}
-        const c=obj(row.conversation)
-        if(row.conversation_kind!=='team_direct'||String(recordOwnerId(c.team_id))!==teamId||c.side!=='team')throw invalid()
-        return {kind:'customer' as const,key,activityAt,conversation:{...await this.conversation(c,actor),...(row.source_card?{hasGroupSources:true}:{})},...(row.source_card?{sourceCard:await this.sourceCard(obj(row.source_card),actor,str(c.conversation_uid))}:{})}
+  private async workspaceRows(raw:Record<string,unknown>,session:ArkmeSessionCredentials,teamId:string,signal?:AbortSignal):Promise<import('../team-group-contract.js').TeamWorkspaceEntry[]> {
+    const actor = session.userId
+    const rows = list(raw.items)
+    const delegated = rows.filter(row => row.conversation_kind === 'team_group').map(row => obj(row.group))
+    const roster = rows.filter(row => row.conversation_kind === 'team_internal_group').map(row => obj(row.roster_group))
+    const [externalSources, rosterSources] = await Promise.all([
+      Promise.all(delegated.map(row => this.groupSource(row, actor, teamId))).then(sources => this.groupSourcesAvatars(sources, delegated, actor, signal)),
+      this.workspaceRosterSources(roster, session, teamId, signal),
+    ])
+    let externalIndex = 0
+    let rosterIndex = 0
+    return await Promise.all(rows.map(async row => {
+      const key = str(row.key), activityAt = num(row.activity_at)
+      if (!key || activityAt <= 0) throw invalid()
+      if (row.conversation_kind === 'team_group' || row.conversation_kind === 'team_internal_group') {
+        const internal = row.conversation_kind === 'team_internal_group'
+        const uid = str(obj(internal ? row.roster_group : row.group).chat_session_uid)
+        const source = internal ? rosterSources[rosterIndex++] : externalSources[externalIndex++]
+        if (!source || internal && key !== `team_internal_group:${uid}`) throw invalid()
+        return { kind:'group', key, activityAt, source, entryKey:teamEntryCloudKey(actor,'group',`${teamId}:${uid}`),
+          entryRef:await this.ref('entry-group',{team_id:recordOwnerId(teamId),group_uid:uid},actor) }
+      }
+      const c = obj(row.conversation)
+      if (row.conversation_kind !== 'team_direct' || String(recordOwnerId(c.team_id)) !== teamId || c.side !== 'team') throw invalid()
+      return {kind:'customer',key,activityAt,conversation:{...await this.conversation(c,actor),...(row.source_card?{hasGroupSources:true}:{})},
+        ...(row.source_card?{sourceCard:await this.sourceCard(obj(row.source_card),actor,str(c.conversation_uid))}:{})}
     }))
-    const groups=items.filter(item=>item.kind==='group')
-    const rawGroups=list(raw.items).filter(row=>row.conversation_kind==='team_group').map(row=>obj(row.group))
-    const decorated=await this.groupSourcesAvatars(groups.map(item=>item.source),rawGroups,actor,signal)
-    let index=0
-    return items.map(item=>item.kind==='group'?{...item,source:decorated[index++]!}:item)
   }
 
-  private async workspaceOperation(operation:TeamAppOperation,p:Record<string,unknown>,actor:number,post:TeamOwnerPost,signal?:AbortSignal):Promise<unknown> {
+  private async workspaceRosterSources(rows: Record<string, unknown>[], session: ArkmeSessionCredentials, teamId: string, signal?: AbortSignal) {
+    if (!rows.length) return []
+    if (!this.contacts?.rosterDirectorySources) throw invalid()
+    const bundles = rows.map(row => {
+      const bundle = obj(row.bundle), chat = obj(bundle.session)
+      if (!str(row.chat_session_uid) || row.chat_session_uid !== chat.chat_session_uid || chat.bound_team_id !== teamId) throw invalid()
+      return bundle
+    })
+    return await this.contacts.rosterDirectorySources(bundles, session, signal)
+  }
+
+  private async workspaceOperation(operation:TeamAppOperation,p:Record<string,unknown>,session:ArkmeSessionCredentials,post:TeamOwnerPost,signal?:AbortSignal):Promise<unknown> {
+    const actor = session.userId
     if(operation==='team.app.workspace.folders') {
       let selectedTeamId:string|undefined
       if(p.teamRef!==undefined) {
@@ -677,20 +704,24 @@ export class TeamAppService {
         selectedTeamId=String(recordOwnerId(team.team_id))
         if(team.environment!==this.runtime.config.environment||!/^[1-9][0-9]*$/.test(selectedTeamId))throw invalid()
       }
-      const raw=await post('workspace/folders/query',{},true)
+      const raw=await post('workspace/folders/query',{include_roster_groups:true},true)
       if(!Array.isArray(raw.items)||!this.contacts?.chatDirectorySourceKey)throw invalid()
       const rows=list(raw.items).filter(row=>selectedTeamId===undefined||String(recordOwnerId(row.team_id))===selectedTeamId)
       return await Promise.all(rows.map(async row=>{
-        const teamId=String(recordOwnerId(row.team_id)),group=obj(row.latest_group)
-        if(!/^[1-9][0-9]*$/.test(teamId)||num(row.group_count)<1||!Array.isArray(row.groups)||num(row.unread_count)<0)throw invalid()
-        const source=await this.groupSource(group,actor,teamId)
+        const teamId=String(recordOwnerId(row.team_id)),group=obj(row.latest_group),roster=obj(row.latest_roster_group)
+        const rosterCount=num(row.roster_group_count),groupCount=num(row.group_count)
+        if(!/^[1-9][0-9]*$/.test(teamId)||rosterCount<0||groupCount<0||groupCount+rosterCount<1||!Array.isArray(row.groups)||num(row.unread_count)<0)throw invalid()
+        const useRoster=rosterCount>0&&num(roster.activity_at)>=num(row.activity_at)
+        const source=useRoster ? (await this.workspaceRosterSources([roster],session,teamId,signal))[0] : await this.groupSource(group,actor,teamId)
+        if(!source)throw invalid()
         const groups=await Promise.all(list(row.groups).map(async item=>{
           if(!str(item.chat_session_uid)||num(item.unread_count)<0||num(item.visible_from_seq)<1)throw invalid()
           return {sourceKey:await this.contacts!.chatDirectorySourceKey!(actor,str(item.chat_session_uid)),unread:num(item.unread_count),lastSeq:num(item.last_seq)}
         }))
         if(groups.length!==row.group_count||groups.reduce((sum,item)=>sum+item.unread,0)!==row.unread_count)throw invalid()
-        return {channel:await this.channel(row.channel,actor),activityAt:num(row.activity_at),preview:source.latestPreview??'',unread:num(row.unread_count),groupCount:num(row.group_count),
-          hasPublished:list(row.groups).some(item=>num(item.last_seq)>=num(item.visible_from_seq)),groups} satisfies import('../team-group-contract.js').TeamWorkspaceFolder
+        // Canonical personal unread is already counted by the ordinary group list.
+        return {channel:await this.channel(row.channel,actor),activityAt:useRoster?num(roster.activity_at):num(row.activity_at),preview:source.latestPreview??'',unread:num(row.unread_count),groupCount:groupCount+rosterCount,
+          hasPublished:row.roster_has_messages===true||list(row.groups).some(item=>num(item.last_seq)>=num(item.visible_from_seq)),groups} satisfies import('../team-group-contract.js').TeamWorkspaceFolder
       }))
     }
     if(operation==='team.app.workspace') {
@@ -698,9 +729,9 @@ export class TeamAppService {
       if(team.environment!==this.runtime.config.environment||!/^[1-9][0-9]*$/.test(teamId))throw invalid()
       const cursor=p.cursor?await this.open('workspace-page',p.cursor,actor):undefined
       if(cursor&&(cursor.team!==teamId||cursor.environment!==this.runtime.config.environment))throw invalid()
-      const raw=await post('workspace/page',{team_id:teamId,cursor:cursor?.cursor??'',limit:p.limit??30},true,{stringIdFields:['team_id']})
+      const raw=await post('workspace/page',{team_id:teamId,cursor:cursor?.cursor??'',limit:p.limit??30,include_roster_groups:true},true,{stringIdFields:['team_id']})
       if(!Array.isArray(raw.items)||typeof raw.has_more!=='boolean'||typeof raw.complete!=='boolean'||!Array.isArray(raw.unavailable_sources)||raw.has_more&&!str(raw.next_cursor))throw invalid()
-      const items=await this.workspaceRows(raw,actor,teamId,signal)
+      const items=await this.workspaceRows(raw,session,teamId,signal)
       return {items,hasMore:raw.has_more,complete:raw.complete,unavailableSources:raw.unavailable_sources.map(str),resetRequired:raw.reset_required===true,...(raw.has_more?{nextCursor:await this.ref('workspace-page',{team:teamId,cursor:raw.next_cursor},actor)}:{})} satisfies import('../team-group-contract.js').TeamWorkspacePage
     }
     if(operation==='team.app.sources.cards') {
@@ -760,14 +791,14 @@ export class TeamAppService {
         const team=await this.open('team',request.teamRef,actor),teamId=String(recordOwnerId(team.team_id))
         if(team.environment!==this.runtime.config.environment||!Array.isArray(request.entries)||!request.entries.length||request.entries.length>100)throw invalid()
         const entries=await Promise.all(request.entries.map(e=>this.entryPreferences.resolve(e,actor)))
-        const raw=await post('workspace/entries/query',{team_id:teamId,entries},true,{stringIdFields:['team_id']})
+        const raw=await post('workspace/entries/query',{team_id:teamId,entries,include_roster_groups:true},true,{stringIdFields:['team_id']})
         if(!Array.isArray(raw.items)||typeof raw.complete!=='boolean')throw invalid()
-        return {items:await this.workspaceRows(raw,actor,teamId,signal),complete:raw.complete,resetRequired:raw.reset_required===true,hasMore:false,unavailableSources:[]} satisfies import('../team-group-contract.js').TeamWorkspacePage
+        return {items:await this.workspaceRows(raw,session,teamId,signal),complete:raw.complete,resetRequired:raw.reset_required===true,hasMore:false,unavailableSources:[]} satisfies import('../team-group-contract.js').TeamWorkspacePage
       }
       if(!['folders','page','cards','occurrences','locate'].includes(kind))throw invalid()
       return this.dispatch(kind==='folders'?'team.app.workspace.folders':kind==='page'?'team.app.workspace':`team.app.sources.${kind}` as TeamAppOperation,{...request,expectedAccountKey:p.expectedAccountKey},session,post,signal)
     }
-    if(operation==='team.app.workspace'||operation==='team.app.workspace.folders'||operation.startsWith('team.app.sources.'))return this.workspaceOperation(operation,p,actor,post,signal)
+    if(operation==='team.app.workspace'||operation==='team.app.workspace.folders'||operation.startsWith('team.app.sources.'))return this.workspaceOperation(operation,p,session,post,signal)
     if (operation.startsWith('team.app.entries.')) return this.entryPreferences.execute(operation, p, actor, this.runtime.config.environment, post)
     if (operation === 'team.app.local-mark.capabilities' || operation === 'team.app.local-mark.list' || operation === 'team.app.local-mark.change') {
       return await this.localMarks(operation, p, session, signal)
@@ -957,7 +988,7 @@ export class TeamAppService {
         const offset = p.cursor ? num((await this.open('directory-cursor', p.cursor, actor)).offset) : 0
         const limit = Math.min(100, Math.max(1, num(p.limit) || 50))
         const hasMore = offset + limit < teams.length
-        const items = p.countOnly === true ? [] : teams.slice(offset, offset + limit).map(v => ({ kind: 'team' as const, teamRef: v.teamRef, displayName: v.name, publicId: v.jotmoId, role: v.currentUserRole, ...(v.avatar?{avatar:v.avatar}:{}) }))
+        const items = p.countOnly === true ? [] : teams.slice(offset, offset + limit).map(v => ({ kind: 'team' as const, teamRef: v.teamRef, teamKey: v.key, displayName: v.name, publicId: v.jotmoId, role: v.currentUserRole, ...(v.avatar?{avatar:v.avatar}:{}) }))
         return { section: 'teams', items, total: teams.length, hasMore: p.countOnly === true ? false : hasMore,
           ...(hasMore ? { nextCursor: await this.ref('directory-cursor', { offset: offset + limit }, actor) } : {}) } satisfies ArkmeDirectoryPage
       }
@@ -1244,6 +1275,11 @@ export class TeamAppService {
             return {state: 'preview', previewRef, requestUid, expiresAt: num(data.expires_at),
               add: await Promise.all((data.add as string[]).map(person)), remove: await Promise.all((data.remove as string[]).map(person)),
               retainCount: (data.retain as unknown[]).length, botCount: (data.bots as unknown[]).length,
+              retain: await Promise.all((data.retain as string[]).map(person)),
+              bots: await Promise.all((data.bots as string[]).map(async uid => ({
+                key: await this.key(`roster-preview-bot:${uid}`, actor),
+                name: str(obj(data.bot_names)[uid]).trim() || '未命名 Bot',
+              }))),
               owner: await person(ownerId), ownerChanged: !!str(data.previous_owner_user_id) && data.previous_owner_user_id !== ownerId,
               roleChanges: await Promise.all(changes.map(async c => { if (![1,2,3].includes(num(c.before)) || ![1,2,3].includes(num(c.after))) throw invalid(); return {...await person(str(c.user_id)), before: role(c.before), after: role(c.after)} })),
               closePublicAccess: data.close_public_access === true}

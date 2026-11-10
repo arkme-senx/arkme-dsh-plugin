@@ -338,6 +338,10 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'read-ack') {
+          const selected = arkmeUi.getSnapshot().selectedSource
+          const rosterSource = selected?.sourceKey === update.sourceKey ? selected :
+            arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)
+          if (rosterSource?.teamRosterManaged) invalidateTeamWorkspace(authenticatedAccountScope, update.sourceKey)
           arkmeInterwovenInvalidation.invalidate(update.sourceKey, update.sourceKind === 'private_chat' ? [] : undefined, false, 'read-ack')
           arkmeChatDirectory.updateReadAck(
             update.sourceRef,
@@ -431,6 +435,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type !== 'sessions-delta') return
+        if (update.updates.some(item => item.source.teamRosterManaged)) invalidateTeamWorkspace(authenticatedAccountScope)
         const privateDeltas = new Map(update.updates.filter(item => item.source.kind === 'private_chat')
           .map(item => [chatDeltaSourceKey(item), item.source]))
         const existingPrivateKeys = new Set<string>()

@@ -119,3 +119,46 @@ it.each(['viewer','environment','malformed'] as const)('rejects %s folder scope 
  await expect(f.service.execute('team.app.workspace.request',{request:{operation:'folders',teamRef}})).rejects.toThrow()
  expect(f.paths).toEqual([])
 })
+
+it('opens roster workspace rows through the same canonical Chat source as the ordinary directory', async () => {
+ const uid = 'canonical-internal-group'
+ const bundle = {
+  session: {chat_session_uid: uid, session_kind: 2, title: '内部群', membership_policy: 'team_roster', bound_team_id: '42'},
+  sort_active_at: 300,
+  current_member: {visible_from_seq: 5},
+  unread_snapshot: {unread_count: 2, read_seq: 4, session_last_seq: 6},
+ }
+ const roster = {chat_session_uid:uid, activity_at:300, bundle}
+ const session = {userId:90,accessToken:'fixture',refreshToken:'fixture-refresh'}
+ const runtime = new ServiceRuntime({environment:'test',chatBaseUrl:'https://chat.example',teamBaseUrl:'https://team.example',authBaseUrl:'https://auth.example',shareWebsite:'https://share.example',requestTimeoutMs:1000} as ArkmeServiceConfig,{} as never,{uniqueCode:async()=> 'fake-workspace-key'} as StateStore,
+  async (input, init) => {
+   const path = String(input)
+   let data: unknown = {items:[]}
+   if (path.endsWith('/workspace/page')) {
+    expect(JSON.parse(String(init?.body))).toMatchObject({include_roster_groups:true})
+    data={items:[{key:`team_internal_group:${uid}`,conversation_kind:'team_internal_group',activity_at:300,roster_group:roster}],complete:true,unavailable_sources:[],has_more:false}
+   }
+   if (path.endsWith('/workspace/folders/query')) {
+    expect(JSON.parse(String(init?.body))).toMatchObject({include_roster_groups:true})
+    data={items:[{team_id:'42',roster_group_count:1,roster_has_messages:true,latest_roster_group:roster,group_count:0,groups:[],unread_count:0,channel:customer.channel}]}
+   }
+   return new Response(JSON.stringify({code:200,data}))
+  })
+ vi.spyOn(runtime,'requireSession').mockResolvedValue(session)
+ vi.spyOn(runtime,'accountScopedSession').mockResolvedValue(session)
+ const sources = new SourceService(runtime,{} as never,{} as never)
+ const service = new TeamAppService(runtime,{publicAvatarPresentationsByArkmeIds:async()=>new Map()} as never,undefined,sources)
+ const teamRef = await service.worldTeamRef(42,90)
+ const page = await service.execute('team.app.workspace',{teamRef}) as TeamWorkspacePage
+ const row = page.items[0]
+ expect(row?.kind).toBe('group')
+ if (row?.kind !== 'group') throw new Error('missing roster group')
+ const ordinary = await sources.chatSourceFromBundle(bundle, session, undefined, [])
+ expect(row.source).toMatchObject({sourceKey:ordinary.sourceKey,teamRosterManaged:true,sourceVisibleFromSeq:5,unreadCount:2})
+ const sourceRef = await sources.openSourceRef(row.source.sourceRef,90)
+ expect(sourceRef).toMatchObject({ownerRef:uid,kind:'group_chat'})
+ expect(sourceRef.groupDelegation).toBeUndefined()
+ const codec = new EncryptedReferenceCodec(async()=> 'fake-workspace-key',()=>new Error('invalid'))
+ await expect(codec.open('team-app-team',row.source.rosterTeamRef!)).resolves.toMatchObject({team_id:42,viewer:90,environment:'test'})
+ await expect(service.execute('team.app.workspace.folders',{})).resolves.toMatchObject([{groupCount:1,unread:0,groups:[]}])
+})

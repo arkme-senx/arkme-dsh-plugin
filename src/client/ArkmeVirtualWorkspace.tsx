@@ -1136,7 +1136,10 @@ export function ArkmeNavigation({
   const notificationPinned = useNotificationDirectoryPin(currentAccountKey ?? '')
   const builtinPinSnapshot = useBuiltinDirectoryPins(currentAccountKey ?? '')
   const builtinPins = parseBuiltinPins(builtinPinSnapshot)
-  const visibleTeamDirectory = authenticated && (ui.mode === 'team' || ui.mode === 'source' && ui.selectedSource?.accessKind === 'team_delegation') && currentAccountKey
+  const visibleTeamDirectory = authenticated && currentAccountKey && (
+    ui.mode === 'team' ||
+    ui.mode === 'source' && (ui.selectedSource?.accessKind === 'team_delegation' || !!ui.teamDirectory?.rosterSourceKey)
+  )
     ? ui.teamDirectory : undefined
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
     active && authenticated && directory === 'root' && !visibleTeamDirectory && chatDirectory.baselineReady)

@@ -53,3 +53,17 @@ it('preserves Bot addition without offering manual people or team admission',asy
  expect(call.mock.calls.map(([operation])=>operation)).toEqual(['group.bots','group.bot.add'])
  expect(onAdded).toHaveBeenCalledOnce();expect(onError).not.toHaveBeenCalled()
 })
+
+it('explains roster membership and opens the existing Team members selection', async () => {
+ const {arkmeContactsTab} = await import('../src/client/redesign/contacts/contacts-tab-store.js')
+ const {arkmeUi} = await import('../src/client/ui-controller.js')
+ await render({...source,teamRosterManaged:true,rosterTeamRef:'signed-team-members',rosterTeamKey:'stable-team'})
+ expect(host.textContent).toContain('成员由团队管理')
+ expect(host.textContent).toContain('添加 Bot')
+ const open=[...host.querySelectorAll('button')].find(button=>button.textContent==='查看团队成员')!
+ await act(async()=>open.click())
+ expect(arkmeContactsTab.getSnapshot().selection).toEqual({kind:'team',teamRef:'signed-team-members',teamKey:'stable-team',view:'members'})
+ expect(arkmeUi.getSnapshot().productMode).toBe('contacts')
+ expect(call).not.toHaveBeenCalled()
+ arkmeUi.showConversations()
+})

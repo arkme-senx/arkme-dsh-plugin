@@ -10,6 +10,8 @@ export interface TeamInternalGroupPreview {
   remove: TeamInternalGroupPerson[]
   retainCount: number
   botCount: number
+  retain: TeamInternalGroupPerson[]
+  bots: TeamInternalGroupPerson[]
   owner: TeamInternalGroupPerson
   ownerChanged: boolean
   roleChanges: Array<TeamInternalGroupPerson & {before: 'owner'|'admin'|'member'; after: 'owner'|'admin'|'member'}>

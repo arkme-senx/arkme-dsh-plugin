@@ -792,3 +792,20 @@ it.each(['same', 'different', 'explicit-normal'])('keeps only a confirmed same-t
   expect(controller.getSnapshot().conversationTarget).toMatchObject({ itemUid: 'second-record', sendAtMillis: 2 })
   expect(controller.getSnapshot().conversationTarget!.revision).toBeGreaterThan(previousTarget.revision)
 })
+
+it('keeps the workspace around a canonical roster group only when opened there', () => {
+  const controller = new ArkmeUiController()
+  const source = { kind: 'group_chat' as const, sourceRef: 'canonical-ref', sourceKey: 'canonical-group',
+    displayName: '内部群', activeAtMillis: 1, unreadCount: 0, teamRosterManaged: true as const }
+  controller.showTeamConversation({ kind: 'team', teamRef: 'team-ref' })
+  controller.selectWorkspaceSource(source)
+  expect(controller.getSnapshot()).toMatchObject({
+    selectedSource: source, teamDirectory: { teamRef: 'team-ref', rosterSourceKey: source.sourceKey },
+  })
+  controller.resolveTeamDirectory('team-ref', { teamRef: 'rotated-ref', jotmoId: 'our-team' } as import('../src/team-app-contract.js').TeamChannel)
+  controller.updateSelectedSourceProjection({ ...source, unreadCount: 4 })
+  expect(controller.getSnapshot().teamDirectory?.teamRef).toBe('rotated-ref')
+  controller.selectSource(source)
+  expect(controller.getSnapshot().selectedSource).toEqual(source)
+  expect(controller.getSnapshot().teamDirectory).toBeUndefined()
+})
