@@ -4,3 +4,20 @@ vi.mock('@deepseek-ai/dsh-llm-pi-ai',()=>({PiAiAdapter:class{constructor(private
 import {AccountModelAdapter} from '../src/account-model-adapter.js'
 const base={uid:'id',route:'user-api/id',version_route:'user-api/id/version-1',name:'Own',disabled:false,execution:'cloud',protocol:'openai-chat',model_key:'owned',base_url:'https://example.com',key_configured:true,capabilities:{text:true,tools:true,images:false,json:true,stream:true,context_tokens:16384,output_tokens:4096}}
 it('freezes a native DSH tool turn while giving every physical call a distinct id',async()=>{state.profiles=[];let model={...base},scope='prod:11';const adapter=new AccountModelAdapter({accountModels:async()=>({enabled:true,models:[model]} as any),currentScope:async()=>scope,bearer:async()=>'arkme-session',operation:()=> 'durable-turn'},'https://intelligent.example');const options={provider:'arkme-user-api',model:base.route,messages:[],maxTokens:100};for await(const _ of (await adapter.prepareCall('',base.route)).stream(options)){}model={...base,version_route:'user-api/id/version-2'};for await(const _ of (await adapter.prepareCall('',base.route)).stream(options)){}expect(state.profiles.map(item=>item['X-Arkme-Binding-Route'])).toEqual([base.version_route,base.version_route]);expect(new Set(state.profiles.map(item=>item['X-Arkme-Call-Id'])).size).toBe(2);expect(state.profiles.every(item=>item['X-Arkme-Operation-Id']==='durable-turn')).toBe(true);adapter.releaseOperation('durable-turn');for await(const _ of (await adapter.prepareCall('',base.route)).stream(options)){}expect(state.profiles[2]!['X-Arkme-Binding-Route']).toBe(model.version_route);const call=await adapter.prepareCall('',base.route);scope='prod:22';await expect(async()=>{for await(const _ of call.stream(options)){} }).rejects.toMatchObject({code:'ACCOUNT_CHANGED'})})
+
+it('keeps an admitted tool turn on its frozen capabilities and rejects the next incompatible turn before dispatch', async () => {
+  state.profiles = []
+  let model = structuredClone(base), operation = 'running-turn'
+  const adapter = new AccountModelAdapter({ accountModels:async()=>({enabled:true,models:[model]} as any), currentScope:async()=>'prod:11', bearer:async()=>'fixture-session', operation:()=>operation },'https://intelligent.example')
+  const run = async () => { for await (const _ of (await adapter.prepareCall('',base.route)).stream({provider:'arkme-user-api',model:base.route,messages:[]})) {} }
+  await run()
+  model = {...model,version_route:'user-api/id/version-2',capabilities:{...model.capabilities,tools:false,stream:false}}
+  await run()
+  expect(state.profiles.map(item=>item['X-Arkme-Binding-Route'])).toEqual([base.version_route,base.version_route])
+  operation = 'new-turn'
+  await expect(run()).rejects.toThrow('DSH 对话：缺少工具调用、缺少流式输出')
+  expect(state.profiles).toHaveLength(2)
+  model.disabled = true
+  operation = 'running-turn'
+  await expect(run()).rejects.toThrow('账号模型不可用')
+})

@@ -1,15 +1,21 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { arkoModelCache } from './arko-model-cache.js'
-import { accountModelEffectiveRoute, accountModelSupportsScene, type AccountModel, type AccountModelPreferences, type AccountModelSave, type AccountModelSettings } from '../account-models.js'
+import { accountModelEffectiveRoute, accountModelSceneIssues, accountModelSceneRequirements, type AccountModel, type AccountModelPreferences, type AccountModelSave, type AccountModelSettings } from '../account-models.js'
 import type { UnifiedModelCatalog } from '../model-directory.js'
 import { callArkme } from './api.js'
 import { tr } from './locale.js'
 import { AccountModelUsage } from './AccountModelUsage.js'
+import { accountModelRetryParams, isAccountModelConflict } from './account-model-save-recovery.js'
 import css from './account-models.css?inline'
 
 type Tab = 'custom' | 'preferences' | 'usage'
 const defaultForm = (): AccountModelSave => ({ uid: '', expected_revision: 0, name: '', execution: 'cloud', protocol: 'openai-chat', base_url: '', model_key: '', connector_id: '', host_provider: '', api_key: '', capabilities: { text: true, images: false, tools: true, json: true, stream: true, context_tokens: 32768, output_tokens: 4096 } })
-function message(error: unknown): string { const value = error as { message?: unknown }; return typeof value?.message === 'string' && value.message.length < 300 ? value.message : tr('暂时无法完成，请稍后重试') }
+function message(error: unknown): string {
+  const value = error as { message?: unknown; body?: { code?: string } }
+  // This owner-generated message lists every affected function; do not hide
+  // the list behind a generic error when several functions share a model.
+  return typeof value?.message === 'string' && (value.message.length < 300 || value.body?.code === 'model-capability-mismatch') ? value.message : tr('暂时无法完成，请稍后重试')
+}
 
 export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) {
   const [data, setData] = useState<AccountModelSettings>(), [loadError, setLoadError] = useState(''), [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [notice, setNotice] = useState('')
@@ -23,6 +29,7 @@ export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) 
       const value = await callArkme<AccountModelSettings>('models.account.query', { expectedAccountScope: scope }, signal)
       if (signal?.aborted || !alive.current || value.accountScope !== scope) return
       setData(value); setPreferences(current => current ?? structuredClone(value.preferences)); setPreferenceRevision(current => current ?? value.revision)
+      return value
     } catch (error) { if (!signal?.aborted && alive.current) setLoadError(message(error)) }
     finally { if (!signal?.aborted && alive.current) setLoading(false) }
   }
@@ -34,16 +41,30 @@ export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) 
   }, [scope])
   useEffect(() => { if (tab === 'usage') setUsageVisited(true) }, [tab])
   const mutate = async (operation: 'models.account.save' | 'models.account.disable' | 'models.preferences.save' | 'models.connector.enroll', params: Record<string, unknown>, done?: () => void) => {
-    if (busy) return
+    if (busy || request.current) return
     const controller = new AbortController(); request.current = controller; setBusy(true); setNotice('')
+    let refreshed = false
     try {
-      const value = await callArkme<AccountModelSettings>(operation, { expectedAccountScope: scope, ...params }, controller.signal)
+      let value: AccountModelSettings
+      try {
+        value = await callArkme<AccountModelSettings>(operation, { expectedAccountScope: scope, ...params }, controller.signal)
+      } catch (error) {
+        if (!isAccountModelConflict(error) || controller.signal.aborted || !alive.current) throw error
+        const latest = await load(controller.signal)
+        refreshed = true
+        const retry = latest && accountModelRetryParams(operation, params, data, latest)
+        if (!retry || controller.signal.aborted || !alive.current) throw error
+        // One retry, only after a definite rejection. The owner still checks CAS
+        // and capabilities; a second conflict or an uncertain result stops here.
+        refreshed = false
+        value = await callArkme<AccountModelSettings>(operation, { expectedAccountScope: scope, ...retry }, controller.signal)
+      }
       if (controller.signal.aborted || !alive.current || value.accountScope !== scope) return
       if (operation !== 'models.connector.enroll') arkoModelCache.invalidate(scope)
       setData(value); setNotice(tr('已保存，后续新任务生效')); if(form && operation==='models.connector.enroll')setForm({...form,expected_revision:value.revision}); if(preferences && data && JSON.stringify(preferences)===JSON.stringify(data.preferences)){setPreferences(structuredClone(value.preferences));setPreferenceRevision(value.revision)} done?.()
       if (operation === 'models.preferences.save') { setPreferences(structuredClone(value.preferences)); setPreferenceRevision(value.revision) }
-    } catch (error) { if (!controller.signal.aborted && alive.current) { setNotice(message(error)); await load(controller.signal) } }
-    finally { if (!controller.signal.aborted && alive.current) setBusy(false) }
+    } catch (error) { if (!controller.signal.aborted && alive.current) { setNotice(isAccountModelConflict(error) ? tr('设置已发生变化，你的修改已保留。') : message(error)); if (!refreshed) await load(controller.signal) } }
+    finally { if (request.current === controller) request.current = undefined; if (!controller.signal.aborted && alive.current) setBusy(false) }
   }
   const beginEdit = (model?: AccountModel) => {
     setNotice(''); setConsent(false)
@@ -51,9 +72,14 @@ export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) 
   }
   const submit = (event: FormEvent) => {
     event.preventDefault(); if (!form || form.execution === 'cloud' && !consent) return
-    void mutate('models.account.save', { input: form }, () => { setForm(undefined); setConsent(false) })
+    const confirmLatest = (event.nativeEvent as SubmitEvent | undefined)?.submitter?.getAttribute('data-confirm-latest') === 'true'
+    void mutate('models.account.save', { input: confirmLatest ? { ...form, expected_revision: data!.revision } : form }, () => { setForm(undefined); setConsent(false) })
   }
-  const names = new Map(data?.scenes.map(scene => [scene.key, scene.name]))
+  const affectedPreferences = data?.scenes.flatMap(scene => {
+    const model = data.models.find(item => item.route === accountModelEffectiveRoute(data, scene.key))
+    const issues = model ? accountModelSceneIssues(model, scene) : []
+    return issues.length ? [`${scene.name}：${issues.join('、')}`] : []
+  }) ?? []
   const nativeModels = native?.models.filter(model => model.origin === 'user-provided' && model.dsh && !model.dsh.provider.startsWith('arkme-user-')) ?? []
   return <div className="arkme-account-models"><style>{css}</style>
     {tab !== 'usage' && <>
@@ -61,13 +87,14 @@ export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) 
       {loadError && <div className="arkme-account-models-notice" role="alert"><p>{loadError}</p><p>{tr('原有本机模型仍可在下方管理；全场景绑定需要当前服务支持。')}</p><button type="button" onClick={() => void load()}>{tr('重试')}</button></div>}
       {loading && !data && <p role="status">{tr('正在读取账号模型…')}</p>}
       {data && !data.enabled && <p className="arkme-account-models-notice">{tr('当前服务尚未开放全场景模型绑定，原有本机配置可继续使用。')}</p>}
-      {notice && <p className="arkme-account-models-notice" role="status">{notice}</p>}
+      {notice && tab === 'custom' && !form && <p className="arkme-account-models-notice" role="status">{notice}</p>}
     </>}
     <div hidden={tab !== 'custom'}>
       {data?.enabled && <>
         <div className="arkme-account-models-heading"><div><h3>{tr('全场景模型')}</h3><p>{tr('接入自己的 API，可用于对话、识别和总结。')}</p></div><button type="button" className="primary" disabled={busy || !!form} onClick={() => beginEdit()}>{tr('添加模型')}</button></div>
         {data.models.length === 0 && !form && <p className="arkme-account-models-empty">{tr('还没有绑定账号模型。添加后，可在「使用偏好」中设为默认。')}</p>}
         {data.models.map(model => <article key={model.uid} className="arkme-account-model-row"><div><strong>{model.name}</strong><span className="arkme-account-model-tag">{tr(model.execution === 'cloud' ? '云端可用' : '需要本机在线')}</span>{model.disabled && <span className="arkme-account-model-tag">{tr('已停用')}</span>}<p>{model.model_key} · {model.capabilities.context_tokens.toLocaleString()} Token · {tr(model.capabilities.tools ? '支持工具' : '纯文本')} {model.capabilities.images && `· ${tr('支持图片')}`}</p></div><div><button type="button" disabled={busy} onClick={() => beginEdit(model)}>{tr('编辑')}</button><button type="button" disabled={busy} onClick={() => void mutate('models.account.disable', { revision: data.revision, uid: model.uid, disabled: !model.disabled })}>{tr(model.disabled ? '启用' : '停用')}</button></div></article>)}
+        {!form && affectedPreferences.length > 0 && <div className="arkme-account-models-notice" role="status"><p>{tr('以下功能当前选用的模型不满足要求，请在「使用偏好」中更换：')}</p>{affectedPreferences.map(detail => <p key={detail}>{detail}</p>)}</div>}
         {form && <form className="arkme-account-model-form" onSubmit={submit} aria-label={tr(form.uid ? '编辑账号模型' : '添加账号模型')}>
           <h3>{tr(form.uid ? '编辑模型' : '添加模型')}</h3>
           <div className="arkme-account-model-form-grid">
@@ -88,10 +115,12 @@ export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) 
             <label>{tr('输出上限 Token')}<input disabled={busy} type="number" min={1} max={Math.min(131072, form.capabilities.context_tokens - 1)} required value={form.capabilities.output_tokens} onChange={event => setForm({ ...form, capabilities: { ...form.capabilities, output_tokens: Number(event.target.value) } })}/></label>
           </div>
           <fieldset><legend>{tr('模型支持的能力')}</legend>{([['tools', '工具调用'], ['json', 'JSON 输出'], ['images', '图片'], ['stream', '流式输出']] as const).map(([key, label]) => <label key={key}><input disabled={busy} type="checkbox" checked={form.capabilities[key]} onChange={event => setForm({ ...form, capabilities: { ...form.capabilities, [key]: event.target.checked } })}/>{tr(label)}</label>)}</fieldset>
+          <ModelCapabilityHints settings={data} form={form}/>
           {form.execution === 'cloud' && <label className="arkme-model-cloud-consent"><input disabled={busy} type="checkbox" required checked={consent} onChange={event => setConsent(event.target.checked)}/><span>{tr('同意将本次填写的 API Key 加密绑定到账号，供桌面端、App 及自动任务使用。费用由提供方账号承担。')}</span></label>}
           <p className="arkme-account-model-hint">{tr('能力与上限请以提供方说明为准。修改配置只影响后续新任务，已开始的任务使用原版本。')}</p>
-          {form.expected_revision!==data.revision && <p className="arkme-account-models-notice">{tr('配置已更新，草稿已保留。请检查后使用最新版本保存。')} <button type="button" onClick={()=>setForm({...form,expected_revision:data.revision})}>{tr('使用最新配置版本')}</button></p>}
-          <div className="arkme-account-model-actions"><button type="button" disabled={busy} onClick={() => setForm(undefined)}>{tr('取消')}</button><button type="submit" className="primary" disabled={busy || form.execution === 'cloud' && !consent}>{tr(busy ? '保存中…' : '保存模型')}</button></div>
+          {notice && <p className="arkme-account-models-notice" role="status">{notice}</p>}
+          {form.expected_revision!==data.revision && !notice && <p className="arkme-account-models-notice">{tr('设置已发生变化，请确认本次修改。')}</p>}
+          <div className="arkme-account-model-actions"><button type="button" disabled={busy} onClick={() => setForm(undefined)}>{tr('取消')}</button><button type="submit" data-confirm-latest={form.expected_revision!==data.revision ? 'true' : undefined} className="primary" disabled={busy || form.execution === 'cloud' && !consent}>{tr(busy ? '保存中…' : form.expected_revision!==data.revision ? '确认保存我的修改' : '保存模型')}</button></div>
         </form>}
       </>}
     </div>
@@ -99,11 +128,66 @@ export function AccountModelsPanel({ scope, tab }: { scope: string; tab: Tab }) 
       <h3>{tr('默认使用模型')}</h3><p className="arkme-account-model-hint">{tr('本次任务的明确选择优先，其次是场景设置，最后是全局默认。')}</p>
       <label className="arkme-account-model-preference">{tr('全局默认')}<select value={preferences.default_route || 'system-default'} disabled={busy} onChange={event => setPreferences({ ...preferences, default_route: event.target.value })}><option value="system-default">{tr('即我官方 · 使用各功能默认模型')}</option>{data.models.filter(model => !model.disabled || model.route===preferences.default_route).map(model => <option key={model.uid} value={model.route} disabled={model.disabled}>{model.name} · {tr(model.disabled?'已停用':'自提供')}</option>)}</select></label>
       <h3>{tr('按场景设置')}</h3>
-      {([true,false] as const).map(common=>{const primary=new Set(['dsh','arko','arrangement','profile','goals','recording-summary','recording-timeline']);const scenes=data.scenes.filter(scene=>primary.has(scene.key)===common).sort((a,b)=>common?[...primary].indexOf(a.key)-[...primary].indexOf(b.key):0);const rows=<>{scenes.map(scene => <label className="arkme-account-model-preference" key={scene.key}><span>{scene.name}<small>{names.get(scene.key) && preferences.scenes[scene.key] ? tr('已单独设置') : tr('跟随全局默认')}</small></span><select value={preferences.scenes[scene.key] || ''} disabled={busy} onChange={event => { const scenes = { ...preferences.scenes }; if (event.target.value) scenes[scene.key] = event.target.value; else delete scenes[scene.key]; setPreferences({ ...preferences, scenes }) }}><option value="">{tr('跟随全局默认')}</option><option value="system-default">{tr('即我官方 · 场景默认模型')}</option>{preferences.scenes[scene.key] && preferences.scenes[scene.key] !== 'system-default' && !data.models.some(model => model.route === preferences.scenes[scene.key]) && <option value={preferences.scenes[scene.key]}>{tr('已选择的官方模型')} · {preferences.scenes[scene.key]}</option>}{data.models.map(model => <option key={model.uid} value={model.route} disabled={!accountModelSupportsScene(model, scene)}>{model.name}{!accountModelSupportsScene(model, scene) ? ` · ${tr(model.disabled ? '已停用' : '能力不满足')}` : ''}</option>)}</select>{(() => { const model = data.models.find(model => model.route === accountModelEffectiveRoute({ ...data, preferences }, scene.key)); return model && !accountModelSupportsScene(model, scene) ? <small className="warning">{(scene.key === 'dsh' && !model.disabled ? tr('DSH 对话需要同时支持工具调用和流式输出，请重新选择。') : tr('当前有效模型无法完成此场景，请重新选择。'))}</small> : null })()}</label>)}</>;return common?<div key="common">{rows}</div>:<details key="more"><summary>{tr('更多场景')}（{scenes.length}）</summary>{rows}</details>})}
+      {([true, false] as const).map(common => {
+        const primary = ['dsh', 'arko', 'arrangement', 'profile', 'goals', 'recording-summary', 'recording-timeline']
+        const scenes = data.scenes.filter(scene => primary.includes(scene.key) === common).sort((a, b) => common ? primary.indexOf(a.key) - primary.indexOf(b.key) : 0)
+        const rows = scenes.map(scene => {
+          const selected = data.models.find(model => model.route === accountModelEffectiveRoute({ ...data, preferences }, scene.key))
+          const issues = selected ? accountModelSceneIssues(selected, scene) : []
+          return <label className="arkme-account-model-preference" key={scene.key}>
+            <span>{scene.name}<small>{preferences.scenes[scene.key] ? tr('已单独设置') : tr('跟随全局默认')}</small><small>{tr('需要：')}{accountModelSceneRequirements(scene)}</small></span>
+            <select aria-label={scene.name} value={preferences.scenes[scene.key] || ''} disabled={busy} onChange={event => {
+              const scenes = { ...preferences.scenes }
+              if (event.target.value) scenes[scene.key] = event.target.value
+              else delete scenes[scene.key]
+              setPreferences({ ...preferences, scenes })
+            }}>
+              <option value="">{tr('跟随全局默认')}</option><option value="system-default">{tr('即我官方 · 场景默认模型')}</option>
+              {preferences.scenes[scene.key] && preferences.scenes[scene.key] !== 'system-default' && !data.models.some(model => model.route === preferences.scenes[scene.key]) && <option value={preferences.scenes[scene.key]}>{tr(preferences.scenes[scene.key]!.startsWith('user-api/') ? '已选择的自提供模型暂不可用' : '已选择的官方模型')} · {preferences.scenes[scene.key]}</option>}
+              {data.models.map(model => {
+                const missing = accountModelSceneIssues(model, scene)
+                return <option key={model.uid} value={model.route} disabled={missing.length > 0}>{model.name}{missing.length ? ` · ${missing.join('、')}` : ''}</option>
+              })}
+            </select>
+            {issues.length > 0 && <small className="warning">{scene.name}：{issues.join('、')}。{tr('请选择其他模型后保存。')}</small>}
+          </label>
+        })
+        return common ? <div key="common">{rows}</div> : <details key="more"><summary>{tr('更多场景')}（{scenes.length}）</summary>{rows}</details>
+      })}
       <p className="arkme-account-model-hint">{tr('自提供模型调用失败时停止，不自动切换到积分模型。')}</p>
-      {preferenceRevision!==data.revision && <p className="arkme-account-models-notice">{tr('配置已更新，当前选择已保留。检查后可使用最新版本保存。')} <button type="button" onClick={()=>setPreferenceRevision(data.revision)}>{tr('使用最新配置版本')}</button></p>}
-      <div className="arkme-account-model-actions"><button type="button" disabled={busy} onClick={() => { setPreferences(structuredClone(data.preferences)); setPreferenceRevision(data.revision); setNotice('') }}>{tr('恢复已保存设置')}</button><button type="button" className="primary" disabled={busy} onClick={() => void mutate('models.preferences.save', { revision: preferenceRevision, preferences })}>{tr(busy ? '保存中…' : '保存使用偏好')}</button></div>
+      {notice && <p className="arkme-account-models-notice" role="status">{notice}</p>}
+      {preferenceRevision!==data.revision && !notice && <p className="arkme-account-models-notice">{tr('设置已发生变化，请确认本次修改。')}</p>}
+      <div className="arkme-account-model-actions"><button type="button" disabled={busy} onClick={() => { setPreferences(structuredClone(data.preferences)); setPreferenceRevision(data.revision); setNotice('') }}>{tr('恢复已保存设置')}</button><button type="button" className="primary" disabled={busy} onClick={() => void mutate('models.preferences.save', { revision: data.revision, preferences })}>{tr(busy ? '保存中…' : preferenceRevision!==data.revision ? '确认保存我的修改' : '保存使用偏好')}</button></div>
     </>}</div>
     <div hidden={tab !== 'usage'}>{usageVisited && <AccountModelUsage scope={scope} settings={data}/>}</div>
+  </div>
+}
+
+function ModelCapabilityHints({ settings, form }: { settings: AccountModelSettings; form: AccountModelSave }) {
+  // Both first-time setup and edits use the complete owner-provided registry.
+  // Group identical requirements to keep the form readable as scenes grow.
+  const missing = new Map<string, string[]>(), requirements = new Map<string, string[]>()
+  let affectsBoundScene = false
+  for (const scene of settings.scenes) {
+    const required = accountModelSceneRequirements(scene)
+    requirements.set(required, [...(requirements.get(required) ?? []), scene.name])
+    const issues = accountModelSceneIssues(form, scene)
+    if (!issues.length) continue
+    const detail = issues.join('、')
+    const inUse = !!form.uid && accountModelEffectiveRoute(settings, scene.key) === settings.models.find(model => model.uid === form.uid)?.route
+    affectsBoundScene ||= inUse
+    missing.set(detail, [...(missing.get(detail) ?? []), `${scene.name}${inUse ? '（正在使用）' : ''}`])
+  }
+  return <div className="arkme-model-capability-hints">
+    {missing.size > 0 && <div className="arkme-account-models-notice" role="status">
+      <p>{tr('可以保存模型；以下功能暂不适用：')}</p>
+      {[...missing].map(([detail, names]) => <p key={detail}><strong>{names.join('、')}</strong>：{detail}</p>)}
+      <p className="arkme-account-model-hint">{tr(affectsBoundScene ? '正在使用的功能需在「使用偏好」中更换模型，后续新任务才能继续。' : '这些功能可以使用其他模型，不影响保存当前模型。')}</p>
+    </div>}
+    <details><summary>{tr('各功能需要哪些能力')}</summary>
+      {[...requirements].map(([required, names]) => <p key={required}><strong>{names.join('、')}</strong>：{required}</p>)}
+      <p>{tr('发送或分析图片时，还需要图片能力。')}</p>
+    </details>
+    <p className="arkme-account-model-hint">{tr('一个模型可以用于多个功能，无需支持全部功能。应用到功能时会检查所需能力。')}</p>
   </div>
 }
