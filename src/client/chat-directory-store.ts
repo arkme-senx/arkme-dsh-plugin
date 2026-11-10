@@ -1116,6 +1116,8 @@ const EMPTY_CHAT_TIMELINE_SOURCE_DELTA: ArkmeChatTimelineSourceDeltaSnapshot = {
 const MAX_SCOPED_REALTIME_SOURCES = 256
 const MAX_TIMELINE_REMOVED_ITEM_KEYS = 512
 const MAX_TIMELINE_CHANGE_CURSORS = MAX_TIMELINE_REMOVED_ITEM_KEYS * 2
+// The server can send 1,000 terminal identities in one manifest page.
+const MAX_COMMITTED_SYNC_CHANGES = 2048
 const MAX_COMMITTED_SYNC_BYTES = 8 * 1024 * 1024
 
 type ArkmeChatTimelineChangeKind = 'deleted' | 'recovered' | 'reedited' | 'extended'
@@ -1181,7 +1183,7 @@ export class ArkmeChatTimelineDeltaStore {
         next.set(change.itemKey, change)
       }
       let overflow = false
-      while (next.size > MAX_TIMELINE_REMOVED_ITEM_KEYS) {
+      while (next.size > MAX_COMMITTED_SYNC_CHANGES) {
         const oldestBody = [...next].find(([, change]) => change.item)?.[0]
         next.delete(oldestBody ?? next.keys().next().value!)
         overflow = true
