@@ -1,5 +1,5 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite'
-import type { ArkmeMessageSyncProgress, ChatSyncCommand, ChatSyncLocalPage, ChatSyncPlan, ChatSyncSession, ChatSyncWork } from './chat-message-sync.js'
+import type { ArkmeMessageSyncProgress, ChatSyncCommand, ChatSyncLocalPage, ChatSyncPlan, ChatSyncProjection, ChatSyncSession, ChatSyncWork } from './chat-message-sync.js'
 import type { ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
 const MAX_WORK = 100_000
@@ -142,6 +142,7 @@ export class ChatMessageSyncStore {
       }
       return { resume, cached }
     }
+    const projections: ChatSyncProjection[] = []
     this.db.exec('BEGIN IMMEDIATE')
     try {
       if (command.action === 'begin') {
@@ -163,7 +164,10 @@ export class ChatMessageSyncStore {
         const row = this.assert(account, command.epoch)
         if (command.action === 'manifest' || command.action === 'commit') {
           if (row.checkpoint !== command.expectedCheckpoint || (command.action === 'manifest') !== command.page.manifest) throw new Error('message-sync-checkpoint-stale')
-          for (const session of command.page.sessions) this.applySession(command, session, row)
+          for (const session of command.page.sessions) {
+            const projection = this.applySession(command, session, row)
+            if (projection.reset || projection.changes.length) projections.push(projection)
+          }
           if (command.action === 'manifest') this.prepare('UPDATE message_sync_accounts SET checkpoint=? WHERE account=?').run(command.page.checkpoint, account)
         } else if (command.action === 'freeze') {
           const counts = this.prepare('SELECT COALESCE(SUM(counted),0) AS total,COALESCE(SUM(counted*done),0) AS completed,COALESCE(SUM(CASE WHEN state IN (\'removed\',\'restricted\') THEN counted*done ELSE 0 END),0) AS terminal FROM message_sync_work WHERE account=? AND cycle=?').get(account, Number(row.cycle))!
@@ -177,10 +181,10 @@ export class ChatMessageSyncStore {
       this.enforceBudget()
       const result = this.status(account)
       this.db.exec('COMMIT')
-      return result
+      return projections.length ? { ...result, projections } : result
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
-  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row): void {
+  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row): ChatSyncProjection {
     const { account, ticket, now } = command
     const scope = session.scope!, sourceKey = session.sourceKey!
     if (!scope || !sourceKey) throw new Error('message-sync-scope-missing')
@@ -191,7 +195,10 @@ export class ChatMessageSyncStore {
     if (ticket < fence) throw new Error('message-sync-stale')
     if (command.action === 'commit' && !oldSession) throw new Error('message-sync-membership-changed')
     if (command.action === 'commit' && oldSession?.membership !== session.membership) session = { ...session, accessible: false, work: [] }
-    if (oldSession && (oldSession.membership !== session.membership || !session.accessible)) {
+    const projection: ChatSyncProjection = { sourceKey, changes: [] }
+    if (!session.accessible && oldSession?.accessible !== 0) projection.reset = 'restricted'
+    else if (session.accessible && oldSession && (oldSession.accessible === 0 || oldSession.membership !== session.membership)) projection.reset = 'accessible'
+    if (projection.reset) {
       this.prepare('DELETE FROM entries WHERE scope=?').run(scope)
       this.prepare('DELETE FROM contents WHERE scope=?').run(scope)
       this.prepare('INSERT OR REPLACE INTO scopes VALUES (?,?)').run(scope, ticket)
@@ -206,7 +213,7 @@ export class ChatMessageSyncStore {
       const unsettled = this.prepare('SELECT COUNT(*) AS n FROM message_sync_work WHERE account=? AND uid=? AND counted=1 AND done=0 AND cycle=?').get(account, session.uid, Number(accountRow.cycle))!
       this.prepare("UPDATE message_sync_work SET pending=0,state='restricted',stored_revision=revision,stored_version=version,done=counted WHERE account=? AND uid=?").run(account, session.uid)
       if (!accountRow.discovering) this.prepare('UPDATE message_sync_accounts SET completed=completed+?,terminal=terminal+? WHERE account=?').run(Number(unsettled.n), Number(unsettled.n), account)
-      return
+      return projection
     }
     for (let work of session.work) {
       const old = this.prepare('SELECT * FROM message_sync_work WHERE account=? AND uid=? AND id=?').get(account, session.uid, work.id)
@@ -215,7 +222,11 @@ export class ChatMessageSyncStore {
       if (!eventId || !itemKey) throw new Error('message-sync-identity-missing')
       const exists = this.prepare("SELECT version,ticket,json_extract(payload,'$.contentStatus') AS content_status FROM contents WHERE scope=? AND event_id=?").get(scope, eventId)
       const unread = (command.action === 'commit' && old ? old.unread === 1 : work.unread) && work.sequence > readThrough
-      if (!unread && !old && !exists) continue
+      if (!unread && !old && !exists) {
+        // A browser can still be displaying a realtime body that never reached SQLite.
+        if (terminal) projection.changes.push({ itemKey, revision: work.revision, version: work.version })
+        continue
+      }
       if (old && (Number(old.revision) > work.revision || Number(old.version) > work.version)) work = { ...work, revision: Math.max(Number(old.revision), work.revision), version: Math.max(Number(old.version), work.version), state: terminal ? work.state : 'pending' }
       const already = old && old.stored_revision === work.revision && Number(old.stored_version) >= work.version && exists !== undefined && old.pending === 0
       const counted = old !== undefined && old.cycle === accountRow.cycle && old.counted === 1 || command.action === 'manifest' && accountRow.discovering === 1 && !terminal && !already ? 1 : 0
@@ -227,14 +238,21 @@ export class ChatMessageSyncStore {
         // If its ticket blocks this write, retry instead of acknowledging a body
         // version that was never committed to canonical contents.
         if (exists && Number(exists.ticket) > ticket && (exists.content_status !== 'available' || Number(exists.version) < work.version)) throw new Error('message-sync-stale')
-        if (!exists || Number(exists.ticket) <= ticket && Number(exists.version) <= work.version) this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,'messages',?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET
-          payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(work.event), work.version, ticket)
+        if (!exists || Number(exists.ticket) <= ticket && Number(exists.version) <= work.version) {
+          this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,'messages',?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET
+            payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(work.event), work.version, ticket)
+          // Newly downloaded tails already use the committed-body wakeup.
+          if (exists || Number(old?.stored_revision ?? -1) >= 0) {
+            projection.changes.push({ itemKey, revision: work.revision, version: work.version, item: work.event.item })
+          }
+        }
         committed = true
       } else if (terminal) {
         if (exists && Number(exists.ticket) > ticket) throw new Error('message-sync-stale')
         this.prepare('DELETE FROM entries WHERE scope=? AND event_id=?').run(scope, eventId)
         this.prepare('DELETE FROM contents WHERE scope=? AND event_id=?').run(scope, eventId)
         this.prepare('INSERT OR REPLACE INTO scopes VALUES (?,?)').run(scope, ticket)
+        if (exists || old?.state === 'available') projection.changes.push({ itemKey, revision: work.revision, version: work.version })
       }
       const attempts = committed || command.action === 'manifest' ? Number(old?.attempts ?? 0) : Math.min(6, Number(old?.attempts ?? 0) + 1)
       const retry = committed ? 0 : command.action === 'commit' ? now + 1000 * 2 ** attempts
@@ -248,6 +266,7 @@ export class ChatMessageSyncStore {
       if (committed && counted && !done && !accountRow.discovering) this.prepare('UPDATE message_sync_accounts SET completed=completed+1,terminal=terminal+? WHERE account=?').run(terminal ? 1 : 0, account)
     }
     if (Number(this.prepare('SELECT COUNT(*) AS n FROM message_sync_work').get()!.n) > MAX_WORK || Number(this.prepare('SELECT COUNT(*) AS n FROM message_sync_sessions').get()!.n) > MAX_SESSIONS) throw new Error('message-sync-capacity')
+    return projection
   }
   retire(scope: string, eventId?: string): void {
     this.prepare(`UPDATE message_sync_work SET pending=1,stored_revision=-1,retry_at=0 WHERE scope=?${eventId ? ' AND event_id=?' : ''}`).run(...(eventId ? [scope, eventId] : [scope]))

@@ -951,9 +951,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       this.callHistory,
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
-    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
+    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys, projections) => {
       this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
-        ...(sourceKeys?.length ? { sourceKeys } : {}) })
+        ...(sourceKeys?.length ? { sourceKeys } : {}), ...(projections?.length ? { projections } : {}) })
     })
     this.realtime.subscribeChatRealtime(event => this.messageSync.accept(event))
     this.realtime.subscribeChatRealtime(event => {

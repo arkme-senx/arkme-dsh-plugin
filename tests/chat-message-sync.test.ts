@@ -212,3 +212,33 @@ it('keeps the foreground window allowance when unread bodies exceed the old shar
     expect(clean.prepare('SELECT bodies FROM message_sync_stats').get()!.bodies).toBe(0);clean.close()
   } finally {s.close()}
 },30000)
+
+it('publishes same-sequence edits and permission changes only from the committed SQLite result', () => {
+  const s = setup()
+  try {
+    s.begin()
+    s.page([session([work()])])
+    s.action('freeze')
+    expect(s.page([session([body(work())])], false).projections).toBeUndefined()
+    s.action('finish')
+    s.begin()
+    const edited = { ...work(), revision: 2, version: 2 }
+    s.page([session([edited])])
+    s.action('freeze')
+    const committed = s.page([session([body(edited)])], false)
+    expect(committed.projections).toMatchObject([{ sourceKey: 'source:chat', changes: [{ itemKey: 'key:one', revision: 2, item: { recordVersion: 2 } }] }])
+    expect(s.execute({ action: 'read', scope: 'test:1:chat', limit: 40 })).toMatchObject({ events: [{ item: { recordVersion: 2 } }] })
+    s.action('finish')
+    s.begin()
+    expect(s.page([session([{ ...edited, revision: 3, state: 'removed' }])]).projections).toEqual([
+      { sourceKey: 'source:chat', changes: [{ itemKey: 'key:one', revision: 3, version: 2 }] },
+    ])
+    expect(s.execute({ action: 'read', scope: 'test:1:chat', limit: 40 })).toBeUndefined()
+    expect(s.page([{ ...session([]), accessible: false }]).projections).toEqual([
+      { sourceKey: 'source:chat', reset: 'restricted', changes: [] },
+    ])
+    expect(s.page([session([])]).projections).toEqual([
+      { sourceKey: 'source:chat', reset: 'accessible', changes: [] },
+    ])
+  } finally { s.close() }
+})

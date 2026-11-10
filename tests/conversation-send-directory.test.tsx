@@ -397,6 +397,39 @@ describe('conversation send directory projection', () => {
     expect(renderedText(renderer!.toJSON())).toContain('发送结果待确认，不能重复发送')
   })
 
+  it('updates the mounted row from a committed edit and rejects an older in-flight copy after removal', async () => {
+    const api = await import('../src/client/api.js')
+    const base = mocks.callArkme.getMockImplementation()!
+    const delayed = deferred<unknown>()
+    const old = { itemUid: 'sync-old', timelineItemKey: 'sync-occurrence', sequence: 8,
+      recordVersion: 1, senderName: '对方', isMe: false, sendAtMillis: 8, title: '', textContent: '同步前正文', status: 1 }
+    let reads = 0
+    vi.spyOn(api, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation !== 'source.timeline') return base(operation, params, signal)
+      if ((params as any)?.cursor?.unified?.cacheOnly) return Promise.reject(new ArkmeClientError({ code: 'chat-timeline-cache-miss', message: 'empty', retryable: false }))
+      return (++reads === 1 ? Promise.resolve(unifiedFixture(target, [old])) : delayed.promise) as any
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(renderedText(renderer!.toJSON())).toContain('同步前正文')
+    await act(async () => {
+      arkmeChatTimelineDelta.applyTimelineChange({ sourceKey: target.sourceKey!, timelineItemKey: old.timelineItemKey,
+        changeKind: 'reedited', changeVersion: 2, relationTerminal: false, throughSequence: 8 })
+    })
+    expect(reads).toBe(2)
+    await act(async () => arkmeChatTimelineDelta.applySyncProjections([{ sourceKey: target.sourceKey!, changes: [
+      { itemKey: old.timelineItemKey, revision: 2, version: 2, item: { ...old, recordVersion: 2, textContent: '同步后正文' } },
+    ] }]))
+    expect(renderedText(renderer!.toJSON())).toContain('同步后正文')
+    expect(renderedText(renderer!.toJSON())).not.toContain('同步前正文')
+    await act(async () => arkmeChatTimelineDelta.applySyncProjections([{ sourceKey: target.sourceKey!, changes: [
+      { itemKey: old.timelineItemKey, revision: 3, version: 2 },
+    ] }]))
+    expect(renderedText(renderer!.toJSON())).not.toContain('同步后正文')
+    await act(async () => { delayed.resolve(unifiedFixture(target, [old])) })
+    expect(renderedText(renderer!.toJSON())).not.toContain('同步前正文')
+    expect(reads).toBe(2)
+  })
+
   it('renders continuous confirmed unified arrivals before refresh completion with stable row identities', async () => {
     const api = await import('../src/client/api.js')
     const base = mocks.callArkme.getMockImplementation()!

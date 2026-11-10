@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { UnifiedTimelineLiveTail } from '../src/client/unified-timeline-live-tail.js'
+import { projectCommittedChatWindow, UnifiedTimelineLiveTail } from '../src/client/unified-timeline-live-tail.js'
 import { ConversationReadAckQueue } from '../src/client/conversation-read-ack-queue.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import type { ArkmeTimelineItem } from '../src/types.js'
@@ -102,4 +102,16 @@ it('bounds acknowledgement starts and flushes only the latest observed cursor on
     expect(calls).toEqual([1, 101, 102])
     expect(vi.getTimerCount()).toBe(0)
   } finally { vi.useRealTimers() }
+})
+
+it('projects committed edits and removals in a historical window without changing its coverage', () => {
+  const history = { ...window([5, 6, 7]), newerHasMore: true }
+  const changes = new Map([
+    ['relation-5', { itemKey: 'relation-5', revision: 10, version: 2, item: { ...item(5), recordVersion: 2, textContent: 'edited' } }],
+    ['relation-6', { itemKey: 'relation-6', revision: 11, version: 0 }],
+  ])
+  const projected = projectCommittedChatWindow(history, changes)
+  expect(projected.events).toMatchObject([{ eventId: 'event-5', item: { sequence: 5, textContent: 'edited' } }, { eventId: 'event-7' }])
+  expect(projected).toMatchObject({ newerHasMore: true, windowTokens: ['confirmed'], olderCursor: 'older' })
+  expect(projectCommittedChatWindow(history, changes).events).toEqual(projected.events)
 })

@@ -75,3 +75,18 @@ it('keeps explicit cached ranges on every discovery continuation and freezes onl
   try {s.service.start();await vi.waitFor(()=>expect(s.updates.at(-1)).toMatchObject({phase:'idle',completed:1,total:1}));expect(pages).toBe(2)}
   finally{s.close()}
 })
+
+it('prioritizes reconnect over a pending realtime check', async () => {
+  vi.useFakeTimers()
+  const post = vi.fn(async () => ({ manifest_only: true, checkpoint: 'cp', has_more: false, retry: false, sessions: [] }))
+  const s = setup(post)
+  try {
+    s.service.start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(post).toHaveBeenCalledTimes(1)
+    s.service.accept({ type: 'sessions-delta', revision: 1, updates: [] })
+    s.service.accept({ type: 'reconcile', revision: 2, connected: true, connectionGeneration: 2 })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(post).toHaveBeenCalledTimes(2)
+  } finally { s.close(); vi.useRealTimers() }
+})

@@ -4239,6 +4239,7 @@ export type ArkmeChatClientEvent = {
   progress: import('./chat-message-sync.js').ArkmeMessageSyncProgress
   /** Bounded committed-body hints; no read positions or complete window coverage. */
   sourceKeys?: string[]
+  projections?: import('./chat-message-sync.js').ChatSyncProjection[]
 } | {
   type: 'team-invalidated'
   revision: number

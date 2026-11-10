@@ -256,8 +256,9 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'message-sync-progress') {
           arkmeMessageSync.apply(update.progress)
-          if (update.progress.accountKey === authenticatedAccountScope && update.sourceKeys?.length) {
-            arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
+          if (update.progress.accountKey === authenticatedAccountScope) {
+            if (update.projections?.length) arkmeChatTimelineDelta.applySyncProjections(update.projections)
+            if (update.sourceKeys?.length) arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
           }
           return
         }

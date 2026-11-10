@@ -43,7 +43,7 @@ import { ExploreSurface } from './explore/ExploreSurface.js'
 import { MessageQuoteThreadsProvider, MessageQuoteThreadTimestamp } from './MessageQuoteThreads.js'
 import { RecordThoughtContent, RecordThoughtEntry, RecordThoughtMessageFooter, RecordThoughtsProvider } from './RecordThoughts.js'
 import { TimelineRefreshScheduler } from './timeline-refresh-scheduler.js'
-import { removeUnifiedTimelineItems, UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
+import { projectCommittedChatMessage, projectCommittedChatWindow, removeUnifiedTimelineItems, UnifiedTimelineLiveTail } from './unified-timeline-live-tail.js'
 import { ConversationReadAckQueue } from './conversation-read-ack-queue.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { ConversationViewportPersistence } from './conversation-viewport-persistence.js'
@@ -2310,12 +2310,12 @@ export function ArkmeSurface({
     newerCursor: undefined, newerHasMore: false,
   })
   const {
-    unified: unifiedWindow,
+    unified: rawUnifiedWindow,
     cache: timelineCache,
     sourceKey: timelineStateKey,
     mode: timelineMode,
     aroundSequenceRange,
-    items,
+    items: rawItems,
     aiPolishNotices,
     aiPolishSettings,
     nextCursor,
@@ -2323,6 +2323,18 @@ export function ArkmeSurface({
     newerCursor,
     newerHasMore,
   } = timelineView
+  const syncReset = chatDelta.syncReset
+  const syncChanges = chatDelta.syncChanges
+  const appliedSyncResets = useRef(new WeakSet<object>())
+  const hideSyncWindow = syncReset?.access === 'restricted'
+    || syncReset !== undefined && !appliedSyncResets.current.has(syncReset)
+  const unifiedWindow = useMemo(() => hideSyncWindow ? undefined
+    : rawUnifiedWindow && syncChanges?.size ? projectCommittedChatWindow(rawUnifiedWindow, syncChanges) : rawUnifiedWindow,
+  [hideSyncWindow, rawUnifiedWindow, syncChanges])
+  const items = useMemo(() => {
+    if (hideSyncWindow) return []
+    return syncChanges?.size ? rawItems.flatMap(item => projectCommittedChatMessage(item, syncChanges) ?? []) : rawItems
+  }, [hideSyncWindow, rawItems, syncChanges])
   const aiPolishSettingsRef = useRef(aiPolishSettings)
   const aiPolishNoticesRef = useRef(aiPolishNotices)
   aiPolishSettingsRef.current = aiPolishSettings
@@ -3459,6 +3471,7 @@ export function ArkmeSurface({
     if (source === undefined) return
     const sourceRef = source.sourceRef
     const sourceKey = arkmeSourceIdentityKey(source)
+    if (arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).syncReset?.access === 'restricted') return
     const generation = timelineGenerationRef.current
     const recordMutationReadEpoch = recordMutations.readEpoch
     const invalidationRevision = arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).revision
@@ -3951,6 +3964,7 @@ export function ArkmeSurface({
       locateRenderedTarget()
       return () => { reactionLocateController.abort(); cancelReactionLayout?.(); if (animationFrame !== 0) cancelAnimationFrame(animationFrame) }
     }
+    if (arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).syncReset?.access === 'restricted') return
     if ((source.kind === 'private_chat' || source.kind === 'group_chat')
       && (target.systemRef || target.contextRef || recordOwnerId(target.recordOwnerUserId) !== 0)
       && !conversationTargetPagingRef.current.aroundRequested) {
@@ -4132,6 +4146,11 @@ export function ArkmeSurface({
       }
     }
     const sourceKey = authenticated && conversationKey !== '' ? conversationKey : undefined
+    if (sourceKey && syncReset && !appliedSyncResets.current.has(syncReset)) {
+      appliedSyncResets.current.add(syncReset)
+      conversationCacheRef.current.forgetTimeline(sourceKey)
+      liveTimelineTail.clear()
+    }
     const cachedTimeline = sourceKey === undefined
       ? undefined
       : conversationCacheRef.current.getTimeline(sourceKey)
@@ -4159,7 +4178,7 @@ export function ArkmeSurface({
       newerCursor: cachedTimeline?.newerCursor,
       newerHasMore: cachedTimeline?.newerHasMore ?? false,
     })
-    setTimelineLoadingKey(sourceKey !== undefined && cachedTimeline === undefined ? sourceKey : '')
+    setTimelineLoadingKey(sourceKey !== undefined && cachedTimeline === undefined && syncReset?.access !== 'restricted' ? sourceKey : '')
     setTimelineSkeletonKey('')
     setTimelineRevealKey('')
     setNewMessageCount(0)
@@ -4169,7 +4188,7 @@ export function ArkmeSurface({
       pendingExtensionParentDetailRef.current = undefined
     }
     setDraftPreview(undefined)
-    setTimelineError('')
+    setTimelineError(syncReset?.access === 'restricted' ? tr('你已无权查看此会话') : '')
     if (authenticated) setError('')
     setLongArticleCreating(false); setAddMenuOpen(false)
     setArticlePickerScope(undefined)
@@ -4239,7 +4258,7 @@ export function ArkmeSurface({
     setForwardSuccessFeedback(undefined)
     setMessageActionStatus('')
     setMessageActionBusy(undefined)
-  }, [authenticated, authenticatedAccountKey, conversationKey, notificationActivationRevision, persistRecordReeditDraft])
+  }, [authenticated, authenticatedAccountKey, conversationKey, notificationActivationRevision, persistRecordReeditDraft, syncReset, liveTimelineTail])
   useEffect(() => {
     if (!activeConversation || !authenticated || !sourceIsChat) return
     const release = arkmeChatDirectory.registerReadingIntent(conversationKey, () => {
@@ -4345,7 +4364,7 @@ export function ArkmeSurface({
     timelineStateKey, timelineMode, conversationKey, messageMerge, liveTimelineTail, timelineRefreshScheduler])
 
   useEffect(() => {
-    if (!activeConversation || !authenticated || source === undefined) return
+    if (!activeConversation || !authenticated || source === undefined || syncReset?.access === 'restricted') return
     const generation = timelineGenerationRef.current
     const cachedTimeline = conversationCacheRef.current.getTimeline(conversationKey)
     const hasCachedTimeline = cachedTimeline !== undefined
@@ -4395,7 +4414,7 @@ export function ArkmeSurface({
         if (!hasCachedTimeline || conversationWindowRequested()) setTimelineError(errorMessage(caught))
       }
     })
-  }, [acknowledgeRead, activeConversation, authenticated, chatDelta.items, conversationKey, foregroundReadRevision, loadTimeline, notificationActivationRevision, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler])
+  }, [acknowledgeRead, activeConversation, authenticated, chatDelta.items, conversationKey, foregroundReadRevision, loadTimeline, notificationActivationRevision, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, syncReset])
   useEffect(() => {
     if (!authenticated || source === undefined || timelineStateKey !== conversationKey) return
     if (conversationCacheRef.current.getTimeline(conversationKey) === undefined) return
@@ -6404,8 +6423,10 @@ export function ArkmeSurface({
     const extensionItems = publicTimelineExtensionSends(extensionSendTasks).filter(task => !remoteIds.has(task.result?.recordUid ?? task.recordUid)).map(detailExtensionSendTimelineItem)
     const displayItems = [...remoteItems, ...extensionItems, ...fileTasks.tasks.filter(task => !remoteIds.has(task.result?.itemUid ?? task.recordUid)).map(fileTaskTimelineItem)]
       .sort(compareTimelineMessages)
-    return { displayItems: source ? recordMutations.projectWindow(displayItems, source, selfSources).sort(compareTimelineMessages) : displayItems, reeditItems }
-  }, [items, fileTasks.tasks, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
+    const visible = hideSyncWindow ? [] : syncChanges?.size
+      ? displayItems.flatMap(item => projectCommittedChatMessage(item, syncChanges) ?? []) : displayItems
+    return { displayItems: source ? recordMutations.projectWindow(visible, source, selfSources).sort(compareTimelineMessages) : visible, reeditItems }
+  }, [items, hideSyncWindow, syncChanges, fileTasks.tasks, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
   useEffect(() => {
     for (const job of reeditSubmissions.jobs) {
       if (job.state === 'pending' || job.state === 'committing') pendingReeditHighlights.current.add(job.submissionId)
@@ -6474,6 +6495,7 @@ export function ArkmeSurface({
   } | { kind: 'world-public'; id: string; occurredAtMillis: number; recordRef: string; authorName: string }
     | { kind: 'offline-context'; id: string; occurredAtMillis: number; entryRef: string; revision: string; title: string; summary: string }>>(
     () => {
+      if (hideSyncWindow) return []
       if (unifiedWindow) {
         const messageByEvent = new Map(displayItems.filter(item => item.timelineEventId !== undefined).map(item => [item.timelineEventId, item]))
         return [
@@ -6519,7 +6541,7 @@ export function ArkmeSurface({
       ? compareTimelineMessages(left.item, right.item)
       : left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id))
     },
-    [unifiedWindow, sourceIsChat, aiPolishNotices, displayItems, fileTasks.tasks, fileTasks.activeTaskKeys, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps, recordMutations, selfSources,
+    [hideSyncWindow, unifiedWindow, sourceIsChat, aiPolishNotices, displayItems, fileTasks.tasks, fileTasks.activeTaskKeys, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps, recordMutations, selfSources,
       communityWelcome, authenticatedAccountKey, source?.sourceRef, source?.sourceKey, source?.kind, source?.displayName, timelineMode],
   )
   const cachedWindowSyncFailed = conversationWindowRequested() && error === '' && timelineError !== '' && liveDisplayRows.length > 0
