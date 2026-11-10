@@ -4,7 +4,7 @@ import { callArkme } from './api.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 
 type Snapshot = { value?: ConversationRecognitionSetting; busy: boolean; error: string }
-type Entry = { state: Snapshot; listeners: Set<() => void>; read?: AbortController; write?: AbortController }
+type Entry = { state: Snapshot; listeners: Set<() => void>; read?: AbortController; readBackground?: boolean; write?: AbortController }
 const empty: Snapshot = { busy: false, error: '' }
 const entries = new Map<string, Entry>()
 const keyFor = (account: string, reference: string, scope: string) => JSON.stringify([account, scope, reference])
@@ -27,22 +27,28 @@ export function useConversationRecognition(account: string, reference: string, s
   const entry = entryFor(key)
   const state = useSyncExternalStore(notify => { entry.listeners.add(notify); return () => { entry.listeners.delete(notify) } }, () => entry.state, () => empty)
   const params = { expectedAccountScope: account, ...(scope === 'team' ? { teamConversationRef: reference } : { sourceRef: reference }) }
-  async function read() {
-    if (!account || !reference || entry.write || entry.read) return
-    const controller = new AbortController(); entry.read = controller
+  async function read(background = false) {
+    if (!account || !reference || entry.write) return
+    if (entry.read) {
+      if (background || !entry.readBackground) return
+      entry.read.abort()
+    }
+    const controller = new AbortController(); entry.read = controller; entry.readBackground = background
     update(entry, { ...entry.state, busy: !entry.state.value, error: '' })
     try {
-      const value = await withArkmeReadDeadline(signal => callArkme<ConversationRecognitionSetting>('arrangements.conversation.recognition.get', params, signal), controller.signal)
+      const value = await withArkmeReadDeadline(signal => background
+        ? callArkme<ConversationRecognitionSetting>('arrangements.conversation.recognition.get', params, signal, { priority: 'background' })
+        : callArkme<ConversationRecognitionSetting>('arrangements.conversation.recognition.get', params, signal), controller.signal)
       if (!value || value.accountScope !== account) throw new Error('安排识别设置响应无效，请重试')
       if (!controller.signal.aborted) update(entry, { value, busy: false, error: '' })
     } catch (error) { if (!controller.signal.aborted) update(entry, { ...entry.state, busy: false, error: message(error) }) }
-    finally { if (entry.read === controller) delete entry.read }
+    finally { if (entry.read === controller) { delete entry.read; delete entry.readBackground } }
   }
   async function toggle() {
     if (entry.write) return
     const previous = entry.state.value
     if (!previous) { await read(); return }
-    entry.read?.abort(); delete entry.read
+    entry.read?.abort(); delete entry.read; delete entry.readBackground
     const controller = new AbortController(); entry.write = controller
     update(entry, { ...entry.state, busy: true, error: '' })
     const desired = !previous.enabled
@@ -62,11 +68,11 @@ export function useConversationRecognition(account: string, reference: string, s
   }
   useEffect(() => {
     if (!active || !account || !reference) return
-    void read()
-    const refresh = () => { void read() }
+    void read(true)
+    const refresh = () => { void read(true) }
     window.addEventListener('focus', refresh)
     const timer = window.setInterval(refresh, 60_000)
     return () => { window.removeEventListener('focus', refresh); window.clearInterval(timer) }
   }, [key, active])
-  return { ...state, toggle, refresh: read }
+  return { ...state, toggle, refresh: () => read() }
 }

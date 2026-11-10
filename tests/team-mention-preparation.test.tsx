@@ -20,13 +20,25 @@ beforeEach(()=>{vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);arkmeAuthStore.se
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();vi.unstubAllGlobals()})
 it('prepares the current composer before the first @ and shows the completed page without a new request',async()=>{
  await render();expect(read).toHaveBeenCalledOnce();expect(host.textContent).toBe('')
+ expect(read.mock.calls[0]![3]).toEqual({priority:'background'})
  await render({open:true});expect(host.textContent).toBe('Member');expect(value.loading).toBe(false);expect(read).toHaveBeenCalledOnce()
 })
-it('joins the pending preparation when @ opens/closes instead of restarting it',async()=>{
- let finish!:(page:unknown)=>void;read.mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+it('promotes pending background preparation when @ opens and keeps that foreground read on close',async()=>{
+ const finish:Array<(page:unknown)=>void>=[];read.mockImplementation(()=>new Promise(resolve=>{finish.push(resolve)}))
  await render();expect(read).toHaveBeenCalledOnce();const signal=read.mock.calls[0]![2] as AbortSignal
- await render({open:true});expect(value.loading).toBe(true);await render();expect(signal.aborted).toBe(false);expect(read).toHaveBeenCalledOnce()
- await act(async()=>finish(page));await render({open:true});expect(host.textContent).toBe('Member');expect(read).toHaveBeenCalledOnce()
+ await render({open:true});expect(value.loading).toBe(true);expect(signal.aborted).toBe(true);expect(read).toHaveBeenCalledTimes(2)
+ expect(read.mock.calls[1]![3]).toBeUndefined();const foreground=read.mock.calls[1]![2] as AbortSignal
+ await render();expect(foreground.aborted).toBe(false);expect(read).toHaveBeenCalledTimes(2)
+ await act(async()=>finish[0]!({...page,items:[{...page.items[0],nickname:'Old'}]}));await render({open:true});expect(host.textContent).toBe('')
+ await act(async()=>finish[1]!(page));expect(host.textContent).toBe('Member');expect(read).toHaveBeenCalledTimes(2)
+})
+
+it('starts an already-open picker, manual retry and member pagination as foreground reads',async()=>{
+ read.mockResolvedValue({...page,hasMore:true,nextCursor:'next'})
+ await render({open:true});expect(read.mock.calls[0]![3]).toBeUndefined()
+ await act(async()=>value.next());expect(read.mock.calls[1]![3]).toBeUndefined()
+ await act(async()=>value.retry());expect(read.mock.calls[2]![3]).toBeUndefined()
+ await act(async()=>value.first());expect(read.mock.calls[3]![3]).toBeUndefined()
 })
 it('keeps an expired page visible at @ while refreshing once, with no timer-driven polling',async()=>{
  await render();expect(read).toHaveBeenCalledOnce();vi.spyOn(Date,'now').mockReturnValue(Date.now()+30_001)

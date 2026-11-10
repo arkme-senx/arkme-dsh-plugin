@@ -1115,8 +1115,10 @@ export function ArkmeNavigation({
   const notificationPinned = useNotificationDirectoryPin(currentAccountKey ?? '')
   const builtinPinSnapshot = useBuiltinDirectoryPins(currentAccountKey ?? '')
   const builtinPins = parseBuiltinPins(builtinPinSnapshot)
+  const visibleTeamDirectory = authenticated && (ui.mode === 'team' || ui.mode === 'source' && ui.selectedSource?.accessKind === 'team_delegation') && currentAccountKey
+    ? ui.teamDirectory : undefined
   const privateInteractionDirectory = usePrivateInteractionDirectory(currentAccountKey,
-    authenticated && directory === 'root' && chatDirectory.baselineReady)
+    active && authenticated && directory === 'root' && !visibleTeamDirectory && chatDirectory.baselineReady)
   useEffect(() => {
     const anchor = selfEntryRef.current
     if (anchor === null || !active || !authenticated || directory !== 'root') return
@@ -2274,8 +2276,8 @@ export function ArkmeNavigation({
     ><ArkmeMark size={20} /></button></div>
   }
 
-  if (authenticated && (ui.mode === 'team'||ui.mode==='source'&&ui.selectedSource?.accessKind==='team_delegation') && ui.teamDirectory && currentAccountKey) return <ConversationActionFeedbackContext.Provider value={setDirectoryActionFeedback}><TeamConversationDirectory
-    accountKey={currentAccountKey} folder={ui.teamDirectory}
+  if (visibleTeamDirectory && currentAccountKey) return <ConversationActionFeedbackContext.Provider value={setDirectoryActionFeedback}><TeamConversationDirectory
+    accountKey={currentAccountKey} folder={visibleTeamDirectory}
     {...(ui.teamIntent?.kind === 'conversation' ? {selectedKey:ui.teamIntent.conversation.key} : ui.mode==='source'&&ui.selectedSource?.sourceKey?{selectedKey:ui.selectedSource.sourceKey}:{})}
     onBack={() => { changeDirectory('root'); arkmeUi.closeTeamDirectory() }} />{directoryActionFeedback}</ConversationActionFeedbackContext.Provider>
 

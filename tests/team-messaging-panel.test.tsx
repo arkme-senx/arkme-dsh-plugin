@@ -7,6 +7,7 @@ import {liveTeamSnapshotStack} from './fixtures/team-snapshot-live.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import * as socialActionGuard from '../src/client/social-action-guard.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
+import { TeamWorkspaceDirectory } from '../src/client/TeamWorkspaceDirectory.js'
 import { TeamPublicCardDialog } from '../src/client/TeamPublicCardDialog.js'
 vi.mock('../src/client/TeamPublicCardDialog.js', () => ({ TeamPublicCardDialog: () => <div data-team-public-card-test /> }))
 import { ArkmeComposerInfoRow } from '../src/client/ArkmeComposerInfoRow.js'
@@ -85,6 +86,116 @@ describe('Team send UI recovery', () => {
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
   const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it('starts an explicit conversation in the same commit before its sibling workspace read', async () => {
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await act(async () => {
+      renderer = create(<>
+        <TeamWorkspaceDirectory accountKey="test:11" teamRef={conversation.channel.teamRef} channel={conversation.channel} onBack={() => {}} />
+        <TeamMessagingPanel accountKey="test:11" intent={{ kind: 'conversation', conversation }} />
+      </>)
+      await tick()
+    })
+    const operations = mocks.call.mock.calls.map(([operation]) => operation)
+    expect(operations.filter(operation => operation === 'team.app.timeline')).toHaveLength(1)
+    expect(operations).toContain('team.app.workspace')
+    expect(operations.indexOf('team.app.timeline')).toBeLessThan(operations.indexOf('team.app.workspace'))
+  })
+
+  it('switches and returns to explicit conversations without replaying an older intent on rerender', async () => {
+    const next = { ...conversation, key: 'next', ref: 'next' }
+    const reads: { ref: string; signal: AbortSignal }[] = []
+    mocks.call.mockImplementation((operation: string, params: { conversationRef?: string }, signal: AbortSignal) => {
+      if (operation === 'team.app.timeline') reads.push({ ref: params.conversationRef!, signal })
+      return new Promise(() => {})
+    })
+    for (const target of [conversation, next, conversation]) {
+      const intent = { kind: 'conversation' as const, conversation: target }
+      await act(async () => {
+        if (renderer) renderer.update(<TeamMessagingPanel accountKey="test:11" intent={intent} />)
+        else renderer = create(<TeamMessagingPanel accountKey="test:11" intent={intent} />)
+        await tick()
+      })
+      const count = reads.length
+      await act(async () => { renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={{ ...intent }} />); await tick() })
+      expect(reads).toHaveLength(count)
+      expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(target)
+    }
+    expect(reads.map(read => read.ref)).toEqual([conversation.ref, next.ref, conversation.ref])
+    expect(reads.map(read => read.signal.aborted)).toEqual([true, true, false])
+    await act(async () => renderer!.update(<TeamMessagingPanel accountKey="test:12" intent={{ kind: 'conversation', conversation }} />))
+    expect(reads.map(read => read.signal.aborted)).toEqual([true, true, true, false])
+    expect(renderer!.root.findByType(TeamConversationPane).props.accountKey).toBe('test:12')
+  })
+
+  it.each(['link', 'official'] as const)('keeps %s opening results scoped to the current intent', async kind => {
+    const reads: { signal: AbortSignal; resolve(value: unknown): void }[] = []
+    mocks.call.mockImplementation((operation: string, _params: unknown, signal: AbortSignal) => {
+      if (operation === 'team.app.official') return Promise.resolve(conversation.channel)
+      if (operation === 'team.app.open') return new Promise(resolve => { reads.push({ signal, resolve }) })
+      return new Promise(() => {})
+    })
+    const opening = kind === 'link' ? { kind, publicRef: 'b'.repeat(32) } : { kind }
+    await act(async () => { renderer = create(<TeamMessagingPanel accountKey="test:11" intent={opening} />); await tick() })
+    expect(reads).toHaveLength(1)
+    expect(renderer!.root.findAllByType(TeamConversationPane)).toHaveLength(0)
+    await act(async () => renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={{ kind: 'conversation', conversation }} />))
+    expect(reads[0]!.signal.aborted).toBe(true)
+    const other = { ...conversation, key: 'opened', ref: 'opened' }
+    await act(async () => { reads[0]!.resolve({ channel: conversation.channel, conversation: other }); await tick() })
+    expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(conversation)
+    const current = { ...opening }
+    await act(async () => { renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={current} />); await tick() })
+    expect(renderer!.root.findAllByType(TeamConversationPane)).toHaveLength(0)
+    await act(async () => { reads[1]!.resolve({ channel: conversation.channel, conversation: other }); await tick() })
+    expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(other)
+    await act(async () => renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={current} />))
+    expect(reads).toHaveLength(2)
+    expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(other)
+    await act(async () => { renderer!.update(<TeamMessagingPanel accountKey="test:12" intent={current} />); await tick() })
+    expect(renderer!.root.findAllByType(TeamConversationPane)).toHaveLength(0)
+    expect(reads).toHaveLength(3)
+    await act(async () => renderer!.unmount()); renderer = undefined
+    expect(reads[2]!.signal.aborted).toBe(true)
+  })
+
+  it('starts the first timeline read before mounted ancillary reads', async () => {
+    // Keep every read pending so response timing cannot affect the observed
+    // mount order. Use the real Pane hooks and child components.
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await mount()
+    const operations = mocks.call.mock.calls.map(([operation]) => operation)
+    expect(operations).toEqual(expect.arrayContaining([
+      'team.app.timeline', 'team.app.send.tasks',
+      'team.app.local-mark.capabilities', 'team.app.snapshot.capabilities',
+    ]))
+    expect(operations.filter(operation => operation === 'team.app.timeline')).toHaveLength(1)
+    expect(operations.slice(0, operations.indexOf('team.app.timeline'))).toEqual([])
+    for (const operation of ['team.app.snapshot.capabilities', 'provider.capabilities', 'settings.background-sound.get']) {
+      expect(mocks.call.mock.calls.find(([op]) => op === operation)?.[3]).toEqual({ priority: 'background' })
+    }
+  })
+
+  it('keeps the delivery owner first read on entry and refreshes it only on later recovery', async () => {
+    const base = mocks.call.getMockImplementation()!
+    const reads: AbortSignal[] = []
+    mocks.call.mockImplementation((op: string, params: unknown, signal: AbortSignal) => {
+      if (op !== 'team.app.send.tasks') return base(op, params, signal)
+      reads.push(signal)
+      return new Promise(() => {})
+    })
+    await mount()
+    expect(reads).toHaveLength(1)
+    expect(reads[0]!.aborted).toBe(false)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.timeline')).toHaveLength(1)
+    await act(async () => { window.dispatchEvent(new Event('focus')); await tick() })
+    expect(reads).toHaveLength(2)
+    expect(reads[0]!.aborted).toBe(true)
+    expect(reads[1]!.aborted).toBe(false)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.timeline')).toHaveLength(2)
+    await act(async () => renderer!.unmount()); renderer = undefined
+    expect(reads[1]!.aborted).toBe(true)
+  })
 
   it.each(['team', 'external'] as const)('keeps the %s panel readable after a send ACK while the timeline refresh is pending', async side => {
     const current: TeamConversation = {

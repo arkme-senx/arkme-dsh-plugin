@@ -67,6 +67,7 @@ it('renders immediately before remarks arrive, updates in place, and clears a re
   let resolve!: (v:unknown)=>void
   call.mockImplementation(()=>new Promise(done=>{resolve=done}))
   await act(async()=>root.render(<Names/>));expect(host.textContent).toBe('同事昵称')
+  expect(call.mock.calls[0]?.[3]).toEqual({priority:'background'})
   await act(async()=>resolve({items:[{personKey:'colleague',remark:'宏顺'}]}));expect(host.textContent).toBe('宏顺')
   call.mockResolvedValue({items:[{personKey:'colleague',remark:''}]})
   await act(async()=>window.dispatchEvent(new Event('focus')));expect(host.textContent).toBe('同事昵称')

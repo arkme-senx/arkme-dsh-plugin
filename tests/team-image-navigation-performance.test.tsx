@@ -154,7 +154,7 @@ it('contains a tall handoff inside the same fixed stage as the full image, indep
  expect(canvas.style.position).toBe('absolute');expect(canvas.style.inset).toBe('0')
  const image=doc.querySelector<HTMLImageElement>('img[alt="a.png"]')!
  expect([canvas.style.width,canvas.style.height,canvas.style.objectFit]).toEqual([image.style.width,image.style.height,image.style.objectFit])
- const stage=canvas.parentElement!,fullStage=image.parentElement!.parentElement!.parentElement!
+ const stage=canvas.parentElement!,fullStage=image.closest('[data-arkme-image-preview-viewport]')!.parentElement!
  for(const edge of ['top','right','bottom','left'] as const)expect(stage.style[edge]).toBe(fullStage.style[edge])
  // Existing contain geometry: subtract overlay padding and the shared stage's
  // 30/52px insets. Bitmap rounding must not alter the portrait crop or position.

@@ -1,6 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeBotSummary, ArkmeSourceItem } from '../src/types.js'
+import type { TeamConversation } from '../src/team-app-contract.js'
 
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme, ArkmeClientError: class extends Error {} }))
@@ -92,6 +93,34 @@ afterEach(async () => {
 })
 
 describe('conversation pin interaction', () => {
+  it('cancels root interaction reads while the Team directory is shown and resumes on return', async () => {
+    await act(async () => { renderer!.unmount() }); renderer = undefined
+    const reads: { signal: AbortSignal; resolve(value: unknown): void }[] = []
+    const fallback = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation: string, params: unknown, signal: AbortSignal) => operation === 'private-interaction.directory'
+      ? new Promise(resolve => { reads.push({ signal, resolve }) }) : fallback(operation, params, signal))
+    arkmeChatDirectory.activateAccount('test:7001'); arkmeChatDirectory.publish([source])
+    await act(async () => { renderer = create(<ArkmeNavigation />) })
+    expect(reads).toHaveLength(1)
+    const team = { ref: 'team-conversation', key: 'team-conversation', side: 'team',
+      channel: { teamRef: 'team-ref', jotmoId: 'team-test', name: '团队', enabled: true },
+    } as TeamConversation
+    await act(async () => { arkmeUi.showTeamConversation({ kind: 'conversation', conversation: team }) })
+    expect(reads[0]!.signal.aborted).toBe(true)
+    await act(async () => { reads[0]!.resolve({ items: [{ ...source, displayName: '过期互动' }], version: 'old', hasMore: false }) })
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('过期互动')
+    await act(async () => { arkmeUi.selectSource(source) })
+    expect(reads).toHaveLength(2)
+    expect(reads[1]!.signal.aborted).toBe(false)
+    await act(async () => renderer!.update(<ArkmeNavigation active={false} />))
+    expect(reads[1]!.signal.aborted).toBe(true)
+    await act(async () => renderer!.update(<ArkmeNavigation active />))
+    expect(reads).toHaveLength(3)
+    expect(reads[2]!.signal.aborted).toBe(false)
+    await act(async () => { renderer!.unmount() }); renderer = undefined
+    expect(reads[2]!.signal.aborted).toBe(true)
+  })
+
   it('keeps cached conversations visible with a retry action when refreshing fails', async () => {
     await act(async () => { renderer!.unmount() })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })

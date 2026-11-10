@@ -40,21 +40,24 @@ it('keeps pages explicit and bounded; arrow/Tab select from the new page',async(
  await key('ArrowDown');await key('Tab');expect(editor().textContent).toBe('@Next ')
 })
 it('shows read errors with an explicit retry and never loops requests',async()=>{
- let reject!:(error:unknown)=>void;mocks.candidates.mockImplementationOnce(()=>new Promise((_,fail)=>{reject=fail}));await input('@');await act(async()=>reject(new Error('unavailable')));expect(host.textContent).toContain('候选加载失败');expect(mocks.candidates).toHaveBeenCalledOnce()
- await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='重试')!.click());expect(options()).toHaveLength(2);expect(mocks.candidates).toHaveBeenCalledTimes(2)
+ let reject!:(error:unknown)=>void;mocks.candidates.mockImplementation(()=>new Promise((_,fail)=>{reject=fail}));await input('@');await act(async()=>reject(new Error('unavailable')));expect(host.textContent).toContain('候选加载失败');expect(mocks.candidates).toHaveBeenCalledTimes(2)
+ expect(mocks.candidates.mock.calls[0]![1].aborted).toBe(true)
+ mocks.candidates.mockResolvedValueOnce(page)
+ await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='重试')!.click());expect(options()).toHaveLength(2);expect(mocks.candidates).toHaveBeenCalledTimes(3)
  await key('Escape');expect(host.querySelector('[data-arkme-mention-popup]')).toBeNull()
 })
 it.each(['change','logout','unmount'])('aborts a pending directory and discards late results after %s',async kind=>{
- let finish!:(value:unknown)=>void;mocks.candidates.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve}))
- await input('@');const signal=mocks.candidates.mock.calls[0]![1] as AbortSignal
+ let finish!:(value:unknown)=>void;mocks.candidates.mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+ await input('@');const signal=mocks.candidates.mock.calls.at(-1)![1] as AbortSignal,complete=finish
+ expect(signal.aborted).toBe(false)
  await act(async()=>{if(kind==='change')invalidateTeamMessages('test:7777');else if(kind==='logout')arkmeAuthStore.setAuth({status:'logged-out',environment:'test'});else root.render(null)})
- expect(signal.aborted).toBe(true);await act(async()=>finish(page));expect(host.querySelector('[data-arkme-mention-popup]')).toBeNull()
+ expect(signal.aborted).toBe(true);await act(async()=>complete(page));expect(host.querySelector('[data-arkme-mention-popup]')).toBeNull()
 })
 it('does not fetch members from an external-side composer or while disabled',async()=>{
  current={...conversation,side:'external'};await act(async()=>root.render(<TeamConversationPane key="external" conversation={current} accountKey="test:7777" onChanged={()=>{}}/>));await input('@');expect(mocks.candidates).not.toHaveBeenCalled()
 })
 it.each(['loading','empty'])('never sends Enter while candidates are %s',async mode=>{
- if(mode==='loading')mocks.candidates.mockImplementationOnce(()=>new Promise(()=>{}))
+ if(mode==='loading')mocks.candidates.mockImplementation(()=>new Promise(()=>{}))
  await input(mode==='empty'?'@Nobody':'@');await key('Enter')
  expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(false)
  expect(editor().textContent).toBe(mode==='empty'?'@Nobody':'@')
@@ -81,9 +84,10 @@ it('reuses only the same composer bounded candidate page on close/reopen without
  const measuredPage={items:Array.from({length:51},(_,i)=>({personRef:`person-${i}`,personKey:`key-${i}`,nickname:`Member ${i}`})),hasMore:false}
  mocks.candidates.mockImplementation(async()=>{await new Promise(resolve=>setTimeout(resolve,120));return measuredPage})
  const start=performance.now();await input('@');await act(async()=>{await new Promise(resolve=>setTimeout(resolve,130))});const first=performance.now()-start
+ expect(mocks.candidates).toHaveBeenCalledTimes(2);expect(mocks.candidates.mock.calls[0]![1].aborted).toBe(true)
  await key('Escape');await input('');const secondStart=performance.now();await input('@');if(options().length===0)await act(async()=>{await new Promise(resolve=>setTimeout(resolve,130))});const reopened=performance.now()-secondStart
  if(process.env.ARKME_MENTION_UI_METRICS)await writeFile(process.env.ARKME_MENTION_UI_METRICS,JSON.stringify({fixture:'same mounted composer, 50 members + visitor, fixed120ms read; NOT production latency',first,reopened,requests:mocks.candidates.mock.calls.length},null,2))
- expect(options()).toHaveLength(51);expect(mocks.candidates).toHaveBeenCalledOnce()
+ expect(options()).toHaveLength(51);expect(mocks.candidates).toHaveBeenCalledTimes(2)
 })
 it.each(['membership','reconnect','focus','online'])('retires the closed picker page on %s before it can be reused',async reason=>{
  await input('@');await key('Escape');await input('')
@@ -119,12 +123,13 @@ it.each(['blocked','sourceOnly','disabled'])('does not prepare a %s conversation
 })
 
 it('keeps prepared DOM rows during a slow refresh and a retryable network error',async()=>{
- await mount();let reject!:(error:unknown)=>void;mocks.candidates.mockImplementationOnce(()=>new Promise((_,fail)=>{reject=fail}))
+ await mount();let reject!:(error:unknown)=>void;mocks.candidates.mockImplementation(()=>new Promise((_,fail)=>{reject=fail}))
  await act(async()=>window.dispatchEvent(new Event('focus')));await input('@')
  expect(options()).toHaveLength(2);expect(host.textContent).not.toContain('正在查找')
  await act(async()=>reject(Object.assign(new Error('network'),{body:{code:'local-network-unavailable',retryable:true}})))
  expect(options()).toHaveLength(2);expect(host.textContent).toContain('部分候选加载失败');expect(host.textContent).not.toContain('正在查找')
- await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='重试')!.click());expect(options()).toHaveLength(2);expect(mocks.candidates).toHaveBeenCalledTimes(3)
+ mocks.candidates.mockResolvedValueOnce(page)
+ await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='重试')!.click());expect(options()).toHaveLength(2);expect(mocks.candidates).toHaveBeenCalledTimes(4)
 })
 it('keeps six selectable Team rows and the active person when expired suggestions refresh with rotated person refs',async()=>{
  const people=Array.from({length:6},(_,i)=>({personRef:`old-person-${i}`,personKey:`stable-person-${i}`,nickname:`Person ${i}`}))
