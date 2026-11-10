@@ -5953,25 +5953,13 @@ export function ArkmeSurface({
   })
   const focusEditedComposer = useCallback((cursor: number) => {
     if (composerDraftKey === undefined) return
-    const scope = composerAsyncScopeRef.current
-    const reeditGeneration = recordReeditComposerRef.current?.generation
-    if (reeditGeneration !== undefined) {
-      requestAnimationFrame(() => {
-        if (recordReeditComposerRef.current?.generation !== reeditGeneration || composerAsyncScopeRef.current !== scope || !activeConversationRef.current
-          || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== scope.accountKey) return
-        const editor = textareaRef.current
-        if (editor === null || editor.disabled) return
-        editor.focus()
-        editor.setSelectionRange(cursor, cursor)
-        messagePreparing.input(arkmeComposerDraftStore.get(composerDraftKey).text)
-      })
-      return
-    }
-    const text = arkmeComposerDraftStore.get(composerDraftKey).text
+    const reedit = recordReeditComposerRef.current
+    const text = reedit?.textContent ?? arkmeComposerDraftStore.get(composerDraftKey).text
     // The editor consumes this once, after its document has committed. A single
     // animation frame can run before a newly initialized editor is ready.
     setEditedComposerSelection({
       scope: composerAsyncScopeRef.current,
+      reeditGeneration: reedit?.generation,
       request: { text, start: cursor, end: cursor },
     })
     messagePreparing.input(text)
@@ -7058,11 +7046,16 @@ export function ArkmeSurface({
       showMessageActionStatus('这条快记仍在保存或核对，请稍后再编辑；其他消息不受影响')
       return
     }
+    const focusReeditEnd = (generation: number) => setEditedComposerSelection({
+      scope: composerAsyncScopeRef.current,
+      reeditGeneration: generation,
+      request: { atEnd: true },
+    })
     const previous = recordReeditComposerRef.current
     if (previous !== undefined) {
       if (previous.accountKey === authenticatedAccountKey && previous.sourceKey === arkmeSourceIdentityKey(source)
         && previous.item.itemUid === item.itemUid && (previous.snapshot || previous.loading)) {
-        requestAnimationFrame(() => { textareaRef.current?.focus() })
+        focusReeditEnd(previous.generation)
         return
       }
       persistRecordReeditBeforeContextExit(previous, () => true)
@@ -7099,7 +7092,7 @@ export function ArkmeSurface({
     setDraftPreview(undefined)
     setDrawer(undefined)
     setRecordReeditComposer(target)
-    requestAnimationFrame(() => { textareaRef.current?.focus({ preventScroll: true }) })
+    focusReeditEnd(generation)
     if (retained?.snapshot !== undefined || retained?.loading && retained.persisted.readiness) return
     target.persisted.readiness = withArkmeReadDeadline(signal => callArkme<ArkmeRecordReeditEditorSnapshot>('source.record-reedit.detail', {
       sourceRef: source.sourceRef, itemUid: item.itemUid,
