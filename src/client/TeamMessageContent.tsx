@@ -36,7 +36,8 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
 
 /** Existing loaded timeline material; each destination retains its own read owner. */
 export function teamAttachmentNavigationEntries(messages:readonly TeamMessage[],conversation:Pick<TeamConversation,'ref'|'key'>,accountKey:string):ArkmeAttachmentNavigationEntry[] {
- return messages.flatMap(message=>{
+ return messages.flatMap<ArkmeAttachmentNavigationEntry>(message=>{
+  if(message.state==='published'&&message.contentStatus==='revalidating'&&!message.historyPreview)return [{key:message.key,source:`${message.key}:${message.key}`,version:String(message.version),blocks:[],revalidating:true}]
   if(message.state!=='published'||message.contentStatus!=='available'||message.version<=0||message.historyPreview)return []
   const blocks=(teamMessagePresentation(message).contentBlocks??[]).filter(block=>block.kind==='image'||block.kind==='video')
   return blocks.length?[{key:message.key,source:`${message.key}:${message.key}`,version:String(message.version),blocks,

@@ -1,3 +1,5 @@
+import { LoginDevicesService } from './services/login-devices-service.js'
+import type { LoginDeviceRequest } from './login-devices-contract.js'
 import { WorldSoundService } from './services/world-sound-service.js'
 import { WorldSuggestionsService } from './services/world-suggestions-service.js'
 import { AccountModelService } from './services/account-model-service.js'
@@ -515,6 +517,7 @@ export class ArkmeService {
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
   private readonly profile: ProfileService
+  private readonly loginDeviceService: LoginDevicesService
   private readonly deviceLock: DeviceLockService
   private readonly auth: AuthService
   private readonly extensionReview: ExtensionReviewService
@@ -643,6 +646,10 @@ export class ArkmeService {
   }
   async teamHistory(conversationRef:string,action:import('./team-history-contract.js').TeamHistoryAction,options:import('./team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryResponse>{return await this.executeTeamApp('team.app.history',{conversationRef,action,options},signal) as import('./team-history-contract.js').TeamHistoryResponse}
   async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryExportChunk>{return await this.executeTeamApp('team.app.history.chunk',{resultRef,...(cursor?{cursor}:{})},signal) as import('./team-history-contract.js').TeamHistoryExportChunk}
+  async readTeamMentionCandidates(conversationRef:string,teamRef:string,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamMentionCandidatePage> {
+    if (!conversationRef || !teamRef) throw new TypeError('Team mention candidates require conversation and Team references')
+    return await this.executeTeamApp('team.app.members',{conversationRef,teamRef,pageCursor:options.cursor,limit:options.limit,mentionCandidates:true},signal) as import('./team-message-contract.js').TeamMentionCandidatePage
+  }
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -1079,6 +1086,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       reconnectChatRealtime: () => { this.realtime.reconnect() },
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
+    this.loginDeviceService = new LoginDevicesService(this.runtime)
     this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
@@ -1370,6 +1378,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return await this.bot.openBotRef(botRef, expectedUserId)
   }
 
+  async loginDevices(request: LoginDeviceRequest, signal?: AbortSignal) { return this.loginDeviceService.execute(request, signal) }
+
   async deviceLockStatus() { return await this.deviceLock.refresh() }
   async lockDevice() { return await this.deviceLock.lock() }
   async requestDeviceUnlock() { return await this.deviceLock.requestUnlock() }
@@ -1472,6 +1482,7 @@ arkoImagesV1:true,
         accountModelsV1:true,
         aiPointsStatisticsV1:true,
         automaticCapabilitiesV1: true,
+        loginDevicesV1: true,
         recordingVoiceTriggersV2: true,
         personalTranscriptViewsV1: true,
         imageRead: true,
@@ -1498,6 +1509,7 @@ arkoImagesV1:true,
         teamMessageSnapshot: 1,
         teamHistoryV1: true,
         teamPersonMentions: 1,
+        teamMentionCandidates: 1,
         teamNotificationPoliciesV1: true,
         teamEntryPreferencesV1: true,
         groupSelfNickname: true,

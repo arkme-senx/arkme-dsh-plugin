@@ -149,7 +149,7 @@ it('opens only the verified existing team conversation, and reuses the same idem
   const opens = call.mock.calls.filter(v => v[0] === 'team.app.outbound.open')
   expect(opens[0]![1].requestUid).toBe(opens[1]![1].requestUid)
   expect(navigate).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation })
-  expect(invalidate).toHaveBeenCalledExactlyOnceWith('prod:90'); expect(close).toHaveBeenCalledOnce()
+  expect(invalidate).toHaveBeenCalledExactlyOnceWith('prod:90', false, {kind:'team.directory.changed',conversationKeys:[conversation.key]}); expect(close).toHaveBeenCalledOnce()
 })
 
 it('loads real contacts progressively and passes directory references without opening a private conversation', async () => {

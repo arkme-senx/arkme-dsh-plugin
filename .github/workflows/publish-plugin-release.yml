@@ -273,11 +273,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
           VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_CREATOR: ${{ github.event.pull_request.merged_by.login }}
         run: |
           payload=$(jq -n \
             --arg release_sha "$RELEASE_SHA" \
             --arg version "$VERSION" \
-            '{event_type: "arkme-plugin-release-prepared", client_payload: {release_sha: $release_sha, version: $version}}')
+            --arg build_creator "$BUILD_CREATOR" \
+            '{event_type: "arkme-plugin-release-prepared", client_payload: {release_sha: $release_sha, version: $version, build_creator: $build_creator}}')
           printf '%s' "$payload" | gh api --method POST "repos/${GH_REPO}/dispatches" --input -
 
   sync-dev:

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { create } from 'react-test-renderer'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { connectArkmeLocale } from '../src/client/locale.js'
 import {
   ArkmeSettingsSurface,
   BackgroundSoundSettingsRow,
@@ -14,7 +15,25 @@ import {
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import pluginManifest from '../package.json' with { type: 'json' }
 
+const selectLocale = (active: string) => connectArkmeLocale({ getLocale: () => ({ active }), subscribe: () => () => {} })()
+beforeEach(() => { selectLocale('zh') })
+
 describe('ArkmeSettingsSurface', () => {
+  it.each([
+    ['zh', 'jiwo.cc', '即我'],
+    ['zh-Hant', 'jiwo.cc', '即我'],
+    ['en', 'arkme.ai', 'Arkme'],
+  ])('opens the current product agreements from About in %s', (locale, domain, name) => {
+    selectLocale(locale)
+    const markup = renderToStaticMarkup(<ArkmeSettingsSurface view="about" />)
+    for (const kind of ['user', 'privacy']) {
+      expect(markup).toContain(`href="https://www.${domain}/article/${kind}-aggrement-v1.html" target="_blank" rel="noreferrer"`)
+    }
+    expect(markup).toContain(locale === 'en' ? `View ${name} terms of service` : `查看 ${name} 用户协议`)
+    expect(markup).toContain(locale === 'en' ? `View ${name} privacy policy` : `查看 ${name} 隐私条款`)
+    expect(markup).not.toContain(`https://www.${domain === 'jiwo.cc' ? 'arkme.ai' : 'jiwo.cc'}/article/`)
+  })
+
   it('renders the text background-sound preference as an accessible real switch', () => {
     const disabled = renderToStaticMarkup(<BackgroundSoundSettingsRow
       checked={false}

@@ -1,5 +1,21 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+发生时间|Time recorded
+当前状态|Current status
+已停用，停用后 Arkme 已启动|Disabled. Arkme started after disabling the extension.
+插件名称|Plugin name
+插件来源|Plugin source
+安装包|Package archive
+本地目录|Local directory
+未记录|Not recorded
+Harness 原始错误|Original Harness error
+已复制诊断|Diagnostics copied
+复制诊断信息|Copy diagnostics
+发送给 Deepseek Harness 排查|Investigate with Deepseek Harness
+正在准备诊断信息…|Preparing diagnostics…
+诊断信息已填入，请确认后发送|Diagnostics are ready. Review and send.
+复制失败，可手动选择并复制详细原因。|Copy failed. Select and copy the diagnostic details manually.
+请根据以上诊断找到原插件项目。如果来源是安装包，请先定位源码。检查 Web 入口、激活函数和依赖服务的注册时机，复现后再修改。如果错误中出现 loading，它只表示检查当时的状态，请验证具体原因。修复并重新构建后，请告诉我何时点击「重新启用并重启」，以及用哪个实际操作验证插件功能。|Use these diagnostics to locate the original plugin project. If the source is a package archive, locate its source code first. Check the web entry point, activation function and when required services register. Reproduce the failure before editing. If the error says loading, verify the cause behind that observation. After fixing and rebuilding, tell me when to re-enable and restart, and how to verify the plugin works.
 可用模型|Available models
 即我可用模型|Arkme models
 查看官方模型，可在对应功能中选用|Explore official models to use in the corresponding features
@@ -915,6 +931,10 @@ GitHub 仓库（可选）|GitHub repository (optional)
 重试预览|Retry preview
 群成员|Group members
 正在读取群成员…|Loading group members…
+筛选当前页成员|Filter members on this page
+回到第一页|Back to first page
+下一页成员|Next page of members
+当前 Provider 不支持团队提及候选，请升级|This provider does not support Team mention candidates. Please update.
 ，点击重试|. Click to retry.
 暂无群成员|No group members
 已添加|Added
@@ -1201,9 +1221,16 @@ Enter发送 / Shift+Enter换行|Enter to send / Shift+Enter for a new line
 新建主题|New topic
 搜索对话或消息|Search chats or messages
 登录解锁更多功能|Sign in for more features
-会话加载失败，请重试|Failed to load conversation. Please retry.
-会话暂未同步|Conversations haven’t synced yet
-重试同步|Retry sync
+同步失败|Sync failed
+查看详情|View details
+会话列表|Conversations
+团队会话和文件夹|Team conversations and folders
+团队文件夹|Team folders
+团队会话|Team conversations
+团队入口设置|Team entry settings
+群互动|Group interactions
+本机会话设置|Local conversation settings
+重试中|Retrying
 加载或播放失败，请点击播放重试。|Could not load or play audio. Click Play to retry.
 下载|Download
 我的声音|My voice
@@ -2075,8 +2102,8 @@ Arkme 账号|Arkme account
 返回快记详情|Back to note details
 返回相关快记列表|Back to related notes
 选择生成模型|Choose generation model
-查看 Arkme 用户协议|View Arkme terms of service
-查看 Arkme 隐私条款|View Arkme privacy policy
+查看 {v0} 用户协议|View {v0} terms of service
+查看 {v0} 隐私条款|View {v0} privacy policy
 返回 Arkme 会话列表|Back to Arkme conversations
 关闭 Arkme|Close Arkme
 关闭快记详情|Close note details

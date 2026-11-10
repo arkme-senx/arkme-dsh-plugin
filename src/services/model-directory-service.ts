@@ -1,5 +1,6 @@
+import { accountModelSupportsDsh, accountModelSceneIssues, type AccountModel, type AccountModelSettings } from '../account-models.js'
 import { publishedChoiceId } from '../model-execution.js'
-import { dshModelChoices, arkoModelChoices, recordingModelChoices, mergeModelChoices, type UnifiedModelCatalog } from '../model-directory.js'
+import { dshModelChoices, arkoModelChoices, recordingModelChoices, mergeModelChoices, type UnifiedModelCatalog, type ModelChoice, type ModelScene } from '../model-directory.js'
 import type { ArkmeArkoModelCatalog, ArkmeRecordingSummaryModelConfig } from '../types.js'
 import type { DshRemoteModelCatalog } from '../dsh-remote/types.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
@@ -29,8 +30,8 @@ export class ModelDirectoryService {
       ] })) : Promise.reject(new Error('模型目录正在连接，请稍后刷新')),
       this.readers.arko(signal).then(value => ({ models: arkoModelChoices(value), failures: [] })),
       Promise.all([this.readers.recording(signal,'summary'),this.readers.recording(signal,'timeline')]).then(([summary,timeline]) => ({models:mergeModelChoices(recordingModelChoices(summary,'summary'),recordingModelChoices(timeline,'timeline')),failures:[]})),
-      ...(!officialOnly && this.readers.account ? [this.readers.account(signal).then(value=>({models:value.models.filter(model=>!model.disabled).map(model=>({id:JSON.stringify(['account',model.uid]),origin:'user-provided' as const,name:model.name,identifier:model.route,channel:model.execution==='cloud'?'账号绑定 API':'本机连接器',billing:'provider-account' as const,exploreRouteKey:model.route,images:model.capabilities.images,
-        ...(model.capabilities.stream?{dsh:model.execution==='cloud'?{provider:'arkme-user-api',model:model.route}:{provider:model.host_provider!,model:model.model_key}}:{}),...(model.capabilities.tools?{arko:model.route}:{}),recording:model.route})),failures:[]}))] : []),
+      ...(!officialOnly && this.readers.account ? [this.readers.account(signal).then(value=>({models:value.models.filter(model=>!model.disabled).map(model=>({id:JSON.stringify(['account',model.uid]),origin:'user-provided' as const,name:model.name,identifier:model.route,channel:model.execution==='cloud'?'账号绑定 API':'本机连接器',billing:'provider-account' as const,exploreRouteKey:model.route,images:model.capabilities.images,capabilityIssuesByScene:accountCapabilityIssues(model,value.scenes),
+        ...(accountModelSupportsDsh(model)?{dsh:model.execution==='cloud'?{provider:'arkme-user-api',model:model.route}:{provider:model.host_provider!,model:model.model_key}}:{}),...(model.capabilities.tools?{arko:model.route}:{}),recording:model.route})),failures:[]}))] : []),
       ...(this.readers.explore ? [this.readers.explore(signal)] : []),
     ])
     signal?.throwIfAborted()
@@ -60,4 +61,23 @@ export class ModelDirectoryService {
     if(revisions.size>1)failures.push({source:'官方模型',message:'发布目录已变化，请刷新后确认模型'})
     return {accountScope:scope,observedAt:Date.now(),models:published,failures}
   }
+}
+
+// UI scene aliases refer to the same business keys used by their existing
+// profile/event/goal/anniversary/calendar endpoints. Requirements stay owned
+// by the account registry; unknown scene metadata grants no availability.
+const accountSceneKeys: Record<ModelScene, string> = {
+  dsh: 'dsh', arko: 'arko', arrangement: 'arrangement',
+  'recording-summary': 'recording-summary', 'recording-timeline': 'recording-timeline',
+  'explore-profile': 'profile', 'explore-event': 'intelligent.event.subscription.final',
+  'explore-goal': 'goals', 'explore-anniversary': 'insight.anniversary.verify.final',
+  dayReview: 'intelligent.calendar.day-review',
+}
+function accountCapabilityIssues(model: AccountModel, scenes: AccountModelSettings['scenes']): NonNullable<ModelChoice['capabilityIssuesByScene']> {
+  const issues: NonNullable<ModelChoice['capabilityIssuesByScene']> = {}
+  for (const [alias, key] of Object.entries(accountSceneKeys)) {
+    const scene = scenes.find(item => item.key === key)
+    if (scene) issues[alias as ModelScene] = accountModelSceneIssues(model, scene)
+  }
+  return issues
 }

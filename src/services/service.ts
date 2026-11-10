@@ -316,6 +316,8 @@ export class ServiceRuntime {
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
   invalidateMemberCache(): void { this.memberCacheRevision += 1 }
   readonly requestCoordinator: ArkmeRequestCoordinator
+  // Media holds permits until body completion, independently of short JSON reads.
+  private readonly mediaStreamCoordinator = new ArkmeRequestCoordinator()
   // One bounded pool for message bodies and their awaited projection reads.
   // Background member rosters and other UI reads never inherit this context.
   private readonly messageSyncCoordinator = new ArkmeRequestCoordinator({
@@ -483,6 +485,7 @@ export class ServiceRuntime {
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateScope(scope)
     this.messageSyncCoordinator.invalidateScope(scope)
+    this.mediaStreamCoordinator.invalidateScope(scope)
   }
 
   invalidateKey(scope: string, key: string): void {
@@ -503,6 +506,7 @@ export class ServiceRuntime {
     this.calendarRevisions.clear()
     this.requestCoordinator.dispose()
     this.messageSyncCoordinator.dispose()
+    this.mediaStreamCoordinator.dispose()
   }
 
   async requireSession(): Promise<ArkmeSessionCredentials> {
@@ -590,7 +594,7 @@ export class ServiceRuntime {
           } else if (!await this.accountSessions.deleteIfCurrent(session)) throw contextChanged()
           // 1004 是通用“账号不可用”，也覆盖注销等既有状态，不能在客户端臆断为封禁。
           if (error.code === 'arkme-code-1004') throw new ArkmePluginError('account-unavailable', '当前即我账号暂不可用', false, 403)
-          throw new ArkmePluginError('login-expired', 'Arkme 登录已过期，请重新扫码', false, 401)
+          throw new ArkmePluginError('login-expired', 'Arkme 登录已失效，请重新登录', false, 401)
         }
         throw error
       }
@@ -652,6 +656,9 @@ export class ServiceRuntime {
     ]).has(path)) return true
     if (baseUrl === this.config.teamBaseUrl && new Set([
       '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team/message-channel/get', '/api/v1/team/official-feedback-target',
+      '/api/v1/team/workspace/folders/query',
+      '/api/v1/team/entry-preferences/list', '/api/v1/team/entry-preferences/query',
+      '/api/v1/team/entry-preferences/v2/list', '/api/v1/team/entry-preferences/v2/query',
       '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
@@ -787,7 +794,10 @@ export class ServiceRuntime {
         body: multipart ? body : stringifyOwnerJson(body,stringIdFields),
         signal: controller.signal,
       })
-      if (response.status === 401 || (response.status === 403 && !preserveForbiddenError)) {
+      if (path === '/api/public/v1/auth/login-by-pwd' && response.headers.get('X-Jotmo-Auth-Failure') === 'device_verification_required') {
+        throw new ArkmePluginError('device-verification-required', '此设备已取消信任，请使用验证码、扫码或授权方式重新登录', false, 403)
+      }
+      if (response.status === 401 || (response.status === 403 && (!preserveForbiddenError || response.headers.get('X-Jotmo-Auth-Failure') === 'session_ended'))) {
         throw new ArkmePluginError(`auth-http-${response.status}`, 'Arkme 登录凭据已失效', false, response.status)
       }
       if (!response.ok) {
@@ -1190,7 +1200,7 @@ export class ServiceRuntime {
     }
   }
 
-  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false,wire:Pick<ArkmeRemoteRequestOptions,'stringIdFields'>={}): Promise<T> {
+  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false,wire:Pick<ArkmeRemoteRequestOptions,'stringIdFields'>={}, background = false): Promise<T> {
     const origin = this.config.teamBaseUrl
     if (!origin) throw new ArkmePluginError('team-service-unavailable', '团队服务地址未配置', false, 503)
     let session = initialSession ?? await this.requireSession()
@@ -1199,7 +1209,8 @@ export class ServiceRuntime {
     const snapshotRead = typeof body.result_id === 'string' && body.result_id.length > 0 && [
       'analysis/result', 'analysis/words', 'dates', 'participants', 'exports/download',
     ].some(action => path === `/api/v1/team/conversations/history/${action}`)
-    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', {
+    const lane = read ? (background ? 'background-read' : 'interactive-read') : 'write'
+    const options = () => this.authenticatedRequestOptions(session, 'team', lane, {
       ...wire,bypassCache: true, cacheMs: 0,
       ...(snapshotRead ? { requestTimeoutMs: Math.max(150_000, this.config.requestTimeoutMs) } : {}),
     })
@@ -1323,7 +1334,7 @@ export class ServiceRuntime {
     try {
       // Admission, token recovery and first headers are bounded independently
       // of media duration. The opened body owns its progress/idle lifetime.
-      return await this.requestCoordinator.runStream({
+      return await this.mediaStreamCoordinator.runStream({
         scope: this.requestScope(session.userId), lane: 'interactive-read', service, signal,
         operation: signal => this.openMediaStream(service, path, { ...options, signal }, session),
       })
@@ -1723,7 +1734,7 @@ export class ServiceRuntime {
     try {
       return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true, true)
     } catch (error) {
-      if (!(error instanceof ArkmePluginError) || error.code !== 'auth-http-401') throw error
+      if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) throw error
       session = await this.refreshAccessToken(session)
       return await this.post<T>(baseUrl, path, body, session.accessToken, [0], signal, false, requestOptions(), true, true)
     }

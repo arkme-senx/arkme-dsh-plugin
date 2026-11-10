@@ -339,7 +339,7 @@ export class RecordService {
     const uid = String(body.record_uid ?? '')
     const snapshot = await this.selfRoles?.prepare(account, uid)
     const result = await this.runtime.authenticatedPost<T>(path, { ...body, ...(snapshot === undefined ? {} : { self_role_snapshot: snapshot }) }, account, signal, options)
-    if (snapshot !== undefined) this.selfRoles?.acknowledge(account, uid)
+    if (snapshot !== undefined) await this.selfRoles?.acknowledge(account, uid, snapshot)
     return result
   }
 

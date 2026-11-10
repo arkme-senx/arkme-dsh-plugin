@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'loginDevices',
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
   'recordingFileStorage', 'recordingAnalysis',
@@ -65,7 +66,7 @@ const expectedPublicMethods = [
   'executeTeamApp', 'fetchTeamMedia', 'personalRecordDetail', // composition retains the existing byte-delivery seam
   'teamSnapshotCapabilities','freezeTeamMetadata','readTeamMessageSnapshot','editTeamMessage','readTeamEditReceipt','freezeTeamEditMetadata',
   'teamHistory','readTeamHistoryExportChunk',
-  'listTeamConversations','readTeamExtensions','readTeamMessages','sendTeamMessage','teamMessageTasks','updateTeamSend',
+  'listTeamConversations','readTeamExtensions','readTeamMessages','readTeamMentionCandidates','sendTeamMessage','teamMessageTasks','updateTeamSend',
   'preflightTeamMessages','readTeamMarks','changeTeamMark','recallTeamMessage', 'reportTeamMessage','createTeamMessageCopyLink','forwardTeamMessages',
   'screenshotCapability', 'captureScreenshot',
   'searchConversationNames',
@@ -156,6 +157,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'login-devices-service.ts',
   'transcript-view-service.ts',
   'progressive-attachments.ts',
   'account-model-service.ts', 'model-usage-contract.ts',

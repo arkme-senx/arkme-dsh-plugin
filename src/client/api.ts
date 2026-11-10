@@ -366,7 +366,8 @@ export async function callArkme<T>(
   let cleanupBackground: (() => void) | undefined
   try {
     const parameters = accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }
-    const background = options?.priority === 'background' && supportsBackgroundRead(operation)
+    const background = options?.priority === 'background' && supportsBackgroundRead(operation, params)
+    const fetchPriority = background ? 'low' : operation === 'team.app.timeline' || operation === 'team.app.preflight' ? 'high' : undefined
     const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
     const currentScope = () => {
       const current = arkmeAuthStore.getSnapshot().auth
@@ -391,7 +392,9 @@ export async function callArkme<T>(
     }
     const dispatch = async (requestSignal?: AbortSignal): Promise<T> => {
       if (background && currentScope() !== scope) throw changedAccount()
-      const value = await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
+      const value = fetchPriority === undefined
+        ? await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
+        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, { priority: fetchPriority })
       if (background) {
         requestSignal?.throwIfAborted()
         if (currentScope() !== scope) throw changedAccount()

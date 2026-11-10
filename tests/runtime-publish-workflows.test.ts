@@ -126,6 +126,9 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(JSON.stringify(dispatchJob)).not.toMatch(/needs\.publish|secrets\./)
     const production = parse(await workflow('publish-production-runtime.yml'))
     expect(production.on.repository_dispatch.types).toContain('arkme-plugin-release-prepared')
+    expect(dispatch.env.BUILD_CREATOR).toBe('${{ github.event.pull_request.merged_by.login }}')
+    expect(dispatch.run).toContain('build_creator: $build_creator')
+    expect(production['run-name']).toContain('github.event.client_payload.build_creator')
     expect(dispatch.run).toContain('arkme-plugin-release-prepared')
   })
 

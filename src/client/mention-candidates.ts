@@ -52,12 +52,13 @@ export type ArkmeMentionCandidate =
   | {kind:'team';key:string;teamMentionRef:string;displayName:string;secondaryName?:string;avatarRef?:string}
   | { kind: 'all'; displayName: '所有人' }
   | { kind: 'bot'; displayName: string; botRef: string; secondaryName?: string; avatarRef?: string; searchText?: string; reservedAgent?: 'asen' }
-  | ({ kind: 'member'; mentionRef: string } & ArkmeConversationMemberItem)
+  | ({ kind: 'member'; mentionRef: string; teamPersonKey?: string; teamImage?: {ref: string; key?: string} } & ArkmeConversationMemberItem)
 
 export function arkmeMentionCandidateKey(candidate: ArkmeMentionCandidate): string {
   if (candidate.kind === 'all') return 'all'
   if(candidate.kind==='team')return `team:${candidate.key}`
   if (candidate.kind === 'bot') return `bot:${candidate.botRef}`
+  if (candidate.teamPersonKey) return `team-member:${candidate.teamPersonKey}`
   return `member:${candidate.mentionRef}`
 }
 

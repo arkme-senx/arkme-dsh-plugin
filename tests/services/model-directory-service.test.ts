@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { ModelDirectoryService } from '../../src/services/model-directory-service.js'
-import { mergeModelChoices, dshModelChoices, arkoModelChoices, modelSceneBilling } from '../../src/model-directory.js'
+import { mergeModelChoices, dshModelChoices, arkoModelChoices, modelSceneBilling, modelAvailable, unavailableLabel } from '../../src/model-directory.js'
 import { exploreModelChoices } from '../../src/explore-models.js'
 import { publishedModelChoices } from '../../src/services/model-directory-contract.js'
 import { createArkmeSdk } from '../../src/sdk/index.js'
@@ -129,4 +129,28 @@ it('reports mixed official publications instead of fabricating a shared revision
  const value=await new ModelDirectoryService(f.runtime as never,{dsh:f.dsh,arko:f.arko,recording}).read('production:42')
  expect(value.failures).toContainEqual({source:'官方模型',message:'发布目录已变化，请刷新后确认模型'})
  expect(new Set(value.models.map(model=>model.catalogRevision).filter(Boolean))).toEqual(new Set(['12','13']))
+})
+
+it('explains account capability restrictions across picker scenes without granting business routes', async () => {
+  const f = fixture()
+  const model = { uid:'a', route:'user-api/a', version_route:'user-api/a/v1', name:'Own', disabled:false, execution:'cloud' as const, protocol:'openai-chat' as const, base_url:'https://example.com', model_key:'own', key_configured:true, capabilities:{ text:true, tools:false, json:false, images:false, stream:true, context_tokens:16000, output_tokens:128 } }
+  const keys = ['dsh','arko','arrangement','profile','goals','recording-summary','recording-timeline','intelligent.calendar.day-review','intelligent.event.subscription.final','insight.anniversary.verify.final']
+  const scenes = keys.map(key => ({ key, name:key, group:key, biz_code:0, tools:['dsh','arko'].includes(key), stream:key==='dsh', json:['arrangement','profile','goals','intelligent.calendar.day-review'].includes(key), images:false, ...(key.startsWith('recording-') ? {min_output_tokens:512,min_input_tokens:513} : {}) }))
+  const account = vi.fn(async () => ({ accountScope:'production:42', revision:1, enabled:true, models:[model], connectors:[], scenes, preferences:{ default_route:'system-default', scenes:{}, points_fallback:false as const } }))
+  const service = new ModelDirectoryService(f.runtime as never, { dsh:f.dsh, arko:f.arko, recording:f.recording, account })
+  const value = await service.read('production:42'), own = value.models.find(item=>item.identifier===model.route)!
+  for (const scene of ['dsh','arko','arrangement','explore-profile','explore-goal','dayReview','recording-summary','recording-timeline'] as const) {
+    expect(modelAvailable(own,scene)).toBe(false)
+    expect(unavailableLabel(own,scene)).not.toBe('此场景支持情况待确认')
+  }
+  expect(unavailableLabel(own,'arko')).toBe('缺少工具调用')
+  expect(unavailableLabel(own,'explore-profile')).toBe('缺少JSON 输出')
+  expect(unavailableLabel(own,'recording-timeline')).toBe('输出上限需至少 512 Token')
+  expect(own.capabilityIssuesByScene?.['explore-event']).toEqual([])
+  expect(modelAvailable(own,'explore-event')).toBe(false) // Capability match never grants an owner route.
+  const [merged] = mergeModelChoices([own],[{ ...own, capabilityIssuesByScene:undefined, arko:model.route, availabilityByScene:{arko:{available:true}} }])
+  expect(modelAvailable(merged!,'arko')).toBe(false) // A stale business list cannot erase the account restriction.
+  const official = value.models.find(item=>item.origin==='official' && item.arko)!
+  expect(modelAvailable(official,'arko')).toBe(true)
+  expect(official.capabilityIssuesByScene).toBeUndefined()
 })

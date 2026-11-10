@@ -28,6 +28,9 @@ export class ArkoModelCache {
     this.entries.set(key, { catalog, expiresAt: this.now() + FRESH_FOR_MS })
     this.publish()
   }
+  invalidate(key: string): void {
+    if (this.entries.delete(key)) this.publish()
+  }
   clear(): void { this.entries.clear(); this.selections.clear(); this.publish() }
   select(key: string, fetch: () => Promise<ArkmeArkoModelCatalog>): Promise<ArkmeArkoModelCatalog> {
     const existing = this.selections.get(key)
@@ -42,9 +45,9 @@ export class ArkoModelCache {
     this.publish()
     return pending
   }
-  load(key: string, fetch: () => Promise<ArkmeArkoModelCatalog>): Promise<void> {
+  load(key: string, fetch: () => Promise<ArkmeArkoModelCatalog>, refresh = false): Promise<void> {
     let entry = this.entries.get(key)
-    if (entry?.catalog && this.now() < entry.expiresAt) return Promise.resolve()
+    if (!refresh && entry?.catalog && this.now() < entry.expiresAt) return Promise.resolve()
     if (entry?.pending) return entry.pending
     if (!entry) { entry = { expiresAt: 0 }; this.entries.set(key, entry) }
     const current = entry

@@ -14,12 +14,21 @@ export interface TeamSourceReadTarget {
   revision?: number
 }
 
+export function isTeamAccessDenied(error: unknown): boolean {
+  return /^(team-not_accessible$|team-account-changed$|login-)/.test(String((error as {body?: {code?: string}})?.body?.code))
+}
+
+export function teamChangeInConversation(change: TeamMessageChangeHint | undefined, key: string): boolean {
+  return !change?.conversationKeys?.length || change.conversationKeys.includes(key)
+}
+
 /** Delivery metadata is only a relevance hint. The existing Host preflight grants reads. */
 export function teamChangeAffectsSource(change:TeamMessageChangeHint|undefined,target:Pick<TeamSourceReadTarget,'conversationKey'|'messageKey'|'revision'>):boolean {
   if (!change) return true // Reconnects must recheck facts missed while disconnected.
-  if (['team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
-  if (change.conversationKeys?.length && target.conversationKey && !change.conversationKeys.includes(target.conversationKey)) return false
+  if (['team.directory.changed','team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
+  if (target.conversationKey && !teamChangeInConversation(change, target.conversationKey)) return false
   if (change.messageKey && target.messageKey && change.messageKey !== target.messageKey) return false
+  if (change.messageKeys?.length && target.messageKey && !change.messageKeys.includes(target.messageKey)) return false
   if(change.kind==='team.message.changed'&&change.messageKey===target.messageKey&&change.messageRevision&&change.messageRevision>0&&target.revision!==undefined&&target.revision>=change.messageRevision)return false
   return true
 }
@@ -51,13 +60,17 @@ export class TeamSendReadFence {
   }
   invalidate(change: TeamMessageChangeHint | undefined): void {
     if (!teamChangeAffectsSource(change, {conversationKey: this.conversationKey})) return
-    if (change?.kind !== 'team.message.changed' || !change.messageKey) { this.generation++; return }
-    const previous = this.changes.get(change.messageKey)
-    if (previous && (!(previous.messageRevision! > 0) || (change.messageRevision! > 0 && previous.messageRevision! >= change.messageRevision!))) return
-    this.changes.delete(change.messageKey); this.changes.set(change.messageKey, change)
-    if (this.changes.size > 64) {
-      this.changes.delete(this.changes.keys().next().value!)
-      this.generation++
+    const keys = change?.kind === 'team.message.changed' ? change.messageKey ? [change.messageKey] : change.messageKeys : undefined
+    if (!change || !keys?.length) { this.generation++; return }
+    for (const key of keys) {
+      const previous = this.changes.get(key)
+      if (previous && (!(previous.messageRevision! > 0) || (change.messageRevision! > 0 && previous.messageRevision! >= change.messageRevision!))) continue
+      this.changes.delete(key)
+      this.changes.set(key, {...change, messageKey:key})
+      if (this.changes.size > 64) {
+        this.changes.delete(this.changes.keys().next().value!)
+        this.generation++
+      }
     }
   }
   /** Only an authorized read past its stale-IO check may release a source fence. */
@@ -106,7 +119,14 @@ export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:
       })
   }
   const stop=subscribeTeamMessageChanges((account,receiptOnly,change)=>{
-    if(account===target.accountKey&&!receiptOnly&&teamChangeAffectsSource(change,target))validate()
+    if(account!==target.accountKey||receiptOnly||!teamChangeAffectsSource(change,target))return
+    if(change?.kind==='team.access.revoked') {
+      ++generation
+      request?.abort()
+      available=false
+      checking=false
+      listener({status:'revoked'})
+    } else validate()
   })
   const recover=()=>{if(!available&&!checking)validate()}
   window.addEventListener('online',validate);window.addEventListener('focus',recover)

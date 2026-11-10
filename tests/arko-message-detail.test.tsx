@@ -5,6 +5,7 @@ import { arkoModelCache } from '../src/client/arko-model-cache.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { AccountModelsPanel } from '../src/client/AccountModelsPanel.js'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -499,6 +500,57 @@ it('keeps model switching isolated from the open detail and preserves the draft'
   expect(arkmeComposerDraftStore.get(key).text).toBe('已有草稿')
   expect(vi.mocked(callArkme)).toHaveBeenCalledWith('arko.model.activate', { routeKey: 'b' })
 })
+it('refreshes a mounted Arko conversation after saving the account preference in a separate settings root', async () => {
+  const official = 'managed-ai/official'
+  const owned = 'user-api/owned'
+  const model = { uid: 'owned', route: owned, name: '自备模型', disabled: false, execution: 'cloud', model_key: 'owned',
+    capabilities: { text: true, tools: true, stream: false, context_tokens: 32768 } }
+  let effective = official
+  const settings = () => ({
+    accountScope: 'test:10001', revision: effective === official ? 1 : 2, enabled: true, models: [model],
+    preferences: { default_route: 'system-default', scenes: effective === official ? {} : { arko: owned }, points_fallback: false },
+    scenes: [{ key: 'arko', name: 'Arko', tools: true, images: false, json: false }],
+  })
+  const original = vi.mocked(callArkme).getMockImplementation()!
+  vi.mocked(callArkme).mockImplementation(async (method, params, signal) => {
+    if (method === 'models.account.query') return settings() as never
+    if (method === 'models.directory') return { accountScope: 'test:10001', models: [] } as never
+    if (method === 'models.preferences.save') {
+      expect(params).toMatchObject({ revision: 1, preferences: { scenes: { arko: owned } } })
+      effective = owned
+      return settings() as never
+    }
+    if (method === 'arko.models') return { effectiveRouteKey: effective, selectionSource: effective === official ? 'default' : 'personal',
+      options: [{ routeKey: official, displayName: '官方模型', selected: effective === official },
+        { routeKey: owned, displayName: model.name, selected: effective === owned }] } as never
+    if (method === 'arko.ask') {
+      expect(params).not.toHaveProperty('modelRouteKey')
+      return { sessionId: 88, userMsgId: 3, assistantMsgId: 4, status: 'completed', text: '新任务已完成', reasoning: '', createdRecordUids: [] } as never
+    }
+    return original(method, params, signal)
+  })
+  await act(async () => arkoModelCache.invalidate('test:10001'))
+  const picker = host.querySelector('footer [aria-label="选择模型"]')!
+  expect(picker.textContent).toContain('官方模型')
+
+  const settingsHost = document.createElement('div')
+  document.body.append(settingsHost)
+  const settingsRoot = createRoot(settingsHost)
+  try {
+    await act(async () => settingsRoot.render(<AccountModelsPanel scope="test:10001" tab="preferences" />))
+    const scene = settingsHost.querySelectorAll('select')[1]!
+    await act(async () => { scene.value = owned; scene.dispatchEvent(new Event('change', { bubbles: true })) })
+    await click([...settingsHost.querySelectorAll('button')].find(button => button.textContent === '保存使用偏好')!)
+    expect(picker.textContent).toContain('自备模型')
+    await act(async () => arkmeComposerDraftStore.setText(arkmeArkoComposerDraftKey(10001), '使用保存的偏好'))
+    await click(host.querySelector('footer [aria-label="发送"]')!)
+    expect(callArkme).toHaveBeenCalledWith('arko.ask', expect.objectContaining({ text: '使用保存的偏好' }))
+  } finally {
+    await act(async () => settingsRoot.unmount())
+    settingsHost.remove()
+  }
+})
+
 it('reopening after unmount starts without a retained drawer or modal state', async () => {
   await click(bubble('完整回答'))
   await act(async () => { root.render(null) })

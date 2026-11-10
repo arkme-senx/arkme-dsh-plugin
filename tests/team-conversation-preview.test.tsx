@@ -16,7 +16,7 @@ const channel = { teamRef: 'team', name: '测试团队', jotmoId: 'team', public
 const conversation: TeamConversation = { ref: 'conversation', key: 'conversation', channel, visitor: { nickname: '来访者' }, side: 'team', lastSeq: 4, latestTeamReplySeq: 0, myReadSeq: 0, unread: 4, needsReply: true, blocked: false, revision: 1, updatedAt: 10 }
 const message: TeamMessage = { key: 'm4', ref: 'm4', seq: 4, revision: 1, side: 'external', sender: { nickname: '来访者' }, own: false, state: 'published', createdAt: 10, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', content: { text_content: '预览正文', template_kind: 1 }, media: [] }
 let host: HTMLDivElement, root: Root, opener: HTMLButtonElement
-const close = vi.fn(), changed = vi.fn()
+const close = vi.fn()
 const timeline = (messages = [message]): TeamTimeline => ({ conversation, messages, hasMore: false, beforeSeq: 0 })
 const preview = () => <TeamConversationPreview accountKey="preview-test" target={{ kind: 'conversation', conversation }} onClose={close} />
 const render = async (node = preview()) => { await act(async () => root.render(node)) }
@@ -51,6 +51,7 @@ it('retains an older mounted source when a changed occurrence refreshes only the
  await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:message.key}))
  expect(document.body.contains(article)).toBe(true)
  expect(article.textContent).toContain('历史预览')
+ mocks.call.mockImplementation(() => new Promise(() => {}))
  await act(async()=>invalidateTeamMessages('preview-test',false,{kind:'team.message.changed',messageKey:older.key}))
  expect(article.textContent).not.toContain('历史预览')
 })
@@ -58,7 +59,7 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('IntersectionObserver', class { constructor(private callback: (entries: unknown[]) => void) {} observe() { this.callback([{ isIntersecting: true }]) } disconnect() {} })
   vi.spyOn(document, 'hasFocus').mockReturnValue(true)
-  localStorage.clear(); mocks.call.mockReset(); mocks.open.mockReset(); close.mockReset(); changed.mockReset()
+  localStorage.clear(); mocks.call.mockReset(); mocks.open.mockReset(); close.mockReset()
   mocks.call.mockImplementation(async op => { if (op === 'team.app.timeline') return timeline(); if (op === 'team.app.read') return {}; throw new Error(op) })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   opener = document.createElement('button'); document.body.append(opener); opener.focus()
@@ -132,6 +133,23 @@ it.each(['unavailable', 'absent'])('does not show a frozen folder membership aft
   } finally { await act(async () => stop()) }
 })
 
+it('revalidates an edited historical row and its pagination cursor without a manual reload', async () => {
+  const { invalidateTeamMessageKeys } = await import('../src/client/team-messaging-events.js')
+  const original = { ...message, key:'older', seq:1, content:{template_kind:1, text_content:'历史原文'} }
+  const updated = { ...original, revision:2, version:2, content:{template_kind:1, text_content:'历史新正文'} }
+  mocks.call.mockImplementation(async (_, {beforeSeq}) => beforeSeq ? timeline([original]) : {...timeline(),hasMore:true,beforeSeq:4})
+  await render(); await click('加载更早消息')
+  let finish!: (value: TeamTimeline) => void
+  mocks.call.mockImplementation(async (_, {beforeSeq}) => beforeSeq ? new Promise(resolve => {finish=resolve}) : {...timeline(),hasMore:true,beforeSeq:4})
+  await act(async () => invalidateTeamMessageKeys('preview-test',conversation.key,[original.key]))
+  expect(document.body.textContent).not.toContain('历史原文')
+  expect(document.body.textContent).toContain('预览正文')
+  expect(finish).toBeTypeOf('function')
+  await act(async () => finish(timeline([updated])))
+  expect(document.body.textContent).toContain('历史新正文')
+  expect(button('加载更早消息')).toBeUndefined()
+})
+
 it('has a loading state, retries failures, and aborts a pending request on dismissal', async () => {
   let fail!: (error: Error) => void
   mocks.call.mockReturnValueOnce(new Promise((_, reject) => { fail = reject }))
@@ -194,7 +212,7 @@ it('Escape and backdrop close the preview without opening the conversation', asy
 })
 
 it('suspends the underlying team conversation read intent until the preview closes', async () => {
-  const pane = <TeamConversationPane accountKey="preview-background" conversation={conversation} onChanged={changed} />
+  const pane = <TeamConversationPane accountKey="preview-background" conversation={conversation} />
   await render(<>{pane}{preview()}</>)
   expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.read')).toBe(false)
   await render(<>{pane}</>)
@@ -220,4 +238,63 @@ it('does not reuse a frozen folder summary when the current directory has no aut
  const group=groupTeamConversations([{...conversation,preview:{status:'available',text:'冻结目录摘要',hasMedia:false,templateKind:1}}])[0]!
  await render(<TeamConversationPreview accountKey="preview-test" target={{kind:'folder',group}} onClose={close}/>)
  expect(document.body.textContent).not.toContain('冻结目录摘要')
+})
+
+it('refreshes only the published conversation without hiding its mounted preview', async () => {
+  const { refreshPublishedTeamMessages } = await import('../src/client/team-messaging-events.js')
+  const next: TeamMessage = { ...message, key: 'm5', ref: 'm5', seq: 5, content: { template_kind: 1, text_content: '新发布消息' } }
+  await render()
+  let finish!: (value: TeamTimeline) => void
+  mocks.call.mockClear().mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  await act(async () => refreshPublishedTeamMessages('preview-test', 'other'))
+  expect(mocks.call).not.toHaveBeenCalled()
+  await act(async () => refreshPublishedTeamMessages('preview-test', conversation.key))
+  expect(mocks.call).toHaveBeenCalledOnce()
+  expect(document.body.textContent).toContain('预览正文')
+  await act(async () => finish(timeline([message, next])))
+  expect(document.body.textContent).toContain('新发布消息')
+})
+
+it('removes existing material on explicit denial during pagination and retries from the head', async () => {
+  mocks.call.mockResolvedValueOnce({ ...timeline(), hasMore: true, beforeSeq: 4 })
+  await render()
+  mocks.call.mockRejectedValueOnce(Object.assign(new Error('已失去团队会话权限'), { body: { code: 'team-not_accessible' } }))
+  await click('加载更早消息')
+  expect(document.body.textContent).toContain('已失去团队会话权限')
+  expect(document.body.textContent).not.toContain('预览正文')
+  expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.timeline')).toHaveLength(2)
+  await click('重试')
+  expect(mocks.call.mock.lastCall![1]).toMatchObject({ beforeSeq: 0 })
+})
+
+
+it('bridges a multi-page publication gap without losing previously loaded history', async () => {
+  const {refreshPublishedTeamMessages}=await import('../src/client/team-messaging-events.js')
+  const row=(seq:number):TeamMessage=>({...message,key:'m'+seq,seq,content:{text_content:'消息'+seq}})
+  mocks.call.mockImplementation(async(_,{beforeSeq})=>({...timeline(beforeSeq?[row(1),row(2)]:[row(3),row(4)]),hasMore:!beforeSeq,beforeSeq:beforeSeq?1:3}))
+  await render();await click('加载更早消息')
+  const reads:number[]=[]
+  mocks.call.mockImplementation(async(_,{beforeSeq})=>{
+    reads.push(beforeSeq)
+    return {...timeline(beforeSeq?[row(4),row(5),row(6)]:[row(7),row(8)]),hasMore:true,beforeSeq:beforeSeq?4:7}
+  })
+  await act(async()=>refreshPublishedTeamMessages('preview-test',conversation.key))
+  expect(reads).toEqual([0,7])
+  expect([...document.querySelectorAll('article')].map(n=>n.textContent)).toHaveLength(8)
+  expect(button('加载更早消息')).toBeUndefined()
+})
+
+it('rejects the final older-page reply when access is revoked during window revalidation', async () => {
+  const {invalidateTeamMessageKeys,revokeTeamConversationRead}=await import('../src/client/team-messaging-events.js')
+  const old={...message,key:'old',seq:1,content:{text_content:'旧正文'}}
+  mocks.call.mockImplementation(async(_,{beforeSeq})=>({...timeline(beforeSeq?[old]:[message]),hasMore:!beforeSeq,beforeSeq:beforeSeq?1:4}))
+  await render();await click('加载更早消息')
+  let finish!:(value:TeamTimeline)=>void
+  mocks.call.mockImplementation(async(_,{beforeSeq})=>beforeSeq?new Promise(resolve=>{finish=resolve}):{...timeline(),hasMore:true,beforeSeq:4})
+  await act(async()=>invalidateTeamMessageKeys('preview-test',conversation.key,[old.key]))
+  expect(finish).toBeTypeOf('function')
+  await act(async()=>revokeTeamConversationRead('preview-test',conversation.key))
+  await act(async()=>finish(timeline([old])))
+  expect(document.querySelectorAll('article')).toHaveLength(0)
+  expect(document.body.textContent).not.toContain('旧正文')
 })

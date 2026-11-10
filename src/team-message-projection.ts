@@ -28,7 +28,9 @@ export function mergeTeamMessages(current: readonly TeamMessage[], incoming: rea
 // Client-only read projection: distinguish pending validation from an authoritative denial.
 export function withoutTeamMessageMaterial(message: TeamMessage): TeamMessage {
   const {content,reply,forwardRecords,localMarkRef,recipientRead,...identity}=message
-  return {...identity,media:[],version:0,canEdit:false,canDelete:false,contentStatus:message.state==='recalled'?'recalled':'revalidating'}
+  const contentStatus = message.state === 'recalled' ? 'recalled'
+    : ['unavailable', 'deleted', 'protected', 'moderated'].includes(message.contentStatus) ? message.contentStatus : 'revalidating'
+  return {...identity,media:[],version:0,canEdit:false,canDelete:false,contentStatus}
 }
 
 

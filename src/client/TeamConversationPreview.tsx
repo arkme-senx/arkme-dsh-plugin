@@ -13,10 +13,12 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { groupTeamConversations, readTeamDirectory, refreshTeamDirectory, subscribeTeamDirectory } from './team-conversation-directory.js'
-import { openTeamMessages, subscribeTeamMessageChanges } from './team-messaging-events.js'
+import { openTeamMessages, revokeTeamConversationRead, subscribeTeamMessageChanges } from './team-messaging-events.js'
 import { mergeTeamMessages,withoutTeamConversationMaterial } from '../team-message-projection.js'
-import {invalidateTeamMessageRead,teamChangeAffectsSource} from './team-source-read.js'
+import {invalidateTeamMessageRead,isTeamAccessDenied,teamChangeAffectsConversationPreview,teamChangeAffectsSource,teamChangeInConversation} from './team-source-read.js'
 import { teamDirectoryPreferences, type TeamEntryTarget } from './team-directory-preferences.js'
+import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
+import { arkmeConversationRestoredScrollTop, type ArkmeConversationViewportSnapshot } from './conversation-memory-cache.js'
 import { TeamVisitorMembership } from './TeamVisitorMembership.js'
 
 const button = { border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', padding: '6px 8px', fontSize: 13 }
@@ -87,27 +89,77 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
 function TeamPreviewMessages({ accountKey, conversation, onConversation }: { accountKey: string; conversation: TeamConversation; onConversation: Dispatch<SetStateAction<TeamConversation | undefined>> }) {
   const [page, setPage] = useState<TeamTimeline>(), [loading, setLoading] = useState(true), [error, setError] = useState('')
   const [request, setRequest] = useState({ before: 0, attempt: 0 })
-  const generation = useRef(0)
-  useEffect(() => subscribeTeamMessageChanges((account, receiptOnly,change) => {
-    if (account !== accountKey || receiptOnly || !teamChangeAffectsSource(change,{conversationKey:conversation.key})) return
+  const generation = useRef(0), loaded = useRef<TeamTimeline>()
+  const revalidateFrom = useRef(Infinity)
+  const body = useRef<HTMLDivElement>(null), viewport = useRef<ArkmeConversationViewportSnapshot>()
+  function showPage(next: TeamTimeline | undefined) {
+    viewport.current = loaded.current && body.current ? arkmeConversationViewport(body.current) : undefined
+    loaded.current = next
+    setPage(next)
+  }
+  useLayoutEffect(() => subscribeTeamMessageChanges((account, receiptOnly,change) => {
+    if (account !== accountKey || receiptOnly || !teamChangeInConversation(change, conversation.key)) return
+    if (change?.kind === 'team.access.revoked') {
+      ++generation.current
+      revalidateFrom.current = Infinity
+      showPage(undefined)
+      setLoading(false)
+      setError(tr('你已无权访问该团队消息，请刷新列表'))
+      onConversation(previous => {
+        const latest = previous ?? conversation
+        return withoutTeamConversationMaterial(latest.visitor ? {...latest, visitor:{...latest.visitor,memberType:'unknown'}} : latest)
+      })
+      return
+    }
+    const revalidate = teamChangeAffectsSource(change,{conversationKey:conversation.key})
+    if (!revalidate && change?.kind !== 'team.message.published') return
     ++generation.current
-    setPage(old=>old?{...old,conversation:withoutTeamConversationMaterial(old.conversation),messages:old.messages.map(row=>invalidateTeamMessageRead(row,change,conversation.key))}:old)
+    const old = loaded.current
+    if (revalidate && old) {
+      const messages = old.messages.map(row => {
+        const next = invalidateTeamMessageRead(row,change,conversation.key)
+        if (row !== next) revalidateFrom.current = Math.min(revalidateFrom.current, row.seq)
+        return next
+      })
+      showPage({...old, conversation:teamChangeAffectsConversationPreview(change,old.conversation) ? withoutTeamConversationMaterial(old.conversation) : old.conversation, messages})
+    }
     setRequest(value => ({before:0, attempt:value.attempt+1}))
-  }), [accountKey])
-  const body = useRef<HTMLDivElement>(null), geometry = useRef<{ height: number; top: number }>()
+  }), [accountKey, conversation, onConversation])
   useEffect(() => {
     const controller = new AbortController(), token = ++generation.current
     setLoading(true); setError('')
-    void callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq: request.before, limit: 30 }, controller.signal)
-      .then(value => {
-        controller.signal.throwIfAborted()
+    const readPage = async (beforeSeq: number) => {
+      const value = await callArkme<TeamTimeline>('team.app.timeline', { conversationRef: conversation.ref, expectedAccountKey: accountKey, beforeSeq, limit: 30 }, controller.signal)
+      controller.signal.throwIfAborted()
+      if (value.hasMore && (!value.beforeSeq || beforeSeq > 0 && value.beforeSeq >= beforeSeq)) throw new Error('消息分页异常，请重试')
+      return value
+    }
+    const readWindow = async () => {
+      const old = loaded.current
+      const head = await readPage(request.before)
+      const incoming = [...head.messages]
+      let last = head
+      // Bridge a gap after a burst of publications, or read through a changed
+      // historical occurrence. Previously loaded, unaffected older pages stay put.
+      const through = Math.min(old?.messages.at(-1)?.seq ?? 0, revalidateFrom.current)
+      while (!request.before && through > 0 && last.hasMore && last.beforeSeq > through) {
         if (token !== generation.current) return
-        if (value.hasMore && (!value.beforeSeq || request.before > 0 && value.beforeSeq >= request.before)) throw new Error('消息分页异常，请重试')
-        if (body.current) geometry.current = { height: body.current.scrollHeight, top: body.current.scrollTop }
-        setPage(old => ({ ...value, messages: mergeTeamMessages(old?.messages??[],value.messages) }))
-        onConversation(value.conversation)
-      }).catch(caught => {
+        last = await readPage(last.beforeSeq)
+        incoming.push(...last.messages)
+      }
+      if (token !== generation.current) return
+      const keepOlder = !!old && last.hasMore && (old.messages[0]?.seq ?? Infinity) < last.beforeSeq
+      const cursor = !request.before && keepOlder ? old : last
+      const keys = new Set(incoming.map(row => row.key))
+      const messages = mergeTeamMessages(old?.messages ?? [], incoming).filter(row =>
+        request.before > 0 || keys.has(row.key) || keepOlder && row.seq < last.beforeSeq)
+      if (!request.before) revalidateFrom.current = Infinity
+      showPage({...head, hasMore:cursor.hasMore, beforeSeq:cursor.beforeSeq, messages})
+      onConversation(head.conversation)
+    }
+    void readWindow().catch(caught => {
         if (controller.signal.aborted || token !== generation.current) return
+        if (isTeamAccessDenied(caught)) revokeTeamConversationRead(accountKey, conversation.key)
         setError(caught instanceof Error ? caught.message : '加载失败，请重试')
         onConversation(previous => {
           const latest = previous?.key === conversation.key && previous.side === conversation.side ? previous : conversation
@@ -118,15 +170,18 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
     return () => controller.abort()
   }, [accountKey, conversation.ref, request, onConversation])
   useLayoutEffect(() => {
-    if (body.current && page) body.current.scrollTop = (request.before || request.attempt>0) && geometry.current ? geometry.current.top + body.current.scrollHeight - geometry.current.height : body.current.scrollHeight
+    const node = body.current
+    if (!node || !page) return
+    const offset = arkmeConversationAnchorOffset(node,viewport.current?.anchorId)
+    node.scrollTop = arkmeConversationRestoredScrollTop(viewport.current,{currentScrollTop:node.scrollTop,scrollHeight:node.scrollHeight,...(offset === undefined ? {} : {anchorOffset:offset})})
   }, [page])
   return <div ref={body} aria-label="预览消息列表" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', padding: '0 16px 16px' }}>
-    {error && <p role="alert">{error}<button style={button} onClick={() => setRequest(value => ({ ...value, attempt: value.attempt + 1 }))}>{tr('重试')}</button></p>}
+    {error && <p role="alert">{error}<button style={button} onClick={() => setRequest(value => ({ before: page ? value.before : 0, attempt: value.attempt + 1 }))}>{tr('重试')}</button></p>}
     {page?.hasMore && !error && <button style={button} disabled={loading} onClick={() => setRequest(value => ({ before: page.beforeSeq, attempt: value.attempt + 1 }))}>{loading ? '正在加载…' : '加载更早消息'}</button>}
     {loading && !page && <p role="status">正在加载消息…</p>}
     {!loading && !error && !page?.messages.length && <p>暂无消息</p>}
     <ArkmeAttachmentNavigationProvider scopeKey={JSON.stringify([accountKey,conversation.side,conversation.key])} entries={teamAttachmentNavigationEntries(page?.messages??[],conversation,accountKey)}>
-    {page?.messages.map(message => <article key={message.key} style={{ display: 'flex', flexDirection: message.own ? 'row-reverse' : 'row', gap: 8, marginTop: 14 }}>
+    {page?.messages.map(message => <article key={message.key} data-arkme-conversation-row={message.key} style={{ display: 'flex', flexDirection: message.own ? 'row-reverse' : 'row', gap: 8, marginTop: 14 }}>
       <ArkmeUserAvatar size={30} label={message.sender.nickname} avatarRef={message.sender.imageRef} imageKey={message.sender.imageKey} imagePort={teamAvatarImages} />
       <div style={{ maxWidth: 'calc(100% - 38px)', minWidth: 0 }}>
         <div style={{ fontSize: 11, color: arkmeTheme.secondary, marginBottom: 4 }}>{message.sender.nickname} · {new Date(message.createdAt).toLocaleString()}</div>

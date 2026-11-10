@@ -7,6 +7,7 @@ import {liveTeamSnapshotStack} from './fixtures/team-snapshot-live.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import * as socialActionGuard from '../src/client/social-action-guard.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
+import { TeamWorkspaceDirectory } from '../src/client/TeamWorkspaceDirectory.js'
 import { TeamPublicCardDialog } from '../src/client/TeamPublicCardDialog.js'
 vi.mock('../src/client/TeamPublicCardDialog.js', () => ({ TeamPublicCardDialog: () => <div data-team-public-card-test /> }))
 import { ArkmeComposerInfoRow } from '../src/client/ArkmeComposerInfoRow.js'
@@ -56,7 +57,7 @@ import { TeamMessagingPanel, TeamConversationPane, TeamConversationRow } from '.
 import { conversationDirectoryStyles } from '../src/client/conversation-directory-presentation.js'
 import { connectArkmeLocale } from '../src/client/locale.js'
 
-import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
+import { readTeamDirectory, startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
 
 const conversation: TeamConversation = { ref: 'conv', key: 'key', channel: { teamRef: 'team', name: '团队', jotmoId: 'arkme_cn', publicRef: 'a'.repeat(32), link: '', enabled: true, revision: 1, canManage: false }, side: 'external', lastSeq: 0, latestTeamReplySeq: 0, myReadSeq: 0, unread: 0, needsReply: false, blocked: false, revision: 1, updatedAt: 1 }
 const storageKey = 'arkme.team.draft:test:11:key'
@@ -83,8 +84,238 @@ describe('Team send UI recovery', () => {
     })
   })
   afterEach(async () => { await act(async () => renderer?.unmount()); renderer = undefined; socialAccessStore.activate(undefined); vi.restoreAllMocks(); vi.unstubAllGlobals() })
-  const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />, options); await tick() }) }
+  const mount = async (options?: Parameters<typeof create>[1]) => { await act(async () => { renderer = create(<TeamConversationPane conversation={conversation} accountKey="test:11" />, options); await tick() }) }
   const send = async () => { await act(async () => { renderer!.root.findByType(ArkmeComposerSendButton).props.onClick(); await tick() }) }
+
+  it('starts an explicit conversation in the same commit before its sibling workspace read', async () => {
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await act(async () => {
+      renderer = create(<>
+        <TeamWorkspaceDirectory accountKey="test:11" teamRef={conversation.channel.teamRef} channel={conversation.channel} onBack={() => {}} />
+        <TeamMessagingPanel accountKey="test:11" intent={{ kind: 'conversation', conversation }} />
+      </>)
+      await tick()
+    })
+    const operations = mocks.call.mock.calls.map(([operation]) => operation)
+    expect(operations.filter(operation => operation === 'team.app.timeline')).toHaveLength(1)
+    expect(operations).toContain('team.app.workspace')
+    expect(operations.indexOf('team.app.timeline')).toBeLessThan(operations.indexOf('team.app.workspace'))
+  })
+
+  it('switches and returns to explicit conversations without replaying an older intent on rerender', async () => {
+    const next = { ...conversation, key: 'next', ref: 'next' }
+    const reads: { ref: string; signal: AbortSignal }[] = []
+    mocks.call.mockImplementation((operation: string, params: { conversationRef?: string }, signal: AbortSignal) => {
+      if (operation === 'team.app.timeline') reads.push({ ref: params.conversationRef!, signal })
+      return new Promise(() => {})
+    })
+    for (const target of [conversation, next, conversation]) {
+      const intent = { kind: 'conversation' as const, conversation: target }
+      await act(async () => {
+        if (renderer) renderer.update(<TeamMessagingPanel accountKey="test:11" intent={intent} />)
+        else renderer = create(<TeamMessagingPanel accountKey="test:11" intent={intent} />)
+        await tick()
+      })
+      const count = reads.length
+      await act(async () => { renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={{ ...intent }} />); await tick() })
+      expect(reads).toHaveLength(count)
+      expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(target)
+    }
+    expect(reads.map(read => read.ref)).toEqual([conversation.ref, next.ref, conversation.ref])
+    expect(reads.map(read => read.signal.aborted)).toEqual([true, true, false])
+    await act(async () => renderer!.update(<TeamMessagingPanel accountKey="test:12" intent={{ kind: 'conversation', conversation }} />))
+    expect(reads.map(read => read.signal.aborted)).toEqual([true, true, true, false])
+    expect(renderer!.root.findByType(TeamConversationPane).props.accountKey).toBe('test:12')
+  })
+
+  it.each(['link', 'official'] as const)('keeps %s opening results scoped to the current intent', async kind => {
+    const reads: { signal: AbortSignal; resolve(value: unknown): void }[] = []
+    mocks.call.mockImplementation((operation: string, _params: unknown, signal: AbortSignal) => {
+      if (operation === 'team.app.official') return Promise.resolve(conversation.channel)
+      if (operation === 'team.app.open') return new Promise(resolve => { reads.push({ signal, resolve }) })
+      return new Promise(() => {})
+    })
+    const opening = kind === 'link' ? { kind, publicRef: 'b'.repeat(32) } : { kind }
+    await act(async () => { renderer = create(<TeamMessagingPanel accountKey="test:11" intent={opening} />); await tick() })
+    expect(reads).toHaveLength(1)
+    expect(renderer!.root.findAllByType(TeamConversationPane)).toHaveLength(0)
+    await act(async () => renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={{ kind: 'conversation', conversation }} />))
+    expect(reads[0]!.signal.aborted).toBe(true)
+    const other = { ...conversation, key: 'opened', ref: 'opened' }
+    await act(async () => { reads[0]!.resolve({ channel: conversation.channel, conversation: other }); await tick() })
+    expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(conversation)
+    const current = { ...opening }
+    await act(async () => { renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={current} />); await tick() })
+    expect(renderer!.root.findAllByType(TeamConversationPane)).toHaveLength(0)
+    await act(async () => { reads[1]!.resolve({ channel: conversation.channel, conversation: other }); await tick() })
+    expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(other)
+    await act(async () => renderer!.update(<TeamMessagingPanel accountKey="test:11" intent={current} />))
+    expect(reads).toHaveLength(2)
+    expect(renderer!.root.findByType(TeamConversationPane).props.conversation).toBe(other)
+    await act(async () => { renderer!.update(<TeamMessagingPanel accountKey="test:12" intent={current} />); await tick() })
+    expect(renderer!.root.findAllByType(TeamConversationPane)).toHaveLength(0)
+    expect(reads).toHaveLength(3)
+    await act(async () => renderer!.unmount()); renderer = undefined
+    expect(reads[2]!.signal.aborted).toBe(true)
+  })
+
+  it('starts the first timeline read before mounted ancillary reads', async () => {
+    // Keep every read pending so response timing cannot affect the observed
+    // mount order. Use the real Pane hooks and child components.
+    mocks.call.mockImplementation(() => new Promise(() => {}))
+    await mount()
+    const operations = mocks.call.mock.calls.map(([operation]) => operation)
+    expect(operations).toEqual(expect.arrayContaining([
+      'team.app.timeline', 'team.app.send.tasks',
+      'team.app.local-mark.capabilities', 'team.app.snapshot.capabilities',
+    ]))
+    expect(operations.filter(operation => operation === 'team.app.timeline')).toHaveLength(1)
+    expect(operations.slice(0, operations.indexOf('team.app.timeline'))).toEqual([])
+    for (const operation of ['team.app.snapshot.capabilities', 'provider.capabilities', 'settings.background-sound.get']) {
+      expect(mocks.call.mock.calls.find(([op]) => op === operation)?.[3]).toEqual({ priority: 'background' })
+    }
+  })
+
+  it('keeps the delivery owner first read on entry and refreshes it only on later recovery', async () => {
+    const base = mocks.call.getMockImplementation()!
+    const reads: AbortSignal[] = []
+    mocks.call.mockImplementation((op: string, params: unknown, signal: AbortSignal) => {
+      if (op !== 'team.app.send.tasks') return base(op, params, signal)
+      reads.push(signal)
+      return new Promise(() => {})
+    })
+    await mount()
+    expect(reads).toHaveLength(1)
+    expect(reads[0]!.aborted).toBe(false)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.timeline')).toHaveLength(1)
+    await act(async () => { window.dispatchEvent(new Event('focus')); await tick() })
+    expect(reads).toHaveLength(2)
+    expect(reads[0]!.aborted).toBe(true)
+    expect(reads[1]!.aborted).toBe(false)
+    expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.timeline')).toHaveLength(2)
+    await act(async () => renderer!.unmount()); renderer = undefined
+    expect(reads[1]!.aborted).toBe(true)
+  })
+
+  it.each(['team', 'external'] as const)('keeps the %s panel readable after a send ACK while the timeline refresh is pending', async side => {
+    const current: TeamConversation = {
+      ...conversation, side, lastSeq: 2, revision: 2,
+      preview: { text: '上一条消息', status: 'available', hasMedia: false, templateKind: 1 },
+    }
+    const own: TeamMessage = {
+      key: 'own', ref: 'own-ref', seq: 1, revision: 1, side, sender: { nickname: '我' },
+      own: true, state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1,
+      contentStatus: 'available', content: { template_kind: 1, text_content: '我之前发的消息' }, media: [],
+    }
+    const peer: TeamMessage = {
+      ...own, key: 'peer', ref: 'peer-ref', seq: 2, side: side === 'team' ? 'external' : 'team',
+      own: false, sender: { nickname: '对方' }, content: { template_kind: 1, text_content: '上一条消息' },
+    }
+    const ack: TeamMessage = {
+      ...own, key: 'sent', ref: 'sent-ref', seq: 3, createdAt: Date.now(), version: 0, contentStatus: '', content: undefined,
+    }
+    const published = { ...current, lastSeq: 3, revision: 3, preview: { ...current.preview!, text: '问题' } }
+    let sent = false
+    const pending: Array<(page: unknown) => void> = []
+    mocks.call.mockImplementation(async (op, params) => {
+      if (op === 'team.app.conversations') return { items: params.side === side ? [sent ? published : current] : [], hasMore: false }
+      if (op === 'team.app.timeline') {
+        if (sent) return new Promise(resolve => pending.push(resolve))
+        return { conversation: current, messages: [own, peer], hasMore: false, beforeSeq: 1 }
+      }
+      if (op === 'team.app.send.enqueue') {
+        sent = true
+        return accepted({ state: 'sent', message: ack })
+      }
+      return []
+    })
+    const stop = startTeamDirectory('test:11')
+    try {
+      await act(async () => {
+        renderer = create(<TeamMessagingPanel accountKey="test:11" intent={{ kind: 'conversation', conversation: current }} />)
+        await tick()
+      })
+      const rows = () => renderer!.root.findAllByType(TeamConversationMessage).map(row => row.props.message as TeamMessage)
+      expect(rows().map(row => row.content?.text_content)).toEqual(['我之前发的消息', '上一条消息'])
+      await send()
+      expect(pending).toHaveLength(1)
+      expect(rows().map(row => row.content?.text_content)).toEqual(['我之前发的消息', '上一条消息', '问题'])
+      expect(JSON.stringify(renderer!.toJSON())).not.toContain('内容当前不可用')
+      expect(readTeamDirectory('test:11').items.find(row => row.key === current.key)?.preview?.text).toBe('问题')
+      await act(async () => {
+        const messages = [own, peer, { ...ack, contentStatus: 'available', version: 1, content: { template_kind: 1, text_content: '问题' } }]
+        for (const resolve of pending) resolve({ conversation: published, messages, hasMore: false, beforeSeq: 1 })
+        await tick()
+      })
+      expect(rows().map(row => [row.key, row.version])).toEqual([['own', 1], ['peer', 1], ['sent', 1]])
+    } finally {
+      await act(async () => { stop() })
+    }
+  })
+
+  it.each(['recall', 'edit', 'delete', 'unreadable-ack', 'locate-denied'] as const)('keeps unrelated message material while confirming %s', async operation => {
+    const current: TeamConversation = { ...conversation, side:'team', lastSeq:2, revision:2 }
+    const own: TeamMessage = {
+      key:'own', ref:'own-ref', seq:1, revision:1, side:'team', sender:{nickname:'我'}, own:true, state:'published',
+      createdAt:Date.now(), canEdit:true, canDelete:true, canRecall:true, version:1, contentStatus:'available',
+      content:{template_kind:1,text_content:'被操作消息'}, media:[],
+    }
+    const peer: TeamMessage = { ...own, key:'peer',ref:'peer-ref',seq:2, side:'external', own:false, canEdit:false, canDelete:false, canRecall:false, sender:{nickname:'访客'},content:{template_kind:1,text_content:'无关消息正文'} }
+    const recalled:TeamMessage = {...own,state:'recalled',revision:2,content:undefined,contentStatus:'recalled',version:0}
+    const edited:TeamMessage = {...own,version:2,revision:2,content:{template_kind:1,text_content:'编辑后的新正文'}}
+    const denied:TeamMessage = {...own,key:'denied',ref:'denied-ref',seq:3,content:undefined,contentStatus:'unavailable',version:0}
+    let mutated=false, reads=0
+    const timeline=(messages:TeamMessage[])=>({conversation:current,messages,hasMore:false,beforeSeq:1})
+    mocks.call.mockImplementation(async op => {
+      if (op==='team.app.timeline') {
+        if (!mutated) return timeline([own,peer])
+        reads++
+        if (reads===1 && operation==='edit') return timeline([edited,peer])
+        if (reads===1 && operation==='delete') return timeline([peer])
+        return new Promise(()=>{})
+      }
+      if (op==='team.app.preflight') return [own]
+      if (op==='team.app.locate') {
+        mutated=true
+        throw Object.assign(new Error('原消息无权访问'), { body: { code: 'team-not_accessible' } })
+      }
+      if (op==='team.app.recall') { mutated=true; return {message:recalled,changed:true} }
+      if (op==='team.app.edit'||op==='team.app.delete') { mutated=true; return {} }
+      if (op==='team.app.send.enqueue') { mutated=true; return accepted({state:'sent',message:denied}) }
+      return []
+    })
+    await act(async()=>{ renderer=create(<TeamMessagingPanel accountKey="test:11" intent={{kind:'conversation',conversation:current}}/>); await tick() })
+    const row = (key:string) => renderer!.root.findAllByType(TeamConversationMessage).find(node=>node.props.message.key===key)!
+    expect(row('peer').props.message.content?.text_content).toBe('无关消息正文')
+    if (operation==='recall') {
+      await act(async()=>row('own').props.onRecall())
+      await act(async()=>{renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
+      expect(row('own').props.message.state).toBe('recalled')
+    } else if (operation==='edit') {
+      await act(async()=>row('own').props.onEdit())
+      await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('编辑后的新正文'))
+      await send()
+      expect(mocks.call.mock.calls.some(([op])=>op==='team.app.edit')).toBe(true)
+    } else if (operation==='delete') {
+      await act(async()=>row('own').props.onSelect())
+      await act(async()=>renderer!.root.findByType(ArkmeMessageSelectionBar).props.actions.find((action:{id:string})=>action.id==='delete').onSelect())
+      await act(async()=>{renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
+      expect(mocks.call.mock.calls.some(([op])=>op==='team.app.delete')).toBe(true)
+    } else if (operation==='locate-denied') {
+      const locate = renderer!.root.findByType(TeamConversationTools).props.onLocate
+      await act(async()=>{
+        await expect(locate(own, new AbortController().signal)).rejects.toThrow('原消息无权访问')
+      })
+      expect(row('own').props.message.content).toBeUndefined()
+    } else {
+      await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('要发送的正文'))
+      await send()
+      expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(true)
+    }
+    expect(reads).toBe(1)
+    expect(row('peer').props.message).toMatchObject({contentStatus:'available',content:{text_content:'无关消息正文'}})
+    if (operation==='unreadable-ack') expect(row('denied').props.message.content).toBeUndefined()
+  })
 
   it('offers four composer sources and adds cloud files without sending the normal draft', async () => {
     const base = mocks.call.getMockImplementation()!
@@ -100,20 +331,24 @@ describe('Team send UI recovery', () => {
     expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.send.enqueue')).toBe(false)
   })
 
-  it('sends a selected team document separately and preserves new text typed during preparation', async () => {
+  it('keeps a new document ACK readable after reconnect and preserves text typed during preparation', async () => {
     let finish!: (value: unknown) => void
     mocks.call.mockImplementation(async (op: string) => {
       if (op === 'team.app.timeline') return { conversation, messages: [], hasMore: false, beforeSeq: 0 }
       if (op === 'sources.self-target') return { sourceRef: 'self' }
       if (op === 'search.scene') return { items: [], hasMore: false }
       if (op === 'composer.document.prepare') return new Promise(resolve => { finish = resolve })
-      if (op === 'team.app.send.enqueue') return accepted()
+      if (op === 'team.app.send.enqueue') return accepted({state:'sent',message:{
+        ref:'doc-ref',key:'doc',seq:1,revision:1,side:'external',sender:{nickname:'我'},own:true,
+        state:'published',createdAt:Date.now(),canEdit:false,canDelete:false,version:0,contentStatus:'',media:[],
+      }})
       if (op === 'team.app.send.tasks') return []
       throw new Error(op)
     })
     await mount()
     act(() => renderer!.root.findByProps({ 'aria-label': '添加内容' }).props.onClick())
     const actions = renderer!.root.findAllByType(ArkmeActionMenu).find(menu => menu.props.label === '添加内容')!.props.actions.filter(Boolean)
+    await act(async () => { invalidateTeamMessages('test:11'); await tick() })
     act(() => actions.find((action: { id: string }) => action.id === 'document').onSelect())
     const picker = renderer!.root.findByType(ArkmeArticlePicker)
     act(() => { picker.props.onSelect({ kind: 'existing', detail: { itemUid: 'document', title: '文档标题', textContent: '全文', version: 3, sourceRef: 'self' }, messageActionRef: 'action' }); picker.props.onClose() })
@@ -125,6 +360,9 @@ describe('Team send UI recovery', () => {
     expect(JSON.parse(localStorage.getItem(storageKey)!)).toMatchObject({ text: '下一条普通消息', assets: [] })
     expect(JSON.parse(localStorage.getItem(storageKey)!).document).toBeUndefined()
     expect(mocks.call.mock.calls.some(([op]) => op === 'source.long-article.publish')).toBe(false)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message).toMatchObject({
+      key:'doc',contentStatus:'available',content:{text_content:'全文'},
+    })
   })
 
   it.each(['editing','next-draft'] as const)('inserts a structured mention into the %s without changing an accepted command',async mode=>{
@@ -138,7 +376,7 @@ describe('Team send UI recovery', () => {
       if(op==='team.app.send.enqueue')return new Promise(resolve=>{release=resolve})
       throw new Error('unavailable')
     })
-    await act(async()=>{renderer=create(<TeamConversationPane conversation={current} accountKey="test:11" onChanged={()=>{}} />);await tick()})
+    await act(async()=>{renderer=create(<TeamConversationPane conversation={current} accountKey="test:11" />);await tick()})
     if(mode==='editing')await act(async()=>renderer!.root.findAllByType(TeamConversationMessage).find(row=>row.props.message.key==='own')!.props.onEdit())
     else await send()
     const avatar=renderer!.root.findAllByProps({'aria-label':'访客 的用户卡片'}).find(node=>node.type==='button')!
@@ -273,7 +511,7 @@ describe('Team send UI recovery', () => {
   it('does not attach an external team promotion badge to the visitor name on the team side', async () => {
     const own = { ...conversation, side: 'team' as const, visitor: { nickname: '客户' } }
     mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? { conversation: own, messages: [], hasMore: false, beforeSeq: 0 } : [])
-    await act(async () => { renderer = create(<TeamConversationPane conversation={own} accountKey="test:11" onChanged={() => {}} />) })
+    await act(async () => { renderer = create(<TeamConversationPane conversation={own} accountKey="test:11" />) })
     expect(renderer!.root.findAllByProps({ 'aria-label': '查看团队资料与功能介绍' })).toHaveLength(0)
   })
 
@@ -300,7 +538,7 @@ describe('Team send UI recovery', () => {
     const host = document.createElement('div'); document.body.append(host)
     const root = createRoot(host)
     try {
-      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />); await tick() })
+      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="test:11" />); await tick() })
       const target = host.querySelector('[data-arkme-composer-extension-target]')!
       const card = host.querySelector<HTMLElement>('[data-arkme-primary-composer]')!
       expect(target.nextElementSibling).toBe(card)
@@ -328,7 +566,7 @@ describe('Team send UI recovery', () => {
       if (op === 'team.app.send.enqueue') return new Promise(resolve => { release = resolve })
       return []
     })
-    await act(async () => { renderer = create(<TeamConversationPane conversation={current} accountKey="test:11" onChanged={() => {}} />); await tick() })
+    await act(async () => { renderer = create(<TeamConversationPane conversation={current} accountKey="test:11" />); await tick() })
     await send()
     const stored = () => JSON.parse(localStorage.getItem(storageKey)!)
     expect(stored().reply).toBeUndefined()
@@ -555,7 +793,7 @@ describe('Team send UI recovery', () => {
     const value = { ...conversation, side: 'team' as const, visitor: { nickname: '访客', memberType: 'vip' as const } }
     let fresh: TeamConversation = { ...value, visitor: { nickname: '访客', memberType: 'svip' } }
     mocks.call.mockImplementation(async op => op === 'team.app.timeline' ? { conversation: fresh, messages: [], hasMore: false, beforeSeq: 0 } : [])
-    await act(async () => { renderer = create(<TeamConversationPane conversation={value} accountKey="test:11" onChanged={() => {}} />); await tick() })
+    await act(async () => { renderer = create(<TeamConversationPane conversation={value} accountKey="test:11" />); await tick() })
     const badges = () => renderer!.root.findByType('header').findAll(node => node.type === 'svg' && !!node.props['data-arkme-membership'])
     expect(badges()[0]!.props['data-arkme-membership']).toBe('svip')
     fresh = { ...value, visitor: { nickname: '访客', memberType: 'free' } }
@@ -641,15 +879,19 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findAll(node=>node.props.mode==='reedit'&&node.props.text==='编辑源旧正文')).toHaveLength(0)
   })
 
-  it('removes cached material immediately when recall proves conversation access was revoked', async () => {
+  it('removes cached material when the conversation read after a denied recall confirms access loss', async () => {
     const mine: TeamMessage = {ref:'own-ref',key:'own',seq:1,revision:1,side:'team',sender:{nickname:'我'},own:true,state:'published',createdAt:1,canRecall:true,canEdit:true,canDelete:true,version:1,contentStatus:'available',content:{text_content:'撤权前材料',template_kind:1},media:[]}
     const lost = vi.fn()
+    let denied = false
     mocks.call.mockImplementation(async op => {
-      if(op==='team.app.timeline') return {conversation,messages:[mine],hasMore:false,beforeSeq:0}
-      if(op==='team.app.recall') throw {body:{code:'team-not_accessible',message:'无权访问'}}
+      if(op==='team.app.recall') { denied = true; throw {body:{code:'team-not_accessible',message:'无权访问'}} }
+      if(op==='team.app.timeline') {
+        if (denied) throw {body:{code:'team-not_accessible',message:'无权访问'}}
+        return {conversation,messages:[mine],hasMore:false,beforeSeq:0}
+      }
       return []
     })
-    await act(async () => {renderer=create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={()=>{}} onAccessLost={lost}/>);await tick()})
+    await act(async () => {renderer=create(<TeamConversationPane conversation={conversation} accountKey="test:11" onAccessLost={lost}/>);await tick()})
     await act(async () => renderer!.root.findByType(TeamConversationMessage).props.onRecall())
     await act(async () => {renderer!.root.findByType(ArkmeConfirmDialog).props.onConfirm();await tick()})
     expect(lost).toHaveBeenCalledOnce()
@@ -962,7 +1204,7 @@ describe('Team send UI recovery', () => {
     const host = document.createElement('div'); document.body.append(host)
     const root = createRoot(host)
     try {
-      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />); await tick() })
+      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="test:11" />); await tick() })
       const editor = host.querySelector('[contenteditable="true"]') as HTMLElement
       editor.focus()
       const text = editor.firstChild!
@@ -1098,7 +1340,7 @@ describe('Team send UI recovery', () => {
   it.each(['arkme_cn', 'project_team'])('omits redundant explanation and Home controls for external conversations: %s', async jotmoId => {
     const target = { ...conversation, channel: { ...conversation.channel, jotmoId } }
     mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
-    await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="test:11" onChanged={() => {}} />); await tick() })
+    await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="test:11" />); await tick() })
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('与作者的历史私聊')
     expect(renderer!.root.findAllByType(ArkmeActionMenu).flatMap(node => node.props.actions).map(action => action.id)).toEqual(['audio', 'video'])
     expect(mocks.call.mock.calls.some(v => v[0] === 'team.app.home.visibility')).toBe(false)
@@ -1107,7 +1349,7 @@ describe('Team send UI recovery', () => {
   it.each(['team', 'external'] as const)('hides moderation and empty menus for owners on the %s side', async side => {
     const target = { ...conversation, side, channel: { ...conversation.channel, canManage: true } }
     mocks.call.mockImplementation(async () => ({ conversation: target, messages: [], hasMore: false, beforeSeq: 0 }))
-    await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="test:11" onChanged={() => {}} />); await tick() })
+    await act(async () => { renderer = create(<TeamConversationPane conversation={target} accountKey="test:11" />); await tick() })
     expect(renderer!.root.findAllByType(ArkmeActionMenu).flatMap(node => node.props.actions).map(action => action.id)).toEqual(['audio', 'video'])
     expect(JSON.stringify(renderer!.toJSON())).not.toMatch(/屏蔽此用户|解除屏蔽|对话选项/)
     expect(renderer!.root.findAllByProps({'aria-label':'返回团队对话'}).some(node => node.type === 'button')).toBe(false)
@@ -1196,10 +1438,13 @@ describe('Team send UI recovery', () => {
     expect(renderer!.root.findByType(ArkmeRichComposerInput).props.value).toBe('问题')
     expect(mocks.call.mock.calls.some(v=>v[0]==='team.app.send.enqueue')).toBe(false)
   })
-  it('keeps an edit draft and requires reading the new version before explicit overwrite', async () => {
+  it.each([false,true])('rechecks edit authorization before overwriting a version conflict (denied = %s)', async denied => {
     let message: TeamMessage = { ref: 'message', key: 'message', seq: 1, revision: 1, side: 'team', sender: { nickname: '成员' }, own: true, state: 'published', createdAt: 1, canEdit: true, canDelete: true, content: { text_content: '原内容', template_kind: 1 }, version: 1, contentStatus: 'available', media: [] }
     mocks.call.mockImplementation(async (op: string) => {
-      if (op === 'team.app.timeline') return { conversation: { ...conversation, side: 'team' }, messages: [message], hasMore: false, beforeSeq: 0 }
+      if (op === 'team.app.timeline') {
+        if (denied && message.version > 1) throw Object.assign(new Error('会话访问已撤销'),{body:{code:'team-not_accessible'}})
+        return { conversation: { ...conversation, side: 'team' }, messages: [message], hasMore: false, beforeSeq: 0 }
+      }
       if (op === 'team.app.edit' && message.version === 1) {
         message = { ...message, version: 2, content: { text_content: '另一位成员的新内容', template_kind: 1 } }
         throw Object.assign(new Error('内容已更新'), { body: { code: 'team-version_conflict' } })
@@ -1218,6 +1463,13 @@ describe('Team send UI recovery', () => {
     expect(button('保存修改').props.disabled).toBe(true)
     expect(renderer!.root.findAllByType(ArkmeRichComposerInput).find(v=>v.props.ariaLabel==='修改消息内容')!.props.value).toBe('我的修改')
     await click('读取最新版本')
+    if (denied) {
+      expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(0)
+      expect(renderer!.root.findAllByProps({'aria-label':'修改消息内容'})).toHaveLength(0)
+      expect(button('重试')).toBeDefined()
+      expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.edit')).toHaveLength(1)
+      return
+    }
     expect(JSON.stringify(renderer!.toJSON())).toContain('另一位成员的新内容')
     expect(mocks.call.mock.calls.filter(v => v[0] === 'team.app.edit')).toHaveLength(1)
     await click('确认覆盖最新版本')
@@ -1250,6 +1502,51 @@ describe('Team send UI recovery', () => {
     await act(async () => { invalidateTeamMessages('test:11'); await tick() })
     expect(renderer!.root.findAllByType('article')).toHaveLength(2)
   })
+  it.each([false,true])('checks the timeline after a receipt-only denial (conversation denied = %s)', async denied => {
+    const current:TeamConversation = {...conversation,side:'team'}
+    const message:TeamMessage = {ref:'m',key:'m',seq:1,revision:1,side:'team',sender:{nickname:'成员'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{template_kind:1,text_content:'已授权正文'},media:[]}
+    const page = {conversation:current,messages:[message],hasMore:false,beforeSeq:0}
+    const failure = Object.assign(new Error('阅读状态无权访问'),{body:{code:'team-not_accessible'}})
+    const lost = vi.fn()
+    let check = false, finish!: () => void
+    mocks.call.mockImplementation(async op => {
+      if (op === 'team.app.timeline') return check ? new Promise((resolve,reject) => {finish=()=>denied?reject(failure):resolve(page)}) : page
+      if (op === 'team.app.receipts') throw failure
+      return {}
+    })
+    await act(async () => {renderer=create(<TeamConversationPane conversation={current} accountKey="test:11" onAccessLost={lost}/>);await tick()})
+    check = true
+    await act(async () => {renderer!.root.findByType(TeamConversationMessage).props.onReceipts();await tick()})
+    expect(lost).not.toHaveBeenCalled()
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('已授权正文')
+    expect(finish).toBeTypeOf('function')
+    await act(async () => {finish();await tick()})
+    expect(lost).toHaveBeenCalledTimes(denied ? 1 : 0)
+    expect(renderer!.root.findAllByType(TeamConversationMessage)).toHaveLength(denied ? 0 : 1)
+  })
+  it('bounds receipt retries when the timeline remains readable after repeated receipt denial', async () => {
+    const message:TeamMessage = {ref:'m',key:'m',seq:1,revision:1,side:'team',sender:{nickname:'成员'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',content:{text_content:'保留正文'},media:[]}
+    let timelineReads=0, receiptReads=0
+    mocks.call.mockImplementation(async op => {
+      if(op==='team.app.timeline') {
+        timelineReads++
+        if(timelineReads>15) return new Promise(()=>{})
+        return {conversation:{...conversation,side:'team'},messages:[message],hasMore:false,beforeSeq:0}
+      }
+      if(op==='team.app.receipts') {
+        receiptReads++
+        throw Object.assign(new Error('回执不可用'),{body:{code:'team-not_accessible'}})
+      }
+      return {}
+    })
+    await mount()
+    await act(async()=>{renderer!.root.findByType(TeamConversationMessage).props.onReceipts();await tick()})
+    await act(async()=>{window.dispatchEvent(new Event('online'));await tick()})
+    for(let i=0;i<8;i++) await act(async()=>{await tick()})
+    expect(timelineReads).toBeLessThanOrEqual(6)
+    expect(receiptReads).toBeLessThanOrEqual(3)
+    expect(renderer!.root.findByType(TeamConversationMessage).props.message.content.text_content).toBe('保留正文')
+  })
   it('refreshes open receipts without dropping pages and never reopens a dismissed receipt', async () => {
     const message: TeamMessage = {ref:'message',key:'message',seq:1,revision:1,side:'team',sender:{nickname:'成员'},own:true,state:'published',createdAt:1,canEdit:false,canDelete:false,version:1,contentStatus:'available',media:[]}
     let read=false, deferred: ((value: unknown)=>void) | undefined, hold=false
@@ -1275,7 +1572,7 @@ describe('Team send UI recovery', () => {
   it('notifies the inbox owner immediately when detail authorization is revoked', async () => {
     const revoked=vi.fn()
     mocks.call.mockRejectedValue(Object.assign(new Error('no access'),{body:{code:'team-not_accessible'}}))
-    await act(async()=>{renderer=create(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={()=>{}} onAccessLost={revoked}/>);await tick()})
+    await act(async()=>{renderer=create(<TeamConversationPane conversation={conversation} accountKey="test:11" onAccessLost={revoked}/>);await tick()})
     expect(revoked).toHaveBeenCalledTimes(1)
     expect(renderer!.root.findAllByType('article')).toHaveLength(0)
   })
@@ -1339,7 +1636,7 @@ describe('Team send UI recovery', () => {
       const opened=await live.dispatch('team.app.open',{publicRef:'a'.repeat(32)}) as {conversation:TeamConversation}
       arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:2});socialAccessStore.confirm('test:2',true)
       mocks.call.mockImplementation((op,params,signal)=>live.dispatch(op,params??{},signal))
-      await act(async()=>{renderer=create(<TeamConversationPane conversation={opened.conversation} accountKey="test:2" onChanged={()=>{}} />);await tick()})
+      await act(async()=>{renderer=create(<TeamConversationPane conversation={opened.conversation} accountKey="test:2" />);await tick()})
       await act(async()=>renderer!.root.findByType(ArkmeRichComposerInput).props.onTextChange('T15 PC UI input'))
       await vi.waitFor(()=>expect(renderer!.root.findByType(ArkmeComposerSendButton).props.disabled).toBe(false),{timeout:10000})
       await send()

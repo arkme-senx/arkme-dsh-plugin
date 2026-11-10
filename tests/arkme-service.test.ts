@@ -1278,7 +1278,7 @@ describe('ArkmeService', () => {
     }
   })
 
-  it('prepares an outgoing video call from a fresh Arkme private-chat source', async () => {
+  it.each([undefined, [], ['peer__c2'], ['other']])('prepares an outgoing call with recipient push policy %j', async (mutedAccounts) => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -1304,6 +1304,7 @@ describe('ArkmeService', () => {
       } })
       if (url.endsWith('/api/v1/trtc/create-room')) return json({ code: 200, data: {
         room_id: 'room-private-1', shared_topic_id: 99, callee_accounts: ['peer__c2'],
+        call_push_disabled_accounts: mutedAccounts,
       } })
       throw new Error(`unexpected URL ${url}`)
     })
@@ -1314,17 +1315,18 @@ describe('ArkmeService', () => {
       callRequestId: 'request-1',
     })
 
-    expect(requests.map(item => item.url)).toEqual([
-      'https://chat.test/api/v1/chats/detail',
+    expect(requests[0]?.url).toBe('https://chat.test/api/v1/chats/detail')
+    expect(requests.at(-1)?.url).toBe('https://webrtc.test/api/v1/trtc/create-room')
+    expect(requests.slice(1, -1).map(item => item.url).sort()).toEqual([
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
       'https://auth.test/api/v1/auth/get-user-info',
-      'https://auth.test/api/v1/auth/get-public-users-by-ids',
-      'https://auth.test/api/v1/auth/get-public-users-by-ids',
       'https://webrtc.test/api/v1/trtc/credentials',
-      'https://webrtc.test/api/v1/trtc/create-room',
     ])
     expect(requests.at(-1)?.body).toMatchObject({
       chat_session_uid: 'chat-private-1',
       callee_user_ids: [20002],
+      include_call_notification_policy: true,
       call_media_type: 1,
       caller_name: '我的昵称',
     })
@@ -1344,11 +1346,17 @@ describe('ArkmeService', () => {
         roomId: 'room-private-1',
         mediaType: 'video',
         calleeAccounts: ['peer__c2'],
+        offlinePushInfo: { isDisablePush: mutedAccounts?.includes('peer__c2') ?? false },
         calleeName: '小林',
         callerName: '我的昵称',
         timeoutSec: 30,
       },
     })
+    const data = JSON.parse(result.call.userData)
+    expect(data.sharedTopicId).toBe(99)
+    expect(data.callerName).toBe('我的昵称')
+    expect(data.arkmeCallNotification).toEqual(mutedAccounts?.includes('peer__c2')
+      ? { version: 1, roomId: 'room-private-1', mutedAccounts: ['peer__c2'] } : undefined)
   })
 
   it('rejects a non-private outgoing source before contacting remote services', async () => {
@@ -5215,19 +5223,18 @@ describe('ArkmeService', () => {
     expect(requests.map(request => [request.method, request.url.split('?')[0]])).toEqual([
       ['POST', 'https://intelligent.test/api/v1/qa/latest-session'],
       ['POST', 'https://intelligent.test/api/v1/qa/new-session'],
-      ['POST', 'https://intelligent.test/api/v1/agent/model/list'],
       ['POST', 'https://intelligent.test/api/v1/qa/new-msg-v2'],
       ['GET', 'https://intelligent.test/api/v1/qa/stream-v2'],
     ])
-    expect(requests[3]?.body).toMatchObject({
+    expect(requests[2]?.body).toMatchObject({
       model: 2,
       session_id: 88,
       content: '帮我总结今天的快记',
       extra: '{}',
       client_turn_uid: '11111111-1111-4111-8111-111111111111',
       client_capabilities: ['dsh.arko.v1'],
-      model_route_key: 'dashscope/qwen3.8-max',
     })
+    expect(requests[2]?.body).not.toHaveProperty('model_route_key')
     expect(requests.every(request => request.authorization === 'Bearer access')).toBe(true)
   })
 

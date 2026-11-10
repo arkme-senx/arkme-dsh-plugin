@@ -94,3 +94,12 @@ describe('asynchronous mention candidates', () => {
     expect(next.rows.at(-1)?.candidate.displayName).toBe('乙新名字')
   })
 })
+
+it('uses an explicit Team person identity across signed-ref rotation without changing ordinary Chat keys', () => {
+  const ordinary: ArkmeMentionCandidate = {...members[0]!,kind:'member',mentionRef:'signed-old'}
+  const rotated: ArkmeMentionCandidate = {...ordinary,mentionRef:'signed-new'}
+  expect(arkmeMentionCandidateKey(ordinary)).toBe('member:signed-old')
+  expect(arkmeMentionCandidateKey(rotated)).toBe('member:signed-new')
+  expect(arkmeMentionCandidateKey({...ordinary,teamPersonKey:'stable-team-person'})).toBe('team-member:stable-team-person')
+  expect(arkmeMentionCandidateKey({...rotated,teamPersonKey:'stable-team-person'})).toBe('team-member:stable-team-person')
+})

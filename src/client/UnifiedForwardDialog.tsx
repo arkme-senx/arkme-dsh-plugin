@@ -16,7 +16,7 @@ import { useUnifiedForwardDirectory } from './unified-forward-directory.js'
 import { forwardTargetKey, forwardTargetName, forwardTargetSubtitle, forwardTeamChildren, searchForwardRows, type ForwardTarget, type ForwardTargetRow } from './unified-forward-targets.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { invalidateTeamMessages } from './team-messaging-events.js'
+import { refreshPublishedTeamMessages } from './team-messaging-events.js'
 import { tr } from './locale.js'
 import { useForwardTeamWorkspace } from './use-forward-team-workspace.js'
 import { mergeTeamWorkspaceRows, teamWorkspaceTarget } from './team-workspace-rows.js'
@@ -124,7 +124,7 @@ export function UnifiedForwardDialog({ accountKey, attempt, previewTitle, previe
           if (chosen.kind === 'team' && (chosen.conversation.blocked || !chosen.conversation.channel.enabled) && !attempt.hasAttempt(key)) throw new Error(tr('该团队对话暂时不能发送'))
           const receipt = await attempt.send(chosen, comment, controller.current.signal, identities[key])
           if (!current()) return
-          if (chosen.kind === 'team') invalidateTeamMessages(accountKey)
+          if (chosen.kind === 'team') refreshPublishedTeamMessages(accountKey, chosen.conversation.key)
           setResults(value => new Map(value).set(key, receipt.warningText || tr('已转发')))
           if (receipt.warningText) complete = false
         } catch (reason) { complete = false; if (current()) { const message = reason instanceof Error ? reason.message : tr('转发结果尚未确认，请使用原请求重试'); setError(message); setResults(value => new Map(value).set(key, message)) } }
