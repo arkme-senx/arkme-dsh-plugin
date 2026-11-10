@@ -160,6 +160,19 @@ describe('registered owner read recovery', () => {
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
   const busy = (error?: object) => new Response(JSON.stringify({ code: 1002, message: '服务器繁忙', data: {}, ...(error ? { error } : {}) }))
   const ok = () => new Response(JSON.stringify({ code: 200, data: { items: [] } }))
+  it.each(['workspace/folders/query', 'entry-preferences/list', 'entry-preferences/v2/list',
+    'entry-preferences/query', 'entry-preferences/v2/query'])('recovers a connection reset during Team directory read %s', async route => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError('fetch failed')).mockImplementation(ok)
+    const runtime = new ServiceRuntime({ ...config, teamBaseUrl: 'https://team.test' }, sessions,
+      { async uniqueCode() { return 'synthetic-key' } } as StateStore, fetcher)
+    try {
+      const check = expect(runtime.authenticatedTeamPost(`/api/v1/team/${route}`, {}, session, undefined, true))
+        .resolves.toEqual({ items: [] })
+      await Promise.all([vi.advanceTimersByTimeAsync(2000), check])
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally { runtime.dispose() }
+  })
   it('silently recovers public profile reads without retrying profile mutations', async () => {
     vi.useFakeTimers()
     const fetcher = vi.fn().mockImplementationOnce(() => busy()).mockImplementationOnce(() => busy()).mockImplementation(ok)

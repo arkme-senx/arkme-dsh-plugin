@@ -380,24 +380,25 @@ span.arkme-forward-search {
 /* Only the search label condenses. Conversation rows retain their left anchor
    and continuously truncate text instead of switching to an avatar-only layout. */
 .arkme-directory-search-control { position: relative; display: flex; flex: 1; min-width: 40px; }
-[data-arkme-directory-sync-status] { position: absolute; z-index: 1; inset-inline-end: 6px; top: 50%; transform: translateY(-50%); }
-section > [data-arkme-directory-sync-status] { top: 6px; transform: none; }
-[data-arkme-directory-sync-status] button[aria-haspopup="menu"] {
-  display: grid; place-items: center; width: 26px; height: 26px;
-  padding: 0; border: 0; border-radius: 7px; cursor: pointer;
-  background-color: transparent; color: var(--dsw-alias-label-secondary, #68707c);
-}
-.arkme-directory-search-control:has(> [data-arkme-directory-sync-status]) [data-arkme-directory-search-label] { margin-inline-end: 23px; }
 [data-arkme-directory-compact="true"] .arkme-directory-search-control { flex: none; }
-[data-arkme-directory-compact="true"] .arkme-directory-search-control > [data-arkme-directory-sync-status] {
-  top: -5px; inset-inline-end: -4px; transform: none;
-}
-[data-arkme-directory-compact="true"] [data-arkme-directory-sync-status] button[aria-haspopup="menu"] {
-  width: 20px; height: 20px; border-radius: 6px;
-  background-color: var(--dsw-alias-bg-layer-2, #f3f4f6);
-}
 [data-arkme-directory-compact="true"] [data-arkme-directory-search] { flex: none !important; width: 40px; padding: 0 !important; justify-content: center; }
 [data-arkme-directory-compact="true"] [data-arkme-directory-search-label] { display: none !important; }
+[data-arkme-directory-sync-row] { flex: 0 0 24px; min-width: 0; }
+[data-arkme-directory-sync-row] > span { width: 100%; }
+[data-arkme-directory-sync-row] button[aria-haspopup="menu"] {
+  display: flex; align-items: center; justify-content: space-between; gap: 4px;
+  width: 100%; height: 24px; padding: 0 10px; border: 0; cursor: pointer;
+  background: transparent; color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 11px; white-space: nowrap;
+}
+[role="menu"]:has(.arkme-directory-sync-item) { min-width: min(220px, calc(100vw - 24px)); }
+[role="menuitem"]:has(.arkme-directory-sync-item) > span { flex: 1; min-width: 0; }
+.arkme-directory-sync-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%;
+}
+.arkme-directory-sync-item > span:last-child {
+  flex: none; color: var(--dsw-alias-label-secondary, #68707c);
+}
 
 [data-arkme-harness-summary] { min-width: 0; display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px 8px; font-size: 11px; line-height: 16px; }
 [data-arkme-harness-status] { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }

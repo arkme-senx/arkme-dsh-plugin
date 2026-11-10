@@ -33,8 +33,9 @@ export function startTeamDirectory(key: string): () => void {
     for (const c of openedTeamConversations.read(key)) items.set(c.key, mergeOpenedTeamConversation(c, items.get(c.key) ?? c))
     return [...items.values()].sort((a, b) => b.updatedAt - a.updatedAt || `${a.side}:${a.key}`.localeCompare(`${b.side}:${b.key}`))
   }
-  let running = false, again = false, fullAgain = false, revision = 0
+  let running = false, again = false, fullAgain = false, revision = 0, preferenceRefresh = 0
   let folderRequest: AbortController | undefined
+  let foldersReady: Promise<void> | undefined
   account = key; openedTeamConversations.activate(key); snapshot = { ...empty, items: itemsNow() }; emit()
   const stopOpened = openedTeamConversations.subscribe(changed => {
     if (changed !== key || controller.signal.aborted || account !== key) return
@@ -48,8 +49,7 @@ export function startTeamDirectory(key: string): () => void {
     const token = revision
     if (!readStateOnly) { snapshot = { ...snapshot, loading: true }; emit() }
     let failure: string | undefined, accessLost = false
-    void(async()=>{
-      if(more||readStateOnly)return
+    if (!more && !readStateOnly) foldersReady = (async () => {
       // Folder IO stays optional, but a newer head owns its result and error.
       folderRequest?.abort()
       const folders=new AbortController();folderRequest=folders
@@ -69,10 +69,11 @@ export function startTeamDirectory(key: string): () => void {
         if(folderRequest===folders)folderRequest=undefined
         if(!folders.signal.aborted&&account===key&&token===revision&&snapshot.hasLoaded) {
           emit()
-          void teamDirectoryPreferences.hydrate(key,true).then(()=>teamDirectoryPreferences.reconcile(key,itemsNow(),controller.signal)).catch(()=>{})
         }
       }
     })()
+    const preferenceToken = readStateOnly ? preferenceRefresh : ++preferenceRefresh
+    const preferencesCurrent = () => !controller.signal.aborted && account === key && token === revision && preferenceToken === preferenceRefresh
     await Promise.all((['team', 'external'] as const).map(async side => {
       const previous = pages.get(side)
       if (more && !previous?.hasMore) return
@@ -136,12 +137,15 @@ export function startTeamDirectory(key: string): () => void {
     if (accessLost) ++revision
     const items = itemsNow()
     snapshot = { ...(snapshot.workspaceSupported===undefined?{}:{workspaceSupported:snapshot.workspaceSupported}),workspaceFolders:snapshot.workspaceFolders,...(snapshot.foldersError?{foldersError:snapshot.foldersError}:{}),items, hasMore: [...pages.values()].some(p => p.hasMore), loading: false, hasLoaded: true, ...(failure ? { error: failure } : {}) }; emit()
-    if (!readStateOnly && token === revision) {
-      // Optional preference IO runs after publishing ordinary directory rows.
+    if (!readStateOnly && preferencesCurrent()) {
+      // Publish conversation rows first, then sync preferences once the folder scope is known.
       void (async () => {
+        await foldersReady
+        if (!preferencesCurrent()) return
         await teamDirectoryPreferences.hydrate(key, true)
-        await teamDirectoryPreferences.reconcile(key, items, controller.signal)
-        if (controller.signal.aborted || account !== key || token !== revision) return
+        if (!preferencesCurrent()) return
+        await teamDirectoryPreferences.reconcile(key, itemsNow(), controller.signal)
+        if (!preferencesCurrent()) return
         // A preference query also carries an authority verdict. A denial must
         // retire old previews, rather than appear as an ordinary default row.
         const allowed = (c: TeamConversation) => teamDirectoryPreferences.canPresent(key, c)
@@ -163,7 +167,7 @@ export function startTeamDirectory(key: string): () => void {
           // member-initiated contact can appear outside the ordinary page.
           extra.push(...batch.flat().filter(c => c.lastSeq > 0 || c.side === 'team' && c.memberInitiated === true))
         }
-        if (controller.signal.aborted || account !== key || token !== revision) return
+        if (!preferencesCurrent()) return
         for (const c of extra) if (!pins.has(c.key) && allowed(c)) pins.set(c.key, c)
         const preferences = teamDirectoryPreferences.read(key)
         for (const [id, c] of pins) if (!teamEntryPinned(preferences, { kind: 'conversation', conversation: c }) &&
