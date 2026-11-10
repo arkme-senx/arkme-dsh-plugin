@@ -66,6 +66,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
   const recallAction = { id:'withdraw' as const, disabled:busy || !onRecall, onSelect:()=>select(()=>onRecall?.()) }
   return <article data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
     data-team-selectable={teamMessageSelectable(message) ? message.key : undefined}
+    data-arkme-read-sequence={published && available && message.version > 0 && !selecting ? message.seq : undefined}
     onClickCapture={event => { if (selecting) { event.preventDefault(); event.stopPropagation(); if (!busy) onToggle?.() } }}
     data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther), ...(selecting ? messageSelectionStyles.rowSelectAvatarMode : {}), ...(selected ? messageSelectionStyles.rowSelectedForAction : {}) }}>
     {selecting && <ArkmeMessageSelectionControl anchor="avatar" checked={selected} disabled={busy || !teamMessageSelectable(message)} onToggle={() => onToggle?.()} />}

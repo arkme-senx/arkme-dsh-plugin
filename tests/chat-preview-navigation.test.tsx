@@ -79,21 +79,17 @@ it('opens preview without navigation and leaves click/reselect read state to the
   expect(mark).not.toHaveBeenCalled()
   expect(row()).not.toBeNull()
   // The selected conversation may restore history, including on repeated clicks.
-  const release = arkmeChatDirectory.registerReadingIntent(source.sourceKey!, () => false)
-  try {
-    for (let i = 0; i < 3; i++) await act(async () => row().click())
-    expect(mark).not.toHaveBeenCalled()
-    expect(row()).not.toBeNull()
-    expect(state.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
-  } finally { release() }
+  for (let i = 0; i < 3; i++) await act(async () => row().click())
+  expect(mark).not.toHaveBeenCalled()
+  expect(row()).not.toBeNull()
+  expect(state.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
   expect(arkmeUi.getSnapshot().selectedSource?.sourceRef).toBe(source.sourceRef)
 })
 
-it('keeps the row and native badge until the viewport follows latest, including delayed Host replay', async () => {
+it('keeps the row and native badge until the viewport displays the latest message, including delayed Host replay', async () => {
   await act(async () => root.render(<><ArkmeProductNavigation compact={false} /><ArkmeNavigation /></>))
   const apply = vi.fn(async () => true)
   const stop = startArkmeDirectoryBadge(apply, 'test:7001')
-  let release: (() => void) | undefined
   try {
     await act(async () => { await Promise.resolve() })
     expect(document.querySelector('[data-arkme-unread-count="5"]')).not.toBeNull()
@@ -102,7 +98,7 @@ it('keeps the row and native badge until the viewport follows latest, including 
     await act(async () => row().click())
     expect(row()).not.toBeNull()
     expect(apply).toHaveBeenLastCalledWith(5)
-    await act(async () => { release = arkmeChatDirectory.registerReadingIntent(source.sourceKey!, () => true) })
+    await act(async () => { arkmeChatDirectory.markReadOptimistic(source, source.sourceKey, 10) })
     expect(document.querySelector('[data-arkme-unread-count]')).toBeNull()
     expect(row()).toBeNull()
     expect(apply).toHaveBeenLastCalledWith(0)
@@ -110,7 +106,7 @@ it('keeps the row and native badge until the viewport follows latest, including 
     expect(document.querySelector('[data-arkme-unread-count]')).toBeNull()
     expect(row()).toBeNull()
     expect(apply).toHaveBeenLastCalledWith(0)
-  } finally { arkmeChatDirectory.confirmDisplayedRead(source.sourceKey!, 10); release?.(); stop() }
+  } finally { stop() }
 })
 
 

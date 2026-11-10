@@ -4,13 +4,44 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { TeamConversation } from '../src/team-app-contract.js'
 const mock = vi.hoisted(() => vi.fn())
 vi.mock('../src/client/api.js', () => ({ callArkme: mock }))
-import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
+import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, markTeamDirectoryRead, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
 import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
 import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
 let stops: Array<() => void> = []
 afterEach(() => { stops.forEach(stop => stop()); stops = []; openedTeamConversations.reset(); mock.mockReset(); vi.restoreAllMocks() })
 const channel = { teamRef: 'ref', name: '团队', jotmoId: 'team_id', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
 const item = (side: 'team' | 'external', time = 1): TeamConversation => ({ ref: `${side}-ref`, key: `${side}-key`, channel, side, lastSeq: 1, latestTeamReplySeq: 0, myReadSeq: 0, unread: 1, needsReply: true, blocked: false, revision: 1, updatedAt: time })
+it('clears only the covered Team badge, preserving newer unread and current failure recovery', async () => {
+  const account = 'visible-team-read'
+  let team = item('team')
+  mock.mockImplementation(async (op, { side, conversationRefs }) => {
+    if (op === 'team.app.workspace.request') return []
+    if (op === 'team.app.read-states') return conversationRefs.map((ref: string) => {
+      const row = ref === team.ref ? team : item('external')
+      return { key: row.key, accessible: true, lastSeq: row.lastSeq, myReadSeq: row.myReadSeq, unread: row.unread }
+    })
+    return { items: op === 'team.app.conversations' ? [side === 'team' ? team : item('external')] : [], hasMore: false }
+  })
+  stops.push(startTeamDirectory(account))
+  const unread = () => readTeamDirectory(account).items.find(row => row.key === team.key)?.unread
+  await vi.waitFor(() => expect(unread()).toBe(1))
+  const rollbackOld = markTeamDirectoryRead(account, team.key, 1)
+  expect(unread()).toBe(0)
+  expect(groupTeamConversations(readTeamDirectory(account).items)[0]?.unread).toBe(0)
+  team = { ...team, lastSeq: 2, unread: 2 }
+  await refreshTeamDirectory(account, false, true)
+  expect(unread()).toBe(2)
+  markTeamDirectoryRead(account, team.key, 1)
+  expect(unread()).toBe(2)
+  await refreshTeamDirectory(account)
+  expect(unread()).toBe(2)
+  const rollbackCurrent = markTeamDirectoryRead(account, team.key, 2)
+  rollbackOld()
+  expect(unread()).toBe(0)
+  rollbackCurrent()
+  expect(unread()).toBe(2)
+})
+
 it('keeps automatic refresh behind explicit retry and pagination', async () => {
   const account = 'scheduling'
   let release!: () => void

@@ -243,6 +243,12 @@ describe('conversation send directory projection', () => {
   let copiedQuickLinkItems: ArkmeMessageCopyLinkSnapshotItem[]
   let activeSource = target
 
+  function visibleReadRows(bottom = 560) {
+    return renderer?.root.findAll(node => typeof node.type === 'string' && node.props['data-arkme-read-sequence'] !== undefined)
+      .map(row => ({ dataset: { arkmeReadSequence: row.props['data-arkme-read-sequence'] },
+        getBoundingClientRect: () => ({ top: bottom - 20, bottom }) })) ?? []
+  }
+
   it.each([['background-read', 'private'], ['previous-realtime', 'private'], ['background-read', 'group'], ['previous-realtime', 'group']] as const)('keeps an in-flight send visible through %s in %s chat', async (trigger, kind) => {
     const selected = kind === 'group' ? { ...group, latestSequence: 8 } : target
     activeSource = selected; arkmeUi.selectSource(selected)
@@ -458,7 +464,7 @@ describe('conversation send directory projection', () => {
       return (++reads === 1 ? Promise.resolve(unifiedFixture(target, [old])) : blocked.promise) as any
     })
     const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
-      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), querySelectorAll: () => [], scrollTo: vi.fn() }
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), querySelectorAll: (selector: string) => selector === '[data-arkme-read-sequence]' ? visibleReadRows() : [], scrollTo: vi.fn() }
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
     }) })
@@ -479,6 +485,7 @@ describe('conversation send directory projection', () => {
       })
       expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
       expect(renderer!.root.findAllByProps({ 'data-arkme-conversation-row': `message:live-${n}` }).length).toBeGreaterThan(0)
+      await act(async () => { for (const [frame] of vi.mocked(requestAnimationFrame).mock.calls.splice(0)) frame(0) })
       expect(arkmeChatDirectory.unreadCount(target.sourceRef)).toBe(0)
     }
     expect(discoveries()).toBe(initialDiscoveries)
@@ -650,7 +657,8 @@ describe('conversation send directory projection', () => {
     const doc = Object.assign(new EventTarget(), { body: {}, activeElement: null,
       visibilityState: state.visibilityState, hasFocus: () => state.focused })
     vi.stubGlobal('document', doc)
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0))
+    vi.stubGlobal('cancelAnimationFrame', clearTimeout)
     activeSource = { ...state.selected, unreadCount: 1 }
     arkmeChatDirectory.publish([activeSource])
     arkmeUi.selectSource(activeSource)
@@ -659,7 +667,12 @@ describe('conversation send directory projection', () => {
     const base = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation((operation, params, signal) => operation === 'source.mark-read'
       ? Promise.resolve({ effectiveReadSequence: params.readSequence, unreadCount: 0 }) : base(operation, params, signal))
-    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const body = { scrollTop: 0, scrollHeight: 600, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }), querySelectorAll: (selector: string) =>
+        selector === '[data-arkme-read-sequence]' ? visibleReadRows() : [] }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
     const readsBefore = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
     const incoming = { ...timeline[0]!, itemUid: 'background-body', sequence: activeSource.latestSequence! + 1, textContent: '后台正文' }
     await act(async () => { arkmeChatTimelineDelta.publish([{ source: { ...activeSource, latestSequence: incoming.sequence }, items: [incoming] }]) })
@@ -667,7 +680,7 @@ describe('conversation send directory projection', () => {
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
     doc.visibilityState = 'visible'
     state.focused = true
-    await act(async () => { doc.dispatchEvent(new Event('visibilitychange')) })
+    await act(async () => { doc.dispatchEvent(new Event('visibilitychange')); await new Promise(resolve => setTimeout(resolve, 20)) })
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(readsBefore)
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.mark-read')).toHaveLength(1)
     expect(mocks.callArkme).toHaveBeenCalledWith('source.mark-read', { sourceRef: activeSource.sourceRef, readSequence: incoming.sequence })
@@ -677,7 +690,8 @@ describe('conversation send directory projection', () => {
     const doc = Object.assign(new EventTarget(), { body: {}, activeElement: null,
       visibilityState: 'visible', hasFocus: () => true })
     vi.stubGlobal('document', doc)
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0))
+    vi.stubGlobal('cancelAnimationFrame', clearTimeout)
     activeSource = { ...target, unreadCount: 1 }
     arkmeChatDirectory.publish([activeSource]); arkmeUi.selectSource(activeSource)
     timeline = [{ itemUid: 'before-motion', sequence: 8, senderName: '同事', isMe: false,
@@ -688,25 +702,29 @@ describe('conversation send directory projection', () => {
       ? Promise.resolve({ effectiveReadSequence: params.readSequence, unreadCount: 0 }) : base(operation, params, signal))
     const view = { Event, performance: { now: () => 0 }, requestAnimationFrame: vi.fn(() => 1),
       cancelAnimationFrame: vi.fn(), matchMedia: () => ({ matches: false }) }
+    let lowerEdge = 660
     const body = { scrollTop: 0, scrollHeight: 1500, clientHeight: 600,
       style: { getPropertyValue: () => '', getPropertyPriority: () => '', setProperty: vi.fn(), removeProperty: vi.fn() },
-      ownerDocument: { defaultView: view }, addEventListener: vi.fn(), removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(), getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }), querySelectorAll: () => [] }
+      ownerDocument: Object.assign(doc, { defaultView: view }), addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(), getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }), querySelectorAll: (selector: string) => selector === '[data-arkme-read-sequence]'
+        ? visibleReadRows(lowerEdge).filter(row => row.dataset.arkmeReadSequence === 9) : [] }
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
     }) })
     mocks.callArkme.mockClear()
     const incoming = { ...timeline[0]!, itemUid: 'during-motion', timelineEventId: 'during-motion', timelineOrderTie: '009', sequence: 9, sendAtMillis: 2 }
     // The viewport is still within the old 80px follow tolerance, but the new
-    // lower edge has not been presented. Intent may suppress a badge, not ACK it.
+    // lower edge has not been presented. The row must be presented before clearing its badge or sending an ACK.
     body.scrollHeight += 60
     await act(async () => {
       arkmeChatDirectory.publish([{ ...activeSource, unreadCount: 1, latestSequence: 9 }])
       arkmeChatTimelineDelta.publish([{ source: { ...activeSource, latestSequence: 9 }, items: [incoming] }])
     })
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': incoming.itemUid })).toHaveLength(1)
+    expect(arkmeChatDirectory.unreadCount(target.sourceRef)).toBe(1)
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'source.mark-read')).toHaveLength(0)
     await act(async () => {
+      lowerEdge = 600
       body.scrollTop = 960
       renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll()
     })
@@ -789,7 +807,8 @@ describe('conversation send directory projection', () => {
       scrollHeight: 1500, clientHeight: 600,
       scrollTo: vi.fn(({ top: value }: { top: number }) => { body.scrollTop = value }),
       getBoundingClientRect: () => ({ top: 0, bottom: 600, height: 600 }),
-      querySelectorAll: () => ['bottom-history', 'bottom-latest'].map(itemUid => ({
+      querySelectorAll: (selector: string) => selector === '[data-arkme-read-sequence]'
+        ? visibleReadRows(1500 - top) : ['bottom-history', 'bottom-latest'].map(itemUid => ({
         dataset: { arkmeConversationRow: `message:${itemUid}`, arkmeMessageItemUid: itemUid },
         getBoundingClientRect: () => ({ top: 300 - top, bottom: 380 - top, height: 80 }),
       })),
@@ -806,8 +825,7 @@ describe('conversation send directory projection', () => {
       // This renderer's default RAF stub records callbacks without running them.
       // Deliver the scheduled paint before checking the scroll affordance.
       if (vi.isMockFunction(requestAnimationFrame)) {
-        const callback = vi.mocked(requestAnimationFrame).mock.calls.at(-1)?.[0]
-        callback?.(0)
+        for (const [callback] of vi.mocked(requestAnimationFrame).mock.calls.splice(0)) callback(0)
       }
     })
     return body
@@ -1045,13 +1063,13 @@ describe('conversation send directory projection', () => {
 
   it('finishes navigation without waiting for read acknowledgement', async () => {
     const body = await mountBottomControl(true)
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
     vi.spyOn(arkmeChatDirectory, 'hasOptimisticRead').mockReturnValue(true)
     const pendingRead = deferred<unknown>()
     const baseCall = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.mark-read'
       ? pendingRead.promise : baseCall(operation, ...args))
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '回到底部' }).props.onClick() })
+    await act(async () => { for (const [callback] of vi.mocked(requestAnimationFrame).mock.calls.splice(0)) callback(0) })
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(true)
     expect(body.scrollTop).toBe(900)
     expect(renderer!.root.findAllByProps({ 'aria-label': '回到底部' })).toHaveLength(0)
@@ -2311,7 +2329,8 @@ describe('conversation send directory projection', () => {
       entries: [[selected.sourceKey, { scrollTop: 730, stickToBottom: false, anchorId: 'message:cached-entry', anchorOffset: 0 }]] }))
     vi.stubGlobal('document', Object.assign(new EventTarget(), { body: {}, activeElement: null,
       visibilityState: 'visible', hasFocus: () => true }))
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0))
+    vi.stubGlobal('cancelAnimationFrame', clearTimeout)
     const local = unifiedFixture(selected, [{ itemUid: 'cached-entry', sequence: 10, senderName: '同事', isMe: false,
       sendAtMillis: 10, textContent: '本地历史', status: 1 }])
     Object.assign(local.unified, { newerHasMore: true, newerCursor: 'local-tail' })
@@ -2335,7 +2354,7 @@ describe('conversation send directory projection', () => {
     let top = 200
     const body = { get scrollTop() { return top }, set scrollTop(value: number) { top = Math.max(0, Math.min(1400, value)) },
       scrollHeight: 2000, clientHeight: 600, scrollTo: vi.fn(), getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
-      querySelectorAll: () => [{ dataset: { arkmeConversationRow: 'message:cached-entry' },
+      querySelectorAll: (selector: string) => selector === '[data-arkme-read-sequence]' ? visibleReadRows(2000 - top) : [{ dataset: { arkmeConversationRow: 'message:cached-entry' },
         getBoundingClientRect: () => ({ top: 730 - top, bottom: 810 - top }) }] }
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
@@ -2344,6 +2363,7 @@ describe('conversation send directory projection', () => {
       ? [expect.objectContaining({ unified: expect.objectContaining({ mode: 'refresh' }) })] : [undefined])
     expect(body.scrollTop).toBe(saved ? 730 : 1400)
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': saved ? 'cached-entry' : 'latest-entry' })).toHaveLength(1)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })
     expect(acknowledgements).toEqual(saved ? [] : [50])
   })
 

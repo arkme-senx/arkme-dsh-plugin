@@ -447,8 +447,7 @@ export class ArkmeChatDirectoryStore {
   private pendingMutations: ArkmeChatDirectoryMutation[] = []
   private readonly readWatermarks = new Map<string, ArkmeChatReadWatermark>()
   private readonly optimisticReadWatermarks = new Map<string, ArkmeChatReadWatermark>()
-  private readonly optimisticUnreadBackups = new Map<string, number>()
-  private readingIntent: { key: string; allowed: () => boolean; failedThrough: number; displayedThrough: number } | undefined
+  private readonly optimisticUnreadBackups = new Map<string, Pick<ArkmeSourceItem, "unreadCount" | "hasUnreadMention">>()
   private readonly sourceKeysByRef = new Map<string, string>()
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
@@ -508,7 +507,6 @@ export class ArkmeChatDirectoryStore {
     this.readWatermarks.clear()
     this.optimisticReadWatermarks.clear()
     this.optimisticUnreadBackups.clear()
-    this.readingIntent = undefined
     this.sourceKeysByRef.clear()
     if (this.snapshot.sources.length > 0 || this.snapshot.baselineReady || this.snapshot.isRefreshing || this.snapshot.rootReadError !== undefined || hadLocalMetadata) this.commit([])
   }
@@ -735,19 +733,6 @@ export class ArkmeChatDirectoryStore {
   }
 
   private commit(sources: ArkmeSourceItem[]): void {
-    const reading = this.readingIntent
-    if (reading?.allowed()) sources = sources.map(source => {
-      const key = identityForSource({ sourceKeysByRef: this.sourceKeysByRef }, source.sourceRef, source.sourceKey)
-      const sequence = normalizedSequence(source.latestSequence)
-      if (key !== reading.key || sequence <= reading.failedThrough || source.unreadCount <= 0
-        || (source.kind !== 'private_chat' && source.kind !== 'group_chat')) return source
-      const previous = this.optimisticReadWatermarks.get(key)
-      if (!previous || previous.effectiveReadSequence < sequence) {
-        this.optimisticUnreadBackups.set(key, normalizedCount(source.unreadCount))
-        this.optimisticReadWatermarks.set(key, { effectiveReadSequence: sequence, unreadCount: 0 })
-      }
-      return applyReadWatermark(source, this.combinedReadWatermarks(), { sourceKeysByRef: this.sourceKeysByRef })
-    })
     if (this.snapshot.baselineReady !== this.baselineReady || this.snapshot.isRefreshing !== this.isRefreshing
       || (this.snapshot.sources.length === 0) !== (sources.length === 0)) {
       homeTourDiagnostic('directory-state-change', {
@@ -907,11 +892,11 @@ export class ArkmeChatDirectoryStore {
     const currentSource = sourceIndex >= 0
       ? this.snapshot.sources[sourceIndex]
       : seedSourceIndex >= 0 ? seedSources[seedSourceIndex] : source
-    if (currentSource === undefined
+    if (currentSource === undefined || normalizedSequence(currentSource.latestSequence) > target.effectiveReadSequence
       || (normalizedCount(currentSource.unreadCount) <= 0 && currentSource.hasUnreadMention !== true)) return false
     const existing = this.optimisticReadWatermarks.get(identity)
     if (existing !== undefined && existing.effectiveReadSequence >= target.effectiveReadSequence && existing.unreadCount === 0) return false
-    if (!this.optimisticUnreadBackups.has(identity)) this.optimisticUnreadBackups.set(identity, normalizedCount(currentSource.unreadCount))
+    this.optimisticUnreadBackups.set(identity, { unreadCount: normalizedCount(currentSource.unreadCount), hasUnreadMention: currentSource.hasUnreadMention === true })
     this.optimisticReadWatermarks.set(identity, { effectiveReadSequence: target.effectiveReadSequence, unreadCount: 0 })
     const sources = sourceIndex >= 0
       ? this.snapshot.sources
@@ -923,40 +908,6 @@ export class ArkmeChatDirectoryStore {
       { sourceKeysByRef: this.sourceKeysByRef },
     ))
     return true
-  }
-
-  /** Continuous equivalent of clicking an unread row. ACK still waits for displayed bodies. */
-  registerReadingIntent(key: string, allowed: () => boolean): () => void {
-    const intent = { key, allowed, failedThrough: 0, displayedThrough: 0 }
-    this.readingIntent = intent
-    this.refreshReadingIntent()
-    return () => {
-      if (this.readingIntent !== intent) return
-      this.readingIntent = undefined
-      this.rollbackReadingIntent(key, intent.displayedThrough)
-    }
-  }
-
-  refreshReadingIntent(): void {
-    const intent = this.readingIntent
-    if (!intent) return
-    if (!intent.allowed()) this.rollbackReadingIntent(intent.key, intent.displayedThrough)
-    else if (this.snapshot.sources.some(source => source.unreadCount > 0
-      && normalizedSequence(source.latestSequence) > intent.failedThrough
-      && identityForSource({ sourceKeysByRef: this.sourceKeysByRef }, source.sourceRef, source.sourceKey) === intent.key)) {
-      this.commit(this.snapshot.sources)
-    }
-  }
-
-  confirmDisplayedRead(key: string, sequence: number): void {
-    if (this.readingIntent?.key === key) this.readingIntent.displayedThrough = Math.max(this.readingIntent.displayedThrough, sequence)
-  }
-
-  private rollbackReadingIntent(key: string, displayedThrough: number): void {
-    const pending = this.optimisticReadWatermarks.get(key)
-    if (!pending || pending.effectiveReadSequence <= displayedThrough) return
-    const source = this.snapshot.sources.find(item => identityForSource({ sourceKeysByRef: this.sourceKeysByRef }, item.sourceRef, item.sourceKey) === key)
-    if (source) this.rejectOptimisticRead(source.sourceRef, key, pending.effectiveReadSequence)
   }
 
   hasOptimisticRead(sourceRef: string, sourceKey: string | undefined, effectiveReadSequence: number): boolean {
@@ -974,15 +925,14 @@ export class ArkmeChatDirectoryStore {
     const identity = identityForSource(indexes, target.sourceRef, target.sourceKey)
     const optimistic = this.optimisticReadWatermarks.get(identity)
     if (optimistic === undefined || optimistic.effectiveReadSequence > target.effectiveReadSequence) return false
-    if (this.readingIntent?.key === identity) this.readingIntent.failedThrough = target.effectiveReadSequence
     this.optimisticReadWatermarks.delete(identity)
-    const backupUnreadCount = this.optimisticUnreadBackups.get(identity)
+    const backup = this.optimisticUnreadBackups.get(identity)
     this.optimisticUnreadBackups.delete(identity)
     const sources = this.snapshot.sources.map(source => {
-      if (backupUnreadCount === undefined) return source
+      if (backup === undefined) return source
       if (identityForSource(indexes, source.sourceRef, source.sourceKey) !== identity) return source
       if (normalizedSequence(source.latestSequence) > target.effectiveReadSequence) return source
-      return projectSourceAttention(source, backupUnreadCount)
+      return projectSourceAttention({ ...source, ...backup })
     })
     this.commit(applyDirectoryMutations(
       sources,
@@ -1085,7 +1035,8 @@ export class ArkmeChatDirectoryStore {
       // The remaining unseen count can shrink while the optimistic frontier stays unchanged.
       if (target.latestSequence === optimistic.effectiveReadSequence
         && target.effectiveReadSequence >= (this.readWatermarks.get(identity)?.effectiveReadSequence ?? 0)) {
-        this.optimisticUnreadBackups.set(identity, normalizedCount(target.unreadCount))
+        const unreadCount = normalizedCount(target.unreadCount)
+        this.optimisticUnreadBackups.set(identity, { unreadCount, hasUnreadMention: unreadCount > 0 && this.optimisticUnreadBackups.get(identity)?.hasUnreadMention === true })
       }
       return
     }
