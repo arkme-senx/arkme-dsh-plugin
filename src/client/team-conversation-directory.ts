@@ -14,9 +14,51 @@ const listeners = new Set<() => void>()
 let account = '', snapshot = empty, request: ((more?: boolean, readStateOnly?: boolean) => Promise<void>) | undefined
 let discard: ((conversation: TeamConversation) => void) | undefined
 export const subscribeTeamDirectory = (listener: () => void): (() => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
-export const readTeamDirectory = (key: string): Snapshot => key === account ? snapshot : empty
+export const readTeamDirectory = (key: string): Snapshot => key === account ? projectedSnapshot : empty
 export const refreshTeamDirectory = (key: string, more = false, readStateOnly = false): Promise<void> => key === account ? request?.(more, readStateOnly) ?? Promise.resolve() : Promise.resolve()
-const emit = () => { for (const listener of listeners) listener() }
+const pendingReads = new Map<string, number>()
+// The read-state endpoint can learn a newer message before the directory preview changes.
+const readStateFrontiers = new Map<string, number>()
+let projectedSnapshot = empty
+const emit = () => {
+  projectedSnapshot = snapshot
+  if (pendingReads.size > 0 || readStateFrontiers.size > 0) {
+    const rows = new Map(snapshot.items.map(row => [row.key, row.lastSeq]))
+    for (const key of pendingReads.keys()) if (!rows.has(key)) pendingReads.delete(key)
+    for (const [key, frontier] of readStateFrontiers) {
+      const last = rows.get(key)
+      if (last === undefined || last >= frontier) readStateFrontiers.delete(key)
+    }
+  }
+  if (pendingReads.size > 0) {
+    const items = snapshot.items.map(row => {
+      const sequence = pendingReads.get(row.key)
+      if (sequence === undefined) return row
+      if (row.myReadSeq >= sequence || row.lastSeq > sequence) {
+        pendingReads.delete(row.key)
+        return row
+      }
+      return row.unread ? { ...row, unread: 0, attentionUnread: 0 } : row
+    })
+    projectedSnapshot = items.some((item, index) => item !== snapshot.items[index]) ? { ...snapshot, items } : snapshot
+  }
+  for (const listener of listeners) listener()
+}
+
+/** Project only a proved latest read. Keep raw unread counts for failure and concurrent arrivals. */
+export function markTeamDirectoryRead(accountKey: string, conversationKey: string, sequence: number): () => void {
+  const row = snapshot.items.find(item => item.key === conversationKey)
+  if (accountKey !== account || !row || sequence < Math.max(row.lastSeq, readStateFrontiers.get(conversationKey) ?? 0) || sequence <= row.myReadSeq
+    || (pendingReads.get(conversationKey) ?? 0) >= sequence) return () => {}
+  const owner = request
+  pendingReads.set(conversationKey, sequence)
+  emit()
+  return () => {
+    if (request !== owner || pendingReads.get(conversationKey) !== sequence) return
+    pendingReads.delete(conversationKey)
+    emit()
+  }
+}
 export function discardTeamDirectory(key: string, conversation: TeamConversation): void {
   if (key !== account) return
   discard?.(conversation)
@@ -39,6 +81,7 @@ export function startTeamDirectory(key: string): () => void {
   let pendingMore = false
   let folderRequest: AbortController | undefined
   let foldersReady: Promise<void> | undefined
+  pendingReads.clear(); readStateFrontiers.clear()
   account = key; openedTeamConversations.activate(key); snapshot = { ...empty, items: itemsNow() }; emit()
   const stopOpened = openedTeamConversations.subscribe(changed => {
     if (changed !== key || controller.signal.aborted || account !== key) return
@@ -105,8 +148,11 @@ export function startTeamDirectory(key: string): () => void {
               const state = states.get(c.key)
               if (!state) throw new Error('阅读状态返回不完整')
               if (!state.accessible) { accessLost = true; return [] }
-              const next = state.lastSeq < c.lastSeq || state.myReadSeq < c.myReadSeq ? c : {...c, myReadSeq: state.myReadSeq, unread: state.unread, notificationPolicy:mergeTeamNotificationPolicy(c.notificationPolicy,state.notificationPolicy)}
-              return [[c.key, next] as const]
+              if (state.lastSeq < Math.max(c.lastSeq, readStateFrontiers.get(c.key) ?? 0) || state.myReadSeq < c.myReadSeq) return [[c.key, c] as const]
+              if (state.lastSeq > c.lastSeq) readStateFrontiers.set(c.key, state.lastSeq)
+              const pending = pendingReads.get(c.key)
+              if (pending !== undefined && (state.lastSeq > pending || state.myReadSeq >= pending)) pendingReads.delete(c.key)
+              return [[c.key, {...c, myReadSeq: state.myReadSeq, unread: state.unread, notificationPolicy:mergeTeamNotificationPolicy(c.notificationPolicy,state.notificationPolicy)}] as const]
             }))
             if (previous) pages.set(side, {...previous, items: previous.items.flatMap(c => updated.has(c.key) ? [updated.get(c.key)!] : [])})
             for (const [id, c] of pins) if (c.side === side) { if (updated.has(id)) pins.set(id, updated.get(id)!); else pins.delete(id) }
@@ -229,7 +275,7 @@ export function startTeamDirectory(key: string): () => void {
   void refresh()
   return () => {
     controller.abort(); folderRequest?.abort(); stop(); stopOpened(); stopWorkspace(); clearInterval(timer); window.removeEventListener('focus', focus)
-    if (request === refresh) { account = ''; request = undefined; discard = undefined; snapshot = empty; openedTeamConversations.reset(key); emit() }
+    if (request === refresh) { pendingReads.clear(); readStateFrontiers.clear(); account = ''; request = undefined; discard = undefined; snapshot = empty; openedTeamConversations.reset(key); emit() }
   }
 }
 

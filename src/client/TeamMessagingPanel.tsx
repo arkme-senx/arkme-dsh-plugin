@@ -78,7 +78,8 @@ import { TeamVisitorRecords } from './TeamVisitorRecords.js'
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { useTeamConversationEntryActions } from './TeamConversationEntryActions.js'
 import { teamEntryHidden, teamEntryPinned, useTeamDirectoryPreferences } from './team-directory-preferences.js'
-import { arkmeVisibleReadIntentAllowed, subscribeArkmeReadIntentAvailability } from './read-intent-visibility.js'
+import { useVisibleMessageRead } from './visible-message-read.js'
+import { ConversationReadAckQueue } from './conversation-read-ack-queue.js'
 import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { ArkmeTeamChannelAvatar } from './ArkmeTeamAvatar.js'
 import { arkmeConversationAnchorOffset, arkmeConversationViewport } from './conversation-viewport.js'
@@ -91,7 +92,7 @@ import { arkmeUi } from './ui-controller.js'
 import { conversationDirectoryStyles as directoryStyles, conversationTimeLabel } from './conversation-directory-presentation.js'
 import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
 import { Paperclip } from '@phosphor-icons/react/dist/icons/Paperclip'
-import { startTeamDirectory, subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory } from './team-conversation-directory.js'
+import { markTeamDirectoryRead, startTeamDirectory, subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory } from './team-conversation-directory.js'
 import { startOfficialTeamMembership } from './official-team-membership.js'
 import { startTeamAttention } from './team-attention-store.js'
 import { showBrowserNotification } from './browser-notification.js'
@@ -358,7 +359,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', update) }
   }, [receiptStore])
   const [editing, setEditing] = useState<{ message: TeamMessage; text: string; mentions?: import('../team-app-contract.js').TeamMention[]; startedAtMillis?: number; needsReload?: boolean; latestText?: string }>()
-  const ctrl = useRef(new AbortController()), generation = useRef(0), bottom = useRef<HTMLDivElement>(null), scroller = useRef<HTMLDivElement>(null), visible = useRef(false), read = useRef(conversation.myReadSeq)
+  const ctrl = useRef(new AbortController()), generation = useRef(0), scroller = useRef<HTMLDivElement>(null), read = useRef(conversation.myReadSeq)
   const recordsRef = useRef<HTMLDivElement>(null)
   const bottomVisibility = useScrollBottomVisibility(scroller, recordsRef, timeline !== undefined, timeline)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -410,6 +411,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
   useEffect(() => {
     if (draftPreview && !draft.localFiles?.some(file => file.fileRef === draftPreview.localFileRef)) setDraftPreview(undefined)
   }, [draft.localFiles, draftPreview])
+  const confirmedRead = useRef(conversation.myReadSeq)
   const viewport = useRef<ArkmeConversationViewportSnapshot>()
   const attachmentQueue = useRef<AttachmentPreparationQueue>()
   const sendBusy = useRef(false)
@@ -430,6 +432,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
   useEffect(() => receiptStore.subscribeReadState(state => {
     const old = latest.current
     // A receipt read started before a new message cannot clear its unread count.
+    confirmedRead.current = Math.max(confirmedRead.current, state.myReadSeq)
     if (!old || state.lastSeq < old.conversation.lastSeq || state.myReadSeq < Math.max(read.current,old.conversation.myReadSeq)) return
     read.current = state.myReadSeq
     const next = {...old,conversation:{...old.conversation,myReadSeq:state.myReadSeq,unread:state.unread,notificationPolicy:mergeTeamNotificationPolicy(old.conversation.notificationPolicy,state.notificationPolicy)}}
@@ -618,21 +621,33 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     })
     viewport.current = arkmeConversationViewport(node)
   }, [timeline, outgoing, delivery.tasks])
-  const advance = useCallback(() => {
-    const current = latest.current
-    if (!current || !visible.current || !arkmeVisibleReadIntentAllowed()) return
-    const sequence = Math.max(0, ...current.messages.map(m => m.seq))
-    if (!sequence || sequence <= read.current) return
-    const previous = read.current; read.current = sequence
-    void callArkme('team.app.read', { conversationRef: conversation.ref, readSeq: sequence }, ctrl.current.signal).then(() => onReadChanged?.()).catch(() => { read.current = previous })
-  }, [conversation.ref, onReadChanged])
-  useEffect(() => {
-    const observer = new IntersectionObserver(entries => { visible.current = entries.some(v => v.isIntersecting); advance() }, { root: scroller.current, threshold: 1 })
-    if (bottom.current) observer.observe(bottom.current)
-    window.addEventListener('focus', advance); document.addEventListener('visibilitychange', advance); advance()
-    const stopReadAvailability = subscribeArkmeReadIntentAvailability(advance)
-    return () => { stopReadAvailability(); observer.disconnect(); window.removeEventListener('focus', advance); document.removeEventListener('visibilitychange', advance) }
-  }, [advance, timeline])
+  const readQueue = useMemo(() => new ConversationReadAckQueue(), [accountKey, conversation.key])
+  useEffect(() => () => readQueue.close(), [readQueue])
+  const measureVisibleRead = useVisibleMessageRead(
+    timeline && !historyWindow.current && !pendingJump.current
+      ? `${accountKey}:${conversation.key}` : undefined,
+    scroller, recordsRef, timeline?.messages, sequence => {
+      const current = latest.current
+      const signal = ctrl.current.signal
+      if (signal.aborted || !current || sequence > current.conversation.lastSeq
+        || sequence <= Math.max(read.current, current.conversation.myReadSeq)) return
+      read.current = sequence
+      const rollback = sequence === current.conversation.lastSeq
+        ? markTeamDirectoryRead(accountKey, conversation.key, sequence) : undefined
+      // If this request is replaced before the queue runs it, the newer cursor
+      // covers this one and owns the projection.
+      void readQueue.enqueue(sequence, async () => {
+        try {
+          await callArkme('team.app.read', { conversationRef: conversation.ref, readSeq: sequence, expectedAccountKey: accountKey })
+          confirmedRead.current = Math.max(confirmedRead.current, sequence)
+          onReadChanged?.()
+        } catch {
+          if (read.current === sequence) read.current = Math.max(confirmedRead.current, latest.current?.conversation.myReadSeq ?? 0)
+          rollback?.()
+        }
+      })
+    },
+  )
   const observedCompletions = useRef(new Set<string>())
   useLayoutEffect(() => {
     let changed = false
@@ -1260,7 +1275,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
       {!selection.busy && <ArkmeCloseButton type="button" aria-label={tr('关闭操作提示')} onClick={selection.clearStatus} />}
     </div>}
     <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
-    <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current); bottomVisibility.measure() }} aria-label={tr("团队消息记录")}>
+    <div ref={scroller} className="team-message-list" data-arkme-width-viewport data-arkme-message-selection-scope onScroll={() => { if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current); bottomVisibility.measure(); measureVisibleRead() }} aria-label={tr("团队消息记录")}>
       <div ref={recordsRef}>
       {timeline?.hasMore && <button onClick={() => { void refresh(timeline.beforeSeq) }}>{tr("加载更早消息")}</button>}
       <ArkmeAttachmentNavigationProvider scopeKey={JSON.stringify([accountKey,conversation.side,conversation.key])} entries={teamAttachmentNavigationEntries(displayedMessages,conversation,accountKey)}>
@@ -1291,7 +1306,6 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
         </ArkmeSendTaskStatus>)}
       </Fragment>)}
       </ArkmeAttachmentNavigationProvider>
-      <div ref={bottom} className="team-read-sentinel" />
       </div>
     </div>
     <ArkmeConversationBottomControl showBackToBottom={bottomVisibility.visible || historyWindow.current > 0}

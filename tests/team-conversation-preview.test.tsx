@@ -214,8 +214,15 @@ it('Escape and backdrop close the preview without opening the conversation', asy
 it('suspends the underlying team conversation read intent until the preview closes', async () => {
   const pane = <TeamConversationPane accountKey="preview-background" conversation={conversation} />
   await render(<>{pane}{preview()}</>)
+  const viewport = host.querySelector<HTMLElement>('.team-message-list')!
+  const row = viewport.querySelector<HTMLElement>('[data-arkme-read-sequence="4"]')!
+  Object.defineProperty(viewport, 'clientHeight', { value: 300 })
+  vi.spyOn(row, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 220, 160, 70))
+  const paint = () => act(async () => { await new Promise(requestAnimationFrame) })
+  await paint()
   expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.read')).toBe(false)
   await render(<>{pane}</>)
+  await paint()
   expect(mocks.call.mock.calls.filter(([op]) => op === 'team.app.read')).toHaveLength(1)
 })
 
