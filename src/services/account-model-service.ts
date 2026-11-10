@@ -51,14 +51,19 @@ export class AccountModelService {
     return await this.request<AccountModelSettings>(scope, 'settings/save', input as unknown as Record<string, unknown>, signal)
   }
   async preferences(scope: string, revision: number, preferences: AccountModelPreferences, signal?: AbortSignal) {
-    const settings = await this.settings(scope, signal)
-    if (settings.revision !== revision) throw new ArkmePluginError('model-settings-conflict', '配置已更新，请刷新后检查当前选择', true, 409)
-    for (const scene of settings.scenes) {
-      const next = preferences.scenes[scene.key] || preferences.default_route
-      const previous = settings.preferences.scenes[scene.key] || settings.preferences.default_route
-      const model = settings.models.find(item => item.route === next)
-      if (next !== previous && model && !accountModelSupportsScene(model, scene)) {
-        throw new ArkmePluginError('model-capability-mismatch', `所选模型无法用于${scene.name}，请为该场景单独选择支持所需能力的模型`, false, 400)
+    // Official selections keep the existing single write. The owner still
+    // validates revisions; the extra read only explains account capabilities.
+    const routes = [preferences.default_route, ...Object.values(preferences.scenes)]
+    if (routes.some(route => typeof route === 'string' && route.startsWith('user-api/'))) {
+      const settings = await this.settings(scope, signal)
+      if (settings.revision !== revision) throw new ArkmePluginError('model-settings-conflict', '配置已更新，请刷新后检查当前选择', true, 409)
+      for (const scene of settings.scenes) {
+        const next = preferences.scenes[scene.key] || preferences.default_route
+        const previous = settings.preferences.scenes[scene.key] || settings.preferences.default_route
+        const model = settings.models.find(item => item.route === next)
+        if (next !== previous && model && !accountModelSupportsScene(model, scene)) {
+          throw new ArkmePluginError('model-capability-mismatch', `所选模型无法用于${scene.name}，请为该场景单独选择支持所需能力的模型`, false, 400)
+        }
       }
     }
     return await this.request<AccountModelSettings>(scope, 'preferences/save', { expected_revision: revision, preferences }, signal)

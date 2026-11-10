@@ -42,3 +42,15 @@ it('explains the Responses minimum before sending a credential binding', async (
   })).rejects.toMatchObject({ code: 'model-output-limit' })
   expect(f.post).not.toHaveBeenCalled()
 })
+
+it('saves official preferences without adding a settings-query dependency', async () => {
+  const f = fixture()
+  const preferences = { default_route: 'system-default', scenes: { arko: 'managed-ai/official' }, points_fallback: false }
+  f.post.mockImplementation(async (path: string) => {
+    if (!path.endsWith('preferences/save')) throw new Error('unexpected settings dependency')
+    return data()
+  })
+  await f.service.preferences('production:11', 1, preferences)
+  expect(f.post).toHaveBeenCalledTimes(1)
+  expect(f.post).toHaveBeenCalledWith('/api/v1/user-models/preferences/save', { expected_revision: 1, preferences }, f.session, undefined)
+})
