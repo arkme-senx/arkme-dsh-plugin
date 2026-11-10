@@ -20,7 +20,7 @@ Record 保存一份加密正文及 `content_payload.excerpt`。Chat 保存现有
 
 Provider capabilities 的 selectedTextForwardV1 用于 SDK 合同探测，不是灰度或运维配置。SDK dispose 及调用者 AbortSignal 共同约束这三项请求。
 
-prepare 在打开选择器前解析一次已有来源引用，之后每个目标使用同一冻结选段。录音分页视图利用 Audio owner 的标量边界，把选区一次映射到完整片段的规范投影；不按相同文字搜索位置，不增加持久化定位字段。每个目标有独立且稳定的 recordUid、relationUid、sendAtMillis。首个发送意图冻结后，重试复用原参数；成功目标不重发，未知结果不生成新身份。
+选中文字后立即打开既有选择器。用户确认发送后，首次派发前调用 Host prepare 解析已有来源引用，同一次转发的多个目标共用准备结果。准备失败后可重试，准备成功后沿用同一冻结选段。录音分页视图利用 Audio owner 的标量边界，把选区一次映射到完整片段的规范投影，不按相同文字搜索位置，也不增加持久化定位字段。每个目标有独立且稳定的 recordUid、relationUid、sendAtMillis。首个发送意图冻结后，重试复用原参数。成功目标不重发，未知结果不生成新身份。
 
 发给自己的本地待发送记录同样校验冻结正文、摘录结构和发送时间。意图不同时在派发前返回 `record-intent-conflict`，不重放旧请求，也不转成可重试的结果未知；相同意图继续复用原待发送 owner。
 
