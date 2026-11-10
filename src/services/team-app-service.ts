@@ -458,10 +458,15 @@ export class TeamAppService {
       const current = await this.runtime.accountScopedSession()
       if (!current || current.userId !== actor || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('team-account-changed', '登录账号已变化，请重新打开团队消息', false, 409)
     }
+    const background = p.background === true && (
+      operation === 'team.app.conversations' || operation === 'team.app.read-states' || operation === 'team.app.timeline'
+      || operation === 'team.app.entries.list' || operation === 'team.app.entries.query'
+      || operation === 'team.app.workspace.request' && obj(p.request).operation === 'folders'
+    )
     const post = async (path: string, body: Record<string, unknown> = {}, read = false,wire:{stringIdFields?:readonly string[]}={}): Promise<Record<string, unknown>> => {
       await assertAccount()
       let result: unknown
-      try { result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read,wire) }
+      try { result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read,wire,background) }
       catch (error) {
         if (read && /^(workspace|group-sources)\//.test(path) && isBackendRouteUnavailable(error)) {
           throw new ArkmePluginError('team-workspace-unsupported', '服务端尚未提供团队群工作区', false, 501)

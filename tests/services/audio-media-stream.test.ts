@@ -7,7 +7,7 @@ const path = recordingPlaybackPath({ child_id: '123456789012345678901234', sourc
 function fixture(fetcher: typeof fetch) {
   let session = { userId: 42, accessToken: 'private-fixture', refreshToken: 'refresh-fixture' }
   const store: ArkmeSessionStore = { read: async () => session, write: async value => { session = value }, delete: async () => {} }
-  const runtime = new ServiceRuntime({ authBaseUrl: 'https://auth.test', audioBaseUrl: 'https://audio.test', recordBaseUrl: 'https://record.test', requestTimeoutMs: 5_000 } as ArkmeServiceConfig, store, {} as StateStore, fetcher)
+  const runtime = new ServiceRuntime({ authBaseUrl: 'https://auth.test', teamBaseUrl: 'https://team.test', audioBaseUrl: 'https://audio.test', recordBaseUrl: 'https://record.test', requestTimeoutMs: 5_000 } as ArkmeServiceConfig, store, {} as StateStore, fetcher)
   return { runtime, changeUser: () => { session = { ...session, userId: 43 } } }
 }
 
@@ -23,14 +23,14 @@ describe('private team original image delivery', () => {
       expect(response.headers.get('cache-control')).toBe('private, no-store')
       expect(response.headers.get('location')).toBeNull()
       expect(await response.text()).toBe('png')
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it.each([{ type: 'image/svg+xml', size: '3', bytes: 'svg' }, { type: 'image/png', size: '4', bytes: 'large' }, { type: 'application/json', size: '3', bytes: '{}' }])('rejects invalid media before consuming it: $type/$size', async ({ type, size, bytes }) => {
     const { runtime } = fixture(async () => new Response(bytes, { headers: { 'content-length': size, 'content-type': type } }))
     try {
       await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 })).rejects.toMatchObject({ code: 'media-response-invalid' })
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('stops an opened image when the account changes', async () => {
@@ -39,7 +39,7 @@ describe('private team original image delivery', () => {
       const response = await runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 })
       changeUser()
       await expect(response.arrayBuffer()).rejects.toMatchObject({ code: 'media-account-changed' })
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('preserves an HTTP 200 JSON permission denial for the business owner', async () => {
@@ -47,7 +47,7 @@ describe('private team original image delivery', () => {
     try {
       await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 }))
         .rejects.toMatchObject({ code: 'arkme-code-40001', message: 'team_world_not_accessible', responseData: { reason: 'not_accessible' } })
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('bounds a JSON error body and cancels the unread stream', async () => {
@@ -59,7 +59,7 @@ describe('private team original image delivery', () => {
       await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 }))
         .rejects.toMatchObject({ code: 'media-response-invalid' })
       expect(cancelled).toHaveBeenCalledOnce()
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('does not expose a JSON error after switching accounts during its read', async () => {
@@ -69,7 +69,7 @@ describe('private team original image delivery', () => {
     try {
       await expect(runtime.authenticatedRecordImage('/api/v1/team-world/images/read', {}, { expectedUserId: 42, maxBytes: 3 }))
         .rejects.toMatchObject({ code: 'media-account-changed' })
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 })
 
@@ -98,7 +98,7 @@ describe('private audio byte delivery', () => {
         expect(produced - consumed).toBeLessThanOrEqual(chunk.length)
       }
       expect(consumed).toBe(length)
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it.each(['GET', 'HEAD'] as const)('allows %s of a bounded range in a larger recording', async method => {
@@ -110,7 +110,7 @@ describe('private audio byte delivery', () => {
       const response = await runtime.authenticatedAudioStream(path, { expectedUserId: 42, range: 'bytes=1-3', method })
       expect(response.headers.get('content-range')).toBe(`bytes 1-3/${total}`)
       expect(await response.text()).toBe(method === 'HEAD' ? '' : 'abc')
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('rejects unsafe lengths even when a streamed recording has no total byte cap', async () => {
@@ -120,7 +120,7 @@ describe('private audio byte delivery', () => {
     try {
       await expect(runtime.authenticatedAudioStream(path, { expectedUserId: 42, method: 'HEAD' }))
         .rejects.toMatchObject({ code: 'media-response-invalid' })
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('keeps a progressing stream alive beyond the opening budget, then cancels a stalled body', async () => {
@@ -151,7 +151,7 @@ describe('private audio byte delivery', () => {
       await vi.advanceTimersByTimeAsync(35_000)
       await stalled
       expect(cancelled).toHaveBeenCalledOnce()
-    } finally { runtime.requestCoordinator.dispose(); oldTimeout.mockRestore(); vi.useRealTimers() }
+    } finally { runtime.dispose(); oldTimeout.mockRestore(); vi.useRealTimers() }
   })
 
   it('does not treat downstream playback backpressure as a stalled upstream read', async () => {
@@ -173,7 +173,7 @@ describe('private audio byte delivery', () => {
       expect(cancelled).not.toHaveBeenCalled()
       expect((await reader.read()).value).toEqual(new Uint8Array([2]))
       expect((await reader.read()).done).toBe(true)
-    } finally { runtime.requestCoordinator.dispose(); vi.useRealTimers() }
+    } finally { runtime.dispose(); vi.useRealTimers() }
   })
 
   it.each(['bytes', 'transcript'] as const)('detaches a cancelled %s consumer from the shared token refresh', async kind => {
@@ -196,7 +196,7 @@ describe('private audio byte delivery', () => {
       expect(fetcher).toHaveBeenCalledTimes(2)
     } finally {
       refresh.resolve(new Response(null, {status:500}))
-      runtime.requestCoordinator.dispose()
+      runtime.dispose()
     }
   })
 
@@ -209,7 +209,7 @@ describe('private audio byte delivery', () => {
       changeUser()
       await result
       expect(fetcher).toHaveBeenCalledOnce()
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it.each(['caller', 'account', 'deadline'])('cancels capacity waiting on %s and releases admission', async reason => {
@@ -221,11 +221,11 @@ describe('private audio byte delivery', () => {
       const result = expect(runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64, signal: controller.signal })).rejects.toBeDefined()
       await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
       if (reason === 'caller') controller.abort()
-      if (reason === 'account') runtime.requestCoordinator.invalidateScope('user:42')
+      if (reason === 'account') runtime.invalidateScope('user:42')
       if (reason === 'deadline') await vi.advanceTimersByTimeAsync(35_000)
       await result
       expect(fetcher).toHaveBeenCalledOnce()
-    } finally { runtime.requestCoordinator.dispose(); if (reason === 'deadline') vi.useRealTimers() }
+    } finally { runtime.dispose(); if (reason === 'deadline') vi.useRealTimers() }
   })
 
   it.each([[403, '1'], [404, '1'], [503, ''], [503, 'invalid']])('does not retry terminal media responses: %s/%s', async (status, hint) => {
@@ -234,7 +234,7 @@ describe('private audio byte delivery', () => {
     try {
       await expect(runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64 })).rejects.toMatchObject({ upstreamStatus: status })
       expect(fetcher).toHaveBeenCalledOnce()
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('waits for media capacity without requiring another playback click', async () => {
@@ -249,24 +249,30 @@ describe('private audio byte delivery', () => {
       await result
       expect(fetcher).toHaveBeenCalledTimes(2)
       expect(cancelled).toHaveBeenCalledOnce()
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
-  it('holds shared read admission through body lifetime and releases it on cancel', async () => {
-    const fetcher = vi.fn(async () => new Response('abc', { headers: { 'content-length': '3', 'content-type': 'audio/ogg' } }))
+  it('holds media admission through body lifetime without blocking JSON reads', async () => {
+    const fetcher = vi.fn(async (input: string | URL | Request) => new URL(String(input)).hostname === 'team.test'
+      ? Response.json({ code: 200, data: { messages: [] } })
+      : new Response('abc', { headers: { 'content-length': '3', 'content-type': 'audio/ogg' } }))
     const { runtime } = fixture(fetcher)
+    const json = new AbortController()
     try {
       const responses = await Promise.all(Array.from({ length: 4 }, () =>
         runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64 })))
       const next = runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64 })
-      await new Promise(resolve => setTimeout(resolve, 20))
-      expect(fetcher).toHaveBeenCalledTimes(4)
+      void next.catch(() => {}) // A failed assertion disposes the pending stream.
+      const timeline = runtime.authenticatedTeamPost('/api/v1/team/conversations/timeline/page', {}, undefined, json.signal, true)
+      void timeline.catch(() => {})
+      await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5), { timeout: 300 })
+      await expect(timeline).resolves.toEqual({ messages: [] })
       await responses[0]!.body!.cancel()
       const fifth = await next
-      expect(fetcher).toHaveBeenCalledTimes(5)
+      expect(fetcher).toHaveBeenCalledTimes(6)
       expect(await fifth.text()).toBe('abc')
       await Promise.all(responses.slice(1).map(response => response.body!.cancel()))
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { json.abort(); runtime.dispose() }
   })
 
   it('sends real HEAD reads and releases admission without a body consumer', async () => {
@@ -281,7 +287,7 @@ describe('private audio byte delivery', () => {
         expect(response.headers.get('content-length')).toBe('12')
       }
       expect(fetcher.mock.calls.every(call => (call as unknown as [unknown, RequestInit])[1].method === 'HEAD')).toBe(true)
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('validates HEAD range headers and rejects an account change before publishing them', async () => {
@@ -300,7 +306,7 @@ describe('private audio byte delivery', () => {
         return new Response(null, { headers: { 'content-length': '8', 'content-type': 'audio/ogg' } })
       })
       await expect(runtime.authenticatedAudioStream(path, options)).rejects.toMatchObject({ code: 'media-account-changed' })
-    } finally { runtime.requestCoordinator.dispose() }
+    } finally { runtime.dispose() }
   })
 
   it('aborts and releases an unread body on account-scope invalidation', async () => {
@@ -309,10 +315,10 @@ describe('private audio byte delivery', () => {
       headers: { 'content-length': '3', 'content-type': 'audio/ogg' },
     }))
     const response = await runtime.authenticatedAudioStream(path, { expectedUserId: 42, maxBytes: 64 })
-    runtime.requestCoordinator.invalidateScope('user:42')
+    runtime.invalidateScope('user:42')
     await expect(response.text()).rejects.toBeDefined()
     await vi.waitFor(() => expect(cancelled).toHaveBeenCalledTimes(1))
-    runtime.requestCoordinator.dispose()
+    runtime.dispose()
   })
 
   it('caller cancellation closes an unread upstream body without waiting for a pull', async () => {
@@ -325,7 +331,7 @@ describe('private audio byte delivery', () => {
     caller.abort()
     await expect(response.text()).rejects.toBeDefined()
     expect(cancelled).toHaveBeenCalledTimes(1)
-    runtime.requestCoordinator.dispose()
+    runtime.dispose()
   })
 
   it('preserves clip ranges and keeps credentials on the configured service', async () => {
