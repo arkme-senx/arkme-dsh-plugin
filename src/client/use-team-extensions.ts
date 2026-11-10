@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createArkmeSdk } from '../sdk/index.js'
+import { tr } from './locale.js'
 import type { TeamConversation, TeamExtensionPage, TeamMessage } from '../team-app-contract.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
-import { invalidateTeamMessageRead, teamChangeAffectsSource } from './team-source-read.js'
+import { invalidateTeamMessageRead, teamChangeAffectsSource, teamChangeInConversation } from './team-source-read.js'
 
 export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConversation,'ref'|'key'>,message:TeamMessage) {
  const conversationRef=conversation.ref,conversationKey=conversation.key
@@ -50,8 +51,16 @@ export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConver
   return ()=>{mounted.current=false;pending.current?.abort()}
  },[load,message.version,scope,conversationKey])
  useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly,change)=>{
-  if(account!==accountKey||receiptOnly||!teamChangeAffectsSource(change,{conversationKey}))return
-  if(change?.kind==='team.message.changed'&&change.messageKey){
+  if(account!==accountKey||receiptOnly||!teamChangeInConversation(change,conversationKey))return
+  if(change?.kind==='team.message.published'){
+   // Reopen the snapshot boundary on the next read, including saved parent
+   // pages reached later via Back. Keep their authorized text while loading.
+   for(const [key,value] of saved.current)saved.current.set(key,{...value,throughSeq:0})
+   void load()
+   return
+  }
+  if(!teamChangeAffectsSource(change,{conversationKey}))return
+  if(change?.kind==='team.message.changed'&&(change.messageKey||change.messageKeys?.length)){
    const project=(value:TeamExtensionPage):TeamExtensionPage=>({...value,
     message:invalidateTeamMessageRead(value.message,change,conversationKey),
     items:value.items.map(row=>invalidateTeamMessageRead(row,change,conversationKey)),throughSeq:0})
@@ -60,6 +69,12 @@ export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConver
   }else{
    // Unknown/reconnect and access changes still remove every stale snapshot.
    saved.current.clear();state.current=undefined;setPage(undefined);setInvalidated(true)
+   if(change?.kind==='team.access.revoked'){
+    pending.current?.abort()
+    setLoading(false)
+    setError(tr('你已无权访问该团队消息，请刷新列表'))
+    return
+   }
   }
   void load()
  }),[accountKey,conversationKey,load])

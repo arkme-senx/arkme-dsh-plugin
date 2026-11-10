@@ -60,7 +60,7 @@ it('parity: a retained Team reply keeps its parent on its local failure bubble',
   let renderer: ReturnType<typeof createRenderer> | undefined
   try {
     await rendererAct(async () => {
-      renderer = createRenderer(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />,
+      renderer = createRenderer(<TeamConversationPane conversation={conversation} accountKey="test:11" />,
         {createNodeMock: node => typeof node.type === 'string' ? document.createElement(node.type) : null})
       await Promise.resolve(); await Promise.resolve()
     })

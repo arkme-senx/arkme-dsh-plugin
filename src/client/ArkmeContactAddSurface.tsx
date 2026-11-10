@@ -168,7 +168,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
       if (revision === requestRevision.current) {
         setCandidate(current => current === undefined ? current : { ...current, team: { ...team, state: result.state } })
         teamRequestUid.current = undefined
-        if (result.state === 'joined') { arkmeContactsTab.refresh(); if (accountKey) invalidateTeamMessages(accountKey) }
+        if (result.state === 'joined') { arkmeContactsTab.refresh(); if (accountKey) invalidateTeamMessages(accountKey, false, {kind:'team.directory.changed'}) }
       }
     } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
     finally { if (revision === requestRevision.current) setBusy(false) }

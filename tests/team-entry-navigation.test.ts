@@ -150,7 +150,7 @@ it('retains a confirmed zero-message contact before navigation without waiting f
   expect(navigation.openConfirmedTeamContact('test:11', empty)).toBe(true)
   expect(mock.restore).toHaveBeenCalledExactlyOnceWith('test:11', { kind: 'conversation', conversation: empty })
   expect(mock.open).toHaveBeenCalledExactlyOnceWith({ kind: 'conversation', conversation: empty })
-  expect(mock.invalidate).toHaveBeenCalledWith('test:11')
+  expect(mock.invalidate).toHaveBeenCalledWith('test:11', false, {kind:'team.directory.changed',conversationKeys:[empty.key]})
 })
 
 it('does not retain passive empty panes, another account, an external open or a malformed contact', () => {
