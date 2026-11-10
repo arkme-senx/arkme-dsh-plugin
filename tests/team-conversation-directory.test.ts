@@ -319,6 +319,27 @@ it('publishes group-only folders independently and drops their body on a failed 
  expect(readTeamDirectory('folders-only').foldersError).toBe('来源权限暂时无法确认')
 })
 
+it('runs one preference sync when folders finish after the conversations', async () => {
+  let finishFolders: ((items: []) => void) | undefined
+  let delayFolders = false
+  mock.mockImplementation(async (operation, { side }) => {
+    if (operation === 'team.app.workspace.request') {
+      return delayFolders ? new Promise<[]>(resolve => { finishFolders = resolve }) : []
+    }
+    if (operation.startsWith('team.app.entries.')) return { schemaVersion: 2, items: [], hasMore: false }
+    return { items: side ? [item(side)] : [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('slow-folders'))
+  await vi.waitFor(() => expect(mock.mock.calls.some(([op]) => op === 'team.app.entries.query')).toBe(true))
+  mock.mockClear()
+  delayFolders = true
+  await refreshTeamDirectory('slow-folders')
+  expect(readTeamDirectory('slow-folders').items).toHaveLength(2)
+  finishFolders?.([])
+  await vi.waitFor(() => expect(mock.mock.calls.filter(([op]) => op === 'team.app.entries.query')).toHaveLength(1))
+  expect(mock.mock.calls.filter(([op]) => op === 'team.app.entries.list')).toHaveLength(1)
+})
+
 it('a confirmed contact is visible during a pending list read and survives an absent server row', async () => {
   const empty = { ...item('team', 50), lastSeq: 0, unread: 0 }
   let release!: (value: unknown) => void

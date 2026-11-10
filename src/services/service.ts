@@ -652,6 +652,9 @@ export class ServiceRuntime {
     ]).has(path)) return true
     if (baseUrl === this.config.teamBaseUrl && new Set([
       '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team/message-channel/get', '/api/v1/team/official-feedback-target',
+      '/api/v1/team/workspace/folders/query',
+      '/api/v1/team/entry-preferences/list', '/api/v1/team/entry-preferences/query',
+      '/api/v1/team/entry-preferences/v2/list', '/api/v1/team/entry-preferences/v2/query',
       '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
