@@ -77,15 +77,16 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
     return <article data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key}
       data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
       style={layout.notice}>
-      {onDetail && !selecting ? <button type="button" onClick={onDetail}
-        style={{ padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' }}>{notice}</button> : notice}
+      {onDetail ? <button type="button" onClick={selecting ? undefined : onDetail}
+        aria-disabled={selecting || undefined} tabIndex={selecting ? -1 : undefined}
+        style={{ padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: selecting ? 'default' : 'pointer' }}>{notice}</button> : notice}
     </article>
   }
   return <article data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
     data-team-selectable={teamMessageSelectable(message) ? message.key : undefined}
     data-arkme-read-sequence={published && available && message.version > 0 && !selecting ? message.seq : undefined}
     onClickCapture={event => { if (selecting) { event.preventDefault(); event.stopPropagation(); if (!busy) onToggle?.() } }}
-    data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther), ...(selecting ? messageSelectionStyles.rowSelectAvatarMode : {}), ...(selected ? messageSelectionStyles.rowSelectedForAction : {}) }}>
+    data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther), ...(selecting ? { ...messageSelectionStyles.rowSelectAvatarMode, marginBottom: 0 } : {}), ...(selected ? messageSelectionStyles.rowSelectedForAction : {}) }}>
     {selecting && <ArkmeMessageSelectionControl anchor="avatar" checked={selected} disabled={busy || !teamMessageSelectable(message)} onToggle={() => onToggle?.()} />}
     <div data-arkme-extension-message-cluster={available && message.reply ? 'true' : undefined} style={{minWidth:0,maxWidth:'100%',display:'flex',flexDirection:'column',alignItems:message.own?'flex-end':'flex-start'}}>
       {available && message.reply && <TeamMessageMediaScope conversationRef={conversationRef} conversationKey={conversationKey} message={{...message,ref:message.reply.ref,key:message.reply.key,revision:0,version:message.reply.version,media:message.reply.media ?? []}}>
