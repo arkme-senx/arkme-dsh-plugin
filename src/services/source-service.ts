@@ -332,6 +332,13 @@ export function arkmeChatConversationPreview(raw: Record<string, unknown>, viewe
   const callPreview = callRecordConversationPreview(raw, viewerUserId)
   if (callPreview !== undefined) return callPreview
   const values = conversationPreviewObjects(raw)
+  for (const value of values) {
+    const forward = objectValue(value.forward_records ?? value.forwardRecords ?? value)
+    if (stringValue(forward.render_kind ?? forward.renderKind) === 'forward_records'
+      || ['team_message', 'quick_records'].includes(stringValue(forward.source_type))) {
+      return arkmeForwardConversationPreview(stringValue(forward.title).trim() || '转发消息')
+    }
+  }
   const text = normalizedConversationText(values)
   let marker = conversationMediaMarker(values)
   if (marker === '[表情]' && arkmeHasKnownEmojiToken(text)) marker = ''
@@ -341,7 +348,15 @@ export function arkmeChatConversationPreview(raw: Record<string, unknown>, viewe
     ? '[卡片]' : ''
 }
 
-export function arkmeTimelineConversationPreview(item: ArkmeTimelineItem): string {
+export function arkmeForwardConversationPreview(title: string): string {
+  return arkmeEmojiTokenSafePrefix(`[转发] ${title.replace(/\s+/gu, ' ').trim()}`, 300)
+}
+
+export function arkmeTimelineConversationPreview(
+  item: Pick<ArkmeTimelineItem, 'conversationPreview' | 'contentBlocks' | 'forwardRecords' | 'textFormat' | 'textContent' | 'title' | 'templateKind'>,
+  fallback = '非文本内容',
+): string {
+  if (item.forwardRecords !== undefined) return arkmeForwardConversationPreview(item.forwardRecords.title)
   const projected = item.conversationPreview?.trim()
   if (projected !== undefined && projected !== '') return projected
   const text = ((item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent.trim()) || item.title.trim()).replace(/\s+/gu, ' ')
@@ -350,10 +365,10 @@ export function arkmeTimelineConversationPreview(item: ArkmeTimelineItem): strin
   let marker = kinds.has('file') ? '[文件]'
     : kinds.has('video') ? '[视频]'
       : kinds.has('image') ? '[图片]'
-        : kinds.has('audio') ? '[语音]'
+        : kinds.has('audio') || item.templateKind === 3 || item.templateKind === 4 ? '[语音]'
           : blocks.some(block => block.renderRole === 3) ? '[表情]' : ''
   if (marker === '[表情]' && arkmeHasKnownEmojiToken(text)) marker = ''
-  return `${marker}${text}` || '非文本内容'
+  return arkmeEmojiTokenSafePrefix(`${marker}${text}`, 300) || fallback
 }
 
 function chunksOf<T>(values: readonly T[], size: number): T[][] {
@@ -1582,7 +1597,7 @@ export class SourceService {
         ), undefined)
       const defaultLatestPreview = defaultLatestRecord === undefined
         ? ''
-        : (defaultLatestRecord.textContent.trim() || defaultLatestRecord.title.trim())
+        : arkmeTimelineConversationPreview(defaultLatestRecord, '')
       const defaultCategory: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '未分类'),
         kind: 'default_category',
@@ -1784,7 +1799,12 @@ export class SourceService {
           || cached?.displayName || stringValue(counterpart.visible_phone).trim()
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
-      const preview = activity.latestPreview ?? arkmeChatConversationPreview(latestRecord, session.userId)
+      const previewUnavailable = latestRecord.status === 3 || latestRecord.status === 'unavailable'
+      const previewMissing = latestRecord.status === 2 || latestRecord.status === 4 || latestRecord.status === 'missing'
+      const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+      const preview = activity.latestPreview ?? (previewUnavailable
+        ? cached?.latestSequence === latestSequence ? cached.latestPreview ?? '' : ''
+        : previewMissing ? '' : arkmeChatConversationPreview(latestRecord, session.userId))
       const unreadCount = attention.unreadCount
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
@@ -1830,6 +1850,7 @@ export class SourceService {
           : {}),
         ...activity,
         ...(preview === '' ? {} : { latestPreview: preview }),
+        latestPreviewUnavailable: previewUnavailable && preview === '',
         activeAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
         ...attention,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
@@ -2338,12 +2359,10 @@ export class SourceService {
     const previewSnapshot = options.previewSnapshot === true && snapshotSequence >= Math.max(cached?.latestSequence ?? 0, latestItem?.sequence ?? 0)
     let latestPreview = latestItem === undefined
       ? cached?.latestPreview
-      : latestItem.forwardRecords === undefined
-        ? arkmeTimelineConversationPreview(latestItem)
-        : `[转发] ${latestItem.forwardRecords.title}`
+      : arkmeTimelineConversationPreview(latestItem)
     if (previewSnapshot) {
       const record = objectValue(objectValue(bundle.latest_preview).record)
-      if (record.status !== 'unavailable') latestPreview = record.status === 'missing'
+      if (record.status !== 'unavailable' && record.status !== 3) latestPreview = record.status === 'missing' || record.status === 2 || record.status === 4
         ? '' : arkmeChatConversationPreview(record, session.userId)
     }
     const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
@@ -2352,7 +2371,7 @@ export class SourceService {
     if (!previewSnapshot && latestItem !== undefined && latestItemAt > 0 && latestItemAt >= (activity.latestActivityAtMillis ?? 0)) {
       activity.latestActivityAtMillis = latestItemAt
       activity.latestActivityKind = 'record'
-      latestPreview = latestItem.forwardRecords === undefined ? arkmeTimelineConversationPreview(latestItem) : `[转发] ${latestItem.forwardRecords.title}`
+      latestPreview = arkmeTimelineConversationPreview(latestItem)
     }
     const latestSequence = Math.max(
       numberValue(unread.session_last_seq ?? chatSession.last_seq),

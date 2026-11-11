@@ -49,6 +49,7 @@ describe('Arkme send-to-self source list', () => {
     expect(arkmeRootChatPreview({ ...author, latestPreview: '[jm_emoji:silent_face]' })).toBe('😶')
     expect(arkmeRootChatPreview({ ...author, peerUserId: 12 })).toBe('')
     expect(arkmeRootChatPreview({ ...author, kind: 'group_chat' })).toBe('')
+    expect(arkmeRootChatPreview({ sourceRef:'group',displayName:'群',kind:'group_chat',activeAtMillis:1,unreadCount:0,latestPreviewUnavailable:true })).toBe('')
   })
 
   it('shows the first incoming author message immediately without requiring an outgoing message', () => {

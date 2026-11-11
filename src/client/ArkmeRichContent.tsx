@@ -68,7 +68,7 @@ const styles: Record<string, CSSProperties> = {
   mediaTile: { position: 'relative', display: 'block', width: '100%', aspectRatio: '1', overflow: 'hidden', border: 0, padding: 0, borderRadius: 8, background: 'rgba(127,127,127,.10)', cursor: 'pointer' },
   mediaImage: { display: 'block', width: '100%', height: '100%', objectFit: 'cover' },
   sticker: { display: 'block', width: 148, maxWidth: '42vw', height: 148, maxHeight: '24vh', objectFit: 'contain', cursor: 'pointer' },
-  videoPreview: { display: 'block', width: '100%', height: '100%', objectFit: 'cover', background: '#111', pointerEvents: 'none' },
+  videoPreview: { display: 'block', width: '100%', height: '100%', objectFit: 'contain', background: '#111', pointerEvents: 'none' },
   videoBadge: { position: 'absolute', left: 6, bottom: 6, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 5px', borderRadius: 6, background: 'rgba(0,0,0,.62)', color: '#fff', fontSize: 10, lineHeight: '14px' },
   file: { width: 'max-content', maxWidth: '100%', minWidth: 0, minHeight: 48, display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0', boxSizing: 'border-box', borderRadius: 8, color: 'inherit', background: 'transparent', textDecoration: 'none' },
   fileIconBox: { width: 40, height: 40, flex: 'none', display: 'grid', placeItems: 'center' },
@@ -527,7 +527,7 @@ function GalleryVideoPreview({ src, block, onFailure }: {
           onFailure(block, event.currentTarget.error?.code === 4 || !arkmeCanInlineLocalFile(block.mimeType, block.fileName) ? 'unsupported' : 'retryable')
         }
       }} />
-    {frame && <img src={frame.poster} alt="" aria-hidden style={{ ...styles.mediaImage, position: 'absolute', inset: 0, pointerEvents: 'none', visibility: decodedScope === accountKey ? 'hidden' : 'visible' }} />}
+    {frame && <img src={frame.poster} alt="" aria-hidden style={{ ...styles.mediaImage, objectFit: 'contain', position: 'absolute', inset: 0, pointerEvents: 'none', visibility: decodedScope === accountKey ? 'hidden' : 'visible' }} />}
     <span style={styles.videoBadge} aria-hidden>▶ {durationLabel(block.durationSec && Number.isFinite(block.durationSec) ? block.durationSec : measuredDuration ?? frame?.duration)}</span>
   </>
 }

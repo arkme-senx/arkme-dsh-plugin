@@ -623,6 +623,7 @@ describe('Arkme rich content presentation', () => {
     expect(html).toContain('长文正文')
     expect(html).toContain('/arkme-self/api/media?ref=image-ref')
     expect(html).toContain('<video')
+    expect(html).toMatch(/<video[^>]*object-fit:contain/)
     expect(html).toContain('<audio')
     expect(html).toContain('data-arkme-file-card="file"')
     expect(html).toContain('4 B · 未下载')

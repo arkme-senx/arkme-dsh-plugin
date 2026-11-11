@@ -524,8 +524,10 @@ describe('ChatRealtimeService', () => {
         ...(sessionIndex === 0 && index === 1
           ? { conversationPreview: '[图片]消息 0-1[jm_emoji:red_angry_face]' }
           : sessionIndex === 0 && index === 2
-            ? { conversationPreview: '😠'.repeat(130) }
-          : {}),
+            ? { conversationPreview: '[jm_emoji:red_angry_face]'.repeat(130) }
+            : sessionIndex === 0 && index === 3
+              ? { forwardRecords: { title: '聊天记录[jm_emoji:thumb_up]', createdAtMillis: 1, summaryLines: [], items: [] } }
+              : {}),
         status: 1, sequence: index + 1,
       })),
     ]))
@@ -641,6 +643,7 @@ describe('ChatRealtimeService', () => {
     expect(events.find(event => event.notification?.eventUid === 'event-1')?.notification?.body)
       .toBe(nativeBodies.get('event-1'))
     expect(nativeBodies.get('event-2')).toBe('😠'.repeat(120))
+    expect(nativeBodies.get('event-3')).toBe('[转发] 聊天记录👍')
     service.dispose()
   })
 

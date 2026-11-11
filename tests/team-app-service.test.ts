@@ -481,6 +481,21 @@ describe('Team App owner adapter', () => {
     expect(result.items[0]?.preview).toEqual({ status: 'available', text: '', hasMedia: true, templateKind: 3 })
   })
 
+  it.each(['team', 'external'] as const)('shares the authorized %s record summary with notifications', async side => {
+    const record = { text_content: '**说明**[jm_emoji:thumb_up]', text_format: 'markdown', media_display_items: [{ file_type: 3 }] }
+    const f = fixture(path => path.endsWith('/notifications/resolve') ? {
+      notification: { event_uid: 'event', message_uid: 'message', conversation_uid: conversation.conversation_uid,
+        side, seq: 2, published_at: 10, expires_at: 3600010, title: '团队', body: '旧摘要',
+        preview_record: record, preview_sender: '同事' },
+    } : { items: [{ ...conversation, side, preview: { status: 'available', text: '旧摘要', record } }] })
+    const result = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    expect(result.items[0]?.preview?.summary).toBe('[视频]说明[jm_emoji:thumb_up]')
+    const notification = await f.service.resolveMessageNotification({
+      eventUid: 'event', messageUid: 'message', conversationUid: conversation.conversation_uid,
+    }, await f.runtime.requireSession(), new AbortController().signal)
+    expect(notification?.body).toBe(side === 'team' ? '同事：[视频]说明👍' : '[视频]说明👍')
+  })
+
   it('cancels by original send identity using current conversation authority without sending content', async () => {
     const f=fixture((path,body)=>path.endsWith('/messages/cancel')
       ? {message_uid:body.client_message_uid,seq:0,state:'cancelled',side:'external',own:true,revision:1}

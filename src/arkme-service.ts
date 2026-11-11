@@ -985,7 +985,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         this.realtime.emitChatClientEvent({ type: 'directory-update', revision: this.realtime.nextChatClientRevision(), page })
         void this.realtime.refreshAttentionSummary()
       },
-      async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+      async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId),
+      async (ref, signal) => await this.unifiedTimeline.read(ref, { cacheOnly: true, limit: 1 }, signal))
     this.realtime.offlineContextInvalidation = async () => await this.unifiedTimeline.refreshKnownWindows()
     this.realtime.selfRoleInvalidation = async () => await this.selfRoles.refresh()
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
@@ -1112,6 +1113,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         await this.localFileOpener(path, signal)
       },
     })
+    void this.fileTransfers?.resume().catch(() => undefined)
   }
   private filesOwner(): FileTransfers {
     if (!this.fileTransfers) throw new ArkmePluginError('file-flow-unavailable', '当前宿主不支持本地文件流程，请升级插件', false, 501)
@@ -1138,11 +1140,11 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async fileOpenLocal(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocal(ref, signal) }
   async fileOpenLocalFolder(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocalFolder(ref, signal) }
   async fileRemove(ref: string) { await this.filesOwner().remove(ref) }
-  async fileSend(input: ArkmeFileSendInput) {
+  async fileSend(input: ArkmeFileSendInput, recovery?: { signal?: AbortSignal }) {
     if (input.content.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
-    return await this.filesOwner().enqueue(input)
+    return await this.filesOwner().enqueue(input, recovery)
   }
-  async fileSendTasks(sourceRef?: string) { return await this.filesOwner().tasks(sourceRef) }
+  async fileSendTasks(sourceRef?: string, watchTaskRefs?: readonly string[]) { return await this.filesOwner().tasks(sourceRef, watchTaskRefs) }
   async fileSendRetry(taskRef: string) { return await this.filesOwner().retry(taskRef) }
   async fileStageBytes(contentBase64: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType'>) { return await this.filesOwner().stageBytes(contentBase64, metadata) }
   async fileSendDiscard(taskRef: string) { return await this.filesOwner().discard(taskRef) }
@@ -1388,6 +1390,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
 
   async authStatus(): Promise<ArkmeAuthSnapshot> {
     const snapshot = await this.auth.authStatus()
+    if (snapshot.status === 'authenticated') void this.fileTransfers?.resume().catch(() => undefined)
     void this.deviceLock.refresh().catch(() => undefined)
     void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
     return snapshot
@@ -1679,7 +1682,7 @@ recordingAnalysisV1: true,
     this.directory.dispose()
     this.record.dispose()
     this.realtime.resetAttentionSummary()
-    this.fileTransfers?.cancelActive()
+    this.fileTransfers?.dispose()
     this.contact.dispose()
     this.contactDirectory.dispose()
     this.unmarkedSpeaker.dispose()
@@ -2726,9 +2729,11 @@ recordingAnalysisV1: true,
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
       this.realtime.preferChatProjection(session.userId, source.ownerRef)
-      return await this.withSelfRoleSnapshots(await this.unifiedTimeline.read(sourceRef, {
+      const page = await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal, options.background === true), session.userId)
+      }, options.signal, options.background === true)
+      if (!source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
+      return await this.withSelfRoleSnapshots(page, session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }

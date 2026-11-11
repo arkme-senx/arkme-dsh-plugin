@@ -12,7 +12,7 @@ const row = (id: number, extra: Partial<ArkmeSourceItem> = {}): ArkmeSourceItem 
 const page = (items: ArkmeSourceItem[], nextCursor?: string): ArkmeSourceList => ({ directory: 'root', items, hasMore: nextCursor !== undefined, ...(nextCursor === undefined ? {} : { nextCursor }) })
 const owners: ConversationDirectoryService[] = []
 afterEach(() => { for (const owner of owners.splice(0)) owner.reset(); vi.useRealTimers() })
-function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: ArkmeSourceList, restoreBots?: (items: import('../../src/types.js').ArkmeBotSummary[], userId: number) => Promise<import('../../src/types.js').ArkmeBotSummary[]>) {
+function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: ArkmeSourceList, restoreBots?: (items: import('../../src/types.js').ArkmeBotSummary[], userId: number) => Promise<import('../../src/types.js').ArkmeBotSummary[]>, readLocalTimeline?: (sourceRef: string, signal: AbortSignal) => Promise<import('../../src/types.js').ArkmeTimelinePage>) {
   let userId = 1
   const write = vi.fn(async (_userId: number, _page: ArkmeSourceList) => undefined)
   const emitted: ArkmeSourceList[] = []
@@ -25,12 +25,47 @@ function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: Ark
   const runtime = { authenticatedChatPost: vi.fn(async (_path: string, body: { chat_session_uids: string[] }) => ({ items: body.chat_session_uids.map(uid => ({ session: { chat_session_uid: uid }, current_policy: { user_id: userId, pin_state: 2, update_at: 20 } })) })), requireSession: async () => ({ userId }), accountScopedSession: async () => ({ userId }), stateStore: { readDirectoryCache: async () => cached, writeDirectoryCache: write } }
   const readBots = vi.fn(async () => ({ items: [] as import('../../src/types.js').ArkmeBotSummary[] }))
   const warmAvatar = vi.fn(async () => undefined)
-  const owner = new ConversationDirectoryService(runtime as unknown as ServiceRuntime, source as unknown as SourceService, preferences as unknown as ConversationDirectoryVisibilityService, readBots, warmAvatar, value => { emitted.push(value) }, restoreBots)
+  const owner = new ConversationDirectoryService(runtime as unknown as ServiceRuntime, source as unknown as SourceService, preferences as unknown as ConversationDirectoryVisibilityService, readBots, warmAvatar, value => { emitted.push(value) }, restoreBots, readLocalTimeline)
   owners.push(owner)
   return { owner, source, write, emitted, preferences, runtime, readBots, warmAvatar, switchUser: (id: number) => { userId = id; owner.reset() } }
 }
 
 describe('local-first directory', () => {
+  it('recovers only the matching latest preview before displaying the cached directory', async () => {
+    const cached = [row(1, { latestSequence: 7, latestPreviewUnavailable: true }), row(2, { latestSequence: 8, latestPreviewUnavailable: true })]
+    const remote = gate<ArkmeSourceList>()
+    const test = setup(() => remote.promise, page(cached), undefined, async ref => ({
+      source: cached.find(source => source.sourceRef === ref)!,
+      items: [{ itemUid: 'video', sequence: 7, title: '', textContent: '', conversationPreview: '[视频]说明',
+        senderName: '同事', isMe: false, status: 1, sendAtMillis: 10 }],
+      hasMore: false,
+    }))
+    const first = await test.owner.read()
+    expect(first.items[0]).toMatchObject({ latestPreview: '[视频]说明', latestPreviewUnavailable: false })
+    expect(first.items[1]?.latestPreview).toBeUndefined()
+    remote.resolve(page(cached))
+    await test.owner.settled()
+  })
+  it('keeps a same-sequence media preview on temporary failure and replaces it after opening the latest message', async () => {
+    let current = row(1, {latestSequence:7,latestPreview:'[图片]说明'})
+    const test = setup(async () => page([current]))
+    await test.owner.read()
+    await test.owner.settled()
+    current = row(1, {latestSequence:7,latestPreviewUnavailable:true})
+    await test.owner.read(true)
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]?.latestPreview).toBe('[图片]说明')
+    current = row(1, {latestSequence:8,latestPreviewUnavailable:true})
+    await test.owner.read(true)
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]?.latestPreview).toBeUndefined()
+    const source = (await test.owner.read()).items[0]!
+    test.owner.rememberTimelinePreview(1, {source,items:[{
+      itemUid:'video',sequence:8,title:'',textContent:'视频说明',senderName:'同事',isMe:false,status:1,sendAtMillis:10,
+      contentBlocks:[{kind:'video',mediaRef:'video',fileName:'clip.mp4',mimeType:'video/mp4',size:1,sortOrder:0}],
+    }],hasMore:false})
+    expect((await test.owner.read()).items[0]).toMatchObject({latestPreview:'[视频]视频说明',latestPreviewUnavailable:false})
+  })
   it.each([false, true])('refreshes only the affected unread row and respects a concurrent read (read=%s)', async read => {
     const current = row(1, { latestSequence: 4, readSequence: 4, latestPreview: 'previous' })
     const test = setup(async () => page([current, row(2)]))

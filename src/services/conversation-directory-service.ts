@@ -1,7 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises'
 import { retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
-import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
+import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList, ArkmeTimelinePage } from '../types.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
 import type { ChatSyncUnreadPreview } from '../chat-message-sync.js'
@@ -22,6 +22,13 @@ const MAX_PAGE_RATE_LIMIT_DELAY_MS = 30_000
 const PAGE_SIZE = 20
 const MAX_ROWS = 20_000
 const keyOf = (source: ArkmeSourceItem) => source.sourceKey ?? source.sourceRef
+
+function recoverTimelinePreview(source: ArkmeSourceItem, page: ArkmeTimelinePage): ArkmeSourceItem {
+  if (!source.latestSequence || !source.latestPreviewUnavailable || keyOf(source) !== keyOf(page.source)) return source
+  const item = page.items.find(item => item.sequence === source.latestSequence)
+  if (!item || item.status !== 1 || item.sendAtMillis < (source.latestActivityAtMillis ?? 0)) return source
+  return { ...source, latestPreview: arkmeTimelineConversationPreview(item), latestPreviewUnavailable: false }
+}
 
 function directoryFailureDetails(error: unknown) {
   if (!(error instanceof ArkmePluginError)) return { code: 'unexpected' }
@@ -52,7 +59,12 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
       if (previous[field] !== undefined) Object.assign(merged, { [field]: previous[field] })
     }
   }
-  if (!stale && incoming.latestPreview === undefined) delete merged.latestPreview
+  if (!stale && incoming.latestPreview === undefined) {
+    if (incoming.latestPreviewUnavailable && incoming.latestSequence === previous.latestSequence && previous.latestPreview) {
+      merged.latestPreview = previous.latestPreview
+      merged.latestPreviewUnavailable = false
+    } else delete merged.latestPreview
+  }
   // A page started before a live mutation cannot roll a current name back.
   if (keepLiveName) {
     merged.displayName = previous.displayName
@@ -140,6 +152,7 @@ export class ConversationDirectoryService {
     private readonly warmAvatar: (ref: string, signal: AbortSignal) => Promise<unknown>,
     private readonly emit: (page: ArkmeSourceList) => void,
     private readonly restoreBots: (items: ArkmeBotSummary[], userId: number) => Promise<ArkmeBotSummary[]> = async items => items,
+    private readonly readLocalTimeline?: (sourceRef: string, signal: AbortSignal) => Promise<ArkmeTimelinePage>,
   ) {}
 
   dispose(): void { this.disposed = true; this.reset() }
@@ -169,7 +182,9 @@ export class ConversationDirectoryService {
         // References are validated by the current Host before they can reach a consumer.
         if (cached.items[0] !== undefined) await this.source.openSourceRef(cached.items[0].sourceRef, userId)
         if (generation !== this.generation) return
-        for (const item of cached.items) this.sources.set(keyOf(item), item)
+        const items = await this.recoverLocalPreviews(cached.items, this.controller.signal)
+        if (generation !== this.generation) return
+        for (const item of items) this.sources.set(keyOf(item), item)
         this.cachedAtMillis = cached.projection?.cachedAtMillis ?? 0
         for (const item of cached.projection?.visibility ?? []) this.visibility.set(`${item.entryKind}:${item.entryRef}`, item)
         const cachedBots = cached.projection?.bots ?? []
@@ -205,6 +220,33 @@ export class ConversationDirectoryService {
       signal.addEventListener('abort', abort, { once: true })
       void pending.then(resolve, reject).finally(() => { signal.removeEventListener('abort', abort) })
     })
+  }
+
+  private async recoverLocalPreviews(items: ArkmeSourceItem[], signal: AbortSignal): Promise<ArkmeSourceItem[]> {
+    const read = this.readLocalTimeline
+    if (!read) return items
+    const pending = items.filter(item => item.latestPreviewUnavailable && !item.latestPreview && item.accessKind !== 'team_delegation'
+      && (item.kind === 'private_chat' || item.kind === 'group_chat'))
+      .sort((a, b) => b.activeAtMillis - a.activeAtMillis).slice(0, 8)
+    if (!pending.length) return items
+    const timeoutMillis = 120
+    const budget = AbortSignal.any([signal, AbortSignal.timeout(timeoutMillis)])
+    const recovery = Promise.all(pending.map(async item => {
+      const page = await read(item.sourceRef, budget).catch(() => undefined)
+      return [keyOf(item), page && !budget.aborted ? recoverTimelinePreview(item, page) : item] as const
+    })).then(entries => {
+      const recovered = new Map(entries)
+      return items.map(item => recovered.get(keyOf(item)) ?? item)
+    })
+    return await Promise.race([recovery, delay(timeoutMillis, items, { signal, ref: false }).catch(() => items)])
+  }
+
+  rememberTimelinePreview(userId: number, page: ArkmeTimelinePage): void {
+    if (this.disposed || userId !== this.userId) return
+    const current = this.sources.get(keyOf(page.source))
+    if (!current) return
+    const recovered = recoverTimelinePreview(current, page)
+    if (recovered !== current) this.apply([recovered])
   }
 
   private async readSnapshot(force: boolean): Promise<ArkmeSourceList> {
@@ -303,6 +345,7 @@ export class ConversationDirectoryService {
         if (visited.size >= MAX_ROWS / PAGE_SIZE) throw new Error("Directory page budget exceeded; synchronization incomplete")
         const atRevision = this.revision
         const page = await this.readScanPage(cursor, signal)
+        if (first) page.items = await this.recoverLocalPreviews(page.items, signal)
         if (generation !== this.generation || (await this.runtime.requireSession()).userId !== userId) throw new DOMException('Account changed', 'AbortError')
         this.onChatPageAvailable?.()
         if (page.hasMore && (page.nextCursor === undefined || visited.has(page.nextCursor))) throw new ArkmePluginError('directory-cursor-invalid', '会话目录分页未完成：游标无效', true, 502)
@@ -832,7 +875,7 @@ export class ConversationDirectoryService {
       const currentActivity = Math.max(current.activeAtMillis, current.latestActivityAtMillis ?? 0)
       const preview = latest === sequence && item.sendAtMillis >= currentActivity
         ? { activeAtMillis: item.sendAtMillis, latestActivityAtMillis: item.sendAtMillis, latestActivityKind: 'record' as const,
-            latestPreview: item.forwardRecords === undefined ? arkmeTimelineConversationPreview(item) : `[转发] ${item.forwardRecords.title}` }
+            latestPreview: arkmeTimelineConversationPreview(item) }
         : {}
       rows.push({ ...current, ...preview, latestSequence: latest, readSequence: read,
         ...projectArkmeChatAttentionFromMuted(count, current.isMuted === true) })

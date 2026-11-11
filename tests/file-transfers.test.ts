@@ -605,7 +605,7 @@ describe('account-bound file lifecycle', () => {
       directory,
       maxUploadBytes: 1_000,
       runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [] } } as never,
-      source: { openSourceRef: async () => ({ kind: 'private_chat' }) } as never,
+      source: { openSourceRef: async () => ({ kind: 'private_chat' }), sourceScopeKey: async () => 'private' } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
       }) } as never,
@@ -648,7 +648,7 @@ describe('account-bound file lifecycle', () => {
       directory,
       maxUploadBytes: 1_000,
       runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [] } } as never,
-      source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
+      source: { openSourceRef: async () => ({ kind: 'send_to_self' }), sourceScopeKey: async () => 'self' } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
       }) } as never,
@@ -965,7 +965,7 @@ it('preserves cloud and local attachment order through the durable file owner', 
   const sendSourceRich = vi.fn(async (_ref: string, _content: unknown, options: { recordUid: string }) => ({ sourceRef: 'source', itemUid: options.recordUid, status: 1, localState: 'synced' as const }))
   const owner = createArkmeFileTransfers({ directory, maxUploadBytes: 1000,
     runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [], arkoFileRefs: async () => [] } } as never,
-    source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
+    source: { openSourceRef: async () => ({ kind: 'send_to_self' }), sourceScopeKey: async () => 'self' } as never,
     media: { uploadLocalFile: async (_path: string, metadata: object) => ({ ...metadata, fileAssetUid: 'uploaded-local' }) } as never,
     chat: { sendSourceRich, readSource: async () => ({ items: [] }) } as never,
   })!

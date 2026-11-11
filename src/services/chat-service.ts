@@ -5265,10 +5265,13 @@ nextPublic = next
   async sendSourceRich(
       sourceRef: string,
       input: ArkmeRichSendInput,
-      options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal; sendAtMillis?: number; pendingAttachments?: PendingAttachment[]; attachmentOrder?: string[]; backgroundAmplitudes?: number[] } = {},
+      options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal; sendAtMillis?: number; pendingAttachments?: PendingAttachment[]; attachmentOrder?: string[]; backgroundAmplitudes?: number[]; allowPlainText?: true } = {},
     ): Promise<ArkmeSourceSendResult> {
     requireFrozenTeamSendTime(input)
-      if (this.runtime.config.richMediaSendEnabled === false) {
+      if (this.runtime.config.richMediaSendEnabled === false && (
+        !options.allowPlainText || input.textFormat === 'markdown' || input.displayKind === 1 || input.title?.trim()
+        || input.assets?.length || options.pendingAttachments?.length || input.backgroundSound !== undefined || input.botMentions?.length
+      )) {
         throw new ArkmePluginError('rich-content-disabled', '富内容发送已被插件配置关闭', false, 403)
       }
       if (input.textFormat === 'markdown' && (input.displayKind === 1 ? this.runtime.config.markdownLongArticlesEnabled : this.runtime.config.markdownQuickNotesEnabled) !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
@@ -5606,10 +5609,28 @@ nextPublic = next
     }
   }
   
-  async confirmSourceSend(input:import('../file-transfer-contract.js').ArkmeFileSendInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult|undefined|null>{
+  async confirmSourceSend(input:import('../file-transfer-contract.js').ArkmeFileSendInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult|undefined|null|false>{
     const session=await this.runtime.requireSession(),source=await this.source.openSourceRef(input.sourceRef,session.userId)
+    if (source.kind === 'send_to_self' || source.kind === 'default_category' || source.kind === 'topic') {
+      let data: Record<string, unknown>
+      try {
+        data = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/detail',
+          { record_uid: input.recordUid }, session, signal, { lane: 'interactive-read', bypassCache: true, cacheMs: 0 })
+      } catch (error) {
+        // Record's legacy detail endpoint uses InvalidParam for several rejections.
+        if (error instanceof ArkmePluginError && error.code === 'arkme-code-40001'
+          && /^record is not found(?:（服务错误码 40001）)?$/.test(error.message)) return false
+        throw error
+      }
+      const core = objectValue(data.record_core)
+      if (stringValue(core.record_uid) !== input.recordUid || Number(core.owner_user_id) !== session.userId || numberValue(core.status) !== 1) {
+        throw new ArkmePluginError('record-send-receipt-unverified', '原快记状态无法核对，请勿重复发送', false, 409)
+      }
+      return { sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' }
+    }
     if(source.kind!=='group_chat'&&source.kind!=='private_chat')return null
     const result=await this.sourceChatPost<Record<string,unknown>>(source,'/api/v1/chats/records/receipt/get',{chat_session_uid:source.ownerRef,record_uid:input.recordUid,rel_uid:input.relationUid},session,signal,{lane:'interactive-read',bypassCache:true})
+    if(result.accepted===false)return false
     if(result.accepted!==true)return undefined
     const expected=bindGroupSourceRepresentation(source,await new GroupRepresentationCodec(this.runtime).selection(input.content.representation,session.userId))
     const actual=objectValue(result.representation)
