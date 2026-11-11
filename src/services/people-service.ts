@@ -1,3 +1,4 @@
+import type { CallHistoryService } from './call-history-service.js'
 import { SpeakerGroupService } from './speaker-group-service.js'
 import type { ExploreEvidence, ExploreSource } from '../explore-contract.js'
 import { PeopleIdentityService } from './people-identity-service.js'
@@ -21,7 +22,8 @@ export class PeopleService {
     private readonly explore: Pick<ExploreService, 'personDirectoryItem'> & Partial<Pick<ExploreService,'personEvidenceKey'>>,
     private readonly recording: Pick<RecordingService, 'directorySpeakerRef' | 'directoryUserSpeakerRef'> & Partial<Pick<RecordingService,'recordingGroupRows'>>,
     private readonly contacts: Pick<ContactDirectoryService, 'listRecordingSpeakerUsers' | 'enrichPeoplePage'>,
-    private readonly chat: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService,'personRecordsForIdentity'>>) {
+    private readonly chat: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService,'personRecordsForIdentity'>>,
+    private readonly calls?: Pick<CallHistoryService, 'listCallHistory' | 'callDetail'>) {
     this.identities = new PeopleIdentityService(runtime, (id, owner) => recording.directorySpeakerRef(id, owner))
     this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), unavailable, 262144)
   }
@@ -61,7 +63,7 @@ export class PeopleService {
         facet.assignmentRef = await this.recording.directoryUserSpeakerRef(userId, session.userId)
         if (userId !== session.userId) facet.chatRef = await this.codec.seal('arkme-person-chat-v1', { viewer: session.userId, environment: this.runtime.config.environment, userId, label: facet.name, expires: Date.now() + 30 * 60_000 })
       }
-      if(source==='speakers'||source==='contacts'&&(row.chat_session_uid||userId===session.userId)) facet.recordsRef=await this.codec.seal('arkme-person-records-v1',{viewer:session.userId,environment:this.runtime.config.environment,identity,source,chat:row.chat_session_uid,userId,expires:Date.now()+30*60_000})
+      if(source==='speakers'||source==='contacts'&&(row.chat_session_uid||userId===session.userId||this.calls)) facet.recordsRef=await this.codec.seal('arkme-person-records-v1',{viewer:session.userId,environment:this.runtime.config.environment,identity,source,chat:row.chat_session_uid,userId,expires:Date.now()+30*60_000})
       return this.identities.decorate(facet, identity, value => key('person', value), signal, row.link)
     }))
     const nextCursor = page.next_cursor ? await this.codec.seal('arkme-people-page-v1', { viewer: session.userId, environment: this.runtime.config.environment, source, query, cursor: page.next_cursor }) : undefined
@@ -94,7 +96,7 @@ export class PeopleService {
       if(!progress.sourceCursor&&progress.seen.includes(key))progress.index++
       else {
         const recordsRef=await this.codec.seal('arkme-person-records-v1',{viewer:session.userId,environment:this.runtime.config.environment,identity,source:audio?'speakers':'contacts',chat:source.chat_session_uid,userId:source.user_id,expires:progress.expires})
-        const page=await this.records({recordsRef,...(progress.sourceCursor?{cursor:progress.sourceCursor}:{})},signal)
+        const page=await this.records({recordsRef,...(progress.sourceCursor?{cursor:progress.sourceCursor}:{})},signal,false,true)
         const ledger=this.runtime.stateStore.personImpact
         if(ledger){
           if(progress.seenRecords.length)throw unavailable() // Old large cursors restart under the new bounded checkpoint protocol.
@@ -128,9 +130,15 @@ export class PeopleService {
     const page=await this.records({recordsRef:ref.recordsRef,...(ref.cursor?{cursor:ref.cursor}:{})},signal,true)
     const item=page.evidence.find(e=>e.key===ref.key)
     if(!item?.directSource)throw unavailable()
+    if(item.directSource.kind==='call-ref'){
+      if(!this.calls)throw unavailable()
+      const detail=await this.calls.callDetail(item.directSource.callRef,signal)
+      if(!detail.connectedUserIds?.includes(item.directSource.participantUserId))throw unavailable()
+      const current=await this.runtime.requireSession();if(current.userId!==session.userId||current.refreshToken!==session.refreshToken)throw unavailable()
+    }
     return item.directSource
   }
-  private async records(params: Record<string,unknown>,signal?:AbortSignal,forSource=false):Promise<{evidence:Array<ExploreEvidence&{directSource?:ExploreSource}>;nextCursor?:string}> {
+  private async records(params: Record<string,unknown>,signal?:AbortSignal,forSource=false,forImpact=false):Promise<{evidence:Array<ExploreEvidence&{directSource?:ExploreSource}>;nextCursor?:string}> {
     const session=await this.runtime.requireSession()
     if(typeof params.recordsRef!=='string'||params.cursor!==undefined&&typeof params.cursor!=='string')throw unavailable()
     const ref=await this.codec.open('arkme-person-records-v1',params.recordsRef),identity=objectValue(ref.identity)
@@ -142,11 +150,31 @@ export class PeopleService {
       const page=await groups.members({detailRef:params.recordsRef,...(params.cursor?{cursor:params.cursor}:{})},signal)
       nextCursor=page.nextCursor
       evidence=page.items.map(item=>{const day=new Date(item.startAtMillis);day.setHours(0,0,0,0);return {key:item.itemId,label:'录音',speaker:item.speakerLabel,text:item.text,date:item.startAtMillis,anchor:false,roles:['speaker'],directSource:{kind:'recording',dateStamp:day.getTime(),focusItemId:item.itemId,items:[item]}}})
-    }else if(ref.source==='contacts'&&['arkme_user','contact'].includes(String(identity.namespace))&&(typeof ref.chat==='string'||id(ref.userId)===session.userId)&&id(ref.userId)&&this.chat.personRecordsForIdentity){
-      const page=await this.chat.personRecordsForIdentity(typeof ref.chat==='string'?ref.chat:'',id(ref.userId),params.cursor as string|undefined,signal)
-      if(!page.supported)throw new ArkmePluginError('person-records-unsupported','聊天来源暂不支持人物内容分页',false,501)
-      nextCursor=page.nextCursor
-      evidence=await Promise.all(page.items.map(async(item):Promise<ExploreEvidence&{directSource?:ExploreSource}>=>({key:this.explore.personEvidenceKey?await this.explore.personEvidenceKey('core_record',item.itemUid):item.eventRef,label:'聊天原文',speaker:item.senderName,text:item.textContent,date:item.sendAtMillis,anchor:false,roles:['author'],directSource:{kind:'conversation',source:item.personSource,itemUid:item.itemUid,sendAtMillis:item.sendAtMillis}})))
+    }else if(ref.source==='contacts'&&['arkme_user','contact'].includes(String(identity.namespace))&&id(ref.userId)){
+      const prefix='arkme-person-call-page-v1'
+      const cursor=typeof params.cursor==='string'?params.cursor:undefined
+      const callPhase=cursor?.startsWith(prefix+'.')===true
+      if(callPhase){
+        if(!this.calls||forImpact)throw unavailable()
+        const checkpoint=await this.codec.open(prefix,cursor!)
+        if(checkpoint.viewer!==session.userId||checkpoint.environment!==this.runtime.config.environment||checkpoint.recordsRef!==params.recordsRef||Number(checkpoint.expires)<Date.now())throw unavailable()
+        const page=await this.calls.listCallHistory({limit:20,includeRecentContacts:false,...(typeof checkpoint.cursor==='string'?{cursor:checkpoint.cursor}:{})},signal)
+        if(page.hasMore&&!page.nextCursor)throw unavailable()
+        if(page.nextCursor===checkpoint.cursor&&page.hasMore)throw unavailable()
+        evidence=page.items.filter(item=>item.connectedUserIds?.includes(id(ref.userId))).map(item=>({
+          key:'call:'+item.stableId,label:'通话',speaker:'',text:'参与通话，不代表所有内容都是其发言。',date:item.startedAtMillis,anchor:false,roles:['participant'],directSource:{kind:'call-ref',callRef:item.callRef,participantUserId:id(ref.userId)}}))
+        if(page.hasMore)nextCursor=await this.codec.seal(prefix,{...checkpoint,cursor:page.nextCursor})
+      }else{
+        evidence=[]
+        if((typeof ref.chat==='string'||id(ref.userId)===session.userId)&&this.chat.personRecordsForIdentity){
+          const page=await this.chat.personRecordsForIdentity(typeof ref.chat==='string'?ref.chat:'',id(ref.userId),cursor,signal)
+          if(!page.supported)throw new ArkmePluginError('person-records-unsupported','聊天来源暂不支持人物内容分页',false,501)
+          nextCursor=page.nextCursor
+          evidence=await Promise.all(page.items.map(async(item):Promise<ExploreEvidence&{directSource?:ExploreSource}>=>({key:this.explore.personEvidenceKey?await this.explore.personEvidenceKey('core_record',item.itemUid):item.eventRef,label:'聊天原文',speaker:item.senderName,text:item.textContent,date:item.sendAtMillis,anchor:false,roles:['author'],directSource:{kind:'conversation',source:item.personSource,itemUid:item.itemUid,sendAtMillis:item.sendAtMillis}})))
+        }else if(cursor)throw unavailable()
+        // Calls are independent participation evidence, not additional chat originals affected by a link.
+        if(!nextCursor&&this.calls&&!forImpact)nextCursor=await this.codec.seal(prefix,{viewer:session.userId,environment:this.runtime.config.environment,recordsRef:params.recordsRef,expires:ref.expires})
+      }
     }else throw unavailable()
     signal?.throwIfAborted();const current=await this.runtime.requireSession();if(current.userId!==session.userId||current.refreshToken!==session.refreshToken)throw unavailable()
     if(!forSource)evidence=await Promise.all(evidence.map(async row=>{const {directSource:_,...publicRow}=row;return {...publicRow,personSourceRef:await this.codec.seal('arkme-person-source-v1',{viewer:session.userId,environment:this.runtime.config.environment,expires:ref.expires,recordsRef:params.recordsRef,cursor:params.cursor,key:row.key})}}))

@@ -5,7 +5,7 @@ import type { ServiceRuntime } from '../src/services/service.js'
 import { DatabaseSync } from 'node:sqlite'
 import { LocalPersonImpactStore } from '../src/local-person-impact.js'
 
-function fixture() {
+function fixture(calls?: ConstructorParameters<typeof PeopleService>[5]) {
   let userId = 11
   const session = () => ({ userId, refreshToken: 'test' })
   const contacts = { listRecordingSpeakerUsers: vi.fn(async () => [{ userId: 27, label: '我的备注', remark: '我的备注', avatarRef: 'avatar' }]),
@@ -22,7 +22,7 @@ function fixture() {
   const runtime = { config: { environment: 'prod' }, stateStore: { uniqueCode: async () => 'test-people-key' }, requireSession: async () => session(), authenticatedRelationPost: audio } as unknown as ServiceRuntime
   const recording = { directorySpeakerRef: vi.fn(async () => 'speaker-ref'), directoryUserSpeakerRef: vi.fn(async () => 'user-ref') }
   const chat = { personRecordsForIdentity:vi.fn(async()=>({supported:true,items:[{eventRef:'event-ref',itemUid:'core-record',textContent:'本人消息',senderName:'联系人',sendAtMillis:1000,personSource:{sourceRef:'original-chat'}}],hasMore:false})), openPrivateChatFromUser: vi.fn(async () => ({ source: { sourceRef: 'chat' } })) }
-  const service = new PeopleService(runtime, explore, recording, contacts, chat as never)
+  const service = new PeopleService(runtime, explore, recording, contacts, chat as never, calls)
   return { service, contacts, explore, audio, chat, runtime, switchAccount: () => { userId = 22 } }
 }
 
@@ -150,4 +150,33 @@ it('deduplicates the same recording under two audio identities in impact',async(
  const first=await f.service.identityAction('impact',{commandRef:preview.commandRef}) as {nextCursor:string}
  const done=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
  expect(done).toMatchObject({state:'complete',recordingCount:1,chatCount:0});expect(read).toHaveBeenCalledTimes(2)
+})
+
+
+describe('person call participation',()=>{
+ it('paginates beyond empty matches, keeps author roles separate and rechecks the selected call',async()=>{
+  const calls={listCallHistory:vi.fn(),callDetail:vi.fn()}
+  const f=fixture(calls),person=(await f.service.list('contacts')).items[0]!
+  const read=(cursor?:string)=>f.service.identityAction('records',{recordsRef:person.recordsRef,...(cursor?{cursor}:{})}) as Promise<any>
+  const first=await read();expect(first.evidence[0].roles).toEqual(['author']);expect(first.nextCursor).toBeTruthy()
+  calls.listCallHistory.mockResolvedValueOnce({items:[{stableId:'invited',connectedUserIds:[11],peerUserId:27}],hasMore:true,nextCursor:'older'})
+  const empty=await read(first.nextCursor);expect(empty.evidence).toEqual([]);expect(empty.nextCursor).toBeTruthy()
+  const page={items:[{stableId:'connected',callRef:'authorized-call',connectedUserIds:[11,27],startedAtMillis:100}],hasMore:false}
+  calls.listCallHistory.mockResolvedValue(page)
+  const final=await read(empty.nextCursor);expect(final.evidence).toHaveLength(1);expect(final.evidence[0].roles).toEqual(['participant']);expect(final.nextCursor).toBeUndefined()
+  expect(calls.listCallHistory).toHaveBeenLastCalledWith({limit:20,includeRecentContacts:false,cursor:'older'},undefined)
+  calls.callDetail.mockResolvedValue({connectedUserIds:[11,27]})
+  await expect(f.service.identityAction('records-source',{ref:final.evidence[0].personSourceRef})).resolves.toMatchObject({kind:'call-ref',callRef:'authorized-call'})
+  calls.callDetail.mockResolvedValue({connectedUserIds:[11]})
+  await expect(f.service.identityAction('records-source',{ref:final.evidence[0].personSourceRef})).rejects.toThrow()
+  f.switchAccount();await expect(read(empty.nextCursor)).rejects.toThrow()
+ })
+ it('does not expose call raw sources or create chats for a contact without a conversation',async()=>{
+  const calls={listCallHistory:vi.fn(),callDetail:vi.fn()},f=fixture(calls)
+  const original=f.audio.getMockImplementation()!
+  f.audio.mockImplementation(async(path,body)=>{const p=await original(path,body);if(body.source==='contacts')for(const item of p.items)delete (item as any).chat_session_uid;return p})
+  const person=(await f.service.list('contacts')).items[0]!
+  const page=await f.service.identityAction('records',{recordsRef:person.recordsRef}) as any
+  expect(page.evidence).toEqual([]);expect(page.nextCursor).toBeTruthy();expect(f.chat.personRecordsForIdentity).not.toHaveBeenCalled();expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+ })
 })

@@ -1,3 +1,4 @@
+import { ArkmeCallDetailDrawer } from '../ArkmeCallDetailDrawer.js'
 import { PersonRecordingAssignment } from './PersonRecordingAssignment.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PEOPLE_SOURCES, PEOPLE_SOURCE_LABELS, personMatches, type PersonFacet, type UnifiedPerson } from '../../people-contract.js'
@@ -221,6 +222,7 @@ function PersonRecords({ accountScope, relations, loading, unavailable }: { acco
     <div ref={moreSentinel} className="explore-more">{evidence.length > 0 ? `${tr('已显示')} ${evidence.length} ${tr('条原始记录')}` : ''}</div>
     {!loading && !rows.some(x => x.loading) && !evidence.length && <p className="explore-muted">{tr(unavailable || rows.some(x => x.error) ? '相关记录暂不可用' : '暂无已明确关联的关系记录。独立人物的历史关联需要后端补齐。')}</p>}
     {error && <p role="alert" className="explore-error">{error}</p>}
+    {source?.kind === 'call-ref' && <ArkmeCallDetailDrawer callRef={source.callRef} onClose={() => setSource(undefined)}/>}
     {source?.kind === 'record' && <ArkmeTimelineDetailDrawer item={source.item} canExtend={false} showOriginal={original} onToggleOriginal={() => setOriginal(x => !x)} onClose={() => setSource(undefined)}/>}
     {source?.kind === 'recording' && <ExploreRecordingSource source={source} onClose={() => setSource(undefined)}/>}
   </section>

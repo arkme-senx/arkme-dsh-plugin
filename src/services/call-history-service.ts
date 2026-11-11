@@ -521,6 +521,7 @@ export class CallHistoryService {
       callRef,
       stableId: await this.publicStableId(stableId),
       peerDisplayName: displayName,
+      connectedUserIds: [...new Set([...connectedUserIds, ...(acceptedAtMillis > 0 && callerUserId > 0 ? [callerUserId] : [])])],
       ...(peerUserId > 0 ? { peerUserId } : {}),
       mediaType: callMediaType(firstValue(item, ['call_media_type', 'callMediaType', 'media_type', 'mediaType'])),
       startedAtMillis,
@@ -733,6 +734,7 @@ export class CallHistoryService {
       transcriptFailed: booleanValue(raw.transcript_failed ?? raw.transcriptFailed),
       ...(videoRecord === undefined ? {} : { videoRecord }),
       participants,
+      connectedUserIds: [...new Set([...numberList(raw.connected_user_ids ?? raw.connectedUserIds), ...(acceptedAtMillis > 0 && firstNumber(raw, ['caller_user_id', 'callerUserId']) > 0 ? [firstNumber(raw, ['caller_user_id', 'callerUserId'])] : [])])],
       ...(source ? {sourceQuoteState: matches.length === 1 ? 'exact' as const : matches.length > 1 ? 'ambiguous' as const : 'unlocated' as const} : {}),
       transcriptSegments: transcriptSegments.map(segment => {
         const speaker = participants.find(participant => participant.userId !== undefined && participant.userId === segment.speakerUserId)

@@ -1455,6 +1455,8 @@ export interface ArkmeCallHistoryOptions {
 }
 
 export interface ArkmeCallHistoryItem {
+  /** Explicit connected members only; invitations and summary mentions are not participation. */
+  connectedUserIds?: number[]
   callRef: string
   stableId: string
   peerDisplayName: string
@@ -1538,6 +1540,7 @@ export interface ArkmeCallShareViewer { viewId: string; userId: number; displayN
 export interface ArkmeCallShareViewers { items: ArkmeCallShareViewer[]; nextCursor: string }
 
 export interface ArkmeCallDetail {
+  connectedUserIds?: number[]
   /** Source match over the full transcript, before the bounded detail projection. */
   sourceQuoteState?: 'exact' | 'unlocated' | 'ambiguous'
   /** Stable occurrence identity; callRef is renewable and must not be used for equality. */
