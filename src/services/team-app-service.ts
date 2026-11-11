@@ -11,6 +11,7 @@ import { TeamEntryPreferenceService, teamEntryCloudKey } from './team-entry-pref
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
+import { arkmeEmojiPlainText, arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { teamMessageProjection } from '../team-message-projection.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
 import {squareProfileImage,authorizedStorageURL,imagePresentationIdentity} from './profile-image.js'
@@ -30,13 +31,18 @@ import { readTeamUnderlineSnapshot, underlineId, type MessageUnderlineChange } f
 import { arkmePeerMemberType } from '../peer-membership.js'
 import { readTeamMemberCodexSync } from '../team-member-codex-sync.js'
 import type { ChatService } from './chat-service.js'
-import {arkmeChatConversationPreview, type SourceService, type ArkmeGroupAvatarSnapshotProjection} from './source-service.js'
+import {arkmeChatConversationPreview, arkmeForwardConversationPreview, type SourceService, type ArkmeGroupAvatarSnapshotProjection} from './source-service.js'
 import type { TeamMemberCandidatePort, TeamMemberCandidatePage, TeamMemberCandidateSource, TeamMemberAddResult } from '../team-member-add-contract.js'
 import { remapLongArticleAssets } from '../long-article-content.js'
 import { sharedAttachments, sharedAttachmentAt, sharedContentBlock, sharedForwardPreview } from '../team-external-chat-presentation.js'
 
 const obj = objectValue
 const str = stringValue
+function teamRecordPreview(raw: unknown): string {
+  const record = obj(raw)
+  const title = str(record.forward_title)
+  return title ? arkmeForwardConversationPreview(title) : arkmeChatConversationPreview(record)
+}
 const num = (v: unknown): number => typeof v === 'number' && Number.isSafeInteger(v) ? v : 0
 const list = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.map(obj) : []
 const role = (v: unknown): ArkmeTeamRole => v === 1 ? 'owner' : v === 2 ? 'admin' : 'member'
@@ -292,12 +298,16 @@ export class TeamAppService {
     const availablePerson = visitor.kind === 'person' && visitor.account_state === 'active' && !!recordOwnerId(v.external_user_id)
     // A former visitor can also be a current member. Each side owns a different
     // composer and accepted send identity, even when the conversation is shared.
+    const preview = obj(v.preview)
     return { ...(v.source_only===true?{sourceOnly:true}:{}),entryKey: teamEntryCloudKey(actor,'conversation',uid,side), ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: legacyKey,
       channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity({ ...visitor, member_type: availablePerson ? visitor.member_type : 'unknown' }, actor, availablePerson ? { id: v.external_user_id, context: { conversation_uid: uid, side } } : undefined) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       ...(side === 'team' && v.member_initiated === true ? { memberInitiated: true } : {}),
       notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
-      needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
+      needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: {
+        text: str(preview.text), status: str(preview.status), hasMedia: preview.has_media === true, templateKind: num(preview.template_kind),
+        ...(preview.status === 'available' && preview.record != null ? { summary: teamRecordPreview(preview.record) } : {}),
+      } } : {}) }
   }
   private async mediaItems(raw:unknown,actor:number,locator:Record<string,unknown>,version:number) {
     return await Promise.all(list(raw).map(async f => {
@@ -363,9 +373,12 @@ export class TeamAppService {
         !['team','external'].includes(str(n.side)) || num(n.seq)<=0 || num(n.published_at)<=0 || num(n.expires_at)-num(n.published_at)!==3600000) throw invalid()
     const current = await this.runtime.accountScopedSession()
     if (signal.aborted || current?.userId!==session.userId || current.refreshToken!==session.refreshToken) throw invalid()
+    const sender = n.side === 'team' ? str(n.preview_sender) : ''
+    const preview = n.preview_record == null ? '' : teamRecordPreview(n.preview_record)
+    const body = preview ? arkmeEmojiTokenSafePrefix(arkmeEmojiPlainText(sender ? `${sender}：${preview}` : preview), 120) : str(n.body)
     return { eventUid:hint.eventUid, sourceRef:await this.ref('notification',{conversation_uid:n.conversation_uid},session.userId),
       sourceKey:await this.key(`${str(n.conversation_uid)}:${str(n.side)}`,session.userId), sourceKind:'team_conversation' as const,
-      title:str(n.title), body:str(n.body), eventAtMillis:num(n.published_at), expiresAtMillis:num(n.published_at)+300000 }
+      title:str(n.title), body, eventAtMillis:num(n.published_at), expiresAtMillis:num(n.published_at)+300000 }
   }
 
   private async frozenMetadata(ref: unknown, actor: number, context: Record<string, unknown>, uid: string, kind: 'send'|'edit', messageUid?: unknown) {

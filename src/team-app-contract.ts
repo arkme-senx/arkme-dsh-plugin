@@ -56,7 +56,7 @@ export interface TeamConversation {
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
   notificationPolicy?: TeamNotificationPolicy; attentionUnread?: number
   blocked: boolean; revision: number; updatedAt: number
-  preview?: { text: string; status: string; hasMedia: boolean; templateKind?: number }
+  preview?: { text: string; summary?: string; status: string; hasMedia: boolean; templateKind?: number }
 }
 export function hasTeamDirectEntry(conversation: TeamConversation): boolean {
   return conversation.lastSeq > 0 || conversation.side === 'team' && conversation.memberInitiated === true

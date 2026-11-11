@@ -20,7 +20,7 @@ export function forwardTargetName(target: ForwardTarget): string {
     ? `${target.conversation.channel.name} · ${target.conversation.visitor?.nickname || '外部用户'}` : target.conversation.channel.name
 }
 export function forwardTargetSubtitle(target: ForwardTarget): string {
-  return target.kind === 'team' ? target.conversation.preview?.text || (target.conversation.side === 'team' ? '团队接待' : '我联系的团队')
+  return target.kind === 'team' ? (target.conversation.preview?.summary ?? target.conversation.preview?.text) || (target.conversation.side === 'team' ? '团队接待' : '我联系的团队')
     : target.source.latestPreview || (target.source.kind === 'group_chat' ? '群聊' : target.source.kind === 'private_chat' ? '私聊' : target.source.kind === 'topic' ? '主题' : '默认分类')
 }
 export function forwardTeamChildren(group: TeamConversationGroup, preferences: TeamDirectoryPreferences): ForwardTargetRow[] {
