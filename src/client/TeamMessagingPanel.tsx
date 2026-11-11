@@ -23,6 +23,7 @@ import {useTeamMessageSnapshot} from './use-team-message-snapshot.js'
 import type {TeamEditReceipt} from '../team-snapshot-contract.js'
 import { teamComposerDraft, teamMentions, rebaseTeamMentions } from './team-mentions.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
+import { useConversationResizeAnchor } from './conversation-resize-anchor.js'
 import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
 import { ArkmeComposerTargetAttachments } from './ArkmeComposerTargetAttachments.js'
 import { ArkmeComposerCard } from './ArkmeComposerCard.js'
@@ -136,7 +137,7 @@ import { useResizableComposer } from './use-resizable-composer.js'
 import { focusArkmeComposerFromClick } from './composer-focus.js'
 import { useComposerPasteFocus } from './composer-paste-focus.js'
 import type { ArkmeComposerSelectionRequest } from './composer-selection-request.js'
-import { insertArkmeComposerMentionToken, reconcileArkmeComposerMentions, arkmeAttachmentsPending, arkmeAttachmentId, releaseArkmeComposerAttachment, type ArkmeComposerAttachment, arkmeComposerDraftFromText, insertArkmeComposerEmoji, reconcileArkmeComposerEmojis, serializeArkmeComposerDraft } from './composer-draft-store.js'
+import { arkmeComposerAtomicDeletion, insertArkmeComposerMentionToken, reconcileArkmeComposerMentions, arkmeAttachmentsPending, arkmeAttachmentId, releaseArkmeComposerAttachment, type ArkmeComposerAttachment, arkmeComposerDraftFromText, insertArkmeComposerEmoji, reconcileArkmeComposerEmojis, serializeArkmeComposerDraft } from './composer-draft-store.js'
 
 
 function errorText(error: unknown): string { return error instanceof Error ? tr(error.message) : tr("操作失败，请重试") }
@@ -170,7 +171,7 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
   const emptyPreview = c.lastSeq === 0 && (!c.preview || c.preview.status === 'unavailable' && !c.preview.text && !c.preview.templateKind && !c.preview.hasMedia)
   const preview = emptyPreview ? tr('尚未发送消息') : c.preview?.status === 'available'
     ? c.preview.text || (c.preview.templateKind === 3 ? tr('[语音]') : c.preview.hasMedia ? tr('[附件]') : '')
-    : c.preview ? tr('内容暂不可用') : ''
+    : c.preview?.status === 'revalidating' ? tr('正在确认…') : c.preview ? tr('内容暂不可用') : ''
   return <><button className="team-conversation-row" data-team-conversation-key={c.key} data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-team-side={c.side} type="button" role={role}
     {...(role === 'treeitem' ? { 'aria-selected': selected } : {})} data-arkme-feedback="neutral"
     style={{ ...directoryStyles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }} onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}>
@@ -413,6 +414,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
   }, [draft.localFiles, draftPreview])
   const confirmedRead = useRef(conversation.myReadSeq)
   const viewport = useRef<ArkmeConversationViewportSnapshot>()
+  const viewportRestoreIntent = useRef<boolean>()
   const attachmentQueue = useRef<AttachmentPreparationQueue>()
   const sendBusy = useRef(false)
   const latest = useRef(timeline); latest.current = timeline
@@ -612,8 +614,9 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     if (pendingJump.current) {
       const key=pendingJump.current
       const row=[...node.querySelectorAll<HTMLElement>('[data-team-message-key]')].find(element=>element.dataset.teamMessageKey===key)
-      if (row) {row.scrollIntoView?.({block:'center'});quoteNavigation.located(row,key,node);pendingJump.current=undefined;viewport.current=arkmeConversationViewport(node);return}
+      if (row) {row.scrollIntoView?.({block:'center'});quoteNavigation.located(row,key,node);pendingJump.current=undefined;viewport.current=arkmeConversationViewport(node);viewportRestoreIntent.current=false;return}
     }
+    viewportRestoreIntent.current = viewport.current?.stickToBottom !== false
     const offset = arkmeConversationAnchorOffset(node, viewport.current?.anchorId)
     node.scrollTop = arkmeConversationRestoredScrollTop(viewport.current, {
       currentScrollTop: node.scrollTop, scrollHeight: node.scrollHeight,
@@ -974,6 +977,14 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     updateText(serialized.text,teamMentions(serialized.mentions));dismissMention();editor.current?.focus()
     setSelectionRequest({text:inserted.text,start:inserted.caretIndex,end:inserted.caretIndex})
   }
+  const updateRichText = (text: string, emojis?: typeof richDraft.emojis) => {
+    const value = serializeArkmeComposerDraft({
+      ...richDraft, text,
+      mentions: reconcileArkmeComposerMentions(richDraft.text, text, richDraft.mentions),
+      emojis: emojis ?? reconcileArkmeComposerEmojis(richDraft.text, text, richDraft.emojis),
+    })
+    updateText(value.text, teamMentions(value.mentions))
+  }
   const personRecordsRevision = useMemo(() => JSON.stringify([timeline?.conversation.revision ?? conversation.revision,
     (timeline?.messages ?? []).map(message => [message.key,message.version,message.contentStatus,message.state])]), [timeline,conversation.revision])
   const visitorActions = useTeamVisitorActions({ conversation: current, accountKey,
@@ -995,6 +1006,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     if (!locatedKey) return
     const row = Array.from(scroller.current?.querySelectorAll<HTMLElement>('[data-team-message-key]') ?? []).find(node => node.dataset.teamMessageKey === locatedKey)
     row?.scrollIntoView({ block: 'center' })
+    viewportRestoreIntent.current = false
     if (scroller.current) viewport.current = arkmeConversationViewport(scroller.current)
   }, [locatedKey])
   useEffect(() => {
@@ -1003,6 +1015,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     return () => clearTimeout(timer)
   }, [locatedKey])
   const selection = useTeamMessageSelection({ accountKey, conversationKey: conversation.key, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal })
+  useConversationResizeAnchor(scroller, timeline ? storageKey : undefined, undefined, selection.ids !== undefined, recordsRef, viewportRestoreIntent)
   const displayedMessages = visibleMessages.filter(selection.keeps).map(m => { const sender = personName(m.sender); return sender === m.sender ? m : { ...m, sender } })
   const reactionActors = useTeamReactionActors(accountKey,
     [...displayedMessages.map(message => message.sender), ...(receiptState.value?.members ?? []).map(personName)],
@@ -1149,13 +1162,27 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
             if(!trigger||JSON.stringify([trigger.startIndex,trigger.query])!==dismissedMention)setDismissedMention('')
           }}
           onFocus={() => {setComposerFocused(true);mentionCandidates.prepare()}} onBlur={() => setComposerFocused(false)}
-          onTextChange={(text, emojis) => {const value=serializeArkmeComposerDraft({...richDraft,text,mentions:reconcileArkmeComposerMentions(richDraft.text,text,richDraft.mentions),emojis:emojis ?? reconcileArkmeComposerEmojis(richDraft.text,text,richDraft.emojis)});updateText(value.text,teamMentions(value.mentions))}}
+          onTextChange={updateRichText}
           onKeyDown={event => {
             if(event.nativeEvent.isComposing||event.nativeEvent.keyCode===229)return
             if(detailReady&&mentionOpen){
               if(event.key==='Escape'){event.preventDefault();event.stopPropagation();dismissMention();return}
               if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();mentionSession.move(event.key==='ArrowDown'?1:-1);return}
               if((event.key==='Enter'||event.key==='Tab')&&!event.shiftKey){event.preventDefault();if(mentionSession.activeCandidate)selectMention(mentionSession.activeCandidate);return}
+            }
+            if (event.key === 'Backspace' || event.key === 'Delete') {
+              const deletion = arkmeComposerAtomicDeletion(
+                richDraft.text, richDraft.mentions,
+                editor.current?.selectionStart ?? richDraft.text.length,
+                editor.current?.selectionEnd ?? richDraft.text.length,
+                event.key === 'Backspace' ? 'backward' : 'forward',
+              )
+              if (deletion) {
+                event.preventDefault()
+                updateRichText(deletion.text)
+                setSelectionRequest({text:deletion.text,start:deletion.caretIndex,end:deletion.caretIndex})
+                return
+              }
             }
             if (detailReady && event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (editing) void mutateMessage(); else void send(defaultReply) } }}
           onPaste={event => {

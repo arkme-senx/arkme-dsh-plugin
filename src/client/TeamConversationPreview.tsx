@@ -74,7 +74,7 @@ export function TeamConversationPreview({ accountKey, target, onClose }: { accou
           {group&&group.conversations.length===0&&group.groupCount>0&&<p style={{fontSize:13,color:arkmeTheme.secondary}}>{group.preview||tr('团队群聊')}</p>}
           {group?.conversations.map(c => <button key={c.key} style={{ ...button, width: '100%', textAlign: 'left', padding: '12px 0', borderBottom: `1px solid ${arkmeTheme.borderSoft}`, color: arkmeTheme.text }} onClick={() => setChosen(c)}>
             <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}><span style={{ minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{c.visitor?.nickname ?? '用户'}</span><TeamVisitorMembership conversation={c} />{c.unread > 0 && <span style={{ marginLeft: 'auto', flexShrink: 0, color: arkmeTheme.accent }}>{c.unread} 条未读</span>}</span>
-            <span style={{ display: 'block', marginTop: 5, fontSize: 12, color: arkmeTheme.secondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? '[附件]' : '[消息]') : '内容暂不可用'}</span>
+            <span style={{ display: 'block', marginTop: 5, fontSize: 12, color: arkmeTheme.secondary, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.preview?.status === 'available' ? c.preview.text || (c.preview.hasMedia ? '[附件]' : '[消息]') : c.preview?.status === 'revalidating' ? tr('正在确认…') : '内容暂不可用'}</span>
           </button>)}
           {directory.error && <p role="alert">{directory.error}</p>}
           {(directory.hasMore || directory.error) && <button style={button} disabled={directory.loading} onClick={() => { void refreshTeamDirectory(accountKey, !directory.error) }}>{directory.loading ? '正在加载…' : directory.error ? '重试' : '加载更多对话'}</button>}
@@ -186,7 +186,7 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
       <div style={{ maxWidth: 'calc(100% - 38px)', minWidth: 0 }}>
         <div style={{ fontSize: 11, color: arkmeTheme.secondary, marginBottom: 4 }}>{message.sender.nickname} · {new Date(message.createdAt).toLocaleString()}</div>
         <div style={{ padding: '8px 10px', borderRadius: 10, background: message.own ? arkmeTheme.messageOwn : arkmeTheme.messageOther }}>
-          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent readOnly attachmentNavigationKey={message.key} message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>消息已删除或暂不可用</span>}
+          {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent readOnly attachmentNavigationKey={message.key} message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>{message.contentStatus === 'revalidating' ? tr('正在确认…') : '消息已删除或暂不可用'}</span>}
         </div>
       </div>
     </article>)}

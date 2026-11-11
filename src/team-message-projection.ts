@@ -36,5 +36,7 @@ export function withoutTeamMessageMaterial(message: TeamMessage): TeamMessage {
 
 /** A directory identity is retained while its content preview is revalidated. */
 export function withoutTeamConversationMaterial(conversation: TeamConversation): TeamConversation {
-  return {...conversation,preview:{status:'unavailable',text:'',hasMedia:false}}
+  const previous = conversation.preview?.status ?? ''
+  const status = ['unavailable', 'deleted', 'protected', 'moderated'].includes(previous) ? previous : 'revalidating'
+  return { ...conversation, preview: { status, text: '', hasMedia: false } }
 }
