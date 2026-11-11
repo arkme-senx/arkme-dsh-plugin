@@ -44,13 +44,12 @@ afterEach(async () => {
   await act(async () => root.unmount()); host.remove(); unifiedModelStore.activate(undefined)
   arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'production' }); vi.unstubAllGlobals()
 })
-it.each(['profile', 'events', 'goals', 'anniversaries'] as const)('shows %s models in the shared full directory and submits only after confirmation', async module => {
+it.each(['profile', 'events', 'goals', 'anniversaries'] as const)('shows selectable %s models and submits only after confirmation', async module => {
   const changed = await render(module)
   expect(host.textContent).toContain('分析模型 A'); await open()
-  expect(options()).toHaveLength(3); expect(document.body.textContent).toContain('123.45 积分')
+  expect(options()).toHaveLength(2); expect(document.body.textContent).toContain('123.45 积分')
   expect(document.querySelector('.arkme-unified-model-confirm')).toBeNull()
-  await choose('系统对话模型')
-  expect(document.body.textContent).toContain('支持情况待确认')
+  expect(document.body.textContent).not.toMatch(/系统对话模型|支持情况待确认/)
   expect(mock.call.mock.calls.some(([op]) => op === 'explore.settings.save')).toBe(false)
   await choose('分析模型 B')
   expect(mock.call.mock.calls.some(([op]) => op === 'explore.settings.save')).toBe(false)
@@ -74,7 +73,7 @@ it('allows a failed model read to be retried without submitting analysis', async
   failRead = true; await render(); await open()
   expect(document.body.textContent).toContain('模型目录暂不可用'); failRead = false
   await click('重新读取模型')
-  expect(options()).toHaveLength(3); expect(host.textContent).toContain('分析模型 A')
+  expect(options()).toHaveLength(2); expect(host.textContent).toContain('分析模型 A')
   expect(mock.call.mock.calls.some(([op]) => op === 'explore.settings.save')).toBe(false)
 })
 it('aborts an old-account activation and never publishes its late result to the new account', async () => {

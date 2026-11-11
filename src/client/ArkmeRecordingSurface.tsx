@@ -577,10 +577,8 @@ function RecordingModelDialog({ kind, config, onClose, onConfirm }: {
   onClose(): void
   onConfirm(routeKey: string): void
 }) {
-  const initial = config.options.some(option => option.routeKey === config.effectiveRouteKey)
-    ? config.effectiveRouteKey : config.options[0]?.routeKey ?? ''
   return <AnalysisModelDialog ariaLabel={`选择${kind === 'summary' ? tr("总结") : tr("时间轴")}生成模型`}
-    initialValue={initial} options={config.options.map(option => ({ value: option.routeKey, label: option.displayName }))}
+    initialValue={config.effectiveRouteKey} options={config.options.map(option => ({ value: option.routeKey, label: option.displayName }))}
     modelScene={kind === 'timeline' ? 'recording-timeline' : 'recording-summary'} unifiedModels={recordingModelChoices(config,kind)} onClose={onClose} onConfirm={onConfirm} />
 }
 
@@ -928,7 +926,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         if (controller.signal.aborted) return
         setModelConfig({ state: 'ready', value })
         if (dialogKind !== undefined && selectedDateRef.current === requestedDateStamp) {
-          if (value.options.length > 0) setModelDialogKind(dialogKind)
+          if (value.options.some(option => option.available === true)) setModelDialogKind(dialogKind)
           else setGenerationErrors(current => ({ ...current, [dialogKind]: tr('暂无可用生成模型，请稍后重试。') }))
         }
       })
@@ -1456,10 +1454,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       delete next[kind]
       return next
     })
-    if (modelConfigKind === kind && modelConfig.state === 'ready' && modelConfig.value.options.length > 0) {
-      setModelDialogKind(kind)
-      return
-    }
     loadModelConfig(kind)
   }
 

@@ -5,7 +5,7 @@ import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { formatAiPoints, pointsUnits } from '../ai-points.js'
-import { mergeModelChoices, modelSceneBilling, modelAvailable, sceneReference, unavailableLabel, type ModelChoice, type ModelScene, type ModelOrigin } from '../model-directory.js'
+import { modelSceneBilling, modelAvailable, sceneReference, type ModelChoice, type ModelScene, type ModelOrigin } from '../model-directory.js'
 import { ArkmeBillingSettings } from './ArkmeBillingSettings.js'
 import { ArkmePointsConsumption } from './ArkmePointsConsumption.js'
 import { ThinkingEffortSlider } from './ThinkingEffortSlider.js'
@@ -14,9 +14,9 @@ import { tr, useArkmeLocale } from './locale.js'
 import css from './unified-model-picker.css?inline'
 import usageCss from './account-usage.css?inline'
 
-export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, currentId, currentEffort, anchor, busy = false, error = '', confirmLabel = '确认并生成', confirmationDescription, initialView = 'models', onApply, onClose, onRefresh, ariaLabel }: {
+export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, currentId, currentEffort, anchor, busy = false, loading = false, error = '', confirmLabel = '确认并生成', confirmationDescription, initialView = 'models', onApply, onClose, onRefresh, ariaLabel }: {
   scene: ModelScene; scopeLabel: string; models: readonly ModelChoice[]; currentId: string; currentEffort?: string | undefined
-  anchor?: HTMLButtonElement | undefined; busy?: boolean; error?: string; confirmLabel?: string; initialView?: 'models' | 'usage'
+  anchor?: HTMLButtonElement | undefined; busy?: boolean; loading?: boolean; error?: string; confirmLabel?: string; initialView?: 'models' | 'usage'
   confirmationDescription?: string | undefined
   onApply(model: ModelChoice, effort?: string): Promise<boolean>
   onRefresh?: (() => Promise<void>) | undefined
@@ -31,22 +31,29 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   const applyingRef = useRef(false), mounted = useRef(true), latestScope = useRef(data.scope)
   latestScope.current = data.scope
   const [position, setPosition] = useState<CSSProperties>({ visibility: anchor ? 'hidden' : 'visible' })
-  const choices = mergeModelChoices(data.catalog?.models ?? [], localModels)
-  const resolveId = (id: string) => {
-    const local = localModels.find(model => model.id === id)
-    const reference = local && sceneReference(local, scene)
-    return choices.find(model => model.id === id || local?.origin === model.origin && (
+  const positioned = position.visibility !== 'hidden'
+  const catalogChoices = data.catalog?.models ?? []
+  // Only display metadata can come from the shared catalog. Scene data owns routes, billing and controls.
+  const choices = localModels.filter(model => modelAvailable(model, scene)).map(local => {
+    const reference = sceneReference(local, scene)
+    const catalogModel = catalogChoices.find(model => model.origin === local.origin && model.id === local.id)
+      ?? catalogChoices.find(model => local.origin === model.origin && (
       ((scene === 'dayReview' || local.origin === 'user-provided') && typeof reference === 'string' && sceneReference(model, scene) === reference)
       || (scene === 'dsh' && local.dsh && model.dsh?.provider === local.dsh.provider && model.dsh.model === local.dsh.model)
-    ))?.id ?? id
-  }
-  const selected = choices.find(model => model.id === resolveId(selectedId))
+    ))
+    return catalogModel ? {
+      ...(catalogModel.supplierCode ? { supplierCode: catalogModel.supplierCode } : {}),
+      ...(catalogModel.version ? { version: catalogModel.version } : {}),
+      ...local,
+    } : local
+  })
+  const selected = choices.find(model => model.id === selectedId)
   const requiresConfirmation = scene.startsWith('recording-') || scene.startsWith('explore-') || scene === 'dayReview'
-  const actualCurrentId = resolveId(currentId)
-  const checkedId = resolveId(requiresConfirmation ? selectedId : currentId)
-  const rank = (model: ModelChoice) => model.id === actualCurrentId ? 0 : modelAvailable(model, scene) ? 1 : 2
+  const checkedId = requiresConfirmation ? selectedId : currentId
+  const rank = (model: ModelChoice) => model.id === currentId ? 0 : 1
   const groups = (['official', 'user-provided'] as const).map(origin => [origin, choices.filter(model => model.origin === origin).sort((a, b) => rank(a) - rank(b))] as const)
     .filter(([, models]) => models.length)
+  const firstChoiceId = groups[0]?.[1][0]?.id
   const nameKey = (model: ModelChoice) => `${model.origin}:${model.name.trim().toLowerCase().replace(/\s+/g, ' ')}`
   const nameCounts = new Map<string, number>()
   for (const model of choices) nameCounts.set(nameKey(model), (nameCounts.get(nameKey(model)) ?? 0) + 1)
@@ -55,14 +62,21 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
       ? model.exploreRouteKey?.split('/')[0] || model.channel : model.channel)
     return ({ dashscope: '百炼', 'aliyun-bailian': '百炼', deepseek: 'DeepSeek', volcengine: '火山引擎', openai: 'OpenAI' } as Record<string, string>)[supplier] ?? supplier
   }
-  const hasDraftChange = resolveId(selectedId) !== actualCurrentId || effort !== (currentEffort ?? '')
+  const hasDraftChange = selected !== undefined && (selectedId !== currentId || effort !== (currentEffort ?? ''))
   // Recording's explicit generation action is meaningful even without a model change.
-  const showConfirmation = requiresConfirmation && (scene.startsWith('recording-') || scene === 'dayReview' || hasDraftChange || busy || applying)
+  const showConfirmation = choices.length > 0 && requiresConfirmation && (scene.startsWith('recording-') || scene === 'dayReview' || hasDraftChange || busy || applying)
   const originLabel = (origin: ModelOrigin) => tr(origin === 'official' ? '即我官方' : '用户自提供')
   const hasReadError = !!(data.catalogError || data.accountError || data.catalog?.failures.length)
   const restoreSelection = () => { setSelectedId(currentId); setEffort(currentEffort ?? '') }
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  useEffect(() => {
+    if (requiresConfirmation && selectedId && selectedId !== currentId && !selected) {
+      setSelectedId('')
+      setEffort('')
+    }
+  }, [requiresConfirmation, selectedId, currentId, selected])
   useEffect(() => { restoreSelection() }, [currentId, currentEffort])
+  useEffect(() => { if (view === 'pricing' && !selected) setView('models') }, [view, selected])
   useLayoutEffect(() => {
     if (typeof document === 'undefined' || typeof window === 'undefined') return
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : undefined
@@ -78,13 +92,14 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); (anchor ?? previous)?.focus({ preventScroll: true }) }
   }, [anchor])
   useLayoutEffect(() => {
-    const option = view === 'models' ? panel.current?.querySelector<HTMLElement>('[aria-selected="true"]') ?? panel.current?.querySelector<HTMLElement>('[role="option"]') : undefined
+    if (!positioned || !panel.current) return
+    const option = view === 'models' ? panel.current.querySelector<HTMLElement>('[role="option"][aria-selected="true"]:not(:disabled)')
+      ?? panel.current.querySelector<HTMLElement>('[role="option"]:not(:disabled)') : undefined
     option?.scrollIntoView?.({ block: 'nearest' })
-    ;(option ?? panel.current)?.focus({ preventScroll: true })
-  }, [view, selected?.id])
+    ;(option ?? panel.current).focus({ preventScroll: true })
+  }, [view, positioned, selected?.id, firstChoiceId])
   const apply = async (model: ModelChoice, nextEffort?: string, closeOnSuccess = true) => {
     if (busy || applyingRef.current) return
-    if (!modelAvailable(model, scene)) { setNotice(unavailableLabel(model, scene)); return }
     const scope = data.scope
     applyingRef.current = true; setApplying(true); setNotice('')
     try {
@@ -110,11 +125,10 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
   }
   const choose = (model: ModelChoice) => {
     if (busy || applyingRef.current) return
-    const nextEffort = model.id === actualCurrentId ? currentEffort ?? '' : model.reasoning?.defaultEffort ?? ''
+    const nextEffort = model.id === currentId ? currentEffort ?? '' : model.reasoning?.defaultEffort ?? ''
     setSelectedId(model.id); setEffort(nextEffort); setNotice('')
-    if (!modelAvailable(model, scene)) { setNotice(unavailableLabel(model, scene)); return }
     if (!requiresConfirmation) {
-      if (model.id === actualCurrentId) onClose()
+      if (model.id === currentId) onClose()
       else void apply(model, nextEffort)
     }
   }
@@ -129,14 +143,14 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
         onKeyDown={event => {
           if (event.key === 'Escape') { event.stopPropagation(); event.preventDefault(); onClose() }
           if (event.target instanceof Element && event.target.closest('[role="listbox"]') && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
-            const options = [...(panel.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? [])], index = options.indexOf(document.activeElement as HTMLElement)
+            const options = [...(panel.current?.querySelectorAll<HTMLElement>('[role="option"]:not(:disabled)') ?? [])], index = options.indexOf(document.activeElement as HTMLElement)
             const next = event.key === 'Home' ? 0 : event.key === 'End' ? options.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length
             event.preventDefault(); options[next]?.focus()
           }
           if (event.key === 'Tab') {
             const controls = [...(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)') ?? [])]
             const first = controls[0], last = controls.at(-1)
-            if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === panel.current)) { event.preventDefault(); last?.focus() }
             else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
           }
         }}>
@@ -148,7 +162,7 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
           <ArkmeCloseButton type="button" aria-label={tr('关闭模型面板')} onClick={onClose} />
         </header>
         {view === 'models' ? <>
-          <div className="arkme-unified-model-list" role="group" aria-label={tr('全部已接入模型')} aria-busy={applying}>
+          <div className="arkme-unified-model-list" role="group" aria-label={tr('当前场景可用模型')} aria-busy={applying}>
             {groups.map(([origin, models]) => <div key={origin} role="group" aria-label={originLabel(origin)} className="arkme-unified-model-group">
               <div className="arkme-unified-model-group-title">
                 <span>{originLabel(origin)}</span>
@@ -168,18 +182,17 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
                 </span>
                   {origin === 'user-provided' && <small className="arkme-unified-model-bound-account">{model.channel}</small>}
                 </span>
-                {model.id === actualCurrentId && <small className="arkme-unified-model-current">{tr('当前')}</small>}
-                {!modelAvailable(model, scene) && <small>{tr(unavailableLabel(model, scene))}</small>}
+                {model.id === currentId && <small className="arkme-unified-model-current">{tr('当前')}</small>}
                 <span className="arkme-unified-model-check" aria-hidden>{model.id === checkedId && <Check size={16} weight="bold"/>}</span>
               </button>)}
               </div>
             </div>)}
-            {!choices.length && <p className="arkme-unified-model-empty" role="status">{tr(data.loading ? '正在读取模型…' : '模型暂不可用')}</p>}
+            {!choices.length && !error && <p className="arkme-unified-model-empty" role="status">{tr(loading ? '正在读取模型…' : '模型暂不可用')}</p>}
           </div>
           <footer className="arkme-unified-model-footer">
             {showConfirmation && confirmationDescription && <p className="arkme-unified-model-muted">{tr(confirmationDescription)}</p>}
             {selected?.reasoning && scene !== 'dayReview' && <ThinkingEffortSlider key={selected.id} reasoning={selected.reasoning} value={effort}
-              disabled={busy || applying || !modelAvailable(selected, scene)} onPreview={setEffort} onCommit={value => {
+              disabled={busy || applying} onPreview={setEffort} onCommit={value => {
                 setNotice('')
                 if (!requiresConfirmation && value !== (currentEffort ?? '')) void apply(selected, value, false)
               }}/>}
@@ -187,9 +200,11 @@ export function UnifiedModelPicker({ scene, scopeLabel, models: localModels, cur
               <span>{billingHint}</span><span className="arkme-unified-model-info-link">{tr('详情')}<CaretRight size={14}/></span>
             </button>}
             {(notice || error) && <p className="arkme-unified-model-notice" role="alert">{notice || error}</p>}
-            {error && onRefresh && !hasReadError && <div className="arkme-unified-model-read-error"><button type="button" disabled={busy || applying} onClick={retry}>{tr('重新读取模型')}</button></div>}
-            {hasReadError && <div className="arkme-unified-model-read-error" role="status"><span>{tr(data.catalogError || data.catalog?.failures.length ? '部分模型信息暂不可用' : '积分暂不可用')}</span><button type="button" disabled={data.loading} onClick={retry}>{tr(data.loading ? '重试中…' : '重试')}</button></div>}
-            {showConfirmation && <button type="button" className="arkme-unified-model-confirm" disabled={(!selected || !modelAvailable(selected, scene)) || busy || applying}
+            {!selected && requiresConfirmation && choices.length > 0 && <p className="arkme-unified-model-muted" role="status">{tr('请选择模型')}</p>}
+            {error && onRefresh && <div className="arkme-unified-model-read-error"><button type="button" disabled={busy || applying || loading} onClick={retry}>{tr('重新读取模型')}</button></div>}
+            {hasReadError && <div className="arkme-unified-model-read-error" role="status"><span>{tr(data.catalogError || data.catalog?.failures.length ? '部分模型信息暂不可用' : '积分暂不可用')}</span>
+              {!(error && onRefresh) && <button type="button" disabled={data.loading} onClick={retry}>{tr(data.loading ? '重试中…' : '重试')}</button>}</div>}
+            {showConfirmation && <button type="button" className="arkme-unified-model-confirm" disabled={!selected || busy || applying}
               onClick={() => { if (selected) void apply(selected, effort) }}>{tr(applying || busy ? '正在提交…' : confirmLabel)}</button>}
           </footer>
         </> : <div className="arkme-unified-model-content">
