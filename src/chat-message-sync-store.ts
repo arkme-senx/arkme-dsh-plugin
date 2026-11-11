@@ -227,7 +227,7 @@ export class ChatMessageSyncStore {
       const terminal = work.state === 'removed' || work.state === 'restricted'
       const eventId = work.eventId!, itemKey = work.itemKey!
       if (!eventId || !itemKey) throw new Error('message-sync-identity-missing')
-      const exists = this.prepare("SELECT version,ticket,json_extract(payload,'$.contentStatus') AS content_status FROM contents WHERE scope=? AND event_id=?").get(scope, eventId)
+      const exists = this.prepare("SELECT version,ticket,json_extract(payload,'$.contentStatus') AS content_status, json_extract(payload,'$.item.messageActionsV2') AS message_actions_v2 FROM contents WHERE scope=? AND event_id=?").get(scope, eventId)
       const unread = (command.action === 'commit' && old ? old.unread === 1 : work.unread) && work.sequence > readThrough
       if (!unread && !old && !exists) {
         // A browser can still be displaying a realtime body that never reached SQLite.
@@ -246,14 +246,18 @@ export class ChatMessageSyncStore {
         // version that was never committed to canonical contents.
         if (exists && Number(exists.ticket) > ticket && (exists.content_status !== 'available' || Number(exists.version) < work.version)) throw new Error('message-sync-stale')
         if (!exists || Number(exists.ticket) <= ticket && Number(exists.version) <= work.version) {
+          // Sync bodies omit the capability previously confirmed by the timeline.
+          const item = work.event.item.messageActionsV2 === undefined && exists?.message_actions_v2 === 1
+            ? { ...work.event.item, messageActionsV2: true } : work.event.item
+          const event = item === work.event.item ? work.event : { ...work.event, item }
           this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,'messages',?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET
-            payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(work.event), work.version, ticket)
+            payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(event), work.version, ticket)
           if (unread && work.unread && work.sequence > (latestUnread?.sequence ?? 0)) {
-            latestUnread = { uid: session.uid, sourceKey, sequence: work.sequence, item: work.event.item }
+            latestUnread = { uid: session.uid, sourceKey, sequence: work.sequence, item }
           }
           // Newly downloaded tails already use the committed-body wakeup.
           if (exists || Number(old?.stored_revision ?? -1) >= 0) {
-            projection.changes.push({ itemKey, revision: work.revision, version: work.version, item: work.event.item })
+            projection.changes.push({ itemKey, revision: work.revision, version: work.version, item })
           }
         }
         committed = true

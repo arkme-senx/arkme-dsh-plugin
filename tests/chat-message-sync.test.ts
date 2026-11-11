@@ -36,6 +36,24 @@ it('commits bodies and checkpoint durably, freezes m, resumes without recounting
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%read%'").all()).toEqual([]); db.close()
   } finally { s.close() }
 })
+it('keeps confirmed message actions in the committed projection and the reopened cache', () => {
+  const s = setup()
+  try {
+    s.begin()
+    s.page([session([work()])])
+    s.action('freeze')
+    const first = body(work())
+    if (first.event?.kind === 'message') first.event.item.messageActionsV2 = true
+    s.page([session([first])], false)
+    const next = body({ ...work(), revision: 2, version: 2 })
+    s.page([session([next])], false)
+    expect(s.plan.projections).toMatchObject([{ changes: [{ item: { messageActionsV2: true, recordVersion: 2 } }] }])
+    s.reopen()
+    expect(s.execute({ action: 'read', scope: 'test:1:chat', limit: 40 }))
+      .toMatchObject({ events: [{ item: { messageActionsV2: true, recordVersion: 2 } }] })
+  } finally { s.close() }
+})
+
 it('rolls back the entire commit on invalid bodies, counts zero-revision tombstones and holds pending work', () => {
   const s = setup()
   try {

@@ -1414,7 +1414,14 @@ export class TeamAppService {
           return {message:await this.message(current,actor,context),changed:false}
         }
       }
-      case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
+      case 'team.app.delete': {
+        const context = await conversation(), m = await message()
+        if (m.conversation_uid !== context.conversation_uid || m.side !== context.side) throw invalid()
+        const data = await post('conversations/messages/delete/v2', { ...context, message_uid: m.message_uid })
+        const changedAtMillis = num(data.deleted_at)
+        if (data.conversation_uid !== context.conversation_uid || data.message_uid !== m.message_uid || !Number.isSafeInteger(changedAtMillis) || changedAtMillis <= 0) throw invalid()
+        return { changedAtMillis }
+      }
       case 'team.app.notification-policy.get': {
         const context=await conversation()
         return this.policy(await post('conversations/notification-policy/get',context,true),actor,str(context.conversation_uid),true)

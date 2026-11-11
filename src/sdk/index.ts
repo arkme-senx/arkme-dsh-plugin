@@ -2654,6 +2654,20 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  async changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.personalMessageActionsV2 !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持本人删除或发送者撤回，请升级', retryable: false })
+    }
+    return await this.call<import('../chat-message-actions.js').ChatMessageActionResult>('source.chat-message-action', { sourceRef, actionRef, action }, signal)
+  }
+
+  async deleteTeamMessage(conversationRef: string, messageRef: string, signal?: AbortSignal) {
+    if ((await this.capabilities(signal)).features.personalMessageActionsV2 !== true) {
+      throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持本人删除或发送者撤回，请升级', retryable: false })
+    }
+    return await this.call<import('../chat-message-actions.js').TeamMessageDeletionResult>('team.messages.delete', { conversationRef, messageRef }, signal)
+  }
+
   async withdrawGroupMessage(
     messageWithdrawalRef: string,
     signal?: AbortSignal,
@@ -3594,3 +3608,5 @@ export type { ModelBinding, ModelExecutionMetadata } from '../model-execution.js
 export type {AccountModelSettings,AccountModelSave,AccountModelPreferences,AccountModelCapabilities,AccountModelScene,ModelUsageQuery,ModelUsagePage} from '../account-models.js'
 
 export type { LocalRecorderSnapshot, LocalRecorderDevice, LocalRecorderRecording, LocalRecorderAudio } from '../local-recorder/contract.js'
+
+export type { ChatMessageActionResult, TeamMessageDeletionResult } from "../chat-message-actions.js"

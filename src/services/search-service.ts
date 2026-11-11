@@ -28,6 +28,8 @@ import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLo
 import { arkmeNormalizedHashTag } from '../hashtag.js'
 import { arkmeSearchRecordLinks } from '../search-record-links.js'
 import { arkmeMediaKind } from '../file-transfer-contract.js'
+import { isBackendRouteUnavailable } from './service-error.js'
+import type { ArkmeSessionCredentials } from '../keychain-store.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -126,10 +128,11 @@ export class SearchService {
       options.signal,
       { lane: 'interactive-read', ...(frame ? { chatAccessRef: frame.source.groupDelegation!.accessRef, bypassCache: true } : {}) },
     )
-    const result = this.recordSearchResult(data, lockedRecordUids, frame)
+    const filtered = await this.applyChatPersonalDeletions(data, session, options.signal)
+    const result = this.recordSearchResult(filtered, lockedRecordUids, frame)
     result.items = await resolveDshSearchOrigins(this.localDshQuery?.(), result.items, options.signal)
     const navigable = await this.withNavigationTargets(result, options.signal, options.sourceRef)
-    await this.bindSourceArticleActions(data, navigable, frame, options.signal)
+    await this.bindSourceArticleActions(filtered, navigable, frame, options.signal)
     options.signal?.throwIfAborted()
     if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
     options.signal?.throwIfAborted()
@@ -368,8 +371,9 @@ export class SearchService {
     if (options.articleScope && options.articleScope !== 'recent' && data.applied_article_scope !== options.articleScope) {
       throw new ArkmePluginError('long-article-sharing-unavailable', '服务端暂不支持此共享分类，请升级后重试', false, 501)
     }
-    const result = await this.withNavigationTargets(this.recordSearchResult(data, lockedRecordUids, frame), options.signal, options.sourceRef)
-    await this.bindSourceArticleActions(data,result,frame,options.signal)
+    const filtered = await this.applyChatPersonalDeletions(data, session, options.signal)
+    const result = await this.withNavigationTargets(this.recordSearchResult(filtered, lockedRecordUids, frame), options.signal, options.sourceRef)
+    await this.bindSourceArticleActions(filtered,result,frame,options.signal)
     if (options.articleScope && options.articleScope !== 'recent') {
       result.appliedArticleScope = options.articleScope
       for (const item of result.items) {
@@ -613,6 +617,40 @@ export class SearchService {
         state: stringValue(guard.state).trim() || 'complete',
         ...(stringValue(guard.reason).trim() === '' ? {} : { reason: stringValue(guard.reason).trim() }),
       },
+    }
+  }
+
+  private async applyChatPersonalDeletions(data: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    const items = listValue(data.items)
+    const occurrence = (raw: unknown) => {
+      const row = objectValue(raw), chat = objectValue(row.chat_core)
+      if (row.source_kind !== 3) return
+      const session = stringValue(chat.chat_session_uid || row.source_uid)
+      const relation = stringValue(objectValue(chat.occurrence).relation_uid)
+      if (session && relation) return { chat_session_uid: session, rel_uid: relation }
+    }
+    const occurrences = items.flatMap(row => {
+      const target = occurrence(row)
+      return target ? [target] : []
+    })
+    if (!occurrences.length) return data
+    try {
+      const result = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/messages/personal-visibility/query',
+        { items: occurrences }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      if (!Array.isArray(result.hidden)) throw new ArkmePluginError('chat-message-visibility-invalid', '会话消息状态响应无效', true, 502)
+      const hidden = new Set(result.hidden.map(raw => {
+        const item = objectValue(raw)
+        return JSON.stringify([item.chat_session_uid, item.rel_uid])
+      }))
+      if (!hidden.size) return data
+      const visible = items.filter(raw => {
+        const target = occurrence(raw)
+        return !target || !hidden.has(JSON.stringify([target.chat_session_uid, target.rel_uid]))
+      })
+      return { ...data, items: visible, page_summary: undefined }
+    } catch (error) {
+      if (isBackendRouteUnavailable(error)) return data
+      throw error
     }
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { projectCommittedChatWindow, UnifiedTimelineLiveTail } from '../src/client/unified-timeline-live-tail.js'
+import { projectCommittedChatMessage, projectCommittedChatWindow, UnifiedTimelineLiveTail } from '../src/client/unified-timeline-live-tail.js'
 import { ArkmeChatTimelineDeltaStore } from '../src/client/chat-directory-store.js'
 import { ConversationReadAckQueue } from '../src/client/conversation-read-ack-queue.js'
 import { CHAT_TIMELINE_SOURCES, type ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
@@ -115,6 +115,17 @@ it('projects committed edits and removals in a historical window without changin
   expect(projected.events).toMatchObject([{ eventId: 'event-5', item: { sequence: 5, textContent: 'edited' } }, { eventId: 'event-7' }])
   expect(projected).toMatchObject({ newerHasMore: true, windowTokens: ['confirmed'], olderCursor: 'older' })
   expect(projectCommittedChatWindow(history, changes).events).toEqual(projected.events)
+})
+
+it('preserves the confirmed recall capability when a synced body replaces the same message', () => {
+  const canonical = { ...item(5), isMe: true, messageActionRef: 'confirmed-ref', messageActionsV2: true }
+  const synced = { ...item(5), isMe: true, messageActionRef: 'synced-ref', recordVersion: 2 }
+  const change = { itemKey: 'relation-5', revision: 10, version: 2, item: synced }
+  expect(projectCommittedChatMessage(canonical, new Map([['relation-5', change]])))
+    .toMatchObject({ messageActionsV2: true, messageActionRef: 'synced-ref', recordVersion: 2 })
+  expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: undefined }]]))).toBeUndefined()
+  expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: { ...synced, messageActionsV2: false } }]])))
+    .toMatchObject({ messageActionsV2: false })
 })
 
 it('keeps an entire manifest page of removals available to a mounted window', () => {

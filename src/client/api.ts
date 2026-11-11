@@ -279,7 +279,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.message-underline.change'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
-  | 'source.record-delete'
+  | 'source.record-delete' | 'source.chat-message-action'
   | 'source.record-topic.assign'
   | 'source.forward-messages'
   | 'message-actions.copy-link'

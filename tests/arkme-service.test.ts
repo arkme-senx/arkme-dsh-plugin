@@ -6647,7 +6647,7 @@ describe('ArkmeService', () => {
 
 
 describe('chat deletion capabilities from hydrated Record payloads', () => {
-  it.each(['private_chat', 'group_chat'] as const)('preserves authoritative deletion facts across %s projections', async kind => {
+  it.each(['private_chat', 'group_chat'] as const)('uses the Chat V2 receipt without exposing Record deletion in %s projections', async kind => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const variants = [
@@ -6672,13 +6672,13 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
       if (url.endsWith('/timeline/unified/v3')) {
-        return json({ code: 200, data: unifiedResponse('chat-delete', { items, has_more: false }) })
+        return json({ code: 200, data: { ...unifiedResponse('chat-delete', { items, has_more: false }), message_actions_v2: true } })
       }
-      if (url.endsWith('/api/v1/records/delete')) {
-        deleteBodies.push(JSON.parse(String(init?.body)))
-        return json({ code: 0, data: {
-          record_core: { record_uid: 'own', owner_user_id: 10001, status: 2, version: 8 },
-        } })
+      if (url.endsWith('/api/v1/records/delete')) throw new Error('Unexpected Record deletion')
+      if (url.endsWith('/api/v1/chats/messages/delete/v2')) {
+        const body = JSON.parse(String(init?.body))
+        deleteBodies.push(body)
+        return json({ code: 200, data: { ...body, deleted_at: 120 } })
       }
       return json({ code: 200, data: { items: [] } })
     })
@@ -6689,16 +6689,14 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
     const realtime = await (service as unknown as { chat: import('../src/services/chat-service.js').ChatService })
       .chat.chatTimelineItems({ items }, sessions.session, 'chat-delete', kind)
     for (const projected of [page.items, tail.items, around.items, realtime]) {
-      const own = projected.find(item => item.itemUid === 'own')!
-      expect(own?.recordDeletionRef).toBeDefined()
-      expect(openRecordDeletionRef(own.recordDeletionRef!, 'dsh-device-1')).toMatchObject({
-        recordUid: 'own', recordVersion: 7, userId: 10001, sourceKind: kind, sourceOwnerRef: 'chat-delete',
-      })
-      expect(projected.filter(item => item.recordDeletionRef).map(item => item.itemUid)).toEqual(['own'])
+      expect(projected.every(item => !item.recordDeletionRef)).toBe(true)
     }
-    await expect(service.deleteSourceRecords(sourceRef, [page.items.find(item => item.itemUid === 'own')!.recordDeletionRef!]))
-      .resolves.toMatchObject({ items: [{ recordUid: 'own', result: 'deleted', version: 8 }] })
-    expect(deleteBodies).toEqual([{ record_uid: 'own', version: 7 }])
+    const own = page.items.find(item => item.itemUid === 'own')!
+    expect(own.messageActionsV2).toBe(true)
+    await expect(service.changeChatMessage(sourceRef, own.messageActionRef!, 'delete'))
+      .resolves.toMatchObject({ timelineItemKey: own.timelineItemKey, changedAtMillis: 120 })
+    await expect(service.deleteSourceRecords(sourceRef, ['old-record-ref'])).rejects.toThrow('请使用会话消息删除')
+    expect(deleteBodies).toEqual([{ chat_session_uid: 'chat-delete', rel_uid: 'own' }])
   })
 })
 

@@ -2637,7 +2637,7 @@ export function ArkmeSurface({
   const messageActionStatusTimerRef = useRef<number>()
   const forwardSuccessTimerRef = useRef<number>()
   const [selectMode, setSelectMode] = useState<{ sourceKey: string; selectedIds: Set<string> }>()
-  const [nativeMessageActionBusy, setMessageActionBusy] = useState<'copy-link' | 'forward'>()
+  const [nativeMessageActionBusy, setMessageActionBusy] = useState<'copy-link' | 'forward' | 'delete'>()
   const askDsh = useAskDsh(JSON.stringify([authenticatedAccountKey, conversationKey, [...(selectMode?.selectedIds ?? [])]]), () => {
     exitMessageSelectMode()
     arkmeUi.showHarness()
@@ -2650,6 +2650,9 @@ export function ArkmeSurface({
   const recordMutations = useMemo(() => recordMutationFeedback(authenticatedAccountKey ?? 'logged-out'), [authenticatedAccountKey])
   const recordMutationSnapshot = useSyncExternalStore(recordMutations.subscribe, recordMutations.getSnapshot, recordMutations.getSnapshot)
   const topicAssignmentScopeKey = `${authenticatedAccountKey ?? ''}:${conversationOverlayKey}`
+  const activeMessageMutationScope = useRef(topicAssignmentScopeKey)
+  activeMessageMutationScope.current = topicAssignmentScopeKey
+  const personalDeletionRunning = useRef(false)
   const messageActionBusy = askDsh.busy ? 'ask-dsh' : nativeMessageActionBusy
   const deletionMotionRef = useRef<MessageDeletionMotion>()
   useLayoutEffect(() => () => { deletionMotionRef.current?.cancel(); deletionMotionRef.current = undefined }, [topicAssignmentScopeKey, activeConversation, active])
@@ -6761,7 +6764,7 @@ export function ArkmeSurface({
   const selectedMessageCount = activeSelectMode?.selectedIds.size ?? 0
   const selectedMessagesWithinBatchLimit = selectedMessageCount > 0 && selectedMessageCount <= 100
   const selectedMessagesCanDelete = selectedMessagesWithinBatchLimit && selectedMessageItems.length === selectedMessageCount
-    && selectedMessageItems.every(item => Boolean(item.recordDeletionRef))
+    && selectedMessageItems.every(item => Boolean(sourceIsChat ? item.messageActionsV2 && item.messageActionRef : item.recordDeletionRef))
   const selectedMessagesHaveSnapshots = selectedMessageCount > 0 && selectedMessageItems.length === selectedMessageCount
     && selectedMessageItems.every(item => arkmeTimelineMessageActionRef(item) !== '')
   const selectedMessagesSupportSnapshotBatch = selectedMessagesWithinBatchLimit && selectedMessagesHaveSnapshots
@@ -8288,7 +8291,7 @@ export function ArkmeSurface({
                 </Fragment>
                 if (row.kind === 'notice') return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
-                  <li data-arkme-conversation-row={row.id} style={styles.notice}>{row.item.message}</li>
+                  <li data-arkme-conversation-row={row.id} style={arkmeConversationMessageLayout.notice}>{row.item.message}</li>
                 </Fragment>
                 if (row.kind === 'moment') {
                   return <Fragment key={row.id}>
@@ -8351,7 +8354,9 @@ export function ArkmeSurface({
                   </span> : personalMessageAvatar
                 const selectionAnchor = arkmeMessageSelectionAnchor(item)
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
-                const messageLineBottomGap = index === displayRows.length - 1 || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
+                const next = displayRows[index + 1]
+                const nextIsSameDayNotice = next?.kind === 'notice' && dayKey(next.occurredAtMillis) === dayKey(item.sendAtMillis)
+                const messageLineBottomGap = !next || nextIsSameDayNotice || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
                 return <Fragment key={conversationMessageRenderKey(item)}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={item.sendAtMillis} /></li>}
                   <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
@@ -8746,7 +8751,49 @@ export function ArkmeSurface({
         if (oldQuote) showMessageActionStatus('已更换引用')
       }} />}
     {selfTour.panel}
-    {activeConversation && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordDeletionDialog
+    {activeConversation && sourceIsChat && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeConfirmDialog
+      titleId="arkme-chat-delete-title" title={tr('删除消息')}
+      description={tr('仅从你的会话中删除，其他人仍可查看。')}
+      confirmLabel={tr('确认删除')} busyLabel={tr('删除中…')} busy={nativeMessageActionBusy === 'delete'} confirmTone="danger"
+      onClose={() => setRecordDeletion(undefined)}
+      onConfirm={() => {
+        if (nativeMessageActionBusy || personalDeletionRunning.current) return
+        personalDeletionRunning.current = true
+        const selection = recordDeletion
+        const account = arkmeAuthStore.getSnapshot().auth
+        const selectedSource = conversationKey
+        setMessageActionBusy('delete')
+        void (async () => {
+          let confirmed = 0
+          for (const item of selection.items) {
+            const current = arkmeAuthStore.getSnapshot().auth
+            if (current?.userId !== account?.userId || current?.environment !== account?.environment) return
+            try {
+              const result = await callArkme<import('../chat-message-actions.js').ChatMessageActionResult>('source.chat-message-action', {
+                sourceRef: selection.sourceRef, actionRef: item.messageActionRef, action: 'delete',
+              }, AbortSignal.timeout(10_000))
+              const afterWrite = arkmeAuthStore.getSnapshot().auth
+              if (afterWrite?.userId !== account?.userId || afterWrite?.environment !== account?.environment) return
+              arkmeChatTimelineDelta.applyTimelineChange({
+                sourceKey: selectedSource, timelineItemKey: result.timelineItemKey, changeKind: 'deleted',
+                changeVersion: result.changedAtMillis, relationTerminal: true, throughSequence: item.sequence ?? 0,
+              })
+              confirmed++
+            } catch { break }
+          }
+          const current = arkmeAuthStore.getSnapshot().auth
+          if (current?.userId !== account?.userId || current?.environment !== account?.environment) return
+          arkmeUi.chatChanged()
+          if (activeMessageMutationScope.current !== selection.scopeKey) return
+          setRecordDeletion(previous => previous === selection ? undefined : previous)
+          exitMessageSelectMode()
+          showMessageActionStatus(confirmed === selection.items.length ? '已删除所选消息' : `已确认删除 ${confirmed} 条，其余请刷新核对`)
+        })().finally(() => {
+          personalDeletionRunning.current = false
+          setMessageActionBusy(previous => previous === 'delete' ? undefined : previous)
+        })
+      }} />}
+    {activeConversation && !sourceIsChat && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordDeletionDialog
       key={recordDeletion.scopeKey} sourceRef={recordDeletion.sourceRef}
       deletionRefs={recordDeletion.items.map(item => item.recordDeletionRef!)}
       onSubmit={() => {
@@ -9623,7 +9670,7 @@ export function ArkmeSurface({
               disabled: !selectedMessagesCanAskDsh || messageActionBusy !== undefined,
               onSelect: () => { if (source) void askDsh.run(source.sourceRef, askDshNotesWithLocalNames(selectedMessageItems, source, conversationMemberByRef, selfProfile)) } },
             { id: 'delete', label: tr('删除'), icon: <Trash size={22} />, danger: true,
-              reason: selectedMessagesCanDelete ? tr('删除') : '包含他人或暂不可删除的快记', disabled: !selectedMessagesCanDelete || messageActionBusy !== undefined,
+              reason: selectedMessagesCanDelete ? tr('删除') : '包含暂不可删除的消息', disabled: !selectedMessagesCanDelete || messageActionBusy !== undefined,
               onSelect: () => { if (source && selectedMessagesCanDelete && messageActionBusy === undefined) setRecordDeletion({ scopeKey: topicAssignmentScopeKey, sourceRef: source.sourceRef, items: [...selectedMessageItems] }) } },
             { id: 'close', label: ARKME_MESSAGE_SELECT_ACTION_LABELS[3], icon: <ArkmeSelectActionIcon kind="close" size={18} />,
               disabled: messageActionBusy !== undefined, onSelect: exitMessageSelectMode },
@@ -9703,6 +9750,7 @@ export function ArkmeSurface({
             })
             setMessageWithdrawalTarget(undefined)
             showMessageActionStatus(result.alreadyWithdrawn ? '消息已撤回' : '已撤回')
+            if (messageWithdrawalTarget.item.isMe) void loadTimeline(undefined, true, 40, 'refresh').catch(() => undefined)
           }}
         />}
         {activeConversation && snapshot !== undefined && <ArkmeMessageSnapshotDialog

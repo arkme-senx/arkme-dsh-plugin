@@ -139,6 +139,7 @@ export interface ArkmeConversationToolPort {
     reportType: 1 | 2 | 3 | 4,
     options?: { sourceRef?:string;reason?: string; requestUid?: string; signal?: AbortSignal },
   ): Promise<ArkmeMessageReportResult>
+  changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal): Promise<import('../../chat-message-actions.js').ChatMessageActionResult>
   /** Withdraw one other member's group message after an explicit owner request. */
   withdrawGroupMessage(
     messageWithdrawalRef: string,

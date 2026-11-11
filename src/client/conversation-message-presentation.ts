@@ -15,6 +15,7 @@ export const arkmeConversationMessageLayout = {
   title: { flex: '0 1 auto', minWidth: 0, margin: 0, fontSize: 15, lineHeight: '21px', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   headerSubtitle: { color: arkmeTheme.secondary, fontSize: 11, lineHeight: '15px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
   date: { alignSelf: 'center', marginBottom: 18, color: arkmeTheme.caption, fontSize: 10 },
+  notice: { alignSelf: 'center', maxWidth: 520, marginInline: 'auto', padding: '9px 12px', color: arkmeTheme.secondary, textAlign: 'center', fontSize: 13, lineHeight: '16px' },
   row: { width: '100%', minWidth: 0, display: 'flex', background: 'transparent', transition: 'background-color .3s ease' },
   rowMe: { justifyContent: 'flex-end' },
   rowOther: { justifyContent: 'flex-start' },
