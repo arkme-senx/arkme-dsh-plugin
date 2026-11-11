@@ -8356,7 +8356,7 @@ export function ArkmeSurface({
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
                 const next = displayRows[index + 1]
                 const nextIsSameDayNotice = next?.kind === 'notice' && dayKey(next.occurredAtMillis) === dayKey(item.sendAtMillis)
-                const messageLineBottomGap = !next || nextIsSameDayNotice || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
+                const messageBottomGap = !next || nextIsSameDayNotice ? 0 : isSharedRecordingCard ? 42 : 18
                 return <Fragment key={conversationMessageRenderKey(item)}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={item.sendAtMillis} /></li>}
                   <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
@@ -8376,6 +8376,7 @@ export function ArkmeSurface({
                       : selectionAnchor === 'avatar'
                         ? styles.rowSelectAvatarMode
                         : styles.rowSelectCardCenterMode),
+                    ...(activeSelectMode !== undefined ? { marginBottom: messageBottomGap } : {}),
                     ...(selectedForAction ? styles.rowSelectedForAction : {}),
                     ...(isHighlighted ? styles.rowSearchTarget : {}),
                   }}
@@ -8391,7 +8392,7 @@ export function ArkmeSurface({
                       key={`highlight:${conversationTargetLocatedRevisionRef.current}`}
                       aria-hidden="true"
                       data-arkme-highlight-backdrop="true"
-                      style={{ ...styles.rowSearchTargetBackdrop, bottom: messageLineBottomGap - 6, ...(highlightedTargetUid === item.itemUid && transientReactionHighlightRef.current ? { animation: 'arkme-reaction-highlight 2s ease-out both' } : {}) }}
+                      style={{ ...styles.rowSearchTargetBackdrop, bottom: (activeSelectMode === undefined ? messageBottomGap : 0) - 6, ...(highlightedTargetUid === item.itemUid && transientReactionHighlightRef.current ? { animation: 'arkme-reaction-highlight 2s ease-out both' } : {}) }}
                     />}
                     {activeSelectMode !== undefined && <ArkmeMessageSelectionControl
                       anchor={selectionAnchor}
@@ -8407,7 +8408,7 @@ export function ArkmeSurface({
                       ...(isSharedRecordingCard ? styles.sharedRecordingMessageLine : {}),
                       ...(activeSelectMode !== undefined && selectionAnchor === 'card-center' ? styles.messageLineSelectCardCenterMode : {}),
                       // The viewport already supplies the gap above the composer.
-                      marginBottom: messageLineBottomGap,
+                      marginBottom: activeSelectMode === undefined ? messageBottomGap : 0,
                     }}>
                       {!isExtensionMessage && messageAvatar}
                       <div style={{

@@ -219,6 +219,13 @@ it('recalls by server capability even without readable body, and renders termina
  expect(host.textContent).not.toContain(message.content!.text_content)
  await mouse(notice.querySelector('button')!, 'click')
  expect(detail).toHaveBeenCalledOnce()
+ const noticeButton = notice.querySelector('button')!
+ await act(async () => root.render(<Fixture msg={recalled} selecting />))
+ expect(notice.querySelector('button')).toBe(noticeButton)
+ expect(noticeButton.getAttribute('aria-disabled')).toBe('true')
+ expect(notice.querySelector('[data-arkme-select-check]')).toBeNull()
+ await mouse(noticeButton, 'click')
+ expect(detail).toHaveBeenCalledOnce()
  await render({...recalled,own:false})
  expect(notice.textContent).toBe('对方撤回了一条消息')
 })

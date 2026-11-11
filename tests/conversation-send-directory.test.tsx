@@ -3807,6 +3807,31 @@ describe('conversation send directory projection', () => {
     await enterMessageSelectMode(item, additional)
   }
 
+  it('keeps the gap around a recall notice when entering and exiting multi-select', async () => {
+    const before: ArkmeTimelineItem = { itemUid: 'before-recall', messageActionRef: 'before-ref',
+      senderName: '我', isMe: true, sendAtMillis: 1, textContent: '前一条', status: 1 }
+    const after: ArkmeTimelineItem = { ...before, itemUid: 'after-recall', messageActionRef: 'after-ref', sendAtMillis: 3, textContent: '后一条' }
+    const page = unifiedFixture(target, [before, after])
+    page.unified.events.push({ kind: 'notice', eventId: 'recall-notice', source: 'messages',
+      occurredAtMillis: 2, orderTie: 'recall', contentStatus: 'available', text: '你撤回了一条消息' })
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((op, ...args) => op === 'source.timeline' ? Promise.resolve(page) : base(op, ...args))
+    const menu = await openMessageContextMenu(before, [after])
+    const gap = (itemUid: string) => {
+      const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': itemUid })
+      const line = row.children.find(child => typeof child !== 'string' && child.props.style?.marginBottom !== undefined)
+      return (row.props.style.marginBottom ?? 0) + (typeof line === 'object' ? line.props.style.marginBottom : 0)
+    }
+    const notice = renderer!.root.findByProps({ 'data-arkme-conversation-row': 'recall-notice' })
+    const beforeSelection = [gap(before.itemUid), notice.props.style.padding, gap(after.itemUid)]
+    expect(beforeSelection).toEqual([0, '9px 12px', 0])
+    act(() => { menu.findAllByProps({ role: 'menuitem' }).find(button => button.findAllByType('span')
+      .some(span => span.children.includes('多选')))!.props.onClick() })
+    expect([gap(before.itemUid), notice.props.style.padding, gap(after.itemUid)]).toEqual(beforeSelection)
+    act(() => { renderer!.root.findByProps({ 'aria-label': '退出多选' }).props.onClick({ currentTarget: {} }) })
+    expect([gap(before.itemUid), notice.props.style.padding, gap(after.itemUid)]).toEqual(beforeSelection)
+  })
+
   it('offers Record deletion only with an authoritative capability and preserves selection on cancel', async () => {
     await enterSelfRecordDeletion({ itemUid: 'delete-own', messageActionRef: 'select-ref',
       recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
@@ -4427,7 +4452,7 @@ describe('conversation send directory projection', () => {
       itemUid: 'select-source', messageActionRef: 'opaque-select-action',
       senderName: '狗才', isMe: true, sendAtMillis: 1, title: '',
       textContent: '这是一条用于验证多选圆点锚定头像而不是整条长消息中心的长文本。'.repeat(12), status: 1,
-    })
+    }, [{ itemUid: 'select-source-next', senderName: '狗才', isMe: true, sendAtMillis: 2, textContent: '下一条消息', status: 1 }])
 
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': 'select-source' })
     expect(row.props.style).toMatchObject({
@@ -4526,7 +4551,7 @@ describe('conversation send directory projection', () => {
         transcriptAvailable: true, participants: [{ refUserId: 12, displayName: '朋友', role: 1 }],
       },
     }
-    await enterMessageSelectMode(item)
+    await enterMessageSelectMode(item, [{ itemUid: 'select-shared-recording-next', senderName: '朋友', isMe: false, sendAtMillis: 2, textContent: '下一条消息', status: 1 }])
 
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
     expect(row.props.style).toMatchObject({
