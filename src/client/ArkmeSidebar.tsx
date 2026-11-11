@@ -121,6 +121,7 @@ import { ArkmeBotIdentityStyles, ArkmeBotSenderName } from './ArkmeBotIdentity.j
 import { ArkmePinnedCorner } from './ArkmePinnedCorner.js'
 import { ArkmeMembershipBadge } from './ArkmeMembershipBadge.js'
 import { useForwardTargetDirectory } from './forward-target-directory.js'
+import { ArkmeForwardSuccessBanner } from './ArkmeForwardSuccessBanner.js'
 import { UnifiedForwardDialog } from './UnifiedForwardDialog.js'
 import { SourceForwardAttempt } from './source-forward-attempt.js'
 import { ArkmeRecordDeletionDialog } from './ArkmeRecordDeletionDialog.js'
@@ -407,6 +408,7 @@ import {
   defaultArkmeLoginTranslate, type ArkmeLoginTranslate,
 } from './arkme-login-locales.js'
 
+import { ArkmeConversationDetailDismiss } from './ArkmeDetailShell.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail, arkmeTimelineDetailSenderText } from './ArkmeNoteDetails.js'
 import { usePersonalExtensionParents } from './use-personal-extension-parents.js'
 import { ArkmeMessageSnapshotDialog, arkmeCanOpenMessageSnapshot } from './ArkmeMessageSnapshotDialog.js'
@@ -592,20 +594,6 @@ const styles: Record<string, CSSProperties> = {
     color: '#fff', boxShadow: '0 8px 24px rgba(20,23,31,.18)', fontSize: 12, lineHeight: '18px',
     textAlign: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', pointerEvents: 'none',
   },
-  forwardSuccessBannerWrap: {
-    position: 'absolute', left: 0, right: 0, bottom: 118, zIndex: 85, display: 'flex', justifyContent: 'center',
-    padding: '0 16px', pointerEvents: 'none',
-  },
-  forwardSuccessBanner: {
-    width: 'min(380px, 100%)', minHeight: 48, display: 'flex', alignItems: 'center', gap: 9,
-    padding: '9px 12px', border: 0, borderRadius: 12, boxSizing: 'border-box',
-    background: 'color-mix(in srgb, var(--dsw-alias-bg-layer-3, #fff) 80%, transparent)',
-    color: colors.text, boxShadow: '0 5px 14px rgba(20,23,31,.16)', backdropFilter: 'blur(40px)',
-    cursor: 'pointer', pointerEvents: 'auto', textAlign: 'left',
-  },
-  forwardSuccessAvatarStack: { width: 30, height: 30, flex: 'none', position: 'relative' },
-  forwardSuccessText: { minWidth: 0, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13, lineHeight: '18px', fontWeight: 600 },
-  forwardSuccessAction: { flex: 'none', fontSize: 13, lineHeight: '18px', fontWeight: 700 },
   body: { flex: 1, minHeight: 0, overflowX: 'hidden', overflowY: 'auto', padding: '22px 22px 12px', background: arkmeTheme.base },
   utilityBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
   error: { padding: '10px 12px', borderRadius: 9, background: arkmeTheme.dangerSoft, color: colors.danger, fontSize: 13 },
@@ -662,7 +650,7 @@ const styles: Record<string, CSSProperties> = {
   bubble: arkmeConversationMessageLayout.bubble,
   bubbleMe: arkmeConversationMessageLayout.bubbleMe,
   bubbleOther: arkmeConversationMessageLayout.bubbleOther,
-  forwardBubble: { width: 354, maxWidth: '100%', minWidth: 0, padding: '13px 15px' },
+  forwardBubble: arkmeConversationMessageLayout.forwardBubble,
   sharedRecordingBubble: {
     width: '100%', maxWidth: '100%', minWidth: 0, padding: '18px 21px',
     borderRadius: 12, background: arkmeTheme.base, borderColor: arkmeTheme.border,
@@ -9269,38 +9257,18 @@ export function ArkmeSurface({
             && displayRows.length === 0 && !hasMore && !newerHasMore
             && (source?.latestSequence ?? 0) === 0
             && <ArkmeOfficialAuthorGuide />}
-          {activeConversation && forwardSuccessFeedback !== undefined && <div style={styles.forwardSuccessBannerWrap}>
-            <button
-              type="button"
-              style={styles.forwardSuccessBanner}
-              aria-label={forwardSuccessFeedback.message}
-              onClick={() => {
-                if (forwardSuccessTimerRef.current !== undefined) {
-                  window.clearTimeout(forwardSuccessTimerRef.current)
-                  forwardSuccessTimerRef.current = undefined
-                }
-                const target = forwardSuccessFeedback.targets[0]
-                setForwardSuccessFeedback(undefined)
-                if (target !== undefined) activateSource(target)
-              }}
-            >
-              <span
-                style={{
-                  ...styles.forwardSuccessAvatarStack,
-                  width: Math.min(30 + Math.max(0, forwardSuccessFeedback.targets.length - 1) * 15, 75),
-                }}
-              >
-                {forwardSuccessFeedback.targets.slice(0, 4).map((target, index) => <span
-                  key={target.sourceRef}
-                  style={{ position: 'absolute', left: index * 15, top: 0 }}
-                >
-                  <ArkmeDirectorySourceAvatar source={target} size={30} />
-                </span>)}
-              </span>
-              <span style={styles.forwardSuccessText}>{forwardSuccessFeedback.message}</span>
-              <span style={styles.forwardSuccessAction}>{tr("去看看")}</span>
-            </button>
-          </div>}
+          {activeConversation && forwardSuccessFeedback !== undefined && <ArkmeForwardSuccessBanner
+            message={forwardSuccessFeedback.message}
+            avatars={forwardSuccessFeedback.targets.slice(0, 4).map(target => <ArkmeDirectorySourceAvatar key={target.sourceRef} source={target} size={30} />)}
+            onOpen={() => {
+              if (forwardSuccessTimerRef.current !== undefined) {
+                window.clearTimeout(forwardSuccessTimerRef.current)
+                forwardSuccessTimerRef.current = undefined
+              }
+              const target = forwardSuccessFeedback.targets[0]
+              setForwardSuccessFeedback(undefined)
+              if (target !== undefined) activateSource(target)
+            }} />}
           {((activeSelectMode === undefined && askDsh.status) || messageActionStatus) && <div role="status" aria-live="polite" style={styles.messageActionToast}>{(activeSelectMode === undefined && askDsh.status) || messageActionStatus}</div>}
           {/* The mounted composer and its info row own the selection overlay's height. */}
           <div ref={selectionStartAreaRef} className="arkme-conversation-input-slot" style={{ position: 'relative', flex: 'none', ...(activeSelectMode !== undefined && archiveReadOnly && activeRecordReeditComposer === undefined ? { minHeight: askDsh.status ? 160 : 130 } : {}) }}>
@@ -9875,11 +9843,7 @@ export function ArkmeSurface({
           onClose={() => { setBotRecords(undefined) }}
         />}
         {activeConversation && drawer === 'detail' && detailItem !== undefined && <>
-          <div
-            style={styles.forwardDrawerDismiss}
-            aria-hidden="true"
-            onClick={() => { setDrawer(undefined) }}
-          />
+          <ArkmeConversationDetailDismiss onClose={() => setDrawer(undefined)} />
           {detailItem.forwardRecords !== undefined && <ForwardRecordsDetail
             key={detailItem.itemUid}
             item={detailItem}

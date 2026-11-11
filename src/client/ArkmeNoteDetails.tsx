@@ -1356,8 +1356,8 @@ function ForwardSenderAvatar({ name, avatarRef, senderUserId, onPrivateChatOpene
     ]} />
 }
 
-export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChatOpened }: {
-  item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode
+export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChatOpened, readStatus }: {
+  item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode; readStatus?: ReactNode
   /** Opens a resolved snapshot sender's private chat, shared by every entry path. */
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
 }) {
@@ -1372,6 +1372,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     return <ArkmeDetailShell title={recording.title || forward.title || tr("录音转写")} label={tr("录音片段详情")}
       subtitle={selectedDate === undefined ? '' : `${selectedDate.toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })} ${selectedDate.toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}>
       {sourceBadge}
+      {readStatus}
       <div data-arkme-forward-recording-detail>
         {segments.map((segment, index) => {
           const hours = Math.floor(segment.startMillis / 3_600_000)
@@ -1440,9 +1441,10 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     subtitle={firstDate === lastDate ? firstDate : tr("{v0} 至 {v1}", { v0: firstDate, v1: lastDate })}
     footer={forwardedAt ? tr("转发于 {v0}", { v0: forwardedAt }) : '转发时间未知'} onClose={onClose}>
     {sourceBadge}
+    {readStatus}
     <div style={styles.rows}>{rows.map(renderRecord)}</div>
     <RecordThoughtContent item={item} />
-    {rows.length === 0 && <p style={styles.notice}>{tr("原快记暂不可查看")}</p>}
+    {rows.length === 0 && !readStatus && <p style={styles.notice}>{tr("原快记暂不可查看")}</p>}
     {forward.truncated && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
   </ArkmeDetailShell>
 }

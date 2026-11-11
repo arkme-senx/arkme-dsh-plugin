@@ -95,7 +95,7 @@ export class TeamSendReadFence {
 }
 
 /** One authority check lifetime, shared by frozen local references and independent previews. */
-export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:ArkmeMediaReadState)=>void):()=>void {
+export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:ArkmeMediaReadState)=>void,onMessage?:(message:TeamMessage)=>void):()=>void {
   const controller=new AbortController()
   let generation=0,available=false,checking=false
   let request:AbortController|undefined
@@ -108,8 +108,16 @@ export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:
     available=false
     listener({status:'checking'})
     if (!target.accountKey || !target.conversationRef || target.version<=0) { checking=false;listener({status:'revoked'}); return }
-    void callArkme('team.app.preflight',{conversationRef:target.conversationRef,selections:[{messageRef:target.messageRef,version:target.version}],expectedAccountKey:target.accountKey},request.signal)
-      .then(()=>{if(!controller.signal.aborted&&token===generation){checking=false;available=true;listener({status:'available'})}})
+    void callArkme<TeamMessage[]>('team.app.preflight',{conversationRef:target.conversationRef,selections:[{messageRef:target.messageRef,version:target.version}],expectedAccountKey:target.accountKey},request.signal)
+      .then(rows=>{
+        if(controller.signal.aborted||token!==generation)return
+        if(onMessage && (!rows?.[0] || rows[0].key!==target.messageKey || rows[0].version!==target.version || rows[0].contentStatus!=='available')) {
+          checking=false;listener({status:'revoked'});return
+        }
+        checking=false;available=true
+        if(onMessage)onMessage(rows[0]!)
+        listener({status:'available'})
+      })
       .catch(error=>{
         if(controller.signal.aborted||token!==generation)return
         checking=false

@@ -248,3 +248,14 @@ it('shows a pending authority check separately from a confirmed unavailable or r
   expect(host.textContent).toContain('对方撤回了一条消息')
   expect(host.textContent).not.toContain(message.content!.text_content)
 })
+
+it('opens a Team message with Enter and Space without activating nested controls', async () => {
+  await render()
+  const bubble = host.querySelector('.arkme-timed-bubble')!
+  for (const key of ['Enter', ' ']) {
+    await act(async () => { bubble.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })) })
+  }
+  expect(detail).toHaveBeenCalledTimes(2)
+  await act(async () => { bubble.querySelector('p')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+  expect(detail).toHaveBeenCalledTimes(2)
+})

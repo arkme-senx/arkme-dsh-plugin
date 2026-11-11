@@ -43,6 +43,11 @@ const styles: Record<string, CSSProperties> = {
 }
 
 /** Non-modal overlay: the conversation retains its width and scroll position. */
+export function ArkmeConversationDetailDismiss({ onClose }: { onClose(): void }) {
+  return <div aria-hidden="true" onClick={onClose}
+    style={{ position: 'absolute', inset: `${ARKME_CONVERSATION_HEADER_HEIGHT}px 0 0`, zIndex: 9 }} />
+}
+
 export function ArkmeDetailShell({ open = true, className, style, bodyStyle, closeLabel, widthPreferenceKey, title, label, headerContent, headerActions, subtitle, footer, footerHidden = false, onClose, onPointerDownOutside, onBack, backLabel, bodyRef, children, resizeLabel, returnFocusRef }: ArkmeDetailShellProps) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const backRef = useRef<HTMLButtonElement>(null)
