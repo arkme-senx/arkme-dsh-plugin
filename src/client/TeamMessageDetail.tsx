@@ -63,7 +63,7 @@ export function TeamMessageDetail({ accountKey, message, conversation, avatar, f
     {readable && current.reply && <TeamMessageMediaScope conversationRef={conversation.ref} conversationKey={conversation.key} message={{ ...current,ref:current.reply.ref,key:current.reply.key,revision:0,version:current.reply.version,media: current.reply.media ?? [] }}>
       <ArkmeExtensionParentPreview inline parent={teamReplyPresentation(current)!} isMe={current.own} onSelect={openParent} />
     </TeamMessageMediaScope>}
-    {readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr(current.state==='recalled' ? current.own ? '你撤回了一条消息' : '对方撤回了一条消息' : '内容当前不可用')}</p>}
+    {readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr(current.state==='recalled' ? current.own ? '你撤回了一条消息' : '对方撤回了一条消息' : current.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
     <button type="button" style={{ ...arkmeDetailSourceBadgeStyle, cursor: 'pointer' }} aria-label={tr('所在对话：{v0}', { v0: source })} onClick={() => onLocate(current)}>
       <span aria-hidden>↗</span><span>{source}</span>
     </button>
@@ -80,7 +80,7 @@ export function TeamMessageDetail({ accountKey, message, conversation, avatar, f
           <ArkmeUserAvatar avatarRef={reply.sender.imageRef} imageKey={reply.sender.imageKey} imagePort={teamAvatarImages} label={reply.sender.nickname} size={32} />
           <div style={styles.extensionContextBody}>
             <div style={styles.extensionContextHead}><span style={styles.extensionContextName}>{reply.sender.nickname}</span><span style={styles.extensionContextTime}>{timeLabel(reply.createdAt)}</span></div>
-            {reply.contentStatus === 'available' ? <TeamMessageContent message={reply} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr('内容当前不可用')}</p>}
+            {reply.contentStatus === 'available' ? <TeamMessageContent message={reply} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr(reply.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
           </div>
         </div>
       })}</div>

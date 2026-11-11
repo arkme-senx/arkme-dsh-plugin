@@ -13,7 +13,7 @@ import { teamMessageSelectable } from './use-team-message-selection.js'
 import { TeamReceiptBadge } from './TeamReadReceipts.js'
 import { emptyTeamReceipt, type TeamReceiptStore } from './team-read-receipts.js'
 import { ArkmeReadReceiptControl, readReceiptLineStyle } from './ArkmeReadReceiptControl.js'
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import type { TeamMessage } from '../team-app-contract.js'
 import { ArkmeMessageContextMenu } from './ArkmeMessageContextMenu.js'
@@ -47,6 +47,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
   const [reactionRequest,setReactionRequest]=useState<'open'|'toggle'>()
   const [menu, setMenu] = useState<ReturnType<typeof captureMessageContextMenu>>()
   const bubble = useRef<HTMLDivElement>(null)
+  const checkedSize = useRef<{width: number; height: number} | undefined>(undefined)
   const receiptButton = useRef<HTMLButtonElement>(null)
   const select = (action: () => void) => { setMenu(undefined); action() }
   const receipt = useSyncExternalStore(receiptStore.subscribe, () => receiptStore.get(message.key), () => emptyTeamReceipt)
@@ -59,6 +60,13 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
     return () => {observer.disconnect();stop?.()}
   },[showReceipts,message.key,message.ref,message.own,message.state,recipientRead,receiptStore])
   const published = message.state === 'published', available = (published || message.state === 'sending') && message.contentStatus === 'available'
+  const checking = published && message.contentStatus === 'revalidating'
+  useLayoutEffect(() => {
+    if (!available || !bubble.current) return
+    const rect = bubble.current.getBoundingClientRect()
+    checkedSize.current = {width: rect.width, height: rect.height}
+  }, [available, message.key, message.version])
+
   useEffect(() => { setMenu(undefined) }, [message.key, message.version, message.state, message.contentStatus, selecting])
   const copy = (text: string) => select(() => { void copyText(text).catch(() => onError(tr('复制失败，请重试'))) })
   const reactionTarget:ReactionPreviewTarget|undefined=accountKey&&conversationRef&&conversationKey&&published&&available?{id:`team:${conversationKey}:${message.key}`,teamConversationRef:conversationRef,teamMessageRef:message.ref,source:'团队会话',text:message.content?.text_content ?? message.content?.title ?? '',...(resolveReactionActor?{resolveActor:resolveReactionActor}:{})}:undefined
@@ -85,8 +93,8 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
           state={recipientRead === undefined ? 'error' : 'unread'}
           label={tr(recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
           {...(showReceipts ? { onClick: () => onReceipts(receiptButton.current) } : {})} />}
-        <div ref={bubble} className="arkme-timed-bubble" data-arkme-message-direction={message.own?'self':'other'} data-team-message-located={located || undefined} style={{ ...layout.bubble, ...(message.own ? layout.bubbleMe : layout.bubbleOther), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}), ...(located ? { outline: '2px solid var(--dsw-alias-state-business-primary, #8295e8)', outlineOffset: 3 } : {}) }} tabIndex={0}
-          aria-label={tr('消息操作')}
+        <div ref={bubble} className="arkme-timed-bubble" data-arkme-message-direction={message.own?'self':'other'} data-team-message-located={located || undefined} style={{ ...layout.bubble, ...(checking && checkedSize.current ? {width:checkedSize.current.width,minHeight:checkedSize.current.height} : {}), ...(message.own ? layout.bubbleMe : layout.bubbleOther), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}), ...(located ? { outline: '2px solid var(--dsw-alias-state-business-primary, #8295e8)', outlineOffset: 3 } : {}) }} tabIndex={0}
+          aria-label={tr('消息操作')} aria-busy={checking || undefined}
           onClick={event => {
             if ((!available && message.state !== 'recalled') || selecting || captureMessageTextSelection(bubble.current ?? undefined)
               || (event.target instanceof Element && event.target.closest('a,button,input,video,audio,[role="button"],[data-arkme-message-mark]'))) return
@@ -97,7 +105,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
             const rect = event.currentTarget.getBoundingClientRect()
             setMenu(captureMessageContextMenu({ clientX: rect.left, clientY: rect.bottom, preventDefault: () => event.preventDefault(), stopPropagation: () => event.stopPropagation() }, event.currentTarget))
           } }}>
-          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} attachmentNavigationKey={attachmentNavigationKey} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.state === 'recalled' ? message.own ? '你撤回了一条消息' : '对方撤回了一条消息' : message.contentStatus === 'deleted' ? '消息已删除' : '内容当前不可用')}</p>}
+          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} attachmentNavigationKey={attachmentNavigationKey} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.state === 'recalled' ? message.own ? '你撤回了一条消息' : '对方撤回了一条消息' : message.contentStatus === 'deleted' ? '消息已删除' : message.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
           {reactionTarget&&!selecting&&<ArkmeReactionSelections scope={accountKey!} target={reactionTarget}
             actorName={reactionSelfName || (message.own ? message.sender.nickname : '') || '我'} actorAvatarRef={reactionSelfAvatarRef}
             onAdd={()=>setReactionRequest('toggle')} />}

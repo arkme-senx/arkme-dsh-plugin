@@ -365,7 +365,7 @@ describe('Team send UI recovery', () => {
     })
   })
 
-  it.each(['editing','next-draft'] as const)('inserts a structured mention into the %s without changing an accepted command',async mode=>{
+  it.each(['editing','next-draft'] as const)('inserts and deletes a structured mention in the %s without changing an accepted command',async mode=>{
     const visitor={nickname:'访客',personRef:'sealed-visitor',personKey:'visitor'}
     const current={...conversation,side:'team' as const,visitor}
     const message:TeamMessage={key:'own',ref:'own-ref',seq:1,revision:1,side:'team',sender:{nickname:'自己',isMe:true},own:true,state:'published',createdAt:1,canEdit:true,canDelete:true,version:1,contentStatus:'available',media:[],content:{template_kind:1,text_content:'原消息'}}
@@ -391,6 +391,17 @@ describe('Team send UI recovery', () => {
       await act(async()=>{release(accepted());await tick()})
       expect(JSON.parse(localStorage.getItem(storageKey)!).mentions).toEqual([expect.objectContaining({personRef:'sealed-visitor'})])
     }
+    const caret = input.props.mentions[0].startIndex
+    const preventDefault = vi.fn()
+    await act(async () => input.props.onKeyDown({key:'Backspace',nativeEvent:{isComposing:true},preventDefault}))
+    expect(preventDefault).not.toHaveBeenCalled()
+    expect(input.props.value).toContain('@访客')
+
+    await act(async () => input.props.onKeyDown({key:'Backspace',nativeEvent:{},preventDefault}))
+    expect(preventDefault).toHaveBeenCalledOnce()
+    expect(input.props.value).toBe(mode === 'editing' ? '原消息' : '')
+    expect(input.props.mentions).toEqual([])
+    expect(input.props.selectionRequest).toEqual({text:input.props.value,start:caret,end:caret})
   })
 
   it.each(['paused', 'blocked'] as const)('preserves the extension draft if the conversation becomes %s during phone preflight', async reason => {
@@ -1198,6 +1209,41 @@ describe('Team send UI recovery', () => {
     expect(shown.media[0].url).toBe('/local/local-image')
     expect(shown.media).toHaveLength(1)
     expect(JSON.stringify(shown)).not.toContain('private-recording')
+  })
+
+  it('keeps the Team timeline at the bottom when a message expands after the page renders', async () => {
+    const observers = new Map<ResizeObserverCallback, Set<Element>>()
+    vi.stubGlobal('ResizeObserver', class {
+      readonly elements = new Set<Element>()
+      constructor(callback: ResizeObserverCallback) { observers.set(callback, this.elements) }
+      observe(element: Element) { this.elements.add(element) }
+      disconnect() { this.elements.clear() }
+    })
+    let height = 2000
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      return this.parentElement?.classList.contains('team-message-list')
+        ? new DOMRect(0, 0, 500, height) : originalRect.call(this)
+    })
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => { root.render(<TeamConversationPane conversation={conversation} accountKey="test:11" />); await tick() })
+      const scroller = host.querySelector<HTMLDivElement>('.team-message-list')!
+      const records = scroller.firstElementChild!
+      Object.defineProperties(scroller, { scrollHeight: { get: () => height }, clientHeight: { value: 600 } })
+      const resize = () => {
+        for (const [callback, elements] of observers) if (elements.has(records)) callback([], {} as ResizeObserver)
+      }
+      await act(async () => { scroller.scrollTop = 1400; resize(); scroller.dispatchEvent(new Event('scroll')) })
+      await act(async () => { height += 500; resize() })
+      expect(scroller.scrollTop).toBe(1900)
+      await act(async () => { scroller.scrollTop = 300; scroller.dispatchEvent(new Event('scroll')) })
+      await act(async () => { height += 500; resize() })
+      expect(scroller.scrollTop).toBe(300)
+    } finally {
+      await act(async () => root.unmount()); host.remove(); rect.mockRestore(); vi.unstubAllGlobals()
+    }
   })
 
   it('retains the live editor DOM and selection on background invalidation', async () => {

@@ -2,6 +2,7 @@
 import {afterEach,expect,it,vi} from 'vitest'
 import {teamChangeAffectsSource,watchTeamSourceRead,invalidateTeamMessageRead,TeamSendReadFence} from '../src/client/team-source-read.js'
 import type {TeamMessage} from '../src/team-app-contract.js'
+import {withoutTeamConversationMaterial} from '../src/team-message-projection.js'
 import {invalidateTeamMessages,invalidateTeamMessageKeys,revokeTeamConversationRead} from '../src/client/team-messaging-events.js'
 const call=vi.hoisted(()=>vi.fn())
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
@@ -144,4 +145,11 @@ it('joins focus recovery while checking and aborts a superseded source read',asy
  pending[0]!.resolve([]);await Promise.resolve()
  expect(listener).toHaveBeenLastCalledWith({status:'checking'})
  pending[1]!.resolve([]);await vi.waitFor(()=>expect(listener).toHaveBeenLastCalledWith({status:'available'}))
+})
+
+
+it('distinguishes pending preview validation from a confirmed denial without retaining preview material',()=>{
+ const conversation={key:'conversation',preview:{status:'available',text:'private preview',hasMedia:true}} as import('../src/team-app-contract.js').TeamConversation
+ expect(withoutTeamConversationMaterial(conversation).preview).toEqual({status:'revalidating',text:'',hasMedia:false})
+ expect(withoutTeamConversationMaterial({...conversation,preview:{status:'unavailable',text:'',hasMedia:false}}).preview?.status).toBe('unavailable')
 })

@@ -263,8 +263,11 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if(update.type==='team-invalidated'&&(update.change?.kind==='team.group.changed'||update.change?.kind==='team.group.source.changed'||update.change?.kind==='team.group.timeline.changed')) {invalidateTeamWorkspace(authenticatedAccountScope,update.change.canonicalChatSourceKey);if(update.change.canonicalChatSourceKey)arkmeInterwovenInvalidation.invalidate(update.change.canonicalChatSourceKey);return}
-        if(update.type==='reconcile'||update.type==='team-invalidated'&&!update.change&&!update.receiptOnly)invalidateTeamWorkspace(authenticatedAccountScope)
-        if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true,update.type==='team-invalidated'?update.change:undefined)
+        // A subscription snapshot is not an upstream reconnect. Only a gap
+        // or the Host's explicit reconcile invalidates already authorized Team content.
+        const teamReconcile = update.type === 'reconcile' && (update.refresh !== 'if-stale' || localReconnectGap)
+        if(teamReconcile||update.type==='team-invalidated'&&!update.change&&!update.receiptOnly)invalidateTeamWorkspace(authenticatedAccountScope)
+        if (update.type === 'team-invalidated' || teamReconcile) invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true,update.type==='team-invalidated'?update.change:undefined)
         if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {
           void arkmeChatDirectory.receiveHostPage(update.page).catch(() => undefined)
