@@ -26,14 +26,14 @@ import { arkmeConversationMessageLayout as layout } from './conversation-message
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
-export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onRecall, onReceipts, onError, selecting = false, selected = false, onSelect, onToggle, onDetail, onReply, onOpenReply, accountKey, conversationKey, onAsk, askBusy, onCopyLink, onForward, located = false, onSnapshot, reactionSelfName, reactionSelfAvatarRef, resolveReactionActor,attachmentNavigationKey }: {
+export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onRecall, onReceipts, onError, selecting = false, selected = false, onSelect, onToggle, onDetail, onReply, onOpenReply, accountKey, conversationKey, onAsk, askBusy, onCopyLink, onForward, located = false, followedByRecall = false, onSnapshot, reactionSelfName, reactionSelfAvatarRef, resolveReactionActor,attachmentNavigationKey }: {
   message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; receiptStore: TeamReceiptStore; busy: boolean
   selecting?: boolean; selected?: boolean; onSelect?(): void; onToggle?(): void; onDetail?(): void
   accountKey?:string;conversationKey?:string
   attachmentNavigationKey?:string|undefined
   reactionSelfName?: string | undefined; reactionSelfAvatarRef?: string | undefined
   resolveReactionActor?: ((actor: ReactionActor) => ReactionActor | undefined) | undefined
-  located?: boolean; onSnapshot?(): void
+  located?: boolean; followedByRecall?: boolean; onSnapshot?(): void
   conversationRef?: string | undefined
   onAsk?: (()=>void) | undefined;askBusy?:boolean
  onCopyLink?():void
@@ -72,6 +72,15 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
   const reactionTarget:ReactionPreviewTarget|undefined=accountKey&&conversationRef&&conversationKey&&published&&available?{id:`team:${conversationKey}:${message.key}`,teamConversationRef:conversationRef,teamMessageRef:message.ref,source:'团队会话',text:message.content?.text_content ?? message.content?.title ?? '',...(resolveReactionActor?{resolveActor:resolveReactionActor}:{})}:undefined
   const copyMessage = () => copy(arkmeMessageCopyText(teamMessagePresentation(message)))
   const recallAction = { id:'withdraw' as const, disabled:busy || !onRecall, onSelect:()=>select(()=>onRecall?.()) }
+  if (message.state === 'recalled') {
+    const notice = tr(message.own ? '你撤回了一条消息' : '对方撤回了一条消息')
+    return <article data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key}
+      data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
+      style={layout.notice}>
+      {onDetail && !selecting ? <button type="button" onClick={onDetail}
+        style={{ padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' }}>{notice}</button> : notice}
+    </article>
+  }
   return <article data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
     data-team-selectable={teamMessageSelectable(message) ? message.key : undefined}
     data-arkme-read-sequence={published && available && message.version > 0 && !selecting ? message.seq : undefined}
@@ -82,7 +91,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
       {available && message.reply && <TeamMessageMediaScope conversationRef={conversationRef} conversationKey={conversationKey} message={{...message,ref:message.reply.ref,key:message.reply.key,revision:0,version:message.reply.version,media:message.reply.media ?? []}}>
         {message.state === 'sending' || message.version === 0 ? <TeamSourceReadScope accountKey={accountKey} conversationRef={conversationRef} messageRef={message.reply.ref} messageKey={message.reply.key} conversationKey={conversationKey} version={message.reply.version}>{authorized=><ArkmeExtensionParentPreview parent={authorized ? teamReplyPresentation(message)! : {itemUid:message.reply!.key,senderName:'',title:'',textContent:'',quoteState:'unavailable'}} isMe={message.own} onSelect={authorized && !selecting ? onOpenReply : undefined} />}</TeamSourceReadScope> : <ArkmeExtensionParentPreview parent={teamReplyPresentation(message)!} isMe={message.own} onSelect={selecting ? undefined : onOpenReply} />}
       </TeamMessageMediaScope>}
-    <div style={{ ...layout.messageLine, ...(message.own ? layout.messageLineMe : {}) }}>
+    <div style={{ ...layout.messageLine, ...(message.own ? layout.messageLineMe : {}), ...(followedByRecall ? { marginBottom: 0 } : {}) }}>
       <div style={layout.messageAvatar}>{avatar}</div>
       <div style={{ ...layout.messageBody, ...(message.own ? layout.messageBodyMe : {}) }}>
         {!message.own && <div style={layout.messageHeader}><strong style={layout.sender}>{message.sender.nickname}</strong></div>}
@@ -96,7 +105,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
         <div ref={bubble} className="arkme-timed-bubble" data-arkme-message-direction={message.own?'self':'other'} data-team-message-located={located || undefined} style={{ ...layout.bubble, ...(checking && checkedSize.current ? {width:checkedSize.current.width,minHeight:checkedSize.current.height} : {}), ...(message.own ? layout.bubbleMe : layout.bubbleOther), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}), ...(located ? { outline: '2px solid var(--dsw-alias-state-business-primary, #8295e8)', outlineOffset: 3 } : {}) }} tabIndex={0}
           aria-label={tr('消息操作')} aria-busy={checking || undefined}
           onClick={event => {
-            if ((!available && message.state !== 'recalled') || selecting || captureMessageTextSelection(bubble.current ?? undefined)
+            if (!available || selecting || captureMessageTextSelection(bubble.current ?? undefined)
               || (event.target instanceof Element && event.target.closest('a,button,input,video,audio,[role="button"],[data-arkme-message-mark]'))) return
             onDetail?.()
           }}
@@ -105,7 +114,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
             const rect = event.currentTarget.getBoundingClientRect()
             setMenu(captureMessageContextMenu({ clientX: rect.left, clientY: rect.bottom, preventDefault: () => event.preventDefault(), stopPropagation: () => event.stopPropagation() }, event.currentTarget))
           } }}>
-          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} attachmentNavigationKey={attachmentNavigationKey} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.state === 'recalled' ? message.own ? '你撤回了一条消息' : '对方撤回了一条消息' : message.contentStatus === 'deleted' ? '消息已删除' : message.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
+          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} attachmentNavigationKey={attachmentNavigationKey} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : message.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
           {reactionTarget&&!selecting&&<ArkmeReactionSelections scope={accountKey!} target={reactionTarget}
             actorName={reactionSelfName || (message.own ? message.sender.nickname : '') || '我'} actorAvatarRef={reactionSelfAvatarRef}
             onAdd={()=>setReactionRequest('toggle')} />}

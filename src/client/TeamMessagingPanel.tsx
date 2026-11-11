@@ -1309,6 +1309,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
       {displayedMessages.map((m, index) => <Fragment key={delivery.tasks.find(task => task.message?.key === m.key)?.clientUid ?? m.key}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(displayedMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
         <TeamConversationMessage attachmentNavigationKey={m.key} reactionSelfName={reactionActors.selfName} reactionSelfAvatarRef={reactionActors.selfAvatarRef} resolveReactionActor={reactionActors.resolveActor} accountKey={accountKey} conversationKey={conversation.key} message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
+          followedByRecall={displayedMessages[index + 1]?.state === 'recalled' && dayKey(displayedMessages[index + 1]!.createdAt) === dayKey(m.createdAt)}
           avatar={current.side === 'team' && !selection.ids
             ? visitorActions.avatar(<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />, m.side === 'external' ? undefined : m.sender)
             : <TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />} writable={current.channel.enabled && !current.blocked}

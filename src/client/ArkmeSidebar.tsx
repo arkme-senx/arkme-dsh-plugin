@@ -8291,7 +8291,7 @@ export function ArkmeSurface({
                 </Fragment>
                 if (row.kind === 'notice') return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
-                  <li data-arkme-conversation-row={row.id} style={styles.notice}>{row.item.message}</li>
+                  <li data-arkme-conversation-row={row.id} style={arkmeConversationMessageLayout.notice}>{row.item.message}</li>
                 </Fragment>
                 if (row.kind === 'moment') {
                   return <Fragment key={row.id}>
@@ -8354,7 +8354,9 @@ export function ArkmeSurface({
                   </span> : personalMessageAvatar
                 const selectionAnchor = arkmeMessageSelectionAnchor(item)
                 const isHighlighted = highlightedTargetUid === item.itemUid || recordReeditHighlightUid === item.itemUid
-                const messageLineBottomGap = index === displayRows.length - 1 || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
+                const next = displayRows[index + 1]
+                const nextIsSameDayNotice = next?.kind === 'notice' && dayKey(next.occurredAtMillis) === dayKey(item.sendAtMillis)
+                const messageLineBottomGap = !next || nextIsSameDayNotice || activeSelectMode !== undefined ? 0 : isSharedRecordingCard ? 42 : 18
                 return <Fragment key={conversationMessageRenderKey(item)}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={item.sendAtMillis} /></li>}
                   <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
