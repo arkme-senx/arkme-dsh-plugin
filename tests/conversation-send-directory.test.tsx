@@ -3139,12 +3139,14 @@ describe('conversation send directory projection', () => {
     activeSource = sendToSelf
     arkmeUi.selectSource(sendToSelf)
     const baseCall = mocks.callArkme.getMockImplementation()!
+    const enqueuing = deferred<void>()
     let finishChecking!: () => void
     const checking = new Promise<void>(resolve => { finishChecking = resolve })
     let task: import('../src/file-transfer-contract.js').ArkmeFileSendTask | undefined
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
       if (operation === 'files.capabilities') return { version: 1, textMessagesVersion: 1 }
       if (operation === 'files.send') {
+        await enqueuing.promise
         task = { taskRef: 'original-note-task', sourceRef: params.sourceRef, recordUid: params.recordUid, relationUid: params.relationUid,
           content: { textContent: params.textContent, sendAtMillis: params.sendAtMillis }, fileRefs: [], files: [], createdAtMillis: 48,
           state: 'uncertain', error: '无法连接 Arkme 服务' }
@@ -3153,7 +3155,8 @@ describe('conversation send directory projection', () => {
       if (operation === 'files.send.tasks') return task ? [task] : []
       if (operation === 'files.send.retry') {
         await checking
-        task = { ...task!, state: 'sent', result: { sourceRef: task!.sourceRef, itemUid: task!.recordUid, status: 1, localState: 'synced' } }
+        task = { ...task!, state: 'sent', content: { sendAtMillis: task!.content.sendAtMillis },
+          result: { sourceRef: task!.sourceRef, itemUid: task!.recordUid, status: 1, localState: 'synced' } }
         return task
       }
       return baseCall(operation, params, signal)
@@ -3163,10 +3166,17 @@ describe('conversation send directory projection', () => {
     act(() => arkmeComposerDraftStore.setText(draftKey, '待恢复的文字'))
     await act(async () => renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick())
     expect(mocks.callArkme).toHaveBeenCalledWith('files.send', expect.objectContaining({ sourceRef: sendToSelf.sourceRef, fileRefs: [], textContent: '待恢复的文字', recordUid: 'record-new', relationUid: 'relation-new' }))
+    try {
+      expect(renderedText(renderer!.toJSON())).toContain('待恢复的文字')
+      expect(renderer!.root.findAllByProps({ 'aria-label': '消息发送状态' })).toHaveLength(0)
+    } finally {
+      await act(async () => enqueuing.resolve())
+    }
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe('')
     const status = renderer!.root.findByProps({ 'aria-label': '消息发送状态' })
     const trigger = status.findByType('button')
     expect(trigger.props['aria-haspopup']).toBe('menu')
+    expect(renderedText(renderer!.toJSON())).not.toContain('发送结果待确认')
     const anchor = { getBoundingClientRect: () => ({ right: 80, bottom: 70 }) }
     act(() => trigger.props.onClick({ currentTarget: anchor, stopPropagation: vi.fn() }))
     const menu = renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.label === '消息操作')!
@@ -3175,11 +3185,31 @@ describe('conversation send directory projection', () => {
     expect(clear.danger).toBe(true)
     act(() => arkmeComposerDraftStore.setText(draftKey, '后续的新草稿'))
     await act(async () => retry.onSelect())
-    expect(renderedText(renderer!.toJSON())).toContain('正在确认…')
+    expect(renderer!.root.findAllByProps({ 'aria-label': '消息发送状态' })).toHaveLength(0)
+    expect(renderedText(renderer!.toJSON())).toContain('待恢复的文字')
+    expect(renderedText(renderer!.toJSON())).not.toContain('正在确认…')
     await act(async () => finishChecking())
     expect(mocks.callArkme).toHaveBeenCalledWith('files.send.retry', { taskRef: 'original-note-task' })
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'files.send')).toHaveLength(1)
     expect(arkmeComposerDraftStore.get(draftKey).text).toBe('后续的新草稿')
+    expect(renderer!.root.findAllByProps({ 'aria-label': '消息发送状态' })).toHaveLength(0)
+    expect(renderer!.root.findByProps({ 'data-arkme-send-placeholder': 'confirmed' }).props['aria-label']).toBe('待恢复的文字')
+    expect(renderedText(renderer!.toJSON())).not.toContain('正在同步…')
+  })
+
+  it.each(['queued', 'sending'] as const)('shows only the message while a self note is %s', async state => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'files.send.tasks') return [{
+        taskRef: 'plain-note-task', sourceRef: sendToSelf.sourceRef, recordUid: 'plain-note', relationUid: 'plain-note-relation',
+        content: { textContent: '普通文字快记' }, fileRefs: [], files: [], createdAtMillis: 48, state,
+      }]
+      return baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(renderedText(renderer!.toJSON())).toContain('普通文字快记')
     expect(renderer!.root.findAllByProps({ 'aria-label': '消息发送状态' })).toHaveLength(0)
   })
 

@@ -64,7 +64,6 @@ export { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
 import { forgetFileSendAdmissions, rememberFileSendAdmission, retryFileSendAdmission, useFileSendAdmissions } from './file-send-admission.js'
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle'
-import { ClockIcon } from '@phosphor-icons/react/dist/csr/Clock'
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise'
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash'
 import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, conversationMessageDefaultUnread, mergeConversationMessages as mergeItems } from './conversation-message-merge.js'
@@ -2460,15 +2459,19 @@ export function ArkmeSurface({
   const fileTasks = useArkmeFileSendTasks(source?.sourceRef, authenticatedUserId, activeConversation)
   const fileAdmissionScope = authenticatedAccountKey && source
     ? JSON.stringify([authenticatedAccountKey, arkmeSourceIdentityKey(source)]) : undefined
+  // Keep only messages composed in this view until the authoritative row arrives.
+  const liveTextSends = useMemo(() => new Map<string, ArkmeTimelineItem>(), [fileAdmissionScope, activeConversation])
   const fileAdmissions = useFileSendAdmissions()
   const visibleFileAdmissions = useMemo(() => fileAdmissions.filter(entry => entry.scope === fileAdmissionScope), [fileAdmissions, fileAdmissionScope])
   const visibleFileTasks = useMemo(() => {
     if (!visibleFileAdmissions.length) return fileTasks.tasks
-    const accepted = new Set(fileTasks.tasks.map(task => task.recordUid))
-    return [...fileTasks.tasks, ...visibleFileAdmissions.filter(entry => !accepted.has(entry.task.recordUid)).map(entry => ({
+    const represented = new Set(fileTasks.tasks.map(task => task.recordUid))
+    // The original bubble owns the display while the browser submission is in flight.
+    for (const item of items) represented.add(item.itemUid)
+    return [...fileTasks.tasks, ...visibleFileAdmissions.filter(entry => !represented.has(entry.task.recordUid)).map(entry => ({
       ...entry.task, content: { sendAtMillis: entry.task.createdAtMillis },
     }))]
-  }, [fileTasks.tasks, visibleFileAdmissions])
+  }, [fileTasks.tasks, items, visibleFileAdmissions])
   useEffect(() => {
     if (fileAdmissionScope && visibleFileAdmissions.length && fileTasks.tasks.length) {
       forgetFileSendAdmissions(fileAdmissionScope, new Set(fileTasks.tasks.map(task => task.recordUid)))
@@ -5356,6 +5359,7 @@ export function ArkmeSurface({
             content: { sendAtMillis: now },
             createdAtMillis: now, state: 'uncertain', error: tr('本机接收结果待确认'),
           })
+          if (sameTargetComposer()) liveTextSends.set(recordUid, optimistic)
           pendingFileAdmissionScope = scope
         }
         try {
@@ -6443,9 +6447,17 @@ export function ArkmeSurface({
     const receipts = new Set(fileTasks.tasks.filter(task => !task.fileRefs.length).map(task => task.result?.itemUid ?? task.recordUid))
     const seen = seenTextReceipts.current.scope === fileAdmissionScope ? seenTextReceipts.current.ids : []
     const next = new Set([...seen].filter(uid => receipts.has(uid)))
-    for (const item of items) if (item.status === 1 && receipts.has(item.itemUid)) next.add(item.itemUid)
+    for (const item of items) if (item.status !== 0 && receipts.has(item.itemUid)) next.add(item.itemUid)
     seenTextReceipts.current = { scope: fileAdmissionScope, ids: next }
-  }, [fileAdmissionScope, fileTasks.tasks, items])
+    if (liveTextSends.size) {
+      const pending = new Set(visibleFileAdmissions.map(entry => entry.task.recordUid))
+      for (const item of items) if (item.status === 0) pending.add(item.itemUid)
+      for (const task of fileTasks.tasks) {
+        if (!next.has(task.result?.itemUid ?? task.recordUid)) pending.add(task.recordUid)
+      }
+      for (const uid of liveTextSends.keys()) if (hideSyncWindow || !pending.has(uid) || next.has(uid)) liveTextSends.delete(uid)
+    }
+  }, [fileAdmissionScope, fileTasks.tasks, items, hideSyncWindow, liveTextSends, visibleFileAdmissions])
 
   const { displayItems, reeditItems, sendPlaceholders } = useMemo(() => {
     const remoteIds = new Set(items.map(item => item.itemUid))
@@ -6461,24 +6473,26 @@ export function ArkmeSurface({
     const taskItems = visibleFileTasks.flatMap(task => {
       const uid = task.result?.itemUid ?? task.recordUid
       if (remoteIds.has(uid)) return []
+      const live = liveTextSends.get(task.recordUid)
       if (task.taskRef.startsWith('local-admission.')) {
+        if (live) return [live]
         sendPlaceholders.set(uid, 'admission')
-        return [{ ...fileTaskTimelineItem(task), textContent: tr('本机接收结果待确认') }]
+        return [fileTaskTimelineItem(task)]
       }
-      if (task.state !== 'sent') return [fileTaskTimelineItem(task)]
+      if (task.state !== 'sent') return [live ?? fileTaskTimelineItem(task)]
       if (task.fileRefs.length) {
         return !isArkmeSelfWorkspaceSource(source) || fileTasks.activeTaskKeys.has(task.taskRef) ? [fileTaskTimelineItem(task)] : []
       }
       if (timelineMode === 'around' || !fileTasks.activeTaskKeys.has(task.taskRef)
         || (seenTextReceipts.current.scope === fileAdmissionScope && seenTextReceipts.current.ids.has(uid))) return []
       sendPlaceholders.set(uid, 'confirmed')
-      return [{ ...fileTaskTimelineItem(task), textContent: tr('已送达，等待同步') }]
+      return live ? [{ ...live, itemUid: uid, status: task.result?.status ?? 1 }] : []
     })
     const displayItems = [...remoteItems, ...extensionItems, ...taskItems].sort(compareTimelineMessages)
     const visible = hideSyncWindow ? [] : syncChanges?.size
       ? displayItems.flatMap(item => projectCommittedChatMessage(item, syncChanges) ?? []) : displayItems
     return { displayItems: source ? recordMutations.projectWindow(visible, source, selfSources).sort(compareTimelineMessages) : visible, reeditItems, sendPlaceholders }
-  }, [items, hideSyncWindow, syncChanges, visibleFileTasks, fileTasks.activeTaskKeys, fileAdmissionScope, timelineMode, locale, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
+  }, [items, hideSyncWindow, syncChanges, visibleFileTasks, fileTasks.activeTaskKeys, fileAdmissionScope, liveTextSends, timelineMode, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
   const waitingDeliveryKey = [...sendPlaceholders].filter(([, kind]) => kind === 'confirmed').map(([uid]) => uid).sort().join(',')
   useEffect(() => {
     if (!waitingDeliveryKey || !activeConversation || typeof document === 'undefined') return
@@ -8416,11 +8430,14 @@ export function ArkmeSurface({
                               ? <RecordThoughtMessageFooter item={item} onOpen={openMessageDetail}>{messageTimestamp}</RecordThoughtMessageFooter>
                               : messageTimestamp}
                           </div>
-                          const fileSendStatus = timelineFileTasks
-                            .filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid && task.state !== 'sent' && fileTaskShowsInlineStatus(task))
+                          const messageFileTasks = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid)
+                          const fileSendStatus = messageFileTasks
+                            .filter(task => task.state !== 'sent' && fileTaskShowsInlineStatus(task))
                             .map(task => {
                               const working = retryingFileTasks.has(task.taskRef)
                               const needsRecovery = task.state === 'failed' || task.state === 'uncertain'
+                              const compact = selfWorkspace && task.fileRefs.length === 0
+                              if (compact && (!needsRecovery || working)) return null
                               const waiting = task.nextRetryAtMillis !== undefined
                               let statusText: string
                               if (working) statusText = tr(task.state === 'uncertain' ? '正在确认…' : '正在发送…')
@@ -8429,7 +8446,6 @@ export function ArkmeSurface({
                               else if (task.state === 'failed') statusText = tr(task.result && task.delivery === 'progressive' ? '附件上传失败，消息已发送' : '发送失败')
                               else if (task.state === 'queued') statusText = tr(task.fileRefs.length ? '等待上传' : '等待发送')
                               else statusText = tr(task.state === 'uploading' && task.fileRefs.length ? '正在上传' : '正在发送…')
-                              const StatusIcon = waiting ? ClockIcon : WarningCircleIcon
                               return <ArkmeSendTaskStatus label={tr(task.fileRefs.length ? '附件发送状态' : '消息发送状态')} key={task.taskRef} state={task.state} own={presentationIsMe}>
                                 {needsRecovery && !working
                                   ? <button type="button" aria-haspopup="menu" data-arkme-send-recovery-trigger
@@ -8439,12 +8455,13 @@ export function ArkmeSurface({
                                         event.stopPropagation()
                                         timelineActions.current.openFileRecoveryMenu(item, task, event.currentTarget)
                                       }}>
-                                      <StatusIcon size={15} aria-hidden />{statusText}
+                                      <WarningCircleIcon size={15} aria-hidden />{compact && sendPlaceholder !== 'admission' ? null : statusText}
                                     </button>
                                   : <span>{statusText}</span>}
                               </ArkmeSendTaskStatus>
                             })
-                          const sendFailure = conversationMessageSendFailure(item)
+                          if (sendPlaceholder === 'admission') return <div data-arkme-send-placeholder="admission">{fileSendStatus}</div>
+                          const sendFailure = selfWorkspace && messageFileTasks.length ? undefined : conversationMessageSendFailure(item)
                           const textSendStatus = sendFailure && <ArkmeSendTaskStatus label={tr('消息发送状态')} state={sendFailure.state} own={presentationIsMe}>
                             {sendFailure.state === 'uncertain' ? '发送结果待确认' : '发送失败'}：{sendFailure.message}
                           </ArkmeSendTaskStatus>
