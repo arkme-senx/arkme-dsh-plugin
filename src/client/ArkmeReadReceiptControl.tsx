@@ -1,3 +1,4 @@
+import { CircleNotch } from '@phosphor-icons/react/CircleNotch'
 import type { CSSProperties, ReactNode, Ref } from 'react'
 import { ArkmeReadReceiptIcon } from './ArkmeReadReceiptIcon.js'
 import { readReceiptStyles as styles } from './ArkmeReadReceiptPanel.js'
@@ -9,7 +10,7 @@ export const readReceiptLineStyle: CSSProperties = {
 
 /** Shared accessory geometry and interaction; receipt truth belongs to the caller. */
 export function ArkmeReadReceiptControl({ state, status, count, tone, label, onClick, onEscape, hostRef, buttonRef, children, placement = 'before' }: {
-  state: 'unread' | 'all-read' | 'partial-read' | 'count' | 'error' | 'placeholder'
+  state: 'unread' | 'all-read' | 'partial-read' | 'count' | 'error' | 'placeholder' | 'sending'
   status?: string; count?: number; label: string; onClick?: () => void; onEscape?: () => void
   /** Team counts and external-contact status are independent; color identifies the latter. */
   tone?: 'neutral' | 'info'
@@ -19,6 +20,12 @@ export function ArkmeReadReceiptControl({ state, status, count, tone, label, onC
   const boundedCount = count === undefined ? undefined : Math.min(999, Math.max(0, count))
   const toneStyle: CSSProperties = tone ? { color: tone === 'info' ? arkmeTheme.info : arkmeTheme.caption, opacity: tone === 'info' ? 0.5 : 0.8 } : {}
   const statusStyle: CSSProperties = { ...styles.status, ...(placement === 'after' ? { padding: '0 0 0 6px', justifyContent: 'flex-start' } : {}) }
+  if (state === 'sending') {
+    return <span role="img" aria-label={label}
+      style={{ ...statusStyle, alignSelf: 'center', alignItems: 'center', flex: 'none', height: 14 }}>
+      <CircleNotch size={14} aria-hidden className="arkme-message-send-spinner" data-arkme-message-send-loading />
+    </span>
+  }
   const indicator = state === 'all-read' || state === 'partial-read' || state === 'count'
     ? <span style={styles.indicator} data-arkme-read-receipt-indicator={state} data-arkme-read-receipt-tone={tone}>
         <ArkmeReadReceiptIcon checked={state === 'all-read'} style={{ ...styles.indicatorIcon, ...toneStyle }} />
