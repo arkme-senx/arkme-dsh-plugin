@@ -1219,7 +1219,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} revision={version} onOpenDetail={onCallDetailOpen} />
   const selfQuote = selectedTextNotePresentation(item.textContent, item.localSelfQuote)
   if (selfQuote && item.status === 1 && item.textFormat !== 'markdown') return <div ref={contentRef} data-arkme-message-content="message" data-arkme-content-presentation={presentation}>
-    <SelectedTextSelfNoteContent value={selfQuote} detail={presentation === 'detail'} recordUid={item.itemUid} />
+    <SelectedTextSelfNoteContent value={selfQuote} detail={presentation === 'detail'} recordUid={item.itemUid} {...(sourceRef&&item.messageActionRef?{sourceRef,messageActionRef:item.messageActionRef}:{})} />
   </div>
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {

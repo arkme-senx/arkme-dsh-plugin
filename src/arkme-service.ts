@@ -49,7 +49,7 @@ import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} fro
 import { ChatMessageSyncService } from './services/chat-message-sync-service.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { sendSelectedTextForward } from './services/selected-text-forward.js'
-import { readExcerptOriginal } from './services/excerpt-original.js'
+import { readExcerptOriginal, matchExcerptOriginal } from './services/excerpt-original.js'
 import { sendSelectedTextSelfNote } from './services/selected-text-self-note.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -1498,6 +1498,7 @@ arkoImagesV1:true,
         topicHomeVisibility: true,
         arkoLifecycleV1: true,
         arkoHistoryReadsV1: true, arkoInteractionTimelineV1: true,
+        selectedTextForwardV1: true,
         recordExportV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
@@ -2901,21 +2902,56 @@ recordingAnalysisV1: true,
     const session = await this.runtime.requireSession()
     if (`${this.config.environment}:${session.userId}` !== input.expectedAccountKey) throw new ArkmePluginError('selected-text-account-changed', '账号已变化，请重新选择', false, 409)
     const target = await this.source.openSourceRef(input.targetSourceRef, session.userId)
-    if(target.kind==='send_to_self'||target.kind==='default_category')return this.sendQuotedSelfNote({expectedAccountKey:input.expectedAccountKey,recordUid:input.recordUid,noteText:input.commentText,quote:input.quote},signal,true)
-    return sendSelectedTextForward(this.runtime, input, target, (text, userId) => this.chat.sendSourceText(input.targetSourceRef, text, {
-      recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId: userId, ...(signal ? { signal } : {}),
-    }), signal)
+    return sendSelectedTextForward(this.runtime,input,target,(text,userId,excerpt)=>this.chat.sendSourceExcerpt(input.targetSourceRef,text,excerpt,{recordUid:input.recordUid,relationUid:input.relationUid,sendAtMillis:input.sendAtMillis,expectedUserId:userId,...(signal?{signal}:{})}),signal)
   }
 
-  async excerptOriginal(recordUid:string,signal?:AbortSignal) {
+  async prepareSelectedText(input:{expectedAccountKey:string;quote:unknown},signal?:AbortSignal) {
+    const session=await this.runtime.requireSession()
+    if(`${this.config.environment}:${session.userId}`!==input.expectedAccountKey)throw new ArkmePluginError('selected-text-account-changed','账号已变化',false,409)
+    const quote=readSelectedTextNoteQuote(input.quote)
+    if(!quote)throw new ArkmePluginError('selected-text-invalid','选区无效',false,400)
+    let source=quote.source,sourceSelection=quote.sourceSelection
+    if(quote.origin){
+      try {
+       if(quote.origin.kind==='recording'){const prepared=await this.recording.prepareExcerptSelection(quote.origin.itemRef,quote,signal);source=prepared.source;sourceSelection=prepared.sourceSelection}
+       else if(quote.origin.kind==='call'){const key=JSON.parse(quote.origin.itemRef);if(Array.isArray(key)&&key.length===2)source=await this.callHistory.excerptSource(key[0],key[1])}
+       else if(quote.origin.kind==='dsh')source=await this.nativeAnnotationService.excerptSource(JSON.parse(quote.origin.itemRef),signal)
+       else if(quote.origin.kind==='team_message')source=await this.teamApp.excerptSource(quote.origin.itemRef)
+       else {const key=JSON.parse(quote.origin.itemRef);if(Array.isArray(key)&&key.length===2){const value=await this.codexWorkRecordsOwner?.canonicalMessageTarget(key[0],JSON.stringify([key[0],key[1],'']));if(value)source={kind:'codex_event',...value}}}
+      } catch { signal?.throwIfAborted();source=undefined }
+    }
+    const current=await this.runtime.accountScopedSession()
+    if(!current||current.userId!==session.userId||current.refreshToken!==session.refreshToken)throw new ArkmePluginError('selected-text-account-changed','账号已变化',false,409)
+    const {origin:ignored,source:old,sourceSelection:oldSelection,...frozen}=quote
+    return {...frozen,...(source?{source}:{}),...(sourceSelection?{sourceSelection}:{})}
+  }
+
+  async excerptOriginal(recordUid:string,signal?:AbortSignal,occurrence?:{sourceRef:string;messageActionRef:string}) {
     const account=await this.runtime.requireSession()
-    const source=await this.record.excerptNavigationSource(recordUid,signal)
-    return readExcerptOriginal(this.runtime,source,{
+    const lifetime=new AbortController()
+    let subscribed=false
+    const stop=this.runtime.subscribeAccountScope(()=>{if(subscribed)lifetime.abort(new ArkmePluginError('excerpt-account-changed','账号已变化，请重新打开原文',false,409))})
+    subscribed=true
+    signal=signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal
+    try {
+    signal.throwIfAborted()
+    const readSaved=()=>occurrence?this.chat.excerptOccurrence(occurrence.sourceRef,occurrence.messageActionRef,recordUid,signal):this.record.personalRecordDetail(recordUid,signal).then(item=>item.localSelfQuote)
+    const saved=await readSaved()
+    const source=saved?.quote.source
+    if(!source)throw new ArkmePluginError('excerpt-source-unavailable','这条摘录没有可访问的原文位置',false,404)
+    const original=await readExcerptOriginal(this.runtime,source,{
       personal:(uid,s)=>this.record.personalRecordDetail(uid,s),
-      agent:async(session,message,user,s)=>{const rows=await this.arko.actionMessages([{sessionId:session,messageId:message}],user,s);const row=rows.find(item=>item.sessionId===session&&item.messageId===message&&item.status===1);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原文已失效或无权查看',false,404);return row},
+      agent:async(session,message,user,s)=>{const rows=await this.arko.actionMessages([{sessionId:session,messageId:message}],user,s);const row=rows.find(item=>item.sessionId===session&&item.messageId===message&&item.status===1);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原文已失效或无权查看',false,404);return {...row,textFormat:row.role==='assistant'?'markdown':'plain'}},
       recording:(uid,segment,s)=>this.recording.excerptOriginal(uid,segment,s),
       call:async(uid,segment,s)=>{const detail=await this.callHistory.arrangementCallDetail(uid,s),row=detail.transcriptSegments.find(item=>item.sourceSegmentId===segment);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原通话片段已失效',false,404);return {title:'通话原文',text:row.text,...(row.spokenAtMillis?{at:row.spokenAtMillis}:{})}},
     },signal,account)
+    const current=await readSaved()
+    if(!current||JSON.stringify(current.quote)!==JSON.stringify(saved.quote))throw new ArkmePluginError('excerpt-source-changed','摘录或原文权限已变化，请重新打开',false,409)
+    const session=await this.runtime.accountScopedSession()
+    signal.throwIfAborted()
+    if(!session||session.userId!==account.userId||session.refreshToken!==account.refreshToken)throw new ArkmePluginError('excerpt-account-changed','账号已变化，请重新打开',false,409)
+    return matchExcerptOriginal(original,saved.quote)
+    } finally {stop()}
   }
 
   async sendQuotedSelfNote(input: Parameters<typeof sendSelectedTextSelfNote>[1], signal?: AbortSignal, allowEmptyNote=false) {

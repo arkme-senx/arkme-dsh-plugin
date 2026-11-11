@@ -1609,6 +1609,7 @@ arkoImagesV1?:true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
     arkoLifecycleV1?: true
+    selectedTextForwardV1?: true
     recordExportV1?: true
     arkoHistoryReadsV1?: true
     arkoInteractionTimelineV1?: true
@@ -4828,6 +4829,7 @@ export type ArkmePluginOperation =
   | 'source.send-text'
   | 'excerpt.original'
   | 'self-note.quote.send'
+  | 'selected-text.prepare'
   | 'selected-text.forward'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'

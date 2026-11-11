@@ -27,19 +27,19 @@ it('official DSH discovers safe control tools without an automatic-enable capabi
   } finally { await ctx.fiber.dispose() }
 })
 
-it('official DSH confirms a human disable and executes only the prepared account/version', async () => {
+it.each(['record_thought', 'record_entity', 'call_summary'])('official DSH confirms a human disable of %s and executes only the prepared account/version', async key => {
   const ctx = new Context()
   await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
   try {
     const session = ctx.sessions.create()
     const inbox = createSessionInput(session)
     const agent = { id: session.id, session, inbox }
-    const settings = { accountScope: 'prod:123', settings: [{ key: 'record_entity', title: '快记实体识别', enabled: true, version: 9, enabledAt: 100 }] }
+    const settings = { accountScope: 'prod:123', settings: [{ key, title: '快记建议', enabled: true, version: 9, enabledAt: 100 }] }
     const query = vi.fn(async () => settings), update = vi.fn(async () => settings)
     registerArkmeTools(ctx, { automaticCapabilities: query, updateAutomaticCapability: update } as never, 'business')
     let step = 0
     const invoke = async () => {
-      const callId = CallId(`disable-${++step}`), name = 'arkme_disable_automatic_ai', args = { key: 'record_entity' }
+      const callId = CallId(`disable-${++step}`), name = 'arkme_disable_automatic_ai', args = { key }
       const call = session.append('tool/call', { turn: 1, step, callId, name, arguments: JSON.stringify(args) })
       const result = await ctx.tools.execute({ callId, agent: agent as never, signal: new AbortController().signal, name, arguments: args })
       session.append('tool/result', { turn: 1, step, message: createToolResultMessage({ callId, content: result.content, isError: result.isError }) }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
@@ -51,6 +51,6 @@ it('official DSH confirms a human disable and executes only the prepared account
     for (const message of inbox.claim('next-step', 0)) session.append('user/message', message, { surfaceOp: 'append' })
     expect((await invoke()).isError).toBe(false)
     expect(update).toHaveBeenCalledOnce()
-    expect(update.mock.calls[0]).toEqual([{ key: 'record_entity', enabled: false, expectedVersion: 9, billingConsent: false }, 'prod:123', expect.any(AbortSignal)])
+    expect(update.mock.calls[0]).toEqual([{ key, enabled: false, expectedVersion: 9, billingConsent: false }, 'prod:123', expect.any(AbortSignal)])
   } finally { await ctx.fiber.dispose() }
 })

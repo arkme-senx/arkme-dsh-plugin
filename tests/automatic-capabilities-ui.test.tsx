@@ -143,3 +143,20 @@ it('explains the command and saved result without enabling on open or cancel', a
   expect(document.querySelector('[role="dialog"]')).toBeNull()
   expect(writes()).toHaveLength(0)
 })
+
+it('keeps call summaries off until consent with a concise billing notice', async () => {
+  mocks.call.mockImplementation(async (operation, params) => {
+    if (operation.endsWith('update')) { enabled = params.enabled; version++ }
+    return { accountScope: 'prod:1', settings: [{ key: 'call_summary', title: '通话', enabled, version, enabledAt: enabled ? 100 : 0 }] }
+  })
+  await render()
+  expect(host.querySelector('[role="switch"]')?.getAttribute('aria-checked')).toBe('false')
+  expect(host.textContent).toContain('通话结束后自动生成 AI 总结')
+  await click(host.querySelector('[role="switch"]')!)
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('通话结束后自动生成 AI 总结，生成时会消耗 AI 积分。')
+  await click(button('取消'))
+  expect(writes()).toHaveLength(0)
+  await click(host.querySelector('[role="switch"]')!)
+  await click(button('同意并开启'))
+  expect(writes()[0]?.[1]).toMatchObject({ key: 'call_summary', enabled: true, billingConsent: true, expectedVersion: 0 })
+})
