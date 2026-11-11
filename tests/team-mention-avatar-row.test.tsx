@@ -4,6 +4,7 @@ import {ArkmeMentionSuggestionRow,type ArkmeMentionSuggestionRowStyles} from '..
 import type {ArkmeMentionCandidate} from '../src/client/mention-candidates.js'
 import {teamAvatarImages} from '../src/client/team-avatar-image-runtime.js'
 import {arkmeAvatarImages} from '../src/client/avatar-image-runtime.js'
+import {arkmeAuthStore} from '../src/client/auth-store.js'
 const mocks=vi.hoisted(()=>({callArkme:vi.fn()}))
 vi.mock('../src/client/api.js',()=>({callArkme:mocks.callArkme}))
 const styles:ArkmeMentionSuggestionRowStyles={row:{},rowActive:{},avatar:{},botAvatar:{},text:{},name:{},secondary:{}}
@@ -28,9 +29,30 @@ it('shows names immediately and resolves Team images through the existing accoun
 it('preserves ordinary personal avatars and keeps missing Team avatars as fallback without requests',async()=>{
  mocks.callArkme.mockResolvedValue({dataBase64:'AQID',mediaType:'image/png'})
  await act(async()=>{renderer=create(row({...member,avatarRef:'personal-image'} as ArkmeMentionCandidate))})
- expect(mocks.callArkme).toHaveBeenCalledExactlyOnceWith('image.read',{imageRef:'personal-image'},undefined,{priority:'background'})
+ expect(mocks.callArkme).toHaveBeenCalledExactlyOnceWith('image.read',{imageRef:'personal-image'},undefined,{priority:'background',avatarDownload:true})
  await act(async()=>{renderer!.update(row(member))})
  expect(renderer!.root.findAllByType('img')).toHaveLength(0);expect(mocks.callArkme).toHaveBeenCalledOnce()
+})
+it('returns both local hits in one request and lets a miss finish separately',async()=>{
+  arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:42})
+  teamAvatarImages.activateScope('test:42')
+  let finishDownload!: (value:unknown)=>void
+  mocks.callArkme.mockImplementation((operation:string) => operation==='team.app.image-cache.batch'
+    ? Promise.resolve([{imageKey:'a',base64:'AQID',mimeType:'image/png'},null,{imageKey:'c',base64:'AQID',mimeType:'image/png'}])
+    : new Promise(resolve=>{finishDownload=resolve}))
+  try {
+    const first=teamAvatarImages.load('team-app-image.a','a')
+    const missing=teamAvatarImages.load('team-app-image.b','b')
+    const last=teamAvatarImages.load('team-app-image.c','c')
+    await expect(Promise.all([first,last])).resolves.toEqual(['data:image/png;base64,AQID','data:image/png;base64,AQID'])
+    expect(mocks.callArkme.mock.calls[0]).toEqual(['team.app.image-cache.batch',{
+      imageRefs:['team-app-image.a','team-app-image.b','team-app-image.c'],expectedAccountKey:'test:42',
+    }])
+    await vi.waitFor(()=>expect(finishDownload).toBeTypeOf('function'))
+    expect(mocks.callArkme.mock.calls[1]).toEqual(['team.app.image',{imageRef:'team-app-image.b'},undefined,{priority:'background'}])
+    finishDownload({base64:'Ag==',mimeType:'image/png'})
+    await expect(missing).resolves.toBe('data:image/png;base64,Ag==')
+  } finally { arkmeAuthStore.setAuth({status:'logged-out',environment:'test'}) }
 })
 it('keeps the name on image failure and discards late image bytes after logout',async()=>{
  const candidate={...member,teamImage:{ref:'team-app-image.signed',key:'image-key'}} as ArkmeMentionCandidate

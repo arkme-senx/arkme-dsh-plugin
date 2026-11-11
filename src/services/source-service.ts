@@ -2037,14 +2037,15 @@ export class SourceService {
       const item = items[index]
       if (item === undefined) continue
       // Avatar profile caches must not overwrite Chat's current-name projection.
-      if (profiles.get(targetUserId)?.avatarUrl === undefined) {
+      const avatarUrl = profiles.get(targetUserId)?.avatarUrl
+      if (avatarUrl === undefined) {
         // The profile request completed and explicitly produced no usable
         // avatar, so the full directory baseline owns removal.
         delete item.avatarRef
         continue
       }
       try {
-        item.avatarRef = await this.profile.sealProfileImageRef(session.userId, targetUserId)
+        item.avatarRef = await this.profile.sealProfileImageRef(session.userId, targetUserId, avatarUrl)
       } catch (error) {
         // Keep a seeded last-known-good avatar when sealing is temporarily
         // unavailable; this is not a server-owned deletion either.
@@ -2116,7 +2117,7 @@ export class SourceService {
       slots: await Promise.all(snapshot.memberIds.slice(0, 5).map(async userId => {
         const profile = profiles.get(userId)
         if (profile?.avatarUrl !== undefined) {
-          return { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, userId) }
+          return { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, userId, profile.avatarUrl) }
         }
         return { fallback: profile?.avatarFallback ?? { kind: 'default' } }
       })),

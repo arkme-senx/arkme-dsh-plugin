@@ -46,6 +46,41 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
+it('reuses persisted Team avatar bytes across service restarts and renewed grants', async () => {
+  const data = new Map<string, import('../src/types.js').ArkmeImageBytes>()
+  let url = 'https://jotmo-userfiles.senguo.me/avatar.png?v=1&Signature=first'
+  const f = fixture(path => path === '/avatar.png'
+    ? new Response('image bytes', { headers: { 'content-type': 'image/png' } })
+    : { channel: { ...channel, avatar_url: url }, conversation })
+  Object.assign(f.runtime.stateStore, {
+    readAvatarCache: async (user: number, key: string) => data.get(`${user}:${key}`),
+    writeAvatarCache: async (user: number, key: string, image: import('../src/types.js').ArkmeImageBytes) => { data.set(`${user}:${key}`, image) },
+  })
+  const first = (await open(f)).channel.imageRef
+  const initial = await f.service.execute('team.app.image', { imageRef: first })
+  url = 'https://jotmo-userfiles.senguo.me/avatar.png?v=1&Signature=renewed'
+  const restarted = new TeamAppService(f.runtime, f.avatars)
+  const renewed = (await restarted.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen).channel.imageRef
+  await expect(restarted.execute('team.app.image', { imageRef: renewed })).resolves.toEqual(initial)
+  await expect(restarted.execute('team.app.image', { imageRef: renewed, cacheOnly: true })).resolves.toEqual({
+    ...(initial as object), imageKey: (await open(f)).channel.imageKey,
+  })
+  expect(f.requests.filter(request => request.path === '/avatar.png')).toHaveLength(1)
+
+  url = 'https://jotmo-userfiles.senguo.me/avatar.png?v=2&Signature=updated'
+  const updated = (await open(f)).channel.imageRef
+  await expect(restarted.execute('team.app.image', { imageRef: updated, cacheOnly: true })).rejects.toMatchObject({ code: 'image-cache-miss' })
+  await expect(restarted.execute('team.app.image-cache.batch', { imageRefs: [updated, renewed, 'team-app-image.invalid'] })).resolves.toEqual([
+    null, expect.objectContaining(initial as object), null,
+  ])
+  expect(f.requests.filter(request => request.path === '/avatar.png')).toHaveLength(1)
+  await f.service.execute('team.app.image', { imageRef: updated })
+  expect(f.requests.filter(request => request.path === '/avatar.png')).toHaveLength(2)
+  f.changeAccount()
+  await expect(restarted.execute('team.app.image-cache.batch', { imageRefs: [renewed] })).resolves.toEqual([null])
+  await expect(restarted.execute('team.app.image', { imageRef: renewed })).rejects.toMatchObject({ code: 'team-reference-invalid' })
+})
+
 it('uses the Host background lane for automatic directory reads only', async () => {
   const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { items: [] })
   const { conversation: row } = await open(f)

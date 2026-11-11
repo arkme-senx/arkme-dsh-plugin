@@ -14,7 +14,7 @@ export type TeamAppOperation = `team.app.${
   | 'feature-links.get' | 'feature-links.save'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
   | 'entries.cached' | 'entries.query' | 'entries.list' | 'entries.change'
-  | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
+  | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image' | 'image-cache.batch' | 'image-manifest'
   | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'visitor.world-target' | 'person.world-target' | 'people.remarks' | 'outbound.open'
   | 'group.context' | 'group.join' | 'group.directory' | 'group.request' | 'group.join-context' | 'group.command' | 'group.status' | 'group.participants' | 'group.approvals'
@@ -25,6 +25,9 @@ export type TeamAppOperation = `team.app.${
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
+export const TEAM_AVATAR_CACHE_BATCH_SIZE = 8
+export interface TeamAvatarCacheHit { base64: string; mimeType: string; imageKey: string }
+export interface TeamAvatarDescriptor { ref: string; key: string }
 /** Presentation-only status; current membership is resolved against the official target by the Host. */
 export interface TeamOfficialMembership { jotmoId: string; isMember: boolean }
 export interface TeamIdentity {

@@ -2208,7 +2208,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'image.read': {
       const image = params.cacheOnly === true
         ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true, ...(requestSignal ? { signal: requestSignal } : {}) })
-        : await service.readImage(stringParam(params, 'imageRef'), requestSignal ? { signal: requestSignal } : {})
+        : await service.readImage(stringParam(params, 'imageRef'), { ...(params.refresh === true ? { refresh: true } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
       return {
         mediaType: image.mediaType,
         bytes: image.bytes,

@@ -37,7 +37,7 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
     style={{ ...styles.chatRow, ...(selected ? { background: arkmeTheme.active } : {}), ...actions.rowStyle }}>
     {actions.pinned && <ArkmePinnedCorner />}
     <span style={styles.sourceAvatarWrap}>
-      <ArkmeTeamChannelAvatar size={styles.sourceAvatarWrap.width} channel={channel} />
+      <ArkmeTeamChannelAvatar size={styles.sourceAvatarWrap.width} channel={channel} lazy />
       {unread > 0 && <span style={styles.mentionUnread}>{unread > 99 ? '99+' : `${unread}${group.unreadExact ? '' : '+'}`}</span>}
     </span>
     <span data-arkme-conversation-content style={styles.chatContent}>

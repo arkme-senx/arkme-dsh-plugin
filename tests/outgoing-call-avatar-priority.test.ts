@@ -37,7 +37,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('This fixture must not access the network') }))
   provider.mockImplementation(async (operation: string, _params: unknown, signal?: AbortSignal) => {
     if (operation === 'user.profile.refresh') return { profile: { userId: 4, contact: { phoneMasked: '138****0000' } } }
-    if (operation === 'world.interactions.list') return await new Promise((_resolve, reject) => {
+    if (operation === 'world.interactions.list' || operation === 'team.app.image') return await new Promise((_resolve, reject) => {
       if (signal?.aborted) reject(signal.reason)
       else signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
     })
@@ -53,14 +53,14 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-async function occupyBackground() {
+async function occupyBackground(operation: 'world.interactions.list' | 'team.app.image' = 'world.interactions.list') {
   const controller = new AbortController()
   const completed = Promise.allSettled([1, 2].map(id => callArkme(
-    'world.interactions.list', { recordRef: String(id) }, controller.signal, { priority: 'background' },
+    operation, { recordRef: String(id) }, controller.signal, { priority: 'background' },
   )))
   const release = async () => { controller.abort(); await completed }
   try {
-    await vi.waitFor(() => expect(provider.mock.calls.filter(call => call[0] === 'world.interactions.list')).toHaveLength(2))
+    await vi.waitFor(() => expect(provider.mock.calls.filter(call => call[0] === operation)).toHaveLength(2))
   } catch (error) { await release(); throw error }
   return { controller, release }
 }
@@ -90,7 +90,7 @@ it('single-flights a Host cache-only probe outside occupied background permits',
 })
 
 it('coalesces repeated cold avatar reads before admission and downloads once when capacity returns', async () => {
-  const blocked = await occupyBackground()
+  const blocked = await occupyBackground('team.app.image')
   const loads = Promise.all(Array.from({ length: 8 }, () => arkmeAvatarImages.load(peerAvatarRef)))
   try {
     await Promise.resolve()
@@ -101,8 +101,8 @@ it('coalesces repeated cold avatar reads before admission and downloads once whe
   } finally { await blocked.release(); await loads }
 })
 
-it('bootstraps and sends the call while an optional avatar waits behind unrelated background reads', async () => {
-  const blocked = await occupyBackground()
+it('bootstraps and sends the call while an optional avatar waits for a download permit', async () => {
+  const blocked = await occupyBackground('team.app.image')
   const controller = new OutgoingCallUiController()
   // Match the production adapter: one shared store owns both current bytes and loading.
   const options = {

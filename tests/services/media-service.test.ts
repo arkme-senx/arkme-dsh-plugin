@@ -510,6 +510,27 @@ describe('MediaService', () => {
 
 
 describe('durable avatar availability', () => {
+  it('keeps signed URL renewals on the same avatar version and evicts a replaced version', async () => {
+    const base = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/a.png'
+    const bytes = { mediaType: 'image/png' as const, bytes: 8, data: new Uint8Array([137,80,78,71,13,10,26,10]) }
+    const state = { uniqueCode: async () => 'device', readAvatarCache: vi.fn(async () => bytes), deleteAvatarCache: vi.fn(async () => {}) }
+    const fetcher = vi.fn<typeof fetch>()
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, state as unknown as StateStore, fetcher)
+    try {
+      const profile = new ProfileService(runtime)
+      const ref = await profile.sealProfileImageRef(42, 88, `${base}?v=1&Signature=first`)
+      expect(await profile.sealProfileImageRef(42, 88, `${base}?Signature=renewed&v=1`)).toBe(ref)
+      expect(await profile.sealProfileImageRef(42, 88, `${base}?v=2`)).not.toBe(ref)
+      vi.spyOn(profile, 'publicProfileSummariesByUserIds').mockResolvedValue(new Map([[88, { userId: 88, displayName: 'User', nickname: 'User', avatarUrl: `${base}?v=2` }]]))
+      const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
+      await expect(media.readImage(ref, { cacheOnly: true })).resolves.toMatchObject({ bytes: 8 })
+      await expect(media.readImage(await profile.sealProfileImageRef(99, 88), { cacheOnly: true })).rejects.toMatchObject({ code: 'image-ref-invalid' })
+      await expect(media.readImage(ref, { refresh: true })).rejects.toMatchObject({ code: 'image-ref-unavailable' })
+      expect(state.deleteAvatarCache).toHaveBeenCalledWith(42, ref)
+      expect(fetcher).not.toHaveBeenCalled()
+    } finally { runtime.dispose() }
+  })
+
   it.each(['read', 'write'])('keeps the downloaded profile avatar usable when cache %s fails', async failure => {
     const state = { uniqueCode: async () => 'device', readAvatarCache: vi.fn(async () => { if (failure === 'read') throw new Error('disk unavailable'); return undefined }),
       writeAvatarCache: vi.fn(async () => { if (failure === 'write') throw new Error('disk full') }) }

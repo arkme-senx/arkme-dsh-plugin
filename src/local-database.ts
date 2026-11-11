@@ -561,11 +561,19 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       .get(userId, fileAssetUid) as { local_ref: string } | undefined)?.local_ref
   }
 
-  async readAvatarCache(userId: number, imageRef: string): Promise<ArkmeImageBytes | undefined> {
-    const row = this.database.prepare('SELECT media_type, data FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array } | undefined
+  async readAvatarCache(userId: number, imageRef: string, maxAgeMillis?: number): Promise<ArkmeImageBytes | undefined> {
+    const row = this.database.prepare('SELECT media_type, data, touched_at FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array; touched_at: number } | undefined
     if (row === undefined) return undefined
-    this.database.prepare('UPDATE avatar_cache SET touched_at=? WHERE user_id=? AND image_ref=?').run(Date.now(), userId, imageRef)
+    if (maxAgeMillis !== undefined) {
+      if (Date.now() - row.touched_at >= maxAgeMillis) return undefined
+    } else {
+      this.database.prepare('UPDATE avatar_cache SET touched_at=? WHERE user_id=? AND image_ref=?').run(Date.now(), userId, imageRef)
+    }
     return { mediaType: row.media_type, data: row.data, bytes: row.data.byteLength }
+  }
+
+  async deleteAvatarCache(userId: number, imageRef: string): Promise<void> {
+    this.database.prepare('DELETE FROM avatar_cache WHERE user_id=? AND image_ref=?').run(userId, imageRef)
   }
 
   async writeAvatarCache(userId: number, imageRef: string, image: ArkmeImageBytes): Promise<void> {
@@ -1312,6 +1320,20 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     }
     const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as {payload: string} | undefined
     return row ? JSON.parse(row.payload) : {}
+  }
+
+  async teamAvatarManifest(accountKey: string, side: import('./team-app-contract.js').TeamSide, images?: readonly import('./team-app-contract.js').TeamAvatarDescriptor[]): Promise<readonly import('./team-app-contract.js').TeamAvatarDescriptor[]> {
+    const key = `team-avatar-manifest:v1:${side}`
+    if (images !== undefined) {
+      this.database.prepare('INSERT OR REPLACE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)')
+        .run(accountKey, key, JSON.stringify(images.slice(0, 8)))
+      return []
+    }
+    const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as { payload: string } | undefined
+    if (!row || row.payload.length > 128 * 1024) return []
+    const value: unknown = JSON.parse(row.payload)
+    return Array.isArray(value) ? value.slice(0, 8).filter(item => typeof item?.ref === 'string' && item.ref.startsWith('team-app-image.')
+      && item.ref.length <= 8192 && typeof item.key === 'string' && /^[a-f0-9]{64}$/.test(item.key)) : []
   }
 
   async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {

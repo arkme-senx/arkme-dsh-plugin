@@ -339,7 +339,7 @@ export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
-  options?: { priority?: 'background' },
+  options?: { priority?: 'background'; avatarDownload?: true },
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
@@ -403,8 +403,11 @@ export async function callArkme<T>(
     }
     // Keep the permit until callProvider has consumed the entire JSON body.
     // No key/recovery: existing owners retain deduplication and retry semantics.
+    const imageService = operation === 'team.app.image' ? 'team'
+      : operation === 'image.read' && options?.avatarDownload ? 'chat' : undefined
     const value = background ? await backgroundUiReads.run({
-      scope: scope ?? 'anonymous', lane: 'background-read', service: 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
+      scope: scope ?? 'anonymous', lane: imageService ? 'image' : 'background-read',
+      service: imageService ?? 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
       operation: dispatch,
     }) : await dispatch(signal)
     if (background) {
