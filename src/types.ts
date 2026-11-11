@@ -1936,6 +1936,7 @@ export interface ArkmeSourceItem {
   /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
   groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
+  latestPreviewUnavailable?: boolean
   /** Server-selected activity freshness, independent of the message/read sequence. No participant IDs. */
   latestActivityAtMillis?: number
   latestActivityKind?: 'member_joined' | 'record'

@@ -262,6 +262,7 @@ const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> =
   displayName: true,
   avatarRef: true,
   latestPreview: true,
+  latestPreviewUnavailable: true,
   latestActivityAtMillis: true,
   latestActivityKind: true,
   latestPreviewUpdatedAtMillis: true,

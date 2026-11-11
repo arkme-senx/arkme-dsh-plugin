@@ -710,7 +710,7 @@ export function arkmeRootChatPreview(source: ArkmeSourceItem): string {
 }
 
 export function arkmeRootChatPreviewParts(source: ArkmeSourceItem): { mentionPrefix: string; preview: string } {
-  const preview = (source.latestPreview ?? (source.kind === 'group_chat' ? '群聊' : ''))
+  const preview = (source.latestPreview ?? '')
     .replace(/\s+/g, ' ').trim()
     || (isArkmeOfficialAuthor(source) ? OFFICIAL_AUTHOR_PREVIEW : '')
   const mentionPrefix = source.kind === 'group_chat' && source.hasUnreadMention === true && preview !== ''
