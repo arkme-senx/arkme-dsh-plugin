@@ -1537,10 +1537,9 @@ export class ChatRealtimeService {
                   continue
                 }
                 const richPreview = arkmeTimelineConversationPreview(message)
-                const body = arkmeEmojiPlainText(arkmeEmojiTokenSafePrefix(
+                const body = arkmeEmojiTokenSafePrefix(arkmeEmojiPlainText(
                   source.kind === 'group_chat' ? `${message.senderName}：${richPreview}` : richPreview,
-                  120,
-                ))
+                ), 120)
                 notification = {
                   eventUid: candidate.hint.eventUid,
                   sourceRef: source.sourceRef,

@@ -27,8 +27,7 @@ function recoverTimelinePreview(source: ArkmeSourceItem, page: ArkmeTimelinePage
   if (!source.latestSequence || !source.latestPreviewUnavailable || keyOf(source) !== keyOf(page.source)) return source
   const item = page.items.find(item => item.sequence === source.latestSequence)
   if (!item || item.status !== 1 || item.sendAtMillis < (source.latestActivityAtMillis ?? 0)) return source
-  return { ...source, latestPreview: item.forwardRecords
-    ? `[转发] ${item.forwardRecords.title}` : arkmeTimelineConversationPreview(item), latestPreviewUnavailable: false }
+  return { ...source, latestPreview: arkmeTimelineConversationPreview(item), latestPreviewUnavailable: false }
 }
 
 function directoryFailureDetails(error: unknown) {
@@ -876,7 +875,7 @@ export class ConversationDirectoryService {
       const currentActivity = Math.max(current.activeAtMillis, current.latestActivityAtMillis ?? 0)
       const preview = latest === sequence && item.sendAtMillis >= currentActivity
         ? { activeAtMillis: item.sendAtMillis, latestActivityAtMillis: item.sendAtMillis, latestActivityKind: 'record' as const,
-            latestPreview: item.forwardRecords === undefined ? arkmeTimelineConversationPreview(item) : `[转发] ${item.forwardRecords.title}` }
+            latestPreview: arkmeTimelineConversationPreview(item) }
         : {}
       rows.push({ ...current, ...preview, latestSequence: latest, readSequence: read,
         ...projectArkmeChatAttentionFromMuted(count, current.isMuted === true) })

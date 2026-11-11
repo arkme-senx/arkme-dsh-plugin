@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, it } from 'vitest'
-import { ArkmeArkoRow, ArkmeDirectoryRow, ArkmeTopicCard } from '../src/client/ArkmeVirtualWorkspace.js'
+import { ArkmeArkoRow, ArkmeDirectoryRow, ArkmeRootChatPreview, ArkmeTopicCard } from '../src/client/ArkmeVirtualWorkspace.js'
 import { RecordRow } from '../src/client/ArkmeSearchSurface.js'
 import { ArkmeMessageSnapshotDialogContent } from '../src/client/ArkmeMessageSnapshotDialog.js'
 import { previewText } from '../src/share-link-preview.js'
@@ -12,6 +12,8 @@ const item: ArkmeTimelineItem = { itemUid: 'emoji-record', senderName: '我', is
 
 const surfaces = [
   ['directory contribution', () => <ArkmeDirectoryRow avatar={null} title="会话" preview={text} selected={false} onClick={noop} />],
+  ...(['private_chat', 'group_chat'] as const).map(kind => [kind, () =>
+    <ArkmeRootChatPreview source={{sourceRef:kind,kind,displayName:'会话',activeAtMillis:0,unreadCount:0,latestPreview:text}} />] as const),
   ['AI directory', () => <ArkmeArkoRow selected={false} latestPreview={text} onClick={noop} />],
   ['topic directory', () => <ArkmeTopicCard source={{sourceRef:'topic',kind:'topic',displayName:'主题',activeAtMillis:0,unreadCount:0,latestPreview:text}} selected={false} hovered={false} onHoverChange={noop} onSelect={noop} actions={null} />],
   ['message snapshot', () => <ArkmeMessageSnapshotDialogContent item={item} />],

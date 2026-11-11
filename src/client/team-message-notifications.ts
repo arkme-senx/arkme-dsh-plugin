@@ -2,6 +2,7 @@ import { openTeamEntryMessages } from './team-entry-navigation.js'
 import type { ArkmeChatClientEvent } from '../types.js'
 import type { TeamConversation } from '../team-app-contract.js'
 import { callArkme } from './api.js'
+import { arkmeEmojiPlainText } from '../arkme-emoji-text.js'
 import { showBrowserNotification } from './browser-notification.js'
 
 type Notice = Extract<ArkmeChatClientEvent, { type: 'team-message-notification' }>['notification']
@@ -25,7 +26,7 @@ export class TeamMessageNotificationPresenter {
       if (entry.expires <= Date.now()) { entry.close(); this.notices.delete(key) }
     }
     if (this.notices.has(notice.eventUid)) return
-    const close = this.ports.show(notice.title, notice.body, `arkme-team-message-${notice.eventUid}`, () => {
+    const close = this.ports.show(notice.title, arkmeEmojiPlainText(notice.body), `arkme-team-message-${notice.eventUid}`, () => {
       if (!this.ports.current() || this.controller.signal.aborted) return
       this.opening?.abort()
       const request = new AbortController()

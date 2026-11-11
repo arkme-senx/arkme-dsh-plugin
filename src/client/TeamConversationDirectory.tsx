@@ -30,7 +30,7 @@ export function TeamConversationGroupRow({ group, accountKey, selected = false, 
   const unread = group.attentionUnread
   const emptyPreview = latest !== undefined && latest.lastSeq === 0 && (!latest.preview || latest.preview.status === 'unavailable' && !latest.preview.text && !latest.preview.templateKind && !latest.preview.hasMedia)
   const preview = emptyPreview ? tr('尚未发送消息') : latest?.preview?.status === 'available'
-    ? latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : '')
+    ? latest.preview.summary ?? (latest.preview.text || (latest.preview.templateKind === 3 ? tr('[语音]') : latest.preview.hasMedia ? tr('[附件]') : ''))
     : latest?.preview?.status === 'revalidating' ? tr('正在确认…') : latest?.preview ? tr('内容暂不可用') : ''
   return <><button type="button" role="treeitem" aria-selected={selected} data-team-folder={channel.jotmoId}
     className="team-conversation-row" data-arkme-removal-phase={actions.phase} aria-disabled={!!actions.phase} tabIndex={actions.phase ? -1 : undefined} data-arkme-feedback="neutral" onContextMenu={actions.onContextMenu} onClick={() => actions.open(onClick)}

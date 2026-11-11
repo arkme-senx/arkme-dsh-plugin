@@ -1101,7 +1101,8 @@ describe('SourceService', () => {
           sendAtMillis: item.send_at,
           title: '',
           textContent: item.record_core.text_content,
-          templateKind: 1,
+          templateKind: 2,
+          contentBlocks: [{ kind: 'video', mediaRef: 'video', fileName: 'clip.mp4', mimeType: 'video/mp4', size: 1, sortOrder: 0 }],
           status: 1,
           version: 1,
         }
@@ -1112,11 +1113,11 @@ describe('SourceService', () => {
     const defaultCategory = result.items.find(item => item.kind === 'default_category')
     expect(result.items.some(item => item.topicKind === 3)).toBe(false)
     expect(result.items.filter(item => item.kind === 'topic')).toMatchObject([{ displayName: 'DSH Agent Input', recordCount: 1 }])
-    expect(result.items[0]).toMatchObject({ latestPreview: '普通发给自己', activeAtMillis: 190 })
+    expect(result.items[0]).toMatchObject({ latestPreview: '[视频]普通发给自己', activeAtMillis: 190 })
 
     expect(defaultCategory).toMatchObject({
       displayName: '未分类',
-      latestPreview: '普通发给自己',
+      latestPreview: '[视频]普通发给自己',
       activeAtMillis: 190,
     })
   })
