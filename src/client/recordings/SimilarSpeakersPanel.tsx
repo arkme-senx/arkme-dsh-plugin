@@ -89,14 +89,18 @@ function SimilarityView({ accountKey, row, onBack, directory }: { accountKey: st
   const [preview, setPreview] = useState<'same' | 'different'>(), [targetMode, setTargetMode] = useState<'existing' | 'new' | 'anonymous'>('existing')
   const [target, setTarget] = useState<SpeakerDirectoryPerson | undefined>(row.type === 'marked' ? row : undefined), [name, setName] = useState('')
   const request = useRef<AbortController>(), requestId = useRef(0), cursors = useRef(new Set<string>())
-  const load = async (more = false) => {
+  const pollTimer = useRef<ReturnType<typeof setTimeout>>(), pollCount = useRef(0)
+  const load = async (more = false, polling = false) => {
+    clearTimeout(pollTimer.current)
+    if (!polling) pollCount.current = 0
     request.current?.abort(); const controller = new AbortController(); request.current = controller
     const generation = ++requestId.current, previous = more && result?.supported ? result : undefined
     setLoading(true); setError('')
-    if (!more) { setResult(undefined); setSelected(new Set()); setPreview(undefined); setComparison(undefined); cursors.current.clear() }
+    if (!more && !polling) { setResult(undefined); setSelected(new Set()); setPreview(undefined); setComparison(undefined); cursors.current.clear() }
     try {
       const next = await callArkme<SpeakerSimilarityResult>('speaker-directory.similar', { detailRef: row.detailRef, ...(previous ? { cursor: previous.nextCursor, version: previous.version } : {}) }, controller.signal)
       if (controller.signal.aborted || generation !== requestId.current) return
+      if (polling && result?.supported && next.supported && (next.anchor.personKey !== result.anchor.personKey || next.modelVersion !== result.modelVersion || next.aggregation !== result.aggregation || next.scoreDefinition !== result.scoreDefinition)) throw new Error(tr('相似声音证据已变化，请重新查找。'))
       if (previous) {
         if (!next.supported || !['ready','complete'].includes(next.state) || next.version !== previous.version || next.anchor.personKey !== previous.anchor.personKey || next.modelVersion !== previous.modelVersion || next.aggregation !== previous.aggregation || next.scoreDefinition !== previous.scoreDefinition
           || next.hasMore && (next.nextCursor === previous.nextCursor || cursors.current.has(next.nextCursor))) throw new Error(tr('相似声音证据已变化，请重新查找。'))
@@ -108,7 +112,15 @@ function SimilarityView({ accountKey, row, onBack, directory }: { accountKey: st
     } catch (error) { if (!controller.signal.aborted) { setError(message(error)); setSelected(new Set()); setPreview(undefined) } }
     finally { if (!controller.signal.aborted) setLoading(false) }
   }
-  useEffect(() => { void load(); return () => { requestId.current++; request.current?.abort() } }, [])
+  useEffect(() => { void load(); return () => { clearTimeout(pollTimer.current); requestId.current++; request.current?.abort() } }, [])
+  useEffect(() => {
+    if (loading || error || selecting || !result?.supported || !['building','partial'].includes(result.state)) return
+    if (pollCount.current >= 20) { setError(tr('自动查询已达到次数上限，请重新查找。')); return }
+    // Poll the same version-bound anchor ref, never a newly returned identity.
+    // Polling is a fresh first page: a building index may change its search version.
+    pollTimer.current = setTimeout(() => { pollCount.current++; void load(false, true) }, 3000)
+    return () => clearTimeout(pollTimer.current)
+  }, [result, loading, error, selecting])
   const data = result?.supported ? result : undefined
   const chosen = data?.items.filter(item => selected.has(item.person.personKey)) ?? []
   const consistency = data?.anchorConsistency

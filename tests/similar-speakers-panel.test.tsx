@@ -17,7 +17,7 @@ describe('similar speaker review UI', () => {
   const click = async (label: string) => { await act(async () => { button(label).props.onClick(); await tick() }) }
   const select = async () => { await act(async () => renderer.root.findByProps({ 'aria-label': '选择 说话人 b' }).props.onChange({ target: { checked: true } })) }
   beforeEach(() => { mocks.call.mockReset().mockResolvedValue(result()); mocks.toggle.mockReset(); mocks.stop.mockReset() })
-  afterEach(async () => { await act(async () => { renderer?.unmount(); await tick() }) })
+  afterEach(async () => { await act(async () => { renderer?.unmount(); await tick() }); vi.useRealTimers() })
   it('defaults to unselected candidates and separates distance from consistency', async () => {
     await mount()
     expect(renderer.root.findByProps({ 'aria-label': '选择 说话人 b' }).props.checked).toBe(false)
@@ -68,4 +68,57 @@ describe('similar speaker review UI', () => {
     expect(oldSignal.aborted).toBe(true)
     expect(JSON.stringify(renderer.toJSON())).not.toContain('合成测试证据')
   })
+  const pending = (state: 'building' | 'partial' | 'failed' = 'building'): SpeakerSimilarityResult => {
+    const base = result(); if (!base.supported) throw Error()
+    return { ...base, state, items: [], searchedCount: 0, totalCount: 23 }
+  }
+  const advance = async (millis = 3000) => { await act(async () => { await vi.advanceTimersByTimeAsync(millis); await tick() }) }
+  it('polls building then partial every three seconds until the backend reports all 23 groups covered', async () => {
+    vi.useFakeTimers()
+    const done = pending(); if (!done.supported) throw Error()
+    mocks.call.mockResolvedValueOnce(pending()).mockResolvedValueOnce(pending('partial')).mockResolvedValue({ ...done, state: 'insufficient', version: 'finished-index', searchedCount: 23 })
+    await mount(); expect(mocks.call).toHaveBeenCalledTimes(1)
+    await advance(2999); expect(mocks.call).toHaveBeenCalledTimes(1)
+    await advance(1); expect(mocks.call).toHaveBeenCalledTimes(2)
+    await advance(); expect(mocks.call).toHaveBeenCalledTimes(3)
+    expect(JSON.stringify(renderer.toJSON())).toContain('已检索 23 / 23 个分组')
+    expect(mocks.call.mock.calls.every(([,input]) => input.detailRef === person('a').detailRef && !input.cursor && !input.version)).toBe(true)
+    await advance(60000); expect(mocks.call).toHaveBeenCalledTimes(3)
+  })
+  it('stops on failed state or request error, with manual refresh starting a fresh bounded attempt', async () => {
+    vi.useFakeTimers(); mocks.call.mockResolvedValueOnce(pending()).mockRejectedValueOnce(new Error('查询失败')).mockResolvedValue(pending('failed'))
+    await mount(); await advance(); await advance(60000)
+    expect(mocks.call).toHaveBeenCalledTimes(2); expect(JSON.stringify(renderer.toJSON())).toContain('查询失败')
+    await click('重新查找'); await advance(60000)
+    expect(mocks.call).toHaveBeenCalledTimes(3)
+  })
+  it('bounds polling at twenty retries and permits manual retry without an infinite loop', async () => {
+    vi.useFakeTimers(); mocks.call.mockResolvedValue(pending())
+    await mount()
+    for (let i=0;i<20;i++) await advance()
+    expect(mocks.call).toHaveBeenCalledTimes(21)
+    await advance(60000); expect(mocks.call).toHaveBeenCalledTimes(21)
+    expect(JSON.stringify(renderer.toJSON())).toContain('自动查询已达到次数上限')
+    await click('重新查找'); await advance(); expect(mocks.call).toHaveBeenCalledTimes(23)
+  })
+  it('aborts an in-flight poll on account change and never accepts its late response', async () => {
+    vi.useFakeTimers(); let finish!: (value:unknown)=>void
+    mocks.call.mockResolvedValueOnce(pending()).mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve})).mockResolvedValue({supported:false})
+    await mount(); await advance(); const signal=mocks.call.mock.calls[1]![2]
+    await act(async()=>{renderer.update(<SimilarSpeakersPanel accountKey="prod:8" row={person('other')} onBack={()=>{}}/>);await tick()})
+    expect(signal.aborted).toBe(true)
+    await act(async()=>{finish(result());await tick()})
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('合成测试证据')
+    await advance(60000); expect(mocks.call).toHaveBeenCalledTimes(3)
+  })
+  it('cancels a scheduled poll on unmount and stops if a poll changes the anchor or evidence model', async () => {
+    vi.useFakeTimers(); mocks.call.mockResolvedValue(pending())
+    await mount(); await act(async()=>renderer.unmount()); await advance(60000)
+    expect(mocks.call).toHaveBeenCalledTimes(1)
+    mocks.call.mockReset().mockResolvedValueOnce(pending()).mockResolvedValue({...pending(),anchor:person('wrong')})
+    await mount(); await advance(); await advance(60000)
+    expect(mocks.call).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(renderer.toJSON())).toContain('相似声音证据已变化')
+  })
+
 })
