@@ -8,7 +8,7 @@ function fixture() {
   const state = row()
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/query')) {
-      expect(body).toEqual({ catalog_version: 3 })
+      expect(body).toEqual({ catalog_version: 5 })
       return [{ ...state }]
     }
     if (state.version !== body.expected_version) throw new Error('conflict')
@@ -106,7 +106,7 @@ describe('automatic capability owner', () => {
   })
 })
 
-it.each(['offline_context', 'recording_voice_trigger', 'event_insight', 'anniversary_insight'] as const)('%s uses the existing consent/version owner without activating personal profile', async key => {
+it.each(['offline_context', 'recording_voice_trigger', 'event_insight', 'anniversary_insight', 'record_entity', 'call_summary'] as const)('%s uses the existing consent/version owner without activating personal profile', async key => {
   const state = { key, title: key === 'offline_context' ? '线下交流关联' : '录音语音触发', enabled: false, version: 0, enabled_at: 0 }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path.endsWith('/query')) return [state]
@@ -122,3 +122,9 @@ it.each(['offline_context', 'recording_voice_trigger', 'event_insight', 'anniver
   expect(state.enabled).toBe(true)
   expect(post.mock.calls.every(([path]) => path.startsWith('/api/v1/settings/capabilities/'))).toBe(true)
 })
+
+ it('accepts every published catalog 5 key, retaining catalog 4 record entities', async () => {
+  const keys = ['personal_profile', 'record_thought', 'chat_thought', 'arrangement_recognition', 'goal_insight', 'offline_context', 'recording_voice_trigger', 'event_insight', 'anniversary_insight', 'record_entity', 'call_summary']
+  const service = new CapabilityService({config: {environment: 'prod'}, requireSession: async () => ({userId: 1}), authenticatedPost: async () => keys.map(key => ({ ...row(), key }))} as never)
+  expect((await service.query()).settings.map(setting => setting.key)).toEqual(keys)
+ })

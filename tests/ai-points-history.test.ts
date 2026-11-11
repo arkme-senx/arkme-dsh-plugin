@@ -1,5 +1,5 @@
 import {expect,it,vi} from 'vitest'
-import {PointsHistoryReader,pointsWindow,pointsDateKey,aggregatePointsView,pointsCategory} from '../src/client/ai-points-history.js'
+import {PointsHistoryReader,pointsWindow,pointsDateKey,aggregatePointsView,pointsCategory,pointsBusinessLabel} from '../src/client/ai-points-history.js'
 import type {ArkmeAiPointsStatistics,ArkmeAiPointsRangePage} from '../src/ai-points-statistics.js'
 const scope='test:42', now=Date.parse('2026-01-02T00:01:00+08:00')
 function snapshot(grain:'day'|'week'|'month'='day'):ArkmeAiPointsStatistics {
@@ -36,4 +36,9 @@ it('requires matching cutoff, scope and total for drilldown and late settlements
  const reader=new PointsHistoryReader(scope,{summary:async()=>snapshot(),range:async()=>({...page,...patch})})
  await expect(reader.details(query,'0.0000001',new AbortController().signal)).rejects.toThrow()
  }
+})
+
+it("distinguishes post-call summaries and live Asen calls", () => {
+ expect(pointsBusinessLabel("call_summary")).toBe("通话 AI 总结")
+ expect(pointsBusinessLabel("asen_call")).toBe("呼叫阿森")
 })

@@ -6,10 +6,11 @@ export const pointsCategories = [
   ['dsh', 'DSH 对话'], ['arko', 'Arko 对话'], ['arrangement', '安排识别'], ['profile', '个人档案识别'],
   ['summary', '录音总结'], ['timeline', '录音时间轴'], ['goal', '目标识别'], ['entity', '录音实体识别'],
   ['record_thought', '快记分析'], ['chat_thought', '聊天分析'], ['offline', '线下交流关联'],
-  ['voice_trigger', '录音口令记事'], ['other', '其他'],
+  ['voice_trigger', '录音口令记事'], ['call_summary', '通话 AI 总结'], ['asen_call', '呼叫阿森'], ['other', '其他'],
 ] as const
 export type PointsCategory = typeof pointsCategories[number][0]
 const categories: Record<string, PointsCategory> = {
+  call_summary: 'call_summary', asen_call: 'asen_call',
   arkme: 'dsh', agent: 'arko', arrangement_recognition: 'arrangement', personal_profile: 'profile',
   recording_summary: 'summary', recording_timeline: 'timeline', goal_insight: 'goal', audio_entity: 'entity',
   record_thought: 'record_thought', chat_thought: 'chat_thought', offline_context: 'offline',

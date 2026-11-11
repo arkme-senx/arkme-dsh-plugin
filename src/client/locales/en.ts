@@ -1,5 +1,11 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+通话结束后自动生成 AI 总结|Automatically generate an AI summary after calls
+通话 AI 总结|Call AI summary
+呼叫阿森|Call Asen
+快记实体识别|Note entity recognition
+自动识别快记中的实体，运行时消耗 AI 额度。|Automatically recognize entities in notes, using AI allowance.
+通话结束后自动生成 AI 总结，生成时会消耗 AI 积分。|Automatically generate an AI summary after calls. Generation uses AI credits.
 发生时间|Time recorded
 当前状态|Current status
 已停用，停用后 Arkme 已启动|Disabled. Arkme started after disabling the extension.

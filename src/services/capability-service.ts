@@ -23,7 +23,7 @@ export class CapabilityService {
     const { session, scope } = await this.session(expectedScope)
     // Optional feature settings must not publish a Record-wide cooldown that
     // delays normal reads or writes. Existing request admission still applies.
-    const raw = await this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/query', { catalog_version: 3 }, session, signal, { lane: 'interactive-read', bypassCache: true, publishServiceCooldown: false })
+    const raw = await this.runtime.authenticatedPost<unknown>('/api/v1/settings/capabilities/query', { catalog_version: 5 }, session, signal, { lane: 'interactive-read', bypassCache: true, publishServiceCooldown: false })
     await this.session(scope)
     if (!Array.isArray(raw)) return invalid()
     const settings = raw.map(parseCapability)
