@@ -3732,6 +3732,16 @@ nextPublic = next
     return { extensionCount: extensions.length, extensions, ...(extensionParent === undefined ? {} : { extensionParent }) }
   }
 
+  async excerptOccurrence(sourceRef:string,actionRef:string,recordUid:string,signal?:AbortSignal) {
+    const session=await this.runtime.requireSession(),target=await this.recordEditHistoryTarget(sourceRef,actionRef)
+    if(target.recordUid!==recordUid)throw new ArkmePluginError('excerpt-source-unavailable','摘录身份不匹配',false,404)
+    if(target.kind==='owned')return (await this.record.personalRecordDetail(recordUid,signal)).localSelfQuote
+    const raw=objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/records/detail',{chat_session_uid:target.chatSessionUid,rel_uid:target.relationUid,record_uid:recordUid,record_owner_user_id:target.recordOwnerUserId},session,signal,{bypassCache:true,cacheMs:0,lane:'interactive-read'}))
+    const item=objectValue(raw.item),relation=objectValue(item.relation),record=objectValue(item.record),core=objectValue(record.payload)
+    if(relation.rel_uid!==target.relationUid||core.record_uid!==recordUid||String(core.owner_user_id)!==String(target.recordOwnerUserId)||Number(record.status??core.status)!==1||Number(core.content_access_state??record.content_access_state)!==1)throw new ArkmePluginError('excerpt-source-unavailable','摘录已失效或无权查看',false,404)
+    return recordExcerptPresentation(objectValue(core.content_payload).excerpt,stringValue(core.text_content))
+  }
+
   async recordEditHistoryTarget(sourceRef: string, messageActionRef: string): Promise<RecordEditHistoryTarget> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef.trim(), session.userId)
@@ -4679,6 +4689,34 @@ nextPublic = next
       return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: recordUid, status: numberValue(data.status), localState: 'synced' })
     }
   
+  /** Selected prose is already final: no whole-message polish or quote-derived mentions. */
+  async sendSourceExcerpt(sourceRef:string,text:string,excerpt:RecordExcerpt,options:{recordUid:string;relationUid?:string;sendAtMillis?:number;expectedUserId:number;signal?:AbortSignal}):Promise<ArkmeSourceSendResult> {
+    const session=await this.runtime.requireSession()
+    if(session.userId!==options.expectedUserId)throw new ArkmePluginError('selected-text-account-changed','账号已变化',false,409)
+    const target=await this.source.openSourceRef(sourceRef,session.userId)
+    options.signal?.throwIfAborted()
+    const own=text.slice(excerpt.note_start)
+    const tags=arkmeHashTagContentPayload(own)
+    const payload={payload_kind:1,schema_version:1,text_state:1,text_format:'plain',...(tags??{}),...(tags?.hash_tags?{hash_tags:(tags.hash_tags as {start_index:number}[]).map(t=>({...t,start_index:t.start_index+excerpt.note_start}))}:{}),excerpt}
+    if(target.kind==='send_to_self'||target.kind==='default_category') {
+      const result=await this.record.createTextForConversation(options.recordUid,text,{expectedUserId:session.userId,excerpt,...(options.signal?{signal:options.signal}:{}),...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis})})
+      if(result.localState==='synced') {
+        try { await this.realtime.invalidateRecordProjection({contentOnly:true}) } catch { /* Accepted owner truth survives a local refresh failure. */ }
+      }
+      return {sourceRef,itemUid:result.recordUid,status:result.status,localState:result.localState}
+    }
+    if(target.kind==='topic') {
+      const senderSnapshot=await this.profile.recordSenderSnapshot?.(session)
+      options.signal?.throwIfAborted()
+      const data=await this.record.createPersonalRecord<Record<string,unknown>>('/api/v1/topics/records/create',{topic_uid:target.ownerRef,record_uid:options.recordUid,template_kind:1,title:'',text_content:text,content_payload:payload,...(senderSnapshot?{sender_snapshot:senderSnapshot}:{}),send_at:options.sendAtMillis},session,options.signal)
+      await this.record.syncCreatedRecordTags(stringValue(data.record_uid),own,session.userId,options.signal,undefined,excerpt.note_start)
+      try { await this.realtime.invalidateRecordProjection({contentOnly:true}) } catch { /* Accepted owner truth survives a local refresh failure. */ }
+      return {sourceRef,itemUid:stringValue(data.record_uid),status:numberValue(data.record_status),localState:'synced'}
+    }
+    if(target.kind!=='private_chat'&&target.kind!=='group_chat')throw new ArkmePluginError('selected-text-target-invalid','此目标不支持摘录',false,400)
+    return this.sendChatSourceTextRaw(sourceRef,target.ownerRef,text,options.recordUid,options.relationUid??randomUUID(),session,undefined,payload,options.signal,options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis})
+  }
+
   async sendSourceText(
       sourceRef: string,
       textContent: string,
@@ -4704,6 +4742,7 @@ nextPublic = next
       }
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       if(options.representation!==undefined&&source.kind!=='group_chat')throw new ArkmePluginError('team-identity-target-invalid','团队身份仅用于普通群',false,409)
+      if(options.excerpt)return this.sendSourceExcerpt(sourceRef,textContent,options.excerpt,{recordUid:options.recordUid??randomUUID(),expectedUserId:session.userId,...(options.relationUid?{relationUid:options.relationUid}:{}),...(options.signal?{signal:options.signal}:{})})
       const text = textContent.trim()
       if (text === '' || text.length > this.runtime.config.maxTextLength) {
         throw new ArkmePluginError('source-text-invalid', '发送内容为空或超过长度限制', false)

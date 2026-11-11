@@ -12,6 +12,9 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+ prepareSelectedText(input:{expectedAccountKey:string;quote:unknown},signal?:AbortSignal):Promise<import('../../selected-text-note.js').SelectedTextNoteQuote>
+ forwardSelectedText(input:import('../../selected-text-note.js').SelectedTextForwardInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult>
+ excerptOriginal(recordUid:string,signal?:AbortSignal,occurrence?:{sourceRef:string;messageActionRef:string}):Promise<import('../../record-excerpt.js').RecordExcerptOriginal>
  sourceMessageExtensionSummaries(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<import('../../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]>
 
  teamOutboundOpen(teamRef:string,recipient:import('../../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../../team-outbound-contract.js').TeamOutboundOpenResult>
