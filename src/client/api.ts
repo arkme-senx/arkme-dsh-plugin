@@ -7,7 +7,7 @@ import type { RecordAppOperation } from '../record-app-contract.js'
 import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
 import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
-import type { ArkmePluginOperation } from '../types.js'
+import type { ArkmePluginOperation, ArkmePluginResponse, ArkmeTimelineCursor } from '../types.js'
 import { backgroundUiReads, supportsBackgroundRead } from './background-read.js'
 import { socialWriteAction } from './social-write-policy.js'
 
@@ -373,7 +373,9 @@ export async function callArkme<T>(
   try {
     const parameters = accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }
     const background = options?.priority === 'background' && supportsBackgroundRead(operation, params)
-    const fetchPriority = background ? 'low' : operation === 'team.app.timeline' || operation === 'team.app.preflight' ? 'high' : undefined
+    const foregroundTimeline = operation === 'source.timeline' && params?.background !== true
+    const fetchPriority = background ? 'low'
+      : foregroundTimeline || operation === 'team.app.timeline' || operation === 'team.app.preflight' ? 'high' : undefined
     const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
     const currentScope = () => {
       const current = arkmeAuthStore.getSnapshot().auth
@@ -398,6 +400,23 @@ export async function callArkme<T>(
     }
     const dispatch = async (requestSignal?: AbortSignal): Promise<T> => {
       if (background && currentScope() !== scope) throw changedAccount()
+      const query = operation === 'source.timeline' ? (parameters?.cursor as ArkmeTimelineCursor | undefined)?.unified : undefined
+      const localRead = typeof window === 'undefined' ? undefined : (window as Window & {
+        arkmeDesktop?: { localChatRead?: (account: string, input: unknown) => Promise<ArkmePluginResponse<T>> }
+      }).arkmeDesktop?.localChatRead
+      const localInput = operation === 'conversation.viewport.read' && parameters?.accountKey === scope
+        ? { kind: 'viewport', surface: parameters?.surface }
+        : query?.mode === 'initial' && query.cacheOnly === true && !query.cursor
+          ? { kind: 'timeline', sourceRef: parameters?.sourceRef, limit: parameters?.limit ?? 30, anchorId: query.anchorId }
+          : undefined
+      if (localRead && scope && localInput) {
+        requestSignal?.throwIfAborted()
+        const result = await localRead(scope, localInput)
+        requestSignal?.throwIfAborted()
+        if (currentScope() !== scope) throw changedAccount()
+        if (result.ok) return result.value
+        if (result.error.code !== 'chat-desktop-local-unsupported') throw new ArkmeClientError(result.error)
+      }
       const value = fetchPriority === undefined
         ? await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
         : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, { priority: fetchPriority })

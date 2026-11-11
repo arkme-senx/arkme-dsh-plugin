@@ -58,6 +58,7 @@ Harness 原始错误|Original Harness error
 增量进度读取失败|Could not read incremental progress
 尚未建立完整备份|No complete backup yet
 自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。|Save new, changed and removed content, including backdated records. Incremental exports are unlimited and do not use the full export allowance.
+离线时无法读取云端记录|Cloud records are unavailable offline.
 当前离线，将导出上次完整保存的本地副本。|You are offline. The last complete local copy will be exported.
 复用本地备份，仅同步变化，不占用全量导出次数。|Reuse the local backup and sync changes without using the full export allowance.
 日期与全部导出共用原有云端导出额度；本地已有原文件会优先复用。|Date and full cloud exports share the existing allowance. Locally saved originals are reused first.

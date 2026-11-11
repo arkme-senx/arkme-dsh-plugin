@@ -102,6 +102,7 @@ export function startTeamDirectory(key: string): () => void {
     running = more ? 'more' : 'refresh'
     const token = revision
     const priority = background ? { background: true } : {}
+    const transport = background ? { priority: 'background' as const } : undefined
     if (!readStateOnly) { snapshot = { ...snapshot, loading: true }; emit() }
     let failure: string | undefined, accessLost = false
     if (!more && !readStateOnly) foldersReady = (async () => {
@@ -109,7 +110,7 @@ export function startTeamDirectory(key: string): () => void {
       folderRequest?.abort()
       const folders=new AbortController();folderRequest=folders
       try {
-        const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,...priority,request:{operation:'folders'}},folders.signal)
+        const value=await callArkme<TeamWorkspaceFolder[]>('team.app.workspace.request',{expectedAccountKey:key,...priority,request:{operation:'folders'}},folders.signal,transport)
         if(!Array.isArray(value))throw new Error('团队群文件夹暂时无法刷新')
         if(!folders.signal.aborted&&account===key&&token===revision){const {foldersError:_,...current}=snapshot;snapshot={...current,workspaceSupported:true,workspaceFolders:value};teamDirectoryPreferences.setWorkspaceAvailable(key,true)}
       } catch(e) {
@@ -140,7 +141,7 @@ export function startTeamDirectory(key: string): () => void {
           for (let i = 0; i < targets.length; i += 100) {
             const rows = await callArkme<TeamConversationReadState[]>('team.app.read-states', {
               conversationRefs: targets.slice(i, i + 100).map(c => c.ref), expectedAccountKey: key, ...priority,
-            }, controller.signal)
+            }, controller.signal, transport)
             for (const state of rows) states.set(state.key, state)
           }
           if (!controller.signal.aborted && account === key && token === revision) {
@@ -161,7 +162,7 @@ export function startTeamDirectory(key: string): () => void {
           return
         }
         if (more && !previous?.nextCursor) throw new Error('消息分页异常，请重试')
-        let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...priority, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal)
+        let page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...priority, ...(more && previous?.nextCursor ? { cursor: previous.nextCursor } : {}) }, controller.signal, transport)
         if (more && page.hasMore && page.nextCursor === previous?.nextCursor) throw new Error('消息分页异常，请重试')
         const previousByKey=new Map(previous?.items.map(c=>[c.key,c])??[])
         const items = new Map([...(more ? previous?.items ?? [] : []), ...page.items.map(c=>({...c,notificationPolicy:mergeTeamNotificationPolicy(previousByKey.get(c.key)?.notificationPolicy,c.notificationPolicy)}))].map(c => [c.key, c]))
@@ -169,7 +170,7 @@ export function startTeamDirectory(key: string): () => void {
         while (!more && items.size < (previous?.items.length ?? 0) && page.hasMore) {
           if (!page.nextCursor || seen.has(page.nextCursor)) throw new Error('消息分页异常，请重试')
           seen.add(page.nextCursor)
-          page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...priority, cursor: page.nextCursor }, controller.signal)
+          page = await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { side, expectedAccountKey: key, ...priority, cursor: page.nextCursor }, controller.signal, transport)
           for (const c of page.items) items.set(c.key, {...c,notificationPolicy:mergeTeamNotificationPolicy(items.get(c.key)?.notificationPolicy,c.notificationPolicy)})
         }
         if (!controller.signal.aborted && account === key && token === revision) {
@@ -217,7 +218,7 @@ export function startTeamDirectory(key: string): () => void {
         for (let i = 0; i < targets.length; i += 10) {
           const batch = await Promise.all(targets.slice(i, i + 10).map(async target => {
             try {
-              if (target.kind === 'folder') return (await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef: target.ref, side: 'team', limit: 1, expectedAccountKey: key, ...priority }, controller.signal)).items
+              if (target.kind === 'folder') return (await callArkme<TeamPage<TeamConversation>>('team.app.conversations', { teamRef: target.ref, side: 'team', limit: 1, expectedAccountKey: key, ...priority }, controller.signal, transport)).items
               return [(await callArkme<import('../team-app-contract.js').TeamTimeline>('team.app.timeline', { conversationRef: target.ref, limit: 1, expectedAccountKey: key, ...priority }, controller.signal)).conversation]
             } catch { return [] }
           }))
@@ -272,9 +273,10 @@ export function startTeamDirectory(key: string): () => void {
   const focus = () => { void refresh(false, false, true) }
   const timer = setInterval(() => { if (document.visibilityState === 'visible') focus() }, 60_000)
   window.addEventListener('focus', focus)
-  void refresh()
+  window.addEventListener('online', focus)
+  void refresh(false, false, true)
   return () => {
-    controller.abort(); folderRequest?.abort(); stop(); stopOpened(); stopWorkspace(); clearInterval(timer); window.removeEventListener('focus', focus)
+    controller.abort(); folderRequest?.abort(); stop(); stopOpened(); stopWorkspace(); clearInterval(timer); window.removeEventListener('focus', focus); window.removeEventListener('online', focus)
     if (request === refresh) { pendingReads.clear(); readStateFrontiers.clear(); account = ''; request = undefined; discard = undefined; snapshot = empty; openedTeamConversations.reset(key); emit() }
   }
 }

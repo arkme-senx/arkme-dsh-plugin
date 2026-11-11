@@ -44,25 +44,27 @@ it('clears only the covered Team badge, preserving newer unread and current fail
 
 it('keeps automatic refresh behind explicit retry and pagination', async () => {
   const account = 'scheduling'
+  let holdRefresh = false
   let release!: () => void
   const hold = new Promise<void>(resolve => { release = resolve })
   mock.mockImplementation(async (operation, params) => {
     if (operation === 'team.app.workspace.request') return []
     if (operation.startsWith('team.app.entries.')) return { items: [], schemaVersion: 2, hasMore: false }
-    if (params.background) await hold
+    if (holdRefresh && params.background) await hold
     return { items: [item(params.side)], hasMore: !params.cursor, nextCursor: 'older' }
   })
   stops.push(startTeamDirectory(account))
   await vi.waitFor(() => expect(readTeamDirectory(account).hasMore).toBe(true))
   const lists = () => mock.mock.calls.filter(([op]) => op === 'team.app.conversations').map(([, params]) => [params.background, params.cursor])
-  expect(lists()).toEqual([[undefined, undefined], [undefined, undefined]])
+  expect(lists()).toEqual([[true, undefined], [true, undefined]])
+  holdRefresh = true
   window.dispatchEvent(new Event('focus'))
   await refreshTeamDirectory(account, true)
   await refreshTeamDirectory(account)
   window.dispatchEvent(new Event('focus'))
   release()
   await vi.waitFor(() => expect(lists()).toEqual([
-    [undefined, undefined], [undefined, undefined],
+    [true, undefined], [true, undefined],
     [true, undefined], [true, undefined],
     [undefined, undefined], [undefined, undefined],
     [undefined, 'older'], [undefined, 'older'],
@@ -544,4 +546,27 @@ it.each(['success','failure','unsupported'] as const)('does not let an older det
  expect(readTeamDirectory('folder-order').foldersError).toBeUndefined()
  expect(readTeamDirectory('folder-order').workspaceSupported).toBe(true)
  expect(firstSignal.aborted).toBe(true)
+})
+
+it('recovers conversations, folders and entry preferences on online without focus or a manual retry', async () => {
+  const account = 'reconnect-directory'
+  let online = false
+  mock.mockImplementation(async (operation, params) => {
+    if (!online && operation !== 'team.app.entries.cached') throw new Error('offline')
+    if (operation === 'team.app.workspace.request') return []
+    return { items: operation === 'team.app.conversations' ? [item(params.side)] : [], schemaVersion: 2, hasMore: false }
+  })
+  stops.push(startTeamDirectory(account))
+  await vi.waitFor(() => {
+    expect(readTeamDirectory(account)).toMatchObject({ error: 'offline', foldersError: 'offline' })
+    expect(teamDirectoryPreferences.error(account)).toBeTruthy()
+  })
+  online = true
+  window.dispatchEvent(new Event('online'))
+  await vi.waitFor(() => {
+    expect(readTeamDirectory(account).items).toHaveLength(2)
+    expect(readTeamDirectory(account).error).toBeUndefined()
+    expect(readTeamDirectory(account).foldersError).toBeUndefined()
+    expect(teamDirectoryPreferences.error(account)).toBe('')
+  })
 })

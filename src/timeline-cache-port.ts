@@ -1,3 +1,5 @@
+import { AsyncResource } from 'node:async_hooks'
+import { conversationReadTracing, recordConversationReadPhase } from './conversation-read-diagnostics.js'
 import { Worker } from 'node:worker_threads'
 import type { ArkmeTimelinePage } from './types.js'
 import type { TimelineCacheCommit } from './unified-timeline-cache.js'
@@ -41,7 +43,7 @@ function commandBytes(command: TimelineCacheCommand): number {
 /** One bounded worker per Host. SQL, JSON, cleanup and checkpoints never execute on the Host event loop. */
 export class TimelineCacheWorker implements TimelineCachePort {
   private readonly worker: Worker
-  private readonly pending = new Map<number, { resolve(value: unknown): void; reject(reason: Error): void; timer: ReturnType<typeof setTimeout>; bytes: number }>()
+  private readonly pending = new Map<number, { resolve(value: unknown): void; reject(reason: Error): void; timer: ReturnType<typeof setTimeout>; bytes: number; recordTiming?: (queue: number, sqlite: number) => void }>()
   private queuedBytes = 0
   private nextId = 0
   private closed = false
@@ -53,7 +55,7 @@ export class TimelineCacheWorker implements TimelineCachePort {
     this.worker.unref()
     this.startupTimer = setTimeout(() => { this.fail(); void this.worker.terminate() }, 30000)
     this.startupTimer.unref?.()
-    this.worker.on('message', (reply: { ready?: boolean; id: number; value?: unknown; failed?: boolean; code?: string }) => {
+    this.worker.on('message', (reply: { ready?: boolean; id: number; value?: unknown; failed?: boolean; code?: string; queue?: number; sqlite?: number }) => {
       this.initialized = true; clearTimeout(this.startupTimer)
       if (reply.ready) return
       const request = this.pending.get(reply.id)
@@ -61,6 +63,7 @@ export class TimelineCacheWorker implements TimelineCachePort {
       this.pending.delete(reply.id); clearTimeout(request.timer)
       this.queuedBytes -= request.bytes
       if (!this.pending.size) this.worker.unref()
+      if (reply.queue !== undefined && reply.sqlite !== undefined) request.recordTiming?.(reply.queue, reply.sqlite)
       if (reply.failed) request.reject(reply.code ? new Error(reply.code) : unavailable()); else request.resolve(reply.value)
     })
     this.worker.on('error', () => this.fail())
@@ -72,6 +75,11 @@ export class TimelineCacheWorker implements TimelineCachePort {
     try { bytes = commandBytes(command) } catch { return Promise.reject(unavailable()) }
     if (this.queuedBytes + bytes > 64 * 1024 * 1024) return Promise.reject(unavailable())
     const id = ++this.nextId
+    const sent = conversationReadTracing() ? Date.now() : undefined
+    const recordTiming = sent === undefined ? undefined : AsyncResource.bind((queue: number, sqlite: number) => {
+      recordConversationReadPhase('worker-queue', queue)
+      recordConversationReadPhase('sqlite', sqlite)
+    })
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         console.warn('arkme: timeline storage request timed out', { kind: command.kind, ...(command.kind === 'sync' ? { action: command.command.action } : {}), pending: this.pending.size })
@@ -84,9 +92,9 @@ export class TimelineCacheWorker implements TimelineCachePort {
         this.fail(); void this.worker.terminate()
       }, 5000)
       this.queuedBytes += bytes
-      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer, bytes })
+      this.pending.set(id, { resolve: value => resolve(value as T), reject, timer, bytes, ...(recordTiming === undefined ? {} : { recordTiming }) })
       this.worker.ref()
-      try { this.worker.postMessage({ id, command }) } catch { this.fail(); void this.worker.terminate() }
+      try { this.worker.postMessage({ id, command, sent }) } catch { this.fail(); void this.worker.terminate() }
     })
   }
   private fail(): void {

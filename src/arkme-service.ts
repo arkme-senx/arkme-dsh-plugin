@@ -1016,7 +1016,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         ...(sourceKeys?.length ? { sourceKeys } : {}), ...(projections?.length ? { projections } : {}) })
     }, (session, previews, signal) => this.directory.refreshSyncedUnread(session, previews, signal))
     this.directory.onChatPageAvailable = () => this.messageSync.resumeTransport()
-    this.realtime.subscribeChatRealtime(event => this.messageSync.accept(event))
+    this.realtime.subscribeChatRealtime(event => {
+      this.messageSync.accept(event)
+      if (event.type === 'reconcile' && event.connected) void this.fileTransfers?.resumeAfterReconnect().catch(() => undefined)
+    })
     this.realtime.subscribeChatRealtime(event => {
       if (event.type === 'timeline-changed') void this.unifiedTimeline.invalidate(event.sourceKey, event.timelineItemKey, event.relationTerminal || event.changeKind === 'deleted')
       else if (event.type === 'members-invalidated' || event.type === 'member-events-invalidated') void this.unifiedTimeline.invalidate(event.sourceKey)
@@ -2720,20 +2723,44 @@ recordingAnalysisV1: true,
     }) } as T
   }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {}): Promise<ArkmeTimelinePage> {
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
-    if (!options.background && (!options.cursor || options.cursor.unified?.mode === 'initial') && !options.signal?.aborted) {
+    const localInitial = options.cursor?.unified?.cacheOnly === true && options.cursor.unified.mode === 'initial'
+    if (source.kind === 'send_to_self' && localInitial) {
+      const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 40)))
+      const pending = await this.runtime.stateStore.listPending(session.userId)
+      const current = await this.runtime.requireSession()
+      options.signal?.throwIfAborted()
+      if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+        throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+      }
+      const items: ArkmeTimelineItem[] = pending.slice(-limit).map(entry => ({
+        ...this.record.recordTimelineItem({ recordUid: entry.recordUid, textContent: entry.textContent, title: '',
+          sendAtMillis: entry.sendAtMillis, status: 1, templateKind: 0, version: 1,
+          ...(entry.textFormat ? { textFormat: entry.textFormat } : {}),
+          ...(entry.excerpt ? { excerpt: entry.excerpt } : {}) }),
+        localState: entry.lastError ? 'failed' : 'pending',
+        awaitingTimelineProjection: true,
+        ...(entry.lastError ? { lastError: entry.lastError } : {}),
+      }))
+      return { source: await this.source.sourceItem(source), items, hasMore: false }
+    }
+    if (options.desktopLocal && (!localInitial || source.groupDelegation
+      || source.kind !== 'private_chat' && source.kind !== 'group_chat')) {
+      throw new ArkmePluginError('chat-desktop-local-unsupported', '此会话不能使用桌面本地读取', false, 400)
+    }
+    if (!options.background && !options.cursor?.unified?.cacheOnly && (!options.cursor || options.cursor.unified?.mode === 'initial') && !options.signal?.aborted) {
       const memberChat = (source.kind === 'private_chat' || source.kind === 'group_chat') && !source.groupDelegation
       this.messageSync.preferConversation(session.userId, memberChat ? source.ownerRef : undefined)
     }
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
-      this.realtime.preferChatProjection(session.userId, source.ownerRef)
+      if (!options.cursor?.unified?.cacheOnly) this.realtime.preferChatProjection(session.userId, source.ownerRef)
       const page = await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
       }, options.signal, options.background === true)
-      if (!source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
+      if (!options.cursor?.unified?.cacheOnly && !source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
       return await this.withSelfRoleSnapshots(page, session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
