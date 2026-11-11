@@ -112,6 +112,30 @@ export class FileTransfers {
     this.armRecovery(user, state)
   }
 
+  async resumeAfterReconnect(): Promise<void> {
+    await this.resume()
+    const user = this.recoveryUser
+    if (user === undefined || this.closed) return
+    const generation = this.recoveryGeneration
+    const state = await this.state(user)
+    await this.exclusive(async () => {
+      if (this.closed || generation !== this.recoveryGeneration || this.recoveryUser !== user) return
+      await this.assertUser(user)
+      if (this.closed || generation !== this.recoveryGeneration || this.recoveryUser !== user) return
+      for (const task of allTasks(state)) {
+        if (task.retryAttempts === undefined || task.retryAfterMillis !== undefined
+          || task.retryable === false || !['failed', 'uncertain'].includes(task.state)) continue
+        if (task.nextRetryAtMillis === undefined) {
+          if (task.retryAttempts < 6 || !['arkme-network-error', 'arkme-timeout'].includes(task.errorCode ?? '')) continue
+          task.retryAttempts = 0
+        }
+        task.nextRetryAtMillis = Date.now()
+        await this.saveTask(user, state, task)
+      }
+      this.armRecovery(user, state)
+    })
+  }
+
   private planRecovery(task: StoredSendTask): void {
     delete task.nextRetryAtMillis
     if (task.retryAttempts === undefined || task.retryAttempts >= 6 || task.retryable === false

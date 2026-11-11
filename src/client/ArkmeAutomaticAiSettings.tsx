@@ -5,6 +5,7 @@ import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 
 const capabilityTitles: Partial<Record<ArkmeCapabilitySetting['key'], string>> = {
+  call_summary: '通话',
   personal_profile: '自动整理个人档案',
   arrangement_recognition: '自动识别安排',
   goal_insight: '自动分析目标',
@@ -16,6 +17,7 @@ const capabilityTitles: Partial<Record<ArkmeCapabilitySetting['key'], string>> =
 
 // Dedicated pages use their real entry; contextual automation explains its effect.
 const capabilityGuidance: Record<ArkmeCapabilitySetting['key'], string> = {
+  call_summary: '通话结束后自动生成 AI 总结',
   personal_profile: '「探索 → 个人档案」',
   record_thought: '阅读新快记，有想法时在快记下方回应你。',
   chat_thought: '在私聊和群聊消息下方提供建议，仅你可见。',

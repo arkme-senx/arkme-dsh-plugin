@@ -1,3 +1,4 @@
+import { measureConversationReadPhase } from '../conversation-read-diagnostics.js'
 import { systemTimelineAnchorCodec } from './system-timeline-anchor.js'
 import type { OfflineContextService } from './offline-context-service.js'
 import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand } from '../timeline-cache-port.js'
@@ -198,8 +199,10 @@ export class UnifiedChatTimelineService {
   private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object') throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const epoch = this.epoch
-    const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const { session, source } = await measureConversationReadPhase('scope', async () => {
+      const session = await this.runtime.requireSession()
+      return { session, source: await this.source.openSourceRef(sourceRef, session.userId) }
+    })
     signal?.throwIfAborted()
     if (this.disposed || this.epoch !== epoch) throw new ArkmePluginError('chat-timeline-stale', '账号状态已变化', false, 409)
     if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw new ArkmePluginError('chat-timeline-source-invalid', '仅私聊和群聊支持统一时间线', false)
@@ -244,7 +247,7 @@ export class UnifiedChatTimelineService {
       })
       if (signal.aborted) abort()
     })
-    const cache = await this.readyStorage()
+    const cache = await measureConversationReadPhase('storage-ready', () => this.readyStorage())
     const assertCurrent = async () => {
       signal.throwIfAborted()
       const currentSession = await this.runtime.requireSession()
@@ -252,11 +255,11 @@ export class UnifiedChatTimelineService {
       if(source.groupDelegation) await this.source.authorizeGroupDelegation(source,session,signal)
     }
     if (query.cacheOnly) {
-      await assertCurrent()
+      await measureConversationReadPhase('access', assertCurrent)
       let cached: ArkmeTimelinePage | undefined
-      try { cached = cache ? await this.callStorage<ArkmeTimelinePage | undefined>(cache, { kind: 'read', scope, request: requestKey,
+      try { cached = cache ? await measureConversationReadPhase('projection', () => this.callStorage<ArkmeTimelinePage | undefined>(cache, { kind: 'read', scope, request: requestKey,
         ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
-        latest: mode === 'initial' && !query.anchorId }) : undefined } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
+        latest: mode === 'initial' && !query.anchorId })) : undefined } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
       // Window coverage and synced bodies have independent commit clocks. An old
       // latest window must not hide a newer, already durable local message tail.
       const latestLocal = mode === 'initial' && !query.anchorId && !query.cursor
@@ -270,7 +273,7 @@ export class UnifiedChatTimelineService {
         }
         if (before !== undefined && (!Number.isSafeInteger(before) || before <= 0)) throw invalid()
         const anchor = query.anchorId ?? (mode === 'around' ? query.itemUid : undefined)
-        const local = await this.sync<ChatSyncLocalPage | undefined>({ action: 'read', scope, limit: query.limit ?? 40, ...(anchor === undefined ? {} : { anchorId: anchor.replace(/^(message|moment|notice|external|world-public):/, '') }), ...(before ? { before } : {}) }).catch(() => undefined)
+        const local = await measureConversationReadPhase('message-bodies', () => this.sync<ChatSyncLocalPage | undefined>({ action: 'read', scope, limit: query.limit ?? 40, ...(anchor === undefined ? {} : { anchorId: anchor.replace(/^(message|moment|notice|external|world-public):/, '') }), ...(before ? { before } : {}) })).catch(() => undefined)
         const sequence = (events: ArkmeUnifiedTimelineEvent[]) => Math.max(0, ...events.flatMap(event => event.kind === 'message' ? [event.item.sequence ?? 0] : []))
         if (local?.events.length && (!cached || sequence(local.events) > sequence(cached.unified?.events ?? [])
           || !cached.items.length && local.revision > (cached.cache?.revision ?? 0))) {
@@ -283,7 +286,7 @@ export class UnifiedChatTimelineService {
         }
       }
       if (!cached) throw new ArkmePluginError('chat-timeline-cache-miss', '没有已确认的本地时间线', false, 404)
-      await assertCurrent()
+      await measureConversationReadPhase('access', assertCurrent)
       return { ...cached, source: sourceItem, ...(cached.cache ? { cache: { ...cached.cache,
         stale: cached.cache.stale === true || state.refreshRevision !== refreshRevision } } : {}) }
     }
@@ -316,12 +319,12 @@ export class UnifiedChatTimelineService {
       ...(mode === 'around' && pageQuery.contextRef ? { anchor_source: 'offline_context', anchor_id: await this.offlineContexts?.timelineAnchor(pageQuery.contextRef, source.ownerRef) } : {}),
       ...(mode === 'around' && pageQuery.messageRef ? await this.offlineContexts?.messageAnchor(pageQuery.messageRef, source.ownerRef) : {}),
       ...(mode === 'around' && !pageQuery.systemRef && !pageQuery.contextRef && !pageQuery.messageRef ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
-    const post = () => this.runtime.authenticatedChatPost(route(protocol), body, session, signal, {
+    const post = () => measureConversationReadPhase('upstream', () => this.runtime.authenticatedChatPost(route(protocol), body, session, signal, {
       ...(source.groupDelegation ? { chatAccessRef: source.groupDelegation.accessRef } : {}),
       chatMessageActionsV2: true,
       lane: background || mode === 'refresh' ? 'background-read' : 'interactive-read',
       key: `unified-timeline:v${protocol}:${JSON.stringify(body)}`, cancelWhenUnobserved: true,
-    })
+    }))
     let raw: unknown
     try {
       try { raw = await post() }

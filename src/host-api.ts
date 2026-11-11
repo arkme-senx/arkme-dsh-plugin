@@ -142,7 +142,7 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   }
 }
 
-function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number): void {
+function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number, phases?: string): void {
   const encoded = JSON.stringify(body)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -151,7 +151,7 @@ function writeJson(res: ServerResponse, status: number, body: ArkmePluginRespons
     'X-Content-Type-Options': 'nosniff',
     // Standard timing metadata separates Host execution from browser queueing
     // and transport. No request parameters, identity or upstream URL is exposed.
-    ...(started === undefined ? {} : { 'Server-Timing': `arkme;dur=${Math.max(0, performance.now() - started).toFixed(1)}` }),
+    ...(started === undefined ? {} : { 'Server-Timing': `arkme;dur=${Math.max(0, performance.now() - started).toFixed(1)}${phases ? ', ' + phases : ''}` }),
   })
   res.end(encoded)
 }
@@ -931,6 +931,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
   const dayReviewConfirmation = new DayReviewConfirmation(service)
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const started = performance.now()
+    let phases: string | undefined
     const controller = new AbortController()
     const abortDisconnectedRequest = () => {
       if (!res.writableEnded) controller.abort(new Error('Arkme Browser request disconnected'))
@@ -1106,8 +1107,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.accountSessions?.(),
         options.teamCodex,
         options.migrationManager,
-      ))
-      writeJson(res, 200, { ok: true, value }, started)
+      ), measured => { phases = measured })
+      writeJson(res, 200, { ok: true, value }, started, phases)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
       const known = error instanceof ArkmePluginError
@@ -1129,7 +1130,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           ...(known.imageFailures === undefined ? {} : { imageFailures: known.imageFailures }),
           ...(known.publishReceipt === undefined ? {} : { publishReceipt: known.publishReceipt }),
           ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
-      }, started)
+      }, started, phases)
     } finally {
       res.off('close', abortDisconnectedRequest)
     }
@@ -2534,6 +2535,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         stringParam(params, 'sourceRef'),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
           ...(params?.background === true ? { background: true } : {}),
+          ...(params.desktopLocal === true ? { desktopLocal: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
     }

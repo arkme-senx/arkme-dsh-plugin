@@ -218,10 +218,37 @@ it('caps automatic recovery at six attempts and keeps unsent content for an expl
   await vi.advanceTimersByTimeAsync(600000); expect(f.send).toHaveBeenCalledTimes(7)
   await f.owner.retry(task.taskRef); await f.owner.settled(); expect(f.send).toHaveBeenCalledTimes(8)
 })
+it('wakes persisted Chat sends on reconnect and checks unknown outcomes before replay', async () => {
+  const f = await fixture()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+  const chat = { ...input, sourceRef: 'private-chat' }
+  f.send.mockResolvedValueOnce({ kind: 'owner_outcome_unknown', code: 'arkme-network-error' })
+  const queued = await f.owner.enqueue(chat)
+  await f.owner.settled()
+  f.owner.dispose()
+
+  const restarted = f.make()
+  expect(await restarted.tasks(chat.sourceRef)).toMatchObject([{
+    taskRef: queued.taskRef, state: 'uncertain', content: chat.content,
+  }])
+  f.reconcile.mockResolvedValue(null)
+  f.send.mockImplementationOnce(async request => {
+    expect(request).toMatchObject(chat)
+    return { kind: 'owner_accepted', result: { sourceRef: chat.sourceRef, itemUid: chat.recordUid, status: 1, localState: 'synced' } }
+  })
+  await restarted.resumeAfterReconnect()
+  await vi.advanceTimersByTimeAsync(1)
+  await restarted.settled()
+  expect(f.reconcile).toHaveBeenCalledOnce()
+  expect(f.send).toHaveBeenCalledTimes(2)
+  expect(await restarted.tasks(chat.sourceRef)).toMatchObject([{ taskRef: queued.taskRef, state: 'sent' }])
+})
+
 it('honors Retry-After and stops recovery when the account disappears', async () => {
   const f = await fixture(); vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
   f.send.mockResolvedValueOnce({ kind: 'owner_not_accepted', code: 'arkme-http-429', message: 'rate limited', retryable: true, retryAfterMillis: 10_000 })
   await f.owner.enqueue(input); await f.owner.settled()
+  await f.owner.resumeAfterReconnect()
   await vi.advanceTimersByTimeAsync(9999); expect(f.send).toHaveBeenCalledOnce()
   f.setUser(99); await vi.advanceTimersByTimeAsync(1); await f.owner.settled()
   expect(f.send).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0)

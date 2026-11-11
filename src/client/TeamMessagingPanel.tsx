@@ -1234,7 +1234,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     {messageMarks.layer}
     {forwardAttempt&&forwardAttempt.messages[0]&&<TeamSourceReadScope accountKey={accountKey} conversationRef={conversation.ref} messageRef={forwardAttempt.messages[0].ref} messageKey={forwardAttempt.messages[0].key} conversationKey={conversation.key} version={forwardAttempt.messages[0].version} revision={forwardAttempt.messages[0].revision}>{readable=><TeamForwardDialog accountKey={accountKey} attempt={forwardAttempt.attempt} previewTitle={tr('转发 {v0} 条团队消息',{v0:forwardAttempt.messages.length})} previewSubtitle={readable ? forwardAttempt.messages[0]?.content?.text_content??'' : tr('引用内容当前不可用')} onClose={()=>setForwardAttempt(undefined)} onComplete={()=>{setForwardAttempt(undefined);selection.exit()}}/>}</TeamSourceReadScope>}
     {copyLinkNotice&&<div role="status">{copyLinkNotice}</div>}
-    {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
+    {!selection.ids && <ArkmeMessageTextSelectionToolbar key={`text-selection:${accountKey}:${conversation.key}`} replySourceRef={conversation.ref} selfNote={{ sourceLabel: `团队消息 · ${conversation.channel.name}`, accountKey }}
       onReply={(target,quote)=>{const message=timeline?.messages.find(m=>m.key===target.item.itemUid);if(message)chooseReply(message,quote)}}
       markScopeControl={<div role="group" aria-label={tr('标记范围')} style={{display:'flex',alignItems:'center',gap:2,padding:'2px 5px'}}>
         {(['local',...(conversation.side==='team'?['team' as const]:[]),'conversation'] as const).map(scope=><button key={scope} type="button" aria-pressed={markScope===scope}
@@ -1286,11 +1286,11 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
         onLocate={locateVisitorRecord}/>
 
     </header>
-    {conversation.side==='team'&&(workspace.workspaceSupported===true||conversation.sourceOnly||conversation.hasGroupSources)&&<TeamGroupSourceCards key={`${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation}/>}
+    {conversation.side==='team'&&(workspace.workspaceSupported===true||conversation.sourceOnly||conversation.hasGroupSources)&&<TeamGroupSourceCards key={`group-sources:${accountKey}:${conversation.key}`} accountKey={accountKey} conversation={conversation}/>}
     {Boolean(quoteNavigation.notice || replyBack.current) && <div role="status">{quoteNavigation.notice}
       {replyBack.current && <button type="button" onClick={()=>{const back=replyBack.current!;replyBack.current=undefined;quoteNavigation.clear();void locateMessage(back.ref,back.key)}}>{tr('返回回复位置')}</button>}
     </div>}
-    {teamCardOpen && current.side === 'external' && <TeamPublicCardDialog key={`${accountKey}:${conversation.key}`} accountKey={accountKey}
+    {teamCardOpen && current.side === 'external' && <TeamPublicCardDialog key={`public-card:${accountKey}:${conversation.key}`} accountKey={accountKey}
       jotmoId={current.channel.jotmoId} currentChannel={current.channel} onClose={() => setTeamCardOpen(false)} />}
     {loadError && <div role="alert" className="team-error">{loadError} <button type="button" onClick={() => { void recover() }}>{tr('重试')}</button></div>}
     {error && <div role="alert" className="team-error">{error}</div>}
