@@ -8,6 +8,10 @@ export interface ArkmeFilePolicy {
   maxAttachments: number
   /** Metadata-first implementation; each send negotiates server support. */
   metadataFirstVersion?: 2
+  /** Empty fileRefs with nonempty text use the same durable send owner. */
+  textMessagesVersion?: 1
+  /** A restored browser submission is checked against its original remote UID before replay. */
+  admissionRecoveryVersion?: 1
 }
 
 export interface ArkmeLocalFile {
@@ -59,6 +63,9 @@ export interface ArkmeFileSendTask extends ArkmeFileSendInput {
   /** Definite terminal rejection remains terminal across restart and later permission changes. */
   retryable?: boolean
   error?: string
+  /** Absent on legacy tasks, which require an explicit retry before automatic recovery. */
+  retryAttempts?: number
+  nextRetryAtMillis?: number
 }
 
 export interface ArkmeFileReception {

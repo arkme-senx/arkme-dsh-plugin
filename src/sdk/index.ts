@@ -3107,6 +3107,7 @@ export class ArkmeSdk {
   async openLocalFileFolder(fileRef: string, signal?: AbortSignal): Promise<{ folderOpened: true }> { return this.call('files.local.open-folder', { fileRef }, signal) }
   async openLocalFile(fileRef: string, signal?: AbortSignal): Promise<import('../file-transfer-contract.js').ArkmeFileOpenResult> { return this.call('files.local.open', { fileRef }, signal) }
   async removeLocalFile(fileRef: string): Promise<void> { return this.call('files.local.remove', { fileRef }) }
+  /** With textMessagesVersion=1, fileRefs may be empty for a nonempty message. The returned task is local acceptance, not a delivery receipt. */
   async sendFiles(input: ArkmeFileSendInput): Promise<ArkmeFileSendTask> { return this.call('files.send', { ...input.content, ...input }) }
   async fileSendTasks(sourceRef?: string, signal?: AbortSignal): Promise<ArkmeFileSendTask[]> { return this.call('files.send.tasks', sourceRef === undefined ? {} : { sourceRef }, signal) }
   async retryFileSend(taskRef: string): Promise<ArkmeFileSendTask> { return this.call('files.send.retry', { taskRef }) }

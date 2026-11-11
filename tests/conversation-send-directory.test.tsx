@@ -3135,6 +3135,54 @@ describe('conversation send directory projection', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '搜索' }).find(node => node.type === 'input')).toBeUndefined()
   })
 
+  it('queues a self note and retries its original task from the pending bubble', async () => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let finishChecking!: () => void
+    const checking = new Promise<void>(resolve => { finishChecking = resolve })
+    let task: import('../src/file-transfer-contract.js').ArkmeFileSendTask | undefined
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'files.capabilities') return { version: 1, textMessagesVersion: 1 }
+      if (operation === 'files.send') {
+        task = { taskRef: 'original-note-task', sourceRef: params.sourceRef, recordUid: params.recordUid, relationUid: params.relationUid,
+          content: { textContent: params.textContent, sendAtMillis: params.sendAtMillis }, fileRefs: [], files: [], createdAtMillis: 48,
+          state: 'uncertain', error: '无法连接 Arkme 服务' }
+        return task
+      }
+      if (operation === 'files.send.tasks') return task ? [task] : []
+      if (operation === 'files.send.retry') {
+        await checking
+        task = { ...task!, state: 'sent', result: { sourceRef: task!.sourceRef, itemUid: task!.recordUid, status: 1, localState: 'synced' } }
+        return task
+      }
+      return baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const draftKey = arkmeSourceComposerDraftKey(42, sendToSelf)!
+    act(() => arkmeComposerDraftStore.setText(draftKey, '待恢复的文字'))
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick())
+    expect(mocks.callArkme).toHaveBeenCalledWith('files.send', expect.objectContaining({ sourceRef: sendToSelf.sourceRef, fileRefs: [], textContent: '待恢复的文字', recordUid: 'record-new', relationUid: 'relation-new' }))
+    expect(arkmeComposerDraftStore.get(draftKey).text).toBe('')
+    const status = renderer!.root.findByProps({ 'aria-label': '消息发送状态' })
+    const trigger = status.findByType('button')
+    expect(trigger.props['aria-haspopup']).toBe('menu')
+    const anchor = { getBoundingClientRect: () => ({ right: 80, bottom: 70 }) }
+    act(() => trigger.props.onClick({ currentTarget: anchor, stopPropagation: vi.fn() }))
+    const menu = renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.label === '消息操作')!
+    const [retry, clear] = menu.props.actions.filter(Boolean)
+    expect([retry.label, clear.label]).toEqual(['重试发送', '清除本地记录'])
+    expect(clear.danger).toBe(true)
+    act(() => arkmeComposerDraftStore.setText(draftKey, '后续的新草稿'))
+    await act(async () => retry.onSelect())
+    expect(renderedText(renderer!.toJSON())).toContain('正在确认…')
+    await act(async () => finishChecking())
+    expect(mocks.callArkme).toHaveBeenCalledWith('files.send.retry', { taskRef: 'original-note-task' })
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'files.send')).toHaveLength(1)
+    expect(arkmeComposerDraftStore.get(draftKey).text).toBe('后续的新草稿')
+    expect(renderer!.root.findAllByProps({ 'aria-label': '消息发送状态' })).toHaveLength(0)
+  })
+
   it.each([target, group, sendToSelf].flatMap(source => ['queued', 'uploading', 'sending', 'failed', 'uncertain', 'sent'].map(state => ({ source, state }))))('renders $state attachment status outside the $source.kind bubble', async ({ source, state }) => {
     activeSource = source
     arkmeUi.selectSource(source)
@@ -3168,11 +3216,13 @@ describe('conversation send directory projection', () => {
     let statusContainer = status.parent!
     while (typeof statusContainer.type !== 'string') statusContainer = statusContainer.parent!
     expect(statusContainer.findAllByProps({ 'data-arkme-message-direction': 'self' })).toHaveLength(1)
-    expect(status.findAllByType('button').map(button => button.children.join(''))).toEqual(
-      state === 'failed' ? ['重试', '清除'] : state === 'uncertain' ? ['核对发送结果', '清除'] : [])
-    if (state === 'failed') {
-      await act(async () => status.findAllByType('button')[0]!.props.onClick({ stopPropagation: vi.fn() }))
-      expect(mocks.callArkme).toHaveBeenCalledWith('files.send.retry', { taskRef: task.taskRef })
+    const buttons = status.findAllByType('button')
+    expect(buttons).toHaveLength(state === 'failed' || state === 'uncertain' ? 1 : 0)
+    if (state === 'failed' || state === 'uncertain') {
+      const anchor = { getBoundingClientRect: () => ({ right: 80, bottom: 70 }) }
+      act(() => buttons[0]!.props.onClick({ currentTarget: anchor, stopPropagation: vi.fn() }))
+      const menu = renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.label === '消息操作')!
+      expect(menu.props.actions.filter(Boolean).map((action: {label: string}) => action.label)).toEqual(['重试发送', '清除本地记录'])
     }
   })
 
@@ -3232,15 +3282,15 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    const remove = renderer!.root.findAllByType('button').find(button => button.children.includes('清除'))
-    expect(remove).toBeDefined()
-
-    await act(async () => {
-      remove!.props.onClick({ stopPropagation: vi.fn() })
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
+    const discardFromMenu = async () => {
+      const trigger = renderer!.root.findAllByType('button').find(button => button.props['data-arkme-send-recovery-trigger'])!
+      const anchor = { getBoundingClientRect: () => ({ right: 80, bottom: 70 }) }
+      act(() => trigger.props.onClick({ currentTarget: anchor, stopPropagation: vi.fn() }))
+      const menu = renderer!.root.findAllByType(ArkmeActionMenu).find(node => node.props.label === '消息操作')!
+      const discard = menu.props.actions.find((action: { id: string } | false) => action && action.id === 'discard-send')
+      await act(async () => discard.onSelect())
+    }
+    await discardFromMenu()
     expect(mocks.callArkme).toHaveBeenCalledWith('files.send.discard', { taskRef: 'task-failed-file' })
 
     await act(async () => {
@@ -3269,21 +3319,11 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
       await Promise.resolve()
     })
-    const uncertainRemove = renderer!.root.findAllByType('button').find(button => button.children.includes('清除'))
-    expect(uncertainRemove).toBeDefined()
-
-    await act(async () => {
-      uncertainRemove!.props.onClick({ stopPropagation: vi.fn() })
-      await Promise.resolve()
-    })
+    await discardFromMenu()
     expect(confirm).toHaveBeenCalledTimes(1)
     expect(mocks.callArkme).not.toHaveBeenCalledWith('files.send.discard', { taskRef: 'task-uncertain-file' })
 
-    await act(async () => {
-      uncertainRemove!.props.onClick({ stopPropagation: vi.fn() })
-      await Promise.resolve()
-      await Promise.resolve()
-    })
+    await discardFromMenu()
     expect(confirm).toHaveBeenCalledTimes(2)
     expect(mocks.callArkme).toHaveBeenCalledWith('files.send.discard', { taskRef: 'task-uncertain-file' })
   })

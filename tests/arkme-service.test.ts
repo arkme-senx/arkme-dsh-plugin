@@ -331,7 +331,7 @@ describe('ArkmeService', () => {
     const uploadRefs = vi.fn(async () => [])
     Object.assign(service as unknown as Record<string, unknown>, {
       chat: { sourceMessageExtensionContext, extendSourceMessage },
-      fileTransfers: { uploadRefs, cancelActive: vi.fn() },
+      fileTransfers: { uploadRefs, cancelActive: vi.fn(), dispose: vi.fn() },
     })
 
     await expect(service.extendSourceMessage(
@@ -355,7 +355,7 @@ describe('ArkmeService', () => {
     const uploadRefs = vi.fn(async () => [])
     Object.assign(service as unknown as Record<string, unknown>, {
       chat: { sourceMessageExtensionContext, extendSourceMessage },
-      fileTransfers: { uploadRefs, cancelActive: vi.fn() },
+      fileTransfers: { uploadRefs, cancelActive: vi.fn(), dispose: vi.fn() },
     })
 
     await expect(service.extendSourceMessage(
