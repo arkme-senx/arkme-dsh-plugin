@@ -212,6 +212,7 @@ export const actionEnglish: Record<string,string> = {
   "积分与用量": "Credits and usage",
   "计费详情": "Pricing details",
   "返回模型": "Back to models",
+  "当前场景可用模型": "Models available in this context",
   "此模型在当前场景的支持情况待确认": "Support for this model in the current context is not yet confirmed",
   "暂时无法更新，请稍后重试": "Unable to update right now. Try again later",
   "积分暂不可用": "Credits are temporarily unavailable",
