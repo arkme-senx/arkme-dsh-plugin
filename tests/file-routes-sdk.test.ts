@@ -8,6 +8,7 @@ import { FileTransfers, type FileTransferPorts } from '../src/services/file-tran
 import { createArkmeHostApi } from '../src/host-api.js'
 import { createArkmeUploadHandler, createArkmeLocalFileHandler } from '../src/rich-media-routes.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
+import { createArkmeCoreToolDefinitions } from '../src/tools/index.js'
 
 describe('file Host and external SDK transport contract', () => {
   it('stages, reads ranges, queues sends, recovers tasks, and enforces account/origin boundaries', async () => {
@@ -137,8 +138,20 @@ describe('file Host and external SDK transport contract', () => {
       userId = 42
       await sdk.discardFileSend(task.taskRef); await sdk.removeLocalFile(file.fileRef)
       expect((await sdk.localFiles()).map(value => value.fileRef)).toEqual([image.fileRef, html.fileRef])
+      expect(await sdk.fileCapabilities()).toMatchObject({ textMessagesVersion: 1 })
+      const textTask = await sdk.sendFiles({ ...input, fileRefs: [], content: { textContent: 'SDK 待发送文字', sendAtMillis: 1000 } })
+      await owner.settled()
+      expect(await sdk.fileSendTasks('source')).toMatchObject([{ taskRef: textTask.taskRef, state: 'sent', content: { sendAtMillis: 1000 } }])
+      const tools = createArkmeCoreToolDefinitions(facade as never)
+      const sendText = tools.find(tool => tool.name === 'arkme_files_send')!
+      const result = await sendText.execute({ source_ref: 'source', file_refs: [], text: '工具待发送文字' }, { callId: 'durable-text-send' } as never)
+      expect(JSON.stringify(result)).toContain('工具待发送文字')
+      await owner.settled()
+      expect(await sdk.fileSendTasks()).toHaveLength(2)
+      expect(upload).toHaveBeenCalledOnce()
+      expect(send).toHaveBeenCalledTimes(3)
     } finally {
-      owner.cancelActive(); await owner.settled()
+      owner.dispose(); await owner.settled()
       await new Promise<void>(resolve => server.close(() => resolve()))
       await rm(directory, { recursive: true, force: true })
     }

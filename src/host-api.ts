@@ -3054,7 +3054,14 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       ...(requestSignal ? { signal: requestSignal } : {}),
     })
     case 'files.search': return await service.fileSearch({ query: stringParam(params, 'query'), limit: numberParam(params, 'limit', 30), cursor: stringParam(params, 'cursor') })
-    case 'files.send.tasks': return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined)
+    case 'files.send.tasks': {
+      const watchTaskRefs = params.watchTaskRefs
+      if (watchTaskRefs === undefined) return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined)
+      if (!Array.isArray(watchTaskRefs) || watchTaskRefs.length > 100 || watchTaskRefs.some(ref => typeof ref !== 'string' || ref.length > 80)) {
+        throw new ArkmePluginError('file-task-watch-invalid', '发送任务订阅无效', false, 400)
+      }
+      return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined, watchTaskRefs)
+    }
     case 'files.send.retry': return await service.fileSendRetry(stringParam(params, 'taskRef'))
     case 'files.send.discard': return await service.fileSendDiscard(stringParam(params, 'taskRef'))
     case 'files.send.reconcile': return await service.fileSendReconcile(stringParam(params, 'taskRef'))
@@ -3062,10 +3069,11 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'files.receive': return await service.fileReceive(stringParam(params, 'mediaRef'), booleanParam(params, 'start'))
     case 'files.send': {
       const fileRefs = stringListParam(params, 'fileRefs')
+      if (!Array.isArray(params.fileRefs) || params.fileRefs.length !== fileRefs.length) throw new ArkmePluginError('file-send-invalid', '附件引用列表无效', false, 400)
       const backgroundSound = fileBackgroundSoundParam(params, fileRefs)
       const location = params.location === undefined ? undefined : recordLocationCaptureParam(params)
       const expectedUserId = fileExpectedUserIdParam(params)
-      return await service.fileSend({
+      const input = {
         sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
         fileRefs,
         ...(Array.isArray(params.attachmentOrder) ? { attachmentOrder: stringListParam(params, 'attachmentOrder') } : {}),
@@ -3073,7 +3081,10 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(backgroundSound === undefined ? {} : { backgroundSound }),
         ...(location === undefined ? {} : { location }),
         content: richSendParam({ ...params, backgroundSound: undefined }),
-      })
+      }
+      return booleanParam(params, 'recoverAdmission')
+        ? await service.fileSend(input, requestSignal ? { signal: requestSignal } : {})
+        : await service.fileSend(input)
     }
     case 'source.send-rich': {
       const expectedUserId = fileExpectedUserIdParam(params)
