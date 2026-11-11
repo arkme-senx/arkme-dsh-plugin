@@ -3561,7 +3561,7 @@ export type ArkmeRecordingSpeakerEvidence = { supported: false } | {
     status: 'ready' | 'insufficient'
     distanceA: number | null
     distanceB: number | null
-    effectiveSpeechMillis: number
+    effectiveSpeechMillis: number | null
     reason?: string
   }>
 }

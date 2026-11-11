@@ -60,14 +60,14 @@ export function parseRecordingSpeakerEvidence(value: unknown, input: ArkmeRecord
     const row = record(value), index = row.client_index
     if (!Number.isInteger(index) || typeof index !== 'number' || index < 0 || index >= input.itemRefs.length || seen.has(index)
       || !['ready', 'insufficient'].includes(String(row.status))
-      || typeof row.effective_speech_ms !== 'number' || !Number.isFinite(row.effective_speech_ms) || row.effective_speech_ms < 0
+      || (row.effective_speech_ms !== null && (typeof row.effective_speech_ms !== 'number' || !Number.isFinite(row.effective_speech_ms) || row.effective_speech_ms < 0))
       || (row.distance_a !== null && !distance(row.distance_a)) || (row.distance_b !== null && !distance(row.distance_b))
       || (input.referenceA.length === 0 && row.distance_a !== null) || (input.referenceB.length === 0 && row.distance_b !== null)
       || (row.status === 'insufficient' && (row.distance_a !== null || row.distance_b !== null))
       || (row.status === 'ready' && (row.distance_a === null || (input.referenceB.length > 0 && row.distance_b === null)))) return invalid()
     seen.add(index)
     return { itemRef: input.itemRefs[index]!, status: row.status as 'ready' | 'insufficient', distanceA: row.distance_a as number | null,
-      distanceB: row.distance_b as number | null, effectiveSpeechMillis: row.effective_speech_ms,
+      distanceB: row.distance_b as number | null, effectiveSpeechMillis: row.effective_speech_ms as number | null,
       ...(typeof row.reason === 'string' && row.reason.trim() ? { reason: row.reason.slice(0, 200) } : {}) }
   })
   if (items.length !== input.itemRefs.length) return invalid()

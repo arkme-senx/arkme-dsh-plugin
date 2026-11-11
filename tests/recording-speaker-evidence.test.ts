@@ -50,6 +50,10 @@ describe('speaker evidence contract', () => {
       items: [{ itemRef: 'row-1', status: 'ready', distanceA: .31, distanceB: .12, effectiveSpeechMillis: 3000 }] })
     expect(parseRecordingSpeakerEvidence({ supported: false }, input)).toEqual({ supported: false })
   })
+  it('preserves unknown speech duration for unavailable backend evidence', () => {
+    const raw={...response(),items:[{client_index:0,status:'insufficient',distance_a:null,distance_b:null,effective_speech_ms:null,reason:'precise_evidence_unavailable'}]}
+    expect(parseRecordingSpeakerEvidence(raw,input)).toMatchObject({items:[{status:'insufficient',effectiveSpeechMillis:null}]})
+  })
   it.each(['missing', 'duplicate', 'unknown-index', 'nan', 'range', 'model', 'metric', 'false-certainty'] as const)('rejects %s evidence', kind => {
     const raw = response()
     if (kind === 'missing') raw.items = []
