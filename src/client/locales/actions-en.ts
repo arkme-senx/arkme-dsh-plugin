@@ -988,8 +988,12 @@ export const actionEnglish: Record<string,string> = {
   "当前入口不会创建请求、发送消息或更改系统权限。": "This entry point does not create requests, send messages or change system permissions.",
   "查看原文": "View original",
   "引用原文": "Original source",
-  "正在核验原文访问权限…": "Checking access to the original…",
-  "个人摘录仍保留，当前未打开原文。": "Your personal excerpt is retained. The original has not been opened.",
+  "关闭原文": "Close original",
+  "正在打开原文…": "Opening the original…",
+  "原文或引用已变化，无法查看。": "The original or its excerpt has changed and can’t be opened.",
+  "原文过长，无法在此展开。": "The original is too long to display here.",
+  "暂时无法打开原文，请稍后重试。": "Couldn’t open the original. Try again in a moment.",
+  "原文暂不可查看。": "The original is unavailable.",
   "重新核验": "Check again",
   "旧摘录仍保存在本机。原记录已有改动或引用中含旧标签、提及，需核对后再同步引用样式。": "This older excerpt remains on this device. The record changed or has existing tags or mentions inside the quote, so its structure needs review before syncing."
 }
