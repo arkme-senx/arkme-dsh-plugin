@@ -3518,6 +3518,7 @@ export interface ArkmeRecordingSpeakerRecommendation {
 
 /** Read-only, interval-bound evidence. Distances are never recognition probabilities. */
 export interface ArkmeRecordingSpeakerEvidenceInput {
+  crossDateSelection?: boolean
   itemRefs: string[]
   referenceA: string[]
   referenceB: string[]

@@ -1898,7 +1898,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       if ([params.itemRefs, params.referenceA, params.referenceB].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) {
         throw new ArkmePluginError('invalid-params', '声纹对比参数无效', false)
       }
-      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[] }, requestSignal)
+      if (params.crossDateSelection !== undefined && typeof params.crossDateSelection !== 'boolean') throw new ArkmePluginError('invalid-params', '比较范围无效', false)
+      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[], ...(params.crossDateSelection === true ? { crossDateSelection: true } : {}) }, requestSignal)
     }
     case 'recordings.speaker.consistency': {
       if ([params.anchorRefs, params.itemRefs].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) throw new ArkmePluginError('invalid-params', '一致性查询参数无效', false)

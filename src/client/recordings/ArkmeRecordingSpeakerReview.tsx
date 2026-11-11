@@ -75,13 +75,13 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, explicitSc
   const pages = Math.max(1, Math.ceil(candidates.length / 50))
   const pageIndex = Math.min(page, pages - 1)
   const pageItems = candidates.slice(pageIndex * 50, pageIndex * 50 + 50)
-  const consistency = useRecordingConsistency(loadItems && !complete?.items ? [] : [item.itemRef], loadItems && !complete?.items ? [] : pageItems.map(row => row.itemRef))
+  const consistency = useRecordingConsistency(explicitScope || loadItems && !complete?.items ? [] : [item.itemRef], explicitScope || loadItems && !complete?.items ? [] : pageItems.map(row => row.itemRef))
   const group = explicitScope ? undefined : consistency.groups[0]
   const deviations = new Map(group?.items.map(row => [row.itemRef, row]) ?? [])
   const referenceA = all.filter(row => a.includes(row.itemId))
   const referenceB = all.filter(row => b.includes(row.itemId))
   const chosen = all.filter(row => selected.has(row.itemId)).sort((left, right) => left.startAtMillis - right.startAtMillis)
-  const input = { itemRefs: pageItems.map(row => row.itemRef), referenceA: referenceA.map(row => row.itemRef), referenceB: referenceB.map(row => row.itemRef) }
+  const input = { ...(explicitScope ? { crossDateSelection: true } : {}), itemRefs: pageItems.map(row => row.itemRef), referenceA: referenceA.map(row => row.itemRef), referenceB: referenceB.map(row => row.itemRef) }
   const signature = JSON.stringify(input)
   const current = evidence.key === signature ? evidence : undefined
   const value = current?.value?.supported ? current.value : undefined
@@ -159,22 +159,23 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, explicitSc
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><strong style={{ flex: 1, fontSize: 15 }}>{tr('声音一致性')} <span style={{ fontWeight: 400, color: color.secondary }}>· {item.speakerLabel}</span></strong>
       <button type="button" style={button} onClick={onClose}>{tr('关闭')}</button></div>
     {!preview ? <>
-      <div aria-label={tr('说话人整体一致性')} style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', border: `1px solid ${color.border}`, borderRadius: 8 }}>
+      {!explicitScope && <div aria-label={tr('说话人整体一致性')} style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', border: `1px solid ${color.border}`, borderRadius: 8 }}>
         <div><div style={{ color: color.secondary }}>{tr('整体一致性')}</div><strong style={{ fontSize: 28, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{tr(recordingConsistencyLabel(group, consistency.error))}</strong>{group?.score != null && <span style={{ color: color.tertiary }}> / 100</span>}</div>
         <div style={{ flex: 1, minWidth: 180, color: color.secondary }}><div>{group ? tr('当天已分析 {v0} / {v1} 段', { v0: group.analyzedCount, v1: group.totalCount }) : tr('当天完整分组 · 分析覆盖情况待返回')}</div>
           <div>{group?.reviewCount != null ? tr('{v0} 段待复核', { v0: group.reviewCount }) : tr('待复核数量待计算')}{group?.suspectedVoices && group.suspectedVoices > 1 ? ` · ${tr('可能混入多种声音')}` : ''}</div>
           <div style={{ marginTop: 4, fontSize: 11 }}>{tr('越高表示组内声音越一致，不代表人物身份准确率。')}</div></div>
         <button type="button" style={button} disabled={consistency.loading} onClick={consistency.reload}>{consistency.loading ? tr('读取中…') : tr('重新读取一致性')}</button>
       </div>
+      }
       {consistency.error && <div role="alert" style={{ color: color.danger }}>{consistency.error}</div>}
       {consistency.supported === false && <div style={{ color: color.secondary }}>{tr('一致性与偏离数据待后端提供；可先试听和选择片段。')}</div>}
       {group && <details><summary style={{ color: color.secondary, cursor: 'pointer' }}>{tr('指标口径与覆盖范围')}</summary><div>{tr('模型：')}{group.modelVersion} · {tr('版本：')}{group.version}</div><div>{tr('一致性定义：')}{group.scoreDefinition}</div><div>{tr('片段偏离参照：')}{group.referenceMethod}</div></details>}
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={button} disabled={explicitScope} aria-pressed={!nearby} onClick={() => { setNearby(false); setPage(0) }}>{tr('当天同组')}</button>
+        <button type="button" style={button} disabled={explicitScope} aria-pressed={!nearby} onClick={() => { setNearby(false); setPage(0) }}>{tr(explicitScope ? '已选跨日期片段' : '当天同组')}</button>
         <button type="button" style={button} disabled={explicitScope} aria-pressed={nearby} onClick={() => { setNearby(true); setPage(0) }}>{tr('附近片段')}</button>
         <span style={{ color: color.secondary }}>{nearby ? tr('前后 10 分钟，已加载 {v0} 段', { v0: candidates.length }) : group ? tr('已加载 {v0} 段 / 同组共 {v1} 处', { v0: candidates.length, v1: group.totalCount }) : tr('已加载 {v0} 段', { v0: candidates.length })}</span>
       </div>
-      <div style={{ color: color.secondary }}>{tr(loadItems ? '下方覆盖当天完整候选范围；整体一致性按后台完整分组统计。系统同组不代表同一个人。' : '下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>
+      <div style={{ color: color.secondary }}>{tr(explicitScope ? '仅对比当前明确加载的跨日期片段；完整组覆盖情况请返回分组审查查看。' : loadItems ? '下方覆盖当天完整候选范围；整体一致性按后台完整分组统计。系统同组不代表同一个人。' : '下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={button} aria-pressed={deviationFirst} onClick={() => { setDeviationFirst(true); setAdvanced(false) }}>{tr('本页偏离较大优先')}</button>
         <button type="button" style={button} aria-pressed={!deviationFirst} onClick={() => { setDeviationFirst(false); setAdvanced(false) }}>{tr('按时间')}</button>

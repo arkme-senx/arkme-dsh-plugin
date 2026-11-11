@@ -750,7 +750,7 @@ export class RecordingService {
     const revision = this.speakerCacheRevision
     const all = await Promise.all(lists.flat().map(ref => this.openRecordingItemRef(ref)))
     const anchor = all[0]!
-    if (all.some(item => item.viewerUserId !== session.userId || item.dateStamp !== anchor.dateStamp || item.transcriptSource !== anchor.transcriptSource)) {
+    if (all.some(item => item.viewerUserId !== session.userId || (input.crossDateSelection !== true && item.dateStamp !== anchor.dateStamp) || item.transcriptSource !== anchor.transcriptSource)) {
       throw new ArkmePluginError('recording-evidence-scope', '请在同一账号、日期和转写版本内对比声音', false, 409)
     }
     const rows = all.slice(0, input.itemRefs.length)
@@ -759,7 +759,7 @@ export class RecordingService {
     let raw: unknown
     try {
       raw = await this.runtime.authenticatedAudioPost('/api/v1/audio/speaker-evidence/compare', {
-        schema_version: 1, date_stamp: anchor.dateStamp,
+        schema_version: 1, date_stamp: anchor.dateStamp, ...(input.crossDateSelection === true ? { cross_date_selection: true } : {}),
         items: rows.map((item, client_index) => ({ client_index, ...this.correctionLocator(item) })),
         reference_a: a.map(item => this.correctionLocator(item)), reference_b: b.map(item => this.correctionLocator(item)),
       }, session, signal, { bypassCache: true, lane: 'interactive-read' })

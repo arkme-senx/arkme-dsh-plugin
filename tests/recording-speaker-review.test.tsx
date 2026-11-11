@@ -66,6 +66,13 @@ describe('speaker evidence review', () => {
     expect(mocks.call).not.toHaveBeenCalled()
   })
 
+  it('compares explicit cross-date rows without requesting daily consistency', async () => {
+    await act(async () => { renderer = create(<ArkmeRecordingSpeakerReview item={item(0)} items={[item(0), {...item(1),startAtMillis:item(1).startAtMillis+86400000}]} explicitScope options={[]} onClose={onClose} onUpdated={onUpdated}/>); await tick() })
+    expect(mocks.consistency).not.toHaveBeenCalled()
+    await click('作为参照甲',0); await click('对比本页声纹')
+    expect(mocks.call.mock.calls.find(([op])=>op==='recordings.speaker.evidence')![1]).toMatchObject({crossDateSelection:true})
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('当天完整分组')
+  })
   it('requires explicit references, alternates real playback, and does not fabricate distances when unsupported', async () => {
     await mount()
     expect(buttons('对比本页声纹')[0]!.props.disabled).toBe(true)
