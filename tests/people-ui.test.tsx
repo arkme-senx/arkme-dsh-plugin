@@ -171,3 +171,21 @@ it('previews relation-only recording identity and only creates it after confirma
   await click('确认并继续标记')
   expect(choose).toHaveBeenCalledWith({ label: '张老师', speakerRef: 'new-speaker' })
 })
+
+it('replaces cached parent-scoped record keys with a fresh full page and shows one canonical card across merged facets',async()=>{
+ const second={...relation,key:'e-merged',relation:{...relation.relation!,key:'e-merged',ref:'merged-ref'}}
+ let fresh=false
+ mocks.call.mockImplementation(async(op,input)=>{
+  if(op==='people.list')return {source:input.source,items:input.source==='relations'?[relation,second]:[]}
+  const key=fresh?'canonical-source':`legacy-${input.ref}`
+  return {evidence:[{key,text:'同一条合并原文',label:'来源',date:1,speaker:'',anchor:false,mentions:[{start:input.ref==='merged-ref'?3:0,end:input.ref==='merged-ref'?4:1,text:'人'}]}]}
+ })
+ await act(async()=>root.render(<PeopleSurface accountScope="canonical-refresh" onBack={()=>{}}/>))
+ await act(async()=>(host.querySelector('.people-row') as HTMLButtonElement).click())
+ expect(host.querySelectorAll('.explore-evidence')).toHaveLength(2)
+ await act(async()=>root.render(<div/>))
+ const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now+31_000);fresh=true
+ await act(async()=>root.render(<PeopleSurface accountScope="canonical-refresh" onBack={()=>{}}/>))
+ expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
+ expect(host.textContent).toContain('此原文提及 2 处')
+})

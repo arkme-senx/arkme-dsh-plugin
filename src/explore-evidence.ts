@@ -19,6 +19,7 @@ export function mergeExploreEvidence(...pages: readonly ExploreEvidence[][]): Ex
       ...previous, ...item, text: item.text || previous.text,
       ...(previous.ref && !item.ref ? { ref: previous.ref } : {}),
       anchor: previous.anchor || item.anchor,
+      ...(previous.roles || item.roles ? { roles: [...new Set([...previous.roles ?? [], ...item.roles ?? []])] } : {}),
       ...(mentions.size ? { mentions: [...mentions.values()].sort((a,b) => a.start-b.start) } : {}),
     })
   }
