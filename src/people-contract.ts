@@ -74,7 +74,8 @@ export function personMatches(person: UnifiedPerson, query: string): boolean {
 
 export interface PeopleIdentityChange { identityKey: string; namespace: string; beforeState: string; afterState: string }
 export interface PeopleIdentityPreview { changes: PeopleIdentityChange[]; commandRef: string; changeCount: number; expiresAt: number }
-export interface PeopleIdentityLink { identityKey: string; identityRef: string; namespace: string; splitRef?: string }
+export type PeopleIdentityProvenance = {kind: 'unknown'} | {kind: 'user_decision'; action: string; confirmedAt: number; confirmedBySelf: boolean}
+export interface PeopleIdentityLink { provenance?: PeopleIdentityProvenance; identityKey: string; identityRef: string; namespace: string; splitRef?: string }
 export interface PeopleIdentityReceipt { operationRef: string; state: string }
 
 export interface PeopleIdentityImpact { recordingCount?: number; chatCount?: number; state: 'pending' | 'complete'; identityCount: number; relationRecordCount: number; unavailableRecordCount: number; names: Array<{name: string; target: boolean}>; displayChange?: {before: string[]; after: string[]}; nextCursor?: string }

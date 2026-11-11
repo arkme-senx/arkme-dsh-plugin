@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
 import { PeopleIdentityService } from '../src/services/people-identity-service.js'
-import { ArkmePluginError, type ServiceRuntime } from '../src/services/service.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, type ServiceRuntime } from '../src/services/service.js'
 import type { PersonFacet, PeopleIdentityPreview, PeopleIdentityReceipt } from '../src/people-contract.js'
 const root = '111111111111111111111111', other = '222222222222222222222222', speaker = '333333333333333333333333'
 const facet: PersonFacet = { key: 'facet', personKey: 'legacy-user', name: '人物', source: 'relations', aliases: [], accountLinked: true, isSelf: false }
@@ -110,4 +110,21 @@ it('reads independent identity capabilities and distinguishes unsupported from t
  await expect(f.service.execute('capabilities',{})).resolves.toEqual({supported:false})
  f.post.mockRejectedValueOnce(new Error('timeout'))
  await expect(f.service.execute('capabilities',{})).rejects.toThrow('timeout')
+})
+
+it('only exposes provenance matching the current identity, revision and viewer', async()=>{
+ const f=fixture(), person=await f.decorate()
+ const identity={namespace:'audio_speaker',id:speaker}
+ const proof={kind:'user_decision',identity,revision:3,confirmed_by:11,confirmed_at:1794391200000,operation_id:'a'.repeat(64),action:'link'}
+ for(const [overrides,expected] of [[{},'user_decision'],[{revision:2},'unknown'],[{confirmed_by:22},'unknown'],[{identity:{namespace:'audio_speaker',id:other}},'unknown'],[{operation_id:'bad'},'unknown']] as const){
+  f.post.mockResolvedValueOnce({links:[{identity,state:'active',revision:3,provenance:{...proof,...overrides}}]})
+  const value=await f.service.execute('list',{personRef:person.personRef}) as any
+  expect(value.links[0].provenance.kind).toBe(expected)
+  expect(JSON.stringify(value.links[0].provenance)).not.toContain('confirmed_by')
+ }
+})
+it('maps only known owner conflict reasons without exposing upstream details',async()=>{
+ const f=fixture(),person=await f.decorate(),target=await f.decorate(other)
+ f.post.mockRejectedValueOnce(new ArkmeUpstreamResponseError('arkme-code-409','private upstream body',false,409,{reason:'explicitly_excluded',secret:'never expose'},{upstreamStatus:409}))
+ await expect(f.service.execute('preview',{kind:'merge',personRef:person.personRef,otherPersonRef:target.personRef,idempotencyKey:'conflict-test-12345678'})).rejects.toMatchObject({code:'people-identity-conflict',message:'此前已明确拆开这些身份，本次未保存。'})
 })

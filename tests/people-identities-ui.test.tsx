@@ -100,3 +100,13 @@ it('keeps identity browsing but disables unavailable merge and reports capabilit
  expect(merge.disabled).toBe(true)
  expect(mocks.call.mock.calls.some(c=>c[1].action==='capabilities')).toBe(true)
 })
+
+it('shows verified provenance and cautious candidate explanation without writing',async()=>{
+ mocks.call.mockImplementation(async(_op,p)=>p.action==='capabilities'?capabilities:p.action==='list'?{links:[{identityKey:'linked',identityRef:'ref',namespace:'audio_speaker',provenance:{kind:'user_decision',action:'link',confirmedAt:1794391200000,confirmedBySelf:true}}]}:undefined)
+ await act(async()=>root.render(<PeopleIdentities person={person} people={[person,other]} accountScope="test:proof" onChanged={()=>{}} onClose={()=>{}}/>))
+ expect(document.body.textContent).toContain('查看关联依据')
+ expect(document.body.textContent).toContain('你已手动确认')
+ await choose('speaker')
+ expect(document.body.textContent).toContain('尚未确认是同一人')
+ expect(mocks.call.mock.calls.some(c=>c[1].action==='apply')).toBe(false)
+})

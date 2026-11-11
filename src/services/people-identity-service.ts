@@ -1,12 +1,23 @@
 import { createHash, createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
-import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
-import type { PersonFacet, PeopleIdentityPreview, PeopleIdentityLink, PeopleIdentityImpact } from '../people-contract.js'
+import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, type ServiceRuntime } from './service.js'
+import type { PersonFacet, PeopleIdentityPreview, PeopleIdentityLink, PeopleIdentityImpact, PeopleIdentityProvenance } from '../people-contract.js'
 
 type Identity = { namespace: string; id: string }
-type Link = { identity: Identity; person_id: string; state: string; person_revision?: number; excluded_person_ids?: string[] }
+type Link = { provenance?: unknown; revision?: number; identity: Identity; person_id: string; state: string; person_revision?: number; excluded_person_ids?: string[] }
 const unavailable = () => new ArkmePluginError('people-identity-unavailable', '人物身份已变化，请重新读取并预览', true, 409)
 const oid = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{24}$/.test(v) && !/^0+$/.test(v)
+
+function provenance(link: Link, viewer: number): PeopleIdentityProvenance {
+ const p=objectValue(link.provenance), identity=objectValue(p.identity)
+ if(p.kind!=='user_decision' || identity.namespace!==link.identity.namespace || identity.id!==link.identity.id || !Number.isSafeInteger(link.revision) || p.revision!==link.revision || !Number.isSafeInteger(p.confirmed_at) || Number(p.confirmed_at)<=0 || p.confirmed_by!==viewer || typeof p.operation_id!=='string' || !/^[a-f0-9]{64}$/.test(p.operation_id) || !['link','unlink','merge','split','undo','materialize'].includes(String(p.action))) return {kind:'unknown'}
+ return {kind:'user_decision',action:String(p.action),confirmedAt:Number(p.confirmed_at),confirmedBySelf:true}
+}
+const conflictMessages:Record<string,string>={
+ identity_already_linked:'此身份已关联其他人物，本次未保存。', explicitly_excluded:'此前已明确拆开这些身份，本次未保存。',
+ identity_changed:'人物身份已变化，请重新读取并预览。',preview_expired:'预览已过期，请重新预览。',source_changed:'来源资料已变化，请重新读取并预览。',idempotency_mismatch:'操作编号对应的请求内容不一致，请核对原操作结果。'
+}
+
 export class PeopleIdentityService {
   private readonly codec: EncryptedReferenceCodec
   constructor(private readonly runtime: ServiceRuntime, private readonly speakerRef?: (id: string, owner: number) => Promise<string>) { this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), unavailable) }
@@ -30,6 +41,11 @@ export class PeopleIdentityService {
     try {
       result = await this.runtime.authenticatedRelationPost<T>(`/api/v1/entity/identities/${action}`, body, session, signal, { bypassCache: true, cacheMs: 0, ...(action === 'apply' ? { lane: 'write' as const } : {}) })
     } catch (error) {
+      if(error instanceof ArkmeUpstreamResponseError && error.upstreamStatus===409) {
+        const reason=objectValue(error.responseData).reason
+        const text=typeof reason==='string'?conflictMessages[reason]:undefined
+        if(text) throw new ArkmePluginError(action==='apply'?'people-identity-rejected':'people-identity-conflict',text,false,409)
+      }
       // Runtime transports owner HTTP failures as 502 with upstreamStatus.
       // Only definite apply rejections permit a new command; result 404 does
       // not prove a concurrently executing write failed.
@@ -115,7 +131,8 @@ export class PeopleIdentityService {
     if (action === 'list') {
       if (!person) throw unavailable()
       const result = await this.post<{ links: Link[]; recent_operation?: { operation_id: string } }>('list', { person_id: person.person_id, include_operations: true }, signal)
-      const links = await Promise.all(result.links.map(async (link): Promise<PeopleIdentityLink> => ({ identityKey: await this.identityKey(link.identity), identityRef: await this.seal({ identity: link.identity }), namespace: link.identity.namespace, ...(link.identity.namespace === 'relation_entity' ? { splitRef: await this.seal({ person_id: link.identity.id }) } : {}) })))
+      const viewer = (await this.runtime.requireSession()).userId
+      const links = await Promise.all(result.links.map(async (link): Promise<PeopleIdentityLink> => ({ provenance: provenance(link, viewer), identityKey: await this.identityKey(link.identity), identityRef: await this.seal({ identity: link.identity }), namespace: link.identity.namespace, ...(link.identity.namespace === 'relation_entity' ? { splitRef: await this.seal({ person_id: link.identity.id }) } : {}) })))
       return { links, ...(result.recent_operation ? { operationRef: await this.seal({ operation_id: result.recent_operation.operation_id }) } : {}) }
     }
     if (action !== 'preview' || !['link', 'unlink', 'merge', 'split', 'materialize', 'undo'].includes(String(params.kind))) throw unavailable()
