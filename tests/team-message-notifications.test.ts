@@ -18,6 +18,12 @@ it('dedupes a Team message and resolves current access on click', async()=>{
   expect(f.ports.show).toHaveBeenCalledOnce();f.click();await vi.waitFor(()=>expect(f.ports.open).toHaveBeenCalledWith({key:'conversation'}))
   expect(f.ports.resolve.mock.calls[0]?.[0]).toBe('sealed-team');f.presenter.dispose();expect(f.controller.close).toHaveBeenCalledOnce()
 })
+it('presents known Team emoji tokens as Unicode in notification bodies', () => {
+  const { presenter, ports } = fixture()
+  presenter.show({...notice, body:'消息 [im_emoji:heart_eyes] [jm_emoji:thumb_up] 😊'})
+  expect(ports.show).toHaveBeenCalledWith('团队', '消息 😍 👍 😊', 'arkme-team-message-event', expect.any(Function))
+  presenter.dispose()
+})
 it('rejects expired presentation but a prior notification can still open authorized history',async()=>{
   const f=fixture();f.presenter.show({...notice,expiresAtMillis:Date.now()-1});expect(f.ports.show).not.toHaveBeenCalled()
   f.presenter.show(notice);f.click();await vi.waitFor(()=>expect(f.ports.open).toHaveBeenCalledOnce());f.presenter.dispose()

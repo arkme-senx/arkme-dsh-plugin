@@ -19,3 +19,94 @@ it('uses the DSH tools and stream requirements even with an older settings paylo
   expect(accountModelSupportsScene(model, scene)).toBe(true)
   expect(accountModelSupportsScene(withoutStream, { ...scene, key: 'arko' })).toBe(true)
 })
+
+it('validates inherited capabilities before writing global preferences', async () => {
+  const f = fixture()
+  const plain = { ...model, capabilities: { ...model.capabilities, tools: false, stream: false } }
+  const settings = { ...data(), models: [plain], preferences: { default_route: 'system-default', scenes: {}, points_fallback: false }, scenes: [
+    { key: 'dsh', name: 'DSH 对话', group: 'dsh', biz_code: 0, tools: true, stream: true, images: false, json: false },
+  ] }
+  f.post.mockResolvedValue(settings as never)
+  await expect(f.service.preferences('production:11', 1, { default_route: model.route, scenes: {}, points_fallback: false })).rejects.toMatchObject({ code: 'model-capability-mismatch' })
+  expect(f.post.mock.calls.every(args => args[0].endsWith('settings/query'))).toBe(true)
+  await f.service.preferences('production:11', 1, { default_route: model.route, scenes: { dsh: 'system-default' }, points_fallback: false })
+  expect(f.post.mock.calls.some(args => args[0].endsWith('preferences/save'))).toBe(true)
+})
+
+it('explains the Responses minimum before sending a credential binding', async () => {
+  const f = fixture()
+  await expect(f.service.save('production:11', {
+    ...model, uid: '', expected_revision: 1, api_key: 'fixture-only',
+    execution: 'cloud', protocol: 'openai-responses', base_url: 'https://api.openai.com/v1',
+    capabilities: { ...model.capabilities, output_tokens: 8 },
+  })).rejects.toMatchObject({ code: 'model-output-limit' })
+  expect(f.post).not.toHaveBeenCalled()
+})
+
+it('saves official preferences without adding a settings-query dependency', async () => {
+  const f = fixture()
+  const preferences = { default_route: 'system-default', scenes: { arko: 'managed-ai/official' }, points_fallback: false }
+  f.post.mockImplementation(async (path: string) => {
+    if (!path.endsWith('preferences/save')) throw new Error('unexpected settings dependency')
+    return data()
+  })
+  await f.service.preferences('production:11', 1, preferences)
+  expect(f.post).toHaveBeenCalledTimes(1)
+  expect(f.post).toHaveBeenCalledWith('/api/v1/user-models/preferences/save', { expected_revision: 1, preferences }, f.session, undefined)
+})
+
+const sharedScenes = [
+  { key: 'dsh', name: 'DSH 对话', group: 'dsh', biz_code: 0, tools: true, images: false, json: false },
+  { key: 'arko', name: 'Arko 对话', group: 'arko', biz_code: 1, tools: true, images: false, json: false },
+  { key: 'summary', name: '普通总结', group: 'summary', biz_code: 2, tools: false, images: false, json: false },
+  { key: 'official', name: '官方场景', group: 'official', biz_code: 3, tools: true, images: false, json: false },
+  { key: 'images', name: '已有图片限制的场景', group: 'images', biz_code: 4, tools: false, images: true, json: false },
+]
+const sharedPreferences = { default_route: model.route, scenes: { dsh: model.route, official: 'system-default' }, points_fallback: false }
+const saveInput = () => ({ ...model, expected_revision: 1, api_key: '', connector_id: '', host_provider: '' })
+
+it('saves capabilities without blocking on existing business bindings or adding a settings read', async () => {
+  const f = fixture()
+  f.post.mockResolvedValue({ ...data(), scenes: sharedScenes, preferences: sharedPreferences } as never)
+  const input = { ...saveInput(), capabilities: { ...model.capabilities, tools: false } }
+  await f.service.save('production:11', input)
+  expect(f.post).toHaveBeenCalledExactlyOnceWith('/api/v1/user-models/settings/save', input, f.session, undefined)
+})
+
+it('allows the same model to remain selected by multiple functions when capabilities still satisfy them', async () => {
+  const f = fixture()
+  f.post.mockResolvedValue({ ...data(), scenes: sharedScenes, preferences: sharedPreferences } as never)
+  const input = { ...saveInput(), name: 'Renamed shared model' }
+  await f.service.save('production:11', input)
+  expect(f.post).toHaveBeenLastCalledWith('/api/v1/user-models/settings/save', input, f.session, undefined)
+})
+
+it('reports exact missing requirements for all applied account choices, including unchanged bindings', async () => {
+  const f = fixture()
+  const plain = { ...model, capabilities: { ...model.capabilities, tools: false } }
+  f.post.mockResolvedValue({ ...data(), models: [plain], scenes: sharedScenes, preferences: { default_route: 'system-default', scenes: { images: model.route }, points_fallback: false } } as never)
+  await expect(f.service.preferences('production:11', 1, { ...sharedPreferences, scenes: { ...sharedPreferences.scenes, images: model.route } })).rejects.toMatchObject({
+    code: 'model-capability-mismatch',
+    message: '暂时无法应用：DSH 对话：缺少工具调用；Arko 对话：缺少工具调用；已有图片限制的场景：缺少图片。请为这些功能选择其他模型。',
+  })
+  expect(f.post).toHaveBeenCalledTimes(1)
+})
+
+it('preserves owner-provided recording requirements and blocks only preference application', async () => {
+  const f = fixture()
+  const scene = { key: 'recording-summary', name: '录音日总结', group: 'recording', biz_code: 1, tools: false, images: false, json: false, min_output_tokens: 512, min_input_tokens: 513, secret: 'never-leak' }
+  const own = { ...model, capabilities: { ...model.capabilities, output_tokens: 128 } }
+  f.post.mockResolvedValue({ ...data(), models: [own], scenes: [scene] } as never)
+  const settings = await f.service.settings('production:11')
+  expect(settings.scenes[0]).toMatchObject({ min_output_tokens: 512, min_input_tokens: 513 })
+  expect(JSON.stringify(settings)).not.toContain('never-leak')
+  await expect(f.service.preferences('production:11', 1, sharedPreferences)).rejects.toMatchObject({ message: '暂时无法应用：录音日总结：输出上限需至少 512 Token。请为这些功能选择其他模型。' })
+  expect(accountModelSupportsScene({ ...own, capabilities: { ...own.capabilities, context_tokens: 1024, output_tokens: 512 } }, scene)).toBe(false)
+  expect(accountModelSupportsScene({ ...own, capabilities: { ...own.capabilities, context_tokens: 1025, output_tokens: 512 } }, scene)).toBe(true)
+})
+
+it('rejects malformed scene limits instead of silently dropping admission requirements', async () => {
+  const f = fixture()
+  f.post.mockResolvedValue({ ...data(), scenes: [{ ...sharedScenes[0], min_output_tokens: '512' }] } as never)
+  await expect(f.service.settings('production:11')).rejects.toMatchObject({ code: 'model-settings-invalid' })
+})

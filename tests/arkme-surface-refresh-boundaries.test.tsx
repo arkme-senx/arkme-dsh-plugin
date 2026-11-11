@@ -99,8 +99,8 @@ describe('Arkme surface refresh boundaries', () => {
     })
     vi.stubGlobal('document', doc)
     vi.stubGlobal('window', win)
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1 })
-    vi.stubGlobal('cancelAnimationFrame', () => {})
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(0), 0))
+    vi.stubGlobal('cancelAnimationFrame', clearTimeout)
     let source = {
       sourceRef: 'source-a', sourceKey: 'chat:a', kind,
       displayName: '对话 A', activeAtMillis: 1, unreadCount: 0, latestSequence: 1,
@@ -120,7 +120,16 @@ describe('Arkme surface refresh boundaries', () => {
     })
     arkmeChatDirectory.publish([source, other])
     arkmeUi.selectSource(source)
-    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} active />) })
+    const body = { ownerDocument: doc, scrollTop: 0, scrollHeight: 600, clientHeight: 600,
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      querySelectorAll: (selector: string) => selector === '[data-arkme-read-sequence]'
+        ? renderer?.root.findAll(node => node.type === 'li' && node.props['data-arkme-read-sequence'] !== undefined)
+          .map(row => ({ dataset: { arkmeReadSequence: row.props['data-arkme-read-sequence'] },
+            getBoundingClientRect: () => ({ top: 500, bottom: 560 }) })) ?? [] : [],
+    }
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} active />, {
+      createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
+    }) })
     const readCalls = () => state.callArkme.mock.calls.filter(call => call[0] === 'source.mark-read')
 
     for (const event of ['focus', 'visibilitychange', 'preview']) {
@@ -146,6 +155,7 @@ describe('Arkme surface refresh boundaries', () => {
         if (event === 'preview') resumePreview!()
         else if (event === 'focus') win.dispatchEvent(new Event(event))
         else doc.dispatchEvent(new Event(event))
+        await new Promise(resolve => setTimeout(resolve, 20))
       })
       expect(readCalls()).toHaveLength(previousReads + 1)
       expect(readCalls().at(-1)?.[1]).toEqual({ sourceRef: 'source-a', readSequence: source.latestSequence })

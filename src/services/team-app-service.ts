@@ -11,16 +11,18 @@ import { TeamEntryPreferenceService, teamEntryCloudKey } from './team-entry-pref
 import { retainedRecordMentionMetadata } from './record-reedit-mentions.js'
 import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
+import { arkmeEmojiPlainText, arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { teamMessageProjection } from '../team-message-projection.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
-import {squareProfileImage,authorizedStorageURL} from './profile-image.js'
+import {squareProfileImage,authorizedStorageURL,imagePresentationIdentity} from './profile-image.js'
 import { createHash, createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { recordOwnerId, stringifyOwnerJson } from '../record-owner-id.js'
 import type { TeamMemberAvatarPort } from './team-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
-import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
+import type { TeamAvatarDescriptor, TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
+import { TEAM_AVATAR_CACHE_BATCH_SIZE, type TeamAvatarCacheHit } from '../team-app-contract.js'
 import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
 import type { TeamGroupContext, TeamGroupPending, TeamGroupJoinContext, TeamGroupCommandResult, TeamPublicCard } from '../team-group-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
@@ -29,13 +31,18 @@ import { readTeamUnderlineSnapshot, underlineId, type MessageUnderlineChange } f
 import { arkmePeerMemberType } from '../peer-membership.js'
 import { readTeamMemberCodexSync } from '../team-member-codex-sync.js'
 import type { ChatService } from './chat-service.js'
-import {arkmeChatConversationPreview, type SourceService, type ArkmeGroupAvatarSnapshotProjection} from './source-service.js'
+import {arkmeChatConversationPreview, arkmeForwardConversationPreview, type SourceService, type ArkmeGroupAvatarSnapshotProjection} from './source-service.js'
 import type { TeamMemberCandidatePort, TeamMemberCandidatePage, TeamMemberCandidateSource, TeamMemberAddResult } from '../team-member-add-contract.js'
 import { remapLongArticleAssets } from '../long-article-content.js'
 import { sharedAttachments, sharedAttachmentAt, sharedContentBlock, sharedForwardPreview } from '../team-external-chat-presentation.js'
 
 const obj = objectValue
 const str = stringValue
+function teamRecordPreview(raw: unknown): string {
+  const record = obj(raw)
+  const title = str(record.forward_title)
+  return title ? arkmeForwardConversationPreview(title) : arkmeChatConversationPreview(record)
+}
 const num = (v: unknown): number => typeof v === 'number' && Number.isSafeInteger(v) ? v : 0
 const list = (v: unknown): Record<string, unknown>[] => Array.isArray(v) ? v.map(obj) : []
 const role = (v: unknown): ArkmeTeamRole => v === 1 ? 'owner' : v === 2 ? 'admin' : 'member'
@@ -83,21 +90,6 @@ function requireFrozenMetadataSaved(data: Record<string, unknown>, required: boo
   if (required && data.state === 'published' && data.metadata_saved !== true) {
     throw new ArkmePluginError('team-dependency_unavailable', reasons.dependency_unavailable!, true, 503, {writeOutcomeUnknown:true})
   }
-}
-
-// Signing credentials authorize a download; they do not identify its pixels.
-// Preserve content/version/processing parameters so a real avatar change still
-// invalidates the presentation. The original URL remains inside the access ref.
-function imagePresentationIdentity(raw: string): string {
-  try {
-    const url = new URL(raw)
-    const authorization = new Set(['ossaccesskeyid', 'expires', 'signature', 'security-token',
-      'x-oss-signature', 'x-oss-signature-version', 'x-oss-credential', 'x-oss-date',
-      'x-oss-expires', 'x-oss-security-token', 'x-oss-additional-headers'])
-    for (const key of [...url.searchParams.keys()]) if (authorization.has(key.toLowerCase())) url.searchParams.delete(key)
-    url.searchParams.sort()
-    return url.toString()
-  } catch { return raw }
 }
 
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
@@ -306,12 +298,16 @@ export class TeamAppService {
     const availablePerson = visitor.kind === 'person' && visitor.account_state === 'active' && !!recordOwnerId(v.external_user_id)
     // A former visitor can also be a current member. Each side owns a different
     // composer and accepted send identity, even when the conversation is shared.
+    const preview = obj(v.preview)
     return { ...(v.source_only===true?{sourceOnly:true}:{}),entryKey: teamEntryCloudKey(actor,'conversation',uid,side), ref: await this.ref('conversation', { conversation_uid: uid, side }, actor), key: legacyKey,
       channel: await this.channel(v.channel, actor), ...(v.visitor ? { visitor: await this.identity({ ...visitor, member_type: availablePerson ? visitor.member_type : 'unknown' }, actor, availablePerson ? { id: v.external_user_id, context: { conversation_uid: uid, side } } : undefined) } : {}), side,
       lastSeq: num(v.last_seq), latestTeamReplySeq: num(v.latest_team_reply_seq), myReadSeq: num(v.my_read_seq), unread: num(v.unread),
       ...(side === 'team' && v.member_initiated === true ? { memberInitiated: true } : {}),
       notificationPolicy: this.policy(v.notification_policy,actor,uid), attentionUnread: this.policy(v.notification_policy,actor,uid).muted ? 0 : num(v.unread),
-      needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: { text: str(obj(v.preview).text), status: str(obj(v.preview).status), hasMedia: obj(v.preview).has_media === true, templateKind: num(obj(v.preview).template_kind) } } : {}) }
+      needsReply: v.needs_reply === true, blocked: v.blocked === true, revision: num(v.revision), updatedAt: num(v.updated_at), ...(v.preview ? { preview: {
+        text: str(preview.text), status: str(preview.status), hasMedia: preview.has_media === true, templateKind: num(preview.template_kind),
+        ...(preview.status === 'available' && preview.record != null ? { summary: teamRecordPreview(preview.record) } : {}),
+      } } : {}) }
   }
   private async mediaItems(raw:unknown,actor:number,locator:Record<string,unknown>,version:number) {
     return await Promise.all(list(raw).map(async f => {
@@ -377,9 +373,12 @@ export class TeamAppService {
         !['team','external'].includes(str(n.side)) || num(n.seq)<=0 || num(n.published_at)<=0 || num(n.expires_at)-num(n.published_at)!==3600000) throw invalid()
     const current = await this.runtime.accountScopedSession()
     if (signal.aborted || current?.userId!==session.userId || current.refreshToken!==session.refreshToken) throw invalid()
+    const sender = n.side === 'team' ? str(n.preview_sender) : ''
+    const preview = n.preview_record == null ? '' : teamRecordPreview(n.preview_record)
+    const body = preview ? arkmeEmojiTokenSafePrefix(arkmeEmojiPlainText(sender ? `${sender}：${preview}` : preview), 120) : str(n.body)
     return { eventUid:hint.eventUid, sourceRef:await this.ref('notification',{conversation_uid:n.conversation_uid},session.userId),
       sourceKey:await this.key(`${str(n.conversation_uid)}:${str(n.side)}`,session.userId), sourceKind:'team_conversation' as const,
-      title:str(n.title), body:str(n.body), eventAtMillis:num(n.published_at), expiresAtMillis:num(n.published_at)+300000 }
+      title:str(n.title), body, eventAtMillis:num(n.published_at), expiresAtMillis:num(n.published_at)+300000 }
   }
 
   private async frozenMetadata(ref: unknown, actor: number, context: Record<string, unknown>, uid: string, kind: 'send'|'edit', messageUid?: unknown) {
@@ -449,15 +448,24 @@ export class TeamAppService {
 
   async execute(operation: TeamAppOperation, p: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     const session = await this.assertViewer(p.expectedAccountKey), actor = session.userId
+    // Parallel candidate reads share only this consumer lifetime. On rejection,
+    // detach its sibling through the existing read coordinator's AbortSignal.
+    const candidates = operation === 'team.app.members' && p.mentionCandidates === true ? new AbortController() : undefined
+    if (candidates) signal = signal ? AbortSignal.any([signal,candidates.signal]) : candidates.signal
     const assertAccount = async () => {
       signal?.throwIfAborted()
       const current = await this.runtime.accountScopedSession()
       if (!current || current.userId !== actor || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('team-account-changed', '登录账号已变化，请重新打开团队消息', false, 409)
     }
+    const background = p.background === true && (
+      operation === 'team.app.conversations' || operation === 'team.app.read-states' || operation === 'team.app.timeline'
+      || operation === 'team.app.entries.list' || operation === 'team.app.entries.query'
+      || operation === 'team.app.workspace.request' && obj(p.request).operation === 'folders'
+    )
     const post = async (path: string, body: Record<string, unknown> = {}, read = false,wire:{stringIdFields?:readonly string[]}={}): Promise<Record<string, unknown>> => {
       await assertAccount()
       let result: unknown
-      try { result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read,wire) }
+      try { result = await this.runtime.authenticatedTeamPost<unknown>(`/api/v1/team/${path}`, body, session, signal, read,wire,background) }
       catch (error) {
         if (read && /^(workspace|group-sources)\//.test(path) && isBackendRouteUnavailable(error)) {
           throw new ArkmePluginError('team-workspace-unsupported', '服务端尚未提供团队群工作区', false, 501)
@@ -477,6 +485,8 @@ export class TeamAppService {
         if (reasons[reason]) throw new ArkmePluginError(`team-${reason}`, reasons[reason], ['dependency_unavailable', 'rate_limited', 'reply_conflict'].includes(reason), reason === 'dependency_unavailable' ? 503 : reason === 'rate_limited' ? 429 : 409, { cause: error })
       }
       throw error
+    } finally {
+      candidates?.abort()
     }
   }
 
@@ -927,9 +937,39 @@ export class TeamAppService {
       }
       case 'team.app.members': {
         const id = await teamID()
-        const [data, mine] = await Promise.all([post('members/snapshot', { team_id: id, limit: num(p.limit) || 50, ...(p.pageCursor ? { cursor: (await this.open('member-cursor', p.pageCursor, actor)).cursor } : {}) }, true), post('list-mine', {}, true)])
+        const mentionsOnly = p.mentionCandidates === true
+        if (mentionsOnly && p.conversationRef === undefined) throw invalid()
+        let context: Record<string, unknown> | undefined, visitor: TeamIdentity | undefined
+        if (p.conversationRef !== undefined) {
+          context = await this.open('conversation', p.conversationRef, actor)
+          const team = await this.open('team', p.teamRef, actor)
+          if (context.side !== 'team' || context.environment !== this.runtime.config.environment || team.environment !== this.runtime.config.environment
+            || p.limit !== undefined && (!Number.isSafeInteger(p.limit) || Number(p.limit) < 1 || Number(p.limit) > 100)) throw invalid()
+        }
+        const readContext = async () => {
+          if (!context) return
+          const data = await post('conversations/timeline/page', { conversation_uid: context.conversation_uid, side: 'team', before_seq: 0, limit: 1 }, true)
+          const current = obj(data.conversation), peer = obj(current.visitor)
+          if (current.conversation_uid !== context.conversation_uid || current.side !== 'team' || String(obj(current.channel).team_id) !== String(id)) throw invalid()
+          if (peer.kind === 'person' && peer.account_state === 'active' && recordOwnerId(current.external_user_id)) {
+            visitor = await this.identity(peer, actor, {id: current.external_user_id, context})
+          }
+        }
+        const cursor = p.pageCursor ? await this.open('member-cursor', p.pageCursor, actor) : undefined
+        if (cursor && (context ? cursor.environment !== this.runtime.config.environment || String(cursor.team_id) !== String(id) || cursor.conversation_uid !== context.conversation_uid : cursor.conversation_uid !== undefined)) throw invalid()
+        const readMembers = () => post('members/snapshot', { team_id: id, limit: num(p.limit) || 50, ...(cursor ? { cursor: cursor.cursor } : {}) }, true)
+        // Each endpoint authorizes this viewer independently. Candidates leave this
+        // owner only after both the current conversation and membership agree.
+        const [data, mine] = mentionsOnly
+          ? await Promise.all([readMembers(), readContext().then(() => ({}))])
+          : (await readContext(), await Promise.all([readMembers(), post('list-mine', {}, true)]))
         if (!Number.isSafeInteger(data.member_count) || Number(data.member_count) < 1 || !Number.isSafeInteger(data.membership_revision) || Number(data.membership_revision) < 0 || typeof data.can_add_members !== 'boolean' || typeof data.has_more !== 'boolean' || !Array.isArray(data.items) || data.has_more && !str(data.next_cursor)) throw invalid()
-        const selected = list(mine.teams).find(v => String(v.team_id) === String(id))
+        if (mentionsOnly) {
+          const items = await Promise.all(list(data.items).filter(v => recordOwnerId(v.user_id)).map(v => this.identity({kind:'person',nickname:str(v.display_name)||'用户',avatar_url:v.avatar_url}, actor, {id:v.user_id,context:context!})))
+          if (!cursor && visitor?.personRef && !items.some(v => v.personKey === visitor!.personKey)) items.push(visitor)
+          return {items,hasMore:data.has_more,...(data.next_cursor ? {nextCursor:await this.ref('member-cursor',{cursor:data.next_cursor,team_id:id,conversation_uid:context!.conversation_uid},actor)} : {})} satisfies import('../team-message-contract.js').TeamMentionCandidatePage
+        }
+        const selected = list((mine as Record<string, unknown>).teams).find(v => String(v.team_id) === String(id))
         if (!selected) throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
         const members = list(data.items)
         // Membership renders immediately; the App can enrich this page separately.
@@ -962,9 +1002,14 @@ export class TeamAppService {
             avatarState = 'unavailable'
           }
         }
-        return { team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
-          ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor }, actor) } : {}),
+        return { ...(visitor ? {visitor} : {}), team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
+          ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor, ...(context ? {team_id: id, conversation_uid: context.conversation_uid} : {}) }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
+            ...(context && recordOwnerId(v.user_id) ? {
+              personKey: await this.key(`person:${recordOwnerId(v.user_id)}`, actor),
+              personRef: await this.ref('person', {conversation_uid: context.conversation_uid, side: 'team', user_id: recordOwnerId(v.user_id)}, actor),
+              isMe: String(v.user_id) === String(actor),
+            } : {}),
             key: await this.key(`member:${String(id)}:${recordOwnerId(v.user_id)}`, actor),
             userRef: await this.ref('member', { team_id: id, user_id: recordOwnerId(v.user_id) }, actor), displayName: str(v.display_name) || '用户',
             ...(v.jotmo_id ? { jotmoId: str(v.jotmo_id), ...presentations.get(str(v.jotmo_id)) } : {}),
@@ -1173,9 +1218,21 @@ export class TeamAppService {
           ...(data.conversation ? { conversation: await this.conversation(data.conversation, actor) } : {}) }
       }
       case 'team.app.conversations': {
-        const data = await post('conversations/list', { side: p.side === 'team' ? 'team' : 'external', ...(p.teamRef ? { team_id: await teamID() } : {}),
+        const side = p.side === 'team' ? 'team' : 'external'
+        const data = await post('conversations/list', { side, ...(p.teamRef ? { team_id: await teamID() } : {}),
           cursor: p.cursor ? str((await this.open('conversation-cursor', p.cursor, actor)).cursor) : '', limit: num(p.limit) || 30 }, true)
-        return { items: await Promise.all(list(data.items).map(v => this.conversation(v, actor))), hasMore: data.has_more === true,
+        const items = await Promise.all(list(data.items).map(v => this.conversation(v, actor)))
+        if (!p.teamRef && !p.cursor && !p.limit && this.runtime.stateStore.teamAvatarManifest) {
+          const images = new Map<string, TeamAvatarDescriptor>()
+          for (const row of items) {
+            for (const identity of [row.visitor, row.channel]) {
+              if (identity?.imageRef && identity.imageKey) images.set(identity.imageKey, {ref: identity.imageRef, key: identity.imageKey})
+            }
+            if (images.size >= 8) break
+          }
+          await this.runtime.stateStore.teamAvatarManifest(`${this.runtime.config.environment}:${actor}`, side, [...images.values()]).catch(() => undefined)
+        }
+        return { items, hasMore: data.has_more === true,
           ...(data.next_cursor ? { nextCursor: await this.ref('conversation-cursor', { cursor: data.next_cursor }, actor) } : {}) }
       }
       case 'team.app.source': {
@@ -1357,7 +1414,14 @@ export class TeamAppService {
           return {message:await this.message(current,actor,context),changed:false}
         }
       }
-      case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
+      case 'team.app.delete': {
+        const context = await conversation(), m = await message()
+        if (m.conversation_uid !== context.conversation_uid || m.side !== context.side) throw invalid()
+        const data = await post('conversations/messages/delete/v2', { ...context, message_uid: m.message_uid })
+        const changedAtMillis = num(data.deleted_at)
+        if (data.conversation_uid !== context.conversation_uid || data.message_uid !== m.message_uid || !Number.isSafeInteger(changedAtMillis) || changedAtMillis <= 0) throw invalid()
+        return { changedAtMillis }
+      }
       case 'team.app.notification-policy.get': {
         const context=await conversation()
         return this.policy(await post('conversations/notification-policy/get',context,true),actor,str(context.conversation_uid),true)
@@ -1462,6 +1526,33 @@ export class TeamAppService {
         return { state: str(data.state) }
       }
       case 'team.app.image': return await this.image(p, session, signal)
+      case 'team.app.image-cache.batch': {
+        if (!Array.isArray(p.imageRefs) || p.imageRefs.length > TEAM_AVATAR_CACHE_BATCH_SIZE) throw invalid()
+        const images: Array<TeamAvatarCacheHit | null> = []
+        let remaining = 3 * 1024 * 1024
+        for (const imageRef of p.imageRefs) {
+          signal?.throwIfAborted()
+          let hit: TeamAvatarCacheHit | null = null
+          if (typeof imageRef === 'string' && imageRef.length <= 8192 && imageRef.startsWith('team-app-image.')) {
+            const image = await this.image({ imageRef, cacheOnly: true }, session, signal).catch(() => undefined)
+            if (image?.imageKey && image.base64.length <= remaining) {
+              hit = { ...image, imageKey: image.imageKey }
+              remaining -= image.base64.length
+            }
+          }
+          images.push(hit)
+        }
+        signal?.throwIfAborted()
+        const current = await this.runtime.accountScopedSession()
+        if (!current || current.userId !== actor || current.refreshToken !== session.refreshToken) throw invalid()
+        return images
+      }
+      case 'team.app.image-manifest': {
+        const scope = `${this.runtime.config.environment}:${actor}`
+        const read = (side: TeamSide) => this.runtime.stateStore.teamAvatarManifest?.(scope, side).catch(() => []) ?? []
+        const [team, external] = await Promise.all([read('team'), read('external')])
+        return [...new Map([...team, ...external].map(image => [image.key, image])).values()]
+      }
       default: throw new ArkmePluginError('operation-unsupported', '不支持该团队操作', false)
     }
   }
@@ -1511,8 +1602,9 @@ export class TeamAppService {
     if (!response.ok) {await response.body?.cancel();throw new ArkmePluginError('team-not_accessible','附件已失效或无权访问，请刷新消息',false,403)}
     return { response, fileName: str(ref.file_name) || 'attachment', mimeType: str(ref.mime_type) || 'application/octet-stream',size:num(ref.size) }
   }
-  private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
+  private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<{ base64: string; mimeType: string; imageKey?: string }> {
     if(str(p.imageRef).startsWith('team-app-profile-image.')){
+      if (p.cacheOnly === true) throw new ArkmePluginError('image-cache-miss', '本地没有可用的团队头像', false, 404)
       const ref=await this.open('profile-image',p.imageRef,session.userId)
       const result=obj(await this.runtime.authenticatedTeamPost(
         ref.public_card ? '/api/v1/team/public-card/get' : ref.jotmo_id ? '/api/v1/team/discovery/search' : ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
@@ -1532,10 +1624,31 @@ export class TeamAppService {
     }
     const ref = await this.open('image', p.imageRef, session.userId), url = new URL(str(ref.url))
     const hosts = this.runtime.config.environment === 'prod' ? ['jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', 'userfiles.jotmo.cc'] : ['jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com', 'jotmo-userfiles.senguo.me']
-    if (url.protocol !== 'https:' || url.username || url.password || url.port || !hosts.includes(url.hostname)) throw invalid()
+    if (ref.environment !== this.runtime.config.environment || url.protocol !== 'https:' || url.username || url.password || url.port || !hosts.includes(url.hostname)) throw invalid()
+    const identity = imagePresentationIdentity(url.href)
+    const cacheKey = `team_url_avatar:${await this.key(`image:${this.runtime.config.environment}:${identity}`, session.userId)}`
+    // A legacy avatar URL can retain its path when the pixels change.
+    const cached = await this.runtime.stateStore.readAvatarCache?.(session.userId, cacheKey, 24 * 60 * 60_000).catch(() => undefined)
+    const assertCurrentSession = async () => {
+      signal?.throwIfAborted()
+      const current = await this.runtime.accountScopedSession()
+      if (!current || current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw invalid()
+    }
+    if (cached) {
+      await assertCurrentSession()
+      return { base64: Buffer.from(cached.data).toString('base64'), mimeType: cached.mediaType,
+        ...(p.cacheOnly === true ? { imageKey: await this.key(`image:${identity}`, session.userId) } : {}) }
+    }
+    if (p.cacheOnly === true) throw new ArkmePluginError('image-cache-miss', '本地没有可用的团队头像', false, 404)
     const response = await this.runtime.fetchImpl(url, { redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000) })
     const mimeType = response.headers.get('content-type')?.split(';')[0] ?? ''
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mimeType)) { await response.body?.cancel(); throw invalid() }
-    return { base64: (await this.readBytes(response, 5 * 1024 * 1024)).toString('base64'), mimeType }
+    if (mimeType !== 'image/png' && mimeType !== 'image/jpeg' && mimeType !== 'image/webp' && mimeType !== 'image/gif') {
+      await response.body?.cancel()
+      throw invalid()
+    }
+    const bytes = await this.readBytes(response, 5 * 1024 * 1024)
+    await assertCurrentSession()
+    await this.runtime.stateStore.writeAvatarCache?.(session.userId, cacheKey, { data: bytes, bytes: bytes.length, mediaType: mimeType }).catch(() => undefined)
+    return { base64: bytes.toString('base64'), mimeType }
   }
 }

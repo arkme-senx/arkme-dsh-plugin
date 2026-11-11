@@ -1,6 +1,7 @@
-import { parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncSession } from '../chat-message-sync.js'
+import { parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncProjection, type ChatSyncSession, type ChatSyncUnreadPreview } from '../chat-message-sync.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
+import { isBackendRouteUnavailable } from './service-error.js'
 import type { UnifiedChatTimelineService } from './unified-chat-timeline-service.js'
 import type { SourceService } from './source-service.js'
 import type { ChatService } from './chat-service.js'
@@ -8,6 +9,7 @@ import type { ArkmeChatClientEvent } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 
 const ROUTE = '/api/v1/chat/sync/account'
+const SESSION_ROUTE = '/api/v1/chat/sync/session'
 const idle = (accountKey = ''): ArkmeMessageSyncProgress => ({ accountKey, cycle: 0, revision: 0, phase: 'idle', completed: 0, total: 0, pending: 0, terminal: 0 })
 
 /** One lifecycle per Host; a UI mount, Tool call or SDK consumer never owns a second pump. */
@@ -20,19 +22,24 @@ export class ChatMessageSyncService {
   private controller = new AbortController()
   private running: Promise<void> | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
+  private timerKind: 'realtime' | 'catchup' | 'transport-retry' | 'retry' | undefined
   private dirty = false
   private trigger: 'realtime' | 'catchup' = 'catchup'
   private pendingTrigger: 'realtime' | 'catchup' | undefined
   private failures = 0
+  private transportProbeUsed = false
+  private preferredConversation: { userId: number; uid: string } | undefined
+  private scopedSyncUnavailable = false
   private readonly unsubscribe?: () => void
   constructor(private readonly runtime: ServiceRuntime, private readonly timeline: UnifiedChatTimelineService,
     private readonly source: SourceService, private readonly chat: ChatService,
-    private readonly publish: (progress: ArkmeMessageSyncProgress, sourceKeys?: string[]) => void) {
+    private readonly publish: (progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[]) => void,
+    private readonly refreshUnread?: (session: ArkmeSessionCredentials, previews: ChatSyncUnreadPreview[], signal: AbortSignal) => Promise<void>) {
     this.unsubscribe = runtime.subscribeAccountScope?.(() => { this.reset(); if (this.started) this.wake(0) })
   }
-  private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[]): void {
+  private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[]): void {
     this.progress = { ...progress, trigger: this.trigger, revision: ++this.revision }
-    this.publish(this.progress, sourceKeys)
+    this.publish(this.progress, sourceKeys, projections)
   }
   start(): () => void {
     if (!this.started && !this.disposed) { this.started = true; this.wake(0) }
@@ -41,8 +48,9 @@ export class ChatMessageSyncService {
   reset(): void {
     this.generation++; this.controller.abort(); this.controller = new AbortController()
     if (this.timer) clearTimeout(this.timer)
-    this.timer = undefined; this.dirty = false; this.failures = 0
-    this.trigger = 'catchup'; this.pendingTrigger = undefined
+    this.timer = undefined; this.timerKind = undefined; this.dirty = false; this.failures = 0
+    this.trigger = 'catchup'; this.pendingTrigger = undefined; this.transportProbeUsed = false
+    this.preferredConversation = undefined; this.scopedSyncUnavailable = false
     if (this.progress.accountKey) this.update(idle())
     else this.progress = idle()
   }
@@ -57,6 +65,15 @@ export class ChatMessageSyncService {
     // One trailing account check per bounded burst, never one request per message.
     else if (event.type === 'sessions-delta' || event.type === 'timeline-changed' || event.type === 'members-invalidated') this.wake(5000, 'realtime')
   }
+  preferConversation(userId: number, uid?: string): void {
+    this.preferredConversation = uid ? { userId, uid } : undefined
+  }
+  /** A successful Chat read can prove recovery before the realtime stream reopens. */
+  resumeTransport(): void {
+    if (this.timerKind !== 'transport-retry' || this.transportProbeUsed) return
+    this.transportProbeUsed = true
+    this.wake(0)
+  }
   private wake(delay: number, trigger: 'realtime' | 'catchup' = 'catchup'): void {
     if (this.disposed || !this.started || this.progress.phase === 'unsupported') return
     this.dirty = true
@@ -65,8 +82,14 @@ export class ChatMessageSyncService {
       this.pendingTrigger = 'catchup'
       if (this.running && this.trigger !== 'catchup') { this.trigger = 'catchup'; this.update(this.progress) }
     } else this.pendingTrigger ??= 'realtime'
-    if (this.running || this.timer) return
-    this.timer = setTimeout(() => { this.timer = undefined; void this.launch() }, delay)
+    if (this.running) return
+    if (this.timer) {
+      // Reconnect can promote a routine check. A server or failure backoff still applies.
+      if (delay !== 0 || trigger !== 'catchup' || (this.timerKind !== 'realtime' && this.timerKind !== 'transport-retry')) return
+      clearTimeout(this.timer)
+    }
+    this.timerKind = trigger
+    this.timer = setTimeout(() => { this.timer = undefined; this.timerKind = undefined; void this.launch() }, delay)
     this.timer.unref?.()
   }
   private async launch(): Promise<void> {
@@ -78,7 +101,7 @@ export class ChatMessageSyncService {
     this.running = task
     try { await task } finally {
       if (this.running === task) this.running = undefined
-      if (this.dirty && this.started && !this.disposed && !this.timer) this.wake(generation === this.generation ? 5000 : 0, this.pendingTrigger ?? 'catchup')
+      if (this.dirty && this.started && !this.disposed && !this.timer) this.wake(generation === this.generation && this.pendingTrigger !== 'catchup' ? 5000 : 0, this.pendingTrigger ?? 'catchup')
     }
   }
   private assert(generation: number, signal: AbortSignal): void {
@@ -107,16 +130,18 @@ export class ChatMessageSyncService {
       return current
     }
     if (this.timer) clearTimeout(this.timer)
-    this.timer = undefined; this.failures = 0; this.started = true
+    this.timer = undefined; this.timerKind = undefined; this.failures = 0; this.started = true
     this.wake(0)
     return current
   }
-  private async request(body: Record<string, unknown>, session: ArkmeSessionCredentials, signal: AbortSignal): Promise<ChatSyncPage> {
-    const raw = await this.runtime.authenticatedChatPost<unknown>(ROUTE, body, session, signal, {
+  private async request(body: Record<string, unknown>, session: ArkmeSessionCredentials, signal: AbortSignal, route = ROUTE): Promise<ChatSyncPage> {
+    const raw = await this.runtime.authenticatedChatPost<unknown>(route, body, session, signal, {
       lane: 'background-read', traffic: 'message-sync', cancelWhenUnobserved: true,
-      key: `account-message-sync:${JSON.stringify(body)}`,
+      key: `${route}:${JSON.stringify(body)}`,
     })
-    return parseChatSyncPage(raw, body.mode === 'unread_manifest')
+    const page = parseChatSyncPage(raw, body.mode === 'unread_manifest')
+    if (!signal.aborted) this.transportProbeUsed = false
+    return page
   }
   private async identify(page: ChatSyncPage, session: ArkmeSessionCredentials, key: string, signal: AbortSignal): Promise<void> {
     for (const entry of page.sessions) {
@@ -155,23 +180,57 @@ export class ChatMessageSyncService {
       const key = await this.runtime.stateStore.uniqueCode()
       if (plan.progress.phase === 'discovering') {
         let ranges: Record<string, unknown> = plan.checkpoint ? {} : await this.timeline.sync({ action: 'ranges', account, epoch: plan.epoch })
+        let priority = this.trigger === 'catchup' && !this.scopedSyncUnavailable && this.preferredConversation?.userId === session.userId
+          ? this.preferredConversation.uid : undefined
         // Each page yields network admission and the writer before the next read.
         for (let pages = 0; ; pages++) {
           this.assert(generation, signal)
           if (pages >= 10000) throw new Error('message-sync-capacity')
           const ticket = await this.timeline.syncTicket()
-          const page = await this.request({ mode: 'unread_manifest', limit: 1000, checkpoint: plan.checkpoint, ...ranges }, session, signal)
+          const uid = priority
+          priority = undefined
+          const args = { mode: 'unread_manifest', limit: uid ? 100 : 1000, checkpoint: plan.checkpoint, ...ranges }
+          let page: ChatSyncPage
+          try {
+            page = await this.request(uid ? { ...args, chat_session_uid: uid } : args, session, signal, uid ? SESSION_ROUTE : ROUTE)
+          } catch (error) {
+            this.assert(generation, signal)
+            if (!uid || !isBackendRouteUnavailable(error)) throw error
+            this.scopedSyncUnavailable = true
+            continue
+          }
           this.assert(generation, signal)
+          if (uid && page.sessions.some(entry => entry.uid !== uid)) throw new Error('message-sync-session-mismatch')
           if (page.sessions.some(s => s.cacheRequired)) this.trigger = 'catchup'
-          if (page.hasMore && !page.retry && page.checkpoint === plan.checkpoint && !page.sessions.some(s => s.cacheRequired)) throw new Error('message-sync-checkpoint-stale')
-          await this.identify(page, session, key, signal)
-          this.assert(generation, signal)
-          const { bodies: _bodies, ...stored } = page
-          plan = await this.timeline.sync<ChatSyncPlan>({ action: 'manifest', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket, now: Date.now() })
-          if (page.sessions.some(s => s.cacheRequired) && !('cached' in ranges)) ranges = await this.timeline.sync({ action: 'ranges', account, epoch: plan.epoch })
-          ranges = 'cached' in ranges ? { cached: ranges.cached } : {}
-          if (page.retry) throw new Error('message-sync-upstream-pending')
-          if (!page.hasMore) break
+          if (!uid && page.hasMore && !page.retry && page.checkpoint === plan.checkpoint && !page.sessions.some(s => s.cacheRequired)) throw new Error('message-sync-checkpoint-stale')
+          try {
+            await this.identify(page, session, key, signal)
+            this.assert(generation, signal)
+            const { bodies: _bodies, ...stored } = page
+            plan = await this.timeline.sync<ChatSyncPlan>({ action: 'manifest', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket, now: Date.now() })
+            this.assert(generation, signal)
+            if (plan.projections?.length) this.update(plan.progress, undefined, plan.projections)
+            if (page.sessions.some(s => s.cacheRequired) && !('cached' in ranges)) {
+              ranges = await this.timeline.sync({ action: 'ranges', account, epoch: plan.epoch })
+              priority = uid
+            }
+            ranges = 'cached' in ranges ? { cached: ranges.cached } : {}
+            if (page.retry) throw new Error('message-sync-upstream-pending')
+            if (!uid && !page.hasMore) break
+            // Each committed manifest page authorizes a bounded body batch.
+            // Publish it before scanning other membership windows.
+            if (page.sessions.some(entry => entry.accessible && entry.work.some(work => work.state === 'available'))) {
+              const ready = await this.timeline.sync<ChatSyncBatch[]>({
+                action: 'pending', account, epoch: plan.epoch, now: Date.now(), limit: 100, ...(uid === undefined ? {} : { uid }),
+              })
+              if (ready.length) plan = await this.hydratePending(ready, plan, account, session, key, generation, signal)
+            }
+          } catch (error) {
+            this.assert(generation, signal)
+            // Live invalidations can win the SQLite fence while this optional
+            // read is in flight. The account scan can continue at its committed checkpoint.
+            if (!uid || !(error instanceof Error) || error.message !== 'message-sync-stale') throw error
+          }
         }
         plan = await this.timeline.sync<ChatSyncPlan>({ action: 'freeze', account, epoch: plan.epoch })
         this.assert(generation, signal); this.update(plan.progress)
@@ -181,43 +240,7 @@ export class ChatMessageSyncService {
         this.assert(generation, signal)
         const pending = await this.timeline.sync<ChatSyncBatch[]>({ action: 'pending', account, epoch: plan.epoch, now: Date.now(), limit: 400 })
         if (!pending.length) break
-        const batches: Record<string, string[]>[] = []; let wanted: Record<string, string[]> = {}, count = 0
-        for (const entry of pending) for (const work of entry.work) {
-          if (count === 100 || !(entry.uid in wanted) && Object.keys(wanted).length === 50) { batches.push(wanted); wanted = {}; count = 0 }
-          ;(wanted[entry.uid] ??= []).push(work.id); count++
-        }
-        if (count) batches.push(wanted)
-        let next = 0
-        type Flight = { wanted: Record<string, string[]>; ticket: number; response: Promise<ChatSyncPage> }
-        const flights: Flight[] = []
-        const launch = async () => {
-          while (flights.length < 2 && next < batches.length) {
-            this.assert(generation, signal)
-            const ticket = await this.timeline.syncTicket(), wanted = batches[next++]!
-            const response = this.request({ mode: 'bodies', checkpoint: plan!.checkpoint, bodies: wanted }, session, signal)
-            void response.catch(() => undefined)
-            flights.push({ wanted, ticket, response })
-          }
-        }
-        try {
-          await launch()
-          while (flights.length) {
-            const flight = flights.shift()!, page = await flight.response
-            this.assert(generation, signal)
-            this.validateBodies(page.sessions, flight.wanted)
-            if (page.sessions.some(s => s.accessible && s.membership !== Number(s.position.membership_version))) this.dirty = true
-            // Permit the next I/O while preparing/committing this bounded page.
-            await launch()
-            await this.identify(page, session, key, signal)
-            this.assert(generation, signal)
-            const { bodies: _bodies, ...stored } = page
-            plan = await this.timeline.sync<ChatSyncPlan>({ action: 'commit', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket: flight.ticket, now: Date.now() })
-            this.assert(generation, signal)
-            // Notify only after commit. Consumers reread durable bodies, never
-            // publish the HTTP payload that may have lost an invalidation race.
-            this.update(plan.progress, page.sessions.flatMap(entry => entry.sourceKey ? [entry.sourceKey] : []))
-          }
-        } finally { await Promise.allSettled(flights.map(f => f.response)) }
+        plan = await this.hydratePending(pending, plan, account, session, key, generation, signal)
       }
       plan = await this.timeline.sync<ChatSyncPlan>({ action: 'status', account })
       this.assert(generation, signal)
@@ -239,13 +262,64 @@ export class ChatMessageSyncService {
       const delay = Math.max(error instanceof ArkmePluginError ? error.retryAfterMillis ?? 0 : 0, Math.min(60000, 2000 * 2 ** Math.min(5, this.failures++)))
       this.trigger = 'catchup'
       this.update({ ...(plan?.progress ?? (this.progress.accountKey === account ? this.progress : idle(account))), phase: 'paused', reason, retryAtMillis: Date.now() + delay })
-      if (reason !== 'authentication') this.scheduleRetry(delay)
+      const transport = error instanceof ArkmePluginError && error.code === 'arkme-network-error'
+        && error.retryAfterMillis === undefined
+      // A newly accepted stream can wake a failed transport read once.
+      // Upstream Retry-After, overload and durable-work backoff still apply.
+      if (reason !== 'authentication' && !(transport && this.pendingTrigger === 'catchup' && this.dirty)) {
+        this.scheduleRetry(delay, transport)
+      }
     }
   }
-  private scheduleRetry(delay: number): void {
+  private async hydratePending(pending: ChatSyncBatch[], plan: ChatSyncPlan, account: string,
+    session: ArkmeSessionCredentials, key: string, generation: number, signal: AbortSignal): Promise<ChatSyncPlan> {
+    const batches: Record<string, string[]>[] = []; let wanted: Record<string, string[]> = {}, count = 0
+    for (const entry of pending) for (const work of entry.work) {
+      if (count === 100 || !(entry.uid in wanted) && Object.keys(wanted).length === 50) { batches.push(wanted); wanted = {}; count = 0 }
+      ;(wanted[entry.uid] ??= []).push(work.id); count++
+    }
+    if (count) batches.push(wanted)
+    let next = 0
+    type Flight = { wanted: Record<string, string[]>; ticket: number; response: Promise<ChatSyncPage> }
+    const flights: Flight[] = []
+    const launch = async () => {
+      while (flights.length < 2 && next < batches.length) {
+        this.assert(generation, signal)
+        const ticket = await this.timeline.syncTicket(), wanted = batches[next++]!
+        const response = this.request({ mode: 'bodies', checkpoint: plan.checkpoint, bodies: wanted }, session, signal)
+        void response.catch(() => undefined)
+        flights.push({ wanted, ticket, response })
+      }
+    }
+    try {
+      await launch()
+      while (flights.length) {
+        const flight = flights.shift()!, page = await flight.response
+        this.assert(generation, signal)
+        this.validateBodies(page.sessions, flight.wanted)
+        if (page.sessions.some(s => s.accessible && s.membership !== Number(s.position.membership_version))) this.dirty = true
+        // Permit the next I/O while preparing/committing this bounded page.
+        await launch()
+        await this.identify(page, session, key, signal)
+        this.assert(generation, signal)
+        const { bodies: _bodies, ...stored } = page
+        plan = await this.timeline.sync<ChatSyncPlan>({ action: 'commit', account, epoch: plan.epoch, expectedCheckpoint: plan.checkpoint, page: stored, ticket: flight.ticket, now: Date.now() })
+        this.assert(generation, signal)
+        // Notify only after commit. Consumers reread durable bodies, never
+        // publish the HTTP payload that may have lost an invalidation race.
+        this.update(plan.progress, page.sessions.flatMap(entry => entry.sourceKey ? [entry.sourceKey] : []), plan.projections)
+        if (this.trigger === 'catchup' && plan.unreadPreviews?.length) {
+          void this.refreshUnread?.(session, plan.unreadPreviews, signal).catch(() => undefined)
+        }
+      }
+    } finally { await Promise.allSettled(flights.map(f => f.response)) }
+    return plan
+  }
+  private scheduleRetry(delay: number, transport = false): void {
     this.pendingTrigger = 'catchup'
     if (this.timer) clearTimeout(this.timer)
-    this.timer = setTimeout(() => { this.timer = undefined; void this.launch() }, delay)
+    this.timerKind = transport ? 'transport-retry' : 'retry'
+    this.timer = setTimeout(() => { this.timer = undefined; this.timerKind = undefined; void this.launch() }, delay)
     this.timer.unref?.()
   }
   private validateBodies(sessions: ChatSyncSession[], wanted: Record<string, string[]>): void {

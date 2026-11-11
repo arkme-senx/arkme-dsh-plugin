@@ -256,14 +256,18 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'message-sync-progress') {
           arkmeMessageSync.apply(update.progress)
-          if (update.progress.accountKey === authenticatedAccountScope && update.sourceKeys?.length) {
-            arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
+          if (update.progress.accountKey === authenticatedAccountScope) {
+            if (update.projections?.length) arkmeChatTimelineDelta.applySyncProjections(update.projections)
+            if (update.sourceKeys?.length) arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
           }
           return
         }
         if(update.type==='team-invalidated'&&(update.change?.kind==='team.group.changed'||update.change?.kind==='team.group.source.changed'||update.change?.kind==='team.group.timeline.changed')) {invalidateTeamWorkspace(authenticatedAccountScope,update.change.canonicalChatSourceKey);if(update.change.canonicalChatSourceKey)arkmeInterwovenInvalidation.invalidate(update.change.canonicalChatSourceKey);return}
-        if(update.type==='reconcile'||update.type==='team-invalidated'&&!update.change&&!update.receiptOnly)invalidateTeamWorkspace(authenticatedAccountScope)
-        if (update.type === 'team-invalidated' || update.type === 'reconcile') invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true,update.type==='team-invalidated'?update.change:undefined)
+        // A subscription snapshot is not an upstream reconnect. Only a gap
+        // or the Host's explicit reconcile invalidates already authorized Team content.
+        const teamReconcile = update.type === 'reconcile' && (update.refresh !== 'if-stale' || localReconnectGap)
+        if(teamReconcile||update.type==='team-invalidated'&&!update.change&&!update.receiptOnly)invalidateTeamWorkspace(authenticatedAccountScope)
+        if (update.type === 'team-invalidated' || teamReconcile) invalidateTeamMessages(authenticatedAccountScope, update.type === 'team-invalidated' && update.receiptOnly === true,update.type==='team-invalidated'?update.change:undefined)
         if (update.type === 'team-invalidated') return
         if (update.type === 'directory-update') {
           void arkmeChatDirectory.receiveHostPage(update.page).catch(() => undefined)
@@ -470,7 +474,16 @@ export function useArkmeRealtimeClientEvents(
       if (browserWindow?.navigator?.onLine === false) return
       void refreshUnread(true).catch(() => undefined)
     }
-    browserWindow?.addEventListener('online', recoverDirectory)
+    const handleOnline = () => {
+      if (!ownsMessagePreparing || browserWindow?.navigator?.onLine === false) return
+      const joinedPreReconnectRead = arkmeChatDirectory.getSnapshot().isRefreshing
+      void refreshUnread(true).catch(() => {
+        if (joinedPreReconnectRead && !stopped) recoverDirectory()
+      })
+      arkmeConversationMembers.refreshActive()
+      reconcileReceipts()
+    }
+    browserWindow?.addEventListener('online', handleOnline)
     const handleWindowFocus = () => {
       arkmeInterwovenInvalidation.invalidate()
       if (ownsMessagePreparing) recoverDirectory()
@@ -486,7 +499,7 @@ export function useArkmeRealtimeClientEvents(
       disconnectEvents()
       browserDocument?.removeEventListener('visibilitychange', handleVisibilityChange)
       browserWindow?.removeEventListener('focus', handleWindowFocus)
-      browserWindow?.removeEventListener('online', recoverDirectory)
+      browserWindow?.removeEventListener('online', handleOnline)
     }
   }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline, ownsMessagePreparing, ownsNotifications])
 }

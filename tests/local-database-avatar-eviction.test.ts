@@ -49,6 +49,32 @@ it('rolls back an over-budget replacement when every image is still referenced',
   } finally { await f.close() }
 })
 
+it('expires mutable avatars from their write time even after a cache hit', async () => {
+  const f = await fixture()
+  try {
+    const written = Date.now() - 1_000
+    f.avatar(1, 'mutable-avatar', 1, written)
+    await expect(f.database.readAvatarCache(1, 'mutable-avatar', 60_000)).resolves.toMatchObject({ bytes: 1 })
+    await expect(f.database.readAvatarCache(1, 'mutable-avatar', 1_000)).resolves.toBeUndefined()
+    await expect(f.database.readAvatarCache(2, 'mutable-avatar', 60_000)).resolves.toBeUndefined()
+  } finally { await f.close() }
+})
+
+it('restores the Team avatar manifest from the same account database after restart', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'arkme-avatar-manifest-'))
+  const image = { ref: 'team-app-image.fixture', key: 'a'.repeat(64) }
+  try {
+    const initial = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    try { await initial.teamAvatarManifest('test:1', 'team', [image]) } finally { initial.close() }
+    const restarted = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    try {
+      await expect(restarted.teamAvatarManifest('test:1', 'team')).resolves.toEqual([image])
+      await expect(restarted.teamAvatarManifest('test:2', 'team')).resolves.toEqual([])
+      await expect(restarted.teamAvatarManifest('prod:1', 'team')).resolves.toEqual([])
+    } finally { restarted.close() }
+  } finally { await rm(directory, { recursive: true, force: true }) }
+})
+
 it('does not block the Host for seconds when a full avatar cache meets a large directory', async () => {
   const f = await fixture(160_000)
   try {

@@ -1609,6 +1609,7 @@ arkoImagesV1?:true
     /** Topic home preference uses the record-owned policy without changing topic contents. */
     topicHomeVisibility?: true
     arkoLifecycleV1?: true
+    selectedTextForwardV1?: true
     recordExportV1?: true
     arkoHistoryReadsV1?: true
     arkoInteractionTimelineV1?: true
@@ -1617,10 +1618,12 @@ arkoImagesV1?:true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
     teamHistoryV1?: true
+    personalMessageActionsV2?: true
     teamMessageInteractions?: 1
     teamMessageRecall?: 1
     teamMessageSnapshot?: 1
     teamPersonMentions?: 1
+    teamMentionCandidates?: 1
     teamEntryPreferencesV1?: true
     teamNotificationPoliciesV1?: true
     teamOutboundReception?: 1
@@ -1935,6 +1938,7 @@ export interface ArkmeSourceItem {
   /** Preferred group-avatar projection. Consumers that do not understand it may keep using avatarRefs. */
   groupAvatar?: ArkmeGroupAvatarPresentation
   latestPreview?: string
+  latestPreviewUnavailable?: boolean
   /** Server-selected activity freshness, independent of the message/read sequence. No participant IDs. */
   latestActivityAtMillis?: number
   latestActivityKind?: 'member_joined' | 'record'
@@ -2227,6 +2231,7 @@ export interface ArkmeTimelineItem {
   messageWithdrawalRef?: string
   /** Account- and conversation-bound opaque reference for copy-link and forward actions. */
   messageActionRef?: string
+  messageActionsV2?: boolean
   /** False when the source actor cannot own related quick notes or chat extensions. Omitted defaults to supported for legacy and user messages. */
   quickNoteDetailsSupported?: boolean
   /** Account- and conversation-bound opaque reference for actions on the sender. */
@@ -4269,6 +4274,7 @@ export type ArkmeChatClientEvent = {
   progress: import('./chat-message-sync.js').ArkmeMessageSyncProgress
   /** Bounded committed-body hints; no read positions or complete window coverage. */
   sourceKeys?: string[]
+  projections?: import('./chat-message-sync.js').ChatSyncProjection[]
 } | {
   type: 'team-invalidated'
   revision: number
@@ -4528,7 +4534,7 @@ export type ArkmePluginOperation =
   | 'team.messages.edit' | 'team.messages.edit-receipt' | 'team.messages.edit-metadata-freeze'
   | 'team.messages.snapshot-capabilities' | 'team.messages.metadata-freeze' | 'team.messages.snapshot'
   | 'team.history' | 'team.history.export-chunk'
-  | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
+  | 'team.messages.mention-candidates' | 'team.messages.extensions' | 'team.messages.conversations' | 'team.messages.read' | 'team.messages.send' | 'team.messages.tasks' | 'team.messages.task-update'
   | 'team.entries.list' | 'team.entries.query' | 'team.entries.change'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.members.manage'
@@ -4798,7 +4804,7 @@ export type ArkmePluginOperation =
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'
-  | 'source.message-withdraw'
+  | 'source.message-withdraw' | 'source.chat-message-action' | 'team.messages.delete'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
@@ -4814,6 +4820,7 @@ export type ArkmePluginOperation =
   | 'source.send-text'
   | 'excerpt.original'
   | 'self-note.quote.send'
+  | 'selected-text.prepare'
   | 'selected-text.forward'
   | 'related-recordings.eligibility'
   | 'related-recordings.page'

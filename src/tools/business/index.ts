@@ -1,3 +1,4 @@
+import {selectedTextPrepareTool,selectedTextForwardTool,selectedTextOriginalTool} from './conversation/selected-text-forward.js'
 import { recordHistoryToolModule } from './records/history.js'
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
@@ -47,7 +48,7 @@ import { copyLinkExtendToolModule } from './conversation/copy-link-extend.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
 import { personRecordsToolModule, sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
-import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
+import { chatMessageActionToolModule, withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { sharedRecordingDetailToolModule } from './conversation/shared-recording-detail.js'
 import { userBanToolModules } from './conversation/user-ban.js'
@@ -150,6 +151,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   conversationMarkReadToolModule,
   reportMessageToolModule,
   withdrawMessageToolModule,
+  chatMessageActionToolModule,
   relatedRecordingsToolModule,
   sharedRecordingDetailToolModule,
   ...userBanToolModules,
@@ -159,6 +161,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listFavoriteStickersToolModule,
   readReactionsToolModule,
   writeReactionsToolModule,
+  selectedTextPrepareTool,selectedTextForwardTool,selectedTextOriginalTool,
   readMessageExtensionsSummaryToolModule, readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
   ...thoughtReplyToolModules,
   addFavoriteStickerToolModule,

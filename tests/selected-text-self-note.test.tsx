@@ -11,10 +11,13 @@ import { quoteCanonicalText } from '../src/message-quote.js'
 import { selectedTextNoteHeader, selectedTextNoteWireText, selectedTextNotePresentation, selectedTextForwardWireText, type SelectedTextNoteQuote } from '../src/selected-text-note.js'
 import { registerLocalSnapshotForward } from '../src/client/local-snapshot-forward.js'
 import { callArkme } from '../src/client/api.js'
+import { ExcerptOriginal } from '../src/client/ExcerptOriginal.js'
+import { arkmeAuthStore } from '../src/client/auth-store.js'
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 const quote: SelectedTextNoteQuote = { version: 1, sourceLabel: '群聊 · 产品讨论', senderName: '同事', sourceAtMillis: 1000, text: '引用文字\n第二行' }
 let root: Root, host: HTMLDivElement
 beforeEach(() => {
+  vi.mocked(callArkme).mockReset(); vi.mocked(callArkme).mockImplementation(async(operation,params)=>operation==='selected-text.prepare'?params!.quote:undefined)
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto)
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
@@ -68,4 +71,52 @@ it.each(['', '自己的附言'])('renders a forwarded quotation and optional com
   expect(quoteDomProjection(host).text).toBe(quoteCanonicalText({ textContent: wire }))
   expect(host.textContent).not.toContain('我的笔记')
   if (!noteText) expect(host.textContent).not.toContain('附言')
+})
+
+it('closes original content and aborts its read when the saved occurrence or account changes', async () => {
+  arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:11} as never)
+  vi.mocked(callArkme).mockResolvedValue({title:'原文',text:'只属于当前账号的内容'})
+  await act(async()=>root.render(<ExcerptOriginal recordUid="same" sourceRef="source-1" messageActionRef="occurrence-1"/>))
+  await act(async()=>host.querySelector('button')!.click())
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('只属于当前账号的内容')
+  const signal=vi.mocked(callArkme).mock.calls[0]?.[2]
+  await act(async()=>root.render(<ExcerptOriginal recordUid="same" sourceRef="source-2" messageActionRef="occurrence-2"/>))
+  expect(signal?.aborted).toBe(true)
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+  await act(async()=>host.querySelector('button')!.click())
+  expect(vi.mocked(callArkme).mock.calls[1]?.[1]).toEqual({recordUid:'same',sourceRef:'source-2',messageActionRef:'occurrence-2'})
+  await act(async()=>arkmeAuthStore.setAuth({status:'authenticated',environment:'test',userId:22} as never))
+  expect(document.querySelector('[role="dialog"]')).toBeNull()
+})
+
+
+it.each([
+  { text: '前文\n\n相同词\n相同词 https://example.com', textFormat: 'plain' as const },
+  { text: '前文\n\n**相同词**\n\n**相同词** [链接](https://example.com)', textFormat: 'markdown' as const },
+])('preserves paragraphs and links while highlighting the exact original range ($textFormat)', async original => {
+  class TestHighlight {
+    constructor(readonly range: Range) {}
+  }
+  const highlights = new Map<string, TestHighlight>()
+  vi.stubGlobal('Highlight', TestHighlight)
+  vi.stubGlobal('CSS', { highlights })
+  const canonical = quoteCanonicalText({ textContent: original.text, textFormat: original.textFormat })
+  const start = canonical.lastIndexOf('相同词')
+  vi.mocked(callArkme).mockResolvedValue({ title: '原文', ...original, selection: { start, end: start + 3 } })
+  await act(async () => root.render(<ExcerptOriginal recordUid="excerpt"/>))
+  await act(async () => host.querySelector('button')!.click())
+  const dialog = document.querySelector('[role="dialog"]')!
+  const link = dialog.querySelector('a')!
+  expect(link.href).toBe('https://example.com/')
+  const range = [...highlights.values()][0]?.range
+  expect(range?.toString()).toBe('相同词')
+  if (original.textFormat === 'plain') {
+    expect(link.parentElement!.textContent).toBe(original.text)
+    expect(range!.startOffset).toBe(original.text.lastIndexOf('相同词'))
+  } else {
+    expect(dialog.querySelectorAll('p')).toHaveLength(3)
+    expect(range!.startContainer.parentElement!.closest('strong')).toBe(dialog.querySelector('p:last-of-type strong'))
+  }
+  await act(async () => [...dialog.querySelectorAll('button')].find(button => button.textContent === '关闭')!.click())
+  expect(highlights.size).toBe(0)
 })

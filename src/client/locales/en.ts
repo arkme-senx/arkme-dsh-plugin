@@ -1,5 +1,11 @@
 /** Application copy only. User-authored text is never looked up in this table. */
 export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
+通话结束后自动生成 AI 总结|Automatically generate an AI summary after calls
+通话 AI 总结|Call AI summary
+呼叫阿森|Call Asen
+快记实体识别|Note entity recognition
+自动识别快记中的实体，运行时消耗 AI 额度。|Automatically recognize entities in notes, using AI allowance.
+通话结束后自动生成 AI 总结，生成时会消耗 AI 积分。|Automatically generate an AI summary after calls. Generation uses AI credits.
 发生时间|Time recorded
 当前状态|Current status
 已停用，停用后 Arkme 已启动|Disabled. Arkme started after disabling the extension.
@@ -10,7 +16,10 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 未记录|Not recorded
 Harness 原始错误|Original Harness error
 已复制诊断|Diagnostics copied
-复制诊断给 Agent|Copy diagnostics for the agent
+复制诊断信息|Copy diagnostics
+发送给 Deepseek Harness 排查|Investigate with Deepseek Harness
+正在准备诊断信息…|Preparing diagnostics…
+诊断信息已填入，请确认后发送|Diagnostics are ready. Review and send.
 复制失败，可手动选择并复制详细原因。|Copy failed. Select and copy the diagnostic details manually.
 请根据以上诊断找到原插件项目。如果来源是安装包，请先定位源码。检查 Web 入口、激活函数和依赖服务的注册时机，复现后再修改。如果错误中出现 loading，它只表示检查当时的状态，请验证具体原因。修复并重新构建后，请告诉我何时点击「重新启用并重启」，以及用哪个实际操作验证插件功能。|Use these diagnostics to locate the original plugin project. If the source is a package archive, locate its source code first. Check the web entry point, activation function and when required services register. Reproduce the failure before editing. If the error says loading, verify the cause behind that observation. After fixing and rebuilding, tell me when to re-enable and restart, and how to verify the plugin works.
 可用模型|Available models
@@ -49,6 +58,7 @@ Harness 原始错误|Original Harness error
 增量进度读取失败|Could not read incremental progress
 尚未建立完整备份|No complete backup yet
 自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。|Save new, changed and removed content, including backdated records. Incremental exports are unlimited and do not use the full export allowance.
+离线时无法读取云端记录|Cloud records are unavailable offline.
 当前离线，将导出上次完整保存的本地副本。|You are offline. The last complete local copy will be exported.
 复用本地备份，仅同步变化，不占用全量导出次数。|Reuse the local backup and sync changes without using the full export allowance.
 日期与全部导出共用原有云端导出额度；本地已有原文件会优先复用。|Date and full cloud exports share the existing allowance. Locally saved originals are reused first.
@@ -186,6 +196,10 @@ AI 自动分析|Automatic AI analysis
 自动分析录音与聊天内容，识别相关的线下交流。开启后会分析历史录音和聊天内容，运行时消耗 AI 额度。|Automatically analyze recordings and chats to identify related in-person conversations. Enabling this also analyzes historical recordings and chats and uses AI allowance.
 自动整理个人档案|Automatically organize my profile
 自动识别安排|Automatically recognize plans
+自动识别快记实体|Automatically recognize entities in notes
+从新快记中识别人物、地点等实体。|Recognize people, places, and other entities in new notes.
+识别开启后新增的快记中的人物、地点等实体，使用 AI 额度。|Recognize people, places, and other entities in notes added after enabling. Uses AI allowance.
+快记实体识别|Note entity recognition
 自动分析目标|Automatically analyze goals
 录音口令记事|Voice-command notes
 在私聊和群聊消息下方提供建议，仅你可见。|Offers suggestions beneath private and group chat messages, visible only to you.
@@ -928,6 +942,10 @@ GitHub 仓库（可选）|GitHub repository (optional)
 重试预览|Retry preview
 群成员|Group members
 正在读取群成员…|Loading group members…
+筛选当前页成员|Filter members on this page
+回到第一页|Back to first page
+下一页成员|Next page of members
+当前 Provider 不支持团队提及候选，请升级|This provider does not support Team mention candidates. Please update.
 ，点击重试|. Click to retry.
 暂无群成员|No group members
 已添加|Added
@@ -1214,9 +1232,16 @@ Enter发送 / Shift+Enter换行|Enter to send / Shift+Enter for a new line
 新建主题|New topic
 搜索对话或消息|Search chats or messages
 登录解锁更多功能|Sign in for more features
-会话加载失败，请重试|Failed to load conversation. Please retry.
-会话暂未同步|Conversations haven’t synced yet
-重试同步|Retry sync
+同步失败|Sync failed
+查看详情|View details
+会话列表|Conversations
+团队会话和文件夹|Team conversations and folders
+团队文件夹|Team folders
+团队会话|Team conversations
+团队入口设置|Team entry settings
+群互动|Group interactions
+本机会话设置|Local conversation settings
+重试中|Retrying
 加载或播放失败，请点击播放重试。|Could not load or play audio. Click Play to retry.
 下载|Download
 我的声音|My voice
@@ -2088,8 +2113,8 @@ Arkme 账号|Arkme account
 返回快记详情|Back to note details
 返回相关快记列表|Back to related notes
 选择生成模型|Choose generation model
-查看 Arkme 用户协议|View Arkme terms of service
-查看 Arkme 隐私条款|View Arkme privacy policy
+查看 {v0} 用户协议|View {v0} terms of service
+查看 {v0} 隐私条款|View {v0} privacy policy
 返回 Arkme 会话列表|Back to Arkme conversations
 关闭 Arkme|Close Arkme
 关闭快记详情|Close note details

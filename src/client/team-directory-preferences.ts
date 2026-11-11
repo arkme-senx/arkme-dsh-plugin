@@ -88,7 +88,7 @@ export class TeamDirectoryPreferenceStore {
     })
     state.error = page.syncError ?? ''; if (page.migrationNotice) state.notice = page.migrationNotice; this.publish(state)
   }
-  hydrate(account: string, force = false): Promise<void> {
+  hydrate(account: string, force = false, background = false): Promise<void> {
     if (!account) return Promise.resolve()
     const state = this.state(account)
     if (state.loading) return state.loading
@@ -98,7 +98,7 @@ export class TeamDirectoryPreferenceStore {
       let cursor: string | undefined
       const seen = new Set<string>()
       do {
-        const page = await this.send(state, 'team.app.entries.list', { expectedAccountKey: account, ...(cursor ? { cursor } : {}) })
+        const page = await this.send(state, 'team.app.entries.list', { expectedAccountKey: account, ...(background ? { background } : {}), ...(cursor ? { cursor } : {}) })
         this.accept(state, page)
         if (page.hasMore && (!page.nextCursor || seen.has(page.nextCursor))) throw new Error('入口偏好分页异常')
         cursor = page.hasMore ? page.nextCursor : undefined
@@ -175,18 +175,18 @@ export class TeamDirectoryPreferenceStore {
     })
     state.queue = run; return run
   }
-  async reconcile(account: string, conversations: TeamConversation[], signal: AbortSignal): Promise<void> {
+  async reconcile(account: string, conversations: TeamConversation[], signal: AbortSignal, background = false): Promise<void> {
     const state = this.state(account), entries = new Map<string, TeamEntryReference>()
     for (const c of conversations) {
       entries.set(teamConversationEntryKey(c), { kind: 'conversation', ref: c.ref })
       if (c.side === 'team') entries.set(teamFolderEntryKey(c.channel), { kind: 'folder', ref: c.channel.teamRef })
     }
-    await this.reconcileReferences(account,[...entries],signal)
+    await this.reconcileReferences(account,[...entries],signal,background)
   }
   async reconcileTargets(account:string,targets:TeamEntryTarget[],signal:AbortSignal) {
     await this.reconcileReferences(account,targets.map(t=>{const e=this.remember(t);return [e.key,e.ref]}),signal)
   }
-  private async reconcileReferences(account:string, rows:[string,TeamEntryReference][],signal:AbortSignal) {
+  private async reconcileReferences(account:string, rows:[string,TeamEntryReference][],signal:AbortSignal,background=false) {
     const state=this.state(account)
     for (let i = 0; i < rows.length; i += 100) {
       const batch = rows.slice(i, i + 100)
@@ -195,7 +195,7 @@ export class TeamDirectoryPreferenceStore {
       // Queue one batch at a time, allowing user commands between large pages.
       const run = state.queue.catch(() => {}).then(async () => {
         signal.throwIfAborted()
-        const page = await this.send(state, 'team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account }, signal)
+        const page = await this.send(state, 'team.app.entries.query', { entries: batch.map(e => e[1]), expectedAccountKey: account, ...(background ? { background } : {}) }, signal)
         signal.throwIfAborted(); this.accept(state, page, batch.map(e => e[0]))
       })
       state.queue = run
@@ -214,7 +214,8 @@ export class TeamDirectoryPreferenceStore {
     return state.saved.get(state.aliases.get(key)??key)?.accessible!==false && teamEntryConversations(target).every(c=>this.canPresent(account,c))
   }
 }
-export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) => callArkme(operation, params, signal))
+export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) =>
+  callArkme(operation, params, signal, params.background === true ? { priority: 'background' } : undefined))
 export function useTeamDirectoryPreferences(account: string) {
   useEffect(() => { if (account) void localDirectoryPreferences.hydrate(account).catch(() => {}).then(() => teamDirectoryPreferences.hydrate(account)).catch(() => {}) }, [account])
   return useSyncExternalStore(teamDirectoryPreferences.subscribe, () => teamDirectoryPreferences.read(account), () => empty)

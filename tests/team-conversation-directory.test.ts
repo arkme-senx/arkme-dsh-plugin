@@ -4,13 +4,73 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { TeamConversation } from '../src/team-app-contract.js'
 const mock = vi.hoisted(() => vi.fn())
 vi.mock('../src/client/api.js', () => ({ callArkme: mock }))
-import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
+import { startTeamDirectory, readTeamDirectory, refreshTeamDirectory, markTeamDirectoryRead, discardTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from '../src/client/team-conversation-directory.js'
 import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
 import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
 let stops: Array<() => void> = []
 afterEach(() => { stops.forEach(stop => stop()); stops = []; openedTeamConversations.reset(); mock.mockReset(); vi.restoreAllMocks() })
 const channel = { teamRef: 'ref', name: '团队', jotmoId: 'team_id', publicRef: '', link: '', enabled: true, revision: 1, canManage: false }
 const item = (side: 'team' | 'external', time = 1): TeamConversation => ({ ref: `${side}-ref`, key: `${side}-key`, channel, side, lastSeq: 1, latestTeamReplySeq: 0, myReadSeq: 0, unread: 1, needsReply: true, blocked: false, revision: 1, updatedAt: time })
+it('clears only the covered Team badge, preserving newer unread and current failure recovery', async () => {
+  const account = 'visible-team-read'
+  let team = item('team')
+  mock.mockImplementation(async (op, { side, conversationRefs }) => {
+    if (op === 'team.app.workspace.request') return []
+    if (op === 'team.app.read-states') return conversationRefs.map((ref: string) => {
+      const row = ref === team.ref ? team : item('external')
+      return { key: row.key, accessible: true, lastSeq: row.lastSeq, myReadSeq: row.myReadSeq, unread: row.unread }
+    })
+    return { items: op === 'team.app.conversations' ? [side === 'team' ? team : item('external')] : [], hasMore: false }
+  })
+  stops.push(startTeamDirectory(account))
+  const unread = () => readTeamDirectory(account).items.find(row => row.key === team.key)?.unread
+  await vi.waitFor(() => expect(unread()).toBe(1))
+  const rollbackOld = markTeamDirectoryRead(account, team.key, 1)
+  expect(unread()).toBe(0)
+  expect(groupTeamConversations(readTeamDirectory(account).items)[0]?.unread).toBe(0)
+  team = { ...team, lastSeq: 2, unread: 2 }
+  await refreshTeamDirectory(account, false, true)
+  expect(unread()).toBe(2)
+  markTeamDirectoryRead(account, team.key, 1)
+  expect(unread()).toBe(2)
+  await refreshTeamDirectory(account)
+  expect(unread()).toBe(2)
+  const rollbackCurrent = markTeamDirectoryRead(account, team.key, 2)
+  rollbackOld()
+  expect(unread()).toBe(0)
+  rollbackCurrent()
+  expect(unread()).toBe(2)
+})
+
+it('keeps automatic refresh behind explicit retry and pagination', async () => {
+  const account = 'scheduling'
+  let holdRefresh = false
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  mock.mockImplementation(async (operation, params) => {
+    if (operation === 'team.app.workspace.request') return []
+    if (operation.startsWith('team.app.entries.')) return { items: [], schemaVersion: 2, hasMore: false }
+    if (holdRefresh && params.background) await hold
+    return { items: [item(params.side)], hasMore: !params.cursor, nextCursor: 'older' }
+  })
+  stops.push(startTeamDirectory(account))
+  await vi.waitFor(() => expect(readTeamDirectory(account).hasMore).toBe(true))
+  const lists = () => mock.mock.calls.filter(([op]) => op === 'team.app.conversations').map(([, params]) => [params.background, params.cursor])
+  expect(lists()).toEqual([[true, undefined], [true, undefined]])
+  holdRefresh = true
+  window.dispatchEvent(new Event('focus'))
+  await refreshTeamDirectory(account, true)
+  await refreshTeamDirectory(account)
+  window.dispatchEvent(new Event('focus'))
+  release()
+  await vi.waitFor(() => expect(lists()).toEqual([
+    [true, undefined], [true, undefined],
+    [true, undefined], [true, undefined],
+    [undefined, undefined], [undefined, undefined],
+    [undefined, 'older'], [undefined, 'older'],
+  ]))
+})
+
 it('merges Team rows only in presentation and preserves pinned rows and ordinary identities', () => {
   const pinned = { kind: 'source', activeAtMillis: 1, pinned: true }, ordinary = { kind: 'source', activeAtMillis: 10, pinned: false }
   const result = mergeTeamDirectoryRows([pinned, ordinary], [item('team', 15), item('external', 5)])
@@ -319,6 +379,27 @@ it('publishes group-only folders independently and drops their body on a failed 
  expect(readTeamDirectory('folders-only').foldersError).toBe('来源权限暂时无法确认')
 })
 
+it('runs one preference sync when folders finish after the conversations', async () => {
+  let finishFolders: ((items: []) => void) | undefined
+  let delayFolders = false
+  mock.mockImplementation(async (operation, { side }) => {
+    if (operation === 'team.app.workspace.request') {
+      return delayFolders ? new Promise<[]>(resolve => { finishFolders = resolve }) : []
+    }
+    if (operation.startsWith('team.app.entries.')) return { schemaVersion: 2, items: [], hasMore: false }
+    return { items: side ? [item(side)] : [], hasMore: false }
+  })
+  stops.push(startTeamDirectory('slow-folders'))
+  await vi.waitFor(() => expect(mock.mock.calls.some(([op]) => op === 'team.app.entries.query')).toBe(true))
+  mock.mockClear()
+  delayFolders = true
+  await refreshTeamDirectory('slow-folders')
+  expect(readTeamDirectory('slow-folders').items).toHaveLength(2)
+  finishFolders?.([])
+  await vi.waitFor(() => expect(mock.mock.calls.filter(([op]) => op === 'team.app.entries.query')).toHaveLength(1))
+  expect(mock.mock.calls.filter(([op]) => op === 'team.app.entries.list')).toHaveLength(1)
+})
+
 it('a confirmed contact is visible during a pending list read and survives an absent server row', async () => {
   const empty = { ...item('team', 50), lastSeq: 0, unread: 0 }
   let release!: (value: unknown) => void
@@ -465,4 +546,27 @@ it.each(['success','failure','unsupported'] as const)('does not let an older det
  expect(readTeamDirectory('folder-order').foldersError).toBeUndefined()
  expect(readTeamDirectory('folder-order').workspaceSupported).toBe(true)
  expect(firstSignal.aborted).toBe(true)
+})
+
+it('recovers conversations, folders and entry preferences on online without focus or a manual retry', async () => {
+  const account = 'reconnect-directory'
+  let online = false
+  mock.mockImplementation(async (operation, params) => {
+    if (!online && operation !== 'team.app.entries.cached') throw new Error('offline')
+    if (operation === 'team.app.workspace.request') return []
+    return { items: operation === 'team.app.conversations' ? [item(params.side)] : [], schemaVersion: 2, hasMore: false }
+  })
+  stops.push(startTeamDirectory(account))
+  await vi.waitFor(() => {
+    expect(readTeamDirectory(account)).toMatchObject({ error: 'offline', foldersError: 'offline' })
+    expect(teamDirectoryPreferences.error(account)).toBeTruthy()
+  })
+  online = true
+  window.dispatchEvent(new Event('online'))
+  await vi.waitFor(() => {
+    expect(readTeamDirectory(account).items).toHaveLength(2)
+    expect(readTeamDirectory(account).error).toBeUndefined()
+    expect(readTeamDirectory(account).foldersError).toBeUndefined()
+    expect(teamDirectoryPreferences.error(account)).toBe('')
+  })
 })

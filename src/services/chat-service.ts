@@ -2881,6 +2881,32 @@ export class ChatService {
     return {messageRef,reportUid,status:numberValue(report.status)}
   }
 
+  async changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal) {
+    if (action !== 'delete' && action !== 'recall') throw new TypeError('Unsupported message action')
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw new ArkmePluginError('chat-message-action-invalid', '仅支持私聊和群聊消息', false, 400)
+    const reference = await this.openMessageActionRef(actionRef, session.userId, source)
+    if (reference.sourceKind !== 'chat_relation' || !reference.relationUid || reference.chatSessionUid !== source.ownerRef) {
+      throw new ArkmePluginError('chat-message-action-invalid', '请重新选择会话中的消息', false, 400)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换', false, 409)
+    const path = action === 'delete' ? '/api/v1/chats/messages/delete/v2' : '/api/v1/chats/messages/recall'
+    const data = await this.sourceChatPost<Record<string, unknown>>(source, path,
+      { chat_session_uid: reference.chatSessionUid, rel_uid: reference.relationUid }, session, signal, { trackWriteOutcome: true })
+    const changedAtMillis = numberValue(action === 'delete' ? data.deleted_at : data.withdrawn_at)
+    if (data.chat_session_uid !== reference.chatSessionUid || data.rel_uid !== reference.relationUid || !Number.isSafeInteger(changedAtMillis) || changedAtMillis <= 0) {
+      throw new ArkmePluginError('chat-message-action-unconfirmed', '无法确认消息操作结果', true, 502)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换', false, 409)
+    return {
+      timelineItemKey: await this.source.chatTimelineItemKey(session.userId, reference.chatSessionUid, reference.relationUid),
+      sourceKey: await this.source.chatDirectorySourceKey(session.userId, reference.chatSessionUid),
+      throughSequence: reference.sourceSequence,
+      changedAtMillis,
+    }
+  }
+
   async withdrawGroupMessage(messageWithdrawalRef:string,options:{sourceRef?:string;signal?:AbortSignal}={}):Promise<ArkmeMessageWithdrawalResult> {
     const session=await this.runtime.requireSession(),normalized=messageWithdrawalRef.trim(),reference=await this.openMessageWithdrawalRef(normalized,session.userId)
     const source=await this.scopedMessageSource(reference,session,options.sourceRef),body={chat_session_uid:reference.chatSessionUid,rel_uid:reference.relationUid}
@@ -3730,6 +3756,16 @@ nextPublic = next
     })
     extensions.sort((left, right) => right.sendAtMillis - left.sendAtMillis)
     return { extensionCount: extensions.length, extensions, ...(extensionParent === undefined ? {} : { extensionParent }) }
+  }
+
+  async excerptOccurrence(sourceRef:string,actionRef:string,recordUid:string,signal?:AbortSignal) {
+    const session=await this.runtime.requireSession(),target=await this.recordEditHistoryTarget(sourceRef,actionRef)
+    if(target.recordUid!==recordUid)throw new ArkmePluginError('excerpt-source-unavailable','摘录身份不匹配',false,404)
+    if(target.kind==='owned')return (await this.record.personalRecordDetail(recordUid,signal)).localSelfQuote
+    const raw=objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/records/detail',{chat_session_uid:target.chatSessionUid,rel_uid:target.relationUid,record_uid:recordUid,record_owner_user_id:target.recordOwnerUserId},session,signal,{bypassCache:true,cacheMs:0,lane:'interactive-read'}))
+    const item=objectValue(raw.item),relation=objectValue(item.relation),record=objectValue(item.record),core=objectValue(record.payload)
+    if(relation.rel_uid!==target.relationUid||core.record_uid!==recordUid||String(core.owner_user_id)!==String(target.recordOwnerUserId)||Number(record.status??core.status)!==1||Number(core.content_access_state??record.content_access_state)!==1)throw new ArkmePluginError('excerpt-source-unavailable','摘录已失效或无权查看',false,404)
+    return recordExcerptPresentation(objectValue(core.content_payload).excerpt,stringValue(core.text_content))
   }
 
   async recordEditHistoryTarget(sourceRef: string, messageActionRef: string): Promise<RecordEditHistoryTarget> {
@@ -4679,6 +4715,34 @@ nextPublic = next
       return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: recordUid, status: numberValue(data.status), localState: 'synced' })
     }
   
+  /** Selected prose is already final: no whole-message polish or quote-derived mentions. */
+  async sendSourceExcerpt(sourceRef:string,text:string,excerpt:RecordExcerpt,options:{recordUid:string;relationUid?:string;sendAtMillis?:number;expectedUserId:number;signal?:AbortSignal}):Promise<ArkmeSourceSendResult> {
+    const session=await this.runtime.requireSession()
+    if(session.userId!==options.expectedUserId)throw new ArkmePluginError('selected-text-account-changed','账号已变化',false,409)
+    const target=await this.source.openSourceRef(sourceRef,session.userId)
+    options.signal?.throwIfAborted()
+    const own=text.slice(excerpt.note_start)
+    const tags=arkmeHashTagContentPayload(own)
+    const payload={payload_kind:1,schema_version:1,text_state:1,text_format:'plain',...(tags??{}),...(tags?.hash_tags?{hash_tags:(tags.hash_tags as {start_index:number}[]).map(t=>({...t,start_index:t.start_index+excerpt.note_start}))}:{}),excerpt}
+    if(target.kind==='send_to_self'||target.kind==='default_category') {
+      const result=await this.record.createTextForConversation(options.recordUid,text,{expectedUserId:session.userId,excerpt,...(options.signal?{signal:options.signal}:{}),...(options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis})})
+      if(result.localState==='synced') {
+        try { await this.realtime.invalidateRecordProjection({contentOnly:true}) } catch { /* Accepted owner truth survives a local refresh failure. */ }
+      }
+      return {sourceRef,itemUid:result.recordUid,status:result.status,localState:result.localState}
+    }
+    if(target.kind==='topic') {
+      const senderSnapshot=await this.profile.recordSenderSnapshot?.(session)
+      options.signal?.throwIfAborted()
+      const data=await this.record.createPersonalRecord<Record<string,unknown>>('/api/v1/topics/records/create',{topic_uid:target.ownerRef,record_uid:options.recordUid,template_kind:1,title:'',text_content:text,content_payload:payload,...(senderSnapshot?{sender_snapshot:senderSnapshot}:{}),send_at:options.sendAtMillis},session,options.signal)
+      await this.record.syncCreatedRecordTags(stringValue(data.record_uid),own,session.userId,options.signal,undefined,excerpt.note_start)
+      try { await this.realtime.invalidateRecordProjection({contentOnly:true}) } catch { /* Accepted owner truth survives a local refresh failure. */ }
+      return {sourceRef,itemUid:stringValue(data.record_uid),status:numberValue(data.record_status),localState:'synced'}
+    }
+    if(target.kind!=='private_chat'&&target.kind!=='group_chat')throw new ArkmePluginError('selected-text-target-invalid','此目标不支持摘录',false,400)
+    return this.sendChatSourceTextRaw(sourceRef,target.ownerRef,text,options.recordUid,options.relationUid??randomUUID(),session,undefined,payload,options.signal,options.sendAtMillis===undefined?{}:{sendAtMillis:options.sendAtMillis})
+  }
+
   async sendSourceText(
       sourceRef: string,
       textContent: string,
@@ -4704,6 +4768,7 @@ nextPublic = next
       }
       const source = await this.source.openSourceRef(sourceRef, session.userId)
       if(options.representation!==undefined&&source.kind!=='group_chat')throw new ArkmePluginError('team-identity-target-invalid','团队身份仅用于普通群',false,409)
+      if(options.excerpt)return this.sendSourceExcerpt(sourceRef,textContent,options.excerpt,{recordUid:options.recordUid??randomUUID(),expectedUserId:session.userId,...(options.relationUid?{relationUid:options.relationUid}:{}),...(options.signal?{signal:options.signal}:{})})
       const text = textContent.trim()
       if (text === '' || text.length > this.runtime.config.maxTextLength) {
         throw new ArkmePluginError('source-text-invalid', '发送内容为空或超过长度限制', false)
@@ -5265,10 +5330,13 @@ nextPublic = next
   async sendSourceRich(
       sourceRef: string,
       input: ArkmeRichSendInput,
-      options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal; sendAtMillis?: number; pendingAttachments?: PendingAttachment[]; attachmentOrder?: string[]; backgroundAmplitudes?: number[] } = {},
+      options: { recordUid?: string; relationUid?: string; expectedUserId?: number; signal?: AbortSignal; sendAtMillis?: number; pendingAttachments?: PendingAttachment[]; attachmentOrder?: string[]; backgroundAmplitudes?: number[]; allowPlainText?: true } = {},
     ): Promise<ArkmeSourceSendResult> {
     requireFrozenTeamSendTime(input)
-      if (this.runtime.config.richMediaSendEnabled === false) {
+      if (this.runtime.config.richMediaSendEnabled === false && (
+        !options.allowPlainText || input.textFormat === 'markdown' || input.displayKind === 1 || input.title?.trim()
+        || input.assets?.length || options.pendingAttachments?.length || input.backgroundSound !== undefined || input.botMentions?.length
+      )) {
         throw new ArkmePluginError('rich-content-disabled', '富内容发送已被插件配置关闭', false, 403)
       }
       if (input.textFormat === 'markdown' && (input.displayKind === 1 ? this.runtime.config.markdownLongArticlesEnabled : this.runtime.config.markdownQuickNotesEnabled) !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
@@ -5606,10 +5674,28 @@ nextPublic = next
     }
   }
   
-  async confirmSourceSend(input:import('../file-transfer-contract.js').ArkmeFileSendInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult|undefined|null>{
+  async confirmSourceSend(input:import('../file-transfer-contract.js').ArkmeFileSendInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult|undefined|null|false>{
     const session=await this.runtime.requireSession(),source=await this.source.openSourceRef(input.sourceRef,session.userId)
+    if (source.kind === 'send_to_self' || source.kind === 'default_category' || source.kind === 'topic') {
+      let data: Record<string, unknown>
+      try {
+        data = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/detail',
+          { record_uid: input.recordUid }, session, signal, { lane: 'interactive-read', bypassCache: true, cacheMs: 0 })
+      } catch (error) {
+        // Record's legacy detail endpoint uses InvalidParam for several rejections.
+        if (error instanceof ArkmePluginError && error.code === 'arkme-code-40001'
+          && /^record is not found(?:（服务错误码 40001）)?$/.test(error.message)) return false
+        throw error
+      }
+      const core = objectValue(data.record_core)
+      if (stringValue(core.record_uid) !== input.recordUid || Number(core.owner_user_id) !== session.userId || numberValue(core.status) !== 1) {
+        throw new ArkmePluginError('record-send-receipt-unverified', '原快记状态无法核对，请勿重复发送', false, 409)
+      }
+      return { sourceRef: input.sourceRef, itemUid: input.recordUid, status: 1, localState: 'synced' }
+    }
     if(source.kind!=='group_chat'&&source.kind!=='private_chat')return null
     const result=await this.sourceChatPost<Record<string,unknown>>(source,'/api/v1/chats/records/receipt/get',{chat_session_uid:source.ownerRef,record_uid:input.recordUid,rel_uid:input.relationUid},session,signal,{lane:'interactive-read',bypassCache:true})
+    if(result.accepted===false)return false
     if(result.accepted!==true)return undefined
     const expected=bindGroupSourceRepresentation(source,await new GroupRepresentationCodec(this.runtime).selection(input.content.representation,session.userId))
     const actual=objectValue(result.representation)
@@ -5679,6 +5765,7 @@ nextPublic = next
     const representation = await new GroupRepresentationCodec(this.runtime).snapshot(relation.representation, session.userId)
     const actionItem: ArkmeTimelineItem = {
       ...this.record.recordTimelineItemFromRaw({ record_core: core }, session.userId), contentBlocks,
+      ...(data.message_actions_v2 === true ? { messageActionsV2: true } : {}),
       ...(representation ? { representation } : {}),
       senderName: stringValue(relation.display_name_snapshot)||reference.senderName, isMe: reference.senderUserId === session.userId,
       recordOwnerUserId: reference.recordOwnerUserId,

@@ -40,6 +40,7 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
   const article: ArticleExportContent = detail ?? snapshot ?? { title: '', textContent: '' }
   const item = detail?.actionItem ?? snapshot ?? (detail ? { ...detail, senderName: '', isMe: detail.editable, status: 1 } : undefined)
   const ref = snapshot ? undefined : item?.messageActionRef
+  const chatDeletion = detail?.actionItem?.messageActionsV2 === true && !!ref
   const actionItems = useMemo(() => ref && item ? [{ id: item.itemUid, copyText: item.textContent,
     actionRef: ref, conversationRef: sourceRef, copyLinkAvailable: true, forwardAvailable: true }] : [], [ref, item, sourceRef])
   const actions = useArkmeMessageActions({ scopeKey: `${sourceRef}:${item?.itemUid}`, sourceActions: true, items: actionItems })
@@ -118,11 +119,17 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
     finally { clearTimeout(timeout); if (mounted.current) { setBusy(false); setProgress('') } }
   }
   const remove = async () => {
-    if (busy || !item?.recordDeletionRef || accountChanged) return
+    if (busy || !item || (!chatDeletion && !item.recordDeletionRef) || accountChanged) return
     const controller = new AbortController(); request.current = controller
     setBusy(true); setError('')
     try {
       const currentItem = (await prepare())?.actionItem ?? item
+      if (chatDeletion && currentItem.messageActionRef) {
+        await callArkme('source.chat-message-action', { sourceRef, actionRef: currentItem.messageActionRef, action: 'delete' }, controller.signal)
+        assertAccount()
+        if (mounted.current) { setPanel(undefined); onDeleted(item.itemUid) }
+        return
+      }
       if (!currentItem?.recordDeletionRef) throw new Error('请重新打开长文核对删除权限')
       const result = await callArkme<ArkmeRecordDeletionResult>('source.record-delete', { sourceRef, deletionRefs: [currentItem.recordDeletionRef] }, controller.signal)
       assertAccount()
@@ -150,14 +157,14 @@ export function ArkmeLongArticleActions({ sourceRef, detail, snapshot, dismissRe
         { id: 'export', label: '导出 ›', icon: <DownloadSimple size={18}/>, onSelect: () => setMenu('export') },
         { id: 'forward', label: '转发', icon: <PaperPlaneTilt size={18}/>, disabled: !ref, onSelect: () => { setMenu(undefined); void withCurrent(true) } },
         { id: 'snapshot', label: '详情', icon: <Info size={18}/>, onSelect: () => choose('snapshot') },
-        ...(item?.recordDeletionRef && !snapshot ? [{ id: 'delete-separator', type: 'separator' as const }, { id: 'delete', label: '删除长文', icon: <Trash size={18}/>, danger: true, onSelect: () => choose('delete') }] : []),
+        ...((chatDeletion || item?.recordDeletionRef) && !snapshot ? [{ id: 'delete-separator', type: 'separator' as const }, { id: 'delete', label: '删除长文', icon: <Trash size={18}/>, danger: true, onSelect: () => choose('delete') }] : []),
       ]} />
     {error && !panel && <span role="alert" style={{ color: theme.danger, fontSize: 12 }}>{error}</span>}
     {typeof document !== 'undefined' && !!document.body && createPortal(<div style={{ position: 'relative', zIndex: 10_250 }}>{actions.overlay}</div>, document.body)}
     {panel === 'snapshot' && item && <ArkmeMessageSnapshotDialog item={item} previewText={article.title} createdAtMillis={detail?.createdAtMillis ?? 0} {...(metadata ? { detail: metadata } : {})}
       metadataUnavailable={!ref || !item.isMe ? '仅展示当前可见信息；原作者的私人位置与设备信息不公开' : undefined}
       loading={metadataLoading} {...(error ? { loadError: error } : {})} onClose={close} />}
-    {panel === 'delete' && <ArkmeConfirmDialog titleId="arkme-article-delete-title" title="删除这篇长文？" description="删除后可在数据管理中查看，保留 30 天。此操作会删除长文本身。"
+    {panel === 'delete' && <ArkmeConfirmDialog titleId="arkme-article-delete-title" title="删除这篇长文？" description={chatDeletion ? tr("仅从你的会话中删除，其他人仍可查看。") : tr("删除后可在数据管理中查看，保留 30 天。此操作会删除长文本身。")}
       confirmLabel="确认删除" busyLabel="删除中…" confirmTone="danger" busy={busy} confirmDisabled={!!error} error={error} onClose={close} onConfirm={() => { void remove() }}>
       <ArkmeConfirmDialogPreview>{article.title || '无标题长文'}</ArkmeConfirmDialogPreview>
     </ArkmeConfirmDialog>}

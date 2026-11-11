@@ -9,12 +9,16 @@ import arkmeAbout from '../../assets/branding/arkme-macos-app-icon.png'
 const brands = {
   zh: {
     name: '即我', icon: `data:image/png;base64,${jiwoIcon}`,
+    userAgreementUrl: 'https://www.jiwo.cc/article/user-aggrement-v1.html',
+    privacyPolicyUrl: 'https://www.jiwo.cc/article/privacy-aggrement-v1.html',
     wordmark: `data:image/png;base64,${jiwoWordmark}`,
     wordmarkDark: `data:image/png;base64,${jiwoWordmarkDark}`,
     about: `data:image/png;base64,${jiwoWordmark}`,
   },
   en: {
     name: 'Arkme', icon: ARKME_ICON_DATA_URL,
+    userAgreementUrl: 'https://www.arkme.ai/article/user-aggrement-v1.html',
+    privacyPolicyUrl: 'https://www.arkme.ai/article/privacy-aggrement-v1.html',
     wordmark: ARKME_WORDMARK_DATA_URL, wordmarkDark: ARKME_WORDMARK_DATA_URL,
     about: `data:image/png;base64,${arkmeAbout}`,
   },

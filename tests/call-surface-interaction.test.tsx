@@ -802,8 +802,8 @@ describe('ArkmeCallSurface interactions', () => {
       expect(textContent(renderer.toJSON())).toContain('最近通话')
       expect(textContent(renderer.toJSON())).toContain('小林')
       expect(renderer.root.findAllByType('img').length).toBeGreaterThan(0)
-      expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-contact-1' }, undefined, { priority: 'background' })
-      expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-call-1' }, undefined, { priority: 'background' })
+      expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-contact-1' }, undefined, { priority: 'background', avatarDownload: true })
+      expect(mocks.callArkme).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-call-1' }, undefined, { priority: 'background', avatarDownload: true })
       const imageReads = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'image.read').length
       act(() => renderer.unmount())
       await act(async () => { renderer = create(<ArkmeCallSurface />); await tick() })

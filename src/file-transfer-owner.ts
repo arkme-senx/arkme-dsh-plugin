@@ -22,7 +22,10 @@ export function createArkmeFileTransfers(options: {
   return new FileTransfers(options.directory, {
     currentUser: async () => (await options.runtime.requireSession()).userId,
     retainedFileRefs: async userId => [...await options.runtime.stateStore.recordReeditFileRefs(userId), ...await options.runtime.stateStore.arkoFileRefs(userId)],
-    validateSource: async sourceRef => { await options.source.openSourceRef(sourceRef, (await options.runtime.requireSession()).userId) },
+    validateSource: async (sourceRef, userId) => {
+      const source = await options.source.openSourceRef(sourceRef, userId)
+      return `${source.kind}:${await options.source.sourceScopeKey(source)}`
+    },
     upload: async (path, metadata, onProgress, expectedUserId, signal) => await options.media.uploadLocalFile(path, metadata, { onProgress, expectedUserId, signal }),
     progressive: {
       supported: (userId, signal) => progressive.supported(userId, signal),
@@ -44,7 +47,7 @@ export function createArkmeFileTransfers(options: {
           ...(ordinaryAssets.length === 0 ? {} : { assets: ordinaryAssets }),
           ...(backgroundSound === undefined ? {} : { backgroundSound }),
         }, {
-          recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId, signal,
+          recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId, signal, allowPlainText: true,
           ...(pending ? { pendingAttachments: pending, ...(input.attachmentOrder ? { attachmentOrder: input.attachmentOrder } : {}), ...(input.backgroundSound ? { backgroundAmplitudes: input.backgroundSound.amplitudes } : {}) } : {}),
         })
         if (input.location !== undefined) {
@@ -66,9 +69,10 @@ export function createArkmeFileTransfers(options: {
         return { kind: 'owner_accepted', result }
       } catch (error) {
         if (!(error instanceof ArkmePluginError)) return { kind: 'owner_outcome_unknown' }
+        const retry = error.retryAfterMillis === undefined ? {} : { retryAfterMillis: error.retryAfterMillis }
         return error.writeOutcomeUnknown === true
-          ? { kind: 'owner_outcome_unknown', message: error.message, code: error.code }
-          : { kind: 'owner_not_accepted', message: error.message, code: error.code, retryable: error.retryable }
+          ? { kind: 'owner_outcome_unknown', message: error.message, code: error.code, ...retry }
+          : { kind: 'owner_not_accepted', message: error.message, code: error.code, retryable: error.retryable, ...retry }
       }
     },
     fetchMedia: async (ref, signal) => {
@@ -83,6 +87,7 @@ export function createArkmeFileTransfers(options: {
     reconcile: async (input, signal) => {
       const exact=await options.chat.confirmSourceSend(input,signal)
       let result:import('./types.js').ArkmeSourceSendResult
+      if(exact===false)return null
       if(exact===undefined)return undefined
       if(exact!==null)result=exact
       else{

@@ -192,6 +192,8 @@ export function ArkmeMessageReadReceiptLine(props: {
   source: ArkmeSourceItem
   item: ArkmeTimelineItem
   defaultUnread?: boolean
+  sendingLabel?: string
+  hideReceipt?: boolean
   wide?: boolean
   children: ReactNode
 }) {
@@ -208,7 +210,9 @@ export function ArkmeMessageReadReceiptLine(props: {
       ...(props.wide === true ? { width: '100%' } : {}),
     }}
   >
-    {props.item.isMe && <ArkmeMessageReadReceipt source={props.source} item={props.item} defaultUnread={props.defaultUnread === true} />}
+    {props.item.isMe && (props.sendingLabel
+      ? <ArkmeReadReceiptControl state="sending" label={props.sendingLabel} />
+      : !props.hideReceipt && <ArkmeMessageReadReceipt source={props.source} item={props.item} defaultUnread={props.defaultUnread === true} />)}
     {props.children}
   </div>
   return props.source.accessKind === 'team_delegation' ? line

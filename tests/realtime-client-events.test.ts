@@ -35,6 +35,9 @@ it('delivers opaque Team change scope and retains conservative reconnect invalid
   try{
     await act(async()=>{renderer=create(createElement(Harness))})
     const change={kind:'team.message.changed',messageKey:'message-key',conversationKeys:['conversation-key']}
+    await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'reconcile',revision:0,refresh:'if-stale',connected:true})} as MessageEvent<string>))
+    expect(changed).not.toHaveBeenCalled()
+    expect(workspace).not.toHaveBeenCalled()
     await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'team-invalidated',revision:1,change})} as MessageEvent<string>))
     expect(changed).toHaveBeenLastCalledWith('test:42',false,change)
     await act(async()=>socket.onmessage?.({data:JSON.stringify({type:'team-invalidated',revision:2,receiptOnly:true})} as MessageEvent<string>))

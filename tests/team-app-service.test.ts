@@ -46,6 +46,53 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
 }
 async function open(f: ReturnType<typeof fixture>) { return await f.service.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen }
 
+it('reuses persisted Team avatar bytes across service restarts and renewed grants', async () => {
+  const data = new Map<string, import('../src/types.js').ArkmeImageBytes>()
+  let url = 'https://jotmo-userfiles.senguo.me/avatar.png?v=1&Signature=first'
+  const f = fixture(path => path === '/avatar.png'
+    ? new Response('image bytes', { headers: { 'content-type': 'image/png' } })
+    : { channel: { ...channel, avatar_url: url }, conversation })
+  Object.assign(f.runtime.stateStore, {
+    readAvatarCache: async (user: number, key: string) => data.get(`${user}:${key}`),
+    writeAvatarCache: async (user: number, key: string, image: import('../src/types.js').ArkmeImageBytes) => { data.set(`${user}:${key}`, image) },
+  })
+  const first = (await open(f)).channel.imageRef
+  const initial = await f.service.execute('team.app.image', { imageRef: first })
+  url = 'https://jotmo-userfiles.senguo.me/avatar.png?v=1&Signature=renewed'
+  const restarted = new TeamAppService(f.runtime, f.avatars)
+  const renewed = (await restarted.execute('team.app.open', { publicRef: channel.public_ref }) as TeamOpen).channel.imageRef
+  await expect(restarted.execute('team.app.image', { imageRef: renewed })).resolves.toEqual(initial)
+  await expect(restarted.execute('team.app.image', { imageRef: renewed, cacheOnly: true })).resolves.toEqual({
+    ...(initial as object), imageKey: (await open(f)).channel.imageKey,
+  })
+  expect(f.requests.filter(request => request.path === '/avatar.png')).toHaveLength(1)
+
+  url = 'https://jotmo-userfiles.senguo.me/avatar.png?v=2&Signature=updated'
+  const updated = (await open(f)).channel.imageRef
+  await expect(restarted.execute('team.app.image', { imageRef: updated, cacheOnly: true })).rejects.toMatchObject({ code: 'image-cache-miss' })
+  await expect(restarted.execute('team.app.image-cache.batch', { imageRefs: [updated, renewed, 'team-app-image.invalid'] })).resolves.toEqual([
+    null, expect.objectContaining(initial as object), null,
+  ])
+  expect(f.requests.filter(request => request.path === '/avatar.png')).toHaveLength(1)
+  await f.service.execute('team.app.image', { imageRef: updated })
+  expect(f.requests.filter(request => request.path === '/avatar.png')).toHaveLength(2)
+  f.changeAccount()
+  await expect(restarted.execute('team.app.image-cache.batch', { imageRefs: [renewed] })).resolves.toEqual([null])
+  await expect(restarted.execute('team.app.image', { imageRef: renewed })).rejects.toMatchObject({ code: 'team-reference-invalid' })
+})
+
+it('uses the Host background lane for automatic directory reads only', async () => {
+  const f = fixture(path => path.endsWith('/open') ? { channel, conversation } : { items: [] })
+  const { conversation: row } = await open(f)
+  const run = vi.spyOn(f.runtime.requestCoordinator, 'run')
+  try {
+    await f.service.execute('team.app.conversations', { side: 'team', background: true })
+    await f.service.execute('team.app.conversations', { side: 'external' })
+    await f.service.execute('team.app.read', { conversationRef: row!.ref, readSeq: 1, background: true })
+    expect(run.mock.calls.map(([request]) => request.lane)).toEqual(['background-read', 'interactive-read', 'write'])
+  } finally { f.runtime.dispose() }
+})
+
 it('projects realtime locators into the same opaque viewer keys used by current Team reads',async()=>{
  const f=fixture(path=>path.endsWith('/open')?{channel,conversation}:{conversation,messages:[message]})
  const opened=await open(f),c=opened.conversation!
@@ -432,6 +479,21 @@ describe('Team App owner adapter', () => {
     }], has_more: false }))
     const result = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
     expect(result.items[0]?.preview).toEqual({ status: 'available', text: '', hasMedia: true, templateKind: 3 })
+  })
+
+  it.each(['team', 'external'] as const)('shares the authorized %s record summary with notifications', async side => {
+    const record = { text_content: '**说明**[jm_emoji:thumb_up]', text_format: 'markdown', media_display_items: [{ file_type: 3 }] }
+    const f = fixture(path => path.endsWith('/notifications/resolve') ? {
+      notification: { event_uid: 'event', message_uid: 'message', conversation_uid: conversation.conversation_uid,
+        side, seq: 2, published_at: 10, expires_at: 3600010, title: '团队', body: '旧摘要',
+        preview_record: record, preview_sender: '同事' },
+    } : { items: [{ ...conversation, side, preview: { status: 'available', text: '旧摘要', record } }] })
+    const result = await f.service.execute('team.app.conversations', { side }) as { items: TeamConversation[] }
+    expect(result.items[0]?.preview?.summary).toBe('[视频]说明[jm_emoji:thumb_up]')
+    const notification = await f.service.resolveMessageNotification({
+      eventUid: 'event', messageUid: 'message', conversationUid: conversation.conversation_uid,
+    }, await f.runtime.requireSession(), new AbortController().signal)
+    expect(notification?.body).toBe(side === 'team' ? '同事：[视频]说明👍' : '[视频]说明👍')
   })
 
   it('cancels by original send identity using current conversation authority without sending content', async () => {

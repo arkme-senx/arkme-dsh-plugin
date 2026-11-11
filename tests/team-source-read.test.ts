@@ -2,7 +2,8 @@
 import {afterEach,expect,it,vi} from 'vitest'
 import {teamChangeAffectsSource,watchTeamSourceRead,invalidateTeamMessageRead,TeamSendReadFence} from '../src/client/team-source-read.js'
 import type {TeamMessage} from '../src/team-app-contract.js'
-import {invalidateTeamMessages} from '../src/client/team-messaging-events.js'
+import {withoutTeamConversationMaterial} from '../src/team-message-projection.js'
+import {invalidateTeamMessages,invalidateTeamMessageKeys,revokeTeamConversationRead} from '../src/client/team-messaging-events.js'
 const call=vi.hoisted(()=>vi.fn())
 vi.mock('../src/client/api.js',()=>({callArkme:call}))
 const target={accountKey:'test:42',conversationRef:'conversation',conversationKey:'conversation-key',messageRef:'message',messageKey:'message-key',version:3}
@@ -67,6 +68,31 @@ it('removes only the affected source or parent material, preserving an independe
  expect(own.contentStatus).toBe('revalidating')
 })
 afterEach(()=>{stop?.();stop=undefined;call.mockReset()})
+it('scopes a batch to its messages and their dependent previews',()=>{
+ const change={kind:'team.message.changed',messageKeys:[sent.key,'another'],conversationKeys:['conversation-key']}
+ const fence=new TeamSendReadFence('conversation-key')
+ fence.begin('affected');fence.begin('unrelated');fence.invalidate(change)
+ expect(fence.projectAcknowledgement(sent,'affected').content).toBeUndefined()
+ const unrelated={...sent,key:'unrelated'}
+ expect(fence.projectAcknowledgement(unrelated,'unrelated')).toBe(unrelated)
+ expect(invalidateTeamMessageRead(sent,change,'other')).toBe(sent)
+})
+it('revokes a matching active read immediately and rejects its late grant',async()=>{
+ let finish!:(value:unknown)=>void
+ call.mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+ const listener=vi.fn();stop=watchTeamSourceRead(target,listener)
+ invalidateTeamMessageKeys(target.accountKey,target.conversationKey,['other','unrelated'])
+ revokeTeamConversationRead(target.accountKey,'other-conversation')
+ expect(call).toHaveBeenCalledTimes(1)
+ expect(listener).toHaveBeenLastCalledWith({status:'checking'})
+ const signal=call.mock.calls[0]![2] as AbortSignal
+ revokeTeamConversationRead(target.accountKey,target.conversationKey)
+ expect(signal.aborted).toBe(true)
+ expect(listener).toHaveBeenLastCalledWith({status:'revoked'})
+ finish([]);await Promise.resolve()
+ expect(listener).toHaveBeenLastCalledWith({status:'revoked'})
+ expect(call).toHaveBeenCalledTimes(1)
+})
 it('keeps an already-granted media reader for represented revisions and rechecks a newer change',async()=>{
  call.mockResolvedValue([])
  const listener=vi.fn();stop=watchTeamSourceRead({...target,revision:2},listener)
@@ -77,7 +103,7 @@ it('keeps an already-granted media reader for represented revisions and rechecks
  expect(listener).toHaveBeenLastCalledWith({status:'checking'})
  await vi.waitFor(()=>expect(call).toHaveBeenCalledTimes(2))
 })
-it.each(['team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'])('does not reread a published source for %s',kind=>{
+it.each(['team.directory.changed','team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'])('does not reread a published source for %s',kind=>{
  expect(teamChangeAffectsSource({kind},target)).toBe(false)
 })
 it('distinguishes other messages and conversations from current or unknown access changes',()=>{
@@ -119,4 +145,11 @@ it('joins focus recovery while checking and aborts a superseded source read',asy
  pending[0]!.resolve([]);await Promise.resolve()
  expect(listener).toHaveBeenLastCalledWith({status:'checking'})
  pending[1]!.resolve([]);await vi.waitFor(()=>expect(listener).toHaveBeenLastCalledWith({status:'available'}))
+})
+
+
+it('distinguishes pending preview validation from a confirmed denial without retaining preview material',()=>{
+ const conversation={key:'conversation',preview:{status:'available',text:'private preview',hasMedia:true}} as import('../src/team-app-contract.js').TeamConversation
+ expect(withoutTeamConversationMaterial(conversation).preview).toEqual({status:'revalidating',text:'',hasMedia:false})
+ expect(withoutTeamConversationMaterial({...conversation,preview:{status:'unavailable',text:'',hasMedia:false}}).preview?.status).toBe('unavailable')
 })

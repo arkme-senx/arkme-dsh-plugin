@@ -561,11 +561,19 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       .get(userId, fileAssetUid) as { local_ref: string } | undefined)?.local_ref
   }
 
-  async readAvatarCache(userId: number, imageRef: string): Promise<ArkmeImageBytes | undefined> {
-    const row = this.database.prepare('SELECT media_type, data FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array } | undefined
+  async readAvatarCache(userId: number, imageRef: string, maxAgeMillis?: number): Promise<ArkmeImageBytes | undefined> {
+    const row = this.database.prepare('SELECT media_type, data, touched_at FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array; touched_at: number } | undefined
     if (row === undefined) return undefined
-    this.database.prepare('UPDATE avatar_cache SET touched_at=? WHERE user_id=? AND image_ref=?').run(Date.now(), userId, imageRef)
+    if (maxAgeMillis !== undefined) {
+      if (Date.now() - row.touched_at >= maxAgeMillis) return undefined
+    } else {
+      this.database.prepare('UPDATE avatar_cache SET touched_at=? WHERE user_id=? AND image_ref=?').run(Date.now(), userId, imageRef)
+    }
     return { mediaType: row.media_type, data: row.data, bytes: row.data.byteLength }
+  }
+
+  async deleteAvatarCache(userId: number, imageRef: string): Promise<void> {
+    this.database.prepare('DELETE FROM avatar_cache WHERE user_id=? AND image_ref=?').run(userId, imageRef)
   }
 
   async writeAvatarCache(userId: number, imageRef: string, image: ArkmeImageBytes): Promise<void> {
@@ -892,6 +900,18 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     this.secureDatabaseFiles()
   }
 
+  async discardPending(userId: number, pending: ArkmePendingWrite): Promise<void> {
+    await this.ensureMigrated(userId)
+    const result = this.database.prepare(`
+      DELETE FROM record_cache
+      WHERE user_id = ? AND record_uid = ? AND sync_state IN ('pending', 'failed')
+        AND send_at_millis = ? AND text_content = ? AND content_payload_json IS ?
+    `).run(userId, pending.recordUid, pending.sendAtMillis, pending.textContent,
+      pending.excerpt ? JSON.stringify({excerpt: pending.excerpt}) : null)
+    if (Number(result.changes) > 0) this.bumpRevision(userId)
+    this.secureDatabaseFiles()
+  }
+
   async listExtensionReviewOperations(userId: number): Promise<ArkmeExtensionReviewOperation[]> {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
@@ -1099,7 +1119,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const result = this.database.prepare(`
       UPDATE record_cache
       SET sync_state = 'failed', attempts = attempts + 1, last_error = ?, updated_at_millis = ?
-      WHERE user_id = ? AND record_uid = ?
+      WHERE user_id = ? AND record_uid = ? AND sync_state IN ('pending', 'failed')
     `).run(error.slice(0, 500), Date.now(), userId, recordUid)
     if (Number(result.changes) > 0) this.bumpRevision(userId)
     this.secureDatabaseFiles()
@@ -1162,9 +1182,14 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const captureContextJson = pending.captureContext === undefined ? null : JSON.stringify(pending.captureContext)
     const contentPayloadJson = pending.excerpt ? JSON.stringify({excerpt:pending.excerpt}) : null
     if (pending.excerpt && !readRecordExcerpt(pending.excerpt,pending.textContent)) throw new Error('摘录待发送数据无效')
-    const existing = this.database.prepare('SELECT text_content,content_payload_json,sync_state FROM record_cache WHERE user_id=? AND record_uid=?').get(userId,pending.recordUid)
+    const existing = this.database.prepare('SELECT text_content,content_payload_json,sync_state,send_at_millis FROM record_cache WHERE user_id=? AND record_uid=?').get(userId,pending.recordUid)
+    // A receipt retry must leave a confirmed cache projection intact.
+    if (existing?.sync_state === 'synced' && pending.excerpt?.kind === 'forward') return
     if (existing && existing.sync_state !== 'synced' && (pending.excerpt || existing.content_payload_json)) {
-      if (existing.text_content !== pending.textContent || existing.content_payload_json !== contentPayloadJson) throw new Error('发送内容已冻结，请使用原内容重试')
+      if (existing.text_content !== pending.textContent || existing.content_payload_json !== contentPayloadJson
+        || (pending.excerpt?.kind === 'forward' && existing.send_at_millis !== pending.sendAtMillis)) {
+        throw new Error('发送内容已冻结，请使用原内容重试')
+      }
       return
     }
     this.database.prepare(`
@@ -1312,6 +1337,20 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     }
     const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as {payload: string} | undefined
     return row ? JSON.parse(row.payload) : {}
+  }
+
+  async teamAvatarManifest(accountKey: string, side: import('./team-app-contract.js').TeamSide, images?: readonly import('./team-app-contract.js').TeamAvatarDescriptor[]): Promise<readonly import('./team-app-contract.js').TeamAvatarDescriptor[]> {
+    const key = `team-avatar-manifest:v1:${side}`
+    if (images !== undefined) {
+      this.database.prepare('INSERT OR REPLACE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)')
+        .run(accountKey, key, JSON.stringify(images.slice(0, 8)))
+      return []
+    }
+    const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as { payload: string } | undefined
+    if (!row || row.payload.length > 128 * 1024) return []
+    const value: unknown = JSON.parse(row.payload)
+    return Array.isArray(value) ? value.slice(0, 8).filter(item => typeof item?.ref === 'string' && item.ref.startsWith('team-app-image.')
+      && item.ref.length <= 8192 && typeof item.key === 'string' && /^[a-f0-9]{64}$/.test(item.key)) : []
   }
 
   async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {

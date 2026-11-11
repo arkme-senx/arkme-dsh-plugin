@@ -12,7 +12,7 @@ it('official DSH discovers safe control tools without an automatic-enable capabi
   await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
   try {
     const session = ctx.sessions.create(), agent = { id: session.id, session }
-    const query = vi.fn(async () => ({ accountScope: 'prod:123', settings: [{ key: 'recording_voice_trigger', title: '录音语音触发', enabled: false, version: 0, enabledAt: 0 }] }))
+    const query = vi.fn(async () => ({ accountScope: 'prod:123', settings: [{ key: 'record_entity', title: '快记实体识别', enabled: false, version: 0, enabledAt: 0 }] }))
     const update = vi.fn()
     registerArkmeTools(ctx, { automaticCapabilities: query, updateAutomaticCapability: update } as never, 'business')
     const schemas = ctx.tools.schemas(agent as never)
@@ -21,25 +21,25 @@ it('official DSH discovers safe control tools without an automatic-enable capabi
     expect(schemas.map(tool => tool.name)).not.toContain('arkme_enable_automatic_ai')
     const result = await ctx.tools.execute({ callId: CallId('read-capabilities'), agent: agent as never, signal: new AbortController().signal, name: 'arkme_automatic_ai_settings', arguments: {} })
     expect(result.isError).toBe(false)
-    expect(String(result.value)).toContain('recording_voice_trigger')
+    expect(String(result.value)).toContain('record_entity')
     expect(String(result.value)).not.toContain('prod:123')
     expect(update).not.toHaveBeenCalled()
   } finally { await ctx.fiber.dispose() }
 })
 
-it('official DSH confirms a human disable and executes only the prepared account/version', async () => {
+it.each(['record_thought', 'record_entity', 'call_summary'])('official DSH confirms a human disable of %s and executes only the prepared account/version', async key => {
   const ctx = new Context()
   await ctx.plugin(SessionStore); await ctx.plugin(SystemPrompt); await ctx.plugin(ToolRuntime)
   try {
     const session = ctx.sessions.create()
     const inbox = createSessionInput(session)
     const agent = { id: session.id, session, inbox }
-    const settings = { accountScope: 'prod:123', settings: [{ key: 'record_thought', title: '快记建议', enabled: true, version: 9, enabledAt: 100 }] }
+    const settings = { accountScope: 'prod:123', settings: [{ key, title: '快记建议', enabled: true, version: 9, enabledAt: 100 }] }
     const query = vi.fn(async () => settings), update = vi.fn(async () => settings)
     registerArkmeTools(ctx, { automaticCapabilities: query, updateAutomaticCapability: update } as never, 'business')
     let step = 0
     const invoke = async () => {
-      const callId = CallId(`disable-${++step}`), name = 'arkme_disable_automatic_ai', args = { key: 'record_thought' }
+      const callId = CallId(`disable-${++step}`), name = 'arkme_disable_automatic_ai', args = { key }
       const call = session.append('tool/call', { turn: 1, step, callId, name, arguments: JSON.stringify(args) })
       const result = await ctx.tools.execute({ callId, agent: agent as never, signal: new AbortController().signal, name, arguments: args })
       session.append('tool/result', { turn: 1, step, message: createToolResultMessage({ callId, content: result.content, isError: result.isError }) }, { surfaceOp: 'append', sourceEventSeqs: [call.seq] })
@@ -47,10 +47,10 @@ it('official DSH confirms a human disable and executes only the prepared account
     }
     expect(JSON.stringify(await invoke())).toContain('confirmation_required')
     expect(update).not.toHaveBeenCalled()
-    inbox.append('next-step', createUserMessage({ content: [{ type: 'text', text: '确认关闭快记建议' }], source: { kind: 'user' } }))
+    inbox.append('next-step', createUserMessage({ content: [{ type: 'text', text: '确认关闭快记实体识别' }], source: { kind: 'user' } }))
     for (const message of inbox.claim('next-step', 0)) session.append('user/message', message, { surfaceOp: 'append' })
     expect((await invoke()).isError).toBe(false)
     expect(update).toHaveBeenCalledOnce()
-    expect(update.mock.calls[0]).toEqual([{ key: 'record_thought', enabled: false, expectedVersion: 9, billingConsent: false }, 'prod:123', expect.any(AbortSignal)])
+    expect(update.mock.calls[0]).toEqual([{ key, enabled: false, expectedVersion: 9, billingConsent: false }, 'prod:123', expect.any(AbortSignal)])
   } finally { await ctx.fiber.dispose() }
 })

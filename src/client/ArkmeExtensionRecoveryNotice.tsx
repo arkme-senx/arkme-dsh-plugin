@@ -1,6 +1,7 @@
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { ArkmeDesktopQuarantineStatus } from '../extensions/desktop-quarantine.js'
+import { useAskDsh } from './use-ask-dsh.js'
 import { copyText } from './clipboard-text.js'
 import { callArkme } from './api.js'
 import { arkmeUi } from './ui-controller.js'
@@ -64,6 +65,11 @@ export function ArkmeExtensionRecoveryNotice({
   const [copied, setCopied] = useState(false)
   const [busyPackage, setBusyPackage] = useState<string>()
   const [error, setError] = useState('')
+  const [handedOff, setHandedOff] = useState(false)
+  const askDsh = useAskDsh('quarantine:' + (status?.quarantineId ?? ''), () => {
+    setHandedOff(true)
+    arkmeUi.showHarness()
+  })
 
   useEffect(() => {
     let active = true
@@ -74,7 +80,7 @@ export function ArkmeExtensionRecoveryNotice({
   }, [request])
 
   const entries = useMemo(() => status?.entries.filter(entry => !entry.dismissed && !entry.resolved) ?? [], [status])
-  if (status?.active !== true || entries.length === 0) return null
+  if (handedOff || status?.active !== true || entries.length === 0) return null
 
   const localSafeMode = status.mode === 'local-safe-mode'
   const unknown = tr('未记录')
@@ -88,10 +94,11 @@ export function ArkmeExtensionRecoveryNotice({
     ]),
     '', tr('Harness 原始错误'), status.failureLogTail || unknown,
   ].join('\n')
+  const diagnosticPrompt = diagnostics + '\n\n' + tr('请根据以上诊断找到原插件项目。如果来源是安装包，请先定位源码。检查 Web 入口、激活函数和依赖服务的注册时机，复现后再修改。如果错误中出现 loading，它只表示检查当时的状态，请验证具体原因。修复并重新构建后，请告诉我何时点击「重新启用并重启」，以及用哪个实际操作验证插件功能。')
   const copyDiagnostics = async () => {
     setError('')
     try {
-      await copyText(diagnostics + '\n\n' + tr('请根据以上诊断找到原插件项目。如果来源是安装包，请先定位源码。检查 Web 入口、激活函数和依赖服务的注册时机，复现后再修改。如果错误中出现 loading，它只表示检查当时的状态，请验证具体原因。修复并重新构建后，请告诉我何时点击「重新启用并重启」，以及用哪个实际操作验证插件功能。'))
+      await copyText(diagnosticPrompt)
       setCopied(true)
     } catch {
       setCopied(false)
@@ -137,7 +144,7 @@ export function ArkmeExtensionRecoveryNotice({
         <button
           type="button"
           style={{ ...styles.button, ...styles.primaryButton }}
-          disabled={busyPackage !== undefined}
+          disabled={busyPackage !== undefined || askDsh.busy}
           data-arkme-quarantine-action="reenable"
           onClick={() => { void reenable(entry.packageName) }}
         >{busyPackage === entry.packageName ? '正在重新启用…' : '重新启用并重启'}</button>
@@ -145,8 +152,16 @@ export function ArkmeExtensionRecoveryNotice({
     </ul>
     {detailsVisible && <>
       <pre style={styles.details}>{diagnostics}</pre>
+      <div style={styles.actions}>
       <button type="button" style={styles.button} data-arkme-quarantine-action="copy"
-        onClick={() => { void copyDiagnostics() }}>{copied ? tr('已复制诊断') : tr('复制诊断给 Agent')}</button>
+        onClick={() => { void copyDiagnostics() }}>{copied ? tr('已复制诊断') : tr('复制诊断信息')}</button>
+      <button type="button" style={{ ...styles.button, ...styles.primaryButton }}
+        data-arkme-quarantine-action="ask-dsh" disabled={askDsh.busy || busyPackage !== undefined}
+        onClick={() => { void askDsh.runText(diagnosticPrompt, diagnosticPrompt) }}>
+        {tr(askDsh.busy ? '正在准备诊断信息…' : '发送给 Deepseek Harness 排查')}
+      </button>
+      </div>
+      {askDsh.status && <p role="status" style={styles.summary}>{tr(askDsh.status)}</p>}
     </>}
     {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
     <div style={styles.actions}>

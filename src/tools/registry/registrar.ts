@@ -18,6 +18,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_thought_reply',
  'arkme_codex_work_record_change','arkme_codex_image_read',
   'arkme_records_export',
+  'arkme_selected_text_forward',
   'arkme_recording_strategy_start',
   'arkme_realtime_dictation',
   'arkme_recording_strategy_preference',
@@ -31,7 +32,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_recording_speaker_correct',
   'arkme_recording_speaker_evidence_build',
   'arkme_team_members_add',
-  'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_message_recall', 'arkme_team_message_edit', 'arkme_team_send_task', 'arkme_team_mark_change',
+  'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_message_recall', 'arkme_team_message_delete', 'arkme_chat_message_action', 'arkme_team_message_edit', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_outbound_open',
   'arkme_team_groups_change',
   'arkme_team_notification_policy_set',
@@ -109,6 +110,7 @@ function cleanArgument(value: unknown, maxLength: number): string {
 }
 
 function coreConfirmationQuestion(name: string, args: Record<string, unknown>): string {
+  if (name === 'arkme_selected_text_forward') return '是否将刚才选中的文字与附言发送到选定对话？只分享这段摘录，不授予原文访问权。'
   if (name === 'arkme_transcript_view_change') return '是否更新你自己的录音或通话转写更正/标记？原始转写与其他人的视图保持独立。'
   if (name === 'arkme_world_suggestions_change') {
     const request = JSON.parse(String(args.request_json)) as { action?: string; days?: number }
@@ -187,6 +189,8 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_message_edit') return `是否确认将这条团队消息修改为“${cleanArgument(args.text,90)}”？已有附件保留，并形成新的编辑版本。`
   if (name === 'arkme_team_message_forward') return '是否确认将所选团队消息转发到指定目标？目标中的冻结内容和附件将按其当前访问权限提供。'
   if (name === 'arkme_team_message_copy_link') return '是否确认生成所选团队消息的公开分享链接？取得链接的人可按分享审核规则查看这些内容。'
+  if (name === 'arkme_team_message_delete' || name === 'arkme_chat_message_action' && args.action === 'delete') return '是否确认仅从你的会话中删除这条消息？其他人仍可查看。'
+  if (name === 'arkme_chat_message_action') return '是否确认撤回这条自己发送的消息？此对话中的参与者将无法再查看正文。'
   if (name === 'arkme_team_message_recall') return '是否确认撤回你在这个团队会话中发布的这条消息？此操作不可恢复，你的原始快记会保留。'
   if (name === 'arkme_team_message_report') return '是否确认将这条团队消息的当前版本举报给平台审核？这不会删除作者的个人快记。'
   if (name === 'arkme_team_send_task') return cleanArgument(args.action, 30) === 'cancel'

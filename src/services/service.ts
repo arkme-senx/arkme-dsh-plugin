@@ -40,6 +40,7 @@ export interface StateStore extends RecentEmojiStore {
 
   teamMemberAddition?(scope: string, teamId: string, change?: {put: import('../team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}): Promise<import('../team-member-add-contract.js').TeamMemberAdditionAttempt | undefined>
   teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
+  teamAvatarManifest?(accountKey: string, side: import('../team-app-contract.js').TeamSide, images?: readonly import('../team-app-contract.js').TeamAvatarDescriptor[]): Promise<readonly import('../team-app-contract.js').TeamAvatarDescriptor[]>
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
   localTranscriptEntries?(account: string, scope: string, ids: string[]): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
@@ -67,7 +68,8 @@ arkoFileRefs(userId:number):Promise<string[]>
   clearRecordingSpeakerCache?(scope: string, userId: number): Promise<void>
   readDirectoryCache?(userId: number): Promise<import('../types.js').ArkmeSourceList | undefined>
   writeDirectoryCache?(userId: number, page: import('../types.js').ArkmeSourceList): Promise<void>
-  readAvatarCache?(userId: number, imageRef: string): Promise<import('../types.js').ArkmeImageBytes | undefined>
+  readAvatarCache?(userId: number, imageRef: string, maxAgeMillis?: number): Promise<import('../types.js').ArkmeImageBytes | undefined>
+  deleteAvatarCache?(userId: number, imageRef: string): Promise<void>
   writeAvatarCache?(userId: number, imageRef: string, image: import('../types.js').ArkmeImageBytes): Promise<void>
   selfRoleAvatarLocalRef?(userId: number, fileAssetUid: string): Promise<string | undefined>
   forgetCachedMembers?(userId: number, group: string, refs: readonly string[]): Promise<void>
@@ -90,6 +92,7 @@ arkoFileRefs(userId:number):Promise<string[]>
   cacheProfile(userId: number, profile: ArkmeUserProfile): Promise<ArkmeUserProfileSnapshot>
   listPending(userId: number): Promise<ArkmePendingWrite[]>
   putPending(userId: number, pending: ArkmePendingWrite): Promise<void>
+  discardPending(userId: number, pending: ArkmePendingWrite): Promise<void>
   markAttempt(userId: number, recordUid: string, error: string): Promise<void>
   markSynced(userId: number, recordUid: string, status: number): Promise<void>
   listExtensionReviewOperations(userId: number): Promise<ArkmeExtensionReviewOperation[]>
@@ -196,6 +199,7 @@ export interface ArkmeRemoteRequestOptions {
   stringIdFields?:readonly string[]
   /** Explicit Chat source frame; Host-only and never part of a consumer DTO. */
   chatAccessRef?: string
+  chatMessageActionsV2?: boolean
   /** Reserved for realtime message projection; only exact read routes are eligible. */
   traffic?: 'message-sync'
   lane?: ArkmeRequestLane
@@ -316,6 +320,8 @@ export class ServiceRuntime {
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
   invalidateMemberCache(): void { this.memberCacheRevision += 1 }
   readonly requestCoordinator: ArkmeRequestCoordinator
+  // Media holds permits until body completion, independently of short JSON reads.
+  private readonly mediaStreamCoordinator = new ArkmeRequestCoordinator()
   // One bounded pool for message bodies and their awaited projection reads.
   // Background member rosters and other UI reads never inherit this context.
   private readonly messageSyncCoordinator = new ArkmeRequestCoordinator({
@@ -483,6 +489,7 @@ export class ServiceRuntime {
     this.readRevisions.set(scope, this.readRevision(scope) + 1)
     this.requestCoordinator.invalidateScope(scope)
     this.messageSyncCoordinator.invalidateScope(scope)
+    this.mediaStreamCoordinator.invalidateScope(scope)
   }
 
   invalidateKey(scope: string, key: string): void {
@@ -503,6 +510,7 @@ export class ServiceRuntime {
     this.calendarRevisions.clear()
     this.requestCoordinator.dispose()
     this.messageSyncCoordinator.dispose()
+    this.mediaStreamCoordinator.dispose()
   }
 
   async requireSession(): Promise<ArkmeSessionCredentials> {
@@ -652,6 +660,9 @@ export class ServiceRuntime {
     ]).has(path)) return true
     if (baseUrl === this.config.teamBaseUrl && new Set([
       '/api/v1/team/list-mine', '/api/v1/team/members/list', '/api/v1/team/message-channel/get', '/api/v1/team/official-feedback-target',
+      '/api/v1/team/workspace/folders/query',
+      '/api/v1/team/entry-preferences/list', '/api/v1/team/entry-preferences/query',
+      '/api/v1/team/entry-preferences/v2/list', '/api/v1/team/entry-preferences/v2/query',
       '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
@@ -725,7 +736,7 @@ export class ServiceRuntime {
         let errorCode: string | undefined
         try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
           baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
-          preserveHttpError, preserveForbiddenError, requestTimeoutMs, options.chatAccessRef,options.stringIdFields,
+          preserveHttpError, preserveForbiddenError, requestTimeoutMs, options.chatAccessRef,options.stringIdFields, options.chatMessageActionsV2,
         )) } catch (error) {
           if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
           throw error
@@ -759,6 +770,7 @@ export class ServiceRuntime {
     requestTimeoutMs = this.config.requestTimeoutMs,
     chatAccessRef?: string,
     stringIdFields:readonly string[]=[],
+    chatMessageActionsV2 = false,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
@@ -779,6 +791,7 @@ export class ServiceRuntime {
         method: 'POST',
         headers: {
           ...(chatAccessRef ? { 'X-Chat-Access-Ref': chatAccessRef } : {}),
+          ...(chatMessageActionsV2 ? { 'X-Arkme-Message-Actions': '2' } : {}),
           ...(multipart ? {} : { 'Content-Type': 'application/json' }),
           'Accept-Language': 'zh-CN',
           Usersource: '3',
@@ -1193,7 +1206,7 @@ export class ServiceRuntime {
     }
   }
 
-  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false,wire:Pick<ArkmeRemoteRequestOptions,'stringIdFields'>={}): Promise<T> {
+  async authenticatedTeamPost<T>(path: string, body: Record<string, unknown>, initialSession?: ArkmeSessionCredentials, signal?: AbortSignal, read = false,wire:Pick<ArkmeRemoteRequestOptions,'stringIdFields'>={}, background = false): Promise<T> {
     const origin = this.config.teamBaseUrl
     if (!origin) throw new ArkmePluginError('team-service-unavailable', '团队服务地址未配置', false, 503)
     let session = initialSession ?? await this.requireSession()
@@ -1202,7 +1215,8 @@ export class ServiceRuntime {
     const snapshotRead = typeof body.result_id === 'string' && body.result_id.length > 0 && [
       'analysis/result', 'analysis/words', 'dates', 'participants', 'exports/download',
     ].some(action => path === `/api/v1/team/conversations/history/${action}`)
-    const options = () => this.authenticatedRequestOptions(session, 'team', read ? 'interactive-read' : 'write', {
+    const lane = read ? (background ? 'background-read' : 'interactive-read') : 'write'
+    const options = () => this.authenticatedRequestOptions(session, 'team', lane, {
       ...wire,bypassCache: true, cacheMs: 0,
       ...(snapshotRead ? { requestTimeoutMs: Math.max(150_000, this.config.requestTimeoutMs) } : {}),
     })
@@ -1326,7 +1340,7 @@ export class ServiceRuntime {
     try {
       // Admission, token recovery and first headers are bounded independently
       // of media duration. The opened body owns its progress/idle lifetime.
-      return await this.requestCoordinator.runStream({
+      return await this.mediaStreamCoordinator.runStream({
         scope: this.requestScope(session.userId), lane: 'interactive-read', service, signal,
         operation: signal => this.openMediaStream(service, path, { ...options, signal }, session),
       })

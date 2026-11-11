@@ -1,3 +1,4 @@
+import type { ArkmeTimelineItem } from './types.js'
 import type { ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
 /** Public facts. Counts describe one frozen cohort, never read acknowledgements. */
@@ -33,7 +34,19 @@ export interface ChatSyncPage {
   /** Raw authorized bodies exist only between transport and Host projection. */
   bodies: Map<string, Record<string, unknown>[]>
 }
-export interface ChatSyncPlan { progress: ArkmeMessageSyncProgress; checkpoint: string; epoch: number; active: boolean }
+export interface ChatSyncProjection {
+  sourceKey: string
+  reset?: 'accessible' | 'restricted'
+  changes: Array<{ itemKey: string; revision: number; version: number; item?: ArkmeTimelineItem }>
+}
+export interface ChatSyncUnreadPreview {
+  uid: string; sourceKey: string; sequence: number; item: ArkmeTimelineItem
+}
+export interface ChatSyncPlan {
+  progress: ArkmeMessageSyncProgress; checkpoint: string; epoch: number; active: boolean
+  projections?: ChatSyncProjection[]
+  unreadPreviews?: ChatSyncUnreadPreview[]
+}
 export interface ChatSyncBatch { uid: string; kind: number; membership: number; work: ChatSyncWork[] }
 export interface ChatSyncLocalPage { events: ArkmeUnifiedTimelineEvent[]; before?: number; revision: number }
 export type ChatSyncCommand =
@@ -42,7 +55,7 @@ export type ChatSyncCommand =
   | { action: 'ack'; account: string; sourceKey: string; through: number }
   | { action: 'manifest' | 'commit'; account: string; epoch: number; expectedCheckpoint: string; page: Omit<ChatSyncPage, 'bodies'>; ticket: number; now: number }
   | { action: 'freeze' | 'finish'; account: string; epoch: number }
-  | { action: 'pending'; account: string; epoch: number; now: number; limit: number }
+  | { action: 'pending'; account: string; epoch: number; now: number; limit: number; uid?: string }
   | { action: 'ranges'; account: string; epoch: number }
   | { action: 'read'; scope: string; anchorId?: string; limit: number; before?: number }
 

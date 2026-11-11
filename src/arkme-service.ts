@@ -49,7 +49,7 @@ import type {ArkmeTeamProfile,ArkmeTeamProfileUpdate,ArkmeTeamProfileResult} fro
 import { ChatMessageSyncService } from './services/chat-message-sync-service.js'
 import { UnifiedChatTimelineService } from './services/unified-chat-timeline-service.js'
 import { sendSelectedTextForward } from './services/selected-text-forward.js'
-import { readExcerptOriginal } from './services/excerpt-original.js'
+import { readExcerptOriginal, matchExcerptOriginal } from './services/excerpt-original.js'
 import { sendSelectedTextSelfNote } from './services/selected-text-self-note.js'
 import { LogoutFeedback } from './logout-feedback.js'
 import { OfficialNotificationService } from './services/official-notification-service.js'
@@ -646,6 +646,10 @@ export class ArkmeService {
   }
   async teamHistory(conversationRef:string,action:import('./team-history-contract.js').TeamHistoryAction,options:import('./team-history-contract.js').TeamHistoryOptions={},signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryResponse>{return await this.executeTeamApp('team.app.history',{conversationRef,action,options},signal) as import('./team-history-contract.js').TeamHistoryResponse}
   async readTeamHistoryExportChunk(resultRef:string,cursor?:string,signal?:AbortSignal):Promise<import('./team-history-contract.js').TeamHistoryExportChunk>{return await this.executeTeamApp('team.app.history.chunk',{resultRef,...(cursor?{cursor}:{})},signal) as import('./team-history-contract.js').TeamHistoryExportChunk}
+  async readTeamMentionCandidates(conversationRef:string,teamRef:string,options:{cursor?:string;limit?:number}={},signal?:AbortSignal):Promise<import('./team-message-contract.js').TeamMentionCandidatePage> {
+    if (!conversationRef || !teamRef) throw new TypeError('Team mention candidates require conversation and Team references')
+    return await this.executeTeamApp('team.app.members',{conversationRef,teamRef,pageCursor:options.cursor,limit:options.limit,mentionCandidates:true},signal) as import('./team-message-contract.js').TeamMentionCandidatePage
+  }
   async readTeamMessages(conversationRef:string,options:TeamMessageReadOptions={},signal?:AbortSignal):Promise<TeamTimeline> {
     return await this.executeTeamApp(options.messageRef?'team.app.locate':'team.app.timeline',{conversationRef,...options},signal) as TeamTimeline
   }
@@ -980,7 +984,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         this.realtime.emitChatClientEvent({ type: 'directory-update', revision: this.realtime.nextChatClientRevision(), page })
         void this.realtime.refreshAttentionSummary()
       },
-      async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+      async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId),
+      async (ref, signal) => await this.unifiedTimeline.read(ref, { cacheOnly: true, limit: 1 }, signal))
     this.realtime.offlineContextInvalidation = async () => await this.unifiedTimeline.refreshKnownWindows()
     this.realtime.selfRoleInvalidation = async () => await this.selfRoles.refresh()
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
@@ -1005,11 +1010,15 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.realtime.audienceSourceAliases=key=>this.unifiedTimeline.audienceAliases(key)
-    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys) => {
+    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys, projections) => {
       this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
-        ...(sourceKeys?.length ? { sourceKeys } : {}) })
+        ...(sourceKeys?.length ? { sourceKeys } : {}), ...(projections?.length ? { projections } : {}) })
+    }, (session, previews, signal) => this.directory.refreshSyncedUnread(session, previews, signal))
+    this.directory.onChatPageAvailable = () => this.messageSync.resumeTransport()
+    this.realtime.subscribeChatRealtime(event => {
+      this.messageSync.accept(event)
+      if (event.type === 'reconcile' && event.connected) void this.fileTransfers?.resumeAfterReconnect().catch(() => undefined)
     })
-    this.realtime.subscribeChatRealtime(event => this.messageSync.accept(event))
     this.realtime.subscribeChatRealtime(event => {
       if (event.type === 'timeline-changed') void this.unifiedTimeline.invalidate(event.sourceKey, event.timelineItemKey, event.relationTerminal || event.changeKind === 'deleted')
       else if (event.type === 'members-invalidated' || event.type === 'member-events-invalidated') void this.unifiedTimeline.invalidate(event.sourceKey)
@@ -1106,6 +1115,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         await this.localFileOpener(path, signal)
       },
     })
+    void this.fileTransfers?.resume().catch(() => undefined)
   }
   private filesOwner(): FileTransfers {
     if (!this.fileTransfers) throw new ArkmePluginError('file-flow-unavailable', '当前宿主不支持本地文件流程，请升级插件', false, 501)
@@ -1132,11 +1142,11 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   async fileOpenLocal(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocal(ref, signal) }
   async fileOpenLocalFolder(ref: string, signal?: AbortSignal) { return await this.filesOwner().openLocalFolder(ref, signal) }
   async fileRemove(ref: string) { await this.filesOwner().remove(ref) }
-  async fileSend(input: ArkmeFileSendInput) {
+  async fileSend(input: ArkmeFileSendInput, recovery?: { signal?: AbortSignal }) {
     if (input.content.textFormat === 'markdown' && this.config.markdownQuickNotesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 发送尚未开放，请稍后重试', false, 403)
-    return await this.filesOwner().enqueue(input)
+    return await this.filesOwner().enqueue(input, recovery)
   }
-  async fileSendTasks(sourceRef?: string) { return await this.filesOwner().tasks(sourceRef) }
+  async fileSendTasks(sourceRef?: string, watchTaskRefs?: readonly string[]) { return await this.filesOwner().tasks(sourceRef, watchTaskRefs) }
   async fileSendRetry(taskRef: string) { return await this.filesOwner().retry(taskRef) }
   async fileStageBytes(contentBase64: string, metadata: Pick<ArkmeLocalFile, 'fileName' | 'mimeType'>) { return await this.filesOwner().stageBytes(contentBase64, metadata) }
   async fileSendDiscard(taskRef: string) { return await this.filesOwner().discard(taskRef) }
@@ -1382,6 +1392,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
 
   async authStatus(): Promise<ArkmeAuthSnapshot> {
     const snapshot = await this.auth.authStatus()
+    if (snapshot.status === 'authenticated') void this.fileTransfers?.resume().catch(() => undefined)
     void this.deviceLock.refresh().catch(() => undefined)
     void this.recordingPresenceWriter.resumeCurrent().catch(() => undefined)
     return snapshot
@@ -1489,6 +1500,7 @@ arkoImagesV1:true,
         topicHomeVisibility: true,
         arkoLifecycleV1: true,
         arkoHistoryReadsV1: true, arkoInteractionTimelineV1: true,
+        selectedTextForwardV1: true,
         recordExportV1: true,
         officialNotificationsV1: true,
         entityArchive: true,
@@ -1503,7 +1515,9 @@ arkoImagesV1:true,
         teamMessageRecall: 1,
         teamMessageSnapshot: 1,
         teamHistoryV1: true,
+        personalMessageActionsV2: true,
         teamPersonMentions: 1,
+        teamMentionCandidates: 1,
         teamNotificationPoliciesV1: true,
         teamEntryPreferencesV1: true,
         groupSelfNickname: true,
@@ -1672,7 +1686,7 @@ recordingAnalysisV1: true,
     this.directory.dispose()
     this.record.dispose()
     this.realtime.resetAttentionSummary()
-    this.fileTransfers?.cancelActive()
+    this.fileTransfers?.dispose()
     this.contact.dispose()
     this.contactDirectory.dispose()
     this.unmarkedSpeaker.dispose()
@@ -2705,15 +2719,45 @@ recordingAnalysisV1: true,
     }) } as T
   }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean } = {}): Promise<ArkmeTimelinePage> {
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const localInitial = options.cursor?.unified?.cacheOnly === true && options.cursor.unified.mode === 'initial'
+    if (source.kind === 'send_to_self' && localInitial) {
+      const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 40)))
+      const pending = await this.runtime.stateStore.listPending(session.userId)
+      const current = await this.runtime.requireSession()
+      options.signal?.throwIfAborted()
+      if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+        throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+      }
+      const items: ArkmeTimelineItem[] = pending.slice(-limit).map(entry => ({
+        ...this.record.recordTimelineItem({ recordUid: entry.recordUid, textContent: entry.textContent, title: '',
+          sendAtMillis: entry.sendAtMillis, status: 1, templateKind: 0, version: 1,
+          ...(entry.textFormat ? { textFormat: entry.textFormat } : {}),
+          ...(entry.excerpt ? { excerpt: entry.excerpt } : {}) }),
+        localState: entry.lastError ? 'failed' : 'pending',
+        awaitingTimelineProjection: true,
+        ...(entry.lastError ? { lastError: entry.lastError } : {}),
+      }))
+      return { source: await this.source.sourceItem(source), items, hasMore: false }
+    }
+    if (options.desktopLocal && (!localInitial || source.groupDelegation
+      || source.kind !== 'private_chat' && source.kind !== 'group_chat')) {
+      throw new ArkmePluginError('chat-desktop-local-unsupported', '此会话不能使用桌面本地读取', false, 400)
+    }
+    if (!options.background && !options.cursor?.unified?.cacheOnly && (!options.cursor || options.cursor.unified?.mode === 'initial') && !options.signal?.aborted) {
+      const memberChat = (source.kind === 'private_chat' || source.kind === 'group_chat') && !source.groupDelegation
+      this.messageSync.preferConversation(session.userId, memberChat ? source.ownerRef : undefined)
+    }
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
-      this.realtime.preferChatProjection(session.userId, source.ownerRef)
-      return await this.withSelfRoleSnapshots(await this.unifiedTimeline.read(sourceRef, {
+      if (!options.cursor?.unified?.cacheOnly) this.realtime.preferChatProjection(session.userId, source.ownerRef)
+      const page = await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal, options.background === true), session.userId)
+      }, options.signal, options.background === true)
+      if (!options.cursor?.unified?.cacheOnly && !source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
+      return await this.withSelfRoleSnapshots(page, session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
@@ -2732,6 +2776,20 @@ recordingAnalysisV1: true,
   }
   async sharedRecordingDetail(detailRef: string, options: { sourceRef?: string; signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)
+  }
+
+  async changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal) {
+    const { sourceKey, throughSequence, ...result } = await this.chat.changeChatMessage(sourceRef, actionRef, action, signal)
+    this.realtime.emitChatClientEvent({
+      type: 'timeline-changed', revision: this.realtime.nextChatClientRevision(), sourceKey,
+      timelineItemKey: result.timelineItemKey, changeKind: 'deleted', changeVersion: result.changedAtMillis,
+      relationTerminal: true, throughSequence,
+    })
+    return result
+  }
+
+  async deleteTeamMessage(conversationRef: string, messageRef: string, signal?: AbortSignal) {
+    return await this.executeTeamApp('team.app.delete', { conversationRef, messageRef }, signal) as import('./chat-message-actions.js').TeamMessageDeletionResult
   }
 
   async deleteSourceRecords(sourceRef: string, deletionRefs: readonly string[], signal?: AbortSignal) {
@@ -2881,21 +2939,56 @@ recordingAnalysisV1: true,
     const session = await this.runtime.requireSession()
     if (`${this.config.environment}:${session.userId}` !== input.expectedAccountKey) throw new ArkmePluginError('selected-text-account-changed', '账号已变化，请重新选择', false, 409)
     const target = await this.source.openSourceRef(input.targetSourceRef, session.userId)
-    if(target.kind==='send_to_self'||target.kind==='default_category')return this.sendQuotedSelfNote({expectedAccountKey:input.expectedAccountKey,recordUid:input.recordUid,noteText:input.commentText,quote:input.quote},signal,true)
-    return sendSelectedTextForward(this.runtime, input, target, (text, userId) => this.chat.sendSourceText(input.targetSourceRef, text, {
-      recordUid: input.recordUid, relationUid: input.relationUid, expectedUserId: userId, ...(signal ? { signal } : {}),
-    }), signal)
+    return sendSelectedTextForward(this.runtime,input,target,(text,userId,excerpt)=>this.chat.sendSourceExcerpt(input.targetSourceRef,text,excerpt,{recordUid:input.recordUid,relationUid:input.relationUid,sendAtMillis:input.sendAtMillis,expectedUserId:userId,...(signal?{signal}:{})}),signal)
   }
 
-  async excerptOriginal(recordUid:string,signal?:AbortSignal) {
+  async prepareSelectedText(input:{expectedAccountKey:string;quote:unknown},signal?:AbortSignal) {
+    const session=await this.runtime.requireSession()
+    if(`${this.config.environment}:${session.userId}`!==input.expectedAccountKey)throw new ArkmePluginError('selected-text-account-changed','账号已变化',false,409)
+    const quote=readSelectedTextNoteQuote(input.quote)
+    if(!quote)throw new ArkmePluginError('selected-text-invalid','选区无效',false,400)
+    let source=quote.source,sourceSelection=quote.sourceSelection
+    if(quote.origin){
+      try {
+       if(quote.origin.kind==='recording'){const prepared=await this.recording.prepareExcerptSelection(quote.origin.itemRef,quote,signal);source=prepared.source;sourceSelection=prepared.sourceSelection}
+       else if(quote.origin.kind==='call'){const key=JSON.parse(quote.origin.itemRef);if(Array.isArray(key)&&key.length===2)source=await this.callHistory.excerptSource(key[0],key[1])}
+       else if(quote.origin.kind==='dsh')source=await this.nativeAnnotationService.excerptSource(JSON.parse(quote.origin.itemRef),signal)
+       else if(quote.origin.kind==='team_message')source=await this.teamApp.excerptSource(quote.origin.itemRef)
+       else {const key=JSON.parse(quote.origin.itemRef);if(Array.isArray(key)&&key.length===2){const value=await this.codexWorkRecordsOwner?.canonicalMessageTarget(key[0],JSON.stringify([key[0],key[1],'']));if(value)source={kind:'codex_event',...value}}}
+      } catch { signal?.throwIfAborted();source=undefined }
+    }
+    const current=await this.runtime.accountScopedSession()
+    if(!current||current.userId!==session.userId||current.refreshToken!==session.refreshToken)throw new ArkmePluginError('selected-text-account-changed','账号已变化',false,409)
+    const {origin:ignored,source:old,sourceSelection:oldSelection,...frozen}=quote
+    return {...frozen,...(source?{source}:{}),...(sourceSelection?{sourceSelection}:{})}
+  }
+
+  async excerptOriginal(recordUid:string,signal?:AbortSignal,occurrence?:{sourceRef:string;messageActionRef:string}) {
     const account=await this.runtime.requireSession()
-    const source=await this.record.excerptNavigationSource(recordUid,signal)
-    return readExcerptOriginal(this.runtime,source,{
+    const lifetime=new AbortController()
+    let subscribed=false
+    const stop=this.runtime.subscribeAccountScope(()=>{if(subscribed)lifetime.abort(new ArkmePluginError('excerpt-account-changed','账号已变化，请重新打开原文',false,409))})
+    subscribed=true
+    signal=signal?AbortSignal.any([signal,lifetime.signal]):lifetime.signal
+    try {
+    signal.throwIfAborted()
+    const readSaved=()=>occurrence?this.chat.excerptOccurrence(occurrence.sourceRef,occurrence.messageActionRef,recordUid,signal):this.record.personalRecordDetail(recordUid,signal).then(item=>item.localSelfQuote)
+    const saved=await readSaved()
+    const source=saved?.quote.source
+    if(!source)throw new ArkmePluginError('excerpt-source-unavailable','这条摘录没有可访问的原文位置',false,404)
+    const original=await readExcerptOriginal(this.runtime,source,{
       personal:(uid,s)=>this.record.personalRecordDetail(uid,s),
-      agent:async(session,message,user,s)=>{const rows=await this.arko.actionMessages([{sessionId:session,messageId:message}],user,s);const row=rows.find(item=>item.sessionId===session&&item.messageId===message&&item.status===1);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原文已失效或无权查看',false,404);return row},
+      agent:async(session,message,user,s)=>{const rows=await this.arko.actionMessages([{sessionId:session,messageId:message}],user,s);const row=rows.find(item=>item.sessionId===session&&item.messageId===message&&item.status===1);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原文已失效或无权查看',false,404);return {...row,textFormat:row.role==='assistant'?'markdown':'plain'}},
       recording:(uid,segment,s)=>this.recording.excerptOriginal(uid,segment,s),
       call:async(uid,segment,s)=>{const detail=await this.callHistory.arrangementCallDetail(uid,s),row=detail.transcriptSegments.find(item=>item.sourceSegmentId===segment);if(!row)throw new ArkmePluginError('excerpt-source-unavailable','原通话片段已失效',false,404);return {title:'通话原文',text:row.text,...(row.spokenAtMillis?{at:row.spokenAtMillis}:{})}},
     },signal,account)
+    const current=await readSaved()
+    if(!current||JSON.stringify(current.quote)!==JSON.stringify(saved.quote))throw new ArkmePluginError('excerpt-source-changed','摘录或原文权限已变化，请重新打开',false,409)
+    const session=await this.runtime.accountScopedSession()
+    signal.throwIfAborted()
+    if(!session||session.userId!==account.userId||session.refreshToken!==account.refreshToken)throw new ArkmePluginError('excerpt-account-changed','账号已变化，请重新打开',false,409)
+    return matchExcerptOriginal(original,saved.quote)
+    } finally {stop()}
   }
 
   async sendQuotedSelfNote(input: Parameters<typeof sendSelectedTextSelfNote>[1], signal?: AbortSignal, allowEmptyNote=false) {

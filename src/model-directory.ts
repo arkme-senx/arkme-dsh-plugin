@@ -20,6 +20,8 @@ export interface ModelChoice {
   pointPricing?: { cacheMissInputPerThousand: string; cacheHitInputPerThousand: string; outputPerThousand: string }
   referencesByScene?: Partial<Record<ModelScene, string>>
   availabilityByScene?: Partial<Record<ModelScene, { available: boolean; reason?: string }>>
+  /** Account requirements explain rejection; they never authorize a business route. */
+  capabilityIssuesByScene?: Partial<Record<ModelScene, string[]>>
   billing?: ModelBilling
   /** A shared route can have different billing contracts in different scenes. */
   billingByScene?: Partial<Record<ModelScene, ModelBilling>>
@@ -79,9 +81,11 @@ export function sceneReference(model: ModelChoice, scene: ModelScene): string | 
   return model[scene as 'dsh' | 'arko' | 'arrangement' | 'dayReview']
 }
 export function modelAvailable(model: ModelChoice, scene: ModelScene): boolean {
-  return !!sceneReference(model, scene) && (scene === 'dsh' || scene === 'arko' || scene === 'arrangement' || scene === 'dayReview' ? model.availabilityByScene?.[scene]?.available !== false : model.availabilityByScene?.[scene]?.available === true)
+  return !(model.origin === 'user-provided' && model.capabilityIssuesByScene?.[scene]?.length) && !!sceneReference(model, scene) && (scene === 'dsh' || scene === 'arko' || scene === 'arrangement' || scene === 'dayReview' ? model.availabilityByScene?.[scene]?.available !== false : model.availabilityByScene?.[scene]?.available === true)
 }
 export function unavailableLabel(model: ModelChoice, scene: ModelScene): string {
+  const issues = model.origin === 'user-provided' ? model.capabilityIssuesByScene?.[scene] : undefined
+  if (issues?.length) return issues.join('、')
   const reason = model.availabilityByScene?.[scene]?.reason
   return ({model_not_priced:'此模型尚未配置报价',model_price_ambiguous:'此模型报价无法确认',catalog_unavailable:'模型目录暂不可用',adapter_unavailable:'此模型暂不可用',business_not_opened:'此场景尚未开放',fixed_model_policy:'此场景按固定模型自动运行，暂不支持切换'} as Record<string,string>)[reason ?? ''] ?? '此场景支持情况待确认'
 }
@@ -104,6 +108,7 @@ export function mergeModelChoices(...lists: readonly (readonly ModelChoice[])[])
     result.set(id, { ...existing, ...model, id,
       ...(existing?.billingByScene || model.billingByScene ? { billingByScene: { ...existing?.billingByScene, ...model.billingByScene } } : {}),
       ...(existing?.referencesByScene || model.referencesByScene ? { referencesByScene: { ...existing?.referencesByScene, ...model.referencesByScene } } : {}),
+      ...(existing?.capabilityIssuesByScene || model.capabilityIssuesByScene ? { capabilityIssuesByScene: { ...existing?.capabilityIssuesByScene, ...model.capabilityIssuesByScene } } : {}),
       ...(existing?.availabilityByScene || model.availabilityByScene ? { availabilityByScene: { ...existing?.availabilityByScene, ...model.availabilityByScene } } : {}) })
   }
   return [...result.values()]

@@ -142,7 +142,7 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
   }
 }
 
-function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number): void {
+function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number, phases?: string): void {
   const encoded = JSON.stringify(body)
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -151,7 +151,7 @@ function writeJson(res: ServerResponse, status: number, body: ArkmePluginRespons
     'X-Content-Type-Options': 'nosniff',
     // Standard timing metadata separates Host execution from browser queueing
     // and transport. No request parameters, identity or upstream URL is exposed.
-    ...(started === undefined ? {} : { 'Server-Timing': `arkme;dur=${Math.max(0, performance.now() - started).toFixed(1)}` }),
+    ...(started === undefined ? {} : { 'Server-Timing': `arkme;dur=${Math.max(0, performance.now() - started).toFixed(1)}${phases ? ', ' + phases : ''}` }),
   })
   res.end(encoded)
 }
@@ -931,6 +931,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
   const dayReviewConfirmation = new DayReviewConfirmation(service)
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const started = performance.now()
+    let phases: string | undefined
     const controller = new AbortController()
     const abortDisconnectedRequest = () => {
       if (!res.writableEnded) controller.abort(new Error('Arkme Browser request disconnected'))
@@ -1106,8 +1107,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.accountSessions?.(),
         options.teamCodex,
         options.migrationManager,
-      ))
-      writeJson(res, 200, { ok: true, value }, started)
+      ), measured => { phases = measured })
+      writeJson(res, 200, { ok: true, value }, started, phases)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
       const known = error instanceof ArkmePluginError
@@ -1129,7 +1130,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
           ...(known.imageFailures === undefined ? {} : { imageFailures: known.imageFailures }),
           ...(known.publishReceipt === undefined ? {} : { publishReceipt: known.publishReceipt }),
           ...(known instanceof ArkmeDirectMessageAdmissionError ? { directMessageAdmission: known.admission } : {}) },
-      }, started)
+      }, started, phases)
     } finally {
       res.off('close', abortDisconnectedRequest)
     }
@@ -1324,6 +1325,7 @@ export async function dispatchArkmeHostOperation(
     case 'team.messages.extensions':return await service.readTeamExtensions(stringParam(params,'conversationRef'),stringParam(params,'messageRef'),params.options as import('./team-message-contract.js').TeamExtensionOptions,requestSignal)
     case 'team.history':return await service.teamHistory(stringParam(params,'conversationRef'),params.action as import('./team-history-contract.js').TeamHistoryAction,(params.options ?? {}) as import('./team-history-contract.js').TeamHistoryOptions,requestSignal)
     case 'team.history.export-chunk':return await service.readTeamHistoryExportChunk(stringParam(params,'resultRef'),typeof params.cursor==='string'?params.cursor:undefined,requestSignal)
+    case 'team.messages.mention-candidates':return await service.readTeamMentionCandidates(stringParam(params,'conversationRef'),stringParam(params,'teamRef'),params.options as {cursor?:string;limit?:number},requestSignal)
     case 'team.messages.read':return await service.readTeamMessages(stringParam(params,'conversationRef'),params.options as import('./team-message-contract.js').TeamMessageReadOptions,requestSignal)
     case 'team.messages.send':return await service.sendTeamMessage(params.command as import('./team-send-contract.js').TeamSendInput,requestSignal)
     case 'team.messages.tasks':return await service.teamMessageTasks(stringParam(params,'conversationRef'),requestSignal)
@@ -2207,7 +2209,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'image.read': {
       const image = params.cacheOnly === true
         ? await service.readImage(stringParam(params, 'imageRef'), { cacheOnly: true, ...(requestSignal ? { signal: requestSignal } : {}) })
-        : await service.readImage(stringParam(params, 'imageRef'), requestSignal ? { signal: requestSignal } : {})
+        : await service.readImage(stringParam(params, 'imageRef'), { ...(params.refresh === true ? { refresh: true } : {}), ...(requestSignal ? { signal: requestSignal } : {}) })
       return {
         mediaType: image.mediaType,
         bytes: image.bytes,
@@ -2533,6 +2535,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         stringParam(params, 'sourceRef'),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
           ...(params?.background === true ? { background: true } : {}),
+          ...(params.desktopLocal === true ? { desktopLocal: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
     }
@@ -2656,6 +2659,13 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
+    case 'source.chat-message-action': {
+      const action = stringParam(params, 'action')
+      const ref = messageActionRefsParam({ actionRefs: [stringParam(params, 'actionRef')] })[0]
+      if (!ref || (action !== 'delete' && action !== 'recall')) throw new ArkmePluginError('chat-message-action-invalid', '消息操作无效', false, 400)
+      return await service.changeChatMessage(stringParam(params, 'sourceRef'), ref, action, requestSignal)
+    }
+    case 'team.messages.delete': return await service.deleteTeamMessage(stringParam(params, 'conversationRef'), stringParam(params, 'messageRef'), requestSignal)
     case 'source.message-withdraw': {
       const messageWithdrawalRef = stringParam(params, 'messageWithdrawalRef').trim()
       if (messageWithdrawalRef === '' || messageWithdrawalRef.length > MAX_MESSAGE_WITHDRAWAL_REF_CHARS) {
@@ -2831,12 +2841,13 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
+    case 'selected-text.prepare': return await service.prepareSelectedText({expectedAccountKey:stringParam(params,'expectedAccountKey'),quote:params.quote},requestSignal)
     case 'selected-text.forward': return await service.forwardSelectedText({
       expectedAccountKey: stringParam(params, 'expectedAccountKey'), targetSourceRef: stringParam(params, 'targetSourceRef'),
       recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
-      commentText: stringParam(params, 'commentText'), quote: params.quote,
+      commentText: stringParam(params, 'commentText'), quote: params.quote, sendAtMillis:numberParam(params,'sendAtMillis',0),
     }, requestSignal)
-    case 'excerpt.original': return await service.excerptOriginal(stringParam(params,'recordUid'),requestSignal)
+    case 'excerpt.original': return await service.excerptOriginal(stringParam(params,'recordUid'),requestSignal,params.sourceRef&&params.messageActionRef?{sourceRef:stringParam(params,'sourceRef'),messageActionRef:stringParam(params,'messageActionRef')}:undefined)
     case 'self-note.quote.send': return await service.sendQuotedSelfNote({
       expectedAccountKey: stringParam(params, 'expectedAccountKey'), recordUid: stringParam(params, 'recordUid'),
       noteText: stringParam(params, 'noteText'), quote: params.quote,
@@ -3053,7 +3064,14 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       ...(requestSignal ? { signal: requestSignal } : {}),
     })
     case 'files.search': return await service.fileSearch({ query: stringParam(params, 'query'), limit: numberParam(params, 'limit', 30), cursor: stringParam(params, 'cursor') })
-    case 'files.send.tasks': return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined)
+    case 'files.send.tasks': {
+      const watchTaskRefs = params.watchTaskRefs
+      if (watchTaskRefs === undefined) return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined)
+      if (!Array.isArray(watchTaskRefs) || watchTaskRefs.length > 100 || watchTaskRefs.some(ref => typeof ref !== 'string' || ref.length > 80)) {
+        throw new ArkmePluginError('file-task-watch-invalid', '发送任务订阅无效', false, 400)
+      }
+      return await service.fileSendTasks(stringParam(params, 'sourceRef') || undefined, watchTaskRefs)
+    }
     case 'files.send.retry': return await service.fileSendRetry(stringParam(params, 'taskRef'))
     case 'files.send.discard': return await service.fileSendDiscard(stringParam(params, 'taskRef'))
     case 'files.send.reconcile': return await service.fileSendReconcile(stringParam(params, 'taskRef'))
@@ -3061,10 +3079,11 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'files.receive': return await service.fileReceive(stringParam(params, 'mediaRef'), booleanParam(params, 'start'))
     case 'files.send': {
       const fileRefs = stringListParam(params, 'fileRefs')
+      if (!Array.isArray(params.fileRefs) || params.fileRefs.length !== fileRefs.length) throw new ArkmePluginError('file-send-invalid', '附件引用列表无效', false, 400)
       const backgroundSound = fileBackgroundSoundParam(params, fileRefs)
       const location = params.location === undefined ? undefined : recordLocationCaptureParam(params)
       const expectedUserId = fileExpectedUserIdParam(params)
-      return await service.fileSend({
+      const input = {
         sourceRef: stringParam(params, 'sourceRef'), recordUid: stringParam(params, 'recordUid'), relationUid: stringParam(params, 'relationUid'),
         fileRefs,
         ...(Array.isArray(params.attachmentOrder) ? { attachmentOrder: stringListParam(params, 'attachmentOrder') } : {}),
@@ -3072,7 +3091,10 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(backgroundSound === undefined ? {} : { backgroundSound }),
         ...(location === undefined ? {} : { location }),
         content: richSendParam({ ...params, backgroundSound: undefined }),
-      })
+      }
+      return booleanParam(params, 'recoverAdmission')
+        ? await service.fileSend(input, requestSignal ? { signal: requestSignal } : {})
+        : await service.fileSend(input)
     }
     case 'source.send-rich': {
       const expectedUserId = fileExpectedUserIdParam(params)

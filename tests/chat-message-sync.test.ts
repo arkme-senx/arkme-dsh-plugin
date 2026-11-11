@@ -36,6 +36,24 @@ it('commits bodies and checkpoint durably, freezes m, resumes without recounting
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name LIKE '%read%'").all()).toEqual([]); db.close()
   } finally { s.close() }
 })
+it('keeps confirmed message actions in the committed projection and the reopened cache', () => {
+  const s = setup()
+  try {
+    s.begin()
+    s.page([session([work()])])
+    s.action('freeze')
+    const first = body(work())
+    if (first.event?.kind === 'message') first.event.item.messageActionsV2 = true
+    s.page([session([first])], false)
+    const next = body({ ...work(), revision: 2, version: 2 })
+    s.page([session([next])], false)
+    expect(s.plan.projections).toMatchObject([{ changes: [{ item: { messageActionsV2: true, recordVersion: 2 } }] }])
+    s.reopen()
+    expect(s.execute({ action: 'read', scope: 'test:1:chat', limit: 40 }))
+      .toMatchObject({ events: [{ item: { messageActionsV2: true, recordVersion: 2 } }] })
+  } finally { s.close() }
+})
+
 it('rolls back the entire commit on invalid bodies, counts zero-revision tombstones and holds pending work', () => {
   const s = setup()
   try {
@@ -212,3 +230,36 @@ it('keeps the foreground window allowance when unread bodies exceed the old shar
     expect(clean.prepare('SELECT bodies FROM message_sync_stats').get()!.bodies).toBe(0);clean.close()
   } finally {s.close()}
 },30000)
+
+it('publishes same-sequence edits and permission changes only from the committed SQLite result', () => {
+  const s = setup()
+  try {
+    s.begin()
+    s.page([session([work()])])
+    s.action('freeze')
+    const created = s.page([session([body(work())])], false)
+    expect(created.projections).toBeUndefined()
+    expect(created.unreadPreviews).toMatchObject([{ uid: 'chat', sourceKey: 'source:chat', sequence: work().sequence,
+      item: { timelineItemKey: 'key:one', recordVersion: 1 } }])
+    s.action('finish')
+    s.begin()
+    const edited = { ...work(), revision: 2, version: 2 }
+    s.page([session([edited])])
+    s.action('freeze')
+    const committed = s.page([session([body(edited)])], false)
+    expect(committed.projections).toMatchObject([{ sourceKey: 'source:chat', changes: [{ itemKey: 'key:one', revision: 2, item: { recordVersion: 2 } }] }])
+    expect(s.execute({ action: 'read', scope: 'test:1:chat', limit: 40 })).toMatchObject({ events: [{ item: { recordVersion: 2 } }] })
+    s.action('finish')
+    s.begin()
+    expect(s.page([session([{ ...edited, revision: 3, state: 'removed' }])]).projections).toEqual([
+      { sourceKey: 'source:chat', changes: [{ itemKey: 'key:one', revision: 3, version: 2 }] },
+    ])
+    expect(s.execute({ action: 'read', scope: 'test:1:chat', limit: 40 })).toBeUndefined()
+    expect(s.page([{ ...session([]), accessible: false }]).projections).toEqual([
+      { sourceKey: 'source:chat', reset: 'restricted', changes: [] },
+    ])
+    expect(s.page([session([])]).projections).toEqual([
+      { sourceKey: 'source:chat', reset: 'accessible', changes: [] },
+    ])
+  } finally { s.close() }
+})
