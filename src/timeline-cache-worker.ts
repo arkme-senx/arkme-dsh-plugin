@@ -4,7 +4,9 @@ import type { TimelineCacheCommand } from './timeline-cache-port.js'
 
 const store = new UnifiedTimelineCache(workerData.directory as string)
 parentPort!.postMessage({ ready: true })
-parentPort!.on('message', ({ id, command }: { id: number; command: TimelineCacheCommand }) => {
+parentPort!.on('message', ({ id, command, sent }: { id: number; command: TimelineCacheCommand; sent?: number }) => {
+  const started = sent === undefined ? undefined : Date.now()
+  const timings = () => started === undefined || sent === undefined ? {} : { queue: started - sent, sqlite: Date.now() - started }
   try {
     let value: unknown
     switch (command.kind) {
@@ -17,11 +19,11 @@ parentPort!.on('message', ({ id, command }: { id: number; command: TimelineCache
       case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal, command.refreshOnly); break
       case 'close': store.close(); parentPort!.postMessage({ id }); parentPort!.close(); return
     }
-    parentPort!.postMessage({ id, value })
+    parentPort!.postMessage({ id, value, ...timings() })
   } catch (error) {
     const message = error instanceof Error ? error.message : ''
     const code = /^message-sync-[a-z-]+$/.test(message) ? message : undefined
     if (!code) console.warn('arkme: timeline storage command failed', { kind: command.kind, ...(command.kind === 'sync' ? { action: command.command.action } : {}), code: (error as { code?: string; errcode?: number })?.code, errcode: (error as { errcode?: number })?.errcode })
-    parentPort!.postMessage({ id, failed: true, ...(code ? { code } : {}) })
+    parentPort!.postMessage({ id, failed: true, ...timings(), ...(code ? { code } : {}) })
   }
 })

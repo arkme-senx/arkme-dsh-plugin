@@ -474,7 +474,16 @@ export function useArkmeRealtimeClientEvents(
       if (browserWindow?.navigator?.onLine === false) return
       void refreshUnread(true).catch(() => undefined)
     }
-    browserWindow?.addEventListener('online', recoverDirectory)
+    const handleOnline = () => {
+      if (!ownsMessagePreparing || browserWindow?.navigator?.onLine === false) return
+      const joinedPreReconnectRead = arkmeChatDirectory.getSnapshot().isRefreshing
+      void refreshUnread(true).catch(() => {
+        if (joinedPreReconnectRead && !stopped) recoverDirectory()
+      })
+      arkmeConversationMembers.refreshActive()
+      reconcileReceipts()
+    }
+    browserWindow?.addEventListener('online', handleOnline)
     const handleWindowFocus = () => {
       arkmeInterwovenInvalidation.invalidate()
       if (ownsMessagePreparing) recoverDirectory()
@@ -490,7 +499,7 @@ export function useArkmeRealtimeClientEvents(
       disconnectEvents()
       browserDocument?.removeEventListener('visibilitychange', handleVisibilityChange)
       browserWindow?.removeEventListener('focus', handleWindowFocus)
-      browserWindow?.removeEventListener('online', recoverDirectory)
+      browserWindow?.removeEventListener('online', handleOnline)
     }
   }, [auth?.environment, auth?.status, auth?.userId, authRevision, refreshDirectoryBaseline, ownsMessagePreparing, ownsNotifications])
 }

@@ -141,7 +141,11 @@ export function usePrivateInteractionDirectory(accountKey: string | undefined, e
         ...(priority === 'background' ? { background: true } : {}),
         limit: 100, ...(cursor ? { cursor } : {}), ...(version ? { expectedVersion: version } : {}),
       }, signal, priority === 'background' ? { priority } : undefined),
-      subscribe: listener => arkmeInterwovenInvalidation.subscribe(listener),
+      subscribe: listener => {
+        const unsubscribe = arkmeInterwovenInvalidation.subscribe(listener)
+        window.addEventListener('online', listener)
+        return () => { unsubscribe(); window.removeEventListener('online', listener) }
+      },
       publish: (rows, error) => {
         const snapshot = { accountKey, rows, ...(error ? { error } : {}) }
         directorySnapshots.set(accountKey, { owner: cacheOwner, snapshot }); publishDirectory()

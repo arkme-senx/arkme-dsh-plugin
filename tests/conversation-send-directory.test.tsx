@@ -1146,6 +1146,24 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'bottom-history' })).toHaveLength(payload === 'same' ? 1 : 0)
   })
 
+  it('returns from history to the cached tail without a network read when offline', async () => {
+    const body = await mountBottomControl(true)
+    vi.stubGlobal('navigator', { onLine: false })
+    const base = memberApi.callArkme
+    const local = unifiedFixture(target, [{ itemUid: 'offline-tail', sequence: 10, senderName: '同事',
+      isMe: false, sendAtMillis: 10, textContent: '离线最新消息', status: 1 }])
+    const reads: unknown[] = []
+    vi.spyOn(memberApi, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation !== 'source.timeline') return base(operation, params, signal)
+      reads.push(params?.cursor)
+      return Promise.resolve(local) as never
+    })
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '回到底部' }).props.onClick() })
+    expect(reads).toEqual([{ unified: { mode: 'initial', cacheOnly: true } }])
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'offline-tail' })).toHaveLength(1)
+    expect(body.scrollTop).toBe(900)
+  })
+
   it('releases the return control on read timeout while preserving history and the draft', async () => {
     const body = await mountBottomControl(true)
     const baseCall = mocks.callArkme.getMockImplementation()!
@@ -2400,6 +2418,93 @@ describe('conversation send directory projection', () => {
     expect(acknowledgements).toEqual(saved ? [] : [50])
   })
 
+  it.each([target, group])('shows the local chat tail if a saved anchor is no longer cached', async source => {
+    activeSource = source
+    arkmeChatDirectory.publish([source])
+    arkmeUi.selectSource(source)
+    window.localStorage.setItem('arkme:reading:v1:main', JSON.stringify({ account: 'test:42',
+      entries: [[source.sourceKey, { scrollTop: 730, stickToBottom: false, anchorId: 'message:expired', anchorOffset: 0 }]] }))
+    const base = memberApi.callArkme
+    const local = unifiedFixture(source, [{ itemUid: 'offline-entry', sequence: 10, senderName: '同事',
+      isMe: false, sendAtMillis: 10, textContent: '离线历史', status: 1 }])
+    const anchors: (string | undefined)[] = []
+    let online = false
+    let recoveredReads = 0
+    vi.spyOn(memberApi, 'callArkme').mockImplementation(async (operation, params, signal) => {
+      if (operation !== 'source.timeline') return base(operation, params, signal)
+      const query = (params?.cursor as import('../src/types.js').ArkmeTimelineCursor | undefined)?.unified
+      if (!query?.cacheOnly) {
+        if (!online) throw new ArkmeClientError({ code: 'arkme-network-error', message: '离线', retryable: true, recovery: { owner: 'host' } } as never)
+        recoveredReads++
+        return local as never
+      }
+      anchors.push(query.anchorId)
+      if (query.anchorId) throw new ArkmeClientError({ code: 'chat-timeline-cache-miss', message: '没有该位置的缓存', retryable: false })
+      return local as never
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(anchors.slice(0, 2)).toEqual(['message:expired', undefined])
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'offline-entry' })).toHaveLength(1)
+    online = true
+    await act(async () => {
+      for (const [event, listener] of vi.mocked(window.addEventListener).mock.calls) {
+        if (event === 'online' && typeof listener === 'function') listener.call(window, new Event('online'))
+      }
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+    expect(recoveredReads).toBe(1)
+  })
+
+  it('opens self history offline from pending local records and refreshes on reconnect', async () => {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    vi.stubGlobal('navigator', { onLine: false })
+    const local = { itemUid: 'self-pending', senderName: '我', isMe: true, sendAtMillis: 10,
+      textContent: '离线待发送', status: 1, localState: 'pending', awaitingTimelineProjection: true }
+    mocks.localTimeline.mockResolvedValue({ source: sendToSelf, items: [local], hasMore: false })
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => operation === 'source.timeline'
+      ? Promise.resolve({ source: sendToSelf, items: [{ ...local, itemUid: 'self-online', localState: 'synced' }], hasMore: false })
+      : base(operation, ...args))
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'self-pending' })).toHaveLength(1)
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.timeline')).toBe(false)
+    vi.stubGlobal('navigator', { onLine: true })
+    await act(async () => {
+      for (const [event, listener] of vi.mocked(window.addEventListener).mock.calls) {
+        if (event === 'online' && typeof listener === 'function') listener.call(window, new Event('online'))
+      }
+      await new Promise(resolve => setTimeout(resolve, 10))
+    })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'self-online' })).toHaveLength(1)
+  })
+
+  it('shows cached messages while durable reading geometry is stalled', async () => {
+    vi.stubGlobal('navigator', { onLine: false })
+    const base = memberApi.callArkme
+    const local = unifiedFixture(target, [{ itemUid: 'offline-without-geometry', sequence: 10, senderName: '同事',
+      isMe: false, sendAtMillis: 10, textContent: '离线历史', status: 1 }])
+    const geometry = deferred<unknown>()
+    const network = vi.fn()
+    vi.spyOn(memberApi, 'callArkme').mockImplementation((operation, params, signal) => {
+      if (operation === 'conversation.viewport.read') return geometry.promise as never
+      if (operation === 'source.timeline') {
+        const query = (params?.cursor as import('../src/types.js').ArkmeTimelineCursor | undefined)?.unified
+        if (query?.cacheOnly) return Promise.resolve(local) as never
+        network()
+      }
+      return base(operation, params, signal)
+    })
+    try {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 160)) })
+      expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'offline-without-geometry' })).toHaveLength(1)
+      expect(network).not.toHaveBeenCalled()
+    } finally {
+      await act(async () => geometry.resolve([]))
+    }
+  })
+
   it('retains persisted reading geometry until the cold local page has loaded', async () => {
     const saved = { scrollTop: 730, stickToBottom: false, anchorId: 'message:persisted', anchorOffset: -10 }
     window.localStorage.setItem('arkme:reading:v1:main', JSON.stringify({ account: 'test:42', entries: [[target.sourceKey, saved]] }))
@@ -3133,6 +3238,37 @@ describe('conversation send directory projection', () => {
       mode: 'source', searchTarget: { query: '#项目' },
     })
     expect(renderer.root.findAllByProps({ 'aria-label': '搜索' }).find(node => node.type === 'input')).toBeUndefined()
+  })
+
+  it.each([target, group])('uses the persistent queue for ordinary chat text and restores its failed bubble', async source => {
+    activeSource = source
+    arkmeChatDirectory.publish([source])
+    arkmeUi.selectSource(source)
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let task: import('../src/file-transfer-contract.js').ArkmeFileSendTask | undefined
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'files.capabilities') return { version: 1, textMessagesVersion: 1 }
+      if (operation === 'files.send') {
+        task = { taskRef: 'offline-chat-task', sourceRef: params.sourceRef, recordUid: params.recordUid,
+          relationUid: params.relationUid, content: { textContent: params.textContent },
+          fileRefs: [], files: [], createdAtMillis: 48, state: 'failed', error: '连接中断' }
+        return task
+      }
+      if (operation === 'files.send.tasks') return task ? [task] : []
+      return baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const draftKey = arkmeSourceComposerDraftKey(42, source)!
+    act(() => arkmeComposerDraftStore.setText(draftKey, '待恢复的聊天文字'))
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick())
+    expect(mocks.callArkme).toHaveBeenCalledWith('files.send', expect.objectContaining({
+      sourceRef: source.sourceRef, fileRefs: [], textContent: '待恢复的聊天文字', recordUid: 'record-new', relationUid: 'relation-new',
+    }))
+    expect(arkmeComposerDraftStore.get(draftKey).text).toBe('')
+    await act(async () => { renderer!.unmount() })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(renderedText(renderer!.toJSON())).toContain('待恢复的聊天文字')
+    expect(renderer!.root.findByProps({ 'data-arkme-send-recovery-trigger': true }).props.title).toBe('连接中断')
   })
 
   it('queues a self note and retries its original task from the pending bubble', async () => {

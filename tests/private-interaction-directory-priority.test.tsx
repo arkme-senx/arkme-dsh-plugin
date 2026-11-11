@@ -96,3 +96,13 @@ it('does not let a retained retry callback act on the next account or after unmo
   currentRetry()
   expect(provider).toHaveBeenCalledTimes(calls)
 })
+
+it('refreshes a failed interaction directory on reconnect without a manual retry', async () => {
+  vi.useFakeTimers()
+  installProvider()
+  await act(async () => { renderer = create(<Directory />) })
+  expect(snapshot.error).toBeDefined()
+  await act(async () => { window.dispatchEvent(new Event('online')); await vi.advanceTimersByTimeAsync(200) })
+  expect(snapshot.error).toBeUndefined()
+  expect(snapshot.rows.map(item => item.displayName)).toEqual(['recent', 'older'])
+})

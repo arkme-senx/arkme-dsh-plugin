@@ -4,7 +4,7 @@ import { callArkme } from './api.js'
 
 type Transport = (operation: 'directory.preferences.read' | 'directory.preferences.set' | 'directory.preferences.migrate', input: Record<string, unknown>) => Promise<unknown>
 const empty: LocalDirectoryPreferences = Object.freeze({})
-type State = { saved: LocalDirectoryPreferences; view: LocalDirectoryPreferences; pending: Map<string, { version: number; value: LocalDirectoryPreference }>; queue: Promise<unknown>; loading?: Promise<void> | undefined; loaded: boolean }
+type State = { saved: LocalDirectoryPreferences; view: LocalDirectoryPreferences; pending: Map<string, { version: number; value: LocalDirectoryPreference }>; queue: Promise<unknown>; loading?: Promise<void> | undefined; loaded: boolean; readFailed?: boolean }
 /** The Host owns persistence. Renderer memory is an optimistic projection, independent of window origin. */
 export class LocalDirectoryPreferenceStore {
   private states = new Map<string, State>()
@@ -32,10 +32,15 @@ export class LocalDirectoryPreferenceStore {
     const run = state.queue.catch(() => {}).then(async () => {
       const entries = normalizeLocalDirectoryPreferences(this.legacy(account))
       const result = await this.transport(Object.keys(entries).length ? 'directory.preferences.migrate' : 'directory.preferences.read', { accountKey: account, ...(Object.keys(entries).length ? { entries } : {}) })
-      state.saved = normalizeLocalDirectoryPreferences(result); state.loaded = true; this.errors.delete(account); this.publish(state)
+      state.saved = normalizeLocalDirectoryPreferences(result); state.loaded = true; state.readFailed = false; this.errors.delete(account); this.publish(state)
     })
-    state.loading = run.catch(error => { this.errors.set(account, '本机置顶设置读取失败，请重试'); this.publish(state); throw error }).finally(() => { state.loading = undefined }); state.queue = state.loading
+    state.loading = run.catch(error => { state.readFailed = true; this.errors.set(account, '本机置顶设置读取失败，请重试'); this.publish(state); throw error }).finally(() => { state.loading = undefined }); state.queue = state.loading
     return state.loading
+  }
+  async recoverRead(account: string, signal: AbortSignal): Promise<void> {
+    const state = this.state(account)
+    await state.loading?.catch(() => {})
+    if (!signal.aborted && state.readFailed) await this.hydrate(account, true)
   }
   set(account: string, key: string, value: LocalDirectoryPreference): Promise<void> {
     if (!account) return Promise.reject(new Error('请先登录'))
@@ -82,8 +87,15 @@ export function useLocalDirectoryPreferenceHydration(account: string) {
     if (!account) return
     const load = () => { void localDirectoryPreferences.hydrate(account, true).catch(() => {}) }
     void localDirectoryPreferences.hydrate(account).catch(() => {})
+    const controller = new AbortController()
+    const recover = () => { void localDirectoryPreferences.recoverRead(account, controller.signal).catch(() => {}) }
     window.addEventListener('focus', load)
-    return () => window.removeEventListener('focus', load)
+    window.addEventListener('online', recover)
+    return () => {
+      controller.abort()
+      window.removeEventListener('focus', load)
+      window.removeEventListener('online', recover)
+    }
   }, [account])
 }
 
