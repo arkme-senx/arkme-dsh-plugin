@@ -1786,7 +1786,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       item={editingSpeaker.item}
       items={transcriptItems}
       loadReviewItems={loadSpeakerReviewItems}
-      onPlay={item => { void playback.playItem(item) }}
+      onPlay={(item, range) => { void playback.playItem(item, item.startAtMillis + (range?.startOffsetMillis ?? 0), range ? item.startAtMillis + range.endOffsetMillis : undefined) }}
       anchor={editingSpeaker.anchor}
       initialBatchUpdate={editingSpeaker.initialBatchUpdate}
       initialReview={editingSpeaker.initialReview ?? false}

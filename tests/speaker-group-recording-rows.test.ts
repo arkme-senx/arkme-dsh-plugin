@@ -30,3 +30,11 @@ it('checks the session before producing source refs and again before returning t
  const g=fixture();g.ensure.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('account changed after projection'))
  await expect(g.read({allowChanged:true})).rejects.toThrow('account changed after projection')
 })
+
+it('preserves requested suspicious ordering across transcript hydration',async()=>{
+ const input=[2,1].map(i=>({locator:{...locator,item_index:i,start_at:i*100,end_at:i*100+50,revision:'rev'},occurred_at:i*1000}))
+ const rows=[1,2].map(i=>({startAt:i*1000,endAt:i*1000+50,locator:{child_id:'child',ordinal:i},speakerEdit:{start:i*100,end:i*100+50,revision:'rev'}}))
+ const owner={assertWorkbenchEnabled:()=>{},runtime:{requireSession:async()=>({userId:1})},readOwner:{transcript:async()=>({revision:'page',items:rows})},ensureRecordingSession:async()=>{},projectWorkbenchPage:async(_date:unknown,_source:unknown,page:{items:typeof rows})=>({items:page.items.map(r=>({itemId:String(r.locator.ordinal),startAtMillis:r.startAt}))})}
+ const result=await RecordingService.prototype.recordingGroupRows.call(owner as unknown as RecordingService,input)
+ expect(result.map(r=>r.itemId)).toEqual(['2','1'])
+})

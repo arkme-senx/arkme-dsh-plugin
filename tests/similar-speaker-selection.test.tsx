@@ -113,3 +113,25 @@ it('retries failed initial member loading without leaving the selection dialog',
  expect(renderer.root.findAllByType('input').filter(x=>x.props.type==='checkbox')).toHaveLength(1)
  expect(mocks.call.mock.calls.filter(([op])=>op==='speaker-directory.group-members')).toHaveLength(2)
 })
+it('shows full coverage and suspicious evidence while preserving the selected subset during local review sorting',async()=>{
+ const original=mocks.call.getMockImplementation()!
+ mocks.call.mockImplementation(async(op,input,signal)=>op==='speaker-directory.group-members'?{
+  items:[row('known',1),row('outlier',2)],snapshotRef:'snapshot',totalCount:2,firstAt:1,lastAt:2,requiresReview:true,
+  consistency:{state:'ready',score:50,analyzedCount:2,totalCount:2,reviewCount:1},scoreDefinition:'cohesion-v1',
+  evidence:[{itemRef:'ref-known',state:'ready',deviation:0},{itemRef:'ref-outlier',state:'ready',deviation:1}]
+ }:original(op,input,signal))
+ await act(async()=>{renderer=create(<SimilarSpeakerSelection people={[person('a')]} assignment={{kind:'anonymous'}} onBack={()=>{}}/>);await tick()})
+ expect(JSON.stringify(renderer.toJSON())).toContain('已分析 2 / 2 段')
+ const checks=renderer.root.findAllByType('input').filter(x=>x.props.type==='checkbox')
+ expect(checks[0]!.props['aria-label']).toContain('outlier')
+ await act(async()=>{checks[0]!.props.onChange({target:{checked:true}});await tick()})
+ expect(JSON.stringify(renderer.toJSON())).toContain('偏离距离：1.000')
+ expect(renderer.root.findAllByType('button').some(b=>b.children.join('')==='试听')).toBe(true)
+})
+
+it('opens an explicit sentence subrange from complete member review without writing',async()=>{
+ await act(async()=>{renderer=create(<SimilarSpeakerSelection people={[person('a')]} assignment={{kind:'anonymous'}} onBack={()=>{}}/>);await tick()})
+ await click('句内拆分')
+ expect(renderer.root.findAllByType('input').some(x=>x.props['aria-label']==='起点（秒）')).toBe(true)
+ expect(writes()).toHaveLength(0)
+})

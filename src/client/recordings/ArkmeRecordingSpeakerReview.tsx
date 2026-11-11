@@ -26,17 +26,18 @@ export function speakerEvidenceBucket(row?: EvidenceRow, margin = 0): Exclude<Fi
   return row.distanceA < row.distanceB ? 'a' : 'b'
 }
 
-export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, onPlay, onUpdated, onClose }: {
+export function ArkmeRecordingSpeakerReview({ item, items, loadItems, explicitScope = false, options, onPlay, onUpdated, onClose }: {
   item: ArkmeRecordingWorkbenchItem
   items: readonly ArkmeRecordingWorkbenchItem[]
+  explicitScope?: boolean
   loadItems?(signal: AbortSignal): Promise<readonly ArkmeRecordingWorkbenchItem[]>
   options: readonly ArkmeRecordingSpeakerOption[]
-  onPlay?(item: ArkmeRecordingWorkbenchItem): void
+  onPlay?(item: ArkmeRecordingWorkbenchItem, range?: { startOffsetMillis: number; endOffsetMillis: number }): void
   onUpdated(day: ArkmeRecordingDay): void
   onClose(): void
 }) {
   const [nearby, setNearby] = useState(false)
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useState(explicitScope)
   const [deviationFirst, setDeviationFirst] = useState(true)
   const [page, setPage] = useState(0)
   const [a, setA] = useState<string[]>([])
@@ -70,12 +71,12 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
     return () => { controller.abort() }
   }, [loadItems, readRevision])
   const all = useMemo(() => [...new Map([item, ...(loadItems ? complete?.items ?? [] : items)].map(row => [row.itemId, row])).values()], [items, item, loadItems, complete])
-  const candidates = useMemo(() => speakerReviewItems(all, item, nearby), [all, item, nearby])
+  const candidates = useMemo(() => explicitScope ? all : speakerReviewItems(all, item, nearby), [all, item, nearby, explicitScope])
   const pages = Math.max(1, Math.ceil(candidates.length / 50))
   const pageIndex = Math.min(page, pages - 1)
   const pageItems = candidates.slice(pageIndex * 50, pageIndex * 50 + 50)
   const consistency = useRecordingConsistency(loadItems && !complete?.items ? [] : [item.itemRef], loadItems && !complete?.items ? [] : pageItems.map(row => row.itemRef))
-  const group = consistency.groups[0]
+  const group = explicitScope ? undefined : consistency.groups[0]
   const deviations = new Map(group?.items.map(row => [row.itemRef, row]) ?? [])
   const referenceA = all.filter(row => a.includes(row.itemId))
   const referenceB = all.filter(row => b.includes(row.itemId))
@@ -143,7 +144,7 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
   </div>
 
   const originalPerson = options.find(option => option.optionKey === item.assignedSpeakerOptionKey && option.kind === 'speaker')
-  if (saving && chosen[0]) return <ArkmeRecordingSpeakerCorrection item={chosen[0]} items={chosen} initialSelectedIds={chosen.map(row => row.itemId)}
+  if (saving && chosen[0]) return <ArkmeRecordingSpeakerCorrection crossDateSelection={explicitScope} item={chosen[0]} items={chosen} initialSelectedIds={chosen.map(row => row.itemId)}
     assignment={targetMode === 'existing' ? { kind: 'existing', speakerRef: options.find(option => option.optionKey === targetKey)!.speakerRef } : targetMode === 'new' ? { kind: 'new', name: newName.trim() } : { kind: 'unknown' }}
     assignmentLabel={targetMode === 'existing' ? options.find(option => option.optionKey === targetKey)?.label ?? tr('所选人物') : targetMode === 'new' ? newName.trim() : tr('拆出后待确认')}
     intent="review" rejectCurrent={!originalPerson && !!item.assignedSpeakerOptionKey && chosen[0].assignedSpeakerOptionKey === item.assignedSpeakerOptionKey}
@@ -169,8 +170,8 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
       {consistency.supported === false && <div style={{ color: color.secondary }}>{tr('一致性与偏离数据待后端提供；可先试听和选择片段。')}</div>}
       {group && <details><summary style={{ color: color.secondary, cursor: 'pointer' }}>{tr('指标口径与覆盖范围')}</summary><div>{tr('模型：')}{group.modelVersion} · {tr('版本：')}{group.version}</div><div>{tr('一致性定义：')}{group.scoreDefinition}</div><div>{tr('片段偏离参照：')}{group.referenceMethod}</div></details>}
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={button} aria-pressed={!nearby} onClick={() => { setNearby(false); setPage(0) }}>{tr('当天同组')}</button>
-        <button type="button" style={button} aria-pressed={nearby} onClick={() => { setNearby(true); setPage(0) }}>{tr('附近片段')}</button>
+        <button type="button" style={button} disabled={explicitScope} aria-pressed={!nearby} onClick={() => { setNearby(false); setPage(0) }}>{tr('当天同组')}</button>
+        <button type="button" style={button} disabled={explicitScope} aria-pressed={nearby} onClick={() => { setNearby(true); setPage(0) }}>{tr('附近片段')}</button>
         <span style={{ color: color.secondary }}>{nearby ? tr('前后 10 分钟，已加载 {v0} 段', { v0: candidates.length }) : group ? tr('已加载 {v0} 段 / 同组共 {v1} 处', { v0: candidates.length, v1: group.totalCount }) : tr('已加载 {v0} 段', { v0: candidates.length })}</span>
       </div>
       <div style={{ color: color.secondary }}>{tr(loadItems ? '下方覆盖当天完整候选范围；整体一致性按后台完整分组统计。系统同组不代表同一个人。' : '下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>

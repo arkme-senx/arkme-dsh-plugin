@@ -37,6 +37,41 @@ describe('speaker correction interaction', () => {
   const click = async (text: string) => { await act(async () => { button(text).props.onClick(); await tick() }) }
   const writes = () => mocks.call.mock.calls.filter(([op]) => /correction\.(apply|undo)$/.test(op))
 
+  it('previews an exact subrange before saving and freezes it through confirmation', async () => {
+    const original = mocks.call.getMockImplementation()!
+    mocks.call.mockImplementation((op, ...args) => op === 'recordings.speaker.correction.preview'
+      ? Promise.resolve({ affectedCount: 1, intentToken: 'intent-range' }) : original(op, ...args))
+    await mount('review')
+    expect(button('句内一段')).toBeDefined()
+    await click('句内一段')
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '起点（秒）' }).props.onChange({ target: { value: '1.2' } })
+      renderer.root.findByProps({ 'aria-label': '终点（秒）' }).props.onChange({ target: { value: '3.4' } })
+      await tick()
+    })
+    await click('预览区间纠错')
+    expect(writes()).toHaveLength(0)
+    const preview = mocks.call.mock.calls.find(([op]) => op === 'recordings.speaker.correction.preview')![1]
+    expect(preview.selections).toEqual([{ itemRef: 'ref-1', startOffsetMillis: 1200, endOffsetMillis: 3400 }])
+    await click('确认保存')
+    expect(writes()[0]![1]).toMatchObject({ selections: preview.selections, intentToken: 'intent-range', itemRefs: ['ref-1'] })
+    await click('预览撤销');expect(writes()).toHaveLength(1)
+    await click('确认撤销');expect(writes()).toHaveLength(2)
+  })
+
+  it('blocks empty, reversed and out-of-sentence subranges without submitting', async () => {
+    await mount('review'); await click('句内一段')
+    for (const [start, end] of [['', '2'], ['3', '2'], ['1', '6']]) {
+      await act(async () => {
+        renderer.root.findByProps({ 'aria-label': '起点（秒）' }).props.onChange({ target: { value: start } })
+        renderer.root.findByProps({ 'aria-label': '终点（秒）' }).props.onChange({ target: { value: end } })
+        await tick()
+      })
+      expect(button('预览区间纠错').props.disabled).toBe(true)
+    }
+    expect(writes()).toHaveLength(0)
+  })
+
   it('shows an honest unavailable preview without any writes, even with a reject intent', async () => {
     supported = false; await mount('reject', true)
     expect(button('保存纠错').props.disabled).toBe(true)

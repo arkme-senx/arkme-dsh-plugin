@@ -8,18 +8,18 @@ function fixture() {
   const session = () => ({ userId, refreshToken: 'test' })
   const contacts = { listRecordingSpeakerUsers: vi.fn(async () => [{ userId: 27, label: '我的备注', remark: '我的备注', avatarRef: 'avatar' }]),
     enrichPeoplePage: vi.fn(async (rows: Array<{ userId: number; label: string; remark?: string }>) => rows.map(r => ({ ...r, aliases: [], avatarRef: 'avatar' }))) }
-  const explore = { personDirectoryItem: vi.fn(async (row: Record<string, unknown>) => ({ key: String(row.entity_id), ref: 'entity-ref', title: String(row.name), category: '人物', date: 1, summary: '', status: '' })) }
+  const explore = { personEvidenceKey:vi.fn(async(provider:string,uid:string)=>provider+':'+uid), personDirectoryItem: vi.fn(async (row: Record<string, unknown>) => ({ key: String(row.entity_id), ref: 'entity-ref', title: String(row.name), category: '人物', date: 1, summary: '', status: '' })) }
   const entities = ['111111111111111111111111', '222222222222222222222222']
   const speakers = ['333333333333333333333333', '444444444444444444444444']
   const unlinked = (namespace: string, id: string) => ({ identity: { namespace, id }, state: 'unlinked', person_id: '000000000000000000000000' })
   const row = (namespace: string, id: string, name: string, user: number, extra = {}) => ({ identity: { namespace, id }, link: unlinked(namespace, id), display_name: name, ref_user_id: user, aliases: [], ...extra })
   const audio = vi.fn(async (_path: string, body: Record<string, unknown>) => ({ source: body.source, items: body.source === 'relations'
     ? [row('relation_entity', entities[0]!, '何宏顺', 27, { aliases: ['宏顺'], relation: { entity_id: entities[0], name: '何宏顺' } }), row('relation_entity', entities[1]!, '我的备注', 0, { relation: { entity_id: entities[1], name: '我的备注' } })]
-    : body.source === 'contacts' ? [row('arkme_user', '27', '我的备注', 27, { remark: '我的备注' })]
+    : body.source === 'contacts' ? [row('arkme_user', '27', '我的备注', 27, { remark: '我的备注', chat_session_uid:'existing-chat' })]
     : [row('audio_speaker', speakers[0]!, '以前的昵称', 27), row('audio_speaker', speakers[1]!, '我的备注', 0)] }))
   const runtime = { config: { environment: 'prod' }, stateStore: { uniqueCode: async () => 'test-people-key' }, requireSession: async () => session(), authenticatedRelationPost: audio } as unknown as ServiceRuntime
   const recording = { directorySpeakerRef: vi.fn(async () => 'speaker-ref'), directoryUserSpeakerRef: vi.fn(async () => 'user-ref') }
-  const chat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { sourceRef: 'chat' } })) }
+  const chat = { personRecordsForIdentity:vi.fn(async()=>({supported:true,items:[{eventRef:'event-ref',itemUid:'core-record',textContent:'本人消息',senderName:'联系人',sendAtMillis:1000,personSource:{sourceRef:'original-chat'}}],hasMore:false})), openPrivateChatFromUser: vi.fn(async () => ({ source: { sourceRef: 'chat' } })) }
   const service = new PeopleService(runtime, explore, recording, contacts, chat as never)
   return { service, contacts, explore, audio, chat, switchAccount: () => { userId = 22 } }
 }
@@ -88,4 +88,54 @@ it('retains remark as the displayed relation name and keeps the entity name as a
  f.audio.mockResolvedValueOnce({source:'relations',items:[{identity:{namespace:'relation_entity',id:'111111111111111111111111'},link:{identity:{namespace:'relation_entity',id:'111111111111111111111111'},state:'unlinked',person_id:'000000000000000000000000'},display_name:'旧实体名',remark:'当前备注',aliases:[],ref_user_id:27,relation:{entity_id:'111111111111111111111111',name:'旧实体名'}}]} as never)
  const page=await f.service.list('relations',undefined,undefined,'当前备注')
  expect(page.items[0]).toMatchObject({name:'当前备注',hasRemark:true,aliases:['旧实体名']})
+})
+
+it('reads contact authors through an existing conversation, never opens or creates a chat',async()=>{
+ const f=fixture(),person=(await f.service.list('contacts')).items[0]!
+ const page=await f.service.identityAction('records',{recordsRef:person.recordsRef}) as {evidence:Array<{roles:string[];text:string}>}
+ expect(page.evidence[0]).toMatchObject({text:'本人消息',roles:['author']})
+ expect(f.chat.personRecordsForIdentity).toHaveBeenCalledWith('existing-chat',27,undefined,undefined)
+ expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+ f.switchAccount();await expect(f.service.identityAction('records',{recordsRef:person.recordsRef})).rejects.toThrow()
+})
+it('does not convert a failed contact source into an empty person timeline',async()=>{
+ const f=fixture(),person=(await f.service.list('contacts')).items[0]!
+ f.chat.personRecordsForIdentity.mockRejectedValueOnce(new Error('source offline'))
+ await expect(f.service.identityAction('records',{recordsRef:person.recordsRef})).rejects.toThrow('source offline')
+})
+
+it('keeps source impact pending until every chat page is read and rejects an outage',async()=>{
+ const f=fixture(),person=(await f.service.list('relations')).items[0]!,original=f.audio.getMockImplementation()!
+ f.audio.mockImplementation(async(path,body)=>{
+  if(path.endsWith('/preview'))return {preview_token:'signed',changes:[],expires_at:Date.now()+60000} as never
+  if(path.endsWith('/impact'))return {state:'complete',identity_count:1,relation_record_count:2,unavailable_record_count:0,names:[],display_change:{before:['甲'],after:['乙']},record_sources:[{namespace:'arkme_user',id:'27'}]} as never
+  if(path.endsWith('/record-source'))return {identity:{namespace:'arkme_user',id:'27'},chat_session_uid:'existing-chat',user_id:27} as never
+  return original(path,body)
+ })
+ const preview=await f.service.identityAction('preview',{kind:'unlink',personRef:person.personRef,identityRef:person.identityRef,idempotencyKey:'impact-source-test-key'}) as {commandRef:string}
+ const response={supported:true,items:[{eventRef:'event',itemUid:'core-record',textContent:'内容',senderName:'甲',sendAtMillis:1000,personSource:{sourceRef:'chat'}}],hasMore:true,nextCursor:'source-next'}
+ f.chat.personRecordsForIdentity.mockResolvedValueOnce(response)
+ const first=await f.service.identityAction('impact',{commandRef:preview.commandRef}) as {state:string;nextCursor:string;chatCount:number}
+ expect(first).toMatchObject({state:'pending',chatCount:1,recordingCount:0,relationRecordCount:2})
+ expect(first).not.toHaveProperty('recordSources')
+ f.chat.personRecordsForIdentity.mockRejectedValueOnce(new Error('chat offline'))
+ await expect(f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})).rejects.toThrow('chat offline')
+ const done=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
+ expect(done).toMatchObject({state:'complete',chatCount:1,recordingCount:0})
+ expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+})
+
+it('deduplicates the same recording under two audio identities in impact',async()=>{
+ const f=fixture(),person=(await f.service.list('relations')).items[0]!,original=f.audio.getMockImplementation()!
+ f.audio.mockImplementation(async(path,body)=>{
+  if(path.endsWith('/preview'))return {preview_token:'signed',changes:[],expires_at:Date.now()+60000} as never
+  if(path.endsWith('/impact'))return {state:'complete',identity_count:2,relation_record_count:0,unavailable_record_count:0,names:[],display_change:{before:['甲'],after:['乙']},record_sources:['333333333333333333333333','444444444444444444444444'].map(id=>({namespace:'audio_speaker',id}))} as never
+  if(path.endsWith('/record-source'))return {identity:body.identity} as never
+  return original(path,body)
+ })
+ const read=vi.spyOn(f.service as unknown as {records():Promise<unknown>},'records').mockResolvedValue({evidence:[{key:'same-recording-utterance'}]})
+ const preview=await f.service.identityAction('preview',{kind:'unlink',personRef:person.personRef,identityRef:person.identityRef,idempotencyKey:'impact-audio-test-key'}) as {commandRef:string}
+ const first=await f.service.identityAction('impact',{commandRef:preview.commandRef}) as {nextCursor:string}
+ const done=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
+ expect(done).toMatchObject({state:'complete',recordingCount:1,chatCount:0});expect(read).toHaveBeenCalledTimes(2)
 })

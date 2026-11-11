@@ -102,3 +102,12 @@ it('materializes one explicit source and exposes entity split without guessing h
   expect(f.post.mock.calls.at(-1)?.[1]).toMatchObject({ action: 'split', person_id: root, other_person_id: other })
   expect(f.post.mock.calls.at(-1)?.[1]).not.toHaveProperty('operation_id')
 })
+it('reads independent identity capabilities and distinguishes unsupported from transport failures',async()=>{
+ const f=fixture()
+ f.post.mockResolvedValueOnce({schema_version:1,explicit_link:true,unlink:false,merge:true,split:true,undo:true,stable_source_person:true,recording_binding:true})
+ await expect(f.service.execute('capabilities',{})).resolves.toMatchObject({supported:true,link:true,unlink:false,merge:true,recordingBinding:true})
+ f.post.mockRejectedValueOnce(new ArkmePluginError('upstream','missing',false,502,{upstreamStatus:404}))
+ await expect(f.service.execute('capabilities',{})).resolves.toEqual({supported:false})
+ f.post.mockRejectedValueOnce(new Error('timeout'))
+ await expect(f.service.execute('capabilities',{})).rejects.toThrow('timeout')
+})

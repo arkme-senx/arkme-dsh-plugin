@@ -116,7 +116,7 @@ export interface RecordingSpeakerUpdateFeedback {
 export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewItems, anchor, initialBatchUpdate = false, initialReview = false, onUpdated, onClose, onPlay }: {
   items?: readonly ArkmeRecordingWorkbenchItem[]
   loadReviewItems?(signal: AbortSignal): Promise<readonly ArkmeRecordingWorkbenchItem[]>
-  onPlay?(item: ArkmeRecordingWorkbenchItem): void
+  onPlay?(item: ArkmeRecordingWorkbenchItem, range?: { startOffsetMillis: number; endOffsetMillis: number }): void
   item: ArkmeRecordingWorkbenchItem
   anchor?: RecordingSpeakerPopoverAnchor
   initialBatchUpdate?: boolean

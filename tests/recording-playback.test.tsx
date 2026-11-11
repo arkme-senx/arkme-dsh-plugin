@@ -68,6 +68,15 @@ describe('recording playback controller', () => {
     vi.unstubAllGlobals(); vi.restoreAllMocks()
   })
 
+  it('stops subrange audition at its end while preserving the original owner locator', async () => {
+    await act(async () => { await playback.playItem(item('item-a', 100_000), 101_200, 103_400) })
+    expect(mocks.callArkme.mock.calls[0]![1]).toEqual({ itemRef: 'item-a' })
+    expect(audios[0]!.currentTime).toBe(3.2)
+    await act(async () => { audios[0]!.currentTime = 5.4; audios[0]!.emit('timeupdate') })
+    expect(playback.isPlaying).toBe(false)
+    expect(audios).toHaveLength(1)
+  })
+
   it('continues across a page boundary once even when timeupdate and ended arrive together', async () => {
     const first = item('item-a', 100_000), second = item('item-b', 200_000)
     const pending = Promise.withResolvers<readonly ArkmeRecordingWorkbenchItem[]>()

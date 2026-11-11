@@ -74,3 +74,13 @@ it('reports the 2000 atomic budget clearly without sending apply',async()=>{
  await expect(f.service.action('preview',{snapshots:[page.snapshotRef],target:{kind:'anonymous'},idempotencyKey:'budget-preview-123'})).rejects.toThrow('2000')
  expect(f.post.mock.calls.some(c=>c[0].endsWith('/apply'))).toBe(false)
 })
+it('exposes only bounded group review evidence and does not treat absent coverage as complete',async()=>{
+ const f=fixture(),original=f.post.getMockImplementation()!
+ f.post.mockImplementationOnce(async(...args)=>({...await original(...args),consistency:{state:'partial',score:50,analyzed_count:2,total_count:300,review_count:1},score_definition:'cohesion-v1',items:[{locator,occurred_at:1000,evidence_state:'ready',deviation:1}]}))
+ const page=await f.service.members({detailRef:'speaker-a'})
+ expect(page.consistency).toMatchObject({state:'partial',analyzedCount:2,totalCount:300})
+ expect(page.requiresReview).toBe(true)
+ expect(page.evidence).toEqual([{itemRef:'opaque-row',state:'ready',deviation:1}])
+ const old=await f.service.members({detailRef:'speaker-a'})
+ expect(old.requiresReview).toBe(true)
+})

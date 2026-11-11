@@ -2007,11 +2007,23 @@ export class ChatService {
     }), await this.runtime.stateStore.uniqueCode())
   }
 
+  /** Read an existing verified contact conversation without creating or marking it read. */
+  async personRecordsForIdentity(chatSessionUid: string, targetUserId: number, cursor?: string, signal?: AbortSignal) {
+    const session=await this.runtime.requireSession()
+    if(targetUserId===session.userId)return this.personRecordsPage('','',{...(cursor?{cursor}:{}),...(signal?{signal}:{})})
+    if(!chatSessionUid||!Number.isSafeInteger(targetUserId)||targetUserId<=0)throw new ArkmePluginError('person-record-identity-invalid','联系人来源不可用',false,400)
+    const source=(await this.source.chatSourcesBySessionUids([chatSessionUid],signal)).get(chatSessionUid)
+    if(!source||source.kind!=='private_chat'||source.peerUserId!==targetUserId)throw new ArkmePluginError('person-record-identity-unavailable','联系人会话已变化，请重新读取',true,409)
+    const memberRef=await this.sealChatMemberRef(session.userId,chatSessionUid,targetUserId)
+    return this.personRecordsPage(source.sourceRef,memberRef,{...(cursor?{cursor}:{}),...(signal?{signal}:{})})
+  }
+
   async personRecordsPage(sourceRef: string, memberRef: string, options: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal } = {}): Promise<import('../person-records.js').PersonRecordsPage> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
-    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('person-record-source-invalid', '仅支持聊天成员内容', false, 400)
-    const target = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    const self=!sourceRef&&!memberRef
+    const source = self?undefined:await this.source.openSourceRef(sourceRef, session.userId)
+    if (!self && source?.kind !== 'group_chat' && source?.kind !== 'private_chat') throw new ArkmePluginError('person-record-source-invalid', '仅支持聊天成员内容', false, 400)
+    const target = self?{targetUserId:session.userId}:await this.openChatMemberRef(memberRef, session.userId, source!.ownerRef)
     const eventScope = JSON.stringify([this.runtime.config.environment, this.runtime.config.chatBaseUrl, session.userId, target.targetUserId])
     if ((options.knownEventRefs?.length ?? 0) > 500) throw new ArkmePluginError('person-record-window-full', '已达阅读窗口上限，请重新打开', false, 400)
     const known = new Map<string, string>()
@@ -2022,17 +2034,18 @@ export class ChatService {
     }
     let data: Record<string, unknown>
     try {
-      data = await this.sourceChatPost(source,'/api/v1/chats/members/records/aggregate', {
-        chat_session_uid: source.ownerRef, target_user_id: target.targetUserId, scope: 'shared', limit: Math.min(50,Math.max(1,Math.trunc(options.limit ?? 20))),
+      const body = {
+        ...(self?{}:{chat_session_uid:source!.ownerRef}), target_user_id: target.targetUserId, scope:self?'self':'shared', limit: Math.min(50,Math.max(1,Math.trunc(options.limit ?? 20))),
         ...(options.cursor ? { cursor: options.cursor } : {}), known_relations: [...known.keys()], ...(options.validateOnly ? { validate_only: true } : {}),
-      }, session, options.signal, { lane: 'interactive-read', bypassCache: true })
+      }
+      data=source?await this.sourceChatPost(source,'/api/v1/chats/members/records/aggregate',body,session,options.signal,{lane:'interactive-read',bypassCache:true}):await this.runtime.authenticatedChatPost('/api/v1/chats/members/records/aggregate',body,session,options.signal,{lane:'interactive-read',bypassCache:true})
     } catch (error) {
       if (!options.cursor && error instanceof ArkmePluginError && [404,501].includes(error.upstreamStatus ?? error.httpStatus)) {
         return { version: 1, supported: false, items: [], hasMore: false, removedEventRefs: [], coverage: 'current_chat_relations' }
       }
       throw error
     }
-    if (data.protocol_version !== 1 || data.applied_scope !== 'shared') throw new ArkmePluginError('person-record-protocol-unsupported', '人物内容汇总协议不兼容，请升级服务', false, 501)
+    if (data.protocol_version !== 1 || data.applied_scope !== (self?'self':'shared')) throw new ArkmePluginError('person-record-protocol-unsupported', '人物内容汇总协议不兼容，请升级服务', false, 501)
     const groups = new Map<string, { source: ArkmeSourceRefPayload; rows: unknown[] }>()
     for (const raw of listValue(data.items)) {
       const row = objectValue(raw); const origin = objectValue(row.source); const relation = objectValue(row.relation)

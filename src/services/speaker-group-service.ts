@@ -1,3 +1,4 @@
+import {parseGroupConsistency} from '../speaker-similarity-contract.js'
 import {createHash} from 'node:crypto'
 import {EncryptedReferenceCodec} from '../encrypted-reference.js'
 import {ArkmePluginError,objectValue,type ServiceRuntime} from './service.js'
@@ -18,21 +19,27 @@ export class SpeakerGroupService {
   await this.assertSession(s,signal)
   let data:unknown
   try {data=await this.runtime.authenticatedAudioPost<Record<string,unknown>>(`/api/v1/audio/speaker/group/${path}`,body,s,signal,{bypassCache:true,cacheMs:0,lane:['apply','cancel','undo'].includes(path)?'write':'interactive-read'})}
-  catch(error){if(error instanceof ArkmePluginError&&(error.upstreamStatus??error.httpStatus)===422)throw new ArkmePluginError('speaker-group-budget','完整分组最多原子保存 2000 段；本次未保存，请返回逐片段选择或减少分组。',false,422);throw error}
+  catch(error){if(error instanceof ArkmePluginError&&(error.upstreamStatus??error.httpStatus)===422)throw new ArkmePluginError('speaker-group-budget',path==='members'?'分组证据超过本次读取预算，请缩小审查范围后重试。':'完整分组最多原子保存 2000 段；本次未保存，请返回逐片段选择或减少分组。',false,422);throw error}
   await this.assertSession(s,signal);return objectValue(data)
  }
  async members(input:Record<string,unknown>,signal?:AbortSignal):Promise<SpeakerGroupMembers>{return this.scoped(s=>this.membersFor(s,input,signal),signal)}
  private async membersFor(s:Session,input:Record<string,unknown>,signal?:AbortSignal):Promise<SpeakerGroupMembers>{
+  const sort=input.sort??'time';if(sort!=='time'&&sort!=='review')throw bad()
   const ref=await this.detail(input.detailRef,s.userId)
-  const source={type:ref.type,id:ref.id,expected_version:ref.expectedVersion},sourceKey=createHash('sha256').update(JSON.stringify(source)).digest('hex')
+  const source={type:ref.type,id:ref.id,expected_version:ref.expectedVersion},sourceKey=createHash('sha256').update(JSON.stringify({source,sort})).digest('hex')
   const c=input.cursor?await this.open(s,input.cursor):undefined
   if(c&&c.sourceKey!==sourceKey)throw bad()
-  const data=await this.post(s,'members',{detail_ref:source,limit:20,...(c?{cursor:c.cursor,snapshot_version:c.snapshot}: {})},signal)
+  const data=await this.post(s,'members',{detail_ref:source,sort,limit:20,...(c?{cursor:c.cursor,snapshot_version:c.snapshot}: {})},signal)
   if(!Array.isArray(data.items)||data.items.length>20||typeof data.has_more!=='boolean'||typeof data.requires_review!=='boolean')throw bad()
   const snapshot=text(data.snapshot_version),members=data.items.map(value=>{const r=objectValue(value),l=objectValue(r.locator);if(!['system','doubao'].includes(String(l.transcript_source)))throw bad();const start=count(l.start_at),end=count(l.end_at);if(end<=start)throw bad();return {locator:{session_id:text(l.session_id),child_id:text(l.child_id),item_index:count(l.item_index),transcript_source:String(l.transcript_source),start_at:start,end_at:end,revision:text(l.revision)},occurred_at:count(r.occurred_at)}})
   if(c&&snapshot!==c.snapshot||count(data.total_count)<members.length)throw bad()
   const items=await this.recording.recordingGroupRows(members,signal)
-  return {items,snapshotRef:await this.seal(s,{snapshot,sourceKey}),totalCount:count(data.total_count),firstAt:count(data.first_at),lastAt:count(data.last_at),requiresReview:data.requires_review,
+  const consistency=data.consistency===undefined?undefined:parseGroupConsistency(data.consistency)
+  if(consistency&&consistency.totalCount!==count(data.total_count))throw bad()
+  const evidence=data.items.map((value,i)=>{const r=objectValue(value),state=r.evidence_state??'insufficient',deviation=r.deviation??null
+   if(!['ready','insufficient'].includes(String(state))||deviation!==null&&(typeof deviation!=='number'||!Number.isFinite(deviation)||deviation<0||deviation>2)||state==='ready'&&deviation===null)throw bad()
+   if(!items[i])throw bad();return {itemRef:items[i]!.itemRef,state:state as 'ready'|'insufficient',deviation:deviation as number|null}})
+  return {items,evidence,...(consistency?{consistency,scoreDefinition:text(data.score_definition)}:{}),snapshotRef:await this.seal(s,{snapshot,sourceKey}),totalCount:count(data.total_count),firstAt:count(data.first_at),lastAt:count(data.last_at),requiresReview:data.requires_review||consistency?.state!=='ready'||consistency.reviewCount!==0,
    ...(data.has_more?{nextCursor:await this.seal(s,{snapshot,sourceKey,cursor:text(data.next_cursor)})}:{})}
  }
  async action(action:unknown,input:Record<string,unknown>,signal?:AbortSignal):Promise<SpeakerGroupPreview|SpeakerGroupJob|SpeakerGroupJobs|SpeakerGroupConflictItem>{return this.scoped(s=>this.actionFor(s,action,input,signal),signal)}

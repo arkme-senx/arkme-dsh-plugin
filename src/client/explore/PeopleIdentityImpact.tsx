@@ -27,11 +27,12 @@ export function PeopleIdentityImpactPanel({ commandRef, onReady }: { commandRef:
   }, [commandRef, revision])
   return <div className="explore-muted">
     {value && <><p>{tr('关系原文（去重）')}：{value.relationRecordCount}{value.state === 'pending' ? ` · ${tr('统计中')}` : ''}{value.unavailableRecordCount > 0 ? ` · ${tr('来源暂不可核对')} ${value.unavailableRecordCount}` : ''}</p>
+      <p>{tr('录音片段')}：{value.recordingCount ?? tr('等待核对')} · {tr('聊天原文')}：{value.chatCount ?? tr('等待核对')}</p>
       {value.displayChange && <p>{tr('人物显示名')}：{value.displayChange.before.join('、') || tr('未建档')} → {value.displayChange.after.join('、') || tr('未关联')}</p>}
       {value.names.map((n,i) => <p key={i}>{tr(n.target ? '目标人物名称' : '涉及人物名称')}：{n.name}</p>)}</>}
     {value && value.unavailableRecordCount > 0 && <p>{tr('有来源暂不可核对，暂不能确认；请恢复来源后重新预览。')}</p>}
     {!value && !error && <p role="status">{tr('正在核对影响范围…')}</p>}
-    <p>{tr('统计范围为人物详情中的关系原文；录音与联系人身份保留来源，原文内容不会改写。联系人备注仍优先显示，同名不作为合并依据。')}</p>
+    <p>{tr('关系原文、录音片段和聊天原文分别核对；来源权限和内容不改变。未完成或失败的来源不计作零，同名不作为合并依据。')}</p>
     {error && <p role="alert" className="explore-error">{error} <button className="explore-source-link" onClick={() => setRevision(v => v + 1)}>{tr('重新统计')}</button></p>}
   </div>
 }

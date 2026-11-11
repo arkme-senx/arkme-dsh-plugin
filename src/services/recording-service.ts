@@ -808,7 +808,7 @@ export class RecordingService {
   async recordingGroupRows(members: Array<{ locator: {session_id: string;child_id: string;item_index: number;transcript_source: string;start_at: number;end_at: number;revision: string}; occurred_at: number }>, signal?: AbortSignal, options?: { allowChanged?: boolean }) {
     this.assertWorkbenchEnabled()
     if(members.length>100)throw new ArkmePluginError('speaker-group-budget','成员分页超出范围',false,400)
-    const session=await this.runtime.requireSession(), out:ArkmeRecordingWorkbenchItem[]=[]
+    const session=await this.runtime.requireSession(), out=new Map<string,ArkmeRecordingWorkbenchItem>()
     const groups=new Map<string,typeof members>()
     for(const m of members){const key=`${m.locator.session_id}:${m.locator.transcript_source}`;groups.set(key,[...groups.get(key)??[],m])}
     for(const rows of groups.values()) {
@@ -825,7 +825,7 @@ export class RecordingService {
           await this.ensureRecordingSession(session,signal)
           const result=await this.projectWorkbenchPage(date.getTime(),source==='primary'?'system':'doubao',{...page,items:[exact],views:[{recording_uid:first.locator.session_id,source,revision}],totalDurationMillis:exact.endAt-exact.startAt},session,signal)
           if(result.items.length!==1)throw new ArkmePluginError('speaker-group-changed','分组片段已变化，请重新读取',true,409)
-          out.push(result.items[0]!);found.add(i)
+          out.set(JSON.stringify(rows[i]!.locator),result.items[0]!);found.add(i)
         }
         if(found.size===rows.length)break
         if(!page.nextCursor||seen.has(page.nextCursor))throw new ArkmePluginError('speaker-group-changed','分组片段已变化，请重新读取',true,409)
@@ -833,7 +833,7 @@ export class RecordingService {
       }
     }
     await this.ensureRecordingSession(session,signal)
-    return out.sort((a,b)=>a.startAtMillis-b.startAtMillis)
+    return members.map(member=>{const item=out.get(JSON.stringify(member.locator));if(!item)throw new ArkmePluginError('speaker-group-changed','分组片段已变化，请重新读取',true,409);return item})
   }
 
   async recordingCorrectionSample(locator: { sessionId: string; childId: string; start: number; end: number; num: number }, signal?: AbortSignal) {

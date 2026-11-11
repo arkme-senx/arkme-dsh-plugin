@@ -189,3 +189,15 @@ it('replaces cached parent-scoped record keys with a fresh full page and shows o
  expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
  expect(host.textContent).toContain('此原文提及 2 处')
 })
+it('filters explicit person record roles without promoting mentions to speech and preserves distinct times',async()=>{
+ mocks.call.mockImplementation(async(op,input)=>op==='people.list'?{source:input.source,items:input.source==='relations'?[relation]:[]}:{evidence:[
+  {key:'mention',text:'别人提到了他',date:1000,label:'录音',roles:['mentioned']},
+  {key:'author',text:'他发出的消息',date:2000,label:'聊天',roles:['author'],uploadedAt:3000,recognizedAt:4000},
+  {key:'unknown',text:'未确定角色',date:5000,label:'记录'}]})
+ await act(async()=>root.render(<PeopleSurface accountScope="role-filter" onBack={()=>{}}/>))
+ await act(async()=>(host.querySelector('.people-row') as HTMLButtonElement).click())
+ await click('作者')
+ expect(host.textContent).toContain('他发出的消息');expect(host.textContent).not.toContain('别人提到了他')
+ await click('录音发言');expect(host.textContent).not.toContain('别人提到了他')
+ expect(host.textContent).toContain('已加载记录中没有此角色')
+})

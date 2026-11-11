@@ -20,6 +20,7 @@ export interface PersonFacet {
   speakerRef?: string
   assignmentRef?: string
   identityKey?: string
+  recordsRef?: string
   identityRef?: string
   identityRevision?: number
   personIdentityKey?: string
@@ -76,4 +77,6 @@ export interface PeopleIdentityPreview { changes: PeopleIdentityChange[]; comman
 export interface PeopleIdentityLink { identityKey: string; identityRef: string; namespace: string; splitRef?: string }
 export interface PeopleIdentityReceipt { operationRef: string; state: string }
 
-export interface PeopleIdentityImpact { state: 'pending' | 'complete'; identityCount: number; relationRecordCount: number; unavailableRecordCount: number; names: Array<{name: string; target: boolean}>; displayChange?: {before: string[]; after: string[]}; nextCursor?: string }
+export interface PeopleIdentityImpact { recordingCount?: number; chatCount?: number; state: 'pending' | 'complete'; identityCount: number; relationRecordCount: number; unavailableRecordCount: number; names: Array<{name: string; target: boolean}>; displayChange?: {before: string[]; after: string[]}; nextCursor?: string }
+
+export type PeopleIdentityCapabilities = {supported:false} | {supported:true;link:boolean;unlink:boolean;merge:boolean;split:boolean;undo:boolean;materialize:boolean;recordingBinding:boolean}

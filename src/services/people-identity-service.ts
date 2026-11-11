@@ -56,6 +56,15 @@ export class PeopleIdentityService {
       ...((link.state === 'active' || links?.length || directoryLink && identity.namespace === 'relation_entity') ? { personKey: stableKey(personId), ...(facet.source === 'relations' && facet.accountLinked ? { legacyPersonKey: facet.personKey } : {}) } : {}) }
   }
   async execute(action: unknown, params: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+    if (action === 'capabilities') {
+      let raw: Record<string,unknown>
+      try { raw=await this.post<Record<string,unknown>>('capabilities',{},signal) }
+      catch(e) { if(e instanceof ArkmePluginError && [404,501].includes(e.upstreamStatus??e.httpStatus))return {supported:false};throw e }
+      if(raw.supported===false)return {supported:false}
+      const mapping={link:'explicit_link',unlink:'unlink',merge:'merge',split:'split',undo:'undo',materialize:'stable_source_person',recordingBinding:'recording_binding'}
+      if(raw.schema_version!==1 || Object.values(mapping).some(k=>typeof raw[k]!=='boolean'))throw unavailable()
+      return {supported:true,...Object.fromEntries(Object.entries(mapping).map(([k,v])=>[k,raw[v]]))}
+    }
     if (action === 'impact') {
       const ref = await this.open(params.commandRef), body = objectValue(ref.command)
       if (!body.preview_token) throw unavailable()
@@ -70,7 +79,7 @@ export class PeopleIdentityService {
       const display = objectValue(result.display_change)
       if (!Array.isArray(display.before) || !Array.isArray(display.after) || ![...display.before,...display.after].every(v => typeof v === 'string')) throw unavailable()
       const nextCursor = result.next_cursor ? await this.seal({ commandHash: createHash('sha256').update(JSON.stringify(body)).digest('hex'), cursor: result.next_cursor }) : undefined
-      return { state: result.state, identityCount: result.identity_count, relationRecordCount: result.relation_record_count, unavailableRecordCount: result.unavailable_record_count,
+      return { recordSources: result.record_sources, state: result.state, identityCount: result.identity_count, relationRecordCount: result.relation_record_count, unavailableRecordCount: result.unavailable_record_count,
         displayChange: { before: display.before as string[], after: display.after as string[] }, names: result.names.map(v => { const r = objectValue(v); if (typeof r.name !== 'string' || typeof r.target !== 'boolean') throw unavailable(); return {name:r.name, target:r.target} }), ...(nextCursor ? { nextCursor } : {}) } as PeopleIdentityImpact
     }
     if (action === 'binding-preview') {

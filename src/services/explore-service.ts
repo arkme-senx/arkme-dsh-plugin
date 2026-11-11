@@ -326,6 +326,7 @@ export class ExploreService {
     if(next)page.nextCursor=await this.seal(session,{kind:'cursor',module,filter,query,...next})
     await this.guard(session,epoch,signal);return page
   }
+  async personEvidenceKey(provider:string,uid:string) { const session=await this.runtime.requireSession(); return this.key(session,'relations',provider,uid) }
   private async evidence(module: ExploreModule, rows: Doc[], session: ArkmeSessionCredentials, parent: Doc): Promise<ExploreEvidence[]> {
     const result = await Promise.all(rows.map(async (row,index)=>{
       const owner=doc(row.owner_ref),fields=doc(row.fields),sourceIdentity=doc(row.source_identity)
@@ -341,7 +342,7 @@ export class ExploreService {
       const identity=module==='relations'&&uid ? [provider,uid] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
       const start=number(row.start_position),end=number(row.end_position)
       return {key:module==='relations'&&uid?await this.key(session,module,...identity):await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
-        speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,anchor:row.is_anchor===true||row.is_primary_anchor===true,
+        speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,...(number(row.uploaded_at)>0?{uploadedAt:number(row.uploaded_at)}:{}),...(number(row.recognized_at)>0?{recognizedAt:number(row.recognized_at)}:{}),anchor:row.is_anchor===true||row.is_primary_anchor===true,
         ...(module==='relations'?{roles:strings(row.roles).filter((role): role is 'author'|'speaker'|'mentioned'|'participant' => ['author','speaker','mentioned','participant'].includes(role)),...projectPersonReferences(row,content),mentions:Array.isArray(row.mentions)?list(row.mentions).map(m=>({start:number(m.start_position),end:number(m.end_position),text:text(m.mention_text)})):end>start&&start>=0?[{start,end,text:text(row.mention_text)}]:[]}:{}),
         ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,provider:sourceIdentity.provider,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:sourceIdentity.provider&&sourceIdentity.provider!=='core_record'?'此来源暂不支持打开详情':'这条结果尚未提供可定位的原文'})}
     }))
