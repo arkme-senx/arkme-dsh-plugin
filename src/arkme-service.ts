@@ -984,7 +984,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         this.realtime.emitChatClientEvent({ type: 'directory-update', revision: this.realtime.nextChatClientRevision(), page })
         void this.realtime.refreshAttentionSummary()
       },
-      async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId))
+      async (bots, userId) => await this.bot.restoreDirectoryBots(bots, userId),
+      async (ref, signal) => await this.unifiedTimeline.read(ref, { cacheOnly: true, limit: 1 }, signal))
     this.realtime.offlineContextInvalidation = async () => await this.unifiedTimeline.refreshKnownWindows()
     this.realtime.selfRoleInvalidation = async () => await this.selfRoles.refresh()
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
@@ -2721,9 +2722,11 @@ recordingAnalysisV1: true,
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
       this.realtime.preferChatProjection(session.userId, source.ownerRef)
-      return await this.withSelfRoleSnapshots(await this.unifiedTimeline.read(sourceRef, {
+      const page = await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal, options.background === true), session.userId)
+      }, options.signal, options.background === true)
+      if (!source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
+      return await this.withSelfRoleSnapshots(page, session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }

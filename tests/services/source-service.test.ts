@@ -168,10 +168,10 @@ describe('SourceService', () => {
     expect((await service.chatSourceFromBundle(bundle, session, cached, [], { previewSnapshot: true })).latestPreview).toBe('新消息')
     const item = { itemUid: 'new', title: '', textContent: '更新消息', senderName: '同事', isMe: false, status: 1, sendAtMillis: 101, sequence: 11 }
     expect((await service.chatSourceFromBundle(bundle, session, cached, [item], { previewSnapshot: true })).latestPreview).toBe('更新消息')
-    for (const status of ['unavailable', 'missing']) {
+    for (const status of ['unavailable', 'missing', 3, 2, 4]) {
       const updated = await service.chatSourceFromBundle({ ...bundle, session: { ...bundle.session, last_seq: 10 },
         latest_preview: { record: { status, payload: { text_content: '不得使用的正文' } } } }, session, cached, [], { previewSnapshot: true })
-      expect(updated.latestPreview ?? '').toBe(status === 'missing' ? '' : '新消息')
+      expect(updated.latestPreview ?? '').toBe(status === 'unavailable' || status === 3 ? '新消息' : '')
     }
   })
 

@@ -1784,7 +1784,12 @@ export class SourceService {
           || cached?.displayName || stringValue(counterpart.visible_phone).trim()
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
-      const preview = activity.latestPreview ?? arkmeChatConversationPreview(latestRecord, session.userId)
+      const previewUnavailable = latestRecord.status === 3 || latestRecord.status === 'unavailable'
+      const previewMissing = latestRecord.status === 2 || latestRecord.status === 4 || latestRecord.status === 'missing'
+      const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+      const preview = activity.latestPreview ?? (previewUnavailable
+        ? cached?.latestSequence === latestSequence ? cached.latestPreview ?? '' : ''
+        : previewMissing ? '' : arkmeChatConversationPreview(latestRecord, session.userId))
       const unreadCount = attention.unreadCount
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
@@ -1830,6 +1835,7 @@ export class SourceService {
           : {}),
         ...activity,
         ...(preview === '' ? {} : { latestPreview: preview }),
+        latestPreviewUnavailable: previewUnavailable && preview === '',
         activeAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
         ...attention,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
@@ -2343,7 +2349,7 @@ export class SourceService {
         : `[转发] ${latestItem.forwardRecords.title}`
     if (previewSnapshot) {
       const record = objectValue(objectValue(bundle.latest_preview).record)
-      if (record.status !== 'unavailable') latestPreview = record.status === 'missing'
+      if (record.status !== 'unavailable' && record.status !== 3) latestPreview = record.status === 'missing' || record.status === 2 || record.status === 4
         ? '' : arkmeChatConversationPreview(record, session.userId)
     }
     const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
