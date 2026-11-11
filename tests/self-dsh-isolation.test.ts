@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ArkmeService } from '../src/arkme-service.js'
 import { ChatService } from '../src/services/chat-service.js'
 import { RecordService } from '../src/services/record-service.js'
 import { isDshAgentInputRawRecord } from '../src/dsh-agent-input-source.js'
@@ -131,4 +132,27 @@ describe('personal/DSH record isolation', () => {
     expect(runtime.authenticatedPost).toHaveBeenCalledTimes(boundary === 'metadata' ? 1 : 2)
   })
 
+})
+
+
+it('serves only the self outbox on a cache-only read and rejects an account switch', async () => {
+  const source = { kind: 'send_to_self', sourceRef: 'self' }
+  const requireSession = vi.fn().mockResolvedValue({ userId: 42, refreshToken: 'current' })
+  const listPending = vi.fn().mockResolvedValue([{ recordUid: 'pending', textContent: 'local only', sendAtMillis: 12 }])
+  const remote = vi.fn()
+  const service = Object.assign(Object.create(ArkmeService.prototype), {
+    runtime: { requireSession, stateStore: { listPending } },
+    source: { openSourceRef: async () => source, sourceItem: async () => source },
+    record: { recordTimelineItem: ({ recordUid }: { recordUid: string }) => ({ itemUid: recordUid }) },
+    chat: { readSource: remote },
+  }) as ArkmeService
+  const options = { desktopLocal: true, cursor: { unified: { mode: 'initial', cacheOnly: true } } } as const
+  await expect(service.readSource('self', options)).resolves.toMatchObject({
+    items: [{ itemUid: 'pending', localState: 'pending', awaitingTimelineProjection: true }], hasMore: false,
+  })
+  requireSession.mockResolvedValueOnce({ userId: 42, refreshToken: 'current' })
+    .mockResolvedValueOnce({ userId: 43, refreshToken: 'new' })
+  await expect(service.readSource('self', options)).rejects.toMatchObject({ code: 'read-account-changed' })
+  expect(listPending.mock.calls).toEqual([[42], [42]])
+  expect(remote).not.toHaveBeenCalled()
 })

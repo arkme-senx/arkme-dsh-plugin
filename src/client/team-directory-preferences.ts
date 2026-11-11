@@ -214,7 +214,8 @@ export class TeamDirectoryPreferenceStore {
     return state.saved.get(state.aliases.get(key)??key)?.accessible!==false && teamEntryConversations(target).every(c=>this.canPresent(account,c))
   }
 }
-export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) => callArkme(operation, params, signal))
+export const teamDirectoryPreferences = new TeamDirectoryPreferenceStore((operation, params, signal) =>
+  callArkme(operation, params, signal, params.background === true ? { priority: 'background' } : undefined))
 export function useTeamDirectoryPreferences(account: string) {
   useEffect(() => { if (account) void localDirectoryPreferences.hydrate(account).catch(() => {}).then(() => teamDirectoryPreferences.hydrate(account)).catch(() => {}) }, [account])
   return useSyncExternalStore(teamDirectoryPreferences.subscribe, () => teamDirectoryPreferences.read(account), () => empty)

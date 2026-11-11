@@ -289,3 +289,45 @@ it('never delays interactive, mutation, other-read or unknown actions inside mix
     await Promise.all(reads)
   } finally { release(); await Promise.allSettled([...active, ...reads]) }
 })
+
+it('dispatches cached chat history at high priority while Team directory reads are pending', async () => {
+  const release: Array<() => void> = []
+  provider.mockImplementation(async (operation: string) => {
+    if (operation.startsWith('team.')) await new Promise<void>(resolve => release.push(resolve))
+    return {}
+  })
+  const controller = new AbortController()
+  const reads = [
+    callArkme('team.app.workspace.request', { request: { operation: 'folders' } }, controller.signal, background),
+    callArkme('team.app.conversations', { side: 'team' }, controller.signal, background),
+    callArkme('team.app.official.membership', {}, controller.signal, background),
+  ]
+  const completion = Promise.allSettled(reads)
+  try {
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(2))
+    const params = { sourceRef: 'chat', cursor: { unified: { mode: 'initial', cacheOnly: true } } }
+    await callArkme('source.timeline', params, controller.signal)
+    expect(provider).toHaveBeenCalledTimes(3)
+    expect(provider).toHaveBeenLastCalledWith('source.timeline', params, controller.signal, { priority: 'high' })
+  } finally {
+    controller.abort()
+    release.forEach(resolve => resolve())
+    await completion
+  }
+})
+
+it('uses desktop IPC for local first paint while remote refresh stays on HTTP', async () => {
+  const localChatRead = vi.fn().mockResolvedValue({ ok: true, value: { items: [] } })
+  vi.stubGlobal('arkmeDesktop', { localChatRead })
+  provider.mockResolvedValue({})
+  try {
+    const cached = { sourceRef: 'opaque', limit: 40, cursor: { unified: { mode: 'initial', cacheOnly: true, anchorId: 'message:x' } } }
+    await expect(callArkme('source.timeline', cached)).resolves.toEqual({ items: [] })
+    expect(localChatRead).toHaveBeenCalledWith('test:4', { kind: 'timeline', sourceRef: 'opaque', limit: 40, anchorId: 'message:x' })
+    await callArkme('conversation.viewport.read', { accountKey: 'test:4', surface: 'main' })
+    expect(localChatRead).toHaveBeenLastCalledWith('test:4', { kind: 'viewport', surface: 'main' })
+    await callArkme('source.timeline', { sourceRef: 'opaque', limit: 40 })
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.calls[0]?.[0]).toBe('source.timeline')
+  } finally { vi.unstubAllGlobals() }
+})
