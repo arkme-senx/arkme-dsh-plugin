@@ -666,7 +666,11 @@ export class ServiceRuntime {
       '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
-    if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
+    if (baseUrl === this.config.audioBaseUrl && new Set([
+      '/api/v1/audio/unmarked-speakers/list', '/api/v1/audio/get-session-ls',
+      '/api/v1/audio/speaker-directory/summary', '/api/v1/audio/speaker-directory/list',
+      '/api/v1/audio/speaker-directory/similar', '/api/v1/audio/speaker-directory/voice-samples',
+    ]).has(path)) return true
     return false
   }
 

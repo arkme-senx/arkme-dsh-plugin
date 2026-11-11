@@ -77,6 +77,20 @@ it('coalesces login device reads without caching and keeps the remaining observe
 })
 
 describe('registered owner read recovery', () => {
+ it('recovers a transient speaker lookup 503 but never automatically replays correction writes',async()=>{
+  vi.useFakeTimers()
+  const viewer={userId:510,accessToken:'synthetic',refreshToken:'synthetic'}
+  const fetcher=vi.fn().mockResolvedValueOnce(new Response('',{status:503})).mockResolvedValueOnce(new Response(JSON.stringify({code:200,data:{state:'ready'}})))
+  const runtime=runtimeFixture(fetcher,{async read(){return viewer},async write(){},async delete(){}})
+  const read=runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/similar',{},viewer)
+  const checked=expect(read).resolves.toEqual({state:'ready'})
+  await vi.advanceTimersByTimeAsync(3000);await checked;expect(fetcher).toHaveBeenCalledTimes(2)
+  fetcher.mockClear().mockResolvedValue(new Response('',{status:503}))
+  const write=runtime.authenticatedAudioPost('/api/v1/audio/speaker-corrections/apply',{},viewer)
+  const rejected=expect(write).rejects.toMatchObject({upstreamStatus:503})
+  await vi.advanceTimersByTimeAsync(3000);await rejected;expect(fetcher).toHaveBeenCalledOnce()
+  runtime.dispose()
+ })
   it.each([false, true])('finishes profile recovery before contact degradation and preserves known names: exhausted=%s', async exhausted => {
     vi.useFakeTimers()
     let profileAttempts = 0
@@ -761,10 +775,12 @@ it('removes a shared queued reaction read when its final consumer disconnects', 
 
 describe('speaker directory HTTP contract', () => {
   it.each([[2, 45000], [60, 2000]])('honors both Retry-After and retry_after_ms: %s seconds, %s ms', async (seconds, milliseconds) => {
+    vi.useFakeTimers()
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 429, data: { error_code: 'directory_rate_limited', retry_after_ms: milliseconds } }), { status: 429, headers: { 'Retry-After': String(seconds) } }))
     const runtime = runtimeFixture(fetcher)
-    await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
+    const checked = expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
       .rejects.toMatchObject({ upstreamStatus: 429, retryAfterMillis: Math.max(seconds * 1000, milliseconds) })
+    await vi.advanceTimersByTimeAsync(5001);await checked
     expect(fetcher).toHaveBeenCalledTimes(1); runtime.dispose()
   })
   it.each([0, 1001, 1002])('does not treat HTTP 200 business code %s as success', async code => {
