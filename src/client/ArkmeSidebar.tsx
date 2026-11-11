@@ -8217,6 +8217,16 @@ export function ArkmeSurface({
   useLayoutEffect(() => { timelineActions.current = timelineActionValues })
   const timelineReediting = activeRecordReeditComposer !== undefined
   const timelineFileTasks = visibleFileTasks
+  const timelineFileTasksByItem = useMemo(() => {
+    const byItem = new Map<string, ArkmeFileSendTask[]>()
+    for (const task of timelineFileTasks) {
+      const uid = task.result?.itemUid ?? task.recordUid
+      const tasks = byItem.get(uid)
+      if (tasks) tasks.push(task)
+      else byItem.set(uid, [task])
+    }
+    return byItem
+  }, [timelineFileTasks])
   const messageMenuTask = messageMenu?.recoveryTaskRef === undefined ? undefined : timelineFileTasks.find(task =>
     task.taskRef === messageMenu.recoveryTaskRef && (task.state === 'failed' || task.state === 'uncertain'))
   const canRetryMessageMenuTask = messageMenuTask !== undefined && messageMenuTask.retryable !== false && !directAdmission.blocked
@@ -8496,9 +8506,22 @@ export function ArkmeSurface({
                               ? <RecordThoughtMessageFooter item={item} onOpen={openMessageDetail}>{messageTimestamp}</RecordThoughtMessageFooter>
                               : messageTimestamp}
                           </div>
-                          const messageFileTasks = timelineFileTasks.filter(task => (task.result?.itemUid ?? task.recordUid) === item.itemUid)
+                          const messageFileTasks = timelineFileTasksByItem.get(item.itemUid) ?? []
+                          const chatSendAccessory = sourceIsChat && source.accessKind !== 'team_delegation'
+                            && presentationIsMe && sendPlaceholder !== 'admission'
+                          const pendingTask = chatSendAccessory ? messageFileTasks.find(task => task.result?.localState !== 'synced'
+                            && (task.state === 'queued' || task.state === 'uploading' || task.state === 'sending'
+                              || retryingFileTasks.has(task.taskRef))) : undefined
+                          const defaultUnread = conversationMessageDefaultUnread(item)
+                          const sendingLabel = pendingTask
+                            ? tr(pendingTask.state === 'queued' ? '等待发送' : '正在发送…')
+                            : chatSendAccessory && !messageFileTasks.length && defaultUnread && item.status === 0
+                              ? tr('正在发送…') : undefined
+                          const hideReceipt = chatSendAccessory && messageFileTasks.some(task => task.state !== 'sent'
+                            && task.result?.localState !== 'synced')
                           const fileSendStatus = messageFileTasks
-                            .filter(task => task.state !== 'sent' && fileTaskShowsInlineStatus(task))
+                            .filter(task => task.state !== 'sent' && fileTaskShowsInlineStatus(task)
+                              && (task !== pendingTask || task.state === 'uploading' && task.fileRefs.length > 0))
                             .map(task => {
                               const working = retryingFileTasks.has(task.taskRef)
                               const needsRecovery = task.state === 'failed' || task.state === 'uncertain'
@@ -8537,7 +8560,9 @@ export function ArkmeSurface({
                               key={`read-receipt:${conversationOverlayKey}`}
                               source={source}
                               item={item}
-                              defaultUnread={conversationMessageDefaultUnread(item)}
+                              defaultUnread={defaultUnread}
+                              {...(sendingLabel === undefined ? {} : { sendingLabel })}
+                              hideReceipt={hideReceipt}
                               wide={isStructuredMessageCard}
                             >
                               {messageBubble}
@@ -8607,7 +8632,7 @@ export function ArkmeSurface({
               })
   }, [offlineMessageLinks, displayRows, personalExtensionParents, source, selfSources, selfProfile, conversationBootstrap, selfConversationMember, conversationMemberByRef, resolveReactionActor,
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
-    timelineReediting, conversationKey, conversationOverlayKey, timelineFileTasks, retryingFileTasks, sendPlaceholders,
+    timelineReediting, conversationKey, conversationOverlayKey, timelineFileTasksByItem, retryingFileTasks, sendPlaceholders,
     highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
     reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale, reactionMenuRequest, extensionSendTasks])
 

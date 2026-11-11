@@ -3370,8 +3370,17 @@ describe('conversation send directory projection', () => {
     })
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     const statuses = renderer!.root.findAllByProps({ 'aria-label': '附件发送状态' })
-    expect(statuses).toHaveLength(state === 'sent' ? 0 : 1)
-    if (state === 'sent') return
+    const sending = source.kind !== 'send_to_self' && ['queued', 'uploading', 'sending'].includes(state)
+    const line = renderer!.root.findAllByProps({ 'data-arkme-message-content-line': task.recordUid })[0]
+    if (sending) {
+      expect(line?.findAll(node => node.type === 'svg' && node.props['data-arkme-message-send-loading'] === true)).toHaveLength(1)
+      expect(line?.findAll(node => node.props['data-arkme-read-receipt-indicator'] !== undefined)).toHaveLength(0)
+    } else {
+      expect(renderer!.root.findAll(node => node.type === 'svg' && node.props['data-arkme-message-send-loading'] === true)).toHaveLength(0)
+    }
+    const hasTextStatus = state !== 'sent' && (!sending || state === 'uploading')
+    expect(statuses).toHaveLength(hasTextStatus ? 1 : 0)
+    if (!hasTextStatus) return
     const status = statuses[0]!
     expect(status.props.style.color).toBe(arkmeTheme.secondary)
     let ancestor = status.parent
@@ -5386,6 +5395,12 @@ describe('conversation send directory projection', () => {
   })
 
   it('keeps the owner directory unchanged after send until the authoritative session projection arrives', async () => {
+    const ack = deferred<void>()
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'source.send-text') await ack.promise
+      return baseCall(operation, params, signal)
+    })
     await act(async () => {
       renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />)
       await Promise.resolve()
@@ -5404,6 +5419,11 @@ describe('conversation send directory projection', () => {
       await Promise.resolve()
     })
 
+    const loading = renderer!.root.findByProps({ role: 'img', 'aria-label': '正在发送…' })
+    expect(loading.findAll(node => node.type === 'svg' && node.props['data-arkme-message-send-loading'] === true)).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-read-receipt-indicator': 'unread' })).toHaveLength(0)
+    await act(async () => ack.resolve())
+    expect(renderer!.root.findAll(node => node.type === 'svg' && node.props['data-arkme-message-send-loading'] === true)).toHaveLength(0)
     expect(arkmeChatDirectory.getSnapshot()).toEqual(directoryBeforeSend)
     const sendCall = mocks.callArkme.mock.calls.find(([operation]) => operation === 'source.send-text')
     expect(sendCall?.[1]).not.toHaveProperty('humanMentions')
