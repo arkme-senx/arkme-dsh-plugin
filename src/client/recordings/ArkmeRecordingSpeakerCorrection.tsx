@@ -1,3 +1,4 @@
+import { RecordingLearningStatus } from './RecordingLearningStatus.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeRecordingDay, ArkmeRecordingSoundSource, ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { callArkme } from '../api.js'
@@ -5,6 +6,7 @@ import { ArkmeClientError } from '../../sdk/index.js'
 import { arkmeAuthStore } from '../auth-store.js'
 import { arkmeTheme as color } from '../arkme-theme.js'
 import { tr } from '../locale.js'
+import { recognizedSpeakerDirectory } from '../recognized-speaker-directory.js'
 import { resetRecordingSpeakerCaches } from './recording-speaker-options-store.js'
 import { useRecordingSpeakerCorrection } from './use-recording-speaker-correction.js'
 
@@ -19,10 +21,16 @@ export function nearbyCorrectionItems(items: readonly ArkmeRecordingWorkbenchIte
   return nearby.slice(0, 100).sort((a, b) => a.startAtMillis - b.startAtMillis)
 }
 
-export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCurrent, intent, autoReject = false, initialSelectedIds, onUpdated, onClose, onPlay, onBack }: {
+export function ArkmeRecordingSpeakerCorrection({ item, items, target, assignment, assignmentLabel, crossDateSelection, rejectedCandidateItemRef, preserveAssignment, exclusionLabel, rejectCurrent, intent, autoReject = false, initialSelectedIds, onUpdated, onClose, onPlay, onBack }: {
   item: ArkmeRecordingWorkbenchItem
   items: readonly ArkmeRecordingWorkbenchItem[]
   target?: Pick<ArkmeRecordingSpeakerCandidate, 'label' | 'speakerRef' | 'optionKey'>
+  assignment?: ArkmeRecordingSpeakerCorrectionInput['target']
+  assignmentLabel?: string
+  crossDateSelection?: boolean
+  rejectedCandidateItemRef?: string
+  preserveAssignment?: boolean
+  exclusionLabel?: string
   rejectCurrent: boolean
   intent: 'reject' | 'source' | 'review'
   autoReject?: boolean
@@ -39,7 +47,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   const context = correction.context
   const [exclude, setExclude] = useState(intent === 'reject')
   const [source, setSource] = useState<ArkmeRecordingSoundSource | ''>('')
-  const [detach, setDetach] = useState(intent === 'reject' || intent === 'review')
+  const [detach, setDetach] = useState(preserveAssignment || rejectedCandidateItemRef ? false : !assignment || assignment.kind === 'unknown' ? intent === 'reject' || intent === 'review' : false)
   const [review, setReview] = useState(intent === 'review')
   const [selected, setSelected] = useState(new Set(initialSelectedIds ? [item.itemId, ...initialSelectedIds.filter(id => items.some(row => row.itemId === id))] : [item.itemId]))
   const [activity, setActivity] = useState<'write' | 'read'>()
@@ -48,12 +56,16 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   const [outcomeUnknown, setOutcomeUnknown] = useState(false)
   const [receipt, setReceipt] = useState<ArkmeRecordingSpeakerCorrectionResult>()
   const [notice, setNotice] = useState('')
+  const [learningRef, setLearningRef] = useState<string>()
+  const [learningRevision, setLearningRevision] = useState(0)
+  const [prepared, setPrepared] = useState<ArkmeRecordingSpeakerCorrectionInput>()
+  const [previewCount, setPreviewCount] = useState(0)
   const mounted = useRef(true)
   const locked = useRef(false)
   const autoStarted = useRef(false)
   const attempt = useRef<{ signature: string; key: string }>()
   const unresolved = useRef<{ action: 'apply'; input: ArkmeRecordingSpeakerCorrectionInput } | { action: 'undo'; input: ArkmeRecordingSpeakerCorrectionUndoInput }>()
-  const recovering = unresolved.current !== undefined
+  const recovering = unresolved.current !== undefined || prepared !== undefined
   const initialAccount = useRef(arkmeAuthStore.getSnapshot().auth)
   useEffect(() => {
     mounted.current = true
@@ -67,11 +79,15 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   const personLabel = target?.label ?? (rejectCurrent ? item.speakerLabel : '')
   const maxItems = context?.supported ? context.maxItems : 100
   const canSave = !pending && !outcomeUnknown && (recovering ? unresolved.current?.action === 'apply' : context?.supported === true && selected.size > 0 && selected.size <= maxItems
-    && ((exclude && !!personLabel) || source !== '' || detach))
+    && ((exclude && !!personLabel) || source !== '' || detach || !!assignment || !!rejectedCandidateItemRef))
   const finish = (result: ArkmeRecordingSpeakerCorrectionResult, undo = false) => {
-    unresolved.current = undefined; attempt.current = undefined; setOutcomeUnknown(false); setError('')
+    unresolved.current = undefined; attempt.current = undefined; setPrepared(undefined); setOutcomeUnknown(false); setError('')
     resetRecordingSpeakerCaches()
+    const auth = initialAccount.current
+    if (auth?.userId) recognizedSpeakerDirectory.invalidate(`${auth.environment}:${auth.userId}`)
     setReceipt(result)
+    if (result.learningRef) setLearningRef(result.learningRef)
+    setLearningRevision(v => v + 1)
     setNotice(undo ? tr('已撤销这次纠错') : tr('已保存 {v0} 段纠错', { v0: result.affectedCount }))
     if (result.day) onUpdated(result.day)
     const transcript = result.transcript ?? result.day?.transcript
@@ -84,7 +100,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   const fail = (reason: unknown, fallback: string) => {
     if (!mounted.current) return
     const rejected = reason instanceof ArkmeClientError && reason.body.code === 'recording-correction-rejected'
-    if (rejected) unresolved.current = undefined
+    if (rejected) { unresolved.current = undefined; attempt.current = undefined; setPrepared(undefined) }
     setError(reason instanceof Error ? reason.message : fallback)
     setOutcomeUnknown(!rejected)
   }
@@ -103,13 +119,28 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
     const input = { itemRef: currentItem.itemRef,
       itemRefs: availableItems.filter(row => selected.has(row.itemId)).map(row => row.itemRef),
       expectedVersion: context.version, detach,
+      ...(assignment ? { target: assignment } : {}),
+      ...(rejectedCandidateItemRef ? { rejectedCandidateItemRef } : {}),
+      ...(preserveAssignment ? { preserveAssignment: true } : {}),
+      ...(crossDateSelection ? { crossDateSelection: true } : {}),
       ...(exclude && rejectCurrent ? { rejectCurrent: true } : {}),
       ...(exclude && !rejectCurrent && target ? { rejectedSpeakerRef: target.speakerRef } : {}),
       ...(source === '' ? {} : { soundSource: source }) }
     if (input.itemRefs.length === 0 && selected.has(currentItem.itemId)) input.itemRefs.push(currentItem.itemRef)
     const signature = JSON.stringify(input)
     if (attempt.current?.signature !== signature) attempt.current = { signature, key: crypto.randomUUID() }
-    await submit({ action: 'apply', input: { ...input, idempotencyKey: attempt.current.key } })
+    const prepared = { ...input, idempotencyKey: attempt.current.key }
+    if (assignment || crossDateSelection) {
+      locked.current = true; setActivity('read'); setError('')
+      try {
+        const preview = await callArkme<import('../../types.js').ArkmeRecordingSpeakerCorrectionPreview>('recordings.speaker.correction.preview', prepared)
+        if (!mounted.current) return
+        setPrepared({ ...prepared, intentToken: preview.intentToken }); setPreviewCount(preview.affectedCount)
+      } catch (reason) { if (mounted.current) setError(reason instanceof Error ? reason.message : tr('预览失败')) }
+      finally { locked.current = false; if (mounted.current) setActivity(undefined) }
+      return
+    }
+    await submit({ action: 'apply', input: prepared })
   }
   const undo = async () => {
     if (pending || locked.current || outcomeUnknown) return
@@ -149,7 +180,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
   }, [context])
   const resetForReview = () => {
     setReceipt(undefined); setNotice(''); setReview(true); setSelected(new Set([currentItem.itemId]));
-    setExclude(false); setSource(''); setDetach(true)
+    setExclude(false); setSource(''); setDetach(!preserveAssignment && !rejectedCandidateItemRef && (!assignment || assignment.kind === 'unknown'))
   }
   const undoRef = receipt ? receipt.undoRef : (context?.supported ? context.undoRef : undefined)
   return <section aria-label={tr('说话人纠错')} style={{ display: 'flex', flexDirection: 'column', minHeight: 0, gap: 10, fontSize: 12 }}>
@@ -159,12 +190,16 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
       <button type="button" style={button} disabled={pending} onClick={onClose}>{tr('关闭')}</button>
     </div>
     <div style={{ color: color.secondary }}>{time(currentItem.startAtMillis)} · {initialSelectedIds ? tr('仅处理手动选择的 {v0} 段', { v0: selected.size }) : tr('默认仅处理当前片段')}</div>
+    {preserveAssignment && <div style={{ color: color.secondary }}>{tr('保留当前归属，仅记录所选片段与「{v0}」不是同一个人。', { v0: exclusionLabel ?? target?.label ?? tr('基准声音') })}</div>}
+    {assignment && <div style={{ color: color.secondary }}>{tr('归属目标：')}{assignmentLabel ?? (assignment.kind === 'new' ? assignment.name : assignment.kind === 'anonymous' ? tr('同一个匿名身份') : assignment.kind === 'unknown' ? tr('拆出后待确认') : tr('所选人物'))}</div>}
     {correction.loading && <div role="status">{tr('正在读取纠错状态…')}</div>}
     {context?.supported === false && <div role="status" style={{ padding: 9, borderRadius: 6, background: color.layer2, lineHeight: 1.6 }}>
       {tr('说话人纠错暂未开放。可以先查看和选择，当前选择尚未保存。')}
     </div>}
     {correction.error && <div role="alert" style={{ color: color.danger }}>{correction.error} <button style={button} onClick={correction.reload}>{tr('重试读取')}</button></div>}
     {context?.supported && context.excludedSpeakers.length > 0 && <div style={{ color: color.secondary }}>{tr('已排除：')}{context.excludedSpeakers.map(person => person.label).join('、')}</div>}
+    {(learningRef ?? (context?.supported ? context.learningRef : undefined)) && <RecordingLearningStatus learningRef={(learningRef ?? (context?.supported ? context.learningRef : undefined))!} refreshKey={learningRevision}/> }
+    {prepared && !notice && <div style={{ padding: 10, background: color.layer2 }}><p>{tr('后台已核实 {v0} 段；仅修改明确选择的片段，不合并历史或未来身份。', { v0: previewCount })}</p><p>{new Date(Math.min(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.startAtMillis))).toLocaleString()} — {new Date(Math.max(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.endAtMillis))).toLocaleString()}</p><button style={button} disabled={pending || !!unresolved.current} onClick={() => setPrepared(undefined)}>{tr('返回修改')}</button> <button style={button} disabled={pending || outcomeUnknown} onClick={() => { if (!locked.current) void submit(unresolved.current ?? { action: 'apply', input: prepared }) }}>{tr('确认保存')}</button></div>}
     {notice ? <>
       <div role="status" style={{ padding: 10, borderRadius: 6, background: color.layer2 }}>{notice}{receipt?.warning && <p>{receipt.warning}</p>}</div>
       <div style={{ display: 'flex', gap: 8 }}>
@@ -174,7 +209,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
     </> : <>
       <div style={{ overflowY: 'auto', minHeight: 0, maxHeight: 'min(510px, 55vh)', display: 'flex', flexDirection: 'column', gap: 12 }}>
         {personLabel && <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" aria-label={tr('不是 {v0}', { v0: personLabel })} checked={exclude} disabled={pending || recovering} onChange={event => { setExclude(event.target.checked); if (event.target.checked) setDetach(true) }} />
+          <input type="checkbox" aria-label={tr('不是 {v0}', { v0: personLabel })} checked={exclude} disabled={pending || recovering} onChange={event => { setExclude(event.target.checked); if (event.target.checked && !preserveAssignment) setDetach(true) }} />
           {tr('这些片段不是 {v0}', { v0: personLabel })}
         </label>}
         <fieldset disabled={pending || recovering} style={{ border: 0, margin: 0, padding: 0 }}>
@@ -184,7 +219,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
               <button key={value} type="button" aria-pressed={source === value} style={{ ...button, ...(source === value ? { background: color.layer2, borderColor: color.info } : {}) }} onClick={() => { setSource(value) }}>{tr(label)}</button>)}
           </div>
         </fieldset>
-        <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}><input type="checkbox" aria-label={tr('从原说话人分组中拆出')} checked={detach} disabled={pending || recovering || exclude} onChange={event => { setDetach(event.target.checked) }} />
+        <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}><input type="checkbox" aria-label={tr('从原说话人分组中拆出')} checked={detach} disabled={pending || recovering || exclude || !!preserveAssignment || !!rejectedCandidateItemRef || (!!assignment && assignment.kind !== 'unknown')} onChange={event => { setDetach(event.target.checked) }} />
           <span>{tr('从原说话人分组中拆出')}<small style={{ display: 'block', color: color.secondary, marginTop: 4, lineHeight: 1.6 }}>{tr('保留转写，身份待确认；选中多段不代表它们是同一个人。')}</small></span>
         </label>
         {!review ? <button style={button} disabled={pending || recovering} onClick={() => { setReview(true) }}>{tr('核对附近片段')}</button> : <>
@@ -202,7 +237,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, rejectCur
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', borderTop: `1px solid ${color.border}`, paddingTop: 10 }}>
         <span style={{ color: color.secondary, flex: 1 }}>{tr('已选 {v0} 段', { v0: selected.size })}</span>
         {undoRef && <button style={button} disabled={pending || outcomeUnknown || unresolved.current?.action === 'apply' || correction.loading} onClick={() => { void undo() }}>{tr('撤销上次纠错')}</button>}
-        <button type="button" style={{ ...button, background: canSave ? color.text : color.layer2, color: canSave ? color.base : color.tertiary }} disabled={!canSave || correction.loading} onClick={() => { void save() }}>{pending ? tr(activity === 'read' ? '读取中…' : '保存中…') : tr('保存纠错')}</button>
+        <button type="button" style={{ ...button, background: canSave ? color.text : color.layer2, color: canSave ? color.base : color.tertiary }} disabled={!canSave || correction.loading} onClick={() => { void save() }}>{pending ? tr(activity === 'read' ? '读取中…' : '保存中…') : tr(assignment || crossDateSelection ? '预览纠错' : '保存纠错')}</button>
       </div>
     </>}
     {error && <div role="alert" style={{ color: color.danger, lineHeight: 1.6 }}>{error}<div>{tr(outcomeUnknown ? '请先重新读取状态，确认是否已保存。' : recovering ? (unresolved.current?.action === 'undo' ? '可继续读取状态，或点击撤销按钮重试原请求。' : '可继续读取状态，或点击保存纠错重试原请求。') : '本次操作未保存，请重新打开录音，再核对所选片段。')}</div>

@@ -46,6 +46,7 @@ export interface ExplorePage {
   needsEnrichment?: boolean
 }
 export interface ExploreEvidence {
+  roles?: Array<'author' | 'speaker' | 'mentioned' | 'participant'>
   key: string
   label: string
   speaker: string

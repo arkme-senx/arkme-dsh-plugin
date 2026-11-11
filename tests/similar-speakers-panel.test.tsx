@@ -31,7 +31,7 @@ describe('similar speaker review UI', () => {
     const radios = renderer.root.findAllByType('input').filter(node => node.props.type === 'radio')
     await act(async () => radios[2]!.props.onChange())
     expect(JSON.stringify(renderer.toJSON())).toContain('保留一个匿名身份')
-    expect(button('等待后端支持保存').props.disabled).toBe(true)
+    expect(button('选择原文片段').props.disabled).toBe(false)
     await click('返回核对')
     expect(renderer.root.findByProps({ 'aria-label': '选择 说话人 b' }).props.checked).toBe(true)
     await click('不是同一个人')

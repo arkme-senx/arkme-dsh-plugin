@@ -3586,6 +3586,7 @@ export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   /** optionKey is empty for an excluded person no longer present in the directory. */
   excludedSpeakers: Array<{ optionKey: string; label: string }>
   undoRef?: string
+  learningRef?: string
 }
 
 export interface ArkmeRecordingSpeakerCorrectionPreview {
@@ -3597,15 +3598,19 @@ export interface ArkmeRecordingSpeakerCorrectionPreview {
 }
 
 export interface ArkmeRecordingSpeakerCorrectionInput {
+  /** Explicit selections only, capped at 100; never whole-account expansion. */
+  crossDateSelection?: boolean
   intentToken?: string
   /** Offsets within the explicitly selected parent rows; Host resolves storage coordinates. */
   selections?: import('./recording-evidence-contract.js').RecordingEvidenceSelection[]
-  target?: { kind: 'unknown' } | { kind: 'existing'; speakerRef: string } | { kind: 'new'; name: string }
+  target?: { kind: 'unknown' | 'anonymous' } | { kind: 'existing'; speakerRef: string } | { kind: 'new'; name: string }
   itemRef: string
   itemRefs: string[]
   expectedVersion: string
   idempotencyKey: string
   rejectedSpeakerRef?: string
+  rejectedCandidateItemRef?: string
+  preserveAssignment?: boolean
   rejectCurrent?: boolean
   soundSource?: ArkmeRecordingSoundSource
   /** Clear the assignment; must be false when assigning an existing or new target. */
@@ -3624,6 +3629,7 @@ export interface ArkmeRecordingSpeakerCorrectionResult {
   affectedCount: number
   version: string
   undoRef?: string
+  learningRef?: string
   day?: ArkmeRecordingDay
   /** Fresh transcript from the corrected source; day remains the system day. */
   transcript?: ArkmeRecordingDay['transcript']
@@ -4437,7 +4443,7 @@ export type ArkmePluginOperation =
   | 'arko.run.status'
   | 'explore.settings' | 'explore.settings.save'
   | 'relations.list' | 'relations.records'
-  | 'people.list' | 'people.open-chat'
+  | 'people.list' | 'people.open-chat' | 'people.identities'
   | 'explore.list' | 'explore.detail' | 'explore.enrich' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
@@ -4453,6 +4459,8 @@ export type ArkmePluginOperation =
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.learning'
+  | 'recordings.speaker.correction.learning.retry'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'speaker-directory.summary'
@@ -4462,6 +4470,9 @@ export type ArkmePluginOperation =
   | 'speaker-directory.avatars'
   | 'speaker-directory.similar'
   | 'speaker-directory.voice-samples'
+  | 'speaker-directory.group-members'
+  | 'speaker-directory.group-action'
+  | 'speaker-directory.correction-items'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'self-roles.list'
@@ -5041,6 +5052,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.learning'
+  | 'recordings.speaker.correction.learning.retry'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'

@@ -1,6 +1,8 @@
+import { RecentSpeakerGroupJobs } from './SpeakerGroupTask.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { SpeakerDirectoryPerson } from '../../speaker-directory-contract.js'
 import { speakerGroupConsistencyLabel, type SimilarSpeaker, type SpeakerSimilarityResult, type SpeakerVoiceSamples } from '../../speaker-similarity-contract.js'
+import { SimilarSpeakerSelection } from './SimilarSpeakerSelection.js'
 import { callArkme } from '../api.js'
 import { arkmeTheme as color } from '../arkme-theme.js'
 import { tr } from '../locale.js'
@@ -83,6 +85,7 @@ export function SimilarSpeakersPanel({ accountKey, row, onBack, directory = reco
 function SimilarityView({ accountKey, row, onBack, directory }: { accountKey: string; row: SpeakerDirectoryPerson; onBack(): void; directory: RecognizedSpeakerDirectory }) {
   const [result, setResult] = useState<SpeakerSimilarityResult>(), [error, setError] = useState(''), [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(() => new Set()), [comparison, setComparison] = useState<SpeakerDirectoryPerson>()
+  const [selecting, setSelecting] = useState(false)
   const [preview, setPreview] = useState<'same' | 'different'>(), [targetMode, setTargetMode] = useState<'existing' | 'new' | 'anonymous'>('existing')
   const [target, setTarget] = useState<SpeakerDirectoryPerson | undefined>(row.type === 'marked' ? row : undefined), [name, setName] = useState('')
   const request = useRef<AbortController>(), requestId = useRef(0), cursors = useRef(new Set<string>())
@@ -95,7 +98,7 @@ function SimilarityView({ accountKey, row, onBack, directory }: { accountKey: st
       const next = await callArkme<SpeakerSimilarityResult>('speaker-directory.similar', { detailRef: row.detailRef, ...(previous ? { cursor: previous.nextCursor, version: previous.version } : {}) }, controller.signal)
       if (controller.signal.aborted || generation !== requestId.current) return
       if (previous) {
-        if (!next.supported || next.state !== 'ready' || next.version !== previous.version || next.anchor.personKey !== previous.anchor.personKey || next.modelVersion !== previous.modelVersion || next.aggregation !== previous.aggregation || next.scoreDefinition !== previous.scoreDefinition
+        if (!next.supported || !['ready','complete'].includes(next.state) || next.version !== previous.version || next.anchor.personKey !== previous.anchor.personKey || next.modelVersion !== previous.modelVersion || next.aggregation !== previous.aggregation || next.scoreDefinition !== previous.scoreDefinition
           || next.hasMore && (next.nextCursor === previous.nextCursor || cursors.current.has(next.nextCursor))) throw new Error(tr('相似声音证据已变化，请重新查找。'))
         const seen = new Set(previous.items.map(item => item.person.personKey))
         if (next.items.some(item => seen.has(item.person.personKey))) throw new Error(tr('相似声音分页重复，请重新查找。'))
@@ -110,19 +113,22 @@ function SimilarityView({ accountKey, row, onBack, directory }: { accountKey: st
   const chosen = data?.items.filter(item => selected.has(item.person.personKey)) ?? []
   const consistency = data?.anchorConsistency
   const check = (candidate: SimilarSpeaker, checked: boolean) => setSelected(old => { const next = new Set(old); if (checked) next.add(candidate.person.personKey); else next.delete(candidate.person.personKey); return next })
+  if (selecting) return <SimilarSpeakerSelection people={preview === 'different' ? chosen.map(candidate => candidate.person) : [row, ...chosen.map(candidate => candidate.person)]} {...(preview === 'different' ? { rejectedPerson: row } : { assignment: targetMode === 'existing' && target ? { kind: 'directory' as const, person: target } : targetMode === 'new' ? { kind: 'new' as const, name: name.trim() } : { kind: 'anonymous' as const } })} onBack={() => setSelecting(false)} />
   return <section aria-label={tr('找相似声音')} style={{ fontSize: 12, lineHeight: 1.6 }}>
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><button type="button" style={button} onClick={onBack}>{tr('‹ 返回人物详情')}</button><strong style={{ flex: 1, fontSize: 17 }}>{tr('找相似声音')}</strong><button type="button" style={button} disabled={loading} onClick={() => { void load() }}>{tr('重新查找')}</button></div>
     <div style={{ ...box, marginTop: 12 }}><strong>{row.displayName}</strong><span style={{ marginLeft: 10, color: color.secondary }}>{tr('组内一致性')} {tr(speakerGroupConsistencyLabel(consistency))}</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 6 }}><span style={{ flex: 1, color: color.secondary }}>{consistency ? tr('已分析 {v0} / {v1} 段', { v0: consistency.analyzedCount, v1: consistency.totalCount }) : tr('以这个声音为基准，查找其他可能属于同一人的分组。')}</span><button type="button" style={button} onClick={() => setComparison(row)}>{tr('试听 / 查看片段')}</button></div>
     </div>
+    <RecentSpeakerGroupJobs/>
     {comparison && !preview && <><VoiceComparison key={`${accountKey}:${comparison.detailRef}`} accountKey={accountKey} anchor={row} other={comparison} /><button type="button" style={{ ...button, marginTop: 7 }} onClick={() => setComparison(undefined)}>{tr('收起片段')}</button></>}
     {error && <p role="alert" style={{ color: color.danger }}>{error}</p>}
     {loading && <p role="status">{tr('正在查找相似声音…')}</p>}
     {result?.supported === false && <p role="status" style={{ ...box, color: color.secondary }}>{tr('相似声音检索暂未开放。你可以先试听当前声音；候选距离、一致性和批量归并需后端提供支持。')}</p>}
     {data && !preview && <>
+      {data.progress&&<p role="status" style={{color:color.secondary}}>{tr(data.progress.stage==='index'?'声音索引覆盖':'相似检索进度')}：{data.progress.coveredCount} / {data.progress.totalCount}</p>}
       <p style={{ color: color.secondary }}>{tr('已检索 {v0} / {v1} 个分组', { v0: data.searchedCount, v1: data.totalCount })} · {tr('距离越小越接近，不代表是同一个人的概率。')}</p>
       <details style={{ color: color.secondary }}><summary style={{ cursor: 'pointer' }}>{tr('查看证据口径')}</summary><div>{tr('模型：')}{data.modelVersion} · {tr('版本：')}{data.version}</div><div>{tr('距离计算：')}{data.aggregation}</div><div>{tr('一致性定义：')}{data.scoreDefinition}</div></details>
-      {data.state !== 'ready' ? <p role="status">{tr(data.state === 'building' ? '相似声音索引正在准备，稍后可重新查找。' : '可比较的声纹证据不足，暂不能给出相似候选。')}</p>
+      {!['ready','complete'].includes(data.state) ? <p role="status">{tr(data.state === 'building'||data.state==='partial' ? '相似声音索引正在准备，稍后可重新查找。' : data.state==='failed' ? '相似声音索引暂时失败，可重新查找以恢复。' : '可比较的声纹证据不足，暂不能给出相似候选。')}</p>
         : data.items.length === 0 ? <p>{tr('当前已检索范围内没有相似候选。')}</p> : <ul style={{ listStyle: 'none', margin: '12px 0', padding: 0 }}>{data.items.map(candidate => <li key={candidate.person.personKey} style={{ ...box, marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'start', gap: 9 }}><input type="checkbox" aria-label={tr('选择 {v0}', { v0: candidate.person.displayName })} checked={selected.has(candidate.person.personKey)} disabled={loading || !!error || !selected.has(candidate.person.personKey) && selected.size >= 100} onChange={event => check(candidate, event.target.checked)} />
             <div style={{ flex: 1, minWidth: 0 }}><strong>{candidate.person.displayName}</strong><span style={{ marginLeft: 8, color: color.secondary }}>{tr('出现 {v0} 天', { v0: candidate.person.dayCount })}</span>
@@ -136,16 +142,16 @@ function SimilarityView({ accountKey, row, onBack, directory }: { accountKey: st
     </>}
     {preview && <div style={{ ...box, marginTop: 12 }}>
       <strong>{tr(preview === 'same' ? '统一标记预览' : '排除关系预览')}</strong>
-      <p>{preview === 'same' ? tr('本次包含基准声音及所选 {v0} 个候选组。', { v0: chosen.length }) : tr('仅排除基准声音与所选 {v0} 个候选组之间的同人关系。', { v0: chosen.length })}</p>
+      <p>{preview === 'same' ? tr('本次包含基准声音及所选 {v0} 个候选组。', { v0: chosen.length }) : tr('从所选 {v0} 个候选组中明确选择片段，排除它们与基准声音的同人关系。', { v0: chosen.length })}</p>
       <ul><li>{row.displayName} · {tr('基准声音')}</li>{chosen.map(candidate => <li key={candidate.person.personKey}>{candidate.person.displayName} · {tr('{v0} 段', { v0: candidate.consistency.totalCount })}</li>)}</ul>
-      {preview === 'same' ? <><p style={{ color: color.secondary }}>{tr('最终涉及的日期、去重片段数与混合声音冲突，需要后台预览核实。此处不会把分组数量当成人数。')}</p>
+      {preview === 'same' ? <><p style={{ color: color.secondary }}>{tr('下一步默认逐项选择，也可明确选择完整分组；后台核实日期、去重片段数与版本。分组数量不代表人数。')}</p>
         <fieldset style={{ border: 0, padding: 0 }}><legend>{tr('统一到')}</legend>{([['existing', '已有的人物'], ['new', '新人物'], ['anonymous', '暂不知道姓名']] as const).map(([mode, label]) => <label key={mode} style={{ marginRight: 10, display: 'inline-block' }}><input type="radio" name="similar-speaker-target" checked={targetMode === mode} onChange={() => setTargetMode(mode)} /> {tr(label)}</label>)}</fieldset>
         {targetMode === 'existing' && <ExistingPersonPicker accountKey={accountKey} directory={directory} {...(target ? { selected: target } : {})} onSelect={setTarget} />}
         {targetMode === 'new' && <input aria-label={tr('新人物名称')} placeholder={tr('输入姓名或备注')} value={name} maxLength={40} onChange={event => setName(event.target.value)} style={{ ...button, marginTop: 8 }} />}
         {targetMode === 'anonymous' && <p>{tr('保留一个匿名身份，之后可以再补姓名；原始录音和分组来源仍保留。')}</p>}
-      </> : <p style={{ color: color.secondary }}>{tr('候选之间的关系保持不变，不代表它们彼此不同。后续检索应遵守已确认的排除关系。')}</p>}
-      <p role="status" style={{ color: color.secondary }}>{tr('这只是预览，尚未保存。需要后端提供范围核对、版本校验、持久化及撤销支持。')}</p>
-      <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }}><button type="button" style={button} onClick={() => setPreview(undefined)}>{tr('返回核对')}</button><button type="button" style={button} disabled>{tr('等待后端支持保存')}</button></div>
+      </> : <p style={{ color: color.secondary }}>{tr('候选之间的关系保持不变，不代表它们彼此不同。下一步明确选择片段或完整分组；候选之间不新增排除关系。')}</p>}
+      <p role="status" style={{ color: color.secondary }}>{tr('尚未保存。下一步明确选择片段，后台预览通过后确认保存，可撤销。')}</p>
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between' }}><button type="button" style={button} onClick={() => setPreview(undefined)}>{tr('返回核对')}</button><button type="button" style={button} disabled={preview === 'same' && (targetMode === 'existing' && !target || targetMode === 'new' && !name.trim())} onClick={() => setSelecting(true)}>{tr('选择原文片段')}</button></div>
     </div>}
   </section>
 }

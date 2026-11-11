@@ -144,6 +144,8 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
 
   const originalPerson = options.find(option => option.optionKey === item.assignedSpeakerOptionKey && option.kind === 'speaker')
   if (saving && chosen[0]) return <ArkmeRecordingSpeakerCorrection item={chosen[0]} items={chosen} initialSelectedIds={chosen.map(row => row.itemId)}
+    assignment={targetMode === 'existing' ? { kind: 'existing', speakerRef: options.find(option => option.optionKey === targetKey)!.speakerRef } : targetMode === 'new' ? { kind: 'new', name: newName.trim() } : { kind: 'unknown' }}
+    assignmentLabel={targetMode === 'existing' ? options.find(option => option.optionKey === targetKey)?.label ?? tr('所选人物') : targetMode === 'new' ? newName.trim() : tr('拆出后待确认')}
     intent="review" rejectCurrent={!originalPerson && !!item.assignedSpeakerOptionKey && chosen[0].assignedSpeakerOptionKey === item.assignedSpeakerOptionKey}
     {...(originalPerson ? { target: { ...originalPerson, label: item.speakerLabel } } : {})} {...(onPlay ? { onPlay } : {})} onUpdated={onUpdated} onClose={onClose} onBack={() => setSaving(false)} />
 
@@ -244,11 +246,11 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
         </fieldset>
         {targetMode === 'existing' && <select aria-label={tr('目标人物')} value={targetKey} onChange={event => setTargetKey(event.target.value)} style={{ ...button, maxWidth: '100%' }}><option value="">{tr('选择已有的人物')}</option>{options.map(option => <option key={option.optionKey} value={option.optionKey}>{option.label}</option>)}</select>}
         {targetMode === 'new' && <input aria-label={tr('新说话人名称')} value={newName} maxLength={50} onChange={event => setNewName(event.target.value)} placeholder={tr('输入名称')} style={button} />}
-        <p style={{ color: color.secondary }}>{targetMode === 'unknown' ? tr('下一步确认声音来源和排除人物。选中多段不代表它们属于同一个人。') : tr('此方式暂为处理预览，需要后端支持原子拆分与归属保存；尚未修改任何人物。')}</p>
+        <p style={{ color: color.secondary }}>{targetMode === 'unknown' ? tr('下一步确认声音来源和排除人物。选中多段不代表它们属于同一个人。') : tr('下一步核实所选范围并预览归属，确认后原子保存；可撤销。')}</p>
         {targetMode !== 'unknown' && <p>{tr('预览目标：')}{targetMode === 'new' ? newName.trim() || tr('尚未填写') : options.find(option => option.optionKey === targetKey)?.label || tr('尚未选择')}</p>}
       </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', borderTop: `1px solid ${color.border}`, paddingTop: 10 }}><button type="button" style={button} onClick={() => setPreview(false)}>{tr('返回核对')}</button>
-        <button type="button" style={button} disabled={targetMode !== 'unknown' || chosen.length === 0} onClick={() => setSaving(true)}>{targetMode === 'unknown' ? tr('确认范围，继续纠错') : tr('等待后端支持保存')}</button></div>
+        <button type="button" style={button} disabled={chosen.length === 0 || (targetMode === 'existing' && !options.some(option => option.optionKey === targetKey)) || (targetMode === 'new' && !newName.trim())} onClick={() => setSaving(true)}>{tr('确认范围，继续纠错')}</button></div>
     </>}
   </section>
 }

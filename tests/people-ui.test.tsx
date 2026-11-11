@@ -89,6 +89,8 @@ it('publishes each relation page, retains partial results on a later error and r
     : input.cursor ? new Promise(resolve => { finish = resolve }) : { source: 'relations', items: [relation], nextCursor: 'second-page' })
   await act(async () => root.render(<PeopleSurface accountScope="paged" onBack={() => {}}/>))
   expect(host.querySelectorAll('.people-row')).toHaveLength(1)
+  expect(mocks.call.mock.calls.some(([op, p]) => op === 'people.list' && p.cursor === 'second-page')).toBe(false)
+  await click('加载更多人物')
   expect(host.textContent).toContain('关系人物 · 1 加载中')
   expect(mocks.call.mock.calls.some(([op, p]) => op === 'people.list' && p.cursor === 'second-page')).toBe(true)
   await act(async () => finish({ source: 'relations', items: [{...relation, key: 'e2', personKey: 'u2', name:'第二位'}] }))
@@ -154,4 +156,18 @@ it('resumes a page interrupted by new identity facets and retries the actual fai
   await click('重试')
   expect(mocks.call.mock.lastCall?.[1].cursor).toBe('page-two')
   expect(host.textContent).toContain('原文第一页');expect(host.textContent).toContain('原文第二页')
+})
+
+it('previews relation-only recording identity and only creates it after confirmation', async () => {
+  const choose = vi.fn()
+  const unbound = { ...relation, key: 'unbound', personKey: 'unbound', name: '张老师', accountLinked: false, personRef: 'person-ref' }
+  mocks.call.mockImplementation(async (op, input) => op === 'people.list' ? { source: input.source, items: input.source === 'relations' ? [unbound] : [] }
+    : input.action === 'binding-preview' ? { state: 'create_required', commandRef: 'binding-command' } : { speakerRef: 'new-speaker' })
+  await act(async () => root.render(<PersonPicker accountScope="binding" onClose={() => {}} onChoose={choose}/>))
+  await act(async () => (host.querySelector('.people-picker-list button') as HTMLButtonElement).click())
+  expect(host.textContent).toContain('无需对方注册账号')
+  expect(choose).not.toHaveBeenCalled()
+  expect(mocks.call.mock.calls.some(([, p]) => p.action === 'binding-apply')).toBe(false)
+  await click('确认并继续标记')
+  expect(choose).toHaveBeenCalledWith({ label: '张老师', speakerRef: 'new-speaker' })
 })
