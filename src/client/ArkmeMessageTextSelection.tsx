@@ -116,6 +116,15 @@ function captureSelection(doc: Document) {
     startEntry: targets.get(start), endEntry: targets.get(end), range, rect }
 }
 
+function selectedRange(selection: Selection | null): Range | undefined {
+  return selection && !selection.isCollapsed && selection.rangeCount === 1 ? selection.getRangeAt(0) : undefined
+}
+
+function sameRange(previous: Range, next: Range | undefined) {
+  return !!next && previous.startContainer === next.startContainer && previous.startOffset === next.startOffset
+    && previous.endContainer === next.endContainer && previous.endOffset === next.endOffset
+}
+
 function stillValid(snapshot: Snapshot) {
   return snapshot.start.isConnected && snapshot.end.isConnected
     && targets.get(snapshot.start) === snapshot.startEntry && targets.get(snapshot.end) === snapshot.endEntry
@@ -178,22 +187,31 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     setSelfController(controller)
     return () => controller.abort()
   }, [accountKey, replySourceRef])
-  const [selfSent, setSelfSent] = useState(false)
-  useEffect(() => { setSelfSent(false) }, [accountKey, replySourceRef])
-  useEffect(() => { if (selfSent) { const timer = setTimeout(() => setSelfSent(false), 3500); return () => clearTimeout(timer) } }, [selfSent])
+  const [forwardFeedback, setForwardFeedback] = useState<{ text: string; failed: boolean }>()
+  useEffect(() => { setForwardFeedback(undefined) }, [accountKey, replySourceRef])
+  useEffect(() => {
+    if (!forwardFeedback) return
+    const timer = setTimeout(() => setForwardFeedback(undefined), 3500)
+    return () => clearTimeout(timer)
+  }, [forwardFeedback])
+  const forwarding = useRef<Snapshot>()
   const [replacing, setReplacing] = useState<{ target: MessageSelectionTarget; quote: ArkmeMessageQuote; rect: DOMRect }>()
   const [verified, setVerified] = useState<{ snapshot: Snapshot; quote: ArkmeMessageQuote }>()
-  const [snapshot, setSnapshot] = useState<Snapshot>()
+  const [snapshot, setRenderedSnapshot] = useState<Snapshot>()
+  const current = useRef<Snapshot>()
+  const setSnapshot = useCallback((next: Snapshot | undefined) => {
+    current.current = next
+    setRenderedSnapshot(next)
+  }, [])
   const [notice, setNotice] = useState('')
   const [markScopeOpen, setMarkScopeOpen] = useState(false)
   const markScopeMenu = useRef<HTMLElement | null>(null)
   const [position, setPosition] = useState({ left: 8, top: 8 })
   const toolbar = useRef<HTMLDivElement>(null)
   const anchors = useRef(new WeakMap<Snapshot, { source: string; quote: ArkmeMessageQuote }>())
-  const current = useRef(snapshot)
-  current.current = snapshot
   useEffect(() => {
     let dragging = false
+    let rangeBeforeMouseDown: Range | undefined
     const insideToolbar = (target: EventTarget | null) => target instanceof Node
       && (toolbar.current?.contains(target) || markScopeMenu.current?.contains(target))
     const dismiss = () => { setSnapshot(undefined) }
@@ -203,12 +221,18 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     const down = (event: MouseEvent) => {
       if (insideToolbar(event.target)) return
       dragging = event.button === 0
+      rangeBeforeMouseDown = dragging && !targetFor(event.target as Node) ? selectedRange(document.getSelection())?.cloneRange() : undefined
       dismiss()
     }
     const up = (event: MouseEvent) => {
       if (insideToolbar(event.target)) return
       dragging = false
-      if (event.button === 0 && !elementFor(event.target as Node)?.closest(excludedSelector)) show()
+      const previousRange = rangeBeforeMouseDown
+      rangeBeforeMouseDown = undefined
+      if (event.button !== 0 || elementFor(event.target as Node)?.closest(excludedSelector)) return
+      // An outside click on non-selectable UI can leave the old browser selection intact.
+      if (previousRange && sameRange(previousRange, selectedRange(document.getSelection()))) return
+      show()
     }
     const context = (event: MouseEvent) => {
       const clicked = targetFor(event.target as Node)
@@ -230,14 +254,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     }
     const selectionChanged = () => {
       if (dragging || insideToolbar(document.activeElement)) return
-      const value = document.getSelection()
-      if (!value || value.isCollapsed) dismiss()
-      else if (current.current) {
-        const range = value.rangeCount === 1 ? value.getRangeAt(0) : undefined
-        const previous = current.current.range
-        if (!range || range.startContainer !== previous.startContainer || range.startOffset !== previous.startOffset
-          || range.endContainer !== previous.endContainer || range.endOffset !== previous.endOffset) dismiss()
-      }
+      const range = selectedRange(document.getSelection())
+      if (current.current && !sameRange(current.current.range, range)) dismiss()
     }
     document.addEventListener('mousedown', down, true)
     document.addEventListener('mouseup', up)
@@ -259,7 +277,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       window.removeEventListener('blur', dismiss)
       window.removeEventListener('resize', dismiss)
     }
-  }, [selectionDomain, replySourceRef])
+  }, [selectionDomain, replySourceRef, setSnapshot])
   useEffect(() => { setMarkScopeOpen(false) }, [snapshot])
   useEffect(() => {
     const open = (event: Event) => {
@@ -272,12 +290,11 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       if (!next || next.start !== element || next.end !== element) return
       event.preventDefault()
       anchors.current.set(next, { source: JSON.stringify([quoteSourceContent(entry.reply.item), entry.reply.item.recordVersion]), quote })
-      current.current = next
       setNotice(''); setSnapshot(next); setVerified({ snapshot: next, quote })
     }
     document.addEventListener(openMarkEvent, open)
     return () => document.removeEventListener(openMarkEvent, open)
-  }, [replySourceRef])
+  }, [replySourceRef, setSnapshot])
   useEffect(() => {
     if (!snapshot || !getMarks || snapshot.start !== snapshot.end) return
     const target = snapshot.startEntry?.reply
@@ -298,10 +315,12 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   }, [snapshot, replySourceRef, !!getMarks])
   useEffect(() => {
     if (!snapshot) return
-    const observer = new MutationObserver(() => { if (!stillValid(snapshot)) setSnapshot(undefined) })
+    const observer = new MutationObserver(() => {
+      if (current.current === snapshot && !stillValid(snapshot)) setSnapshot(undefined)
+    })
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-arkme-text-selection'] })
     return () => observer.disconnect()
-  }, [snapshot])
+  }, [snapshot, setSnapshot])
   useLayoutEffect(() => {
     if (!snapshot || !toolbar.current) return
     const element = toolbar.current
@@ -323,7 +342,11 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   if (typeof document === 'undefined') return null
   if (replacing && prepareReplace) return <ArkmeSelectedTextReplace key={`${replacing.target.sourceRef}:${replacing.target.item.itemUid}`}
     {...replacing} prepare={prepareReplace} onClose={() => setReplacing(undefined)} />
-  if (!snapshot) return selfSent ? createPortal(<div role="status" style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 12000, padding: '8px 14px', borderRadius: 8, background: arkmeTheme.menu, color: arkmeTheme.text, boxShadow: arkmeTheme.shadow }}>已转发</div>, document.body) : null
+  if (!snapshot) return forwardFeedback ? createPortal(<div role={forwardFeedback.failed ? 'alert' : 'status'}
+    style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 12000, padding: '8px 14px', borderRadius: 8,
+      background: arkmeTheme.menu, color: forwardFeedback.failed ? arkmeTheme.danger : arkmeTheme.text, boxShadow: arkmeTheme.shadow }}>
+    {forwardFeedback.text}
+  </div>, document.body) : null
   const replyTarget = snapshot.start === snapshot.end ? snapshot.startEntry?.reply : undefined
   const quote = verified?.snapshot === snapshot ? verified.quote : undefined
   const marks = quote && replyTarget ? (getMarks?.(replyTarget) ?? []).filter(mark => mark.state === 'available'
@@ -350,7 +373,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
   const canReply = !!onReply && !!replyTarget && replyTarget.sourceRef === replySourceRef
     && replyTarget.item.status === 1 && (!!replyTarget.item.messageActionRef || !!replyTarget.cloudMarkRef
       || ((selectionDomain === 'native' || selectionDomain === 'codex') && !!replyTarget.localMarkRef))
-  const canSendSelf = !!selfNote && !!accountKey && !!replyTarget && replyTarget.item.status === 1 && replyTarget.sourceRef === replySourceRef
+  const canForward = !!selfNote && !!accountKey && !!replyTarget && replyTarget.item.status === 1 && replyTarget.sourceRef === replySourceRef
   const find = () => {
     if (!stillValid(snapshot) || !replySourceRef) return
     if (!findSelectedMessageText(replySourceRef, snapshot.text)) { setNotice('当前对话暂不支持查找'); return }
@@ -364,10 +387,20 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       if (!stillValid(snapshot) || current.current !== snapshot || quoteSourceContent(snapshot.startEntry!.reply!.item) !== source) return
       setReplacing({ target: { ...replyTarget, item }, quote: anchor, rect: snapshot.rect })
       document.getSelection()?.removeAllRanges(); setSnapshot(undefined)
-    } catch (error) { setNotice(error instanceof Error ? error.message : '无法读取选区，请重新选择') }
+    } catch (error) {
+      if (current.current === snapshot) setNotice(error instanceof Error ? error.message : tr('无法读取选区，请重新选择'))
+    }
   }
-  const reply = async (underline = false, sendSelf = false) => {
-    if ((!canReply && !underline && !(sendSelf && canSendSelf)) || !replyTarget || replyTarget.sourceRef !== replySourceRef || !stillValid(snapshot)) return
+  const runQuoteAction = async (action: 'reply' | 'mark' | 'forward') => {
+    if (!replyTarget || replyTarget.sourceRef !== replySourceRef || current.current !== snapshot || !stillValid(snapshot)) return
+    if (action === 'reply' && !canReply) return
+    const forwardSignal = action === 'forward' ? selfController?.signal : undefined
+    if (action === 'forward') {
+      if (!canForward || !forwardSignal || forwardSignal.aborted || forwarding.current === snapshot) return
+      forwarding.current = snapshot
+      setForwardFeedback(undefined)
+      setNotice('')
+    }
     try {
       const sourceItem = replyTarget.item
       const source = JSON.stringify([quoteSourceContent(sourceItem), sourceItem.recordVersion])
@@ -386,32 +419,49 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
         || freshTarget.item.itemUid !== sourceItem.itemUid || freshTarget.item.status !== 1
         || JSON.stringify([quoteSourceContent(freshTarget.item), freshTarget.item.recordVersion]) !== source) return
       anchors.current.set(snapshot, { source, quote })
-      if (underline) {
+      if (action === 'mark') {
         if (canMarkTarget && !canMarkTarget(freshTarget)) return
         const message = await onUnderline?.(freshTarget, quote)
         if (current.current !== snapshot) return
         if (message) { setNotice(message); return }
-      } else if (sendSelf && selfNote && selfController && !selfController.signal.aborted) {
+      } else if (action === 'forward') {
+        if (!selfNote || !forwardSignal || forwardSignal.aborted) return
         const frozen: SelectedTextNoteQuote = {
           version: 1, sourceSelection:{projection:quote.projection,source_digest:quote.sourceDigest,start:quote.start,end:quote.end,...(quote.recordVersion===undefined?{}:{record_version:quote.recordVersion})},sourceLabel: selfNote.sourceLabel, senderName: freshTarget.item.senderName || '原作者',
           sourceAtMillis: freshTarget.item.sendAtMillis || 0, text: quote.text,...(freshTarget.excerptOrigin?{origin:freshTarget.excerptOrigin}:{}),...((freshTarget.excerptSource??freshTarget.item.excerptSource)?{source:(freshTarget.excerptSource??freshTarget.item.excerptSource)!}:{}),
         }
-        const signal = selfController.signal
-        document.getSelection()?.removeAllRanges(); setSnapshot(undefined)
-        try { const result = await forwardSelectedText(accountKey, frozen, signal); if (!signal.aborted && result.completed) setSelfSent(true) }
-        catch (error) { if (!signal.aborted) { setSnapshot(snapshot); setNotice(error instanceof Error ? error.message : '转发失败，请重试') } }
+        // A synchronous refusal leaves the current selection available for retry.
+        const request = forwardSelectedText(accountKey, frozen, forwardSignal)
+        setSnapshot(undefined)
+        document.getSelection()?.removeAllRanges()
+        try {
+          const result = await request
+          if (!forwardSignal.aborted && forwarding.current === snapshot && result.completed) {
+            setForwardFeedback({ text: tr('已转发'), failed: false })
+          }
+        } catch (error) {
+          if (!forwardSignal.aborted && forwarding.current === snapshot && !current.current) {
+            setForwardFeedback({ text: error instanceof Error ? error.message : tr('转发失败，请重新选择'), failed: true })
+          }
+        }
         return
-      }
-      else onReply!(freshTarget, quote)
+      } else onReply!(freshTarget, quote)
       document.getSelection()?.removeAllRanges()
       setSnapshot(undefined)
-    } catch (error) { setNotice(error instanceof Error ? error.message : '引用失败，请重新选择') }
+    } catch (error) {
+      if (current.current === snapshot && !forwardSignal?.aborted) {
+        const fallback = action === 'forward' ? tr('转发失败，请重试') : tr('引用失败，请重新选择')
+        setNotice(error instanceof Error ? error.message : fallback)
+      }
+    } finally {
+      if (action === 'forward' && forwarding.current === snapshot) forwarding.current = undefined
+    }
   }
   const copy = async (value: string) => {
     if (!stillValid(snapshot)) { setSnapshot(undefined); return }
     try {
       await copyText(value)
-      setSnapshot(current => current === snapshot ? undefined : current)
+      if (current.current === snapshot) setSnapshot(undefined)
     } catch {
       if (current.current === snapshot) setNotice(tr('复制失败，请重试'))
     }
@@ -425,9 +475,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     selection.addRange(range)
     const next = captureSelection(snapshot.start.ownerDocument)
     // Keep the menu beside the user's initial selection, even for a long message.
-    current.current = next ? { ...next, rect: snapshot.rect } : undefined
     setNotice('')
-    setSnapshot(current.current)
+    setSnapshot(next ? { ...next, rect: snapshot.rect } : undefined)
   }
   return createPortal(<div ref={toolbar} role="toolbar" aria-label={tr('选中文字操作')}
     data-arkme-text-selection-toolbar
@@ -454,7 +503,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
     {canMark && <span style={{ display: 'inline-flex', alignItems: 'center' }}><button type="button" aria-pressed={!!ownMark} disabled={!!ownMark?.pending}
       title={ownMark ? `取消你对“${ownMark.anchor!.text}”的标记` : undefined}
       style={{ ...buttonStyle, ...(ownMark ? { color: arkmeTheme.info, background: arkmeTheme.active } : {}) }}
-      onClick={() => { void (ownMark && onRemoveMark ? removeMark() : reply(true)) }}>{ownMark && <span aria-hidden>✓ </span>}{tr(markLabel)}</button>
+      onClick={() => { void (ownMark && onRemoveMark ? removeMark() : runQuoteAction('mark')) }}>{ownMark && <span aria-hidden>✓ </span>}{tr(markLabel)}</button>
       {chooseMarkScope && <><style>{'[data-arkme-mark-scope-menu] { z-index: 12001; }'}</style><ArkmeActionMenu open={markScopeOpen} label={tr('标记范围')} autoFocus
         onClose={() => setMarkScopeOpen(false)} selectedIds={[markStorage ?? 'cloud']}
         anchor={<button type="button" aria-label={tr('标记范围')} aria-haspopup="menu" aria-expanded={markScopeOpen}
@@ -473,8 +522,8 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       && <button type="button" style={buttonStyle} onClick={find}>{tr('查找')}</button>}
     {prepareReplace && replyTarget && replyTarget.sourceRef === replySourceRef && canReplace?.(replyTarget)
       && <button type="button" style={buttonStyle} onClick={() => { void replace() }}>{tr('替换')}</button>}
-    {canReply && <button type="button" style={buttonStyle} onClick={() => { void reply() }}>{tr(replyLabel)}</button>}
-    {canSendSelf && <button type="button" style={buttonStyle} onClick={() => { void reply(false, true) }}>{tr('转发')}</button>}
+    {canReply && <button type="button" style={buttonStyle} onClick={() => { void runQuoteAction('reply') }}>{tr(replyLabel)}</button>}
+    {canForward && <button type="button" style={buttonStyle} onClick={() => { void runQuoteAction('forward') }}>{tr('转发')}</button>}
     </div>
     {canMark && markScopeControl}
     {(authors.length > 0 || (markStorage === 'local' && !onMarkStorageChange && canMark)) && <div data-arkme-mark-authors tabIndex={0} aria-label="标记作者" style={{ padding: '2px 9px 4px', fontSize: 11, color: arkmeTheme.secondary, minHeight: 0, maxHeight: 'min(160px, 35vh)', overflowY: 'auto', overflowWrap: 'anywhere' }}>{authors.length > 0 ? `${authors.join('、')}标记了选区中的内容` : ''}{markStorage === 'local' && !onMarkStorageChange ? `${authors.length > 0 ? ' · ' : ''}仅本机` : ''}</div>}

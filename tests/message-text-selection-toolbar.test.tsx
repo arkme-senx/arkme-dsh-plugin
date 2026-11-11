@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { webcrypto } from 'node:crypto'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
@@ -6,6 +7,8 @@ import { ArkmeMessageTextSelectionToolbar, ArkmeSelectableMessageText } from '..
 import { copyText } from '../src/client/clipboard-text.js'
 import { ArkmeMarkdownBody } from '../src/client/ArkmeMarkdownBody.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
+import { registerLocalSnapshotForward, type LocalSnapshotForward } from '../src/client/local-snapshot-forward.js'
+import type { NativeForwardResult } from '../src/client/native-forward-entry.js'
 import type { ArkmeTimelineItem } from '../src/types.js'
 vi.mock('../src/client/clipboard-text.js', () => ({ copyText: vi.fn() }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn(async () => ({})) }))
@@ -200,4 +203,96 @@ it('keeps a live-growing toolbar inside its viewport without losing selection', 
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
     expect(observers.filter(observer => observer.target === toolbar).every(observer => observer.disconnected)).toBe(true)
   } finally { rect.mockRestore() }
+})
+
+it('does not reopen an old selection on an outside click that retains the native range', async () => {
+  await render(<><Fixture /><div id="outside" style={{ userSelect: 'none' }}>空白</div></>)
+  await open()
+  const outside = host.querySelector('#outside')!
+  await mouse(outside, 'mousedown')
+  expect(menu()).toBeNull()
+  await mouse(outside, 'mouseup')
+  expect(document.getSelection()?.toString()).toBe(partial)
+  expect(menu()).toBeNull()
+})
+
+it('opens for a changed drag selection when the pointer is released outside the message', async () => {
+  await render(<><Fixture /><div id="outside">空白</div></>)
+  await open()
+  const message = host.querySelector('#one')!
+  await mouse(message, 'mousedown')
+  select(message.firstChild!, 2, 4)
+  await mouse(host.querySelector('#outside')!, 'mouseup')
+  expect(menu()).not.toBeNull()
+  expect(document.getSelection()?.toString()).toBe(partial.slice(0, 2))
+})
+
+function ForwardFixture() {
+  return <><ArkmeMessageTextSelectionToolbar replySourceRef="test-source" selfNote={{ sourceLabel: '消息', accountKey: 'test:11' }} />
+    {[['one', `前缀${partial}后缀`], ['two', '第二条消息']].map(([id, text]) =>
+      <ArkmeSelectableMessageText key={id} text={text!} target={{ sourceRef: 'test-source', item: {
+        itemUid: id, title: '', status: 1, textContent: text!, textFormat: 'plain',
+      } as ArkmeTimelineItem }}><p id={id}>{text}</p></ArkmeSelectableMessageText>)}
+  </>
+}
+const forwardButton = () => buttons().find(button => button.textContent === '转发')!
+
+it('keeps a valid selection available for retry when the picker refuses to open', async () => {
+  vi.stubGlobal('crypto', webcrypto)
+  const presenter = vi.fn<(content: LocalSnapshotForward) => Promise<NativeForwardResult>>()
+    .mockImplementationOnce(() => { throw new Error('转发页面尚未就绪，请稍后重试') })
+    .mockResolvedValueOnce({ completed: false })
+  const unregister = registerLocalSnapshotForward(presenter)
+  try {
+    await render(<ForwardFixture />)
+    await open()
+    await act(async () => forwardButton().click())
+    await act(async () => { await vi.waitFor(() => expect(presenter).toHaveBeenCalledTimes(1)) })
+    expect(menu()?.querySelector('[role="alert"]')?.textContent).toContain('请稍后重试')
+    expect(document.getSelection()?.toString()).toBe(partial)
+    await act(async () => forwardButton().click())
+    expect(presenter).toHaveBeenCalledTimes(2)
+    expect(presenter.mock.calls[1]?.[0].preview.subtitle).toBe(partial)
+    expect(menu()).toBeNull()
+  } finally { unregister() }
+})
+
+it('does not restore a handed-off selection when its failure arrives after a new selection', async () => {
+  vi.stubGlobal('crypto', webcrypto)
+  let fail!: (error: Error) => void
+  const presenter = vi.fn(() => new Promise<NativeForwardResult>((_, reject) => { fail = reject }))
+  const unregister = registerLocalSnapshotForward(presenter)
+  try {
+    await render(<ForwardFixture />)
+    await open()
+    await act(async () => forwardButton().click())
+    await act(async () => { await vi.waitFor(() => expect(presenter).toHaveBeenCalledTimes(1)) })
+    expect(menu()).toBeNull()
+
+    const next = host.querySelector('#two')!
+    await mouse(next, 'mousedown')
+    select(next.firstChild!, 0, 3)
+    await mouse(next, 'mouseup')
+    await act(async () => fail(new Error('转发失败')))
+    expect(menu()?.querySelector('[role="alert"]')).toBeNull()
+    await act(async () => buttons()[0]!.click())
+    expect(copyText).toHaveBeenLastCalledWith('第二条')
+  } finally { unregister() }
+})
+
+it('hands off a selection once when Forward is clicked twice during digest calculation', async () => {
+  let finishDigest!: (digest: ArrayBuffer) => void
+  const digest = new Promise<ArrayBuffer>(resolve => { finishDigest = resolve })
+  vi.stubGlobal('crypto', { subtle: { digest: () => digest } })
+  const presenter = vi.fn(async () => ({ completed: false }))
+  const unregister = registerLocalSnapshotForward(presenter)
+  try {
+    await render(<ForwardFixture />)
+    await open()
+    await act(async () => { forwardButton().click(); forwardButton().click() })
+    expect(presenter).not.toHaveBeenCalled()
+    await act(async () => finishDigest(new ArrayBuffer(32)))
+    expect(presenter).toHaveBeenCalledTimes(1)
+    expect(menu()).toBeNull()
+  } finally { unregister() }
 })

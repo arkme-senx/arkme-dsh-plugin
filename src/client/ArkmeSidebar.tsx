@@ -7800,7 +7800,7 @@ export function ArkmeSurface({
       nativeForwardRequestRef.current?.finish({ completed: false })
     }
   }, [authenticatedAccountKey, authenticatedUserId])
-  useEffect(() => registerLocalSnapshotForward(async (content, signal) => {
+  useEffect(() => registerLocalSnapshotForward((content, signal) => {
     if (signal.aborted || !authenticatedAccountKey || authenticatedUserId !== content.userId || arkmeAuthenticatedAccountKey(arkmeAuthStore.getSnapshot().auth) !== authenticatedAccountKey) throw new Error('账号已变化，请重新选择')
     if (nativeForwardRequestRef.current || forwardPickerScopeRef.current || forwardSubmissionScopeRef.current.sending) throw new Error('请先完成当前转发')
     return new Promise<NativeForwardResult>(resolve => {
