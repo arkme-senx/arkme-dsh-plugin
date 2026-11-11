@@ -14,7 +14,7 @@ const changed = vi.fn()
 let stopChanges: () => void
 function Fixture({ messages }: { messages: TeamMessage[] }) {
   const viewport = useRef<HTMLElement>(null)
-  value = useTeamMessageSelection({ accountKey: 'prod:11', conversationKey: 'conversation', messages, viewport, signal: controller.signal })
+  value = useTeamMessageSelection({ accountKey: 'prod:11', conversationKey: 'conversation', conversationRef: 'conversation-ref', messages, viewport, signal: controller.signal })
   return null
 }
 async function mount(messages: TeamMessage[]) { await act(async () => { view = create(<Fixture messages={messages} />) }) }
@@ -35,7 +35,7 @@ it('includes external and internal messages for selection but refuses a mixed un
   await act(async () => value.requestDelete())
   expect(value.confirm).toBeUndefined(); expect(mocks.call).not.toHaveBeenCalled()
 })
-it('updates immediately before network completion, suppresses stale snapshots, allows a newer restore', async () => {
+it('updates immediately before network completion, keeps a personal deletion even after the message is edited', async () => {
   let finish!: () => void
   mocks.call.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
   const a = message('a'); await mount([a]); await act(async () => value.enter(new Set(['a'])))
@@ -45,11 +45,11 @@ it('updates immediately before network completion, suppresses stale snapshots, a
   expect(value.keeps(a)).toBe(false); expect(value.busy).toBe(true); expect(value.ids).toBeUndefined()
   await act(async () => { void value.remove() })
   expect(mocks.call).toHaveBeenCalledTimes(1)
-  expect(mocks.call.mock.calls[0]!.slice(0, 2)).toEqual(['team.app.delete', { messageRef: 'sealed-a-1', version: 1, expectedAccountKey: 'prod:11' }])
+  expect(mocks.call.mock.calls[0]!.slice(0, 2)).toEqual(['team.app.delete', { conversationRef: 'conversation-ref', messageRef: 'sealed-a-1', expectedAccountKey: 'prod:11' }])
   await act(async () => { finish(); await pending })
   expect(value.keeps(a)).toBe(false)
   expect(value.keeps({ ...a, version: 2, contentStatus: 'deleted' })).toBe(false)
-  expect(value.keeps({ ...a, version: 3 })).toBe(true)
+  expect(value.keeps({ ...a, version: 3 })).toBe(false)
   expect(changed).toHaveBeenCalledExactlyOnceWith('prod:11', false, { kind: 'team.message.changed', conversationKeys: ['conversation'], messageKey: 'a' })
 })
 it('restores only failed items and retains confirmed deletions with a refresh affordance', async () => {

@@ -3656,8 +3656,14 @@ describe('conversation send directory projection', () => {
       .some(span => span.children.includes('多选')))!.props.onClick() })
   }
 
+  async function enterSelfRecordDeletion(item: ArkmeTimelineItem, additional: ArkmeTimelineItem[] = []) {
+    activeSource = sendToSelf
+    arkmeUi.selectSource(sendToSelf)
+    await enterMessageSelectMode(item, additional)
+  }
+
   it('offers Record deletion only with an authoritative capability and preserves selection on cancel', async () => {
-    await enterMessageSelectMode({ itemUid: 'delete-own', messageActionRef: 'select-ref',
+    await enterSelfRecordDeletion({ itemUid: 'delete-own', messageActionRef: 'select-ref',
       recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
       sendAtMillis: 1, textContent: 'Delete me', status: 1 })
     const button = renderer!.root.findByProps({ 'aria-label': '删除' })
@@ -3679,7 +3685,7 @@ describe('conversation send directory projection', () => {
       }
       return baseCall(operation, ...args)
     })
-    await enterMessageSelectMode({ itemUid: 'delete-success', messageActionRef: 'select-ref',
+    await enterSelfRecordDeletion({ itemUid: 'delete-success', messageActionRef: 'select-ref',
       recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
       sendAtMillis: 1, textContent: 'Delete me', status: 1 })
     act(() => { renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }) })
@@ -3692,13 +3698,11 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'delete-success' })).toHaveLength(0)
   })
 
-  it.each([target, group])('removes a $kind record before the response and keeps feedback out of another conversation', async currentSource => {
-    activeSource = currentSource
-    arkmeUi.selectSource(currentSource)
+  it('removes a self Record before the response and keeps feedback out of another conversation', async () => {
     const pending = deferred<unknown>(), previous = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, ...args) => operation === 'source.record-delete'
       ? pending.promise : previous(operation, ...args))
-    await enterMessageSelectMode({ itemUid: 'delete-pending', messageActionRef: 'select-ref',
+    await enterSelfRecordDeletion({ itemUid: 'delete-pending', messageActionRef: 'select-ref',
       recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
       sendAtMillis: 1, textContent: 'Delete pending', status: 1 })
     act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }))
@@ -3728,7 +3732,7 @@ describe('conversation send directory projection', () => {
         items: [{ recordUid: item.itemUid, version: 4, result: 'deleted' }] }
       return baseCall(operation, input, ...args)
     })
-    await enterMessageSelectMode(item)
+    await enterSelfRecordDeletion(item)
     await act(async () => {
       renderer!.root.find(node => node.type === 'button' && renderedText(node.props.children) === '继续加载更早消息').props.onClick()
       await Promise.resolve()
@@ -3736,7 +3740,7 @@ describe('conversation send directory projection', () => {
     expect(finishPage).toBeDefined()
     act(() => { renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }) })
     await act(async () => { renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick() })
-    await act(async () => { finishPage({ source: target, items: [item], hasMore: false }); await Promise.resolve() })
+    await act(async () => { finishPage({ source: sendToSelf, items: [item], hasMore: false }); await Promise.resolve() })
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': item.itemUid })).toHaveLength(0)
   })
 
@@ -3748,7 +3752,7 @@ describe('conversation send directory projection', () => {
       if (operation === 'source.timeline' && refreshFails) throw new Error('核对读取失败')
       return baseCall(operation, ...args)
     })
-    await enterMessageSelectMode({ itemUid: 'delete-unknown', messageActionRef: 'select-ref',
+    await enterSelfRecordDeletion({ itemUid: 'delete-unknown', messageActionRef: 'select-ref',
       recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
       sendAtMillis: 1, textContent: 'Keep me', status: 1 })
     act(() => { renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }) })
@@ -3770,7 +3774,7 @@ describe('conversation send directory projection', () => {
       ? { items: [{ recordUid: first.itemUid, version: 4, result: 'deleted' },
           { recordUid: second.itemUid, version: 4, result: outcome, ...(outcome === 'rejected' ? { message: '内容版本已变化，请刷新后重试' } : {}) }] }
       : baseCall(operation, ...args))
-    await enterMessageSelectMode(first, [second])
+    await enterSelfRecordDeletion(first, [second])
     act(() => renderer!.root.findByProps({ 'data-arkme-message-item-uid': second.itemUid }).findByProps({ role: 'checkbox' }).props.onClick({ stopPropagation: vi.fn() }))
     act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }))
     await act(async () => renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick())
@@ -3786,7 +3790,7 @@ describe('conversation send directory projection', () => {
     let finish!: (value: unknown) => void
     mocks.callArkme.mockImplementation(async (operation, ...args) => operation === 'source.record-delete'
       ? new Promise(resolve => { finish = resolve }) : baseCall(operation, ...args))
-    await enterMessageSelectMode({ itemUid: 'delete-switch', messageActionRef: 'select-ref',
+    await enterSelfRecordDeletion({ itemUid: 'delete-switch', messageActionRef: 'select-ref',
       recordDeletionRef: 'delete-ref', recordVersion: 3, senderName: '我', isMe: true,
       sendAtMillis: 1, textContent: 'Original', status: 1 })
     act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }))
@@ -3799,9 +3803,31 @@ describe('conversation send directory projection', () => {
   })
 
   it('disables Record deletion when the selected message lacks owner evidence', async () => {
-    await enterMessageSelectMode({ itemUid: 'delete-foreign', messageActionRef: 'select-ref',
+    await enterSelfRecordDeletion({ itemUid: 'delete-foreign', messageActionRef: 'select-ref',
       senderName: 'Peer', isMe: false, sendAtMillis: 1, textContent: 'Foreign', status: 1 })
     expect(renderer!.root.findByProps({ 'aria-label': '删除' }).props.disabled).toBe(true)
+  })
+
+  it.each([target, group])('deletes a received $kind occurrence only after the V2 receipt', async source => {
+    activeSource = source
+    arkmeUi.selectSource(source)
+    const item: ArkmeTimelineItem = {
+      itemUid: 'incoming-delete', timelineItemKey: 'incoming-occurrence', messageActionRef: 'incoming-ref',
+      messageActionsV2: true, senderName: 'Peer', isMe: false, sendAtMillis: 1, textContent: 'Incoming', status: 1,
+    }
+    const pending = deferred<unknown>(), previous = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, ...args) => operation === 'source.chat-message-action'
+      ? pending.promise : previous(operation, ...args))
+    await enterMessageSelectMode(item)
+    act(() => renderer!.root.findByProps({ 'aria-label': '删除' }).props.onClick({ currentTarget: {} }))
+    await act(async () => renderer!.root.findAllByType('button').find(node => node.children.includes('确认删除'))!.props.onClick())
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': item.itemUid })).toHaveLength(1)
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.chat-message-action', {
+      sourceRef: source.sourceRef, actionRef: 'incoming-ref', action: 'delete',
+    }, expect.any(AbortSignal))
+    await act(async () => pending.resolve({ timelineItemKey: 'incoming-occurrence', changedAtMillis: 2 }))
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': item.itemUid })).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.record-delete')).toHaveLength(0)
   })
 
   it.each([500, 1400])('keeps the clicked message at its viewport offset when entering selection from scrollTop %s', async initialTop => {

@@ -8,10 +8,11 @@ import {stringifyOwnerJson} from '../../src/record-owner-id.js'
 it.each((['keyword', 'long_article'] as const).flatMap(kind => (['account', 'abort'] as const).map(reason => ({ kind, reason }))))('rejects a delegated $kind search invalidated during article action binding: $reason', async ({ kind, reason }) => {
  let userId = 42
  const hit = { record_uid: 'article', source_kind: 3, source_uid: 'group', record_core: { record_uid: 'article', owner_user_id: 77, version: 3, display_kind: 1, text_content: '正文' }, chat_core: { chat_session_uid: 'group', occurrence: { relation_uid: 'article-rel', sequence: 57, approved_record_version: 3 } } }
- const runtime = new ServiceRuntime({ environment: 'test', recordBaseUrl: 'https://record.test', requestTimeoutMs: 1000 } as ArkmeServiceConfig,
+ const runtime = new ServiceRuntime({ environment: 'test', recordBaseUrl: 'https://record.test', chatBaseUrl: 'https://chat.test', requestTimeoutMs: 1000 } as ArkmeServiceConfig,
   { read: async () => ({ userId, accessToken: 'fake', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} },
   { uniqueCode: async () => 'article-source-key' } as StateStore,
-  (async () => new Response(JSON.stringify({ code: 0, data: { items: [hit], source_aggregates: [], has_more: false } }))) as typeof fetch)
+  (async input => new Response(JSON.stringify(String(input).includes('personal-visibility/query')
+   ? { code: 200, data: { hidden: [] } } : { code: 0, data: { items: [hit], source_aggregates: [], has_more: false } }))) as typeof fetch)
  const source = new SourceService(runtime, {} as never, {} as never)
  const search = new SearchService(runtime, {} as never, new MediaService(runtime, {} as never, {} as never, {} as never), source)
  const started = Promise.withResolvers<void>(), binding = Promise.withResolvers<void>()
@@ -37,7 +38,14 @@ it('preserves delegation on keyword and every scene, including source media and 
  const session={userId:42,accessToken:'fake',refreshToken:'fake-refresh'}
  const data={items:[{record_uid:'record',source_kind:3,source_uid:'group',route_target_kind:'chat_timeline',chat_core:{chat_session_uid:'group',title:'客户群',occurrence:{relation_uid:'rel',sequence:57,approved_record_version:3}},record_core:{owner_user_id:77,version:3,text_content:'授权内容',content_payload:{media_refs:[{file_asset_uid:'asset',file_name:'图片.png',file_kind:1,mime_type:'image/png',download_url:'https://must-not-use.test/owner-url'}]},media_display_items:[{file_asset_uid:'asset',source_attachment_ref:'attachment-proof',file_kind:1,file_name:'图片.png',mime_type:'image/png',size:12}]}}],source_aggregates:[{source_kind:3,source_uid:'group',matched_record_count:1,matched_record_count_exact:true}],has_more:false}
  let fail=false
+ let hide=false
  const fetcher=vi.fn(async(input:unknown,init?:RequestInit)=>{
+  if (String(input).includes('personal-visibility/query')) {
+   const items = [{ chat_session_uid: 'group', rel_uid: 'rel' }]
+   expect(JSON.parse(String(init?.body))).toEqual({ items })
+   expect(new Headers(init?.headers).get('X-Chat-Access-Ref')).toBeNull()
+   return new Response(JSON.stringify({ code: 200, data: { hidden: hide ? items : [] } }))
+  }
   expect(String(input)).toContain('/search/records/')
   expect(new Headers(init?.headers).get('X-Chat-Access-Ref')).toBe('signed-team-frame')
   const body=JSON.parse(String(init?.body))
@@ -63,14 +71,17 @@ it('preserves delegation on keyword and every scene, including source media and 
   expect(JSON.stringify(result)).not.toContain('owner-url')
   expect(JSON.stringify(result)).not.toContain('signed-team-frame')
   for(const scene of ['audio','link','image_video','file','long_article'] as const) await search.searchScene({scene,limit:20,sourceRef:ref})
-  expect(fetcher).toHaveBeenCalledTimes(6)
+  expect(fetcher).toHaveBeenCalledTimes(12)
   expect(locked).not.toHaveBeenCalled()
+  hide=true
+  expect((await search.searchRemote({query:'授权',limit:20,sourceRef:ref})).items).toEqual([])
+  hide=false
   data.items[0]!.chat_core.occurrence.sequence=56
   await expect(search.searchRemote({query:'授权',limit:20,sourceRef:ref})).rejects.toThrow('搜索来源已变化')
   data.items[0]!.chat_core.occurrence.sequence=57
   fail=true
   await expect(search.searchRemote({query:'授权',limit:20,sourceRef:ref})).rejects.toThrow()
-  expect(fetcher).toHaveBeenCalledTimes(8)
+  expect(fetcher).toHaveBeenCalledTimes(17)
  } finally {runtime.dispose()}
 })
 
@@ -84,6 +95,7 @@ it('opens another authors article from source keyword and scene results through 
  const raw={relation:{chat_session_uid:'group',rel_uid:'article-rel',record_uid:'article',record_owner_user_id:77,sender_user_id:77,display_name_snapshot:'群内作者',seq:57},record:{status:1,payload:core}}
  const runtime=new ServiceRuntime({environment:'test',chatBaseUrl:'https://chat.example',recordBaseUrl:'https://record.example',requestTimeoutMs:1000} as ArkmeServiceConfig,{read:async()=>session,write:async()=>{},delete:async()=>{}},{uniqueCode:async()=> 'article-source-key'} as StateStore,(async(input,init)=>{
   const path=new URL(String(input)).pathname;paths.push(path)
+  if(path==='/api/v1/chats/messages/personal-visibility/query')return new Response(JSON.stringify({code:200,data:{hidden:[]}}))
   expect(new Headers(init?.headers).get('X-Chat-Access-Ref')).toBe('article-frame')
   if(path==='/api/v1/chats/records/detail')return revoked?new Response('{}',{status:404}):new Response(JSON.stringify({code:200,data:{item:raw}}))
   if(path==='/api/v1/search/records/query'||path==='/api/v1/search/records/scene/query')return new Response(JSON.stringify({code:0,data:{items:[hit],source_aggregates:[],has_more:false}}))
@@ -101,10 +113,10 @@ it('opens another authors article from source keyword and scene results through 
   const article=await chat.longArticleDetail(sourceRef,'article',undefined,keyword.items[0]!.messageActionRef)
   expect(article.actionItem?.senderName).toBe('群内作者')
   expect(article.contentBlocks?.[0]?.mediaRef).toBeTruthy()
-  expect(paths).toEqual(['/api/v1/search/records/query','/api/v1/search/records/scene/query','/api/v1/chats/records/detail'])
+  expect(paths).toEqual(['/api/v1/search/records/query','/api/v1/chats/messages/personal-visibility/query','/api/v1/search/records/scene/query','/api/v1/chats/messages/personal-visibility/query','/api/v1/chats/records/detail'])
   const other=await sources.sealSourceRef(42,'group_chat','group','客户群',{groupDelegation:{...frame,teamId:'43'}})
   await expect(chat.longArticleDetail(other,'article',undefined,keyword.items[0]!.messageActionRef)).rejects.toThrow('不匹配')
-  expect(paths).toHaveLength(3)
+  expect(paths).toHaveLength(5)
   revoked=true
   await expect(chat.longArticleDetail(sourceRef,'article',undefined,scene.items[0]!.messageActionRef)).rejects.toThrow()
   expect(paths.every(path=>path!=='/api/v1/records/detail')).toBe(true)

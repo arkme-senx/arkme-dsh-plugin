@@ -2650,6 +2650,9 @@ export function ArkmeSurface({
   const recordMutations = useMemo(() => recordMutationFeedback(authenticatedAccountKey ?? 'logged-out'), [authenticatedAccountKey])
   const recordMutationSnapshot = useSyncExternalStore(recordMutations.subscribe, recordMutations.getSnapshot, recordMutations.getSnapshot)
   const topicAssignmentScopeKey = `${authenticatedAccountKey ?? ''}:${conversationOverlayKey}`
+  const activeMessageMutationScope = useRef(topicAssignmentScopeKey)
+  activeMessageMutationScope.current = topicAssignmentScopeKey
+  const personalDeletionRunning = useRef(false)
   const messageActionBusy = askDsh.busy ? 'ask-dsh' : nativeMessageActionBusy
   const deletionMotionRef = useRef<MessageDeletionMotion>()
   useLayoutEffect(() => () => { deletionMotionRef.current?.cancel(); deletionMotionRef.current = undefined }, [topicAssignmentScopeKey, activeConversation, active])
@@ -8661,7 +8664,8 @@ export function ArkmeSurface({
       confirmLabel={tr('确认删除')} busyLabel={tr('删除中…')} busy={nativeMessageActionBusy === 'delete'} confirmTone="danger"
       onClose={() => setRecordDeletion(undefined)}
       onConfirm={() => {
-        if (nativeMessageActionBusy) return
+        if (nativeMessageActionBusy || personalDeletionRunning.current) return
+        personalDeletionRunning.current = true
         const selection = recordDeletion
         const account = arkmeAuthStore.getSnapshot().auth
         const selectedSource = conversationKey
@@ -8675,6 +8679,8 @@ export function ArkmeSurface({
               const result = await callArkme<import('../chat-message-actions.js').ChatMessageActionResult>('source.chat-message-action', {
                 sourceRef: selection.sourceRef, actionRef: item.messageActionRef, action: 'delete',
               }, AbortSignal.timeout(10_000))
+              const afterWrite = arkmeAuthStore.getSnapshot().auth
+              if (afterWrite?.userId !== account?.userId || afterWrite?.environment !== account?.environment) return
               arkmeChatTimelineDelta.applyTimelineChange({
                 sourceKey: selectedSource, timelineItemKey: result.timelineItemKey, changeKind: 'deleted',
                 changeVersion: result.changedAtMillis, relationTerminal: true, throughSequence: item.sequence ?? 0,
@@ -8684,11 +8690,15 @@ export function ArkmeSurface({
           }
           const current = arkmeAuthStore.getSnapshot().auth
           if (current?.userId !== account?.userId || current?.environment !== account?.environment) return
+          arkmeUi.chatChanged()
+          if (activeMessageMutationScope.current !== selection.scopeKey) return
           setRecordDeletion(previous => previous === selection ? undefined : previous)
           exitMessageSelectMode()
           showMessageActionStatus(confirmed === selection.items.length ? '已删除所选消息' : `已确认删除 ${confirmed} 条，其余请刷新核对`)
-          arkmeUi.chatChanged()
-        })().finally(() => setMessageActionBusy(previous => previous === 'delete' ? undefined : previous))
+        })().finally(() => {
+          personalDeletionRunning.current = false
+          setMessageActionBusy(previous => previous === 'delete' ? undefined : previous)
+        })
       }} />}
     {activeConversation && !sourceIsChat && recordDeletion?.scopeKey === topicAssignmentScopeKey && <ArkmeRecordDeletionDialog
       key={recordDeletion.scopeKey} sourceRef={recordDeletion.sourceRef}

@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
-import SessionStore from '@deepseek-ai/dsh-session'
+import { SessionId } from '@deepseek-ai/dsh-session'
+import { recordToolResults, sessionEvents } from './helpers/tool-session.js'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import { ToolCallId } from '@deepseek-ai/dsh-llm'
 import { expect, it, vi } from 'vitest'
@@ -26,12 +27,12 @@ it('exposes Chat and Team actions through the same SDK and DSH owners', async ()
   expect(owner.deleteTeamMessage).toHaveBeenLastCalledWith('conversation', 'message', signal)
 
   const ctx = new Context()
-  await ctx.plugin(SessionStore)
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
+  recordToolResults(ctx)
   try {
-    const session = ctx.sessions.create()
-    const agent = { id: session.id, session }
+    const events = sessionEvents()
+    const agent = { id: SessionId('personal-message-actions'), session: { events } }
     const fiber = await ctx.plugin(Object.assign(
       (toolCtx: Context) => registerArkmeTools(toolCtx, owner as never, 'business'), { inject: ['tools', 'systemPrompt'] },
     ))
@@ -40,8 +41,10 @@ it('exposes Chat and Team actions through the same SDK and DSH owners', async ()
       ['arkme_chat_message_action', { source_ref: 'source', action_ref: 'message', action: 'delete' }],
       ['arkme_team_message_delete', { conversation_ref: 'conversation', message_ref: 'message' }],
     ] as const) {
-      const result = await ctx.tools.execute({ callId: ToolCallId(name), name, agent: agent as never, arguments: args, signal })
-      expect(result.isError).toBe(false)
+      const run = (stage: string) => ctx.tools.execute({ callId: ToolCallId(`${name}:${stage}`), name, agent: agent as never, arguments: args, signal })
+      expect(JSON.stringify(await run('prepare'))).toContain('confirmation_required')
+      events.push({ type: 'user/message', data: { source: { kind: 'user' }, content: [{ type: 'text', text: '确认仅从我的会话中删除这条消息' }] } })
+      expect((await run('confirmed')).isError).toBe(false)
     }
     expect(owner.changeChatMessage).toHaveBeenLastCalledWith('source', 'message', 'delete', expect.any(AbortSignal))
     expect(owner.deleteTeamMessage).toHaveBeenCalledTimes(2)
