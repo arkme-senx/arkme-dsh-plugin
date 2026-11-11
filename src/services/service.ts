@@ -92,6 +92,7 @@ arkoFileRefs(userId:number):Promise<string[]>
   cacheProfile(userId: number, profile: ArkmeUserProfile): Promise<ArkmeUserProfileSnapshot>
   listPending(userId: number): Promise<ArkmePendingWrite[]>
   putPending(userId: number, pending: ArkmePendingWrite): Promise<void>
+  discardPending(userId: number, pending: ArkmePendingWrite): Promise<void>
   markAttempt(userId: number, recordUid: string, error: string): Promise<void>
   markSynced(userId: number, recordUid: string, status: number): Promise<void>
   listExtensionReviewOperations(userId: number): Promise<ArkmeExtensionReviewOperation[]>

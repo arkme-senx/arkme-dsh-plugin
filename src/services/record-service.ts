@@ -255,7 +255,11 @@ function recordReeditContentPayloadForWrite(
     else output.mention_metadata = mentions.metadata
   }
   if (nextText !== currentText) {
-    const hashTags = arkmeHashTagPayload(nextText)
+    const excerpt=readRecordExcerpt(contentPayload?.excerpt,currentText)
+    const ownStart=excerpt?.kind==='forward'
+      ? excerpt.quote_end+(nextText.slice(excerpt.quote_end).startsWith('\n\n附言\n')?'\n\n附言\n'.length:0)
+      : excerpt?.note_start??0
+    const hashTags = arkmeHashTagPayload(nextText.slice(ownStart)).map(tag=>({...tag,start_index:tag.start_index+ownStart}))
     if (hashTags.length > 0) output.hash_tags = hashTags
     else delete output.hash_tags
   }
@@ -320,6 +324,10 @@ function normalizedRecordCaptureContext(input: ArkmeRecordCaptureContext | undef
     ...(charge === 0 ? {} : { charge }),
   }
   return Object.keys(normalized).length === 0 ? undefined : normalized
+}
+
+function isRecordCreateRejection(error: unknown): boolean {
+  return error instanceof ArkmeUpstreamResponseError && error.code === 'arkme-code-40001' && !error.writeOutcomeUnknown
 }
 
 export class RecordService {
@@ -1612,7 +1620,7 @@ export class RecordService {
   async createText(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number; signal?:AbortSignal } = {},
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
     if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
@@ -1636,11 +1644,16 @@ export class RecordService {
     const excerpt = readRecordExcerpt(options.excerpt,normalizedText)
     if(options.excerpt && !excerpt)throw new ArkmePluginError('self-note-invalid','摘录结构无效，未发送',false,400)
     const previous=(await this.runtime.stateStore.listPending(session.userId)).find(p=>p.recordUid===normalizedUid)
+    options.signal?.throwIfAborted()
     if(previous){
-      if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt))throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
+      const changedExcerptTime = excerpt !== undefined && options.sendAtMillis !== undefined
+        && previous.sendAtMillis !== options.sendAtMillis
+      if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt) || changedExcerptTime) {
+        throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
+      }
       return this.sendPending(session,previous)
     }
-    const now = Date.now()
+    const now = options.sendAtMillis ?? Date.now()
     const recordDurationMillis = Math.max(0, Math.trunc(options.recordDurationMillis ?? 0))
     const captureContext = normalizedRecordCaptureContext(options.captureContext)
     const pending: ArkmePendingWrite = {
@@ -1660,12 +1673,13 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number; signal?:AbortSignal } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
       const result = await this.createText(recordUid, textContent, options)
       return { ...result, localState: 'synced' }
     } catch (error) {
+      if (options.excerpt && error instanceof ArkmePluginError && error.code === 'record-intent-conflict') throw error
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw error
       const pending = (await this.runtime.stateStore.listPending(session.userId))
@@ -1915,9 +1929,9 @@ export class RecordService {
         },
         session,
       ) } catch(error) {
-        // A Host/UI receipt may be lost after the durable outbox was acknowledged.
-        // Reconcile the exact immutable excerpt with its real owner; never recreate or overwrite it.
-        if(!pending.excerpt||!(error instanceof ArkmeUpstreamResponseError)||error.code!=='arkme-code-40001'||error.writeOutcomeUnknown)throw error
+        // Legacy notes lack a Record create anchor. Forwarded excerpts must
+        // use the owner's immutable command receipt, including its send time.
+        if (!pending.excerpt || pending.excerpt.kind === 'forward' || !isRecordCreateRejection(error)) throw error
         const existing=await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail',{record_uid:pending.recordUid},session,undefined,{bypassCache:true,cacheMs:0,lane:'interactive-read'})
         const core=objectValue(existing.record_core),excerpt=readRecordExcerpt(objectValue(core.content_payload).excerpt,stringValue(core.text_content))
         if(core.record_uid!==pending.recordUid||Number(core.owner_user_id)!==session.userId||Number(core.status)!==1||Number(core.content_access_state??existing.content_access_state)!==1||arkmePrivacyLockedRecord(existing)||core.text_content!==pending.textContent||JSON.stringify(excerpt)!==JSON.stringify(pending.excerpt))throw error
@@ -1934,7 +1948,11 @@ export class RecordService {
       await this.runtime.stateStore.markSynced(session.userId, pending.recordUid, result.status)
       return result
     } catch (error) {
-      await this.runtime.stateStore.markAttempt(session.userId, pending.recordUid, safeFailureMessage(error))
+      if (pending.excerpt?.kind === 'forward' && isRecordCreateRejection(error)) {
+        await this.runtime.stateStore.discardPending(session.userId, pending)
+      } else {
+        await this.runtime.stateStore.markAttempt(session.userId, pending.recordUid, safeFailureMessage(error))
+      }
       throw error
     }
   }

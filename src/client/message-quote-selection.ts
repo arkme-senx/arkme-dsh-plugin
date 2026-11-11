@@ -66,9 +66,14 @@ export async function quoteDigest(item: ArkmeTimelineItem): Promise<string> {
 export function quoteHighlightRange(element: HTMLElement, quote: ArkmeMessageQuote): Range | undefined {
   const dom = quoteDomProjection(element)
   if (!quoteMatchesCanonical(quote, dom.text)) return undefined
-  const start = dom.units[quote.start]?.start, end = dom.units[quote.end - 1]?.end
-  if (!start || !end) return undefined
+  return quoteDomRange(element, dom, quote.start, quote.end)
+}
+
+export function quoteDomRange(element: HTMLElement, dom: ReturnType<typeof quoteDomProjection>, start: number, end: number): Range | undefined {
+  const first = dom.units[start]?.start, last = dom.units[end - 1]?.end
+  if (!first || !last || start >= end) return undefined
   const range = element.ownerDocument.createRange()
-  range.setStart(start.node, start.offset); range.setEnd(end.node, end.offset)
+  range.setStart(first.node, first.offset)
+  range.setEnd(last.node, last.offset)
   return range
 }

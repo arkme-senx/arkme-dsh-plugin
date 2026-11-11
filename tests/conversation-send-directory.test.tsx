@@ -3515,6 +3515,7 @@ describe('conversation send directory projection', () => {
     expect(dialog.findAll(node => node.type === 'button' && node.props['aria-pressed'] === true)).toHaveLength(0)
     expect(dialog.findByProps({ 'aria-label': '发送转发' }).props.disabled).toBe(true)
     expect(dialog.findByType('blockquote').children).toEqual(['只转发这一段'])
+    expect(renderedText(dialog)).toContain('仅发送选中文字与附言，原文访问权限不变。')
     const targets = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')
     expect(renderedText(targets[0]!)).toContain('发给自己')
     act(() => dialog.findByProps({ 'aria-label': '转发附言' }).props.onChange({ currentTarget: { value: '自己的想法' } }))
