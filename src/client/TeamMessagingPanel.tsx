@@ -159,9 +159,9 @@ function pendingTeamMessage(draft: Draft, conversation: TeamConversation, media:
   }
 }
 
-export function TeamAvatar({ identity, size }: { identity: TeamIdentity; size?: number }) {
+export function TeamAvatar({ identity, size, lazy = false }: { identity: TeamIdentity; size?: number; lazy?: boolean }) {
   return <ArkmeUserAvatar avatarRef={identity.imageRef} imageKey={identity.imageKey}
-    imagePort={teamAvatarImages} size={size ?? 32} label={identity.nickname} />
+    imagePort={teamAvatarImages} size={size ?? 32} label={identity.nickname} lazy={lazy} />
 }
 
 export function TeamConversationRow({ conversation: c, accountKey, selected = false, showTeamName = true, role, onClick }: {
@@ -178,8 +178,8 @@ export function TeamConversationRow({ conversation: c, accountKey, selected = fa
     {actions.pinned && <ArkmePinnedCorner />}
     <span style={directoryStyles.sourceAvatarWrap}>
       {c.side === 'team'
-        ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} />
-        : <ArkmeTeamChannelAvatar size={directoryStyles.sourceAvatarWrap.width} channel={c.channel}/>}
+        ? <TeamAvatar size={directoryStyles.sourceAvatarWrap.width} identity={c.visitor ?? { nickname: tr('用户') }} lazy />
+        : <ArkmeTeamChannelAvatar size={directoryStyles.sourceAvatarWrap.width} channel={c.channel} lazy />}
       {c.unread > 0 && <span style={directoryStyles.mentionUnread}>{c.unread > 99 ? '99+' : c.unread}</span>}
     </span>
     <span data-arkme-conversation-content style={directoryStyles.chatContent}>

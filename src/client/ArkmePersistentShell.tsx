@@ -1,6 +1,6 @@
 import { currentHarnessSession } from './harness-session-state.js'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
-import { teamAvatarImages } from './team-avatar-image-runtime.js'
+import { teamAvatarImages, warmTeamDirectoryAvatars } from './team-avatar-image-runtime.js'
 import { TeamMessagingMount, TeamMessagingPanel } from './TeamMessagingPanel.js'
 import { TeamOutboundMount } from './TeamOutboundDialog.js'
 import { IdentityShareHost } from './IdentityShareHost.js'
@@ -169,7 +169,10 @@ export function ArkmePersistentClientRuntime() {
   useLayoutEffect(() => { arkmeAvatarImages.activateScope(avatarScopeKey); teamAvatarImages.activateScope(avatarScopeKey) }, [avatarScopeKey])
   useEffect(() => {
     if (avatarScopeKey === undefined) return
-    return arkmePresentationMaintenance.start()
+    const controller = new AbortController()
+    void warmTeamDirectoryAvatars(avatarScopeKey, controller.signal).catch(() => undefined)
+    const stop = arkmePresentationMaintenance.start()
+    return () => { controller.abort(); stop() }
   }, [avatarScopeKey])
 
   useArkmeRealtimeClientEvents(auth, ui.authRevision, true, { ownsMessagePreparing: true })

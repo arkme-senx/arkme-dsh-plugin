@@ -49,18 +49,20 @@ it.each(['world.interactions.list', 'world.notification-sources'] as const)('kee
   }
 })
 
-it('shares one background budget across notifications, private directory and both avatar readers', async () => {
+it('admits ordinary and Team avatar downloads while the general background budget is full', async () => {
   const release: Array<() => void> = []
   provider.mockImplementation(async () => { await new Promise<void>(resolve => release.push(resolve)); return {} })
   const controller = new AbortController()
-  const operations = ['official-notifications.list', 'private-interaction.directory', ...passiveTeamReads, 'image.read', 'team.app.image'] as const
-  const reads = operations.map(operation => callArkme(operation, {}, controller.signal, background))
+  const operations = ['official-notifications.list', 'private-interaction.directory', ...passiveTeamReads, 'image.read', 'team.app.image', 'team.app.image', 'team.app.image'] as const
+  const reads = operations.map(operation => callArkme(operation, {}, controller.signal,
+    operation === 'image.read' ? { ...background, avatarDownload: true } : background))
   const completion = Promise.allSettled(reads)
   try {
-    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(4))
+    expect(provider.mock.calls.map(args => args[0])).toEqual([...operations.slice(0, 2), 'image.read', 'team.app.image'])
     release.shift()!()
-    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(3))
-    expect(provider.mock.calls.map(args => args[0])).toEqual(operations.slice(0, 3))
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(5))
+    expect(provider.mock.calls[4]![0]).toBe(operations[2])
   } finally {
     controller.abort(); release.forEach(resolve => resolve()); await completion
   }

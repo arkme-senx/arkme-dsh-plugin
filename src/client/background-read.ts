@@ -1,6 +1,6 @@
 import { ArkmeRequestCoordinator } from '../request-coordinator.js'
 
-// Optional JSON reads and Team gallery images retain separate, bounded permits.
+// Optional JSON reads and image downloads use separate, bounded permits.
 // Host owns upstream rate limiting; local cached responses must not be throttled.
 const concurrencyOnly = { ratePerSecond: Number.MAX_SAFE_INTEGER, burst: Number.MAX_SAFE_INTEGER, maxQueued: 512 }
 export const backgroundUiReads = new ArkmeRequestCoordinator({

@@ -13,14 +13,15 @@ import {projectTeamForward} from '../team-forward-presentation.js'
 import { mergeTeamNotificationPolicy, type TeamNotificationPolicy } from '../team-notification-contract.js'
 import { teamMessageProjection } from '../team-message-projection.js'
 import type {ArkmeTeamAvatar, ArkmeTeamProfile, ArkmeTeamProfileResult} from '../team-profile-contract.js'
-import {squareProfileImage,authorizedStorageURL} from './profile-image.js'
+import {squareProfileImage,authorizedStorageURL,imagePresentationIdentity} from './profile-image.js'
 import { createHash, createHmac } from 'node:crypto'
 import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { recordOwnerId, stringifyOwnerJson } from '../record-owner-id.js'
 import type { TeamMemberAvatarPort } from './team-service.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { ArkmeTeam, ArkmeTeamRole, ArkmeDirectoryPage } from '../types.js'
-import type { TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
+import type { TeamAvatarDescriptor, TeamChannel, TeamConversation, TeamIdentity, TeamMessage, TeamSide, TeamTimeline, TeamAppOperation, TeamMembers } from '../team-app-contract.js'
+import { TEAM_AVATAR_CACHE_BATCH_SIZE, type TeamAvatarCacheHit } from '../team-app-contract.js'
 import { validTeamOutboundRecipient } from '../team-outbound-contract.js'
 import type { TeamGroupContext, TeamGroupPending, TeamGroupJoinContext, TeamGroupCommandResult, TeamPublicCard } from '../team-group-contract.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, objectValue, stringValue, type ServiceRuntime } from './service.js'
@@ -83,21 +84,6 @@ function requireFrozenMetadataSaved(data: Record<string, unknown>, required: boo
   if (required && data.state === 'published' && data.metadata_saved !== true) {
     throw new ArkmePluginError('team-dependency_unavailable', reasons.dependency_unavailable!, true, 503, {writeOutcomeUnknown:true})
   }
-}
-
-// Signing credentials authorize a download; they do not identify its pixels.
-// Preserve content/version/processing parameters so a real avatar change still
-// invalidates the presentation. The original URL remains inside the access ref.
-function imagePresentationIdentity(raw: string): string {
-  try {
-    const url = new URL(raw)
-    const authorization = new Set(['ossaccesskeyid', 'expires', 'signature', 'security-token',
-      'x-oss-signature', 'x-oss-signature-version', 'x-oss-credential', 'x-oss-date',
-      'x-oss-expires', 'x-oss-security-token', 'x-oss-additional-headers'])
-    for (const key of [...url.searchParams.keys()]) if (authorization.has(key.toLowerCase())) url.searchParams.delete(key)
-    url.searchParams.sort()
-    return url.toString()
-  } catch { return raw }
 }
 
 /** App business adapter. Never uses Team OpenAPI or stores Chat session state. */
@@ -1219,9 +1205,21 @@ export class TeamAppService {
           ...(data.conversation ? { conversation: await this.conversation(data.conversation, actor) } : {}) }
       }
       case 'team.app.conversations': {
-        const data = await post('conversations/list', { side: p.side === 'team' ? 'team' : 'external', ...(p.teamRef ? { team_id: await teamID() } : {}),
+        const side = p.side === 'team' ? 'team' : 'external'
+        const data = await post('conversations/list', { side, ...(p.teamRef ? { team_id: await teamID() } : {}),
           cursor: p.cursor ? str((await this.open('conversation-cursor', p.cursor, actor)).cursor) : '', limit: num(p.limit) || 30 }, true)
-        return { items: await Promise.all(list(data.items).map(v => this.conversation(v, actor))), hasMore: data.has_more === true,
+        const items = await Promise.all(list(data.items).map(v => this.conversation(v, actor)))
+        if (!p.teamRef && !p.cursor && !p.limit && this.runtime.stateStore.teamAvatarManifest) {
+          const images = new Map<string, TeamAvatarDescriptor>()
+          for (const row of items) {
+            for (const identity of [row.visitor, row.channel]) {
+              if (identity?.imageRef && identity.imageKey) images.set(identity.imageKey, {ref: identity.imageRef, key: identity.imageKey})
+            }
+            if (images.size >= 8) break
+          }
+          await this.runtime.stateStore.teamAvatarManifest(`${this.runtime.config.environment}:${actor}`, side, [...images.values()]).catch(() => undefined)
+        }
+        return { items, hasMore: data.has_more === true,
           ...(data.next_cursor ? { nextCursor: await this.ref('conversation-cursor', { cursor: data.next_cursor }, actor) } : {}) }
       }
       case 'team.app.source': {
@@ -1508,6 +1506,33 @@ export class TeamAppService {
         return { state: str(data.state) }
       }
       case 'team.app.image': return await this.image(p, session, signal)
+      case 'team.app.image-cache.batch': {
+        if (!Array.isArray(p.imageRefs) || p.imageRefs.length > TEAM_AVATAR_CACHE_BATCH_SIZE) throw invalid()
+        const images: Array<TeamAvatarCacheHit | null> = []
+        let remaining = 3 * 1024 * 1024
+        for (const imageRef of p.imageRefs) {
+          signal?.throwIfAborted()
+          let hit: TeamAvatarCacheHit | null = null
+          if (typeof imageRef === 'string' && imageRef.length <= 8192 && imageRef.startsWith('team-app-image.')) {
+            const image = await this.image({ imageRef, cacheOnly: true }, session, signal).catch(() => undefined)
+            if (image?.imageKey && image.base64.length <= remaining) {
+              hit = { ...image, imageKey: image.imageKey }
+              remaining -= image.base64.length
+            }
+          }
+          images.push(hit)
+        }
+        signal?.throwIfAborted()
+        const current = await this.runtime.accountScopedSession()
+        if (!current || current.userId !== actor || current.refreshToken !== session.refreshToken) throw invalid()
+        return images
+      }
+      case 'team.app.image-manifest': {
+        const scope = `${this.runtime.config.environment}:${actor}`
+        const read = (side: TeamSide) => this.runtime.stateStore.teamAvatarManifest?.(scope, side).catch(() => []) ?? []
+        const [team, external] = await Promise.all([read('team'), read('external')])
+        return [...new Map([...team, ...external].map(image => [image.key, image])).values()]
+      }
       default: throw new ArkmePluginError('operation-unsupported', '不支持该团队操作', false)
     }
   }
@@ -1557,8 +1582,9 @@ export class TeamAppService {
     if (!response.ok) {await response.body?.cancel();throw new ArkmePluginError('team-not_accessible','附件已失效或无权访问，请刷新消息',false,403)}
     return { response, fileName: str(ref.file_name) || 'attachment', mimeType: str(ref.mime_type) || 'application/octet-stream',size:num(ref.size) }
   }
-  private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<unknown> {
+  private async image(p: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<{ base64: string; mimeType: string; imageKey?: string }> {
     if(str(p.imageRef).startsWith('team-app-profile-image.')){
+      if (p.cacheOnly === true) throw new ArkmePluginError('image-cache-miss', '本地没有可用的团队头像', false, 404)
       const ref=await this.open('profile-image',p.imageRef,session.userId)
       const result=obj(await this.runtime.authenticatedTeamPost(
         ref.public_card ? '/api/v1/team/public-card/get' : ref.jotmo_id ? '/api/v1/team/discovery/search' : ref.public_ref?'/api/public/v1/team/message-channel/resolve':'/api/v1/team/profile/get',
@@ -1578,10 +1604,31 @@ export class TeamAppService {
     }
     const ref = await this.open('image', p.imageRef, session.userId), url = new URL(str(ref.url))
     const hosts = this.runtime.config.environment === 'prod' ? ['jotmo-userfiles.oss-cn-hangzhou.aliyuncs.com', 'userfiles.jotmo.cc'] : ['jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com', 'jotmo-userfiles.senguo.me']
-    if (url.protocol !== 'https:' || url.username || url.password || url.port || !hosts.includes(url.hostname)) throw invalid()
+    if (ref.environment !== this.runtime.config.environment || url.protocol !== 'https:' || url.username || url.password || url.port || !hosts.includes(url.hostname)) throw invalid()
+    const identity = imagePresentationIdentity(url.href)
+    const cacheKey = `team_url_avatar:${await this.key(`image:${this.runtime.config.environment}:${identity}`, session.userId)}`
+    // A legacy avatar URL can retain its path when the pixels change.
+    const cached = await this.runtime.stateStore.readAvatarCache?.(session.userId, cacheKey, 24 * 60 * 60_000).catch(() => undefined)
+    const assertCurrentSession = async () => {
+      signal?.throwIfAborted()
+      const current = await this.runtime.accountScopedSession()
+      if (!current || current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw invalid()
+    }
+    if (cached) {
+      await assertCurrentSession()
+      return { base64: Buffer.from(cached.data).toString('base64'), mimeType: cached.mediaType,
+        ...(p.cacheOnly === true ? { imageKey: await this.key(`image:${identity}`, session.userId) } : {}) }
+    }
+    if (p.cacheOnly === true) throw new ArkmePluginError('image-cache-miss', '本地没有可用的团队头像', false, 404)
     const response = await this.runtime.fetchImpl(url, { redirect: 'error', signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000) })
     const mimeType = response.headers.get('content-type')?.split(';')[0] ?? ''
-    if (!['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(mimeType)) { await response.body?.cancel(); throw invalid() }
-    return { base64: (await this.readBytes(response, 5 * 1024 * 1024)).toString('base64'), mimeType }
+    if (mimeType !== 'image/png' && mimeType !== 'image/jpeg' && mimeType !== 'image/webp' && mimeType !== 'image/gif') {
+      await response.body?.cancel()
+      throw invalid()
+    }
+    const bytes = await this.readBytes(response, 5 * 1024 * 1024)
+    await assertCurrentSession()
+    await this.runtime.stateStore.writeAvatarCache?.(session.userId, cacheKey, { data: bytes, bytes: bytes.length, mediaType: mimeType }).catch(() => undefined)
+    return { base64: bytes.toString('base64'), mimeType }
   }
 }

@@ -40,6 +40,7 @@ export interface StateStore extends RecentEmojiStore {
 
   teamMemberAddition?(scope: string, teamId: string, change?: {put: import('../team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}): Promise<import('../team-member-add-contract.js').TeamMemberAdditionAttempt | undefined>
   teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
+  teamAvatarManifest?(accountKey: string, side: import('../team-app-contract.js').TeamSide, images?: readonly import('../team-app-contract.js').TeamAvatarDescriptor[]): Promise<readonly import('../team-app-contract.js').TeamAvatarDescriptor[]>
   readonly selfNoteQuotes?: import('../local-self-note-quotes.js').LocalSelfNoteQuotes
   readonly worldReactions?: import('../local-world-reactions.js').LocalWorldReactions
   localTranscriptEntries?(account: string, scope: string, ids: string[]): Promise<Record<string, import('../local-transcript-state.js').LocalTranscriptEntry>>
@@ -67,7 +68,8 @@ arkoFileRefs(userId:number):Promise<string[]>
   clearRecordingSpeakerCache?(scope: string, userId: number): Promise<void>
   readDirectoryCache?(userId: number): Promise<import('../types.js').ArkmeSourceList | undefined>
   writeDirectoryCache?(userId: number, page: import('../types.js').ArkmeSourceList): Promise<void>
-  readAvatarCache?(userId: number, imageRef: string): Promise<import('../types.js').ArkmeImageBytes | undefined>
+  readAvatarCache?(userId: number, imageRef: string, maxAgeMillis?: number): Promise<import('../types.js').ArkmeImageBytes | undefined>
+  deleteAvatarCache?(userId: number, imageRef: string): Promise<void>
   writeAvatarCache?(userId: number, imageRef: string, image: import('../types.js').ArkmeImageBytes): Promise<void>
   selfRoleAvatarLocalRef?(userId: number, fileAssetUid: string): Promise<string | undefined>
   forgetCachedMembers?(userId: number, group: string, refs: readonly string[]): Promise<void>

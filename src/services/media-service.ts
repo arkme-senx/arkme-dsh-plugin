@@ -744,8 +744,8 @@ export class MediaService {
     const session = await this.runtime.requireSession()
     const assetMatch = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
     if (assetMatch !== null) return await this.readFileAssetImage(session, assetMatch[1]!, options, generation)
-    if (options.cacheOnly) throw new ArkmePluginError('image-cache-miss', '本地没有可用的资产头像', false, 404)
     const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
+    if (options.cacheOnly && !isProfileImage) throw new ArkmePluginError('image-cache-miss', '本地没有可用的头像', false, 404)
     const isBotImage = imageRef.trim().startsWith('arkme-bot-image-v1.')
     const isSelfRoleImage = imageRef.trim().startsWith('arkme-self-role-image-v1.')
     const isAvatar = isProfileImage || isBotImage
@@ -754,11 +754,13 @@ export class MediaService {
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
     if (isProfileImage) await this.profile.openProfileImageRef(imageRef, session.userId)
-    const persisted = isAvatar ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef).catch(() => undefined) : undefined
+    const persisted = isAvatar ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef, isProfileImage ? 24 * 60 * 60_000 : undefined).catch(() => undefined) : undefined
     if (persisted !== undefined && options.refresh !== true && persisted.bytes <= byteLimit) {
-      this.cacheImage(cacheKey, persisted)
+      if (isProfileImage) await this.assertImageAccount(session, generation)
+      if (!options.cacheOnly) this.cacheImage(cacheKey, persisted)
       return cloneImageBytes(persisted)
     }
+    if (options.cacheOnly) throw new ArkmePluginError('image-cache-miss', '本地没有可用的头像', false, 404)
     if (isBotImage) {
       try {
         if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
@@ -773,19 +775,34 @@ export class MediaService {
     if (cached !== undefined) return cached
     const existing = this.imageInFlight.get(cacheKey)
     if (existing !== undefined) return cloneImageBytes(await existing)
+    const expiredProfile = isProfileImage && persisted === undefined
+      ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef, Infinity).catch(() => undefined)
+      : undefined
+    const inFlight = this.imageInFlight.get(cacheKey)
+    if (inFlight !== undefined) return cloneImageBytes(await inFlight)
     const startedAtMillis = Date.now()
     const pending = this.withImageDownloadPermit(
-      async () => await this.readImageUncached(session, imageRef, byteLimit, options.signal),
+      async () => await this.readImageUncached(session, imageRef, byteLimit, options.signal, isProfileImage && (options.refresh === true || expiredProfile !== undefined)),
     )
     this.imageInFlight.set(cacheKey, pending)
     try {
       const value = await pending
+      if (isProfileImage) await this.assertImageAccount(session, generation)
       this.cacheImage(cacheKey, value)
       if (isAvatar) await this.runtime.stateStore.writeAvatarCache?.(session.userId, imageRef, value).catch(() => { console.warn('dsh-arkme: avatar_cache_write_failed') })
       return cloneImageBytes(value)
     } catch (error) {
       options.signal?.throwIfAborted()
-      if (persisted !== undefined && persisted.bytes <= byteLimit) return cloneImageBytes(persisted)
+      if (isProfileImage && error instanceof ArkmePluginError && ['image-ref-unavailable', 'image-ref-invalid'].includes(error.code)) {
+        const previous = this.imageCache.get(cacheKey)
+        if (previous && this.imageCache.delete(cacheKey)) this.imageCacheBytes -= previous.value.bytes
+        await this.runtime.stateStore.deleteAvatarCache?.(session.userId, imageRef).catch(() => undefined)
+        throw error
+      }
+      if (isProfileImage) await this.assertImageAccount(session, generation)
+      const fallback = persisted ?? expiredProfile
+      const transient = !(error instanceof ArkmePluginError) || error.httpStatus >= 500 || error.httpStatus === 429
+      if (fallback !== undefined && fallback.bytes <= byteLimit && (!isProfileImage || transient)) return cloneImageBytes(fallback)
       if (isProfileImage) logArkmeAvatarDiagnostic('image_read_failed', {
         environment: this.runtime.config.environment, viewerUserId: session.userId,
         ...avatarReferenceDiagnostic(imageRef), durationMillis: Math.max(0, Date.now() - startedAtMillis),
@@ -988,6 +1005,7 @@ export class MediaService {
     imageRef: string,
     byteLimit: number,
     signal?: AbortSignal,
+    refreshProfile = false,
   ): Promise<ArkmeImageBytes> {
     if (imageRef.trim().startsWith('arkme-self-role-image-v1.')) {
       if (this.selfRoleAvatars === undefined) throw new ArkmePluginError('self-role-avatar-missing', '本地角色头像不可用', false, 404)
@@ -1012,12 +1030,13 @@ export class MediaService {
     }
     if (imageRef.trim().startsWith('arkme-profile-image-v1.')) {
       const reference = await this.profile.openProfileImageRef(imageRef, session.userId)
-      if (reference.targetUserId === session.userId) {
+      if (reference.targetUserId === session.userId && reference.imageVersion === undefined) {
         let snapshot = await this.runtime.stateStore.cachedProfile(session.userId)
-        if ((snapshot.profile?.avatarRef.trim() ?? '') === '') {
+        if (refreshProfile || (snapshot.profile?.avatarRef.trim() ?? '') === '') {
           try {
             snapshot = await this.profile.refreshProfileForSession(session)
-          } catch {
+          } catch (error) {
+            if (refreshProfile) throw error
             // A missing current-user profile may still fall back to the public profile below.
           }
         }
@@ -1047,13 +1066,16 @@ export class MediaService {
           })
         }
       }
-      const cachedAvatarUrl = this.profile.cachedPublicProfileAvatar(session.userId, reference.targetUserId)
+      const cachedAvatarUrl = refreshProfile ? undefined : this.profile.cachedPublicProfileAvatar(session.userId, reference.targetUserId)
       let avatarUrl = cachedAvatarUrl
       if (avatarUrl === undefined) {
-        avatarUrl = (await this.profile.publicProfilesByUserIds([reference.targetUserId], session, signal))
+        avatarUrl = (await (refreshProfile
+          ? this.profile.publicProfileSummariesByUserIds([reference.targetUserId], session, signal, 0)
+          : this.profile.publicProfilesByUserIds([reference.targetUserId], session, signal)))
           .get(reference.targetUserId)?.avatarUrl
       }
       if (avatarUrl === undefined) throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
+      await this.profile.assertProfileImageVersion(reference, avatarUrl)
       try {
         return await this.downloadSignedImage(
           trustedSignedImageUrl(this.runtime.config.environment, avatarUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
@@ -1064,7 +1086,8 @@ export class MediaService {
         await this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
         const refreshedUrl = (await this.profile.publicProfileSummariesByUserIds([reference.targetUserId], session, signal, 0))
           .get(reference.targetUserId)?.avatarUrl
-        if (refreshedUrl === undefined) throw error
+        if (refreshedUrl === undefined) throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', false, 404)
+        await this.profile.assertProfileImageVersion(reference, refreshedUrl)
         return await this.downloadSignedImage(
           trustedSignedImageUrl(this.runtime.config.environment, refreshedUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
         )
