@@ -2881,6 +2881,32 @@ export class ChatService {
     return {messageRef,reportUid,status:numberValue(report.status)}
   }
 
+  async changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal) {
+    if (action !== 'delete' && action !== 'recall') throw new TypeError('Unsupported message action')
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw new ArkmePluginError('chat-message-action-invalid', '仅支持私聊和群聊消息', false, 400)
+    const reference = await this.openMessageActionRef(actionRef, session.userId, source)
+    if (reference.sourceKind !== 'chat_relation' || !reference.relationUid || reference.chatSessionUid !== source.ownerRef) {
+      throw new ArkmePluginError('chat-message-action-invalid', '请重新选择会话中的消息', false, 400)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换', false, 409)
+    const path = action === 'delete' ? '/api/v1/chats/messages/delete/v2' : '/api/v1/chats/messages/recall'
+    const data = await this.sourceChatPost<Record<string, unknown>>(source, path,
+      { chat_session_uid: reference.chatSessionUid, rel_uid: reference.relationUid }, session, signal, { trackWriteOutcome: true })
+    const changedAtMillis = numberValue(action === 'delete' ? data.deleted_at : data.withdrawn_at)
+    if (data.chat_session_uid !== reference.chatSessionUid || data.rel_uid !== reference.relationUid || !Number.isSafeInteger(changedAtMillis) || changedAtMillis <= 0) {
+      throw new ArkmePluginError('chat-message-action-unconfirmed', '无法确认消息操作结果', true, 502)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换', false, 409)
+    return {
+      timelineItemKey: await this.source.chatTimelineItemKey(session.userId, reference.chatSessionUid, reference.relationUid),
+      sourceKey: await this.source.chatDirectorySourceKey(session.userId, reference.chatSessionUid),
+      throughSequence: reference.sourceSequence,
+      changedAtMillis,
+    }
+  }
+
   async withdrawGroupMessage(messageWithdrawalRef:string,options:{sourceRef?:string;signal?:AbortSignal}={}):Promise<ArkmeMessageWithdrawalResult> {
     const session=await this.runtime.requireSession(),normalized=messageWithdrawalRef.trim(),reference=await this.openMessageWithdrawalRef(normalized,session.userId)
     const source=await this.scopedMessageSource(reference,session,options.sourceRef),body={chat_session_uid:reference.chatSessionUid,rel_uid:reference.relationUid}
@@ -5700,6 +5726,7 @@ nextPublic = next
     const representation = await new GroupRepresentationCodec(this.runtime).snapshot(relation.representation, session.userId)
     const actionItem: ArkmeTimelineItem = {
       ...this.record.recordTimelineItemFromRaw({ record_core: core }, session.userId), contentBlocks,
+      ...(data.message_actions_v2 === true ? { messageActionsV2: true } : {}),
       ...(representation ? { representation } : {}),
       senderName: stringValue(relation.display_name_snapshot)||reference.senderName, isMe: reference.senderUserId === session.userId,
       recordOwnerUserId: reference.recordOwnerUserId,

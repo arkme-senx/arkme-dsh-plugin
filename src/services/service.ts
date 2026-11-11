@@ -198,6 +198,7 @@ export interface ArkmeRemoteRequestOptions {
   stringIdFields?:readonly string[]
   /** Explicit Chat source frame; Host-only and never part of a consumer DTO. */
   chatAccessRef?: string
+  chatMessageActionsV2?: boolean
   /** Reserved for realtime message projection; only exact read routes are eligible. */
   traffic?: 'message-sync'
   lane?: ArkmeRequestLane
@@ -734,7 +735,7 @@ export class ServiceRuntime {
         let errorCode: string | undefined
         try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
           baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
-          preserveHttpError, preserveForbiddenError, requestTimeoutMs, options.chatAccessRef,options.stringIdFields,
+          preserveHttpError, preserveForbiddenError, requestTimeoutMs, options.chatAccessRef,options.stringIdFields, options.chatMessageActionsV2,
         )) } catch (error) {
           if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
           throw error
@@ -768,6 +769,7 @@ export class ServiceRuntime {
     requestTimeoutMs = this.config.requestTimeoutMs,
     chatAccessRef?: string,
     stringIdFields:readonly string[]=[],
+    chatMessageActionsV2 = false,
   ): Promise<T> {
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
@@ -788,6 +790,7 @@ export class ServiceRuntime {
         method: 'POST',
         headers: {
           ...(chatAccessRef ? { 'X-Chat-Access-Ref': chatAccessRef } : {}),
+          ...(chatMessageActionsV2 ? { 'X-Arkme-Message-Actions': '2' } : {}),
           ...(multipart ? {} : { 'Content-Type': 'application/json' }),
           'Accept-Language': 'zh-CN',
           Usersource: '3',

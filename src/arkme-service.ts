@@ -1511,6 +1511,7 @@ arkoImagesV1:true,
         teamMessageRecall: 1,
         teamMessageSnapshot: 1,
         teamHistoryV1: true,
+        personalMessageActionsV2: true,
         teamPersonMentions: 1,
         teamMentionCandidates: 1,
         teamNotificationPoliciesV1: true,
@@ -2747,6 +2748,20 @@ recordingAnalysisV1: true,
   }
   async sharedRecordingDetail(detailRef: string, options: { sourceRef?: string; signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)
+  }
+
+  async changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal) {
+    const { sourceKey, throughSequence, ...result } = await this.chat.changeChatMessage(sourceRef, actionRef, action, signal)
+    this.realtime.emitChatClientEvent({
+      type: 'timeline-changed', revision: this.realtime.nextChatClientRevision(), sourceKey,
+      timelineItemKey: result.timelineItemKey, changeKind: 'deleted', changeVersion: result.changedAtMillis,
+      relationTerminal: true, throughSequence,
+    })
+    return result
+  }
+
+  async deleteTeamMessage(conversationRef: string, messageRef: string, signal?: AbortSignal) {
+    return await this.executeTeamApp('team.app.delete', { conversationRef, messageRef }, signal) as import('./chat-message-actions.js').TeamMessageDeletionResult
   }
 
   async deleteSourceRecords(sourceRef: string, deletionRefs: readonly string[], signal?: AbortSignal) {

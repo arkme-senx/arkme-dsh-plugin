@@ -1617,6 +1617,7 @@ arkoImagesV1?:true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
     teamHistoryV1?: true
+    personalMessageActionsV2?: true
     teamMessageInteractions?: 1
     teamMessageRecall?: 1
     teamMessageSnapshot?: 1
@@ -2229,6 +2230,7 @@ export interface ArkmeTimelineItem {
   messageWithdrawalRef?: string
   /** Account- and conversation-bound opaque reference for copy-link and forward actions. */
   messageActionRef?: string
+  messageActionsV2?: boolean
   /** False when the source actor cannot own related quick notes or chat extensions. Omitted defaults to supported for legacy and user messages. */
   quickNoteDetailsSupported?: boolean
   /** Account- and conversation-bound opaque reference for actions on the sender. */
@@ -4801,7 +4803,7 @@ export type ArkmePluginOperation =
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'
-  | 'source.message-withdraw'
+  | 'source.message-withdraw' | 'source.chat-message-action' | 'team.messages.delete'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'

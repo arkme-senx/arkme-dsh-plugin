@@ -2657,6 +2657,13 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
+    case 'source.chat-message-action': {
+      const action = stringParam(params, 'action')
+      const ref = messageActionRefsParam({ actionRefs: [stringParam(params, 'actionRef')] })[0]
+      if (!ref || (action !== 'delete' && action !== 'recall')) throw new ArkmePluginError('chat-message-action-invalid', '消息操作无效', false, 400)
+      return await service.changeChatMessage(stringParam(params, 'sourceRef'), ref, action, requestSignal)
+    }
+    case 'team.messages.delete': return await service.deleteTeamMessage(stringParam(params, 'conversationRef'), stringParam(params, 'messageRef'), requestSignal)
     case 'source.message-withdraw': {
       const messageWithdrawalRef = stringParam(params, 'messageWithdrawalRef').trim()
       if (messageWithdrawalRef === '' || messageWithdrawalRef.length > MAX_MESSAGE_WITHDRAWAL_REF_CHARS) {

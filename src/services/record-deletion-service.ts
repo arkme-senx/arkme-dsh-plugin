@@ -58,6 +58,9 @@ export class RecordDeletionService {
     if (!Array.isArray(deletionRefs) || deletionRefs.length < 1 || deletionRefs.length > 100) throw invalid()
     const session = await this.runtime.requireSession()
     const source = await this.sources.openSourceRef(sourceRef, session.userId)
+    if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+      throw new ArkmePluginError('record-delete-selection-invalid', '请使用会话消息删除', false, 409)
+    }
     const audienceKey=source.groupDelegation?await this.sources.sourceScopeKey(source):undefined
     const key = await this.runtime.stateStore.uniqueCode()
     const refs = deletionRefs.map(ref => openRecordDeletionRef(ref, key))

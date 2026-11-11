@@ -318,6 +318,7 @@ export class UnifiedChatTimelineService {
       ...(mode === 'around' && !pageQuery.systemRef && !pageQuery.contextRef && !pageQuery.messageRef ? { record_uid: pageQuery.itemUid, record_owner_user_id: recordOwnerId(pageQuery.recordOwnerUserId) } : {}) }
     const post = () => this.runtime.authenticatedChatPost(route(protocol), body, session, signal, {
       ...(source.groupDelegation ? { chatAccessRef: source.groupDelegation.accessRef } : {}),
+      chatMessageActionsV2: true,
       lane: background || mode === 'refresh' ? 'background-read' : 'interactive-read',
       key: `unified-timeline:v${protocol}:${JSON.stringify(body)}`, cancelWhenUnobserved: true,
     })
@@ -361,6 +362,8 @@ export class UnifiedChatTimelineService {
         projected.push({ ...order, kind: 'offline-context',
           entryRef: await this.offlineContexts.timelineReference(String(payload.association_id), source.ownerRef, source.kind as 'private_chat' | 'group_chat', source.displayName),
           revision: String(payload.revision), title: stringValue(payload.title), summary: stringValue(payload.summary) })
+      } else if (event.source === 'messages' && event.kind === 'message_recalled') {
+        projected.push({ ...order, kind: 'notice', text: payload.own === true ? '你撤回了一条消息' : '对方撤回了一条消息' })
       } else if (order.contentStatus === 'unavailable') {
         const relation = objectValue(payload.relation)
         const uid = stringValue(relation.record_uid)
@@ -381,6 +384,7 @@ export class UnifiedChatTimelineService {
         const offlineContextMessageRef = owner && this.offlineContexts
           ? await this.offlineContexts.messageReference(source.ownerRef, stringValue(relation.rel_uid), item.itemUid, owner) : undefined
         projected.push({ ...order, kind: 'message', item: { ...item, timelineEventId: order.eventId, sendAtMillis: order.occurredAtMillis,
+          ...(data.message_actions_v2 === true ? { messageActionsV2: true } : {}),
           ...(owner ? { recordOwnerUserId: owner } : {}),
           ...(offlineContextMessageRef ? { offlineContextMessageRef } : {}) } })
       } else if (event.source === 'interwoven') {

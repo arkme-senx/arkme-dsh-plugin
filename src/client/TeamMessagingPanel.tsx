@@ -1014,7 +1014,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     const timer = setTimeout(() => setLocatedKey(undefined), 2400)
     return () => clearTimeout(timer)
   }, [locatedKey])
-  const selection = useTeamMessageSelection({ accountKey, conversationKey: conversation.key, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal })
+  const selection = useTeamMessageSelection({ accountKey, conversationKey: conversation.key, conversationRef: conversation.ref, messages: timeline?.messages ?? [], viewport: scroller, signal: ctrl.current.signal })
   useConversationResizeAnchor(scroller, timeline ? storageKey : undefined, undefined, selection.ids !== undefined, recordsRef, viewportRestoreIntent)
   const displayedMessages = visibleMessages.filter(selection.keeps).map(m => { const sender = personName(m.sender); return sender === m.sender ? m : { ...m, sender } })
   const reactionActors = useTeamReactionActors(accountKey,
@@ -1350,8 +1350,8 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
       { id: 'close', label: tr('退出多选'), icon: <ArkmeSelectActionIcon kind="close" size={18} />, disabled: selection.busy, onSelect: selection.exit },
     ]} />}
     {recallTarget && <ArkmeConfirmDialog titleId="team-recall-title" title={tr('撤回消息')} description={tr('撤回后，此对话中将无法查看这条消息；你的原始快记会保留。')} confirmLabel={tr('确认撤回')} busyLabel={tr('正在撤回…')} confirmTone="danger" busy={busy} onConfirm={()=>{void recall()}} onClose={()=>{if(!busy)setRecallTarget(undefined)}} />}
-    {selection.confirm && <ArkmeConfirmDialog titleId="team-selected-delete-title" title={tr('删除快记')}
-      description={`确认删除所选 ${selection.confirm.length} 条快记？删除的内容将在数据管理中保留30天，所有引用它的位置都会同步更新。`}
+    {selection.confirm && <ArkmeConfirmDialog titleId="team-selected-delete-title" title={tr('删除消息')}
+      description={tr('仅从你的会话中删除，其他人仍可查看。')}
       confirmLabel={tr('确认删除')} busyLabel={tr('正在保存…')} confirmTone="danger" busy={selection.busy}
       onConfirm={() => { void selection.remove() }} onClose={selection.closeConfirm} />}
     {snapshot && <ArkmeMessageSnapshotDialog item={teamMessagePresentation(snapshot)}

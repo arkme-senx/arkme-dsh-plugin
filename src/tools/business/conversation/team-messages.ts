@@ -6,6 +6,12 @@ import { readMessageQuote } from '../../../message-quote.js'
 
 export const teamMessageTools = [
   defineArkmeCoreToolModule({
+    meta:{id:'business.team.message-delete.v2',toolName:'arkme_team_message_delete',kind:'business',phase:'core',effect:'write',grant:'explicit-user-write',profiles:['business','hybrid']},
+    create:ports=>defineTool({name:'arkme_team_message_delete',description:'After explicit human confirmation, delete one Team message for the current account. Use exact references returned by arkme_team_messages. Other participants retain access.',parameters:{conversation_ref:{type:'string',required:true},message_ref:{type:'string',required:true}},output:TEXT_OUTPUT,
+      execute:async(args,exec)=>taggedJSON('团队消息删除结果',await ports.deleteTeamMessage(args.conversation_ref,args.message_ref,exec.signal)),
+    }),
+  }),
+  defineArkmeCoreToolModule({
     meta:{id:'business.team.message-recall.v1',toolName:'arkme_team_message_recall',kind:'business',phase:'core',effect:'write',grant:'explicit-user-write',profiles:['business','hybrid']},
     create:ports=>defineTool({name:'arkme_team_message_recall',description:'Only after explicit current human authorization, recall your own published Team message in this exact conversation. This permanently withdraws one publication, retaining the personal Record and independent copies. Current access is required; admins cannot recall others. Preserve the same references after an uncertain result; never replace this with Record deletion or send cancellation.',parameters:{conversation_ref:{type:'string',required:true},message_ref:{type:'string',required:true}},output:TEXT_OUTPUT,
       execute:async(args,exec)=>taggedJSON('团队消息撤回结果',await ports.recallTeamMessage(args.conversation_ref,args.message_ref,exec.signal)),
