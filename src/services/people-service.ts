@@ -75,7 +75,7 @@ export class PeopleService {
     const session=await this.runtime.requireSession(),prefix='arkme-person-impact-v1'
     if(typeof params.commandRef!=='string')throw unavailable()
     const commandHash=createHash('sha256').update(params.commandRef).digest('hex')
-    type Progress={viewer:number;environment:string;commandHash:string;expires:number;index:number;sourceCursor?:string;recordingCount:number;chatCount:number;seen:string[];seenRecords:string[];relationCursor?:string}
+    type Progress={viewer:number;environment:string;commandHash:string;expires:number;index:number;sourceCursor?:string;recordingCount:number;chatCount:number;seen:string[];seenRecords:string[];relationCursor?:string;step?:number}
     let progress:Progress
     if(typeof params.cursor==='string'&&params.cursor.startsWith(prefix+'.')){
       progress=await this.codec.open(prefix,params.cursor) as unknown as Progress
@@ -95,12 +95,22 @@ export class PeopleService {
       else {
         const recordsRef=await this.codec.seal('arkme-person-records-v1',{viewer:session.userId,environment:this.runtime.config.environment,identity,source:audio?'speakers':'contacts',chat:source.chat_session_uid,userId:source.user_id,expires:progress.expires})
         const page=await this.records({recordsRef,...(progress.sourceCursor?{cursor:progress.sourceCursor}:{})},signal)
+        const ledger=this.runtime.stateStore.personImpact
+        if(ledger){
+          if(progress.seenRecords.length)throw unavailable() // Old large cursors restart under the new bounded checkpoint protocol.
+          const step=(progress.step??0)+1
+          const keys=page.evidence.map(row=>createHash('sha256').update((audio?'audio:':'chat:')+row.key).digest('base64url'))
+          const counts=ledger.append(`${this.runtime.config.environment}:${session.userId}`,commandHash,step,
+            {recordingCount:progress.recordingCount,chatCount:progress.chatCount},keys,audio,progress.expires)
+          Object.assign(progress,counts,{step})
+        }else{
         const known=new Set(progress.seenRecords)
         for(const row of page.evidence){const recordKey=createHash('sha256').update((audio?'audio:':'chat:')+row.key).digest('base64url');if(known.has(recordKey))continue
           if(known.size>=3000)throw new ArkmePluginError('people-impact-budget','本次涉及超过 3000 条不同原文，影响核对尚未完成；请减少本次关联身份后重新预览。',false,422)
           known.add(recordKey);if(audio)progress.recordingCount++;else progress.chatCount++
         }
         progress.seenRecords=[...known]
+        }
         if(page.nextCursor)progress.sourceCursor=page.nextCursor
         else{delete progress.sourceCursor;progress.seen.push(key);progress.index++}
       }

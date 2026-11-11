@@ -114,8 +114,11 @@ function SimilarityView({ accountKey, row, onBack, directory }: { accountKey: st
   }
   useEffect(() => { void load(); return () => { clearTimeout(pollTimer.current); requestId.current++; request.current?.abort() } }, [])
   useEffect(() => {
-    if (loading || error || selecting || !result?.supported || !['building','partial'].includes(result.state)) return
-    if (pollCount.current >= 20) { setError(tr('自动查询已达到次数上限，请重新查找。')); return }
+    if (loading || error || selecting || !result?.supported) return
+    const indexPending = ['building','partial'].includes(result.state)
+    const cohesionPending = result.items.length <= 20 && (result.anchorConsistency.state === 'building' || result.items.some(item => item.consistency.state === 'building'))
+    if (!indexPending && !cohesionPending) return
+    if (pollCount.current >= 20) { if (indexPending) setError(tr('自动查询已达到次数上限，请重新查找。')); return }
     // Poll the same version-bound anchor ref, never a newly returned identity.
     // Polling is a fresh first page: a building index may change its search version.
     pollTimer.current = setTimeout(() => { pollCount.current++; void load(false, true) }, 3000)

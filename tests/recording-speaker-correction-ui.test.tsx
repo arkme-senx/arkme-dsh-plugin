@@ -37,6 +37,31 @@ describe('speaker correction interaction', () => {
   const click = async (text: string) => { await act(async () => { button(text).props.onClick(); await tick() }) }
   const writes = () => mocks.call.mock.calls.filter(([op]) => /correction\.(apply|undo)$/.test(op))
 
+  it('reopens source-time ranges and previews every affected row before undo', async () => {
+    const original = mocks.call.getMockImplementation()!
+    const ranges = [
+      { startOffsetMillis: 0, endOffsetMillis: 500, label: '周鹏', human: false, soundSource: 'unknown' },
+      { startOffsetMillis: 500, endOffsetMillis: 1500, label: '未知人物', human: true, soundSource: 'unknown' },
+      { startOffsetMillis: 1500, endOffsetMillis: 5000, label: '周鹏', human: false, soundSource: 'unknown' },
+    ]
+    mocks.call.mockImplementation((op, ...args) => op === 'recordings.speaker.correction.context'
+      ? Promise.resolve({ supported: true, version: 'v2', maxItems: 100, soundSource: 'unknown', excludedSpeakers: [], undoRef: 'restored-undo', ranges,
+        undoRanges: [0, 1].map(i => ({ occurredAt: item(i).startAtMillis, startOffsetMillis: 500, endOffsetMillis: 1500, before: [{ ...ranges[0], endOffsetMillis: 5000 }], after: ranges })) })
+      : original(op, ...args))
+    await mount('review')
+    expect(JSON.stringify(renderer.toJSON())).toContain('已分段标记')
+    const listen = renderer.root.findAllByType('button').filter(b => b.children.join('') === '试听')[1]!
+    await act(async () => { listen.props.onClick(); await tick() })
+    expect(onPlay).toHaveBeenCalledWith(item(1), expect.objectContaining({ startOffsetMillis: 500, endOffsetMillis: 1500 }))
+    await click('预览撤销上次纠错')
+    expect(writes()).toHaveLength(0)
+    const preview = renderer.root.findByProps({ 'aria-label': '撤销影响预览' })
+    expect(JSON.stringify(preview.findAllByType('div').map(n => n.children.filter(c => typeof c === 'string')))).toContain('恢复归属：')
+    await click('确认撤销')
+    expect(writes()).toHaveLength(1)
+    expect(writes()[0]![1]).toMatchObject({ undoRef: 'restored-undo', expectedVersion: 'v2' })
+  })
+
   it('previews an exact subrange before saving and freezes it through confirmation', async () => {
     const original = mocks.call.getMockImplementation()!
     mocks.call.mockImplementation((op, ...args) => op === 'recordings.speaker.correction.preview'
@@ -87,12 +112,12 @@ describe('speaker correction interaction', () => {
     expect(writes()).toHaveLength(1)
     expect(writes()[0]![1]).toMatchObject({ itemRef: 'ref-1', itemRefs: ['ref-1'], rejectedSpeakerRef: 'person-ref', detach: true })
     expect(writes()[0]![1]).not.toHaveProperty('soundSource')
-    expect(button('撤销这次纠错')).toBeDefined()
+    expect(button('预览撤销')).toBeDefined()
     expect(onUpdated).toHaveBeenCalledOnce()
-    await click('撤销这次纠错')
+    await click('预览撤销'); expect(writes()).toHaveLength(1); await click('确认撤销')
     expect(writes()).toHaveLength(2)
     expect(writes()[1]![1]).toMatchObject({ undoRef: 'undo', itemRef: 'ref-1' })
-    expect(button('撤销这次纠错')).toBeUndefined()
+    expect(button('预览撤销')).toBeUndefined()
   })
 
   it('keeps source-only edits separate, and submits only explicitly checked nearby rows', async () => {
@@ -150,7 +175,7 @@ describe('speaker correction interaction', () => {
     await click('重新读取状态')
     expect(writes()).toHaveLength(1)
     expect(onUpdated).toHaveBeenCalledOnce()
-    expect(button('撤销这次纠错')).toBeDefined()
+    expect(button('预览撤销')).toBeDefined()
     expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
   })
 
@@ -189,22 +214,22 @@ describe('speaker correction interaction', () => {
       if (op === 'recordings.speaker.correction.undo' && !lost) { lost = true; return Promise.reject(new Error('撤销响应丢失')) }
       return original(op, ...args)
     })
-    await mount(); await click('保存纠错'); await click('撤销这次纠错'); await click('重新读取状态')
+    await mount(); await click('保存纠错'); await click('预览撤销'); await click('确认撤销'); await click('重新读取状态')
     expect(writes()).toHaveLength(2)
     expect(button('核对附近片段').props.disabled).toBe(true)
-    await click('撤销这次纠错')
+    await click('确认撤销')
     expect(writes()).toHaveLength(3)
     expect(writes()[2]![1]).toEqual(writes()[1]![1])
-    expect(button('撤销这次纠错')).toBeUndefined()
+    expect(button('确认撤销')).toBeUndefined()
   })
 
   it('recovers a committed undo by reading its receipt with no repeated undo', async () => {
     const original = mocks.call.getMockImplementation()!
     mocks.call.mockImplementation((op, ...args) => op === 'recordings.speaker.correction.undo' ? Promise.reject(new Error('响应丢失'))
       : op === 'recordings.speaker.correction.result' ? original('recordings.speaker.correction.undo', ...args) : original(op, ...args))
-    await mount(); await click('保存纠错'); await click('撤销这次纠错'); await click('重新读取状态')
+    await mount(); await click('保存纠错'); await click('预览撤销'); await click('确认撤销'); await click('重新读取状态')
     expect(writes()).toHaveLength(2)
-    expect(button('撤销这次纠错')).toBeUndefined()
+    expect(button('确认撤销')).toBeUndefined()
     expect(JSON.stringify(renderer.toJSON())).toContain('已撤销这次纠错')
   })
 

@@ -62,6 +62,7 @@ arkoFileRefs(userId:number):Promise<string[]>
   readCancellationCompletion?(): Promise<import('../state-store.js').ArkmeCancellationCompletion | undefined>
   writeCancellationCompletion?(completion: import('../state-store.js').ArkmeCancellationCompletion | undefined): Promise<void>
   readonly messageMarks?: import('../local-message-marks.js').LocalMessageMarkStore
+  readonly personImpact?: import('../local-person-impact.js').LocalPersonImpactStore
   readonly commonGroups?: import('../common-groups.js').CommonGroupStore
   readRecordingSpeakerCache?(scope: string, userId: number): Promise<import('../types.js').ArkmeRecordingSpeakerCandidate[] | undefined>
   writeRecordingSpeakerCache?(scope: string, userId: number, candidates: import('../types.js').ArkmeRecordingSpeakerCandidate[]): Promise<void>

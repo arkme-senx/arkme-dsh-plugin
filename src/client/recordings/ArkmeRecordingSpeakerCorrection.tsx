@@ -193,6 +193,11 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, assignmen
     setRangeMode(false); setExclude(false); setSource(''); setDetach(!preserveAssignment && !rejectedCandidateItemRef && (!assignment || assignment.kind === 'unknown'))
   }
   const undoRef = receipt ? receipt.undoRef : (context?.supported ? context.undoRef : undefined)
+  const savedRanges = context?.supported ? context.ranges : undefined
+  const undoRanges = context?.supported ? context.undoRanges : undefined
+  const previewUndo = () => { if (!undoReview) setUndoReview(true); else void undo() }
+  const undoDisabled = pending || outcomeUnknown || unresolved.current?.action === 'apply' || correction.loading
+  const rangeText = (row: { startOffsetMillis: number; endOffsetMillis: number }) => `${(row.startOffsetMillis / 1000).toFixed(3)}–${(row.endOffsetMillis / 1000).toFixed(3)}`
   return <section aria-label={tr('说话人纠错')} style={{ display: 'flex', flexDirection: 'column', minHeight: 0, gap: 10, fontSize: 12 }}>
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
       <strong style={{ fontSize: 14 }}>{tr('纠正说话人')}</strong>
@@ -208,13 +213,30 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, assignmen
     </div>}
     {correction.error && <div role="alert" style={{ color: color.danger }}>{correction.error} <button style={button} onClick={correction.reload}>{tr('重试读取')}</button></div>}
     {context?.supported && context.excludedSpeakers.length > 0 && <div style={{ color: color.secondary }}>{tr('已排除：')}{context.excludedSpeakers.map(person => person.label).join('、')}</div>}
+    {savedRanges && savedRanges.length > 1 && <details style={{ border: `1px solid ${color.border}`, borderRadius: 6, padding: 10 }}>
+      <summary>{tr('已分段标记 · {v0} 个区间', { v0: savedRanges.length })}</summary>
+      <p style={{ color: color.secondary }}>{tr('区间相对本句原音；文字保持原转写，不猜测每个词对应的说话人。')}</p>
+      {savedRanges.map(row => <div key={`${row.startOffsetMillis}:${row.endOffsetMillis}`} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${color.border}` }}>
+        <span>{rangeText(row)} {tr('秒')}</span><span style={{ flex: 1 }}>{row.label}{row.human ? ` · ${tr('人工纠正')}` : ''}</span>
+        <button style={button} disabled={!onPlay || correction.loading} onClick={() => onPlay?.(currentItem, row)}>{tr('试听')}</button>
+      </div>)}
+    </details>}
+    {undoReview && <div aria-label={tr('撤销影响预览')} style={{ padding: 10, background: color.layer2, borderRadius: 6 }}>
+      <strong>{tr('撤销影响预览')}</strong>
+      {undoRanges?.length ? undoRanges.map((row, index) => <div key={index} style={{ padding: '8px 0', borderBottom: `1px solid ${color.border}` }}>
+        <div>{new Date(row.occurredAt).toLocaleString()} · {rangeText(row)} {tr('秒')}</div>
+        <div>{tr('当前归属：')}{row.after.filter(r => r.startOffsetMillis < row.endOffsetMillis && row.startOffsetMillis < r.endOffsetMillis).map(r => `${rangeText(r)} ${r.label}`).join('；')}</div>
+        <div>{tr('恢复归属：')}{row.before.filter(r => r.startOffsetMillis < row.endOffsetMillis && row.startOffsetMillis < r.endOffsetMillis).map(r => `${rangeText({ startOffsetMillis: Math.max(r.startOffsetMillis, row.startOffsetMillis), endOffsetMillis: Math.min(r.endOffsetMillis, row.endOffsetMillis) })} ${r.label}`).join('；')}</div>
+      </div>) : <p>{tr('将撤销本次区间纠错，恢复原归属；若片段已有后续修改，后端会拒绝覆盖。')}</p>}
+      <p style={{ color: color.secondary }}>{tr('撤销包含这次操作的全部片段；如已有后续修改，将拒绝覆盖。')}</p>
+      <button style={button} disabled={pending} onClick={() => setUndoReview(false)}>{tr('返回修改')}</button>
+    </div>}
     {(learningRef ?? (context?.supported ? context.learningRef : undefined)) && <RecordingLearningStatus learningRef={(learningRef ?? (context?.supported ? context.learningRef : undefined))!} refreshKey={learningRevision}/> }
     {prepared && !notice && <div style={{ padding: 10, background: color.layer2 }}>{prepared.selections?.map(selection => <p key={selection.itemRef}>{tr('仅修改当前句 {v0}–{v1} 秒', { v0: selection.startOffsetMillis / 1000, v1: selection.endOffsetMillis / 1000 })}</p>)}<p>{tr('后台已核实 {v0} 段；仅修改明确选择的片段，不合并历史或未来身份。', { v0: previewCount })}</p><p>{new Date(Math.min(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.startAtMillis))).toLocaleString()} — {new Date(Math.max(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.endAtMillis))).toLocaleString()}</p><button style={button} disabled={pending || !!unresolved.current} onClick={() => setPrepared(undefined)}>{tr('返回修改')}</button> <button style={button} disabled={pending || outcomeUnknown} onClick={() => { if (!locked.current) void submit(unresolved.current ?? { action: 'apply', input: prepared }) }}>{tr('确认保存')}</button></div>}
     {notice ? <>
       <div role="status" style={{ padding: 10, borderRadius: 6, background: color.layer2 }}>{notice}{receipt?.warning && <p>{receipt.warning}</p>}</div>
-      {undoReview && <p>{tr('将撤销本次区间纠错，恢复原归属；若片段已有后续修改，后端会拒绝覆盖。')}</p>}
       <div style={{ display: 'flex', gap: 8 }}>
-        {undoRef && <button style={button} disabled={pending || outcomeUnknown || unresolved.current?.action === 'apply' || correction.loading} onClick={() => { if(rangeMode&&!undoReview)setUndoReview(true);else void undo() }}>{tr(rangeMode&&!undoReview?'预览撤销':rangeMode?'确认撤销':'撤销这次纠错')}</button>}
+        {undoRef && <button style={button} disabled={undoDisabled} onClick={previewUndo}>{tr(undoReview ? '确认撤销' : '预览撤销')}</button>}
         <button style={button} disabled={pending || recovering || correction.loading} onClick={resetForReview}>{tr('核对附近片段')}</button>
       </div>
     </> : <>
@@ -261,7 +283,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, assignmen
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', borderTop: `1px solid ${color.border}`, paddingTop: 10 }}>
         <span style={{ color: color.secondary, flex: 1 }}>{tr('已选 {v0} 段', { v0: selected.size })}</span>
-        {undoRef && <button style={button} disabled={pending || outcomeUnknown || unresolved.current?.action === 'apply' || correction.loading} onClick={() => { void undo() }}>{tr('撤销上次纠错')}</button>}
+        {undoRef && <button style={button} disabled={undoDisabled} onClick={previewUndo}>{tr(undoReview ? '确认撤销' : '预览撤销上次纠错')}</button>}
         <button type="button" style={{ ...button, background: canSave ? color.text : color.layer2, color: canSave ? color.base : color.tertiary }} disabled={!canSave || correction.loading} onClick={() => { void save() }}>{pending ? tr(activity === 'read' ? '读取中…' : '保存中…') : tr(rangeMode?'预览区间纠错':assignment || crossDateSelection ? '预览纠错' : '保存纠错')}</button>
       </div>
     </>}

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { PeopleService } from '../src/services/people-service.js'
 import { combinePeople, personMatches, type PersonFacet } from '../src/people-contract.js'
 import type { ServiceRuntime } from '../src/services/service.js'
+import { DatabaseSync } from 'node:sqlite'
+import { LocalPersonImpactStore } from '../src/local-person-impact.js'
 
 function fixture() {
   let userId = 11
@@ -21,7 +23,7 @@ function fixture() {
   const recording = { directorySpeakerRef: vi.fn(async () => 'speaker-ref'), directoryUserSpeakerRef: vi.fn(async () => 'user-ref') }
   const chat = { personRecordsForIdentity:vi.fn(async()=>({supported:true,items:[{eventRef:'event-ref',itemUid:'core-record',textContent:'本人消息',senderName:'联系人',sendAtMillis:1000,personSource:{sourceRef:'original-chat'}}],hasMore:false})), openPrivateChatFromUser: vi.fn(async () => ({ source: { sourceRef: 'chat' } })) }
   const service = new PeopleService(runtime, explore, recording, contacts, chat as never)
-  return { service, contacts, explore, audio, chat, switchAccount: () => { userId = 22 } }
+  return { service, contacts, explore, audio, chat, runtime, switchAccount: () => { userId = 22 } }
 }
 
 describe('unified people identity projection', () => {
@@ -104,8 +106,11 @@ it('does not convert a failed contact source into an empty person timeline',asyn
  await expect(f.service.identityAction('records',{recordsRef:person.recordsRef})).rejects.toThrow('source offline')
 })
 
-it('keeps source impact pending until every chat page is read and rejects an outage',async()=>{
+it.each([false,true])('keeps source impact pending until every chat page is read and rejects an outage (SQLite=%s)',async(useLedger)=>{
  const f=fixture(),person=(await f.service.list('relations')).items[0]!,original=f.audio.getMockImplementation()!
+ const db=useLedger?new DatabaseSync(':memory:'):undefined
+ if(db)Object.assign(f.runtime.stateStore,{personImpact:new LocalPersonImpactStore(db,work=>{db.exec('BEGIN');try{work();db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}})})
+ try {
  f.audio.mockImplementation(async(path,body)=>{
   if(path.endsWith('/preview'))return {preview_token:'signed',changes:[],expires_at:Date.now()+60000} as never
   if(path.endsWith('/impact'))return {state:'complete',identity_count:1,relation_record_count:2,unavailable_record_count:0,names:[],display_change:{before:['甲'],after:['乙']},record_sources:[{namespace:'arkme_user',id:'27'}]} as never
@@ -123,6 +128,13 @@ it('keeps source impact pending until every chat page is read and rejects an out
  const done=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
  expect(done).toMatchObject({state:'complete',chatCount:1,recordingCount:0})
  expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+ if(useLedger){
+  expect(first.nextCursor.length).toBeLessThan(3000)
+  const replay=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
+  expect(replay).toMatchObject({state:'complete',chatCount:1,recordingCount:0})
+  expect(db!.prepare('SELECT count(*) AS n FROM person_impact_keys').get()).toMatchObject({n:1})
+ }
+ } finally {db?.close()}
 })
 
 it('deduplicates the same recording under two audio identities in impact',async()=>{

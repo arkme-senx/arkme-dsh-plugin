@@ -726,6 +726,14 @@ export class MediaService {
     return this.issueRecordingClip(session.userId, locator.child_id, current)
   }
 
+  async verifyRecordingPlayback(input: { viewerUserId: number; locator: RecordingPlaybackLocator }, signal?: AbortSignal): Promise<void> {
+    const mediaRef = await this.issueRecordingPlaybackMediaRef(input, signal)
+    const { response } = await this.fetchMedia(mediaRef, undefined, signal, false, 'HEAD')
+    try {
+      if (!response.ok) throw new ArkmePluginError('recording-material-unavailable', '原音暂不可回听，请恢复原音后再预览纠错', true, response.status)
+    } finally { await response.body?.cancel() }
+  }
+
   private issueRecordingClip(userId: number, childId: string, clip: RecordingPlaybackRef): string {
     if (clip.child_id !== childId) {
       throw new ArkmePluginError('recording-media-invalid', '录音媒体不属于当前片段', false, 502)

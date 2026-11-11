@@ -3581,6 +3581,14 @@ export interface ArkmeRecordingSpeakerMutationResult {
 
 export type ArkmeRecordingSoundSource = 'unknown' | 'in_person' | 'playback'
 
+export interface ArkmeRecordingCorrectionRange {
+  startOffsetMillis: number
+  endOffsetMillis: number
+  label: string
+  human: boolean
+  soundSource: ArkmeRecordingSoundSource
+}
+
 export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   supported: true
   version: string
@@ -3590,6 +3598,8 @@ export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   excludedSpeakers: Array<{ optionKey: string; label: string }>
   undoRef?: string
   learningRef?: string
+  ranges?: ArkmeRecordingCorrectionRange[]
+  undoRanges?: Array<{ occurredAt: number; startOffsetMillis: number; endOffsetMillis: number; before: ArkmeRecordingCorrectionRange[]; after: ArkmeRecordingCorrectionRange[] }>
 }
 
 export interface ArkmeRecordingSpeakerCorrectionPreview {

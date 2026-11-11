@@ -3,6 +3,7 @@ import {readRecordExcerpt,type RecordExcerpt} from './record-excerpt.js'
 import type { LocalTranscriptEntry } from './local-transcript-state.js'
 import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
 import { LocalMessageMarkStore } from './local-message-marks.js'
+import { LocalPersonImpactStore } from './local-person-impact.js'
 import { LocalSelfNoteQuotes } from './local-self-note-quotes.js'
 import { LocalWorldReactions } from './local-world-reactions.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
@@ -138,6 +139,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   readonly selfNoteQuotes: LocalSelfNoteQuotes
   readonly worldReactions: LocalWorldReactions
   readonly messageMarks: LocalMessageMarkStore
+  readonly personImpact: LocalPersonImpactStore
   readonly selfRoleSync: SelfRoleSyncStore
   readonly commonGroups: CommonGroupDatabase
   private readonly path: string
@@ -292,6 +294,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       }
     })
     this.messageMarks = new LocalMessageMarkStore(this.database, work => this.transaction(work))
+    this.personImpact = new LocalPersonImpactStore(this.database, work => this.transaction(work))
     this.selfNoteQuotes = new LocalSelfNoteQuotes(this.database)
     this.worldReactions = new LocalWorldReactions(this.database, work => this.transaction(work))
     this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
