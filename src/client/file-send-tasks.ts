@@ -27,7 +27,7 @@ export function fileTaskHasOnlyBackgroundFiles(task: ArkmeFileSendTask): boolean
 /** Avoid duplicating attachment progress in the message footer. */
 export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask, displayedBlocks?: readonly ArkmeContentBlock[]): boolean {
   if (fileTaskHasOnlyBackgroundFiles(task) && ['queued', 'uploading', 'sending'].includes(task.state)) return false
-  if (task.state !== 'uploading' || !displayedBlocks) return true
+  if (!['queued', 'uploading', 'sending'].includes(task.state) || !displayedBlocks) return true
   return !visibleTaskFiles(task).every(file => file.fileKind === 1)
     || !displayedBlocks.some(block => block.kind === 'image' && (
       (block.uploadProgress !== undefined && task.fileRefs.includes(block.localFileRef ?? ''))
