@@ -46,6 +46,7 @@ export interface ChatSyncPlan {
   progress: ArkmeMessageSyncProgress; checkpoint: string; epoch: number; active: boolean
   projections?: ChatSyncProjection[]
   unreadPreviews?: ChatSyncUnreadPreview[]
+  committedGroupBodies?: Record<string, string[]>
 }
 export interface ChatSyncBatch { uid: string; kind: number; membership: number; work: ChatSyncWork[] }
 export interface ChatSyncLocalPage { events: ArkmeUnifiedTimelineEvent[]; before?: number; revision: number }

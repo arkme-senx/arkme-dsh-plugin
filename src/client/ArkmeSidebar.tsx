@@ -1976,7 +1976,7 @@ export function ArkmeSurface({
     () => EMPTY_INTERWOVEN_INVALIDATION,
   )
   useEffect(()=>subscribeTeamWorkspaceChanges((account,canonicalKey)=>{
-    if(activeConversation&&account===authenticatedAccountKey&&source?.accessKind==='team_delegation'&&canonicalKey===undefined)arkmeInterwovenInvalidation.invalidate(source.sourceKey??source.sourceRef)
+    if(activeConversation&&account===authenticatedAccountKey&&source?.accessKind==='team_delegation'&&canonicalKey===undefined)arkmeInterwovenInvalidation.invalidate(source.sourceKey??source.sourceRef, undefined, false, 'team-workspace-change')
   }),[activeConversation,authenticatedAccountKey,source?.accessKind,source?.sourceKey,source?.sourceRef])
   const activeSourceKeyRef = useRef('')
   useEffect(() => {

@@ -1,9 +1,10 @@
 import { groupInteractionTrace, groupInteractionTraceKey } from '../group-interaction-diagnostics.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmePrivateInteractionDirectoryPage, ArkmePrivateInteractionSummary, ArkmeSourceItem } from '../types.js'
-import { callArkme } from './api.js'
+import { ArkmeClientError, callArkme } from './api.js'
 import { applyPrivateInteractionDirectory } from './private-interaction-directory.js'
 import { arkmeChatDirectory, arkmeInterwovenInvalidation } from './chat-directory-store.js'
+import { abortableDelay } from './harness-attachment-draft.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
 
 type Snapshot = { accountKey?: string; rows: ArkmeSourceItem[]; error?: string }
@@ -16,10 +17,11 @@ export const readPrivateInteractionDirectory = (accountKey: string) => directory
 const publishDirectory = () => { for (const listener of directoryListeners) listener() }
 
 /** Automatic events coalesce; an explicit retry can replace a background read. */
-export function watchPrivateInteractionDirectory({ read, publish, subscribe, readPeer, delay = 150 }: {
-  read: (cursor: string | undefined, version: string | undefined, signal: AbortSignal, priority: ReadPriority) => Promise<ArkmePrivateInteractionDirectoryPage>
+export function watchPrivateInteractionDirectory({ read, publish, subscribe, subscribeGroupAccess, readPeer, delay = 150 }: {
+  read: (cursor: string | undefined, version: string | undefined, signal: AbortSignal, priority: ReadPriority, recoveryHead?: boolean) => Promise<ArkmePrivateInteractionDirectoryPage>
   publish: (rows: ArkmeSourceItem[], error?: string) => void
-  subscribe: (invalidate: (peers?: readonly string[], revalidate?: boolean) => void) => () => void
+  subscribe: (invalidate: (peers?: readonly string[], revalidate?: boolean, reason?: string) => void) => () => void
+  subscribeGroupAccess?: (listener: (restricted: ReadonlySet<string>) => void) => () => void
   readPeer?: (key: string, rows: readonly ArkmeSourceItem[], signal: AbortSignal) =>
     Promise<{ key: string; row?: ArkmeSourceItem } | undefined>
   delay?: number
@@ -32,6 +34,11 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
   let publishedError: string | undefined
   let peerRevision = 0
   const pendingPeers = new Set<string>()
+  let restrictedGroups: ReadonlySet<string> = new Set()
+  const isRestricted = (row: ArkmeSourceItem) => {
+    const group = row.privateInteraction?.latest.groupSourceKey
+    return group !== undefined && restrictedGroups.has(group)
+  }
   const peerChanges = new Map<string, { row?: ArkmeSourceItem; revision: number }>()
   const publishMerged = () => {
     const rows = new Map(directoryRows.map(row => [arkmeSourceIdentityKey(row), row]))
@@ -39,16 +46,17 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
       if (change.row === undefined) rows.delete(key)
       else rows.set(key, change.row)
     }
-    publishedRows = [...rows.values()]
+    publishedRows = [...rows.values()].filter(row => !isRestricted(row))
     if (publishedError === undefined) publish(publishedRows)
     else publish(publishedRows, publishedError)
   }
-  const publishSnapshot = (rows: ArkmeSourceItem[], error?: string, completeRevision?: number) => {
+  const publishSnapshot = (rows: ArkmeSourceItem[], error?: string, completeRevision?: number, complete = false) => {
     directoryRows = rows
     publishedError = error
     if (completeRevision !== undefined) {
+      const received = complete ? undefined : new Set(rows.map(arkmeSourceIdentityKey))
       for (const [key, change] of peerChanges) {
-        if (change.revision <= completeRevision) peerChanges.delete(key)
+        if (change.revision <= completeRevision && (received === undefined || received.has(key))) peerChanges.delete(key)
       }
     }
     publishMerged()
@@ -62,19 +70,30 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
         const controller = new AbortController()
         peerRead = { key, controller }
         try {
-          const result = await readPeer(key, publishedRows, controller.signal)
+          let result: Awaited<ReturnType<NonNullable<typeof readPeer>>>
+          for (let attempt = 0; ; attempt++) {
+            controller.signal.throwIfAborted()
+            try {
+              result = await readPeer(key, publishedRows, controller.signal)
+              break
+            } catch (error) {
+              if (!(error instanceof ArkmeClientError) || error.body.code !== 'interaction-version-changed' || attempt >= 2) throw error
+              groupInteractionTrace('summary-version-retry', { contact: groupInteractionTraceKey(key), attempt: attempt + 1 })
+              await abortableDelay(controller.signal, attempt === 0 ? 150 : 350)
+            }
+          }
           if (!controller.signal.aborted && !disposed && result !== undefined) {
             peerChanges.delete(result.key)
             peerChanges.set(result.key, { ...(result.row === undefined ? {} : { row: result.row }), revision: ++peerRevision })
             // Match the directory's existing maximum of 40 pages of 100.
             if (peerChanges.size > 4000) {
               peerChanges.delete(peerChanges.keys().next().value!)
-              invalidate()
+              invalidate(undefined, false, 'contact-cache-capacity')
             }
             publishMerged()
           }
         } catch {
-          if (!controller.signal.aborted && !disposed && !queued) invalidate()
+          if (!controller.signal.aborted && !disposed && !queued) invalidate(undefined, false, 'contact-summary-failed')
         }
         if (disposed) break
       }
@@ -83,10 +102,11 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
       peerWorker = false
     }
   }
-  let active: { controller: AbortController; priority: ReadPriority } | undefined
+  let active: { controller: AbortController; priority: ReadPriority; recovery: boolean; reconnectPending: boolean } | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   let revision = 0
   let queued = false
+  const queuedReasons = new Set<string>()
   let queuedPriority: ReadPriority = 'background'
   let retryBudget = 1
   let waitForQuiet = false
@@ -94,7 +114,7 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
     if (disposed || active !== undefined || timer !== undefined) return
     timer = setTimeout(() => { timer = undefined; void run(queuedPriority) }, waitForQuiet ? Math.max(delay, 5000) : delay)
   }
-  const invalidate = (peers?: readonly string[], revalidate = false) => {
+  const invalidate = (peers?: readonly string[], revalidate = false, reason = 'unscoped') => {
     if (disposed) return
     if (peers !== undefined && readPeer !== undefined) {
       let overflow = false
@@ -104,6 +124,7 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
       }
       void refreshPeers()
       if (!overflow) return
+      reason = 'contact-queue-capacity'
     }
     if (revalidate) {
       if (peerRead !== undefined) {
@@ -111,19 +132,31 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
         peerRead.controller.abort()
       }
       if (peerChanges.size > 0) {
+        // Older pages cannot fill in a row whose newer summary just lost its authorization.
+        directoryRows = directoryRows.filter(row => !peerChanges.has(arkmeSourceIdentityKey(row)))
         peerChanges.clear()
         publishMerged()
       }
     }
-    revision += 1
+    const recoveryHint = reason === 'network-online' || reason === 'realtime-reconcile'
+    if (active?.recovery && recoveryHint && !revalidate) {
+      active.reconnectPending = true
+      return
+    }
+    if (revalidate || !active?.recovery) revision += 1
+    queuedReasons.add(reason)
     queued = true
     if (active?.priority === 'foreground') queuedPriority = 'foreground'
     retryBudget = 1
     if (waitForQuiet && timer !== undefined) { clearTimeout(timer); timer = undefined }
     schedule()
   }
-  const run = async (priority: ReadPriority) => {
-    const request = { controller: new AbortController(), priority }
+  const run = async (priority: ReadPriority, reason?: string) => {
+    const recovery = queuedReasons.has('network-online') || queuedReasons.has('realtime-reconcile') || queuedReasons.has('recovery-retry')
+    const reasons = reason ?? [...queuedReasons].join(',')
+    queuedReasons.clear()
+    groupInteractionTrace('directory-run-start', { reason: reasons, priority })
+    const request = { controller: new AbortController(), priority, recovery, reconnectPending: false }
     active = request
     const { signal } = request.controller
     queued = false
@@ -132,19 +165,28 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
     const requestRevision = revision
     const requestPeerRevision = peerRevision
     const current = () => !disposed && !signal.aborted && active === request && requestRevision === revision
+    const retryInterruptedRecovery = () => {
+      if (!current() || !request.reconnectPending) return false
+      queued = true
+      queuedPriority = priority
+      queuedReasons.add('recovery-retry')
+      return true
+    }
     const rows = new Map<string, ArkmeSourceItem>()
     const visited = new Set<string>()
     let cursor: string | undefined
     let version: string | undefined
     try {
       for (let index = 0; index < 40; index += 1) {
-        const page = await read(cursor, version, signal, priority)
+        const page = recovery && index === 0
+          ? await read(cursor, version, signal, priority, true)
+          : await read(cursor, version, signal, priority)
         if (!current()) return
         if (version !== undefined && page.version !== version) throw new Error('interaction-version-changed')
         version = page.version
         for (const row of page.items) rows.set(arkmeSourceIdentityKey(row), row)
         // Latest people become visible immediately, before older directory pages.
-        publishSnapshot([...rows.values()], undefined, page.hasMore ? undefined : requestPeerRevision)
+        publishSnapshot([...rows.values()], undefined, requestPeerRevision, !page.hasMore)
         if (!page.hasMore) return
         if (!page.nextCursor || visited.has(page.nextCursor) || index === 39) throw new Error('互动目录未完整加载，请刷新重试')
         cursor = page.nextCursor
@@ -152,31 +194,37 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
       }
     } catch (error) {
       if (disposed || signal.aborted || active !== request) return
+      if (retryInterruptedRecovery()) return
       const message = error instanceof Error ? error.message : ''
       if (/version|状态已变化/iu.test(message) && requestRevision !== revision) {
         // The server could not produce a stable snapshot while read state changed.
         // Retain one dirty intent and one trailing timer, instead of retrying an
         // expensive query throughout the same burst. Read acknowledgements can
         // arrive seconds apart, so allow 5s quiet. Explicit retry bypasses this.
-        waitForQuiet = true
+        waitForQuiet = !queuedReasons.has('network-online') && !queuedReasons.has('realtime-reconcile')
+        queuedReasons.add('version-conflict')
         queued = true; queuedPriority = priority
         publishSnapshot([], '群互动同步暂未完成，点击重试')
         return
       }
       if (!current()) return
       if (/version|状态已变化/iu.test(message)) {
-        if (retryBudget-- > 0) { queued = true; queuedPriority = priority }
+        if (retryBudget-- > 0) {
+          queued = true; queuedPriority = priority; queuedReasons.add('version-conflict')
+          if (request.recovery) queuedReasons.add('recovery-retry')
+        }
         else if (rows.size > 0) {
           // A busy account can change between pages. Never keep an obsolete
           // permission snapshot: revalidate recent contacts, drop old pages,
           // and explicitly report that earlier contacts are not loaded.
           try {
+            groupInteractionTrace('directory-run-start', { reason: 'version-conflict-first-page', priority })
             const freshPeerRevision = peerRevision
             const fresh = await read(undefined, undefined, signal, priority)
             if (!current()) return
-            publishSnapshot(fresh.items, fresh.hasMore ? '较早群互动暂未加载，点击重试' : undefined, fresh.hasMore ? undefined : freshPeerRevision)
+            publishSnapshot(fresh.items, fresh.hasMore ? '较早群互动暂未加载，点击重试' : undefined, freshPeerRevision, !fresh.hasMore)
           } catch {
-            if (current()) publishSnapshot([], '群互动同步暂未完成，点击重试')
+            if (current() && !retryInterruptedRecovery()) publishSnapshot([], '群互动同步暂未完成，点击重试')
           }
         } else publishSnapshot([], '群互动同步暂未完成，点击重试')
       } else publishSnapshot([], '群互动同步暂未完成，点击重试')
@@ -189,7 +237,18 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
     }
   }
   const unsubscribe = subscribe(invalidate)
-  void run('background')
+  const unsubscribeAccess = subscribeGroupAccess?.(restricted => {
+    restrictedGroups = restricted
+    const affected = publishedRows.filter(isRestricted).map(arkmeSourceIdentityKey)
+    if (!affected.length) return
+    directoryRows = directoryRows.filter(row => !isRestricted(row))
+    for (const [key, change] of peerChanges) {
+      if (change.row && isRestricted(change.row)) peerChanges.delete(key)
+    }
+    publishMerged()
+    invalidate(affected)
+  })
+  void run('background', 'initial')
   return {
     retry() {
       if (disposed || active?.priority === 'foreground') return
@@ -198,7 +257,7 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
       waitForQuiet = false
       if (timer !== undefined) { clearTimeout(timer); timer = undefined }
       active?.controller.abort()
-      void run('foreground')
+      void run('foreground', 'manual-retry')
     },
     dispose() {
       disposed = true
@@ -207,6 +266,7 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, rea
       active?.controller.abort()
       if (timer !== undefined) clearTimeout(timer)
       unsubscribe()
+      unsubscribeAccess?.()
     },
   }
 }
@@ -222,12 +282,13 @@ export function usePrivateInteractionDirectory(accountKey: string | undefined, e
     const cacheOwner = {}
     setSnapshot({ accountKey, rows: [] })
     const watcher = watchPrivateInteractionDirectory({
-      read: async (cursor, version, signal, priority) => {
-        groupInteractionTrace('directory-page-start', { continuation: cursor !== undefined, priority })
+      read: async (cursor, version, signal, priority, recoveryHead) => {
+        const background = priority === 'background' && !recoveryHead
+        groupInteractionTrace('directory-page-start', { continuation: cursor !== undefined, priority, recoveryHead })
         const page = await callArkme<ArkmePrivateInteractionDirectoryPage>('private-interaction.directory', {
-          ...(priority === 'background' ? { background: true } : {}),
-          limit: 100, ...(cursor ? { cursor } : {}), ...(version ? { expectedVersion: version } : {}),
-        }, signal, priority === 'background' ? { priority } : undefined)
+          ...(background ? { background: true } : {}),
+          limit: recoveryHead ? 20 : 100, ...(cursor ? { cursor } : {}), ...(version ? { expectedVersion: version } : {}),
+        }, signal, background ? { priority: 'background' } : undefined)
         groupInteractionTrace('directory-page-response', { rows: page.items.length, hasMore: page.hasMore })
         return page
       },
@@ -262,8 +323,9 @@ export function usePrivateInteractionDirectory(accountKey: string | undefined, e
           new Map([[key, { latest, version: result.version, unreadCount: result.unreadCount, attentionCount: result.attentionCount }]]))
         return { key, ...(row === undefined ? {} : { row }) }
       },
+      subscribeGroupAccess: arkmeInterwovenInvalidation.subscribeGroupAccess,
       subscribe: listener => {
-        const online = () => listener()
+        const online = () => listener(undefined, false, 'network-online')
         const unsubscribe = arkmeInterwovenInvalidation.subscribeDirectory(listener)
         window.addEventListener('online', online)
         return () => { unsubscribe(); window.removeEventListener('online', online) }

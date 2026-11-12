@@ -207,6 +207,7 @@ export class InterwovenService {
       privateSourceKey: await this.source.chatDirectorySourceKey(userId, privateUid),
       peerName,
       groupSourceRef: await this.source.sealSourceRef(userId, 'group_chat', groupUid, groupName),
+      groupSourceKey: await this.source.chatDirectorySourceKey(userId, groupUid),
       groupName, sequence: item.seq as number, occurredAtMillis: item.occurred_at as number,
       senderIsMe: item.sender_is_me, summary: item.summary.slice(0, 2000), unread: item.unread, attention: item.attention,
     }

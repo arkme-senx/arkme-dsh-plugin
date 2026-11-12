@@ -1011,10 +1011,12 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.realtime.audienceSourceAliases=key=>this.unifiedTimeline.audienceAliases(key)
-    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys, projections) => {
+    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys, projections, interactionSourceKeys) => {
       this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
-        ...(sourceKeys?.length ? { sourceKeys } : {}), ...(projections?.length ? { projections } : {}) })
-    }, (session, previews, signal) => this.directory.refreshSyncedUnread(session, previews, signal))
+        ...(sourceKeys?.length ? { sourceKeys } : {}), ...(projections?.length ? { projections } : {}),
+        ...(interactionSourceKeys?.length ? { interactionSourceKeys } : {}) })
+    }, (session, previews, signal) => this.directory.refreshSyncedUnread(session, previews, signal),
+    (userId, peers) => this.directory.interactionSourceKeys(userId, peers))
     this.directory.onChatPageAvailable = () => this.messageSync.resumeTransport()
     this.realtime.subscribeChatRealtime(event => {
       this.messageSync.accept(event)

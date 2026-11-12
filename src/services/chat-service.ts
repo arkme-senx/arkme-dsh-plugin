@@ -6055,6 +6055,7 @@ nextPublic = next
           type: 'read-ack',
           revision: this.realtime.nextChatClientRevision(),
           sourceRef,
+          ...(source.kind === 'private_chat' || source.kind === 'group_chat' ? { sourceKind: source.kind } : {}),
           sourceKey: await this.source.chatDirectorySourceKey(session.userId, chatSessionUid),
           effectiveReadSequence,
           unreadCount,

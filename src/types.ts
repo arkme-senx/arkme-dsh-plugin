@@ -4299,6 +4299,7 @@ export type ArkmeChatClientEvent = {
   /** Bounded committed-body hints; no read positions or complete window coverage. */
   sourceKeys?: string[]
   projections?: import('./chat-message-sync.js').ChatSyncProjection[]
+  interactionSourceKeys?: string[]
 } | {
   type: 'team-invalidated'
   revision: number
@@ -4325,6 +4326,8 @@ export type ArkmeChatClientEvent = {
     timelineItems: ArkmeTimelineItem[]
     /** Present when the Host can account for interaction changes in this group delta. */
     interactionSourceKeys?: string[]
+    /** A group read cursor change coalesced with a scoped message delta. */
+    reconcileInteractionRead?: true
   }>
 } | {
   /** Confirmed bodies only; does not publish directory/unread facts or durable coverage. */
@@ -4402,6 +4405,7 @@ export type ArkmeChatClientEvent = {
   type: 'read-ack'
   revision: number
   sourceRef: string
+  sourceKind?: 'private_chat' | 'group_chat'
   sourceKey?: string
   effectiveReadSequence: number
   unreadCount: number
@@ -5198,6 +5202,7 @@ export interface ArkmePrivateInteraction {
   privateSourceKey?: string
   peerName: string
   groupSourceRef: string
+  groupSourceKey?: string
   groupName: string
   sequence: number
   occurredAtMillis: number
