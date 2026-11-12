@@ -3,12 +3,14 @@
 .arkme-arrangement-workspace button:disabled { cursor: default; opacity: .5; }
 .arkme-arrangement-workspace button:focus-visible { outline: 2px solid #467af0; outline-offset: 2px; }
 .arkme-arrangement-navigation { width: 166px; flex: 0 0 166px; box-sizing: border-box; display: flex; flex-direction: column; padding: 24px 12px 14px; border-right: 1px solid var(--aw-line); background: color-mix(in srgb, var(--aw-ink) 1.5%, var(--aw-surface)); }
-.arkme-arrangement-navigation h2 { margin: 0 12px 24px; font-size: 20px; font-weight: 600; }
-.arkme-arrangement-view-links { display: flex; flex-direction: column; gap: 5px; }
-.arkme-arrangement-view-links button { min-height: 40px; padding: 9px 12px; text-align: left; white-space: nowrap; }
+.arkme-arrangement-navigation h2 { margin: 0 12px 24px; font-size: 16px; font-weight: 600; }
+.arkme-arrangement-view-links { display: flex; flex-direction: column; gap: 6px; }
+.arkme-arrangement-view-links button { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 9px 12px; text-align: left; white-space: nowrap; font-size: 14px; line-height: 22px; border-radius: 8px; transition: background 160ms ease, color 160ms ease; }
+.arkme-arrangement-view-links button > svg { flex: none; color: var(--aw-secondary); }
+.arkme-arrangement-view-links button[aria-current=page] > svg { color: inherit; }
 .arkme-arrangement-view-links button:nth-child(4) { margin-top: 17px; }
 .arkme-arrangement-view-links button:hover { background: var(--aw-hover); }
-.arkme-arrangement-view-links button[aria-current=page] { background: var(--aw-selected); color: #3c72df; font-weight: 600; }
+.arkme-arrangement-view-links button[aria-current=page] { background: var(--aw-selected); color: #3c72df; font-weight: 500; }
 .arkme-arrangement-navigation-footer { margin-top: auto; padding-top: 24px; display: flex; flex-direction: column; gap: 5px; color: var(--aw-secondary); font-size: 12px; }
 .arkme-arrangement-navigation-footer button { display: flex; align-items: center; gap: 7px; padding: 8px 10px; text-align: left; }
 .arkme-arrangement-navigation-footer button:hover { background: var(--aw-hover); }
@@ -17,10 +19,10 @@
 .arkme-arrangement-directory h3 { margin: 0; font-size: 17px; font-weight: 600; }
 .arkme-arrangement-directory header small { display: block; color: var(--aw-secondary); font-size: 11px; margin-top: 4px; }
 .arkme-arrangement-directory-tools { display: flex; gap: 5px; }
-.arkme-arrangement-directory-tools button, .arkme-arrangement-detail-header-actions button { display: grid; place-items: center; width: 30px; height: 30px; flex: none; color: var(--aw-secondary); }
+.arkme-arrangement-directory-tools button, .arkme-arrangement-detail-header-actions button { display: grid; place-items: center; width: 32px; height: 32px; flex: none; color: var(--aw-secondary); }
 .arkme-arrangement-directory-tools button:hover, .arkme-arrangement-detail-header-actions button:hover { background: var(--aw-hover); color: var(--aw-ink); }
 .arkme-arrangement-directory-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 8px; }
-.arkme-arrangement-task { display: flex; align-items: flex-start; min-width: 0; border-radius: 9px; padding: 14px 10px; gap: 12px; margin-bottom: 2px; transition: background 120ms ease, opacity 160ms ease; }
+.arkme-arrangement-task { display: flex; align-items: flex-start; min-width: 0; border-radius: 9px; padding: 16px 12px; gap: 12px; margin-bottom: 4px; transition: background 120ms ease, opacity 160ms ease; }
 .arkme-arrangement-task:hover { background: var(--aw-hover); }
 .arkme-arrangement-task[data-selected=true] { background: var(--aw-selected); }
 .arkme-arrangement-task-body { flex: 1; min-width: 0; padding: 0; display: flex; gap: 12px; align-items: flex-start; text-align: left; }
@@ -28,27 +30,27 @@
 .arkme-arrangement-task-title { display: flex; align-items: center; gap: 5px; }
 .arkme-arrangement-task-title strong { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-size: 14px; font-weight: 500; line-height: 21px; overflow-wrap: anywhere; }
 .arkme-arrangement-task-copy p { margin: 5px 0 0; line-height: 18px; font-size: 12px; color: var(--aw-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.arkme-arrangement-task time { flex: 0 0 auto; color: var(--aw-secondary); font-size: 11px; line-height: 21px; max-width: 94px; text-align: right; white-space: nowrap; }
+.arkme-arrangement-task time { flex: 0 0 auto; color: var(--aw-secondary); font-size: 12px; line-height: 21px; max-width: 104px; text-align: right; white-space: nowrap; }
 .arkme-arrangement-directory > footer { flex: none; border-top: 1px solid var(--aw-line); color: var(--aw-secondary); font-size: 11px; padding: 9px 20px; }
 .arkme-arrangement-workspace-empty { color: var(--aw-secondary); text-align: center; padding: 40px 12px; font-size: 13px; }
 .arkme-arrangement-detail, .arkme-arrangement-detail-empty { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .arkme-arrangement-detail-empty { align-items: center; justify-content: center; color: var(--aw-secondary); font-size: 13px; }
-.arkme-arrangement-detail > header { flex: none; min-height: 54px; padding: 12px 20px; box-sizing: border-box; display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid var(--aw-line); }
+.arkme-arrangement-detail > header { flex: none; min-height: 54px; padding: 16px 20px; box-sizing: border-box; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--aw-line); }
 .arkme-arrangement-detail-heading { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-.arkme-arrangement-detail-heading h2 { width: 100%; min-width: 0; font-size: 20px; line-height: 1.5; margin: 0; font-weight: 600; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.arkme-arrangement-detail-heading h2 { width: 100%; min-width: 0; font-size: 17px; line-height: 1.5; margin: 0; font-weight: 600; overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .arkme-arrangement-detail-heading h2[data-expanded=true] { display: block; -webkit-line-clamp: unset; max-height: min(40vh, 320px); overflow-y: auto; overscroll-behavior: contain; }
 .arkme-arrangement-detail-heading .arkme-arrangement-title-toggle { padding: 0; color: var(--aw-secondary); font-size: 12px; line-height: 20px; }
 .arkme-arrangement-detail-heading .arkme-arrangement-title-toggle:hover { color: var(--aw-ink); }
 .arkme-arrangement-detail-header-actions { display: flex; align-items: center; gap: 4px; flex: none; }
 .arkme-arrangement-detail-scroll { flex: 1; min-height: 0; padding: 20px 24px 32px; overflow-y: auto; overscroll-behavior: contain; }
 .arkme-arrangement-detail-scroll > :first-child { margin-top: 0; }
-.arkme-arrangement-detail-description { margin: 0 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; font-size: 14px; }
+.arkme-arrangement-detail-description { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 24px; padding: 14px 16px; border: 1px solid var(--aw-line); border-radius: 10px; background: var(--aw-hover); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.75; font-size: 14px; }
 .arkme-arrangement-detail dl { display: flex; flex-direction: column; gap: 13px; margin: 26px 0; font-size: 12px; }
 .arkme-arrangement-detail dl > div { display: flex; align-items: flex-start; gap: 20px; line-height: 20px; }
 .arkme-arrangement-detail dt { color: var(--aw-secondary); flex: 0 0 62px; }
 .arkme-arrangement-detail dd { margin: 0; overflow-wrap: anywhere; }
 .arkme-arrangement-detail dd button { padding: 0 7px; margin-left: -7px; color: #477dec; }
-.arkme-arrangement-detail dd button:hover { background: var(--aw-hover); }
+.arkme-arrangement-detail dd button:not(.arkme-arrangement-reminder-switch):hover { background: var(--aw-hover); }
 .arkme-arrangement-detail-sources { border-top: 1px solid var(--aw-line); padding-top: 22px; }
 .arkme-arrangement-detail-sources strong, .arkme-arrangement-detail-sources h3 { font-size: 13px; font-weight: 500; margin: 0 0 12px; }
 .arkme-arrangement-detail-sources .arkme-arrangement-content { cursor: text; }
@@ -71,6 +73,42 @@
 .arkme-arrangement-delete-confirm p { overflow-wrap: anywhere; line-height: 1.6; font-size: 13px; }
 .arkme-arrangement-delete-confirm footer { display: flex; justify-content: flex-end; gap: 12px; }
 .arkme-arrangement-delete-confirm button { padding: 8px 12px; background: var(--aw-hover); }
+/* Scoped to the arrangement panes: host navigation and surface colors stay unchanged. */
+.arkme-arrangement-directory-tools button, .arkme-arrangement-detail-header-actions button, .arkme-arrangement-navigation-footer button { transition: background 160ms ease, color 160ms ease; }
+.arkme-arrangement-detail-description > svg { flex: none; margin-top: 3px; color: var(--aw-secondary); }
+.arkme-arrangement-detail-description p { min-width: 0; margin: 0; }
+.arkme-arrangement-detail .arkme-arrangement-detail-facts { gap: 16px; font-size: 13px; margin: 24px 0; }
+.arkme-arrangement-detail-facts dt { display: flex; align-items: center; gap: 9px; flex-basis: 100px; }
+.arkme-arrangement-detail-facts dt svg { flex: none; }
+.arkme-arrangement-detail-facts dd { flex: 1; min-width: 0; }
+.arkme-arrangement-detail-facts dd[data-unset=true] { color: var(--aw-secondary); }
+.arkme-arrangement-detail .arkme-arrangement-status { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 6px; font-size: 12px; line-height: 20px; font-weight: 500; color: var(--aw-secondary); background: var(--aw-hover); }
+.arkme-arrangement-detail .arkme-arrangement-status[data-status=following] { color: #477dec; background: var(--aw-selected); }
+.arkme-arrangement-detail .arkme-arrangement-status:is([data-status=completed], [data-status=validated], [data-status=applied]) { color: var(--dsw-alias-success-primary, #358250); background: color-mix(in srgb, #358250 9%, var(--aw-surface)); }
+.arkme-arrangement-detail-sources { border-top: 0; padding-top: 0; }
+.arkme-arrangement-detail .arkme-occurrence-timeline { padding: 16px; border: 1px solid var(--aw-line); border-radius: 12px; }
+.arkme-arrangement-detail .arkme-occurrence-timeline h3 { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; margin-bottom: 18px; }
+.arkme-arrangement-section-icon { vertical-align: middle; margin-right: 4px; color: var(--dsw-alias-label-secondary, #777c85); }
+.arkme-arrangement-detail .arkme-occurrence-timeline article { border-bottom: 0; margin-bottom: 0; padding-bottom: 24px; }
+.arkme-arrangement-detail .arkme-occurrence-timeline article:last-of-type { padding-bottom: 4px; }
+.arkme-arrangement-detail .arkme-occurrence-timeline header { align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.arkme-arrangement-detail .arkme-occurrence-timeline header > span[data-disposition] { display: inline-flex; align-items: center; flex: none; box-sizing: border-box; height: 22px; padding: 1px 7px; border-radius: 6px; font-size: 12px; line-height: 20px; white-space: nowrap; }
+.arkme-arrangement-detail .arkme-occurrence-timeline header span:not([data-disposition=new]) { color: var(--aw-secondary); background: var(--aw-hover); }
+.arkme-arrangement-detail .arkme-occurrence-timeline summary { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; padding-block: 6px; }
+.arkme-arrangement-detail .arkme-occurrence-timeline summary::-webkit-details-marker { display: none; }
+.arkme-arrangement-disclosure-icon { vertical-align: middle; flex: none; }
+details[open] > summary > .arkme-arrangement-disclosure-icon { transform: rotate(90deg); }
+.arkme-arrangement-detail .arkme-recognition-process { border: 1px solid var(--aw-line); border-radius: 12px; padding: 16px; margin-top: 16px; }
+.arkme-arrangement-detail .arkme-recognition-process .arkme-recognition-process-trigger { align-items: center; gap: 8px; padding: 0; font-size: 14px; }
+.arkme-arrangement-detail .arkme-recognition-process .arkme-recognition-process-trigger[aria-expanded=true] { padding-bottom: 16px; }
+.arkme-arrangement-detail .arkme-recognition-facts > div { gap: 16px; margin: 16px 0 !important; }
+.arkme-arrangement-field-icon { display: none; }
+.arkme-arrangement-detail .arkme-recognition-facts dt { display: flex; align-items: flex-start; gap: 8px; flex: 0 0 112px; width: 112px; color: var(--aw-secondary); }
+.arkme-arrangement-detail .arkme-arrangement-field-icon { display: block; flex: none; margin-top: 2px; }
+.arkme-arrangement-detail .arkme-recognition-facts dd { flex: 1; min-width: 0; }
+.arkme-arrangement-detail .arkme-recognition-facts strong { font-size: 14px; font-weight: 500; }
+.arkme-arrangement-detail .arkme-recognition-facts code { font-size: 12px; color: var(--aw-secondary); overflow-wrap: anywhere; }
+.arkme-arrangement-detail .arkme-recognition-process { overflow-wrap: anywhere; }
 @container arrangement-workspace (max-width: 800px) {
   .arkme-arrangement-navigation { width: 140px; flex-basis: 140px; padding-inline: 8px; }
   .arkme-arrangement-directory { flex: 1; min-width: 0; width: auto; border-right: 0; }
@@ -91,4 +129,38 @@
   .arkme-arrangement-detail-scroll { padding: 20px 16px; }
   .arkme-arrangement-detail > header { padding-inline: 16px; gap: 8px; }
 }
-@media (prefers-reduced-motion: reduce) { .arkme-arrangement-task { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .arkme-arrangement-task, .arkme-arrangement-view-links button, .arkme-arrangement-navigation-footer button, .arkme-arrangement-directory-tools button, .arkme-arrangement-detail-header-actions button { transition: none; } }
+
+/* Inline editors only affect arrangement details and their date-time portal. */
+.arkme-arrangement-title-line { display: flex; align-items: flex-start; gap: 4px; max-width: 100%; min-width: 0; }
+.arkme-arrangement-title-line h2 { width: auto; box-sizing: border-box; }
+.arkme-arrangement-title-line:has(.arkme-arrangement-title-editor) { width: 100%; }
+.arkme-arrangement-detail-heading .arkme-arrangement-title-edit { flex: none; display: grid; place-items: center; width: 28px; height: 28px; color: var(--aw-secondary); opacity: 0; }
+.arkme-arrangement-detail-heading:hover .arkme-arrangement-title-edit, .arkme-arrangement-detail-heading:focus-within .arkme-arrangement-title-edit { opacity: 1; }
+.arkme-arrangement-detail-heading .arkme-arrangement-title-edit:hover, .arkme-arrangement-detail dd .arkme-arrangement-time-edit:hover { background: var(--aw-hover); }
+.arkme-arrangement-title-line:has(.arkme-arrangement-title-editor) > h2, .arkme-arrangement-detail-heading:has(.arkme-arrangement-title-editor) > .arkme-arrangement-title-toggle { display: none; }
+.arkme-arrangement-title-editor { width: 100%; }
+.arkme-arrangement-title-editor input { box-sizing: border-box; width: 100%; min-width: 0; font: inherit; font-size: 17px; line-height: 26px; border: 1px solid var(--aw-line); border-radius: 6px; background: var(--aw-surface); color: var(--aw-ink); padding: 2px 6px; }
+.arkme-arrangement-title-editor small, .arkme-arrangement-edit-error { color: var(--dsw-alias-state-error-primary, #c04444); font-size: 12px; line-height: 1.6; }
+.arkme-arrangement-status-value, .arkme-arrangement-reminder-value, .arkme-arrangement-reminder-switch-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.arkme-arrangement-detail dd .arkme-arrangement-time-edit { margin: 0; padding: 0; width: 28px; height: 28px; display: inline-grid; place-items: center; color: var(--aw-secondary); }
+.arkme-arrangement-detail dd button.arkme-arrangement-reminder-switch { display: inline-flex; align-items: center; flex: none; width: 36px; height: 20px; border-radius: 20px; padding: 2px; margin: 0; background: color-mix(in srgb, var(--aw-secondary) 35%, var(--aw-surface)); transition: background-color 150ms ease; }
+.arkme-arrangement-detail dd button.arkme-arrangement-reminder-switch[aria-checked=true] { background: var(--dsw-alias-state-business-primary, #477dec); }
+.arkme-arrangement-detail dd button.arkme-arrangement-reminder-switch:not(:disabled):hover { background: color-mix(in srgb, var(--aw-secondary) 48%, var(--aw-surface)); }
+.arkme-arrangement-detail dd button.arkme-arrangement-reminder-switch[aria-checked=true]:not(:disabled):hover { background: color-mix(in srgb, var(--dsw-alias-state-business-primary, #477dec) 90%, #000); }
+.arkme-arrangement-reminder-switch > span { display: block; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: transform 150ms ease; }
+.arkme-arrangement-reminder-switch[aria-checked=true] > span { transform: translateX(16px); }
+.arkme-arrangement-time-popover { position: fixed; z-index: 1200; width: min(304px, calc(100vw - 24px)); max-height: calc(100vh - 24px); overflow: auto; box-sizing: border-box; padding: 14px; border-radius: 10px; border: 1px solid var(--dsw-alias-border-l1, #e8e8eb); background: var(--dsw-alias-bg-base, #fff); color: var(--dsw-alias-label-primary, #17191c); box-shadow: 0 4px 16px #0001; font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
+.arkme-arrangement-time-popover header { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.arkme-arrangement-time-popover button { display: grid; place-items: center; border: 0; padding: 0; min-height: 32px; min-width: 28px; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.arkme-arrangement-time-popover button:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover, #f1f3f7); }
+.arkme-arrangement-time-popover button:focus-visible { outline: 2px solid #477dec; }
+.arkme-arrangement-time-popover button:disabled { opacity: .5; cursor: default; }
+.arkme-arrangement-date-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; text-align: center; }
+.arkme-arrangement-date-grid button[aria-pressed=true] { color: #477dec; background: color-mix(in srgb, #477dec 10%, var(--dsw-alias-bg-base, #fff)); }
+.arkme-arrangement-date-grid button[data-outside=true], .arkme-arrangement-time-popover small { color: var(--dsw-alias-label-secondary, #777c85); }
+.arkme-arrangement-time-popover label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 12px 0; }
+.arkme-arrangement-time-popover input { border: 1px solid var(--dsw-alias-border-l1, #e8e8eb); border-radius: 6px; padding: 5px 8px; font: inherit; background: transparent; color: inherit; }
+.arkme-arrangement-time-popover [role=alert] { color: var(--dsw-alias-state-error-primary, #c04444); font-size: 12px; }
+@media (hover: none) { .arkme-arrangement-detail-heading .arkme-arrangement-title-edit { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .arkme-arrangement-reminder-switch, .arkme-arrangement-reminder-switch > span { transition: none; } }

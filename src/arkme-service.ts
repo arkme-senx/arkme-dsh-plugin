@@ -3802,6 +3802,10 @@ recordingAnalysisV1: true,
   }
 
   /** Execute one owner lifecycle intent. Provider locking prevents duplicate writes, not business transitions. */
+  async editArrangement(input: import('./types.js').ArkmeArrangementEditInput, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementEditResult> {
+    return this.arrangement.editArrangement(input, signal)
+  }
+
   async mutateArrangement(
     arrangementRef: string,
     intent: ArkmeArrangementMutationIntent,

@@ -692,6 +692,46 @@ export class ArrangementService {
     }
   }
 
+  async editArrangement(input: import('../types.js').ArkmeArrangementEditInput, signal?: AbortSignal): Promise<import('../types.js').ArkmeArrangementEditResult> {
+    if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0 ||
+      (input.title === undefined && input.remindAtMillis === undefined) ||
+      (input.title !== undefined && (typeof input.title !== 'string' || !input.title.trim() || [...input.title].length > 200 || Buffer.byteLength(input.title) > 800)) ||
+      (input.remindAtMillis !== undefined && (!Number.isSafeInteger(input.remindAtMillis) || input.remindAtMillis < 0 || input.remindAtMillis > 253402300799999))) {
+      throw new ArkmePluginError('arrangement-edit-invalid', '安排编辑参数无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const ref = this.openArrangementRef(input.arrangementRef, session.userId)
+    return this.withArrangementWrite(input.arrangementRef, session.userId, async () => {
+      let data: Record<string, unknown>
+      try {
+        data = objectValue(await this.runtime.authenticatedIntelligentPost('/api/v1/arrangements/edit', {
+          uid: ref.arrangementUid, expected_version: input.expectedVersion,
+          ...(input.title !== undefined ? { title: input.title } : {}),
+          ...(input.remindAtMillis !== undefined ? { remind_at: input.remindAtMillis } : {}),
+        }, session, signal))
+      } catch (error) {
+        if (!isAmbiguousArrangementWriteError(error)) throw error
+        // Never replay an uncertain write: reconcile against the owner instead.
+        const item = await this.arrangementOwnerDetail(ref.arrangementUid, session, undefined, true)
+        if (item.arrangementRef === input.arrangementRef &&
+          (input.title === undefined || item.title === input.title) &&
+          (input.remindAtMillis === undefined || (item.remindAtMillis ?? 0) === input.remindAtMillis)) {
+          return { state: 'applied', item }
+        }
+        throw error
+      }
+      if (!['applied', 'conflict'].includes(String(data.state)) || objectValue(data.item).uid !== ref.arrangementUid) {
+        throw new ArkmePluginError('arrangement-contract-invalid', '安排编辑回执无效，请刷新后重试', false, 502)
+      }
+      const item = await this.arrangementItem(data.item, session.userId)
+      if (data.state === 'applied' && ((input.title !== undefined && item.title !== input.title) ||
+        (input.remindAtMillis !== undefined && (item.remindAtMillis ?? 0) !== input.remindAtMillis))) {
+        throw new ArkmePluginError('arrangement-contract-invalid', '安排编辑结果未确认', false, 502)
+      }
+      return { state: data.state as 'applied' | 'conflict', item }
+    })
+  }
+
   async mutateArrangement(
     arrangementRef: string,
     intent: ArkmeArrangementMutationIntent,
@@ -873,12 +913,13 @@ export class ArrangementService {
     arrangementUid: string,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
+    bypassCache = false,
   ): Promise<ArkmeArrangementItem> {
     let data:Record<string,unknown>={};const seen=new Set<string>()
     for(let hop=0;hop<10;hop++){
       if(seen.has(arrangementUid))throw new ArkmePluginError('arrangement-contract-invalid','安排归并引用循环，请刷新',false,502)
       seen.add(arrangementUid)
-      data=objectValue(await this.runtime.authenticatedIntelligentPost('/api/v1/arrangements/detail',{uid:arrangementUid},session,signal,{lane:'interactive-read'}))
+      data=objectValue(await this.runtime.authenticatedIntelligentPost('/api/v1/arrangements/detail',{uid:arrangementUid},session,signal,{lane:'interactive-read',bypassCache}))
       if(data.uid!==arrangementUid){if(data.resolved_from_uid!==arrangementUid||![1,2,3].includes(Number(data.status))||!stringValue(data.uid).trim())throw new ArkmePluginError('arrangement-contract-invalid','安排详情响应身份不一致',true,502);arrangementUid=stringValue(data.uid)}
       const merged=stringValue(data.merged_into_uid).trim()
       if(Number(data.status)!==5||!merged)break
@@ -983,6 +1024,7 @@ export class ArrangementService {
     const recordingSource = projectArrangementRecordingSource(summary ? { ...item, recording_source: { kind: 'daily-summary', date_stamp: summary.date_stamp, tz_offset: summary.tz_offset, summary_id: summary.summary_id } } : item)
     return {
       arrangementRef: await this.arrangementRef(viewerUserId, arrangementUid),
+      ...(Number.isSafeInteger(item.version) && Number(item.version) >= 0 ? { version: Number(item.version) } : {}),
       title: stringValue(item.title),
       description: stringValue(item.description),
       creationSource: arrangementCreationSource(item),
@@ -1037,6 +1079,7 @@ export class ArrangementService {
     return {
       eventRef: await this.arrangementReminderRef(viewerUserId, eventUid),
       arrangementRef: await this.arrangementRef(viewerUserId, arrangementUid),
+      ...(Number.isSafeInteger(item.version) && Number(item.version) >= 0 ? { version: Number(item.version) } : {}),
       title: stringValue(item.title),
       description: stringValue(item.description),
       eventKind: stringValue(item.event_kind),

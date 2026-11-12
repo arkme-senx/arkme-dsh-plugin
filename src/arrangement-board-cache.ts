@@ -35,13 +35,13 @@ export function parseArrangementBoardCachePages(value: unknown): ArkmeArrangemen
     const refs = new Set<string>()
     for (const rawItem of page.items as unknown[]) {
       const item = object(rawItem)
-      keys(item, ['arrangementRef', 'title', 'description', 'status', 'reminderEnabled', 'reminderState', 'createdAtMillis', 'updatedAtMillis', 'dueAtMillis', 'remindAtMillis', 'creationSource', 'recognitionState', 'recordingSource', 'provenance', 'sourceType'])
+      keys(item, ['version', 'arrangementRef', 'title', 'description', 'status', 'reminderEnabled', 'reminderState', 'createdAtMillis', 'updatedAtMillis', 'dueAtMillis', 'remindAtMillis', 'creationSource', 'recognitionState', 'recordingSource', 'provenance', 'sourceType'])
       if (item.status !== column || typeof item.reminderEnabled !== 'boolean' || typeof item.arrangementRef !== 'string'
         || !/^arkme-arrangement-v1\.[A-Za-z0-9_-]{43}$/.test(item.arrangementRef) || refs.has(item.arrangementRef)) fail()
       refs.add(item.arrangementRef as string)
       text(item.title, 20000); text(item.description, 200000); text(item.reminderState, 256)
       integer(item.createdAtMillis); integer(item.updatedAtMillis)
-      for (const key of ['dueAtMillis', 'remindAtMillis']) if (item[key] !== undefined) integer(item[key])
+      for (const key of ['dueAtMillis', 'remindAtMillis', 'version']) if (item[key] !== undefined) integer(item[key])
       if (item.recognitionState !== undefined) text(item.recognitionState, 256)
       if (item.sourceType !== undefined) integer(item.sourceType)
       if (item.provenance !== undefined) {
