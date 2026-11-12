@@ -141,8 +141,7 @@ import { arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
 import { arkmeCallRecordBubbleStyle } from './ArkmeCallRecordContent.js'
 import { arkmeSourceAllowsUserWrite, isArkmeDSHInputTopic, arkmeTopicDisplayName } from '../topic-policy.js'
 import { ArkmeTopicReadOnlyNotice } from './ArkmeTopicReadOnlyNotice.js'
-import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
-import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
+import { ArkmeDetailConversationBadge, ArkmeTopicSourceIcon } from './ArkmeDetailSourceBadgeVisuals.js'
 import { UserPlus } from '@phosphor-icons/react/dist/csr/UserPlus'
 import { PrivateGroupCreateDialog } from './PrivateGroupCreateDialog.js'
 import { copyIdentityShareLink } from './IdentityCopyLinkButton.js'
@@ -5696,14 +5695,8 @@ export function ArkmeSurface({
       ?? detailItem.selfTopic?.title
       ?? (source?.kind === 'topic' ? source.displayName : undefined)
   const detailConversationBadge = source !== undefined && (source.kind === 'private_chat' || source.kind === 'group_chat')
-    ? <button data-arkme-feedback="neutral" data-arkme-detail-conversation-source type="button"
-      style={{ ...arkmeDetailSourceBadgeStyle, cursor: 'pointer' }}
-      aria-label={tr('来源：{v0}', { v0: source.displayName })}
-      onClick={event => { event.stopPropagation(); setDrawer(undefined); setDetailBackStack([]); pendingExtensionParentDetailRef.current = undefined }}>
-      <ArkmeDirectorySourceAvatar source={source} size={16} />
-      <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{source.displayName}</span>
-      <CaretRight size={12} aria-hidden style={{ flex: 'none' }} />
-    </button>
+    ? <ArkmeDetailConversationBadge name={source.displayName} avatar={<ArkmeDirectorySourceAvatar source={source} size={16} />}
+      onClick={() => { setDrawer(undefined); setDetailBackStack([]); pendingExtensionParentDetailRef.current = undefined }} />
     : undefined
   const openExtensionParentDetail = (parent: NonNullable<ArkmeTimelineItem['extensionParent']>) => {
     if (source === undefined || detailItem === undefined || parent.itemUid === detailItem.itemUid) return

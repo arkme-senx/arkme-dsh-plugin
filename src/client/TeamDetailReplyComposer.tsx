@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
 import { ArkmeRichComposerInput } from './ArkmeRichComposerInput.js'
-import { arkmeConversationComposerLayout as layout } from './conversation-composer-presentation.js'
+import { ArkmeDetailExtensionInput } from './ArkmeDetailExtensionInput.js'
+import { arkmeDetailExtensionComposerStyles as styles } from './detail-extension-composer-style.js'
 import { tr } from './locale.js'
 
 interface Attempt { uid: string; version: number; expectedReplySeq: number }
@@ -11,13 +12,14 @@ interface Draft {
   attempt?: Attempt
 }
 
-export function TeamDetailReplyComposer({ accountKey, conversationKey, messageKey, version, expectedReplySeq, disabled, onSend }: {
+export function TeamDetailReplyComposer({ accountKey, conversationKey, messageKey, version, expectedReplySeq, disabled, onAttach, onSend }: {
   accountKey: string
   conversationKey: string
   messageKey: string
   version: number
   expectedReplySeq: number
   disabled: boolean
+  onAttach?: ((files: FileList) => void) | undefined
   onSend(text: string, attempt: Attempt): Promise<void>
 }) {
   const storageKey = JSON.stringify(['arkme-team-detail-reply', accountKey, conversationKey, messageKey])
@@ -34,6 +36,7 @@ export function TeamDetailReplyComposer({ accountKey, conversationKey, messageKe
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const pending = useRef(false)
+  const fileInput = useRef<HTMLInputElement>(null)
   const save = (next: Draft) => {
     if (next.text) localStorage.setItem(storageKey, JSON.stringify(next))
     else localStorage.removeItem(storageKey)
@@ -59,17 +62,26 @@ export function TeamDetailReplyComposer({ accountKey, conversationKey, messageKe
     } catch (caught) { setError(caught instanceof Error ? caught.message : tr('发送失败，请重试')) }
     finally { pending.current = false; setBusy(false) }
   }
-  return <div data-arkme-team-detail-composer style={{ ...layout.composer, padding: '8px 12px' }}>
-    <ArkmeRichComposerInput ariaLabel={tr('延展回复')} placeholder={tr('延展此快记...')} value={draft.text}
-      mentions={[]} emojis={[]} maxLength={20_000} disabled={disabled || busy} style={{ ...layout.textarea, minHeight: 40 }}
-      onTextChange={text => {
-        try { save({ text }); setError('') }
-        catch { setError(tr('草稿未能保存到本机')) }
-      }}
-      onKeyDown={event => {
-        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit() }
-      }} />
-    {error && <div role="alert">{error}</div>}
-    <ArkmeComposerSendButton ariaLabel={tr('发送延展')} disabled={disabled || busy || !draft.text.trim()} onClick={() => { void submit() }} />
+  return <div data-arkme-team-detail-composer>
+    {onAttach && <input ref={fileInput} type="file" multiple hidden disabled={disabled || busy}
+      onChange={event => {
+        const files = event.currentTarget.files
+        if (files?.length) onAttach(files)
+        event.currentTarget.value = ''
+      }} />}
+    <ArkmeDetailExtensionInput attachmentDisabled={disabled || busy}
+      onAttach={onAttach ? () => fileInput.current?.click() : undefined}
+      before={error && <div role="alert">{error}</div>}>
+      <ArkmeRichComposerInput ariaLabel={tr('延展此快记')} placeholder={tr('延展此快记...')} value={draft.text}
+        mentions={[]} emojis={[]} maxLength={20_000} disabled={disabled || busy} style={styles.input}
+        onTextChange={text => {
+          try { save({ text }); setError('') }
+          catch { setError(tr('草稿未能保存到本机')) }
+        }}
+        onKeyDown={event => {
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit() }
+        }} />
+      <ArkmeComposerSendButton ariaLabel={tr('发送延展')} shortcutHint={tr('Enter发送 / Shift+Enter换行')} disabled={disabled || busy || !draft.text.trim()} onClick={() => { void submit() }} />
+    </ArkmeDetailExtensionInput>
   </div>
 }

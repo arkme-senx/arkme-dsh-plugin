@@ -13,6 +13,8 @@ vi.mock('../src/client/TeamPublicCardDialog.js', () => ({ TeamPublicCardDialog: 
 import { ArkmeComposerInfoRow } from '../src/client/ArkmeComposerInfoRow.js'
 import { ArkmeMessageSnapshotDialog } from '../src/client/ArkmeMessageSnapshotDialog.js'
 import { ArkmeMessageSelectionBar } from '../src/client/ArkmeMessageSelectionBar.js'
+import { ArkmeTimelineDetailDrawer } from '../src/client/ArkmeNoteDetails.js'
+import { ArkmeDetailExtensionInput } from '../src/client/ArkmeDetailExtensionInput.js'
 import { TeamMessageDetail } from '../src/client/TeamMessageDetail.js'
 import { TeamVisitorRecords } from '../src/client/TeamVisitorRecords.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
@@ -501,7 +503,7 @@ describe('Team send UI recovery', () => {
     await mount()
     await act(async () => { renderer!.root.findByType(TeamConversationMessage).props.onDetail(); await tick() })
     await act(async () => { renderer!.root.findByProps({'data-team-extension-item':'child'}).props.onClick(); await tick() })
-    const reply = renderer!.root.findByProps({ 'data-arkme-team-detail-composer': true })
+    const reply = renderer!.root.findByType(TeamMessageDetail).findByType(ArkmeTimelineDetailDrawer).findByType(ArkmeDetailExtensionInput)
     await act(async () => reply.findByType(ArkmeRichComposerInput).props.onTextChange('详情里的独立草稿'))
     await act(async () => { reply.findByProps({ 'aria-label': '发送延展' }).props.onClick(); await tick() })
     expect(renderer!.root.findByProps({ 'data-team-composer': 'message' }).findByType(ArkmeRichComposerInput).props.value).toBe('问题')

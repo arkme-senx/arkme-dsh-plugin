@@ -48,7 +48,7 @@ import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './
 import { ArkmeMessageSnapshotDialog } from './ArkmeMessageSnapshotDialog.js'
 import { useTeamMessageSelection } from './use-team-message-selection.js'
 import { ArkmeMessageSelectionBar } from './ArkmeMessageSelectionBar.js'
-import { arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
+import { ArkmeDetailConversationBadge } from './ArkmeDetailSourceBadgeVisuals.js'
 import { ArkmeConversationDetailDismiss } from './ArkmeDetailShell.js'
 import { ArkmeSelectActionIcon } from './message-selection-presentation.js'
 import { RegionMarquee } from './selection/RegionMarquee.js'
@@ -613,7 +613,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     if (capturePreparing || busy || editing || draftRef.current.attempt || message.contentStatus !== 'available' || message.state !== 'published') return
     const next:Draft = {...draftRef.current,reply:{messageRef:message.ref,messageKey:message.key,version:message.version,
       text:quote?.text ?? message.content?.text_content ?? '',title:message.content?.title ?? '',media:message.media,senderName:message.sender.nickname,...(quote ? {quote} : {})}}
-    try {persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next);editor.current?.focus()}
+    try {persistTeamDraft(localStorage,storageKey,next);draftRef.current=next;setDraft(next);editor.current?.focus();return true}
     catch {setError(tr('草稿未能保存到本机，请勿关闭窗口'))}
   }
   const readLocatedMessage = async (ref: string, key: string, signal: AbortSignal) => {
@@ -1137,10 +1137,10 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
     void askDsh.runPrepared(JSON.stringify(selected.map(message => [message.key, message.version])),
       (signal, progress) => prepareTeamAskDshNotes(current.ref, selected, current.side==='team'?`${current.channel.name} · ${current.visitor?.nickname??tr('外部用户')}`:current.channel.name, signal, progress))
   }
-  const extendMessage = (message: TeamMessage) => {
+  const attachToExtension = (message: TeamMessage, files: FileList) => {
     if (capturePreparing || busy || editing || draftRef.current.attempt || !current.channel.enabled || current.blocked) { setError(tr('请先完成当前编辑或发送')); return }
-    if (message.state !== 'published' || message.contentStatus !== 'available') return
-    chooseReply(message)
+    if (!chooseReply(message)) return
+    selectFiles(files)
     setDetailKey(undefined)
   }
   const openPrivateComposer=async()=>{
@@ -1440,10 +1440,13 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
       onEnableBackgroundSound={() => {closeSnapshot();arkmeUi.openDshSettings()}} onClose={closeSnapshot} />}
     {detail && <ArkmeConversationDetailDismiss onClose={() => setDetailKey(undefined)} />}
     {detail && (detail.key === forwardDetailKey ? <TeamForwardDetail key={detail.key} message={detail} conversationRef={conversation.ref} conversationKey={conversation.key}
-      sourceBadge={<button type="button" style={arkmeDetailSourceBadgeStyle} onClick={() => setDetailKey(undefined)}>{current.side === 'team' ? current.visitor?.nickname ?? current.channel.name : current.channel.name}</button>}
+      sourceBadge={<ArkmeDetailConversationBadge name={current.side === 'team' ? current.visitor?.nickname ?? current.channel.name : current.channel.name}
+        avatar={current.side === 'team' && current.visitor ? <TeamAvatar identity={current.visitor} size={16} /> : <ArkmeTeamChannelAvatar channel={current.channel} size={16} />}
+        onClick={() => setDetailKey(undefined)} />}
       onPrivateChatOpened={source => arkmeUi.selectSource(source)} onClose={() => setDetailKey(undefined)} /> : <TeamMessageDetail key={`${accountKey}:${detail.key}`} accountKey={accountKey} message={detail} conversation={current} displayIdentity={personName}
       footer={(target, readable) => target.state === 'published' && target.version > 0 && !sourceOnly ? <TeamDetailReplyComposer key={target.key} accountKey={accountKey}
         conversationKey={conversation.key} messageKey={target.key} version={target.version} expectedReplySeq={current.latestTeamReplySeq} disabled={!readable || !current.channel.enabled || current.blocked}
+        onAttach={busy || editing || capturePreparing || draft.attempt ? undefined : files => attachToExtension(target, files)}
         onSend={async (text, { uid: clientUid, expectedReplySeq }) => {
           const signal = ctrl.current.signal
           await requirePhoneForSocialAction('发送消息', signal)
@@ -1459,8 +1462,6 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
           if (task?.clientUid !== clientUid || !task.taskRef || !Array.isArray(task.files)) throw new Error(tr('发送状态暂时无法确认，请重试'))
           delivery.accept(task)
         }} /> : undefined}
-      onExtend={current.channel.enabled && !current.blocked && !busy && !editing ? (target = detail) => extendMessage(target) : undefined}
-      onLocateReply={(target = detail) => {void locateReply(target)}}
       avatar={visitorActions.avatar(<TeamAvatar identity={detail.sender} size={40} />, detail.side === 'external' ? undefined : detail.sender)}
       onClose={() => setDetailKey(undefined)} onLocate={(target = detail) => { setDetailKey(undefined); if(target.key===detail.key)setLocatedKey(target.key);else void locateMessage(target.ref,target.key) }} />)}
 

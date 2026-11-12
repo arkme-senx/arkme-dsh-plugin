@@ -27,7 +27,7 @@ export function TeamForwardDetail({ message, conversationRef, conversationKey, s
     const { conversationRef, messageRef } = references.current
     void createArkmeSdk().preflightTeamMessages(conversationRef, [{ messageRef, version: message.version }], controller.signal)
       .then(([row]) => {
-        if (!row?.forwardRecords || row.key !== message.key || row.version !== message.version) throw new Error(tr('内容当前不可用'))
+        if (row?.state !== 'published' || row.contentStatus !== 'available' || !row.forwardRecords || row.key !== message.key || row.version !== message.version) throw new Error(tr('内容当前不可用'))
         if (!controller.signal.aborted) setResult({ scope, message: row })
       }).catch(reason => {
         if (!controller.signal.aborted) setResult({ scope, error: reason instanceof Error ? reason.message : tr('加载失败') })
@@ -35,20 +35,19 @@ export function TeamForwardDetail({ message, conversationRef, conversationKey, s
     return () => controller.abort()
   }, [available, message.key, message.version, scope, attempt])
   const confirmed = available ? current?.message : undefined
-  const preview = available && !current?.error ? message.forwardRecords : undefined
-  const item = confirmed ? teamMessagePresentation(confirmed) : {
+  // Summary-only cards keep their timeline preview until the complete drawer can open.
+  if (available && !current && !message.forwardRecords?.items.length) return null
+  const preview = available && !current?.error ? confirmed ?? message : undefined
+  const item = preview ? teamMessagePresentation(preview) : {
     ...teamMessagePresentation(message),
-    forwardRecords: {
-      title: preview?.title || tr('转发快记'), items: [], summaryLines: preview?.summaryLines ?? [],
-      createdAtMillis: preview?.createdAtMillis ?? message.createdAt,
-    },
+    forwardRecords: { title: tr('转发快记'), items: [], summaryLines: [], createdAtMillis: message.createdAt },
   }
   const pending = !confirmed && !current?.error && (available || message.contentStatus === 'revalidating')
-  const readStatus = confirmed ? undefined : pending ? <p role="status">{tr('正在加载转发内容…')}</p>
+  const readStatus = confirmed || pending ? undefined
     : <p role="alert">{current?.error || tr('内容当前不可用')} {available &&
-      <button type="button" onClick={() => { setResult(undefined); setAttempt(value => value + 1) }}>{tr('重试')}</button>}</p>
+      <button type="button" onClick={() => setAttempt(value => value + 1)}>{tr('重试')}</button>}</p>
   return <TeamMessageMediaScope message={confirmed ?? message} conversationRef={conversationRef} conversationKey={conversationKey}>
-    <ForwardRecordsDetail item={item} onClose={onClose} sourceBadge={sourceBadge} readStatus={readStatus}
+    <ForwardRecordsDetail item={item} onClose={onClose} sourceBadge={sourceBadge} readStatus={readStatus} pending={pending}
       onPrivateChatOpened={onPrivateChatOpened} />
   </TeamMessageMediaScope>
 }
