@@ -42,7 +42,7 @@ export function ExploreModelControl({ module, accountScope, onChanged }: {
       <span>{label}</span><CaretDown size={13} aria-hidden/>
     </button>
     {open && <UnifiedModelPicker scene={({profile:'explore-profile',events:'explore-event',goals:'explore-goal',anniversaries:'explore-anniversary'} as const)[module]} scopeLabel={EXPLORE_LABELS[module]} models={models} currentId={currentId}
-      ariaLabel={tr('选择{v0}分析模型', { v0: tr(EXPLORE_LABELS[module]) })} anchor={trigger.current ?? undefined} busy={saving}
+      ariaLabel={tr('选择{v0}分析模型', { v0: tr(EXPLORE_LABELS[module]) })} anchor={trigger.current ?? undefined} busy={saving} loading={loading}
       error={error || (data && !models.length ? tr('当前板块暂无可选模型') : '')} onRefresh={read} confirmLabel="应用并重新分析"
       confirmationDescription="切换模型可能启动后台分析并产生 AI 用量，已有结果会保留。" onClose={() => setOpen(false)}
       onApply={async model => {

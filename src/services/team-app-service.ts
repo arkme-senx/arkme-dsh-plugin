@@ -340,7 +340,30 @@ export class TeamAppService {
     const markable = v.state === 'published' && content.status === 'available' && !!(markContent.textContent || markContent.title)
     const projectedMedia = (await this.mediaItems(content.media, actor, locator, num(content.version))).map((media, index) => num(content.display_kind) === 1 ? { ...media, inlineRef: str(list(content.media)[index]?.file_asset_uid) } : media)
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
-    const forwardRecords=projectTeamForward(content.content_payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
+    const payload = { ...obj(content.content_payload) }
+    const avatarURLs: unknown[] = Array.isArray(payload.forward_sender_avatars) ? payload.forward_sender_avatars : []
+    const cardAvatarURLs: unknown[] = Array.isArray(payload.forward_card_sender_avatars) ? payload.forward_card_sender_avatars : []
+    delete payload.forward_sender_avatars
+    delete payload.forward_card_sender_avatars
+    delete payload.mention_metadata
+    delete payload.mentionMetadata
+    const avatars = new Map<string, Promise<TeamIdentity>>()
+    const avatarTasks: Promise<void>[] = []
+    const forwardRecords=projectTeamForward(payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}),
+      avatarURLs.length || cardAvatarURLs.length ? (item, index, kind) => {
+        const url = str((kind === 'card' ? cardAvatarURLs : avatarURLs)[index])
+        if (!url) return
+        let image = avatars.get(url)
+        if (!image) {
+          image = this.identity({ avatar_url: url }, actor)
+          avatars.set(url, image)
+        }
+        avatarTasks.push(image.then(({ imageRef, imageKey }) => {
+          if (imageRef) item.avatarRef = imageRef
+          if (imageKey) item.avatarKey = imageKey
+        }))
+      } : undefined)
+    if (avatarTasks.length) await Promise.all(avatarTasks)
     return teamMessageProjection({ ...(v.own===true&&typeof v.metadata_saved==='boolean'?{metadataSaved:v.metadata_saved}:{}), ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
         digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonicalDigest: createHash('sha256').update(quoteCanonicalText(markContent)).digest('hex') }, actor) } : {}),
@@ -351,7 +374,7 @@ export class TeamAppService {
       ...(replyPreview ? {reply:replyPreview} : {}),
       version: num(content.version), contentStatus: str(content.status), ...(v.record && v.state !== 'recalled' ? { content: {
         ...(mentions.length ? {mentions} : {}), text_content: str(content.text_content), title: str(content.title), template_kind: num(content.template_kind) || 1, display_kind: num(content.display_kind),
-        ...(content.content_payload ? { content_payload: (() => { const payload = {...obj(content.content_payload)}; delete payload.mention_metadata; delete payload.mentionMetadata; return payload })() } : {}),
+        ...(content.content_payload ? { content_payload: payload } : {}),
       } } : {}),
       mediaComplete: (()=>{const payload=obj(content.content_payload),assets=new Set(list(content.media).map(media=>str(media.file_asset_uid)));return [...list(payload.media_refs).map(media=>str(media.file_asset_uid)),str(obj(payload.voice).file_asset_uid)].filter(Boolean).every(id=>assets.has(id))})(),
       media: projectedMedia,
@@ -1414,7 +1437,14 @@ export class TeamAppService {
           return {message:await this.message(current,actor,context),changed:false}
         }
       }
-      case 'team.app.delete': { const m = await message(); return await post('conversations/messages/delete', { message_uid: m.message_uid, side: m.side, expected_record_version: num(p.version) }) }
+      case 'team.app.delete': {
+        const context = await conversation(), m = await message()
+        if (m.conversation_uid !== context.conversation_uid || m.side !== context.side) throw invalid()
+        const data = await post('conversations/messages/delete/v2', { ...context, message_uid: m.message_uid })
+        const changedAtMillis = num(data.deleted_at)
+        if (data.conversation_uid !== context.conversation_uid || data.message_uid !== m.message_uid || !Number.isSafeInteger(changedAtMillis) || changedAtMillis <= 0) throw invalid()
+        return { changedAtMillis }
+      }
       case 'team.app.notification-policy.get': {
         const context=await conversation()
         return this.policy(await post('conversations/notification-policy/get',context,true),actor,str(context.conversation_uid),true)

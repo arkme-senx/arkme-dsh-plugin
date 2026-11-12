@@ -16,7 +16,7 @@ export interface ArkmeModelDirectory {
     error: string | null
   }>
   load(): Promise<unknown>
-  select(selection: ModelSelection): Promise<unknown>
+  select(selection: ModelSelection): Promise<{ ok: boolean }>
 }
 export function ArkmeModelSelect({ directory, locked, available }: { directory: ArkmeModelDirectory; locked: boolean; available: boolean }) {
   useArkmeLocale()
@@ -45,12 +45,13 @@ export function ArkmeModelSelect({ directory, locked, available }: { directory: 
       <span>{model?.name ?? state.current?.model ?? tr('选择模型')}</span>{effortName && <small> · {effortName}</small>}<span aria-hidden>⌄</span>
     </button>
     {open && <UnifiedModelPicker scene="dsh" scopeLabel="当前 DSH 对话" models={models} currentId={currentId} currentEffort={state.current?.reasoningEffort ?? undefined}
-      anchor={trigger.current ?? undefined} busy={locked || state.status === 'selecting'}
+      anchor={trigger.current ?? undefined} busy={locked || state.status === 'selecting'} loading={state.status === 'idle' || state.status === 'loading'}
       error={[state.error, ...state.failures.map(failure => `${failure.name}：${failure.message}`)].filter(Boolean).join('；')}
       onRefresh={async () => { await directory.load() }} onClose={() => setOpen(false)} onApply={async (selected, reasoningEffort) => {
         const target = selected.dsh
         if (!target || !state.groups.some(group => group.id === target.provider && group.models.some(item => item.id === target.model))) throw new Error('此模型暂未出现在当前对话目录，请刷新后重试')
-        await directory.select({ ...target, ...(reasoningEffort ? { reasoningEffort } : {}) }); return true
+        const result = await directory.select({ ...target, ...(reasoningEffort ? { reasoningEffort } : {}) })
+        return result.ok
       }}/>}
   </div>
 }

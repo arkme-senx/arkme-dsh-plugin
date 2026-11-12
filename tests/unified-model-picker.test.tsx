@@ -5,6 +5,7 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 import { UnifiedModelPicker } from '../src/client/UnifiedModelPicker.js'
+import { ArkoModelMenu } from '../src/client/ArkoModelMenu.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { unifiedModelStore } from '../src/client/use-unified-models.js'
 import type { ModelChoice } from '../src/model-directory.js'
@@ -42,15 +43,22 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); unifiedModelStore.activate(undefined); arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'production' }); vi.unstubAllGlobals() })
 
-it('groups every supplier under official or user-provided and switches chat models without invoking unconfirmed routes', async () => {
+it('shows only selectable Arko models from the scene, grouped by ownership', async () => {
   const apply = vi.fn(async () => true), close = vi.fn()
-  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko 后续新任务" models={[available]} currentId={available.id} onApply={apply} onClose={close}/>))
-  expect(document.querySelectorAll('[role="option"]')).toHaveLength(4)
+  const user = { ...external, arko: 'user-api/user-model' }
+  const blocked = { ...alternative, id: 'blocked', name: '不可用模型', availabilityByScene: { arko: { available: false } } }
+  const missingTools = { ...user, id: 'missing-tools', name: '缺少工具的模型', capabilityIssuesByScene: { arko: ['缺少工具调用'] } }
+  const sharedOnly = { ...available, id: 'shared-only', name: '统一目录独有模型', arko: 'managed-ai/shared-only' }
+  const original = mocks.callArkme.getMockImplementation()!
+  mocks.callArkme.mockImplementation(async (op, ...args) => op === 'models.directory'
+    ? { accountScope: 'production:42', observedAt: 1, models: [available, other, alternative, sharedOnly], failures: [] } : original(op, ...args))
+  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko 后续新任务" models={[available, alternative, user, blocked, missingTools]} currentId={available.id} onApply={apply} onClose={close}/>))
+  expect(document.querySelectorAll('[role="option"]')).toHaveLength(3)
   expect([...document.querySelectorAll('.arkme-unified-model-list>.arkme-unified-model-group')].map(group => group.getAttribute('aria-label'))).toEqual(['即我官方', '用户自提供'])
-  expect(option('模型 B').closest('.arkme-unified-model-group')?.getAttribute('aria-label')).toBe('即我官方')
+  expect(option('模型 C').closest('.arkme-unified-model-group')?.getAttribute('aria-label')).toBe('即我官方')
   expect(option('自有模型').textContent).toContain('DeepSeek Account')
   expect(document.querySelector('input')).toBeNull()
-  expect(document.body.textContent).not.toMatch(/刷新|目录更新|当前场景可用|internal-model-a|7.9|使用此模型|取消/)
+  expect(document.body.textContent).not.toMatch(/模型 B|统一目录独有模型|不可用模型|缺少工具的模型|支持情况待确认|internal-model-a|7.9/)
   const account = document.querySelector('[aria-label="Arkme 积分账户"]')!
   expect(account.parentElement?.className).toBe('arkme-unified-model-group-title')
   expect(account.closest('.arkme-unified-model-group')?.getAttribute('aria-label')).toBe('即我官方')
@@ -59,17 +67,68 @@ it('groups every supplier under official or user-provided and switches chat mode
   expect(document.querySelector('[aria-label="用户自提供"] .arkme-unified-model-account')).toBeNull()
   expect(account.closest('[aria-hidden]')).toBeNull()
   expect(account.closest('[role="listbox"]')).toBeNull()
-  await choose('模型 B')
   expect(apply).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled()
   expect(option('模型 A').getAttribute('aria-selected')).toBe('true')
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain('支持情况待确认')
   await choose('模型 C')
   expect(apply).toHaveBeenCalledExactlyOnceWith(alternative, undefined)
   expect(close).toHaveBeenCalledOnce()
 })
+it('marks the published Arko route as current and closes without activating it again', async () => {
+  const select = vi.fn(async () => true), close = vi.fn()
+  const route = 'managed-ai/a'
+  await act(async () => root.render(<ArkoModelMenu anchor={document.createElement('button')} catalog={{
+    defaultRouteKey: route, effectiveRouteKey: route, selectionSource: 'default',
+    options: [{ routeKey: route, displayName: '已发布模型', provider: 'managed-ai', description: '', recommended: true,
+      selected: true, binding: { catalogReleaseId: '1', offeringRevisionId: '2', publicModelCode: 'a' } }],
+  }} busy={false} error="" onSelect={select} onClose={close}/>))
+  expect(option('已发布模型').getAttribute('aria-selected')).toBe('true')
+  await choose('已发布模型')
+  expect(close).toHaveBeenCalledOnce()
+  expect(select).not.toHaveBeenCalled()
+})
+it('uses scene availability and controls when the shared catalog has stale data for the same route', async () => {
+  const user = { ...external, arko: 'user-api/user-model', billingByScene: { arko: 'provider-account' as const } }
+  const current = { ...available, pricing: undefined } as ModelChoice
+  const original = mocks.callArkme.getMockImplementation()!
+  mocks.callArkme.mockImplementation(async (op, ...args) => op === 'models.directory'
+    ? { accountScope: 'production:42', observedAt: 1, failures: [], models: [
+      { ...reasoningModel, availabilityByScene: { arko: { available: false } }, pricing: '其他场景报价', images: true },
+      { ...user, capabilityIssuesByScene: { arko: ['旧能力限制'] } },
+    ] } : original(op, ...args))
+  const apply = vi.fn(async () => true)
+  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[current, user]} currentId={current.id} onApply={apply} onClose={() => {}}/>))
+  expect(option('模型 A').getAttribute('aria-selected')).toBe('true')
+  expect(document.querySelector('input[type="range"]')).toBeNull()
+  await click('计费详情')
+  expect(document.body.textContent).not.toMatch(/其他场景报价|图片输入/)
+  await click('返回模型')
+  await choose('自有模型')
+  expect(apply).toHaveBeenCalledExactlyOnceWith(user, undefined)
+})
+it('removes an unavailable recording draft and prevents generation when no choices remain', async () => {
+  const apply = vi.fn(async () => true)
+  const render = (models: ModelChoice[]) => act(async () => root.render(
+    <UnifiedModelPicker scene="recording-summary" scopeLabel="录音" models={models} currentId={other.id} onApply={apply} onClose={() => {}}/>,
+  ))
+  await render([other, alternative])
+  await choose('模型 C')
+  await click('计费详情')
+  await render([other, { ...alternative, availabilityByScene: { 'recording-summary': { available: false } } }])
+  expect(option('模型 C')).toBeUndefined()
+  expect(button('确认并生成').disabled).toBe(true)
+  expect(document.querySelector('[aria-label="计费详情"]')).toBeNull()
+  await render([other, alternative])
+  expect(button('确认并生成').disabled).toBe(true)
+  expect(option('模型 C').getAttribute('aria-selected')).toBe('false')
+  await render([])
+  expect(document.querySelectorAll('[role="option"]')).toHaveLength(0)
+  expect(document.querySelector('[role="status"]')?.textContent).toBe('模型暂不可用')
+  expect(document.querySelector('.arkme-unified-model-confirm')).toBeNull()
+  expect(apply).not.toHaveBeenCalled()
+})
 it('keeps recording selection separate from the explicit generation action', async () => {
   const apply = vi.fn(async () => true)
-  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音总结与时间轴" models={[other]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音总结与时间轴" models={[other, alternative]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
   await choose('模型 C')
   expect(option('模型 C').getAttribute('aria-selected')).toBe('true')
   expect(apply).not.toHaveBeenCalled()
@@ -90,7 +149,7 @@ it('puts pricing, version and reserved points behind their own views without exp
 })
 it('preserves a recording draft when recharge is opened and closed without creating an order', async () => {
   const apply = vi.fn(async () => true)
-  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音" models={[other]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音" models={[other, alternative]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
   await choose('模型 C'); await click('充值')
   expect(document.querySelector('[aria-label="关闭充值弹窗"]')).not.toBeNull()
   await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭充值弹窗"]')!.click())
@@ -102,7 +161,7 @@ it('keeps the actual chat selection on rejection and offers retry only for faile
   const original = mocks.callArkme.getMockImplementation()!
   mocks.callArkme.mockImplementation(async (op, ...args) => op === 'account.points.query' ? Promise.reject(Error('积分暂时不可读')) : original(op, ...args))
   const close = vi.fn()
-  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[available]} currentId={available.id} onApply={async () => { throw Error('服务端拒绝切换') }} onClose={close}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[available, alternative]} currentId={available.id} onApply={async () => { throw Error('服务端拒绝切换') }} onClose={close}/>))
   expect(button('充值').disabled).toBe(false)
   await choose('模型 C')
   expect(close).not.toHaveBeenCalled()
@@ -116,7 +175,7 @@ it('does not apply while navigating with arrow keys and serializes a pending act
   let complete!: (accepted: boolean) => void
   const apply = vi.fn(() => new Promise<boolean>(resolve => { complete = resolve }))
   const close = vi.fn()
-  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[available]} currentId={available.id} onApply={apply} onClose={close}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[available, alternative]} currentId={available.id} onApply={apply} onClose={close}/>))
   expect(document.activeElement).toBe(option('模型 A'))
   await act(async () => option('模型 A').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true })))
   expect(document.activeElement).toBe(option('模型 C')); expect(apply).not.toHaveBeenCalled()
@@ -132,7 +191,7 @@ it.each([
 ])('distinguishes $hint from the explicitly named Arkme credits account', async ({ billing, channel, hint, explanation }) => {
   const model: ModelChoice = { id: 'billing-example', origin: billing === 'provider-account' ? 'user-provided' : 'official', name: '示例模型', identifier: 'billing-example', channel,
     arko: 'example/model', ...(billing ? { billing } : {}) }
-  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[model]} currentId={model.id} onApply={async () => true} onClose={() => {}}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="arko" scopeLabel="Arko" models={[available, model]} currentId={model.id} onApply={async () => true} onClose={() => {}}/>))
   expect(button('计费详情').textContent).toContain(hint)
   const account = document.querySelector('[aria-label="Arkme 积分账户"]')!
   expect(account.textContent).toContain('· 123.45 积分')
@@ -152,10 +211,11 @@ it('omits Arkme account controls when only external models are present', async (
   expect(document.body.textContent).not.toMatch(/123.45|充值|用量/)
 })
 
-it.each(['dsh', 'arko', 'recording-summary', 'explore-goal'] as const)('uses the same two ownership groups in %s', async scene => {
-  await act(async () => root.render(<UnifiedModelPicker scene={scene} scopeLabel="当前场景" models={[]} currentId={available.id} onApply={async () => true} onClose={() => {}}/>))
-  expect([...document.querySelectorAll('.arkme-unified-model-group-title>span')].map(node => node.textContent)).toEqual(['即我官方', '用户自提供'])
-  expect(document.querySelector('[aria-label="即我官方"]')?.textContent).toContain('模型 B')
+it.each([
+  ['dsh', ['用户自提供']], ['arko', ['即我官方']], ['recording-summary', ['即我官方']], ['explore-goal', []],
+] as const)('renders only nonempty ownership groups in %s', async (scene, groups) => {
+  await act(async () => root.render(<UnifiedModelPicker scene={scene} scopeLabel="当前场景" models={[available, other, external]} currentId={available.id} onApply={async () => true} onClose={() => {}}/>))
+  expect([...document.querySelectorAll('.arkme-unified-model-group-title>span')].map(node => node.textContent)).toEqual(groups)
   expect(document.querySelector('[aria-label="用户自提供"] .arkme-unified-model-account')).toBeNull()
 })
 
@@ -170,13 +230,18 @@ it('does not borrow another scene’s credits contract or quote for the same off
 })
 
 it('keeps identical official and user model names tied to their distinct execution identities', async () => {
+  const official = { ...available, dsh: { provider: 'arkme-managed', model: 'official' } }
   const user = { ...external, name: available.name }
   const original = mocks.callArkme.getMockImplementation()!
   mocks.callArkme.mockImplementation(async (op, ...args) => op === 'models.directory'
-    ? { accountScope: 'production:42', observedAt: 1, models: [available, user], failures: [] } : original(op, ...args))
+    ? { accountScope: 'production:42', observedAt: 1, models: [{ ...official, id: 'published-offering', version: 'v4.1' }, user], failures: [] }
+    : original(op, ...args))
   const apply = vi.fn(async () => true)
-  await act(async () => root.render(<UnifiedModelPicker scene="dsh" scopeLabel="DSH" models={[]} currentId={available.id} onApply={apply} onClose={() => {}}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="dsh" scopeLabel="DSH" models={[official, user]} currentId={official.id} onApply={apply} onClose={() => {}}/>))
   expect(document.querySelectorAll('[role="option"]')).toHaveLength(2)
+  await click('计费详情')
+  expect(document.body.textContent).toContain('v4.1')
+  await click('返回模型')
   await act(async () => document.querySelector<HTMLButtonElement>('[role="listbox"][aria-label="用户自提供"] [role="option"]')!.click())
   expect(apply).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ origin: 'user-provided', dsh: external.dsh }), undefined)
 })
@@ -274,12 +339,12 @@ it('serializes pending effort saves and skips unchanged effort', async () => {
 
 it('ranks the actual current model and supported models first without reshuffling when a draft is selected', async () => {
   const apply = vi.fn(async () => true)
-  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音" models={[]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音" models={[available, alternative, other]} currentId={other.id} onApply={apply} onClose={() => {}}/>))
   const names = () => [...document.querySelectorAll('[role="listbox"][aria-label="即我官方"] [role="option"] .arkme-unified-model-primary')].map(node => node.textContent)
-  expect(names()).toEqual(['模型 B', '模型 C', '模型 A'])
+  expect(names()).toEqual(['模型 B', '模型 C'])
   expect(option('模型 B').querySelector('.arkme-unified-model-current')?.textContent).toBe('当前')
   await choose('模型 C')
-  expect(names()).toEqual(['模型 B', '模型 C', '模型 A'])
+  expect(names()).toEqual(['模型 B', '模型 C'])
   expect(option('模型 B').querySelector('.arkme-unified-model-current')).not.toBeNull()
   expect(option('模型 C').getAttribute('aria-selected')).toBe('true')
   expect(apply).not.toHaveBeenCalled()
@@ -292,7 +357,7 @@ it('disambiguates identical official names by supplier while preserving their se
   mocks.callArkme.mockImplementation(async (op, ...args) => op === 'models.directory'
     ? { accountScope: 'production:42', observedAt: 1, models: [bailian, deepseek], failures: [] } : original(op, ...args))
   const apply = vi.fn(async () => true)
-  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音" models={[]} currentId={bailian.id} onApply={apply} onClose={() => {}}/>))
+  await act(async () => root.render(<UnifiedModelPicker scene="recording-summary" scopeLabel="录音" models={[bailian, deepseek]} currentId={bailian.id} onApply={apply} onClose={() => {}}/>))
   expect([...document.querySelectorAll('.arkme-unified-model-supplier')].map(node => node.textContent)).toEqual(['百炼', 'DeepSeek'])
   await act(async () => document.querySelectorAll<HTMLButtonElement>('[role="option"]')[1]!.click())
   expect(apply).not.toHaveBeenCalled()

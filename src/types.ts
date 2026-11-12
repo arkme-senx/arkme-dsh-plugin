@@ -1082,7 +1082,19 @@ export type ArkmeArrangementSourceTarget =
   | { kind: 'call'; detail: ArkmeCallDetail; startMillis?: number; quote: string; quoteState?: ArrangementQuoteState }
   | { kind: 'audio_summary'; dateStamp: number; tzOffsetMillis: number; summaryId: string }
 
+export interface ArkmeArrangementEditInput {
+  arrangementRef: string
+  expectedVersion: number
+  title?: string
+  remindAtMillis?: number
+}
+export interface ArkmeArrangementEditResult {
+  state: 'applied' | 'conflict'
+  item: ArkmeArrangementItem
+}
+
 export interface ArkmeArrangementItem {
+  version?: number
   provenance?: ArkmeArrangementEvidence[]
   sourceType?: number
   recognitionState?: string
@@ -1621,6 +1633,7 @@ arkoImagesV1?:true
     /** Paged five-section directory, including coverage and Host-owned recovery. */
     teamMessageExtensions?: 1
     teamHistoryV1?: true
+    personalMessageActionsV2?: true
     teamMessageInteractions?: 1
     teamMessageRecall?: 1
     teamMessageSnapshot?: 1
@@ -1769,6 +1782,7 @@ recordingAnalysisV1?: true
 export type ArkmeImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 
 export interface ArkmeImageBytes {
+  etag?: string
   mediaType: ArkmeImageMediaType
   bytes: number
   data: Uint8Array
@@ -2233,6 +2247,7 @@ export interface ArkmeTimelineItem {
   messageWithdrawalRef?: string
   /** Account- and conversation-bound opaque reference for copy-link and forward actions. */
   messageActionRef?: string
+  messageActionsV2?: boolean
   /** False when the source actor cannot own related quick notes or chat extensions. Omitted defaults to supported for legacy and user messages. */
   quickNoteDetailsSupported?: boolean
   /** Account- and conversation-bound opaque reference for actions on the sender. */
@@ -2419,6 +2434,8 @@ export interface ArkmeForwardTranscriptSegment {
 }
 
 export interface ArkmeForwardRecordPreviewItem {
+  /** A forwarded card keeps its own frozen rows and can be opened separately. */
+  forwardRecords?: ArkmeForwardRecordsPreview
   sourceTeam?:{name:string;jotmoId:string}
   originTeam?:{name:string;jotmoId:string}
   /** Built-in AI presentation asset; never a user identity. */
@@ -2428,6 +2445,7 @@ export interface ArkmeForwardRecordPreviewItem {
   senderName: string
   /** Opaque Provider image reference for the snapshotted sender. */
   avatarRef?: string
+  avatarKey?: string
   /**
    * Account id of the snapshotted sender, present only when the Provider
    * resolved a real account and it is not the viewer, so the snapshot can offer
@@ -2554,6 +2572,9 @@ export interface ArkmeContentBlock {
   /** Original bytes, distinct from an image preview. */
   originalRef?: string
   localFileRef?: string
+  imageDimensions?: { width: number; height: number }
+  inlinePhotoPreview?: string
+  thumbnailRef?: string
   attachmentUid?: string
   attachmentState?: 'pending' | 'failed'
   uploadProgress?: import('./file-transfer-contract.js').ArkmeFileProgress
@@ -4288,6 +4309,11 @@ export type ArkmeChatClientEvent = {
   /** Local Host epoch; revisions are comparable only within this instance. */
   providerInstanceId?: string
 } & ({
+  type: 'file-send-progress'
+  revision: number
+  userId: number
+  taskRef: string
+} | {
   type: 'message-sync-progress'
   revision: number
   progress: import('./chat-message-sync.js').ArkmeMessageSyncProgress
@@ -4786,6 +4812,7 @@ export type ArkmePluginOperation =
   | 'arrangements.conversation.recognition.get'
   | 'arrangements.conversation.recognition.set'
   | 'arrangements.conversation.detail'
+  | 'arrangements.edit'
   | 'arrangements.mutate'
   | 'arrangements.create'
   | 'arrangements.recognition'
@@ -4828,7 +4855,7 @@ export type ArkmePluginOperation =
   | 'source.read-receipts.summary-list'
   | 'source.read-receipts.detail'
   | 'source.message-report'
-  | 'source.message-withdraw'
+  | 'source.message-withdraw' | 'source.chat-message-action' | 'team.messages.delete'
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'

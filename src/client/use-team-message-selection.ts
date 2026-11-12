@@ -8,7 +8,7 @@ export const teamMessageSelectable = (message: TeamMessage) => message.state ===
 
 /** Selection is keyed by message identity, never by rotating authorization references. */
 export function useTeamMessageSelection(input: {
-  accountKey: string; conversationKey: string; messages: readonly TeamMessage[]; viewport: RefObject<HTMLElement>
+  accountKey: string; conversationKey: string; conversationRef: string; messages: readonly TeamMessage[]; viewport: RefObject<HTMLElement>
   signal: AbortSignal
 }) {
   const [ids, setIds] = useState<Set<string>>()
@@ -17,7 +17,7 @@ export function useTeamMessageSelection(input: {
   const [busy, setBusy] = useState(false), [status, setStatus] = useState(''), [error, setError] = useState('')
   const lock = useRef(false), motion = useRef<MessageDeletionMotion>()
   const current = useRef(input); current.current = input
-  const keeps = (message: TeamMessage) => !removed.has(message.key) || message.contentStatus !== 'deleted' && message.version > removed.get(message.key)!
+  const keeps = (message: TeamMessage) => !removed.has(message.key)
   const available = input.messages.filter(message => teamMessageSelectable(message) && keeps(message))
   const selected = available.filter(message => ids?.has(message.key))
   useEffect(() => {
@@ -65,7 +65,7 @@ export function useTeamMessageSelection(input: {
       for (const message of batch) {
         if (input.signal.aborted) return
         try {
-          await callArkme('team.app.delete', { messageRef: message.ref, version: message.version, expectedAccountKey: input.accountKey }, input.signal)
+          await callArkme('team.app.delete', { conversationRef: input.conversationRef, messageRef: message.ref, expectedAccountKey: input.accountKey }, input.signal)
           deleted++
         } catch {
           if (input.signal.aborted) return

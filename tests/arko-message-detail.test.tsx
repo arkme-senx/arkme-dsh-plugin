@@ -500,6 +500,33 @@ it('keeps model switching isolated from the open detail and preserves the draft'
   expect(arkmeComposerDraftStore.get(key).text).toBe('已有草稿')
   expect(vi.mocked(callArkme)).toHaveBeenCalledWith('arko.model.activate', { routeKey: 'b' })
 })
+it('retries the scene directory from an open model chooser after the first read fails', async () => {
+  const original = vi.mocked(callArkme).getMockImplementation()!
+  let rejectRead!: (error: Error) => void
+  let first = true
+  const route = 'managed-ai/official'
+  vi.mocked(callArkme).mockImplementation((method, params, signal) => {
+    if (method !== 'arko.models') return original(method, params, signal)
+    if (first) {
+      first = false
+      return new Promise((_, reject) => { rejectRead = reject }) as never
+    }
+    return Promise.resolve({ effectiveRouteKey: route, selectionSource: 'default', options: [
+      { routeKey: route, displayName: '当前官方模型', provider: 'managed-ai', selected: true },
+    ] }) as never
+  })
+  await act(async () => arkoModelCache.invalidate('test:10001'))
+  await click(host.querySelector('footer [aria-label="选择模型"]')!)
+  const panel = document.querySelector('.arkme-unified-model-panel')!
+  expect(panel.textContent).toContain('正在读取模型…')
+  await act(async () => rejectRead(new Error('场景目录暂不可用')))
+  expect(panel.textContent).toContain('场景目录暂不可用')
+  await click([...panel.querySelectorAll('button')].find(button => button.textContent === '重新读取模型')!)
+  expect(panel.querySelector('[aria-selected="true"]')?.textContent).toContain('当前官方模型')
+  expect(panel.textContent).not.toContain('场景目录暂不可用')
+  expect(callArkme).not.toHaveBeenCalledWith('arko.model.activate', expect.anything())
+})
+
 it('refreshes a mounted Arko conversation after saving the account preference in a separate settings root', async () => {
   const official = 'managed-ai/official'
   const owned = 'user-api/owned'

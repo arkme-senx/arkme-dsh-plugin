@@ -5,12 +5,13 @@ import {callArkme} from './api.js'
 
 const noTeams:TeamGroupParticipant[]=[]
 export function useGroupTeamMentions(accountKey:string,sourceRef:string|undefined,enabled:boolean) {
-  const [state,setState]=useState<{source?:string;items:TeamGroupParticipant[];loading:boolean;error:boolean;unsupported?:boolean;canManage?:boolean;leaveAvailable?:boolean}>({items:[],loading:false,error:false}),[attempt,retry]=useState(0)
+  const scope=sourceRef&&accountKey?JSON.stringify([accountKey,sourceRef]):undefined
+  const [state,setState]=useState<{scope:string;items:TeamGroupParticipant[];loading:boolean;error:boolean;unsupported?:boolean;canManage?:boolean;leaveAvailable?:boolean}>(),[attempt,retry]=useState(0)
   useEffect(()=>subscribeTeamWorkspaceChanges(account=>{if(account===accountKey&&enabled)retry(n=>n+1)}),[accountKey,enabled])
   useEffect(()=>{
-    if(!sourceRef||!enabled||!accountKey)return
+    if(!sourceRef||!enabled||!scope)return
     const controller=new AbortController()
-    setState({source:sourceRef,items:[],loading:true,error:false})
+    setState(previous=>({scope,items:previous?.scope===scope?previous.items:[],loading:true,error:false}))
     void(async()=>{
       const items:TeamGroupParticipant[]=[],seen=new Set<string>()
       let cursor:string|undefined,canManage=true,leaveAvailable=true
@@ -22,9 +23,10 @@ export function useGroupTeamMentions(accountKey:string,sourceRef:string|undefine
         cursor=page.hasMore?page.nextCursor:undefined
         if(cursor)seen.add(cursor)
       }while(cursor)
-      if(!controller.signal.aborted)setState({source:sourceRef,items,loading:false,error:false,canManage,leaveAvailable})
-    })().catch(error=>{if(!controller.signal.aborted){const unsupported=(error as {body?:{code?:string}})?.body?.code==='team-group-backend-pending';setState({source:sourceRef,items:[],loading:false,error:!unsupported,unsupported})}})
+      if(!controller.signal.aborted)setState({scope,items,loading:false,error:false,canManage,leaveAvailable})
+    })().catch(error=>{if(!controller.signal.aborted){const unsupported=(error as {body?:{code?:string}})?.body?.code==='team-group-backend-pending';setState({scope,items:[],loading:false,error:!unsupported,unsupported})}})
     return()=>controller.abort()
-  },[accountKey,sourceRef,enabled,attempt])
-  return {unavailable:state.source===sourceRef&&state.unsupported===true,canManage:state.source===sourceRef&&state.canManage===true,leaveAvailable:state.source===sourceRef&&state.leaveAvailable===true,ready:!!sourceRef&&state.source===sourceRef&&!state.loading&&!state.error&&!state.unsupported,items:state.source===sourceRef?state.items:noTeams,loading:state.source===sourceRef&&state.loading,error:state.source===sourceRef&&state.error,retry:()=>retry(n=>n+1)}
+  },[accountKey,sourceRef,scope,enabled,attempt])
+  const current=state?.scope===scope?state:undefined
+  return {unavailable:current?.unsupported===true,canManage:current?.canManage===true,leaveAvailable:current?.leaveAvailable===true,ready:current!==undefined&&!current.loading&&!current.error&&!current.unsupported,items:current?.items??noTeams,loading:enabled&&scope!==undefined&&(current?.loading??true),error:current?.error===true,retry:()=>retry(n=>n+1)}
 }

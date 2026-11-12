@@ -992,7 +992,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
     this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
     this.realtime.directoryBaseline = async () => await this.directory.complete()
-    this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update') void this.directory.accept(event).catch(() => undefined) })
+    this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update' && event.type !== 'file-send-progress') void this.directory.accept(event).catch(() => undefined) })
     this.chat = new ChatService(
       this.runtime,
       this.source,
@@ -1111,6 +1111,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       media: this.media,
       chat: this.chat,
       teamMedia:this.teamApp,
+      onProgressChange: (userId, taskRef) => this.realtime.emitChatClientEvent({
+        type: 'file-send-progress', userId, taskRef, revision: this.realtime.nextChatClientRevision(),
+      }),
       openPath: async (path, signal) => {
         if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
         await this.localFileOpener(path, signal)
@@ -1516,6 +1519,7 @@ arkoImagesV1:true,
         teamMessageRecall: 1,
         teamMessageSnapshot: 1,
         teamHistoryV1: true,
+        personalMessageActionsV2: true,
         teamPersonMentions: 1,
         teamMentionCandidates: 1,
         teamNotificationPoliciesV1: true,
@@ -2782,6 +2786,20 @@ recordingAnalysisV1: true,
     return await this.chat.sharedRecordingDetail(detailRef, options)
   }
 
+  async changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal) {
+    const { sourceKey, throughSequence, ...result } = await this.chat.changeChatMessage(sourceRef, actionRef, action, signal)
+    this.realtime.emitChatClientEvent({
+      type: 'timeline-changed', revision: this.realtime.nextChatClientRevision(), sourceKey,
+      timelineItemKey: result.timelineItemKey, changeKind: 'deleted', changeVersion: result.changedAtMillis,
+      relationTerminal: true, throughSequence,
+    })
+    return result
+  }
+
+  async deleteTeamMessage(conversationRef: string, messageRef: string, signal?: AbortSignal) {
+    return await this.executeTeamApp('team.app.delete', { conversationRef, messageRef }, signal) as import('./chat-message-actions.js').TeamMessageDeletionResult
+  }
+
   async deleteSourceRecords(sourceRef: string, deletionRefs: readonly string[], signal?: AbortSignal) {
     return await this.recordDeletion.delete(sourceRef, deletionRefs, signal)
   }
@@ -3792,6 +3810,10 @@ recordingAnalysisV1: true,
   }
 
   /** Execute one owner lifecycle intent. Provider locking prevents duplicate writes, not business transitions. */
+  async editArrangement(input: import('./types.js').ArkmeArrangementEditInput, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementEditResult> {
+    return this.arrangement.editArrangement(input, signal)
+  }
+
   async mutateArrangement(
     arrangementRef: string,
     intent: ArkmeArrangementMutationIntent,

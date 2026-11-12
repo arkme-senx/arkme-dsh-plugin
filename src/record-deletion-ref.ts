@@ -37,7 +37,7 @@ export function recordDeletionCapability(input: {
 }, key: string): { recordDeletionRef?: string } {
   if (!input.isMe || input.recordOwnerUserId !== input.userId || input.status !== 1 || !input.recordUid.trim()
     || !Number.isSafeInteger(input.recordVersion) || input.recordVersion <= 0
-    || !['private_chat', 'group_chat', 'send_to_self', 'default_category', 'topic'].includes(input.sourceKind)) return {}
+    || !['send_to_self', 'default_category', 'topic'].includes(input.sourceKind)) return {}
   return { recordDeletionRef: sealRecordDeletionRef({ ...(input.audienceKey?{audienceKey:input.audienceKey}:{}),userId: input.userId, sourceKind: input.sourceKind as RecordDeletionReference['sourceKind'],
     sourceOwnerRef: input.sourceOwnerRef, recordUid: input.recordUid, recordVersion: input.recordVersion }, key) }
 }

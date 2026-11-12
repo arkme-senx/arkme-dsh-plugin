@@ -2894,6 +2894,32 @@ export class ChatService {
     return {messageRef,reportUid,status:numberValue(report.status)}
   }
 
+  async changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal) {
+    if (action !== 'delete' && action !== 'recall') throw new TypeError('Unsupported message action')
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.kind !== 'private_chat' && source.kind !== 'group_chat') throw new ArkmePluginError('chat-message-action-invalid', '仅支持私聊和群聊消息', false, 400)
+    const reference = await this.openMessageActionRef(actionRef, session.userId, source)
+    if (reference.sourceKind !== 'chat_relation' || !reference.relationUid || reference.chatSessionUid !== source.ownerRef) {
+      throw new ArkmePluginError('chat-message-action-invalid', '请重新选择会话中的消息', false, 400)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换', false, 409)
+    const path = action === 'delete' ? '/api/v1/chats/messages/delete/v2' : '/api/v1/chats/messages/recall'
+    const data = await this.sourceChatPost<Record<string, unknown>>(source, path,
+      { chat_session_uid: reference.chatSessionUid, rel_uid: reference.relationUid }, session, signal, { trackWriteOutcome: true })
+    const changedAtMillis = numberValue(action === 'delete' ? data.deleted_at : data.withdrawn_at)
+    if (data.chat_session_uid !== reference.chatSessionUid || data.rel_uid !== reference.relationUid || !Number.isSafeInteger(changedAtMillis) || changedAtMillis <= 0) {
+      throw new ArkmePluginError('chat-message-action-unconfirmed', '无法确认消息操作结果', true, 502)
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换', false, 409)
+    return {
+      timelineItemKey: await this.source.chatTimelineItemKey(session.userId, reference.chatSessionUid, reference.relationUid),
+      sourceKey: await this.source.chatDirectorySourceKey(session.userId, reference.chatSessionUid),
+      throughSequence: reference.sourceSequence,
+      changedAtMillis,
+    }
+  }
+
   async withdrawGroupMessage(messageWithdrawalRef:string,options:{sourceRef?:string;signal?:AbortSignal}={}):Promise<ArkmeMessageWithdrawalResult> {
     const session=await this.runtime.requireSession(),normalized=messageWithdrawalRef.trim(),reference=await this.openMessageWithdrawalRef(normalized,session.userId)
     const source=await this.scopedMessageSource(reference,session,options.sourceRef),body={chat_session_uid:reference.chatSessionUid,rel_uid:reference.relationUid}
@@ -5397,7 +5423,10 @@ nextPublic = next
           ...listValue(contentPayload?.media_refs).map(objectValue).map(ref => ({ ...ref, sort_order: order.get(stringValue(ref.file_asset_uid)) ?? numberValue(ref.sort_order) })),
           ...pending.map(file => ({ file_asset_uid: '', file_name: file.fileName, content_file_role: file.backgroundSound ? 4 : 1,
             ...(file.backgroundSound ? { binding_type: 4 } : {}), render_role: 1, sort_order: file.sortOrder,
-            upload: { attachment_uid: file.attachmentUid, generation: file.generation, state: 'pending', kind: file.fileKind, size: file.size } })),
+            upload: { attachment_uid: file.attachmentUid, generation: file.generation, state: 'pending', kind: file.fileKind, size: file.size,
+              ...(file.fileKind === 1 && file.imageDimensions && file.imageDimensions.width <= 65535 && file.imageDimensions.height <= 65535
+                ? { width: file.imageDimensions.width, height: file.imageDimensions.height, ...(file.inlinePhotoPreview ? { inline_preview: file.inlinePhotoPreview } : {}) }
+                : {}) } })),
         ].sort((a, b) => a.sort_order - b.sort_order).map((ref, index) => ({ ...ref, sort_order: index }))
         contentPayload = { schema_version: 1, text_state: textContent === '' ? 3 : 1, ...contentPayload, payload_kind: 2, media_refs: refs,
           ...(options.backgroundAmplitudes?.length ? { background_sound_amplitudes: options.backgroundAmplitudes } : {}),
@@ -5752,6 +5781,7 @@ nextPublic = next
     const representation = await new GroupRepresentationCodec(this.runtime).snapshot(relation.representation, session.userId)
     const actionItem: ArkmeTimelineItem = {
       ...this.record.recordTimelineItemFromRaw({ record_core: core }, session.userId), contentBlocks,
+      ...(data.message_actions_v2 === true ? { messageActionsV2: true } : {}),
       ...(representation ? { representation } : {}),
       senderName: stringValue(relation.display_name_snapshot)||reference.senderName, isMe: reference.senderUserId === session.userId,
       recordOwnerUserId: reference.recordOwnerUserId,
@@ -7196,7 +7226,7 @@ nextPublic = next
       const agentSource = isMe
         ? this.arko.currentUserAgentSourceFallback(session.userId, rawAgentSource)
         : rawAgentSource
-      const contentBlocks = this.media.richContentBlocks(item, session.userId,[],mediaSource)
+      const contentBlocks = this.media.richContentBlocks(item, session.userId, [], mediaSource)
       const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles,source,audienceKey)
       const senderName = this.timelineSenderName(relation, botProfiles)
       const mentions = await this.timelineMentionTargets(record, payload, session.userId, source.ownerRef)

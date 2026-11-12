@@ -8,24 +8,74 @@ const photo=(ref:string)=>({kind:'image' as const,mediaRef:ref,fileName:ref+'.pn
 const item=(refs:string[])=>({itemUid:refs.join(','),senderName:'我',isMe:true,sendAtMillis:1,status:1,title:'',textContent:'',contentBlocks:refs.map(photo)})
 
 describe('message image proportions',()=>{
- it('preserves a landscape screenshot and its cached size when reopening, without changing video layout',async()=>{
+ it('shows a cold image at its fitted proportions as soon as it loads',async()=>{
   let view:ReturnType<typeof create>|undefined
   try{
    await act(async()=>{view=create(<ArkmeMessageContent item={item(['wide-size-test'])}/> )})
    const grid=()=>view!.root.findByProps({'data-arkme-media-count':1})
+   expect(grid().props.style.width).toBe(150)
+   expect(view!.root.findByType('img').props.style.visibility).toBe('hidden')
    await act(async()=>view!.root.findByType('img').props.onLoad({currentTarget:{naturalWidth:1341,naturalHeight:233}}))
+   expect(view!.root.findByType('img').props.style.visibility).toBeUndefined()
    expect(grid().props.style.width).toBe(360)
    const button=grid().findByType('button')
    const [width,height]=button.props.style.aspectRatio.split(' / ').map(Number)
    expect(width/height).toBeCloseTo(1341/233)
-   expect(view!.root.findByType('img').props.style.objectFit).toBe('contain')
-   await act(async()=>view!.unmount())
-   await act(async()=>{view=create(<ArkmeMessageContent item={item(['wide-size-test'])}/> )})
-   expect(grid().props.style.width).toBe(360)
+   expect(view!.root.findByType('img').props.style.objectFit).toBe('scale-down')
    await act(async()=>view!.update(<ArkmeMessageContent item={{...item(['movie-size-test']),contentBlocks:[{...photo('movie-size-test'),kind:'video',durationSec:18}]}}/>))
    expect(grid().props.style.width).toBe(150)
    expect(grid().findByType('button').props.style.aspectRatio).toBe('1')
   }finally{if(view)await act(async()=>view!.unmount())}
+ })
+
+ it('paints an inline preview at the final message size before the full image loads',async()=>{
+  const inlinePhotoPreview='/9j/AAAA'
+  const block={...photo('inline-photo'),imageDimensions:{width:1200,height:800},inlinePhotoPreview}
+  const view=create(<ArkmeMessageContent item={{...item(['inline-photo']),contentBlocks:[block]}}/>)
+  try {
+   const grid=()=>view.root.findByProps({'data-arkme-media-count':1})
+   const button=()=>grid().findByType('button')
+   expect(grid().props.style.width).toBe(360)
+   expect(button().props.style.aspectRatio).toBe('360 / 240')
+   expect(button().props.style.backgroundImage).toContain(inlinePhotoPreview)
+   await act(async()=>view.root.findByType('img').props.onLoad({currentTarget:{naturalWidth:600,naturalHeight:400}}))
+   expect(button().props.style.aspectRatio).toBe('360 / 240')
+   expect(button().props.style.backgroundImage).toBeUndefined()
+  } finally { await act(async()=>view.unmount()) }
+ })
+
+ it('shows one photo progress indicator from pending through upload and clears it when ready',async()=>{
+  const block=photo('upload-photo')
+  const render=(patch:Partial<import('../src/types.js').ArkmeContentBlock>)=>
+   <ArkmeMessageContent item={{...item(['upload-photo']),contentBlocks:[{...block,...patch}]}}/>
+  const view=create(render({attachmentUid:'photo',attachmentState:'pending',mediaRef:''}))
+  const indicator=()=>view.root.findByProps({role:'progressbar'})
+  const spinner=()=>indicator().findByProps({className:'arkme-pending-attachment-ring'}).findByType('svg')
+  const mountedSpinner=spinner()
+  try{
+   expect(indicator().props['aria-valuenow']).toBeUndefined()
+   await act(async()=>view.update(render({localFileRef:'arkme-file-v1.00000000-0000-4000-8000-000000000001',uploadProgress:{phase:'preparing',sentBytes:0,totalBytes:100}})))
+   expect(indicator().props['aria-valuenow']).toBeUndefined()
+   await act(async()=>view.update(render({localFileRef:'arkme-file-v1.00000000-0000-4000-8000-000000000001',uploadProgress:{phase:'uploading',sentBytes:45,totalBytes:100}})))
+   const image = view.root.findByType('img')
+   const localSrc = image.props.src
+   expect(indicator().props['aria-valuenow']).toBe(45)
+   expect(spinner()).toBe(mountedSpinner)
+   const ring = indicator().findByProps({className:'arkme-pending-attachment-ring'})
+   expect(ring.findAllByType('circle')[1]?.props.strokeDasharray).toBe('45 100')
+   expect(ring.children).toHaveLength(1)
+   await act(async()=>view.update(render({localFileRef:'arkme-file-v1.00000000-0000-4000-8000-000000000001',uploadProgress:{phase:'completing',sentBytes:100,totalBytes:100}})))
+   expect(indicator().props['aria-valuenow']).toBe(100)
+   expect(spinner()).toBe(mountedSpinner)
+   expect(ring.findAllByType('circle')[1]?.props.strokeDasharray).toBe('100 100')
+   expect(ring.children).toHaveLength(1)
+   await act(async()=>view.update(render({localFileRef:'arkme-file-v1.00000000-0000-4000-8000-000000000001',uploadProgress:{phase:'ready',sentBytes:100,totalBytes:100}})))
+   expect(view.root.findAllByProps({role:'progressbar'})).toHaveLength(0)
+   await act(async()=>view.update(render({localFileRef:'arkme-file-v1.00000000-0000-4000-8000-000000000001',
+     attachmentUid:'photo',mediaRef:'confirmed',thumbnailRef:'remote-thumbnail'})))
+   expect(view.root.findByType('img')).toBe(image)
+   expect(image.props.src).toBe(localSrc)
+  }finally{await act(async()=>view.unmount())}
  })
 
  it('keeps a mixed gallery uniform while containing long images and cropping ordinary photos',async()=>{
@@ -65,10 +115,31 @@ describe('message image proportions',()=>{
   const render=(owner:string)=><ArkmeMediaAccessContext.Provider value={{url:block=>`/${owner}/${block.mediaRef}`}}><ArkmeMessageContent item={item(['same-ref-size-test'])}/></ArkmeMediaAccessContext.Provider>
   try{
    await act(async()=>{view=create(render('owner-a'))})
-   await act(async()=>view!.root.findByType('img').props.onLoad({currentTarget:{naturalWidth:1200,naturalHeight:200}}))
+   rememberGalleryImageDimensions('/owner-a/same-ref-size-test',1200,200)
+   await act(async()=>view!.unmount())
+   await act(async()=>{view=create(render('owner-a'))})
    expect(view!.root.findByProps({'data-arkme-media-count':1}).props.style.width).toBe(360)
    await act(async()=>view!.update(render('owner-b')))
    expect(view!.root.findByProps({'data-arkme-media-count':1}).props.style.width).toBe(150)
+  }finally{if(view)await act(async()=>view!.unmount())}
+ })
+
+ it('uses local dimensions on first render and retains the same preview element after acknowledgement',async()=>{
+  const local = {...photo('local'),localFileRef:'arkme-file-v1.00000000-0000-4000-8000-000000000001',imageDimensions:{width:1200,height:900}}
+  const initial = {...item(['sending']),contentBlocks:[local]}
+  let view:ReturnType<typeof create>|undefined
+  try {
+   await act(async()=>{view=create(<ArkmeMessageContent item={initial}/>)})
+   const grid=()=>view!.root.findByProps({'data-arkme-media-count':1})
+   const image=()=>grid().findByType('img')
+   const before=image()
+   const src=before.props.src
+   expect(grid().props.style.width).toBe(360)
+   expect(grid().findByType('button').props.style.aspectRatio).toBe('360 / 270')
+   await act(async()=>view!.update(<ArkmeMessageContent item={{...initial,contentBlocks:[{...local,mediaRef:'remote',fileAssetUid:'asset'}]}}/>))
+   expect(image()).toBe(before)
+   expect(image().props.src).toBe(src)
+   expect(grid().props.style.width).toBe(360)
   }finally{if(view)await act(async()=>view!.unmount())}
  })
 

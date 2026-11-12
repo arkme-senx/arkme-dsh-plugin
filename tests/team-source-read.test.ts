@@ -153,3 +153,16 @@ it('distinguishes pending preview validation from a confirmed denial without ret
  expect(withoutTeamConversationMaterial(conversation).preview).toEqual({status:'revalidating',text:'',hasMedia:false})
  expect(withoutTeamConversationMaterial({...conversation,preview:{status:'unavailable',text:'',hasMedia:false}}).preview?.status).toBe('unavailable')
 })
+
+it('delivers a native article body only for the authorized message and version', async () => {
+  const listener = vi.fn()
+  const receive = vi.fn()
+  const message = { ...sent, key: target.messageKey }
+  call.mockResolvedValueOnce([message]).mockResolvedValueOnce([{ ...message, version: target.version + 1 }])
+  stop = watchTeamSourceRead(target, listener, receive)
+  await vi.waitFor(() => expect(receive).toHaveBeenCalledExactlyOnceWith(message))
+  invalidateTeamMessageKeys(target.accountKey, target.conversationKey, [target.messageKey])
+  expect(listener).toHaveBeenLastCalledWith({ status: 'checking' })
+  await vi.waitFor(() => expect(listener).toHaveBeenLastCalledWith({ status: 'revoked' }))
+  expect(receive).toHaveBeenCalledTimes(1)
+})

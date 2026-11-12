@@ -39,7 +39,10 @@ it('requires individual fragment selection and signed preview, then retries an u
   expect(first).toMatchObject({ itemRefs: [`ref-${person('b').detailRef}`], crossDateSelection: true, target: { kind: 'anonymous' }, detach: false, intentToken: 'signed' })
   await click('重新读取状态'); await click('确认保存')
   expect(writes()[1]![1]).toEqual(first)
-  await click('撤销这次纠错')
+  await click('预览撤销')
+  expect(mocks.call.mock.calls.some(([op]) => op === 'recordings.speaker.correction.undo')).toBe(false)
+  expect(renderer.root.findByProps({ 'aria-label': '撤销影响预览' })).toBeDefined()
+  await click('确认撤销')
   expect(mocks.call.mock.calls.some(([op]) => op === 'recordings.speaker.correction.undo')).toBe(true)
 })
 it('resolves anonymous exclusion from a bounded anchor and never sends detach or a target', async () => {

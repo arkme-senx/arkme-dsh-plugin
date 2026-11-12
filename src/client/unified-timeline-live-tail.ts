@@ -17,6 +17,9 @@ export function projectCommittedChatMessage(
   const change = item.timelineItemKey ? changes.get(item.timelineItemKey) : undefined
   if (!change) return item
   if (change.version !== 0 && (item.recordVersion ?? item.version ?? 0) > change.version) return item
+  if (change.item && change.item.messageActionsV2 === undefined && item.messageActionsV2 === true) {
+    return { ...change.item, messageActionsV2: true }
+  }
   return change.item
 }
 

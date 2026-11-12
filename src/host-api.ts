@@ -2323,6 +2323,12 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
+    case 'arrangements.edit': return service.editArrangement({
+      arrangementRef: stringParam(params, 'arrangementRef'),
+      expectedVersion: params.expectedVersion as number,
+      ...(params.title !== undefined ? { title: params.title as string } : {}),
+      ...(params.remindAtMillis !== undefined ? { remindAtMillis: params.remindAtMillis as number } : {}),
+    }, requestSignal)
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
       arrangementMutationIntentParam(params),
@@ -2672,6 +2678,13 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
     }
+    case 'source.chat-message-action': {
+      const action = stringParam(params, 'action')
+      const ref = messageActionRefsParam({ actionRefs: [stringParam(params, 'actionRef')] })[0]
+      if (!ref || (action !== 'delete' && action !== 'recall')) throw new ArkmePluginError('chat-message-action-invalid', '消息操作无效', false, 400)
+      return await service.changeChatMessage(stringParam(params, 'sourceRef'), ref, action, requestSignal)
+    }
+    case 'team.messages.delete': return await service.deleteTeamMessage(stringParam(params, 'conversationRef'), stringParam(params, 'messageRef'), requestSignal)
     case 'source.message-withdraw': {
       const messageWithdrawalRef = stringParam(params, 'messageWithdrawalRef').trim()
       if (messageWithdrawalRef === '' || messageWithdrawalRef.length > MAX_MESSAGE_WITHDRAWAL_REF_CHARS) {

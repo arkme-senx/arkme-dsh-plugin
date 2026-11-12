@@ -1,3 +1,4 @@
+import { conversationMessageRenderKey } from '../src/client/conversation-message-merge.js'
 import { describe, expect, it } from 'vitest'
 import { ArkmeComposerDraftStore, arkmeSourceComposerDraftKey } from '../src/client/composer-draft-store.js'
 import { bindSentFileTaskLocals, fileTaskConversationPreview, fileTaskShowsInlineStatus, fileTaskTimelineItem } from '../src/client/file-send-tasks.js'
@@ -92,15 +93,47 @@ describe('local file draft recovery', () => {
       fileRefs: [...task.fileRefs, 'arkme-file-v1.30000000-0000-4000-8000-000000000003'],
     })).toBe(true)
   })
+  it('uses the image progress overlay without a duplicate upload status', () => {
+    const photo = { fileRef: 'photo', fileName: 'a.png', mimeType: 'image/png', size: 10, fileKind: 1 as const,
+      progress: { phase: 'uploading' as const, sentBytes: 3, totalBytes: 10 } }
+    const task = { taskRef: 'task', sourceRef: 'source', recordUid: 'record', relationUid: 'relation',
+      content: {}, fileRefs: [photo.fileRef], files: [photo], state: 'uploading' as const, createdAtMillis: 123 }
+    const blocks = fileTaskTimelineItem(task).contentBlocks
+    expect(fileTaskShowsInlineStatus(task, blocks)).toBe(false)
+    expect(fileTaskShowsInlineStatus(task, [])).toBe(true)
+    expect(fileTaskShowsInlineStatus({ ...task, state: 'failed' }, blocks)).toBe(true)
+    expect(fileTaskShowsInlineStatus({ ...task, files: [...task.files, { ...photo, fileRef: 'pdf', fileKind: 4 }], fileRefs: ['photo', 'pdf'] }, blocks)).toBe(true)
+  })
+  it('keeps the local photo and row identity when the canonical pending slot arrives before the task refresh', () => {
+    const file = { fileRef: 'photo', fileName: 'a.png', mimeType: 'image/png', size: 10, fileKind: 1 as const,
+      progress: { phase: 'preparing' as const, sentBytes: 0, totalBytes: 10 } }
+    const task = { taskRef: 'task', sourceRef: 'source', recordUid: 'record', relationUid: 'relation',
+      content: {}, fileRefs: [file.fileRef], files: [file], delivery: 'negotiating' as const, state: 'queued' as const, createdAtMillis: 123 }
+    const local = fileTaskTimelineItem(task)
+    const remote = bindSentFileTaskLocals({ ...local, timelineEventId: 'canonical-event',
+      contentBlocks: [{ ...local.contentBlocks![0]!, localFileRef: undefined, mediaRef: '', attachmentUid: 'server-slot', attachmentState: 'pending' }] }, [task])
+    expect(conversationMessageRenderKey(remote)).toBe(conversationMessageRenderKey(local))
+    expect(remote.contentBlocks?.[0]).toMatchObject({ attachmentUid: 'server-slot', localFileRef: 'photo', uploadProgress: { phase: 'preparing' } })
+    const settled = bindSentFileTaskLocals({ ...remote, contentBlocks: [{ ...local.contentBlocks![0]!, localFileRef: undefined,
+      mediaRef: '', attachmentUid: 'server-slot', attachmentState: 'pending' }] }, [{ ...task, state: 'sent',
+      files: [{ ...file, attachmentUid: 'server-slot', progress: { phase: 'ready', sentBytes: 10, totalBytes: 10 } }] }])
+    expect(settled.contentBlocks?.[0]?.attachmentState).toBeUndefined()
+    expect(settled.contentBlocks?.[0]?.localFileRef).toBe('photo')
+    const ready = { ...remote, contentBlocks: [{ ...local.contentBlocks![0]!, localFileRef: undefined,
+      mediaRef: 'remote', thumbnailRef: 'thumb', attachmentUid: 'server-slot', fileAssetUid: 'canonical-asset' }] }
+    const uploading = { ...task, delivery: 'progressive' as const, state: 'uploading' as const, files: [{ ...file, attachmentUid: 'server-slot' }] }
+    expect(bindSentFileTaskLocals(ready, [uploading]).contentBlocks?.[0]).toMatchObject({ localFileRef: 'photo', thumbnailRef: 'thumb' })
+    expect(bindSentFileTaskLocals(ready, [{ ...uploading, files: [{ ...uploading.files[0]!, size: 20 }] }]).contentBlocks?.[0]?.localFileRef).toBeUndefined()
+  })
   it('keeps a sent local file bound when the authoritative remote message replaces the pending row', () => {
-    const file = { fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001', fileName: 'a.pdf', mimeType: 'application/pdf', size: 10, fileKind: 4 as const, progress: { phase: 'ready' as const, sentBytes: 10, totalBytes: 10 }, asset: { fileAssetUid: 'asset-a', fileName: 'a.pdf', mimeType: 'application/pdf', size: 10, fileKind: 4 as const } }
+    const file = { fileRef: 'arkme-file-v1.00000000-0000-4000-8000-000000000001', fileName: 'a.png', mimeType: 'image/png', size: 10, fileKind: 1 as const, imageDimensions: { width: 40, height: 80 }, progress: { phase: 'ready' as const, sentBytes: 10, totalBytes: 10 }, asset: { fileAssetUid: 'asset-a', fileName: 'a.png', mimeType: 'image/png', size: 10, fileKind: 1 as const } }
     const task = { taskRef: 'task', sourceRef: 'source', recordUid: 'record', relationUid: 'relation', content: { textContent: '' }, fileRefs: [file.fileRef], files: [file], state: 'sent' as const, createdAtMillis: 123, result: { sourceRef: 'source', itemUid: 'remote-item', status: 1, localState: 'synced' as const, messageActionRef: 'opaque-file-message-action' } }
-    const remote = { itemUid: 'remote-item', title: '', textContent: '', sendAtMillis: 124, senderName: '我', isMe: true, status: 1, displayKind: 0, contentBlocks: [{ kind: 'file' as const, mediaRef: 'arkme-media-v1.remote', originalRef: 'arkme-media-v1.original', fileAssetUid: 'asset-a', fileName: 'a.pdf', mimeType: 'application/pdf', size: 10, sortOrder: 0 }] }
+    const remote = { itemUid: 'remote-item', title: '', textContent: '', sendAtMillis: 124, senderName: '我', isMe: true, status: 1, displayKind: 0, contentBlocks: [{ kind: 'image' as const, mediaRef: 'arkme-media-v1.remote', originalRef: 'arkme-media-v1.original', fileAssetUid: 'asset-a', fileName: 'a.png', mimeType: 'image/png', size: 10, sortOrder: 0 }] }
 
     const bound = bindSentFileTaskLocals(remote, [task])
 
     expect(fileTaskTimelineItem(task).messageActionRef).toBe('opaque-file-message-action')
-    expect(bound.contentBlocks?.[0]).toMatchObject({ fileAssetUid: 'asset-a', localFileRef: file.fileRef })
+    expect(bound.contentBlocks?.[0]).toMatchObject({ fileAssetUid: 'asset-a', localFileRef: file.fileRef, imageDimensions: file.imageDimensions })
     expect(bindSentFileTaskLocals({ ...remote, itemUid: 'another-item' }, [task]).contentBlocks?.[0]?.localFileRef).toBeUndefined()
     expect(bindSentFileTaskLocals({ ...remote, contentBlocks: [{ ...remote.contentBlocks[0]!, fileAssetUid: 'another-asset' }] }, [task]).contentBlocks?.[0]?.localFileRef).toBeUndefined()
   })

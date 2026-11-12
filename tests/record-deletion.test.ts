@@ -2,11 +2,11 @@ import { ArkmePluginError, ArkmeUpstreamResponseError } from '../src/services/se
 import { describe,it,expect,vi } from 'vitest'
 import { sealRecordDeletionRef, openRecordDeletionRef } from '../src/record-deletion-ref.js'
 import { RecordDeletionService, RecordDeletionHttpPort } from '../src/services/record-deletion-service.js'
-const ref = { userId: 7, sourceKind: 'private_chat' as const, sourceOwnerRef: 'chat', recordUid: 'record', recordVersion: 3 }
+const ref = { userId: 7, sourceKind: 'send_to_self' as const, sourceOwnerRef: 'chat', recordUid: 'record', recordVersion: 3 }
 function setup(){
  const port={deleteBatch:vi.fn().mockResolvedValue({items:[{recordUid:'record',version:4,result:'deleted'}]})}
  const runtime={invalidateKey:vi.fn(),requestScope:(id:number)=>String(id),requireSession:vi.fn().mockResolvedValue({userId:7}),stateStore:{uniqueCode:async()=> 'key'}}
- const sources={openSourceRef:vi.fn().mockResolvedValue({kind:'private_chat',ownerRef:'chat'}),invalidateSourceListCache:vi.fn()}
+ const sources={openSourceRef:vi.fn().mockResolvedValue({kind:'send_to_self',ownerRef:'chat'}),invalidateSourceListCache:vi.fn()}
  const service=new RecordDeletionService(runtime as never,sources as never,port)
  return {port,runtime,sources,service}
 }
@@ -85,23 +85,15 @@ describe('record deletion boundary',()=>{
 
 import { recordDeletionCapability } from '../src/record-deletion-ref.js'
 describe('authoritative deletion capability',()=>{
- const own={userId:7,sourceKind:'private_chat',sourceOwnerRef:'chat',recordUid:'record',recordVersion:3,recordOwnerUserId:7,isMe:true,status:1}
+ const own={userId:7,sourceKind:'send_to_self',sourceOwnerRef:'chat',recordUid:'record',recordVersion:3,recordOwnerUserId:7,isMe:true,status:1}
  it('issues the exact owner version',()=>{const ref=recordDeletionCapability(own,'key').recordDeletionRef!;expect(openRecordDeletionRef(ref,'key').recordVersion).toBe(3)})
  it.each([{isMe:false},{recordOwnerUserId:8},{status:2},{recordVersion:0},{recordVersion:1.5},{sourceKind:'agent'},{sourceKind:'bot_subject'}])('does not grant for unsupported or foreign facts %s',override=>{expect(recordDeletionCapability({...own,...override},'key')).toEqual({})})
 })
 
-it('binds deletion to the selected delegated audience and rechecks current access before the owner command',async()=>{
- const x=setup(),authorize=vi.fn(async()=>{}),source={kind:'group_chat',ownerRef:'chat',groupDelegation:{teamId:'42'}}
- x.sources.openSourceRef.mockResolvedValue(source as never)
- Object.assign(x.sources,{sourceScopeKey:async()=> 'team-A-admission-1',authorizeGroupDelegation:authorize})
- const scoped={...ref,sourceKind:'group_chat' as const,audienceKey:'team-A-admission-1'}
- await expect(x.service.delete('source',[sealRecordDeletionRef({...scoped,audienceKey:'team-B'},'key')])).rejects.toThrow('当前页面')
- await expect(x.service.delete('source',[sealRecordDeletionRef({...ref,sourceKind:'group_chat'},'key')])).rejects.toThrow('当前页面')
+it.each(['private_chat','group_chat'] as const)('rejects legacy Record deletion in %s without touching Record',async kind=>{
+ const x=setup()
+ x.sources.openSourceRef.mockResolvedValue({kind,ownerRef:'chat'})
+ const scoped={...ref,sourceKind:kind}
+ await expect(x.service.delete('source',[sealRecordDeletionRef(scoped,'key')])).rejects.toThrow('请使用会话消息删除')
  expect(x.port.deleteBatch).not.toHaveBeenCalled()
- await x.service.delete('source',[sealRecordDeletionRef(scoped,'key')])
- expect(authorize).toHaveBeenCalledWith(source,{userId:7},undefined)
- expect(x.port.deleteBatch).toHaveBeenCalledOnce()
- authorize.mockRejectedValueOnce(new Error('团队资格已失效'))
- await expect(x.service.delete('source',[sealRecordDeletionRef(scoped,'key')])).rejects.toThrow('团队资格已失效')
- expect(x.port.deleteBatch).toHaveBeenCalledOnce()
 })

@@ -29,3 +29,17 @@ export const withdrawMessageToolModule = defineArkmeCoreToolModule({
     })
   },
 })
+
+export const chatMessageActionToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.conversation.message-action.v2', toolName: 'arkme_chat_message_action', kind: 'business', phase: 'core', effect: 'write', grant: 'explicit-user-write', profiles: ['business', 'hybrid'] },
+  create: ports => defineTool({
+    name: 'arkme_chat_message_action',
+    description: 'After explicit human confirmation, delete one selected private or group message for the current account, or recall a published message you sent for everyone. Use the exact source and message action references returned by Arkme. The original Record is retained.',
+    parameters: { source_ref: { type: 'string', required: true }, action_ref: { type: 'string', required: true }, action: { type: 'string', enum: ['delete', 'recall'], required: true } },
+    output: TEXT_OUTPUT,
+    execute: async (args, exec) => {
+      if (args.action !== 'delete' && args.action !== 'recall') throw new TypeError('Unsupported message action')
+      return taggedJSON('消息操作结果', await ports.changeChatMessage(args.source_ref, args.action_ref, args.action, exec.signal))
+    },
+  }),
+})

@@ -57,7 +57,7 @@ it('retains an older mounted source when a changed occurrence refreshes only the
 })
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
-  vi.stubGlobal('IntersectionObserver', class { constructor(private callback: (entries: unknown[]) => void) {} observe() { this.callback([{ isIntersecting: true }]) } disconnect() {} })
+  vi.stubGlobal('IntersectionObserver', class { constructor(private callback: (entries: unknown[]) => void) {} observe(target: Element) { this.callback([{ target, isIntersecting: true }]) } disconnect() {} })
   vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   localStorage.clear(); mocks.call.mockReset(); mocks.open.mockReset(); close.mockReset()
   mocks.call.mockImplementation(async op => { if (op === 'team.app.timeline') return timeline(); if (op === 'team.app.read') return {}; throw new Error(op) })

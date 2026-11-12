@@ -35,6 +35,7 @@ describe('recording summary and timeline generation', () => {
         options: [
           { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max', available:true, binding:maxBinding },
           { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5', available:true, binding:glmBinding },
+          { routeKey: 'dashscope/unavailable', provider: 'dashscope', modelKey: 'unavailable', displayName: '不可用模型', available: false },
         ],
       }
       if (operation === 'recordings.summary-model-config.set') return { effectiveRouteKey: String(params?.routeKey) }
@@ -279,7 +280,8 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { renderer.root.findByProps({ 'aria-label': '关闭模型面板' }).props.onClick(); await tick() })
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.analysis' || op === 'recordings.summary-model-config.set')).toHaveLength(0)
     await act(async () => { button(renderer, '选择模型并生成新版本').props.onClick(); await tick() })
-    const options = renderer.root.findByProps({ 'aria-label': '全部已接入模型' })
+    const options = renderer.root.findByProps({ 'aria-label': '当前场景可用模型' })
+    expect(renderedText(options)).not.toContain('不可用模型')
     await act(async () => {
       options.findAll(node => node.type === 'button' && renderedText(node).includes('GLM-5'))[0]!.props.onClick()
       await tick()
@@ -484,7 +486,7 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { button(renderer, '重新生成').props.onClick(); await tick() })
 
     const dialog = renderer.root.findByProps({ 'aria-label': '选择总结生成模型' })
-    const modelOptions = dialog.findByProps({ 'aria-label': '全部已接入模型' })
+    const modelOptions = dialog.findByProps({ 'aria-label': '当前场景可用模型' })
     await act(async () => {
       modelOptions.findAll(node => node.type === 'button' && renderedText(node).includes('GLM-5'))[0]!.props.onClick()
       await tick()
@@ -518,6 +520,30 @@ describe('recording summary and timeline generation', () => {
     expect(reads).toBe(2)
     expect(renderer.root.findByProps({ 'aria-label': '选择总结生成模型' })).toBeDefined()
     expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.analysis')).toHaveLength(0)
+  })
+
+  it('reloads a previously ready directory and asks for a new choice after the saved route is removed', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let reads = 0
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      const value = await original(operation, params, signal)
+      if (operation !== 'recordings.summary-model-config' || ++reads === 1) return value
+      return { ...value, options: value.options
+        .filter((option: { routeKey: string }) => option.routeKey !== value.effectiveRouteKey)
+        .map((option: { routeKey: string }) => reads === 2 ? { ...option, available: false } : option) }
+    })
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />)
+      await tick()
+    })
+    await act(async () => { button(renderer, '总结').props.onClick(); await tick() })
+    await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick() })
+    expect(renderedText(renderer.root)).toContain('暂无可用生成模型，请稍后重试。')
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择总结生成模型' })).toHaveLength(0)
+    await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick() })
+    expect(button(renderer, '确认并生成').props.disabled).toBe(true)
+    expect(renderedText(renderer.root)).toContain('请选择模型')
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.analysis')).toHaveLength(0)
   })
 
   it('does not reopen a model dialog for another day after a slow configuration retry', async () => {

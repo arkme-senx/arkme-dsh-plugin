@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ProgressiveAttachments } from './services/progressive-attachments.js'
 import { FileTransfers, type FileTransferSendOutcome } from './services/file-transfers.js'
 import type { ChatService } from './services/chat-service.js'
@@ -15,11 +19,13 @@ export function createArkmeFileTransfers(options: {
   media: MediaService
   teamMedia?:Pick<import('./services/team-app-service.js').TeamAppService,'fetchMedia'>
   chat: ChatService
+  onProgressChange?: (userId: number, taskRef: string) => void
   openPath?: (path: string, signal: AbortSignal) => Promise<void>
 }): FileTransfers | undefined {
   if (options.directory === undefined) return undefined
   const progressive = new ProgressiveAttachments(options.runtime)
   return new FileTransfers(options.directory, {
+    ...(options.onProgressChange ? { onProgressChange: options.onProgressChange } : {}),
     currentUser: async () => (await options.runtime.requireSession()).userId,
     retainedFileRefs: async userId => [...await options.runtime.stateStore.recordReeditFileRefs(userId), ...await options.runtime.stateStore.arkoFileRefs(userId)],
     validateSource: async (sourceRef, userId) => {
@@ -29,6 +35,26 @@ export function createArkmeFileTransfers(options: {
     upload: async (path, metadata, onProgress, expectedUserId, signal) => await options.media.uploadLocalFile(path, metadata, { onProgress, expectedUserId, signal }),
     progressive: {
       supported: (userId, signal) => progressive.supported(userId, signal),
+      uploadPhotoThumbnail: async (path, target, expectedUserId, signal) => {
+        const { default: sharp } = await import('sharp')
+        const image = await sharp(path, { limitInputPixels: 40_000_000 }).rotate()
+          .resize(720, 720, { fit: 'inside', withoutEnlargement: true }).webp({ quality: 82 }).toBuffer()
+        signal.throwIfAborted()
+        if (image.length === 0 || image.length > 512 * 1024) return
+        const directory = await mkdtemp(join(tmpdir(), 'arkme-photo-preview-'))
+        try {
+          const fileName = 'preview.webp'
+          const file = join(directory, fileName)
+          const sha256 = createHash('sha256').update(image).digest('hex')
+          await writeFile(file, image, { mode: 0o600 })
+          const asset = await options.media.uploadLocalFile(file, {
+            size: image.length, sha256, mimeType: 'image/webp', fileName, fileKind: 1,
+          }, { expectedUserId, signal })
+          await progressive.bindPhotoThumbnail(target, expectedUserId, asset.fileAssetUid, sha256, signal)
+        } finally {
+          await rm(directory, { recursive: true, force: true })
+        }
+      },
       reconcile: (recordUid, userId, signal) => progressive.reconcile(recordUid, userId, signal),
       retry: (target, userId, signal) => progressive.retry(target, userId, signal),
       upload: (path, metadata, onProgress, expectedUserId, signal, progressiveTarget, completionRecovery) => options.media.uploadLocalFile(path, metadata, { onProgress, expectedUserId, signal, progressiveTarget, completionRecovery }),

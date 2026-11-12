@@ -1,11 +1,11 @@
 import { UnifiedForwardDialog, type UnifiedForwardAttempt } from './UnifiedForwardDialog.js'
-import { forwardTargetKey } from './unified-forward-targets.js'
+import { forwardTargetKey, type ForwardTarget } from './unified-forward-targets.js'
 import type { TeamForwardAttempt } from './team-forward-attempt.js'
 import { useMemo } from 'react'
 
 export function TeamForwardDialog({ accountKey, attempt, previewTitle, previewSubtitle, onClose, onComplete }: {
   accountKey: string; attempt: TeamForwardAttempt; previewTitle: string; previewSubtitle: string;
-  onClose(): void; onComplete(): void;
+  onClose(): void; onComplete(targets: readonly ForwardTarget[]): void;
 }) {
   const delivery = useMemo<UnifiedForwardAttempt>(() => ({
     get commentText() { return attempt.commentText },

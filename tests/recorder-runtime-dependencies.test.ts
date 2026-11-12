@@ -35,7 +35,8 @@ const binding = 'node_modules/@serialport/bindings-cpp'
 describe('serial recorder dependencies in the actual npm/runtime payload', () => {
   it('loads the isolated dependency closure and includes both supported OS native binaries', async () => {
     await expect(assertRecorderRuntimeDependencies(packed, manifest)).resolves.toBeUndefined()
-  })
+  // Cold native-module loading and filesystem validation share CPU with full-suite workers.
+  }, 15000)
 
   it('rejects the old package shape that declares serialport but does not bundle it', async () => {
     const old = { ...manifest, bundledDependencies: undefined, bundleDependencies: undefined }
