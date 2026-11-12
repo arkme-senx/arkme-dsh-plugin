@@ -101,7 +101,7 @@ export async function saveRecord(directory, record) {
   await writeFile(join(directory, 'notes.txt'), record.notes, 'utf8')
 }
 
-export async function prepareRelease({ cwd, directory, version, sourceSHA, backend, github, legacyIDs = {}, modelOptions = {}, warn = () => {} }) {
+export async function prepareRelease({ cwd, directory, version, sourceSHA, backend, github, legacyIDs = {}, modelOptions = {}, warn = () => {}, log = () => {} }) {
   identity(version, sourceSHA)
   if (await git(cwd, 'rev-parse', 'HEAD') !== sourceSHA) throw new Error('Source checkout does not match release SHA')
   const tags = (await git(cwd, 'tag', '--list', `v${version}`)).split('\n')
@@ -120,18 +120,22 @@ export async function prepareRelease({ cwd, directory, version, sourceSHA, backe
   } else if (!record) {
     const base = await findBaseline({ cwd, version, sourceSHA, backend, legacyIDs })
     let generated
+    let evidenceStats
     let stage = 'pull-request-evidence'
     try {
       const pullRequests = await collectPullRequests({ cwd, baseSHA: base?.sha, sourceSHA, github })
       stage = 'product-diff-evidence'
-      const evidence = await collectEvidence({ cwd, baseSHA: base?.sha, sourceSHA, pullRequests })
-      generated = await generateNotes(evidence, { ...modelOptions, warn })
+      const evidence = await collectEvidence({ cwd, baseSHA: base?.sha, sourceSHA, pullRequests, onStats: stats => {
+        evidenceStats = stats
+        log(`Release notes evidence: ${JSON.stringify(stats)}`)
+      } })
+      generated = await generateNotes(evidence, { ...modelOptions, warn, log })
     } catch (error) {
       const failure = { stage, detail: error instanceof ReleaseNotesError ? error.message : 'Failed to read change evidence' }
       warn(`Release notes ${stage}: ${failure.detail}; using fallback`)
       generated = { notes: fallbackNotes, items: [], reason: 'evidence-unavailable', failure }
     }
-    record = { schemaVersion: 1, version, sourceSHA, base, ...generated }
+    record = { schemaVersion: 1, version, sourceSHA, base, ...generated, evidenceStats }
   }
   validateNotes(record.notes)
   record.summary = summarizeNotes(record.notes)
@@ -192,7 +196,7 @@ async function main() {
   if (process.argv[2] === 'prepare') {
     const record = await prepareRelease({ cwd, directory, version: env.VERSION, sourceSHA: env.ARKME_RELEASE_SOURCE_SHA, ...api,
       legacyIDs: JSON.parse(env.ARKME_LEGACY_RUNTIME_IDS || '{}'),
-      modelOptions: { apiKey: env.OPENAI_API_KEY, model: env.OPENAI_RELEASE_NOTES_MODEL }, warn })
+      modelOptions: { apiKey: env.OPENAI_API_KEY, model: env.OPENAI_RELEASE_NOTES_MODEL }, warn, log: message => process.stdout.write(message + '\n') })
     if (env.GITHUB_OUTPUT) await appendFile(env.GITHUB_OUTPUT, `already_activated=${Boolean(record.activation)}\n`)
     if (env.GITHUB_STEP_SUMMARY) await appendFile(env.GITHUB_STEP_SUMMARY, `比较基线：${record.base?.tag || '首次发布（无已核验 Tag）'}\n\n生成状态：${record.reason}\n\n${record.notes}\n`)
   } else if (process.argv[2] === 'publish') {

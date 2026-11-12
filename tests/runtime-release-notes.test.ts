@@ -163,6 +163,55 @@ describe('OpenAI generation', () => {
   })
 })
 
+describe('evidence budgets', () => {
+  it('keeps large unchanged context without charging it to the changed-code budget', async () => {
+    const project = await fixture()
+    for (let i = 0; i < 7; i++) await writeFile(join(project.root, `src/context${i}.ts`), 'x'.repeat(100000) + '\nold\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'context baseline')
+    const baseSHA = await git(project.root, 'rev-parse', 'HEAD')
+    for (let i = 0; i < 7; i++) await writeFile(join(project.root, `src/context${i}.ts`), 'x'.repeat(100000) + '\nnew\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'change short lines')
+    const onStats = vi.fn()
+    const result = await collectEvidence({ cwd: project.root, baseSHA, sourceSHA: await git(project.root, 'rev-parse', 'HEAD'), onStats })
+    expect(result.reduce((sum, item) => sum + item.text.length, 0)).toBeGreaterThan(600000)
+    expect(onStats).toHaveBeenCalledWith(expect.objectContaining({ files: 7, addedLines: 7, deletedLines: 7, changedCharacters: 56, contextCharacters: 700007 }))
+  })
+
+  it('rejects actual changed content above 600000 characters and reports its size', async () => {
+    const project = await fixture()
+    for (let i = 0; i < 7; i++) await writeFile(join(project.root, `src/large${i}.ts`), 'x'.repeat(90000) + '\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'large changes')
+    const onStats = vi.fn()
+    await expect(collectEvidence({ cwd: project.root, baseSHA: project.baseSHA, sourceSHA: await git(project.root, 'rev-parse', 'HEAD'), onStats })).rejects.toThrow('Changed product content exceeds limit')
+    expect(onStats).toHaveBeenCalledWith(expect.objectContaining({ changedCharacters: expect.any(Number) }))
+  })
+
+  it('accepts exactly 600000 changed characters including content that starts with +++', async () => {
+    const project = await fixture()
+    await writeFile(join(project.root, 'src/boundary.ts'), '++' + 'x'.repeat(599997) + '\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'boundary')
+    const onStats = vi.fn()
+    await collectEvidence({ cwd: project.root, baseSHA: project.sha, sourceSHA: await git(project.root, 'rev-parse', 'HEAD'), onStats })
+    expect(onStats).toHaveBeenCalledWith(expect.objectContaining({ changedCharacters: 600000, addedLines: 1 }))
+  })
+
+  it('scales the deadline with complete-text batches while retaining the request timeout', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    try {
+      const fetchImpl = vi.fn(async () => modelResponse({ items: [] }))
+      const result = await generateNotes([{ id: 'large', text: 'x'.repeat(200000) }], { apiKey: 'key', model: 'model', fetchImpl })
+      expect(result.generationStats).toEqual({ batches: 10, deadlineMs: 1200000 })
+      expect(timeout.mock.calls[0]).toEqual([1200000])
+      expect(timeout.mock.calls.slice(1).every(([ms]) => ms === 120000)).toBe(true)
+      expect(fetchImpl).toHaveBeenCalledTimes(10)
+    } finally { timeout.mockRestore() }
+  })
+})
+
 describe('release range and durable recovery', () => {
   it('uses the existing Backend UUID contract', () => {
     expect(runtimeVersionID('0.2.0')).toBe('e9e81678-582c-51aa-8a1c-0fcc454999f1')
