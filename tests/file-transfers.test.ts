@@ -36,6 +36,20 @@ async function fixture() {
 const input = (fileRefs: string[]) => ({ sourceRef: 'source', recordUid: '00000000-0000-4000-8000-000000000001', relationUid: '00000000-0000-4000-8000-000000000002', fileRefs, content: { textContent: 'hello' } })
 
 describe('account-bound file lifecycle', () => {
+  it('stores oriented image dimensions with the staged file and restores them after restart', async () => {
+    const f = await fixture()
+    const { default: sharp } = await import('sharp')
+    const image = await sharp({ create: { width: 80, height: 40, channels: 3, background: '#fff' } })
+      .jpeg().withMetadata({ orientation: 6 }).toBuffer()
+    const file = await f.owner.stageBytes(image.toString('base64'), { fileName: 'rotated.jpg', mimeType: 'image/jpeg' })
+    expect(file.imageDimensions).toEqual({ width: 40, height: 80 })
+    expect(file.inlinePhotoPreview!.length).toBeLessThanOrEqual(2048)
+    const thumbnail = await sharp(Buffer.from(file.inlinePhotoPreview!, 'base64')).metadata()
+    expect(thumbnail).toMatchObject({ format: 'jpeg', width: 16, height: 32 })
+    const restarted = new FileTransfers(f.directory, f.ports, 1000)
+    await expect(restarted.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+  })
+
   it('reclaims expired reference-managed staging after receipts release it, including after restart', async () => {
     const f = await fixture()
     const file = await f.stage('edit.pdf', 'references')

@@ -1,7 +1,7 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeFileSendTask } from '../src/file-transfer-contract.js'
-import { useArkmeFileSendTasks } from '../src/client/file-send-tasks.js'
+import { useArkmeFileSendTasks, wakeArkmeFileTask } from '../src/client/file-send-tasks.js'
 
 const api = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
@@ -39,6 +39,23 @@ describe('file send task polling', () => {
       api.call.mockResolvedValue([])
       act(() => { renderer.update(<Harness source="source-2" />) })
       expect(value.activeTaskKeys.size).toBe(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('reads the active task immediately on a matching Host hint and stops polling after settlement', async () => {
+    vi.useFakeTimers()
+    api.call.mockResolvedValueOnce([task('uploading')]).mockResolvedValue([task('sent')])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      await act(async () => { wakeArkmeFileTask(8, 'task-1') })
+      expect(api.call).toHaveBeenCalledTimes(1)
+      await act(async () => { wakeArkmeFileTask(7, 'task-1') })
+      expect(value.tasks[0]?.state).toBe('sent')
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+      expect(api.call).toHaveBeenCalledTimes(2)
     } finally { act(() => renderer.unmount()) }
   })
 

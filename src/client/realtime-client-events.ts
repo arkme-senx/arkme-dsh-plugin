@@ -1,3 +1,4 @@
+import { wakeArkmeFileTask } from './file-send-tasks.js'
 import { publishThoughtInvalidation } from './thought-invalidations.js'
 import { createTeamMessageNotificationPresenter } from './team-message-notifications.js'
 import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
@@ -249,6 +250,10 @@ export function useArkmeRealtimeClientEvents(
         }
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
+        if (update.type === 'file-send-progress') {
+          wakeArkmeFileTask(update.userId, update.taskRef)
+          return
+        }
         diagnoseAttention('accepted', update)
         if (update.type === 'thought-invalidated') {
           if (update.accountScope === authenticatedAccountScope) publishThoughtInvalidation(update)

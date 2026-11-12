@@ -1779,6 +1779,7 @@ recordingAnalysisV1?: true
 export type ArkmeImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 
 export interface ArkmeImageBytes {
+  etag?: string
   mediaType: ArkmeImageMediaType
   bytes: number
   data: Uint8Array
@@ -2568,6 +2569,9 @@ export interface ArkmeContentBlock {
   /** Original bytes, distinct from an image preview. */
   originalRef?: string
   localFileRef?: string
+  imageDimensions?: { width: number; height: number }
+  inlinePhotoPreview?: string
+  thumbnailRef?: string
   attachmentUid?: string
   attachmentState?: 'pending' | 'failed'
   uploadProgress?: import('./file-transfer-contract.js').ArkmeFileProgress
@@ -4284,6 +4288,11 @@ export type ArkmeChatClientEvent = {
   /** Local Host epoch; revisions are comparable only within this instance. */
   providerInstanceId?: string
 } & ({
+  type: 'file-send-progress'
+  revision: number
+  userId: number
+  taskRef: string
+} | {
   type: 'message-sync-progress'
   revision: number
   progress: import('./chat-message-sync.js').ArkmeMessageSyncProgress

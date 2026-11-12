@@ -4,12 +4,22 @@ import {ServiceRuntime,type ArkmeServiceConfig,type StateStore} from '../src/ser
 import {parseOwnerJson} from '../src/record-owner-id.js'
 
 const source:ArkmeChatMediaSource={accessRef:'private-signed-group-frame',chatSessionUid:'group',relationUid:'relation',recordOwnerUserId:'9223372036854775806',recordUid:'record',version:3,audienceKey:'team-admission-scope'}
+const webp = Buffer.from('524946460400000057454250', 'hex')
+const thumbnailTag = '\"' + 'a'.repeat(64) + '\"'
+
 function fixture() {
  let revoked=false,mime='text/plain',content='abc',marked=true
  const requests:{url:string;body:unknown;headers:Headers}[]=[]
  const fetchImpl=vi.fn(async(url,init)=>{
   const headers=new Headers(init?.headers);requests.push({url:String(url),body:parseOwnerJson(String(init?.body)),headers})
   expect(init?.method).toBe('POST')
+  if(String(url).endsWith('/source-thumbnail')) {
+   if(revoked)return new Response(null,{status:403})
+   const conditional=headers.get('If-None-Match')===thumbnailTag
+   return new Response(conditional?null:webp,{status:conditional?304:200,headers:{
+    'content-type':'image/webp','content-length':String(webp.length),'X-Jotmo-Source-Stream':'1',etag:thumbnailTag,
+   }})
+  }
   if(revoked)return new Response(null,{status:404})
   const partial=headers.get('Range')==='bytes=1-2',body=partial?content.slice(1,3):content
   return new Response(body,{status:partial?206:200,headers:{'content-type':mime,'content-length':String(Buffer.byteLength(body)),'cache-control':'private, no-store',...(marked?{'X-Jotmo-Source-Stream':'1'}:{}),...(partial?{'content-range':`bytes 1-2/${Buffer.byteLength(content)}`}:{})}})
@@ -20,6 +30,28 @@ function fixture() {
  const raw={media_display_items:[{file_asset_uid:'asset',file_name:'original.txt',file_kind:4,mime_type:'text/plain',size:3,source_attachment_ref:'a'.repeat(64)}]}
  return {media,raw,requests,revoke:()=>{revoked=true},json:()=>{mime='application/json';content='{"code":1004}'},unmark:()=>{marked=false}}
 }
+
+it('coalesces list thumbnail reads, revalidates cached bytes, and denies a revoked cache hit', async()=>{
+ const f=fixture()
+ const asset={...f.raw.media_display_items[0],file_name:'photo.png',mime_type:'image/png',file_kind:1,size:500000}
+ const preview={file_asset_uid:'preview',preview_for_attachment_uid:'slot',mime_type:'image/webp',size:webp.length,source_attachment_ref:'b'.repeat(64)}
+ const raw={media_display_items:[asset,preview],content_payload:{media_refs:[{file_asset_uid:'asset',file_name:'photo.png',upload:{width:1200,height:800,attachment_uid:'slot',preview_asset_uid:'preview'}}]}}
+ expect(f.media.richContentBlocks({ ...raw, media_display_items: [asset] },42,[],source)[0]?.thumbnailRef).toBeUndefined()
+ expect(f.media.richContentBlocks({ ...raw, media_display_items: [asset, { ...preview, preview_for_attachment_uid: 'wrong-slot' }] },42,[],source)[0]?.thumbnailRef).toBeUndefined()
+ const block=f.media.richContentBlocks(raw,42,[],source)[0]!
+ expect(block.originalRef).toBe(block.mediaRef)
+ expect(block.thumbnailRef).toBeDefined()
+ expect(block.thumbnailRef).not.toBe(block.originalRef)
+ const first=await Promise.all([f.media.fetchMedia(block.thumbnailRef!),f.media.fetchMedia(block.thumbnailRef!)])
+ for(const result of first) expect(Buffer.from(await result.response.arrayBuffer())).toEqual(webp)
+ expect(f.requests).toHaveLength(1)
+ const warm=await f.media.fetchMedia(block.thumbnailRef!)
+ expect(Buffer.from(await warm.response.arrayBuffer())).toEqual(webp)
+ expect(f.requests[1]?.headers.get('If-None-Match')).toBe(thumbnailTag)
+ f.revoke()
+ await expect(f.media.fetchMedia(block.thumbnailRef!)).rejects.toMatchObject({httpStatus:403})
+ expect(f.requests.every(request=>request.url.endsWith('/source-thumbnail'))).toBe(true)
+})
 
 it('streams an exact source attachment with Range, preserves owner precision and denies the same reference after revocation',async()=>{
  const f=fixture(),block=f.media.richContentBlocks(f.raw,42,[],source)[0]!
@@ -57,7 +89,8 @@ it.each(['image/png', 'video/mp4'])('keeps source-bound %s attachment slots when
  const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
  const kind = mimeType.startsWith('image/') ? 1 : 3
  const pendingRefs = ['slot-a', 'slot-b'].map((uid, sort_order) => ({ file_asset_uid: '', file_name: kind === 1 ? 'same.png' : 'same.mp4', sort_order,
-  upload: { attachment_uid: uid, generation: 1, state: 'pending', kind, size: 10 } }))
+  upload: { attachment_uid: uid, generation: 1, state: 'pending', kind, size: 10,
+   ...(kind === 1 ? { width: 1200, height: 800, inline_preview: '/9j/AAAA' } : {}) } }))
  const pending = media.richContentBlocks({ content_payload: { media_refs: pendingRefs } }, 42, [], source)
  const readyRefs = pendingRefs.map((ref, index) => ({ ...ref, file_asset_uid: `asset-${index}`, upload: { ...ref.upload, state: 'ready' } })).reverse()
  const display = readyRefs.map(ref => ({ file_asset_uid: ref.file_asset_uid, file_kind: kind, mime_type: mimeType, size: 10, source_attachment_ref: `signed-${ref.file_asset_uid}` }))
@@ -68,6 +101,10 @@ it.each(['image/png', 'video/mp4'])('keeps source-bound %s attachment slots when
   expect(block.mediaRef).toMatch(/^arkme-media-v1\./)
   expect(block.originalRef).toBe(block.mediaRef)
   expect(block).not.toHaveProperty('attachmentState')
+ }
+ for (const block of [...pending, ...ready]) {
+  if (kind === 1) expect(block).toMatchObject({ imageDimensions: { width: 1200, height: 800 }, inlinePhotoPreview: '/9j/AAAA' })
+  else expect(block).not.toHaveProperty('inlinePhotoPreview')
  }
  expect(JSON.stringify(ready)).not.toContain(source.accessRef)
 })

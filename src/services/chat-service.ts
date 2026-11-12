@@ -5410,7 +5410,10 @@ nextPublic = next
           ...listValue(contentPayload?.media_refs).map(objectValue).map(ref => ({ ...ref, sort_order: order.get(stringValue(ref.file_asset_uid)) ?? numberValue(ref.sort_order) })),
           ...pending.map(file => ({ file_asset_uid: '', file_name: file.fileName, content_file_role: file.backgroundSound ? 4 : 1,
             ...(file.backgroundSound ? { binding_type: 4 } : {}), render_role: 1, sort_order: file.sortOrder,
-            upload: { attachment_uid: file.attachmentUid, generation: file.generation, state: 'pending', kind: file.fileKind, size: file.size } })),
+            upload: { attachment_uid: file.attachmentUid, generation: file.generation, state: 'pending', kind: file.fileKind, size: file.size,
+              ...(file.fileKind === 1 && file.imageDimensions && file.imageDimensions.width <= 65535 && file.imageDimensions.height <= 65535
+                ? { width: file.imageDimensions.width, height: file.imageDimensions.height, ...(file.inlinePhotoPreview ? { inline_preview: file.inlinePhotoPreview } : {}) }
+                : {}) } })),
         ].sort((a, b) => a.sort_order - b.sort_order).map((ref, index) => ({ ...ref, sort_order: index }))
         contentPayload = { schema_version: 1, text_state: textContent === '' ? 3 : 1, ...contentPayload, payload_kind: 2, media_refs: refs,
           ...(options.backgroundAmplitudes?.length ? { background_sound_amplitudes: options.backgroundAmplitudes } : {}),
@@ -7210,7 +7213,7 @@ nextPublic = next
       const agentSource = isMe
         ? this.arko.currentUserAgentSourceFallback(session.userId, rawAgentSource)
         : rawAgentSource
-      const contentBlocks = this.media.richContentBlocks(item, session.userId,[],mediaSource)
+      const contentBlocks = this.media.richContentBlocks(item, session.userId, [], mediaSource)
       const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles,source,audienceKey)
       const senderName = this.timelineSenderName(relation, botProfiles)
       const mentions = await this.timelineMentionTargets(record, payload, session.userId, source.ownerRef)

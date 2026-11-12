@@ -3349,7 +3349,7 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'aria-label': '消息发送状态' })).toHaveLength(0)
   })
 
-  it.each([target, group, sendToSelf].flatMap(source => ['queued', 'uploading', 'sending', 'failed', 'uncertain', 'sent'].map(state => ({ source, state }))))('renders $state attachment status outside the $source.kind bubble', async ({ source, state }) => {
+  it.each([target, group, sendToSelf].flatMap(source => ['queued', 'uploading', 'sending', 'failed', 'uncertain', 'sent'].map(state => ({ source, state }))))('renders $state photo progress and recovery in the $source.kind bubble layout', async ({ source, state }) => {
     activeSource = source
     arkmeUi.selectSource(source)
     const baseCall = mocks.callArkme.getMockImplementation()!
@@ -3370,17 +3370,14 @@ describe('conversation send directory projection', () => {
     })
     await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
     const statuses = renderer!.root.findAllByProps({ 'aria-label': '附件发送状态' })
-    const sending = source.kind !== 'send_to_self' && ['queued', 'uploading', 'sending'].includes(state)
+    const sending = ['queued', 'uploading', 'sending'].includes(state)
     const line = renderer!.root.findAllByProps({ 'data-arkme-message-content-line': task.recordUid })[0]
-    if (sending) {
-      expect(line?.findAll(node => node.type === 'svg' && node.props['data-arkme-message-send-loading'] === true)).toHaveLength(1)
-      expect(line?.findAll(node => node.props['data-arkme-read-receipt-indicator'] !== undefined)).toHaveLength(0)
-    } else {
-      expect(renderer!.root.findAll(node => node.type === 'svg' && node.props['data-arkme-message-send-loading'] === true)).toHaveLength(0)
-    }
-    const hasTextStatus = state !== 'sent' && (!sending || state === 'uploading')
-    expect(statuses).toHaveLength(hasTextStatus ? 1 : 0)
-    if (!hasTextStatus) return
+    expect(line?.findAllByProps({ role: 'progressbar' }) ?? []).toHaveLength(sending ? 1 : 0)
+    expect(renderer!.root.findAll(node => node.type === 'svg' && node.props['data-arkme-message-send-loading'] === true)).toHaveLength(0)
+    if (sending) expect(line?.findAll(node => node.props['data-arkme-read-receipt-indicator'] !== undefined)).toHaveLength(0)
+    const hasRecovery = state === 'failed' || state === 'uncertain'
+    expect(statuses).toHaveLength(hasRecovery ? 1 : 0)
+    if (!hasRecovery) return
     const status = statuses[0]!
     expect(status.props.style.color).toBe(arkmeTheme.secondary)
     let ancestor = status.parent

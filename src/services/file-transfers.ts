@@ -1,4 +1,4 @@
-import type { PendingAttachment, AttachmentReceipt, ProgressiveTarget } from './progressive-attachments.js'
+import type { PendingAttachment, AttachmentReceipt, ProgressiveCapability, ProgressiveTarget } from './progressive-attachments.js'
 import type { ArkmeUploadCompletion, ArkmeUploadCompletionRecovery } from './media-service.js'
 import type { TeamSendTask } from '../team-send-contract.js'
 import { createHash, randomUUID } from 'node:crypto'
@@ -14,19 +14,21 @@ import { isLongArticleImageMimeType, LONG_ARTICLE_IMAGE_MAX_BYTES } from '../lon
 
 type Metadata = Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>
 interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: number; asset?: ArkmeUploadedAsset; retention?: 'references'; longArticle?: true }
-interface StoredSendTask extends ArkmeFileSendTask { completions?: Record<string, { generation: number; completion: ArkmeUploadCompletion }>; retryAfterMillis?: number; sourceKey?: string; contentDigest?: string }
+interface StoredSendTask extends ArkmeFileSendTask { inlinePhotoPreviewSupported?: true; photoThumbnailSupported?: true; photoThumbnails?: Record<string, ProgressiveTarget>; completions?: Record<string, { generation: number; completion: ArkmeUploadCompletion }>; retryAfterMillis?: number; sourceKey?: string; contentDigest?: string }
 interface FileState { version: 1; files: Record<string, StoredFile>; tasks: StoredSendTask[]; textTasks: StoredSendTask[]; originals: Record<string, string>; teamSends?: TeamSendTask[] }
 export type FileTransferSendOutcome =
   | { kind: 'owner_accepted'; result: ArkmeSourceSendResult }
   | { kind: 'owner_not_accepted'; message: string; code?: string; retryable?: boolean; retryAfterMillis?: number }
   | { kind: 'owner_outcome_unknown'; message?: string; code?: string; retryAfterMillis?: number }
 export interface FileTransferPorts {
+  onProgressChange?(userId: number, taskRef: string): void
   currentUser(): Promise<number>
   retainedFileRefs?(userId: number): Promise<readonly string[]>
   validateSource(sourceRef: string, userId: number): Promise<string | void>
   upload(path: string, metadata: StoredFile, progress: (value: ArkmeFileProgress) => void, userId: number, signal: AbortSignal): Promise<ArkmeUploadedAsset>
   progressive?: {
-    supported(userId: number, signal: AbortSignal): Promise<boolean>
+    supported(userId: number, signal: AbortSignal): Promise<ProgressiveCapability>
+    uploadPhotoThumbnail?(path: string, target: ProgressiveTarget, userId: number, signal: AbortSignal): Promise<void>
     reconcile(recordUid: string, userId: number, signal: AbortSignal): Promise<AttachmentReceipt[]>
     retry(target: ProgressiveTarget, userId: number, signal: AbortSignal): Promise<AttachmentReceipt[]>
     upload(path: string, metadata: StoredFile, progress: (value: ArkmeFileProgress) => void, userId: number, signal: AbortSignal, target: ProgressiveTarget, recovery: ArkmeUploadCompletionRecovery): Promise<ArkmeUploadedAsset>
@@ -49,6 +51,8 @@ function taskListKey(task: Pick<ArkmeFileSendInput, 'fileRefs'>): 'tasks' | 'tex
   return task.fileRefs.length ? 'tasks' : 'textTasks'
 }
 const REF = /^arkme-file-v1\.[0-9a-f-]{36}$/
+const progressiveAttachmentUid = (recordUid: string, fileRef: string): string =>
+  `pa-${createHash('sha256').update(`${recordUid}:${fileRef}`).digest('hex')}`
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const fail = (code: string, message: string) => new ArkmePluginError(code, message, false, 400)
 const clone = <T>(value: T): T => structuredClone(value)
@@ -57,7 +61,24 @@ const validLocation = (location: ArkmeFileSendInput['location']): boolean => loc
   && Number.isFinite(location.longitude) && location.longitude >= -180 && location.longitude <= 180
   && Number.isSafeInteger(location.capturedAtMillis) && location.capturedAtMillis > 0
 )
+async function readPhotoPresentation(path: string): Promise<Pick<ArkmeLocalFile, 'imageDimensions' | 'inlinePhotoPreview'>> {
+  try {
+    const { default: sharp } = await import('sharp')
+    const image = sharp(path)
+    const { autoOrient } = await image.metadata()
+    const { width, height } = autoOrient
+    if (width <= 0 || height <= 0) return {}
+    const thumbnail = await image.rotate().resize(32, 32, { fit: 'inside', withoutEnlargement: true })
+      .flatten({ background: '#eee' }).jpeg({ quality: 35 }).toBuffer().catch(() => undefined)
+    return { imageDimensions: autoOrient, ...(thumbnail && thumbnail.length <= 1536 ? { inlinePhotoPreview: thumbnail.toString('base64') } : {}) }
+  } catch {
+    // Some image formats can still be sent even when local metadata is unavailable.
+  }
+  return {}
+}
 const publicFile = (file: ArkmeLocalFile): ArkmeLocalFile => ({ fileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, fileKind: file.fileKind,
+  ...(file.imageDimensions ? { imageDimensions: file.imageDimensions } : {}),
+  ...(file.inlinePhotoPreview ? { inlinePhotoPreview: file.inlinePhotoPreview } : {}),
   ...(file.origin === 'local' || file.origin === 'received' ? { origin: file.origin } : {}) })
 const nativeOpenFileName = (fileName: string): string => {
   const cleaned = fileName.replace(/[<>:"/\\|?*\u0000-\u001f\u007f]/g, '_').trim().replace(/^[. ]+|[. ]+$/g, '')
@@ -79,6 +100,8 @@ export class FileTransfers {
   private readonly uploadingRefs = new Set<string>()
   private queue: Promise<void> = Promise.resolve()
   private legacyFileQueue: Promise<void> = Promise.resolve()
+  private photoThumbnailQueue: Promise<void> = Promise.resolve()
+  private photoThumbnailDrain: AbortController | undefined
   private uploadQueue: Promise<void> = Promise.resolve()
   private readonly jobs = new Set<Promise<void>>()
   private readonly controllers = new Set<AbortController>()
@@ -99,7 +122,7 @@ export class FileTransfers {
   capabilities(): ArkmeFilePolicy { return { ...this.policy } }
   cancelActive(): void { ++this.recoveryGeneration; clearTimeout(this.recoveryTimer); this.recoveryTimer = undefined; this.recovering = undefined; this.recoveryUser = undefined; for (const controller of this.controllers) controller.abort(); this.receptions.clear() }
   dispose(): void { this.closed = true; this.cancelActive() }
-  async settled(): Promise<void> { await this.recovering; await Promise.allSettled(this.reconciling.values()); await this.queue; await this.legacyFileQueue; await this.uploadQueue; await this.directUploads.catch(() => {}); await Promise.all(this.jobs); await Promise.all([this.writes, this.textWrites]) }
+  async settled(): Promise<void> { await this.recovering; await Promise.allSettled(this.reconciling.values()); await this.queue; await this.legacyFileQueue; await this.uploadQueue; await this.photoThumbnailQueue; await this.directUploads.catch(() => {}); await Promise.all(this.jobs); await Promise.all([this.writes, this.textWrites]) }
 
   async resume(): Promise<void> {
     if (this.closed) return
@@ -110,6 +133,7 @@ export class FileTransfers {
     const state = await this.state(user)
     for (const task of allTasks(state)) if (task.state === 'queued') this.schedule(user, state, task)
     this.armRecovery(user, state)
+    this.resumePhotoThumbnails(user, state)
   }
 
   async resumeAfterReconnect(): Promise<void> {
@@ -133,6 +157,7 @@ export class FileTransfers {
         await this.saveTask(user, state, task)
       }
       this.armRecovery(user, state)
+      this.resumePhotoThumbnails(user, state)
     })
   }
 
@@ -345,9 +370,11 @@ export class FileTransfers {
       if (!info.isFile() || info.size !== metadata.size) throw fail('file-size-mismatch', '本地文件不完整')
       const hash = createHash('sha256')
       for await (const chunk of createReadStream(temporaryPath)) hash.update(chunk)
+      const fileKind = arkmePickedFileKind(normalizedMetadata.mimeType, normalizedMetadata.fileName)
+      const photoPresentation = fileKind === 1 && origin === 'local' && !longArticle ? await readPhotoPresentation(temporaryPath) : {}
       await this.assertUser(userId)
       const ref = `arkme-file-v1.${randomUUID()}`
-      const file: StoredFile = { ...normalizedMetadata, origin, fileRef: ref, fileKind: arkmePickedFileKind(normalizedMetadata.mimeType, normalizedMetadata.fileName), sha256: hash.digest('hex'), createdAtMillis: Date.now(), ...(retention ? { retention } : {}), ...(longArticle ? { longArticle: true as const } : {}) }
+      const file: StoredFile = { ...normalizedMetadata, origin, fileRef: ref, fileKind, ...photoPresentation, sha256: hash.digest('hex'), createdAtMillis: Date.now(), ...(retention ? { retention } : {}), ...(longArticle ? { longArticle: true as const } : {}) }
       await copyFile(temporaryPath, this.path(userId, ref))
       await chmod(this.path(userId, ref), 0o600)
       state.files[ref] = file
@@ -632,6 +659,9 @@ export class FileTransfers {
       assertArkmeBackgroundSoundLocalFiles(backgroundSound, files)
       await this.assertUser(userId)
       const task: StoredSendTask = { ...normalizedInput, content, ...(sourceKey ? { sourceKey } : {}), taskRef: `arkme-send-v1.${randomUUID()}`, createdAtMillis: Date.now(), state: 'queued', files, retryAttempts: 0, delivery: files.length && this.ports.progressive ? 'negotiating' : 'legacy' }
+      if (task.delivery === 'negotiating') {
+        for (const file of task.files) file.attachmentUid = progressiveAttachmentUid(task.recordUid, file.fileRef)
+      }
       if (existingReceipt) {
         task.state = 'sent'
         task.result = existingReceipt
@@ -787,8 +817,55 @@ export class FileTransfers {
     }
     return true
   }
-  private publicTask({ completions: _completions, retryAfterMillis: _retryAfterMillis, sourceKey: _sourceKey, contentDigest: _contentDigest, ...task }: StoredSendTask, sourceRef = task.sourceRef): ArkmeFileSendTask {
+  private publicTask({ completions: _completions, retryAfterMillis: _retryAfterMillis, sourceKey: _sourceKey, contentDigest: _contentDigest, inlinePhotoPreviewSupported: _inlinePhotoPreviewSupported, photoThumbnailSupported: _photoThumbnailSupported, photoThumbnails: _photoThumbnails, ...task }: StoredSendTask, sourceRef = task.sourceRef): ArkmeFileSendTask {
     return clone({ ...task, sourceRef, ...(task.result ? { result: { ...task.result, sourceRef } } : {}) })
+  }
+
+  private resumePhotoThumbnails(userId: number, state: FileState): void {
+    const upload = this.ports.progressive?.uploadPhotoThumbnail
+    if (!upload || this.closed || (this.photoThumbnailDrain && !this.photoThumbnailDrain.signal.aborted)
+      || !state.tasks.some(task => task.photoThumbnails)) return
+    const controller = new AbortController()
+    this.photoThumbnailDrain = controller
+    this.controllers.add(controller)
+    this.photoThumbnailQueue = this.photoThumbnailQueue.then(async () => {
+      const attempted = new Set<ProgressiveTarget>()
+      for (;;) {
+        await this.assertUser(userId, controller.signal)
+        const isPending = ([ref, target]: [string, ProgressiveTarget]) => state.files[ref] && !attempted.has(target)
+        const task = state.tasks.find(task => task.photoThumbnails &&
+          Date.now() - task.createdAtMillis < 7 * 24 * 3600_000 &&
+          Object.entries(task.photoThumbnails).some(isPending))
+        if (!task?.photoThumbnails) return
+        const [ref, target] = Object.entries(task.photoThumbnails).find(isPending)!
+        attempted.add(target)
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
+        try {
+          await upload(this.path(userId, ref), target, userId, signal)
+          delete task.photoThumbnails![ref]
+          if (Object.keys(task.photoThumbnails!).length === 0) delete task.photoThumbnails
+          await this.save(userId, state)
+        } catch {
+          // Reconnect or the next launch can retry without touching the sent message.
+        }
+      }
+    }).catch(() => {}).finally(() => {
+      this.controllers.delete(controller)
+      if (this.photoThumbnailDrain === controller) this.photoThumbnailDrain = undefined
+    })
+  }
+
+  private observeUpload(userId: number, task: StoredSendTask, file: StoredSendTask['files'][number]) {
+    let lastUpdate = 0
+    return (progress: ArkmeFileProgress) => {
+      const changedPhase = file.progress.phase !== progress.phase
+      file.progress = progress
+      const now = Date.now()
+      if (changedPhase || now - lastUpdate >= 250) {
+        lastUpdate = now
+        this.ports.onProgressChange?.(userId, task.taskRef)
+      }
+    }
   }
 
   private async deliverProgressive(userId: number, state: FileState, task: StoredSendTask, controller: AbortController): Promise<boolean> {
@@ -797,8 +874,9 @@ export class FileTransfers {
     if (!ports) throw fail('attachment-protocol-unavailable', '附件补传需要更新插件')
     const background = new Set(task.backgroundSound?.fileRefs ?? [])
     const order = new Map((task.attachmentOrder ?? [...(task.content.assets ?? []).map(asset => asset.fileAssetUid), ...task.fileRefs]).map((ref, index) => [ref, index]))
-    const pending: PendingAttachment[] = task.files.map((file, index) => ({ ...publicFile(file),
-      attachmentUid: `pa-${createHash('sha256').update(`${task.recordUid}:${file.fileRef}`).digest('hex')}`,
+    const pending: PendingAttachment[] = task.files.map(({ inlinePhotoPreview, ...file }, index) => ({ ...publicFile(file),
+      ...(task.inlinePhotoPreviewSupported && inlinePhotoPreview ? { inlinePhotoPreview } : {}),
+      attachmentUid: progressiveAttachmentUid(task.recordUid, file.fileRef),
       generation: 1, sortOrder: order.get(file.fileRef) ?? index,
       ...(background.has(file.fileRef) ? { backgroundSound: true, fileKind: 2 as const } : {}),
     }))
@@ -847,7 +925,7 @@ export class FileTransfers {
           const stored = state.files[file.fileRef]
           if (!stored) throw fail('file-local-missing', '消息已发送，本地附件已不存在')
           file.asset = await ports.upload(this.path(userId, file.fileRef), { ...stored, fileKind: descriptor.fileKind },
-            progress => { file.progress = progress }, userId, signal, target, {
+            this.observeUpload(userId, task, file), userId, signal, target, {
               read: () => task.completions?.[file.fileRef]?.generation === target.generation ? task.completions[file.fileRef]!.completion : undefined,
               save: async completion => {
                 task.completions ??= {}; task.completions[file.fileRef] = { generation: target.generation, completion }
@@ -858,6 +936,13 @@ export class FileTransfers {
           receipts = await ports.reconcile(recordUid, userId, signal)
           receipt = receipts.find(value => value.attachmentUid === descriptor.attachmentUid)
           if (receipt && receipt.state !== 'ready') throw new ArkmePluginError('attachment-completion-pending', '消息已发送，附件完成状态待确认，请重试补传', true, 409)
+          const dimensions = descriptor.imageDimensions
+          if (task.photoThumbnailSupported && receipt?.state === 'ready' && descriptor.fileKind === 1
+            && ['image/jpeg', 'image/png'].includes(descriptor.mimeType) && dimensions
+            && Math.max(dimensions.width, dimensions.height) > 720 && file.size > 128 * 1024 && file.size <= 20 * 1024 * 1024) {
+            task.photoThumbnails ??= {}
+            task.photoThumbnails[file.fileRef] = target
+          }
         }
         if (receipt?.fileAssetUid) {
           file.asset = { fileAssetUid: receipt.fileAssetUid, fileName: file.fileName, mimeType: file.mimeType, size: file.size, fileKind: descriptor.fileKind }
@@ -881,7 +966,9 @@ export class FileTransfers {
       this.controllers.delete(controller)
       this.planRecovery(task)
       await this.save(userId, state)
+      if (!signal.aborted) this.ports.onProgressChange?.(userId, task.taskRef)
       this.armRecovery(userId, state)
+      if (!signal.aborted && task.photoThumbnails) this.resumePhotoThumbnails(userId, state)
     }).catch(() => { task.state = 'failed'; task.error = '附件状态保存失败，请重试补传' })
     return true
   }
@@ -897,7 +984,10 @@ export class FileTransfers {
       try {
         await this.assertUser(userId, controller.signal)
         if (task.delivery === undefined || task.delivery === 'negotiating') {
-          task.delivery = await this.ports.progressive?.supported(userId, controller.signal) ? 'progressive' : 'legacy'
+          const capability = await this.ports.progressive?.supported(userId, controller.signal)
+          task.delivery = capability ? 'progressive' : 'legacy'
+          if (capability === 'inline-photo-preview' || capability === 'photo-thumbnail') task.inlinePhotoPreviewSupported = true
+          if (capability === 'photo-thumbnail') task.photoThumbnailSupported = true
           await this.saveTask(userId, state, task)
         }
         if (task.delivery === 'progressive') {
@@ -922,7 +1012,7 @@ export class FileTransfers {
             if (!file.asset) file.asset = await this.ports.upload(
               this.path(userId, file.fileRef),
               { ...stored, fileKind: uploadFileKind },
-              progress => { file.progress = progress },
+              this.observeUpload(userId, task, file),
               userId,
               controller.signal,
             )
@@ -981,6 +1071,7 @@ export class FileTransfers {
           this.controllers.delete(controller)
           this.planRecovery(task)
           await this.saveTask(userId, state, task)
+          if (task.fileRefs.length && !controller.signal.aborted) this.ports.onProgressChange?.(userId, task.taskRef)
         }
       }
     }).catch(() => {

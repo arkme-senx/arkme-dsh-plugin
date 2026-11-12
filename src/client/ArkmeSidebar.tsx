@@ -6540,9 +6540,14 @@ export function ArkmeSurface({
     })
     const displayItems = [...remoteItems, ...extensionItems, ...taskItems].sort(compareTimelineMessages)
     const visible = hideSyncWindow ? [] : syncChanges?.size
-      ? displayItems.flatMap(item => projectCommittedChatMessage(item, syncChanges) ?? []) : displayItems
+      ? displayItems.flatMap(item => {
+        const committed = projectCommittedChatMessage(item, syncChanges)
+        if (!committed) return []
+        // Sync projections are wire items and do not carry local photo presentation.
+        return [committed === item ? item : bindSentFileTaskLocals(committed, fileTasks.tasks)]
+      }) : displayItems
     return { displayItems: source ? recordMutations.projectWindow(visible, source, selfSources).sort(compareTimelineMessages) : visible, reeditItems, sendPlaceholders }
-  }, [items, hideSyncWindow, syncChanges, visibleFileTasks, fileTasks.activeTaskKeys, fileAdmissionScope, liveTextSends, timelineMode, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
+  }, [items, hideSyncWindow, syncChanges, visibleFileTasks, fileTasks.tasks, fileTasks.activeTaskKeys, fileAdmissionScope, liveTextSends, timelineMode, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
   const waitingDeliveryKey = [...sendPlaceholders].filter(([, kind]) => kind === 'confirmed').map(([uid]) => uid).sort().join(',')
   useEffect(() => {
     if (!waitingDeliveryKey || !activeConversation || typeof document === 'undefined') return
@@ -6636,17 +6641,21 @@ export function ArkmeSurface({
           ...(communityWelcome !== undefined && source !== undefined && welcomeMatchesSource(communityWelcome, authenticatedAccountKey, source)
             && timelineMode !== 'around' ? [{ kind: 'community-welcome' as const, id: `community-welcome:${communityWelcome.occurredAtMillis}`,
               occurredAtMillis: communityWelcome.occurredAtMillis, title: source.displayName }] : []),
-          ...mergeTimelineSendRows(unifiedWindow.events.filter(event => event.kind !== 'message' || !source || recordMutations.project(event.item, source, selfSources) !== undefined).map(event => event.kind === 'message'
-            ? { kind: 'message' as const, id: `message:${event.eventId}`, renderKey: conversationMessageRenderKey(messageByEvent.get(event.eventId) ?? event.item), occurredAtMillis: event.occurredAtMillis,
-              readSequence: event.contentStatus === 'available' && event.item.status === 1 ? event.item.sequence : undefined,
-              item: messageByEvent.get(event.eventId) ?? (source ? recordMutations.project(event.item, source, selfSources)! : event.item) }
-            : event.kind === 'world-public' || event.kind === 'offline-context' ? { ...event, id: event.eventId }
+          ...mergeTimelineSendRows(unifiedWindow.events.filter(event => event.kind !== 'message' || !source || recordMutations.project(event.item, source, selfSources) !== undefined).map(event => {
+            if (event.kind === 'message') {
+              const item = messageByEvent.get(event.eventId)
+                ?? bindSentFileTaskLocals(source ? recordMutations.project(event.item, source, selfSources)! : event.item, fileTasks.tasks)
+              return { kind: 'message' as const, id: `message:${event.eventId}`, renderKey: conversationMessageRenderKey(item), occurredAtMillis: event.occurredAtMillis,
+                readSequence: event.contentStatus === 'available' && event.item.status === 1 ? event.item.sequence : undefined, item }
+            }
+            return event.kind === 'world-public' || event.kind === 'offline-context' ? { ...event, id: event.eventId }
             : event.kind === 'moment' ? { kind: 'moment' as const, id: `moment:${event.item.momentId}`, occurredAtMillis: event.occurredAtMillis, item: event.item }
               : event.kind === 'member-event' ? { kind: 'member-event' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis, item: event.item }
                 : event.kind === 'member-join' ? { kind: 'member-join' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis, item: event.item }
                 : { kind: 'notice' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis,
                   item: { noticeUid: event.eventId, sourceKey: conversationKey, createdAtMillis: event.occurredAtMillis,
-                    message: event.kind === 'external' ? `${event.title}：${event.text || '媒体内容'}` : event.text } }),
+                    message: event.kind === 'external' ? `${event.title}：${event.text || '媒体内容'}` : event.text } }
+          }),
           unifiedTimelineSendOverlay(unifiedWindow, displayItems, new Set(fileTasks.tasks
             .filter(task => task.state === 'sent' && !fileTasks.activeTaskKeys.has(task.taskRef))
             .map(task => task.result?.itemUid ?? task.recordUid)))
@@ -8500,14 +8509,16 @@ export function ArkmeSurface({
                             && (task.state === 'queued' || task.state === 'uploading' || task.state === 'sending'
                               || retryingFileTasks.has(task.taskRef))) : undefined
                           const defaultUnread = conversationMessageDefaultUnread(item)
-                          const sendingLabel = pendingTask
+                          const photoShowsProgress = item.contentBlocks?.some(block => block.kind === 'image'
+                            && (block.attachmentState === 'pending' || block.uploadProgress && block.uploadProgress.phase !== 'ready'))
+                          const sendingLabel = photoShowsProgress ? undefined : pendingTask
                             ? tr(pendingTask.state === 'queued' ? '等待发送' : '正在发送…')
                             : chatSendAccessory && !messageFileTasks.length && defaultUnread && item.status === 0
                               ? tr('正在发送…') : undefined
                           const hideReceipt = chatSendAccessory && messageFileTasks.some(task => task.state !== 'sent'
                             && task.result?.localState !== 'synced')
                           const fileSendStatus = messageFileTasks
-                            .filter(task => task.state !== 'sent' && fileTaskShowsInlineStatus(task)
+                            .filter(task => task.state !== 'sent' && fileTaskShowsInlineStatus(task, sendPlaceholder === 'admission' ? undefined : item.contentBlocks)
                               && (task !== pendingTask || task.state === 'uploading' && task.fileRefs.length > 0))
                             .map(task => {
                               const working = retryingFileTasks.has(task.taskRef)
