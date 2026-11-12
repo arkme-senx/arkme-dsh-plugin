@@ -941,17 +941,21 @@ it('projects ordinary forward summaries on the timeline and loads frozen detail 
  } finally {f.runtime.dispose()}
 })
 
-it('hydrates frozen Team authors through the scoped avatar cache without exposing their identities', async () => {
+it.each([true, false])('hydrates frozen Team authors with compatible nested avatar slots (new field=%s)', async hasCardAvatar => {
   const avatar = 'https://jotmo-userfiles.senguo.me/forward-author.png'
+  const cardAvatar = 'https://jotmo-userfiles.senguo.me/forward-card-author.png'
   const leaf = { owner_name: '原作者', text: '历史快记' }
   const forward = { source_type: 'team_message', title: '转发快记' }
   const full = { ...message, record: { ...message.record, media: [], content_payload: {
-    forward_records: { ...forward, items: [leaf, { forward_records: { items: [{ owner_name: '无头像' }, leaf] } }] },
+    forward_records: { ...forward, items: [leaf, { owner_name: '转发者', forward_records: { items: [{ owner_name: '无头像' }, leaf] } }] },
     forward_sender_avatars: [avatar, '', avatar],
+    ...(hasCardAvatar ? { forward_card_sender_avatars: [cardAvatar] } : {}),
   } } }
   const summary = { ...full, record: { ...full.record, content_payload: { forward_records: forward } } }
   const f = fixture(path => path === '/forward-author.png'
     ? new Response('avatar bytes', { headers: { 'content-type': 'image/png' } })
+    : path === '/forward-card-author.png'
+    ? new Response('card avatar bytes', { headers: { 'content-type': 'image/png' } })
     : { channel, conversation, messages: [path.endsWith('/batch-get') ? full : summary] })
   try {
     const conversationRef = (await open(f)).conversation!.ref
@@ -963,14 +967,23 @@ it('hydrates frozen Team authors through the scoped avatar cache without exposin
     }) as import('../src/team-app-contract.js').TeamMessage[]
     const [first, nested] = detail!.forwardRecords!.items
     const [missing, repeated] = nested!.forwardRecords!.items
-    expect(nested?.avatarRef).toBeUndefined()
+    if (hasCardAvatar) {
+      expect(nested?.avatarRef).toMatch(/^team-app-image\./u)
+      expect(nested?.avatarKey).not.toBe(first?.avatarKey)
+      await expect(f.service.execute('team.app.image', { imageRef: nested?.avatarRef }))
+        .resolves.toMatchObject({ mimeType: 'image/png', base64: Buffer.from('card avatar bytes').toString('base64') })
+    } else {
+      expect(nested?.avatarRef).toBeUndefined()
+    }
     expect(first?.avatarRef).toMatch(/^team-app-image\./u)
     expect(first?.avatarKey).toBeTruthy()
     expect(repeated?.avatarRef).toBe(first?.avatarRef)
     expect(repeated?.avatarKey).toBe(first?.avatarKey)
     expect(missing?.avatarRef).toBeUndefined()
     expect(first?.senderUserId).toBeUndefined()
+    expect(nested?.senderUserId).toBeUndefined()
     expect(JSON.stringify(detail)).not.toContain(avatar)
+    expect(JSON.stringify(detail)).not.toContain(cardAvatar)
     await expect(f.service.execute('team.app.image', { imageRef: first?.avatarRef }))
       .resolves.toMatchObject({ mimeType: 'image/png', base64: Buffer.from('avatar bytes').toString('base64') })
     f.changeAccount()

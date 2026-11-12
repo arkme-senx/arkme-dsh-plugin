@@ -94,7 +94,8 @@ it('opens a nested card in the same drawer and returns to its parent without ano
     { senderName: '内层作者', sendAtMillis: 1, title: '内层标题', textContent: '仅内层详情可见的正文' },
   ] }
   const message = { ...forwardMessage, forwardRecords: { ...forwardMessage.forwardRecords!, items: [
-    { senderName: '转发者', sendAtMillis: 1, title: '', textContent: '', forwardRecords: nested },
+    { senderName: '转发者', sendAtMillis: 1, title: '', textContent: '', forwardRecords: nested,
+      avatarRef: 'team-app-image.forwarder', avatarKey: 'forwarder-image' },
     { senderName: '同级作者', sendAtMillis: 1, title: '', textContent: '外层正文' },
   ] } }
   preflight.mockReset().mockResolvedValue([message])
@@ -103,6 +104,8 @@ it('opens a nested card in the same drawer and returns to its parent without ano
   try {
     const visible = () => JSON.stringify(renderer.toJSON())
     const drawer = renderer.root.findByType(ArkmeDetailShell)
+    const forwarder = renderer.root.findAllByType(ArkmeUserAvatar).find(node => node.props.avatarRef === 'team-app-image.forwarder')
+    expect(forwarder?.props).toMatchObject({ imageKey: 'forwarder-image', imagePort: teamAvatarImages })
     expect(visible()).toContain('外层正文')
     expect(visible()).not.toContain('仅内层详情可见的正文')
     await act(async () => renderer.root.findByProps({ 'aria-label': '内层转发' }).props.onClick())
