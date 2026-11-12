@@ -111,7 +111,7 @@ const expectedPublicMethods = [
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiLetterUnread', 'listAiLetters', 'markAiLettersRead', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
   'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setBotDirectoryPin', 'setChatDirectoryPin', 'conversationDirectoryVisibilitySnapshot', 'setConversationDirectoryVisibility', 'cachedSourceMembers', 'pageSourceMembers', 'sourceMembersPresentation', 'listSourceMembers', 'sourceMemberRecords',
-  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'privateInteractionSummary', 'queryPrivateInteractions', 'privateInteractionDirectory', 'interwovenMoments', 'interwovenMomentDetail',
+  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'editArrangement', 'privateInteractionSummary', 'queryPrivateInteractions', 'privateInteractionDirectory', 'interwovenMoments', 'interwovenMomentDetail',
   'relatedQuickNotesFromMessage', 'relatedQuickNotesFromMoment', 'relatedQuickNoteDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',

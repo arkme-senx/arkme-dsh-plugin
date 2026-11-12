@@ -22,10 +22,11 @@ import { ArkmeBotSenderName } from './ArkmeBotIdentity.js'
 import { ArkmeDetailShell } from './ArkmeDetailShell.js'
 import { ArkmeMessageDetailAuthor } from './ArkmeMessageDetailAuthor.js'
 import { arkmeDetailExtensionComposerStyles } from './detail-extension-composer-style.js'
+import { ArkmeDetailExtensionInput } from './ArkmeDetailExtensionInput.js'
 import { ArkmeRichComposerInput, type ArkmeRichComposerHandle } from './ArkmeRichComposerInput.js'
 import type { ArkmeMarkdownDraft } from './markdown-editor.js'
 import type { ArkmeProviderCapabilities } from '../types.js'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import { observeDetailScrollAnchor } from './detail-scroll-anchor.js'
 import { isArkmeTransientReadFailure } from './read-retry.js'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
@@ -53,6 +54,7 @@ import type {
 } from '../types.js'
 import { DeepSeekLogoMark } from './ArkmeDshAgentInputMarker.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { ArkmeSelfRolePicker } from './ArkmeSelfRolePicker.js'
 import { arkmePersonalAvatarRef, arkmeSelfRoleAvatarFallback, arkmeSelfRoleForPresentation } from './self-role-presentation.js'
 import { ArkmeTopicSourceIcon, arkmeDetailSourceBadgeStyle } from './ArkmeDetailSourceBadgeVisuals.js'
@@ -109,10 +111,7 @@ const styles: Record<string, CSSProperties> = {
   time: { flex: 'none', color: arkmeTheme.tertiary, fontSize: 11, lineHeight: '18px' },
   extensionComposer: { display: 'flex', flexDirection: 'column' },
   extensionAttachmentPreview: { padding: '8px 16px' },
-  extensionInputBar: arkmeDetailExtensionComposerStyles.bar,
-  extensionInputWrap: arkmeDetailExtensionComposerStyles.shell,
   extensionInput: arkmeDetailExtensionComposerStyles.input,
-  extensionTool: { width: 18, height: 28, flex: 'none', alignSelf: 'flex-start', display: 'grid', placeItems: 'center', padding: 0, border: 0, borderRadius: 6, background: 'transparent', color: arkmeTheme.tertiary, cursor: 'pointer' },
   mentionSuggestions: {
     position: 'absolute', left: 16, right: 16, bottom: 'calc(100% + 8px)', zIndex: 23,
     maxHeight: 252, overflowY: 'auto', padding: 6, boxSizing: 'border-box',
@@ -143,11 +142,6 @@ const styles: Record<string, CSSProperties> = {
   notice: { margin: '12px 0 0', fontSize: 12, color: arkmeTheme.tertiary, lineHeight: '20px' },
   toggle: { margin: '14px 0', border: 0, borderRadius: 8, padding: '6px 9px', background: arkmeTheme.hover, color: arkmeTheme.secondary, cursor: 'pointer', fontSize: 12 },
 }
-
-// EditorContent wraps ProseMirror, so the shared Markdown last-child rule cannot reach its final block.
-const extensionComposerStyles = `
-.arkme-detail-extension-input-shell .ProseMirror > :last-child { margin-bottom:0; }
-`
 
 const EMPTY_DETAIL_CONVERSATION_MEMBERS: readonly ArkmeConversationMemberItem[] = Object.freeze([])
 
@@ -473,8 +467,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
         }}
         onPreview={attachment => { setDraftPreview(attachment) }}
       /></div>}
-    <div className="arkme-detail-extension-input-bar" style={styles.extensionInputBar}>
-      <style>{extensionComposerStyles}</style>
+    <ArkmeDetailExtensionInput attachmentDisabled={disabled} onAttach={() => fileInputRef.current?.click()} before={<>
       {replyTarget && <div data-arkme-detail-reply-target={replyTarget.kind} style={{ marginBottom: 6 }}>
         <ArkmeComposerTargetPreview mode="extension" quote label={`${tr('回复')} ${replyName}`} text={replyText}
           closeLabel={tr('取消回复')} onClose={onCancelReply}/>
@@ -488,9 +481,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
           avatar: styles.mentionSuggestionAvatar!, botAvatar: styles.mentionSuggestionBotAvatar!,
           text: styles.mentionSuggestionText!, name: styles.mentionSuggestionName!, secondary: styles.mentionSuggestionSecondary! }}
       />}
-      <div className="arkme-detail-extension-input-shell" style={styles.extensionInputWrap}>
-        <button data-arkme-feedback="neutral" type="button" style={{ ...styles.extensionTool, opacity: disabled ? .4 : 1 }} aria-label={tr("添加延展附件")} disabled={disabled}
-          onClick={() => { fileInputRef.current?.click() }}><FileTextIcon size={18} /></button>
+    </>}>
         <ArkmeRichComposerInput ref={inputRef} style={styles.extensionInput!} ariaLabel={replyTarget ? `${tr('回复')} ${replyName}` : tr("延展此快记")} placeholder={replyTarget ? `${tr('回复')} ${replyName}…` : tr("延展此快记...")} value={text} disabled={disabled}
           mentions={mentions} emojis={emojis} maxLength={20000} markdownEnabled={markdownEnabled} markdown={markdown}
           onTextChange={updateText} onMarkdownChange={(value, nextText, nextMentions, nextEmojis) => {
@@ -553,8 +544,7 @@ function DetailExtensionComposer({ sourceRef, sourceIdentityKey, sourceKind, con
           shortcutHint={attachmentPreparationHint(attachments) ?? tr("Enter发送 / Shift+Enter换行")}
           onClick={() => { void send() }}
         />
-      </div>
-    </div>
+    </ArkmeDetailExtensionInput>
     {draftPreview?.localFile !== undefined && <ArkmeMediaPreview
       selected={localFileBlock(draftPreview.localFile)}
       blocks={attachments.flatMap(attachment => attachment.localFile === undefined ? [] : [localFileBlock(attachment.localFile)])}
@@ -843,7 +833,7 @@ function relatedQuickNoteReferenceExpired(error: unknown): boolean {
 export function ArkmeTimelineDetailDrawer({
   item, sourceBadge, sourceRef, sourceIdentityKey, sourceKind, selfTopicPath, selfTopicSource, onOpenSelfTopic, onOpenExtensionParent, onBackToExtension, currentSelfProfile, conversationMembers, canExtend = true, showOriginal, onClose, onToggleOriginal, shareWebsite, onMessageCopyLinkOpen, onExtensionSent, onToast,
   onOpenPrivateChatMember, selfRoleSelection, messageCreationBlocked = false, messageCreationRestriction = '',
-  detailLoading = false, detailError, onRetryDetail,
+  detailLoading = false, detailError, onRetryDetail, conversationDetail,
 }: {
   sourceBadge?: ReactNode
   item: ArkmeTimelineItem
@@ -872,6 +862,15 @@ export function ArkmeTimelineDetailDrawer({
   detailLoading?: boolean
   detailError?: string | undefined
   onRetryDetail?: () => void
+  /** Conversation-specific content and reply controls with their own read/send owner. */
+  conversationDetail?: {
+    avatar: ReactNode
+    bodyRef: RefObject<HTMLDivElement>
+    parent: ReactNode
+    content: ReactNode
+    extensions: ReactNode
+    footer: ReactNode
+  }
 }) {
   useArkmeLocale()
   const [editHistoryTarget, setEditHistoryTarget] = useState<string>()
@@ -888,7 +887,8 @@ export function ArkmeTimelineDetailDrawer({
   const [replySelection, setReplySelection] = useState<{ scopeKey: string; target: DetailReplyTarget }>()
   const [replyFocusRevision, setReplyFocusRevision] = useState(0)
   const [memberProfile, setMemberProfile] = useState<ArkmeConversationMemberItem>()
-  const bodyRef = useRef<HTMLDivElement>(null)
+  const defaultBodyRef = useRef<HTMLDivElement>(null)
+  const bodyRef = conversationDetail?.bodyRef ?? defaultBodyRef
   const scrollAnchorRef = useRef<ReturnType<typeof observeDetailScrollAnchor>>()
   const quoteThreads = useMessageQuoteThreads()
   const commentJump = useRef('')
@@ -908,7 +908,7 @@ export function ArkmeTimelineDetailDrawer({
     setReplySelection(target ? { scopeKey: replyScopeKey, target } : undefined)
     setReplyFocusRevision(value => value + 1)
   }
-  const sourceSendTasks = useDetailExtensionSends(accountKey, sourceIdentityKey ?? normalizedSourceRef)
+  const sourceSendTasks = useDetailExtensionSends(conversationDetail ? undefined : accountKey, sourceIdentityKey ?? normalizedSourceRef)
   const extensionSendTasks = sourceSendTasks.filter(task => task.rootRecordUid === item.itemUid)
   const sentNotifications = useRef(new Set<string>())
   const historyTarget = `${normalizedSourceRef}:${item.itemUid}`
@@ -1085,8 +1085,8 @@ export function ArkmeTimelineDetailDrawer({
     loadExtensionContext()
   }, [item.itemUid, sourceIdentityKey, loadExtensionContext, loadRelated])
   useEffect(() => {
-    if (bodyRef.current !== null) bodyRef.current.scrollTop = historyOpen ? 0 : scrollTopByViewRef.current[relatedView]
-  }, [relatedView, historyOpen])
+    if (!conversationDetail && bodyRef.current !== null) bodyRef.current.scrollTop = historyOpen ? 0 : scrollTopByViewRef.current[relatedView]
+  }, [relatedView, historyOpen, bodyRef, !!conversationDetail])
   const navigateRelated = (nextView: ArkmeRelatedDrawerView) => {
     if (bodyRef.current !== null) scrollTopByViewRef.current[relatedView] = bodyRef.current.scrollTop
     setRelatedView(nextView)
@@ -1136,7 +1136,7 @@ export function ArkmeTimelineDetailDrawer({
   // Only timeline bubbles omit a redundant current-topic badge. A standalone
   // detail must retain its source identity regardless of the entry point.
   const showTopicBadge = personalSource
-  const extensionFooter = !quickNoteDetailsSupported || !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
+  const extensionFooter = conversationDetail ? conversationDetail.footer : !quickNoteDetailsSupported || !canExtend || normalizedSourceRef === '' || messageActionRef === '' ? undefined : <DetailExtensionComposer
     key={replyScopeKey}
     sourceRef={normalizedSourceRef}
     sourceIdentityKey={sourceIdentityKey}
@@ -1193,7 +1193,7 @@ export function ArkmeTimelineDetailDrawer({
     headerContent={historyOpen ? undefined : <ArkmeMessageDetailAuthor at={item.sendAtMillis}
       timeSuffix={publicationTarget ? <WorldPublicationBadge target={publicationTarget}/> : undefined} bot={item.senderKind === 'bot'}
       name={item.senderKind === 'bot' ? <ArkmeBotSenderName name={authorName} detail /> : authorName}
-      avatar={<TeamRepresentationAvatar value={item.representation}><ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
+      avatar={conversationDetail ? conversationDetail.avatar : <TeamRepresentationAvatar value={item.representation}><ArkmeUserAvatar senderKind={item.senderKind} {...(authorAvatarRef === undefined ? {} : { avatarRef: authorAvatarRef })}
         {...(roleAvatarFallback === undefined ? {} : { fallback: roleAvatarFallback })}
         size={40} label={tr("作者头像")} /></TeamRepresentationAvatar>} /> }
     {...(historyOpen ? { onBack: () => { setEditHistoryTarget(undefined) }, backLabel: '返回快记详情' }
@@ -1204,10 +1204,10 @@ export function ArkmeTimelineDetailDrawer({
     {detailError && <div role="alert" style={styles.notice}>
       {tr(detailError)}{onRetryDetail && <button type="button" style={styles.toggle} onClick={onRetryDetail}>{tr('重试')}</button>}
     </div>}
-    {quickNoteDetailsSupported && extensionParent !== undefined && <DetailExtensionParent parent={extensionParent} onOpen={onOpenExtensionParent} />}
+    {conversationDetail ? conversationDetail.parent : quickNoteDetailsSupported && extensionParent !== undefined && <DetailExtensionParent parent={extensionParent} onOpen={onOpenExtensionParent} />}
     {canToggle && <button data-arkme-feedback="neutral" type="button" style={styles.toggle} onClick={onToggleOriginal}>{showOriginal ? '显示润色' : '显示原文'}</button>}
     <div data-arkme-timeline-detail-rich-content data-arkme-detail-scroll-anchor="original-message">
-      <ArkmeMessageContent
+      {conversationDetail ? conversationDetail.content : <ArkmeMessageContent
         presentation="detail"
         item={{ ...item, textContent }}
         highlightMentions
@@ -1217,7 +1217,7 @@ export function ArkmeTimelineDetailDrawer({
         {...(onMessageCopyLinkOpen === undefined ? {} : { onMessageCopyLinkOpen })}
         onMentionClick={openMentionMemberProfile}
         isMentionClickable={mentionOpensMemberProfile}
-      />
+      />}
     </div>
     {showTopicBadge && <button data-arkme-feedback="neutral" data-arkme-detail-self-topic type="button"
       style={{ ...arkmeDetailSourceBadgeStyle, cursor: canOpenTopic ? 'pointer' : 'default' }}
@@ -1236,12 +1236,12 @@ export function ArkmeTimelineDetailDrawer({
         if (bodyRef.current !== null) scrollTopByViewRef.current['source-detail'] = bodyRef.current.scrollTop
         setEditHistoryTarget(historyTarget)
       }}>{tr("已编辑")}<CaretRight size={12} style={{ flex: 'none' }} aria-hidden /></button>}
-    {quickNoteDetailsSupported && <ArkmeRelatedQuickNotesCard
+    {!conversationDetail && quickNoteDetailsSupported && <ArkmeRelatedQuickNotesCard
       state={relatedState}
       onOpen={() => { navigateRelated('related-list') }}
       onRetry={loadRelated}
     />}
-    {quickNoteDetailsSupported && <DetailExtensionContext
+    {conversationDetail ? conversationDetail.extensions : quickNoteDetailsSupported && <DetailExtensionContext
       rootItem={item}
       state={extensionState}
       optimistic={[...optimisticExtensions, ...extensionSendTasks.map(task => task.result?.extension ?? task.extension)]}
@@ -1263,7 +1263,7 @@ export function ArkmeTimelineDetailDrawer({
       onReplyThought={thought => selectReply({ kind: 'thought', thought })}
       onSelect={extension => selectReply({ kind: 'extension', item: detailExtensionTimelineItem(extension, detailExtensionAuthor(extension, personalSource, currentSelfProfile, sourceKind, conversationMembers)) })}
     />}
-    {!quickNoteDetailsSupported && <RecordThoughtContent item={item}/>}
+    {!conversationDetail && !quickNoteDetailsSupported && <RecordThoughtContent item={item}/>}
     {memberProfile !== undefined && <ArkmeMemberProfileCard
       copyLinkTarget={memberProfile.isSelf ? { kind: 'self' } : sourceRef ? { kind: 'member', sourceRef, memberRef: memberProfile.memberRef } : undefined}
       member={memberProfile}
@@ -1276,8 +1276,8 @@ export function ArkmeTimelineDetailDrawer({
   </ArkmeDetailShell>
 }
 
-function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onPrivateChatOpened, representation, segment = false, children }: {
-  name: string; time: string; avatarRef?: string | undefined; avatarKind?: 'deepseek' | undefined
+function ForwardDetailRow({ name, time, avatarRef, avatarKey, avatarKind, senderUserId, onPrivateChatOpened, representation, segment = false, children }: {
+  name: string; time: string; avatarRef?: string | undefined; avatarKey?: string | undefined; avatarKind?: 'deepseek' | undefined
   senderUserId?: number | undefined
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
   representation?: Pick<import('../team-group-contract.js').TeamRepresentationSnapshot, 'name' | 'jotmoId'> | undefined
@@ -1286,7 +1286,7 @@ function ForwardDetailRow({ name, time, avatarRef, avatarKind, senderUserId, onP
   return <div style={styles.row} {...(segment ? { 'data-arkme-forward-segment': 'true' } : {})}>
     {avatarKind === 'deepseek'
       ? <span role="img" aria-label="DeepSeek Harness 头像" style={{ width: 30, height: 30, flex: 'none' }}><DeepSeekLogoMark style={{ width: 30, height: 30, color: arkmeTheme.accent, opacity: 1 }} /></span>
-      : <ForwardSenderAvatar name={name} avatarRef={avatarRef} senderUserId={senderUserId}
+      : <ForwardSenderAvatar name={name} avatarRef={avatarRef} avatarKey={avatarKey} senderUserId={senderUserId}
         onPrivateChatOpened={onPrivateChatOpened} segment={segment} />}
     <div style={styles.content}>
       <div style={styles.meta}><span style={styles.name}>{name}</span>{representation && <TeamRepresentationBadge value={representation} />}<span style={styles.time}>{time}</span></div>
@@ -1314,15 +1314,16 @@ export function arkmeForwardSenderChatPeerId(
  * Provider resolved to another real account is actionable: transcript speakers
  * carry no account identity, and the viewer's own id never reaches the client.
  */
-function ForwardSenderAvatar({ name, avatarRef, senderUserId, onPrivateChatOpened, segment }: {
-  name: string; avatarRef?: string | undefined; senderUserId?: number | undefined
+function ForwardSenderAvatar({ name, avatarRef, avatarKey, senderUserId, onPrivateChatOpened, segment }: {
+  name: string; avatarRef?: string | undefined; avatarKey?: string | undefined; senderUserId?: number | undefined
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined; segment: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [opening, setOpening] = useState(false)
   const [error, setError] = useState('')
   const anchorRef = useRef<HTMLSpanElement>(null)
-  const avatar = <ArkmeUserAvatar {...(avatarRef === undefined ? {} : { avatarRef })} size={30}
+  const avatar = <ArkmeUserAvatar avatarRef={avatarRef} imageKey={avatarKey}
+    {...(avatarRef?.startsWith('team-app-image.') ? { imagePort: teamAvatarImages } : {})} size={30}
     label={segment ? '转写说话人头像' : '转发消息头像'} />
   const peerUserId = arkmeForwardSenderChatPeerId(senderUserId, segment, onPrivateChatOpened !== undefined)
   if (peerUserId === undefined || onPrivateChatOpened === undefined) return avatar
@@ -1356,8 +1357,8 @@ function ForwardSenderAvatar({ name, avatarRef, senderUserId, onPrivateChatOpene
     ]} />
 }
 
-export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChatOpened }: {
-  item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode
+export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChatOpened, readStatus, pending = false }: {
+  item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode; readStatus?: ReactNode; pending?: boolean
   /** Opens a resolved snapshot sender's private chat, shared by every entry path. */
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
 }) {
@@ -1372,6 +1373,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     return <ArkmeDetailShell title={recording.title || forward.title || tr("录音转写")} label={tr("录音片段详情")}
       subtitle={selectedDate === undefined ? '' : `${selectedDate.toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })} ${selectedDate.toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}>
       {sourceBadge}
+      {readStatus}
       <div data-arkme-forward-recording-detail>
         {segments.map((segment, index) => {
           const hours = Math.floor(segment.startMillis / 3_600_000)
@@ -1413,7 +1415,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     }
     const hasRecordBody = segments.length === 0 || hasDistinctText || (value.contentBlocks?.length ?? 0) > 0
     return <div key={index} style={styles.rows}>
-      {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKind={value.avatarKind}
+      {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKey={value.avatarKey} avatarKind={value.avatarKind}
         senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened} representation={value.sourceTeam}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
         {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
@@ -1440,9 +1442,10 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     subtitle={firstDate === lastDate ? firstDate : tr("{v0} 至 {v1}", { v0: firstDate, v1: lastDate })}
     footer={forwardedAt ? tr("转发于 {v0}", { v0: forwardedAt }) : '转发时间未知'} onClose={onClose}>
     {sourceBadge}
+    {readStatus}
     <div style={styles.rows}>{rows.map(renderRecord)}</div>
     <RecordThoughtContent item={item} />
-    {rows.length === 0 && <p style={styles.notice}>{tr("原快记暂不可查看")}</p>}
+    {rows.length === 0 && !readStatus && !pending && <p style={styles.notice}>{tr("原快记暂不可查看")}</p>}
     {forward.truncated && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
   </ArkmeDetailShell>
 }

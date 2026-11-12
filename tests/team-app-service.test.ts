@@ -941,6 +941,42 @@ it('projects ordinary forward summaries on the timeline and loads frozen detail 
  } finally {f.runtime.dispose()}
 })
 
+it('hydrates frozen Team authors through the scoped avatar cache without exposing their identities', async () => {
+  const avatar = 'https://jotmo-userfiles.senguo.me/forward-author.png'
+  const leaf = { owner_name: '原作者', text: '历史快记' }
+  const forward = { source_type: 'team_message', title: '转发快记' }
+  const full = { ...message, record: { ...message.record, media: [], content_payload: {
+    forward_records: { ...forward, items: [leaf, { forward_records: { items: [{ owner_name: '无头像' }, leaf] } }] },
+    forward_sender_avatars: [avatar, '', avatar],
+  } } }
+  const summary = { ...full, record: { ...full.record, content_payload: { forward_records: forward } } }
+  const f = fixture(path => path === '/forward-author.png'
+    ? new Response('avatar bytes', { headers: { 'content-type': 'image/png' } })
+    : { channel, conversation, messages: [path.endsWith('/batch-get') ? full : summary] })
+  try {
+    const conversationRef = (await open(f)).conversation!.ref
+    const page = await f.service.execute('team.app.timeline', { conversationRef }) as TeamTimeline
+    const card = page.messages[0]!
+    expect(card.forwardRecords?.items).toEqual([])
+    const [detail] = await f.service.execute('team.app.preflight', {
+      conversationRef, selections: [{ messageRef: card.ref, version: card.version }],
+    }) as import('../src/team-app-contract.js').TeamMessage[]
+    const [first, missing, repeated] = detail!.forwardRecords!.items
+    expect(first?.avatarRef).toMatch(/^team-app-image\./u)
+    expect(first?.avatarKey).toBeTruthy()
+    expect(repeated?.avatarRef).toBe(first?.avatarRef)
+    expect(repeated?.avatarKey).toBe(first?.avatarKey)
+    expect(missing?.avatarRef).toBeUndefined()
+    expect(first?.senderUserId).toBeUndefined()
+    expect(JSON.stringify(detail)).not.toContain(avatar)
+    await expect(f.service.execute('team.app.image', { imageRef: first?.avatarRef }))
+      .resolves.toMatchObject({ mimeType: 'image/png', base64: Buffer.from('avatar bytes').toString('base64') })
+    f.changeAccount()
+    await expect(f.service.execute('team.app.image', { imageRef: first?.avatarRef })).rejects.toThrow()
+    expect(f.requests.filter(request => request.path === '/forward-author.png')).toHaveLength(1)
+  } finally { f.runtime.dispose() }
+})
+
 it('projects scoped conversation cursor metadata without fetching bodies and rejects incomplete batches', async () => {
   let broken = false
   const f=fixture((path,body)=>path.endsWith('/read-state/query-list')

@@ -31,6 +31,7 @@ export const arkmeConversationMessageLayout = {
   sender: { color: arkmeTheme.text, fontSize: 12, fontWeight: 600 },
   messageHeader: { display: 'flex', alignItems: 'center', gap: 7 },
   bubble: { maxWidth: 'min(600px, 100%)', minWidth: 0, padding: '10px 13px', overflow: 'hidden', overflowWrap: 'anywhere', wordBreak: 'break-word', borderRadius: '5px 16px 16px 16px', boxSizing: 'border-box', cursor: 'pointer', border: '1px solid rgba(29,32,40,.035)' },
+  forwardBubble: { width: 354, maxWidth: '100%', minWidth: 0, padding: '13px 15px' },
   bubbleMe: { background: arkmeTheme.messageOwn, borderColor: 'rgba(83,97,145,.045)', borderRadius: '16px 5px 16px 16px', '--arkme-bubble-fade': arkmeTheme.messageOwn } as CSSProperties,
   bubbleOther: { background: arkmeTheme.messageOther, '--arkme-bubble-fade': arkmeTheme.messageOther } as CSSProperties,
   text: { margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 12, lineHeight: '20px' },

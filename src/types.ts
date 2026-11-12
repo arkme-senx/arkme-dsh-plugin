@@ -2439,6 +2439,7 @@ export interface ArkmeForwardRecordPreviewItem {
   senderName: string
   /** Opaque Provider image reference for the snapshotted sender. */
   avatarRef?: string
+  avatarKey?: string
   /**
    * Account id of the snapshotted sender, present only when the Provider
    * resolved a real account and it is not the viewer, so the snapshot can offer

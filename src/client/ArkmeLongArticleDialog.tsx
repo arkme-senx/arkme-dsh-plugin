@@ -79,19 +79,19 @@ export interface ArkmeLongArticleDialogProps {
 }
 
 /** Forwarded content is a read-only snapshot, not an editable source record. */
-export function ArkmeLongArticleSnapshotDialog({ item, onClose, standalone = false, windowMode }: {
-  item: ArkmeTimelineItem; onClose: () => void; standalone?: boolean; windowMode?: ArkmeLongArticleDialogProps['windowMode']
+export function ArkmeLongArticleSnapshotDialog({ item, onClose, standalone = false, windowMode, articleLabel }: {
+  item: ArkmeTimelineItem; onClose: () => void; standalone?: boolean; windowMode?: ArkmeLongArticleDialogProps['windowMode']; articleLabel?: string
 }) {
   const props: ArkmeLongArticleDialogProps = { sourceRef: 'snapshot', item, onClose, windowMode }
   return <ArkmeLongArticleWorkspace initial={{ sourceRef: 'snapshot', item }} props={props} standalone={standalone}
     renderArticle={(selection, workspace, close, updated, mode) => selection.sourceRef === 'snapshot'
-      ? <ArkmeLongArticleSnapshotContent item={item} onClose={close} workspace={workspace} windowMode={mode} />
+      ? <ArkmeLongArticleSnapshotContent item={item} onClose={close} workspace={workspace} windowMode={mode} articleLabel={articleLabel} />
       : <ArkmeLongArticleContent key={`${selection.sourceRef}:${selection.item?.itemUid}`} sourceRef={selection.sourceRef} item={selection.item}
           onClose={close} onUpdated={updated} windowMode={mode} workspace={workspace} />} />
 }
 
-function ArkmeLongArticleSnapshotContent({ item, onClose, workspace, windowMode }: {
-  item: ArkmeTimelineItem; onClose: () => void; workspace: ArticleWorkspaceFrame; windowMode: ArkmeLongArticleDialogProps['windowMode']
+function ArkmeLongArticleSnapshotContent({ item, onClose, workspace, windowMode, articleLabel }: {
+  item: ArkmeTimelineItem; onClose: () => void; workspace: ArticleWorkspaceFrame; windowMode: ArkmeLongArticleDialogProps['windowMode']; articleLabel?: string | undefined
 }) {
   useArkmeLocale()
   const dismissActions = useRef<(() => boolean)>()
@@ -102,7 +102,7 @@ function ArkmeLongArticleSnapshotContent({ item, onClose, workspace, windowMode 
   }, [onClose, workspace.closeTransient])
   useEffect(() => workspace.registerClose(onClose), [onClose, workspace.registerClose])
   useEffect(() => windowMode?.subscribeClose(onClose), [windowMode, onClose])
-  return <div style={{ height: '100%', minHeight: 0, display: 'flex' }} role="region" aria-label={tr("转发长文详情")}>
+  return <div style={{ height: '100%', minHeight: 0, display: 'flex' }} role="region" aria-label={articleLabel ?? tr("转发长文详情")}>
     <article style={{ ...styles.dialog, width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderRadius: 0, boxShadow: 'none', background: theme.base }} data-arkme-long-article-dialog="snapshot">
       <header style={{ ...styles.header, display: 'flex', alignItems: 'flex-start', gap: 10, padding: '20px 24px 14px' }}>
         {workspace.leading}
