@@ -1,3 +1,4 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { ConversationActionFeedbackContext, useConversationActionFeedback } from './use-conversation-action-feedback.js'
 import { TeamEntryRemovalContext, teamRemovalActions, teamRemovalEvidence, teamRemovalKey } from './TeamEntryRemovalFeedback.js'
 import { type TeamEntryTarget } from './team-directory-preferences.js'
@@ -736,6 +737,19 @@ export function arkmeRootChatUnreadPlacement(source: {
 export function ArkmeRootChatPreview({ source, disabled = false }: { source: ArkmeSourceItem; disabled?: boolean }) {
   const { preview: draftPreview } = useConversationDraftPresentation(source)
   const { mentionPrefix, preview } = arkmeRootChatPreviewParts(source)
+  const interaction = source.privateInteraction?.latest
+  const showingInteraction = draftPreview === undefined && interaction !== undefined
+    && source.activeAtMillis === interaction.occurredAtMillis
+  const contactKey = arkmeSourceIdentityKey(source)
+  useLayoutEffect(() => {
+    if (!showingInteraction || !interaction || !groupInteractionTraceEnabled()
+      || Math.abs(Date.now() - interaction.occurredAtMillis) > 120_000) return
+    const fields = { contact: groupInteractionTraceKey(contactKey), sequence: interaction.sequence }
+    groupInteractionTrace('sidebar-preview-committed', fields)
+    let painted = 0
+    const frame = requestAnimationFrame(() => { painted = requestAnimationFrame(() => groupInteractionTrace('sidebar-preview-painted', fields)) })
+    return () => { cancelAnimationFrame(frame); cancelAnimationFrame(painted) }
+  }, [showingInteraction, contactKey, interaction?.interactionRef])
   // Reactions are an independent reminder, never a replacement for the latest message.
   return <>
     {draftPreview !== undefined ? <ArkmeDraftPreviewText preview={draftPreview} /> : <span style={styles.preview}>

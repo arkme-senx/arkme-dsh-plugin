@@ -1,3 +1,5 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
+import { wakeArkmeFileTask } from './file-send-tasks.js'
 import { publishThoughtInvalidation } from './thought-invalidations.js'
 import { createTeamMessageNotificationPresenter } from './team-message-notifications.js'
 import { invalidateMessageQuoteSources } from './message-quote-invalidations.js'
@@ -45,15 +47,17 @@ export function arkmeSelectedBotAffectedByChatDelta(
     && item.sourceKey === selectedBot.chatSourceKey)
 }
 
+function chatDeltaSourceKey(item: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>['updates'][number]): string {
+  return arkmeChatSourceIdentityKey({
+    sourceRef: item.source.sourceRef,
+    ...((item.sourceKey ?? item.source.sourceKey) === undefined ? {} : { sourceKey: item.sourceKey ?? item.source.sourceKey }),
+  })
+}
+
 export function arkmeChatDeltaSourceKeys(
   update: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>,
 ): string[] {
-  return [...new Set(update.updates.map(item => arkmeChatSourceIdentityKey({
-    sourceRef: item.source.sourceRef,
-    ...(item.sourceKey ?? item.source.sourceKey) === undefined
-      ? {}
-      : { sourceKey: item.sourceKey ?? item.source.sourceKey },
-  })))]
+  return [...new Set(update.updates.map(chatDeltaSourceKey))]
 }
 
 export function arkmeChatDeltaCalendarDateStamps(
@@ -249,6 +253,10 @@ export function useArkmeRealtimeClientEvents(
         }
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
+        if (update.type === 'file-send-progress') {
+          wakeArkmeFileTask(update.userId, update.taskRef)
+          return
+        }
         diagnoseAttention('accepted', update)
         if (update.type === 'thought-invalidated') {
           if (update.accountScope === authenticatedAccountScope) publishThoughtInvalidation(update)
@@ -257,12 +265,19 @@ export function useArkmeRealtimeClientEvents(
         if (update.type === 'message-sync-progress') {
           arkmeMessageSync.apply(update.progress)
           if (update.progress.accountKey === authenticatedAccountScope) {
-            if (update.projections?.length) arkmeChatTimelineDelta.applySyncProjections(update.projections)
+            if (update.projections?.length) {
+              arkmeChatTimelineDelta.applySyncProjections(update.projections)
+              arkmeInterwovenInvalidation.applyGroupAccess(update.projections)
+            }
+            if (update.interactionSourceKeys?.length) {
+              groupInteractionTrace('catchup-interaction-contacts', { count: update.interactionSourceKeys.length })
+              arkmeInterwovenInvalidation.invalidate(undefined, update.interactionSourceKeys)
+            }
             if (update.sourceKeys?.length) arkmeChatTimelineDelta.localCacheUpdated(update.sourceKeys)
           }
           return
         }
-        if(update.type==='team-invalidated'&&(update.change?.kind==='team.group.changed'||update.change?.kind==='team.group.source.changed'||update.change?.kind==='team.group.timeline.changed')) {invalidateTeamWorkspace(authenticatedAccountScope,update.change.canonicalChatSourceKey);if(update.change.canonicalChatSourceKey)arkmeInterwovenInvalidation.invalidate(update.change.canonicalChatSourceKey);return}
+        if(update.type==='team-invalidated'&&(update.change?.kind==='team.group.changed'||update.change?.kind==='team.group.source.changed'||update.change?.kind==='team.group.timeline.changed')) {invalidateTeamWorkspace(authenticatedAccountScope,update.change.canonicalChatSourceKey);if(update.change.canonicalChatSourceKey)arkmeInterwovenInvalidation.invalidate(update.change.canonicalChatSourceKey, undefined, false, 'team-group-event');return}
         // A subscription snapshot is not an upstream reconnect. Only a gap
         // or the Host's explicit reconcile invalidates already authorized Team content.
         const teamReconcile = update.type === 'reconcile' && (update.refresh !== 'if-stale' || localReconnectGap)
@@ -275,12 +290,12 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'members-invalidated') {
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true, 'members-changed')
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           return
         }
         if (update.type === 'member-events-invalidated') {
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true, 'member-event')
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           publishMemberEventHint({ account:authenticatedAccountScope, sourceKey:update.sourceKey,
             eventId:update.eventId, occurredAtMillis:update.occurredAtMillis })
@@ -303,7 +318,7 @@ export function useArkmeRealtimeClientEvents(
           officialNotifications.invalidate(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
-          arkmeInterwovenInvalidation.invalidate()
+          arkmeInterwovenInvalidation.invalidate(undefined, undefined, false, 'realtime-reconcile')
           reconcileReceipts()
           invalidateDirectMessageAdmission()
           if (update.refresh === 'none') return
@@ -323,7 +338,7 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'read-ack') {
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, update.sourceKind === 'private_chat' ? [] : undefined, false, 'read-ack')
           arkmeChatDirectory.updateReadAck(
             update.sourceRef,
             update.sourceKey,
@@ -370,7 +385,7 @@ export function useArkmeRealtimeClientEvents(
           // A metadata-only hint does not identify a removed/locked topic. Reconcile
           // the existing directory atomically; account changes and access errors still clear it.
           invalidateSelfTopicDirectories()
-          arkmeInterwovenInvalidation.invalidate()
+          if (!update.recordReconnect) arkmeInterwovenInvalidation.invalidate(undefined, undefined, false, 'record-projection')
           // Includes privacy/hierarchy changes: never retain an old visible count.
           arkmeCalendarInvalidations.publishAll({ hard: true })
           arkmeUi.recordChanged()
@@ -385,11 +400,15 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'timeline-changed') {
+          if (!arkmeChatTimelineDelta.applyTimelineChange(update)) return
           publishThoughtInvalidation({ accountScope: authenticatedAccountScope, sourceKey: update.sourceKey, timelineItemKey: update.timelineItemKey, clear: update.changeKind !== 'extended' })
           invalidateMessageQuoteSources(update.sourceKey)
           invalidateMessageMarks(true)
-          arkmeChatTimelineDelta.applyTimelineChange(update)
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          const sourceKind = update.changeKind === 'deleted' ? update.sourceKind
+            ?? arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.kind : undefined
+          const reason = sourceKind === 'group_chat' ? 'timeline-deleted'
+            : sourceKind === 'private_chat' ? 'timeline-private-deleted' : 'timeline-changed'
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true, reason)
           arkmeCalendarInvalidations.publishAll()
           return
         }
@@ -399,19 +418,31 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'chat-policy-invalidated') {
           invalidateMessageQuoteSources()
-          arkmeInterwovenInvalidation.invalidate()
+          arkmeInterwovenInvalidation.invalidate(undefined, undefined, true, 'chat-policy')
           if (update.refresh === 'none') return
           arkmeChatDirectory.invalidateRoot()
           void arkmeChatDirectory.refreshRoot({ force: true, silent: true }).catch(() => undefined)
           return
         }
         if (update.type === 'conversation-list-preference-invalidated') {
-          arkmeInterwovenInvalidation.invalidate()
+          arkmeInterwovenInvalidation.invalidate(undefined, undefined, true, 'list-preference')
           if (update.refresh === 'none') return
           arkmeUi.chatChanged()
           return
         }
         if (update.type !== 'sessions-delta') return
+        const privateDeltas = new Map(update.updates.filter(item => item.source.kind === 'private_chat')
+          .map(item => [chatDeltaSourceKey(item), item.source]))
+        const existingPrivateKeys = new Set<string>()
+        if (privateDeltas.size > 0) {
+          for (const source of arkmeChatDirectory.getSnapshot().sources) {
+            if (source.kind !== 'private_chat') continue
+            const key = arkmeChatSourceIdentityKey(source)
+            const incoming = privateDeltas.get(key)
+            if (incoming !== undefined && incoming.peerUserId === source.peerUserId) existingPrivateKeys.add(key)
+            if (existingPrivateKeys.size === privateDeltas.size) break
+          }
+        }
         arkmeChatDirectory.upsertMany(update.updates.map(item => ({
           source: item.source,
           ...(item.sourceKey === undefined ? {} : { sourceKey: item.sourceKey }),
@@ -440,7 +471,21 @@ export function useArkmeRealtimeClientEvents(
           arkmeCalendarInvalidations.publish({ dateStamp })
         }
         if (foreground && arkmeSelectedBotAffectedByChatDelta(arkmeUi.getSnapshot().selectedBot, update)) arkmeUi.chatChanged()
-        for (const sourceKey of arkmeChatDeltaSourceKeys(update)) arkmeInterwovenInvalidation.invalidate(sourceKey)
+        for (const item of update.updates) {
+          const sourceKey = chatDeltaSourceKey(item)
+          const peers = item.source.kind === 'private_chat' && existingPrivateKeys.has(sourceKey) ? [] : item.interactionSourceKeys
+          if (groupInteractionTraceEnabled() && (item.source.kind === 'group_chat' || item.source.kind === 'private_chat')) {
+            groupInteractionTrace('browser-delta-received', {
+              ...(item.source.kind === 'group_chat' ? { group: groupInteractionTraceKey(sourceKey) } : { contact: groupInteractionTraceKey(sourceKey) }),
+              sourceKind: item.source.kind, sequence: item.source.latestSequence, timelineItems: item.timelineItems.length,
+              targets: peers?.map(groupInteractionTraceKey).join(','),
+              mode: peers === undefined ? 'directory' : 'targeted',
+            })
+          }
+          arkmeInterwovenInvalidation.invalidate(sourceKey, peers, false,
+            peers === undefined && item.source.kind === 'group_chat' ? 'group-session-delta-unscoped' : 'session-delta-unscoped')
+          if (item.reconcileInteractionRead) arkmeInterwovenInvalidation.refreshDirectory('group-read-cursor')
+        }
       } catch { /* Ignore malformed local frames; transport keeps the channel alive. */ }
     }
     const disconnectEvents = () => {
@@ -459,7 +504,6 @@ export function useArkmeRealtimeClientEvents(
       updateForeground()
       connectEvents()
       if (browserDocument?.visibilityState !== 'hidden') {
-        arkmeInterwovenInvalidation.invalidate()
         reconcileReceipts()
         void refreshUnread(true)
           .then(() => { if (!stopped) arkmeUi.chatChanged() })
@@ -485,7 +529,6 @@ export function useArkmeRealtimeClientEvents(
     }
     browserWindow?.addEventListener('online', handleOnline)
     const handleWindowFocus = () => {
-      arkmeInterwovenInvalidation.invalidate()
       if (ownsMessagePreparing) recoverDirectory()
       arkmeConversationMembers.refreshActive()
       reconcileReceipts()

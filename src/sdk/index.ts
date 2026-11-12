@@ -1,3 +1,4 @@
+import { directoryTraceHeader, groupInteractionTrace, isDirectoryTraceId } from '../group-interaction-diagnostics.js'
 import type { LoginDeviceRequest, LoginDeviceResult } from '../login-devices-contract.js'
 export type * from '../login-devices-contract.js'
 export type {SelectedTextNoteQuote,SelectedTextForwardInput} from '../selected-text-note.js'
@@ -534,6 +535,8 @@ export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
 /** Browser scheduling hint only; never part of the Host operation payload. */
 export interface ArkmeSdkTransportOptions {
   priority?: 'high' | 'low' | 'auto'
+  /** @internal Loopback directory timing correlation. */
+  directoryTraceId?: string
 }
 
 export interface ArkmeSdkOptions {
@@ -2057,6 +2060,10 @@ export class ArkmeSdk {
     return await this.call<ArkmeArrangementReminderSummary>('arrangements.reminders.summary', undefined, signal)
   }
 
+  async editArrangement(input: import('../types.js').ArkmeArrangementEditInput, signal?: AbortSignal): Promise<import('../types.js').ArkmeArrangementEditResult> {
+    return this.call<import('../types.js').ArkmeArrangementEditResult>('arrangements.edit', { ...input }, signal)
+  }
+
   async mutateArrangement(
     arrangementRef: string,
     intent: ArkmeArrangementMutationIntent,
@@ -3530,14 +3537,18 @@ export class ArkmeSdk {
     signal?: AbortSignal,
     transport?: ArkmeSdkTransportOptions,
   ): Promise<T> {
+    const traceId = operation === 'private-interaction.directory' && isDirectoryTraceId(transport?.directoryTraceId)
+      ? transport.directoryTraceId : undefined
+    if (traceId) groupInteractionTrace('directory-fetch-start', { traceId })
     const response = await this.fetchImpl(this.route, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(traceId ? { [directoryTraceHeader]: traceId } : {}) },
       body: JSON.stringify({ operation, ...(params === undefined ? {} : { params }) }),
       ...(signal === undefined ? {} : { signal }),
       ...(transport?.priority === undefined ? {} : { priority: transport.priority }),
     })
+    if (traceId) groupInteractionTrace('directory-fetch-headers', { traceId, status: response.status })
     let body: ArkmePluginResponse<T>
     try {
       body = await response.json() as ArkmePluginResponse<T>

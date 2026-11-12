@@ -21,7 +21,11 @@ beforeEach(() => {
     { id: 'arkme-managed', name: 'Arkme', models: [{ id: 'pro', name: 'DeepSeek Pro', reasoning: { efforts: [{ id: 'high', name: '高' }, { id: 'low', name: '低' }], defaultEffort: 'high' } }] },
   ], failures: [], status: 'ready', error: null }
   directory = { store: { getSnapshot: () => state, subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } }, update: vi.fn() }, load: vi.fn(async () => undefined),
-    select: vi.fn(async selection => { state = { ...state, current: selection }; listeners.forEach(listener => listener()) }) }
+    select: vi.fn(async selection => {
+      state = { ...state, current: selection, status: 'ready', error: null }
+      listeners.forEach(listener => listener())
+      return { ok: true, value: undefined }
+    }) }
   mocks.callArkme.mockReset().mockImplementation(async op => {
     if (op === 'models.directory') return { accountScope: 'production:42', observedAt: 1, models: [], failures: [] }
     if (op === 'account.points.query') return { accountScope: 'production:42', unit: 'ai_points', availablePoints: '123.45', reservedPoints: '0' }
@@ -54,6 +58,25 @@ it('retains the previous owner selection on rejection and restores focus on Esca
   expect(state.current?.provider).toBe('deepseek'); expect(document.body.textContent).toContain('选择失败')
   await act(async () => document.querySelector('.arkme-unified-model-panel')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })))
   expect(document.querySelector('.arkme-unified-model-panel')).toBeNull(); expect(document.activeElement).toBe(host.querySelector('.arkme-model-trigger'))
+})
+it('keeps the picker open on a rejected DSH result and lets the user retry', async () => {
+  directory.select = vi.fn(directory.select).mockImplementationOnce(async () => {
+    const error = { code: 'model-unavailable', message: '选择失败' }
+    state = { ...state, status: 'error', error: `${error.code}: ${error.message}` }
+    listeners.forEach(listener => listener())
+    return { ok: false, error }
+  })
+  await render(); await click('DeepSeek Flash⌄')
+  const choosePro = () => act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+    .find(option => option.textContent?.includes('DeepSeek Pro'))!.click())
+  await choosePro()
+  expect(document.querySelector('.arkme-unified-model-panel')).not.toBeNull()
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('选择失败')
+  expect(document.querySelector('[role="option"][aria-selected="true"]')?.textContent).toContain('DeepSeek Flash')
+  await choosePro()
+  expect(directory.select).toHaveBeenCalledTimes(2)
+  expect(state.current?.model).toBe('pro')
+  expect(document.querySelector('.arkme-unified-model-panel')).toBeNull()
 })
 it('honors unavailable and locked sessions', async () => {
   await render(false); expect(directory.load).not.toHaveBeenCalled(); expect(host.querySelector('button')).toBeNull()

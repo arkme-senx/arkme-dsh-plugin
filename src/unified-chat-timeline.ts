@@ -29,6 +29,8 @@ export interface ArkmeTimelineSourceStatus {
 export interface ArkmeTimelineEventOrder {
   /** Stable account-bound event identity, distinct from a Record identity. */
   eventId: string
+  /** Host-issued locator for system rows supported by the around endpoint. */
+  systemRef?: string
   source: ArkmeTimelineSource
   occurredAtMillis: number
   orderTie: string

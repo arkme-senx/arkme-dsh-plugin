@@ -77,15 +77,17 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
     return <article data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key}
       data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
       style={layout.notice}>
-      {onDetail && !selecting ? <button type="button" onClick={onDetail}
-        style={{ padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer' }}>{notice}</button> : notice}
+      {onDetail ? <button type="button" onClick={selecting ? undefined : onDetail}
+        aria-disabled={selecting || undefined} tabIndex={selecting ? -1 : undefined}
+        style={{ padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: selecting ? 'default' : 'pointer' }}>{notice}</button> : notice}
     </article>
   }
+  const openMessage = () => { if (available && !selecting) onDetail?.() }
   return <article data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
     data-team-selectable={teamMessageSelectable(message) ? message.key : undefined}
     data-arkme-read-sequence={published && available && message.version > 0 && !selecting ? message.seq : undefined}
     onClickCapture={event => { if (selecting) { event.preventDefault(); event.stopPropagation(); if (!busy) onToggle?.() } }}
-    data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther), ...(selecting ? messageSelectionStyles.rowSelectAvatarMode : {}), ...(selected ? messageSelectionStyles.rowSelectedForAction : {}) }}>
+    data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key} style={{ ...layout.row, ...(message.own ? layout.rowMe : layout.rowOther), ...(selecting ? { ...messageSelectionStyles.rowSelectAvatarMode, marginBottom: 0 } : {}), ...(selected ? messageSelectionStyles.rowSelectedForAction : {}) }}>
     {selecting && <ArkmeMessageSelectionControl anchor="avatar" checked={selected} disabled={busy || !teamMessageSelectable(message)} onToggle={() => onToggle?.()} />}
     <div data-arkme-extension-message-cluster={available && message.reply ? 'true' : undefined} style={{minWidth:0,maxWidth:'100%',display:'flex',flexDirection:'column',alignItems:message.own?'flex-end':'flex-start'}}>
       {available && message.reply && <TeamMessageMediaScope conversationRef={conversationRef} conversationKey={conversationKey} message={{...message,ref:message.reply.ref,key:message.reply.key,revision:0,version:message.reply.version,media:message.reply.media ?? []}}>
@@ -102,15 +104,23 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
           state={recipientRead === undefined ? 'error' : 'unread'}
           label={tr(recipientRead === undefined ? '已读状态同步中' : showReceipts ? '未读，查看阅读状态' : '团队尚未查阅')}
           {...(showReceipts ? { onClick: () => onReceipts(receiptButton.current) } : {})} />}
-        <div ref={bubble} className="arkme-timed-bubble" data-arkme-message-direction={message.own?'self':'other'} data-team-message-located={located || undefined} style={{ ...layout.bubble, ...(checking && checkedSize.current ? {width:checkedSize.current.width,minHeight:checkedSize.current.height} : {}), ...(message.own ? layout.bubbleMe : layout.bubbleOther), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}), ...(located ? { outline: '2px solid var(--dsw-alias-state-business-primary, #8295e8)', outlineOffset: 3 } : {}) }} tabIndex={0}
+        <div ref={bubble} className="arkme-timed-bubble" data-arkme-message-direction={message.own?'self':'other'} data-team-message-located={located || undefined} style={{ ...layout.bubble, ...(checking && checkedSize.current ? {width:checkedSize.current.width,minHeight:checkedSize.current.height} : {}), ...(message.own ? layout.bubbleMe : layout.bubbleOther), ...(message.forwardRecords ? layout.forwardBubble : {}), cursor: selecting ? 'pointer' : 'text', ...(selecting ? { userSelect: 'none' } : {}), ...(located ? { outline: '2px solid var(--dsw-alias-state-business-primary, #8295e8)', outlineOffset: 3 } : {}) }} role={available && !selecting ? 'button' : undefined} tabIndex={0}
           aria-label={tr('消息操作')} aria-busy={checking || undefined}
           onClick={event => {
             if (!available || selecting || captureMessageTextSelection(bubble.current ?? undefined)
-              || (event.target instanceof Element && event.target.closest('a,button,input,video,audio,[role="button"],[data-arkme-message-mark]'))) return
-            onDetail?.()
+              || !(event.target instanceof Element) || !event.currentTarget.contains(event.target)) return
+            const control = event.target.closest('a,button,input,video,audio,[role="button"],[data-arkme-message-mark]')
+            if (control && control !== event.currentTarget) return
+            openMessage()
           }}
           onContextMenu={event => { if (selecting || !published || (!available && !message.canRecall)) return; setMenu(captureMessageContextMenu(event, event.currentTarget)) }}
-          onKeyDown={event => { if (!selecting && published && (available || message.canRecall) && (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey)) {
+          onKeyDown={event => {
+            if (available && !selecting && event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+              event.preventDefault()
+              openMessage()
+              return
+            }
+            if (!selecting && published && (available || message.canRecall) && (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey)) {
             const rect = event.currentTarget.getBoundingClientRect()
             setMenu(captureMessageContextMenu({ clientX: rect.left, clientY: rect.bottom, preventDefault: () => event.preventDefault(), stopPropagation: () => event.stopPropagation() }, event.currentTarget))
           } }}>

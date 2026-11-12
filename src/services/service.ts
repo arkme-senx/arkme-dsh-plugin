@@ -1,3 +1,4 @@
+import { directoryTraceSignals, groupInteractionTrace } from '../group-interaction-diagnostics.js'
 import { ArkmePluginError } from './service-error.js'
 export { ArkmePluginError } from './service-error.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -62,6 +63,7 @@ arkoFileRefs(userId:number):Promise<string[]>
   readCancellationCompletion?(): Promise<import('../state-store.js').ArkmeCancellationCompletion | undefined>
   writeCancellationCompletion?(completion: import('../state-store.js').ArkmeCancellationCompletion | undefined): Promise<void>
   readonly messageMarks?: import('../local-message-marks.js').LocalMessageMarkStore
+  readonly personImpact?: import('../local-person-impact.js').LocalPersonImpactStore
   readonly commonGroups?: import('../common-groups.js').CommonGroupStore
   readRecordingSpeakerCache?(scope: string, userId: number): Promise<import('../types.js').ArkmeRecordingSpeakerCandidate[] | undefined>
   writeRecordingSpeakerCache?(scope: string, userId: number, candidates: import('../types.js').ArkmeRecordingSpeakerCandidate[]): Promise<void>
@@ -666,7 +668,11 @@ export class ServiceRuntime {
       '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
-    if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
+    if (baseUrl === this.config.audioBaseUrl && new Set([
+      '/api/v1/audio/unmarked-speakers/list', '/api/v1/audio/get-session-ls',
+      '/api/v1/audio/speaker-directory/summary', '/api/v1/audio/speaker-directory/list',
+      '/api/v1/audio/speaker-directory/similar', '/api/v1/audio/speaker-directory/voice-samples',
+    ]).has(path)) return true
     return false
   }
 
@@ -682,6 +688,8 @@ export class ServiceRuntime {
     preserveHttpError = false,
     preserveForbiddenError = false,
   ): Promise<T> {
+    const directoryRead = baseUrl === this.config.chatBaseUrl && path === '/api/v1/chats/interwoven/directory/query'
+      && !(body instanceof FormData)
     const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
     const requestTimeoutMs = options.requestTimeoutMs ?? this.config.requestTimeoutMs
     const route = `${baseUrl.replace(/\/+$/, '')}${path}`
@@ -703,9 +711,11 @@ export class ServiceRuntime {
         owner: options.key?.startsWith('projection:display:') ? 'realtime'
           : trace.includes('RuntimeBotDisplayProfilesReader') ? 'bot-display' : 'directory' })
     }
-    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic ? reactionQueue : (event, detail) => {
+    const traceId = directoryRead && signal ? directoryTraceSignals.get(signal) : undefined
+    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !traceId ? reactionQueue : (event, detail) => {
       reactionQueue?.(event, detail)
-      console.info('dsh-arkme: timeline_transport_queue', { atMillis: Date.now(), path, pool: messageSync ? 'message-sync' : 'shared', event, ...detail })
+      if (traceId) groupInteractionTrace('directory-host-queue', { traceId, event, ...detail })
+      if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_queue', { atMillis: Date.now(), path, pool: messageSync ? 'message-sync' : 'shared', event, ...detail })
     }
     return await measureReaction('upstream-total', { route: path }, () => coordinator.run<T>({
       scope: options.scope ?? 'public',
@@ -717,6 +727,11 @@ export class ServiceRuntime {
       ...(options.bypassCache === undefined ? {} : { bypassCache: options.bypassCache }),
       ...(options.cancelWhenUnobserved === undefined ? {} : { cancelWhenUnobserved: options.cancelWhenUnobserved }),
       ...(signal === undefined ? {} : { signal }),
+      ...(directoryRead ? {
+        key: `owner-read:${route}:${stableReadParameters(body)}`,
+        cancelWhenUnobserved: true,
+        continuation: typeof body.cursor === 'string' && /^[a-f0-9]{64}$/.test(String(body.expected_version)),
+      } : {}),
       ...(read ? {
         lane: lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
         route,
@@ -1330,6 +1345,28 @@ export class ServiceRuntime {
     return this.authenticatedMediaStream('record','/api/v1/content/source-stream',{...options,body,sourceAttachment:true})
   }
 
+  async authenticatedRecordSourceThumbnail(
+    body: Record<string, unknown>, expectedUserId: number, key: string, validator: string | undefined, signal?: AbortSignal,
+  ): Promise<{ data?: Uint8Array; etag: string }> {
+    const session = await this.requireSession()
+    return await this.mediaStreamCoordinator.run({
+      scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'record',
+      key: JSON.stringify(['source-thumbnail', key, validator]), cancelWhenUnobserved: true,
+      ...(signal ? { signal } : {}),
+      operation: async signal => {
+        const { value, finished } = await this.openMediaStream('record', '/api/v1/content/source-thumbnail', {
+          body, expectedUserId, sourceAttachment: true, thumbnail: true, maxBytes: 512 * 1024,
+          ...(validator ? { validator } : {}), signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]),
+        }, session)
+        const etag = value.headers.get('etag')!
+        if (value.status === 304) return { etag }
+        const data = new Uint8Array(await value.arrayBuffer())
+        await finished
+        return { data, etag }
+      },
+    })
+  }
+
   private async authenticatedMediaStream(service: 'audio' | 'record', path: string, options: {
     expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean
   }): Promise<Response> {
@@ -1348,7 +1385,7 @@ export class ServiceRuntime {
   }
 
   private async openMediaStream(service: 'audio' | 'record', path: string, options: {
-    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean
+    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean;thumbnail?:boolean;validator?:string
   }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
     const base = new URL(service === 'audio' ? this.config.audioBaseUrl : this.config.recordBaseUrl)
     const url = new URL(path, base)
@@ -1379,7 +1416,7 @@ export class ServiceRuntime {
       await assertAccount()
       return await this.fetchImpl(url, {
         method: options.body === undefined ? options.method ?? 'GET' : 'POST',
-        headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.range === undefined ? {} : { Range: options.range }), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
+        headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.validator ? { 'If-None-Match': options.validator } : {}), ...(options.range === undefined ? {} : { Range: options.range }), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(options.body === undefined ? {} : { body: options.sourceAttachment ? stringifyOwnerJson(options.body) : JSON.stringify(options.body) }),
         redirect: 'error', signal,
       })
@@ -1403,6 +1440,14 @@ export class ServiceRuntime {
         // Shares the opening-stage budget and account cancellation.
         // No byte has been published yet; never replay a partly consumed stream.
         await waitForCapacity(Math.max(1_000, delay), undefined, { signal })
+      }
+      if (options.thumbnail) {
+        const etag = response.headers.get('etag') ?? ''
+        const verified = response.headers.get('X-Jotmo-Source-Stream') === '1' && /^"[a-f0-9]{64}"$/.test(etag)
+        if (response.status === 304 && verified && etag === options.validator) {
+          return { value: new Response(null, { status: 304, headers: { etag } }), finished: Promise.resolve() }
+        }
+        if (response.status === 200 && (!verified || response.headers.get('content-type') !== 'image/webp')) throw invalid()
       }
       if (response.status !== 200 && response.status !== 206) {
         throw new ArkmePluginError('media-fetch-failed', '媒体当前不可用', response.status >= 500,
@@ -1568,13 +1613,13 @@ export class ServiceRuntime {
     let session = initialSession ?? await this.requireSession()
     const requestOptions = () => this.authenticatedRequestOptions(session, 'relation', 'interactive-read', options)
     try {
-      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions(), path.startsWith('/api/v1/entity/identities/'))
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions(), path.startsWith('/api/v1/entity/identities/'))
     }
   }
 

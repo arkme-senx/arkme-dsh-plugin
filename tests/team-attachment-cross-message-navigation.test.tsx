@@ -90,7 +90,8 @@ it.each(['pane','preview'] as const)('connects the %s to loaded neighbours, pagi
  expect(document.querySelector('[data-message="b"]')?.getAttribute('data-navigation-key')).toBe('b')
  expect(document.querySelector('[data-message="b"]')?.getAttribute('data-neighbours')).toBe('b,c')
  const owner=observed!
- const more=[...document.querySelectorAll('button')].find(button=>button.textContent==='加载更早消息')!
+ const pagingLabel=mode==='pane'?'继续加载更早消息':'加载更早消息'
+ const more=[...document.querySelectorAll('button')].find(button=>button.textContent===pagingLabel)!
  await act(async()=>more.click())
  expect(observed).toBe(owner)
  expect(owner.getSnapshot().map(entry=>entry.key)).toEqual(['a','b','c'])

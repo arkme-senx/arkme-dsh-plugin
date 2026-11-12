@@ -219,6 +219,13 @@ it('recalls by server capability even without readable body, and renders termina
  expect(host.textContent).not.toContain(message.content!.text_content)
  await mouse(notice.querySelector('button')!, 'click')
  expect(detail).toHaveBeenCalledOnce()
+ const noticeButton = notice.querySelector('button')!
+ await act(async () => root.render(<Fixture msg={recalled} selecting />))
+ expect(notice.querySelector('button')).toBe(noticeButton)
+ expect(noticeButton.getAttribute('aria-disabled')).toBe('true')
+ expect(notice.querySelector('[data-arkme-select-check]')).toBeNull()
+ await mouse(noticeButton, 'click')
+ expect(detail).toHaveBeenCalledOnce()
  await render({...recalled,own:false})
  expect(notice.textContent).toBe('对方撤回了一条消息')
 })
@@ -240,4 +247,15 @@ it('shows a pending authority check separately from a confirmed unavailable or r
   await render({...message,state:'recalled'}, false)
   expect(host.textContent).toContain('对方撤回了一条消息')
   expect(host.textContent).not.toContain(message.content!.text_content)
+})
+
+it('opens a Team message with Enter and Space without activating nested controls', async () => {
+  await render()
+  const bubble = host.querySelector('.arkme-timed-bubble')!
+  for (const key of ['Enter', ' ']) {
+    await act(async () => { bubble.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })) })
+  }
+  expect(detail).toHaveBeenCalledTimes(2)
+  await act(async () => { bubble.querySelector('p')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
+  expect(detail).toHaveBeenCalledTimes(2)
 })

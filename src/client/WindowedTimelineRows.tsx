@@ -5,19 +5,19 @@ const CHUNK_SIZE = 40
 const MAX_MOUNTED_ROWS = 200
 
 /** Variable-height chunks share one observer. Off-screen media/reaction subtrees are unmounted. */
-export const WindowedTimelineRows = memo(function WindowedTimelineRows({ children, rowIds, scrollport, anchorId }: {
-  children: ReactNode[]; rowIds: readonly { id: string; renderKey?: string }[]; scrollport: RefObject<HTMLDivElement>; anchorId?: string | undefined
-}) {
+export const WindowedTimelineRows = memo(function WindowedTimelineRows({ children, renderRow, rowIds, scrollport, anchorId }: {
+  rowIds: readonly { id: string; renderKey?: string }[]; scrollport: RefObject<HTMLDivElement>; anchorId?: string | undefined
+} & ({ children: ReactNode[]; renderRow?: never } | { renderRow: (index: number) => ReactNode; children?: never })) {
   const previousChunks = useRef<TimelineRowChunk[]>([])
   const chunks = useMemo(() => {
     const partition = timelineRowChunks(rowIds.map(row => ({ id: row.renderKey ?? row.id })), previousChunks.current, CHUNK_SIZE)
     let offset = 0
     return partition.map(chunk => {
-      const rows = children.slice(offset, offset + chunk.rowIds.length)
+      const start = offset
       offset += chunk.rowIds.length
-      return { ...chunk, rows }
+      return { ...chunk, start, end: offset }
     })
-  }, [children, rowIds])
+  }, [rowIds])
   useLayoutEffect(() => { previousChunks.current = chunks }, [chunks])
   const chunkIdentity = chunks.map(chunk => chunk.id).join('\0')
   const anchor = rowIds.find(row => row.id === anchorId)
@@ -74,18 +74,23 @@ export const WindowedTimelineRows = memo(function WindowedTimelineRows({ childre
   // Keep the explicit restore target mounted until the observer catches up.
   const forced = chunks[target >= 0 ? target : chunks.length - 1]?.id
   return <>{chunks.map(chunk => <TimelineChunk key={chunk.id} id={chunk.id}
-    mounted={children.length <= 3 * CHUNK_SIZE || visible.has(chunk.id) || chunk.id === forced}
-    estimate={heights.current.get(chunk.id) ?? chunk.rows.length * 100}
+    mounted={(children?.length ?? rowIds.length) <= 3 * CHUNK_SIZE || visible.has(chunk.id) || chunk.id === forced}
+    estimate={heights.current.get(chunk.id) ?? chunk.rowIds.length * 100}
     register={element => { if (element) elements.current.set(chunk.id, element); else elements.current.delete(chunk.id) }}
-    measured={height => heights.current.set(chunk.id, height)}>
-    {chunk.rows}
-  </TimelineChunk>)}</>
+    measured={height => heights.current.set(chunk.id, height)}
+    children={children} renderRow={renderRow} start={chunk.start} end={chunk.end} />)}</>
 })
 
-function TimelineChunk({ id, mounted, estimate, register, measured, children }: {
+function TimelineChunk({ id, mounted, estimate, register, measured, children, renderRow, start, end }: {
   id: string; mounted: boolean; estimate: number; register(element: HTMLLIElement | null): void
-  measured(height: number): void; children: ReactNode[]
+  measured(height: number): void; children: ReactNode[] | undefined
+  renderRow: ((index: number) => ReactNode) | undefined; start: number; end: number
 }) {
+  const rows = useMemo(() => {
+    if (!mounted) return undefined
+    return renderRow ? Array.from({ length: end - start }, (_, index) => renderRow(start + index))
+      : children?.slice(start, end)
+  }, [mounted, renderRow, children, start, end])
   const element = useRef<HTMLLIElement | null>(null)
   const height = useRef(estimate)
   const measureRef = useRef(measured); measureRef.current = measured
@@ -105,6 +110,6 @@ function TimelineChunk({ id, mounted, estimate, register, measured, children }: 
   }, [mounted])
   return <li ref={node => { element.current = node; register(node) }} data-arkme-timeline-chunk={id}
     aria-hidden={!mounted || undefined} style={{ listStyle: 'none', flex: 'none', ...(mounted ? {} : { height: height.current }) }}>
-    {mounted && <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}>{children}</ul>}
+    {mounted && <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column' }}>{rows}</ul>}
   </li>
 }

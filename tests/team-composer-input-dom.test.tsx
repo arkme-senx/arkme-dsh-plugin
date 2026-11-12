@@ -84,6 +84,8 @@ it('focuses the end of a Team message when its edit menu action opens', async ()
     ? Promise.resolve({ conversation: team, messages: [message], hasMore: false, beforeSeq: 0 })
     : original(op, ...args))
   await act(async () => root.render(<TeamConversationPane key="edit" conversation={team} accountKey="test:7777" />))
+  // Let the timeline publish its initial scroll position before opening the menu.
+  await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
   const bubble = host.querySelector('[data-team-message-key="owned"] [aria-label="消息操作"]')!
   await act(async () => {
     bubble.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))

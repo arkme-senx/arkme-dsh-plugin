@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  // S04/S05/R05: delegated correction learning, group review and explicit identity operations.
+  'peopleIdentities', 'recordingSpeakerLearning', 'speakerDirectoryCorrectionItems', 'speakerGroupAction', 'speakerGroupMembers',
   'loginDevices',
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
@@ -111,7 +113,7 @@ const expectedPublicMethods = [
   'arkoAsk', 'arkoRunStatus', 'arkoCancel', 'aiLetterUnread', 'listAiLetters', 'markAiLettersRead', 'aiVideoResolveSelection', 'aiVideoPreflight', 'aiVideoCreate', 'aiVideoStatus',
   'aiVideoList', 'queryFileAssets', 'textAiVideoPreflight', 'textAiVideoCreate',
   'checkArkmeIdAvailability', 'setArkmeIdOnce', 'createTopic', 'renameTopic', 'dissolveTopic', 'topicDissolveStatus', 'activeTopicDissolve', 'moveTopicHierarchy', 'listSources', 'setBotDirectoryPin', 'setChatDirectoryPin', 'conversationDirectoryVisibilitySnapshot', 'setConversationDirectoryVisibility', 'cachedSourceMembers', 'pageSourceMembers', 'sourceMembersPresentation', 'listSourceMembers', 'sourceMemberRecords',
-  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'privateInteractionSummary', 'queryPrivateInteractions', 'privateInteractionDirectory', 'interwovenMoments', 'interwovenMomentDetail',
+  'dshBetaCommunityEntryState', 'dshRemoteGet', 'dshRemotePost', 'editArrangement', 'privateInteractionSummary', 'queryPrivateInteractions', 'privateInteractionDirectory', 'interwovenMoments', 'interwovenMomentDetail',
   'relatedQuickNotesFromMessage', 'relatedQuickNotesFromMoment', 'relatedQuickNoteDetail',
   'joinDSHBetaCommunity', 'inspectGroupAiPolish', 'inspectGroupAiPolishByName',
   'readGroupAiPolishNotices', 'generateGroupAiPolishRuleForSource', 'generateGroupAiPolishRule',
@@ -219,7 +221,7 @@ const expectedServiceFiles = [
   'arko-service.ts', 'arko-timeline-service.ts', 'arko-lifecycle.ts', 'arko-local-marks.ts', 'ai-letter-service.ts', 'ai-video-service.ts', 'outgoing-call-service.ts', 'interwoven-service.ts',
   'common-group-service.ts', 'community-service.ts', 'extension-review-service.ts', 'calendar-service.ts',
   'calendar-day-review-service.ts',
-  'people-service.ts',
+  'people-service.ts', 'people-identity-service.ts', 'speaker-group-service.ts',
   'person-reference-projection.ts', 'contact-service.ts', 'contact-directory-service.ts', 'directory-snapshot.ts', 'dynamic-photo.ts', 'unmarked-speaker-service.ts',
   'speaker-directory-service.ts', 'timeline-event-id.ts', 'timeline-token.ts', 'system-timeline-anchor.ts', 'unified-chat-timeline-service.ts',
   'team-history-service.ts',

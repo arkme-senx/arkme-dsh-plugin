@@ -631,9 +631,13 @@ export function ArkmeArkoSurface() {
   const modelDialogOpen = modelAnchor !== null
   const [modelError, setModelError] = useState('')
   const closeModelMenu = useCallback(() => setModelAnchor(null), [])
-  const toggleModelMenu = (anchor: HTMLButtonElement) => {
+  const refreshModelMenu = async () => {
     setModelError('')
-    if (!modelDialogOpen) void refreshModelCatalog(true).catch(caught => setModelError(errorMessage(caught)))
+    try { await refreshModelCatalog(true) }
+    catch (caught) { setModelError(errorMessage(caught)) }
+  }
+  const toggleModelMenu = (anchor: HTMLButtonElement) => {
+    if (!modelDialogOpen) void refreshModelMenu()
     setModelAnchor(current => current === anchor ? null : anchor)
   }
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
@@ -1632,7 +1636,7 @@ export function ArkmeArkoSurface() {
 
     {modelAnchor !== null && <ArkoModelMenu
       anchor={modelAnchor} catalog={catalog} busy={selectingModel} error={modelError}
-      onSelect={selectModel} onClose={closeModelMenu}
+      onSelect={selectModel} onClose={closeModelMenu} onRefresh={refreshModelMenu}
     />}
 
     {deletionRequest?.scope === deletionScope && <ArkoMessageDeletionDialog messageRefs={deletionRequest.refs} onClose={() => setDeletionRequest(undefined)} onFacts={items => {
@@ -1718,7 +1722,7 @@ export function ArkmeArkoSurface() {
         <button data-arkme-feedback="neutral"
           type="button"
           aria-label={tr("选择模型")}
-          aria-haspopup="menu"
+          aria-haspopup="dialog"
           aria-expanded={modelDialogOpen}
           title={selectedModel}
           style={{ ...styles.modelTrigger, opacity: interactionLocked || clearing || selectingModel ? .55 : 1 }}

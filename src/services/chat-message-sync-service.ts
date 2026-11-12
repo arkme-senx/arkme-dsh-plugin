@@ -1,3 +1,4 @@
+import { groupInteractionPeers } from './chat-realtime-service.js'
 import { parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncProjection, type ChatSyncSession, type ChatSyncUnreadPreview } from '../chat-message-sync.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
@@ -33,13 +34,14 @@ export class ChatMessageSyncService {
   private readonly unsubscribe?: () => void
   constructor(private readonly runtime: ServiceRuntime, private readonly timeline: UnifiedChatTimelineService,
     private readonly source: SourceService, private readonly chat: ChatService,
-    private readonly publish: (progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[]) => void,
-    private readonly refreshUnread?: (session: ArkmeSessionCredentials, previews: ChatSyncUnreadPreview[], signal: AbortSignal) => Promise<void>) {
+    private readonly publish: (progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[], interactionSourceKeys?: string[]) => void,
+    private readonly refreshUnread?: (session: ArkmeSessionCredentials, previews: ChatSyncUnreadPreview[], signal: AbortSignal) => Promise<void>,
+    private readonly resolveInteractionSources?: (userId: number, peers: readonly number[]) => string[] | undefined) {
     this.unsubscribe = runtime.subscribeAccountScope?.(() => { this.reset(); if (this.started) this.wake(0) })
   }
-  private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[]): void {
+  private update(progress: ArkmeMessageSyncProgress, sourceKeys?: string[], projections?: ChatSyncProjection[], interactionSourceKeys?: string[]): void {
     this.progress = { ...progress, trigger: this.trigger, revision: ++this.revision }
-    this.publish(this.progress, sourceKeys, projections)
+    this.publish(this.progress, sourceKeys, projections, interactionSourceKeys)
   }
   start(): () => void {
     if (!this.started && !this.disposed) { this.started = true; this.wake(0) }
@@ -307,7 +309,20 @@ export class ChatMessageSyncService {
         this.assert(generation, signal)
         // Notify only after commit. Consumers reread durable bodies, never
         // publish the HTTP payload that may have lost an invalidation race.
-        this.update(plan.progress, page.sessions.flatMap(entry => entry.sourceKey ? [entry.sourceKey] : []), plan.projections)
+        const peers = new Set<number>()
+        if (this.trigger === 'catchup' && this.resolveInteractionSources && plan.committedGroupBodies) {
+          for (const entry of page.sessions) {
+            if (entry.kind !== 2 || !entry.accessible) continue
+            const committed = new Set(plan.committedGroupBodies[entry.uid] ?? [])
+            for (const body of page.bodies.get(entry.uid) ?? []) {
+              if (typeof body.rel_uid !== 'string' || !committed.has(body.rel_uid)) continue
+              const sequence = Number((body.relation as { seq?: number } | undefined)?.seq)
+              for (const peer of groupInteractionPeers({ items: [body] }, session.userId, sequence - 1, sequence) ?? []) peers.add(peer)
+            }
+          }
+        }
+        const interactionSourceKeys = peers.size ? this.resolveInteractionSources?.(session.userId, [...peers]) : undefined
+        this.update(plan.progress, page.sessions.flatMap(entry => entry.sourceKey ? [entry.sourceKey] : []), plan.projections, interactionSourceKeys)
         if (this.trigger === 'catchup' && plan.unreadPreviews?.length) {
           void this.refreshUnread?.(session, plan.unreadPreviews, signal).catch(() => undefined)
         }

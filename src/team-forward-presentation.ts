@@ -8,28 +8,49 @@ const list=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)?value.
 
 /** Pure projection of Team-owned frozen cards. File delivery belongs to the
  * authenticated target adapter; source owners never become actionable users. */
-export function projectTeamForward(raw:unknown,files:(items:Record<string,unknown>[],longArticle:boolean)=>ArkmeContentBlock[]):ArkmeForwardRecordsPreview|undefined {
+export function projectTeamForward(raw:unknown,files:(items:Record<string,unknown>[],longArticle:boolean)=>ArkmeContentBlock[],
+ onAvatarRow?:(item:ArkmeForwardRecordPreviewItem,index:number,kind:'leaf'|'card')=>void):ArkmeForwardRecordsPreview|undefined {
  const payload=object(object(raw).forward_records)
  // The frozen source can be ordinary Records; the delivered occurrence and media remain Team-owned.
  if(!['team_message','quick_records'].includes(text(payload.source_type)))return undefined
- const items:ArkmeForwardRecordPreviewItem[]=[]
- let truncated=false
- const visit=(node:Record<string,unknown>,depth:number)=>{
-  for(const item of list(node.items)){
-   if(items.length>=100||depth>8){truncated=true;return}
+ let remaining=100
+ let leafIndex=0
+ let cardIndex=0
+ const project=(node:Record<string,unknown>,depth:number,fallbackAt=0,fallbackTitle='转发消息'):ArkmeForwardRecordsPreview=>{
+  const items:ArkmeForwardRecordPreviewItem[]=[]
+  const createdAtMillis=number(node.created_at)||fallbackAt
+  let truncated=depth>8
+  for(const raw of depth<=8&&Array.isArray(node.items)?node.items.slice(0,101):[]){
+   if(remaining===0){truncated=true;break}
+   remaining--
+   const item=object(raw)
    const nested=object(item.forward_records)
-   if(Array.isArray(nested.items)){visit(nested,depth+1);continue}
-   const media=list(item.files),longArticle=item.display_kind===1
-   const blocks=files(media,longArticle)
-   let body=text(item.text)
-   if(longArticle&&item.text_format==='markdown')body=remapLongArticleAssets(body,new Map(media.map((file,index)=>[`arkme-asset:${text(file.file_asset_uid)}`,`arkme-asset:media-${index}`])))
    const sourceTeam=object(item.source_representation),originTeam=object(item.origin_representation)
-   items.push({senderName:text(item.owner_name)||text(item.source_display_name)||'用户',
+   const row:ArkmeForwardRecordPreviewItem={senderName:text(item.owner_name)||text(item.source_display_name)||'用户',
     ...(text(sourceTeam.name)&&text(sourceTeam.jotmo_id)?{sourceTeam:{name:text(sourceTeam.name),jotmoId:text(sourceTeam.jotmo_id)}}:{}),
     ...(text(originTeam.name)&&text(originTeam.jotmo_id)?{originTeam:{name:text(originTeam.name),jotmoId:text(originTeam.jotmo_id)}}:{}),
-    sendAtMillis:number(item.send_at),title:text(item.title),textContent:body,textFormat:item.text_format==='markdown'?'markdown':'plain',sourceType:'team_message',displayKind:number(item.display_kind),templateKind:number(item.template_kind),...(blocks.length?{contentBlocks:blocks}:{}),...(media.length>blocks.length?{mediaUnavailable:true as const}:{})})
+    sendAtMillis:number(item.send_at),title:text(item.title),textContent:'',sourceType:'team_message'}
+   const hasNestedRows=Array.isArray(nested.items)&&nested.items.length>0
+   // The backend sends separate preorder slots for nonempty cards and leaves.
+   if(hasNestedRows)onAvatarRow?.(row,cardIndex++,'card')
+   else onAvatarRow?.(row,leafIndex++,'leaf')
+   if(hasNestedRows||nested.render_kind==='forward_records'||text(nested.title)){
+    row.forwardRecords=project(nested,depth+1,row.sendAtMillis||createdAtMillis,row.title||'转发消息')
+   }else{
+    const media=list(item.files),longArticle=item.display_kind===1
+    const blocks=files(media,longArticle)
+    row.textFormat=item.text_format==='markdown'?'markdown':'plain'
+    row.displayKind=number(item.display_kind)
+    row.templateKind=number(item.template_kind)
+    row.textContent=longArticle&&row.textFormat==='markdown'
+     ? remapLongArticleAssets(text(item.text),new Map(media.map((file,index)=>[`arkme-asset:${text(file.file_asset_uid)}`,`arkme-asset:media-${index}`])))
+     : text(item.text)
+    if(blocks.length)row.contentBlocks=blocks
+    if(media.length>blocks.length)row.mediaUnavailable=true
+   }
+   items.push(row)
   }
+  return {title:text(node.title)||fallbackTitle,createdAtMillis,summaryLines:Array.isArray(node.summary_lines)?node.summary_lines.filter((value):value is string=>typeof value==='string'):[],items,...(truncated?{truncated:true as const}:{})}
  }
- visit(payload,0)
- return {title:text(payload.title)||'转发消息',createdAtMillis:number(payload.created_at),summaryLines:Array.isArray(payload.summary_lines)?payload.summary_lines.filter((value):value is string=>typeof value==='string'):[],items,...(truncated?{truncated:true as const}:{})}
+ return project(payload,0)
 }

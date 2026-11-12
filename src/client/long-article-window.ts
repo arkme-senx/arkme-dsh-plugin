@@ -12,7 +12,7 @@ export interface LongArticleWindowTarget {
   location?: { initialSource?: ArkmeSourceItem; initialDate?: import('./day-location-cache.js').LocationDateFilter; initialLocation?: import('../types.js').ArkmeRecordLocationObservation }
   autoPublish?: boolean
   composition?: LongArticleComposition
-  article?: { mode: 'existing' | 'snapshot'; item: ArkmeTimelineItem }
+  article?: { mode: 'existing' | 'snapshot'; item: ArkmeTimelineItem; teamRead?: { conversationKey: string; messageRef: string; version: number } }
 }
 export interface LongArticleWindowReceipt extends LongArticleWindowTarget { item: ArkmeTimelineItem }
 export interface LongArticleWindowBridge {

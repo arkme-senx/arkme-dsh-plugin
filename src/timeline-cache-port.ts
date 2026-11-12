@@ -8,7 +8,7 @@ import type { ChatSyncCommand } from './chat-message-sync.js'
 export type TimelineCacheCommand = { kind: 'reserve' | 'close' | 'invalidate-all' }
   | { kind: 'sync'; command: ChatSyncCommand }
   | { kind: 'read'; scope: string; request: string; anchorId?: string; latest?: boolean }
-  | { kind: 'write'; scope: string; request: string; page: ArkmeTimelinePage; options: TimelineCacheCommit }
+  | { kind: 'write'; scope: string; request: string; page: ArkmeTimelinePage; options: TimelineCacheCommit; readBack?: true }
   | { kind: 'invalidate'; scope: string; timelineItemKey?: string; terminal?: boolean; refreshOnly?: boolean }
   | { kind: 'invalidate-source'; sourceKey: string; timelineItemKey?: string; terminal?: boolean; refreshOnly?: boolean }
 export interface TimelineCachePort {

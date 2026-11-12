@@ -14,10 +14,15 @@ it('persists bounded geometry across database restart and isolates accounts, env
   let db = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
   const anchor = { scrollTop: 1800, stickToBottom: false, anchorId: 'message:opaque', anchorOffset: -12,
     messageAnchor: { itemUid: 'record-history', recordOwnerUserId: '9223372036854775806' } }
+  const systemAnchor = { scrollTop: 1800, stickToBottom: false, anchorId: 'chat-event:opaque', anchorOffset: -12, systemRef: 'sealed-system' }
+  const contextAnchor = { scrollTop: 1700, stickToBottom: false, anchorId: 'chat-event:context', anchorOffset: -8, contextRef: 'sealed-context' }
   try {
-    await db.writeConversationViewports('test:1', 'main', [['chat:A', anchor]])
+    const entries: import('../src/conversation-viewport-state.js').ConversationViewportEntries = [
+      ['chat:A', anchor], ['chat:B', systemAnchor], ['chat:C', contextAnchor],
+    ]
+    await db.writeConversationViewports('test:1', 'main', entries)
     db.close(); db = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
-    expect(await db.readConversationViewports('test:1', 'main')).toEqual([['chat:A', anchor]])
+    expect(await db.readConversationViewports('test:1', 'main')).toEqual(entries)
     expect(await db.readConversationViewports('test:2', 'main')).toEqual([])
     expect(await db.readConversationViewports('prod:1', 'main')).toEqual([])
     expect(await db.readConversationViewports('test:1', 'conversation:A')).toEqual([])

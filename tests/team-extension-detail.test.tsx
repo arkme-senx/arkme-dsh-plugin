@@ -21,15 +21,18 @@ beforeEach(()=>{
   : {message:source,items:options.afterSeq?[second]:[first],totalCount:2,hasMore:!options.afterSeq,nextSeq:options.afterSeq?3:2,throughSeq:20})
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
-async function mount(){await act(async()=>root.render(<TeamMessageDetail accountKey="test:11" message={source} conversation={conversation} avatar={null} onClose={()=>{}} onLocate={()=>{}} onExtend={extend}/>))}
+async function mount(){await act(async()=>root.render(<TeamMessageDetail accountKey="test:11" message={source} conversation={conversation} avatar={null} onClose={()=>{}} onLocate={()=>{}} footer={target => <button type="button" onClick={() => extend(target)}>延展回复</button>}/>))}
 async function click(label:string){await act(async()=>[...host.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent===label||b.getAttribute('aria-label')===label)!.click())}
 it('pages nested extensions and restores the already-read parent page before extending an exact child',async()=>{
  await mount();expect(host.textContent).toContain('第一条延展')
+ expect(host.querySelector('[data-arkme-timeline-detail-rich-content]')?.textContent).toContain('原消息正文')
+ expect(host.querySelector('[data-arkme-detail-conversation-source]')?.textContent).toContain('团队 · 访客')
  await click('加载更多');expect(host.textContent).toContain('第二条延展')
  await act(async()=>host.querySelector<HTMLElement>('[data-team-extension-item=second]')!.click())
  expect(host.textContent).toContain('第二条延展');expect(host.textContent).not.toContain('原消息正文')
+ expect(host.querySelector('[data-arkme-note-extension-count]')).toBeNull()
  await click('延展回复');expect(extend).toHaveBeenCalledWith(expect.objectContaining({key:'second',ref:'second-ref'}))
- await click('返回延展列表');expect(host.textContent).toContain('第一条延展');expect(host.textContent).toContain('第二条延展')
+ await click('返回延展快记');expect(host.textContent).toContain('第一条延展');expect(host.textContent).toContain('第二条延展')
  expect(read.mock.calls.at(-1)?.[2]).toMatchObject({afterSeq:2,throughSeq:20})
 })
 it('clears visible source and child snapshots as soon as access needs revalidation',async()=>{
@@ -78,7 +81,7 @@ it('opens an available parent in the detail trail and can return to the reply',a
  await act(async()=>host.querySelector<HTMLElement>('[data-arkme-extension-parent-preview]')!.click())
  expect(read.mock.calls.at(-1)?.[1]).toBe('parent-ref')
  expect(host.textContent).toContain('完整父消息正文')
- await click('返回延展列表');expect(host.textContent).toContain('原消息正文')
+ await click('返回延展快记');expect(host.textContent).toContain('原消息正文')
 })
 it('does not display a passed snapshot while its fresh detail read is still pending',async()=>{
  let complete!:(value:unknown)=>void

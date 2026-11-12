@@ -14,7 +14,11 @@ parentPort!.on('message', ({ id, command, sent }: { id: number; command: Timelin
       case 'reserve': value = store.reserve(); break
       case 'invalidate-all': store.invalidateAll(); break
       case 'read': value = store.read(command.scope, command.request, command.anchorId, command.latest); break
-      case 'write': value = store.write(command.scope, command.request, command.page, command.options); break
+      case 'write': {
+        const accepted = store.write(command.scope, command.request, command.page, command.options)
+        value = accepted && command.readBack ? store.read(command.scope, command.request) : accepted
+        break
+      }
       case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal, command.refreshOnly); break
       case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal, command.refreshOnly); break
       case 'close': store.close(); parentPort!.postMessage({ id }); parentPort!.close(); return

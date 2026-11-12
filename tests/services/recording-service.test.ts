@@ -317,7 +317,7 @@ describe('RecordingService', () => {
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: state.rows }
       if (path.endsWith('/speaker-presence/list')) data = state.presence
       if (path.endsWith('/speaker-presence/detail')) data = state.members
-      if (path.endsWith('/create-speaker')) data = { speaker_id: 'created' }
+      if (path.endsWith('/speakers/create-idempotent')) data = { speaker_id: 'created', creation_key: JSON.parse(String(init?.body ?? '{}')).creation_key }
       if (state.presenceMissing && path.endsWith('/get-calender-summary')) data = {
         duration_ls: [0, 0, 0, 0, 0, 0, 1_000], un_click_session_ids_per_day: [[], [], [], [], [], [], []],
       }
@@ -684,7 +684,7 @@ describe('RecordingService', () => {
       fixture.state.failWrite = true
       await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
         newSpeakerName: '新说话人', scope: 'item' })).rejects.toThrow()
-      expect(fixture.calls.filter(path => path.endsWith('/create-speaker'))).toHaveLength(1)
+      expect(fixture.calls.filter(path => path.endsWith('/speakers/create-idempotent'))).toHaveLength(1)
       expect(fixture.calls.filter(path => path.endsWith('/recordings/transcript/speaker/assign'))).toHaveLength(1)
       expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
     } finally { await fixture.close() }
@@ -2367,6 +2367,84 @@ describe('RecordingService', () => {
     })).rejects.toMatchObject({ code: 'recording-speaker-name-conflict' })
     expect(calls.some(path => path.endsWith('/create-speaker'))).toBe(false)
     expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(false)
+  })
+
+  it('creates a distinct speaker only when same-name creation was explicitly confirmed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-speaker-name-conflict-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push(path)
+      let data: Record<string, unknown> = {}
+      data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
+      }]) ?? data
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ id: 'speaker-existing', nick_name: '林老师' }] }
+      if (path.endsWith('/speakers/create-idempotent')) { expect(body.nick_name).toBe('林老师'); expect(body.creation_key).toMatch(/^[a-f0-9]{64}$/); data = { speaker_id: 'speaker-created', creation_key: body.creation_key } }
+      if (path.endsWith('/speaker/assign')) { expect(body.target_speaker_uid).toBe('speaker-created'); data = { changed_clusters:0, changed_items:1 } }
+      if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
+
+    await expect(service.assignRecordingSpeaker({
+      itemRef: day.transcript.items[0]!.itemRef,
+      newSpeakerName: ' 林老师 ', explicitNewPerson: true,
+      scope: 'item',
+    })).resolves.toBeDefined()
+    expect(calls.some(path => path.endsWith('/speakers/create-idempotent'))).toBe(true)
+    expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(true)
+  })
+
+  it.each(['creation-response','assignment'] as const)('replays creation after %s failure and Host restart', async fault => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-speaker-name-conflict-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const calls: string[] = []; const createdKeys=new Set<string>(); let failed=false
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push(path)
+      let data: Record<string, unknown> = {}
+      data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
+      }]) ?? data
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ id: 'speaker-existing', nick_name: '林老师' }] }
+      if (path.endsWith('/speakers/create-idempotent')) { createdKeys.add(String(body.creation_key)); if(fault==='creation-response'&&!failed){failed=true;throw new Error('response lost after commit')}  expect(body.nick_name).toBe('林老师'); expect(body.creation_key).toMatch(/^[a-f0-9]{64}$/); data = { speaker_id: 'speaker-created', creation_key: body.creation_key } }
+      if (path.endsWith('/speaker/assign')) { if(fault==='assignment'&&!failed){failed=true;throw new Error('assignment unavailable')}  expect(body.target_speaker_uid).toBe('speaker-created'); data = { changed_clusters:0, changed_items:1 } }
+      if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    let service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
+
+    await expect(service.assignRecordingSpeaker({itemRef:day.transcript.items[0]!.itemRef,newSpeakerName:' 林老师 ',explicitNewPerson:true,scope:'item'})).rejects.toThrow();
+    service.dispose(); service = new RecordingService(new ServiceRuntime(config,sessions,new ArkmeStateStore(root),fetchImpl),dependencies());
+    await expect(service.assignRecordingSpeaker({
+      itemRef: day.transcript.items[0]!.itemRef,
+      newSpeakerName: ' 林老师 ', explicitNewPerson: true,
+      scope: 'item',
+    })).resolves.toBeDefined()
+    expect(calls.some(path => path.endsWith('/speakers/create-idempotent'))).toBe(true)
+    expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(true); expect(createdKeys.size).toBe(1); expect(calls.filter(path=>path.endsWith('/speakers/create-idempotent'))).toHaveLength(2); service.dispose()
   })
 
   it('validates batch eligibility before creating a speaker that could not be assigned', async () => {

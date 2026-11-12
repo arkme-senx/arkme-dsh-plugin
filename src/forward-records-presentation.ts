@@ -50,29 +50,29 @@ export function projectForwardRecordsPreview(
   }
   if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'forward_records') return undefined
 
-  const projectedItems: ArkmeForwardRecordPreviewItem[] = []
-  let truncated = false
+  let remainingItems = 100
   let remainingSegments = 2_000
   const epochMillis = (value: unknown): number => {
     const time = numberValue(value)
     return Number.isFinite(time) && time > 0 && time < 8.64e15
       ? Math.trunc(time < 1e12 ? time * 1000 : time) : 0
   }
-  const appendItems = (values: unknown[], depth: number): void => {
-    if (values.length > 100) truncated = true
-    const sorted = values.slice(0, 100).map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
+  const projectCard = (node: Record<string, unknown>, depth: number, fallbackAt: number, fallbackTitle = '转发快记', teamSnapshot = false): ArkmeForwardRecordsPreview => {
+    const projectedItems: ArkmeForwardRecordPreviewItem[] = []
+    const values = listValue(node.items)
+    let truncated = values.length > 100 || depth > 4
+    const createdAtMillis = epochMillis(node.created_at ?? node.createdAt) || epochMillis(fallbackAt)
+    const ownerBlind = teamSnapshot || (node.source_type ?? node.sourceType) === 'team_message'
+    const sorted = (depth <= 4 ? values.slice(0, 100) : []).map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
       .sort((left, right) => (left.order || left.index) - (right.order || right.index))
     for (const entry of sorted) {
-      if (projectedItems.length >= 100) { truncated = true; return }
+      if (remainingItems === 0) { truncated = true; break }
+      remainingItems--
       const item = objectValue(entry.value)
       const nestedForward = objectValue(item.forward_records ?? item.forwardRecords)
-      if (depth < 4
-        && stringValue(nestedForward.render_kind ?? nestedForward.renderKind).trim() === 'forward_records') {
-        appendItems(listValue(nestedForward.items), depth + 1)
-        continue
-      }
-      if (depth >= 4 && Object.keys(nestedForward).length > 0) truncated = true
-      const sourceTypeValue = stringValue(item.source_type ?? item.sourceType ?? payload.source_type ?? payload.sourceType)
+      const isForward = stringValue(nestedForward.render_kind ?? nestedForward.renderKind).trim() === 'forward_records'
+        || Array.isArray(nestedForward.items)
+      const sourceTypeValue = stringValue(item.source_type ?? item.sourceType ?? node.source_type ?? node.sourceType ?? payload.source_type ?? payload.sourceType)
       const rawType = sourceTypeValue === 'quick_records'
         ? stringValue(item.source_chat_session_uid ?? item.sourceChatSessionUid).trim() ? 'chat_record' : 'record'
         : sourceTypeValue
@@ -81,17 +81,27 @@ export function projectForwardRecordsPreview(
         && numberValue(sourceSender) === 0 && stringValue(item.source_avatar_kind ?? item.sourceAvatarKind) === 'deepseek'
       // Chat omits the zero AI speaker ID; content ownership must not turn that reply into a human speaker.
       const isCodexReply=rawType==='codex'&&numberValue(sourceSender)===0
-      const senderUserId = isDeepSeekReply||isCodexReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
+      const senderUserId = ownerBlind || rawType === 'team_message' || isDeepSeekReply || isCodexReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
       const senderName = isCodexReply?'Codex':isDeepSeekReply ? 'DeepSeek Harness' : stringValue(
         item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
       ).trim() || 'Arkme用户'
+      const title = stringValue(item.title).trim()
+      const sendAtMillis = epochMillis(item.send_at ?? item.sendAt)
+      if (isForward) {
+        const row: ArkmeForwardRecordPreviewItem = {
+          senderName, sendAtMillis, title, textContent: '',
+          forwardRecords: projectCard(nestedForward, depth + 1, sendAtMillis || createdAtMillis, title || '转发快记', ownerBlind),
+        }
+        projectedItems.push(row)
+        if (senderUserId > 0) onSender?.(row, senderUserId)
+        continue
+      }
       // Agent forward snapshots use render_format; ordinary Record text_format has a separate contract.
       const textFormat = (rawType === 'agent'||rawType==='codex')
         && stringValue(item.render_format ?? item.renderFormat) === 'markdown' ? 'markdown' : arkmeRecordTextFormat(item)
       const rawText = stringValue(item.text ?? item.text_preview ?? item.textPreview)
       let textContent = textFormat === 'markdown' ? rawText : rawText.trim()
       const displayKind = numberValue(item.display_kind ?? item.displayKind)
-      const title = stringValue(item.title).trim()
       const sourceType: ArkmeForwardRecordPreviewItem['sourceType'] =
         rawType === 'record' || rawType === 'chat_record' || rawType === 'long_recording_segments'
           || rawType === 'agent' || rawType === 'codex' || rawType === 'ai_letter' ? rawType : 'unknown'
@@ -146,7 +156,7 @@ export function projectForwardRecordsPreview(
         // Only a resolved other account gets an actionable identity; the
         // viewer's own id and unresolved senders stay off the wire.
         ...(senderUserId > 0 && senderUserId !== viewerUserId ? { senderUserId } : {}),
-        sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : epochMillis(item.send_at ?? item.sendAt),
+        sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : sendAtMillis,
         title,
         textContent,
         textFormat,
@@ -161,17 +171,13 @@ export function projectForwardRecordsPreview(
       })
       if (senderUserId > 0) onSender?.(projectedItems[projectedItems.length - 1]!, senderUserId)
     }
+    return {
+      title: stringValue(node.title).trim() || fallbackTitle,
+      createdAtMillis,
+      summaryLines: listValue(node.summary_lines ?? node.summaryLines).map(value => stringValue(value).trim()).filter(Boolean),
+      items: projectedItems,
+      ...(truncated ? { truncated: true } : {}),
+    }
   }
-  appendItems(listValue(payload.items), 0)
-
-  const summaryLines = listValue(payload.summary_lines ?? payload.summaryLines)
-    .map(value => stringValue(value).trim()).filter(value => value !== '')
-  const createdAtMillis = epochMillis(payload.created_at ?? payload.createdAt) || epochMillis(fallbackCreatedAtMillis)
-  return {
-    title: stringValue(payload.title).trim() || '转发快记',
-    createdAtMillis,
-    summaryLines,
-    items: projectedItems,
-    ...(truncated ? { truncated: true } : {}),
-  }
+  return projectCard(payload, 0, fallbackCreatedAtMillis)
 }

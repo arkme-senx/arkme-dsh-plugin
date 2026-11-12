@@ -12,22 +12,24 @@ const position = { cursor: 500, membership_version: 2, initialized: true }
 const head = { chat_session_uid: 'chat', session_kind: 1, membership_version: 2, accessible: true, complete: true, position }
 const row = (i: number) => ({ rel_uid: String(i), revision: 1, record_version: 1, state: 'available', seq: i, unread: true })
 const timelineHint: ArkmeChatClientEvent = { type: 'timeline-changed', revision: 1, sourceKey: 'source:chat', timelineItemKey: 'key:1', changeKind: 'reedited', changeVersion: 1, relationTerminal: false, throughSequence: 1 }
-function setup(post: (...args: any[]) => Promise<unknown>, observe?: (progress: ArkmeMessageSyncProgress) => void) {
+function setup(post: (...args: any[]) => Promise<unknown>, observe?: (progress: ArkmeMessageSyncProgress) => void, resolveInteractions?: (userId: number, peers: readonly number[]) => string[]) {
   const path = mkdtempSync(join(tmpdir(), 'arkme sync owner ')), cache = new UnifiedTimelineCache(path)
   const updates: ArkmeMessageSyncProgress[] = []
+  const interactionHints: string[][] = []
   const committedHints: Array<{ sourceKeys: string[]; readable: number }> = []
   let account = 1
   const runtime = { config: { environment: 'test' }, requireSession: async () => ({ userId: account }), accountScopedSession: async () => ({ userId: account }), stateStore: { uniqueCode: async () => 'key' },
     authenticatedChatPost: post, runBackgroundMessageProjection: async (fn: () => Promise<unknown>) => fn() }
   const service = new ChatMessageSyncService(runtime as never, { sync: async (c: ChatSyncCommand) => cache.sync(c), syncTicket: async () => cache.reserve() } as never,
     { chatDirectorySourceKey: async (_user: number, uid: string) => `source:${uid}`, chatTimelineItemKey: async (_user: number, _uid: string, id: string) => `key:${id}` } as never,
-    { chatTimelineItems: async (data: { items: any[] }) => data.items.map(item => ({ timelineItemKey: `key:${item.rel_uid}`, itemUid: item.rel_uid, recordVersion: item.record_version, sendAtMillis: item.relation.seq, textContent: 'body' })) } as never,
-    (progress, sourceKeys) => {
+    { chatTimelineItems: async (data: { items: any[] }) => data.items.map(item => ({ timelineItemKey: `key:${item.rel_uid}`, itemUid: item.rel_uid, recordVersion: item.record_version, sequence: item.relation.seq, sendAtMillis: item.relation.seq, textContent: 'body' })) } as never,
+    (progress, sourceKeys, _projections, interactionSourceKeys) => {
+      if (interactionSourceKeys?.length) interactionHints.push(interactionSourceKeys)
       updates.push(progress)
       observe?.(progress)
       if (sourceKeys?.length) committedHints.push({ sourceKeys, readable: (cache.sync({ action: 'read', scope: JSON.stringify(['test', account, 'chat']), limit: 100 }) as import('../src/chat-message-sync.js').ChatSyncLocalPage | undefined)?.events.length ?? 0 })
-    })
-  return { service, updates, committedHints, runtime, cache, switchAccount() { account++; service.reset() }, close() { service.dispose(); cache.close(); rmSync(path, { force: true, recursive: true }) } }
+    }, undefined, resolveInteractions)
+  return { service, updates, committedHints, interactionHints, runtime, cache, switchAccount() { account++; service.reset() }, close() { service.dispose(); cache.close(); rmSync(path, { force: true, recursive: true }) } }
 }
 it('has one Host pump, 100-body batches, at most two background reads and no directory/read-ACK calls', async () => {
   let active = 0, peak = 0
@@ -49,6 +51,23 @@ it('has one Host pump, 100-body batches, at most two background reads and no dir
     stop()
   } finally { s.close() }
 })
+it('publishes contact keys from committed catchup mentions only', async () => {
+  const resolveInteractions = vi.fn(() => ['private-contact'])
+  const s = setup(async (_route, data) => ({
+    manifest_only: data.mode === 'unread_manifest', checkpoint: 'cp', has_more: false, retry: false,
+    sessions: [{ ...head, session_kind: 2, ...(data.mode === 'unread_manifest' ? { manifest: [row(1)] } : {
+      items: [{ ...row(1), relation: { rel_uid: '1', seq: 1, sender_user_id: 17 },
+        record: { status: 1, payload: { content_payload: { mention_metadata: { human_mentions: [{ user_id: 1 }] } } } } }],
+    }) }],
+  }), undefined, resolveInteractions)
+  try {
+    s.service.start()
+    await vi.waitFor(() => expect(s.interactionHints).toEqual([['private-contact']]))
+    expect(resolveInteractions).toHaveBeenCalledWith(1, [17])
+    expect(s.committedHints[0]?.readable).toBe(1)
+  } finally { s.close() }
+})
+
 it('does not complete missing bodies and backs off without busy looping', async () => {
   const post = vi.fn(async (_route, data) => ({ manifest_only: data.mode === 'unread_manifest', checkpoint: 'cp', has_more: false, retry: false, sessions: [{ ...head,
     ...(data.mode === 'unread_manifest' ? { manifest: [row(1)] } : { items: [{ ...row(1), state: 'missing' }] }) }] }))

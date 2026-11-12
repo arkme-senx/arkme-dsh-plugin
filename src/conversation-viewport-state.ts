@@ -7,6 +7,8 @@ export interface ConversationViewportState {
   anchorId?: string
   anchorOffset?: number
   messageAnchor?: { itemUid: string; recordOwnerUserId: RecordOwnerId }
+  systemRef?: string
+  contextRef?: string
 }
 export type ConversationViewportEntries = Array<[string, ConversationViewportState]>
 export function normalizeConversationViewports(value: unknown): ConversationViewportEntries {
@@ -27,10 +29,14 @@ export function normalizeConversationViewports(value: unknown): ConversationView
       const parsed = typeof owner === 'string' && owner.length > 19 ? 0 : recordOwnerId(owner)
       if (parsed) messageAnchor = { itemUid: v.messageAnchor.itemUid, recordOwnerUserId: parsed }
     }
+    const anchorRef = (ref: unknown): ref is string => typeof ref === 'string' && ref.length > 0 && ref.length <= 8192
+    const nonMessageAnchor = !v.stickToBottom && !!v.anchorId && !v.anchorId.startsWith('message:')
     const entry: [string, ConversationViewportState] = [source, { scrollTop: v.stickToBottom ? 0 : v.scrollTop,
       stickToBottom: v.stickToBottom, ...(v.anchorId === undefined || v.stickToBottom ? {} : { anchorId: v.anchorId }),
       ...(v.anchorOffset === undefined || v.stickToBottom ? {} : { anchorOffset: v.anchorOffset }),
-      ...(messageAnchor ? { messageAnchor } : {}) }]
+      ...(messageAnchor ? { messageAnchor } : {}),
+      ...(nonMessageAnchor && anchorRef(v.contextRef) ? { contextRef: v.contextRef }
+        : nonMessageAnchor && anchorRef(v.systemRef) ? { systemRef: v.systemRef } : {}) }]
     const size = new TextEncoder().encode(JSON.stringify(entry)).byteLength + 1
     if (bytes + size > 64 * 1024) break
     bytes += size; entries.unshift(entry)

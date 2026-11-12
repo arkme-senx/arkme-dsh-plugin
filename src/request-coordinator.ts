@@ -43,6 +43,8 @@ export interface ArkmeCoordinatedRequest<T> {
   admission?: 'transport' | 'route-only'
   /** Omit for mutations and other calls that must never be coalesced. */
   key?: string
+  /** A background page whose predecessor has already completed. */
+  continuation?: boolean
   /** Explicitly registered read route; never set for mutations. */
   route?: string
   cancelWhenUnobserved?: boolean
@@ -86,6 +88,7 @@ interface QueuedPermit {
   lane: ArkmeRequestLane
   service: ArkmeRequestService
   transport: boolean
+  continuation: boolean
   route?: ResolvedLimit
   sequence: number
   onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue']
@@ -208,6 +211,7 @@ export class ArkmeRequestCoordinator {
   private readonly epochs = new Map<string, number>()
   private readonly stats = new Map<string, ArkmeRequestStats>()
   private timer: ReturnType<typeof setTimeout> | undefined
+  private consecutiveContinuations = 0
   private sequence = 0
   private activeTransports = 0
   private readonly maxConcurrent: number
@@ -427,7 +431,7 @@ export class ArkmeRequestCoordinator {
     const deadline = recovery === undefined ? undefined : setTimeout(() => controller.abort(recovery.timeout()), recovery.deadlineMs)
     try {
       while (true) {
-        release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue, request.admission)
+        release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue, request.admission, request.continuation)
         if (controller.signal.aborted) throw abortError(controller.signal.reason)
         if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
         let value: T
@@ -515,6 +519,7 @@ export class ArkmeRequestCoordinator {
     route?: ResolvedLimit,
     onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue'],
     admission: 'transport' | 'route-only' = 'transport',
+    continuation = false,
   ): Promise<() => void> {
     if (signal.aborted) return Promise.reject(abortError(signal.reason))
     const laneLimit = this.laneLimits.get(lane)!
@@ -542,7 +547,7 @@ export class ArkmeRequestCoordinator {
         onQueue?.('cancel', { lane: queued.lane, service, queueWaitMs: this.now() - queued.queuedAt, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
         reject(abortError(signal.reason))
       }
-      queued = { lane, service, transport, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
+      queued = { lane, service, transport, continuation, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
       signal.addEventListener('abort', abort, { once: true })
       this.queue.push(queued)
       onQueue?.('enter', { lane, service, queueLength: this.queue.length, laneQueued, serviceQueued, laneActive: laneLimit.active, serviceActive: serviceLimit.active })
@@ -578,6 +583,9 @@ export class ArkmeRequestCoordinator {
         queued.route.tokens = Math.max(0, queued.route.tokens - 1)
         queued.route.active += 1
       }
+      if (queued.lane === 'background-read' && queued.transport) {
+        this.consecutiveContinuations = queued.continuation ? Math.min(2, this.consecutiveContinuations + 1) : 0
+      }
       this.bump(queued, 'started')
       queued.onQueue?.('start', { lane: queued.lane, service: queued.service, queueWaitMs: this.now() - queued.queuedAt, queueLength: this.queue.length, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
       let released = false
@@ -598,6 +606,8 @@ export class ArkmeRequestCoordinator {
   }
 
   private nextRunnableIndex(): number {
+    let fallback = -1
+    const preferContinuation = this.consecutiveContinuations < 2
     for (let index = 0; index < this.queue.length; index += 1) {
       const queued = this.queue[index]
       if (queued === undefined) continue
@@ -613,9 +623,12 @@ export class ArkmeRequestCoordinator {
       const laneBlocked = queued.transport && this.blocked(lane, 'lane', queued.blockedBy)
       const serviceBlocked = queued.transport && this.blocked(service, 'service', queued.blockedBy)
       const routeBlocked = queued.route !== undefined && this.blocked(queued.route, 'route', queued.blockedBy)
-      if (!poolBlocked && !laneBlocked && !serviceBlocked && !routeBlocked) return index
+      if (poolBlocked || laneBlocked || serviceBlocked || routeBlocked) continue
+      if (queued.lane !== 'background-read') return fallback < 0 ? index : fallback
+      if (queued.continuation === preferContinuation) return index
+      if (fallback < 0) fallback = index
     }
-    return -1
+    return fallback
   }
 
   private blocked(limit: ResolvedLimit, kind: string, reasons?: Set<string>): boolean {

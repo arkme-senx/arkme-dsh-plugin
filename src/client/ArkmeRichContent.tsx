@@ -267,16 +267,30 @@ function mediaAttemptUrl(block: ArkmeContentBlock, attempt: number, resolvedUrl?
   return attempt > 0 ? `${url}${url.includes('?') ? '&' : '?'}retry=${String(attempt)}` : url
 }
 
+function photoUploadInProgress(block: ArkmeContentBlock): boolean {
+  return block.kind === 'image' && (block.attachmentState === 'pending' || (
+    block.uploadProgress !== undefined && block.uploadProgress.phase !== 'ready'
+  ))
+}
+
+function photoHasLocalPresentation(block: ArkmeContentBlock): boolean {
+  return block.kind === 'image' && (block.localFileRef !== undefined || photoUploadInProgress(block))
+}
+
 function UploadProgress({ block }: { block: ArkmeContentBlock }) {
-  if (block.uploadProgress === undefined || block.uploadProgress.phase === 'ready') return null
-  const percent = Math.floor(arkmeVisibleUploadFraction(block.uploadProgress) * 100)
-  return <span role="progressbar" aria-label={`上传 ${block.fileName}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.38)', color: '#fff', borderRadius: 8, pointerEvents: 'none' }}>
-    <span style={{ position: 'relative', width: 36, height: 36, display: 'grid', placeItems: 'center', fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+  const progress = block.uploadProgress
+  if (progress?.phase === 'ready' || (progress === undefined && block.attachmentState !== 'pending')) return null
+  const percent = progress === undefined ? 0 : Math.floor(arkmeVisibleUploadFraction(progress) * 100)
+  const photo = block.kind === 'image'
+  const photoPercent = progress?.phase === 'completing' ? 100 : progress?.phase === 'uploading' && percent > 0 ? percent : undefined
+  const arcLength = photo ? photoPercent ?? 28 : percent
+  return <span role="progressbar" aria-label={`${block.fileName} · ${tr('附件上传中')}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={photo ? photoPercent : percent} style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', background: 'rgba(0,0,0,.38)', color: '#fff', borderRadius: 8, pointerEvents: 'none' }}>
+    <span className={photo ? 'arkme-pending-attachment-ring' : undefined} style={{ position: 'relative', width: 36, height: 36, display: 'grid', placeItems: 'center', color: 'inherit', fontSize: 10, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
       <svg viewBox="0 0 36 36" width="36" height="36" aria-hidden style={{ position: 'absolute', inset: 0, transform: 'rotate(-90deg)' }}>
         <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeOpacity=".25" strokeWidth="3" />
-        <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="3" pathLength="100" strokeDasharray={`${percent} 100`} strokeLinecap="round" />
+        <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="3" pathLength="100" strokeDasharray={`${arcLength} 100`} strokeLinecap="round" />
       </svg>
-      {percent}%
+      {!photo && `${percent}%`}
     </span>
   </span>
 }
@@ -423,11 +437,11 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
   const [imageDimensions, setImageDimensions] = useState<ReadonlyMap<string, GalleryImageDimensions>>(() => new Map())
   const imageSize = (block: ArkmeContentBlock) => {
     const key = mediaUrl(block) ?? arkmeContentMediaUrl(block)
-    return imageDimensions.get(key) ?? galleryImageDimensions(key)
+    return block.imageDimensions ?? imageDimensions.get(key) ?? galleryImageDimensions(key)
   }
   const singleImage = blocks.length === 1 && blocks[0]?.kind === 'image'
-  const naturalSize = singleImage ? imageSize(blocks[0]!) : undefined
-  const singleSize = naturalSize === undefined ? undefined : singleGalleryImageSize(naturalSize)
+  const singleDimensions = singleImage ? imageSize(blocks[0]!) : undefined
+  const singleSize = singleDimensions === undefined ? undefined : singleGalleryImageSize(singleDimensions)
   const columns = mediaColumns(blocks.length)
   const tileSize = columns === 1 ? 150 : 75
   const width = singleSize?.width ?? tileSize * columns + mediaGap * (columns - 1)
@@ -438,15 +452,29 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
     data-arkme-media-columns={columns}
   >
     {blocks.map(block => {
-      if (block.attachmentState && !block.localFileRef) return <PendingAttachmentCard key={block.attachmentUid} block={block} />
+      const uploadingPhoto = photoUploadInProgress(block)
+      const pendingPhoto = uploadingPhoto && block.attachmentState === 'pending' && !block.localFileRef
+      // A local file reference can arrive after the pending slot is already visible.
+      const tileKey = photoHasLocalPresentation(block) ? `local-photo:${String(block.sortOrder)}`
+        : `${block.localFileRef ?? block.attachmentUid ?? block.fileAssetUid ?? block.mediaRef}:${String(block.sortOrder)}`
+      const dimensionsKey = mediaUrl(block) ?? arkmeContentMediaUrl(block)
+      const preview = mediaAccess === undefined && !block.localFileRef && !imageDimensions.has(dimensionsKey)
+        ? block.inlinePhotoPreview : undefined
+      const previewStyle = preview === undefined ? tileStyle : {
+        ...tileStyle, backgroundImage: `url("data:image/jpeg;base64,${preview}")`,
+        backgroundPosition: 'center', backgroundRepeat: 'no-repeat', backgroundSize: 'contain',
+      }
+      if (block.attachmentState && !block.localFileRef && !pendingPhoto) return <PendingAttachmentCard key={tileKey} block={block} tileStyle={previewStyle} />
       const failure = failures.get(block.mediaRef)
-      if (failure !== undefined) return <VisualMediaFallback key={`${block.mediaRef}:${String(block.sortOrder)}`} block={block} failure={failure} style={tileStyle} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
+      if (failure !== undefined && !uploadingPhoto) return <VisualMediaFallback key={tileKey} block={block} failure={failure} style={tileStyle} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
       const dimensions = block.kind === 'image' ? imageSize(block) : undefined
       const longImage = dimensions !== undefined && isLongGalleryImage(dimensions)
-      const dimensionsKey = mediaUrl(block) ?? arkmeContentMediaUrl(block)
-      const src = mediaAttemptUrl(block, retryVersions.get(block.mediaRef) ?? 0, mediaUrl(block))
-      if (block.kind === 'image' && src === '') return <VisualMediaFallback key={`${block.mediaRef}:${String(block.sortOrder)}`} block={block} failure="retryable" style={tileStyle} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
-      const imageProps={src,alt:block.fileName,loading:'lazy' as const,style:{...styles.mediaImage,objectFit:singleImage||dimensions===undefined||longImage?'contain' as const:'cover' as const},
+      const resolvedUrl = mediaUrl(block) ?? (block.thumbnailRef && !block.localFileRef
+        ? `${mediaRoute}?ref=${encodeURIComponent(block.thumbnailRef)}` : undefined)
+      const src = mediaAttemptUrl(block, retryVersions.get(block.mediaRef) ?? 0, resolvedUrl)
+      if (block.kind === 'image' && src === '' && !uploadingPhoto) return <VisualMediaFallback key={tileKey} block={block} failure="retryable" style={tileStyle} onRetry={() => { onRetry(block) }} onOpenAsFile={() => { onOpenAsFile(block) }} />
+      const imageProps={src,alt:block.fileName,loading:'lazy' as const,style:{...styles.mediaImage,objectFit:singleImage?'scale-down' as const:dimensions===undefined||longImage?'contain' as const:'cover' as const,
+        visibility:mediaAccess===undefined&&singleImage&&dimensions===undefined?'hidden' as const:undefined},
         onLoad:(event:{currentTarget:HTMLImageElement})=>{
           const image=event.currentTarget
           const value=rememberGalleryImageDimensions(dimensionsKey,image.naturalWidth,image.naturalHeight)
@@ -457,15 +485,18 @@ function MediaGallery({ blocks, failures, retryVersions, onOpen, onFailure, onRe
             return new Map(current).set(dimensionsKey,value)
           })
         },onError:()=>{onFailure(block,arkmeCanInlineLocalFile(block.mimeType,block.fileName)?'retryable':'unsupported')}}
+      const photoPlaceholder = uploadingPhoto && (pendingPhoto || failure !== undefined || src === '')
       return <button
-        key={`${block.mediaRef}:${String(block.sortOrder)}`}
+        key={tileKey}
         type="button"
-        style={tileStyle}
+        style={previewStyle}
+        disabled={photoPlaceholder}
+        data-arkme-pending-attachment={pendingPhoto ? block.kind : undefined}
         aria-label={block.kind === 'video' ? `播放视频 ${block.fileName}` : tr("预览图片 {v0}", { v0: block.fileName })}
         onClick={event => { onOpen(block,block.kind==='image'?event.currentTarget.querySelector('img')??undefined:undefined) }}
       >
         {block.kind === 'image'
-          ? mediaAccess?.prepareImageWhileChecking
+          ? photoPlaceholder ? null : mediaAccess?.prepareImageWhileChecking
             ? <TeamGalleryImage {...imageProps} readScopeKey={mediaAccess.readScopeKey??''} onUnavailable={imageProps.onError}/>
             : <img {...imageProps}/>
           : <GalleryVideoPreview key={src} src={src} block={block} onFailure={onFailure} />}
@@ -532,13 +563,16 @@ function GalleryVideoPreview({ src, block, onFailure }: {
   </>
 }
 
-function PendingAttachmentCard({ block }: { block: ArkmeContentBlock }) {
+function PendingAttachmentCard({ block, tileStyle = styles.mediaTile }: { block: ArkmeContentBlock; tileStyle?: CSSProperties }) {
   const failed = block.attachmentState === 'failed'
   const label = tr(failed ? '附件上传失败' : '附件上传中')
   const visual = block.kind === 'image' || block.kind === 'video'
   const Icon = failed ? WarningCircle : block.kind === 'video' ? VideoCamera : ImageSquare
+  if (block.kind === 'image' && !failed) return <div title={block.fileName} data-arkme-pending-attachment={block.kind} style={tileStyle}>
+    <UploadProgress block={block} />
+  </div>
   if (visual) return <div role="status" aria-label={`${block.fileName} · ${label}`} title={block.fileName} data-arkme-pending-attachment={block.kind}
-    style={{ ...styles.mediaTile, minWidth: 0, cursor: 'default', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 6, color: failed ? arkmeTheme.danger : arkmeTheme.tertiary }}>
+    style={{ ...tileStyle, minWidth: 0, cursor: 'default', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 6, color: failed ? arkmeTheme.danger : arkmeTheme.tertiary }}>
     {failed ? <Icon size={24} weight="light" aria-hidden /> : <span className="arkme-pending-attachment-ring" role="progressbar" aria-label={`${block.fileName} · ${label}`}>
       <svg viewBox="0 0 36 36" aria-hidden>
         <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="2" opacity=".18" />
@@ -1139,7 +1173,7 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachmentNavigationKey, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen, selectionTarget }: {
+export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachmentNavigationKey, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen, onForwardDetailOpen, selectionTarget }: {
   sessionAttachmentPreview?: boolean
   attachmentNavigationKey?:string|undefined
   item: ArkmeTimelineItem
@@ -1157,6 +1191,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
   isMentionClickable?: ArkmeMentionClickPredicate
   mediaSelectionIsExplicit?: boolean
   onCallDetailOpen?: (videoUrl?: string) => void
+  onForwardDetailOpen?: () => void
   onArticleOpen?: () => void
 }) {
   useArkmeLocale()
@@ -1218,24 +1253,30 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
   }, [mediaRevision])
   if (item.callRecord !== undefined) return <ArkmeCallRecordContent call={item.callRecord} revision={version} onOpenDetail={onCallDetailOpen} />
   const selfQuote = selectedTextNotePresentation(item.textContent, item.localSelfQuote)
-  if (selfQuote && item.status === 1 && item.textFormat !== 'markdown') return <div ref={contentRef} data-arkme-message-content="message" data-arkme-content-presentation={presentation}>
-    <SelectedTextSelfNoteContent value={selfQuote} detail={presentation === 'detail'} recordUid={item.itemUid} {...(sourceRef&&item.messageActionRef?{sourceRef,messageActionRef:item.messageActionRef}:{})} />
+  if (selfQuote && item.status === 1 && item.textFormat !== 'markdown') return <div data-arkme-message-content="message" data-arkme-content-presentation={presentation}>
+    <SelectedTextSelfNoteContent contentRef={contentRef} value={selfQuote} detail={presentation === 'detail'} recordUid={item.itemUid} {...(sourceRef&&item.messageActionRef?{sourceRef,messageActionRef:item.messageActionRef}:{})} />
   </div>
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
-      const summary = value.title.trim() || (value.textFormat === 'markdown' ? arkmeMarkdownPlainText(value.textContent) : value.textContent) || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
+      const summary = value.forwardRecords?.title || value.title.trim() || (value.textFormat === 'markdown' ? arkmeMarkdownPlainText(value.textContent) : value.textContent) || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
       return [`${value.senderName}：${summary}`]
     })
     const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
-    return <div ref={contentRef} style={styles.forwardCard} data-arkme-forward-records-card="true">
-      <p style={styles.forwardTitle} title={arkmeEmojiPlainText(item.forwardRecords.title)}><ArkmeRichText text={item.forwardRecords.title} presentation="preview" /></p>
-      <div style={styles.forwardLines}>
-        {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <p
+    const preview = <>
+      <span style={{ ...styles.forwardTitle, display: 'block' }} title={arkmeEmojiPlainText(item.forwardRecords.title)}><ArkmeRichText text={item.forwardRecords.title} presentation="preview" /></span>
+      <span style={styles.forwardLines}>
+        {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <span
           key={`${String(index)}:${line}`}
           style={styles.forwardLine}
-        ><ArkmeRichText text={line} presentation="preview" highlightMentions={highlightMentions} /></p>)}
-      </div>
+        ><ArkmeRichText text={line} presentation="preview" highlightMentions={highlightMentions} /></span>)}
+      </span>
+    </>
+    return <div ref={contentRef} style={styles.forwardCard} data-arkme-forward-records-card="true">
+      {onForwardDetailOpen ? <button type="button" aria-label={item.forwardRecords.title} onClick={onForwardDetailOpen}
+        style={{ display: 'block', width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${arkmeTheme.borderSoft}`, background: arkmeTheme.layer1, color: 'inherit', textAlign: 'left', font: 'inherit', cursor: 'pointer' }}>
+        {preview}
+      </button> : preview}
     </div>
   }
   if (item.sharedRecording !== undefined) {
@@ -1311,8 +1352,15 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
     /></div> : undefined}</ArkmeVoiceContent>
   const renderRows = splitVisualRuns(blocks.filter(block => block !== inlineVoice)).map((row, rowIndex) => {
     if (Array.isArray(row)) {
+      const photo = row.length === 1 && row[0]?.kind === 'image' ? row[0] : undefined
+      const photoKey = photo === undefined ? undefined : JSON.stringify([
+        mediaAccess?.readScopeKey,
+        photoHasLocalPresentation(photo) ? 'local-photo' : mediaAccess?.readScopeKey
+          ? photo.localFileRef ?? photo.attachmentUid ?? photo.fileAssetUid ?? photo.mediaRef
+          : mediaUrl(photo) ?? (photo.localFileRef ?? photo.attachmentUid ?? photo.mediaRef),
+      ])
       return <div key={`visual-row:${String(rowIndex)}`} style={styles.stack}>
-        <MediaGallery blocks={row} failures={failures} retryVersions={retryVersions} onOpen={(block,image)=>openPreview(block,false,image)} onFailure={markFailed} onRetry={retryMedia} onOpenAsFile={openAsFile} />
+        <MediaGallery key={photoKey} blocks={row} failures={failures} retryVersions={retryVersions} onOpen={(block,image)=>openPreview(block,false,image)} onFailure={markFailed} onRetry={retryMedia} onOpenAsFile={openAsFile} />
       </div>
     }
     if (row.attachmentState && !row.localFileRef) return <PendingAttachmentCard key={row.attachmentUid} block={row} />

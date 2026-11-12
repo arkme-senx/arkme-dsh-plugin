@@ -32,7 +32,7 @@ it('parity: whole-message parent text remains visible in Team reading details', 
   const conversation = {ref:'conversation',key:'key',side:'team',channel:{name:'测试团队'},visitor:{nickname:'访客'}} as TeamConversation
   try {
     await act(async () => root.render(<TeamMessageDetail accountKey="test:11" message={message} conversation={conversation} avatar={null}
-      onClose={() => {}} onLocate={() => {}} onLocateReply={() => {}} />))
+      onClose={() => {}} onLocate={() => {}} />))
     expect(host.querySelector('[data-arkme-quote-preview], [data-arkme-extension-parent-preview]')?.textContent).toContain(message.reply!.text)
   } finally {
     await act(async () => root.unmount())

@@ -129,6 +129,10 @@ export class ExploreService {
     await this.guard(session, epoch, signal)
     return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) }
   }
+  async personDirectoryItem(raw: Record<string, unknown>) {
+    const session = await this.runtime.requireSession()
+    return this.item('relations', raw, session, { linkedUserId: number(raw.linked_user_id), aliases: strings(raw.aliases) })
+  }
   private async relationRemarks(ids: number[], session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<Map<number,string>> {
     const epoch=this.epoch
     const missingIds=[...new Set(ids)].filter(id=>id>0&&id!==session.userId&&(this.remarksCache.get(id)?.until??0)<Date.now())
@@ -322,6 +326,7 @@ export class ExploreService {
     if(next)page.nextCursor=await this.seal(session,{kind:'cursor',module,filter,query,...next})
     await this.guard(session,epoch,signal);return page
   }
+  async personEvidenceKey(provider:string,uid:string) { const session=await this.runtime.requireSession(); return this.key(session,'relations',provider,uid) }
   private async evidence(module: ExploreModule, rows: Doc[], session: ArkmeSessionCredentials, parent: Doc): Promise<ExploreEvidence[]> {
     const result = await Promise.all(rows.map(async (row,index)=>{
       const owner=doc(row.owner_ref),fields=doc(row.fields),sourceIdentity=doc(row.source_identity)
@@ -330,12 +335,15 @@ export class ExploreService {
       const date=number(row.event_at||row.send_at||row.created_at||row.occurred_at||owner.start_at)
       // The existing detail owner addresses core records only. An equal UID in
       // another provider must never fall through to that route.
+      const provider=first(sourceIdentity.provider,owner.provider,'core_record')
       const canOpen=(!!uid && row.content_status!=='unavailable' && (!sourceIdentity.provider || sourceIdentity.provider==='core_record')) || module==='anniversaries' && !!row.message_id
-      const identity=module==='relations'&&uid ? [uid,text(sourceIdentity.provider||owner.provider)] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
+      // Merged person facets read the same canonical source scope. The card key
+      // follows the source; its opaque open ref still retains the parent permission context.
+      const identity=module==='relations'&&uid ? [provider,uid] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
       const start=number(row.start_position),end=number(row.end_position)
-      return {key:await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
-        speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,anchor:row.is_anchor===true||row.is_primary_anchor===true,
-        ...(module==='relations'?{...projectPersonReferences(row,content),mentions:Array.isArray(row.mentions)?list(row.mentions).map(m=>({start:number(m.start_position),end:number(m.end_position),text:text(m.mention_text)})):end>start&&start>=0?[{start,end,text:text(row.mention_text)}]:[]}:{}),
+      return {key:module==='relations'&&uid?await this.key(session,module,...identity):await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
+        speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,...(number(row.uploaded_at)>0?{uploadedAt:number(row.uploaded_at)}:{}),...(number(row.recognized_at)>0?{recognizedAt:number(row.recognized_at)}:{}),anchor:row.is_anchor===true||row.is_primary_anchor===true,
+        ...(module==='relations'?{roles:strings(row.roles).filter((role): role is 'author'|'speaker'|'mentioned'|'participant' => ['author','speaker','mentioned','participant'].includes(role)),...projectPersonReferences(row,content),mentions:Array.isArray(row.mentions)?list(row.mentions).map(m=>({start:number(m.start_position),end:number(m.end_position),text:text(m.mention_text)})):end>start&&start>=0?[{start,end,text:text(row.mention_text)}]:[]}:{}),
         ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,provider:sourceIdentity.provider,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:sourceIdentity.provider&&sourceIdentity.provider!=='core_record'?'此来源暂不支持打开详情':'这条结果尚未提供可定位的原文'})}
     }))
     return module==='relations'?mergeExploreEvidence(result):result

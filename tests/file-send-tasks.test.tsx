@@ -1,10 +1,14 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeFileSendTask } from '../src/file-transfer-contract.js'
-import { useArkmeFileSendTasks } from '../src/client/file-send-tasks.js'
+import { useArkmeFileSendTasks, wakeArkmeFileTask } from '../src/client/file-send-tasks.js'
+import { fileSendPolicy, resetFileSendPolicy } from '../src/client/file-send-admission.js'
+import { ArkmeClientError } from '../src/client/api.js'
 
 const api = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
+vi.mock('../src/client/api.js', async original => ({
+  ...(await original<typeof import('../src/client/api.js')>()), callArkme: api.call,
+}))
 
 function task(state: ArkmeFileSendTask['state']): ArkmeFileSendTask {
   return {
@@ -15,9 +19,34 @@ function task(state: ArkmeFileSendTask['state']): ArkmeFileSendTask {
 }
 
 afterEach(() => {
+  resetFileSendPolicy(undefined)
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+})
+
+it('shares a capability probe, times out stalled reads and retries without falling back', async () => {
+  vi.useFakeTimers()
+  const policy = { version: 1, textMessagesVersion: 1, admissionRecoveryVersion: 1 }
+  api.call.mockReset().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue(policy)
+  const first = fileSendPolicy('test:7')
+  expect(fileSendPolicy('test:7')).toBe(first)
+  const timedOut = expect(first).rejects.toThrow('读取超时')
+  await vi.advanceTimersByTimeAsync(30_000)
+  await timedOut
+  await expect(fileSendPolicy('test:7')).resolves.toBe(policy)
+  await expect(fileSendPolicy('test:7')).resolves.toBe(policy)
+  expect(api.call).toHaveBeenCalledTimes(2)
+  resetFileSendPolicy('test:8')
+  await expect(fileSendPolicy('test:8')).resolves.toBe(policy)
+  expect(api.call).toHaveBeenCalledTimes(3)
+})
+
+it.each(['operation-unknown', 'file-flow-unavailable'])('keeps the legacy send path for an explicit %s capability response', async code => {
+  api.call.mockReset().mockRejectedValue(new ArkmeClientError({ code, message: '不支持本地发送', retryable: false }))
+  await expect(fileSendPolicy('test:7')).resolves.toBeUndefined()
+  await expect(fileSendPolicy('test:7')).resolves.toBeUndefined()
+  expect(api.call).toHaveBeenCalledTimes(1)
 })
 
 describe('file send task polling', () => {
@@ -39,6 +68,23 @@ describe('file send task polling', () => {
       api.call.mockResolvedValue([])
       act(() => { renderer.update(<Harness source="source-2" />) })
       expect(value.activeTaskKeys.size).toBe(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('reads the active task immediately on a matching Host hint and stops polling after settlement', async () => {
+    vi.useFakeTimers()
+    api.call.mockResolvedValueOnce([task('uploading')]).mockResolvedValue([task('sent')])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      await act(async () => { wakeArkmeFileTask(8, 'task-1') })
+      expect(api.call).toHaveBeenCalledTimes(1)
+      await act(async () => { wakeArkmeFileTask(7, 'task-1') })
+      expect(value.tasks[0]?.state).toBe('sent')
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+      expect(api.call).toHaveBeenCalledTimes(2)
     } finally { act(() => renderer.unmount()) }
   })
 

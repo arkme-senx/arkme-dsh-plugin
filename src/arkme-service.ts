@@ -724,7 +724,8 @@ export class ArkmeService {
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
   async relationPage(query: Omit<ExploreQuery,'module'>, signal?: AbortSignal) { return this.explore.relationPage(query,signal) }
   async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal) { return this.explore.relationRecordsPage(query.ref,query.cursor,signal) }
-  async peopleList(source: unknown, signal?: AbortSignal, cursor?: unknown) { return this.people.list(source, signal, cursor) }
+  async peopleIdentities(action: unknown, params: Record<string, unknown>, signal?: AbortSignal) { return this.people.identityAction(action, params, signal) }
+  async peopleList(source: unknown, signal?: AbortSignal, cursor?: unknown, query?: unknown) { return this.people.list(source, signal, cursor, query) }
   async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
@@ -965,6 +966,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       sendChatSourceTextRaw: async (...args) => await this.chat.sendChatSourceTextRaw(...args),
     })
     this.realtime = new ChatRealtimeService(this.runtime, this.source, {
+      interactionSourceKeys: (userId, peers) => this.directory.interactionSourceKeys(userId, peers),
       chatTimelineItems: async (...args) => await this.chat.chatTimelineItems(...args),
     })
     this.teamNotifications = new TeamMessageNotificationService({
@@ -991,7 +993,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
     this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
     this.realtime.directoryBaseline = async () => await this.directory.complete()
-    this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update') void this.directory.accept(event).catch(() => undefined) })
+    this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update' && event.type !== 'file-send-progress') void this.directory.accept(event).catch(() => undefined) })
     this.chat = new ChatService(
       this.runtime,
       this.source,
@@ -1010,10 +1012,12 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     )
     this.unifiedTimeline = new UnifiedChatTimelineService(this.runtime, this.source, this.chat, this.interwoven, undefined, this.offlineContexts)
     this.realtime.audienceSourceAliases=key=>this.unifiedTimeline.audienceAliases(key)
-    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys, projections) => {
+    this.messageSync = new ChatMessageSyncService(this.runtime, this.unifiedTimeline, this.source, this.chat, (progress, sourceKeys, projections, interactionSourceKeys) => {
       this.realtime.emitChatClientEvent({ type: 'message-sync-progress', revision: this.realtime.nextChatClientRevision(), progress,
-        ...(sourceKeys?.length ? { sourceKeys } : {}), ...(projections?.length ? { projections } : {}) })
-    }, (session, previews, signal) => this.directory.refreshSyncedUnread(session, previews, signal))
+        ...(sourceKeys?.length ? { sourceKeys } : {}), ...(projections?.length ? { projections } : {}),
+        ...(interactionSourceKeys?.length ? { interactionSourceKeys } : {}) })
+    }, (session, previews, signal) => this.directory.refreshSyncedUnread(session, previews, signal),
+    (userId, peers) => this.directory.interactionSourceKeys(userId, peers))
     this.directory.onChatPageAvailable = () => this.messageSync.resumeTransport()
     this.realtime.subscribeChatRealtime(event => {
       this.messageSync.accept(event)
@@ -1072,7 +1076,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.personalKeywords = new PersonalKeywordService(this.runtime)
     this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
-    this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
+    this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat, this.callHistory)
     this.conversationActivity = new ConversationActivityService(this.runtime, this.source)
     this.conversationWords = new ConversationWordFrequencyService(this.runtime, this.source)
     this.speechStatistics = new RecordingSpeechStatisticsService(this.runtime, this.recording)
@@ -1110,6 +1114,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       media: this.media,
       chat: this.chat,
       teamMedia:this.teamApp,
+      onProgressChange: (userId, taskRef) => this.realtime.emitChatClientEvent({
+        type: 'file-send-progress', userId, taskRef, revision: this.realtime.nextChatClientRevision(),
+      }),
       openPath: async (path, signal) => {
         if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
         await this.localFileOpener(path, signal)
@@ -1806,7 +1813,10 @@ recordingAnalysisV1: true,
   async recordingDayPart(dateStamp: number, part: import('./types.js').ArkmeRecordingDayPart, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow) { return await this.recording.recordingDayPart(dateStamp, part, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
+  async speakerGroupMembers(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.groupMembers(input, signal) }
+  async speakerGroupAction(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.groupAction(input, signal) }
   async speakerDirectorySimilar(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.similar(input, signal) }
+  async speakerDirectoryCorrectionItems(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.correctionItems(input, signal) }
   async speakerDirectoryVoiceSamples(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.voiceSamples(input, signal) }
   async speakerDirectorySummary(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.summary(input, signal) }
   async speakerDirectoryAvatars(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.avatars(input, signal) }
@@ -1824,12 +1834,13 @@ recordingAnalysisV1: true,
   async recordingSpeakerPresence(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerPresence> { return await this.recording.recordingSpeakerPresence(signal) }
   async recordingSpeakerMembers(speakerRef: string, signal?: AbortSignal, expectedVersion?: string) { return await this.recording.recordingSpeakerMembers(speakerRef, signal, expectedVersion) }
   async recordingSpeakerRecommendation(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerRecommendation> { return await this.recording.recordingSpeakerRecommendation(itemRef, signal) }
-  async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
+  async assignRecordingSpeaker(input: { itemRef: string; speakerRef?: string; newSpeakerName?: string; explicitNewPerson?: boolean; scope: 'item' | 'speaker' }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> { return await this.recording.assignRecordingSpeaker(input, signal) }
   async recordingSpeakerEvidenceQuery(query: import('./recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal) { return this.recording.recordingSpeakerEvidenceQuery(query, signal) }
   async recordingSpeakerEvidence(input: import('./types.js').ArkmeRecordingSpeakerEvidenceInput, signal?: AbortSignal) { return await this.recording.recordingSpeakerEvidence(input, signal) }
   async recordingSpeakerConsistency(input: import('./types.js').ArkmeRecordingSpeakerConsistencyInput, signal?: AbortSignal) { return await this.recording.recordingSpeakerConsistency(input, signal) }
   async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal) { return this.recording.recordingSpeakerCorrectionItems(query, signal) }
   async recordingSpeakerCorrectionResult(query: import('./types.js').ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionResult(query, signal) }
+  async recordingSpeakerLearning(learningRef: string, retryRef?: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerLearning(learningRef, retryRef, signal) }
   async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionContext(itemRef, signal) }
   async previewRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal) { return await this.recording.previewRecordingSpeakerCorrection(input, signal) }
   async applyRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal) { return await this.recording.applyRecordingSpeakerCorrection(input, signal) }
@@ -2172,7 +2183,7 @@ recordingAnalysisV1: true,
   }
 
   /** Model Tool adapter; Chat owns interaction permissions and unread semantics. */
-  async privateInteractionSummary(sourceRef: string, options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'> = {}) {
+  async privateInteractionSummary(sourceRef: string, options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal' | 'background'> = {}) {
     return await this.interwoven.privateInteractionSummary(sourceRef, options)
   }
   async queryPrivateInteractions(options: import('./types.js').ArkmePrivateInteractionQueryOptions = {}) {
@@ -2719,7 +2730,7 @@ recordingAnalysisV1: true,
     }) } as T
   }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean } = {}): Promise<ArkmeTimelinePage> {
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean; firstPaint?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
     const localInitial = options.cursor?.unified?.cacheOnly === true && options.cursor.unified.mode === 'initial'
@@ -2755,7 +2766,7 @@ recordingAnalysisV1: true,
       if (!options.cursor?.unified?.cacheOnly) this.realtime.preferChatProjection(session.userId, source.ownerRef)
       const page = await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal, options.background === true)
+      }, options.signal, options.background === true, options.firstPaint === true)
       if (!options.cursor?.unified?.cacheOnly && !source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
       return await this.withSelfRoleSnapshots(page, session.userId)
     }
@@ -3802,6 +3813,10 @@ recordingAnalysisV1: true,
   }
 
   /** Execute one owner lifecycle intent. Provider locking prevents duplicate writes, not business transitions. */
+  async editArrangement(input: import('./types.js').ArkmeArrangementEditInput, signal?: AbortSignal): Promise<import('./types.js').ArkmeArrangementEditResult> {
+    return this.arrangement.editArrangement(input, signal)
+  }
+
   async mutateArrangement(
     arrangementRef: string,
     intent: ArkmeArrangementMutationIntent,

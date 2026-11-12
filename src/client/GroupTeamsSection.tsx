@@ -50,7 +50,7 @@ export function GroupTeamsSection({accountKey,source,teams,canManage,leaveAvaila
    const expected={leave:'left',remove:'removed',approve:'joined',reject:'rejected'}[target.action as Exclude<TeamGroupCommandAction,'join'>]
    if(result.state!==expected)throw new Error(tr('操作结果尚未确认，请使用原操作重试'))
    localStorage.removeItem(retained.key)
-   setTarget(undefined);arkmeInterwovenInvalidation.invalidate(source.sourceKey??source.sourceRef);refresh();retry(n=>n+1);invalidateTeamWorkspace(accountKey,source.canonicalChatSourceKey)
+   setTarget(undefined);arkmeInterwovenInvalidation.invalidate(source.sourceKey??source.sourceRef, undefined, false, 'team-group-command');refresh();retry(n=>n+1);invalidateTeamWorkspace(accountKey,source.canonicalChatSourceKey)
   } catch(e){if(!signal.aborted)setError(e instanceof Error?e.message:tr('操作失败，请重试'))}
   finally{if(!signal.aborted)setBusy(false)}
  }

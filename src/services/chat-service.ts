@@ -1,3 +1,4 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { readExtensionSummaryBatch } from '../message-extension-summary.js'
 import type { PendingAttachment } from './progressive-attachments.js'
 import { thoughtReplyFromWire } from '../thought-reply.js'
@@ -1432,7 +1433,19 @@ export class ChatService {
   private sourceMessageCreation<T>(source:Pick<ArkmeSourceRefPayload,'groupDelegation'>,path:Parameters<typeof postChatMessageCreation>[1],body:Record<string,unknown>,session?:ArkmeSessionCredentials,signal?:AbortSignal,options?:ArkmeRemoteRequestOptions) {
     const representation=bindGroupSourceRepresentation(source,body.representation===undefined?undefined:objectValue(body.representation))
     const request=source.groupDelegation?{...options,chatAccessRef:source.groupDelegation.accessRef,trackWriteOutcome:true}:options
-    return postChatMessageCreation<T>(this.runtime,path,source.groupDelegation?{...body,representation}:body,session,signal,request)
+    const send = () => postChatMessageCreation<T>(this.runtime,path,source.groupDelegation?{...body,representation}:body,session,signal,request)
+    if (!groupInteractionTraceEnabled()) return send()
+    const mentions = listValue(objectValue(objectValue(body.content_payload).mention_metadata).human_mentions)
+    if (!mentions.some(mention => integerLikeValue(objectValue(mention).user_id) > 0)) return send()
+    const message = groupInteractionTraceKey(stringValue(body.record_uid))
+    groupInteractionTrace('chat-write-start', { message })
+    return send().then(result => {
+      groupInteractionTrace('chat-write-ack', { message, sequence: numberValue(objectValue(result).seq) })
+      return result
+    }, error => {
+      groupInteractionTrace('chat-write-failed', { message })
+      throw error
+    })
   }
 
   constructor(
@@ -2007,11 +2020,23 @@ export class ChatService {
     }), await this.runtime.stateStore.uniqueCode())
   }
 
+  /** Read an existing verified contact conversation without creating or marking it read. */
+  async personRecordsForIdentity(chatSessionUid: string, targetUserId: number, cursor?: string, signal?: AbortSignal) {
+    const session=await this.runtime.requireSession()
+    if(targetUserId===session.userId)return this.personRecordsPage('','',{...(cursor?{cursor}:{}),...(signal?{signal}:{})})
+    if(!chatSessionUid||!Number.isSafeInteger(targetUserId)||targetUserId<=0)throw new ArkmePluginError('person-record-identity-invalid','联系人来源不可用',false,400)
+    const source=(await this.source.chatSourcesBySessionUids([chatSessionUid],signal)).get(chatSessionUid)
+    if(!source||source.kind!=='private_chat'||source.peerUserId!==targetUserId)throw new ArkmePluginError('person-record-identity-unavailable','联系人会话已变化，请重新读取',true,409)
+    const memberRef=await this.sealChatMemberRef(session.userId,chatSessionUid,targetUserId)
+    return this.personRecordsPage(source.sourceRef,memberRef,{...(cursor?{cursor}:{}),...(signal?{signal}:{})})
+  }
+
   async personRecordsPage(sourceRef: string, memberRef: string, options: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal } = {}): Promise<import('../person-records.js').PersonRecordsPage> {
     const session = await this.runtime.requireSession()
-    const source = await this.source.openSourceRef(sourceRef, session.userId)
-    if (source.kind !== 'group_chat' && source.kind !== 'private_chat') throw new ArkmePluginError('person-record-source-invalid', '仅支持聊天成员内容', false, 400)
-    const target = await this.openChatMemberRef(memberRef, session.userId, source.ownerRef)
+    const self=!sourceRef&&!memberRef
+    const source = self?undefined:await this.source.openSourceRef(sourceRef, session.userId)
+    if (!self && source?.kind !== 'group_chat' && source?.kind !== 'private_chat') throw new ArkmePluginError('person-record-source-invalid', '仅支持聊天成员内容', false, 400)
+    const target = self?{targetUserId:session.userId}:await this.openChatMemberRef(memberRef, session.userId, source!.ownerRef)
     const eventScope = JSON.stringify([this.runtime.config.environment, this.runtime.config.chatBaseUrl, session.userId, target.targetUserId])
     if ((options.knownEventRefs?.length ?? 0) > 500) throw new ArkmePluginError('person-record-window-full', '已达阅读窗口上限，请重新打开', false, 400)
     const known = new Map<string, string>()
@@ -2022,17 +2047,18 @@ export class ChatService {
     }
     let data: Record<string, unknown>
     try {
-      data = await this.sourceChatPost(source,'/api/v1/chats/members/records/aggregate', {
-        chat_session_uid: source.ownerRef, target_user_id: target.targetUserId, scope: 'shared', limit: Math.min(50,Math.max(1,Math.trunc(options.limit ?? 20))),
+      const body = {
+        ...(self?{}:{chat_session_uid:source!.ownerRef}), target_user_id: target.targetUserId, scope:self?'self':'shared', limit: Math.min(50,Math.max(1,Math.trunc(options.limit ?? 20))),
         ...(options.cursor ? { cursor: options.cursor } : {}), known_relations: [...known.keys()], ...(options.validateOnly ? { validate_only: true } : {}),
-      }, session, options.signal, { lane: 'interactive-read', bypassCache: true })
+      }
+      data=source?await this.sourceChatPost(source,'/api/v1/chats/members/records/aggregate',body,session,options.signal,{lane:'interactive-read',bypassCache:true}):await this.runtime.authenticatedChatPost('/api/v1/chats/members/records/aggregate',body,session,options.signal,{lane:'interactive-read',bypassCache:true})
     } catch (error) {
       if (!options.cursor && error instanceof ArkmePluginError && [404,501].includes(error.upstreamStatus ?? error.httpStatus)) {
         return { version: 1, supported: false, items: [], hasMore: false, removedEventRefs: [], coverage: 'current_chat_relations' }
       }
       throw error
     }
-    if (data.protocol_version !== 1 || data.applied_scope !== 'shared') throw new ArkmePluginError('person-record-protocol-unsupported', '人物内容汇总协议不兼容，请升级服务', false, 501)
+    if (data.protocol_version !== 1 || data.applied_scope !== (self?'self':'shared')) throw new ArkmePluginError('person-record-protocol-unsupported', '人物内容汇总协议不兼容，请升级服务', false, 501)
     const groups = new Map<string, { source: ArkmeSourceRefPayload; rows: unknown[] }>()
     for (const raw of listValue(data.items)) {
       const row = objectValue(raw); const origin = objectValue(row.source); const relation = objectValue(row.relation)
@@ -5410,7 +5436,10 @@ nextPublic = next
           ...listValue(contentPayload?.media_refs).map(objectValue).map(ref => ({ ...ref, sort_order: order.get(stringValue(ref.file_asset_uid)) ?? numberValue(ref.sort_order) })),
           ...pending.map(file => ({ file_asset_uid: '', file_name: file.fileName, content_file_role: file.backgroundSound ? 4 : 1,
             ...(file.backgroundSound ? { binding_type: 4 } : {}), render_role: 1, sort_order: file.sortOrder,
-            upload: { attachment_uid: file.attachmentUid, generation: file.generation, state: 'pending', kind: file.fileKind, size: file.size } })),
+            upload: { attachment_uid: file.attachmentUid, generation: file.generation, state: 'pending', kind: file.fileKind, size: file.size,
+              ...(file.fileKind === 1 && file.imageDimensions && file.imageDimensions.width <= 65535 && file.imageDimensions.height <= 65535
+                ? { width: file.imageDimensions.width, height: file.imageDimensions.height, ...(file.inlinePhotoPreview ? { inline_preview: file.inlinePhotoPreview } : {}) }
+                : {}) } })),
         ].sort((a, b) => a.sort_order - b.sort_order).map((ref, index) => ({ ...ref, sort_order: index }))
         contentPayload = { schema_version: 1, text_state: textContent === '' ? 3 : 1, ...contentPayload, payload_kind: 2, media_refs: refs,
           ...(options.backgroundAmplitudes?.length ? { background_sound_amplitudes: options.backgroundAmplitudes } : {}),
@@ -6039,6 +6068,7 @@ nextPublic = next
           type: 'read-ack',
           revision: this.realtime.nextChatClientRevision(),
           sourceRef,
+          ...(source.kind === 'private_chat' || source.kind === 'group_chat' ? { sourceKind: source.kind } : {}),
           sourceKey: await this.source.chatDirectorySourceKey(session.userId, chatSessionUid),
           effectiveReadSequence,
           unreadCount,
@@ -7167,7 +7197,7 @@ nextPublic = next
     source: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    options: { basicPresentation?: boolean } = {},
+    options: { basicPresentation?: boolean; deferHumanAvatars?: boolean } = {},
   ): Promise<ArkmeTimelineItem[]> {
     const items: ArkmeTimelineItem[] = []
     const renderableItems = rawItems.filter(raw => numberValue(objectValue(objectValue(raw).record).status) === 1)
@@ -7210,7 +7240,7 @@ nextPublic = next
       const agentSource = isMe
         ? this.arko.currentUserAgentSourceFallback(session.userId, rawAgentSource)
         : rawAgentSource
-      const contentBlocks = this.media.richContentBlocks(item, session.userId,[],mediaSource)
+      const contentBlocks = this.media.richContentBlocks(item, session.userId, [], mediaSource)
       const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles,source,audienceKey)
       const senderName = this.timelineSenderName(relation, botProfiles)
       const mentions = await this.timelineMentionTargets(record, payload, session.userId, source.ownerRef)
@@ -7311,7 +7341,19 @@ nextPublic = next
       }) - 1
       if (!isBot && senderUserId > 0) senderUserIdByIndex.set(itemIndex, senderUserId)
     }
-    if (!options.basicPresentation) try {
+    if (options.deferHumanAvatars) {
+      const refs = new Map<number, string>()
+      for (const [index, userId] of senderUserIdByIndex) {
+        let ref = refs.get(userId)
+        if (ref === undefined) {
+          ref = await this.profile.sealProfileImageRef(session.userId, userId)
+          refs.set(userId, ref)
+        }
+        items[index]!.avatarRef = ref
+      }
+      signal?.throwIfAborted()
+      this.profile.prefetchTimelineAvatars(refs.keys(), session)
+    } else if (!options.basicPresentation) try {
       const profiles = await this.profile.publicProfilesByUserIds([...new Set(senderUserIdByIndex.values())], session, signal)
       for (const [index, senderUserId] of senderUserIdByIndex) {
         if (!profiles.has(senderUserId) || items[index] === undefined) continue

@@ -1,4 +1,4 @@
-import type { ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSourceSendResult, ArkmeUploadedAsset } from './types.js'
+import type { ArkmeContentBlock, ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSourceSendResult, ArkmeUploadedAsset } from './types.js'
 export const ARKME_TOOL_FILE_MAX_BYTES = 64 * 1024
 
 export interface ArkmeFilePolicy {
@@ -20,6 +20,8 @@ export interface ArkmeLocalFile {
   mimeType: string
   size: number
   fileKind: 1 | 2 | 3 | 4
+  imageDimensions?: ArkmeContentBlock['imageDimensions']
+  inlinePhotoPreview?: string
   /** Set by the file owner. Missing on legacy files; never evidence of current remote access. */
   origin?: 'local' | 'received'
 }

@@ -91,6 +91,17 @@ export class ContactDirectoryService {
 
   dispose(): void { this.snapshots.clear(); this.botSnapshots.clear(); this.contactRefs.clear(); this.recentRemarks.clear() }
 
+  async enrichPeoplePage(rows: Array<{ userId: number; label: string; remark?: string }>, session: ArkmeSessionCredentials, signal?: AbortSignal) {
+    if (rows.length > 100) throw new ArkmePluginError('people-budget', '人物分页超过范围', false, 400)
+    const profiles = await this.profile.publicProfileSummariesByUserIds(rows.map(r => r.userId), session, signal)
+    return Promise.all(rows.map(async row => {
+      const profile = profiles.get(row.userId)
+      const label = row.remark || profile?.displayName || profile?.nickname || row.label || (row.userId === session.userId ? '我' : '未命名联系人')
+      return { ...row, label, aliases: [...new Set([row.label, profile?.nickname].filter((v): v is string => !!v && v !== label))],
+        ...(profile?.avatarUrl === undefined ? {} : { avatarRef: await this.profile.sealProfileImageRef(session.userId, row.userId) }) }
+    }))
+  }
+
   async listRecordingSpeakerUsers(
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,

@@ -11,6 +11,23 @@ function deferred<T>() {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ArkmeRequestCoordinator', () => {
+  it('gives background continuations bounded preference within the same budget', async () => {
+    const coordinator = new ArkmeRequestCoordinator({ maxConcurrent: 1,
+      laneLimits: { 'background-read': { maxConcurrent: 1, burst: 10 } } })
+    const gate = deferred<void>()
+    const order: string[] = []
+    const base = { scope: 'user:1', service: 'chat' as const }
+    const start = (name: string, continuation = false, lane: 'background-read' | 'interactive-read' = 'background-read') =>
+      coordinator.run({ ...base, lane, continuation, operation: async () => { order.push(name) } })
+    const blocker = coordinator.run({ ...base, lane: 'background-read', operation: () => gate.promise })
+    const jobs = [start('optional'), start('page-1', true), start('page-2', true),
+      start('page-3', true), start('foreground', false, 'interactive-read')]
+    gate.resolve()
+    await Promise.all([blocker, ...jobs])
+    expect(order).toEqual(['foreground', 'page-1', 'page-2', 'optional', 'page-3'])
+    coordinator.dispose()
+  })
+
   it('stream headers do not release admission or coalesce separate readers', async () => {
     const coordinator = new ArkmeRequestCoordinator({ defaultServiceLimit: { maxConcurrent: 1 } })
     const firstFinished = deferred<void>()

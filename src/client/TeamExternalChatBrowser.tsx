@@ -6,6 +6,7 @@ import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { LinkBreak } from '@phosphor-icons/react/dist/icons/LinkBreak'
 import { LockSimple } from '@phosphor-icons/react/dist/icons/LockSimple'
 import type { ArkmeTimelineItem } from '../types.js'
+import { walkForwardRecordItems } from '../forward-record-tree.js'
 import type { ExternalChatDirectory, ExternalChatShare, ExternalChatTimeline } from '../team-external-chat-contract.js'
 import { callArkme } from './api.js'
 import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
@@ -129,19 +130,28 @@ function retainMedia(next: ExternalChatTimeline, previous?: ExternalChatTimeline
   const items = next.items.map(item => {
     const old = oldItems.get(item.itemUid)
     const stable = old && signature(old) === signature(item) ? old : item
-    const blocks = [...stable.contentBlocks ?? [], ...stable.forwardRecords?.items.flatMap(value => [...value.contentBlocks ?? [], ...value.segments?.flatMap(segment => segment.contentBlocks ?? []) ?? []]) ?? []]
+    const forwardRows = stable.forwardRecords ? [...walkForwardRecordItems(stable.forwardRecords)] : []
+    const blocks = [...stable.contentBlocks ?? [], ...forwardRows.flatMap(value => [...value.contentBlocks ?? [], ...value.segments?.flatMap(segment => segment.contentBlocks ?? []) ?? []])]
     for (const block of blocks) mediaUrls[block.mediaRef] = (stable === old ? previous?.mediaUrls[block.mediaRef] : next.mediaUrls[block.mediaRef]) ?? ''
     return stable
   })
   return {...next, items, mediaUrls}
 }
-function SharedMessageBody({item, sourceKey}: {item: ArkmeTimelineItem; sourceKey: string}) {
-  if (item.forwardRecords) return <div className="arkme-external-forward"><h4>{item.forwardRecords.title}</h4>{item.forwardRecords.items.map((part, index) => <section key={index}>
+function SharedMessageBody({item, sourceKey, showForwardTitle = true}: {item: ArkmeTimelineItem; sourceKey: string; showForwardTitle?: boolean}) {
+  if (item.forwardRecords) return <div className="arkme-external-forward">{showForwardTitle && <h4>{item.forwardRecords.title}</h4>}{item.forwardRecords.items.map((part, index) => <section key={index}>
     <small>{part.senderName}</small>
-    <ArkmeMessageContent item={{...part, status: 1, itemUid: `${item.itemUid}:${index}`, isMe: false}} presentation="detail" collapseText={false} sourceIdentityKey={sourceKey} mediaSelectionIsExplicit/>
+    {part.forwardRecords ? <SharedNestedForward item={{...part, status: 1, itemUid: `${item.itemUid}:${index}`, isMe: false}} sourceKey={sourceKey} />
+      : <ArkmeMessageContent item={{...part, status: 1, itemUid: `${item.itemUid}:${index}`, isMe: false}} presentation="detail" collapseText={false} sourceIdentityKey={sourceKey} mediaSelectionIsExplicit/>}
     {part.segments?.map((segment, position) => <div key={position}><small>{segment.speakerName}</small><ArkmeMessageContent item={{status: 1, itemUid: `${item.itemUid}:${index}:${position}`, senderName: segment.speakerName, sendAtMillis: part.sendAtMillis, title: '', textContent: segment.textContent, contentBlocks: segment.contentBlocks ?? [], isMe: false}} presentation="detail" collapseText={false} sourceIdentityKey={sourceKey} mediaSelectionIsExplicit/></div>)}
-  </section>)}</div>
+  </section>)}{item.forwardRecords.truncated && <p>{tr('内容较多，当前展示部分转发记录')}</p>}</div>
   return <ArkmeMessageContent item={item} presentation="detail" collapseText={false} sourceIdentityKey={sourceKey} mediaSelectionIsExplicit/>
+}
+function SharedNestedForward({item, sourceKey}: {item: ArkmeTimelineItem; sourceKey: string}) {
+  const [open, setOpen] = useState(false)
+  return <details onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary>{item.forwardRecords?.title}</summary>
+    {open && <SharedMessageBody item={item} sourceKey={sourceKey} showForwardTitle={false} />}
+  </details>
 }
 interface ScrollPosition {top: number; height: number; bottom: boolean; anchor: string | undefined; offset: number; more: boolean}
 function Reader({share, onBack}: {share: ExternalChatShare; onBack(): void}) {

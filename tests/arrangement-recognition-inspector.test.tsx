@@ -62,13 +62,13 @@ it('shows Team source details and sends its model choice with the correct source
 it('shows missing history honestly, previews on request, and only applies after explicit confirmation',async () => {
  const applied=vi.fn();api.mockImplementation(async (op:string) => op.endsWith('settings.get') ? structuredClone(settings) : op.endsWith('.preview') ? {accountScope:'test:42',state:'preview',trace} : op.endsWith('.apply') ? {accountScope:'test:42',state:'applied',item:{...item,title:trace.outcomes![0]!.title}} : {accountScope:'test:42',state:'not-recorded',reason:'历史安排未记录实际模型'})
  await act(async () => root.render(<ArkmeArrangementRecognitionProcess accountScope="test:42" item={item} onApplied={applied} onSettings={() => {}} />));expect(api).not.toHaveBeenCalled()
- await click('识别过程+');expect(document.body.textContent).toContain('历史安排未记录实际模型');expect(api.mock.calls.some(([op])=>op.endsWith('.preview'))).toBe(false)
+ await click('识别过程');expect(document.body.textContent).toContain('历史安排未记录实际模型');expect(api.mock.calls.some(([op])=>op.endsWith('.preview'))).toBe(false)
  await click('重新识别并预览差异');expect(document.body.textContent).toContain('旧标题');expect(document.body.textContent).toContain('下周与鑫泉聊硬件合作');expect(applied).not.toHaveBeenCalled()
  expect(api.mock.calls.find(([op])=>op.endsWith('.preview'))?.[1]).toMatchObject({expectedRouteKey:'dashscope/qwen-flash'})
  await click('确认应用这些修改');expect(applied).toHaveBeenCalledWith(expect.objectContaining({title:'下周与鑫泉聊硬件合作',status:'following',arrangementRef:'opaque'}))
 })
 it('shows the execution snapshot instead of replacing it with current settings',async () => {
  api.mockImplementation(async (op:string) => op.endsWith('settings.get') ? settings : {accountScope:'test:42',state:'ready',trace:{...trace,purpose:'recognition'}})
- await act(async () => root.render(<ArkmeArrangementRecognitionProcess accountScope="test:42" item={item} onApplied={() => {}} onSettings={() => {}} />));await click('识别过程+')
+ await act(async () => root.render(<ArkmeArrangementRecognitionProcess accountScope="test:42" item={item} onApplied={() => {}} onSettings={() => {}} />));await click('识别过程')
  expect(document.body.textContent).toContain('old-config');expect(document.body.textContent).toContain('真实发送的请求正文');expect(document.body.textContent).toContain('qwen-flash')
 })

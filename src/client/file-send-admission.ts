@@ -1,6 +1,25 @@
 import { useSyncExternalStore } from 'react'
 import type { ArkmeFilePolicy, ArkmeFileSendTask } from '../file-transfer-contract.js'
-import { callArkme } from './api.js'
+import { ArkmeClientError, callArkme } from './api.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
+
+let filePolicy: { accountKey: string; result: Promise<ArkmeFilePolicy | undefined> } | undefined
+
+export function fileSendPolicy(accountKey: string): Promise<ArkmeFilePolicy | undefined> {
+  if (filePolicy?.accountKey === accountKey) return filePolicy.result
+  const result = withArkmeReadDeadline(signal => callArkme<ArkmeFilePolicy>('files.capabilities', undefined, signal)).catch(caught => {
+    if (caught instanceof ArkmeClientError
+      && (caught.body.code === 'operation-unknown' || caught.body.code === 'file-flow-unavailable')) return undefined
+    if (filePolicy?.result === result) filePolicy = undefined
+    throw caught
+  })
+  filePolicy = { accountKey, result }
+  return result
+}
+
+export function resetFileSendPolicy(accountKey: string | undefined): void {
+  if (filePolicy?.accountKey !== accountKey) filePolicy = undefined
+}
 
 interface Admission {
   scope: string
@@ -79,8 +98,8 @@ export function forgetFileSendAdmissions(scope: string, recordUids: ReadonlySet<
   if (next.length !== entries.length) publish(next)
 }
 
-export async function retryFileSendAdmission(entry: Admission): Promise<ArkmeFileSendTask> {
-  const policy = await callArkme<ArkmeFilePolicy>('files.capabilities')
-  if (policy.admissionRecoveryVersion !== 1) throw new Error('当前插件无法安全核对原消息，请更新插件后重试')
+export async function retryFileSendAdmission(entry: Admission, accountKey: string): Promise<ArkmeFileSendTask> {
+  const policy = await fileSendPolicy(accountKey)
+  if (policy?.admissionRecoveryVersion !== 1) throw new Error('当前插件无法安全核对原消息，请更新插件后重试')
   return await callArkme<ArkmeFileSendTask>('files.send', { ...entry.params, recoverAdmission: true })
 }

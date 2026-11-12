@@ -9,6 +9,15 @@ const item: ArkmeTimelineItem = { itemUid: 'message', senderName: '我', isMe: t
 const detail: ArkmeCallDetail = { callRef: 'sealed-call', title: '通话详情', mediaType: 'video', startedAtMillis: 1788949920000, acceptedAtMillis: 0, endedAtMillis: 1788949922000, durationSeconds: 2, callResult: 'Cancel', resultLabel: '已取消', summaryStatus: 'idle', transcriptPending: false, transcriptFailed: false, participants: [], transcriptSegments: [] }
 
 describe('call detail drawer', () => {
+  it('opens a participant source without inventing a chat message or note', async () => {
+    vi.mocked(callArkme).mockResolvedValue(detail)
+    let view: ReturnType<typeof create>
+    await act(async () => { view = create(<ArkmeCallDetailDrawer callRef="participant-call" onClose={() => {}} />) })
+    expect(callArkme).toHaveBeenLastCalledWith('calls.history.detail', {callRef:'participant-call'}, expect.any(AbortSignal))
+    expect(JSON.stringify(view!.toJSON())).toContain('通话详情')
+    expect(JSON.stringify(view!.toJSON())).not.toContain('延展此快记')
+    act(() => view!.unmount())
+  })
   it('uses the call surface detail and opens its video controls only after clicking', async () => {
     vi.mocked(callArkme).mockResolvedValue({ ...detail, participants: [{ userId: 2, displayName: 'Peer', isCurrentUser: false }], videoRecord: { available: true, source: 'real', perspectives: [{ perspective: 'peer', userId: 2, videoUrl: 'https://example.com/clip.mp4' }] } })
     let view: ReturnType<typeof create>

@@ -294,6 +294,9 @@ describe('ChatRealtimeService', () => {
     const source = new SourceService(runtime, new ProfileService(runtime), {
       async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
     })
+    source.setChatSourceByKey('10001:raw-chat-session', {
+      sourceRef: 'opaque-source-ref', kind: 'private_chat', displayName: 'Peer', activeAtMillis: 1, unreadCount: 0,
+    })
     const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
     const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => undefined)
     vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
@@ -312,7 +315,7 @@ describe('ChatRealtimeService', () => {
 
     await vi.waitFor(() => { expect(events).toHaveLength(1) })
     expect(events[0]).toMatchObject({
-      type: 'timeline-changed', changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
+      type: 'timeline-changed', sourceKind: 'private_chat', changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
       sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
       timelineItemKey: expect.stringMatching(/^arkme-chat-timeline-item-v1\./),
     })
@@ -1356,6 +1359,41 @@ it('coalesces lifecycle preview reads, clears deleted content, and keeps the exi
     const options = (post.mock.calls as unknown as Array<unknown[]>).map(call => call[4])
     expect(options).toEqual(Array.from({ length: 10 }, () => expect.objectContaining({ traffic: 'message-sync', bypassCache: true })))
   } finally { service.dispose() }
+})
+
+it('skips a covered group replay while retaining full reconciliation for a changed read cursor', async () => {
+  const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  const runtime = new ServiceRuntime(config, { read: async () => session, write: async () => {}, delete: async () => {} },
+    { uniqueCode: async () => 'group-replay-fixture' } as unknown as StateStore)
+  const source = new SourceService(runtime, new ProfileService(runtime), {
+    async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
+  })
+  const bundle = { session: { chat_session_uid: 'group', session_kind: 2 },
+    unread_snapshot: { session_last_seq: 9, read_seq: 7, unread_count: 2, unread_attention_count: 1 } }
+  vi.spyOn(runtime, 'authenticatedChatPost').mockImplementation(async path => {
+    if (path.endsWith('display-snapshots')) return { items: [bundle] }
+    if (path.endsWith('timeline/tail')) return { items: [{
+      relation: { seq: bundle.unread_snapshot.session_last_seq, sender_user_id: 42 },
+      record: { status: 1, payload: { content_payload: { mention_metadata: { human_mentions: [{ user_id: 17 }] } } } },
+    }] }
+    throw new Error('Unexpected request')
+  })
+  const service = new ChatRealtimeService(runtime, source, {
+    chatTimelineItems: async () => [], interactionSourceKeys: () => ['peer'],
+  })
+  const targets: Array<[string[] | undefined, true | undefined]> = []
+  service.subscribeChatRealtime(event => {
+    if (event.type === 'sessions-delta') targets.push([event.updates[0]?.interactionSourceKeys, event.updates[0]?.reconcileInteractionRead])
+  })
+  try {
+    await service.refreshChatSessionProjectionBatch([['group', { latestSequence: 9, notificationHints: [] }]])
+    await service.refreshChatSessionProjectionBatch([['group', { latestSequence: 9, notificationHints: [], refreshTimeline: false }]])
+    bundle.unread_snapshot.read_seq = 9
+    await service.refreshChatSessionProjectionBatch([['group', { latestSequence: 9, notificationHints: [], refreshTimeline: false }]])
+    bundle.unread_snapshot.session_last_seq = 10
+    await service.refreshChatSessionProjectionBatch([['group', { latestSequence: 10, notificationHints: [], interactionReadCursorChanged: true }]])
+    expect(targets).toEqual([[['peer'], undefined], [[], undefined], [undefined, undefined], [['peer'], true]])
+  } finally { service.dispose(); runtime.dispose() }
 })
 
 it('projects current counterpart names through realtime display refresh without rewriting historical senders', async () => {

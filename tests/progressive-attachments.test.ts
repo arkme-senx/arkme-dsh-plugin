@@ -8,7 +8,7 @@ import { createSessionInput } from './helpers/session-input.js'
 import { registerArkmeTools } from '../src/tools/registry/registrar.js'
 import { createArkmeSdk } from '../src/sdk/index.js'
 import { dispatchArkmeHostOperation } from '../src/host-api.js'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -58,10 +58,49 @@ it('sends image/video/file metadata before any bytes and exposes message receipt
     expect(tasks[0]).toMatchObject({ state: 'uploading', result: { itemUid: f.input.recordUid } })
     return original(...args)
   })
-  await f.owner.enqueue(f.input); await f.owner.settled()
+  const queued = await f.owner.enqueue(f.input)
+  await f.owner.settled()
+  expect(queued.files.map(file => file.attachmentUid)).toEqual(f.send.mock.calls[0]![5]?.map(file => file.attachmentUid))
   expect(f.events).toEqual(['send', 'upload', 'upload', 'upload'])
   expect(f.send.mock.calls[0]![5]?.map(file => file.fileKind)).toEqual([1, 3, 4])
   expect(await f.owner.tasks()).toMatchObject([{ state: 'sent', delivery: 'progressive' }])
+})
+
+it('resumes an interrupted photo thumbnail without resending the original or the message', async () => {
+  const f = await fixture()
+  const progressive = f.ports.progressive!
+  progressive.supported = async () => 'photo-thumbnail'
+  let started!: () => void
+  const thumbnailStarted = new Promise<void>(resolve => { started = resolve })
+  progressive.uploadPhotoThumbnail = async (_path, _target, _user, signal) => {
+    started()
+    await new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+  }
+  const owner = new FileTransfers(f.root, f.ports, 1024 * 1024)
+  const { default: sharp } = await import('sharp')
+  const jpeg = await sharp({ create: { width: 1000, height: 800, channels: 3, background: '#aaa' } }).jpeg().toBuffer()
+  const photo = Buffer.concat([jpeg, Buffer.alloc(140_000)])
+  const path = join(f.root, 'photo.jpg')
+  await writeFile(path, photo)
+  const file = await owner.stage(path, { fileName: 'photo.jpg', mimeType: 'image/jpeg', size: photo.length })
+  await owner.enqueue({ ...f.input, fileRefs: [file.fileRef] })
+  await thumbnailStarted
+  expect(await owner.tasks()).toMatchObject([{ state: 'sent' }])
+  owner.dispose()
+  await owner.settled()
+
+  const recovered = vi.fn(async () => {})
+  progressive.uploadPhotoThumbnail = recovered
+  const restarted = new FileTransfers(f.root, f.ports, 1024 * 1024)
+  await restarted.resume()
+  await restarted.settled()
+  expect(recovered).toHaveBeenCalledOnce()
+  expect(f.send).toHaveBeenCalledOnce()
+  expect(f.upload).toHaveBeenCalledOnce()
+  await restarted.resumeAfterReconnect()
+  await restarted.settled()
+  expect(recovered).toHaveBeenCalledOnce()
+  restarted.dispose()
 })
 
 it('persists accepted message and retries only unfinished attachments after restart', async () => {

@@ -1,3 +1,4 @@
+import { directoryTraceHeader, directoryTraceSignals, groupInteractionTrace, groupInteractionTraceEnabled, isDirectoryTraceId } from './group-interaction-diagnostics.js'
 import type { LocalRecorderOwner } from './local-recorder/owner.js'
 import { callLocalRecorder } from './local-recorder/routes.js'
 import {readTeamMentionInputs} from './services/group-team-mention.js'
@@ -931,6 +932,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
   const dayReviewConfirmation = new DayReviewConfirmation(service)
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const started = performance.now()
+    const traceHeader = req.headers[directoryTraceHeader]
+    const traceReceivedAt = isDirectoryTraceId(traceHeader) && groupInteractionTraceEnabled() ? Date.now() : undefined
     let phases: string | undefined
     const controller = new AbortController()
     const abortDisconnectedRequest = () => {
@@ -972,6 +975,12 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation === 'private-interaction.directory' && traceReceivedAt !== undefined
+        && isDirectoryTraceId(traceHeader) && isLoopback(req.socket.remoteAddress)) {
+        directoryTraceSignals.set(controller.signal, traceHeader)
+        groupInteractionTrace('directory-host-received', { traceId: traceHeader, at: traceReceivedAt })
+        groupInteractionTrace('directory-host-decoded', { traceId: traceHeader })
+      }
       if (['calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile'].includes(request.operation)) {
         throw new ArkmePluginError('day-review-human-required', '请在宿主确认页亲自确认本次生成', false, 403)
       }
@@ -1166,7 +1175,8 @@ export async function dispatchArkmeHostOperation(
   if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
   if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
   if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
-  if (operation === 'people.list') return service.peopleList(params.source, requestSignal, params.cursor)
+  if (operation === 'people.identities') return service.peopleIdentities(params.action, params, requestSignal)
+  if (operation === 'people.list') return service.peopleList(params.source, requestSignal, params.cursor, params.query)
   if (operation === 'people.open-chat') return service.peopleOpenChat(stringParam(params, 'ref'), requestSignal)
   if (operation === 'relations.list') return service.relationPage(params as Omit<ExploreQuery,'module'>, requestSignal)
   if (operation === 'relations.records') return service.relationRecords({ref:typeof params.ref==='string'?params.ref:'',...(typeof params.cursor==='string'?{cursor:params.cursor}:{})},requestSignal)
@@ -1515,6 +1525,7 @@ export async function dispatchArkmeHostOperation(
       if (sourceRef === '') throw new ArkmePluginError('interaction-source-invalid', '请选择一个私聊联系人', false, 400)
       const expectedVersion = stringParam(params, 'expectedVersion').trim()
       return await service.privateInteractionSummary(sourceRef, {
+        ...(params.background === true ? { background: true } : {}),
         ...(expectedVersion === '' ? {} : { expectedVersion }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })
@@ -1878,7 +1889,10 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'speaker-directory.list': return await service.speakerDirectoryList(params, requestSignal)
     case 'speaker-directory.seen': return await service.speakerDirectorySeen(params, requestSignal)
     case 'speaker-directory.open': return await service.speakerDirectoryOpen(params, requestSignal)
+    case 'speaker-directory.group-members': return await service.speakerGroupMembers(params, requestSignal)
+    case 'speaker-directory.group-action': return await service.speakerGroupAction(params, requestSignal)
     case 'speaker-directory.similar': return await service.speakerDirectorySimilar(params, requestSignal)
+    case 'speaker-directory.correction-items': return await service.speakerDirectoryCorrectionItems(params, requestSignal)
     case 'speaker-directory.voice-samples': return await service.speakerDirectoryVoiceSamples(params, requestSignal)
     case 'speaker-directory.avatars': return await service.speakerDirectoryAvatars(params, requestSignal)
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
@@ -1895,17 +1909,23 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       if ([params.itemRefs, params.referenceA, params.referenceB].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) {
         throw new ArkmePluginError('invalid-params', '声纹对比参数无效', false)
       }
-      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[] }, requestSignal)
+      if (params.crossDateSelection !== undefined && typeof params.crossDateSelection !== 'boolean') throw new ArkmePluginError('invalid-params', '比较范围无效', false)
+      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[], ...(params.crossDateSelection === true ? { crossDateSelection: true } : {}) }, requestSignal)
     }
     case 'recordings.speaker.consistency': {
       if ([params.anchorRefs, params.itemRefs].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) throw new ArkmePluginError('invalid-params', '一致性查询参数无效', false)
       return await service.recordingSpeakerConsistency({ anchorRefs: params.anchorRefs as string[], itemRefs: params.itemRefs as string[] }, requestSignal)
     }
     case 'recordings.speaker.correction.items': return await service.recordingSpeakerCorrectionItems({ dateStamp: numberParam(params, 'dateStamp', Number.NaN), atMillis: numberParam(params, 'atMillis', Number.NaN), transcriptSource: stringParam(params, 'transcriptSource') as 'system' | 'doubao' }, requestSignal)
+    case 'recordings.speaker.correction.learning': return await service.recordingSpeakerLearning(stringParam(params, 'learningRef'), undefined, requestSignal)
+    case 'recordings.speaker.correction.learning.retry': return await service.recordingSpeakerLearning(stringParam(params, 'learningRef'), stringParam(params, 'retryRef'), requestSignal)
     case 'recordings.speaker.correction.context': return await service.recordingSpeakerCorrectionContext(stringParam(params, 'itemRef').trim(), requestSignal)
     case 'recordings.speaker.correction.result': return await service.recordingSpeakerCorrectionResult({ itemRef: stringParam(params, 'itemRef').trim(), action: stringParam(params, 'action') as 'apply' | 'undo', idempotencyKey: stringParam(params, 'idempotencyKey') }, requestSignal)
     case 'recordings.speaker.correction.apply': {
       if (!Array.isArray(params.itemRefs) || !params.itemRefs.every(value => typeof value === 'string')
+        || (params.crossDateSelection !== undefined && typeof params.crossDateSelection !== 'boolean')
+        || (params.preserveAssignment !== undefined && typeof params.preserveAssignment !== 'boolean')
+        || (params.rejectedCandidateItemRef !== undefined && typeof params.rejectedCandidateItemRef !== 'string')
         || typeof params.detach !== 'boolean' || (params.rejectCurrent !== undefined && typeof params.rejectCurrent !== 'boolean')
         || (params.soundSource !== undefined && !['unknown', 'in_person', 'playback'].includes(String(params.soundSource)))) {
         throw new ArkmePluginError('invalid-params', '纠错参数无效', false)
@@ -1913,6 +1933,9 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       return await service.applyRecordingSpeakerCorrection({
         itemRef: stringParam(params, 'itemRef'), itemRefs: params.itemRefs as string[], detach: params.detach,
         ...(params.selections === undefined ? {} : { selections: params.selections as NonNullable<import('./types.js').ArkmeRecordingSpeakerCorrectionInput['selections']> }),
+        ...(params.crossDateSelection === undefined ? {} : { crossDateSelection: params.crossDateSelection as boolean }),
+        ...(params.preserveAssignment === undefined ? {} : { preserveAssignment: params.preserveAssignment as boolean }),
+        ...(params.rejectedCandidateItemRef === undefined ? {} : { rejectedCandidateItemRef: params.rejectedCandidateItemRef as string }),
         ...(params.intentToken === undefined ? {} : { intentToken: params.intentToken as string }),
         ...(params.target === undefined ? {} : { target: params.target as NonNullable<import('./types.js').ArkmeRecordingSpeakerCorrectionInput['target']> }),
         expectedVersion: stringParam(params, 'expectedVersion'), idempotencyKey: stringParam(params, 'idempotencyKey'),
@@ -1931,6 +1954,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       scope: recordingSpeakerScopeParam(params),
     }, requestSignal)
     case 'recordings.speaker.assign-item': return await service.assignRecordingSpeaker({
+      ...(params?.explicitNewPerson === true ? { explicitNewPerson: true } : {}),
       itemRef: stringParam(params, 'itemRef').trim(),
       ...(stringParam(params, 'speakerRef').trim() === '' ? {} : { speakerRef: stringParam(params, 'speakerRef').trim() }),
       ...(stringParam(params, 'newSpeakerName').trim() === '' ? {} : { newSpeakerName: stringParam(params, 'newSpeakerName').trim() }),
@@ -2310,6 +2334,12 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
+    case 'arrangements.edit': return service.editArrangement({
+      arrangementRef: stringParam(params, 'arrangementRef'),
+      expectedVersion: params.expectedVersion as number,
+      ...(params.title !== undefined ? { title: params.title as string } : {}),
+      ...(params.remindAtMillis !== undefined ? { remindAtMillis: params.remindAtMillis as number } : {}),
+    }, requestSignal)
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
       arrangementMutationIntentParam(params),
@@ -2535,6 +2565,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         stringParam(params, 'sourceRef'),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
           ...(params?.background === true ? { background: true } : {}),
+          ...(params?.firstPaint === true ? { firstPaint: true } : {}),
           ...(params.desktopLocal === true ? { desktopLocal: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
