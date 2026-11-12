@@ -1,3 +1,4 @@
+import { directoryTraceHeader, directoryTraceSignals, groupInteractionTrace, groupInteractionTraceEnabled, isDirectoryTraceId } from './group-interaction-diagnostics.js'
 import type { LocalRecorderOwner } from './local-recorder/owner.js'
 import { callLocalRecorder } from './local-recorder/routes.js'
 import {readTeamMentionInputs} from './services/group-team-mention.js'
@@ -931,6 +932,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
   const dayReviewConfirmation = new DayReviewConfirmation(service)
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const started = performance.now()
+    const traceHeader = req.headers[directoryTraceHeader]
+    const traceReceivedAt = isDirectoryTraceId(traceHeader) && groupInteractionTraceEnabled() ? Date.now() : undefined
     let phases: string | undefined
     const controller = new AbortController()
     const abortDisconnectedRequest = () => {
@@ -972,6 +975,12 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation === 'private-interaction.directory' && traceReceivedAt !== undefined
+        && isDirectoryTraceId(traceHeader) && isLoopback(req.socket.remoteAddress)) {
+        directoryTraceSignals.set(controller.signal, traceHeader)
+        groupInteractionTrace('directory-host-received', { traceId: traceHeader, at: traceReceivedAt })
+        groupInteractionTrace('directory-host-decoded', { traceId: traceHeader })
+      }
       if (['calendar.day-review.create', 'calendar.day-review.resume', 'calendar.day-review.reconcile'].includes(request.operation)) {
         throw new ArkmePluginError('day-review-human-required', '请在宿主确认页亲自确认本次生成', false, 403)
       }

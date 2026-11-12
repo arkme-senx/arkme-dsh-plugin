@@ -94,6 +94,8 @@ it('lets a continuation reach Host when Browser background slots are occupied', 
   await act(async () => {})
   const blocked = await imagesPending
   expect(snapshot.rows.map(item => item.displayName)).toEqual(['recent', 'older'])
+  expect(provider.mock.calls.filter(args => args[0] === 'private-interaction.directory').map(args => args[3]?.priority))
+    .toEqual(['low', 'high'])
   expect(blocked.controller.signal.aborted).toBe(false)
   blocked.controller.abort()
   await blocked.pending

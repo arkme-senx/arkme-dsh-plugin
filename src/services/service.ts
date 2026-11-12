@@ -1,3 +1,4 @@
+import { directoryTraceSignals, groupInteractionTrace } from '../group-interaction-diagnostics.js'
 import { ArkmePluginError } from './service-error.js'
 export { ArkmePluginError } from './service-error.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -710,9 +711,11 @@ export class ServiceRuntime {
         owner: options.key?.startsWith('projection:display:') ? 'realtime'
           : trace.includes('RuntimeBotDisplayProfilesReader') ? 'bot-display' : 'directory' })
     }
-    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic ? reactionQueue : (event, detail) => {
+    const traceId = directoryRead && signal ? directoryTraceSignals.get(signal) : undefined
+    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !traceId ? reactionQueue : (event, detail) => {
       reactionQueue?.(event, detail)
-      console.info('dsh-arkme: timeline_transport_queue', { atMillis: Date.now(), path, pool: messageSync ? 'message-sync' : 'shared', event, ...detail })
+      if (traceId) groupInteractionTrace('directory-host-queue', { traceId, event, ...detail })
+      if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_queue', { atMillis: Date.now(), path, pool: messageSync ? 'message-sync' : 'shared', event, ...detail })
     }
     return await measureReaction('upstream-total', { route: path }, () => coordinator.run<T>({
       scope: options.scope ?? 'public',
