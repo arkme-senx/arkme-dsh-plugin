@@ -342,14 +342,16 @@ export class TeamAppService {
     const byAsset=new Map(list(content.media).map((file,index)=>[str(file.file_asset_uid),projectedMedia[index]!]))
     const payload = { ...obj(content.content_payload) }
     const avatarURLs: unknown[] = Array.isArray(payload.forward_sender_avatars) ? payload.forward_sender_avatars : []
+    const cardAvatarURLs: unknown[] = Array.isArray(payload.forward_card_sender_avatars) ? payload.forward_card_sender_avatars : []
     delete payload.forward_sender_avatars
+    delete payload.forward_card_sender_avatars
     delete payload.mention_metadata
     delete payload.mentionMetadata
     const avatars = new Map<string, Promise<TeamIdentity>>()
     const avatarTasks: Promise<void>[] = []
     const forwardRecords=projectTeamForward(payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}),
-      avatarURLs.length ? (item, index) => {
-        const url = str(avatarURLs[index])
+      avatarURLs.length || cardAvatarURLs.length ? (item, index, kind) => {
+        const url = str((kind === 'card' ? cardAvatarURLs : avatarURLs)[index])
         if (!url) return
         let image = avatars.get(url)
         if (!image) {
