@@ -65,17 +65,18 @@ it('mounts bounded rows around a restored anchor and disconnects observers on un
   vi.stubGlobal('IntersectionObserver', class { observe = observe; disconnect = disconnect; constructor(public callback: unknown) {} })
   vi.stubGlobal('ResizeObserver', class { observe = vi.fn(); disconnect = disconnect })
   const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+  const renderRow = vi.fn((index: number) => <li key={index} data-row={`row-${index}`} />)
   function Fixture() {
     const body = useRef<HTMLDivElement>(null)
     const rows = Array.from({ length: 2000 }, (_, index) => ({ id: `row-${index}` }))
-    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body} anchorId="row-1005">
-      {rows.map(row => <li key={row.id} data-row={row.id}>{row.id}</li>)}
-    </WindowedTimelineRows></ul></div>
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}
+      anchorId="row-1005" renderRow={renderRow} /></ul></div>
   }
   try {
     await act(async () => root.render(<Fixture />))
     expect(host.querySelector('[data-row="row-1005"]')).not.toBeNull()
     expect(host.querySelectorAll('[data-row]')).toHaveLength(40)
+    expect(renderRow.mock.calls.flat()).toEqual(Array.from({ length: 40 }, (_, index) => 1000 + index))
     expect(observe).toHaveBeenCalledTimes(50)
     await act(async () => root.unmount())
     expect(disconnect).toHaveBeenCalled()

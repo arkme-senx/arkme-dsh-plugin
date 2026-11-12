@@ -185,6 +185,7 @@ export class ProfileService {
   private readonly publicInvalidations = new Map<string, Promise<void>>()
   private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
   private readonly publicProfileAvatarCache = new Map<string, { avatarUrl: string; expiresAtMillis: number }>()
+  private readonly timelineAvatarBatches = new Map<string, Promise<void>>()
   private readonly avatarRevisions = new Map<number, number>()
   private readonly mutations = new Set<number>()
 
@@ -198,6 +199,7 @@ export class ProfileService {
       this.profileInFlight.clear()
       this.publicProfileCache.clear()
       this.publicProfileAvatarCache.clear()
+      this.timelineAvatarBatches.clear()
       return
     }
     void this.runtime.stateStore?.clearPublicPeople?.(this.runtime.config.environment, userId).catch(() => undefined)
@@ -206,6 +208,43 @@ export class ProfileService {
     const prefix = `${String(userId)}:`
     for (const key of this.publicProfileCache.keys()) if (key.startsWith(prefix)) this.publicProfileCache.delete(key)
     for (const key of this.publicProfileAvatarCache.keys()) if (key.startsWith(prefix)) this.publicProfileAvatarCache.delete(key)
+    for (const key of this.timelineAvatarBatches.keys()) if (key.startsWith(prefix)) this.timelineAvatarBatches.delete(key)
+  }
+
+  prefetchTimelineAvatars(userIds: Iterable<number>, session: ArkmeSessionCredentials): void {
+    const viewer = session.userId
+    const ids = [...new Set(userIds)].filter(id => !this.timelineAvatarBatches.has(`${viewer}:${id}`)
+      && this.cachedPublicProfileAvatar(viewer, id) === undefined)
+      .slice(0, Math.max(0, 256 - this.timelineAvatarBatches.size))
+    if (ids.length === 0) return
+    const budget = AbortSignal.timeout(2_500)
+    const pending = new Promise<void>(resolve => {
+      const done = () => { budget.removeEventListener('abort', done); resolve() }
+      budget.addEventListener('abort', done, { once: true })
+      void this.publicProfilesByUserIds(ids, session, budget).then(done, done)
+    })
+    for (const id of ids) this.timelineAvatarBatches.set(`${viewer}:${id}`, pending)
+    void pending.then(() => {
+      for (const id of ids) {
+        const key = `${viewer}:${id}`
+        if (this.timelineAvatarBatches.get(key) === pending) this.timelineAvatarBatches.delete(key)
+      }
+    })
+  }
+
+  pendingTimelineAvatar(viewer: number, userId: number): Promise<void> | undefined {
+    return this.timelineAvatarBatches.get(`${viewer}:${userId}`)
+  }
+
+  async waitForTimelineAvatar(viewer: number, userId: number, signal?: AbortSignal): Promise<void> {
+    const pending = this.pendingTimelineAvatar(viewer, userId)
+    if (!pending || !signal) return await pending
+    signal.throwIfAborted()
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+      void pending.then(() => { signal.removeEventListener('abort', abort); resolve() })
+    })
   }
 
   cachedPublicProfileAvatar(viewerUserId: number, targetUserId: number): string | undefined {

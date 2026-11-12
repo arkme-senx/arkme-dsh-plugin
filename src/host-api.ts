@@ -2555,6 +2555,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         stringParam(params, 'sourceRef'),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
           ...(params?.background === true ? { background: true } : {}),
+          ...(params?.firstPaint === true ? { firstPaint: true } : {}),
           ...(params.desktopLocal === true ? { desktopLocal: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )

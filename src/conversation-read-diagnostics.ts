@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-type Phase = 'scope' | 'storage-ready' | 'access' | 'projection' | 'message-bodies' | 'worker-queue' | 'sqlite' | 'upstream'
+type Phase = 'scope' | 'storage-ready' | 'access' | 'projection' | 'message-bodies' | 'worker-queue' | 'sqlite' | 'upstream' | 'network-projection' | 'cache-commit'
 const timing = new AsyncLocalStorage<Partial<Record<Phase, number>>>()
 
 export function conversationReadTracing(): boolean { return timing.getStore() !== undefined }

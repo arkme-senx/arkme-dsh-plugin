@@ -1102,6 +1102,10 @@ export class MediaService {
           })
         }
       }
+      if (!refreshProfile && this.profile.cachedPublicProfileAvatar(session.userId, reference.targetUserId) === undefined) {
+        await this.profile.waitForTimelineAvatar(session.userId, reference.targetUserId, signal)
+        signal?.throwIfAborted()
+      }
       const cachedAvatarUrl = refreshProfile ? undefined : this.profile.cachedPublicProfileAvatar(session.userId, reference.targetUserId)
       let avatarUrl = cachedAvatarUrl
       if (avatarUrl === undefined) {

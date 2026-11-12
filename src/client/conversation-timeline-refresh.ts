@@ -1,5 +1,41 @@
 import { refreshUnifiedTimelineWindow } from './unified-timeline-window.js'
 import type { ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage } from '../types.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
+
+const INITIAL_CACHE_BUDGET_MS = 120
+
+export function conversationEntryTracingEnabled(): boolean {
+  try { return localStorage.getItem('arkme:conversation-entry-timing') === '1' }
+  catch { return false }
+}
+
+/** No account, conversation, message, or cursor values enter the diagnostic output. */
+export function traceConversationEntry(start: number, cache: 'memory' | 'cold') {
+  const seen = new Set<string>()
+  return (phase: 'local-start' | 'local-ready' | 'local-miss' | 'local-budget' | 'network-start' | 'network-ready' | 'first-paint' | 'failed') => {
+    if (seen.has(phase)) return
+    seen.add(phase)
+    console.debug('arkme: conversation entry', { cache, phase, millis: Math.round(performance.now() - start) })
+  }
+}
+
+/** An optional local read must not postpone the only foreground network read. */
+export async function readInitialConversationCache<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal,
+  offline: boolean,
+  budgetMillis = INITIAL_CACHE_BUDGET_MS,
+): Promise<T | undefined> {
+  if (offline) return await withArkmeReadDeadline(read, signal)
+  const budget = AbortSignal.timeout(budgetMillis)
+  try {
+    return await withArkmeReadDeadline(read, AbortSignal.any([signal, budget]))
+  } catch (error) {
+    signal.throwIfAborted()
+    if (budget.aborted && error === budget.reason) return undefined
+    throw error
+  }
+}
 
 /** The loaded read window, independent of cache storage and message enhancement state. */
 export interface ConversationTimelineReadWindow {
@@ -75,6 +111,15 @@ export async function readConversationTimelineWindow(
   }
 }
 
+export function conversationViewportAroundCursor(
+  viewport: import('./conversation-memory-cache.js').ArkmeConversationViewportSnapshot,
+): ArkmeTimelineCursor | undefined {
+  if (viewport.stickToBottom) return undefined
+  const anchor = viewport.messageAnchor ?? (viewport.contextRef ? { contextRef: viewport.contextRef }
+    : viewport.systemRef ? { systemRef: viewport.systemRef } : undefined)
+  return anchor ? { unified: { mode: 'around', ...anchor } } : undefined
+}
+
 /** A missing disposable cache must not turn saved history into a latest-tail entry. */
 export async function readConversationTimelineEntry(
   viewport: import('./conversation-memory-cache.js').ArkmeConversationViewportSnapshot,
@@ -82,8 +127,7 @@ export async function readConversationTimelineEntry(
   signal: AbortSignal,
 ): Promise<ArkmeTimelinePage> {
   signal.throwIfAborted()
-  const anchor = !viewport.stickToBottom ? viewport.messageAnchor : undefined
-  const page = await readPage(anchor ? { unified: { mode: 'around', ...anchor } } : undefined)
+  const page = await readPage(conversationViewportAroundCursor(viewport))
   signal.throwIfAborted()
   if (!viewport.stickToBottom && viewport.anchorId && !page.unified?.events.some(event => {
     const id = event.kind === 'message' ? `message:${event.eventId}`

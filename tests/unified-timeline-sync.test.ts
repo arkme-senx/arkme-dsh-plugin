@@ -27,7 +27,12 @@ function setup(unavailable = false, readbackMissing = false, createPort?: (port:
       case 'reserve': result = store.reserve(); break
       case 'invalidate-all': store.invalidateAll(); break
       case 'read': result = readbackMissing ? undefined : store.read(command.scope, command.request, command.anchorId, command.latest); break
-      case 'write': writes(command); result = store.write(command.scope, command.request, command.page, command.options); break
+      case 'write': {
+        writes(command)
+        const accepted = store.write(command.scope, command.request, command.page, command.options)
+        result = accepted && command.readBack ? (readbackMissing ? undefined : store.read(command.scope, command.request)) : accepted
+        break
+      }
       case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal, command.refreshOnly); break
       case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal, command.refreshOnly); break
     }
@@ -85,9 +90,24 @@ it('preserves the durable invalidation state reported by readback', async () => 
   const call = port.call.bind(port)
   vi.spyOn(port, 'call').mockImplementation(async command => {
     const value = await call<any>(command)
-    return command.kind === 'read' && value ? { ...value, cache: { ...value.cache, stale: true } } : value
+    return command.kind === 'write' && command.readBack && value ? { ...value, cache: { ...value.cache, stale: true } } : value
   })
   expect((await owner.read('ref')).cache).toMatchObject({ persistence: 'committed', stale: true })
+})
+it('starts the remote page while the reserved cache ticket is still in the worker queue', async () => {
+  const { owner, post, port } = setup()
+  const call = port.call.bind(port)
+  let release!: () => void
+  const ticketBlocked = new Promise<void>(resolve => { release = resolve })
+  vi.spyOn(port, 'call').mockImplementation(async command => {
+    if (command.kind === 'reserve') await ticketBlocked
+    return await call(command)
+  })
+  const page = owner.read('ref')
+  try {
+    await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  } finally { release() }
+  expect((await page).cache?.persistence).toBe('committed')
 })
 it('does not publish a stale response when its durable commit is rejected by a newer refresh', async () => {
   const { owner, port } = setup()
