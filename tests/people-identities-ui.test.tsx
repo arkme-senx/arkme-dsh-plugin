@@ -14,12 +14,15 @@ let root: Root, host: HTMLDivElement
 beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); clearPeopleDirectoryCache(); mocks.call.mockReset(); host = document.createElement('div'); document.body.append(host); root = createRoot(host) })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 async function click(text: string) { const b = [...document.querySelectorAll('button')].find(b => b.textContent?.trim() === text); expect(b).toBeTruthy(); await act(async () => b!.click()) }
-async function choose(value: string) { await act(async () => { const select = document.querySelector('select')!; select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })) }) }
+async function choose(value: string) { await act(async () => { const radio = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')].find(r => r.value === value); expect(radio).toBeTruthy(); radio!.click() }) }
+
 it('requires preview confirmation, retries the identical signed command, and exposes recent undo', async () => {
   const changed = vi.fn(); let fail = true
   mocks.call.mockImplementation(async (_op, p) => { if(p.action==='capabilities')return capabilities; if (p.action === 'impact') return {state:'complete',identityCount:1,relationRecordCount:0,unavailableRecordCount:0,names:[]}; if (p.action === 'list') return { links: [], ...(!fail ? { operationRef: 'receipt' } : {}) }; if (p.action === 'preview') return { commandRef: 'signed', changeCount: 1, expiresAt: Date.now() + 600000 }; if (p.action === 'apply') { if (fail) { fail = false; throw new Error('网络中断') }; return { operationRef: 'receipt', state: 'committed' } } })
   await act(async () => root.render(<PeopleIdentities person={person} people={[person, other]} accountScope="test:11" onChanged={changed} onClose={() => {}}/>))
+  expect(document.querySelector('select')).toBeNull()
   await choose('speaker'); await click('预览影响')
+  expect(document.querySelector('[aria-modal="true"]')).not.toBeNull()
   expect(mocks.call.mock.calls.some(c => c[1].action === 'apply')).toBe(false)
   await click('确认保存'); expect(document.body.textContent).toContain('保存结果待确认')
   await click('重试同一操作')
@@ -47,6 +50,7 @@ it('allows an independent speaker to preview a first contact link without an exi
   const contact = { ...other, key: 'contact-person', facets: [{ ...other.facets[0]!, key: 'contact', source: 'contacts' as const, personRef: '', identityRef: 'contact-ref' }] }
   mocks.call.mockImplementation(async(_op,p)=>p.action==='capabilities'?capabilities:{ commandRef: 'create-root-preview', changeCount: 2, changes: [], expiresAt: Date.now()+600000 })
   await act(async () => root.render(<PeopleIdentities person={independent} people={[independent, contact]} accountScope="test:14" onChanged={() => {}} onClose={() => {}}/>))
+  expect(Array.from(document.querySelectorAll('button')).some(button => button.textContent === '建立人物档案')).toBe(false)
   await choose('contact'); await click('预览影响')
   expect(mocks.call.mock.calls.filter(c => c[1].action === 'preview').at(-1)?.[1]).toMatchObject({ action: 'preview', kind: 'link', anchorIdentityRef: 'speaker-ref', identityRef: 'contact-ref' })
   expect(mocks.call.mock.calls.filter(c => c[1].action === 'preview').at(-1)?.[1]).not.toHaveProperty('personRef')

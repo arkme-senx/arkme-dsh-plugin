@@ -1,5 +1,4 @@
 import { ArkmeCallDetailDrawer } from '../ArkmeCallDetailDrawer.js'
-import { PersonRecordingAssignment } from './PersonRecordingAssignment.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PEOPLE_SOURCES, PEOPLE_SOURCE_LABELS, personMatches, type PersonFacet, type UnifiedPerson } from '../../people-contract.js'
 import type { ExploreDetail, ExploreEvidence, ExploreSource } from '../../explore-contract.js'
@@ -90,7 +89,6 @@ function PeopleAccountSurface({ accountScope, onBack }: { accountScope: string; 
 }
 
 function PersonProfile({ person, people, onChanged, accountScope, reads }: { person: UnifiedPerson; people: UnifiedPerson[]; onChanged(): void; accountScope: string; reads: Record<PersonFacet['source'], PeopleReadState> }) {
-  const [assigning, setAssigning] = useState(false)
   const [identities, setIdentities] = useState(false), [tab, setTab] = useState<'records' | 'speakers'>('records')
   const [opening, setOpening] = useState(false), [error, setError] = useState('')
   const request = useRef<AbortController>()
@@ -110,7 +108,6 @@ function PersonProfile({ person, people, onChanged, accountScope, reads }: { per
     <div className="explore-detail-actions">
       {contact && <button className="explore-button" disabled={opening} onClick={() => void chat()}>{tr(opening ? '正在打开…' : '发消息')}</button>}
       {!!speakers.length && <button className="explore-button" onClick={() => setTab('speakers')}>{tr('查看录音')}</button>}
-      <button className="explore-button" onClick={() => setAssigning(true)}>{tr('用于录音标记')}</button>
       <button className="explore-button" onClick={() => setIdentities(true)}>{tr('关联身份')}</button>
     </div>
     {error && <p role="alert" className="explore-error">{error}</p>}
@@ -121,7 +118,6 @@ function PersonProfile({ person, people, onChanged, accountScope, reads }: { per
     </div>
     {tab === 'records' ? <PersonRecords accountScope={accountScope} relations={person.facets.filter(f=>f.relation||f.recordsRef)} loading={reads.relations.loading} unavailable={!!reads.relations.error}/>
       : <>{speakers.map(facet => <PersonSpeaker key={facet.key} facet={facet}/>)}{!speakers.length && <p className="explore-muted">{tr(reads.speakers.loading ? '正在读取录音身份…' : reads.speakers.error ? '录音身份暂不可用，请重试' : '暂无已明确关联的录音身份。同名说话人需要确认后才能归入。')}</p>}</>}
-    {assigning && <PersonRecordingAssignment key={person.key} person={person} onClose={() => setAssigning(false)} onChanged={onChanged}/>}
     {identities && <PeopleIdentities person={person} people={people} accountScope={accountScope} onChanged={onChanged} onClose={() => setIdentities(false)}/>}
   </>
 }
