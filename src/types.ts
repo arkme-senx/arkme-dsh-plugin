@@ -4319,7 +4319,13 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'sessions-delta'
   revision: number
-  updates: Array<{ sourceKey?: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }>
+  updates: Array<{
+    sourceKey?: string
+    source: ArkmeSourceItem
+    timelineItems: ArkmeTimelineItem[]
+    /** Present when the Host can account for interaction changes in this group delta. */
+    interactionSourceKeys?: string[]
+  }>
 } | {
   /** Confirmed bodies only; does not publish directory/unread facts or durable coverage. */
   type: 'timeline-items'

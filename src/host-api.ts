@@ -1515,6 +1515,7 @@ export async function dispatchArkmeHostOperation(
       if (sourceRef === '') throw new ArkmePluginError('interaction-source-invalid', '请选择一个私聊联系人', false, 400)
       const expectedVersion = stringParam(params, 'expectedVersion').trim()
       return await service.privateInteractionSummary(sourceRef, {
+        ...(params.background === true ? { background: true } : {}),
         ...(expectedVersion === '' ? {} : { expectedVersion }),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       })

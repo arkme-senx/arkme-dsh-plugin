@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { watchPrivateInteractionDirectory } from '../src/client/use-private-interaction-directory.js'
+import { groupInteractionPeers } from '../src/services/chat-realtime-service.js'
+import { ArkmeInterwovenInvalidationStore } from '../src/client/chat-directory-store.js'
 import type { ArkmePrivateInteractionDirectoryPage, ArkmeSourceItem } from '../src/types.js'
 
 const row = (key: string): ArkmeSourceItem => ({ sourceKey: key, sourceRef: key, kind: 'private_chat', displayName: key, activeAtMillis: 1, unreadCount: 0 })
@@ -17,6 +19,90 @@ function start(read: Parameters<typeof watchPrivateInteractionDirectory>[0]['rea
   return { publish, invalidate, stop: () => watcher.dispose(), retry: () => watcher.retry() }
 }
 describe('private interaction directory refresh', () => {
+  it('routes a complete group tail to only the affected private contacts', async () => {
+    const entry = (seq: number, sender_user_id: number, targets: number[]) => ({
+      relation: { seq, sender_user_id },
+      record: { status: 1, payload: { content_payload: { mention_metadata: { human_mentions: targets.map(user_id => ({ user_id })) } } } },
+    })
+    const normal = { items: [entry(2, 11, [0, 12])] }
+    const tail = { items: [...normal.items, entry(3, 10, [12]), entry(4, 13, [10]), entry(5, 13, [10])] }
+    expect(groupInteractionPeers(normal, 10, 1, 2)?.map(String)).toEqual([])
+    expect(groupInteractionPeers(tail, 10, 1, 6)).toBeUndefined()
+    const invalidation = new ArkmeInterwovenInvalidationStore()
+    const read = vi.fn().mockResolvedValue(page('existing'))
+    const readPeer = vi.fn(async (key: string) => ({ key, row: row(key) }))
+    const publish = vi.fn()
+    const watcher = watchPrivateInteractionDirectory({ read, readPeer, publish,
+      subscribe: listener => invalidation.subscribeDirectory(listener) })
+    stops.push(watcher.dispose)
+    invalidation.invalidate('group', groupInteractionPeers(normal, 10, 1, 2)?.map(String))
+    invalidation.invalidate('group', groupInteractionPeers(tail, 10, 1, 5)?.map(String))
+    await vi.waitFor(() => expect(publish).toHaveBeenLastCalledWith([row('existing'), row('12'), row('13')]))
+    expect(read).toHaveBeenCalledTimes(1)
+    expect(readPeer.mock.calls.map(([peer]) => peer)).toEqual(['12', '13'])
+  })
+
+  it('publishes a live contact while directory pages are blocked and keeps it over the late snapshot', async () => {
+    const first = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const older = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const read = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(older.promise)
+    const live = { ...row('peer'), latestPreview: 'live' }
+    const readPeer = vi.fn(async () => ({ key: 'peer', row: live }))
+    const publish = vi.fn()
+    const store = new ArkmeInterwovenInvalidationStore()
+    const watcher = watchPrivateInteractionDirectory({ read, readPeer, publish,
+      subscribe: listener => store.subscribeDirectory(listener) })
+    stops.push(watcher.dispose)
+    store.invalidate('group', ['peer'])
+    await vi.waitFor(() => expect(publish).toHaveBeenLastCalledWith([live]))
+    first.resolve(page('peer', true))
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    expect(publish).toHaveBeenLastCalledWith([live])
+    older.resolve(page('other'))
+    await vi.waitFor(() => expect(publish).toHaveBeenLastCalledWith([live, row('other')]))
+  })
+
+  it('does not cancel the targeted request when the same group queues a directory refresh', async () => {
+    vi.useFakeTimers()
+    const first = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()
+    const live = Promise.withResolvers<{ key: string; row: ArkmeSourceItem }>()
+    const read = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValue(page('fallback'))
+    const readPeer = vi.fn((_key, _rows, _signal: AbortSignal) => live.promise)
+    const publish = vi.fn()
+    const store = new ArkmeInterwovenInvalidationStore()
+    const watcher = watchPrivateInteractionDirectory({ read, readPeer, publish,
+      subscribe: listener => store.subscribeDirectory(listener) })
+    stops.push(watcher.dispose)
+    store.invalidate('group', ['peer'])
+    store.invalidate('group')
+    expect(readPeer.mock.calls[0]?.[2].aborted).toBe(false)
+    live.resolve({ key: 'peer', row: row('peer') })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(publish).toHaveBeenLastCalledWith([row('peer')])
+    expect(read).toHaveBeenCalledTimes(1)
+    first.resolve(page('stale'))
+    await vi.advanceTimersByTimeAsync(151)
+    expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards an in-flight contact summary when permissions change and revalidates that contact', async () => {
+    const stale = Promise.withResolvers<{ key: string; row: ArkmeSourceItem }>()
+    const read = vi.fn().mockResolvedValue(page('other'))
+    const readPeer = vi.fn((_key: string, _rows: readonly ArkmeSourceItem[], _signal: AbortSignal) =>
+      Promise.resolve({ key: 'peer' })).mockReturnValueOnce(stale.promise)
+    const publish = vi.fn()
+    const store = new ArkmeInterwovenInvalidationStore()
+    const watcher = watchPrivateInteractionDirectory({ read, readPeer, publish,
+      subscribe: listener => store.subscribeDirectory(listener) })
+    stops.push(watcher.dispose)
+    store.invalidate('group', ['peer'])
+    store.invalidate('group', undefined, true)
+    expect(readPeer.mock.calls[0]?.[2].aborted).toBe(true)
+    stale.resolve({ key: 'peer', row: row('forbidden') })
+    await vi.waitFor(() => expect(readPeer).toHaveBeenCalledTimes(2))
+    expect(publish.mock.calls.flatMap(([rows]) => rows)).not.toContainEqual(row('forbidden'))
+  })
+
   it('waits for a quiet version after a conflict overtaken by continuous invalidations', async () => {
     vi.useFakeTimers()
     const first = Promise.withResolvers<ArkmePrivateInteractionDirectoryPage>()

@@ -1,3 +1,5 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
+import { arkmeMentionMetadataFromRecord } from '../mention-metadata.js'
 import { arkmeChatActivityPreview } from '../chat-activity-preview.js'
 import {
   ArkmeChatRealtimeRuntime,
@@ -25,6 +27,7 @@ import {
 } from './desktop-attention-bridge.js'
 
 export interface ArkmeChatProjectionReader {
+  interactionSourceKeys?(userId: number, peerUserIds: readonly number[]): string[] | undefined
   chatTimelineItems(
     data: Record<string, unknown>,
     session: ArkmeSessionCredentials,
@@ -115,6 +118,43 @@ function timelineNotificationIdentities(data: Record<string, unknown>): ArkmeTim
       && Number.isSafeInteger(identity.senderUserId) && identity.senderUserId > 0
       ? [identity] : []
   })
+}
+
+/** Only replace directory reconciliation when the live group tail covers the change. */
+export function groupInteractionPeers(
+  data: Record<string, unknown>, viewerUserId: number, afterSequence: number, throughSequence: number,
+): number[] | undefined {
+  if (throughSequence <= afterSequence) return undefined
+  const covered = new Set<number>()
+  const peers = new Set<number>()
+  for (const raw of listValue(data.items)) {
+    const item = objectValue(raw)
+    const relation = objectValue(item.relation)
+    const sequence = numberValue(relation.seq ?? relation.sequence)
+    if (!Number.isSafeInteger(sequence) || sequence <= 0) return undefined
+    if (sequence <= afterSequence || sequence > throughSequence) continue
+    const sender = numberValue(relation.sender_user_id)
+    const record = objectValue(item.record)
+    const payload = objectValue(record.payload)
+    if (!Number.isSafeInteger(sender) || sender <= 0 || record.status !== 1 || Object.keys(payload).length === 0) return undefined
+    covered.add(sequence)
+    const metadata = arkmeMentionMetadataFromRecord(record, payload)
+    const mentions = metadata.human_mentions ?? metadata.humanMentions
+    if (mentions !== undefined && !Array.isArray(mentions)) return undefined
+    for (const rawMention of listValue(mentions)) {
+      const mention = objectValue(rawMention)
+      const target = mention.user_id ?? mention.userId
+      if (typeof target !== 'number' || !Number.isSafeInteger(target) || target < 0) return undefined
+      if (target === 0 || sender === target) continue
+      if (sender === viewerUserId) peers.add(target)
+      else if (target === viewerUserId) peers.add(sender)
+    }
+  }
+  if (throughSequence - afterSequence > covered.size) return undefined
+  for (let seq = afterSequence + 1; seq <= throughSequence; seq++) {
+    if (!covered.has(seq)) return undefined
+  }
+  return [...peers]
 }
 
 function notificationTimelineItem(
@@ -1318,6 +1358,7 @@ export class ChatRealtimeService {
       let timelineProjection: {
         items: ArkmeTimelineItem[]
         notificationIdentities: ArkmeTimelineNotificationIdentity[]
+        interactionSourceKeys?: string[]
       } | undefined
       const previewBundle = projection.refreshSource !== false && projection.refreshPreview
         ? await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -1434,7 +1475,20 @@ export class ChatRealtimeService {
         const sourceKind = sessionKind === 2 ? 'group_chat'
           : sessionKind === 1 || sessionKind === 3 ? 'private_chat'
             : cached?.kind === 'group_chat' || cached?.kind === 'private_chat' ? cached.kind : undefined
+        if (sourceKind === 'group_chat' && groupInteractionTraceEnabled()) {
+          const group = groupInteractionTraceKey(await this.source.chatDirectorySourceKey(session.userId, uid))
+          for (const identity of identities) groupInteractionTrace('group-tail-result', {
+            group, message: groupInteractionTraceKey(identity.itemUid), sequence: identity.sequence,
+            tailStartedAt, tailMs: tailMillis, displayStartedAt, displayMs: displayMillis, projectionSequence: projection.latestSequence,
+          })
+        }
+        const interactionPeers = sourceKind === 'group_chat' && needsTail && !projection.refreshPreview
+          ? groupInteractionPeers(data, session.userId, afterSequence, projection.latestSequence)
+          : undefined
+        const interactionSourceKeys = interactionPeers?.length === 0 ? []
+          : interactionPeers === undefined ? undefined : this.projectionReader.interactionSourceKeys?.(session.userId, interactionPeers)
         timelineProjection = {
+          ...(interactionSourceKeys === undefined ? {} : { interactionSourceKeys }),
           items: earlyItems ?? await this.projectionReader.chatTimelineItems(
             data,
             session,
@@ -1450,7 +1504,7 @@ export class ChatRealtimeService {
       }
       if (ownerGeneration !== this.attentionOwnerGeneration) return []
       const bundles = await displayReady
-      const updates: Array<{ sourceKey: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
+      const updates: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>['updates'] = []
       const sidebarNotificationHints: Array<{ uid: string; candidate: PendingChatNotificationHint }> = []
       const notifications: Array<{
         notification: ArkmeMessageNotification
@@ -1477,7 +1531,13 @@ export class ChatRealtimeService {
           const sourceKey = source.sourceKey ?? await this.source.chatDirectorySourceKey(session.userId, uid)
           if (ownerGeneration !== this.attentionOwnerGeneration) return []
           if (projection.refreshSource !== false) {
-            updates.push({ sourceKey, source, timelineItems })
+            const interactionSourceKeys = timelineProjection?.interactionSourceKeys
+            if (source.kind === 'group_chat' && groupInteractionTraceEnabled()) groupInteractionTrace('host-delta-ready', {
+              group: groupInteractionTraceKey(sourceKey), sequence: projection.latestSequence,
+              targets: interactionSourceKeys?.map(groupInteractionTraceKey).join(','),
+              mode: interactionSourceKeys === undefined ? 'directory' : 'targeted',
+            })
+            updates.push({ sourceKey, source, timelineItems, ...(interactionSourceKeys === undefined ? {} : { interactionSourceKeys }) })
             for (const candidate of projection.notificationHints.filter(item => item.attempts === 0)) {
               sidebarNotificationHints.push({ uid, candidate })
             }

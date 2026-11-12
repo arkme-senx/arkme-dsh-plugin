@@ -5,7 +5,7 @@ const provider = vi.hoisted(() => vi.fn())
 vi.mock('../src/sdk/index.js', async original => ({ ...await original<typeof import('../src/sdk/index.js')>(), callArkme: provider }))
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
-import { arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
+import { arkmeChatDirectory, arkmeInterwovenInvalidation } from '../src/client/chat-directory-store.js'
 import { usePrivateInteractionDirectory } from '../src/client/use-private-interaction-directory.js'
 
 const row = (id: string) => ({ sourceKey: id, sourceRef: id, kind: 'private_chat', displayName: id, activeAtMillis: 1, unreadCount: 0 })
@@ -105,4 +105,27 @@ it('refreshes a failed interaction directory on reconnect without a manual retry
   await act(async () => { window.dispatchEvent(new Event('online')); await vi.advanceTimersByTimeAsync(200) })
   expect(snapshot.error).toBeUndefined()
   expect(snapshot.rows.map(item => item.displayName)).toEqual(['recent', 'older'])
+})
+
+it('updates the affected private row from one summary', async () => {
+  arkmeChatDirectory.activateAccount('test:4')
+  arkmeChatDirectory.publish([{ ...row('peer'), kind: 'private_chat', unreadCount: 3 }])
+  const latest = { interactionRef: 'mention', privateSourceRef: 'peer', privateSourceKey: 'peer',
+    groupSourceRef: 'group', groupName: '测试群', peerName: '联系人', senderIsMe: true, summary: '@联系人',
+    occurredAtMillis: 10, sequence: 4, unread: false, attention: false }
+  provider.mockImplementation(async (op: string) => op === 'private-interaction.summary'
+    ? { ...page('peer'), latest, unreadCount: 0, attentionCount: 0 } : page('other'))
+  try {
+    await act(async () => { renderer = create(<Directory />) })
+    await act(async () => { arkmeInterwovenInvalidation.invalidate('group', ['peer']) })
+    expect(provider.mock.calls.map(([op]) => op)).toEqual(['private-interaction.directory', 'private-interaction.summary'])
+    expect(provider.mock.calls[1]?.[1]).toEqual({ sourceRef: 'peer' })
+    expect(snapshot.rows).toMatchObject([
+      { sourceKey: 'other' },
+      { sourceKey: 'peer', unreadCount: 3, latestPreview: '测试群 · 我：@联系人',
+        privateInteraction: { latest, unreadCount: 0, attentionCount: 0 } },
+    ])
+  } finally {
+    arkmeChatDirectory.activateAccount(undefined)
+  }
 })

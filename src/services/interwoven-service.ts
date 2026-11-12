@@ -1,3 +1,4 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { TimelineTokenCodec } from './timeline-token.js'
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import type { ArkmePrivateInteraction, ArkmePrivateInteractionCoverage, ArkmePrivateInteractionSummary, ArkmePrivateInteractionPage, ArkmePrivateInteractionDirectoryPage, ArkmePrivateInteractionQueryOptions } from '../types.js'
@@ -53,9 +54,16 @@ export class InterwovenService {
     this.momentReferences.clear()
   }
 
-  async privateInteractionSummary(sourceRef: string, options: Pick<ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'> = {}): Promise<ArkmePrivateInteractionSummary> {
+  async privateInteractionSummary(sourceRef: string, options: Pick<ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal' | 'background'> = {}): Promise<ArkmePrivateInteractionSummary> {
     if (sourceRef.trim() === '') throw new ArkmePluginError('interaction-source-invalid', '请选择一个私聊联系人', false, 400)
-    const { data, userId, epoch } = await this.readPrivateInteractions('contacts/summary', { ...options, sourceRef })
+    const traced = groupInteractionTraceEnabled()
+    const started = Date.now()
+    if (traced) groupInteractionTrace('host-summary-start')
+    const { data, userId, epoch } = await this.readPrivateInteractions('contacts/summary', { ...options, sourceRef }).catch(error => {
+      if (traced) groupInteractionTrace('host-summary-failed', { ms: Date.now() - started })
+      throw error
+    })
+    if (traced) groupInteractionTrace('chat-summary-returned', { ms: Date.now() - started })
     const result: ArkmePrivateInteractionSummary = {
       ...this.interactionCoverage(data),
       unreadCount: this.interactionCount(data.unread_count),
@@ -63,6 +71,7 @@ export class InterwovenService {
       ...(data.latest === undefined ? {} : { latest: await this.projectInteraction(data.latest, userId) }),
     }
     await this.assertInteractionAccount(userId, epoch, options.signal)
+    if (traced) groupInteractionTrace('host-summary-projected', { ms: Date.now() - started, sequence: result.latest?.sequence })
     return result
   }
 

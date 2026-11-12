@@ -965,6 +965,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       sendChatSourceTextRaw: async (...args) => await this.chat.sendChatSourceTextRaw(...args),
     })
     this.realtime = new ChatRealtimeService(this.runtime, this.source, {
+      interactionSourceKeys: (userId, peers) => this.directory.interactionSourceKeys(userId, peers),
       chatTimelineItems: async (...args) => await this.chat.chatTimelineItems(...args),
     })
     this.teamNotifications = new TeamMessageNotificationService({
@@ -2175,7 +2176,7 @@ recordingAnalysisV1: true,
   }
 
   /** Model Tool adapter; Chat owns interaction permissions and unread semantics. */
-  async privateInteractionSummary(sourceRef: string, options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'> = {}) {
+  async privateInteractionSummary(sourceRef: string, options: Pick<import('./types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal' | 'background'> = {}) {
     return await this.interwoven.privateInteractionSummary(sourceRef, options)
   }
   async queryPrivateInteractions(options: import('./types.js').ArkmePrivateInteractionQueryOptions = {}) {

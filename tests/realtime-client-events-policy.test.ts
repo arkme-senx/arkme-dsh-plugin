@@ -28,8 +28,9 @@ describe('Arkme realtime client event lifetime', () => {
     for (const type of ['chat-policy-invalidated', 'conversation-list-preference-invalidated']) {
       const start = source.indexOf(`if (update.type === '${type}')`)
       const block = source.slice(start, source.indexOf('\n        }', start))
-      expect(block.indexOf('arkmeInterwovenInvalidation.invalidate()')).toBeGreaterThan(0)
-      expect(block.indexOf('arkmeInterwovenInvalidation.invalidate()')).toBeLessThan(block.indexOf("update.refresh === 'none'"))
+      const revalidate = block.indexOf('arkmeInterwovenInvalidation.invalidate(undefined, undefined, true)')
+      expect(revalidate).toBeGreaterThan(0)
+      expect(revalidate).toBeLessThan(block.indexOf("update.refresh === 'none'"))
     }
   })
 })

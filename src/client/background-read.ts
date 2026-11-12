@@ -20,7 +20,7 @@ const backgroundReadOperations = new Set([
   'arrangements.reminders.list', 'world.interactions.summary', 'world.mine', 'world.notification-sources', 'world.comment-notifications',
   'world.interactions.list', 'world.replies', 'ai-letter.unread', 'ai-letter.list',
   'official-notifications.summary', 'official-notifications.list',
-  'private-interaction.directory', 'image.read', 'team.app.image', 'team.app.attention',
+  'private-interaction.directory', 'private-interaction.summary', 'image.read', 'team.app.image', 'team.app.attention',
   'provider.capabilities', 'settings.background-sound.get', 'team.app.snapshot.capabilities',
   'calendar.buckets', 'calendar.chat-statistics', 'group.bots', 'bots.list',
   'team.app.conversations', 'team.app.read-states', 'team.app.official.membership',

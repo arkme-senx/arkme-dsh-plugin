@@ -1,3 +1,4 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { readExtensionSummaryBatch } from '../message-extension-summary.js'
 import type { PendingAttachment } from './progressive-attachments.js'
 import { thoughtReplyFromWire } from '../thought-reply.js'
@@ -1432,7 +1433,19 @@ export class ChatService {
   private sourceMessageCreation<T>(source:Pick<ArkmeSourceRefPayload,'groupDelegation'>,path:Parameters<typeof postChatMessageCreation>[1],body:Record<string,unknown>,session?:ArkmeSessionCredentials,signal?:AbortSignal,options?:ArkmeRemoteRequestOptions) {
     const representation=bindGroupSourceRepresentation(source,body.representation===undefined?undefined:objectValue(body.representation))
     const request=source.groupDelegation?{...options,chatAccessRef:source.groupDelegation.accessRef,trackWriteOutcome:true}:options
-    return postChatMessageCreation<T>(this.runtime,path,source.groupDelegation?{...body,representation}:body,session,signal,request)
+    const send = () => postChatMessageCreation<T>(this.runtime,path,source.groupDelegation?{...body,representation}:body,session,signal,request)
+    if (!groupInteractionTraceEnabled()) return send()
+    const mentions = listValue(objectValue(objectValue(body.content_payload).mention_metadata).human_mentions)
+    if (!mentions.some(mention => integerLikeValue(objectValue(mention).user_id) > 0)) return send()
+    const message = groupInteractionTraceKey(stringValue(body.record_uid))
+    groupInteractionTrace('chat-write-start', { message })
+    return send().then(result => {
+      groupInteractionTrace('chat-write-ack', { message, sequence: numberValue(objectValue(result).seq) })
+      return result
+    }, error => {
+      groupInteractionTrace('chat-write-failed', { message })
+      throw error
+    })
   }
 
   constructor(

@@ -1342,6 +1342,7 @@ export class ArkmeInterwovenInvalidationStore {
   private globalRevision = 0
   private readonly sourceRevisions = new Map<string, number>()
   private readonly sourceSnapshots = new Map<string, { globalRevision: number; sourceRevision: number; snapshot: ArkmeInterwovenInvalidationSnapshot }>()
+  private readonly directoryListeners = new Set<(peers?: readonly string[], revalidate?: boolean) => void>()
   private readonly listeners = new Set<() => void>()
   readonly getSnapshot = (): ArkmeInterwovenInvalidationSnapshot => this.snapshot
   readonly getSnapshotForSource = (sourceKey: string, canonicalChatSourceKey?:string): ArkmeInterwovenInvalidationSnapshot => {
@@ -1368,8 +1369,13 @@ export class ArkmeInterwovenInvalidationStore {
     this.sourceSnapshots.clear()
     this.snapshot = { revision: this.snapshot.revision + 1 }
     for (const listener of this.listeners) listener()
+    for (const listener of this.directoryListeners) listener(undefined, true)
   }
-  invalidate(sourceKey?: string): void {
+  subscribeDirectory(listener: (peers?: readonly string[], revalidate?: boolean) => void): () => void {
+    this.directoryListeners.add(listener)
+    return () => { this.directoryListeners.delete(listener) }
+  }
+  invalidate(sourceKey?: string, interactionPeers?: readonly string[], revalidate = false): void {
     if (sourceKey === undefined || sourceKey.trim() === '') {
       this.globalRevision = ++this.nextScopedRevision
       this.sourceSnapshots.clear()
@@ -1383,6 +1389,9 @@ export class ArkmeInterwovenInvalidationStore {
     }
     this.snapshot = { revision: this.snapshot.revision + 1 }
     for (const listener of this.listeners) listener()
+    if (interactionPeers?.length !== 0) {
+      for (const listener of this.directoryListeners) listener(interactionPeers, revalidate)
+    }
   }
 }
 

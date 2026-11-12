@@ -1,3 +1,4 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { wakeArkmeFileTask } from './file-send-tasks.js'
 import { publishThoughtInvalidation } from './thought-invalidations.js'
 import { createTeamMessageNotificationPresenter } from './team-message-notifications.js'
@@ -46,15 +47,17 @@ export function arkmeSelectedBotAffectedByChatDelta(
     && item.sourceKey === selectedBot.chatSourceKey)
 }
 
+function chatDeltaSourceKey(item: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>['updates'][number]): string {
+  return arkmeChatSourceIdentityKey({
+    sourceRef: item.source.sourceRef,
+    ...((item.sourceKey ?? item.source.sourceKey) === undefined ? {} : { sourceKey: item.sourceKey ?? item.source.sourceKey }),
+  })
+}
+
 export function arkmeChatDeltaSourceKeys(
   update: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>,
 ): string[] {
-  return [...new Set(update.updates.map(item => arkmeChatSourceIdentityKey({
-    sourceRef: item.source.sourceRef,
-    ...(item.sourceKey ?? item.source.sourceKey) === undefined
-      ? {}
-      : { sourceKey: item.sourceKey ?? item.source.sourceKey },
-  })))]
+  return [...new Set(update.updates.map(chatDeltaSourceKey))]
 }
 
 export function arkmeChatDeltaCalendarDateStamps(
@@ -280,12 +283,12 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'members-invalidated') {
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true)
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           return
         }
         if (update.type === 'member-events-invalidated') {
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true)
           arkmeConversationMembers.invalidate(authenticatedAccountScope, { sourceKey: update.sourceKey, sourceRef: '' })
           publishMemberEventHint({ account:authenticatedAccountScope, sourceKey:update.sourceKey,
             eventId:update.eventId, occurredAtMillis:update.occurredAtMillis })
@@ -394,7 +397,7 @@ export function useArkmeRealtimeClientEvents(
           invalidateMessageQuoteSources(update.sourceKey)
           invalidateMessageMarks(true)
           arkmeChatTimelineDelta.applyTimelineChange(update)
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey)
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true)
           arkmeCalendarInvalidations.publishAll()
           return
         }
@@ -404,14 +407,14 @@ export function useArkmeRealtimeClientEvents(
         }
         if (update.type === 'chat-policy-invalidated') {
           invalidateMessageQuoteSources()
-          arkmeInterwovenInvalidation.invalidate()
+          arkmeInterwovenInvalidation.invalidate(undefined, undefined, true)
           if (update.refresh === 'none') return
           arkmeChatDirectory.invalidateRoot()
           void arkmeChatDirectory.refreshRoot({ force: true, silent: true }).catch(() => undefined)
           return
         }
         if (update.type === 'conversation-list-preference-invalidated') {
-          arkmeInterwovenInvalidation.invalidate()
+          arkmeInterwovenInvalidation.invalidate(undefined, undefined, true)
           if (update.refresh === 'none') return
           arkmeUi.chatChanged()
           return
@@ -445,7 +448,15 @@ export function useArkmeRealtimeClientEvents(
           arkmeCalendarInvalidations.publish({ dateStamp })
         }
         if (foreground && arkmeSelectedBotAffectedByChatDelta(arkmeUi.getSnapshot().selectedBot, update)) arkmeUi.chatChanged()
-        for (const sourceKey of arkmeChatDeltaSourceKeys(update)) arkmeInterwovenInvalidation.invalidate(sourceKey)
+        for (const item of update.updates) {
+          const sourceKey = chatDeltaSourceKey(item)
+          if (item.source.kind === 'group_chat' && groupInteractionTraceEnabled()) {
+            groupInteractionTrace('browser-delta-received', { group: groupInteractionTraceKey(sourceKey),
+              sequence: item.source.latestSequence, targets: item.interactionSourceKeys?.map(groupInteractionTraceKey).join(','),
+              mode: item.interactionSourceKeys === undefined ? 'directory' : 'targeted' })
+          }
+          arkmeInterwovenInvalidation.invalidate(sourceKey, item.interactionSourceKeys)
+        }
       } catch { /* Ignore malformed local frames; transport keeps the channel alive. */ }
     }
     const disconnectEvents = () => {
