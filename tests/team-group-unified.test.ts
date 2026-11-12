@@ -22,7 +22,16 @@ it('isolates committed windows/cursors by team generation and checks current acc
   const source=new SourceService(runtime as never,{} as never,{} as never)
   const a=await source.sealSourceRef(90,'group_chat','group','客户群',{groupDelegation:delegation})
   const b=await source.sealSourceRef(90,'group_chat','group','客户群',{groupDelegation:{...delegation,accessRef:'team-B-ref',teamId:'43',groupMembershipUid:'epoch-B'}})
-  const cache={isClosed:false,close(){},async call(c:Record<string,unknown>){commands.push(c);const key=`${c.scope}:${c.request}`;if(c.kind==='reserve')return ++ticket;if(c.kind==='write'){store.set(key,c.page);return true}if(c.kind==='read')return store.get(key);return undefined}}
+  const cache={isClosed:false,close(){},async call(c:Record<string,unknown>){
+    commands.push(c)
+    const key=`${c.scope}:${c.request}`
+    if(c.kind==='reserve')return ++ticket
+    if(c.kind==='write'){
+      store.set(key,c.page)
+      return c.readBack?c.page:true
+    }
+    if(c.kind==='read')return store.get(key)
+  }}
   const service=new UnifiedChatTimelineService(runtime as never,source,{projectChatTimelineItems:async()=>[]} as never,{} as never,()=>cache as never)
   try {
     const first=await service.read(a),second=await service.read(b)

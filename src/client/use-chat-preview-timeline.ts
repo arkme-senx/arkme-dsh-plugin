@@ -4,7 +4,7 @@ import { mergeUnifiedTimelineWindow } from '../unified-chat-timeline.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeTimelinePage } from '../types.js'
 import { conversationTimelineReadPort, type ConversationTimelineReadPort } from './conversation-timeline-read-port.js'
-import { readConversationTimelineWindow } from './conversation-timeline-refresh.js'
+import { readConversationTimelineWindow, readInitialConversationCache } from './conversation-timeline-refresh.js'
 
 type TimelineLoadKind = 'initial' | 'older' | 'refresh'
 
@@ -39,10 +39,11 @@ export function useChatPreviewTimeline(sourceRef: string, changeRevision: number
     controller.signal.addEventListener('abort', () => clearTimeout(timer), { once: true })
     try {
       if (intent === 'initial' && previous === undefined && port.readLocal) {
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false
         try {
-          const local = await port.readLocal(sourceRef, controller.signal)
+          const local = await readInitialConversationCache(signal => port.readLocal!(sourceRef, signal), controller.signal, offline)
           if (controller.signal.aborted || request.current !== controller) return
-          if (local.unified) { previous = local; currentPage.current = local; setPage(local) }
+          if (local?.unified) { previous = local; currentPage.current = local; setPage(local) }
         } catch { controller.signal.throwIfAborted() }
       }
       const cursor = intent === 'older' ? previous?.nextCursor : undefined

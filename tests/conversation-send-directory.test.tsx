@@ -2351,9 +2351,10 @@ describe('conversation send directory projection', () => {
     act(() => { renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll() })
     await act(async () => { arkmeUi.selectSource(other) })
     const cache = stored.mock.contexts[0] as ArkmeConversationMemoryCache
+    const cached = cache.getTimeline(target.sourceKey!)!
+    cache.storeTimeline(target.sourceKey!, { ...cached, fetchedAtMillis: Date.now() - 20_000 })
     if (mode === 'cached-around') {
-      const cached = cache.getTimeline(target.sourceKey!)!
-      cache.storeTimeline(target.sourceKey!, { ...cached, mode: 'around', newerHasMore: true,
+      cache.storeTimeline(target.sourceKey!, { ...cached, fetchedAtMillis: Date.now() - 20_000, mode: 'around', newerHasMore: true,
         unified: { ...cached.unified!, newerHasMore: true, newerCursor: 'historical-tail' } })
     }
     fresh = true
@@ -2370,6 +2371,49 @@ describe('conversation send directory projection', () => {
       expect(reads[0]?.[1]?.limit).toBe(40)
     } else expect(reads[0]?.[1]?.cursor?.unified).toEqual(expect.objectContaining({ mode: 'refresh' }))
     expect(cache.getTimeline(target.sourceKey!)?.mode).toBe(mode === 'cached-around' ? 'around' : 'latest')
+  })
+
+  it('renders the network first page when the local reader stalls and reuses it on fresh re-entry', async () => {
+    vi.stubGlobal('navigator', { onLine: true })
+    const base = memberApi.callArkme
+    const networkRead = vi.fn()
+    let localSignal: AbortSignal | undefined
+    const first = unifiedFixture(target, [{ itemUid: 'network-first-paint', sequence: 10, senderName: '同事',
+      isMe: false, sendAtMillis: 10, textContent: '可立即阅读的正文', status: 1 }])
+    first.unified.newerCursor = 'confirmed-tail'
+    const tail = unifiedFixture(target, [{ ...first.items[0]!, itemUid: 'new-tail', sequence: 11, sendAtMillis: 11 }])
+    tail.unified.newerCursor = 'next-tail'
+    tail.unified.windowTokens = ['tail-window']
+    vi.spyOn(memberApi, 'callArkme').mockImplementation(async (operation, params, signal) => {
+      if (operation !== 'source.timeline') return base(operation, params, signal)
+      if (params?.sourceRef !== target.sourceRef) return unifiedFixture(other, []) as never
+      const query = (params?.cursor as import('../src/types.js').ArkmeTimelineCursor | undefined)?.unified
+      if (query?.cacheOnly) {
+        localSignal = signal
+        return await new Promise<never>(() => {})
+      }
+      networkRead(params)
+      if (query?.mode === 'newer') return tail as never
+      return first as never
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    expect(networkRead).not.toHaveBeenCalled()
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)) })
+    expect(localSignal?.aborted).toBe(true)
+    expect(networkRead).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ firstPaint: true }))
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'network-first-paint' })).toHaveLength(1)
+    await act(async () => { arkmeUi.selectSource(other) })
+    await act(async () => { arkmeUi.selectSource(target) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'network-first-paint' })).toHaveLength(1)
+    expect(networkRead).toHaveBeenCalledTimes(1)
+    await act(async () => { arkmeUi.selectSource(other) })
+    await act(async () => { arkmeUi.selectSource({ ...target, latestSequence: 11 }) })
+    expect(networkRead).toHaveBeenCalledTimes(2)
+    expect(networkRead).toHaveBeenLastCalledWith(expect.objectContaining({
+      background: true, cursor: { unified: { mode: 'newer', cursor: 'confirmed-tail' } },
+    }))
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'network-first-paint' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'new-tail' })).toHaveLength(1)
   })
 
   it.each([false, true])('opens unread group at latest only without a saved reading position (saved=%s)', async saved => {
@@ -2429,6 +2473,7 @@ describe('conversation send directory projection', () => {
       isMe: false, sendAtMillis: 10, textContent: '离线历史', status: 1 }])
     const anchors: (string | undefined)[] = []
     let online = false
+    vi.stubGlobal('navigator', { get onLine() { return online } })
     let recoveredReads = 0
     vi.spyOn(memberApi, 'callArkme').mockImplementation(async (operation, params, signal) => {
       if (operation !== 'source.timeline') return base(operation, params, signal)
@@ -8803,7 +8848,7 @@ describe('conversation send directory projection', () => {
       const count = () => renderer!.root.findAll(node => node.type === 'li' && node.props['data-arkme-interwoven-card'] !== undefined).length
       if (mode === 'switch-before-moments') { expect(count()).toBe(0); return }
       expect(count()).toBe(mode === 'messages-first' ? 0 : 3)
-      if (mode !== 'empty-messages') expect(renderedText(renderer!.toJSON())).toContain('部分时间线内容暂未加载')
+      expect(renderedText(renderer!.toJSON())).not.toContain('部分时间线内容暂未加载')
       await act(async () => { arkmeChatTimelineDelta.applyTimelineChange({ sourceKey: target.sourceKey!, timelineItemKey: 'bootstrap', changeKind: 'reedited', changeVersion: 1, relationTerminal: false, throughSequence: 0 }) })
       expect(count()).toBe(mode === 'messages-first' ? 0 : 3)
       await act(async () => { refreshed.resolve(unifiedFixture(target, mode === 'empty-messages' ? [] : [latest], cards)) })

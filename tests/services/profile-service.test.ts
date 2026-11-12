@@ -14,6 +14,23 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('ProfileService', () => {
+  it('lets visible timeline avatars join one background lookup without mixing viewers', async () => {
+    const service = new ProfileService({ config } as ServiceRuntime)
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    let finish!: (result: Map<number, never>) => void
+    const pending = new Promise<Map<number, never>>(resolve => { finish = resolve })
+    const read = vi.spyOn(service, 'publicProfilesByUserIds').mockReturnValue(pending)
+    service.prefetchTimelineAvatars([7, 8, 7], session)
+    service.prefetchTimelineAvatars([7], session)
+    const first = service.pendingTimelineAvatar(42, 7)
+    expect(first).toBeDefined()
+    expect(service.pendingTimelineAvatar(42, 8)).toBe(first)
+    expect(service.pendingTimelineAvatar(43, 7)).toBeUndefined()
+    expect(read).toHaveBeenCalledExactlyOnceWith([7, 8], session, expect.any(AbortSignal))
+    finish(new Map())
+    await first
+    expect(service.pendingTimelineAvatar(42, 7)).toBeUndefined()
+  })
   it.each(['userIds', 'arkmeIds'] as const)('bounds cached public avatars read through %s without crossing viewer scope', async kind => {
     const avatarUrl='https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar.png?x-oss-signature=test'
     const read=vi.fn(async(_path:string,body:Record<string,unknown>)=>({items:

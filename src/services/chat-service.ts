@@ -7183,7 +7183,7 @@ nextPublic = next
     source: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    options: { basicPresentation?: boolean } = {},
+    options: { basicPresentation?: boolean; deferHumanAvatars?: boolean } = {},
   ): Promise<ArkmeTimelineItem[]> {
     const items: ArkmeTimelineItem[] = []
     const renderableItems = rawItems.filter(raw => numberValue(objectValue(objectValue(raw).record).status) === 1)
@@ -7327,7 +7327,19 @@ nextPublic = next
       }) - 1
       if (!isBot && senderUserId > 0) senderUserIdByIndex.set(itemIndex, senderUserId)
     }
-    if (!options.basicPresentation) try {
+    if (options.deferHumanAvatars) {
+      const refs = new Map<number, string>()
+      for (const [index, userId] of senderUserIdByIndex) {
+        let ref = refs.get(userId)
+        if (ref === undefined) {
+          ref = await this.profile.sealProfileImageRef(session.userId, userId)
+          refs.set(userId, ref)
+        }
+        items[index]!.avatarRef = ref
+      }
+      signal?.throwIfAborted()
+      this.profile.prefetchTimelineAvatars(refs.keys(), session)
+    } else if (!options.basicPresentation) try {
       const profiles = await this.profile.publicProfilesByUserIds([...new Set(senderUserIdByIndex.values())], session, signal)
       for (const [index, senderUserId] of senderUserIdByIndex) {
         if (!profiles.has(senderUserId) || items[index] === undefined) continue

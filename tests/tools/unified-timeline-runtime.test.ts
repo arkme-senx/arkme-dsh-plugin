@@ -23,7 +23,10 @@ it('discovers and invokes the unified owner through an official DSH session, pre
     switch (command.kind) {
       case 'reserve': return cache.reserve() as T
       case 'read': return cache.read(command.scope, command.request, command.anchorId, command.latest) as T
-      case 'write': return cache.write(command.scope, command.request, command.page, command.options) as T
+      case 'write': {
+        const accepted = cache.write(command.scope, command.request, command.page, command.options)
+        return (accepted && command.readBack ? cache.read(command.scope, command.request) : accepted) as T
+      }
       default: return undefined as T
     }
   }, close() {} }

@@ -184,19 +184,19 @@ export class UnifiedChatTimelineService {
     await this.invalidating
   }
 
-  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal, background = false): Promise<ArkmeTimelinePage> {
+  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal, background = false, firstPaint = false): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object' || Array.isArray(query)) throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const operation = (shared: AbortSignal) => this.readOwned(sourceRef, query,
-      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]), background)
+      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]), background, firstPaint)
     // SQLite has its own bounded Worker admission and epoch/commit fences. It must
     // never wait behind an unrelated conversation's network/recovery deadline.
     return !query.cacheOnly && this.runtime.runCompositeOwnerRead
-      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query }, operation, signal,
+      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query, ...(firstPaint ? { firstPaint } : {}) }, operation, signal,
         background || query.mode === 'refresh' ? 'background-read' : 'interactive-read')
       : await operation(signal ?? new AbortController().signal)
   }
 
-  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean): Promise<ArkmeTimelinePage> {
+  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean, firstPaint: boolean): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object') throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const epoch = this.epoch
     const { session, source } = await measureConversationReadPhase('scope', async () => {
@@ -290,8 +290,10 @@ export class UnifiedChatTimelineService {
       return { ...cached, source: sourceItem, ...(cached.cache ? { cache: { ...cached.cache,
         stale: cached.cache.stale === true || state.refreshRevision !== refreshRevision } } : {}) }
     }
-    let ticket: number | undefined
-    try { ticket = cache ? await this.callStorage<number>(cache, { kind: 'reserve' }) : undefined } catch { /* Explicit unavailable persistence below. */ }
+    const durable = mode !== 'refresh' || query.reconcile === true
+    // Reserve before the remote read so a later removal can fence this result.
+    // The worker acknowledgement can arrive while the network read is running.
+    const ticketPromise = cache && durable ? this.callStorage<number>(cache, { kind: 'reserve' }).catch(() => undefined) : undefined
     await assertCurrent()
     const readPage = async (pageQuery: ArkmeUnifiedTimelineQuery): Promise<ArkmeTimelinePage> => {
     const mode = pageQuery.mode ?? 'initial'
@@ -344,14 +346,16 @@ export class UnifiedChatTimelineService {
     const { data, sources, events } = parseUnifiedTimelineResponse(raw, source.ownerRef, protocol)
     const eventId = (value: string) => chatTimelineEventId(key, session.userId, this.runtime.config.environment, source.ownerRef, value)
     const native = events.filter(event => event.source === 'messages' && event.content_status === 'available')
-    const messages = await this.chat.projectChatTimelineItems(native.map(event => event.payload), source, session, signal)
-    const messageByRelation = new Map(messages.map(item => [item.timelineItemKey, item]))
     const groups = events.filter(event => event.source === 'interwoven' && event.content_status === 'available')
-    const moments = groups.length ? (await this.interwoven.projectUnifiedGroups({ groups: groups.map(e => e.payload), prepared_at: data.prepared_at }, source, session, 0, signal)).moments : []
-    const momentById = new Map(moments.map(moment => [moment.momentId, moment]))
     const joins = events.filter(event => event.source === 'group_metadata' && event.kind === 'member_join' && event.content_status === 'available')
-    const joinPresentations = joins.length
-      ? await this.chat.projectUnifiedMemberJoins(joins.map(event => ({ ...objectValue(event.payload), join_at: event.occurred_at })), source, session, signal) : []
+    const [messages, moments, joinPresentations] = await measureConversationReadPhase('network-projection', () => Promise.all([
+      this.chat.projectChatTimelineItems(native.map(event => event.payload), source, session, signal,
+        firstPaint && !source.groupDelegation && (mode === 'initial' || mode === 'around') ? { deferHumanAvatars: true } : undefined),
+      groups.length ? this.interwoven.projectUnifiedGroups({ groups: groups.map(e => e.payload), prepared_at: data.prepared_at }, source, session, 0, signal).then(page => page.moments) : [],
+      joins.length ? this.chat.projectUnifiedMemberJoins(joins.map(event => ({ ...objectValue(event.payload), join_at: event.occurred_at })), source, session, signal) : [],
+    ]))
+    const messageByRelation = new Map(messages.map(item => [item.timelineItemKey, item]))
+    const momentById = new Map(moments.map(moment => [moment.momentId, moment]))
     const joinByEvent = new Map(joins.map((event, index) => [event.event_id, joinPresentations[index]!]))
     const projected: ArkmeUnifiedTimelineEvent[] = []
     for (const event of events) {
@@ -438,27 +442,16 @@ export class UnifiedChatTimelineService {
     return result
     }
     let result = query.reconcile ? await reconcileUnifiedTimeline(query, readPage, signal) : await readPage(query)
+    const ticket = await ticketPromise
     await assertCurrent()
-    // Standalone refresh pages do not constitute a durable completed window.
-    const durable = mode !== 'refresh' || query.reconcile === true
     let committed = false
     if (durable && ticket !== undefined) {
-      let accepted: boolean | undefined
-      try { accepted = await this.callStorage<boolean>(cache!, { kind: 'write', scope, request: requestKey, page: result,
+      let persisted: ArkmeTimelinePage | false | undefined
+      try { persisted = await measureConversationReadPhase('cache-commit', () => this.callStorage<ArkmeTimelinePage | false | undefined>(cache!, { kind: 'write', scope, request: requestKey, page: result, readBack: true,
         options: { ticket, latest: (mode === 'initial' || query.reconcile === true && !!query.newerCursor) && !result.unified!.newerHasMore,
-          ...(query.reconcile ? { refreshTokens: query.windowTokens! } : {}) } }) } catch { /* The previous committed window survives. */ }
-      if (accepted === false) throw new ArkmePluginError('chat-timeline-stale', '会话已有更新，请重试', true, 409)
-      committed = accepted === true
-    }
-    if (committed) {
-      // Publish exactly the committed canonical projection, including a newer version
-      // already written by another window. A failed readback is not a persisted success.
-      try {
-        const persisted = await this.callStorage<ArkmeTimelinePage | undefined>(cache!, { kind: 'read', scope, request: requestKey })
-        if (persisted) result = persisted
-        else committed = false
-      }
-      catch { committed = false }
+          ...(query.reconcile ? { refreshTokens: query.windowTokens! } : {}) } })) } catch { /* The previous committed window survives. */ }
+      if (persisted === false) throw new ArkmePluginError('chat-timeline-stale', '会话已有更新，请重试', true, 409)
+      if (persisted) { committed = true; result = persisted }
     }
     await assertCurrent()
     return { ...result, cache: { origin: 'network', persistence: !durable ? 'deferred' : committed ? 'committed' : 'unavailable',
