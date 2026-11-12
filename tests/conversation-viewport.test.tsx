@@ -68,6 +68,18 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('conversation viewport ownership', () => {
+  it.each([['arkmeSystemAnchorRef', 'systemRef'], ['offlineContextRef', 'contextRef']] as const)(
+    'captures the visible offset and the %s locator', (attribute, field) => {
+      render(); scroll(730)
+      const body = host.firstElementChild as HTMLDivElement
+      const row = body.querySelector<HTMLElement>('[data-arkme-conversation-row="message:A-7"]')!
+      row.dataset.arkmeConversationRow = 'chat-event:history'
+      row.dataset[attribute] = 'sealed-locator'
+      expect(arkmeConversationViewport(body)).toEqual({ scrollTop: 730, stickToBottom: false,
+        anchorId: 'chat-event:history', anchorOffset: -30, [field]: 'sealed-locator' })
+    },
+  )
+
   it('captures the visible durable message identity without copying its body or cursor', () => {
     render(); scroll(730)
     const body = host.firstElementChild as HTMLDivElement

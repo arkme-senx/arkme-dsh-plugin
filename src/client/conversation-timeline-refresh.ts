@@ -111,6 +111,15 @@ export async function readConversationTimelineWindow(
   }
 }
 
+export function conversationViewportAroundCursor(
+  viewport: import('./conversation-memory-cache.js').ArkmeConversationViewportSnapshot,
+): ArkmeTimelineCursor | undefined {
+  if (viewport.stickToBottom) return undefined
+  const anchor = viewport.messageAnchor ?? (viewport.contextRef ? { contextRef: viewport.contextRef }
+    : viewport.systemRef ? { systemRef: viewport.systemRef } : undefined)
+  return anchor ? { unified: { mode: 'around', ...anchor } } : undefined
+}
+
 /** A missing disposable cache must not turn saved history into a latest-tail entry. */
 export async function readConversationTimelineEntry(
   viewport: import('./conversation-memory-cache.js').ArkmeConversationViewportSnapshot,
@@ -118,8 +127,7 @@ export async function readConversationTimelineEntry(
   signal: AbortSignal,
 ): Promise<ArkmeTimelinePage> {
   signal.throwIfAborted()
-  const anchor = !viewport.stickToBottom ? viewport.messageAnchor : undefined
-  const page = await readPage(anchor ? { unified: { mode: 'around', ...anchor } } : undefined)
+  const page = await readPage(conversationViewportAroundCursor(viewport))
   signal.throwIfAborted()
   if (!viewport.stickToBottom && viewport.anchorId && !page.unified?.events.some(event => {
     const id = event.kind === 'message' ? `message:${event.eventId}`

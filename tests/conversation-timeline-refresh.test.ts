@@ -128,6 +128,20 @@ describe('cold conversation entry preserves durable reading', () => {
     expect(await readConversationTimelineEntry(anchor, read, new AbortController().signal)).toBe(restored)
     expect(read).toHaveBeenCalledExactlyOnceWith({ unified: { mode: 'around', ...anchor.messageAnchor } })
   })
+  it.each([
+    { kind: 'notice' as const, source: 'group_metadata' as const, text: '群聊已创建', systemRef: 'sealed-system' },
+    { kind: 'offline-context' as const, source: 'offline_context' as const, entryRef: 'sealed-context',
+      revision: '1', title: '', summary: '' },
+  ])('restores a cold $kind anchor without loading the latest window', async event => {
+    const ref = event.kind === 'notice' ? { systemRef: event.systemRef } : { contextRef: event.entryRef }
+    const saved = { scrollTop: 1800, stickToBottom: false, anchorId: 'history-event', anchorOffset: -12, ...ref }
+    const expected = { ...restored, unified: { ...restored.unified!, events: [{
+      ...event, eventId: 'history-event', occurredAtMillis: 5, orderTie: 'a', contentStatus: 'available' as const,
+    }] } }
+    const read = vi.fn().mockResolvedValue(expected)
+    await expect(readConversationTimelineEntry(saved, read, new AbortController().signal)).resolves.toBe(expected)
+    expect(read).toHaveBeenCalledExactlyOnceWith({ unified: { mode: 'around', ...ref } })
+  })
   it('restores a legacy geometry anchor when the first page still contains it', async () => {
     const { messageAnchor: _, ...legacy } = anchor
     const read = vi.fn().mockResolvedValue(restored)

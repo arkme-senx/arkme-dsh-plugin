@@ -1,5 +1,5 @@
 import { measureConversationReadPhase } from '../conversation-read-diagnostics.js'
-import { systemTimelineAnchorCodec } from './system-timeline-anchor.js'
+import { isSystemTimelineAnchorSource, systemTimelineAnchorCodec } from './system-timeline-anchor.js'
 import type { OfflineContextService } from './offline-context-service.js'
 import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand } from '../timeline-cache-port.js'
 import { reconcileUnifiedTimeline } from '../unified-timeline-reconcile.js'
@@ -357,13 +357,18 @@ export class UnifiedChatTimelineService {
     const messageByRelation = new Map(messages.map(item => [item.timelineItemKey, item]))
     const momentById = new Map(moments.map(moment => [moment.momentId, moment]))
     const joinByEvent = new Map(joins.map((event, index) => [event.event_id, joinPresentations[index]!]))
+    const systemAnchor = systemTimelineAnchorCodec(key, this.runtime.config.environment, session.userId,
+      source.ownerRef, source.groupDelegation ? sourceItem.sourceKey : undefined)
     const projected: ArkmeUnifiedTimelineEvent[] = []
     for (const event of events) {
       signal?.throwIfAborted()
       const payload = objectValue(event.payload)
-      const order = { eventId: eventId(String(event.event_id)), source: event.source as ArkmeTimelineSourceStatus['source'],
+      const id = String(event.event_id)
+      const order = { eventId: eventId(id), source: event.source as ArkmeTimelineSourceStatus['source'],
         occurredAtMillis: Number(event.occurred_at), orderTie: String(event.order_tie),
-        contentStatus: event.content_status as 'available' | 'unavailable', windowToken: seal(String(data.window_token), 'window') }
+        contentStatus: event.content_status as 'available' | 'unavailable', windowToken: seal(String(data.window_token), 'window'),
+        ...(event.content_status === 'available' && id.length <= 1024 && isSystemTimelineAnchorSource(String(event.source))
+          ? { systemRef: systemAnchor.seal(event.source, id) } : {}) }
       if (event.source === 'offline_context') {
         if (!this.offlineContexts || !stringValue(payload.association_id) || !Number.isSafeInteger(payload.revision) || Number(payload.revision) < 1) throw invalid()
         projected.push({ ...order, kind: 'offline-context',

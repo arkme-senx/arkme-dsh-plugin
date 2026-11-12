@@ -22,7 +22,7 @@ import { ArkmeDirectorySourceAvatar } from './ArkmeAvatar.js'
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
   | { kind: 'moment'; id: string; occurredAtMillis: number; item: ArkmeInterwovenMention }
-  | { kind: 'member-event'; id: string; occurredAtMillis: number; item: ArkmeMemberEvent }
+  | { kind: 'member-event'; id: string; occurredAtMillis: number; item: ArkmeMemberEvent; systemRef?: string }
 
 /** Pure deterministic merge; each authority keeps its own identity and duplicate policy. */
 export function mergeConversationRows(

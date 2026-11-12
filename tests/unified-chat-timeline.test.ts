@@ -244,13 +244,17 @@ describe('sealed system event navigation', () => {
  it('uses one exact around request and rejects cross-account, conversation, environment and forged anchors', async () => {
   const { systemTimelineAnchorCodec } = await import('../src/services/system-timeline-anchor.js')
   const ref = systemTimelineAnchorCodec('key', 'test', 1, 'chat').seal('group_metadata', 'group_invite:chat')
-  const post = vi.fn(async () => response())
+  const post = vi.fn(async () => ({ ...response(), timeline_items: [{
+    event_id: 'group_invite:chat', source: 'group_metadata', kind: 'group_invite',
+    occurred_at: 1700000000000, order_tie: 'invite', content_status: 'available', payload: {},
+  }] }))
   const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
     stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
     { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
     { projectChatTimelineItems: async () => [] } as never, {} as never)
   try {
-   await service.read('ref', { mode: 'around', systemRef: ref, limit: 40 })
+   const page = await service.read('ref', { mode: 'around', systemRef: ref, limit: 40 })
+   expect(page.unified?.events[0]).toMatchObject({ kind: 'notice', systemRef: ref })
    expect(post).toHaveBeenCalledTimes(1)
    expect(post.mock.calls[0]).toEqual(expect.arrayContaining([expect.objectContaining({ mode: 'around', anchor_source: 'group_metadata', anchor_id: 'group_invite:chat' })]))
    for (const other of [systemTimelineAnchorCodec('key', 'test', 2, 'chat'), systemTimelineAnchorCodec('key', 'prod', 1, 'chat'), systemTimelineAnchorCodec('key', 'test', 1, 'other'), systemTimelineAnchorCodec('other-key', 'test', 1, 'chat')]) {

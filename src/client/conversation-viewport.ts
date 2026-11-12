@@ -6,7 +6,7 @@ import {
   type ArkmeConversationViewportSnapshot,
 } from './conversation-memory-cache.js'
 
-/** Viewport persistence only; message data, cursors and access refs stay with their owners. */
+/** Viewport persistence only; message data and server cursors stay with their owners. */
 export interface ArkmeConversationViewportStore {
   getViewport(sourceKey: string): ArkmeConversationViewportSnapshot | undefined
   storeViewport(sourceKey: string, viewport: ArkmeConversationViewportSnapshot): void
@@ -45,6 +45,8 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
         anchorId,
         anchorOffset: rowRect.top - rootRect.top,
         ...(messageAnchor ? { messageAnchor } : {}),
+        ...(row.dataset.offlineContextRef ? { contextRef: row.dataset.offlineContextRef }
+          : row.dataset.arkmeSystemAnchorRef ? { systemRef: row.dataset.arkmeSystemAnchorRef } : {}),
       }
     }
   }
