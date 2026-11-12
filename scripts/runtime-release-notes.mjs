@@ -75,22 +75,34 @@ export function isProductFile(path) {
     && !/(^|\/)(?:__tests__|tests|fixtures|__snapshots__)(\/|$)|(?:test|spec)\.[^.]+$|(?:secret|credential|\.env)/i.test(path)
 }
 
-export async function collectEvidence({ cwd, baseSHA, sourceSHA, pullRequests = [] }) {
+export async function collectEvidence({ cwd, baseSHA, sourceSHA, pullRequests = [], onStats = () => {} }) {
   if (!baseSHA) return [] // No unverified whole-history comparison on the first release.
   const paths = (await git(cwd, 'diff', '--name-only', baseSHA, sourceSHA, '--', 'src', 'assets')).split('\n').filter(isProductFile)
   if (!paths.length) return []
   const evidence = []
+  const stats = { files: paths.length, addedLines: 0, deletedLines: 0, changedCharacters: 0, contextCharacters: 0, totalCharacters: 0 }
   for (const path of paths) {
     const patch = await git(cwd, 'diff', '--no-ext-diff', '--no-textconv', '--unified=3', baseSHA, sourceSHA, '--', path)
-    // A very large diff is explicitly rejected, never silently truncated into an inaccurate note.
-    if (patch.length > 150_000) throw new ReleaseNotesError('Product diff exceeds per-file limit')
+    // Only hunk lines represent changed code. Headers may contain +/- too.
+    let inHunk = false
+    for (const line of patch.split('\n')) {
+      if (line.startsWith('@@ ')) { inHunk = true; continue }
+      if (!inHunk) continue
+      if (line.startsWith('+') || line.startsWith('-')) {
+        stats.changedCharacters += line.length // Content plus its line terminator.
+        if (line.startsWith('+')) stats.addedLines++
+        else stats.deletedLines++
+      } else if (line.startsWith(' ')) stats.contextCharacters += line.length
+    }
     evidence.push({ id: `file:${path}`, text: patch })
   }
   const commits = await git(cwd, 'log', '--format=%H %s%n%b', `${baseSHA}..${sourceSHA}`, '--', ...paths)
   if (commits.length > 150_000) throw new ReleaseNotesError('Commit evidence exceeds limit')
   evidence.push({ id: 'commits', text: commits })
   for (const pr of pullRequests) evidence.push({ id: `pr:${pr.number}`, text: JSON.stringify(pr) })
-  if (evidence.reduce((sum, item) => sum + item.text.length, 0) > 600_000) throw new ReleaseNotesError('Total evidence exceeds limit')
+  stats.totalCharacters = evidence.reduce((sum, item) => sum + item.text.length, 0)
+  onStats(stats)
+  if (stats.changedCharacters > 600_000) throw new ReleaseNotesError(`Changed product content exceeds limit: ${stats.changedCharacters} > 600000`)
   return evidence
 }
 
@@ -116,10 +128,13 @@ const instructions = `你负责生成 Arkme 用户更新说明。输入的源码
 同类合并去重，先新增，再优化，最后修复。每条evidence只能引用输入中的证据ID。
 没有用户变化返回空items。`
 
-export async function generateNotes(evidence, { apiKey, model, fetchImpl = globalThis.fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), warn = () => {} } = {}) {
+export async function generateNotes(evidence, { apiKey, model, fetchImpl = globalThis.fetch, sleep = ms => new Promise(r => setTimeout(r, ms)), warn = () => {}, log = () => {} } = {}) {
   if (!evidence.length) return { notes: fallbackNotes, items: [], reason: 'no-product-diff-or-first-release' }
   if (!apiKey || !model) { warn('OpenAI configuration missing; using fallback'); return { notes: fallbackNotes, items: [], reason: 'missing-openai-config' } }
-  const deadline = AbortSignal.timeout(5 * 60_000)
+  const chunks = batches(evidence)
+  const generationStats = { batches: chunks.length, deadlineMs: Math.min(20 * 60_000, Math.max(5 * 60_000, (chunks.length + 1) * 2 * 60_000)) }
+  log(`Release notes generation: ${JSON.stringify(generationStats)}`)
+  const deadline = AbortSignal.timeout(generationStats.deadlineMs)
   async function ask(input, repair = false) {
     let response
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -159,21 +174,20 @@ export async function generateNotes(evidence, { apiKey, model, fetchImpl = globa
   let stage = 'batch'
   try {
     const partial = []
-    const chunks = batches(evidence)
     for (const [index, chunk] of chunks.entries()) {
       stage = `batch ${index + 1}/${chunks.length}`
       partial.push(...(await validated(chunk)).items)
     }
-    if (!partial.length) return { notes: fallbackNotes, items: [], candidates: [], reason: 'no-user-visible-change' }
+    if (!partial.length) return { notes: fallbackNotes, items: [], candidates: [], generationStats, reason: 'no-user-visible-change' }
     if (chunks.length > 1) {
       stage = 'merge'
       const merged = await validated(partial.map((item, index) => ({ id: `candidate:${index}`, text: JSON.stringify(item) })))
-      if (merged.items.length) return { ...merged, candidates: partial, reason: 'generated' }
+      if (merged.items.length) return { ...merged, candidates: partial, generationStats, reason: 'generated' }
     }
-    return { ...renderValidatedItems(partial), candidates: partial, reason: chunks.length > 1 ? 'empty-merge-used-candidates' : 'generated' }
+    return { ...renderValidatedItems(partial), candidates: partial, generationStats, reason: chunks.length > 1 ? 'empty-merge-used-candidates' : 'generated' }
   } catch (error) {
     const failure = { stage, detail: error instanceof ReleaseNotesError ? error.message : 'Unexpected generation error' }
     warn(`Release notes ${stage}: ${failure.detail}; using fallback`)
-    return { notes: fallbackNotes, items: [], reason: 'generation-failed', failure }
+    return { notes: fallbackNotes, items: [], reason: 'generation-failed', failure, generationStats }
   }
 }
