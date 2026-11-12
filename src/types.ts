@@ -2255,6 +2255,7 @@ export interface ArkmeTimelineItem {
   senderKind?: 'human' | 'bot'
   /** Account-scoped opaque Bot identity for matching a sender to existing Bot directory entries. */
   senderBotDirectoryKey?: string
+  senderBotPresentationRef?: string
   senderName: string
   agentSource?: ArkmeTimelineAgentSource
   /** Opaque Provider image reference for the concrete message sender. */
@@ -2302,6 +2303,7 @@ export interface ArkmeTimelineItem {
 }
 
 export interface ArkmeTimelineExtensionParent {
+  senderBotPresentationRef?: string
   /** Immutable selected text, only from the validated quote_reply protocol. */
   quote?: import('./message-quote.js').ArkmeMessageQuote
   quoteState?: 'available' | 'edited' | 'unavailable'
@@ -4852,6 +4854,7 @@ export type ArkmePluginOperation =
   | 'chat.sync.retry'
   | 'source.timeline'
   | 'source.timeline-around'
+  | 'source.bot-senders.presentation'
   | 'source.members'
   | 'source.members.page'
   | 'source.members.presentation'

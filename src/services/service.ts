@@ -1,4 +1,5 @@
 import { directoryTraceSignals, groupInteractionTrace } from '../group-interaction-diagnostics.js'
+import { bindConversationRead, conversationReadTracing, countConversationHttpAttempt, measureConversationReadPhase, noteConversationRead, recordConversationReadPhase } from '../conversation-read-diagnostics.js'
 import { ArkmePluginError } from './service-error.js'
 export { ArkmePluginError } from './service-error.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -75,6 +76,8 @@ arkoFileRefs(userId:number):Promise<string[]>
   writeAvatarCache?(userId: number, imageRef: string, image: import('../types.js').ArkmeImageBytes): Promise<void>
   selfRoleAvatarLocalRef?(userId: number, fileAssetUid: string): Promise<string | undefined>
   forgetCachedMembers?(userId: number, group: string, refs: readonly string[]): Promise<void>
+  readBotDisplayCache?(scope: string): Promise<readonly import('../chat-sender-display.js').BotDisplayCacheEntry[]>
+  writeBotDisplayCache?(scope: string, entries: readonly import('../chat-sender-display.js').BotDisplayCacheEntry[]): Promise<void>
   clearPublicPeople?(environment: string, viewer: number, target?: number): Promise<void>
   cachedPublicPerson?(environment: string, viewer: number, target: number): Promise<import('../public-person-cache.js').PublicPersonSnapshot | undefined>
   cachePublicPeople?(environment: string, viewer: number, entries: readonly import('../public-person-cache.js').PublicPersonSnapshot[], missing: readonly number[], observedAt: number): Promise<void>
@@ -473,6 +476,10 @@ export class ServiceRuntime {
       scope: this.requestScope(session.userId), lane, service: 'extension',
       admission,
       route, key: `owner-read:${route}:${stableReadParameters(parameters)}`, cancelWhenUnobserved: true,
+      ...(messageSync && conversationReadTracing() ? { onQueue: bindConversationRead<[event: 'enter' | 'start' | 'cancel' | 'join', detail: Record<string, string | number | boolean>]>((event, detail) => {
+        if (event !== 'enter') noteConversationRead('owner-admission', event)
+        if (typeof detail.queueWaitMs === 'number') recordConversationReadPhase('owner-queue', detail.queueWaitMs)
+      }) } : {}),
       ...(signal === undefined ? {} : { signal }),
       operation: async operationSignal => {
         await assertCurrentAccount(operationSignal)
@@ -712,11 +719,16 @@ export class ServiceRuntime {
           : trace.includes('RuntimeBotDisplayProfilesReader') ? 'bot-display' : 'directory' })
     }
     const traceId = directoryRead && signal ? directoryTraceSignals.get(signal) : undefined
-    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !traceId ? reactionQueue : (event, detail) => {
+    const historyTransport = conversationReadTracing() && baseUrl === this.config.chatBaseUrl && path.startsWith('/api/v1/chat/timeline/unified')
+    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !historyTransport && !traceId ? reactionQueue : bindConversationRead((event, detail) => {
       reactionQueue?.(event, detail)
       if (traceId) groupInteractionTrace('directory-host-queue', { traceId, event, ...detail })
+      if (historyTransport) {
+        if (event !== 'enter') noteConversationRead('transport-admission', event)
+        if (typeof detail.queueWaitMs === 'number') recordConversationReadPhase('upstream-queue', detail.queueWaitMs)
+      }
       if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_queue', { atMillis: Date.now(), path, pool: messageSync ? 'message-sync' : 'shared', event, ...detail })
-    }
+    })
     return await measureReaction('upstream-total', { route: path }, () => coordinator.run<T>({
       scope: options.scope ?? 'public',
       lane,
@@ -749,10 +761,15 @@ export class ServiceRuntime {
       operation: bindReactionTrace(async coordinatedSignal => {
         const started = timelineDiagnostic ? Date.now() : 0
         let errorCode: string | undefined
-        try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
+        const send = () => measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
           baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
           preserveHttpError, preserveForbiddenError, requestTimeoutMs, options.chatAccessRef,options.stringIdFields, options.chatMessageActionsV2,
-        )) } catch (error) {
+        ))
+        try {
+          if (!historyTransport) return await send()
+          countConversationHttpAttempt()
+          return await measureConversationReadPhase('upstream-http', send)
+        } catch (error) {
           if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
           throw error
         } finally {

@@ -444,7 +444,7 @@ describe('record re-edit attachment UI', () => {
     const observers: IntersectionObserverCallback[] = []
     vi.stubGlobal('IntersectionObserver', class {
       constructor(callback: IntersectionObserverCallback, options?: IntersectionObserverInit) {
-        if (options?.rootMargin === '800px 0px 0px') observers.push(callback)
+        if (options?.rootMargin === '1200px 0px 0px') observers.push(callback)
       }
       observe() {} disconnect() {}
     })
@@ -572,7 +572,7 @@ describe('record re-edit attachment UI', () => {
     })
     expect(refreshReads).toHaveLength(0)
     await act(async () => { rejectAround(new Error('未找到要定位的快记')); await flush() })
-    expect(refreshReads).toEqual([{ sourceRef: source.sourceRef, limit: 100, background: true }])
+    expect(refreshReads).toEqual([{ sourceRef: source.sourceRef, limit: 100, background: true, deferBotProfiles: true }])
     expect(mocks.renderedItems.filter(value => value.itemUid === item.itemUid).at(-1))
       .toMatchObject({ version: 4, textContent: '定位失败后补刷的新正文' })
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'missing-target' })).toHaveLength(0)
@@ -777,7 +777,7 @@ describe('record re-edit attachment UI', () => {
         changeKind: 'reedited', changeVersion: 8, relationTerminal: false, throughSequence: 1 })
       await flush()
     })
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', { sourceRef: source.sourceRef, limit: 100, background: true }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.timeline', { sourceRef: source.sourceRef, limit: 100, background: true, deferBotProfiles: true }, expect.any(AbortSignal))
     await act(async () => { arkmeChatTimelineDelta.publish([{ source, items: [partial] }]); await flush() })
     mocks.renderedItems.length = 0
     await act(async () => {

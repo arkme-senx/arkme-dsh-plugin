@@ -60,3 +60,64 @@ describe('Bot display infrastructure', () => {
     expect([...snapshot.profiles]).toEqual([['bot', { displayName: 'Name', avatarUrl: 'https://images.test/bot.png' }]])
   })
 })
+
+describe('Cached timeline bot display', () => {
+  it('returns local data before the cloud, shares refresh across pages, and restores profiles and missing avatars from SQLite', async () => {
+    const [{ mkdtempSync, rmSync }, { tmpdir }, { join }, { ArkmeLocalDatabase }, { ArkmeStateStore }] = await Promise.all([
+      import('node:fs'), import('node:os'), import('node:path'), import('../../src/local-database.js'), import('../../src/state-store.js'),
+    ])
+    const directory = mkdtempSync(join(tmpdir(), 'arkme bot display '))
+    let database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+    try {
+      const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+      let finish!: () => void
+      const waiting = new Promise<void>(resolve => { finish = resolve })
+      const snapshots = vi.fn(async () => {
+        await waiting
+        return { items: [{ session: { chat_session_uid: 'chat', extra: { subject_id: 12 } },
+          bot_participants: [{ chat_session_uid: 'chat', bot_uid: 'known', display_name_snapshot: '会话昵称' }] }] }
+      })
+      const directoryProfiles = vi.fn(async () => new Map([
+        ['known', { displayName: '目录昵称', avatarUrl: 'https://images.test/bot.png' }],
+        ['no-avatar', { displayName: '无头像' }],
+      ]))
+      const groupProfiles = vi.fn(async () => ({ bots: [] }))
+      const boot = () => new RuntimeBotDisplayProfilesReader({
+        config: { environment: 'prod' }, stateStore: database, authenticatedChatPost: snapshots, authenticatedBotPost: groupProfiles,
+      } as never, { senderDisplayProfiles: directoryProfiles })
+      let reader = boot()
+      const input = { chatSessionUid: 'chat', isGroup: true, botUids: new Set(['known', 'no-avatar']) }
+      expect(await reader.cached(input, session)).toEqual(new Map())
+      expect(snapshots).not.toHaveBeenCalled()
+      const controller = new AbortController()
+      const dropped = reader.read(input, session, controller.signal)
+      const settled = expect(dropped).rejects.toThrow('left')
+      const kept = reader.read(input, session)
+      await vi.waitFor(() => expect(snapshots).toHaveBeenCalledTimes(1))
+      controller.abort(new Error('left'))
+      await settled
+      expect(await reader.cached(input, session)).toEqual(new Map())
+      finish()
+      const expected = new Map([
+        ['known', { displayName: '会话昵称', avatarUrl: 'https://images.test/bot.png' }],
+        ['no-avatar', { displayName: '无头像' }],
+      ])
+      expect(await kept).toEqual(expected)
+      expect(await reader.read(input, session)).toEqual(expected)
+      expect(snapshots).toHaveBeenCalledTimes(1)
+      expect(directoryProfiles).toHaveBeenCalledTimes(1)
+      expect(groupProfiles).toHaveBeenCalledTimes(1)
+      database.close()
+      database = new ArkmeLocalDatabase(directory, new ArkmeStateStore(directory))
+      reader = boot()
+      expect(await reader.cached(input, session)).toEqual(expected)
+      expect(await reader.read(input, session)).toEqual(expected)
+      expect(await reader.cached({ ...input, chatSessionUid: 'other-chat' }, session)).toEqual(new Map())
+      expect(await reader.cached(input, { ...session, userId: 43 })).toEqual(new Map())
+      expect(snapshots).toHaveBeenCalledTimes(1)
+    } finally {
+      database.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})

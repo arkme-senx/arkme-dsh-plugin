@@ -114,7 +114,7 @@ describe('conversation viewport ownership', () => {
   it('preserves the visible row before animating a same-height sliding window', () => {
     render(); scroll(maximum())
     const body = host.firstElementChild as HTMLDivElement
-    const captured = arkmeConversationViewport(body, false, true)
+    const captured = arkmeConversationViewport(body, 'latest-anchor')
     const callbacks: FrameRequestCallback[] = []
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callbacks.push(callback); return callbacks.length })
     pending.current = { sourceKey: 'A', viewport: captured, followLatest: true }
@@ -255,7 +255,7 @@ describe('conversation viewport ownership', () => {
     render(); scroll(maximum())
     const body = host.firstElementChild as HTMLDivElement
     expect(arkmeConversationViewport(body).stickToBottom).toBe(true)
-    expect(arkmeConversationViewport(body, true)).toMatchObject({ stickToBottom: false, anchorId: 'message:A-25' })
+    expect(arkmeConversationViewport(body, 'messages')).toMatchObject({ stickToBottom: false, anchorId: 'message:A-25' })
   })
 })
 

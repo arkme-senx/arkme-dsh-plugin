@@ -23,12 +23,12 @@ export interface ArkmeConversationViewportRestore {
 
 const readingAnchors = new WeakMap<HTMLDivElement, HTMLElement>()
 
-export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = false, captureLatestAnchor = false): ArkmeConversationViewportSnapshot {
-  const stickToBottom = !messagesOnly && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
-  if (stickToBottom && !captureLatestAnchor) return { scrollTop: root.scrollTop, stickToBottom: true }
+export function arkmeConversationViewport(root: HTMLDivElement, mode: 'auto' | 'messages' | 'history' | 'latest-anchor' = 'auto'): ArkmeConversationViewportSnapshot {
+  const stickToBottom = (mode === 'auto' || mode === 'latest-anchor') && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
+  if (stickToBottom && mode !== 'latest-anchor') return { scrollTop: root.scrollTop, stickToBottom: true }
   const rootRect = root.getBoundingClientRect()
   const snapshot = (row: HTMLElement): ArkmeConversationViewportSnapshot | undefined => {
-    if (messagesOnly && !row.dataset.arkmeConversationRow?.startsWith('message:')) return undefined
+    if (mode === 'messages' && !row.dataset.arkmeConversationRow?.startsWith('message:')) return undefined
     const rowRect = row.getBoundingClientRect()
     if (rowRect.bottom <= rootRect.top || rowRect.top >= rootRect.bottom) return undefined
     const anchorId = row.dataset.arkmeConversationRow

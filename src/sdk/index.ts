@@ -537,6 +537,7 @@ export interface ArkmeSdkTransportOptions {
   priority?: 'high' | 'low' | 'auto'
   /** @internal Loopback directory timing correlation. */
   directoryTraceId?: string
+  historyTrace?: { id: string; response(status: number, serverTiming: string | null): void }
 }
 
 export interface ArkmeSdkOptions {
@@ -3540,7 +3541,8 @@ export class ArkmeSdk {
     const traceId = operation === 'private-interaction.directory' && isDirectoryTraceId(transport?.directoryTraceId)
       ? transport.directoryTraceId : undefined
     if (traceId) groupInteractionTrace('directory-fetch-start', { traceId })
-    const response = await this.fetchImpl(this.route, {
+    const trace = transport?.historyTrace
+    const response = await this.fetchImpl(trace ? `${this.route}?historyTrace=${encodeURIComponent(trace.id)}` : this.route, {
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...(traceId ? { [directoryTraceHeader]: traceId } : {}) },
@@ -3549,6 +3551,7 @@ export class ArkmeSdk {
       ...(transport?.priority === undefined ? {} : { priority: transport.priority }),
     })
     if (traceId) groupInteractionTrace('directory-fetch-headers', { traceId, status: response.status })
+    trace?.response(response.status, response.headers.get('Server-Timing'))
     let body: ArkmePluginResponse<T>
     try {
       body = await response.json() as ArkmePluginResponse<T>

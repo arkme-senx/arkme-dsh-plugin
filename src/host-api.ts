@@ -56,7 +56,7 @@ import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
-import { measureConversationRead } from './conversation-read-diagnostics.js'
+import { historyReadTrace, measureConversationRead } from './conversation-read-diagnostics.js'
 import {
   arkmeExtensionShareRefFromLink,
   arkmeIsGenericLinkMetadataTitle,
@@ -144,7 +144,11 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
 }
 
 function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number, phases?: string): void {
+  const encodeStarted = phases === undefined ? undefined : performance.now()
   const encoded = JSON.stringify(body)
+  if (encodeStarted !== undefined) {
+    phases = `${phases ? phases + ', ' : ''}arkme-host-encode;dur=${(performance.now() - encodeStarted).toFixed(1)}`
+  }
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(encoded),
@@ -1116,7 +1120,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.accountSessions?.(),
         options.teamCodex,
         options.migrationManager,
-      ), measured => { phases = measured })
+      ), measured => { phases = measured }, request.operation === 'source.timeline' && isLoopback(req.socket.remoteAddress)
+        ? historyReadTrace(confirmationUrl.searchParams.get('historyTrace')) : undefined)
       writeJson(res, 200, { ok: true, value }, started, phases)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
@@ -2559,6 +2564,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     }
     case 'record.thoughts.query': return await service.recordThoughts(stringParam(params, 'expectedAccountScope'), params.recordUids, requestSignal)
     case 'chat.thoughts.query': return await service.chatThoughts(stringParam(params, 'expectedAccountScope'), stringParam(params, 'sourceRef'), params.messageActionRefs, requestSignal)
+    case 'source.bot-senders.presentation':
+      return await service.timelineBotPresentations(stringParam(params, 'sourceRef'), params.refs, requestSignal)
     case 'source.timeline': {
       const cursor = timelineCursorParam(params)
       return await service.readSource(
@@ -2566,6 +2573,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
           ...(params?.background === true ? { background: true } : {}),
           ...(params?.firstPaint === true ? { firstPaint: true } : {}),
+          ...(params?.deferBotProfiles === true ? { deferBotProfiles: true } : {}),
           ...(params.desktopLocal === true ? { desktopLocal: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )

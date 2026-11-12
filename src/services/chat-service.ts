@@ -24,6 +24,7 @@ import type { RecordEditHistoryTarget } from './record-edit-history-service.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { identifyTimelineSender, botDisplayName, type BotDisplayProfiles, type BotDisplayProfilesReader } from '../chat-sender-display.js'
+import { TimelineTokenCodec } from './timeline-token.js'
 import { RuntimeBotDisplayProfilesReader, botDisplaySnapshot } from './chat-sender-display-reader.js'
 import { recordDeletionCapability } from '../record-deletion-ref.js'
 import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
@@ -7197,14 +7198,25 @@ nextPublic = next
     source: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    options: { basicPresentation?: boolean; deferHumanAvatars?: boolean } = {},
+    options: { basicPresentation?: boolean; deferHumanAvatars?: boolean; deferBotProfiles?: boolean } = {},
   ): Promise<ArkmeTimelineItem[]> {
     const items: ArkmeTimelineItem[] = []
     const renderableItems = rawItems.filter(raw => numberValue(objectValue(objectValue(raw).record).status) === 1)
-    const botProfiles = await this.timelineBotDisplayProfiles(renderableItems, session, source.ownerRef, source.kind, signal)
+    const deferBotProfiles = options.deferBotProfiles === true && !source.groupDelegation && this.senderProfiles.cached !== undefined
+    const botProfiles = await this.timelineBotDisplayProfiles(renderableItems, session, source.ownerRef, source.kind, signal, undefined, deferBotProfiles)
     const senderUserIdByIndex = new Map<number, number>()
     const signingKey = await this.runtime.stateStore.uniqueCode()
     const audienceKey=source.groupDelegation?await this.source.sourceScopeKey(source):undefined
+    const botPresentation = deferBotProfiles ? this.botPresentationCodec(signingKey, session.userId, source.ownerRef) : undefined
+    const botPresentationRefs = new Map<string, string>()
+    const presentationRef = (uid: string) => {
+      if (!botPresentation || !uid) return undefined
+      const known = botPresentationRefs.get(uid)
+      if (known) return known
+      const ref = botPresentation.seal(uid, 'bot-sender')
+      botPresentationRefs.set(uid, ref)
+      return ref
+    }
     for (const raw of renderableItems) {
       const item = objectValue(raw)
       const relation = timelineSenderRelation(item)
@@ -7241,7 +7253,8 @@ nextPublic = next
         ? this.arko.currentUserAgentSourceFallback(session.userId, rawAgentSource)
         : rawAgentSource
       const contentBlocks = this.media.richContentBlocks(item, session.userId, [], mediaSource)
-      const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles,source,audienceKey)
+      const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles,source,audienceKey,presentationRef)
+      const senderBotPresentationRef = presentationRef(timelineSenderBotUid(relation))
       const senderName = this.timelineSenderName(relation, botProfiles)
       const mentions = await this.timelineMentionTargets(record, payload, session.userId, source.ownerRef)
       const captureContext = timelineCaptureContext({ ...record, ...payload })
@@ -7308,6 +7321,7 @@ nextPublic = next
         ...(isBot ? { senderKind: 'bot' as const } : {}),
         ...(isBot && timelineSenderBotUid(relation) ? {
           senderBotDirectoryKey: arkmeBotDirectoryKey(session.userId, timelineSenderBotUid(relation), signingKey),
+          ...(senderBotPresentationRef ? { senderBotPresentationRef } : {}),
         } : {}),
         ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId) : {}),
         ...(agentSource === undefined ? {} : { agentSource }),
@@ -7369,7 +7383,7 @@ nextPublic = next
   private async timelineBotDisplayProfiles(
     rawItems: unknown[], session: ArkmeSessionCredentials, chatSessionUid: string,
     sourceKind: ArkmeSourceRefPayload['kind'] | undefined, signal?: AbortSignal,
-    knownBundle?: Record<string, unknown>,
+    knownBundle?: Record<string, unknown>, cacheOnly = false, uncached = false,
   ): Promise<BotDisplayProfiles> {
     const botIds = new Set(rawItems.flatMap(raw => {
       const item = objectValue(raw)
@@ -7377,9 +7391,42 @@ nextPublic = next
       const preview = objectValue(item.extension_parent_preview ?? item.extensionParentPreview)
       return [timelineSenderBotUid(timelineSenderRelation(item)), timelineSenderBotUid(timelineSenderRelation(preview))].filter(Boolean)
     }))
-    return await this.senderProfiles.read({ botUids: botIds, chatSessionUid, isGroup: sourceKind === 'group_chat',
-      ...(knownBundle === undefined ? {} : { snapshot: botDisplaySnapshot(knownBundle) }),
+    const input = { botUids: botIds, chatSessionUid, isGroup: sourceKind === 'group_chat', uncached,
+      ...(knownBundle === undefined ? {} : { snapshot: botDisplaySnapshot(knownBundle) }) }
+    return cacheOnly && this.senderProfiles.cached
+      ? await this.senderProfiles.cached(input, session)
+      : await this.senderProfiles.read(input, session, signal)
+  }
+
+  private botPresentationCodec(key: string, userId: number, chatSessionUid: string): TimelineTokenCodec {
+    return new TimelineTokenCodec(key, JSON.stringify([this.runtime.config.environment, userId, chatSessionUid]))
+  }
+
+  async timelineBotPresentations(sourceRef: string, refs: unknown, signal?: AbortSignal) {
+    if (!Array.isArray(refs) || refs.length === 0 || refs.length > 100
+      || refs.some(ref => typeof ref !== 'string' || !ref || ref.length > 4096)) {
+      throw new ArkmePluginError('bot-senders-invalid', '机器人资料引用无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.groupDelegation || source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('bot-senders-source-invalid', '会话不支持读取机器人资料', false, 400)
+    }
+    const codec = this.botPresentationCodec(await this.runtime.stateStore.uniqueCode(), session.userId, source.ownerRef)
+    const entries = [...new Set<string>(refs)].map(ref => ({ ref, uid: codec.open(ref, 'bot-sender') }))
+    const profiles = await this.senderProfiles.read({
+      botUids: new Set(entries.map(({ uid }) => uid)), chatSessionUid: source.ownerRef, isGroup: source.kind === 'group_chat',
     }, session, signal)
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+    }
+    return entries.flatMap(({ ref, uid }) => {
+      const profile = profiles.get(uid)
+      return profile ? [{ ref, senderName: profile.displayName,
+        ...this.bot.botAvatarProjection({ avatar_url: profile.avatarUrl }, session.userId, uid) }] : []
+    })
   }
 
   private timelineSenderName(relation: Record<string, unknown>, profiles: BotDisplayProfiles): string {
@@ -7405,11 +7452,13 @@ nextPublic = next
     botProfiles: BotDisplayProfiles,
     source?:ArkmeSourceRefPayload,
     audienceKey?:string,
+    presentationRef?: (uid: string) => string | undefined,
   ): Pick<ArkmeTimelineItem, 'extensionParentRecordUid' | 'extensionParent'> | undefined {
     const edge = objectValue(item.extension_edge ?? item.extensionEdge)
     const quoteProjection = projectedMessageQuote(edge.quote_reply ?? item.quote_reply, item.extension_projection_state === 'unavailable' ? 'unavailable' : edge.quote_reply_state ?? item.quote_reply_state)
     const preview = objectValue(item.extension_parent_preview ?? item.extensionParentPreview)
     const previewRelation = timelineSenderRelation(preview)
+    const senderBotPresentationRef = presentationRef?.(timelineSenderBotUid(previewRelation))
     const previewRecord = objectValue(preview.record)
     const previewPayload = objectValue(previewRecord.payload)
     const parentRecordUid = stringValue(
@@ -7430,6 +7479,7 @@ nextPublic = next
     if (previewRecordUid === '' || previewRecordUid !== parentRecordUid) {
       return { extensionParentRecordUid: parentRecordUid, ...(quoteProjection.quoteState === undefined ? {} : { extensionParent: {
         itemUid: parentRecordUid, senderName: this.timelineSenderName(previewRelation, botProfiles), title: '', textContent: '',
+        ...(senderBotPresentationRef ? { senderBotPresentationRef } : {}),
         ...quoteProjection,
         ...(recordOwnerId(edge.parent_record_owner_user_id) ? { recordOwnerUserId: recordOwnerId(edge.parent_record_owner_user_id) } : {}),
       } }) }
@@ -7448,6 +7498,7 @@ nextPublic = next
         ...quoteProjection,
         itemUid: parentRecordUid,
         senderName: this.timelineSenderName(previewRelation, botProfiles),
+        ...(senderBotPresentationRef ? { senderBotPresentationRef } : {}),
         title: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(previewPayload.title),
         textContent: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(previewPayload.text_content ?? previewPayload.textContent),
         ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
@@ -7468,6 +7519,7 @@ nextPublic = next
       item.extensionParent = {
         itemUid: parent.itemUid,
         senderName: parent.senderName,
+        ...(parent.senderBotPresentationRef ? { senderBotPresentationRef: parent.senderBotPresentationRef } : {}),
         title: parent.title,
         textContent: parent.textContent,
         textFormat: parent.textFormat ?? 'plain',

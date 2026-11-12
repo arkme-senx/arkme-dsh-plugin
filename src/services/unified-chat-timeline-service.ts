@@ -1,4 +1,4 @@
-import { measureConversationReadPhase } from '../conversation-read-diagnostics.js'
+import { measureConversationReadPhase, noteConversationRead } from '../conversation-read-diagnostics.js'
 import { isSystemTimelineAnchorSource, systemTimelineAnchorCodec } from './system-timeline-anchor.js'
 import type { OfflineContextService } from './offline-context-service.js'
 import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand } from '../timeline-cache-port.js'
@@ -184,19 +184,19 @@ export class UnifiedChatTimelineService {
     await this.invalidating
   }
 
-  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal, background = false, firstPaint = false): Promise<ArkmeTimelinePage> {
+  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal, background = false, firstPaint = false, deferBotProfiles = false): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object' || Array.isArray(query)) throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const operation = (shared: AbortSignal) => this.readOwned(sourceRef, query,
-      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]), background, firstPaint)
+      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]), background, firstPaint, deferBotProfiles)
     // SQLite has its own bounded Worker admission and epoch/commit fences. It must
     // never wait behind an unrelated conversation's network/recovery deadline.
     return !query.cacheOnly && this.runtime.runCompositeOwnerRead
-      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query, ...(firstPaint ? { firstPaint } : {}) }, operation, signal,
+      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query, ...(firstPaint ? { firstPaint } : {}), ...(deferBotProfiles ? { deferBotProfiles } : {}) }, operation, signal,
         background || query.mode === 'refresh' ? 'background-read' : 'interactive-read')
       : await operation(signal ?? new AbortController().signal)
   }
 
-  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean, firstPaint: boolean): Promise<ArkmeTimelinePage> {
+  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean, firstPaint: boolean, deferBotProfiles: boolean): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object') throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const epoch = this.epoch
     const { session, source } = await measureConversationReadPhase('scope', async () => {
@@ -259,7 +259,9 @@ export class UnifiedChatTimelineService {
       let cached: ArkmeTimelinePage | undefined
       try { cached = cache ? await measureConversationReadPhase('projection', () => this.callStorage<ArkmeTimelinePage | undefined>(cache, { kind: 'read', scope, request: requestKey,
         ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
-        latest: mode === 'initial' && !query.anchorId })) : undefined } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
+        latest: mode === 'initial' && !query.anchorId })) : undefined
+        noteConversationRead('cache-result', !cache ? 'storage-unavailable' : !cached ? 'window-missing' : cached.cache?.stale ? 'window-stale' : 'window-found')
+      } catch { noteConversationRead('cache-result', 'storage-error') }
       // Window coverage and synced bodies have independent commit clocks. An old
       // latest window must not hide a newer, already durable local message tail.
       const latestLocal = mode === 'initial' && !query.anchorId && !query.cursor
@@ -350,7 +352,9 @@ export class UnifiedChatTimelineService {
     const joins = events.filter(event => event.source === 'group_metadata' && event.kind === 'member_join' && event.content_status === 'available')
     const [messages, moments, joinPresentations] = await measureConversationReadPhase('network-projection', () => Promise.all([
       this.chat.projectChatTimelineItems(native.map(event => event.payload), source, session, signal,
-        firstPaint && !source.groupDelegation && (mode === 'initial' || mode === 'around') ? { deferHumanAvatars: true } : undefined),
+        deferBotProfiles && !source.groupDelegation
+          ? { deferBotProfiles: true, deferHumanAvatars: firstPaint && (mode === 'initial' || mode === 'around') }
+          : firstPaint && !source.groupDelegation && (mode === 'initial' || mode === 'around') ? { deferHumanAvatars: true } : undefined),
       groups.length ? this.interwoven.projectUnifiedGroups({ groups: groups.map(e => e.payload), prepared_at: data.prepared_at }, source, session, 0, signal).then(page => page.moments) : [],
       joins.length ? this.chat.projectUnifiedMemberJoins(joins.map(event => ({ ...objectValue(event.payload), join_at: event.occurred_at })), source, session, signal) : [],
     ]))

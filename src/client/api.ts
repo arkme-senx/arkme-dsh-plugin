@@ -346,7 +346,7 @@ export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
-  options?: { priority?: 'background'; avatarDownload?: true; traceId?: string },
+  options?: { priority?: 'background'; avatarDownload?: true; traceId?: string; historyTrace?: import('../sdk/index.js').ArkmeSdkTransportOptions['historyTrace'] },
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
@@ -425,9 +425,13 @@ export async function callArkme<T>(
       }
       const traceId = operation === 'private-interaction.directory' ? options?.traceId : undefined
       if (traceId) groupInteractionTrace('directory-bridge-dispatch', { traceId, priority: fetchPriority })
-      const value = fetchPriority === undefined && traceId === undefined
+      const value = fetchPriority === undefined && !options?.historyTrace && traceId === undefined
         ? await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
-        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, { ...(fetchPriority ? { priority: fetchPriority } : {}), ...(traceId ? { directoryTraceId: traceId } : {}) })
+        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, {
+          ...(fetchPriority === undefined ? {} : { priority: fetchPriority }),
+          ...(traceId ? { directoryTraceId: traceId } : {}),
+          ...(options?.historyTrace ? { historyTrace: options.historyTrace } : {}),
+        })
       if (background) {
         requestSignal?.throwIfAborted()
         if (currentScope() !== scope) throw changedAccount()
