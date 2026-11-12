@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import type { ArkmeFileSendTask, ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
+import { retainFileMessageRenderKey } from './conversation-message-merge.js'
 
 export function composerAttachmentBlock(attachment: ArkmeComposerAttachment, sortOrder: number): ArkmeContentBlock | undefined {
   if (attachment.localFile) return localFileBlock(attachment.localFile, sortOrder)
@@ -12,7 +13,7 @@ export function composerAttachmentBlock(attachment: ArkmeComposerAttachment, sor
     fileName: asset.fileName, mimeType: asset.mimeType, size: asset.size, sortOrder }
 }
 export function localFileBlock(file: ArkmeLocalFile, sortOrder = 0): ArkmeContentBlock {
-  return { kind: file.fileKind === 1 ? 'image' : file.fileKind === 3 ? 'video' : 'file', mediaRef: file.fileRef, localFileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder }
+  return { kind: file.fileKind === 1 ? 'image' : file.fileKind === 3 ? 'video' : 'file', mediaRef: file.fileRef, localFileRef: file.fileRef, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder, ...(file.imageDimensions ? { imageDimensions: file.imageDimensions } : {}) }
 }
 function visibleTaskFiles(task: ArkmeFileSendTask) {
   const backgroundRefs = new Set(task.backgroundSound?.fileRefs ?? [])
@@ -23,9 +24,16 @@ export function fileTaskHasOnlyBackgroundFiles(task: ArkmeFileSendTask): boolean
   return task.fileRefs.length > 0 && backgroundRefs.size > 0
     && task.fileRefs.every(fileRef => backgroundRefs.has(fileRef))
 }
-/** Active supplemental capture has no visible per-message status. */
-export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask): boolean {
-  return !fileTaskHasOnlyBackgroundFiles(task) || !['queued', 'uploading', 'sending'].includes(task.state)
+/** Avoid duplicating attachment progress in the message footer. */
+export function fileTaskShowsInlineStatus(task: ArkmeFileSendTask, displayedBlocks?: readonly ArkmeContentBlock[]): boolean {
+  if (fileTaskHasOnlyBackgroundFiles(task) && ['queued', 'uploading', 'sending'].includes(task.state)) return false
+  if (task.state !== 'uploading' || !displayedBlocks) return true
+  return !visibleTaskFiles(task).every(file => file.fileKind === 1)
+    || !displayedBlocks.some(block => block.kind === 'image' && (
+      (block.uploadProgress !== undefined && task.fileRefs.includes(block.localFileRef ?? ''))
+      || (block.attachmentState === 'pending' && block.attachmentUid
+        && task.files.some(file => file.attachmentUid === block.attachmentUid))
+    ))
 }
 export function fileTaskTimelineItem(task: ArkmeFileSendTask): ArkmeTimelineItem {
   const visibleFiles = visibleTaskFiles(task)
@@ -58,28 +66,45 @@ export function fileTaskConversationPreview(task: ArkmeFileSendTask): string {
   return fileKind === 1 ? '[图片]' : fileKind === 2 ? '[语音]' : fileKind === 3 ? '[视频]' : '[文件]'
 }
 export function bindSentFileTaskLocals(item: ArkmeTimelineItem, tasks: readonly ArkmeFileSendTask[]): ArkmeTimelineItem {
+  const matching = tasks.filter(task => task.fileRefs.length > 0 && (task.result?.itemUid ?? task.recordUid) === item.itemUid)
+  if (!matching.length) return item
+  if (item.isMe && matching.some(task => task.files.some(file => file.fileKind === 1))) item = retainFileMessageRenderKey(item)
   if (item.contentBlocks === undefined || item.contentBlocks.length === 0) return item
-  const localByAsset = new Map<string, string>()
-  for (const task of tasks) {
-    if ((task.result?.itemUid ?? task.recordUid) !== item.itemUid) continue
+  const localByAsset = new Map<string, ArkmeLocalFile>()
+  for (const task of matching) {
     for (const file of task.files) {
       const fileAssetUid = file.asset?.fileAssetUid.trim()
-      if (fileAssetUid !== undefined && fileAssetUid !== '') localByAsset.set(fileAssetUid, file.fileRef)
+      if (fileAssetUid !== undefined && fileAssetUid !== '') localByAsset.set(fileAssetUid, file)
     }
   }
-  const task = tasks.find(task => task.delivery === 'progressive' && (task.result?.itemUid ?? task.recordUid) === item.itemUid)
+  const task = matching.find(task => task.delivery === 'progressive' || task.delivery === 'negotiating')
   const local = task ? fileTaskTimelineItem(task).contentBlocks ?? [] : []
   let changed = false
   const contentBlocks = item.contentBlocks.map(block => {
     if (block.attachmentState) {
       const replacement = local.find(value => block.attachmentUid && value.attachmentUid === block.attachmentUid)
-      if (replacement?.localFileRef) { changed = true; return { ...block, localFileRef: replacement.localFileRef, mediaRef: replacement.mediaRef, ...(replacement.uploadProgress ? { uploadProgress: replacement.uploadProgress } : {}) } }
+        ?? local.find(value => block.kind === 'image' && block.attachmentState === 'pending' && value.localFileRef
+          && value.attachmentUid === undefined && value.kind === 'image' && value.sortOrder === block.sortOrder
+          && value.fileName === block.fileName && value.size === block.size && value.mimeType === block.mimeType)
+      if (replacement?.localFileRef) {
+        changed = true
+        const { attachmentState, ...resource } = block
+        const progress = task?.files.find(file => file.fileRef === replacement.localFileRef)?.progress
+        return { ...resource, localFileRef: replacement.localFileRef, mediaRef: replacement.mediaRef,
+          ...(progress?.phase === 'ready' ? {} : { attachmentState: task?.state === 'failed' ? 'failed' as const : attachmentState }),
+          ...(replacement.imageDimensions ? { imageDimensions: replacement.imageDimensions } : {}),
+          ...(replacement.uploadProgress ? { uploadProgress: replacement.uploadProgress } : {}) }
+      }
     }
     if (block.localFileRef !== undefined || block.fileAssetUid === undefined) return block
-    const localFileRef = localByAsset.get(block.fileAssetUid)
-    if (localFileRef === undefined) return block
+    const file = localByAsset.get(block.fileAssetUid)
+      // The timeline can confirm the slot before the Host task snapshot carries its asset UID.
+      ?? (block.kind === 'image' && block.attachmentUid ? task?.files.find(file =>
+        file.attachmentUid === block.attachmentUid && file.fileKind === 1 && !file.asset
+        && file.fileName === block.fileName && file.size === block.size && file.mimeType === block.mimeType) : undefined)
+    if (file === undefined) return block
     changed = true
-    return { ...block, localFileRef }
+    return { ...block, localFileRef: file.fileRef, ...(file.imageDimensions ? { imageDimensions: file.imageDimensions } : {}) }
   })
   return changed ? { ...item, contentBlocks } : item
 }
@@ -103,10 +128,15 @@ export function arkmeFileSendTasksEqual(
 const EMPTY_FILE_SEND_TASKS: readonly ArkmeFileSendTask[] = Object.freeze([])
 const EMPTY_ACTIVE_TASK_KEYS: ReadonlySet<string> = new Set()
 
+const fileTaskWakeListeners = new Set<(userId: number, taskRef: string) => void>()
+export function wakeArkmeFileTask(userId: number, taskRef: string): void {
+  for (const listener of fileTaskWakeListeners) listener(userId, taskRef)
+}
+
 export function useArkmeDeliveryTasks<T>(
   sourceRef: string | undefined,
   userId: string | number | undefined,
-  adapter: { read(scope: string, signal: AbortSignal): Promise<T[]>; poll?(scope: string, known: readonly T[], signal: AbortSignal): Promise<T[] | undefined>; active(tasks: readonly T[]): boolean; belongs(task: T, scope: string): boolean; key(task: T): string },
+  adapter: { read(scope: string, signal: AbortSignal): Promise<T[]>; poll?(scope: string, known: readonly T[], signal: AbortSignal): Promise<T[] | undefined>; active(tasks: readonly T[]): boolean; belongs(task: T, scope: string): boolean; key(task: T): string; subscribe?(listener: (userId: number, taskRef: string) => void): () => void },
   enabled = true,
 ) {
   const [snapshot, setSnapshot] = useState<{ sourceRef: string; userId: string | number; tasks: T[]; activeKeys: ReadonlySet<string> }>()
@@ -118,6 +148,7 @@ export function useArkmeDeliveryTasks<T>(
     let controller: AbortController | undefined
     let pending = false
     let failures = 0
+    let wakePending = false
     let knownTasks: readonly T[] = snapshot?.sourceRef === sourceRef && snapshot.userId === userId ? snapshot.tasks : []
     const browserDocument = typeof document === 'undefined' ? undefined : document
     const foreground = () => browserDocument?.visibilityState !== 'hidden'
@@ -157,7 +188,8 @@ export function useArkmeDeliveryTasks<T>(
         if (controller === request) controller = undefined
         pending = false
         if (!active) return
-        if (adapter.active(knownTasks)) schedule()
+        if (wakePending && foreground()) { wakePending = false; void poll(true) }
+        else if (adapter.active(knownTasks)) schedule()
         else if (failures > 0 && failures <= FILE_TASK_INITIAL_RETRY_LIMIT) schedule(FILE_TASK_POLL_INTERVAL_MS * failures)
       }
     }
@@ -165,10 +197,17 @@ export function useArkmeDeliveryTasks<T>(
       if (foreground()) void poll()
       else { clearTimer(); controller?.abort() }
     }
+    const unsubscribe = adapter.subscribe?.((actor, taskRef) => {
+      if (actor !== userId || !foreground() || !knownTasks.some(task => adapter.key(task) === taskRef)) return
+      if (pending) { wakePending = true; return }
+      clearTimer()
+      void poll(true)
+    })
     void poll()
     browserDocument?.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       active = false
+      unsubscribe?.()
       clearTimer()
       controller?.abort()
       browserDocument?.removeEventListener('visibilitychange', onVisibilityChange)
@@ -193,6 +232,10 @@ export function useArkmeDeliveryTasks<T>(
 }
 
 const fileTaskAdapter = {
+  subscribe(listener: (userId: number, taskRef: string) => void) {
+    fileTaskWakeListeners.add(listener)
+    return () => { fileTaskWakeListeners.delete(listener) }
+  },
   read: (sourceRef: string, signal: AbortSignal) => callArkme<ArkmeFileSendTask[]>('files.send.tasks', { sourceRef }, signal),
   async poll(sourceRef: string, known: readonly ArkmeFileSendTask[], signal: AbortSignal) {
     const open = new Map(known.filter(task => arkmeFileSendTasksNeedPolling([task])).map(task => [task.taskRef, task]))

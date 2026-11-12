@@ -14,18 +14,21 @@ export interface AttachmentReceipt {
   state: 'pending' | 'failed' | 'ready' | 'removed'
   fileAssetUid?: string
 }
+export type ProgressiveCapability = boolean | 'inline-photo-preview' | 'photo-thumbnail'
 export interface ProgressiveTarget { record_uid: string; attachment_uid: string; generation: number }
 
 export class ProgressiveAttachments {
   constructor(private readonly runtime: ServiceRuntime) {}
 
-  async supported(userId: number, signal: AbortSignal): Promise<boolean> {
+  async supported(userId: number, signal: AbortSignal): Promise<ProgressiveCapability> {
     const session = await this.session(userId, signal)
     try {
       const record = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/attachments/capability', {}, session, signal)
       const chat = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/attachments/capability', {}, session, signal)
       await this.session(userId, signal)
-      return record.version === 1 && chat.version === 1 && record.metadata_first_version === 2 && chat.metadata_first_version === 2
+      if (record.version !== 1 || chat.version !== 1 || record.metadata_first_version !== 2 || chat.metadata_first_version !== 2) return false
+      if (record.inline_photo_preview !== 1 || chat.inline_photo_preview !== 1) return true
+      return record.photo_thumbnail === 1 ? 'photo-thumbnail' : 'inline-photo-preview'
     } catch (error) {
       await this.session(userId, signal)
       if (error instanceof ArkmePluginError && [404, 501].includes(error.upstreamStatus ?? error.httpStatus)) return false
@@ -39,6 +42,13 @@ export class ProgressiveAttachments {
 
   async retry(target: ProgressiveTarget, userId: number, signal: AbortSignal): Promise<AttachmentReceipt[]> {
     return this.request('/api/v1/records/attachments/change', { ...target, action: 'retry' }, userId, signal)
+  }
+
+  async bindPhotoThumbnail(target: ProgressiveTarget, userId: number, fileAssetUid: string, sha256: string, signal: AbortSignal): Promise<void> {
+    const session = await this.session(userId, signal)
+    await this.runtime.authenticatedPost('/api/v1/records/attachments/change', {
+      ...target, action: 'preview', file_asset_uid: fileAssetUid, file_hash: sha256,
+    }, session, signal)
   }
 
   private async session(userId: number, signal: AbortSignal) {

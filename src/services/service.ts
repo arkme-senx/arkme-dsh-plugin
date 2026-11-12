@@ -1330,6 +1330,28 @@ export class ServiceRuntime {
     return this.authenticatedMediaStream('record','/api/v1/content/source-stream',{...options,body,sourceAttachment:true})
   }
 
+  async authenticatedRecordSourceThumbnail(
+    body: Record<string, unknown>, expectedUserId: number, key: string, validator: string | undefined, signal?: AbortSignal,
+  ): Promise<{ data?: Uint8Array; etag: string }> {
+    const session = await this.requireSession()
+    return await this.mediaStreamCoordinator.run({
+      scope: this.requestScope(session.userId), lane: 'interactive-read', service: 'record',
+      key: JSON.stringify(['source-thumbnail', key, validator]), cancelWhenUnobserved: true,
+      ...(signal ? { signal } : {}),
+      operation: async signal => {
+        const { value, finished } = await this.openMediaStream('record', '/api/v1/content/source-thumbnail', {
+          body, expectedUserId, sourceAttachment: true, thumbnail: true, maxBytes: 512 * 1024,
+          ...(validator ? { validator } : {}), signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]),
+        }, session)
+        const etag = value.headers.get('etag')!
+        if (value.status === 304) return { etag }
+        const data = new Uint8Array(await value.arrayBuffer())
+        await finished
+        return { data, etag }
+      },
+    })
+  }
+
   private async authenticatedMediaStream(service: 'audio' | 'record', path: string, options: {
     expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean
   }): Promise<Response> {
@@ -1348,7 +1370,7 @@ export class ServiceRuntime {
   }
 
   private async openMediaStream(service: 'audio' | 'record', path: string, options: {
-    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean
+    expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean;thumbnail?:boolean;validator?:string
   }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
     const base = new URL(service === 'audio' ? this.config.audioBaseUrl : this.config.recordBaseUrl)
     const url = new URL(path, base)
@@ -1379,7 +1401,7 @@ export class ServiceRuntime {
       await assertAccount()
       return await this.fetchImpl(url, {
         method: options.body === undefined ? options.method ?? 'GET' : 'POST',
-        headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.range === undefined ? {} : { Range: options.range }), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
+        headers: { Authorization: `Bearer ${session.accessToken}`, ...(options.validator ? { 'If-None-Match': options.validator } : {}), ...(options.range === undefined ? {} : { Range: options.range }), ...(options.body === undefined ? {} : { 'content-type': 'application/json' }) },
         ...(options.body === undefined ? {} : { body: options.sourceAttachment ? stringifyOwnerJson(options.body) : JSON.stringify(options.body) }),
         redirect: 'error', signal,
       })
@@ -1403,6 +1425,14 @@ export class ServiceRuntime {
         // Shares the opening-stage budget and account cancellation.
         // No byte has been published yet; never replay a partly consumed stream.
         await waitForCapacity(Math.max(1_000, delay), undefined, { signal })
+      }
+      if (options.thumbnail) {
+        const etag = response.headers.get('etag') ?? ''
+        const verified = response.headers.get('X-Jotmo-Source-Stream') === '1' && /^"[a-f0-9]{64}"$/.test(etag)
+        if (response.status === 304 && verified && etag === options.validator) {
+          return { value: new Response(null, { status: 304, headers: { etag } }), finished: Promise.resolve() }
+        }
+        if (response.status === 200 && (!verified || response.headers.get('content-type') !== 'image/webp')) throw invalid()
       }
       if (response.status !== 200 && response.status !== 206) {
         throw new ArkmePluginError('media-fetch-failed', '媒体当前不可用', response.status >= 500,
