@@ -152,7 +152,7 @@ it.each([
         expect(arkmeChatTimelineDelta.getSnapshotForSource(update.sourceKey).items).toEqual(update.timelineItems)
         expect(arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.unreadCount).toBe(1)
       }
-      expect(directoryRefresh).toHaveBeenCalledWith(undefined, false, 'session-delta-unscoped')
+      expect(directoryRefresh).toHaveBeenCalledWith(undefined, false, 'group-session-delta-unscoped')
       directoryRefresh.mockClear()
       await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'sessions-delta', revision: 3,
         updates: [{ ...updates[0], timelineItems: [] }],
@@ -570,7 +570,7 @@ describe('realtime reconcile routing', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('applies timeline deletions even when no conversation is in the foreground', async () => {
+  it('applies timeline deletions once even when no conversation is in the foreground', async () => {
     let source!: FakeWebSocket
     class FakeWebSocket {
       onopen: (() => void) | null = null
@@ -582,6 +582,7 @@ describe('realtime reconcile routing', () => {
     vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
     vi.spyOn(arkmeMessageReadReceipts, 'reconcile').mockImplementation(() => undefined)
     const apply = vi.spyOn(arkmeChatTimelineDelta, 'applyTimelineChange')
+    const invalidate = vi.spyOn(arkmeInterwovenInvalidation, 'invalidate')
 
     function Harness() {
       useArkmeRealtimeClientEvents({
@@ -591,6 +592,11 @@ describe('realtime reconcile routing', () => {
     }
     let renderer!: ReactTestRenderer
     await act(async () => { renderer = create(createElement(Harness)) })
+    vi.spyOn(arkmeChatDirectory, 'getSnapshot').mockReturnValue({
+      ...arkmeChatDirectory.getSnapshot(),
+      sources: [{ sourceKey: 'opaque-source', sourceRef: 'group-ref', kind: 'group_chat',
+        displayName: 'Group', activeAtMillis: 1, unreadCount: 0 }],
+    })
     await act(async () => {
       source.onmessage?.({ data: JSON.stringify({
         type: 'timeline-changed', revision: 1,
@@ -603,6 +609,29 @@ describe('realtime reconcile routing', () => {
       sourceKey: 'opaque-source', timelineItemKey: 'opaque-item',
       changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
     })
+    await act(async () => {
+      source.onmessage?.({ data: JSON.stringify({
+        type: 'timeline-changed', revision: 2,
+        sourceKey: 'opaque-source', timelineItemKey: 'opaque-item',
+        changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
+      }) } as MessageEvent<string>)
+    })
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith('opaque-source', undefined, true, 'timeline-deleted')
+    await act(async () => {
+      for (const [revision, payload] of [
+        [3, { type: 'timeline-changed', sourceKey: 'host-private', sourceKind: 'private_chat', timelineItemKey: 'private-item',
+          changeKind: 'deleted', changeVersion: 123457, relationTerminal: true, throughSequence: 9 }],
+        [4, { type: 'timeline-changed', sourceKey: 'host-unknown', timelineItemKey: 'unknown-item',
+          changeKind: 'deleted', changeVersion: 123458, relationTerminal: true, throughSequence: 9 }],
+        [5, { type: 'projection-invalidated', projection: 'record', recordReconnect: true }],
+        [6, { type: 'projection-invalidated', projection: 'record' }],
+      ] as const) source.onmessage?.({ data: JSON.stringify({ revision, ...payload }) } as MessageEvent<string>)
+    })
+    expect(invalidate.mock.calls.slice(1)).toEqual([
+      ['host-private', undefined, true, 'timeline-private-deleted'],
+      ['host-unknown', undefined, true, 'timeline-changed'],
+      [undefined, undefined, false, 'record-projection'],
+    ])
     await act(async () => { renderer.unmount() })
   })
 })

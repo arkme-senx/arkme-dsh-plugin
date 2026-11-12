@@ -1,3 +1,4 @@
+import { groupInteractionTrace } from '../group-interaction-diagnostics.js'
 export { connectRealtimeDictation } from '../realtime-dictation-client.js'
 import type { RecordingImportBatch } from '../recording-workflow-contract.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -345,7 +346,7 @@ export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
-  options?: { priority?: 'background'; avatarDownload?: true },
+  options?: { priority?: 'background'; avatarDownload?: true; traceId?: string },
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
@@ -374,7 +375,12 @@ export async function callArkme<T>(
     const parameters = accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }
     const background = options?.priority === 'background' && supportsBackgroundRead(operation, params)
     const foregroundTimeline = operation === 'source.timeline' && params?.background !== true
-    const fetchPriority = background ? 'low'
+    // The Host already paces continuation pages. Keep Browser admission for task starts.
+    const hostScheduledContinuation = operation === 'private-interaction.directory'
+      && typeof params?.cursor === 'string' && params.cursor.length > 0
+      && typeof params.expectedVersion === 'string' && /^[a-f0-9]{64}$/.test(params.expectedVersion)
+    // Host priority starts after loopback delivery. Do not let Chromium defer an admitted continuation.
+    const fetchPriority = hostScheduledContinuation ? 'high' : background ? 'low'
       : foregroundTimeline || operation === 'team.app.timeline' || operation === 'team.app.preflight' ? 'high' : undefined
     const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
     const currentScope = () => {
@@ -417,9 +423,11 @@ export async function callArkme<T>(
         if (result.ok) return result.value
         if (result.error.code !== 'chat-desktop-local-unsupported') throw new ArkmeClientError(result.error)
       }
-      const value = fetchPriority === undefined
+      const traceId = operation === 'private-interaction.directory' ? options?.traceId : undefined
+      if (traceId) groupInteractionTrace('directory-bridge-dispatch', { traceId, priority: fetchPriority })
+      const value = fetchPriority === undefined && traceId === undefined
         ? await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
-        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, { priority: fetchPriority })
+        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, { ...(fetchPriority ? { priority: fetchPriority } : {}), ...(traceId ? { directoryTraceId: traceId } : {}) })
       if (background) {
         requestSignal?.throwIfAborted()
         if (currentScope() !== scope) throw changedAccount()
@@ -430,11 +438,11 @@ export async function callArkme<T>(
     // No key/recovery: existing owners retain deduplication and retry semantics.
     const imageService = operation === 'team.app.image' ? 'team'
       : operation === 'image.read' && options?.avatarDownload ? 'chat' : undefined
-    const value = background ? await backgroundUiReads.run({
+    const value = background && !hostScheduledContinuation ? await backgroundUiReads.run({
       scope: scope ?? 'anonymous', lane: imageService ? 'image' : 'background-read',
       service: imageService ?? 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
       operation: dispatch,
-    }) : await dispatch(signal)
+    }) : await dispatch(backgroundSignal ?? signal)
     if (background) {
       // Account changes can arrive while the coordinator unwinds after dispatch.
       backgroundSignal?.throwIfAborted()

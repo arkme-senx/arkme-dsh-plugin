@@ -13,3 +13,11 @@ export function groupInteractionTraceKey(value: string): string {
 export function groupInteractionTrace(stage: string, fields: Record<string, string | number | boolean | undefined> = {}): void {
   if (groupInteractionTraceEnabled()) console.info('[arkme-group-interaction] ' + JSON.stringify({ at: Date.now(), stage, ...fields }))
 }
+
+
+export const directoryTraceHeader = 'x-arkme-directory-trace'
+export const directoryTraceSignals = new WeakMap<AbortSignal, string>()
+
+export function isDirectoryTraceId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(value)
+}
