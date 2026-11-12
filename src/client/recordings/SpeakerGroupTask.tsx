@@ -1,3 +1,4 @@
+import { ArkmeConfirmDialog } from '../ArkmeConfirmDialog.js'
 import {useEffect,useRef,useState,type CSSProperties} from 'react'
 import type {SpeakerGroupJob,SpeakerGroupJobs,SpeakerGroupPreview,SpeakerGroupConflict,SpeakerGroupConflictItem} from '../../speaker-group-contract.js'
 import {useRecordingPlayback} from './useRecordingPlayback.js'
@@ -8,8 +9,9 @@ import {arkmeTheme as color} from '../arkme-theme.js'
 import {tr} from '../locale.js'
 const button:CSSProperties={padding:'6px 9px',border:`1px solid ${color.border}`,borderRadius:7,background:color.base,color:color.text,font:'inherit',cursor:'pointer'}
 const labels:Record<SpeakerGroupJob['state'],string>={preview:'尚未保存',queued:'等待处理',preparing:'准备归属修改',publishing:'正在统一保存',complete:'已完成',failed:'处理失败，可恢复',conflict:'资料已变化，需要重新核对',cancelled:'已取消，原归属保留'}
-export function SpeakerGroupTask({initialPreview,initialJob,targetLabel,onBack}:{initialPreview?:SpeakerGroupPreview;initialJob?:SpeakerGroupJob;targetLabel?:string;onBack():void}){
+export function SpeakerGroupTask({initialPreview,initialJob,targetLabel,onBack,inDialog=false,onBusyChange,backLabel='返回核对'}:{initialPreview?:SpeakerGroupPreview;initialJob?:SpeakerGroupJob;targetLabel?:string;inDialog?:boolean;onBusyChange?(busy:boolean):void;backLabel?:string;onBack():void}){
  const [preview,setPreview]=useState(initialPreview),[job,setJob]=useState(initialJob),[undo,setUndo]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('')
+ useEffect(()=>{onBusyChange?.(busy)},[busy,onBusyChange])
  const action=useRef(new AbortController());useEffect(()=>{const c=new AbortController();action.current=c;return()=>c.abort()},[])
  const run=async(kind:string)=>{setBusy(true);setError('');const signal=action.current.signal
   try{const result=await callArkme<SpeakerGroupJob|SpeakerGroupPreview>('speaker-directory.group-action',{action:kind,...(job?{jobRef:job.jobRef}:{}),...(preview?{commandRef:preview.commandRef}:{})},signal);if(signal.aborted)return
@@ -19,7 +21,7 @@ export function SpeakerGroupTask({initialPreview,initialJob,targetLabel,onBack}:
   const timer=setTimeout(()=>{void callArkme<SpeakerGroupJob>('speaker-directory.group-action',{action:'job',jobRef:job.jobRef},c.signal).then(value=>{if(!c.signal.aborted)setJob(value)}).catch(e=>{if(!c.signal.aborted)setError(e instanceof Error?e.message:tr('任务状态读取失败'))})},1500)
   return()=>{clearTimeout(timer);c.abort()}
  },[job])
- return <section style={{marginTop:12,border:`1px solid ${color.border}`,borderRadius:9,padding:12}} aria-label={tr('完整分组任务')}>
+ const content = <section style={{marginTop:12,border:`1px solid ${color.border}`,borderRadius:9,padding:12}} aria-label={tr('完整分组任务')}>
   {preview&&<><strong>{tr(undo?'撤销整组修改预览':'完整分组影响预览')}</strong><p>{tr('目标')}：{undo?tr('恢复修改前的归属'):targetLabel??tr('所选归属')}</p><p>{tr('后台去重核对')}：{preview.affectedCount} {tr('段')}</p>{preview.firstAt>0&&<p>{new Date(preview.firstAt).toLocaleString()} — {new Date(preview.lastAt).toLocaleString()}</p>}{!!preview.sourceCounts.length&&<p>{tr('各来源分组')}：{preview.sourceCounts.join('、')} {tr('段')}</p>}
    <p>{tr(undo?'只恢复本次修改；后续人工修改冲突时不会覆盖。':'包含所选分组快照中的全部历史片段。准备完成前仍显示旧归属；不自动确认未来录音。')}</p>
    {!!preview.conflictCount&&<p role="alert" style={{color:color.danger}}>{tr('发现冲突片段')}：{preview.conflictCount} · {tr('请返回重新核对')}</p>}
@@ -32,15 +34,22 @@ export function SpeakerGroupTask({initialPreview,initialJob,targetLabel,onBack}:
    {job.state!=='cancelled'&&job.state!=='complete'&&<button style={button} disabled={busy} onClick={()=>void run('job')}>{tr('重新读取任务')}</button>}
   </>}
   {error&&<p role="alert" style={{color:color.danger}}>{error}</p>}
-  <p style={{color:color.secondary}}>{tr('已提交任务会保存在账号中，重启或换设备后可从最近任务继续查看。')}</p><button style={button} disabled={busy} onClick={onBack}>{tr('返回核对')}</button>
+  <p style={{color:color.secondary}}>{tr('已提交任务会保存在账号中，重启或换设备后可从最近任务继续查看。')}</p><button style={button} disabled={busy} onClick={onBack}>{tr(backLabel)}</button>
  </section>
+ return preview && !inDialog ? <ArkmeConfirmDialog layout="picker" titleId="speaker-group-preview" title={tr('完整分组影响预览')} dialogStyle={{ width: 'min(560px, 100%)', padding: 16 }} busy={busy} onClose={onBack}>{content}</ArkmeConfirmDialog> : content
 }
 export function RecentSpeakerGroupJobs(){
- const [page,setPage]=useState<SpeakerGroupJobs>(),[job,setJob]=useState<SpeakerGroupJob>(),[error,setError]=useState(''),[loading,setLoading]=useState(false)
+ const [page,setPage]=useState<SpeakerGroupJobs>(),[job,setJob]=useState<SpeakerGroupJob>(),[error,setError]=useState(''),[loading,setLoading]=useState(false),[jobBusy,setJobBusy]=useState(false)
  const controller=useRef(new AbortController());useEffect(()=>{const c=new AbortController();controller.current=c;return()=>c.abort()},[])
  const load=async(more=false)=>{setLoading(true);setError('');const signal=controller.current.signal;try{const p=await callArkme<SpeakerGroupJobs>('speaker-directory.group-action',{action:'jobs',...(more&&page?.nextCursor?{cursor:page.nextCursor}:{})},signal);if(!signal.aborted)setPage({...p,items:more?[...page?.items??[],...p.items]:p.items})}catch(e){if(!signal.aborted)setError(e instanceof Error?e.message:tr('任务读取失败'))}finally{if(!signal.aborted)setLoading(false)}}
- if(job)return <SpeakerGroupTask initialJob={job} onBack={()=>{setJob(undefined);void load()}}/>
- return <div style={{marginTop:12}}><button style={button} disabled={loading} onClick={()=>void load()}>{tr('最近归并任务')}</button>{error&&<p role="alert">{error}</p>}{page?.items.map((j,i)=><button key={i} style={{...button,margin:6}} onClick={()=>setJob(j)}>{tr(j.action==='undo'?'撤销':'统一标记')} · {j.totalCount}{tr('段')} · {tr(labels[j.state])}</button>)}{page?.nextCursor&&<button style={button} disabled={loading} onClick={()=>void load(true)}>{tr('加载更多任务')}</button>}{page&&!page.items.length&&!page.nextCursor&&<p>{tr('暂无已提交任务')}</p>}</div>
+ return <details onToggle={event=>{if(event.currentTarget.open&&!page&&!loading)void load()}} aria-label={tr('最近操作')} style={{marginTop:16,border:`1px solid ${color.border}`,borderRadius:10,padding:16}}>
+  <summary style={{cursor:'pointer',fontSize:14}}>{tr('最近操作')}</summary>
+  <div style={{display:'flex',alignItems:'center',justifyContent:'flex-end',gap:12,marginTop:10}}><button style={button} disabled={loading} onClick={()=>void load()}>{tr('刷新任务')}</button></div>
+  {error&&<p role="alert">{error}</p>}{loading&&!page&&<p role="status">{tr('正在读取任务…')}</p>}
+  <div style={{maxHeight:240,overflowY:'auto',marginTop:10}}>{page?.items.map(j=><button key={j.jobRef} aria-label={`${tr(j.action==='undo'?'撤销':'统一标记')} · ${j.totalCount}${tr('段')} · ${tr(labels[j.state])}`} style={{...button,display:'flex',width:'100%',alignItems:'center',justifyContent:'space-between',gap:12,padding:'12px 4px',border:0,borderBottom:`1px solid ${color.border}`,borderRadius:0,textAlign:'left'}} onClick={()=>setJob(j)}><span>{tr(j.action==='undo'?'撤销':'统一标记')} · {j.totalCount}{tr('段')}</span><span style={{color:color.secondary}}>{tr(labels[j.state])} ›</span></button>)}</div>
+  {page?.nextCursor&&<button style={button} disabled={loading} onClick={()=>void load(true)}>{tr('加载更多任务')}</button>}{page&&!page.items.length&&!page.nextCursor&&<p>{tr('暂无已提交任务')}</p>}
+  {job&&<ArkmeConfirmDialog layout="picker" titleId="recent-speaker-job" title={tr('归并任务详情')} dialogStyle={{width:'min(560px, 100%)',padding:16}} busy={jobBusy} onClose={()=>{setJob(undefined);void load()}}><h2 style={{fontSize:18,margin:'4px 12px'}}>{tr('归并任务详情')}</h2><SpeakerGroupTask inDialog backLabel="返回任务列表" onBusyChange={setJobBusy} initialJob={job} onBack={()=>{setJob(undefined);void load()}}/></ArkmeConfirmDialog>}
+ </details>
 }
 
 function SpeakerGroupConflicts({conflicts,total}:{conflicts:SpeakerGroupConflict[];total:number}){

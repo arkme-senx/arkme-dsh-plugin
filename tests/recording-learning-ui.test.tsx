@@ -20,13 +20,15 @@ describe('learning status at the existing correction result', () => {
     expect((calls.mock.calls[0]![2] as AbortSignal).aborted).toBe(true)
     expect(calls).toHaveBeenCalledTimes(2)
   })
-  it('retries only the server offered task, then reads current state without reapplying assignment', async () => {
-    calls.mockResolvedValueOnce(state('failed')).mockResolvedValueOnce(state('pending')).mockResolvedValueOnce(state('ready'))
+  it('keeps failed learning visible without offering task writes, and rereads only on read failure', async () => {
+    calls.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(state('failed'))
     await act(async () => { renderer = create(<RecordingLearningStatus learningRef="saved-command"/>); await settle() })
     const click = async (name: string) => { await act(async () => { renderer!.root.findAllByType('button').find(b => b.children.join('') === name)!.props.onClick(); await settle() }) }
-    await click('查看详情'); await click('重试失败任务')
-    expect(calls.mock.calls.map(c => c[0])).toEqual(['recordings.speaker.correction.learning', 'recordings.speaker.correction.learning.retry', 'recordings.speaker.correction.learning'])
-    expect(calls.mock.calls[1]![1]).toEqual({ learningRef: 'saved-command', retryRef: 'opaque-retry' })
-    expect(JSON.stringify(renderer!.toJSON())).toContain('有效声音样本')
+    await click('重新读取状态')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('部分未生效')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('重试失败任务')
+    await click('查看详情')
+    expect(JSON.stringify(renderer!.toJSON())).toContain('处理失败')
+    expect(calls.mock.calls.map(c => c[0])).toEqual(['recordings.speaker.correction.learning', 'recordings.speaker.correction.learning'])
   })
 })

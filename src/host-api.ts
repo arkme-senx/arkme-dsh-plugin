@@ -1954,6 +1954,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       scope: recordingSpeakerScopeParam(params),
     }, requestSignal)
     case 'recordings.speaker.assign-item': return await service.assignRecordingSpeaker({
+      ...(params?.explicitNewPerson === true ? { explicitNewPerson: true } : {}),
       itemRef: stringParam(params, 'itemRef').trim(),
       ...(stringParam(params, 'speakerRef').trim() === '' ? {} : { speakerRef: stringParam(params, 'speakerRef').trim() }),
       ...(stringParam(params, 'newSpeakerName').trim() === '' ? {} : { newSpeakerName: stringParam(params, 'newSpeakerName').trim() }),

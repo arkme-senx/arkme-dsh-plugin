@@ -1241,7 +1241,7 @@ export class RecordingService {
   async assignRecordingSpeaker(input: {
     itemRef: string
     speakerRef?: string
-    newSpeakerName?: string
+    newSpeakerName?: string; explicitNewPerson?: boolean
     scope: 'item' | 'speaker'
   }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> {
     this.assertWorkbenchEnabled()
@@ -1254,7 +1254,7 @@ export class RecordingService {
   private async assignRecordingSpeakerToOwner(input: {
     itemRef: string
     speakerRef?: string
-    newSpeakerName?: string
+    newSpeakerName?: string; explicitNewPerson?: boolean
     scope: 'item' | 'speaker'
   }, signal?: AbortSignal): Promise<ArkmeRecordingSpeakerMutationResult> {
     this.assertWorkbenchEnabled()
@@ -1312,7 +1312,7 @@ export class RecordingService {
       }
     } else {
       if (newSpeakerName.length > 50) throw new ArkmePluginError('recording-speaker-name-invalid', '说话人名称不能超过 50 个字符', false)
-      if (await this.recordingSpeakerNameExists(newSpeakerName, session, signal)) {
+      if (input.explicitNewPerson !== true && await this.recordingSpeakerNameExists(newSpeakerName, session, signal)) {
         throw new ArkmePluginError(
           'recording-speaker-name-conflict',
           '已存在同名说话人，请选择现有说话人',
@@ -1320,10 +1320,15 @@ export class RecordingService {
           409,
         )
       }
+      // Stable across encrypted reference refreshes and Host restarts. The
+      // source revision distinguishes a later, independently confirmed edit.
+      const creationKey = createHmac('sha256', await this.recordingRefKey('speaker-creation-v1'))
+        .update(JSON.stringify([this.runtime.config.environment, session.userId, item.sessionId, item.childId, item.transcriptSource, item.asrItemIndex, item.childAsrItemStartAt, item.childAsrItemEndAt, item.revision, input.scope, newSpeakerName])).digest('hex')
       const created = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
-        '/api/v1/audio/create-speaker', { nick_name: newSpeakerName, ref_usr_id: 0 }, session, signal,
+        '/api/v1/audio/speakers/create-idempotent', { nick_name: newSpeakerName, creation_key: creationKey }, session, signal,
         { lane: 'write', bypassCache: true },
       )
+      if (created.creation_key !== creationKey) throw new ArkmePluginError('recording-speaker-create-invalid', '创建结果待核对，请重试同一操作', false, 502)
       const speaker = objectValue(created.speaker ?? created.spk)
       speakerId = stringValue(created.speaker_id ?? created.spk_id ?? speaker.speaker_id ?? speaker.id).trim()
       if (speakerId === '') throw new ArkmePluginError('recording-speaker-create-invalid', '创建说话人响应无效', true, 502)

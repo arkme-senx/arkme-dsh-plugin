@@ -1,5 +1,18 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '最近操作': 'Recent activity',
+  '版本详情': 'Version details',
+  '此版本来源与当前录音一致。': 'This version uses the current recording sources.',
+  '录音或说话人已更正，此版本待更新。': 'The recording or speaker has been corrected. This version needs updating.',
+  '此历史版本缺少可核验的来源记录，暂无法确认是否基于最新录音。原内容已保留。': 'This historical version has no verifiable source record. Its original content is preserved, but we cannot confirm whether it uses the latest recording.',
+  '声音参考': 'Voice reference',
+  '状态暂不可用': 'Status unavailable',
+  '部分未生效': 'Some references are not active',
+  '未用于学习': 'Not used for learning',
+  '声音参考处理不影响已保存的标记。': 'Voice reference processing does not affect saved labels.',
+  '暂时无法读取状态，已保存的标记不受影响。': 'Unable to read the status. Saved labels are unaffected.',
+  '重新读取状态': 'Reload status',
+  '收起详情': 'Hide details',
   '录音或说话人信息已更正，此版本待更新。': 'The recording or speaker information has been corrected. This version needs updating.',
   '原内容已保留，可使用下方“重新生成”。': 'The original content is preserved. Use “Regenerate” below to update it.',
   '暂无法确认此版本的来源是否最新，原内容已保留': 'We cannot confirm whether this version’s sources are up to date. The original content is preserved.',

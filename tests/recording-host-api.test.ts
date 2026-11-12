@@ -213,6 +213,14 @@ describe('recording UI-only host operations', () => {
     }, undefined)
   })
 
+  it('forwards explicit independent-person creation only for a literal boolean', async()=>{
+    const assignRecordingSpeaker=vi.fn(async()=>({dateStamp:10}));const service={assignRecordingSpeaker} as unknown as ArkmeService;
+    for(const flag of [true,false,'true']) {
+      await dispatchArkmeHostOperation(service,'recordings.speaker.assign-item',{itemRef:'item',newSpeakerName:'同名人物',scope:'item',explicitNewPerson:flag});
+      expect(assignRecordingSpeaker).toHaveBeenLastCalledWith({itemRef:'item',newSpeakerName:'同名人物',scope:'item',...(flag===true?{explicitNewPerson:true}:{})},undefined);
+    }
+  });
+
   it('validates correction selectors and never forwards caller-supplied owner ids', async () => {
     const applyRecordingSpeakerCorrection = vi.fn(async () => ({ affectedCount: 1 }))
     const service = { applyRecordingSpeakerCorrection } as unknown as ArkmeService

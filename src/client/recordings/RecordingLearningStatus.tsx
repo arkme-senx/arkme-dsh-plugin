@@ -28,7 +28,7 @@ function reasonText(reason: string, status: LearningStatus) {
 export function RecordingLearningStatus({ learningRef, refreshKey = 0 }: { learningRef: string; refreshKey?: number }) {
   const [result, setResult] = useState<RecordingLearning>(), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [revision, setRevision] = useState(0), [expanded, setExpanded] = useState(false)
-  const controller = useRef<AbortController>(), retryLock = useRef(false)
+  const controller = useRef<AbortController>()
   useEffect(() => {
     const c = new AbortController(); controller.current = c
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -45,32 +45,24 @@ export function RecordingLearningStatus({ learningRef, refreshKey = 0 }: { learn
     void read()
     return () => { c.abort(); controller.current?.abort(); clearTimeout(timer) }
   }, [learningRef, revision, refreshKey])
-  const retry = async (retryRef: string) => {
-    if (retryLock.current || busy) return
-    retryLock.current = true; controller.current?.abort(); setBusy(true); setError('')
-    const c = new AbortController(); controller.current = c
-    try {
-      await callArkme<RecordingLearning>('recordings.speaker.correction.learning.retry', { learningRef, retryRef }, c.signal)
-      if (!c.signal.aborted) setRevision(v => v + 1)
-    } catch (e) {
-      if (!c.signal.aborted) { setError(`${errorMessage(e)}。${tr('请刷新状态后再核对，纠错归属保持已保存。')}`); setResult(undefined) }
-    } finally { retryLock.current = false; if (!c.signal.aborted) setBusy(false) }
-  }
   useEffect(() => () => { controller.current?.abort() }, [])
-  return <section aria-label={tr('声音参考学习状态')} style={{ border: `1px solid ${color.border}`, borderRadius: 6, padding: 10, fontSize: 12, lineHeight: 1.6 }}>
-    <strong>{tr('声音参考')}</strong>
-    {result && <><div role="status">{tr('已生效')} {result.counts.ready} / {result.totalCount} · {tr('处理中')} {result.counts.pending + result.counts.processing} · {tr('跳过')} {result.counts.skipped} · {tr('失败')} {result.counts.failed} · {tr('撤回')} {result.counts.revoked}</div>
-      <div style={{ color: color.secondary }}>{tr('仅合格的现场声音会用于持续识别；学习失败不影响已保存的纠错。')}</div>
-      <button style={button} onClick={() => setExpanded(v => !v)} aria-expanded={expanded}>{tr(expanded ? '收起详情' : '查看详情')}</button>
-      {expanded && <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0' }}>{result.items.map((row, index) => <li key={index} style={{ padding: '7px 0', borderTop: `1px solid ${color.border}` }}>
+  const summary = !result ? tr('状态暂不可用')
+    : result.counts.failed > 0 ? tr('部分未生效')
+    : result.counts.pending + result.counts.processing > 0 ? tr('处理中')
+    : result.counts.ready > 0 ? tr('已生效')
+    : result.counts.revoked > 0 ? tr('已撤回') : tr('未用于学习')
+  return <section aria-label={tr('声音参考学习状态')} style={{ borderTop: `1px solid ${color.border}`, paddingTop: 10, fontSize: 12, lineHeight: 1.6 }}>
+    <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}><span role="status">{tr('声音参考')}：{busy && !result ? tr('正在读取…') : summary}</span>
+      {result && <button style={{...button,border:0,color:color.secondary,padding:'4px 0'}} onClick={() => setExpanded(v => !v)} aria-expanded={expanded}>{tr(expanded ? '收起详情' : '查看详情')}</button>}
+    </div>
+    {result && expanded && <>
+      <p style={{color:color.secondary}}>{tr('声音参考处理不影响已保存的标记。')}</p>
+      <ul style={{ listStyle: 'none', padding: 0, margin: '8px 0 0' }}>{result.items.map((row, index) => <li key={index} style={{ padding: '7px 0', borderTop: `1px solid ${color.border}` }}>
         <span>{tr('片段')} {index + 1} · {tr(labels[row.status])}</span>
         {row.reason && <div style={{ color: color.secondary }}>{reasonText(row.reason, row.status)}</div>}
         {row.sampleCount > 0 && <div style={{ color: color.secondary }}>{tr('有效声音样本')} {row.sampleCount}</div>}
-        {row.retryRefs.map((ref, j) => <button key={ref} style={button} disabled={busy} onClick={() => { void retry(ref) }}>{tr('重试失败任务')}{row.retryRefs.length > 1 ? ` ${j + 1}` : ''}</button>)}
-      </li>)}</ul>}
+      </li>)}</ul>
     </>}
-    {busy && <div role="status">{tr('正在读取学习状态…')}</div>}
-    {error && <p role="alert" style={{ color: color.danger }}>{error}</p>}
-    <button style={button} disabled={busy} onClick={() => setRevision(v => v + 1)}>{tr('刷新学习状态')}</button>
+    {error && <p role="alert" style={{ color: color.danger }}>{tr('暂时无法读取状态，已保存的标记不受影响。')} <button style={button} disabled={busy} onClick={() => setRevision(v => v + 1)}>{tr('重新读取状态')}</button></p>}
   </section>
 }

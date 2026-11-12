@@ -26,14 +26,14 @@ describe.each(['summary', 'timeline'] as const)('%s source freshness', kind => {
   it.each([undefined, null, {}, { state: 'unknown' }, { state: 'future' }, 'current'])('does not infer freshness from legacy or invalid state %j', source => {
     const version = project(source)
     expect(version.sourceState).toBe('unknown')
-    expect(renderToStaticMarkup(<RecordingSourceNotice version={version} />)).toContain('暂无法确认此版本的来源是否最新')
+    expect(renderToStaticMarkup(<RecordingSourceNotice version={version} />)).toBe('')
   })
   it('shows the selected historical state independently of the newest version', () => {
     const old = project({ state: 'stale' }, 'old')
     const latest = project({ state: 'current' }, 'latest')
     expect(renderToStaticMarkup(<RecordingSourceNotice version={old} />)).toContain('此版本待更新')
     expect(renderToStaticMarkup(<RecordingSourceNotice version={latest} />)).toBe('')
-    expect(renderToStaticMarkup(<RecordingSourceNotice version={{ ...old, sourceState: undefined }} />)).toContain('暂无法确认')
+    expect(renderToStaticMarkup(<RecordingSourceNotice version={{ ...old, sourceState: undefined }} />)).toBe('')
     expect(renderToStaticMarkup(<RecordingSourceNotice version={{ ...old, status: 'processing' }} />)).toBe('')
   })
 })
