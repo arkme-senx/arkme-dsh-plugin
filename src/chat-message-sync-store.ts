@@ -149,6 +149,7 @@ export class ChatMessageSyncStore {
     }
     const projections: ChatSyncProjection[] = []
     const unreadPreviews: ChatSyncUnreadPreview[] = []
+    const committedGroupBodies: Record<string, string[]> = Object.create(null)
     this.db.exec('BEGIN IMMEDIATE')
     try {
       if (command.action === 'begin') {
@@ -171,7 +172,7 @@ export class ChatMessageSyncStore {
         if (command.action === 'manifest' || command.action === 'commit') {
           if (row.checkpoint !== command.expectedCheckpoint || (command.action === 'manifest') !== command.page.manifest) throw new Error('message-sync-checkpoint-stale')
           for (const session of command.page.sessions) {
-            const projection = this.applySession(command, session, row, unreadPreviews)
+            const projection = this.applySession(command, session, row, unreadPreviews, committedGroupBodies)
             if (projection.reset || projection.changes.length) projections.push(projection)
           }
           if (command.action === 'manifest') this.prepare('UPDATE message_sync_accounts SET checkpoint=? WHERE account=?').run(command.page.checkpoint, account)
@@ -187,10 +188,11 @@ export class ChatMessageSyncStore {
       this.enforceBudget()
       const result = this.status(account)
       this.db.exec('COMMIT')
-      return { ...result, ...(projections.length ? { projections } : {}), ...(unreadPreviews.length ? { unreadPreviews } : {}) }
+      return { ...result, ...(projections.length ? { projections } : {}), ...(unreadPreviews.length ? { unreadPreviews } : {}),
+        ...(Object.keys(committedGroupBodies).length ? { committedGroupBodies } : {}) }
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
-  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row, unreadPreviews: ChatSyncUnreadPreview[]): ChatSyncProjection {
+  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row, unreadPreviews: ChatSyncUnreadPreview[], committedGroupBodies: Record<string, string[]>): ChatSyncProjection {
     const { account, ticket, now } = command
     const scope = session.scope!, sourceKey = session.sourceKey!
     if (!scope || !sourceKey) throw new Error('message-sync-scope-missing')
@@ -252,6 +254,7 @@ export class ChatMessageSyncStore {
           const event = item === work.event.item ? work.event : { ...work.event, item }
           this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,'messages',?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET
             payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(event), work.version, ticket)
+          if (session.kind === 2) (committedGroupBodies[session.uid] ??= []).push(work.id)
           if (unread && work.unread && work.sequence > (latestUnread?.sequence ?? 0)) {
             latestUnread = { uid: session.uid, sourceKey, sequence: work.sequence, item }
           }

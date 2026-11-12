@@ -1,3 +1,4 @@
+import { groupInteractionTrace, groupInteractionTraceKey } from '../group-interaction-diagnostics.js'
 import {useGroupTeamMentions} from './use-group-team-mentions.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 
@@ -1975,7 +1976,7 @@ export function ArkmeSurface({
     () => EMPTY_INTERWOVEN_INVALIDATION,
   )
   useEffect(()=>subscribeTeamWorkspaceChanges((account,canonicalKey)=>{
-    if(activeConversation&&account===authenticatedAccountKey&&source?.accessKind==='team_delegation'&&canonicalKey===undefined)arkmeInterwovenInvalidation.invalidate(source.sourceKey??source.sourceRef)
+    if(activeConversation&&account===authenticatedAccountKey&&source?.accessKind==='team_delegation'&&canonicalKey===undefined)arkmeInterwovenInvalidation.invalidate(source.sourceKey??source.sourceRef, undefined, false, 'team-workspace-change')
   }),[activeConversation,authenticatedAccountKey,source?.accessKind,source?.sourceKey,source?.sourceRef])
   const activeSourceKeyRef = useRef('')
   useEffect(() => {
@@ -4991,6 +4992,7 @@ export function ArkmeSurface({
   }, [])
 
   const send = async () => {
+    const sendStartedAt = Date.now()
     const scope = captureComposerAsyncScope()
     const representationAtSendStart = selectedTeamIdentity?.selection
     const roleAtSendStart = source !== undefined && isArkmeSelfWorkspaceSource(source) ? selectedSelfRole : undefined
@@ -5010,12 +5012,12 @@ export function ArkmeSurface({
       // Prompt before acquiring the shared sending state; recheck after draft sync.
       if (!await checkSocialAccess()) return
       await withConversationSend(composerDraftKey, async consumed => {
-        if (await checkSocialAccess()) await sendCore(consumed, roleAtSendStart, representationAtSendStart)
+        if (await checkSocialAccess()) await sendCore(consumed, sendStartedAt, roleAtSendStart, representationAtSendStart)
       })
     }
     catch (caught) { if (!isSocialBindingRequired(caught)) setError(errorMessage(caught)) }
   }
-  const sendCore = async (consumed: () => Promise<void>, roleAtSendStart?: ArkmeSelfRole, representation?: TeamRepresentationSelection) => {
+  const sendCore = async (consumed: () => Promise<void>, sendStartedAt: number, roleAtSendStart?: ArkmeSelfRole, representation?: TeamRepresentationSelection) => {
     if (activeRecordReeditComposer === undefined && directAdmission.blocked) return
     if (activeRecordReeditComposer !== undefined) {
       await commitRecordReedit()
@@ -5076,6 +5078,9 @@ export function ArkmeSurface({
         ? JSON.stringify(['send',representation??null])
         : JSON.stringify(['source-message-extension', targetDraftKey, extensionTarget.item.itemUid, extensionTarget.quote ?? null, representation??null]),
     )
+    const mentionTrace = targetSource.kind === 'group_chat' && serializedDraft.mentions.some(mention => mention.mentionRef)
+      ? groupInteractionTraceKey(recordUid) : undefined
+    if (mentionTrace) groupInteractionTrace('send-click', { message: mentionTrace, startedAt: sendStartedAt })
     // Take the draft before any network await.  The next keystroke now belongs to a
     // fresh draft and can be sent independently instead of being swallowed by a busy lock.
     // Capture must detach synchronously before take() notifies React of the empty
@@ -5419,7 +5424,9 @@ export function ArkmeSurface({
         }
         try {
           providerWriteStarted = true
+          if (mentionTrace) groupInteractionTrace('submit-to-host', { message: mentionTrace, route: 'durable' })
           acceptedTask = await callArkme<ArkmeFileSendTask>('files.send', fileSendParams)
+          if (mentionTrace) groupInteractionTrace('host-admission-returned', { message: mentionTrace })
         } catch (caught) {
           let taskLookupSucceeded = false
           if (sameTargetAccount()) {
@@ -5462,6 +5469,7 @@ export function ArkmeSurface({
       }
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
       providerWriteStarted = true
+      if (mentionTrace) groupInteractionTrace('submit-to-host', { message: mentionTrace, route: 'direct' })
       const result = textFormat === 'markdown' || pendingAssets.length > 0 || backgroundSoundAssets.length > 0 || (isArkmeSelfWorkspaceSource(targetSource) && pendingBotMentions.length > 0)
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
           ...(representation?{representation}:{}), sendAtMillis:now,
@@ -5487,6 +5495,7 @@ export function ArkmeSurface({
         })
       providerWriteSucceeded = true
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送结果已丢弃')
+      if (mentionTrace) groupInteractionTrace('send-confirmed-in-ui', { message: mentionTrace, sequence: result.sequence })
       await rebindRole(result.itemUid)
       backgroundDirectUploadCacheRef.current.delete(recordUid)
       if (result.localState !== 'failed') {
@@ -5499,7 +5508,7 @@ export function ArkmeSurface({
       if (result.localState === 'synced' && confirmedItem !== undefined) {
         messageMerge.retain(targetSourceKey, confirmedItem)
         if (targetSource.kind === 'group_chat' && pendingHumanMentions.length > 0) {
-          arkmeInterwovenInvalidation.invalidate(targetSourceKey)
+          arkmeInterwovenInvalidation.invalidate(targetSourceKey, [])
         }
       }
       if (sameTargetComposer() && confirmedItem) setItems(current => mergeItems(

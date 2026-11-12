@@ -1,3 +1,5 @@
+import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
+import { arkmeMentionMetadataFromRecord } from '../mention-metadata.js'
 import { arkmeChatActivityPreview } from '../chat-activity-preview.js'
 import {
   ArkmeChatRealtimeRuntime,
@@ -25,6 +27,7 @@ import {
 } from './desktop-attention-bridge.js'
 
 export interface ArkmeChatProjectionReader {
+  interactionSourceKeys?(userId: number, peerUserIds: readonly number[]): string[] | undefined
   chatTimelineItems(
     data: Record<string, unknown>,
     session: ArkmeSessionCredentials,
@@ -79,6 +82,7 @@ export interface PendingChatProjection {
   refreshSource?: boolean | undefined
   /** A read-cursor change updates directory facts without changing message bodies. */
   refreshTimeline?: boolean | undefined
+  interactionReadCursorChanged?: boolean | undefined
   /** Same-sequence content changes need the authoritative preview, not a forward-only tail. */
   refreshPreview?: boolean | undefined
   accountUserId?: number | undefined
@@ -115,6 +119,54 @@ function timelineNotificationIdentities(data: Record<string, unknown>): ArkmeTim
       && Number.isSafeInteger(identity.senderUserId) && identity.senderUserId > 0
       ? [identity] : []
   })
+}
+
+/** Only replace directory reconciliation when the live group tail covers the change. */
+export function groupInteractionPeers(
+  data: Record<string, unknown>, viewerUserId: number, afterSequence: number, throughSequence: number,
+): number[] | undefined {
+  if (throughSequence <= afterSequence) return undefined
+  const covered = new Set<number>()
+  const peers = new Set<number>()
+  for (const raw of listValue(data.items)) {
+    const item = objectValue(raw)
+    const relation = objectValue(item.relation)
+    const sequence = numberValue(relation.seq ?? relation.sequence)
+    if (!Number.isSafeInteger(sequence) || sequence <= 0) return undefined
+    if (sequence <= afterSequence || sequence > throughSequence) continue
+    const sender = numberValue(relation.sender_user_id)
+    const record = objectValue(item.record)
+    const payload = objectValue(record.payload)
+    if (!Number.isSafeInteger(sender) || sender <= 0 || record.status !== 1 || Object.keys(payload).length === 0) return undefined
+    covered.add(sequence)
+    const metadata = arkmeMentionMetadataFromRecord(record, payload)
+    const mentions = metadata.human_mentions ?? metadata.humanMentions
+    if (mentions !== undefined && !Array.isArray(mentions)) return undefined
+    for (const rawMention of listValue(mentions)) {
+      const mention = objectValue(rawMention)
+      const target = mention.user_id ?? mention.userId
+      if (typeof target !== 'number' || !Number.isSafeInteger(target) || target < 0) return undefined
+      if (target === 0 || sender === target) continue
+      if (sender === viewerUserId) peers.add(target)
+      else if (target === viewerUserId) peers.add(sender)
+    }
+  }
+  if (throughSequence - afterSequence > covered.size) return undefined
+  for (let seq = afterSequence + 1; seq <= throughSequence; seq++) {
+    if (!covered.has(seq)) return undefined
+  }
+  return [...peers]
+}
+
+export function groupInteractionCoverageKey(
+  bundle: unknown, sequence: number, projectedSequence: number | undefined, refreshPreview: boolean | undefined,
+): string | undefined {
+  if (refreshPreview || !Number.isSafeInteger(sequence) || sequence <= 0 || sequence !== projectedSequence) return undefined
+  const snapshot = objectValue(bundle)
+  const unread = objectValue(snapshot.unread_snapshot)
+  const policy = objectValue(snapshot.current_policy)
+  if (unread.session_last_seq !== sequence || !Number.isSafeInteger(unread.read_seq)) return undefined
+  return JSON.stringify([sequence, unread.read_seq, unread.unread_attention_count, policy.update_at])
 }
 
 function notificationTimelineItem(
@@ -163,6 +215,7 @@ export class ChatRealtimeService {
   private readonly projectionRetryAt = new Map<string, number>()
   private notificationBaselineGeneration = 0
   private notificationBaselineUserId: number | undefined
+  private readonly groupInteractionCoverage = new Map<string, string>()
   private notificationBaselineOwnerGeneration = 0
   private readonly notificationBaselineSequences = new Map<string, number>()
   private connectionBaselineRetryTimer: ReturnType<typeof setTimeout> | undefined
@@ -222,6 +275,7 @@ export class ChatRealtimeService {
     this.projectionTimerDueAtMillis = 0
     this.connectionBaselineRetryTimer = undefined
     this.attentionRetryTimer = undefined
+    this.groupInteractionCoverage.clear()
     this.localReadCursors.clear()
     this.preferredProjection = undefined
     this.projectingSessions.clear()
@@ -264,6 +318,7 @@ export class ChatRealtimeService {
       this.projectionTimerDueAtMillis = 0
       this.connectionBaselineRetryTimer = undefined
       this.attentionRetryTimer = undefined
+      this.groupInteractionCoverage.clear()
       this.localReadCursors.clear()
       this.preferredProjection = undefined
       this.projectingSessions.clear()
@@ -850,6 +905,7 @@ export class ChatRealtimeService {
     if (this.projectionTimer !== undefined) clearTimeout(this.projectionTimer)
     this.projectionTimer = undefined
     this.projectionTimerDueAtMillis = 0
+    this.groupInteractionCoverage.clear()
     this.localReadCursors.clear()
     this.preferredProjection = undefined
     this.projectingSessions.clear()
@@ -1023,6 +1079,7 @@ export class ChatRealtimeService {
       notificationHints,
       refreshSource: true,
       refreshTimeline: refreshTimeline || current !== undefined && current.refreshTimeline !== false,
+      ...(!refreshTimeline && !refreshPreview || current?.interactionReadCursorChanged === true ? { interactionReadCursorChanged: true } : {}),
       refreshPreview: refreshPreview || current?.refreshPreview === true,
       minimumActivityAtMillis: Math.max(minimumActivityAtMillis, current?.minimumActivityAtMillis ?? 0),
       previewUpdatedAtMillis: Math.max(previewUpdatedAtMillis, current?.previewUpdatedAtMillis ?? 0),
@@ -1201,6 +1258,7 @@ export class ChatRealtimeService {
         notificationHints: [...incoming.notificationHints],
         refreshSource: incoming.refreshSource,
         refreshTimeline: incoming.refreshTimeline,
+        interactionReadCursorChanged: incoming.interactionReadCursorChanged,
         refreshPreview: incoming.refreshPreview,
         minimumActivityAtMillis: incoming.minimumActivityAtMillis,
         previewUpdatedAtMillis: incoming.previewUpdatedAtMillis,
@@ -1216,6 +1274,7 @@ export class ChatRealtimeService {
         notificationHints: [...incoming.notificationHints],
         refreshSource: incoming.refreshSource,
         refreshTimeline: incoming.refreshTimeline,
+        interactionReadCursorChanged: incoming.interactionReadCursorChanged,
         refreshPreview: incoming.refreshPreview,
         minimumActivityAtMillis: incoming.minimumActivityAtMillis,
         previewUpdatedAtMillis: incoming.previewUpdatedAtMillis,
@@ -1240,6 +1299,7 @@ export class ChatRealtimeService {
     }
     this.pendingChatProjections.set(uid, {
       latestSequence: Math.max(current.latestSequence, incoming.latestSequence),
+      interactionReadCursorChanged: current.interactionReadCursorChanged === true || incoming.interactionReadCursorChanged === true,
       notificationHints: [...byEventUid.values()].slice(-256),
       refreshSource: current.refreshSource !== false || incoming.refreshSource !== false,
       refreshTimeline: current.refreshTimeline !== false || incoming.refreshTimeline !== false,
@@ -1318,6 +1378,7 @@ export class ChatRealtimeService {
       let timelineProjection: {
         items: ArkmeTimelineItem[]
         notificationIdentities: ArkmeTimelineNotificationIdentity[]
+        interactionSourceKeys?: string[]
       } | undefined
       const previewBundle = projection.refreshSource !== false && projection.refreshPreview
         ? await this.runtime.authenticatedChatPost<Record<string, unknown>>(
@@ -1434,7 +1495,20 @@ export class ChatRealtimeService {
         const sourceKind = sessionKind === 2 ? 'group_chat'
           : sessionKind === 1 || sessionKind === 3 ? 'private_chat'
             : cached?.kind === 'group_chat' || cached?.kind === 'private_chat' ? cached.kind : undefined
+        if (sourceKind === 'group_chat' && groupInteractionTraceEnabled()) {
+          const group = groupInteractionTraceKey(await this.source.chatDirectorySourceKey(session.userId, uid))
+          for (const identity of identities) groupInteractionTrace('group-tail-result', {
+            group, message: groupInteractionTraceKey(identity.itemUid), sequence: identity.sequence,
+            tailStartedAt, tailMs: tailMillis, displayStartedAt, displayMs: displayMillis, projectionSequence: projection.latestSequence,
+          })
+        }
+        const interactionPeers = sourceKind === 'group_chat' && needsTail && !projection.refreshPreview
+          ? groupInteractionPeers(data, session.userId, afterSequence, projection.latestSequence)
+          : undefined
+        const interactionSourceKeys = interactionPeers?.length === 0 ? []
+          : interactionPeers === undefined ? undefined : this.projectionReader.interactionSourceKeys?.(session.userId, interactionPeers)
         timelineProjection = {
+          ...(interactionSourceKeys === undefined ? {} : { interactionSourceKeys }),
           items: earlyItems ?? await this.projectionReader.chatTimelineItems(
             data,
             session,
@@ -1450,7 +1524,7 @@ export class ChatRealtimeService {
       }
       if (ownerGeneration !== this.attentionOwnerGeneration) return []
       const bundles = await displayReady
-      const updates: Array<{ sourceKey: string; source: ArkmeSourceItem; timelineItems: ArkmeTimelineItem[] }> = []
+      const updates: Extract<ArkmeChatClientEvent, { type: 'sessions-delta' }>['updates'] = []
       const sidebarNotificationHints: Array<{ uid: string; candidate: PendingChatNotificationHint }> = []
       const notifications: Array<{
         notification: ArkmeMessageNotification
@@ -1477,7 +1551,35 @@ export class ChatRealtimeService {
           const sourceKey = source.sourceKey ?? await this.source.chatDirectorySourceKey(session.userId, uid)
           if (ownerGeneration !== this.attentionOwnerGeneration) return []
           if (projection.refreshSource !== false) {
-            updates.push({ sourceKey, source, timelineItems })
+            let interactionSourceKeys = timelineProjection?.interactionSourceKeys
+            const reconcileGroupRead = source.kind === 'group_chat' && projection.interactionReadCursorChanged === true
+            if (reconcileGroupRead) {
+              this.groupInteractionCoverage.delete(sourceKey)
+            } else if (source.kind === 'group_chat') {
+              const coverage = groupInteractionCoverageKey(bundle, projection.latestSequence, source.latestSequence, projection.refreshPreview)
+              if (coverage !== undefined && interactionSourceKeys !== undefined) {
+                this.groupInteractionCoverage.delete(sourceKey)
+                this.groupInteractionCoverage.set(sourceKey, coverage)
+                if (this.groupInteractionCoverage.size > 512) this.groupInteractionCoverage.delete(this.groupInteractionCoverage.keys().next().value!)
+              } else if (coverage !== undefined && coverage === this.groupInteractionCoverage.get(sourceKey)) {
+                interactionSourceKeys = []
+              } else {
+                this.groupInteractionCoverage.delete(sourceKey)
+              }
+            }
+            if (groupInteractionTraceEnabled() && (source.kind === 'group_chat' || source.kind === 'private_chat')) {
+              groupInteractionTrace('host-delta-ready', {
+                ...(source.kind === 'group_chat' ? { group: groupInteractionTraceKey(sourceKey) } : { contact: groupInteractionTraceKey(sourceKey) }),
+                sourceKind: source.kind, sequence: projection.latestSequence, timelineItems: timelineItems.length,
+                refreshPreview: projection.refreshPreview === true, refreshTimeline: projection.refreshTimeline !== false,
+                targets: interactionSourceKeys?.map(groupInteractionTraceKey).join(','),
+                mode: interactionSourceKeys === undefined ? 'directory' : 'targeted',
+              })
+            }
+            updates.push({ sourceKey, source, timelineItems,
+              ...(interactionSourceKeys === undefined ? {} : { interactionSourceKeys }),
+              ...(reconcileGroupRead && interactionSourceKeys !== undefined ? { reconcileInteractionRead: true } : {}),
+            })
             for (const candidate of projection.notificationHints.filter(item => item.attempts === 0)) {
               sidebarNotificationHints.push({ uid, candidate })
             }
@@ -1713,6 +1815,13 @@ export class ChatRealtimeService {
   }
 
   emitChatClientEvent(event: ArkmeChatClientEvent): void {
+    if (event.type === 'timeline-changed' || event.type === 'members-invalidated' || event.type === 'member-events-invalidated'
+      || event.type === 'read-ack') {
+      if (event.sourceKey) this.groupInteractionCoverage.delete(event.sourceKey)
+    } else if (event.type === 'reconcile' || event.type === 'chat-policy-invalidated' || event.type === 'conversation-list-preference-invalidated'
+      || event.type === 'projection-invalidated' && event.projection === 'record') {
+      this.groupInteractionCoverage.clear()
+    }
     for (const listener of [...this.chatClientListeners]) listener(event)
     if(['timeline-changed','members-invalidated','member-events-invalidated','message-arrived','message-preparing','thought-invalidated'].includes(event.type)&&'sourceKey' in event&&event.sourceKey) {
       for(const sourceKey of this.audienceSourceAliases?.(event.sourceKey)??[]) {

@@ -480,6 +480,18 @@ export class ConversationDirectoryService {
     if (this.recoveryScan) this.scheduleChanges(1_000)
   }
 
+  interactionSourceKeys(userId: number, peerUserIds: readonly number[]): string[] | undefined {
+    if (this.userId !== userId) return undefined
+    const remaining = new Set(peerUserIds)
+    const keys: string[] = []
+    for (const [key, source] of this.sources) {
+      if (source.kind !== 'private_chat' || source.peerUserId === undefined || !remaining.delete(source.peerUserId)) continue
+      if (!this.visibility.get(`source:${source.sourceRef}`)?.hidden) keys.push(key)
+      if (remaining.size === 0) break
+    }
+    return remaining.size === 0 || this.phase === 'complete' && !this.recoveryScan ? keys : undefined
+  }
+
   private snapshot(items = [...this.sources.values()], visibility = [...this.visibility.values()]): ArkmeSourceList {
     return { directory: 'root', items, hasMore: this.phase !== 'complete', projection: {
       ...this.special, removedSourceKeys: [...this.sourceRemovals.keys()], removedBotRefs: [...this.deletedBotRefs], botPinnedKeys: [...this.botPinnedKeys], revision: this.revision, phase: this.refreshError !== undefined ? 'failed' : this.recoveryScan || this.pendingChanges.size > 0 ? 'syncing' : this.phase, cachedAtMillis: this.cachedAtMillis, visibility, bots: this.bots,
