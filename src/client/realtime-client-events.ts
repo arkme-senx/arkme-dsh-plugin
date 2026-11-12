@@ -385,7 +385,7 @@ export function useArkmeRealtimeClientEvents(
           // A metadata-only hint does not identify a removed/locked topic. Reconcile
           // the existing directory atomically; account changes and access errors still clear it.
           invalidateSelfTopicDirectories()
-          arkmeInterwovenInvalidation.invalidate(undefined, undefined, false, 'record-projection')
+          if (!update.recordReconnect) arkmeInterwovenInvalidation.invalidate(undefined, undefined, false, 'record-projection')
           // Includes privacy/hierarchy changes: never retain an old visible count.
           arkmeCalendarInvalidations.publishAll({ hard: true })
           arkmeUi.recordChanged()
@@ -400,11 +400,15 @@ export function useArkmeRealtimeClientEvents(
           return
         }
         if (update.type === 'timeline-changed') {
+          if (!arkmeChatTimelineDelta.applyTimelineChange(update)) return
           publishThoughtInvalidation({ accountScope: authenticatedAccountScope, sourceKey: update.sourceKey, timelineItemKey: update.timelineItemKey, clear: update.changeKind !== 'extended' })
           invalidateMessageQuoteSources(update.sourceKey)
           invalidateMessageMarks(true)
-          arkmeChatTimelineDelta.applyTimelineChange(update)
-          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true, 'timeline-changed')
+          const sourceKind = update.changeKind === 'deleted' ? update.sourceKind
+            ?? arkmeChatDirectory.getSnapshot().sources.find(source => source.sourceKey === update.sourceKey)?.kind : undefined
+          const reason = sourceKind === 'group_chat' ? 'timeline-deleted'
+            : sourceKind === 'private_chat' ? 'timeline-private-deleted' : 'timeline-changed'
+          arkmeInterwovenInvalidation.invalidate(update.sourceKey, undefined, true, reason)
           arkmeCalendarInvalidations.publishAll()
           return
         }
@@ -478,7 +482,8 @@ export function useArkmeRealtimeClientEvents(
               mode: peers === undefined ? 'directory' : 'targeted',
             })
           }
-          arkmeInterwovenInvalidation.invalidate(sourceKey, peers, false, 'session-delta-unscoped')
+          arkmeInterwovenInvalidation.invalidate(sourceKey, peers, false,
+            peers === undefined && item.source.kind === 'group_chat' ? 'group-session-delta-unscoped' : 'session-delta-unscoped')
           if (item.reconcileInteractionRead) arkmeInterwovenInvalidation.refreshDirectory('group-read-cursor')
         }
       } catch { /* Ignore malformed local frames; transport keeps the channel alive. */ }

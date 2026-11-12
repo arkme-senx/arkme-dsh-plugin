@@ -404,7 +404,7 @@ export class ChatRealtimeService {
       })
       void this.reconcileChatConnectionBaseline(generation, notice.connectionUserId)
       void this.refreshAttentionSummary()
-      void this.invalidateRecordProjection()
+      void this.invalidateRecordProjection({ reconnect: true })
       return
     }
     if(notice.cause==='projection-invalidation'&&notice.projectionInvalidation?.projection==='team_codex'){
@@ -599,8 +599,10 @@ export class ChatRealtimeService {
       ])
       const activeSession = await this.runtime.sessionStore.read()
       if (activeSession?.userId !== session.userId || connectionAborted() || this.disposed) return
+      const kind = this.source.cachedChatSourceByKey?.(`${session.userId}:${hint.chatSessionUid}`)?.kind
       this.emitChatClientEvent({
         type: 'timeline-changed',
+        ...(kind === 'private_chat' || kind === 'group_chat' ? { sourceKind: kind } : {}),
         revision: this.nextChatClientRevision(),
         sourceKey,
         timelineItemKey,
@@ -726,7 +728,7 @@ export class ChatRealtimeService {
     }
   }
 
-  async invalidateRecordProjection(options: { contentOnly?: boolean } = {}): Promise<void> {
+  async invalidateRecordProjection(options: { contentOnly?: boolean; reconnect?: boolean } = {}): Promise<void> {
     try {
       const session = await this.runtime.sessionStore.read()
       if (session === undefined) return
@@ -737,6 +739,7 @@ export class ChatRealtimeService {
         revision: this.nextChatClientRevision(),
         projection: 'record',
         ...(options.contentOnly ? { retainTopicCounts: true } : {}),
+        ...(options.reconnect ? { recordReconnect: true } : {}),
       })
     } catch (error) {
       console.warn('dsh-arkme: Record projection invalidation failed:', safeFailureMessage(error))

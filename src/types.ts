@@ -4368,6 +4368,7 @@ export type ArkmeChatClientEvent = {
   type: 'timeline-changed'
   revision: number
   sourceKey: string
+  sourceKind?: 'private_chat' | 'group_chat'
   timelineItemKey: string
   changeKind: 'deleted' | 'recovered' | 'reedited' | 'extended'
   changeVersion: number
@@ -4406,6 +4407,8 @@ export type ArkmeChatClientEvent = {
   projection: 'chat_extensions' | 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
+  /** The connection reconcile event already owns the group interaction refresh. */
+  recordReconnect?: true
 } | {
   type: 'team-message-notification'
   revision: number

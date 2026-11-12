@@ -80,6 +80,46 @@ it('replaces an already queued automatic retry instead of waiting for its old pr
   expect(provider.mock.calls.filter(args => args[0] === 'private-interaction.directory')).toHaveLength(3)
 })
 
+it('lets a continuation reach Host when Browser background slots are occupied', async () => {
+  const first = Promise.withResolvers<ReturnType<typeof page>>()
+  provider.mockImplementation(async (operation, params, signal: AbortSignal) => {
+    if (operation === 'image.read') return await new Promise((_resolve, reject) =>
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+    return params.cursor ? page('older') : first.promise
+  })
+  await act(async () => { renderer = create(<Directory />) })
+  const imagesPending = occupyImages()
+  await vi.waitFor(() => expect(provider.mock.calls.some(args => args[0] === 'image.read')).toBe(true))
+  first.resolve(page('recent', true))
+  await act(async () => {})
+  const blocked = await imagesPending
+  expect(snapshot.rows.map(item => item.displayName)).toEqual(['recent', 'older'])
+  expect(blocked.controller.signal.aborted).toBe(false)
+  blocked.controller.abort()
+  await blocked.pending
+})
+
+it('shares a paged task and keeps it alive until the last subscriber leaves', async () => {
+  const next = Promise.withResolvers<ReturnType<typeof page>>()
+  let signal: AbortSignal | undefined
+  provider.mockImplementation(async (_operation, params, requestSignal) => {
+    if (!params.cursor) return page('recent', true)
+    signal = requestSignal
+    return next.promise
+  })
+  function Subscribers({ first }: { first: boolean }) {
+    return <>{first && <Directory key="first" />}<Directory key="second" /></>
+  }
+  await act(async () => { renderer = create(<Subscribers first />) })
+  expect(provider).toHaveBeenCalledTimes(2)
+  await act(async () => { renderer!.update(<Subscribers first={false} />) })
+  expect(signal?.aborted).toBe(false)
+  next.resolve(page('older'))
+  await act(async () => {})
+  expect(snapshot.rows.map(item => item.displayName)).toEqual(['recent', 'older'])
+  expect(provider).toHaveBeenCalledTimes(2)
+})
+
 it('does not let a retained retry callback act on the next account or after unmount', async () => {
   provider.mockResolvedValue(page('account-four'))
   await act(async () => { renderer = create(<Directory />) })
