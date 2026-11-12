@@ -136,3 +136,21 @@ it('keeps an entire manifest page of removals available to a mounted window', ()
   const changes = store.getSnapshotForSource('chat').syncChanges!
   expect(projectCommittedChatWindow(window([1, 1000, 1001]), changes).events.map(row => row.eventId)).toEqual(['event-1001'])
 })
+
+it('stabilizes committed projections with inherited capabilities across repeated layout commits', () => {
+  const history = window([5])
+  const event = history.events[0]!
+  if (event.kind !== 'message') throw new Error('expected message fixture')
+  event.item = { ...event.item, messageActionsV2: true }
+  const synced = { ...item(5), recordVersion: 2, textContent: 'edited' }
+  const changes = new Map([['relation-5', { itemKey: 'relation-5', revision: 10, version: 2, item: synced }]])
+  const projected = projectCommittedChatWindow(history, changes)
+  expect(projected.events[0]).toMatchObject({ item: { textContent: 'edited', messageActionsV2: true } })
+  expect(projectCommittedChatWindow(projected, changes)).toBe(projected)
+  expect(synced).not.toHaveProperty('messageActionsV2')
+  const next = { ...synced, recordVersion: 3, textContent: 'edited again' }
+  changes.set('relation-5', { itemKey: 'relation-5', revision: 11, version: 3, item: next })
+  const updated = projectCommittedChatWindow(projected, changes)
+  expect(updated.events[0]).toMatchObject({ item: { textContent: 'edited again', recordVersion: 3, messageActionsV2: true } })
+  expect(projectCommittedChatWindow(updated, changes)).toBe(updated)
+})

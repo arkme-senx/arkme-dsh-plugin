@@ -10,6 +10,11 @@ export function removeUnifiedTimelineItems(window: ArkmeUnifiedTimelineWindow, k
   return events.length === window.events.length ? window : { ...window, events }
 }
 
+// A committed body may omit capabilities confirmed by the canonical read.
+// Reuse its augmented projection so committing it back to React state reaches
+// a fixed point instead of producing another object on every layout pass.
+const committedBodiesWithConfirmedActions = new WeakMap<ArkmeTimelineItem, ArkmeTimelineItem>()
+
 export function projectCommittedChatMessage(
   item: ArkmeTimelineItem,
   changes: ReadonlyMap<string, ChatSyncProjection['changes'][number]>,
@@ -18,7 +23,12 @@ export function projectCommittedChatMessage(
   if (!change) return item
   if (change.version !== 0 && (item.recordVersion ?? item.version ?? 0) > change.version) return item
   if (change.item && change.item.messageActionsV2 === undefined && item.messageActionsV2 === true) {
-    return { ...change.item, messageActionsV2: true }
+    let projected = committedBodiesWithConfirmedActions.get(change.item)
+    if (projected === undefined) {
+      projected = { ...change.item, messageActionsV2: true }
+      committedBodiesWithConfirmedActions.set(change.item, projected)
+    }
+    return projected
   }
   return change.item
 }
