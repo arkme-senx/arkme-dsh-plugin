@@ -1,3 +1,4 @@
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ArkmeArrangementHistoricalMerge } from './ArkmeArrangementOccurrenceActions.js'
 import { ArkmeArrangementDialog } from './ArkmeArrangementDialog.js'
 import { PromptText, Rules, TraceContent, sourceNames } from './ArkmeArrangementRecognitionViews.js'
@@ -222,7 +223,7 @@ export function ArkmeArrangementRecognitionProcess({
         onClick={() => setOpen((value) => !value)}
       >
         {tr('识别过程')}
-        <span>{open ? '−' : '+'}</span>
+        <CaretRight size={16} aria-hidden style={{ transform: open ? 'rotate(90deg)' : undefined }} />
       </button>
       {open && (
         <div>

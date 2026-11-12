@@ -1082,7 +1082,19 @@ export type ArkmeArrangementSourceTarget =
   | { kind: 'call'; detail: ArkmeCallDetail; startMillis?: number; quote: string; quoteState?: ArrangementQuoteState }
   | { kind: 'audio_summary'; dateStamp: number; tzOffsetMillis: number; summaryId: string }
 
+export interface ArkmeArrangementEditInput {
+  arrangementRef: string
+  expectedVersion: number
+  title?: string
+  remindAtMillis?: number
+}
+export interface ArkmeArrangementEditResult {
+  state: 'applied' | 'conflict'
+  item: ArkmeArrangementItem
+}
+
 export interface ArkmeArrangementItem {
+  version?: number
   provenance?: ArkmeArrangementEvidence[]
   sourceType?: number
   recognitionState?: string
@@ -4763,6 +4775,7 @@ export type ArkmePluginOperation =
   | 'arrangements.conversation.recognition.get'
   | 'arrangements.conversation.recognition.set'
   | 'arrangements.conversation.detail'
+  | 'arrangements.edit'
   | 'arrangements.mutate'
   | 'arrangements.create'
   | 'arrangements.recognition'

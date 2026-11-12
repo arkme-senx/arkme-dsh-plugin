@@ -1,3 +1,7 @@
+import { Gear } from '@phosphor-icons/react/dist/icons/Gear'
+import { Stack } from '@phosphor-icons/react/dist/icons/Stack'
+import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle'
+import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
 import type { ArrangementRecognitionTrace } from '../arrangement-recognition.js'
 import { arrangementRecognitionSourceNames } from '../arrangement-recognition.js'
 import { tr } from './locale.js'
@@ -35,15 +39,15 @@ export function TraceContent({ trace }: { trace: ArrangementRecognitionTrace }) 
     <>
       <dl className="arkme-recognition-facts">
         <div>
-          <dt>{tr('请求模型')}</dt>
+          <dt><Gear className="arkme-arrangement-field-icon" size={16} aria-hidden />{tr('请求模型')}</dt>
           <dd>
-            {trace.display_name} · {trace.provider}
+            <strong>{trace.display_name}</strong> · {trace.provider}
             <br />
             <code>{trace.route_key}</code>
           </dd>
         </div>
         <div>
-          <dt>{tr('模型返回标识')}</dt>
+          <dt><Stack className="arkme-arrangement-field-icon" size={16} aria-hidden />{tr('模型返回标识')}</dt>
           <dd>
             {trace.actual_model || tr('未记录')}
             <br />
@@ -51,9 +55,9 @@ export function TraceContent({ trace }: { trace: ArrangementRecognitionTrace }) 
           </dd>
         </div>
         <div>
-          <dt>{tr('执行状态')}</dt>
+          <dt><CheckCircle className="arkme-arrangement-field-icon" size={16} aria-hidden />{tr('执行状态')}</dt>
           <dd>
-            {tr(
+            <span className="arkme-arrangement-status" data-status={trace.status}>{tr(
               {
                 processing: '处理中或已中断',
                 'model-returned': '模型已返回',
@@ -61,11 +65,11 @@ export function TraceContent({ trace }: { trace: ArrangementRecognitionTrace }) 
                 validated: '已完成字段校验',
                 applied: '已应用',
               }[trace.status] ?? trace.status,
-            )}
+            )}</span>
           </dd>
         </div>
         <div>
-          <dt>{tr('返回原因')}</dt>
+          <dt><ArrowsClockwise className="arkme-arrangement-field-icon" size={16} aria-hidden />{tr('返回原因')}</dt>
           <dd>
             {trace.finish_reason || tr('未记录')} ·{' '}
             {trace.prompt_tokens > 0 || trace.completion_tokens > 0

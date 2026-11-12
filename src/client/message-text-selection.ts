@@ -1,5 +1,7 @@
 import { arkmeEmojiUnicode } from '../arkme-emoji-text.js'
 
+export const excerptOriginalSelector = '[data-arkme-excerpt-original]'
+
 const blockTags = new Set(['P', 'DIV', 'LI', 'UL', 'OL', 'BLOCKQUOTE', 'PRE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'TR', 'TABLE'])
 
 export function captureMessageContextMenu(event: Pick<MouseEvent, 'preventDefault' | 'stopPropagation' | 'clientX' | 'clientY'>, anchor?: HTMLElement) {
@@ -32,9 +34,12 @@ export function captureMessageTextSelection(bubble: HTMLElement | undefined): st
   const selection = bubble?.ownerDocument?.getSelection()
   if (!bubble || !selection || selection.isCollapsed || selection.rangeCount !== 1
     || !bubble.contains(selection.anchorNode) || !bubble.contains(selection.focusNode)) return undefined
-  const fragment = selection.getRangeAt(0).cloneContents()
+  const range = selection.getRangeAt(0)
+  const inOriginal = (node: Node) => (node.nodeType === 1 ? node as Element : node.parentElement)?.closest(excerptOriginalSelector)
+  if (inOriginal(range.startContainer) || inOriginal(range.endContainer)) return undefined
+  const fragment = range.cloneContents()
   let converted = false
-  for (const indicator of fragment.querySelectorAll('[data-arkme-mention-read],style,script,button,input,textarea,select,[aria-hidden="true"]')) {
+  for (const indicator of fragment.querySelectorAll(`${excerptOriginalSelector},[data-arkme-mention-read],style,script,button,input,textarea,select,[aria-hidden="true"]`)) {
     indicator.remove()
     converted = true
   }

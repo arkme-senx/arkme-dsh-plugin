@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { captureMessageTextSelection } from './message-text-selection.js'
+import { captureMessageTextSelection, excerptOriginalSelector } from './message-text-selection.js'
 import { copyText } from './clipboard-text.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { tr } from './locale.js'
@@ -54,7 +54,7 @@ export function registeredMessageTargets(sourceRef: string) {
 }
 const targetSelector = '[data-arkme-text-selection]'
 const scopeSelector = '[data-arkme-note-detail], [data-arkme-message-selection-scope]'
-const excludedSelector = 'input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],button,[data-arkme-mention-read]'
+const excludedSelector = `input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],button,[data-arkme-mention-read],${excerptOriginalSelector}`
 
 /** Ref registration adds no layout wrapper and no per-message document listener. */
 export function useMessageTextSelectionTarget(text: string, reply?: MessageSelectionTarget) {
