@@ -345,10 +345,10 @@ export class TeamAppService {
     delete payload.forward_sender_avatars
     delete payload.mention_metadata
     delete payload.mentionMetadata
-    const forwardRecords=projectTeamForward(payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}))
-    if (forwardRecords && avatarURLs.length) {
-      const avatars = new Map<string, Promise<TeamIdentity>>()
-      await Promise.all(forwardRecords.items.map(async (item, index) => {
+    const avatars = new Map<string, Promise<TeamIdentity>>()
+    const avatarTasks: Promise<void>[] = []
+    const forwardRecords=projectTeamForward(payload,(files,longArticle)=>files.flatMap((file,index)=>{const asset=byAsset.get(str(file.media_key)||str(file.file_asset_uid));return asset?[{kind:asset.mimeType.startsWith('image/')?'image' as const:asset.mimeType.startsWith('video/')?'video' as const:asset.mimeType.startsWith('audio/')?'audio' as const:'file' as const,mediaRef:asset.ref,fileName:asset.name,mimeType:asset.mimeType,size:asset.size,sortOrder:index,...(longArticle?{fileAssetUid:`media-${index}`}:{})}]:[]}),
+      avatarURLs.length ? (item, index) => {
         const url = str(avatarURLs[index])
         if (!url) return
         let image = avatars.get(url)
@@ -356,11 +356,12 @@ export class TeamAppService {
           image = this.identity({ avatar_url: url }, actor)
           avatars.set(url, image)
         }
-        const { imageRef, imageKey } = await image
-        if (imageRef) item.avatarRef = imageRef
-        if (imageKey) item.avatarKey = imageKey
-      }))
-    }
+        avatarTasks.push(image.then(({ imageRef, imageKey }) => {
+          if (imageRef) item.avatarRef = imageRef
+          if (imageKey) item.avatarKey = imageKey
+        }))
+      } : undefined)
+    if (avatarTasks.length) await Promise.all(avatarTasks)
     return teamMessageProjection({ ...(v.own===true&&typeof v.metadata_saved==='boolean'?{metadataSaved:v.metadata_saved}:{}), ref: await this.ref('message', locator, actor), key: await this.key(uid, actor), seq: num(v.seq), revision: num(v.revision),
       ...(markable ? { localMarkRef: await this.ref('local-mark', { ...locator, record_version: num(content.version),
         digest: createHash('sha256').update(quoteSourceContent(markContent)).digest('hex'), canonicalDigest: createHash('sha256').update(quoteCanonicalText(markContent)).digest('hex') }, actor) } : {}),

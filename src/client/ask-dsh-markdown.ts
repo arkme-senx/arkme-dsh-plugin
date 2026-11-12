@@ -1,4 +1,5 @@
-import type { ArkmeContentBlock, ArkmeMessageSnapshotDetail, ArkmeTimelineItem } from '../types.js'
+import type { ArkmeContentBlock, ArkmeForwardRecordsPreview, ArkmeMessageSnapshotDetail, ArkmeTimelineItem } from '../types.js'
+import { walkForwardRecordItems } from '../forward-record-tree.js'
 
 export type AskDshNote = ArkmeTimelineItem & { exportSourceName?: string }
 type Attachments = (blocks: readonly ArkmeContentBlock[], heading: string) => string
@@ -25,7 +26,12 @@ export function attachmentDescription(block: ArkmeContentBlock): string {
   return [kind, noteDuration(block.durationSec), size].filter(Boolean).join('｜')
 }
 function noteKind(item: ArkmeTimelineItem, blocks: readonly ArkmeContentBlock[]): string {
-  if (item.forwardRecords) return item.forwardRecords.items.some(row => row.sourceType === 'long_recording_segments') ? '录音片段转发' : '合并转发'
+  if (item.forwardRecords) {
+    for (const row of walkForwardRecordItems(item.forwardRecords)) {
+      if (row.sourceType === 'long_recording_segments') return '录音片段转发'
+    }
+    return '合并转发'
+  }
   if (item.sharedRecording) return '共享录音'
   if (item.callRecord) return '通话记录'
   if (item.extensionParent || item.extensionParentRecordUid) return '延展快记'
@@ -73,13 +79,14 @@ export function formatAskDshNote(item: AskDshNote, detail: ArkmeMessageSnapshotD
     shared.summary && shared.summary !== item.textContent ? `### 摘要\n\n${shared.summary}` : '',
     shared.transcript ? `### 已加载的转写内容\n\n${shared.transcript}` : '转写未加载。',
   )
-  if (forward) {
-    parts.push(field('转发标题', forward.title), field('转发时间', noteTime(forward.createdAtMillis)))
-    if (forward.summaryLines.length) parts.push(`### 转发摘要\n\n${forward.summaryLines.join('\n')}`)
-    if (forward.truncated) parts.push('注意：当前转发快照已截断，仅包含已加载内容。')
-    forward.items.forEach((row, rowIndex) => {
-      if (row.mediaUnavailable) throw new Error(`原消息 ${rowIndex + 1}：附件清单暂不可用，请刷新后重试`)
-      parts.push(`### 原消息 ${rowIndex + 1}${row.title.trim() ? `：${line(row.title)}` : ''}`,
+  const appendForward = (card: ArkmeForwardRecordsPreview, prefix = '') => {
+    parts.push(field('转发标题', card.title), field('转发时间', noteTime(card.createdAtMillis)))
+    if (card.summaryLines.length) parts.push(`### 转发摘要\n\n${card.summaryLines.join('\n')}`)
+    if (card.truncated) parts.push('注意：当前转发快照已截断，仅包含已加载内容。')
+    card.items.forEach((row, rowIndex) => {
+      const index = `${prefix}${rowIndex + 1}`
+      if (row.mediaUnavailable) throw new Error(`原消息 ${index}：附件清单暂不可用，请刷新后重试`)
+      parts.push(`### 原消息 ${index}${row.title.trim() ? `：${line(row.title)}` : ''}`,
         field('原发送者', row.senderName), field('原消息时间', noteTime(row.sendAtMillis)), row.textContent,
         row.truncated ? '注意：此条原消息快照已截断。' : '')
       row.segments?.forEach((segment, segmentIndex) => {
@@ -88,8 +95,10 @@ export function formatAskDshNote(item: AskDshNote, detail: ArkmeMessageSnapshotD
           segment.textContent, attachments(segment.contentBlocks ?? [], '片段附件'))
       })
       parts.push(attachments(row.contentBlocks ?? [], '原消息附件'))
+      if (row.forwardRecords) appendForward(row.forwardRecords, `${index}.`)
     })
   }
+  if (forward) appendForward(forward)
   if (item.extensionParent) {
     const parent = item.extensionParent
     parts.push('### 延展来源（已加载快照）', field('原快记标题', parent.title), field('原快记用户', parent.senderName),

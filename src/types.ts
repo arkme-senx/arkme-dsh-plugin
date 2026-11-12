@@ -2430,6 +2430,8 @@ export interface ArkmeForwardTranscriptSegment {
 }
 
 export interface ArkmeForwardRecordPreviewItem {
+  /** A forwarded card keeps its own frozen rows and can be opened separately. */
+  forwardRecords?: ArkmeForwardRecordsPreview
   sourceTeam?:{name:string;jotmoId:string}
   originTeam?:{name:string;jotmoId:string}
   /** Built-in AI presentation asset; never a user identity. */

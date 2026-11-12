@@ -1139,7 +1139,7 @@ export function arkmeRelatedRecordingItemFromSharedRecording(item: ArkmeTimeline
     : arkmeRelatedRecordingItemFromSharedRecordingPreview(item.sharedRecording, item)
 }
 
-export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachmentNavigationKey, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen, selectionTarget }: {
+export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachmentNavigationKey, item, sourceRef, sourceIdentityKey, sourceDisplayName, onLongArticleUpdated, highlightMentions = false, collapseText = true, presentation = 'bubble', shareWebsite, onMessageCopyLinkOpen, onMentionClick, isMentionClickable, mediaSelectionIsExplicit = false, onCallDetailOpen, onArticleOpen, onForwardDetailOpen, selectionTarget }: {
   sessionAttachmentPreview?: boolean
   attachmentNavigationKey?:string|undefined
   item: ArkmeTimelineItem
@@ -1157,6 +1157,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
   isMentionClickable?: ArkmeMentionClickPredicate
   mediaSelectionIsExplicit?: boolean
   onCallDetailOpen?: (videoUrl?: string) => void
+  onForwardDetailOpen?: () => void
   onArticleOpen?: () => void
 }) {
   useArkmeLocale()
@@ -1224,18 +1225,24 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
   if (item.forwardRecords !== undefined) {
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
-      const summary = value.title.trim() || (value.textFormat === 'markdown' ? arkmeMarkdownPlainText(value.textContent) : value.textContent) || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
+      const summary = value.forwardRecords?.title || value.title.trim() || (value.textFormat === 'markdown' ? arkmeMarkdownPlainText(value.textContent) : value.textContent) || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
       return [`${value.senderName}：${summary}`]
     })
     const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
-    return <div ref={contentRef} style={styles.forwardCard} data-arkme-forward-records-card="true">
-      <p style={styles.forwardTitle} title={arkmeEmojiPlainText(item.forwardRecords.title)}><ArkmeRichText text={item.forwardRecords.title} presentation="preview" /></p>
-      <div style={styles.forwardLines}>
-        {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <p
+    const preview = <>
+      <span style={{ ...styles.forwardTitle, display: 'block' }} title={arkmeEmojiPlainText(item.forwardRecords.title)}><ArkmeRichText text={item.forwardRecords.title} presentation="preview" /></span>
+      <span style={styles.forwardLines}>
+        {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <span
           key={`${String(index)}:${line}`}
           style={styles.forwardLine}
-        ><ArkmeRichText text={line} presentation="preview" highlightMentions={highlightMentions} /></p>)}
-      </div>
+        ><ArkmeRichText text={line} presentation="preview" highlightMentions={highlightMentions} /></span>)}
+      </span>
+    </>
+    return <div ref={contentRef} style={styles.forwardCard} data-arkme-forward-records-card="true">
+      {onForwardDetailOpen ? <button type="button" aria-label={item.forwardRecords.title} onClick={onForwardDetailOpen}
+        style={{ display: 'block', width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${arkmeTheme.borderSoft}`, background: arkmeTheme.layer1, color: 'inherit', textAlign: 'left', font: 'inherit', cursor: 'pointer' }}>
+        {preview}
+      </button> : preview}
     </div>
   }
   if (item.sharedRecording !== undefined) {

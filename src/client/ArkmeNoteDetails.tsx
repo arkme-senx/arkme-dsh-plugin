@@ -1362,7 +1362,19 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
   /** Opens a resolved snapshot sender's private chat, shared by every entry path. */
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
 }) {
-  const forward = item.forwardRecords
+  const [trail, setTrail] = useState<{ itemUid: string; path: number[] }>()
+  const body = useRef<HTMLDivElement>(null)
+  const path: number[] = []
+  let forward = item.forwardRecords
+  for (const index of trail?.itemUid === item.itemUid ? trail.path : []) {
+    const nested = forward?.items[index]?.forwardRecords
+    if (!nested) break
+    path.push(index)
+    forward = nested
+  }
+  const pathKey = path.join('.')
+  const onBack = path.length ? () => setTrail({ itemUid: item.itemUid, path: path.slice(0, -1) }) : undefined
+  useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0 }, [item.itemUid, pathKey])
   if (forward === undefined) return null
   const recording = forward.items.length === 1 ? forward.items[0] : undefined
   if (recording?.sourceType === 'long_recording_segments' && (recording.segments?.length ?? 0) > 0) {
@@ -1371,8 +1383,9 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     const selectedAt = startedAt > 0 ? startedAt + Math.min(...segments.map(segment => segment.startMillis)) : 0
     const selectedDate = selectedAt > 0 ? new Date(selectedAt) : undefined
     return <ArkmeDetailShell title={recording.title || forward.title || tr("录音转写")} label={tr("录音片段详情")}
-      subtitle={selectedDate === undefined ? '' : `${selectedDate.toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })} ${selectedDate.toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}>
-      {sourceBadge}
+      subtitle={selectedDate === undefined ? '' : `${selectedDate.toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })} ${selectedDate.toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}
+      bodyRef={body} {...(onBack ? { onBack } : {})}>
+      {!path.length && sourceBadge}
       {readStatus}
       <div data-arkme-forward-recording-detail>
         {segments.map((segment, index) => {
@@ -1388,7 +1401,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
           </div>
         })}
       </div>
-      <RecordThoughtContent item={item} />
+      {!path.length && <RecordThoughtContent item={item} />}
       {(forward.truncated || recording.truncated) && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
     </ArkmeDetailShell>
   }
@@ -1405,7 +1418,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     const joinedTranscript = segments.map(segment => segment.textContent).join('').replace(/\s/gu, '')
     const hasDistinctText = value.textContent.trim() !== '' && value.textContent.replace(/\s/gu, '') !== joinedTranscript
     const snapshot: ArkmeTimelineItem = {
-      itemUid: `${item.itemUid}-forward-${String(index)}`, senderName: value.senderName, isMe: false, sendAtMillis: value.sendAtMillis,
+      itemUid: `${item.itemUid}-forward-${[...path, index].join('.')}`, senderName: value.senderName, isMe: false, sendAtMillis: value.sendAtMillis,
       status: 1, title: value.title,
       ...(value.displayKind === undefined ? {} : { displayKind: value.displayKind }),
       textContent: value.textContent || ((value.contentBlocks?.length ?? 0) === 0 ? value.contentLabel ?? '' : ''),
@@ -1418,10 +1431,12 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
       {hasRecordBody && <ForwardDetailRow name={value.senderName} avatarRef={value.avatarRef} avatarKey={value.avatarKey} avatarKind={value.avatarKind}
         senderUserId={value.senderUserId} onPrivateChatOpened={onPrivateChatOpened} representation={value.sourceTeam}
         time={`${firstDate !== lastDate ? `${dateLabel(value.sendAtMillis)} ` : ''}${timeLabel(value.sendAtMillis)}`}>
-        {!isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
+        {!value.forwardRecords && !isArticle && value.title.trim() !== '' && (snapshot.textContent !== '' || (value.contentBlocks?.length ?? 0) > 0) && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7, overflowWrap: 'anywhere' }}>
           <ArkmeRichText text={value.title} presentation="preview" />
         </h3>}
-        {isArticle && segments.length === 0 ? <ArkmeForwardArticleContent item={snapshot} /> : segments.length === 0 ? <ArkmeMessageContent item={snapshot} presentation="detail" highlightMentions /> : <>
+        {value.forwardRecords ? <ArkmeMessageContent item={{ ...snapshot, forwardRecords: value.forwardRecords }} presentation="detail" highlightMentions
+          onForwardDetailOpen={() => setTrail({ itemUid: item.itemUid, path: [...path, index] })} />
+          : isArticle && segments.length === 0 ? <ArkmeForwardArticleContent item={snapshot} /> : segments.length === 0 ? <ArkmeMessageContent item={snapshot} presentation="detail" highlightMentions /> : <>
           {hasDistinctText && <div style={{ marginBottom: 18 }}><ArkmeMessageContent item={{ ...snapshot, contentBlocks: [], mediaUnavailable: false }} presentation="detail" highlightMentions /></div>}
           {(value.contentBlocks?.length ?? 0) > 0 && <ArkmeMessageContent item={{ ...snapshot, title: '', textContent: '', mediaUnavailable: false }} presentation="detail" highlightMentions />}
         </>}
@@ -1440,11 +1455,12 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
   const forwardedAt = [dateLabel(forward.createdAtMillis), timeLabel(forward.createdAtMillis)].filter(Boolean).join(' ')
   return <ArkmeDetailShell title={forward.title || '转发快记'} label={tr("转发快记详情")}
     subtitle={firstDate === lastDate ? firstDate : tr("{v0} 至 {v1}", { v0: firstDate, v1: lastDate })}
-    footer={forwardedAt ? tr("转发于 {v0}", { v0: forwardedAt }) : '转发时间未知'} onClose={onClose}>
-    {sourceBadge}
+    footer={forwardedAt ? tr("转发于 {v0}", { v0: forwardedAt }) : '转发时间未知'} onClose={onClose}
+    bodyRef={body} {...(onBack ? { onBack } : {})}>
+    {!path.length && sourceBadge}
     {readStatus}
-    <div style={styles.rows}>{rows.map(renderRecord)}</div>
-    <RecordThoughtContent item={item} />
+    <div key={pathKey} style={styles.rows}>{rows.map(renderRecord)}</div>
+    {!path.length && <RecordThoughtContent item={item} />}
     {rows.length === 0 && !readStatus && !pending && <p style={styles.notice}>{tr("原快记暂不可查看")}</p>}
     {forward.truncated && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}
   </ArkmeDetailShell>
