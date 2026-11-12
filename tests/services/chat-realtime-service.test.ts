@@ -294,6 +294,9 @@ describe('ChatRealtimeService', () => {
     const source = new SourceService(runtime, new ProfileService(runtime), {
       async summary() { return { recordCount: 0, wordsCount: 0, totalSec: 0 } }, recordItem() { return undefined },
     })
+    source.setChatSourceByKey('10001:raw-chat-session', {
+      sourceRef: 'opaque-source-ref', kind: 'private_chat', displayName: 'Peer', activeAtMillis: 1, unreadCount: 0,
+    })
     const service = new ChatRealtimeService(runtime, source, { async chatTimelineItems() { return [] } })
     const schedule = vi.spyOn(service, 'scheduleChatSessionProjection').mockImplementation(() => undefined)
     vi.spyOn(service, 'refreshAttentionSummary').mockResolvedValue()
@@ -312,7 +315,7 @@ describe('ChatRealtimeService', () => {
 
     await vi.waitFor(() => { expect(events).toHaveLength(1) })
     expect(events[0]).toMatchObject({
-      type: 'timeline-changed', changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
+      type: 'timeline-changed', sourceKind: 'private_chat', changeKind: 'deleted', changeVersion: 123456, relationTerminal: true, throughSequence: 9,
       sourceKey: expect.stringMatching(/^arkme-chat-source-v1\./),
       timelineItemKey: expect.stringMatching(/^arkme-chat-timeline-item-v1\./),
     })

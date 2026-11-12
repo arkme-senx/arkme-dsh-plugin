@@ -45,6 +45,30 @@ afterEach(() => {
 })
 
 describe('composite owner reads with the real runtime', () => {
+  it('shares identical directory page transports only within an account', async () => {
+    vi.useFakeTimers()
+    const held = gate()
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      await held.promise
+      return ok({ items: [] }, 200)
+    })
+    const { runtime } = fixture(fetcher)
+    const path = '/api/v1/chats/interwoven/directory/query'
+    const body = { limit: 100, cursor: 'next', expected_version: 'a'.repeat(64) }
+    const session = { userId: 42, accessToken: 'fixture-access', refreshToken: 'fixture-refresh' }
+    const one = new AbortController()
+    const first = runtime.authenticatedChatPost(path, body, session, one.signal, { lane: 'background-read' })
+    const shared = runtime.authenticatedChatPost(path, body, session, undefined, { lane: 'interactive-read' })
+    const otherAccount = runtime.authenticatedChatPost(path, body, { ...session, userId: 43 }, undefined, { lane: 'interactive-read' })
+    const firstResult = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    one.abort()
+    await firstResult
+    held.resolve()
+    await expect(Promise.all([shared, otherAccount])).resolves.toEqual([{ items: [] }, { items: [] }])
+  })
+
   it.each(['list', 'states'] as const)('admits a Team read while notification and archive %s transports are still pending', async archiveRead => {
     vi.useFakeTimers()
     const notification = gate(), archive = gate(), starts: string[] = []

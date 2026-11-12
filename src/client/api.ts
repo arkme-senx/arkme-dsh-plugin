@@ -430,11 +430,15 @@ export async function callArkme<T>(
     // No key/recovery: existing owners retain deduplication and retry semantics.
     const imageService = operation === 'team.app.image' ? 'team'
       : operation === 'image.read' && options?.avatarDownload ? 'chat' : undefined
-    const value = background ? await backgroundUiReads.run({
+    // The Host already paces continuation pages. Keep Browser admission for task starts.
+    const hostScheduledContinuation = operation === 'private-interaction.directory'
+      && typeof params?.cursor === 'string' && params.cursor.length > 0
+      && typeof params.expectedVersion === 'string' && /^[a-f0-9]{64}$/.test(params.expectedVersion)
+    const value = background && !hostScheduledContinuation ? await backgroundUiReads.run({
       scope: scope ?? 'anonymous', lane: imageService ? 'image' : 'background-read',
       service: imageService ?? 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
       operation: dispatch,
-    }) : await dispatch(signal)
+    }) : await dispatch(backgroundSignal ?? signal)
     if (background) {
       // Account changes can arrive while the coordinator unwinds after dispatch.
       backgroundSignal?.throwIfAborted()

@@ -1251,17 +1251,17 @@ export class ArkmeChatTimelineDeltaStore {
     changeVersion: number
     relationTerminal: boolean
     throughSequence: number
-  }): void {
+  }): boolean {
     const sourceKey = change.sourceKey.trim()
     const timelineItemKey = change.timelineItemKey.trim()
     if (sourceKey === '' || timelineItemKey === ''
-      || !Number.isSafeInteger(change.changeVersion) || change.changeVersion <= 0) return
+      || !Number.isSafeInteger(change.changeVersion) || change.changeVersion <= 0) return false
     const previous = this.sourceSnapshots.get(sourceKey) ?? EMPTY_CHAT_TIMELINE_SOURCE_DELTA
     const cursors = this.changeCursorsBySource.get(sourceKey) ?? new Map<string, ArkmeChatTimelineChangeCursor>()
     const previousCursor = cursors.get(timelineItemKey)
     if (!this.shouldApplyTimelineChange(
       previousCursor, change.changeVersion, change.changeKind, change.relationTerminal,
-    )) return
+    )) return false
     const removed = new Set(previous.removedItemKeys)
     if (change.changeKind === 'deleted') removed.add(timelineItemKey)
     else if (change.changeKind === 'recovered') removed.delete(timelineItemKey)
@@ -1291,6 +1291,7 @@ export class ArkmeChatTimelineDeltaStore {
     this.retainChangeCursorsForKnownSources()
     this.snapshot = { revision: this.snapshot.revision + 1, itemsBySourceKey: {} }
     for (const listener of this.listeners) listener()
+    return true
   }
 
   private shouldApplyTimelineChange(
@@ -1344,7 +1345,7 @@ export class ArkmeInterwovenInvalidationStore {
   private readonly sourceSnapshots = new Map<string, { globalRevision: number; sourceRevision: number; snapshot: ArkmeInterwovenInvalidationSnapshot }>()
   private readonly groupAccessListeners = new Set<(restricted: ReadonlySet<string>) => void>()
   private readonly restrictedGroups = new Set<string>()
-  private readonly directoryListeners = new Set<(peers?: readonly string[], revalidate?: boolean, reason?: string) => void>()
+  private readonly directoryListeners = new Set<(peers?: readonly string[], revalidate?: boolean, reason?: string, sourceKey?: string) => void>()
   private readonly listeners = new Set<() => void>()
   readonly getSnapshot = (): ArkmeInterwovenInvalidationSnapshot => this.snapshot
   readonly getSnapshotForSource = (sourceKey: string, canonicalChatSourceKey?:string): ArkmeInterwovenInvalidationSnapshot => {
@@ -1374,7 +1375,7 @@ export class ArkmeInterwovenInvalidationStore {
     for (const listener of this.listeners) listener()
     for (const listener of this.directoryListeners) listener(undefined, true, 'account-change')
   }
-  subscribeDirectory(listener: (peers?: readonly string[], revalidate?: boolean, reason?: string) => void): () => void {
+  subscribeDirectory(listener: (peers?: readonly string[], revalidate?: boolean, reason?: string, sourceKey?: string) => void): () => void {
     this.directoryListeners.add(listener)
     return () => { this.directoryListeners.delete(listener) }
   }
@@ -1412,7 +1413,10 @@ export class ArkmeInterwovenInvalidationStore {
     this.snapshot = { revision: this.snapshot.revision + 1 }
     for (const listener of this.listeners) listener()
     if (interactionPeers?.length !== 0) {
-      for (const listener of this.directoryListeners) listener(interactionPeers, revalidate, reason)
+      for (const listener of this.directoryListeners) {
+        if (reason === 'timeline-deleted' || reason === 'timeline-private-deleted') listener(interactionPeers, revalidate, reason, sourceKey)
+        else listener(interactionPeers, revalidate, reason)
+      }
     }
   }
 }
