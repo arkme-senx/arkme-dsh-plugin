@@ -1,4 +1,4 @@
-import type {ArkmeContentBlock,ArkmeTimelineItem} from '../types.js'
+import type {ArkmeContentBlock,ArkmeForwardRecordsPreview,ArkmeTimelineItem} from '../types.js'
 import type {TeamMessage} from '../team-app-contract.js'
 import {createArkmeSdk} from '../sdk/index.js'
 import {teamMessagePresentation} from './TeamMessageContent.js'
@@ -37,14 +37,17 @@ export async function prepareTeamAskDshNotes(conversationRef:string,selected:rea
     // Forward detail rows have their own inline aliases. Export resources share
     // one namespace, so rewrite those aliases to the authorized media identity.
     // The selected card is one intent: never export a partial detail silently.
-    const forward=item.forwardRecords
-    if(forward&&(forward.truncated||!forward.items.length||forward.items.some(row=>row.truncated||row.mediaUnavailable)))throw new Error('完整转发内容暂不可用或过大，请打开详情后重试')
-    return {...item,exportSourceName:sourceName,contentBlocks:(item.contentBlocks??[]).map(originalBlock),
-      ...(forward?{forwardRecords:{...forward,items:forward.items.map(row=>{
+    const prepareForward=(forward:ArkmeForwardRecordsPreview):ArkmeForwardRecordsPreview=>{
+      if(forward.truncated||!forward.items.length||forward.items.some(row=>row.truncated||row.mediaUnavailable))throw new Error('完整转发内容暂不可用或过大，请打开详情后重试')
+      return {...forward,items:forward.items.map(row=>{
         const blocks=row.contentBlocks??[],converted=blocks.map(originalBlock)
         const aliases=new Map(blocks.flatMap((block,position)=>block.fileAssetUid?[[`arkme-asset:${block.fileAssetUid}`,`arkme-asset:${converted[position]!.fileAssetUid}`]]:[]))
-        return {...row,textContent:row.textFormat==='markdown'?remapLongArticleAssets(row.textContent,aliases):row.textContent,contentBlocks:converted}
-      })}}:{})}
+        return {...row,textContent:row.textFormat==='markdown'?remapLongArticleAssets(row.textContent,aliases):row.textContent,contentBlocks:converted,
+          ...(row.forwardRecords?{forwardRecords:prepareForward(row.forwardRecords)}:{})}
+      })}
+    }
+    return {...item,exportSourceName:sourceName,contentBlocks:(item.contentBlocks??[]).map(originalBlock),
+      ...(item.forwardRecords?{forwardRecords:prepareForward(item.forwardRecords)}:{})}
   })
   return await prepareAskDshNotes(items,{
     detail:async(item:ArkmeTimelineItem)=>({itemUid:item.itemUid,title:item.title,textContent:item.textContent,startAtMillis:item.sendAtMillis,contentBlocks:item.contentBlocks!,backgroundSound:'unknown'}),

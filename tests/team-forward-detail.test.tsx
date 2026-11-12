@@ -88,3 +88,30 @@ it('opens a summary-only card directly into the complete detail', async () => {
     expect(JSON.stringify(renderer.toJSON())).not.toMatch(/已授权摘要|正在加载/u)
   } finally { await act(async () => renderer.unmount()) }
 })
+
+it('opens a nested card in the same drawer and returns to its parent without another read', async () => {
+  const nested = { title: '内层转发', createdAtMillis: 1, summaryLines: [], items: [
+    { senderName: '内层作者', sendAtMillis: 1, title: '内层标题', textContent: '仅内层详情可见的正文' },
+  ] }
+  const message = { ...forwardMessage, forwardRecords: { ...forwardMessage.forwardRecords!, items: [
+    { senderName: '转发者', sendAtMillis: 1, title: '', textContent: '', forwardRecords: nested },
+    { senderName: '同级作者', sendAtMillis: 1, title: '', textContent: '外层正文' },
+  ] } }
+  preflight.mockReset().mockResolvedValue([message])
+  let renderer!: ReturnType<typeof create>
+  await act(async () => { renderer = create(view(message)) })
+  try {
+    const visible = () => JSON.stringify(renderer.toJSON())
+    const drawer = renderer.root.findByType(ArkmeDetailShell)
+    expect(visible()).toContain('外层正文')
+    expect(visible()).not.toContain('仅内层详情可见的正文')
+    await act(async () => renderer.root.findByProps({ 'aria-label': '内层转发' }).props.onClick())
+    expect(renderer.root.findByType(ArkmeDetailShell)).toBe(drawer)
+    expect(visible()).toContain('仅内层详情可见的正文')
+    expect(visible()).not.toContain('外层正文')
+    await act(async () => drawer.props.onBack())
+    expect(visible()).toContain('外层正文')
+    expect(visible()).not.toContain('仅内层详情可见的正文')
+    expect(preflight).toHaveBeenCalledTimes(1)
+  } finally { await act(async () => renderer.unmount()) }
+})

@@ -961,7 +961,9 @@ it('hydrates frozen Team authors through the scoped avatar cache without exposin
     const [detail] = await f.service.execute('team.app.preflight', {
       conversationRef, selections: [{ messageRef: card.ref, version: card.version }],
     }) as import('../src/team-app-contract.js').TeamMessage[]
-    const [first, missing, repeated] = detail!.forwardRecords!.items
+    const [first, nested] = detail!.forwardRecords!.items
+    const [missing, repeated] = nested!.forwardRecords!.items
+    expect(nested?.avatarRef).toBeUndefined()
     expect(first?.avatarRef).toMatch(/^team-app-image\./u)
     expect(first?.avatarKey).toBeTruthy()
     expect(repeated?.avatarRef).toBe(first?.avatarRef)

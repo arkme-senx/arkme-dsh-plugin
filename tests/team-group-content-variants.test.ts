@@ -31,7 +31,7 @@ it('keeps nested frozen attachments and shared-recording detail in the selected 
   const sdk=createArkmeSdk({fetchImpl:async(_input,init)=>{const req=JSON.parse(String(init?.body));const value=await dispatchArkmeHostOperation({sharedRecordingDetail:chat.sharedRecordingDetail.bind(chat)} as never,req.operation,req.params);return new Response(JSON.stringify({ok:true,value}))}})
   await expect(sdk.sharedRecordingDetail(ref!,{sourceRef})).resolves.toMatchObject({transcript:'共享原文'})
   expect(requests).toEqual([{chat_session_uid:'group',record_uid:'recording',record_owner_user_id:77,rel_uid:'rel-recording',seq:7}])
-  const block=forward?.forwardRecords?.items[0]?.contentBlocks?.[0];expect(block?.mediaRef).toBeTruthy()
+  const block=forward?.forwardRecords?.items[0]?.forwardRecords?.items[0]?.contentBlocks?.[0];expect(block?.mediaRef).toBeTruthy()
   const stream=vi.spyOn(runtime,'authenticatedRecordSourceStream').mockResolvedValue(new Response('pdf'))
   await media.fetchMedia(block!.mediaRef)
   expect(stream).toHaveBeenCalledWith(expect.objectContaining({access_ref:'receiving-frame',chat_session_uid:'group',relation_uid:'rel-forward',record_uid:'forward',record_owner_user_id:77,version:3,attachment:'nested-receiving-proof'}),expect.anything())
