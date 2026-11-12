@@ -5884,7 +5884,10 @@ export function ArkmeSurface({
     },
     [composerMentionsEnabled, conversationMembers, mentionBots.group, mentionTrigger, mentionBots.private, source?.kind,mentionTeams.items],
   )
-  const mentionSession = useMentionSuggestions(JSON.stringify([authenticatedAccountKey, conversationKey, activeRecordReeditComposer?.generation]), mentionTrigger, mentionCandidates, sourceIsChat && (mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing))
+  const mentionLoading = sourceIsChat && (mentionBots.loading || (!mentionBots.ready && !mentionBots.error)
+    || (source?.kind === 'group_chat' && (mentionTeams.loading || conversationMemberSnapshot.refreshing
+      || (!conversationMemberSnapshot.ready && conversationMemberSnapshot.error === undefined))))
+  const mentionSession = useMentionSuggestions(JSON.stringify([authenticatedAccountKey, conversationKey, activeRecordReeditComposer?.generation]), mentionTrigger, mentionCandidates, mentionLoading)
   const hashTagCandidates = useMemo(() => {
     if (hashTagTrigger === undefined) return []
     const query = hashTagTrigger.query.toLocaleLowerCase()
@@ -9450,7 +9453,7 @@ export function ArkmeSurface({
             </div>}
             {mentionTrigger !== undefined && <ArkmeMentionSuggestions session={mentionSession}
               style={styles.mentionSuggestions!}
-              loading={sourceIsChat && (mentionBots.loading || (!mentionBots.ready && !mentionBots.error) || conversationMemberSnapshot.refreshing)}
+              loading={mentionLoading}
               error={sourceIsChat && (mentionBots.error||mentionTeams.error)} onRetry={()=>{mentionBots.retry();mentionTeams.retry()}} onSelect={insertMentionCandidate}
               rowStyles={{ row: styles.mentionSuggestionRow!, rowActive: styles.mentionSuggestionRowActive!,
                 avatar: styles.mentionSuggestionAvatar!, botAvatar: styles.mentionSuggestionBotAvatar!,

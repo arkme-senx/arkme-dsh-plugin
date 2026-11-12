@@ -8,7 +8,14 @@ import { cancelConversationFollow, isConversationFollowing } from './conversatio
 
 export const WIDE_CONVERSATION_WIDTH_KEY = 'arkme:conversation-content-width:v1'
 const ANCHOR = '[data-arkme-width-anchor]'
+const PREFERRED_WIDTH = '--arkme-conversation-preferred-width'
 const css = `
+div[data-arkme-wide-conversation="true"] {
+  --dsh-chat-content-width:clamp(640px, var(--arkme-conversation-preferred-width,
+    clamp(680px, calc(var(--dsh-conversation-column-width) * .64), 920px)),
+    calc(var(--dsh-conversation-column-width) - 176px));
+  --dsh-composer-card-max-width:calc(var(--dsh-chat-content-width) + 32px);
+}
 [data-arkme-wide-conversation="true"] [data-arkme-width-viewport] {
   box-sizing:border-box;
   padding-inline:max(22px, calc((100% - var(--dsh-chat-content-width, 920px)) / 2)) !important;
@@ -139,7 +146,8 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
   const [column, setColumn] = useState(0)
   const [native, setNative] = useState<HarnessConversationLayout>()
   const [failed, setFailed] = useState(false)
-  const wide = enabled && column > ARKME_WIDE_CONVERSATION_MIN && native !== undefined && !failed
+  const wide = enabled && column > ARKME_WIDE_CONVERSATION_MIN
+  const controls = wide && !controlsHidden && !failed ? native : undefined
   const preference = useRef<number | null>(null)
   const anchorsRef = useRef<RailAnchor[]>([])
   const [items, setItems] = useState<ConversationRailItem[]>([])
@@ -148,27 +156,27 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
 
   useLayoutEffect(() => {
     const root = rootRef.current
-    if (!enabled || !root || typeof ResizeObserver === 'undefined') return
+    if (!enabled || !root) return
     preference.current = readPreference()
+    if (preference.current === null) root.style.removeProperty(PREFERRED_WIDTH)
+    else root.style.setProperty(PREFERRED_WIDTH, `${preference.current}px`)
     const measure = () => {
       const width = root.clientWidth
       setColumn(previous => previous === width ? previous : width)
       root.style.setProperty('--dsh-conversation-column-width', `${width}px`)
       root.style.setProperty('--dsh-conversation-viewport-height', `${root.clientHeight}px`)
       root.style.setProperty('--dsh-composer-height', `${Math.max(0, root.clientHeight - (viewportRef.current?.clientHeight ?? root.clientHeight))}px`)
-      if (native && preference.current !== null) {
-        root.style.setProperty('--dsh-chat-user-width', `${native.resolveContentWidth(width, preference.current)}px`)
-      }
     }
     measure()
+    if (typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(measure)
     observer.observe(root)
     if (viewportRef.current) observer.observe(viewportRef.current)
     return () => observer.disconnect()
-  }, [enabled, native, scopeKey, viewportRef])
+  }, [enabled, scopeKey, viewportRef])
 
   useEffect(() => {
-    if (!enabled || column <= ARKME_WIDE_CONVERSATION_MIN || native || failed) return
+    if (!wide || native || failed) return
     let stopped = false
     void loadHarnessConversationLayout().then(value => {
       if (stopped) return
@@ -176,14 +184,14 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
       else setFailed(true)
     })
     return () => { stopped = true }
-  }, [column, enabled, failed, native])
+  }, [wide, failed, native])
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current
-    if (!wide || !viewport) return
+    if (!controls || !viewport || typeof ResizeObserver === 'undefined') return
     let frame: number | undefined
     let dirty = true
-    let signature = ''
+    let signature: string | undefined
     const measure = () => {
       frame = undefined
       if (dirty) {
@@ -213,7 +221,7 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
       if (frame !== undefined) cancelAnimationFrame(frame)
       anchorsRef.current = []
     }
-  }, [wide, scopeKey, turns, viewportRef])
+  }, [controls, scopeKey, turns, viewportRef])
 
   const navigate = useCallback((item: NativeRailItem<ReactNode>) => {
     const viewport = viewportRef.current
@@ -234,7 +242,7 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
   const resize = (width: number) => {
     const root = rootRef.current
     if (!root || !native) return
-    const apply = () => root.style.setProperty('--dsh-chat-user-width', `${native.resolveContentWidth(root.clientWidth, width)}px`)
+    const apply = () => root.style.setProperty(PREFERRED_WIDTH, `${native.resolveContentWidth(root.clientWidth, width)}px`)
     if (viewportRef.current) preserveConversationReading(viewportRef.current, apply)
     else apply()
   }
@@ -248,28 +256,26 @@ export function ArkmeWideConversation({ children, enabled, scopeKey, viewportRef
   const end = () => {
     const root = rootRef.current
     if (!root) return
-    if (preference.current === null) {
-      const reset = () => root.style.removeProperty('--dsh-chat-user-width')
-      if (viewportRef.current) preserveConversationReading(viewportRef.current, reset)
-      else reset()
-    }
-    else resize(preference.current)
+    if (preference.current !== null) { resize(preference.current); return }
+    const reset = () => root.style.removeProperty(PREFERRED_WIDTH)
+    if (viewportRef.current) preserveConversationReading(viewportRef.current, reset)
+    else reset()
   }
   const shell: CSSProperties = enabled
     // Native rail/width controls belong to the conversation, below sibling drawers.
     // Contain upstream z-index values here without changing the native components.
     ? { position: 'relative', zIndex: 0, display: 'flex', flex: 1, flexDirection: 'column', minHeight: 0, minWidth: 0, height: 'auto' }
     : { display: 'contents' }
-  return <div ref={rootRef} style={shell} className={wide ? native.rootClass : undefined}
+  return <div ref={rootRef} style={shell} className={wide ? native?.rootClass : undefined}
     data-arkme-wide-conversation={wide ? 'true' : 'false'}>
     <style>{css}</style>
     {children}
-    {wide && !controlsHidden && <NativeLayoutBoundary onFailure={failure}>
-      {(['left', 'right'] as const).map(side => <native.WidthHandle key={side} side={side}
+    {controls && <NativeLayoutBoundary onFailure={failure}>
+      {(['left', 'right'] as const).map(side => <controls.WidthHandle key={side} side={side}
         onStart={start} onDrag={resize} onCommit={commit} onEnd={end} />)}
-      {items.length > 0 && <div data-arkme-native-turn-rail style={{ position: 'absolute', inset: 0, pointerEvents: 'none', containerType: 'inline-size', zIndex: 9 }}>
+      {items.length >= 2 && <div data-arkme-native-turn-rail style={{ position: 'absolute', inset: 0, pointerEvents: 'none', containerType: 'inline-size', zIndex: 9 }}>
         <div style={{ position: 'absolute', top: 0, left: 32, right: 32, height: 0 }}>
-        <native.TurnNavigator items={previewItems} activeTurn={activeTurn} busyTurn={null} onNavigate={navigate} t={t} />
+        <controls.TurnNavigator items={previewItems} activeTurn={activeTurn} busyTurn={null} onNavigate={navigate} t={t} />
         </div>
       </div>}
     </NativeLayoutBoundary>}
