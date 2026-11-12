@@ -1282,7 +1282,9 @@ it('renders pending attachments without media fetches or download/preview contro
   expect(html).toContain('data-arkme-file-icon="audio"')
   expect(html).toContain('aspect-ratio:1')
   expect(html).not.toContain('min-width:100px')
-  expect(html).not.toContain('<button')
+  const buttons = html.match(/<button\b[^>]*>/g) ?? []
+  expect(buttons).toHaveLength(1)
+  expect(buttons[0]).toContain('disabled')
 })
 
 

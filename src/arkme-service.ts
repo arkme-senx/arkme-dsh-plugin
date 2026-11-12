@@ -991,7 +991,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.realtime.directoryInvalidation = async hint => await this.directory.invalidate(hint)
     this.realtime.directoryAttention = async retry => await this.directory.attentionSummary(retry)
     this.realtime.directoryBaseline = async () => await this.directory.complete()
-    this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update') void this.directory.accept(event).catch(() => undefined) })
+    this.realtime.subscribeChatRealtime(event => { if (event.type !== 'directory-update' && event.type !== 'file-send-progress') void this.directory.accept(event).catch(() => undefined) })
     this.chat = new ChatService(
       this.runtime,
       this.source,
@@ -1110,6 +1110,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       media: this.media,
       chat: this.chat,
       teamMedia:this.teamApp,
+      onProgressChange: (userId, taskRef) => this.realtime.emitChatClientEvent({
+        type: 'file-send-progress', userId, taskRef, revision: this.realtime.nextChatClientRevision(),
+      }),
       openPath: async (path, signal) => {
         if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
         await this.localFileOpener(path, signal)
