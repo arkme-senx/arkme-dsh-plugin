@@ -1,4 +1,4 @@
-import { groupInteractionTrace, groupInteractionTraceKey } from '../group-interaction-diagnostics.js'
+import { groupInteractionTrace, groupInteractionTraceEnabled, groupInteractionTraceKey } from '../group-interaction-diagnostics.js'
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import type { ArkmePrivateInteractionDirectoryPage, ArkmePrivateInteractionSummary, ArkmeSourceItem } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
@@ -189,7 +189,10 @@ export function watchPrivateInteractionDirectory({ read, publish, subscribe, sub
       && (deletedSourceRevisions.has(sourceKey) || deletedSourceRevisions.size < 256)
     const coveredByPage = scopedDeletion || (!revalidate
       && (reason === 'session-delta-unscoped' || reason === 'group-session-delta-unscoped'))
-    if (coveredByPage) pageValidatedReasons.set(reason, ++pageValidationRevision)
+    if (coveredByPage) {
+      pageValidatedReasons.set(reason, ++pageValidationRevision)
+      groupInteractionTrace('directory-change-effective', { reason, revision: pageValidationRevision })
+    }
     else completedTail = undefined
     if (scopedDeletion) {
       deletedSourceRevisions.set(sourceKey, pageValidationRevision)
@@ -401,13 +404,14 @@ function startDirectoryTask(accountKey: string) {
     read: async (cursor, version, signal, priority, recoveryHead) => {
       assertAccount()
       const background = priority === 'background' && !recoveryHead
-      groupInteractionTrace('directory-page-start', { continuation: cursor !== undefined, priority, recoveryHead })
+      const traceId = groupInteractionTraceEnabled() ? globalThis.crypto?.randomUUID?.() : undefined
+      groupInteractionTrace('directory-page-start', { traceId, continuation: cursor !== undefined, priority, recoveryHead })
       const page = await callArkme<ArkmePrivateInteractionDirectoryPage>('private-interaction.directory', {
         ...(background ? { background: true } : {}),
         limit: recoveryHead ? 20 : 100, ...(cursor ? { cursor } : {}), ...(version ? { expectedVersion: version } : {}),
-      }, signal, background ? { priority: 'background' } : undefined)
+      }, signal, background || traceId ? { ...(background ? { priority: 'background' } : {}), ...(traceId ? { traceId } : {}) } : undefined)
       assertAccount()
-      groupInteractionTrace('directory-page-response', { rows: page.items.length, hasMore: page.hasMore })
+      groupInteractionTrace('directory-page-response', { traceId, rows: page.items.length, hasMore: page.hasMore })
       return page
     },
     readPeer: async (key, rows, signal) => {
