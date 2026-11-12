@@ -22,24 +22,37 @@ describe('wide conversation responsive lifecycle', () => {
     vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => column)
     vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => 600)
     const resolve = (width: number, pref: number | null) => Math.min(width - 176, Math.max(640, pref ?? width * .64))
-    vi.mocked(loadHarnessConversationLayout).mockResolvedValue({ rootClass: 'native-root', resolveContentWidth: resolve,
-      WidthHandle: props => <button data-width-handle={props.side} onClick={() => {
+    localStorage.setItem(WIDE_CONVERSATION_WIDTH_KEY, '768')
+    let finishLoading!: (layout: Awaited<ReturnType<typeof loadHarnessConversationLayout>>) => void
+    vi.mocked(loadHarnessConversationLayout).mockReturnValue(new Promise(resolve => { finishLoading = resolve }))
+    const native = { rootClass: 'native-root', resolveContentWidth: resolve,
+      WidthHandle: (props: import('../src/client/harness-conversation-layout.js').NativeWidthProps) => <button data-width-handle={props.side} onClick={() => {
         const width = props.onStart() - 100
         props.onDrag(width); props.onCommit(width); props.onEnd()
       }} />,
-      TurnNavigator: props => <button data-test-rail onClick={() => props.onNavigate(props.items[0]!)} />,
-    })
+      TurnNavigator: (props: import('../src/client/harness-conversation-layout.js').NativeRailProps) => <button data-test-rail onClick={() => props.onNavigate(props.items[0]!)} />,
+    }
     const host = document.createElement('div'); document.body.append(host)
     const root = createRoot(host)
     const ref = createRef<HTMLDivElement>()
     try {
       await act(async () => root.render(<ArkmeWideConversation enabled scopeKey="private:1" viewportRef={ref}>
-        <div ref={ref} data-arkme-width-viewport><div data-arkme-width-anchor="a">message</div></div>
+        <div ref={ref} data-arkme-width-viewport><div data-arkme-width-anchor="a">message</div><div data-arkme-width-anchor="b">next</div></div>
         <footer data-arkme-width-composer><textarea defaultValue="unfinished draft" /></footer>
       </ArkmeWideConversation>))
       const editor = host.querySelector('textarea')!
       const shell = host.querySelector('[data-arkme-wide-conversation]') as HTMLElement
       expect(shell.dataset.arkmeWideConversation).toBe('true')
+      expect(shell.style.getPropertyValue('--arkme-conversation-preferred-width')).toBe('768px')
+      expect(host.querySelector('[data-test-rail]')).toBeNull()
+      editor.focus()
+      editor.value += ' while loading'
+      editor.setSelectionRange(7, 7)
+      await act(async () => finishLoading(native))
+      expect(shell.dataset.arkmeWideConversation).toBe('true')
+      expect(shell.style.getPropertyValue('--arkme-conversation-preferred-width')).toBe('768px')
+      expect(document.activeElement).toBe(editor)
+      expect(editor.selectionStart).toBe(7)
       expect(shell.style.position).toBe('relative')
       expect(shell.style.zIndex).toBe('0')
       expect(host.querySelector<HTMLElement>('[data-arkme-native-turn-rail]')?.style.zIndex).toBe('9')
@@ -52,7 +65,7 @@ describe('wide conversation responsive lifecycle', () => {
       expect(ref.current!.scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'instant' }))
       await act(async () => (host.querySelector('[data-width-handle]') as HTMLElement).click())
       expect(localStorage.getItem(WIDE_CONVERSATION_WIDTH_KEY)).toBe('668')
-      expect(shell.style.getPropertyValue('--dsh-chat-user-width')).toBe('668px')
+      expect(shell.style.getPropertyValue('--arkme-conversation-preferred-width')).toBe('668px')
       column = 900
       await act(async () => { for (const callback of [...observers]) callback() })
       expect(shell.dataset.arkmeWideConversation).toBe('false')
@@ -61,9 +74,9 @@ describe('wide conversation responsive lifecycle', () => {
       column = 1200
       await act(async () => { for (const callback of [...observers]) callback() })
       expect(shell.dataset.arkmeWideConversation).toBe('true')
-      expect(shell.style.getPropertyValue('--dsh-chat-user-width')).toBe('668px')
+      expect(shell.style.getPropertyValue('--arkme-conversation-preferred-width')).toBe('668px')
       expect(host.querySelector('textarea')).toBe(editor)
-      expect(editor.value).toBe('unfinished draft')
+      expect(editor.value).toBe('unfinished draft while loading')
       expect(loadHarnessConversationLayout).toHaveBeenCalledTimes(1)
     } finally { await act(async () => root.unmount()); host.remove() }
     expect(observers.size).toBe(0)
