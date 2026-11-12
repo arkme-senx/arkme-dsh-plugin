@@ -1,3 +1,4 @@
+import { RecordingSourceNotice } from './recordings/RecordingSourceNotice.js'
 import { LocalRecorderEntry } from './recordings/LocalRecorderEntry.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { RecordingComparisonMenu } from './recordings/RecordingComparisonMenu.js'
@@ -1585,6 +1586,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     return <>
       {sourceNotice}
       <StatusBanner section={section} onContinue={() => { void continueRecording('summary', section.items[0]) }} />
+      <RecordingSourceNotice version={selectedSummary} />
       <ArkmeMarkdownBody text={selectedSummary.content} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.75 }} />
     </>
   }
@@ -1612,6 +1614,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     return <>
       {sourceNotice}
       <StatusBanner section={section} onContinue={() => { void continueRecording('timeline', section.items[0]) }} />
+      <RecordingSourceNotice version={selectedTimeline} />
       <RecordingTimelineEvents events={selectedTimeline.timelineEvents} onOpen={setTimelineDetailEvent} />
     </>
   }

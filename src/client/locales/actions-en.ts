@@ -1,5 +1,8 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '录音或说话人信息已更正，此版本待更新。': 'The recording or speaker information has been corrected. This version needs updating.',
+  '原内容已保留，可使用下方“重新生成”。': 'The original content is preserved. Use “Regenerate” below to update it.',
+  '暂无法确认此版本的来源是否最新，原内容已保留': 'We cannot confirm whether this version’s sources are up to date. The original content is preserved.',
   '原文': 'Original',
   '个人更正': 'Personal correction',
   '个人更正 · 恢复原文': 'Personal correction · Restore original',

@@ -3700,6 +3700,7 @@ export type ArkmeRecordingVersionStatus = 'processing' | 'done' | 'failed'
 export type ArkmeRecordingSectionState = 'ready' | 'empty' | 'processing' | 'failed' | 'error'
 
 export interface ArkmeRecordingVersion {
+  sourceState?: 'current' | 'stale' | 'unknown'
   continuationAvailable?: boolean
   id: string
   status: ArkmeRecordingVersionStatus
