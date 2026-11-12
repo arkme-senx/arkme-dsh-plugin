@@ -13,3 +13,14 @@ describe('relationship source cards',()=>{
     expect(rows.map(x=>x.key)).toEqual(['a','b','c']);expect(rows[0]?.mentions).toHaveLength(2)
   })
 })
+
+it('unions roles without duplication while retaining distinct mentions and a current authorized source ref',()=>{
+ const a={...evidence('same',1),roles:['mentioned','speaker'] as const}
+ const b={...evidence('same',5),roles:['speaker','participant'] as const,ref:'current-authorized-ref'}
+ const result=mergeExploreEvidence([{...a,roles:[...a.roles]}],[{...b,roles:[...b.roles]}])[0]!
+ expect(result.roles).toEqual(['mentioned','speaker','participant'])
+ expect(result.mentions).toHaveLength(2);expect(result.ref).toBe('current-authorized-ref')
+ const {ref:_ref,...withoutRef}=evidence('same')
+ const revoked=mergeExploreEvidence([result],[{...withoutRef,text:'',roles:[],mentions:[],personReferenceStatus:'unavailable'}])[0]!
+ expect(revoked.ref).toBeUndefined();expect(revoked.roles).toEqual([]);expect(revoked.mentions).toEqual([])
+})

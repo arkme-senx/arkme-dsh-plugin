@@ -31,7 +31,7 @@ function startTime(millis: number): string {
   return new Date(millis).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
-export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item: ArkmeTimelineItem; onClose: () => void; initialVideoUrl?: string | undefined }) {
+export function ArkmeCallDetailDrawer({ item, callRef: sourceCallRef, onClose, initialVideoUrl }: { item?: ArkmeTimelineItem; callRef?: string; onClose: () => void; initialVideoUrl?: string | undefined }) {
   useArkmeLocale()
   const [detail, setDetail] = useState<ArkmeCallDetail>()
   const [error, setError] = useState('')
@@ -41,7 +41,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
   const panel = useRef<HTMLElement>(null)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
-  const callRef = item.callRecord?.callRef
+  const callRef = sourceCallRef ?? item?.callRecord?.callRef
   useEffect(() => {
     const controller = new AbortController()
     setDetail(undefined)
@@ -60,7 +60,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
       if (!controller.signal.aborted) setLoading(false)
     })
     return () => { controller.abort() }
-  }, [callRef, item.itemUid, revision])
+  }, [callRef, item?.itemUid, revision])
 
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -82,16 +82,16 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
     }
   }, [])
 
-  const mediaType = detail?.mediaType === 'unknown' ? item.callRecord?.mediaType : detail?.mediaType ?? item.callRecord?.mediaType
+  const mediaType = detail?.mediaType === 'unknown' ? item?.callRecord?.mediaType : detail?.mediaType ?? item?.callRecord?.mediaType
   const video = mediaType === 'video'
-  const icon = `${video ? 'video' : 'call'}-${item.callRecord?.direction ?? (item.isMe ? 'outgoing' : 'incoming')}-linear.svg`
+  const icon = `${video ? 'video' : 'call'}-${item?.callRecord?.direction ?? (item?.isMe ? 'outgoing' : 'incoming')}-linear.svg`
   const iconColor = (detail?.acceptedAtMillis ?? 0) > 0 ? arkmeTheme.accent : arkmeTheme.danger
   return <aside ref={panel} role="dialog" aria-label={tr("通话详情")} data-arkme-call-detail="true" style={styles.drawer}>
     <ArkmeRightPanelHeader title={tr("通话详情")} onClose={onClose} closeLabel={tr("关闭通话详情")} closeRef={closeButton} actions={!loading && !error && detail && <ArkmeCallShareControls compact callRef={detail.callRef} />} />
     <div style={styles.overview}>
       <span style={styles.cell}><span aria-hidden style={{ width: 12, height: 12, flex: '0 0 12px', background: iconColor, mask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat`, WebkitMask: `url("/arkme-self/api/call/${icon}") center / contain no-repeat` }} />{video ? tr("视频通话") : tr("语音通话")}</span>
-      <span style={{ ...styles.cell, justifyContent: 'center' }}><ClockIcon size={14} color={arkmeTheme.tertiary} aria-hidden />{startTime(detail?.startedAtMillis || item.callRecord?.startedAtMillis || item.sendAtMillis)}</span>
-      <span style={{ ...styles.cell, justifyContent: 'flex-end' }}><TimerIcon size={14} color={arkmeTheme.tertiary} aria-hidden />{callDetailDuration(detail?.durationSeconds ?? item.callRecord?.durationSeconds)}</span>
+      <span style={{ ...styles.cell, justifyContent: 'center' }}><ClockIcon size={14} color={arkmeTheme.tertiary} aria-hidden />{startTime(detail?.startedAtMillis || item?.callRecord?.startedAtMillis || item?.sendAtMillis || 0)}</span>
+      <span style={{ ...styles.cell, justifyContent: 'flex-end' }}><TimerIcon size={14} color={arkmeTheme.tertiary} aria-hidden />{callDetailDuration(detail?.durationSeconds ?? item?.callRecord?.durationSeconds)}</span>
     </div>
     <div style={styles.content} aria-busy={loading}>
       {loading ? <div role="status" style={styles.state}>{tr("加载中…")}</div>
@@ -106,7 +106,7 @@ export function ArkmeCallDetailDrawer({ item, onClose, initialVideoUrl }: { item
             }} />}
             {(detail?.transcriptFailed || detail?.transcriptPending || detail?.summaryStatus === 'pending') && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={() => { setRevision(value => value + 1) }}>{tr("刷新")}</button>}
           </>}
-      <RecordThoughtContent item={item}/>
+      {item && <RecordThoughtContent item={item}/>}
     </div>
   </aside>
 }

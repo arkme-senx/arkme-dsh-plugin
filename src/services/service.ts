@@ -62,6 +62,7 @@ arkoFileRefs(userId:number):Promise<string[]>
   readCancellationCompletion?(): Promise<import('../state-store.js').ArkmeCancellationCompletion | undefined>
   writeCancellationCompletion?(completion: import('../state-store.js').ArkmeCancellationCompletion | undefined): Promise<void>
   readonly messageMarks?: import('../local-message-marks.js').LocalMessageMarkStore
+  readonly personImpact?: import('../local-person-impact.js').LocalPersonImpactStore
   readonly commonGroups?: import('../common-groups.js').CommonGroupStore
   readRecordingSpeakerCache?(scope: string, userId: number): Promise<import('../types.js').ArkmeRecordingSpeakerCandidate[] | undefined>
   writeRecordingSpeakerCache?(scope: string, userId: number, candidates: import('../types.js').ArkmeRecordingSpeakerCandidate[]): Promise<void>
@@ -666,7 +667,11 @@ export class ServiceRuntime {
       '/api/v1/team/conversations/list', '/api/v1/team/conversations/messages/batch-get', '/api/v1/team/conversations/timeline/page', '/api/v1/team/conversations/timeline/locate', '/api/v1/team/conversations/messages/annotations/batch-query', '/api/v1/team/conversations/messages/annotations/query', '/api/v1/team/conversations/read-receipts/query', '/api/v1/team/join-requests/list',
     ]).has(path)) return true
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
-    if (baseUrl === this.config.audioBaseUrl && path === '/api/v1/audio/unmarked-speakers/list') return true
+    if (baseUrl === this.config.audioBaseUrl && new Set([
+      '/api/v1/audio/unmarked-speakers/list', '/api/v1/audio/get-session-ls',
+      '/api/v1/audio/speaker-directory/summary', '/api/v1/audio/speaker-directory/list',
+      '/api/v1/audio/speaker-directory/similar', '/api/v1/audio/speaker-directory/voice-samples',
+    ]).has(path)) return true
     return false
   }
 
@@ -1598,13 +1603,13 @@ export class ServiceRuntime {
     let session = initialSession ?? await this.requireSession()
     const requestOptions = () => this.authenticatedRequestOptions(session, 'relation', 'interactive-read', options)
     try {
-      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions(), path.startsWith('/api/v1/entity/identities/'))
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session)
-      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+      return await this.post<T>(this.config.relationBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions(), path.startsWith('/api/v1/entity/identities/'))
     }
   }
 

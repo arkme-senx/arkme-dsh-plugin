@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ExploreService } from '../src/services/explore-service.js'
 import type { ServiceRuntime } from '../src/services/service.js'
 import type { ExploreModule } from '../src/explore-contract.js'
+import { mergeExploreEvidence } from '../src/explore-evidence.js'
 import { profileProgress } from '../src/services/explore-projection.js'
 
 const disposers:Array<()=>void>=[]
@@ -9,7 +10,7 @@ afterEach(()=>disposers.splice(0).forEach(fn=>fn()))
 function fixture(){
   let user=11,epochCallback=()=>{}
   const writes:Array<{path:string;body:Record<string,unknown>}>=[],calls:Array<{path:string;body:Record<string,unknown>}>=[]
-  const state={modelRoute:'private-model-a',ignoreModelWrite:false,removeModelB:false,analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
+  const state={relationRecords:undefined as Array<Record<string,unknown>>|undefined,modelRoute:'private-model-a',ignoreModelWrite:false,removeModelB:false,analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
   const fact=()=>({fact_key:'private-fact',predicate_label:'偏好',value:state.factValue,state:'active',support_count:1,evidence:[{record_uid:'private-record',event_at:1000,speaker_role:'self'}]})
   const home=()=>({activated:true,state:'processing',snapshot:{snapshot_id:state.version,sections:[{section_id:'identity',title:'我是谁',total_count:state.factDeleted?0:1}]},processing:{phase:state.progress,rebuild_run_id:'private-run',can_resume:state.progress==='paused',can_pause:state.progress==='running',planning_complete:true,processed_units:5,total_units:10},sources:[{source:'personal_record',display_name:'个人记录',enabled:true},{source:'native_chat',display_name:'聊天',enabled:false},{source:'wechat_import',display_name:'微信导入',enabled:true}]})
   const anniversary=()=>({id:'private-anniversary',title:'生日',status:'pending',calendar_type:'solar',date_label:'10月28日',why:'明确提到日期',evidences:[{message_id:'private-message',content:'10月28日',source_type:6,owner_ref:{provider:'audio',container_id:'private-audio'},is_anchor:true}]})
@@ -31,7 +32,7 @@ function fixture(){
     if(path.endsWith('/section/get'))return {snapshot_id:state.version,items:state.factDeleted?[]:[fact()],has_more:false}
     if(path.startsWith('/api/v1/relation/list'))return {entities:state.entities,private_chats:[]}
     if(path.endsWith('/detail-full')||path==='/api/v1/entity/detail')return state.entities.find(x=>x.entity_id===body.entity_id)!
-    if(path.endsWith('/entity/records/list'))return {records:[{record_uid:'private-record',content:'来源文字',created_at:1000,sender_is_self:true}],has_more:false,total:1}
+    if(path.endsWith('/entity/records/list'))return {records:state.relationRecords??[{record_uid:'private-record',content:'来源文字',created_at:1000,sender_is_self:true}],has_more:false,total:1}
     if(path.endsWith('/event/stream'))return {items:[{event_record_id:'private-event-record',event_id:'study',event_name:'学习',summary:'学习了新内容',occurred_at:1000}],total:1,user_progress:{active:false,can_trigger:true}}
     if(path.endsWith('/event/plaza'))return {all:[{event_id:'study',event_name:'学习'},{event_id:'exercise',event_name:'运动'}]}
     if(path.endsWith('/event/detail'))return {event_id:'study',event_name:'学习',records:[{event_record_id:'private-event-record',source_record_uid:'private-record',summary:'事件整理',occurred_at:1000,fields:{reflection:'新的思考'}}]}
@@ -291,4 +292,23 @@ it('manual Goal selection remains available when continuous analysis is disabled
  const settings=await f.service.settings('goals',undefined,{part:'models'})
  await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).resolves.toMatchObject({saved:true})
  expect(f.writes.at(-1)?.path).toBe('/api/v1/insight/goal/model/activate')
+})
+
+it('deduplicates canonical relation sources across different person parents, normalizes core fallback, and preserves provider boundaries',async()=>{
+ const f=fixture(),page=await f.service.page({module:'relations'})
+ const record={record_uid:'shared-record',content:'甲和乙提到了同一原文',created_at:1000}
+ f.state.relationRecords=[{...record,roles:['mentioned'],mentions:[{start_position:0,end_position:1,mention_text:'甲'}]}]
+ const first=await f.service.detail(page.items[0]!.ref,undefined,undefined,'records')
+ f.state.relationRecords=[{...record,source_identity:{provider:'core_record'},roles:['speaker'],mentions:[{start_position:2,end_position:3,mention_text:'乙'}]}]
+ const second=await f.service.detail(page.items[1]!.ref,undefined,undefined,'records')
+ expect(first.evidence[0]!.key).toBe(second.evidence[0]!.key)
+ expect(first.evidence[0]!.ref).toBeTruthy();expect(second.evidence[0]!.ref).toBeTruthy()
+ const merged=mergeExploreEvidence(first.evidence,second.evidence)
+ expect(merged).toHaveLength(1);expect(merged[0]!.mentions?.map(m=>m.text)).toEqual(['甲','乙'])
+ expect(merged[0]!.roles).toEqual(['mentioned','speaker'])
+ f.state.relationRecords=[{...record,source_identity:{provider:'external_archive'}}]
+ const foreign=await f.service.detail(page.items[1]!.ref,undefined,undefined,'records')
+ expect(foreign.evidence[0]!.key).not.toBe(first.evidence[0]!.key)
+ expect(foreign.evidence[0]!.ref).toBeUndefined()
+ expect(mergeExploreEvidence(merged,foreign.evidence)).toHaveLength(2)
 })

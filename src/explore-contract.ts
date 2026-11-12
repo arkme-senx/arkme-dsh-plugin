@@ -46,6 +46,10 @@ export interface ExplorePage {
   needsEnrichment?: boolean
 }
 export interface ExploreEvidence {
+  personSourceRef?: string
+  uploadedAt?: number
+  recognizedAt?: number
+  roles?: Array<'author' | 'speaker' | 'mentioned' | 'participant'>
   key: string
   label: string
   speaker: string
@@ -81,6 +85,7 @@ export interface ExploreQuery {
 }
 export interface ExploreMutation { ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
 export type ExploreSource =
+  | { kind: 'call-ref'; callRef: string; participantUserId: number }
   | { kind: 'record'; item: ArkmeTimelineItem }
   | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number }
   | { kind: 'recording'; dateStamp: number; focusItemId: string; items: ArkmeRecordingWorkbenchItem[]; playbackTargets?: Array<{itemId:string;item:ArkmeRecordingWorkbenchItem}>; segment?: ArkmeRecordingSearchIdentity }

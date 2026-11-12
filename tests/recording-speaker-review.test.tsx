@@ -20,6 +20,7 @@ describe('speaker evidence review', () => {
     mocks.call.mockReset().mockImplementation(async (op, input) => {
       if (op === 'recordings.speaker.evidence') return { supported: false }
       if (op === 'recordings.speaker.correction.context') return { supported: true, version: 'v1', maxItems: 100, soundSource: 'unknown', excludedSpeakers: [] }
+      if (op === 'recordings.speaker.correction.preview') return { affectedCount: input.itemRefs.length, intentToken: 'signed', expiresAt: Date.now() + 60000 }
       if (op === 'recordings.speaker.correction.apply') return { version: 'v2', affectedCount: input.itemRefs.length }
       return []
     })
@@ -65,6 +66,13 @@ describe('speaker evidence review', () => {
     expect(mocks.call).not.toHaveBeenCalled()
   })
 
+  it('compares explicit cross-date rows without requesting daily consistency', async () => {
+    await act(async () => { renderer = create(<ArkmeRecordingSpeakerReview item={item(0)} items={[item(0), {...item(1),startAtMillis:item(1).startAtMillis+86400000}]} explicitScope options={[]} onClose={onClose} onUpdated={onUpdated}/>); await tick() })
+    expect(mocks.consistency).not.toHaveBeenCalled()
+    await click('作为参照甲',0); await click('对比本页声纹')
+    expect(mocks.call.mock.calls.find(([op])=>op==='recordings.speaker.evidence')![1]).toMatchObject({crossDateSelection:true})
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('当天完整分组')
+  })
   it('requires explicit references, alternates real playback, and does not fabricate distances when unsupported', async () => {
     await mount()
     expect(buttons('对比本页声纹')[0]!.props.disabled).toBe(true)
@@ -79,18 +87,22 @@ describe('speaker evidence review', () => {
   it('preserves selection across pages and submits only those intervals, including ones far from the original opener', async () => {
     await mount(55)
     await choose(1); await click('下一页'); await choose(1)
-    await click('预览处理结果'); await click('确认范围，继续纠错'); await click('保存纠错')
+    await click('预览处理结果'); await click('确认范围，继续纠错'); await click('预览纠错'); expect(writes()).toHaveLength(0); await click('确认保存')
     expect(writes()).toHaveLength(1)
     expect(writes()[0]![1]).toMatchObject({ itemRef: 'ref-1', itemRefs: ['ref-1', 'ref-51'], detach: true })
     expect(writes()[0]![1]).not.toHaveProperty('rejectCurrent')
   })
-  it('protects trusted A references and keeps identity assignment preview-only', async () => {
+  it('protects trusted A references and previews a new identity before saving', async () => {
     await mount(); await choose(0); await click('作为参照甲', 0)
     expect(buttons('预览处理结果')[0]!.props.disabled).toBe(true)
     await choose(1); await click('预览处理结果')
     await act(async () => { renderer.root.findAllByType('input').filter(node => node.props.type === 'radio')[2]!.props.onChange(); await tick() })
-    expect(buttons('等待后端支持保存')[0]!.props.disabled).toBe(true)
+    expect(buttons('确认范围，继续纠错')[0]!.props.disabled).toBe(true)
+    await act(async () => renderer.root.findByProps({ 'aria-label': '新说话人名称' }).props.onChange({ target: { value: '测试人物' } }))
+    await click('确认范围，继续纠错'); await click('预览纠错')
     expect(writes()).toHaveLength(0)
+    await click('确认保存')
+    expect(writes()[0]![1]).toMatchObject({ target: { kind: 'new', name: '测试人物' }, detach: false, intentToken: 'signed' })
   })
   it('does not display scores from a request whose references have changed', async () => {
     let resolve!: (value: unknown) => void

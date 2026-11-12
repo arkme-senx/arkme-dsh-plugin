@@ -35,7 +35,7 @@ function fixture() {
     throw new Error(`unexpected request ${path}`)
   })
   const runtime = { subscribeAccountScope: () => () => {}, config: { environment: 'test', maxTextLength: 20000 }, requireSession: async () => ({ ...session }), authenticatedAudioPost: post, stateStore: { uniqueCode: async () => 'test-key' } } as unknown as ServiceRuntime
-  const media = { issueRecordingPlaybackMediaRef: vi.fn(async () => 'opaque-playback') }
+  const media = { issueRecordingPlaybackMediaRef: vi.fn(async () => 'opaque-playback'), verifyRecordingPlayback: vi.fn(async () => {}) }
   const service = new RecordingService(runtime, { media } as unknown as RecordingServiceDependencies)
   const read = async () => {
     const anchor = (await service.recordingDay(date)).transcript.items[0]!
@@ -48,6 +48,12 @@ function fixture() {
 }
 
 describe('refactored evidence coordinates', () => {
+  it('blocks range preview when physical audio is missing without issuing a write', async () => {
+    const f = fixture(), { anchor, member } = await f.read()
+    f.media.verifyRecordingPlayback.mockRejectedValueOnce(new ArkmePluginError('recording-material-unavailable', '原音不可用', true, 404))
+    await expect(f.service.previewRecordingSpeakerCorrection({ itemRef: anchor.itemRef, itemRefs: [member.itemRef], expectedVersion: 'before', idempotencyKey: 'missing-media-00001', detach: true, selections: [{ itemRef: member.itemRef, startOffsetMillis: 1000, endOffsetMillis: 3000 }] })).rejects.toMatchObject({ code: 'recording-material-unavailable' })
+    expect(f.post.mock.calls.some(([path]) => /\/(preview|apply)$/.test(path))).toBe(false)
+  })
   it('pages without transcript hydration and round-trips the actual member coordinates through comparison, preview, apply, result, undo and playback', async () => {
     const f = fixture(), { anchor, page, member } = await f.read()
     expect(f.post).toHaveBeenCalledTimes(1)

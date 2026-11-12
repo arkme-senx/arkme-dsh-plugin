@@ -375,7 +375,9 @@ export function projectRecordingVersions(
     if (kind === 'timeline' && rawStatus === 2 && !snapshotValid) status = 'failed'
     const timelineEvents = kind === 'timeline' && status === 'done' ? parseRecordingTimeline(content) : []
     const selectable = status === 'done' && content !== '' && (kind === 'summary' || timelineEvents.length > 0)
+    const sourceState = objectValue(version.source_state).state
     versions.push({
+      sourceState: sourceState === 'current' || sourceState === 'stale' ? sourceState : 'unknown',
       id: stringValue(version.id ?? version.summary_id).trim() || `version-${sourceIndex}`,
       status,
       selectable,

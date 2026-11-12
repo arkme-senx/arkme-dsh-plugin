@@ -15,7 +15,8 @@ export interface SimilarSpeaker {
 }
 export type SpeakerSimilarityResult = { supported: false } | {
   supported: true
-  state: 'ready' | 'building' | 'insufficient'
+  state: 'ready' | 'building' | 'partial' | 'failed' | 'complete' | 'insufficient'
+  progress?: {stage: 'index'|'search';coveredCount:number;totalCount:number}
   version: string
   modelVersion: string
   scoreDefinition: string
@@ -61,19 +62,21 @@ export function speakerGroupConsistencyLabel(group?: SpeakerGroupConsistency): s
 export function parseSpeakerSimilarity(value: unknown, person: (raw: unknown) => SpeakerDirectoryPerson): SpeakerSimilarityResult {
   const raw = object(value)
   if (raw.supported === false) return { supported: false }
-  if (raw.supported !== true || raw.schema_version !== 1 || raw.metric !== 'cosine_distance'
-    || !['ready', 'building', 'insufficient'].includes(String(raw.state)) || !Array.isArray(raw.items) || raw.items.length > 20
+  if (raw.supported !== true || (raw.schema_version !== 1 && raw.schema_version !== 2) || raw.metric !== 'cosine_distance'
+    || !['ready', 'building', 'partial', 'failed', 'complete', 'insufficient'].includes(String(raw.state)) || !Array.isArray(raw.items) || raw.items.length > 20
     || typeof raw.has_more !== 'boolean' || typeof raw.next_cursor !== 'string' || raw.next_cursor.length > 4096 || raw.has_more && !raw.next_cursor) return invalid()
   const anchor = person(raw.anchor), searchedCount = count(raw.searched_count), totalCount = count(raw.total_count)
-  if (searchedCount > totalCount || raw.state !== 'ready' && (raw.items.length || raw.has_more)) return invalid()
+  if (searchedCount > totalCount || !['ready','complete'].includes(String(raw.state)) && (raw.items.length || raw.has_more)) return invalid()
   const seen = new Set([anchor.personKey])
   const items = raw.items.map(value => {
     const item = object(value), candidate = person(item.person)
-    if (seen.has(candidate.personKey) || candidate.type !== 'unmarked'
+    if (seen.has(candidate.personKey) || (raw.schema_version === 1 && candidate.type !== 'unmarked')
       || item.distance !== null && (typeof item.distance !== 'number' || !Number.isFinite(item.distance) || item.distance < 0 || item.distance > 2)) return invalid()
     seen.add(candidate.personKey)
     return { person: candidate, distance: item.distance as number | null, consistency: parseGroupConsistency(item.consistency), reason: typeof item.reason === 'string' ? item.reason.slice(0, 300) : '' }
   })
-  return { supported: true, state: raw.state as 'ready' | 'building' | 'insufficient', version: text(raw.version), modelVersion: text(raw.model_version),
+  let progress: {stage:'index'|'search';coveredCount:number;totalCount:number}|undefined
+  if(raw.progress!==undefined){const p=object(raw.progress);if(!['index','search'].includes(String(p.stage)))return invalid();const covered=count(p.covered_count),total=count(p.total_count);if(covered>total)return invalid();progress={stage:p.stage as 'index'|'search',coveredCount:covered,totalCount:total}}
+  return { supported: true, ...(progress?{progress}:{}), state: raw.state as 'ready' | 'building' | 'partial' | 'failed' | 'complete' | 'insufficient', version: text(raw.version), modelVersion: text(raw.model_version),
     scoreDefinition: text(raw.score_definition), aggregation: text(raw.aggregation), anchor, anchorConsistency: parseGroupConsistency(raw.anchor_consistency), searchedCount, totalCount, items, hasMore: raw.has_more, nextCursor: raw.next_cursor }
 }

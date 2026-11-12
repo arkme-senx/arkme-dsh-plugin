@@ -2,19 +2,28 @@ import { describe, expect, it, vi } from 'vitest'
 import { PeopleService } from '../src/services/people-service.js'
 import { combinePeople, personMatches, type PersonFacet } from '../src/people-contract.js'
 import type { ServiceRuntime } from '../src/services/service.js'
+import { DatabaseSync } from 'node:sqlite'
+import { LocalPersonImpactStore } from '../src/local-person-impact.js'
 
-function fixture() {
+function fixture(calls?: ConstructorParameters<typeof PeopleService>[5]) {
   let userId = 11
   const session = () => ({ userId, refreshToken: 'test' })
-  const contacts = { listRecordingSpeakerUsers: vi.fn(async () => [{ userId: 27, label: '我的备注', remark: '我的备注', avatarRef: 'avatar' }]) }
-  const explore = { personPage: vi.fn(async () => ({ items: [{ entityId: 'entity-a', linkedUserId: 27, aliases: ['宏顺'], item: { key: 'entity-a-key', ref: 'entity-ref', title: '何宏顺', category: '人物', date: 1, summary: '', status: '' } },
-    { entityId: 'entity-b', linkedUserId: 0, aliases: [], item: { key: 'entity-b-key', ref: 'entity-b-ref', title: '我的备注', category: '人物', date: 0, summary: '', status: '' } }] })) }
-  const audio = vi.fn(async () => ({ spk_ls: [{ id: 'speaker-a', ref_usr_id: 27, nick_name: '以前的昵称' }, { id: 'speaker-b', ref_usr_id: 0, user_id: 11, nick_name: '我的备注' }] }))
-  const runtime = { config: { environment: 'prod' }, stateStore: { uniqueCode: async () => 'test-people-key' }, requireSession: async () => session(), authenticatedAudioPost: audio } as unknown as ServiceRuntime
+  const contacts = { listRecordingSpeakerUsers: vi.fn(async () => [{ userId: 27, label: '我的备注', remark: '我的备注', avatarRef: 'avatar' }]),
+    enrichPeoplePage: vi.fn(async (rows: Array<{ userId: number; label: string; remark?: string }>) => rows.map(r => ({ ...r, aliases: [], avatarRef: 'avatar' }))) }
+  const explore = { personEvidenceKey:vi.fn(async(provider:string,uid:string)=>provider+':'+uid), personDirectoryItem: vi.fn(async (row: Record<string, unknown>) => ({ key: String(row.entity_id), ref: 'entity-ref', title: String(row.name), category: '人物', date: 1, summary: '', status: '' })) }
+  const entities = ['111111111111111111111111', '222222222222222222222222']
+  const speakers = ['333333333333333333333333', '444444444444444444444444']
+  const unlinked = (namespace: string, id: string) => ({ identity: { namespace, id }, state: 'unlinked', person_id: '000000000000000000000000' })
+  const row = (namespace: string, id: string, name: string, user: number, extra = {}) => ({ identity: { namespace, id }, link: unlinked(namespace, id), display_name: name, ref_user_id: user, aliases: [], ...extra })
+  const audio = vi.fn(async (_path: string, body: Record<string, unknown>) => ({ source: body.source, items: body.source === 'relations'
+    ? [row('relation_entity', entities[0]!, '何宏顺', 27, { aliases: ['宏顺'], relation: { entity_id: entities[0], name: '何宏顺' } }), row('relation_entity', entities[1]!, '我的备注', 0, { relation: { entity_id: entities[1], name: '我的备注' } })]
+    : body.source === 'contacts' ? [row('arkme_user', '27', '我的备注', 27, { remark: '我的备注', chat_session_uid:'existing-chat' })]
+    : [row('audio_speaker', speakers[0]!, '以前的昵称', 27), row('audio_speaker', speakers[1]!, '我的备注', 0)] }))
+  const runtime = { config: { environment: 'prod' }, stateStore: { uniqueCode: async () => 'test-people-key' }, requireSession: async () => session(), authenticatedRelationPost: audio } as unknown as ServiceRuntime
   const recording = { directorySpeakerRef: vi.fn(async () => 'speaker-ref'), directoryUserSpeakerRef: vi.fn(async () => 'user-ref') }
-  const chat = { openPrivateChatFromUser: vi.fn(async () => ({ source: { sourceRef: 'chat' } })) }
-  const service = new PeopleService(runtime, explore, recording, contacts, chat as never)
-  return { service, contacts, explore, audio, chat, switchAccount: () => { userId = 22 } }
+  const chat = { personRecordsForIdentity:vi.fn(async()=>({supported:true,items:[{eventRef:'event-ref',itemUid:'core-record',textContent:'本人消息',senderName:'联系人',sendAtMillis:1000,personSource:{sourceRef:'original-chat'}}],hasMore:false})), openPrivateChatFromUser: vi.fn(async () => ({ source: { sourceRef: 'chat' } })) }
+  const service = new PeopleService(runtime, explore, recording, contacts, chat as never, calls)
+  return { service, contacts, explore, audio, chat, runtime, switchAccount: () => { userId = 22 } }
 }
 
 describe('unified people identity projection', () => {
@@ -42,7 +51,7 @@ describe('unified people identity projection', () => {
     await expect(f.service.openChat(ref + 'tamper')).rejects.toThrow()
     await f.service.openChat(ref)
     expect(f.chat.openPrivateChatFromUser).toHaveBeenCalledWith(27, { presentationDisplayName: '我的备注' })
-    f.contacts.listRecordingSpeakerUsers.mockResolvedValueOnce([])
+    f.audio.mockRejectedValueOnce(new Error('source no longer authorized'))
     await expect(f.service.openChat(ref)).rejects.toThrow()
     f.switchAccount()
     await expect(f.service.openChat(ref)).rejects.toThrow()
@@ -50,8 +59,124 @@ describe('unified people identity projection', () => {
   })
   it('rejects a response after account switch and rejects unknown source kinds', async () => {
     const f = fixture()
-    f.audio.mockImplementationOnce(async () => { f.switchAccount(); return { spk_ls: [] } })
+    f.audio.mockImplementationOnce(async () => { f.switchAccount(); return { source: 'speakers', items: [] } })
     await expect(f.service.list('speakers')).rejects.toThrow()
     await expect(f.service.list('all')).rejects.toThrow()
   })
+})
+
+it('preserves verified account facets under an explicit root while respecting exclusions and ambiguous roots', () => {
+  const base: PersonFacet = { key: 'entity', personKey: 'root', legacyPersonKey: 'user', source: 'relations', name: 'A', aliases: [], accountLinked: true, isSelf: false }
+  const contact = { ...base, key: 'contact', source: 'contacts' as const, personKey: 'user' }
+  const excluded = { ...contact, key: 'excluded', source: 'speakers' as const, personKey: 'excluded' }
+  expect(combinePeople([base, contact, excluded]).map(p => p.facets.length).sort()).toEqual([1, 2])
+  expect(combinePeople([base, contact, { ...base, key: 'other', personKey: 'other-root' }])).toHaveLength(3)
+})
+
+it('passes query to owner, pages without a whole-directory fallback and binds cursors to the query', async () => {
+  const f = fixture()
+  f.audio.mockResolvedValueOnce({ source: 'speakers', items: [], next_cursor: 'owner-page-2' } as never)
+  const first = await f.service.list('speakers', undefined, undefined, '远处的人')
+  expect(f.audio).toHaveBeenLastCalledWith('/api/v1/entity/identities/directory', {source:'speakers',query:'远处的人',limit:50}, expect.anything(), undefined, expect.anything())
+  await expect(f.service.list('speakers', undefined, first.nextCursor, '其他')).rejects.toThrow()
+  f.audio.mockResolvedValueOnce({ source: 'speakers', items: [] })
+  await f.service.list('speakers', undefined, first.nextCursor, '远处的人')
+  expect(f.audio.mock.calls.at(-1)?.[1]).toMatchObject({ cursor: 'owner-page-2', query: '远处的人' })
+  expect(f.contacts.listRecordingSpeakerUsers).not.toHaveBeenCalled()
+})
+
+it('retains remark as the displayed relation name and keeps the entity name as an alias', async()=>{
+ const f=fixture()
+ f.audio.mockResolvedValueOnce({source:'relations',items:[{identity:{namespace:'relation_entity',id:'111111111111111111111111'},link:{identity:{namespace:'relation_entity',id:'111111111111111111111111'},state:'unlinked',person_id:'000000000000000000000000'},display_name:'旧实体名',remark:'当前备注',aliases:[],ref_user_id:27,relation:{entity_id:'111111111111111111111111',name:'旧实体名'}}]} as never)
+ const page=await f.service.list('relations',undefined,undefined,'当前备注')
+ expect(page.items[0]).toMatchObject({name:'当前备注',hasRemark:true,aliases:['旧实体名']})
+})
+
+it('reads contact authors through an existing conversation, never opens or creates a chat',async()=>{
+ const f=fixture(),person=(await f.service.list('contacts')).items[0]!
+ const page=await f.service.identityAction('records',{recordsRef:person.recordsRef}) as {evidence:Array<{roles:string[];text:string}>}
+ expect(page.evidence[0]).toMatchObject({text:'本人消息',roles:['author']})
+ expect(f.chat.personRecordsForIdentity).toHaveBeenCalledWith('existing-chat',27,undefined,undefined)
+ expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+ f.switchAccount();await expect(f.service.identityAction('records',{recordsRef:person.recordsRef})).rejects.toThrow()
+})
+it('does not convert a failed contact source into an empty person timeline',async()=>{
+ const f=fixture(),person=(await f.service.list('contacts')).items[0]!
+ f.chat.personRecordsForIdentity.mockRejectedValueOnce(new Error('source offline'))
+ await expect(f.service.identityAction('records',{recordsRef:person.recordsRef})).rejects.toThrow('source offline')
+})
+
+it.each([false,true])('keeps source impact pending until every chat page is read and rejects an outage (SQLite=%s)',async(useLedger)=>{
+ const f=fixture(),person=(await f.service.list('relations')).items[0]!,original=f.audio.getMockImplementation()!
+ const db=useLedger?new DatabaseSync(':memory:'):undefined
+ if(db)Object.assign(f.runtime.stateStore,{personImpact:new LocalPersonImpactStore(db,work=>{db.exec('BEGIN');try{work();db.exec('COMMIT')}catch(error){db.exec('ROLLBACK');throw error}})})
+ try {
+ f.audio.mockImplementation(async(path,body)=>{
+  if(path.endsWith('/preview'))return {preview_token:'signed',changes:[],expires_at:Date.now()+60000} as never
+  if(path.endsWith('/impact'))return {state:'complete',identity_count:1,relation_record_count:2,unavailable_record_count:0,names:[],display_change:{before:['甲'],after:['乙']},record_sources:[{namespace:'arkme_user',id:'27'}]} as never
+  if(path.endsWith('/record-source'))return {identity:{namespace:'arkme_user',id:'27'},chat_session_uid:'existing-chat',user_id:27} as never
+  return original(path,body)
+ })
+ const preview=await f.service.identityAction('preview',{kind:'unlink',personRef:person.personRef,identityRef:person.identityRef,idempotencyKey:'impact-source-test-key'}) as {commandRef:string}
+ const response={supported:true,items:[{eventRef:'event',itemUid:'core-record',textContent:'内容',senderName:'甲',sendAtMillis:1000,personSource:{sourceRef:'chat'}}],hasMore:true,nextCursor:'source-next'}
+ f.chat.personRecordsForIdentity.mockResolvedValueOnce(response)
+ const first=await f.service.identityAction('impact',{commandRef:preview.commandRef}) as {state:string;nextCursor:string;chatCount:number}
+ expect(first).toMatchObject({state:'pending',chatCount:1,recordingCount:0,relationRecordCount:2})
+ expect(first).not.toHaveProperty('recordSources')
+ f.chat.personRecordsForIdentity.mockRejectedValueOnce(new Error('chat offline'))
+ await expect(f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})).rejects.toThrow('chat offline')
+ const done=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
+ expect(done).toMatchObject({state:'complete',chatCount:1,recordingCount:0})
+ expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+ if(useLedger){
+  expect(first.nextCursor.length).toBeLessThan(3000)
+  const replay=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
+  expect(replay).toMatchObject({state:'complete',chatCount:1,recordingCount:0})
+  expect(db!.prepare('SELECT count(*) AS n FROM person_impact_keys').get()).toMatchObject({n:1})
+ }
+ } finally {db?.close()}
+})
+
+it('deduplicates the same recording under two audio identities in impact',async()=>{
+ const f=fixture(),person=(await f.service.list('relations')).items[0]!,original=f.audio.getMockImplementation()!
+ f.audio.mockImplementation(async(path,body)=>{
+  if(path.endsWith('/preview'))return {preview_token:'signed',changes:[],expires_at:Date.now()+60000} as never
+  if(path.endsWith('/impact'))return {state:'complete',identity_count:2,relation_record_count:0,unavailable_record_count:0,names:[],display_change:{before:['甲'],after:['乙']},record_sources:['333333333333333333333333','444444444444444444444444'].map(id=>({namespace:'audio_speaker',id}))} as never
+  if(path.endsWith('/record-source'))return {identity:body.identity} as never
+  return original(path,body)
+ })
+ const read=vi.spyOn(f.service as unknown as {records():Promise<unknown>},'records').mockResolvedValue({evidence:[{key:'same-recording-utterance'}]})
+ const preview=await f.service.identityAction('preview',{kind:'unlink',personRef:person.personRef,identityRef:person.identityRef,idempotencyKey:'impact-audio-test-key'}) as {commandRef:string}
+ const first=await f.service.identityAction('impact',{commandRef:preview.commandRef}) as {nextCursor:string}
+ const done=await f.service.identityAction('impact',{commandRef:preview.commandRef,cursor:first.nextCursor})
+ expect(done).toMatchObject({state:'complete',recordingCount:1,chatCount:0});expect(read).toHaveBeenCalledTimes(2)
+})
+
+
+describe('person call participation',()=>{
+ it('paginates beyond empty matches, keeps author roles separate and rechecks the selected call',async()=>{
+  const calls={listCallHistory:vi.fn(),callDetail:vi.fn()}
+  const f=fixture(calls),person=(await f.service.list('contacts')).items[0]!
+  const read=(cursor?:string)=>f.service.identityAction('records',{recordsRef:person.recordsRef,...(cursor?{cursor}:{})}) as Promise<any>
+  const first=await read();expect(first.evidence[0].roles).toEqual(['author']);expect(first.nextCursor).toBeTruthy()
+  calls.listCallHistory.mockResolvedValueOnce({items:[{stableId:'invited',connectedUserIds:[11],peerUserId:27}],hasMore:true,nextCursor:'older'})
+  const empty=await read(first.nextCursor);expect(empty.evidence).toEqual([]);expect(empty.nextCursor).toBeTruthy()
+  const page={items:[{stableId:'connected',callRef:'authorized-call',connectedUserIds:[11,27],startedAtMillis:100}],hasMore:false}
+  calls.listCallHistory.mockResolvedValue(page)
+  const final=await read(empty.nextCursor);expect(final.evidence).toHaveLength(1);expect(final.evidence[0].roles).toEqual(['participant']);expect(final.nextCursor).toBeUndefined()
+  expect(calls.listCallHistory).toHaveBeenLastCalledWith({limit:20,includeRecentContacts:false,cursor:'older'},undefined)
+  calls.callDetail.mockResolvedValue({connectedUserIds:[11,27]})
+  await expect(f.service.identityAction('records-source',{ref:final.evidence[0].personSourceRef})).resolves.toMatchObject({kind:'call-ref',callRef:'authorized-call'})
+  calls.callDetail.mockResolvedValue({connectedUserIds:[11]})
+  await expect(f.service.identityAction('records-source',{ref:final.evidence[0].personSourceRef})).rejects.toThrow()
+  f.switchAccount();await expect(read(empty.nextCursor)).rejects.toThrow()
+ })
+ it('does not expose call raw sources or create chats for a contact without a conversation',async()=>{
+  const calls={listCallHistory:vi.fn(),callDetail:vi.fn()},f=fixture(calls)
+  const original=f.audio.getMockImplementation()!
+  f.audio.mockImplementation(async(path,body)=>{const p=await original(path,body);if(body.source==='contacts')for(const item of p.items)delete (item as any).chat_session_uid;return p})
+  const person=(await f.service.list('contacts')).items[0]!
+  const page=await f.service.identityAction('records',{recordsRef:person.recordsRef}) as any
+  expect(page.evidence).toEqual([]);expect(page.nextCursor).toBeTruthy();expect(f.chat.personRecordsForIdentity).not.toHaveBeenCalled();expect(f.chat.openPrivateChatFromUser).not.toHaveBeenCalled()
+ })
 })

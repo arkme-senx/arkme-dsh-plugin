@@ -1,5 +1,8 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '录音或说话人信息已更正，此版本待更新。': 'The recording or speaker information has been corrected. This version needs updating.',
+  '原内容已保留，可使用下方“重新生成”。': 'The original content is preserved. Use “Regenerate” below to update it.',
+  '暂无法确认此版本的来源是否最新，原内容已保留': 'We cannot confirm whether this version’s sources are up to date. The original content is preserved.',
   '仅跟进中且已设置有效提醒时间的安排可开启提醒': 'Reminders require an active plan with a valid future reminder time',
   '保存未确认，输入已保留；请刷新核对或重试': 'Save not confirmed. Your input is kept; refresh to check or retry',
   '安排已在其他位置更新，输入已保留，请核对后重试': 'This plan was updated elsewhere. Your input is kept; review and retry',

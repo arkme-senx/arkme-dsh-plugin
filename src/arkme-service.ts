@@ -724,7 +724,8 @@ export class ArkmeService {
   async exploreMutate(input: ExploreMutation, signal?: AbortSignal) { return this.explore.mutate(input, signal) }
   async relationPage(query: Omit<ExploreQuery,'module'>, signal?: AbortSignal) { return this.explore.relationPage(query,signal) }
   async relationRecords(query: {ref:string;cursor?:string}, signal?: AbortSignal) { return this.explore.relationRecordsPage(query.ref,query.cursor,signal) }
-  async peopleList(source: unknown, signal?: AbortSignal, cursor?: unknown) { return this.people.list(source, signal, cursor) }
+  async peopleIdentities(action: unknown, params: Record<string, unknown>, signal?: AbortSignal) { return this.people.identityAction(action, params, signal) }
+  async peopleList(source: unknown, signal?: AbortSignal, cursor?: unknown, query?: unknown) { return this.people.list(source, signal, cursor, query) }
   async peopleOpenChat(ref: string, signal?: AbortSignal) { return this.people.openChat(ref, signal) }
   async exploreSource(ref: string, signal?: AbortSignal) { return this.explore.source(ref, signal) }
   async personalRecordDetail(recordUid: string, signal?: AbortSignal): Promise<ArkmeTimelineItem> { return await this.record.personalRecordDetail(recordUid, signal) }
@@ -1072,7 +1073,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     this.personalKeywords = new PersonalKeywordService(this.runtime)
     this.statistics = new StatisticsService(this.runtime, this.privacy)
     this.explore = new ExploreService(this.runtime, this.recording, this.record, this.source, this.privacy)
-    this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat)
+    this.people = new PeopleService(this.runtime, this.explore, this.recording, this.contactDirectory, this.chat, this.callHistory)
     this.conversationActivity = new ConversationActivityService(this.runtime, this.source)
     this.conversationWords = new ConversationWordFrequencyService(this.runtime, this.source)
     this.speechStatistics = new RecordingSpeechStatisticsService(this.runtime, this.recording)
@@ -1809,7 +1810,10 @@ recordingAnalysisV1: true,
   async recordingDayPart(dateStamp: number, part: import('./types.js').ArkmeRecordingDayPart, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow) { return await this.recording.recordingDayPart(dateStamp, part, signal, window) }
   async recordingPlayback(itemRef: string, signal?: AbortSignal): Promise<ArkmeRecordingPlayback> { return await this.recording.recordingPlayback(itemRef, signal) }
   async cachedRecordingSpeakerOptions(signal?: AbortSignal): Promise<ArkmeRecordingSpeakerCandidate[] | null> { return await this.recording.cachedRecordingSpeakerOptions(signal) }
+  async speakerGroupMembers(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.groupMembers(input, signal) }
+  async speakerGroupAction(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.groupAction(input, signal) }
   async speakerDirectorySimilar(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.similar(input, signal) }
+  async speakerDirectoryCorrectionItems(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.correctionItems(input, signal) }
   async speakerDirectoryVoiceSamples(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.voiceSamples(input, signal) }
   async speakerDirectorySummary(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.summary(input, signal) }
   async speakerDirectoryAvatars(input: Record<string, unknown>, signal?: AbortSignal) { return this.speakerDirectory.avatars(input, signal) }
@@ -1833,6 +1837,7 @@ recordingAnalysisV1: true,
   async recordingSpeakerConsistency(input: import('./types.js').ArkmeRecordingSpeakerConsistencyInput, signal?: AbortSignal) { return await this.recording.recordingSpeakerConsistency(input, signal) }
   async recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal) { return this.recording.recordingSpeakerCorrectionItems(query, signal) }
   async recordingSpeakerCorrectionResult(query: import('./types.js').ArkmeRecordingSpeakerCorrectionResultQuery, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionResult(query, signal) }
+  async recordingSpeakerLearning(learningRef: string, retryRef?: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerLearning(learningRef, retryRef, signal) }
   async recordingSpeakerCorrectionContext(itemRef: string, signal?: AbortSignal) { return await this.recording.recordingSpeakerCorrectionContext(itemRef, signal) }
   async previewRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal) { return await this.recording.previewRecordingSpeakerCorrection(input, signal) }
   async applyRecordingSpeakerCorrection(input: import('./types.js').ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal) { return await this.recording.applyRecordingSpeakerCorrection(input, signal) }

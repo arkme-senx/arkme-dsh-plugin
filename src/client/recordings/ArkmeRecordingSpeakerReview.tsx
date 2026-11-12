@@ -26,17 +26,18 @@ export function speakerEvidenceBucket(row?: EvidenceRow, margin = 0): Exclude<Fi
   return row.distanceA < row.distanceB ? 'a' : 'b'
 }
 
-export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, onPlay, onUpdated, onClose }: {
+export function ArkmeRecordingSpeakerReview({ item, items, loadItems, explicitScope = false, options, onPlay, onUpdated, onClose }: {
   item: ArkmeRecordingWorkbenchItem
   items: readonly ArkmeRecordingWorkbenchItem[]
+  explicitScope?: boolean
   loadItems?(signal: AbortSignal): Promise<readonly ArkmeRecordingWorkbenchItem[]>
   options: readonly ArkmeRecordingSpeakerOption[]
-  onPlay?(item: ArkmeRecordingWorkbenchItem): void
+  onPlay?(item: ArkmeRecordingWorkbenchItem, range?: { startOffsetMillis: number; endOffsetMillis: number }): void
   onUpdated(day: ArkmeRecordingDay): void
   onClose(): void
 }) {
   const [nearby, setNearby] = useState(false)
-  const [advanced, setAdvanced] = useState(false)
+  const [advanced, setAdvanced] = useState(explicitScope)
   const [deviationFirst, setDeviationFirst] = useState(true)
   const [page, setPage] = useState(0)
   const [a, setA] = useState<string[]>([])
@@ -70,17 +71,17 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
     return () => { controller.abort() }
   }, [loadItems, readRevision])
   const all = useMemo(() => [...new Map([item, ...(loadItems ? complete?.items ?? [] : items)].map(row => [row.itemId, row])).values()], [items, item, loadItems, complete])
-  const candidates = useMemo(() => speakerReviewItems(all, item, nearby), [all, item, nearby])
+  const candidates = useMemo(() => explicitScope ? all : speakerReviewItems(all, item, nearby), [all, item, nearby, explicitScope])
   const pages = Math.max(1, Math.ceil(candidates.length / 50))
   const pageIndex = Math.min(page, pages - 1)
   const pageItems = candidates.slice(pageIndex * 50, pageIndex * 50 + 50)
-  const consistency = useRecordingConsistency(loadItems && !complete?.items ? [] : [item.itemRef], loadItems && !complete?.items ? [] : pageItems.map(row => row.itemRef))
-  const group = consistency.groups[0]
+  const consistency = useRecordingConsistency(explicitScope || loadItems && !complete?.items ? [] : [item.itemRef], explicitScope || loadItems && !complete?.items ? [] : pageItems.map(row => row.itemRef))
+  const group = explicitScope ? undefined : consistency.groups[0]
   const deviations = new Map(group?.items.map(row => [row.itemRef, row]) ?? [])
   const referenceA = all.filter(row => a.includes(row.itemId))
   const referenceB = all.filter(row => b.includes(row.itemId))
   const chosen = all.filter(row => selected.has(row.itemId)).sort((left, right) => left.startAtMillis - right.startAtMillis)
-  const input = { itemRefs: pageItems.map(row => row.itemRef), referenceA: referenceA.map(row => row.itemRef), referenceB: referenceB.map(row => row.itemRef) }
+  const input = { ...(explicitScope ? { crossDateSelection: true } : {}), itemRefs: pageItems.map(row => row.itemRef), referenceA: referenceA.map(row => row.itemRef), referenceB: referenceB.map(row => row.itemRef) }
   const signature = JSON.stringify(input)
   const current = evidence.key === signature ? evidence : undefined
   const value = current?.value?.supported ? current.value : undefined
@@ -143,7 +144,9 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
   </div>
 
   const originalPerson = options.find(option => option.optionKey === item.assignedSpeakerOptionKey && option.kind === 'speaker')
-  if (saving && chosen[0]) return <ArkmeRecordingSpeakerCorrection item={chosen[0]} items={chosen} initialSelectedIds={chosen.map(row => row.itemId)}
+  if (saving && chosen[0]) return <ArkmeRecordingSpeakerCorrection crossDateSelection={explicitScope} item={chosen[0]} items={chosen} initialSelectedIds={chosen.map(row => row.itemId)}
+    assignment={targetMode === 'existing' ? { kind: 'existing', speakerRef: options.find(option => option.optionKey === targetKey)!.speakerRef } : targetMode === 'new' ? { kind: 'new', name: newName.trim() } : { kind: 'unknown' }}
+    assignmentLabel={targetMode === 'existing' ? options.find(option => option.optionKey === targetKey)?.label ?? tr('所选人物') : targetMode === 'new' ? newName.trim() : tr('拆出后待确认')}
     intent="review" rejectCurrent={!originalPerson && !!item.assignedSpeakerOptionKey && chosen[0].assignedSpeakerOptionKey === item.assignedSpeakerOptionKey}
     {...(originalPerson ? { target: { ...originalPerson, label: item.speakerLabel } } : {})} {...(onPlay ? { onPlay } : {})} onUpdated={onUpdated} onClose={onClose} onBack={() => setSaving(false)} />
 
@@ -156,22 +159,23 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><strong style={{ flex: 1, fontSize: 15 }}>{tr('声音一致性')} <span style={{ fontWeight: 400, color: color.secondary }}>· {item.speakerLabel}</span></strong>
       <button type="button" style={button} onClick={onClose}>{tr('关闭')}</button></div>
     {!preview ? <>
-      <div aria-label={tr('说话人整体一致性')} style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', border: `1px solid ${color.border}`, borderRadius: 8 }}>
+      {!explicitScope && <div aria-label={tr('说话人整体一致性')} style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap', border: `1px solid ${color.border}`, borderRadius: 8 }}>
         <div><div style={{ color: color.secondary }}>{tr('整体一致性')}</div><strong style={{ fontSize: 28, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{tr(recordingConsistencyLabel(group, consistency.error))}</strong>{group?.score != null && <span style={{ color: color.tertiary }}> / 100</span>}</div>
         <div style={{ flex: 1, minWidth: 180, color: color.secondary }}><div>{group ? tr('当天已分析 {v0} / {v1} 段', { v0: group.analyzedCount, v1: group.totalCount }) : tr('当天完整分组 · 分析覆盖情况待返回')}</div>
           <div>{group?.reviewCount != null ? tr('{v0} 段待复核', { v0: group.reviewCount }) : tr('待复核数量待计算')}{group?.suspectedVoices && group.suspectedVoices > 1 ? ` · ${tr('可能混入多种声音')}` : ''}</div>
           <div style={{ marginTop: 4, fontSize: 11 }}>{tr('越高表示组内声音越一致，不代表人物身份准确率。')}</div></div>
         <button type="button" style={button} disabled={consistency.loading} onClick={consistency.reload}>{consistency.loading ? tr('读取中…') : tr('重新读取一致性')}</button>
       </div>
+      }
       {consistency.error && <div role="alert" style={{ color: color.danger }}>{consistency.error}</div>}
       {consistency.supported === false && <div style={{ color: color.secondary }}>{tr('一致性与偏离数据待后端提供；可先试听和选择片段。')}</div>}
       {group && <details><summary style={{ color: color.secondary, cursor: 'pointer' }}>{tr('指标口径与覆盖范围')}</summary><div>{tr('模型：')}{group.modelVersion} · {tr('版本：')}{group.version}</div><div>{tr('一致性定义：')}{group.scoreDefinition}</div><div>{tr('片段偏离参照：')}{group.referenceMethod}</div></details>}
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={button} aria-pressed={!nearby} onClick={() => { setNearby(false); setPage(0) }}>{tr('当天同组')}</button>
-        <button type="button" style={button} aria-pressed={nearby} onClick={() => { setNearby(true); setPage(0) }}>{tr('附近片段')}</button>
+        <button type="button" style={button} disabled={explicitScope} aria-pressed={!nearby} onClick={() => { setNearby(false); setPage(0) }}>{tr(explicitScope ? '已选跨日期片段' : '当天同组')}</button>
+        <button type="button" style={button} disabled={explicitScope} aria-pressed={nearby} onClick={() => { setNearby(true); setPage(0) }}>{tr('附近片段')}</button>
         <span style={{ color: color.secondary }}>{nearby ? tr('前后 10 分钟，已加载 {v0} 段', { v0: candidates.length }) : group ? tr('已加载 {v0} 段 / 同组共 {v1} 处', { v0: candidates.length, v1: group.totalCount }) : tr('已加载 {v0} 段', { v0: candidates.length })}</span>
       </div>
-      <div style={{ color: color.secondary }}>{tr(loadItems ? '下方覆盖当天完整候选范围；整体一致性按后台完整分组统计。系统同组不代表同一个人。' : '下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>
+      <div style={{ color: color.secondary }}>{tr(explicitScope ? '仅对比当前明确加载的跨日期片段；完整组覆盖情况请返回分组审查查看。' : loadItems ? '下方覆盖当天完整候选范围；整体一致性按后台完整分组统计。系统同组不代表同一个人。' : '下方列出已加载片段；整体一致性按后台完整分组统计。系统同组不代表同一个人。')}</div>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={button} aria-pressed={deviationFirst} onClick={() => { setDeviationFirst(true); setAdvanced(false) }}>{tr('本页偏离较大优先')}</button>
         <button type="button" style={button} aria-pressed={!deviationFirst} onClick={() => { setDeviationFirst(false); setAdvanced(false) }}>{tr('按时间')}</button>
@@ -220,7 +224,7 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
               <button type="button" style={{ ...button, padding: '2px 6px' }} disabled={!onPlay} aria-label={tr('试听片段 {v0}', { v0: time(row.startAtMillis) })} onClick={() => onPlay?.(row)}>{tr('试听')}</button>
             </div><p style={{ margin: '6px 0', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{row.text}</p>
               {advanced ? <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>{(['a', 'b'] as const).map(side => <button key={side} type="button" style={{ ...button, padding: '2px 6px' }} aria-pressed={(side === 'a' ? a : b).includes(row.itemId)} disabled={(side === 'a' ? a : b).length >= 3 && !(side === 'a' ? a : b).includes(row.itemId)} onClick={() => setReference(side, row.itemId)}>{tr('作为参照{v0}', { v0: side === 'a' ? '甲' : '乙' })}</button>)}
-                <span style={{ color: color.tertiary }}>{isReference ? tr('参照不参与自我判断') : score ? score.reason || tr('有效语音 {v0} 秒', { v0: (score.effectiveSpeechMillis / 1000).toFixed(1) }) : tr('尚无声纹证据')}</span>
+                <span style={{ color: color.tertiary }}>{isReference ? tr('参照不参与自我判断') : score ? (score.reason ? tr(score.reason === 'reference_item' ? '参照不参与自我判断' : '该片段暂无可比较的声音证据') : '') || (score.effectiveSpeechMillis == null ? tr('有效语音时长未记录') : tr('有效语音 {v0} 秒', { v0: (score.effectiveSpeechMillis / 1000).toFixed(1) })) : tr('尚无声纹证据')}</span>
               </div> : deviations.get(row.itemRef)?.reason && <small style={{ color: color.tertiary }}>{deviations.get(row.itemRef)?.reason}</small>}
             </td>
             {(advanced ? [score?.distanceA, score?.distanceB, diff] : [deviations.get(row.itemRef)?.deviation]).map((number, index) => <td key={index} style={{ textAlign: 'center', verticalAlign: 'top', padding: '11px 7px', whiteSpace: 'nowrap', fontFamily: 'monospace', fontVariantNumeric: 'tabular-nums', color: color.secondary }}>{(advanced && isReference) || number == null ? '—' : number.toFixed(3)}</td>)}
@@ -244,11 +248,11 @@ export function ArkmeRecordingSpeakerReview({ item, items, loadItems, options, o
         </fieldset>
         {targetMode === 'existing' && <select aria-label={tr('目标人物')} value={targetKey} onChange={event => setTargetKey(event.target.value)} style={{ ...button, maxWidth: '100%' }}><option value="">{tr('选择已有的人物')}</option>{options.map(option => <option key={option.optionKey} value={option.optionKey}>{option.label}</option>)}</select>}
         {targetMode === 'new' && <input aria-label={tr('新说话人名称')} value={newName} maxLength={50} onChange={event => setNewName(event.target.value)} placeholder={tr('输入名称')} style={button} />}
-        <p style={{ color: color.secondary }}>{targetMode === 'unknown' ? tr('下一步确认声音来源和排除人物。选中多段不代表它们属于同一个人。') : tr('此方式暂为处理预览，需要后端支持原子拆分与归属保存；尚未修改任何人物。')}</p>
+        <p style={{ color: color.secondary }}>{targetMode === 'unknown' ? tr('下一步确认声音来源和排除人物。选中多段不代表它们属于同一个人。') : tr('下一步核实所选范围并预览归属，确认后原子保存；可撤销。')}</p>
         {targetMode !== 'unknown' && <p>{tr('预览目标：')}{targetMode === 'new' ? newName.trim() || tr('尚未填写') : options.find(option => option.optionKey === targetKey)?.label || tr('尚未选择')}</p>}
       </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', borderTop: `1px solid ${color.border}`, paddingTop: 10 }}><button type="button" style={button} onClick={() => setPreview(false)}>{tr('返回核对')}</button>
-        <button type="button" style={button} disabled={targetMode !== 'unknown' || chosen.length === 0} onClick={() => setSaving(true)}>{targetMode === 'unknown' ? tr('确认范围，继续纠错') : tr('等待后端支持保存')}</button></div>
+        <button type="button" style={button} disabled={chosen.length === 0 || (targetMode === 'existing' && !options.some(option => option.optionKey === targetKey)) || (targetMode === 'new' && !newName.trim())} onClick={() => setSaving(true)}>{tr('确认范围，继续纠错')}</button></div>
     </>}
   </section>
 }

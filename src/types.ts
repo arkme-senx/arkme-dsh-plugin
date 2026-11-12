@@ -1467,6 +1467,8 @@ export interface ArkmeCallHistoryOptions {
 }
 
 export interface ArkmeCallHistoryItem {
+  /** Explicit connected members only; invitations and summary mentions are not participation. */
+  connectedUserIds?: number[]
   callRef: string
   stableId: string
   peerDisplayName: string
@@ -1550,6 +1552,7 @@ export interface ArkmeCallShareViewer { viewId: string; userId: number; displayN
 export interface ArkmeCallShareViewers { items: ArkmeCallShareViewer[]; nextCursor: string }
 
 export interface ArkmeCallDetail {
+  connectedUserIds?: number[]
   /** Source match over the full transcript, before the bounded detail projection. */
   sourceQuoteState?: 'exact' | 'unlocated' | 'ambiguous'
   /** Stable occurrence identity; callRef is renewable and must not be used for equality. */
@@ -3539,6 +3542,7 @@ export interface ArkmeRecordingSpeakerRecommendation {
 
 /** Read-only, interval-bound evidence. Distances are never recognition probabilities. */
 export interface ArkmeRecordingSpeakerEvidenceInput {
+  crossDateSelection?: boolean
   itemRefs: string[]
   referenceA: string[]
   referenceB: string[]
@@ -3581,7 +3585,7 @@ export type ArkmeRecordingSpeakerEvidence = { supported: false } | {
     status: 'ready' | 'insufficient'
     distanceA: number | null
     distanceB: number | null
-    effectiveSpeechMillis: number
+    effectiveSpeechMillis: number | null
     reason?: string
   }>
 }
@@ -3601,6 +3605,14 @@ export interface ArkmeRecordingSpeakerMutationResult {
 
 export type ArkmeRecordingSoundSource = 'unknown' | 'in_person' | 'playback'
 
+export interface ArkmeRecordingCorrectionRange {
+  startOffsetMillis: number
+  endOffsetMillis: number
+  label: string
+  human: boolean
+  soundSource: ArkmeRecordingSoundSource
+}
+
 export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   supported: true
   version: string
@@ -3609,6 +3621,9 @@ export type ArkmeRecordingSpeakerCorrectionContext = { supported: false } | {
   /** optionKey is empty for an excluded person no longer present in the directory. */
   excludedSpeakers: Array<{ optionKey: string; label: string }>
   undoRef?: string
+  learningRef?: string
+  ranges?: ArkmeRecordingCorrectionRange[]
+  undoRanges?: Array<{ occurredAt: number; startOffsetMillis: number; endOffsetMillis: number; before: ArkmeRecordingCorrectionRange[]; after: ArkmeRecordingCorrectionRange[] }>
 }
 
 export interface ArkmeRecordingSpeakerCorrectionPreview {
@@ -3620,15 +3635,19 @@ export interface ArkmeRecordingSpeakerCorrectionPreview {
 }
 
 export interface ArkmeRecordingSpeakerCorrectionInput {
+  /** Explicit selections only, capped at 100; never whole-account expansion. */
+  crossDateSelection?: boolean
   intentToken?: string
   /** Offsets within the explicitly selected parent rows; Host resolves storage coordinates. */
   selections?: import('./recording-evidence-contract.js').RecordingEvidenceSelection[]
-  target?: { kind: 'unknown' } | { kind: 'existing'; speakerRef: string } | { kind: 'new'; name: string }
+  target?: { kind: 'unknown' | 'anonymous' } | { kind: 'existing'; speakerRef: string } | { kind: 'new'; name: string }
   itemRef: string
   itemRefs: string[]
   expectedVersion: string
   idempotencyKey: string
   rejectedSpeakerRef?: string
+  rejectedCandidateItemRef?: string
+  preserveAssignment?: boolean
   rejectCurrent?: boolean
   soundSource?: ArkmeRecordingSoundSource
   /** Clear the assignment; must be false when assigning an existing or new target. */
@@ -3647,6 +3666,7 @@ export interface ArkmeRecordingSpeakerCorrectionResult {
   affectedCount: number
   version: string
   undoRef?: string
+  learningRef?: string
   day?: ArkmeRecordingDay
   /** Fresh transcript from the corrected source; day remains the system day. */
   transcript?: ArkmeRecordingDay['transcript']
@@ -3701,6 +3721,7 @@ export type ArkmeRecordingVersionStatus = 'processing' | 'done' | 'failed'
 export type ArkmeRecordingSectionState = 'ready' | 'empty' | 'processing' | 'failed' | 'error'
 
 export interface ArkmeRecordingVersion {
+  sourceState?: 'current' | 'stale' | 'unknown'
   continuationAvailable?: boolean
   id: string
   status: ArkmeRecordingVersionStatus
@@ -4465,7 +4486,7 @@ export type ArkmePluginOperation =
   | 'arko.run.status'
   | 'explore.settings' | 'explore.settings.save'
   | 'relations.list' | 'relations.records'
-  | 'people.list' | 'people.open-chat'
+  | 'people.list' | 'people.open-chat' | 'people.identities'
   | 'explore.list' | 'explore.detail' | 'explore.enrich' | 'explore.mutate' | 'explore.source'
   | 'recordings.entities.start'
   | 'recordings.entities'
@@ -4481,6 +4502,8 @@ export type ArkmePluginOperation =
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.learning'
+  | 'recordings.speaker.correction.learning.retry'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'speaker-directory.summary'
@@ -4490,6 +4513,9 @@ export type ArkmePluginOperation =
   | 'speaker-directory.avatars'
   | 'speaker-directory.similar'
   | 'speaker-directory.voice-samples'
+  | 'speaker-directory.group-members'
+  | 'speaker-directory.group-action'
+  | 'speaker-directory.correction-items'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'self-roles.list'
@@ -5071,6 +5097,8 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.learning'
+  | 'recordings.speaker.correction.learning.retry'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'search.locations'

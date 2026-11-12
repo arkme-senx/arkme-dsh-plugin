@@ -1166,7 +1166,8 @@ export async function dispatchArkmeHostOperation(
   if (operation === 'statistics.detail') return service.statisticsRead('detail', params, requestSignal)
   if (operation === 'statistics.active') return service.statisticsRead('active', params, requestSignal)
   if (operation === 'statistics.long') return service.statisticsRead('long', params, requestSignal)
-  if (operation === 'people.list') return service.peopleList(params.source, requestSignal, params.cursor)
+  if (operation === 'people.identities') return service.peopleIdentities(params.action, params, requestSignal)
+  if (operation === 'people.list') return service.peopleList(params.source, requestSignal, params.cursor, params.query)
   if (operation === 'people.open-chat') return service.peopleOpenChat(stringParam(params, 'ref'), requestSignal)
   if (operation === 'relations.list') return service.relationPage(params as Omit<ExploreQuery,'module'>, requestSignal)
   if (operation === 'relations.records') return service.relationRecords({ref:typeof params.ref==='string'?params.ref:'',...(typeof params.cursor==='string'?{cursor:params.cursor}:{})},requestSignal)
@@ -1878,7 +1879,10 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'speaker-directory.list': return await service.speakerDirectoryList(params, requestSignal)
     case 'speaker-directory.seen': return await service.speakerDirectorySeen(params, requestSignal)
     case 'speaker-directory.open': return await service.speakerDirectoryOpen(params, requestSignal)
+    case 'speaker-directory.group-members': return await service.speakerGroupMembers(params, requestSignal)
+    case 'speaker-directory.group-action': return await service.speakerGroupAction(params, requestSignal)
     case 'speaker-directory.similar': return await service.speakerDirectorySimilar(params, requestSignal)
+    case 'speaker-directory.correction-items': return await service.speakerDirectoryCorrectionItems(params, requestSignal)
     case 'speaker-directory.voice-samples': return await service.speakerDirectoryVoiceSamples(params, requestSignal)
     case 'speaker-directory.avatars': return await service.speakerDirectoryAvatars(params, requestSignal)
     case 'recordings.speaker.options': return await service.recordingSpeakerOptions(requestSignal)
@@ -1895,17 +1899,23 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       if ([params.itemRefs, params.referenceA, params.referenceB].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) {
         throw new ArkmePluginError('invalid-params', '声纹对比参数无效', false)
       }
-      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[] }, requestSignal)
+      if (params.crossDateSelection !== undefined && typeof params.crossDateSelection !== 'boolean') throw new ArkmePluginError('invalid-params', '比较范围无效', false)
+      return await service.recordingSpeakerEvidence({ itemRefs: params.itemRefs as string[], referenceA: params.referenceA as string[], referenceB: params.referenceB as string[], ...(params.crossDateSelection === true ? { crossDateSelection: true } : {}) }, requestSignal)
     }
     case 'recordings.speaker.consistency': {
       if ([params.anchorRefs, params.itemRefs].some(list => !Array.isArray(list) || list.some(value => typeof value !== 'string'))) throw new ArkmePluginError('invalid-params', '一致性查询参数无效', false)
       return await service.recordingSpeakerConsistency({ anchorRefs: params.anchorRefs as string[], itemRefs: params.itemRefs as string[] }, requestSignal)
     }
     case 'recordings.speaker.correction.items': return await service.recordingSpeakerCorrectionItems({ dateStamp: numberParam(params, 'dateStamp', Number.NaN), atMillis: numberParam(params, 'atMillis', Number.NaN), transcriptSource: stringParam(params, 'transcriptSource') as 'system' | 'doubao' }, requestSignal)
+    case 'recordings.speaker.correction.learning': return await service.recordingSpeakerLearning(stringParam(params, 'learningRef'), undefined, requestSignal)
+    case 'recordings.speaker.correction.learning.retry': return await service.recordingSpeakerLearning(stringParam(params, 'learningRef'), stringParam(params, 'retryRef'), requestSignal)
     case 'recordings.speaker.correction.context': return await service.recordingSpeakerCorrectionContext(stringParam(params, 'itemRef').trim(), requestSignal)
     case 'recordings.speaker.correction.result': return await service.recordingSpeakerCorrectionResult({ itemRef: stringParam(params, 'itemRef').trim(), action: stringParam(params, 'action') as 'apply' | 'undo', idempotencyKey: stringParam(params, 'idempotencyKey') }, requestSignal)
     case 'recordings.speaker.correction.apply': {
       if (!Array.isArray(params.itemRefs) || !params.itemRefs.every(value => typeof value === 'string')
+        || (params.crossDateSelection !== undefined && typeof params.crossDateSelection !== 'boolean')
+        || (params.preserveAssignment !== undefined && typeof params.preserveAssignment !== 'boolean')
+        || (params.rejectedCandidateItemRef !== undefined && typeof params.rejectedCandidateItemRef !== 'string')
         || typeof params.detach !== 'boolean' || (params.rejectCurrent !== undefined && typeof params.rejectCurrent !== 'boolean')
         || (params.soundSource !== undefined && !['unknown', 'in_person', 'playback'].includes(String(params.soundSource)))) {
         throw new ArkmePluginError('invalid-params', '纠错参数无效', false)
@@ -1913,6 +1923,9 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       return await service.applyRecordingSpeakerCorrection({
         itemRef: stringParam(params, 'itemRef'), itemRefs: params.itemRefs as string[], detach: params.detach,
         ...(params.selections === undefined ? {} : { selections: params.selections as NonNullable<import('./types.js').ArkmeRecordingSpeakerCorrectionInput['selections']> }),
+        ...(params.crossDateSelection === undefined ? {} : { crossDateSelection: params.crossDateSelection as boolean }),
+        ...(params.preserveAssignment === undefined ? {} : { preserveAssignment: params.preserveAssignment as boolean }),
+        ...(params.rejectedCandidateItemRef === undefined ? {} : { rejectedCandidateItemRef: params.rejectedCandidateItemRef as string }),
         ...(params.intentToken === undefined ? {} : { intentToken: params.intentToken as string }),
         ...(params.target === undefined ? {} : { target: params.target as NonNullable<import('./types.js').ArkmeRecordingSpeakerCorrectionInput['target']> }),
         expectedVersion: stringParam(params, 'expectedVersion'), idempotencyKey: stringParam(params, 'idempotencyKey'),
