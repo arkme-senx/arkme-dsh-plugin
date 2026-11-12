@@ -1,5 +1,17 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '仅跟进中且已设置有效提醒时间的安排可开启提醒': 'Reminders require an active plan with a valid future reminder time',
+  '保存未确认，输入已保留；请刷新核对或重试': 'Save not confirmed. Your input is kept; refresh to check or retry',
+  '安排已在其他位置更新，输入已保留，请核对后重试': 'This plan was updated elsewhere. Your input is kept; review and retry',
+  '当前服务暂不支持安排编辑，请刷新后重试': 'Plan editing is not available on this server yet. Refresh and retry',
+  '选择日期和时间后自动保存，使用本地时区': 'Saves automatically after selecting date and time, in your local timezone',
+  '保存失败，请重新选择时间重试': 'Save failed. Select a time to retry',
+  '请选择有效的未来提醒时间': 'Choose a valid future reminder time',
+  '提醒时刻': 'Reminder time',
+  '编辑提醒时间': 'Edit reminder time',
+  '标题不能为空，最多200字': 'Enter a title of up to 200 characters',
+  '安排标题': 'Plan title',
+  '编辑标题': 'Edit title',
   '原文': 'Original',
   '个人更正': 'Personal correction',
   '个人更正 · 恢复原文': 'Personal correction · Restore original',

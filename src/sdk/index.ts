@@ -2057,6 +2057,10 @@ export class ArkmeSdk {
     return await this.call<ArkmeArrangementReminderSummary>('arrangements.reminders.summary', undefined, signal)
   }
 
+  async editArrangement(input: import('../types.js').ArkmeArrangementEditInput, signal?: AbortSignal): Promise<import('../types.js').ArkmeArrangementEditResult> {
+    return this.call<import('../types.js').ArkmeArrangementEditResult>('arrangements.edit', { ...input }, signal)
+  }
+
   async mutateArrangement(
     arrangementRef: string,
     intent: ArkmeArrangementMutationIntent,

@@ -1,3 +1,8 @@
+import { Sun } from '@phosphor-icons/react/dist/icons/Sun'
+import { CalendarDots } from '@phosphor-icons/react/dist/icons/CalendarDots'
+import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
+import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle'
+import { Trash } from '@phosphor-icons/react/dist/icons/Trash'
 import { ArkmeArrangementDetailPane } from './ArkmeArrangementDetailPane.js'
 import { useOccurrenceReviewCount } from './use-arrangement-occurrences.js'
 import { ArkmeArrangementReviewInbox } from "./ArkmeArrangementOccurrenceActions.js"
@@ -8,8 +13,9 @@ import { X } from '@phosphor-icons/react/dist/icons/X'
 import { SpeakerHigh } from '@phosphor-icons/react/dist/icons/SpeakerHigh'
 import { SpeakerSlash } from '@phosphor-icons/react/dist/icons/SpeakerSlash'
 import { ArrowsClockwise } from '@phosphor-icons/react/dist/icons/ArrowsClockwise'
-import type { ArkmeArrangementItem, ArkmeArrangementMutationResult, ArkmeArrangementReminderToggleResult } from '../types.js'
+import type { ArkmeArrangementItem, ArkmeArrangementMutationResult } from '../types.js'
 import { callArkme } from './api.js'
+import { toggleArrangementReminder } from './arrangement-reminder.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import { ArkmeConfirmDialog } from './ArkmeConfirmDialog.js'
@@ -19,6 +25,8 @@ import { useArrangementCompletion } from './use-arrangement-completion.js'
 import { readArrangementForTransition, type ArrangementColumn } from './arrangement-board-model.js'
 import { ArkmeArrangementCompletionControl, arrangementCompletionChecked } from './ArkmeArrangementCompletionControl.js'
 import { arrangementViews, arrangementViewLabels, nextArrangementMidnight, type ArrangementView, type ArrangementWorkspaceItem } from './arrangement-workspace-model.js'
+
+const arrangementViewIcons = { today: Sun, week: CalendarDots, all: CalendarBlank, completed: CheckCircle, deleted: Trash } satisfies Record<ArrangementView, typeof Sun>
 
 function validTime(value?: number): value is number { return !!value && Number.isFinite(new Date(value).getTime()) }
 function fullTime(value?: number) { return validTime(value) ? new Intl.DateTimeFormat(arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(value) : tr('未设置') }
@@ -122,11 +130,8 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
     const signal = lifetime.current!.signal
     writes.current.add(item.arrangementRef); markPending(item.arrangementRef, 'reminder')
     try {
-      const enabled = !item.reminderEnabled
-      const result = await callArkme<ArkmeArrangementReminderToggleResult>('arrangements.reminder-enabled', { arrangementRef: item.arrangementRef, enabled }, signal)
-      if (signal.aborted) return
-      if (!result.item || result.item.arrangementRef !== item.arrangementRef || result.item.reminderEnabled !== enabled) throw new Error('Reminder not confirmed')
-      apply(result.item)
+      await toggleArrangementReminder(item, signal, apply)
+      if (!signal.aborted) void latestData.current.refresh()
     } catch { if (!signal.aborted) setNotice({ text: tr('提醒状态未能确认，请重试'), error: true }) }
     finally { if (!signal.aborted) { writes.current.delete(item.arrangementRef); markPending(item.arrangementRef) } }
   }
@@ -134,8 +139,8 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
   return <div className="arkme-arrangement-workspace" data-detail-open={!!selected}>
     <nav className="arkme-arrangement-navigation" aria-label={tr('安排分类')}>
       <h2>{tr('安排')}</h2>
-      <div className="arkme-arrangement-view-links">{arrangementViews.map(key => <button key={key} type="button" aria-current={view === key ? 'page' : undefined}
-        onClick={() => { setView(key); setSelected(undefined); setDeleting(undefined) }}>{tr(arrangementViewLabels[key])}</button>)}</div>
+      <div className="arkme-arrangement-view-links">{arrangementViews.map(key => { const Icon = arrangementViewIcons[key]; return <button key={key} type="button" aria-current={view === key ? 'page' : undefined}
+        onClick={() => { setView(key); setSelected(undefined); setDeleting(undefined) }}><Icon size={16} weight="regular" aria-hidden /><span>{tr(arrangementViewLabels[key])}</span></button> })}</div>
       <div className="arkme-arrangement-navigation-footer">
         <button type="button" onClick={() => setReviewInbox(true)}>{tr('待确认识别')}{reviewCount ? ` (${reviewCount})` : ''}</button>
         <button type="button" onClick={() => setRecognitionSettings(true)}>{tr('自动识别设置')}</button>
@@ -181,7 +186,7 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
       {!!data.rows.length && <footer>{data.total === undefined ? tr('已加载 {count} 项', { count: data.rows.length }) : tr('已加载 {count} / {total} 项', { count: data.rows.length, total: data.total })}</footer>}
     </section>
     {targetError && <div role="alert">{tr('指定安排加载失败')} <button type="button" onClick={() => setTargetAttempt(n => n + 1)}>{tr('重试')}</button></div>}
-    {selected ? <ArkmeArrangementDetailPane accountScope={accountScope} onSettings={() => setRecognitionSettings(true)} onApplied={apply} onRestored={() => setNotice({ text: tr('已恢复安排') })} onRedirect={next => { setSelected(next); void latestData.current.refresh() }} key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
+    {selected ? <ArkmeArrangementDetailPane accountScope={accountScope} onSettings={() => setRecognitionSettings(true)} onApplied={apply} onEdited={() => { void latestData.current.refresh() }} onRestored={() => setNotice({ text: tr('已恢复安排') })} onRedirect={next => { setSelected(next); void latestData.current.refresh() }} key={selected.arrangementRef} item={selected} busy={busy} onClose={() => setSelected(undefined)} onComplete={toggleComplete} onDelete={setDeleting} onReminder={toggleReminder} />
       : <aside className="arkme-arrangement-detail-empty"><p>{tr('选择一个安排查看详情')}</p></aside>}
     {reviewInbox && <ArkmeArrangementReviewInbox key={accountScope} accountScope={accountScope} onClose={()=>setReviewInbox(false)} onApplied={apply}/>}
     {recognitionSettings && <ArkmeArrangementRecognitionSettings key={accountScope} accountScope={accountScope} onClose={() => setRecognitionSettings(false)} />}

@@ -2310,6 +2310,12 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'arrangements.source.open': return await service.arrangementSourceOpen(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.source.read': return await service.arrangementSourceRead(stringParam(params, 'arrangementRef'), stringParam(params, 'evidenceId'), requestSignal)
     case 'arrangements.detail': return await service.arrangementDetail(stringParam(params, 'arrangementRef'))
+    case 'arrangements.edit': return service.editArrangement({
+      arrangementRef: stringParam(params, 'arrangementRef'),
+      expectedVersion: params.expectedVersion as number,
+      ...(params.title !== undefined ? { title: params.title as string } : {}),
+      ...(params.remindAtMillis !== undefined ? { remindAtMillis: params.remindAtMillis as number } : {}),
+    }, requestSignal)
     case 'arrangements.mutate': return await service.mutateArrangement(
       stringParam(params, 'arrangementRef'),
       arrangementMutationIntentParam(params),
