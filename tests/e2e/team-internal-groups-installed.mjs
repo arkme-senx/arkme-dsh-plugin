@@ -29,7 +29,7 @@ const upstream=createServer({key:await readFile(key),cert:await readFile(cert)},
  const parts=[];for await(const b of req)parts.push(b);const input=JSON.parse(Buffer.concat(parts).toString()||'{}');calls.push({path,input})
  if(realOwners&&path.startsWith('/api/v1/team/')){const r=await forward('/fixture/team'+path,input,actor);res.writeHead(r.status,{'content-type':'application/json'});res.end(r.text);return}
  if(realOwners&&(path.startsWith('/api/v1/search/')||path==='/api/v1/records/related/query'||path==='/api/v1/records/privacy/visibility-snapshot'||path==='/api/v1/content/source-stream')){const r=await forward('/fixture/record'+path,input,actor,req.headers.range?{Range:req.headers.range}:{});res.writeHead(r.status,r.headers);res.end(r.bytes);return}
- if(path.startsWith('/api/v1/chats/')||path.startsWith('/api/v1/chat/')){const r=await forward(path,input,actor);res.writeHead(r.status,{'content-type':'application/json'});res.end(r.text);return}
+ if(path.startsWith('/api/v1/chats/')||path.startsWith('/api/v1/chat/')||path.startsWith('/api/v1/conversation-list/')){const r=await forward(path,input,actor);res.writeHead(r.status,{'content-type':'application/json'});res.end(r.text);return}
  let data={items:[],teams:[],users:[],has_more:false}
  if(path.endsWith('/the-best-api-for-testing'))data={access_token:'roster-fixture-'+input.user_id,refresh_token:'isolated-refresh-'+input.user_id}
  else if(path.endsWith('/get-user-info'))data={user_id:actor,nick_name:'同事'+actor,jotmo_id:'user_'+actor,phone:'13800000000'}
