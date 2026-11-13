@@ -59,6 +59,22 @@ export class UnifiedTimelineLiveTail {
   get hasPending(): boolean { return this.pending.size > 0 }
 
   receive(window: ArkmeUnifiedTimelineWindow, items: readonly ArkmeTimelineItem[]): ArkmeUnifiedTimelineWindow {
+    // Attachment completion edits an existing occurrence without advancing its sequence.
+    const visible = new Map(window.events.flatMap(event => event.kind === 'message' ? [[event.eventId, event.item] as const] : []))
+    const changes = new Map<string, ChatSyncProjection['changes'][number]>()
+    for (const item of items) {
+      const previous = visible.get(item.timelineEventId ?? '')
+      const version = item.recordVersion ?? item.version ?? 0
+      const previousVersion = previous?.recordVersion ?? previous?.version ?? 0
+      if (!previous || previous.status !== 1 || item.status !== 1 || previous.itemUid !== item.itemUid
+        || !item.timelineItemKey || previous.timelineItemKey !== item.timelineItemKey || version <= 0 || previousVersion <= 0) continue
+      if (version > previousVersion || version === previousVersion && previous.mediaUnavailable === true
+        && item.mediaUnavailable !== true && (item.contentBlocks?.length ?? 0) > 0) {
+        changes.set(item.timelineItemKey, { itemKey: item.timelineItemKey, revision: 0, version, item })
+        if (this.pending.has(item.timelineEventId!)) this.pending.set(item.timelineEventId!, { revision: ++this.revision, item })
+      }
+    }
+    if (changes.size) window = projectCommittedChatWindow(window, changes)
     if (!window.complete || window.newerHasMore) return window
     const messages = window.events.flatMap(event => event.kind === 'message' ? [event.item] : [])
     let sequence = Math.max(0, ...messages.map(item => item.sequence ?? 0))
