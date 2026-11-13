@@ -2093,6 +2093,8 @@ export interface ArkmeTimelineCursor {
   itemUid?: string
   beforeSequence?: number
   afterSequence?: number
+  /** Seek the first incoming unread message after the confirmed sequence. */
+  firstUnread?: true
 }
 
 /** A browser-safe topic projection attached to an item in a personal aggregate or topic-subtree feed. */
@@ -2261,6 +2263,8 @@ export interface ArkmeTimelineItem {
   /** Opaque Provider image reference for the concrete message sender. */
   avatarRef?: string
   isMe: boolean
+  /** Matches Chat unread sender identity when a Bot's display alignment differs. */
+  isIncomingForRead?: boolean
   /** Browser-safe projection of whether this incoming message mentions the current viewer. */
   mentionsViewer?: boolean
   /** Browser-safe mention ranges projected from provider metadata; used for exact highlight and member cards. */

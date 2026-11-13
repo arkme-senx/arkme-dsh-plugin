@@ -33,6 +33,14 @@ it('forwards timeline cancellation without accepting caller-owned user identity'
   expect(service.readSource).toHaveBeenCalledWith('topic-ref', { limit: 40, signal })
   await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', limit: 40, background: true }, undefined, undefined, undefined, undefined, signal)
   expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { limit: 40, signal, background: true })
+  await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', cursor: { afterSequence: 0 }, limit: 20 }, undefined, undefined, undefined, undefined, signal)
+  expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { cursor: { afterSequence: 0 }, limit: 20, signal })
+  await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', cursor: { afterSequence: 834, firstUnread: true }, limit: 1 }, undefined, undefined, undefined, undefined, signal)
+  expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { cursor: { afterSequence: 834, firstUnread: true }, limit: 1, signal })
+
+  await expect(dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', cursor: { afterSequence: -1 } }))
+    .rejects.toMatchObject({ code: 'chat-timeline-sequence-invalid' })
+
 })
 
 it('passes contact detail request cancellation to each existing business owner', async () => {

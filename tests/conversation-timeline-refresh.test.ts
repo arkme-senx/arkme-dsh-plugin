@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { readConversationOlderPage, readConversationTimelineEntry, readConversationTimelineWindow } from '../src/client/conversation-timeline-refresh.js'
+import { readConversationAdjacentPage, readConversationTimelineEntry, readConversationTimelineWindow } from '../src/client/conversation-timeline-refresh.js'
 import type { ArkmeConversationTimelineSnapshot } from '../src/client/conversation-memory-cache.js'
 import type { ArkmeSourceItem, ArkmeTimelineItem, ArkmeTimelinePage } from '../src/types.js'
 
@@ -166,14 +166,14 @@ describe('cold conversation entry preserves durable reading', () => {
   })
 })
 
-describe('cache-first older pages', () => {
+describe('cache-first adjacent pages', () => {
   const older = { ...page([record(1)]), cache: { origin: 'local' as const, persistence: 'committed' as const, stale: false },
     unified: { protocolVersion: 2 as const, events: [], sources: [], windowTokens: ['exact-page'],
       complete: true, olderHasMore: false, newerHasMore: false, hasMore: false } }
   it('uses one committed cache read without starting network', async () => {
     const local = vi.fn().mockResolvedValue(older)
     const remote = vi.fn()
-    await expect(readConversationOlderPage(local, remote, new AbortController().signal, false, 'requested')).resolves.toBe(older)
+    await expect(readConversationAdjacentPage(local, remote, new AbortController().signal, false, 'requested', 'older')).resolves.toBe(older)
     expect(local).toHaveBeenCalledOnce()
     expect(remote).not.toHaveBeenCalled()
   })
@@ -188,15 +188,24 @@ describe('cache-first older pages', () => {
     const local = vi.fn().mockResolvedValue(cached)
     const authoritative = page([record(2)])
     const remote = vi.fn().mockResolvedValue(authoritative)
-    await expect(readConversationOlderPage(local, remote, new AbortController().signal, false, 'requested')).resolves.toBe(authoritative)
+    await expect(readConversationAdjacentPage(local, remote, new AbortController().signal, false, 'requested', 'older')).resolves.toBe(authoritative)
     expect(local).toHaveBeenCalledOnce()
     expect(remote).toHaveBeenCalledOnce()
+  })
+  it.each([false, true])('validates the newer continuation before using the local page (advances=%s)', async advances => {
+    const cached = { ...older, unified: { ...older.unified, newerHasMore: true,
+      newerCursor: advances ? 'next' : 'requested' } }
+    const authoritative = page([record(2)])
+    const remote = vi.fn().mockResolvedValue(authoritative)
+    await expect(readConversationAdjacentPage(vi.fn().mockResolvedValue(cached), remote, new AbortController().signal,
+      false, 'requested', 'newer')).resolves.toBe(advances ? cached : authoritative)
+    expect(remote).toHaveBeenCalledTimes(advances ? 0 : 1)
   })
   it('starts network after the short local budget expires and aborts the slow lookup', async () => {
     let localSignal: AbortSignal | undefined
     const local = vi.fn((signal: AbortSignal) => { localSignal = signal; return new Promise<ArkmeTimelinePage>(() => {}) })
     const remote = vi.fn().mockResolvedValue(older)
-    await expect(readConversationOlderPage(local, remote, new AbortController().signal, false, 'requested')).resolves.toBe(older)
+    await expect(readConversationAdjacentPage(local, remote, new AbortController().signal, false, 'requested', 'older')).resolves.toBe(older)
     expect(localSignal?.aborted).toBe(true)
     expect(remote).toHaveBeenCalledOnce()
   })
@@ -204,7 +213,7 @@ describe('cache-first older pages', () => {
     const scope = new AbortController()
     const local = vi.fn(async () => { scope.abort(); return older })
     const remote = vi.fn()
-    await expect(readConversationOlderPage(local, remote, scope.signal, false, 'requested')).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(readConversationAdjacentPage(local, remote, scope.signal, false, 'requested', 'older')).rejects.toMatchObject({ name: 'AbortError' })
     expect(remote).not.toHaveBeenCalled()
   })
 })

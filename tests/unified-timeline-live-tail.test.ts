@@ -121,8 +121,10 @@ it('preserves the confirmed recall capability when a synced body replaces the sa
   const canonical = { ...item(5), isMe: true, messageActionRef: 'confirmed-ref', messageActionsV2: true }
   const synced = { ...item(5), isMe: true, messageActionRef: 'synced-ref', recordVersion: 2 }
   const change = { itemKey: 'relation-5', revision: 10, version: 2, item: synced }
-  expect(projectCommittedChatMessage(canonical, new Map([['relation-5', change]])))
-    .toMatchObject({ messageActionsV2: true, messageActionRef: 'synced-ref', recordVersion: 2 })
+  const changes = new Map([['relation-5', change]])
+  const projected = projectCommittedChatMessage(canonical, changes)!
+  expect(projected).toMatchObject({ messageActionsV2: true, messageActionRef: 'synced-ref', recordVersion: 2 })
+  expect(projectCommittedChatMessage(projected, changes)).toBe(projected)
   expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: undefined }]]))).toBeUndefined()
   expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: { ...synced, messageActionsV2: false } }]])))
     .toMatchObject({ messageActionsV2: false })

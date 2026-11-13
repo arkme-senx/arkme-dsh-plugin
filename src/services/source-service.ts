@@ -2423,6 +2423,7 @@ export class SourceService {
         latestItem?.sendAtMillis ?? 0,
       ),
       ...attention,
+      ...(Number.isSafeInteger(unread.read_seq) && Number(unread.read_seq) >= 0 ? { readSequence: Number(unread.read_seq) } : {}),
       ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
       isPinned,
       chatPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),

@@ -1,3 +1,5 @@
+import { CHAT_MESSAGE_SYNC_SESSION_ROUTE, parseChatSyncPage } from '../chat-message-sync.js'
+import { isBackendRouteUnavailable } from './service-error.js'
 import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { readExtensionSummaryBatch } from '../message-extension-summary.js'
 import type { PendingAttachment } from './progressive-attachments.js'
@@ -2541,6 +2543,38 @@ export class ChatService {
     return results
   }
 
+  private async locateUnreadSequence(source: ArkmeSourceRefPayload, session: ArkmeSessionCredentials, after: number, signal?: AbortSignal): Promise<number | undefined> {
+    if (source.groupDelegation) throw new ArkmePluginError('chat-unread-locate-unsupported', '当前会话需要按消息分页定位', false, 501)
+    let checkpoint = ''
+    let first: number | undefined
+    // The sync snapshot pages backwards over unread relations. Ignore journal rows that are already read.
+    for (let pageIndex = 0; pageIndex < 16; pageIndex += 1) {
+      signal?.throwIfAborted()
+      let raw: unknown
+      try {
+        raw = await this.runtime.authenticatedChatPost<unknown>(CHAT_MESSAGE_SYNC_SESSION_ROUTE, {
+          mode: 'unread_manifest', chat_session_uid: source.ownerRef, cached: {}, checkpoint, limit: 100,
+        }, session, signal, { lane: 'interactive-read', traffic: 'message-sync', cancelWhenUnobserved: true, bypassCache: true })
+      } catch (caught) {
+        if (!isBackendRouteUnavailable(caught)) throw caught
+        throw new ArkmePluginError('chat-unread-locate-unsupported', '当前服务需要按消息分页定位', false, 501)
+      }
+      const page = parseChatSyncPage(raw, true)
+      const entry = page.sessions[0]
+      if (page.sessions.length !== 1 || entry?.uid !== source.ownerRef || !entry.accessible) {
+        throw new ArkmePluginError('chat-unread-locate-inaccessible', '当前会话暂不可读取', false, 403)
+      }
+      for (const item of entry.work) {
+        if (!item.unread || item.state !== 'available' || item.sequence <= after) continue
+        first = first === undefined ? item.sequence : Math.min(first, item.sequence)
+      }
+      if (entry.complete && !page.retry) return first
+      if (checkpoint === page.checkpoint) break
+      checkpoint = page.checkpoint
+    }
+    throw new ArkmePluginError('chat-unread-locate-incomplete', '暂时无法读取完整的未读范围', true, 503)
+  }
+
   async readSource(
       sourceRef: string,
       options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
@@ -2760,20 +2794,30 @@ export class ChatService {
           this.aiPolish.queryGroupAiPolishNotices(source.ownerRef, session, options.signal),
         ])
         : undefined
-      if ((options.cursor?.afterSequence ?? 0) > 0) {
-        const afterSequence = Math.max(0, Math.trunc(options.cursor?.afterSequence ?? 0))
+      if (options.cursor?.afterSequence !== undefined) {
+        const firstUnread = options.cursor.firstUnread
+          ? await this.locateUnreadSequence(source, session, options.cursor.afterSequence, options.signal) : undefined
+        if (options.cursor.firstUnread && firstUnread === undefined) {
+          return { source: await this.source.sourceItem(source), items: [], hasMore: false }
+        }
+        const afterSequence = firstUnread === undefined ? options.cursor.afterSequence : firstUnread - 1
+        const pageLimit = firstUnread === undefined ? limit : 1
         const data = await this.sourceChatPost<Record<string, unknown>>(source,
           '/api/v1/chat/timeline/tail',
-          { chat_session_uid: source.ownerRef, after_seq: afterSequence, limit },
+          { chat_session_uid: source.ownerRef, after_seq: afterSequence, limit: pageLimit },
           session,
           options.signal,
           {
             lane: 'interactive-read',
-            key: `timeline-tail:${source.ownerRef}:${String(afterSequence)}:${String(limit)}`,
+            key: `timeline-tail:${source.ownerRef}:${String(afterSequence)}:${String(pageLimit)}`,
             failureCooldownMs: 2_000,
           },
         )
-        const items = await this.projectChatTimelineItems(listValue(data.items), source, session, options.signal)
+        const items = await this.projectChatTimelineItems(listValue(data.items), source, session, options.signal, { basicPresentation: true })
+        if (firstUnread !== undefined) {
+          return { source: await this.source.sourceItem(source), items: items.filter(item => item.sequence === firstUnread
+            && item.recordOwnerUserId && (item.isIncomingForRead ?? !item.isMe)), hasMore: false }
+        }
         const nextAfterSequence = Math.max(afterSequence, Math.trunc(numberValue(data.next_after_seq)))
         const hasMore = nextAfterSequence > afterSequence
         return {
@@ -6045,7 +6089,9 @@ nextPublic = next
         )
         const responseSessionUid = stringValue(data.chat_session_uid).trim()
         const responseUserId = numberValue(data.user_id)
-        const effectiveReadSequence = numberValue(data.effective_read_seq)
+        const snapshot = objectValue(data.unread_snapshot)
+        // The snapshot is read after the cursor write and can include another device's newer read.
+        const effectiveReadSequence = numberValue(snapshot.read_seq ?? data.effective_read_seq)
         const readAt = numberValue(data.read_at)
         const sessionLastSequence = numberValue(data.session_last_seq)
         const unreadCount = numberValue(data.unread_count)
@@ -6061,8 +6107,10 @@ nextPublic = next
         if (cached !== undefined) {
           this.source.setChatSourceByKey(cacheKey, {
             ...cached,
-            unreadCount,
-            ...(unreadCount <= 0 ? { hasUnreadMention: false } : {}),
+            ...((cached.readSequence ?? 0) <= effectiveReadSequence && (cached.latestSequence ?? 0) <= sessionLastSequence
+              ? { readSequence: effectiveReadSequence, latestSequence: sessionLastSequence, unreadCount,
+                  ...(unreadCount <= 0 ? { hasUnreadMention: false } : {}) }
+              : {}),
           })
         }
         this.realtime.emitChatClientEvent({
@@ -6237,6 +6285,7 @@ nextPublic = next
           ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId)
             : senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(session.userId, senderUserId) } : {}),
           isMe,
+          ...(isBot && senderUserId === session.userId ? { isIncomingForRead: false } : {}),
           ...(callRecord === undefined ? {} : { callRecord }),
           ...(mentionsViewer ? { mentionsViewer: true } : {}),
           ...(mentions === undefined ? {} : { mentions }),
@@ -7326,6 +7375,7 @@ nextPublic = next
         ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId) : {}),
         ...(agentSource === undefined ? {} : { agentSource }),
         isMe,
+        ...(isBot && senderUserId === session.userId ? { isIncomingForRead: false } : {}),
         ...(callRecord === undefined ? {} : { callRecord }),
         ...(mentions === undefined ? {} : { mentions }),
         sendAtMillis,

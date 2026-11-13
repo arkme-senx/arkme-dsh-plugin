@@ -735,6 +735,9 @@ AI 摘要：|AI summary:
 支持 ⌘V / Ctrl+V，也可以直接选择电脑中的图片|Press ⌘V / Ctrl+V, or choose an image from your computer
 选择二维码图片|Choose QR code image
 条新消息|new messages
+未读消息|Unread messages
+向下浏览未读消息|Jump down to unread messages
+暂时无法定位未读消息，请重试|Could not find the first unread message. Try again.
 暂时无法回到底部，请重试|Unable to jump to the latest message. Please retry.
 已移除，可在团队中重新打开|Removed. Reopen it from Teams.
 已移除对话，可在联系人中找回|Conversation removed. Find it again in Contacts.

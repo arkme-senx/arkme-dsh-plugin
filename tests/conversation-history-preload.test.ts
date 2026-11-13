@@ -3,7 +3,7 @@ import { ConversationHistoryPreload, observeConversationHistory } from '../src/c
 
 afterEach(() => vi.unstubAllGlobals())
 
-it('uses two current viewport heights and discards observer callbacks after resizing or leaving', () => {
+it.each(['top', 'bottom'] as const)('uses two viewport heights at the %s edge and discards stale callbacks', edge => {
   const callbacks: IntersectionObserverCallback[] = []
   const margins: string[] = []
   const disconnect = vi.fn()
@@ -23,7 +23,7 @@ it('uses two current viewport heights and discards observer callbacks after resi
   })
   const root = { clientHeight: 600 }
   const near = vi.fn()
-  const stop = observeConversationHistory(root as HTMLElement, {} as HTMLElement, near)
+  const stop = observeConversationHistory(root as HTMLElement, {} as HTMLElement, near, edge)
   root.clientHeight = 900
   resized()
   const notify = (callback: IntersectionObserverCallback) => callback([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
@@ -31,7 +31,7 @@ it('uses two current viewport heights and discards observer callbacks after resi
   notify(callbacks[1]!)
   stop()
   notify(callbacks[1]!)
-  expect(margins).toEqual(['1200px 0px 0px', '1800px 0px 0px'])
+  expect(margins).toEqual(edge === 'top' ? ['1200px 0px 0px', '1800px 0px 0px'] : ['0px 0px 1200px', '0px 0px 1800px'])
   expect(near.mock.calls).toEqual([[true]])
   expect(disconnect).toHaveBeenCalledTimes(3)
 })

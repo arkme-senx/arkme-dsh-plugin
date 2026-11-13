@@ -208,14 +208,15 @@ import type {
 import { projectRecordReedit, useRecordReeditSubmissions } from './record-reedit-submissions.js'
 import { hydrateRecordReeditEditor, useRecordReeditEditors, type ArkmeRecordReeditComposerState } from './record-reedit-editors.js'
 import { recordReeditBackground, RecordReeditAcceptanceUnknown } from './record-reedit-background.js'
-import { conversationEntryTracingEnabled, conversationViewportAroundCursor, readConversationOlderPage, readConversationTimelineEntry, readConversationTimelineWindow, readInitialConversationCache, traceConversationEntry } from './conversation-timeline-refresh.js'
+import { conversationEntryTracingEnabled, conversationViewportAroundCursor, readConversationAdjacentPage, readConversationTimelineEntry, readConversationTimelineWindow, readInitialConversationCache, traceConversationEntry } from './conversation-timeline-refresh.js'
 import { useScrollBottomVisibility } from './use-scroll-bottom-visibility.js'
 import { ArkmeConversationBottomControl } from './ArkmeConversationBottomControl.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { bindSentFileTaskLocals, composerAttachmentBlock, fileTaskShowsInlineStatus, fileTaskTimelineItem, localFileBlock, useArkmeFileSendTasks } from './file-send-tasks.js'
 import { isArkmeRequestAbort, isArkmeTransientReadFailure, retryArkmeRead } from './read-retry.js'
 import { arkmeVisibleReadIntentAllowed, subscribeArkmeReadIntentAvailability } from './read-intent-visibility.js'
-import { useVisibleMessageRead } from './visible-message-read.js'
+import { useVisibleMessageRead, visibleMessageReadSequence } from './visible-message-read.js'
+import { buildConversationUnreadCoverage, findConversationFirstUnread, findCachedConversationFirstUnread, isIncomingForRead } from './conversation-unread.js'
 import { verifyPhoneCaptcha } from './geetest.js'
 import { ArkmeDirectorySourceAvatar, ArkmeUserAvatar } from './ArkmeAvatar.js'
 import {
@@ -1836,6 +1837,11 @@ export function takeArkmeNotificationSurfaceCommit({
   return store.takeReady(revision)
 }
 
+function unreadDividerOrRow(row: HTMLElement): HTMLElement {
+  const divider = row.previousElementSibling
+  return divider?.getAttribute('data-arkme-unread-divider') === 'true' ? divider as HTMLElement : row
+}
+
 export function ArkmeSurface({
   t = defaultArkmeLoginTranslate,
   floating = false,
@@ -2434,7 +2440,6 @@ export function ArkmeSurface({
   const [timelineLoadingKey, setTimelineLoadingKey] = useState('')
   const [timelineSkeletonKey, setTimelineSkeletonKey] = useState('')
   const [timelineRevealKey, setTimelineRevealKey] = useState('')
-  const [newMessageCount, setNewMessageCount] = useState(0)
   const [longArticleCreating, setLongArticleCreating] = useState(false)
   const [articlePickerScope, setArticlePickerScope] = useState<ArkmeComposerAsyncScope>()
   const articleDraftKey = composerArticleKey(authenticatedAccountKey, composerDraftKey)
@@ -2511,7 +2516,7 @@ export function ArkmeSurface({
   const olderLoadError = olderLoadRef.current.error
   const [loadingNewer, setLoadingNewer] = useState(false)
   const [newerLoadFailure, setNewerLoadFailure] = useState<{ generation: number; windowRevision: number }>()
-  const newerSentinelArmedRef = useRef(true)
+  const newerPreloadRef = useRef(new ConversationHistoryPreload())
   const quoteNavigation = useMessageQuoteNavigation(`${authenticatedAccountKey}:${conversationKey}`)
   const [highlightedTargetUid, setHighlightedTargetUid] = useState('')
   const transientReactionHighlightRef = useRef(false)
@@ -2681,6 +2686,14 @@ export function ArkmeSurface({
     needsChatDirectory ? arkmeChatDirectory.subscribe : NOOP_SUBSCRIBE,
     () => needsChatDirectory ? arkmeChatDirectory.getSnapshot() : EMPTY_CHAT_DIRECTORY_SNAPSHOT,
     () => EMPTY_CHAT_DIRECTORY_SNAPSHOT,
+  )
+  const getConversationReadSource = useCallback(() => sourceIsChat
+    ? arkmeChatDirectory.getSnapshot().sources.find(row => arkmeSourceIdentityKey(row) === conversationKey) ?? source
+    : source, [sourceIsChat, conversationKey, source])
+  const conversationReadSource = useSyncExternalStore(
+    activeConversation && sourceIsChat ? arkmeChatDirectory.subscribe : NOOP_SUBSCRIBE,
+    getConversationReadSource,
+    () => source,
   )
   const [forwardSuccessFeedback, setForwardSuccessFeedback] = useState<{
     message: string
@@ -2923,6 +2936,11 @@ export function ArkmeSurface({
     void arkmeChatDirectory.refreshRoot({ force: true, silent: true }).catch(() => {})
   }), [authenticatedAccountKey, conversationKey, messageMerge, setItems])
   const viewportRestoreIntentRef = useRef<boolean>()
+  const unreadLocateReadScope = useRef<string>()
+  const visibleUnreadLocateKey = `${authenticatedAccountKey}:${conversationKey}`
+  const [unreadMarker, setUnreadMarker] = useState<{ scope: string; itemUid: string; sequence: number; through: number }>()
+  const unreadEntryAttempt = useRef<string>()
+  const firstUnreadRequest = useRef<AbortController>()
   const pendingConversationTargetLocateRef = useRef<{
     sourceKey: string
     itemUid: string
@@ -2931,6 +2949,7 @@ export function ArkmeSurface({
     contextRef?: string
     systemRef?: string
     transientHighlight?: boolean
+    firstUnread?: boolean
   }>()
   const interwovenRequestRef = useRef<AbortController>()
   const interwovenGenerationRef = useRef(0)
@@ -2953,7 +2972,9 @@ export function ArkmeSurface({
     timelineGenerationRef.current += 1
     timelineWindowRevisionRef.current += 1
     olderLoadRef.current = { preload: new ConversationHistoryPreload(), error: '' }
+    newerPreloadRef.current = new ConversationHistoryPreload()
     setLoadingOlder(false)
+    setLoadingNewer(false)
     for (const request of timelineRequestsRef.current.values()) request.controller.abort()
     timelineRequestsRef.current.clear()
     conversationTargetAbortRef.current?.abort()
@@ -3439,15 +3460,20 @@ export function ArkmeSurface({
     }
   }, [relatedPanelOpen])
 
-  const acknowledgeRead = (readSequence: number) => {
-    if (!source || !authenticatedAccountKey || cacheAccountKeyRef.current !== authenticatedAccountKey) return
+  const acknowledgeRead = (readSequence: number, coverage: (ReturnType<typeof buildConversationUnreadCoverage> & { through: number }) | undefined) => {
+    if (!source || !authenticatedAccountKey || cacheAccountKeyRef.current !== authenticatedAccountKey || firstUnreadRequest.current) return
+    const current = getConversationReadSource() ?? source
+    if (current.unreadCount > 0 && current.readSequence !== undefined
+      && unreadEntryAttempt.current !== visibleUnreadLocateKey) return
+    if (readSequence <= (current.readSequence ?? 0)) return
     const previous = lastReadAckRef.current
     if (previous?.queue === readAckQueue && previous.sequence >= readSequence) return
-    const current = arkmeChatDirectory.getSnapshot().sources.find(row => arkmeSourceIdentityKey(row) === conversationKey) ?? source
     if (current.unreadCount <= 0 && current.hasUnreadMention !== true && !arkmeChatDirectory.hasOptimisticRead(source.sourceRef, source.sourceKey, readSequence)) return
     const ack = { queue: readAckQueue, sequence: readSequence, failed: false }
     lastReadAckRef.current = ack
-    arkmeChatDirectory.markReadOptimistic(current, source.sourceKey, readSequence)
+    const newlyRead = coverage && coverage.through === current.readSequence
+      ? coverage.counts[readSequence - coverage.from] : undefined
+    arkmeChatDirectory.markReadOptimistic(current, source.sourceKey, readSequence, [], newlyRead)
     void readAckQueue.enqueue(readSequence, async () => {
       if (cacheAccountKeyRef.current !== authenticatedAccountKey) return
       try {
@@ -3457,7 +3483,7 @@ export function ArkmeSurface({
         })
         if (cacheAccountKeyRef.current !== authenticatedAccountKey) return
         arkmeChatDirectory.updateReadAck(source.sourceRef, source.sourceKey, result.effectiveReadSequence, result.unreadCount, result.latestSequence)
-        if(source.kind==='group_chat'&&authenticatedAccountKey)void refreshTeamDirectory(authenticatedAccountKey)
+        if (source.kind === 'group_chat') void refreshTeamDirectory(authenticatedAccountKey, false, true)
       } catch {
         if (cacheAccountKeyRef.current !== authenticatedAccountKey) return
         ack.failed = true
@@ -3530,6 +3556,7 @@ export function ArkmeSurface({
     const interwovenRevision = arkmeInterwovenInvalidation.getSnapshotForSource(sourceKey,source.canonicalChatSourceKey).revision
     let refreshWindow = intent === 'refresh' || intent === 'background' || intent === 'foreground'
       ? conversationCacheRef.current.getTimeline(sourceKey) : undefined
+    if ((intent === 'refresh' || intent === 'background' || intent === 'foreground') && firstUnreadRequest.current) return
     if ((intent === 'refresh' || intent === 'background' || intent === 'foreground') && conversationTargetAbortRef.current !== undefined
       && !conversationTargetAbortRef.current.signal.aborted) {
       timelineRefreshScheduler.request()
@@ -3557,7 +3584,9 @@ export function ArkmeSurface({
     if (intent === 'latest' || intent === 'return-to-latest') {
       timelineWindowRevisionRef.current += 1
       olderLoadRef.current = { preload: new ConversationHistoryPreload(), error: '' }
+      newerPreloadRef.current = new ConversationHistoryPreload()
       setLoadingOlder(false)
+      setLoadingNewer(false)
       for (const [activeDirection, request] of timelineRequestsRef.current) {
         if (activeDirection !== direction) request.controller.abort()
       }
@@ -3666,7 +3695,7 @@ export function ArkmeSurface({
               aiPolishSettings: undefined, nextCursor: snapshot.nextCursor, newerCursor: snapshot.newerCursor, newerHasMore: snapshot.newerHasMore ?? false }))
             setTimelineLoadingKey(current => current === sourceKey ? '' : current)
             setTimelineSkeletonKey(current => current === sourceKey ? '' : current)
-            if (returningOffline) { setNewMessageCount(0); setHighlightedTargetUid('') }
+            if (returningOffline) setHighlightedTargetUid('')
             if (typeof navigator !== 'undefined' && navigator.onLine === false) return
           }
         } catch (caught) {
@@ -3695,7 +3724,7 @@ export function ArkmeSurface({
       }, { signal }), controller.signal)
       const readPage = (pageCursor?: ArkmeTimelineCursor) => {
         const cursor = pageCursor?.unified
-        if (!sourceIsChat || cursor?.mode !== 'older' || cursor.cacheOnly) return readTimelinePage(pageCursor)
+        if (!sourceIsChat || cursor?.cacheOnly || (cursor?.mode !== 'older' && (cursor?.mode !== 'newer' || intent !== 'history'))) return readTimelinePage(pageCursor)
         const localCursor = { ...pageCursor, unified: { ...cursor, cacheOnly: true } }
         const offline = typeof navigator !== 'undefined' && navigator.onLine === false
         const readCloud = () => readTimelinePage(pageCursor, 'cloud')
@@ -3703,14 +3732,14 @@ export function ArkmeSurface({
           if (isArkmeRequestAbort(caught, controller.signal) || !isArkmeTransientReadFailure(caught)) throw caught
           try { return await readTimelinePage(localCursor, 'fallback') } catch { throw caught }
         })
-        if (intent === 'history') return readConversationOlderPage(
+        if (intent === 'history') return readConversationAdjacentPage(
           signal => {
             historyTiming?.cacheStart()
             const send = (historyTrace?: import('../sdk/index.js').ArkmeSdkTransportOptions['historyTrace']) =>
               callArkme<ArkmeTimelinePage>('source.timeline', { sourceRef, limit, cursor: localCursor }, signal, ...(historyTrace ? [{ historyTrace }] : []))
             return historyTiming ? historyTiming.request('cache', send) : send()
           },
-          readRemote, controller.signal, offline, cursor.cursor, historyTiming ? result => historyTiming.cacheChecked(result) : undefined,
+          readRemote, controller.signal, offline, cursor.cursor, cursor.mode, historyTiming ? result => historyTiming.cacheChecked(result) : undefined,
         )
         return offline ? readTimelinePage(localCursor) : readRemote()
       }
@@ -3810,7 +3839,7 @@ export function ArkmeSurface({
       const nativeItems = unified.events.flatMap(event => event.kind === 'message' ? [event.item] : [])
       const mode = rebuiltAround ? 'around' as const : rebuilt || intent === 'return-to-latest' || direction === 'newer' && !unified.newerHasMore && unified.complete || cursor === undefined && direction !== 'refresh' && !restoredLocalTimeline
         ? 'latest' as const : cached?.mode ?? 'latest'
-      const cachedHistory = direction === 'older' && page.cache?.origin === 'local' && cached !== undefined
+      const cachedHistory = (direction === 'older' || direction === 'newer') && page.cache?.origin === 'local' && cached !== undefined
       const snapshot: ArkmeConversationTimelineSnapshot = {
         cache: keepingLocalTail || cachedHistory ? cached.cache : !liveTimelineTail.hasPending ? page.cache : { origin: 'network', persistence: 'deferred', stale: true },
         unified, mode, items: messageMerge.merge(sourceKey, nativeItems, Date.now(), cached?.items, unified), aiPolishNotices: [],
@@ -3820,27 +3849,17 @@ export function ArkmeSurface({
         ...(unified.newerCursor ? { newerCursor: { unified: { mode: 'newer', cursor: unified.newerCursor } } } : {}),
         ...(cached?.aiPolishSettings ? { aiPolishSettings: cached.aiPolishSettings } : {}),
       }
-      if ((intent === 'refresh' || intent === 'background') && cached?.unified && bodyRef.current) {
-        const previousIds = new Set(cached.unified.events.map(event => event.eventId))
-        const count = unified.events.filter(event => event.kind === 'message' && !previousIds.has(event.eventId)
-          && (event.item.sequence ?? 0) > (cached.latestSequence ?? 0)).length
-        const viewport = arkmeConversationViewport(bodyRef.current)
-        if (count > 0 && !viewport.stickToBottom) setNewMessageCount(value => value + count)
-      }
       const changed = !arkmeConversationTimelineContentEqual(cached, snapshot)
       conversationCacheRef.current.storeTimeline(sourceKey, snapshot)
       appliedTimelineInvalidationsRef.current.set(sourceKey, Math.max(appliedTimelineInvalidationsRef.current.get(sourceKey) ?? 0, invalidationRevision))
       if (changed || intent === 'return-to-latest') {
         const body = bodyRef.current
-        const previousEventIds = new Set(cached?.unified?.events.map(event => event.eventId))
-        const firstNewEvent = direction === 'newer' ? unified.events.find(event => !previousEventIds.has(event.eventId)) : undefined
-        const newerPageStartAnchorId = firstNewEvent === undefined ? undefined : firstNewEvent.kind === 'message'
-          ? `message:${firstNewEvent.eventId}` : firstNewEvent.kind === 'moment' ? `moment:${firstNewEvent.item.momentId}` : firstNewEvent.eventId
-        pendingViewportRestoreRef.current = { sourceKey,
-          followLatest: intent === 'refresh' || intent === 'background',
-          ...(newerPageStartAnchorId ? { newerPageStartAnchorId } : {}), viewport: intent === 'return-to-latest'
-          ? { scrollTop: 0, stickToBottom: true } : !hadCachedTimeline && !restoredLocalTimeline ? initialSavedViewport
-            : body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history' ? 'history' : intent === 'refresh' || intent === 'background' ? 'latest-anchor' : undefined) }
+        const followLatest = intent === 'refresh' || intent === 'background' || intent === 'tail'
+        pendingViewportRestoreRef.current = { sourceKey, followLatest,
+          viewport: intent === 'return-to-latest' ? { scrollTop: 0, stickToBottom: true }
+            : !hadCachedTimeline && !restoredLocalTimeline ? initialSavedViewport
+              : body === null ? conversationCacheRef.current.getViewport(sourceKey)
+                : arkmeConversationViewport(body, followLatest ? 'latest-anchor' : intent === 'history' || direction === 'newer' ? 'history' : undefined) }
         if (historyTiming) {
           const previous = new Set(cached?.unified?.events.map(event => event.eventId))
           const rows = new Set(unified.events.flatMap(event =>
@@ -3861,7 +3880,7 @@ export function ArkmeSurface({
       setTimelineLoadingKey(current => current === sourceKey ? '' : current)
       setTimelineSkeletonKey(current => current === sourceKey ? '' : current)
       if (!hadCachedTimeline && unified.events.length) setTimelineRevealKey(sourceKey)
-      if (intent === 'return-to-latest') { setNewMessageCount(0); setHighlightedTargetUid('') }
+      if (intent === 'return-to-latest') setHighlightedTargetUid('')
       if (generation === timelineGenerationRef.current && windowRevision === timelineWindowRevisionRef.current
         && (arkmeChatTimelineDelta.getSnapshotForSource(sourceKey).revision > (appliedTimelineInvalidationsRef.current.get(sourceKey) ?? invalidationRevision)
           || arkmeInterwovenInvalidation.getSnapshotForSource(sourceKey,source.canonicalChatSourceKey).revision > interwovenRevision)) {
@@ -3876,10 +3895,6 @@ export function ArkmeSurface({
     }
     const cached = conversationCacheRef.current.getTimeline(sourceKey)
     const loadingNewerPage = (cursor?.afterSequence ?? 0) > 0
-    const cachedItemUids = new Set((cached?.items ?? []).map(item => item.itemUid))
-    const newerPageStartItemUid = loadingNewerPage
-      ? mergeItems([], page.items.filter(item => !cachedItemUids.has(item.itemUid)))[0]?.itemUid
-      : undefined
     const returningToLatest = cursor === undefined || loadingNewerPage && !page.hasMore
     const nextAroundSequenceRange = !returningToLatest && (cached?.mode ?? 'latest') === 'around'
       ? arkmeConversationTimelineSequenceRange(page.items, cached?.aroundSequenceRange)
@@ -3943,14 +3958,10 @@ export function ArkmeSurface({
       pendingViewportRestoreRef.current = {
         sourceKey,
         viewport: intent === 'return-to-latest' ? { scrollTop: 0, stickToBottom: true } : preserve || hadCachedTimeline
-          ? body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history' ? 'history' : intent === 'refresh' || intent === 'background' ? 'latest-anchor' : undefined)
+          ? body === null ? conversationCacheRef.current.getViewport(sourceKey) : arkmeConversationViewport(body, intent === 'history' || loadingNewerPage ? 'history' : intent === 'refresh' || intent === 'background' ? 'latest-anchor' : undefined)
           : undefined,
-        ...(newerPageStartItemUid === undefined
-          ? {}
-          : { newerPageStartAnchorId: `message:${newerPageStartItemUid}` }),
       }
       if (intent === 'return-to-latest') {
-        setNewMessageCount(0)
         setHighlightedTargetUid('')
       }
       if (contentChanged || intent === 'return-to-latest') setTimelineView({
@@ -3981,6 +3992,49 @@ export function ArkmeSurface({
       else await refresh
     }
   }, [messageMerge, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, liveTimelineTail, recordMutations])
+  const locateFirstUnread = useCallback(async (): Promise<boolean> => {
+    if (!source || !sourceIsChat || !activeConversation || firstUnreadRequest.current) return false
+    const current = getConversationReadSource()
+    if (!current?.unreadCount || current.readSequence === undefined) return false
+    const after = current.readSequence
+    const generation = timelineGenerationRef.current
+    const request = new AbortController()
+    firstUnreadRequest.current = request
+    try {
+      const cached = conversationCacheRef.current.getTimeline(conversationKey)
+      const local = !cached?.cache?.stale ? findCachedConversationFirstUnread(cached?.unified, after) : undefined
+      const first = local ?? await withArkmeReadDeadline(async signal => {
+        const legacy = () => findConversationFirstUnread(after, current.latestSequence,
+          afterSequence => callArkme<ArkmeTimelinePage>('source.timeline', {
+            sourceRef: source.sourceRef, cursor: { afterSequence }, limit: 20,
+          }, signal), signal)
+        try {
+          const result = await callArkme<ArkmeTimelinePage>('source.timeline', {
+            sourceRef: source.sourceRef, cursor: { afterSequence: after, firstUnread: true }, limit: 1,
+          }, signal)
+          if (result.hasMore) return await legacy()
+          return result.items.find(item => item.sequence !== undefined && item.sequence > after
+            && item.status === 1 && item.recordOwnerUserId && isIncomingForRead(item))
+        } catch (caught) {
+          if (caught instanceof ArkmeClientError && caught.body.code === 'chat-unread-locate-unsupported') return await legacy()
+          throw caught
+        }
+      }, request.signal)
+      if (request.signal.aborted || generation !== timelineGenerationRef.current || !activeConversationRef.current
+        || cacheAccountKeyRef.current !== authenticatedAccountKey || arkmeUi.getSnapshot().conversationTarget
+        || arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).syncReset?.access === 'restricted') return false
+      if (!first || first.sequence === undefined) return false
+      setUnreadMarker({ scope: visibleUnreadLocateKey, itemUid: first.itemUid, sequence: first.sequence, through: after })
+      arkmeUi.showConversationTarget(source, first.itemUid, first.sendAtMillis, first.recordOwnerUserId,
+        undefined, false, false, undefined, undefined, true)
+      return true
+    } catch (caught) {
+      if (!isArkmeRequestAbort(caught, request.signal)) throw caught
+      return false
+    } finally {
+      if (firstUnreadRequest.current === request) firstUnreadRequest.current = undefined
+    }
+  }, [activeConversation, authenticatedAccountKey, conversationKey, getConversationReadSource, source, sourceIsChat, visibleUnreadLocateKey])
   useLayoutEffect(() => {
     scheduledTimelineRefreshRef.current = () => {
       if (!activeConversation || !authenticated) return
@@ -4033,6 +4087,7 @@ export function ArkmeSurface({
       || timelineStateKey !== conversationKey) return
     if (conversationTargetLocatedRevisionRef.current === target.revision) return
     if (conversationTargetPagingRef.current.revision !== target.revision) {
+      unreadLocateReadScope.current = undefined
       // A newer locate wins even when its row is already loaded (no around request).
       const returning = timelineRequestsRef.current.get('initial')
       if (returning?.returnToLatest) {
@@ -4043,7 +4098,7 @@ export function ArkmeSurface({
       conversationTargetAbortRef.current?.abort()
       conversationTargetAbortRef.current = undefined
       conversationTargetPagingRef.current = { revision: target.revision, pages: 0, aroundRequested: false }
-      newerSentinelArmedRef.current = true
+      newerPreloadRef.current = new ConversationHistoryPreload()
       if (pendingConversationTargetLocateRef.current?.revision !== target.revision) {
         pendingConversationTargetLocateRef.current = undefined
       }
@@ -4093,13 +4148,17 @@ export function ArkmeSurface({
           viewportRestoreIntentRef.current = false
           const calendarLocate = ownsCalendarNavigation(target.revision)
           cancelConversationFollow(body)
-          body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'),
+          body.scrollTo({ top: arkmeConversationTargetScrollTop(body, target.firstUnread ? unreadDividerOrRow(row) : row, calendarLocate || target.firstUnread ? 'start' : 'center'),
             // Virtual context chunks can change height while mounting. Match the
             // around-page path: establish the viewport before releasing its anchor.
-            behavior: calendarLocate || target.contextRef || target.systemRef ? 'auto' : 'smooth' })
+            behavior: calendarLocate || target.contextRef || target.systemRef || target.firstUnread ? 'auto' : 'smooth' })
+          if (target.firstUnread) {
+            conversationCacheRef.current.storeViewport(conversationKey, arkmeConversationViewport(body, 'history'))
+            unreadLocateReadScope.current = visibleUnreadLocateKey
+          }
           conversationTargetLocatedRevisionRef.current = target.revision
           const calendarFinished = finishCalendarNavigation(target.revision)
-          highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
+          if (!target.firstUnread) highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
           if (target.openDetail === true) openLocatedDetail(target.itemUid, target.revision)
           arkmeUi.consumeConversationTarget(target.revision)
         }
@@ -4162,10 +4221,13 @@ export function ArkmeSurface({
         timelineRequestsRef.current.delete('initial')
         timelineWindowRevisionRef.current += 1
         olderLoadRef.current = { preload: new ConversationHistoryPreload(), error: '' }
+        newerPreloadRef.current = new ConversationHistoryPreload()
         setLoadingOlder(false)
+        setLoadingNewer(false)
         const nextAroundSequenceRange = arkmeConversationTimelineSequenceRange(page.items)
+        const mode = target.firstUnread && page.unified?.newerHasMore === false ? 'latest' : 'around'
         const snapshot: ArkmeConversationTimelineSnapshot = {
-          mode: 'around',
+          mode,
           ...(nextAroundSequenceRange === undefined ? {} : { aroundSequenceRange: nextAroundSequenceRange }),
           unified: page.unified,
           items,
@@ -4191,6 +4253,7 @@ export function ArkmeSurface({
           itemUid: target.itemUid,
           revision: target.revision,
           transientHighlight: target.transientHighlight === true,
+          ...(target.firstUnread ? { firstUnread: true } : {}),
           ...(target.momentId ? { momentId: target.momentId } : {}),
           ...(target.contextRef ? { contextRef: target.contextRef } : {}),
           ...(target.systemRef ? { systemRef: target.systemRef } : {}),
@@ -4198,7 +4261,7 @@ export function ArkmeSurface({
         setTimelineView({
           sourceKey: conversationKey,
           unified: snapshot.unified,
-          mode: 'around',
+          mode,
           aroundSequenceRange: snapshot.aroundSequenceRange,
           items: snapshot.items,
           aiPolishNotices: snapshot.aiPolishNotices,
@@ -4218,6 +4281,10 @@ export function ArkmeSurface({
         conversationTargetAbortRef.current = undefined
         if (pendingConversationTargetLocateRef.current?.revision === target.revision) {
           pendingConversationTargetLocateRef.current = undefined
+        }
+        if (target.firstUnread) {
+          setUnreadMarker(undefined)
+          setForegroundReadRevision(value => value + 1)
         }
         const message = errorMessage(caught) || '暂时无法定位这条快记'
         if (!finishCalendarNavigation(target.revision, message)) {
@@ -4274,7 +4341,7 @@ export function ArkmeSurface({
   useLayoutEffect(() => {
     timelineGenerationRef.current += 1
     timelineWindowRevisionRef.current += 1
-    newerSentinelArmedRef.current = true
+    newerPreloadRef.current = new ConversationHistoryPreload()
     olderLoadRef.current = { preload: new ConversationHistoryPreload(), error: '' }
     setLoadingOlder(false)
     setLoadingNewer(false)
@@ -4336,7 +4403,6 @@ export function ArkmeSurface({
     setTimelineLoadingKey(sourceKey !== undefined && cachedTimeline === undefined && syncReset?.access !== 'restricted' ? sourceKey : '')
     setTimelineSkeletonKey('')
     setTimelineRevealKey('')
-    setNewMessageCount(0)
     setDrawer(undefined); setGroupMembersOpen(false); setDetailItemUid(''); setDetailBackStack([]); setShowOriginal(false)
     const pendingParent = pendingExtensionParentDetailRef.current
     if (arkmeUi.getSnapshot().conversationTarget?.revision !== pendingParent?.revision) {
@@ -4443,7 +4509,6 @@ export function ArkmeSurface({
     timelineRefreshScheduler.request(1000)
     setTimelineView(current => current.sourceKey !== conversationKey ? current : { ...current, ...snapshot,
       items: messageMerge.merge(conversationKey, snapshot.items, Date.now(), current.items) })
-    if (viewport?.stickToBottom === false) setNewMessageCount(count => count + Math.max(0, nextItems.length - cached.items.length))
   }, [activeConversation, authenticated, source, timelineStateKey, conversationKey, unifiedWindow, timelineMode,
     chatDelta, liveTimelineTail, messageMerge, timelineRefreshScheduler])
 
@@ -4494,6 +4559,8 @@ export function ArkmeSurface({
 
   useEffect(() => {
     if (!activeConversation || !authenticated || source === undefined || syncReset?.access === 'restricted') return
+    const target = arkmeUi.getSnapshot().conversationTarget
+    if (sourceIsChat && (timelineStateKey !== conversationKey || firstUnreadRequest.current || target?.firstUnread)) return
     const generation = timelineGenerationRef.current
     const cachedTimeline = conversationCacheRef.current.getTimeline(conversationKey)
     const hasCachedTimeline = cachedTimeline !== undefined
@@ -4503,6 +4570,20 @@ export function ArkmeSurface({
     const explicitlyRetried = entryRetryRef.current === conversationKey
     entryRetryRef.current = undefined
     timelineForegroundRef.current = { key: conversationKey, revision: foregroundReadRevision }
+    if (sourceIsChat && unreadEntryAttempt.current !== visibleUnreadLocateKey) {
+      unreadEntryAttempt.current = visibleUnreadLocateKey
+      const readState = getConversationReadSource()
+      if (!target && readState?.unreadCount && readState.readSequence !== undefined
+        && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+        const continueEntry = () => {
+          if (generation === timelineGenerationRef.current && !arkmeUi.getSnapshot().conversationTarget) {
+            setForegroundReadRevision(value => value + 1)
+          }
+        }
+        void locateFirstUnread().then(found => { if (!found) continueEntry() }, continueEntry)
+        return
+      }
+    }
     const invalidated = chatDelta.invalidationRevision > (appliedTimelineInvalidationsRef.current.get(conversationKey) ?? 0)
     if (cachedTimeline?.mode === 'around') {
       // An explicit unread directory click requests current messages; a reaction locate keeps history.
@@ -4565,7 +4646,8 @@ export function ArkmeSurface({
           ? !hasReadableCache || !isArkmeTransientReadFailure(caught) : !hasCachedTimeline)) setTimelineError(errorMessage(caught))
       }
     })
-  }, [activeConversation, authenticated, chatDelta.items, conversationKey, foregroundReadRevision, loadTimeline, notificationActivationRevision, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, syncReset])
+  }, [activeConversation, authenticated, chatDelta.items, conversationKey, foregroundReadRevision, loadTimeline, notificationActivationRevision, source, sourceIsChat, sourceProjectionRevision, timelineRefreshScheduler, syncReset,
+    timelineStateKey, ui.conversationTarget?.revision, visibleUnreadLocateKey, getConversationReadSource, locateFirstUnread])
   useEffect(() => {
     if (!authenticated || source === undefined || timelineStateKey !== conversationKey) return
     if (conversationCacheRef.current.getTimeline(conversationKey) === undefined) return
@@ -4640,8 +4722,6 @@ export function ArkmeSurface({
     const body = bodyRef.current
     const viewport = body === null ? undefined : arkmeConversationViewport(body)
     pendingViewportRestoreRef.current = { sourceKey: conversationKey, viewport }
-    const existingIds = new Set(retainedItems.map(item => item.itemUid))
-    const incomingCount = applicableDeltaItems.filter(item => !existingIds.has(item.itemUid)).length
     setTimelineView(current => {
       if (current.sourceKey !== conversationKey) return current
       const retained = removedItemKeys.size === 0
@@ -4650,11 +4730,6 @@ export function ArkmeSurface({
       const mergedItems = messageMerge.merge(conversationKey, mergeItems(retained, applicableDeltaItems), Date.now(), retained)
       return sameStateValue(current.items, mergedItems) ? current : { ...current, items: mergedItems }
     })
-    if (viewport?.stickToBottom === false && incomingCount > 0) {
-      setNewMessageCount(current => current + incomingCount)
-    } else {
-      setNewMessageCount(0)
-    }
   }, [activeConversation, aroundSequenceRange, authenticated, chatDelta, conversationKey, items, source, timelineMode, timelineStateKey, unifiedWindow])
 
   const timelineChangeRevision = unifiedWindow === undefined ? chatDelta.invalidationRevision : chatDelta.revision
@@ -4771,40 +4846,38 @@ export function ArkmeSurface({
   const newerLoadFailed = newerLoadFailure?.generation === timelineGenerationRef.current
     && newerLoadFailure?.windowRevision === timelineWindowRevisionRef.current
   const loadNewerHistory = useCallback(async () => {
-    if (!activeConversation || !authenticated || !newerHasMore || newerCursor === undefined
-      || loadingNewer || timelineRequestsRef.current.has('newer')) return
+    if (!activeConversation || !authenticated || timelineStateKey !== conversationKey || !newerHasMore || newerCursor === undefined
+      || ui.conversationTarget !== undefined || loadingNewer || timelineRequestsRef.current.has('newer')) return
     const generation = timelineGenerationRef.current
     const windowRevision = timelineWindowRevisionRef.current
     const current = () => generation === timelineGenerationRef.current
       && windowRevision === timelineWindowRevisionRef.current
-    newerSentinelArmedRef.current = false
     setLoadingNewer(true)
     try {
-      await loadTimeline(newerCursor, true)
+      await loadTimeline(newerCursor, true, 40, 'history')
       if (current()) setNewerLoadFailure(undefined)
     } catch {
       if (current()) setNewerLoadFailure({ generation, windowRevision })
     } finally {
-      if (generation === timelineGenerationRef.current) setLoadingNewer(false)
+      if (current()) setLoadingNewer(false)
     }
-  }, [activeConversation, authenticated, newerHasMore, newerCursor, loadingNewer, loadTimeline])
+  }, [activeConversation, authenticated, timelineStateKey, conversationKey, newerHasMore, newerCursor,
+    loadingNewer, loadTimeline, ui.conversationTarget])
 
   useEffect(() => {
     const root = bodyRef.current; const sentinel = newerSentinelRef.current
-    if (!activeConversation || !authenticated || root === null || sentinel === null
-      || !newerHasMore || newerCursor === undefined || newerLoadFailed) return
-    let active = true
-    const observer = new IntersectionObserver(entries => {
-      if (!active) return
-      if (entries[0]?.isIntersecting !== true) {
-        newerSentinelArmedRef.current = true
-        return
-      }
-      if (!newerSentinelArmedRef.current || loadingNewer) return
-      void loadNewerHistory()
-    }, { root, rootMargin: '0px 0px 120px' })
-    observer.observe(sentinel); return () => { active = false; observer.disconnect() }
-  }, [activeConversation, authenticated, loadNewerHistory, loadingNewer, newerCursor, newerHasMore, newerLoadFailed])
+    if (!activeConversation || !authenticated || ui.conversationTarget !== undefined
+      || root === null || sentinel === null || loadingNewer || !newerHasMore || newerCursor === undefined
+      || newerLoadFailed || timelineStateKey !== conversationKey) return
+    const preload = newerPreloadRef.current
+    const cursorKey = JSON.stringify(newerCursor)
+    return observeConversationHistory(root, sentinel, near => {
+      if (newerPreloadRef.current !== preload || timelineRequestsRef.current.has('newer')) return
+      if (!near) { preload.leaveThreshold(); return }
+      if (preload.shouldRequest(cursorKey, root.scrollHeight)) void loadNewerHistory()
+    }, 'bottom')
+  }, [activeConversation, authenticated, conversationKey, timelineStateKey, loadNewerHistory,
+    loadingNewer, newerCursor, newerHasMore, newerLoadFailed, ui.conversationTarget])
 
   useEffect(() => {
     if (smsCountdown <= 0) return
@@ -6856,11 +6929,18 @@ export function ArkmeSurface({
     pendingViewportRestoreRef.current = undefined
     viewportRestoreIntentRef.current = false
     cancelConversationFollow(body)
-    body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate ? 'start' : 'center'), behavior: 'auto' })
+    body.scrollTo({ top: arkmeConversationTargetScrollTop(body, pending.firstUnread ? unreadDividerOrRow(row) : row, calendarLocate || pending.firstUnread ? 'start' : 'center'), behavior: 'auto' })
     const highlightUid = pending.momentId ? `moment:${pending.momentId}` : pending.itemUid
+    if (pending.firstUnread) {
+      // The ready layout can restore the cached viewport before the scroll event fires.
+      conversationCacheRef.current.storeViewport(pending.sourceKey, arkmeConversationViewport(body, 'history'))
+      unreadLocateReadScope.current = visibleUnreadLocateKey
+      setTimelineLoadingKey(current => current === pending.sourceKey ? '' : current)
+      setTimelineSkeletonKey(current => current === pending.sourceKey ? '' : current)
+    }
     conversationTargetLocatedRevisionRef.current = pending.revision
     const calendarFinished = finishCalendarNavigation(pending.revision)
-    highlightLocatedMessage(body, row, highlightUid, pending.transientHighlight === true, calendarFinished || pending.transientHighlight === true)
+    if (!pending.firstUnread) highlightLocatedMessage(body, row, highlightUid, pending.transientHighlight === true, calendarFinished || pending.transientHighlight === true)
     if (arkmeUi.getSnapshot().conversationTarget?.openDetail === true) openLocatedDetail(pending.itemUid, pending.revision)
     arkmeUi.consumeConversationTarget(pending.revision)
   }, [displayRows, timelineStateKey, finishCalendarNavigation, ownsCalendarNavigation, openLocatedDetail])
@@ -8065,17 +8145,42 @@ export function ArkmeSurface({
     bottomVisibility.measure()
   })
   const visibleReadScope = activeConversation && authenticated && sourceIsChat && timelineStateKey === conversationKey
-    && timelineLoadingKey !== conversationKey && timelineMode !== 'around' && ui.conversationTarget === undefined
+    && timelineLoadingKey !== conversationKey && (timelineMode !== 'around' || unreadLocateReadScope.current === visibleUnreadLocateKey)
+    && ui.conversationTarget === undefined && syncReset?.access !== 'restricted'
     && !unifiedWindow?.sources.some(status => status.source === 'messages' && status.status === 'gap')
     ? `${authenticatedAccountKey}:${conversationKey}` : undefined
-  const measureVisibleRead = useVisibleMessageRead(visibleReadScope, bodyRef, recordsRef, displayRows, acknowledgeRead)
-  useEffect(() => {
-    if (visibleReadScope) return arkmeChatDirectory.subscribe(() => { if (bodyRef.current) measureVisibleRead() })
-  }, [visibleReadScope, measureVisibleRead])
+  const confirmedReadSequence = conversationReadSource?.readSequence
+  const marker = activeConversation && unreadMarker?.scope === visibleUnreadLocateKey ? unreadMarker : undefined
+  const remainingUnread = activeConversation && sourceIsChat && syncReset?.access !== 'restricted'
+    ? conversationReadSource?.unreadCount ?? 0 : 0
+  const unreadCoverage = useMemo(() => {
+    if (!visibleReadScope || confirmedReadSequence === undefined
+      || unifiedWindow?.sources.find(status => status.source === 'messages')?.status !== 'ready'
+      || !unifiedWindow.windowTokens.length || timelineCache?.stale) return undefined
+    const coveredThrough = marker && marker.through <= confirmedReadSequence
+      ? Math.max(confirmedReadSequence, marker.sequence - 1) : confirmedReadSequence
+    return { ...buildConversationUnreadCoverage(displayRows.flatMap(row =>
+      row.kind === 'message' && 'readSequence' in row && typeof row.readSequence === 'number' ? [{ readSequence: row.readSequence, item: row.item }] : []),
+    coveredThrough), through: confirmedReadSequence }
+  }, [visibleReadScope, displayRows, unifiedWindow, confirmedReadSequence, timelineCache?.stale, marker])
+
+  const measureVisibleRead = useVisibleMessageRead(visibleReadScope, bodyRef, recordsRef, displayRows,
+    sequence => acknowledgeRead(sequence, unreadCoverage))
+  useEffect(() => { if (visibleReadScope) measureVisibleRead() },
+    [visibleReadScope, conversationReadSource?.unreadCount, confirmedReadSequence, measureVisibleRead])
+  useEffect(() => () => {
+    firstUnreadRequest.current?.abort()
+    firstUnreadRequest.current = undefined
+    unreadLocateReadScope.current = undefined
+    unreadEntryAttempt.current = undefined
+  }, [activeConversation, authenticatedAccountKey, conversationKey])
+  useEffect(() => { if (ui.conversationTarget !== undefined) firstUnreadRequest.current?.abort() },
+    [ui.conversationTarget?.revision])
+  useLayoutEffect(() => { setUnreadMarker(undefined) }, [activeConversation, visibleUnreadLocateKey])
   const handleConversationScroll = useCallback(() => {
     // Capture synchronously: switching conversations before the next frame must
     // retain the outgoing reading position, never sample the replacement DOM.
-    if (rememberConversationViewport()?.stickToBottom) setNewMessageCount(count => count === 0 ? count : 0)
+    rememberConversationViewport()
     updateScrollAffordances()
     if (lastReadAckRef.current?.failed) lastReadAckRef.current = undefined
     measureVisibleRead()
@@ -8095,13 +8200,14 @@ export function ArkmeSurface({
       timelineRequestsRef.current.clear()
       pendingConversationTargetLocateRef.current = undefined
       olderLoadRef.current = { preload: new ConversationHistoryPreload(), error: '' }
+      newerPreloadRef.current = new ConversationHistoryPreload()
       setLoadingOlder(false)
+      setLoadingNewer(false)
       arkmeUi.consumeConversationTarget(target.revision)
     }
     // Loaded latest window: no read request and no change to the 80px auto-follow policy.
     followConversationBottom(body, false, 'instant')
     conversationCacheRef.current.storeViewport(timelineStateKey, arkmeConversationViewport(body))
-    setNewMessageCount(0)
     setHighlightedTargetUid('')
     bottomVisibility.measure()
   }, [activeConversation, bottomVisibility.measure, conversationKey, loadTimeline, newerHasMore, timelineMode, timelineStateKey])
@@ -8503,13 +8609,17 @@ export function ArkmeSurface({
                 const messageBottomGap = !next || nextIsSameDayNotice ? 0 : isSharedRecordingCard ? 42 : 18
                 return <Fragment key={conversationMessageRenderKey(item)}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={item.sendAtMillis} /></li>}
+                  {marker && marker.itemUid === item.itemUid && marker.sequence === item.sequence && <li data-arkme-unread-divider="true" style={{
+                    margin: '6px 0 12px', padding: '4px 0', textAlign: 'center', listStyle: 'none', color: arkmeTheme.accent,
+                    background: arkmeTheme.subtle, borderRadius: 6, fontSize: 12, lineHeight: '18px',
+                  }}>{tr('未读消息')}</li>}
                   <li data-arkme-width-anchor={row.id} data-arkme-width-preview={(item.conversationPreview || item.textContent || item.title).slice(0, 320)}
                     data-arkme-width-avatar={avatarRef}
                     data-arkme-width-sender={role?.name ?? arkmeTimelineSenderName(item, selfProfile)}
                     data-arkme-width-sender-kind={item.senderKind ?? 'human'}
                     data-arkme-selection-key={arkmeTimelineOccurrenceKey(item)} data-arkme-conversation-row={row.id} data-arkme-message-item-uid={item.itemUid}
                     data-arkme-message-version={item.recordVersion ?? 0} data-arkme-message-sequence={item.sequence}
-                    data-arkme-read-sequence={'readSequence' in row ? row.readSequence : undefined}
+                    data-arkme-read-sequence={row.kind === 'message' && isIncomingForRead(row.item) && 'readSequence' in row ? row.readSequence : undefined}
                     data-arkme-message-owner-id={item.recordOwnerUserId}
                     aria-description={item.representation ? tr('代表{v0}发言', { v0: item.representation.name }) : undefined} style={{
                     ...styles.row,
@@ -8784,7 +8894,7 @@ export function ArkmeSurface({
   }, [offlineMessageLinks, displayRows, personalExtensionParents, source, selfSources, selfProfile, conversationBootstrap, selfConversationMember, conversationMemberByRef, resolveReactionActor,
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, timelineFileTasksByItem, retryingFileTasks, sendPlaceholders,
-    highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
+    highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid, marker,
     reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale, reactionMenuRequest, extensionSendTasks, timelineBotPresentations])
   const unwindowedMessageRows = useMemo(() => source && !unifiedWindow
     ? displayRows.map((_, index) => renderMessageRow(index)) : null,
@@ -9406,9 +9516,18 @@ export function ArkmeSurface({
           {active && activeConversation && timelineStateKey === conversationKey && <ArkmeConversationBottomControl
             key={`${authenticatedAccountKey}:${conversationKey}`}
             showBackToBottom={bottomVisibility.visible || timelineMode === 'around' || newerHasMore}
-            newMessageCount={newMessageCount}
+            {...(sourceIsChat ? { unreadCount: remainingUnread } : {})}
             historical={unifiedWindow !== undefined && (timelineMode === 'around' || newerHasMore)}
-            onReturnToLatest={returnToLatest}
+            onReturnToLatest={async () => {
+              if (arkmeUi.getSnapshot().conversationTarget?.firstUnread) return
+              const generation = timelineGenerationRef.current
+              const viewport = bodyRef.current
+              if (sourceIsChat && remainingUnread > 0 && viewport
+                && visibleMessageReadSequence(viewport) <= (getConversationReadSource()?.readSequence ?? 0)) {
+                if (await locateFirstUnread()) return
+              }
+              if (generation === timelineGenerationRef.current && activeConversationRef.current) await returnToLatest()
+            }}
           />}
           </div>
           {isArkmeOfficialAuthor(source) && timelineStateKey === conversationKey

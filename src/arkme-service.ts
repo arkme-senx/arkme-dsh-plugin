@@ -2737,6 +2737,10 @@ recordingAnalysisV1: true,
   async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean; firstPaint?: boolean; deferBotProfiles?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (options.cursor?.firstUnread !== undefined && (options.cursor.firstUnread !== true || options.cursor.afterSequence === undefined
+      || options.cursor.unified !== undefined || source.kind !== 'private_chat' && source.kind !== 'group_chat')) {
+      throw new ArkmePluginError('chat-timeline-sequence-invalid', '当前查询不支持定位未读消息', false, 400)
+    }
     const localInitial = options.cursor?.unified?.cacheOnly === true && options.cursor.unified.mode === 'initial'
     if (source.kind === 'send_to_self' && localInitial) {
       const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 40)))
@@ -2766,6 +2770,13 @@ recordingAnalysisV1: true,
       this.messageSync.preferConversation(session.userId, memberChat ? source.ownerRef : undefined)
     }
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+      if (options.cursor?.afterSequence !== undefined && !options.cursor.unified) {
+        if (!Number.isSafeInteger(options.cursor.afterSequence) || options.cursor.afterSequence < 0
+          || options.cursor.beforeSequence !== undefined || options.cursor.itemUid !== undefined || options.cursor.sendAtMillis !== undefined) {
+          throw new ArkmePluginError('chat-timeline-sequence-invalid', '消息序号无效', false, 400)
+        }
+        return await this.chat.readSource(sourceRef, options)
+      }
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
       if (!options.cursor?.unified?.cacheOnly) this.realtime.preferChatProjection(session.userId, source.ownerRef)
       const page = await this.unifiedTimeline.read(sourceRef, {

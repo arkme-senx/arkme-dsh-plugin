@@ -39,12 +39,13 @@ export async function readInitialConversationCache<T>(
 }
 
 /** An exact committed history page can satisfy its remote cursor while it is current. */
-export async function readConversationOlderPage(
+export async function readConversationAdjacentPage(
   readLocal: (signal: AbortSignal) => Promise<ArkmeTimelinePage>,
   readRemote: () => Promise<ArkmeTimelinePage>,
   signal: AbortSignal,
   offline: boolean,
   requestedCursor: string | undefined,
+  direction: 'older' | 'newer',
   cacheDecision?: (result: string) => void,
 ): Promise<ArkmeTimelinePage> {
   if (offline) {
@@ -57,9 +58,11 @@ export async function readConversationOlderPage(
     const page = await readInitialConversationCache(readLocal, signal, false)
     signal.throwIfAborted()
     const window = page?.unified
+    const hasMore = direction === 'older' ? window?.olderHasMore : window?.newerHasMore
+    const continuation = direction === 'older' ? window?.olderCursor : window?.newerCursor
     if (page?.cache?.origin === 'local' && page.cache.persistence === 'committed' && page.cache.stale === false
       && window?.complete && window.windowTokens.length
-      && (!window.olderHasMore || window.olderCursor && window.olderCursor !== requestedCursor)) {
+      && (!hasMore || continuation && continuation !== requestedCursor)) {
       cacheDecision?.('hit')
       return page
     }

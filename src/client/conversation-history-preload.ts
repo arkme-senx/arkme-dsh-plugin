@@ -23,7 +23,7 @@ export class ConversationHistoryPreload {
   }
 }
 
-export function observeConversationHistory(root: HTMLElement, sentinel: HTMLElement, onIntersection: (near: boolean) => void): () => void {
+export function observeConversationHistory(root: HTMLElement, sentinel: HTMLElement, onIntersection: (near: boolean) => void, edge: 'top' | 'bottom' = 'top'): () => void {
   if (typeof IntersectionObserver === 'undefined') return () => {}
   let observer: IntersectionObserver | undefined
   let currentHeight = 0
@@ -36,7 +36,7 @@ export function observeConversationHistory(root: HTMLElement, sentinel: HTMLElem
     if (currentHeight <= 0) return
     const next = new IntersectionObserver(([entry]) => {
       if (!disposed && observer === next) onIntersection(entry?.isIntersecting === true)
-    }, { root, rootMargin: `${currentHeight * 2}px 0px 0px` })
+    }, { root, rootMargin: edge === 'top' ? `${currentHeight * 2}px 0px 0px` : `0px 0px ${currentHeight * 2}px` })
     observer = next
     next.observe(sentinel)
   }

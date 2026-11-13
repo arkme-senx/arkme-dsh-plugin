@@ -1,5 +1,5 @@
 import { groupInteractionPeers } from './chat-realtime-service.js'
-import { parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncProjection, type ChatSyncSession, type ChatSyncUnreadPreview } from '../chat-message-sync.js'
+import { CHAT_MESSAGE_SYNC_SESSION_ROUTE, parseChatSyncPage, type ArkmeMessageSyncProgress, type ChatSyncBatch, type ChatSyncPage, type ChatSyncPlan, type ChatSyncProjection, type ChatSyncSession, type ChatSyncUnreadPreview } from '../chat-message-sync.js'
 import { chatTimelineEventId } from './timeline-event-id.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
 import { isBackendRouteUnavailable } from './service-error.js'
@@ -10,7 +10,6 @@ import type { ArkmeChatClientEvent } from '../types.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 
 const ROUTE = '/api/v1/chat/sync/account'
-const SESSION_ROUTE = '/api/v1/chat/sync/session'
 const idle = (accountKey = ''): ArkmeMessageSyncProgress => ({ accountKey, cycle: 0, revision: 0, phase: 'idle', completed: 0, total: 0, pending: 0, terminal: 0 })
 
 /** One lifecycle per Host; a UI mount, Tool call or SDK consumer never owns a second pump. */
@@ -194,7 +193,7 @@ export class ChatMessageSyncService {
           const args = { mode: 'unread_manifest', limit: uid ? 100 : 1000, checkpoint: plan.checkpoint, ...ranges }
           let page: ChatSyncPage
           try {
-            page = await this.request(uid ? { ...args, chat_session_uid: uid } : args, session, signal, uid ? SESSION_ROUTE : ROUTE)
+            page = await this.request(uid ? { ...args, chat_session_uid: uid } : args, session, signal, uid ? CHAT_MESSAGE_SYNC_SESSION_ROUTE : ROUTE)
           } catch (error) {
             this.assert(generation, signal)
             if (!uid || !isBackendRouteUnavailable(error)) throw error

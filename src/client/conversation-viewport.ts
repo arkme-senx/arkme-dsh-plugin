@@ -15,8 +15,6 @@ export interface ArkmeConversationViewportStore {
 export interface ArkmeConversationViewportRestore {
   sourceKey: string
   viewport: ArkmeConversationViewportSnapshot | undefined
-  /** Explicit newer-page navigation, not a saved reading position. */
-  newerPageStartAnchorId?: string
   /** Capture before replacing rows; latest-edge alignment belongs to the same paint. */
   followLatest?: boolean | undefined
 }
@@ -158,9 +156,8 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
     const body = bodyRef.current
     if (!ready || body === null || body.clientHeight <= 0 || pending?.sourceKey !== sourceKey) return
     const anchorOffset = arkmeConversationAnchorOffset(body, pending.viewport?.anchorId)
-    const newerPageStartOffset = arkmeConversationAnchorOffset(body, pending.newerPageStartAnchorId)
     const maximumScrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
-    if (pending.followLatest && pending.viewport?.stickToBottom && pending.newerPageStartAnchorId === undefined) {
+    if (pending.followLatest && pending.viewport?.stickToBottom) {
       // A checkpoint may trim/prepend rows without changing total height. Keep
       // a surviving row at its pre-commit position before following the new tail.
       let rebased = false
@@ -176,21 +173,16 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
       followConversationBottom(body, rebased, 'animated')
     } else {
       cancelConversationFollow(body)
-      body.scrollTop = pending.newerPageStartAnchorId === undefined
-        ? arkmeConversationRestoredScrollTop(pending.viewport, {
-          currentScrollTop: body.scrollTop,
-          scrollHeight: body.scrollHeight,
-          ...(anchorOffset === undefined ? {} : { anchorOffset }),
-        })
-        : Math.max(0, Math.min(maximumScrollTop, newerPageStartOffset === undefined
-          ? pending.viewport?.scrollTop ?? body.scrollTop
-          : body.scrollTop + newerPageStartOffset))
+      body.scrollTop = arkmeConversationRestoredScrollTop(pending.viewport, {
+        currentScrollTop: body.scrollTop,
+        scrollHeight: body.scrollHeight,
+        ...(anchorOffset === undefined ? {} : { anchorOffset }),
+      })
     }
     store.storeViewport(sourceKey, arkmeConversationViewport(body))
     if (restoreIntent !== undefined) {
       // Deferred layout follows the requested position, not temporary geometry.
-      restoreIntent.current = pending.newerPageStartAnchorId === undefined
-        && (pending.viewport === undefined || pending.viewport.stickToBottom)
+      restoreIntent.current = pending.viewport === undefined || pending.viewport.stickToBottom
     }
     pendingRestore.current = undefined
   })

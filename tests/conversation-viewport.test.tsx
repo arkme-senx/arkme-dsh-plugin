@@ -51,7 +51,7 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   restoreIntent = { current: undefined }
   store = new ArkmeConversationMemoryCache(); pending = { current: undefined }
-  scrollTop = 0; viewportHeight = 500; pageHeight = 100; rowCount.B = 12
+  scrollTop = 0; viewportHeight = 500; pageHeight = 100; rowCount.A = 30; rowCount.B = 12
   vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function () {
     scrollTop = Math.max(0, Math.min(scrollTop, maximum())); return scrollTop
   })
@@ -188,10 +188,16 @@ describe('conversation viewport ownership', () => {
     render(); expect(scrollTop).toBe(maximum())
   })
 
-  it('keeps explicit newer-page navigation separate from restoring the saved anchor', () => {
-    render(); scroll(730)
-    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), newerPageStartAnchorId: 'message:A-15' }
-    render(); expect(scrollTop).toBe(1500)
+  it('keeps the last visible window in place when a newer page appends', () => {
+    render(); scroll(maximum())
+    const body = host.firstElementChild as HTMLDivElement
+    const viewport = arkmeConversationViewport(body, 'history')
+    pending.current = { sourceKey: 'A', viewport }
+    rowCount.A += 20
+    render()
+    expect(scrollTop).toBe(viewport.scrollTop)
+    expect(scrollTop).toBeLessThan(maximum())
+    expect(restoreIntent.current).toBe(false)
   })
 
   it('passes explicit follow intent to deferred layout without treating clamped history as latest', () => {
@@ -200,9 +206,6 @@ describe('conversation viewport ownership', () => {
     pending.current = { sourceKey: 'A', viewport: { scrollTop: 9000, stickToBottom: false } }
     render()
     expect(scrollTop).toBe(maximum())
-    expect(restoreIntent.current).toBe(false)
-    pending.current = { sourceKey: 'A', viewport: undefined, newerPageStartAnchorId: 'message:A-29' }
-    render()
     expect(restoreIntent.current).toBe(false)
     restoreIntent.current = undefined
     render()
@@ -227,12 +230,6 @@ describe('conversation viewport ownership', () => {
     render(); scroll(730)
     pending.current = { sourceKey: 'B', viewport: undefined }
     render(); expect(pending.current?.sourceKey).toBe('B'); expect(scrollTop).toBe(730)
-  })
-
-  it('uses the saved pixel fallback when an explicit newer-page row is absent', () => {
-    render(); scroll(730)
-    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), newerPageStartAnchorId: 'message:missing' }
-    render(); expect(scrollTop).toBe(730)
   })
 
   it('retains history across rerenders without a replacement or restore request', () => {

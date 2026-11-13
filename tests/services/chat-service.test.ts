@@ -519,7 +519,7 @@ describe('ChatService', () => {
         expect(path).toBe('/api/v1/chat/timeline/tail')
         expect(body).toMatchObject({ chat_session_uid: 'chat-private', limit: 20 })
         if (body.after_seq === 13) return { items: [], next_after_seq: 13 }
-        expect(body.after_seq).toBe(12)
+        expect(body.after_seq).toBe(0)
         return {
           items: [{
             relation: { rel_uid: 'rel-13', record_uid: 'record-13', record_owner_user_id: 42, sender_user_id: 42, display_name_snapshot: '我', seq: 13, attach_at: 1300 },
@@ -543,13 +543,51 @@ describe('ChatService', () => {
       { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
     )
 
-    const firstPage = await chat.readSource('source-private', { cursor: { afterSequence: 12 }, limit: 20 })
+    const firstPage = await chat.readSource('source-private', { cursor: { afterSequence: 0 }, limit: 20 })
     const exhaustedPage = await chat.readSource('source-private', { cursor: { afterSequence: 13 }, limit: 20 })
 
     expect(firstPage).toMatchObject({ hasMore: true, nextCursor: { afterSequence: 13 } })
-    expect(firstPage.items.map(item => item.itemUid)).toEqual(['record-13'])
+    expect(firstPage.items).toMatchObject([{ itemUid: 'record-13', recordOwnerUserId: 42, sequence: 13 }])
     expect(exhaustedPage).toMatchObject({ hasMore: false })
     expect(exhaustedPage.nextCursor).toBeUndefined()
+  })
+
+  it('seeks the oldest unread relation without paging through the viewer’s own messages', async () => {
+    const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      if (path === '/api/v1/chat/sync/session') {
+        const older = body.checkpoint === 'older-unread'
+        expect(body).toMatchObject({ mode: 'unread_manifest', chat_session_uid: 'chat-private', cached: {}, limit: 100 })
+        return { checkpoint: older ? 'complete' : 'older-unread', has_more: !older, retry: false, manifest_only: true, sessions: [{
+          chat_session_uid: 'chat-private', accessible: true, session_kind: 1, membership_version: 1,
+          complete: older, position: { initialized: older, cursor: 0 }, manifest: [
+            { rel_uid: older ? 'first-unread' : 'newer-unread', state: 'available', unread: true, revision: 1, record_version: 1, seq: older ? 5010 : 5086 },
+          ],
+        }] }
+      }
+      expect(path).toBe('/api/v1/chat/timeline/tail')
+      expect(body).toEqual({ chat_session_uid: 'chat-private', after_seq: 5009, limit: 1 })
+      return { next_after_seq: 5010, items: [{
+        relation: { rel_uid: 'first-unread', record_uid: 'record-5010', record_owner_user_id: 7, sender_user_id: 7, seq: 5010, attach_at: 50100 },
+        record: { status: 1, payload: { record_uid: 'record-5010', text_content: '第一条未读' } },
+      }] }
+    })
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      stateStore: { uniqueCode: vi.fn(async () => 'timeline-unread-signing-key') },
+      authenticatedChatPost: post,
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
+      sourceItem: vi.fn(async () => ({ sourceRef: 'source-private', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount: 52 })),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
+    }
+    const chat = new ChatService(runtime as never, source as never, {} as never,
+      { recordMediaUnavailable: () => false, richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) } as never,
+      {} as never, {} as never, {} as never, { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never)
+    const page = await chat.readSource('source-private', { cursor: { afterSequence: 834, firstUnread: true }, limit: 1 })
+    expect(page).toMatchObject({ hasMore: false, items: [{ itemUid: 'record-5010', sequence: 5010, recordOwnerUserId: 7 }] })
+    expect(post.mock.calls.map(([path]) => path)).toEqual(['/api/v1/chat/sync/session', '/api/v1/chat/sync/session', '/api/v1/chat/timeline/tail'])
   })
 
   it('hydrates a send-to-self extension parent from the same refreshed timeline page', async () => {

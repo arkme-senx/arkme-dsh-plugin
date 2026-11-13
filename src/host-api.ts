@@ -695,13 +695,20 @@ function timelineCursorParam(params: Record<string, unknown>): ArkmeTimelineCurs
   const raw = params.cursor
   if (raw === null || typeof raw !== 'object') return undefined
   const cursor = raw as Record<string, unknown>
+  if (cursor.firstUnread !== undefined && (cursor.firstUnread !== true || cursor.afterSequence === undefined || cursor.unified !== undefined)) {
+    throw new ArkmePluginError('chat-timeline-sequence-invalid', '消息序号无效', false, 400)
+  }
   if (cursor.unified !== undefined) return { unified: cursor.unified as import('./unified-chat-timeline.js').ArkmeUnifiedTimelineQuery }
   const sendAtMillis = numberParam(cursor, 'sendAtMillis', 0)
   const itemUid = stringParam(cursor, 'itemUid')
   const beforeSequence = numberParam(cursor, 'beforeSequence', 0)
-  const afterSequence = numberParam(cursor, 'afterSequence', 0)
+  if (cursor.afterSequence !== undefined) {
+    if (!Number.isSafeInteger(cursor.afterSequence) || Number(cursor.afterSequence) < 0 || beforeSequence > 0) {
+      throw new ArkmePluginError('chat-timeline-sequence-invalid', '消息序号无效', false, 400)
+    }
+    return { afterSequence: Number(cursor.afterSequence), ...(cursor.firstUnread === true ? { firstUnread: true } : {}) }
+  }
   if (beforeSequence > 0) return { beforeSequence }
-  if (afterSequence > 0) return { afterSequence }
   return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
 }
 
