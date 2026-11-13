@@ -88,3 +88,11 @@ Host ChannelManager 使用两个有界 FIFO 通道，最多同时等待两个帧
 回归覆盖连续拉取连接次数、并发调用独立取消、45 秒回收、换账号、Host 换代、重复断流、鉴权拒绝、发送积压上限和关闭后的排队清理。可选的官方兼容测试通过 `DSH_GATEWAY_PACKAGE=<已安装 dsh-api-gateway 的包目录>` 运行 `tests/harness-native-transport-script.test.ts`，实际装配未修改的官方 Client Gateway 与 RemoteStream，验证传输断开且连续两次重开失败后仍能在下一代恢复。
 
 Tools/SDK 继续使用既有账号 owner，无新增业务入口；UI 只修改既有传输恢复。客户端、后端与 Realtime 服务契约不变。以上确定性测试和官方包兼容测试不等同于双电脑、睡眠唤醒、长时间弱网或 Windows/Linux 实机验收；桌面生效还需正式插件制品被客户端消费。
+
+## 模型写入回执与移动端恢复
+
+`session.model.select` 的网络应答丢失后，成功读取旧模型不能证明原写入已经结束。手机持久化请求标识及目标 provider/model/显式 reasoningEffort，只有成功回执、明确拒绝或读取到目标状态才解除保护；重复选择已确认的当前值不发送写入。明确的 DSH 失败响应由既有 adapter 标记 `dshRejected`，Host 在两种远控频道的错误回包中增量传递 `dsh_rejected: true`，并在命令账本的拒绝回执中保留此信息。连接断开、超时和结果未知均不携带该证明；不会把全部 `rejected` 回包当成执行已结束。
+
+手机仅对 `REMOTE_TRANSPORT_FAILED` 加上此证明的失败恢复正常回退/重试；未携带字段的旧 Host 保守处理。先发布 Host，再发布手机，避免明确拒绝时缺少恢复证据。旧手机忽略增量字段，原错误码、权限及请求去重不变。该改动是现有命令失败语义的传递，不新增业务操作、Host 路由或 Tools/SDK 入口；UI 使用原模型菜单和草稿反馈，不展示协议状态。Tools/SDK 的既有能力不变。
+
+验证覆盖 Host 普通频道、稳定会话频道、账本重复读取、手机协议解析、Realtime 错误传递和模型回退。真实手机与目标 Host 的弱网验收须使用这两端的配套版本。

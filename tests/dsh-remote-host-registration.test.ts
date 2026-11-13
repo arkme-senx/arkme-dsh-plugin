@@ -1675,3 +1675,34 @@ it('dispatches mobile typed reads with stale generation on the stable channel', 
     expect(f.realtime.calls.filter(value => value === 'connect')).toHaveLength(1)
   } finally { await f.host.stop() }
 })
+
+for (const dshRejected of [false, true]) {
+  it(`preserves model rejection evidence on the stable session channel: ${dshRejected}`, async () => {
+    const shared = await mkdtemp(join(tmpdir(), 'dsh-model-rejection-'))
+    const f = await fixture({ now: Date.now, sessionChannel: {
+      epoch: () => 1, native: async () => undefined,
+      ledgerForAccount: (_account, key) => new DshRemoteCommandLedger(shared, key),
+    } })
+    vi.spyOn(f.adapter, 'capabilities').mockReturnValue([...f.adapter.capabilities(), 'session.model.select'])
+    vi.spyOn(f.sessionOwnership, 'listOwned').mockResolvedValue(new Set(['session-01']))
+    const select = vi.spyOn(f.adapter, 'selectSessionModel').mockRejectedValue(
+      new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'selection failed', true, dshRejected ? { dshRejected: true } : {}),
+    )
+    try {
+      await f.host.start()
+      f.realtime.onEvent?.({ kind: 'session.command', runtimeRef: 'runtime-01', envelope: {
+        protocol: 'dsh.remote', protocol_major: 1, kind: 'request', request_ref: 'model-rejection', host_generation: 999,
+        issued_at: Date.now(), execute_before: Date.now() + 30_000, operation: 'session.model.select',
+        body: { session_ref: 'session-01', model_provider: 'provider', model_id: 'model' },
+      } }, { senderRole: 'controller', runtimeRef: 'sessions_v1', targetHostLeaseGeneration: 0, acceptedAtMillis: Date.now() })
+      await vi.waitFor(() => expect(f.realtime.published).toContainEqual(expect.objectContaining({
+        kind: 'session.response', envelope: expect.objectContaining({ request_ref: 'model-rejection', status: 'rejected' }),
+      })))
+      const reply = f.realtime.published.map(value => value.envelope as { request_ref?: string; error?: { code: string; dsh_rejected?: boolean } })
+        .find(value => value?.request_ref === 'model-rejection')!
+      expect(reply.error?.code).toBe('REMOTE_TRANSPORT_FAILED')
+      expect(reply.error?.dsh_rejected).toBe(dshRejected ? true : undefined)
+      expect(select).toHaveBeenCalledTimes(1)
+    } finally { await f.host.stop() }
+  })
+}

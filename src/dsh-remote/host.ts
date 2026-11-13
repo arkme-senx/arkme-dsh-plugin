@@ -244,6 +244,7 @@ function resultFromLedger(entry: DshRemoteLedgerEntry): unknown {
         typeof source.code === 'string' ? source.code as ConstructorParameters<typeof DshRemoteError>[0] : 'REMOTE_TRANSPORT_FAILED',
         typeof source.message === 'string' ? source.message : 'DSH 已拒绝该远控命令',
         source.retryable === true,
+        source.dshRejected === true ? { dshRejected: true } : {},
       )
     }
   }
@@ -580,6 +581,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           message: remote.message.slice(0, 256),
           retryable: remote.retryable,
           trace_ref: randomUUID(),
+          ...(remote.details.dshRejected === true ? { dsh_rejected: true as const } : {}),
         },
       })
     }
@@ -1639,7 +1641,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
               return response(request, result.duplicate ? 'duplicate' : 'completed', this.now(), { result: result.value })
             } catch (error) {
               const remote = asDshRemoteError(error)
-              return response(request, 'rejected', this.now(), { error: { code: remote.code, message: remote.message, retryable: remote.retryable, trace_ref: randomUUID() } })
+              return response(request, 'rejected', this.now(), { error: { code: remote.code, message: remote.message, retryable: remote.retryable, trace_ref: randomUUID(), ...(remote.details.dshRejected === true ? { dsh_rejected: true as const } : {}) } })
             }
           } } : {}),
           call: async (request, signal) => {

@@ -91,6 +91,8 @@ export interface DshRemoteResponse {
     message: string
     retryable: boolean
     trace_ref: string
+    /** Explicit DSH rejection; absent when the transport outcome is uncertain. */
+    dsh_rejected?: true
   }
 }
 

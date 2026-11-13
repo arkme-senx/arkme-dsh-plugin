@@ -811,6 +811,29 @@ describe('Arkme remote Host account contract', () => {
       } } } },
     })
     expect(selectModel).toHaveBeenCalledTimes(1)
+
+    // A definite DSH rejection remains distinguishable from transport loss,
+    // including when the caller retrieves the same command receipt again.
+    selectModel.mockRejectedValueOnce(new DshRemoteError(
+      'REMOTE_TRANSPORT_FAILED', 'Model removed', true, { dshRejected: true },
+    ))
+    const rejectedRequest = { ...selectRequest, request_ref: 'model-rejected' }
+    for (let i = 0; i < 2; i++) {
+      await expect(host.dispatchAuthorizedRequest(rejectedRequest, context)).resolves.toMatchObject({
+        status: 'rejected', error: { code: 'REMOTE_TRANSPORT_FAILED', dsh_rejected: true },
+      })
+    }
+    expect(selectModel).toHaveBeenCalledTimes(2)
+
+    selectModel.mockRejectedValueOnce(new DshRemoteError('REMOTE_TRANSPORT_FAILED', 'Connection lost', true))
+    const uncertainRequest = { ...selectRequest, request_ref: 'model-uncertain' }
+    const uncertain = await host.dispatchAuthorizedRequest(uncertainRequest, context)
+    expect(uncertain.error?.code).toBe('REMOTE_TRANSPORT_FAILED')
+    expect(uncertain.error?.dsh_rejected).toBeUndefined()
+    const pending = await host.dispatchAuthorizedRequest(uncertainRequest, context)
+    expect(pending.error?.code).toBe('COMMAND_OUTCOME_UNKNOWN')
+    expect(pending.error?.dsh_rejected).toBeUndefined()
+    expect(selectModel).toHaveBeenCalledTimes(3)
     ledger.close()
   })
 
