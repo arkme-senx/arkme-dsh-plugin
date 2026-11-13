@@ -73,7 +73,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
   const copyMessage = () => copy(arkmeMessageCopyText(teamMessagePresentation(message)))
   const recallAction = { id:'withdraw' as const, disabled:busy || !onRecall, onSelect:()=>select(()=>onRecall?.()) }
   if (message.state === 'recalled') {
-    const notice = tr(message.own ? '你撤回了一条消息' : '对方撤回了一条消息')
+    const notice = tr(message.own ? '你撤回了一条消息' : '{v0}撤回了一条消息', { v0: message.sender.nickname })
     return <article data-arkme-conversation-row={`message:${message.key}`} data-team-message-key={message.key}
       data-arkme-message-item-uid={message.key} data-arkme-message-version={message.version} data-arkme-message-sequence={message.seq}
       style={layout.notice}>

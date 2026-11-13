@@ -127,6 +127,33 @@ describe('unified timeline owner contract', () => {
       expect(runtime.authenticatedChatPost.mock.calls).toHaveLength(mode === 'older' ? 2 : 1)
     } finally { service.dispose(); contexts.dispose() }
   })
+  it.each([
+    ['group_chat', false, true, '群内昵称撤回了一条消息'],
+    ['group_chat', true, true, '你撤回了一条消息'],
+    ['private_chat', false, true, '对方撤回了一条消息'],
+    ['group_chat', false, false, '对方撤回了一条消息'],
+  ])('projects recall identity for %s, own=%s, identity=%s', async (kind, own, identity, text) => {
+    const runtime = { requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: async () => ({ ...response(), timeline_items: [
+        { event_id: 'recall', source: 'messages', kind: 'message_recalled', occurred_at: 10, order_tie: 'r', content_status: 'unavailable',
+          payload: { own, ...(identity ? { sender_user_id: 2001, display_name_snapshot: '群内昵称' } : {}) } },
+      ] }) }
+    const chat = new ChatService(runtime as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const project = vi.spyOn(chat, 'projectChatTimelineItems').mockResolvedValue([])
+    const service = new UnifiedChatTimelineService(runtime as never,
+      { openSourceRef: async () => ({ kind, ownerRef: 'chat' }), sourceItem: async () => ({ kind }) } as never, chat, {} as never)
+    try {
+      const page = await service.read('ref')
+      expect(page.items).toEqual([])
+      expect(project.mock.calls[0]?.[0]).toEqual([])
+      const notice = page.unified!.events[0]!
+      expect(notice).toMatchObject({ kind: 'notice', text, contentStatus: 'unavailable' })
+      if (kind === 'group_chat' && identity) {
+        expect(notice).toMatchObject({ recallSender: { senderName: '群内昵称', isMe: own, memberRef: expect.stringMatching(/^arkme-chat-member/) } })
+        expect(JSON.stringify(page)).not.toContain('sender_user_id')
+      } else expect(notice).not.toHaveProperty('recallSender')
+    } finally { service.dispose() }
+  })
   it('accepts auxiliary-only pages and preserves unavailable message slots', async () => {
     const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { secret: 'do not expose' } }] }
     const post = vi.fn().mockResolvedValue(raw)

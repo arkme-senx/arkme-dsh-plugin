@@ -172,3 +172,15 @@ it('retains unaffected material on a transient refresh failure and rejects late 
  expect(host.textContent).toContain('原消息正文');expect(host.textContent).not.toContain('第一条延展')
  expect(host.textContent).toContain('服务暂时不可用')
 })
+
+it.each([false, true])('uses the resolved nickname for a recalled detail while own=%s', async own => {
+ const recalled = { ...source, own, state: 'recalled', contentStatus: 'recalled', sender: { nickname: '原始昵称', publicNickname: '账号昵称' } }
+ read.mockResolvedValue({ message: recalled, items: [], totalCount: 0, hasMore: false, nextSeq: 0, throughSeq: 20 })
+ const render = async (nickname: string) => act(async () => root.render(<TeamMessageDetail accountKey="test:11" message={recalled} conversation={conversation} avatar={null} onClose={()=>{}} onLocate={()=>{}} displayIdentity={person => ({ ...person, nickname })} />))
+ await render('我的备注')
+ expect(host.textContent).toContain(own ? '你撤回了一条消息' : '我的备注撤回了一条消息')
+ expect(host.textContent).not.toContain('对方撤回了一条消息')
+ expect(host.textContent).not.toContain(source.content!.text_content)
+ await render('更新后的昵称 {v0}')
+ expect(host.textContent).toContain(own ? '你撤回了一条消息' : '更新后的昵称 {v0}撤回了一条消息')
+})
