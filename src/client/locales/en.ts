@@ -1075,6 +1075,8 @@ AI智能体|AI agent
 群聊名称|Group name
 最新|Latest
 部分历史附件暂不可用|Some earlier attachments are unavailable
+此版本保存时附件尚未上传完成|The attachment had not finished uploading when this version was saved
+此版本保存时附件上传失败|The attachment upload had failed when this version was saved
 附件暂不可用|Attachment unavailable
 正在加载编辑记录…|Loading edit history…
 暂无编辑记录|No edit history

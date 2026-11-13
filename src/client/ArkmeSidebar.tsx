@@ -4438,10 +4438,11 @@ export function ArkmeSurface({
       const removedKeys = new Set(arkmeChatTimelineDelta.getSnapshotForSource(conversationKey).removedItemKeys)
       let unified = removeUnifiedTimelineItems(local.unified, removedKeys)
       let nativeItems = unified.events.flatMap(event => event.kind === 'message' ? [event.item] : [])
-      if (!nativeItems.length || Math.max(0, ...nativeItems.map(item => item.sequence ?? 0))
-        <= (cached.unified ? unifiedTimelineMessageSequence(cached.unified) : Math.max(0, ...cached.items.map(item => item.sequence ?? 0)))) return
+      if (!nativeItems.length) return
       const projected = cached.unified && liveTimelineTail.receive(cached.unified, unified.events.flatMap(event => event.kind === 'message'
         ? [{ ...event.item, timelineEventId: event.eventId, timelineOrderTie: event.orderTie }] : []))
+      if (projected === cached.unified && Math.max(0, ...nativeItems.map(item => item.sequence ?? 0))
+        <= (cached.unified ? unifiedTimelineMessageSequence(cached.unified) : Math.max(0, ...cached.items.map(item => item.sequence ?? 0)))) return
       if (projected && projected !== cached.unified) unified = projected
       else if (conversationCacheRef.current.getViewport(conversationKey)?.stickToBottom === false
         || bodyRef.current && !arkmeConversationViewport(bodyRef.current).stickToBottom) return
