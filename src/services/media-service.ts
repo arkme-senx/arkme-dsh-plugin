@@ -1620,22 +1620,22 @@ export class MediaService {
     const size = numberValue(item.size)
     if (!Number.isSafeInteger(size) || size <= 0 || size > 512 * 1024) return undefined
     const mimeType = 'image/webp'
-    if (!source) {
+    if (source?.accessRef === undefined && !Object.hasOwn(item, 'source_attachment_ref')) {
       const remoteUrl = stringValue(item.download_url ?? item.preview_url).trim()
       if (!remoteUrl) return undefined
       return this.issueMediaRef(viewerUserId, { remoteUrl, mimeType, fileName, size }, `photo-thumbnail:${stringValue(item.file_asset_uid)}`)
     }
     const attachment = stringValue(item.source_attachment_ref)
-    if (!attachment || !source.accessRef || !source.chatSessionUid || !source.relationUid || !source.recordUid
-      || !source.recordOwnerUserId || !source.audienceKey || !Number.isSafeInteger(source.version) || source.version < 1) return undefined
+    if (!/^[a-f0-9]{64}$/u.test(attachment) || !source?.chatSessionUid || !source.relationUid || !source.recordUid
+      || !source.recordOwnerUserId || !Number.isSafeInteger(source.version) || source.version < 1
+      || source.accessRef !== undefined && (!source.accessRef || !source.audienceKey)) return undefined
     const chatSource = {
-      access_ref: source.accessRef, chat_session_uid: source.chatSessionUid, relation_uid: source.relationUid,
+      ...(source.accessRef === undefined ? {} : { access_ref: source.accessRef }), chat_session_uid: source.chatSessionUid, relation_uid: source.relationUid,
       record_owner_user_id: source.recordOwnerUserId, record_uid: source.recordUid, version: source.version, attachment,
     }
-    const identity = JSON.stringify(['source-thumbnail', source.audienceKey, source.relationUid, source.recordUid, source.version, attachment])
+    const identity = JSON.stringify(['source-thumbnail', source.audienceKey ?? source.chatSessionUid, source.relationUid, source.recordUid, source.version, attachment])
     return this.issueMediaRef(viewerUserId, { chatSource, sourceBound: true, purpose: 'thumbnail', mimeType, fileName, size }, identity)
   }
-
 
   richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = [],source?:ArkmeChatMediaSource): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
@@ -1686,7 +1686,7 @@ export class MediaService {
       const mimeType = arkmeNormalizedFileMimeType(declaredMimeType, fileName)
       const kind = this.mediaKind(fileKind, mimeType, fileName)
       const thumbnailRef = kind === 'image'
-        ? this.issuePhotoThumbnail(source, viewerUserId, displayByAsset.get(stringValue(upload.preview_asset_uid)), stringValue(upload.attachment_uid), fileName)
+        ? this.issuePhotoThumbnail(source ?? chatMediaSource(raw), viewerUserId, displayByAsset.get(stringValue(upload.preview_asset_uid)), stringValue(upload.attachment_uid), fileName)
         : undefined
       // Native occurrence coordinates also exist in ordinary groups and private chats.
       // Only an explicit delegation or an output source marker selects source delivery.

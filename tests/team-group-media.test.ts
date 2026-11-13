@@ -1,4 +1,5 @@
 import {expect,it,vi} from 'vitest'
+import {createHash} from 'node:crypto'
 import {MediaService,type ArkmeChatMediaSource} from '../src/services/media-service.js'
 import {ServiceRuntime,type ArkmeServiceConfig,type StateStore} from '../src/services/service.js'
 import {parseOwnerJson} from '../src/record-owner-id.js'
@@ -31,20 +32,26 @@ function fixture() {
  return {media,raw,requests,revoke:()=>{revoked=true},json:()=>{mime='application/json';content='{"code":1004}'},unmark:()=>{marked=false}}
 }
 
-it('coalesces list thumbnail reads, revalidates cached bytes, and denies a revoked cache hit', async()=>{
+it.each(['delegated', 'roster-explicit', 'roster-inferred'])('coalesces %s thumbnail reads, revalidates cached bytes, and denies a revoked cache hit', async audience=>{
  const f=fixture()
+ const {accessRef: _accessRef, audienceKey: _audienceKey, ...rosterSource}=source
+ const frame=audience==='delegated'?source:audience==='roster-explicit'?rosterSource:undefined
  const asset={...f.raw.media_display_items[0],file_name:'photo.png',mime_type:'image/png',file_kind:1,size:500000}
  const preview={file_asset_uid:'preview',preview_for_attachment_uid:'slot',mime_type:'image/webp',size:webp.length,source_attachment_ref:'b'.repeat(64)}
- const raw={media_display_items:[asset,preview],content_payload:{media_refs:[{file_asset_uid:'asset',file_name:'photo.png',upload:{width:1200,height:800,attachment_uid:'slot',preview_asset_uid:'preview'}}]}}
- expect(f.media.richContentBlocks({ ...raw, media_display_items: [asset] },42,[],source)[0]?.thumbnailRef).toBeUndefined()
- expect(f.media.richContentBlocks({ ...raw, media_display_items: [asset, { ...preview, preview_for_attachment_uid: 'wrong-slot' }] },42,[],source)[0]?.thumbnailRef).toBeUndefined()
- const block=f.media.richContentBlocks(raw,42,[],source)[0]!
+ const raw={version:3,relation:{chat_session_uid:'group',rel_uid:'relation',record_owner_user_id:source.recordOwnerUserId,record_uid:'record'},media_display_items:[asset,preview],content_payload:{media_refs:[{file_asset_uid:'asset',file_name:'photo.png',upload:{width:1200,height:800,attachment_uid:'slot',preview_asset_uid:'preview'}}]}}
+ expect(f.media.richContentBlocks({ ...raw, media_display_items: [asset] },42,[],frame)[0]?.thumbnailRef).toBeUndefined()
+ expect(f.media.richContentBlocks({ ...raw, media_display_items: [asset, { ...preview, preview_for_attachment_uid: 'wrong-slot' }] },42,[],frame)[0]?.thumbnailRef).toBeUndefined()
+ expect(f.media.richContentBlocks({ ...raw, media_display_items: [asset, { ...preview, source_attachment_ref: '', download_url:'https://unauthorized.test/preview.webp' }] },42,[],frame)[0]?.thumbnailRef).toBeUndefined()
+ const block=f.media.richContentBlocks(raw,42,[],frame)[0]!
  expect(block.originalRef).toBe(block.mediaRef)
  expect(block.thumbnailRef).toBeDefined()
  expect(block.thumbnailRef).not.toBe(block.originalRef)
  const first=await Promise.all([f.media.fetchMedia(block.thumbnailRef!),f.media.fetchMedia(block.thumbnailRef!)])
  for(const result of first) expect(Buffer.from(await result.response.arrayBuffer())).toEqual(webp)
  expect(f.requests).toHaveLength(1)
+ expect(f.requests[0]?.body).toMatchObject({chat_session_uid:'group',relation_uid:'relation',record_uid:'record',version:3,attachment:'b'.repeat(64)})
+ if(audience==='delegated')expect(f.requests[0]?.body).toHaveProperty('access_ref',source.accessRef)
+ else expect(f.requests[0]?.body).not.toHaveProperty('access_ref')
  const warm=await f.media.fetchMedia(block.thumbnailRef!)
  expect(Buffer.from(await warm.response.arrayBuffer())).toEqual(webp)
  expect(f.requests[1]?.headers.get('If-None-Match')).toBe(thumbnailTag)
@@ -93,7 +100,7 @@ it.each(['image/png', 'video/mp4'])('keeps source-bound %s attachment slots when
    ...(kind === 1 ? { width: 1200, height: 800, inline_preview: '/9j/AAAA' } : {}) } }))
  const pending = media.richContentBlocks({ content_payload: { media_refs: pendingRefs } }, 42, [], source)
  const readyRefs = pendingRefs.map((ref, index) => ({ ...ref, file_asset_uid: `asset-${index}`, upload: { ...ref.upload, state: 'ready' } })).reverse()
- const display = readyRefs.map(ref => ({ file_asset_uid: ref.file_asset_uid, file_kind: kind, mime_type: mimeType, size: 10, source_attachment_ref: `signed-${ref.file_asset_uid}` }))
+ const display = readyRefs.map(ref => ({ file_asset_uid: ref.file_asset_uid, file_kind: kind, mime_type: mimeType, size: 10, source_attachment_ref: createHash('sha256').update(ref.file_asset_uid).digest('hex') }))
  const ready = media.richContentBlocks({ record_core: { content_payload: { media_refs: readyRefs } } }, 42, display, { ...source, version: source.version + 1 })
  expect(pending.map(block => [block.attachmentUid, block.attachmentState, block.mediaRef])).toEqual([['slot-a', 'pending', ''], ['slot-b', 'pending', '']])
  expect(ready.map(block => [block.attachmentUid, block.fileAssetUid, block.sortOrder])).toEqual([['slot-a', 'asset-0', 0], ['slot-b', 'asset-1', 1]])

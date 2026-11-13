@@ -1392,7 +1392,7 @@ export class ServiceRuntime {
     const url = new URL(path, base)
     if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin
       || url.username !== '' || url.password !== '' || url.hash !== ''
-      || (options.sourceAttachment && (service !== 'record' || path !== '/api/v1/content/source-stream'))
+      || (options.sourceAttachment && (service !== 'record' || path !== (options.thumbnail ? '/api/v1/content/source-thumbnail' : '/api/v1/content/source-stream')))
       || (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0))) {
       throw new ArkmePluginError('media-path-invalid', '媒体请求路径无效', false, 400)
     }

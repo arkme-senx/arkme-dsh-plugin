@@ -47,6 +47,10 @@ it.each(['group','private'])('keeps ordinary %s media and forwarded files when o
  const ordinary={relation:{chat_session_uid:chatSessionUid,rel_uid:'ordinary-rel',record_owner_user_id:42,record_uid:'ordinary-record'},record:{payload:{owner_user_id:42,record_uid:'ordinary-record',version:1,media_display_items:[{file_asset_uid:'ordinary-image',file_kind:1,file_name:'photo.png',mime_type:'image/png',download_url:'https://ordinary.test/photo.png'}]}}}
  const occurrence=chatMediaSource(ordinary)!
  expect(media.richContentBlocks(ordinary,42,[],occurrence)).toMatchObject([{kind:'image',fileAssetUid:'ordinary-image',mediaRef:expect.any(String)}])
+ const withPreview={...ordinary,content_payload:{media_refs:[{file_asset_uid:'ordinary-image',upload:{attachment_uid:'slot',preview_asset_uid:'preview'}}]},media_display_items:[{file_asset_uid:'preview',preview_for_attachment_uid:'slot',mime_type:'image/webp',size:12,download_url:'https://ordinary.test/preview.webp'}]}
+ const photo=media.richContentBlocks(withPreview,42,[],occurrence)[0]!
+ expect(photo.thumbnailRef).toMatch(/^arkme-media-v1\./)
+ expect(photo.thumbnailRef).not.toBe(photo.originalRef)
  const files=[{type:4,name:'ordinary.pdf',download_url:'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/file.pdf?Signature=fixture'}]
  expect(media.forwardContentBlocks(files,42,{source:occurrence})).toMatchObject([{kind:'file',fileName:'ordinary.pdf',mediaRef:expect.any(String)}])
  // An explicit delegated frame or source marker must never reuse an ordinary URL.

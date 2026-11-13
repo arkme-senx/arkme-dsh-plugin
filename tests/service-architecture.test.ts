@@ -188,6 +188,7 @@ const expectedServiceFiles = [
   'profile-image.ts',
   'team-codex-transport.ts', 'team-message-forward-service.ts', 'selected-text-self-note.ts', 'excerpt-original.ts',
   'team-message-notification-service.ts',
+  'team-reference.ts',
   'reaction-service.ts',
   'reaction-notification-context.ts',
   'ai-points-contract.ts', 'ai-points-service.ts', 'ai-points-statistics-contract.ts', 'account-usage-details-service.ts', 'account-usage-service.ts', 'data-management-service.ts', 'day-recap-service.ts',
