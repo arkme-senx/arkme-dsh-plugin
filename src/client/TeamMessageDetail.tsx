@@ -82,7 +82,7 @@ export function TeamMessageDetail({ accountKey, message, conversation, avatar, f
       avatar: trail.length ? <ArkmeUserAvatar avatarRef={current.sender.imageRef} imageKey={current.sender.imageKey} imagePort={teamAvatarImages} label={current.sender.nickname} size={40} /> : avatar,
       parent,
       content: readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" />
-        : (!extensions.loading || current.state === 'recalled') && <p>{tr(current.state === 'recalled' ? current.own ? '你撤回了一条消息' : '对方撤回了一条消息' : current.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>,
+        : (!extensions.loading || current.state === 'recalled') && <p>{tr(current.state === 'recalled' ? current.own ? '你撤回了一条消息' : '{v0}撤回了一条消息' : current.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用', { v0: current.sender.nickname })}</p>,
       extensions: extensionList,
       footer: typeof footer === 'function' ? footer(current, readable) : footer,
     }} />

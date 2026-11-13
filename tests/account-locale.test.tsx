@@ -22,6 +22,13 @@ beforeEach(() => {
 afterEach(() => { act(() => { active = 'zh'; callback() }); cleanup() })
 const switchEnglish = () => act(() => { active = 'en'; callback() })
 describe('account UI language and editing', () => {
+  it('translates group recall copy without changing the sender nickname', () => {
+    const name = '昵称 {v1} <b>'
+    expect(tr('{v0}撤回了一条消息', { v0: name })).toBe(`${name}撤回了一条消息`)
+    switchEnglish()
+    expect(tr('{v0}撤回了一条消息', { v0: name })).toBe(`${name} recalled a message`)
+  })
+
   it('keeps the unbind dialog and verification input when language switches', async () => {
     mock.call.mockResolvedValue({ allowed: true })
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)

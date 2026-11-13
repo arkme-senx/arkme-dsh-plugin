@@ -375,7 +375,11 @@ export class UnifiedChatTimelineService {
           entryRef: await this.offlineContexts.timelineReference(String(payload.association_id), source.ownerRef, source.kind as 'private_chat' | 'group_chat', source.displayName),
           revision: String(payload.revision), title: stringValue(payload.title), summary: stringValue(payload.summary) })
       } else if (event.source === 'messages' && event.kind === 'message_recalled') {
-        projected.push({ ...order, kind: 'notice', text: payload.own === true ? '你撤回了一条消息' : '对方撤回了一条消息' })
+        const recallSender = source.kind === 'group_chat' && recordOwnerId(payload.sender_user_id)
+          ? await this.chat.projectChatRecallSender(payload, source, session) : undefined
+        projected.push({ ...order, kind: 'notice',
+          text: payload.own === true ? '你撤回了一条消息' : recallSender ? `${recallSender.senderName}撤回了一条消息` : '对方撤回了一条消息',
+          ...(recallSender ? { recallSender } : {}) })
       } else if (order.contentStatus === 'unavailable') {
         const relation = objectValue(payload.relation)
         const uid = stringValue(relation.record_uid)

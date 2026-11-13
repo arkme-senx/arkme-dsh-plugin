@@ -1,5 +1,6 @@
 /** Interpolated UI messages. Values remain untouched (including user content). */
 export const dynamicEnglish: Record<string, string> = Object.fromEntries(`
+{v0}撤回了一条消息|{v0} recalled a message
 {v0} 条相关消息|{v0} related messages
 录音 {v0}|Recorded {v0}
 修改当天所有“{v0}”片段|Edit all “{v0}” segments for this day
