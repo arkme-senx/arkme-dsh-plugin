@@ -7031,6 +7031,39 @@ describe('conversation send directory projection', () => {
     expect(rendered).not.toContain('A 成员')
   })
 
+  it('uses the message nickname rules for group recall notices and updates them without refetching messages', async () => {
+    activeSource = group
+    arkmeChatDirectory.publish([group]); arkmeUi.selectSource(group)
+    let displayName = '私人备注'
+    const member = { ...activeMembers(1)[0]!, memberRef: 'recall-member' }
+    const page = unifiedFixture(group, [])
+    for (const [id, senderName, memberRef, isMe] of [
+      ['named-recall', '账号昵称', member.memberRef, false],
+      ['departed-recall', '离群成员昵称', 'departed-member', false],
+      ['own-recall', '自己昵称', member.memberRef, true],
+    ] as const) page.unified.events.push({ kind: 'notice', eventId: id, source: 'messages', occurredAtMillis: 6,
+      orderTie: id, contentStatus: 'unavailable', text: '对方撤回了一条消息', recallSender: { senderName, memberRef, isMe } })
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, ...args) => {
+      if (operation === 'source.timeline') return page
+      if (operation === 'source.members') return { source: group, items: [{ ...member, displayName }], total: 1, activeCount: 1 }
+      if (operation === 'group.bots') return { source: group, items: [], total: 0 }
+      return base(operation, ...args)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    const notice = (id: string) => renderedText(renderer!.root.findByProps({ 'data-arkme-conversation-row': id }))
+    expect(notice('named-recall')).toBe('私人备注撤回了一条消息')
+    expect(notice('departed-recall')).toBe('离群成员昵称撤回了一条消息')
+    expect(notice('own-recall')).toBe('你撤回了一条消息')
+    const reads = mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline').length
+    for (const next of ['群内昵称', '账号昵称', '群成员']) {
+      displayName = next
+      await act(async () => { await arkmeConversationMembers.ensure('test:42', group, true) })
+      expect(notice('named-recall')).toBe(`${next === '群成员' ? '账号昵称' : next}撤回了一条消息`)
+    }
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(reads)
+  })
+
   it('projects current group member names into history and live message headers without rewriting snapshots', async () => {
     const currentGroup = { ...group, latestSequence: 4 }
     activeSource = currentGroup

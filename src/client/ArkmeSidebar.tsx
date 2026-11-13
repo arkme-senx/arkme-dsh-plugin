@@ -1356,7 +1356,7 @@ export function aiPolishStatus(item: ArkmeTimelineItem): string {
   }
 }
 
-export function arkmeTimelineSenderName(item: ArkmeTimelineItem, profile?: ArkmeUserProfile): string {
+export function arkmeTimelineSenderName(item: Pick<ArkmeTimelineItem, 'senderName' | 'isMe' | 'avatarSnapshot' | 'senderNameSnapshot'>, profile?: ArkmeUserProfile): string {
   if (!item.isMe || profile === undefined) return item.senderName
   if (item.avatarSnapshot === true) {
     return item.senderNameSnapshot === true
@@ -1443,6 +1443,15 @@ export function ArkmeMemberLeaveNotice(props: { rowId:string; systemRef?: string
   </li>
 }
 
+export function arkmeTimelineMessageName(
+  item: Pick<ArkmeTimelineItem, 'senderName' | 'isMe' | 'selfRole' | 'avatarSnapshot' | 'senderNameSnapshot'>,
+  profile?: ArkmeUserProfile,
+  member?: Pick<ArkmeConversationMemberItem, 'displayName'>,
+): string {
+  const memberDisplayName = member?.displayName.trim()
+  return item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
+}
+
 export function ArkmeTimelineMessageHeader({
   item,
   profile,
@@ -1452,8 +1461,7 @@ export function ArkmeTimelineMessageHeader({
   profile?: ArkmeUserProfile
   member?: Pick<ArkmeConversationMemberItem, 'displayName'>
 }) {
-  const memberDisplayName = member?.displayName.trim()
-  const senderName = item.selfRole?.name ?? (memberDisplayName && memberDisplayName !== '群成员' ? memberDisplayName : arkmeTimelineSenderName(item, profile))
+  const senderName = arkmeTimelineMessageName(item, profile, member)
   return <span style={styles.messageHeader}>
     {item.senderKind === 'bot' ? <ArkmeBotSenderName name={senderName} /> : <span style={styles.sender}>{senderName}</span>}
   </span>
@@ -6716,7 +6724,7 @@ export function ArkmeSurface({
   const liveDisplayRows = useMemo<Array<ArkmeConversationRow | {
     kind: 'community-welcome'; id: string; occurredAtMillis: number; title: string
   } | {
-    kind: 'notice'; id: string; occurredAtMillis: number; item: ArkmeGroupAiPolishNotice; systemRef?: string | undefined
+    kind: 'notice'; id: string; occurredAtMillis: number; item: ArkmeGroupAiPolishNotice; systemRef?: string | undefined; recallSender?: Pick<ArkmeTimelineItem, 'senderName' | 'memberRef' | 'isMe'>
   } | {
     kind: 'member-join'; id: string; occurredAtMillis: number; item: ArkmeTimelineMemberJoinEvent; systemRef?: string | undefined
   } | {
@@ -6741,7 +6749,7 @@ export function ArkmeSurface({
             return event.kind === 'world-public' || event.kind === 'offline-context' ? { ...event, id: event.eventId }
             : event.kind === 'moment' ? { kind: 'moment' as const, id: `moment:${event.item.momentId}`, occurredAtMillis: event.occurredAtMillis, item: event.item }
               : event.kind === 'member-event' || event.kind === 'member-join' ? { ...event, id: event.eventId }
-                : { kind: 'notice' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis, systemRef: event.systemRef,
+                : { kind: 'notice' as const, id: event.eventId, occurredAtMillis: event.occurredAtMillis, systemRef: event.systemRef, ...(event.kind === 'notice' && event.recallSender ? { recallSender: event.recallSender } : {}),
                   item: { noticeUid: event.eventId, sourceKey: conversationKey, createdAtMillis: event.occurredAtMillis,
                     message: event.kind === 'external' ? `${event.title}：${event.text || '媒体内容'}` : event.text } }
           }),
@@ -8386,7 +8394,10 @@ export function ArkmeSurface({
                 </Fragment>
                 if (row.kind === 'notice') return <Fragment key={row.id}>
                   {startsDay && <li style={styles.date}><ArkmeConversationDate at={row.occurredAtMillis} /></li>}
-                  <li data-arkme-conversation-row={row.id} data-arkme-system-anchor-ref={row.systemRef} style={arkmeConversationMessageLayout.notice}>{row.item.message}</li>
+                  <li data-arkme-conversation-row={row.id} data-arkme-system-anchor-ref={row.systemRef} style={arkmeConversationMessageLayout.notice}>{row.recallSender
+                    ? row.recallSender.isMe ? tr('你撤回了一条消息') : tr('{v0}撤回了一条消息', { v0: arkmeTimelineMessageName(row.recallSender, selfProfile,
+                      row.recallSender.memberRef ? conversationMemberByRef.get(row.recallSender.memberRef) : undefined) })
+                    : row.item.message}</li>
                 </Fragment>
                 if (row.kind === 'moment') {
                   return <Fragment key={row.id}>

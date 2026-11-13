@@ -7192,6 +7192,14 @@ nextPublic = next
     return results
   }
 
+  async projectChatRecallSender(payload: Record<string, unknown>, source: ArkmeSourceRefPayload, session: ArkmeSessionCredentials) {
+    const senderUserId = recordOwnerId(payload.sender_user_id)
+    return {
+      senderName: this.timelineSenderName(payload, new Map()), isMe: payload.own === true,
+      ...(senderUserId ? { memberRef: await this.sealChatMemberRef(session.userId, source.ownerRef, senderUserId) } : {}),
+    }
+  }
+
   async projectChatTimelineItems(
     rawItems: unknown[],
     source: ArkmeSourceRefPayload,

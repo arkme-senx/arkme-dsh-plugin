@@ -227,7 +227,20 @@ it('recalls by server capability even without readable body, and renders termina
  await mouse(noticeButton, 'click')
  expect(detail).toHaveBeenCalledOnce()
  await render({...recalled,own:false})
- expect(notice.textContent).toBe('对方撤回了一条消息')
+ expect(notice.textContent).toBe('用户撤回了一条消息')
+})
+
+it.each(['我的备注', '公开昵称', '昵称 {v0} <b>'])('uses the same resolved sender nickname %s before and after recall', async nickname => {
+ const named = { ...message, sender: { nickname, publicNickname: '原始公开名' } }
+ await render(named, false)
+ expect(host.querySelector('strong')?.textContent).toBe(nickname)
+ await render({ ...named, state: 'recalled', contentStatus: 'recalled' }, false)
+ const notice = host.querySelector('article')!
+ expect(notice.textContent).toBe(`${nickname}撤回了一条消息`)
+ expect(notice.querySelector('b')).toBeNull()
+ expect(host.textContent).not.toContain(message.content!.text_content)
+ await render({ ...named, sender: { ...named.sender, nickname: '更新后的备注' }, state: 'recalled', contentStatus: 'recalled' }, false)
+ expect(notice.textContent).toBe('更新后的备注撤回了一条消息')
 })
 
 it('shows a pending authority check separately from a confirmed unavailable or recalled message', async () => {
@@ -245,7 +258,7 @@ it('shows a pending authority check separately from a confirmed unavailable or r
   expect(host.textContent).toContain('内容当前不可用')
   expect(host.textContent).not.toContain('正在确认…')
   await render({...message,state:'recalled'}, false)
-  expect(host.textContent).toContain('对方撤回了一条消息')
+  expect(host.textContent).toContain('用户撤回了一条消息')
   expect(host.textContent).not.toContain(message.content!.text_content)
 })
 
