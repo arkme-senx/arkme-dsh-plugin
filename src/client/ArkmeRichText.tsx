@@ -177,6 +177,7 @@ export function ArkmeMentionText({
           tabIndex={0}
           aria-label={tr("查看 {v0}", { v0: run.text })}
           style={readIndicator === null ? clickableMentionStyle : { ...clickableMentionStyle, ...readMentionStyle }}
+          onMouseDown={event => { if (event.button === 0) event.preventDefault() }}
           onClick={event => { event.preventDefault(); event.stopPropagation(); mentionClick(run.text, run.mentionTarget) }}
           onKeyDown={event => {
             if (event.key !== 'Enter' && event.key !== ' ') return

@@ -83,11 +83,11 @@ it('opens an available parent in the detail trail and can return to the reply',a
  expect(host.textContent).toContain('完整父消息正文')
  await click('返回延展快记');expect(host.textContent).toContain('原消息正文')
 })
-it('does not display a passed snapshot while its fresh detail read is still pending',async()=>{
+it('displays the authorized timeline snapshot immediately while refreshing extensions',async()=>{
  let complete!:(value:unknown)=>void
  read.mockImplementation(()=>new Promise(resolve=>{complete=resolve}))
  await mount()
- expect(host.textContent).not.toContain('原消息正文')
+ expect(host.textContent).toContain('原消息正文')
  await act(async()=>complete({message:source,items:[],totalCount:0,hasMore:false,nextSeq:0,throughSeq:20}))
  expect(host.textContent).toContain('原消息正文')
 })
@@ -183,4 +183,59 @@ it.each([false, true])('uses the resolved nickname for a recalled detail while o
  expect(host.textContent).not.toContain(source.content!.text_content)
  await render('更新后的昵称 {v0}')
  expect(host.textContent).toContain(own ? '你撤回了一条消息' : '更新后的昵称 {v0}撤回了一条消息')
+})
+
+it('highlights mentions in the Team message detail with the shared message renderer', async () => {
+ const text = '正文 @同事 联系 a@example.com'
+ const named = { ...source, content: { text_content: text, template_kind: 1, mentions: [{ personRef: 'person-ref', displayName: '同事', startIndex: text.indexOf('@'), length: 3 }] } }
+ read.mockResolvedValue({ message: named, items: [], totalCount: 0, hasMore: false, nextSeq: 0, throughSeq: 20 })
+ await act(async()=>root.render(<TeamMessageDetail accountKey="test:11" message={named} conversation={conversation} avatar={null} onClose={()=>{}} onLocate={()=>{}}/>))
+ expect([...host.querySelectorAll<HTMLSpanElement>('span')].filter(el => el.style.color.includes('state-business-primary')).map(el => el.textContent)).toContain('@同事')
+ expect(host.textContent).toContain('a@example.com')
+})
+
+it('clears the initial snapshot on revocation and ignores a late detail response', async () => {
+ let finish!:(value:unknown)=>void
+ read.mockImplementation(()=>new Promise(resolve=>{finish=resolve}))
+ await mount();expect(host.textContent).toContain('原消息正文')
+ await act(async()=>invalidateTeamMessages('test:11',false,{kind:'team.access.revoked',conversationKeys:[conversation.key]}))
+ expect(host.textContent).not.toContain('原消息正文')
+ await act(async()=>finish({message:source,items:[],totalCount:0,hasMore:false,nextSeq:0,throughSeq:20}))
+ expect(host.textContent).not.toContain('原消息正文')
+})
+it('does not seed history previews or unavailable snapshots', async () => {
+ read.mockImplementation(()=>new Promise(()=>{}))
+ for(const message of [{...source,historyPreview:true},{...source,version:0,contentStatus:'revalidating' as const}]) {
+  await act(async()=>root.render(<TeamMessageDetail key={String(message.historyPreview)} accountKey="test:11" message={message} conversation={conversation} avatar={null} onClose={()=>{}} onLocate={()=>{}}/>))
+  expect(host.textContent).not.toContain('原消息正文')
+ }
+})
+it('opens mention cards from the source and loaded extension without navigating the detail', async () => {
+ const text='正文 @同事', mentions=[{personRef:'person-ref',displayName:'同事',startIndex:3,length:3}]
+ const named={...source,content:{text_content:text,template_kind:1,mentions}}
+ const reply={...first,content:named.content}
+ read.mockResolvedValue({message:named,items:[reply],totalCount:1,hasMore:false,nextSeq:2,throughSeq:20})
+ const openPerson=vi.fn()
+ await act(async()=>root.render(<TeamMessageDetail accountKey="test:11" message={named} conversation={conversation} avatar={null} onOpenPerson={openPerson} onClose={()=>{}} onLocate={()=>{}}/>))
+ const links=[...host.querySelectorAll<HTMLElement>('[role="link"]')].filter(el=>el.textContent==='@同事')
+ expect(links).toHaveLength(2)
+ await act(async()=>{links[0]!.click();links[1]!.dispatchEvent(new KeyboardEvent('keydown',{key:' ',bubbles:true,cancelable:true}))})
+ expect(openPerson).toHaveBeenCalledTimes(2)
+ expect(openPerson).toHaveBeenLastCalledWith({personRef:'person-ref',nickname:'同事'})
+ expect(host.querySelector('[data-team-extension-item=first]')).not.toBeNull()
+ expect(read).toHaveBeenCalledTimes(1)
+})
+
+it.each(['team-not_accessible','team-dependency_unavailable'])('handles %s during the initial detail refresh', async code => {
+ read.mockRejectedValue(Object.assign(new Error('读取失败'),{body:{code}}))
+ await mount()
+ expect(host.textContent?.includes('原消息正文')).toBe(code==='team-dependency_unavailable')
+ expect(host.textContent).toContain('读取失败')
+})
+it('shows an already-loaded extension immediately while its own extension request is pending', async () => {
+ await mount()
+ read.mockImplementation(()=>new Promise(()=>{}))
+ await act(async()=>host.querySelector<HTMLElement>('[data-team-extension-item=first]')!.click())
+ expect(host.querySelector('[data-arkme-timeline-detail-rich-content]')?.textContent).toContain('第一条延展')
+ expect(read.mock.calls.at(-1)?.[1]).toBe('first-ref')
 })

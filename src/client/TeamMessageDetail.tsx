@@ -13,12 +13,13 @@ import { arkmeExtensionDetailListStyles as styles } from './extension-detail-lis
 import { tr } from './locale.js'
 
 /** Adapts the Team extension reader and sender to the conversation detail drawer. */
-export function TeamMessageDetail({ accountKey, message, conversation, avatar, footer, onClose, onLocate, displayIdentity }: {
+export function TeamMessageDetail({ accountKey, message, conversation, avatar, footer, onClose, onLocate, displayIdentity, onOpenPerson }: {
   accountKey: string
   message: TeamMessage
   conversation: TeamConversation
   avatar: ReactNode
   footer?: ReactNode | ((message: TeamMessage, readable: boolean) => ReactNode)
+  onOpenPerson?: ((person: TeamIdentity) => void) | undefined
   displayIdentity?: ((identity: TeamIdentity) => TeamIdentity) | undefined
   onClose(): void
   onLocate(message: TeamMessage): void
@@ -64,7 +65,7 @@ export function TeamMessageDetail({ accountKey, message, conversation, avatar, f
           <ArkmeUserAvatar avatarRef={reply.sender.imageRef} imageKey={reply.sender.imageKey} imagePort={teamAvatarImages} label={reply.sender.nickname} size={32} />
           <div style={styles.extensionContextBody}>
             <div style={styles.extensionContextHead}><span style={styles.extensionContextName}>{reply.sender.nickname}</span><span style={styles.extensionContextTime}>{timeLabel(reply.createdAt)}</span></div>
-            {reply.contentStatus === 'available' ? <TeamMessageContent message={reply} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr(reply.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
+            {reply.contentStatus === 'available' ? <TeamMessageContent onOpenPerson={onOpenPerson} message={reply} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" /> : <p>{tr(reply.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
           </div>
         </div>
       })}</div>
@@ -81,7 +82,7 @@ export function TeamMessageDetail({ accountKey, message, conversation, avatar, f
       bodyRef: body,
       avatar: trail.length ? <ArkmeUserAvatar avatarRef={current.sender.imageRef} imageKey={current.sender.imageKey} imagePort={teamAvatarImages} label={current.sender.nickname} size={40} /> : avatar,
       parent,
-      content: readable ? <TeamMessageContent message={current} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" />
+      content: readable ? <TeamMessageContent onOpenPerson={onOpenPerson} message={current} conversationRef={conversation.ref} conversationKey={conversation.key} presentation="detail" />
         : (!extensions.loading || current.state === 'recalled') && <p>{tr(current.state === 'recalled' ? current.own ? '你撤回了一条消息' : '{v0}撤回了一条消息' : current.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用', { v0: current.sender.nickname })}</p>,
       extensions: extensionList,
       footer: typeof footer === 'function' ? footer(current, readable) : footer,

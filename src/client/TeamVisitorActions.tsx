@@ -41,12 +41,17 @@ export function useTeamVisitorActions({ conversation, accountKey, onRecords, onO
       if (request.current === controller) { request.current = undefined; setBusy(false) }
     }
   }
+  const openProfile = (identity?: TeamIdentity) => {
+    if (conversation.side !== 'team' || identity && !identity.personRef) return
+    document.getSelection()?.removeAllRanges()
+    close(); onOpen(); setSelected({ identity: identity ?? conversation.visitor ?? { nickname: tr('用户') }, visitor: !identity }); setError(''); setProfile(true)
+  }
   return {
-    close,
+    close, openProfile,
     avatar: (image: ReactNode, identity?: TeamIdentity) => conversation.side !== 'team' || identity && !identity.personRef ? image : <button type="button"
       aria-label={tr('{v0} 的用户卡片', { v0: identity?.nickname ?? conversation.visitor?.nickname ?? tr('用户') })}
       style={{ display: 'inline-flex', flex: 'none', padding: 0, border: 0, background: 'transparent', borderRadius: '50%', cursor: 'pointer' }}
-      onClick={event => { event.stopPropagation(); close(); onOpen(); setSelected({ identity: identity ?? conversation.visitor ?? { nickname: tr('用户') }, visitor: !identity }); setError(''); setProfile(true) }}
+      onClick={event => { event.stopPropagation(); openProfile(identity) }}
       onContextMenu={event => { event.preventDefault(); event.stopPropagation(); close(); onOpen(); setSelected({ identity: identity ?? conversation.visitor ?? { nickname: tr('用户') }, visitor: !identity }); setProfile(false); setMenu({ x: event.clientX, y: event.clientY }) }}
       onKeyDown={event => { if (event.key === 'ContextMenu' || event.key === 'F10' && event.shiftKey) {
         event.preventDefault(); event.stopPropagation(); close(); onOpen(); setSelected({ identity: identity ?? conversation.visitor ?? { nickname: tr('用户') }, visitor: !identity }); setProfile(false)

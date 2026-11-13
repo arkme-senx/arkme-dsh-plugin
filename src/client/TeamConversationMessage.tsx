@@ -15,7 +15,7 @@ import { emptyTeamReceipt, type TeamReceiptStore } from './team-read-receipts.js
 import { ArkmeReadReceiptControl, readReceiptLineStyle } from './ArkmeReadReceiptControl.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
-import type { TeamMessage } from '../team-app-contract.js'
+import type { TeamMessage, TeamIdentity } from '../team-app-contract.js'
 import { ArkmeMessageContextMenu } from './ArkmeMessageContextMenu.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
 import { captureMessageContextMenu, captureMessageTextSelection } from './message-text-selection.js'
@@ -26,10 +26,11 @@ import { arkmeConversationMessageLayout as layout } from './conversation-message
 import { teamText as tr } from './team-messaging-i18n.js'
 import type { ReactNode } from 'react'
 
-export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onRecall, onReceipts, onError, selecting = false, selected = false, onSelect, onToggle, onDetail, onReply, onOpenReply, accountKey, conversationKey, onAsk, askBusy, onCopyLink, onForward, located = false, followedByRecall = false, onSnapshot, reactionSelfName, reactionSelfAvatarRef, resolveReactionActor,attachmentNavigationKey }: {
+export function TeamConversationMessage({ message, conversationRef, avatar, writable, showReceipts, receiptStore, busy, onEdit, onRecall, onReceipts, onError, selecting = false, selected = false, onSelect, onToggle, onDetail, onReply, onOpenReply, accountKey, conversationKey, onAsk, askBusy, onCopyLink, onForward, located = false, followedByRecall = false, onSnapshot, reactionSelfName, reactionSelfAvatarRef, resolveReactionActor,attachmentNavigationKey, onOpenPerson }: {
   message: TeamMessage; avatar: ReactNode; writable: boolean; showReceipts: boolean; receiptStore: TeamReceiptStore; busy: boolean
   selecting?: boolean; selected?: boolean; onSelect?(): void; onToggle?(): void; onDetail?(): void
   accountKey?:string;conversationKey?:string
+  onOpenPerson?: ((person: TeamIdentity) => void) | undefined
   attachmentNavigationKey?:string|undefined
   reactionSelfName?: string | undefined; reactionSelfAvatarRef?: string | undefined
   resolveReactionActor?: ((actor: ReactionActor) => ReactionActor | undefined) | undefined
@@ -124,7 +125,7 @@ export function TeamConversationMessage({ message, conversationRef, avatar, writ
             const rect = event.currentTarget.getBoundingClientRect()
             setMenu(captureMessageContextMenu({ clientX: rect.left, clientY: rect.bottom, preventDefault: () => event.preventDefault(), stopPropagation: () => event.stopPropagation() }, event.currentTarget))
           } }}>
-          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} attachmentNavigationKey={attachmentNavigationKey} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : message.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
+          {available ? <TeamMessageContent key={`${message.key}:${message.version}`} message={message} onOpenPerson={selecting ? undefined : onOpenPerson} attachmentNavigationKey={attachmentNavigationKey} conversationKey={conversationKey} onOpenArticle={onDetail} conversationRef={selecting ? undefined : conversationRef} /> : <p style={layout.text}>{tr(message.contentStatus === 'deleted' ? '消息已删除' : message.contentStatus === 'revalidating' ? '正在确认…' : '内容当前不可用')}</p>}
           {reactionTarget&&!selecting&&<ArkmeReactionSelections scope={accountKey!} target={reactionTarget}
             actorName={reactionSelfName || (message.own ? message.sender.nickname : '') || '我'} actorAvatarRef={reactionSelfAvatarRef}
             onAdd={()=>setReactionRequest('toggle')} />}
