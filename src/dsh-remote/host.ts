@@ -244,6 +244,7 @@ function resultFromLedger(entry: DshRemoteLedgerEntry): unknown {
         typeof source.code === 'string' ? source.code as ConstructorParameters<typeof DshRemoteError>[0] : 'REMOTE_TRANSPORT_FAILED',
         typeof source.message === 'string' ? source.message : 'DSH 已拒绝该远控命令',
         source.retryable === true,
+        { commandSettled: true, ...(source.dshRejected === true ? { dshRejected: true } : {}) },
       )
     }
   }
@@ -580,6 +581,8 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
           message: remote.message.slice(0, 256),
           retryable: remote.retryable,
           trace_ref: randomUUID(),
+          ...(remote.details.dshRejected === true ? { dsh_rejected: true as const } : {}),
+          ...(remote.details.commandSettled === true ? { command_settled: true as const } : {}),
         },
       })
     }
@@ -1639,7 +1642,7 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
               return response(request, result.duplicate ? 'duplicate' : 'completed', this.now(), { result: result.value })
             } catch (error) {
               const remote = asDshRemoteError(error)
-              return response(request, 'rejected', this.now(), { error: { code: remote.code, message: remote.message, retryable: remote.retryable, trace_ref: randomUUID() } })
+              return response(request, 'rejected', this.now(), { error: { code: remote.code, message: remote.message, retryable: remote.retryable, trace_ref: randomUUID(), ...(remote.details.dshRejected === true ? { dsh_rejected: true as const } : {}), ...(remote.details.commandSettled === true ? { command_settled: true as const } : {}) } })
             }
           } } : {}),
           call: async (request, signal) => {
@@ -2134,7 +2137,9 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     })
     if (begun.duplicate) {
       if (begun.entry.state === 'completed') return { duplicate: true, value: resultFromLedger(begun.entry) }
-      if (commandScope && begun.entry.state === 'pending' && begun.entry.executeBeforeMillis < this.now()) {
+      // Model writes may still finish after their admission deadline. Replaying
+      // their receipt must not turn a live pending operation into outcome_unknown.
+      if (commandScope && request.operation !== 'session.model.select' && begun.entry.state === 'pending' && begun.entry.executeBeforeMillis < this.now()) {
         await this.reconcileUnsettled(ledger, request.request_ref)
         const reconciled = ledger.get({ accountId, runtimeRef: commandScope.runtimeRef, requestRef: request.request_ref })
         if (reconciled?.state === 'completed') return { duplicate: true, value: resultFromLedger(reconciled) }
@@ -2244,8 +2249,11 @@ export class ArkmeRemoteRealtimeHost implements DshRemoteHostFacade {
     } catch (error) {
       const known = error instanceof DshRemoteError
         && (error.code !== 'REMOTE_TRANSPORT_FAILED' || error.details.dshRejected === true)
-      if (known) ledger.completeRejected(identity, error)
-      else ledger.markOutcomeUnknown(identity, 'DSH transport failed after the command ledger entered pending')
+      if (known) {
+        ledger.completeRejected(identity, error)
+        throw new DshRemoteError(error.code, error.message, error.retryable, { ...error.details, commandSettled: true })
+      }
+      ledger.markOutcomeUnknown(identity, 'DSH transport failed after the command ledger entered pending')
       throw error
     }
     ledger.complete(identity, { value })
