@@ -1038,6 +1038,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async acknowledgeArkoTurn(userId:number,uid:string) { return this.operationalState.acknowledgeArkoTurn(userId,uid) }
   async arkoFileRefs(userId:number) { return this.operationalState.arkoFileRefs(userId) }
 
+  async teamInternalGroup(scope: string, teamId: string, change?: {put: import('./team-internal-group-contract.js').TeamInternalGroupAttempt}|{ack: string}) { return this.operationalState.teamInternalGroup(scope, teamId, change) }
   async teamMemberAddition(scope: string, teamId: string, change?: {put: import('./team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}) { return this.operationalState.teamMemberAddition(scope, teamId, change) }
   async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
   async recordingVoiceDraft(scope: string, change?: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft) { return this.operationalState.recordingVoiceDraft(scope, change) }

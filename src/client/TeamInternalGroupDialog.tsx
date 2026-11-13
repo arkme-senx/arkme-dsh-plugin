@@ -1,101 +1,153 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import type { ArkmeSourceItem, ArkmeTeam } from '../types.js'
-import type { TeamGroupPending } from '../team-group-contract.js'
-import { callArkme } from './api.js'
-import { arkmeTheme } from './arkme-theme.js'
-import { tr, useArkmeLocale } from './locale.js'
-import { TeamGroupPendingNotice } from './TeamGroupControls.js'
-import { TeamFeatureDialog } from './redesign/contacts/TeamFeatureDialog.js'
+import {useEffect, useRef, useState, type CSSProperties} from 'react'
+import type {ArkmeSourceItem, ArkmeTeam} from '../types.js'
+import type {TeamInternalGroupPreview, TeamInternalGroupResult} from '../team-internal-group-contract.js'
+import {callArkme} from './api.js'
+import {arkmeTheme} from './arkme-theme.js'
+import {tr, useArkmeLocale} from './locale.js'
+import {TeamFeatureDialog} from './redesign/contacts/TeamFeatureDialog.js'
 
-type Target = { mode: 'create'; teamJotmoId: string } | { mode: 'link'; source: ArkmeSourceItem }
-type Props = { accountKey: string; target: Target; onClose(): void }
-const errorText = (error: unknown) => error instanceof Error ? error.message : tr('加载失败，请重试')
-
-export function TeamInternalGroupDialog(props: Props) {
-  return <ScopedDialog key={JSON.stringify([props.accountKey, props.target.mode,
-    props.target.mode === 'create' ? props.target.teamJotmoId : props.target.source.sourceRef])} {...props} />
+type Target = {mode:'create';teamJotmoId:string}|{mode:'link';source:ArkmeSourceItem}
+type Props = {accountKey:string;target:Target;onClose():void;onReady?():void}
+const errorText = (e:unknown) => e instanceof Error ? e.message : tr('加载失败，请重试')
+const roleName = {owner:'群主',admin:'管理员',member:'成员'} as const
+export function TeamInternalGroupDialog(p:Props) {
+  return <ScopedDialog key={JSON.stringify([p.accountKey,p.target.mode,p.target.mode==='create'?p.target.teamJotmoId:p.target.source.sourceRef])} {...p}/>
 }
-
-function ScopedDialog({ accountKey, target, onClose }: Props) {
+function ScopedDialog({accountKey,target,onClose,onReady}:Props) {
   useArkmeLocale()
-  const [teams, setTeams] = useState<ArkmeTeam[]>(), [teamId, setTeamId] = useState(''), [name, setName] = useState('')
-  const [loadError, setLoadError] = useState(''), [error, setError] = useState(''), [revision, setRevision] = useState(0)
-  const [busy, setBusy] = useState(false), [pending, setPending] = useState(false)
-  const bodyRef = useRef<HTMLDivElement>(null)
-  const inFlight = useRef<AbortController>(), requestUid = useRef('')
-  useEffect(() => () => inFlight.current?.abort(), [])
-  // Disabling the clicked footer button can send browser focus to <body>.
-  // Retain focus inside the dialog so Escape/Tab still work during the request.
-  useEffect(() => { if (busy || pending) bodyRef.current?.focus({ preventScroll: true }) }, [busy, pending])
-  const requestedTeam = target.mode === 'create' ? target.teamJotmoId : undefined
-  useEffect(() => {
-    const controller = new AbortController()
-    setLoadError('')
-    void callArkme<ArkmeTeam[]>('team.app.teams', { expectedAccountKey: accountKey }, controller.signal).then(result => {
-      if (controller.signal.aborted) return
-      if (!Array.isArray(result)) throw new Error(tr('团队状态返回异常，请重试'))
-      const selected = requestedTeam ? result.find(team => team.jotmoId === requestedTeam) : result.length === 1 ? result[0] : undefined
-      if (requestedTeam && !selected) throw new Error(tr('当前团队已不可访问'))
-      setTeams(result)
-      if (selected) { setTeamId(selected.jotmoId); if (requestedTeam) setName(current => current || tr('{v0}内部群', { v0: selected.name })) }
-    }).catch(caught => { if (!controller.signal.aborted) setLoadError(errorText(caught)) })
-    return () => controller.abort()
-  }, [accountKey, requestedTeam, revision])
-  const team = teams?.find(value => value.jotmoId === teamId)
-  const canManage = team?.currentUserRole === 'owner' || team?.currentUserRole === 'admin'
-  const disabled = !team || !canManage || !!loadError || busy || pending || (target.mode === 'create' && !name.trim())
-  const reset = () => { requestUid.current = ''; setPending(false); setError('') }
-  const prepare = async () => {
-    if (disabled || !team || inFlight.current) return
-    const controller = new AbortController(); inFlight.current = controller
-    requestUid.current ||= crypto.randomUUID()
-    setBusy(true); setError('')
-    try {
-      const result = await callArkme<TeamGroupPending>('team.app.internal-group.prepare', {
-        expectedAccountKey: accountKey, teamRef: team.teamRef, requestUid: requestUid.current, mode: target.mode,
-        ...(target.mode === 'create' ? { name: name.trim() } : { sourceRef: target.source.sourceRef }),
-      }, controller.signal)
-      if (controller.signal.aborted) return
-      if (result.state !== 'backend_pending') throw new Error(tr('内部群状态返回异常，请重试'))
-      setPending(true)
-    } catch (caught) { if (!controller.signal.aborted) setError(errorText(caught)) }
-    finally { if (inFlight.current === controller) inFlight.current = undefined; if (!controller.signal.aborted) setBusy(false) }
+  const [teams,setTeams]=useState<ArkmeTeam[]>(),[teamId,setTeamId]=useState(''),[name,setName]=useState('')
+  const [loadError,setLoadError]=useState(''),[error,setError]=useState(''),[revision,setRevision]=useState(0)
+  const [busy,setBusy]=useState(false),[recovered,setRecovered]=useState(false),[result,setResult]=useState<TeamInternalGroupResult>()
+  const bodyRef=useRef<HTMLDivElement>(null),inFlight=useRef<AbortController>(),requestUid=useRef('')
+  const team=teams?.find(t=>t.jotmoId===teamId), canManage=team?.currentUserRole==='owner'||team?.currentUserRole==='admin'
+  const requestedTeam=target.mode==='create'?target.teamJotmoId:undefined
+  useEffect(()=>()=>inFlight.current?.abort(),[])
+  useEffect(()=>{if(busy||result)bodyRef.current?.focus({preventScroll:true})},[busy,result])
+  useEffect(()=>{
+    const c=new AbortController();setLoadError('')
+    void callArkme<ArkmeTeam[]>('team.app.teams',{expectedAccountKey:accountKey},c.signal).then(items=>{
+      if(c.signal.aborted)return
+      if(!Array.isArray(items))throw new Error(tr('团队状态返回异常，请重试'))
+      const selected=requestedTeam?items.find(t=>t.jotmoId===requestedTeam):items.length===1?items[0]:undefined
+      if(requestedTeam&&!selected)throw new Error(tr('当前团队已不可访问'))
+      setTeams(items)
+      if(selected){setTeamId(selected.jotmoId);if(requestedTeam)setName(n=>n||tr('{v0}内部群',{v0:selected.name}))}
+    }).catch(e=>{if(!c.signal.aborted)setLoadError(errorText(e))})
+    return()=>c.abort()
+  },[accountKey,requestedTeam,revision])
+  const invoke=async(action:'prepare'|'prepare-original'|'confirm'|'recover'|'ack')=>{
+    if(!team||inFlight.current)return
+    const c=new AbortController();inFlight.current=c;setBusy(true);setError('')
+    try{
+      requestUid.current ||= crypto.randomUUID()
+      const value=await callArkme<TeamInternalGroupResult>(`team.app.internal-group.${action}`,{
+        expectedAccountKey:accountKey,teamRef:team.teamRef,
+        ...(action==='prepare'?{requestUid:requestUid.current,mode:target.mode,...(target.mode==='create'?{name:name.trim()}:{sourceRef:target.source.sourceRef})}:{}),
+        ...(action==='confirm'&&result?.state==='preview'?{previewRef:result.previewRef}:{}),
+        ...(action==='ack'&&result&&'requestUid'in result?{requestUid:result.requestUid}:{}),
+      },c.signal)
+      if(c.signal.aborted)return
+      if(!value||!['preview','none','acknowledged','unresolved','activating','ready','archived','rejected'].includes(value.state))throw new Error(tr('内部群状态返回异常，请重试'))
+      if(action==='ack'&&value.state==='acknowledged'){onClose();return}
+      if(value.state==='ready')onReady?.()
+      if('requestUid'in value)requestUid.current=value.requestUid
+      setResult(value.state==='none'?undefined:value);setRecovered(true)
+    }catch(e){if(!c.signal.aborted)setError(errorText(e))}
+    finally{if(inFlight.current===c)inFlight.current=undefined;if(!c.signal.aborted)setBusy(false)}
   }
-  return <TeamFeatureDialog title={tr(target.mode === 'create' ? '创建团队内部群' : '关联为团队内部群')}
-    teamName={target.mode === 'link' ? target.source.displayName : team?.name ?? tr('团队')} onClose={onClose}
-    footer={<button type="button" disabled={disabled} style={{ opacity: disabled ? .5 : 1, cursor: disabled ? 'default' : 'pointer' }} onClick={() => { void prepare() }}>
-      {tr(busy ? '正在检查…' : target.mode === 'create' ? '检查创建条件' : '查看关联影响')}
-    </button>}>
+  useEffect(()=>{
+    setRecovered(false);setResult(undefined);setError('')
+    if(team)void invoke('recover')
+    return()=>{inFlight.current?.abort();inFlight.current=undefined}
+  },[team?.teamRef,revision])
+  useEffect(()=>{
+    if(result?.state!=='activating'||busy||error)return
+    const timer=setTimeout(()=>void invoke('recover'),2000)
+    return()=>clearTimeout(timer)
+  },[result,busy,error])
+  const preview=result?.state==='preview'?result:undefined
+  const locked=busy||!!result
+  const canPrepare=!!team&&canManage&&recovered&&!loadError&&(target.mode==='link'||!!name.trim())
+  const action=result?.state==='ready'||result?.state==='archived'||result?.state==='rejected'?'ack':result?.state==='activating'?'recover':result?.state==='unresolved'||preview&&error?'prepare-original':preview?'confirm':!recovered?'recover':'prepare'
+  const label=busy?'处理中…':action==='ack'?'完成':action==='recover'?(result?.state==='activating'?'查询进度':'查询原请求'):action==='prepare-original'?'重新检查':action==='confirm'?(preview?.mode==='create'?'确认创建':'确认关联'):'下一步'
+  const showForm=!result
+  const showRules=showForm||!!preview
+  const reset=()=>{requestUid.current='';setResult(undefined);setError('')}
+  return <TeamFeatureDialog title={tr((preview?.mode??target.mode)==='create'?'创建团队内部群':'关联团队内部群')}
+    className="arkme-internal-group-dialog"
+    teamName={!result&&target.mode==='link'?target.source.displayName:team?.name??tr('团队')} onClose={onClose}
+    footer={<button className="arkme-contact-remark-confirm" type="button" disabled={busy||!team||(action==='prepare'&&!canPrepare)} onClick={()=>void invoke(action)}>{tr(label)}</button>}>
     <div ref={bodyRef} tabIndex={-1} style={styles.body}>
-      <p style={styles.copy}>{tr('成员随团队自动同步：加入团队后自动入群，离开团队后自动移出。')}</p>
-      <p style={styles.copy}>{tr('群内按本人身份发言，不需要选择个人或团队身份。')}</p>
-      {!teams && !loadError && <p role="status">{tr('正在加载我的团队…')}</p>}
-      {loadError && <p role="alert">{loadError} <button type="button" onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button></p>}
-      {teams && target.mode === 'link' && <label style={styles.label}>{tr('关联团队')}
-        <select style={styles.input} value={teamId} disabled={busy} onChange={event => { setTeamId(event.target.value); reset() }}>
-          <option value="">{tr('请选择团队')}</option>
-          {teams.map(value => <option key={value.jotmoId} value={value.jotmoId}>{value.name}</option>)}
-        </select>
-      </label>}
-      {teams?.length === 0 && <p>{tr('你尚未加入团队')}</p>}
-      {team && target.mode === 'create' && <label style={styles.label}>{tr('群名称')}
-        <input style={styles.input} value={name} maxLength={120} disabled={busy} onChange={event => { setName(event.target.value); reset() }} />
-      </label>}
-      {team && !canManage && <p role="status">{tr('仅团队所有者或管理员可创建或关联内部群。')}</p>}
-      <p style={styles.copy}>{tr(target.mode === 'link'
-        ? '确认关联前，将先展示需新增、移出的成员和历史消息可见范围，再由你确认。'
-        : '创建前会核对团队成员范围与权限；创建成功后不需要再手动维护群成员。')}</p>
-      <TeamGroupPendingNotice>{tr(pending
-        ? target.mode === 'create' ? '尚未创建群聊，当前填写内容已保留。' : '尚未关联团队，原群成员和历史消息保持不变。'
-        : '目前无法取得成员变更预览，不能创建或关联内部群。')}</TeamGroupPendingNotice>
-      {error && <p role="alert" style={{ color: arkmeTheme.danger }}>{error}</p>}
+      {showForm&&<p style={styles.copy}>{tr('成员随团队自动同步。')}</p>}
+      {!teams&&!loadError&&<p role="status">{tr('正在加载我的团队…')}</p>}
+      {loadError&&<p role="alert">{loadError} <button type="button" onClick={()=>setRevision(r=>r+1)}>{tr('重试')}</button></p>}
+      {teams&&showForm&&target.mode==='link'&&<label style={styles.label}>{tr('关联团队')}<select style={styles.input} value={teamId} disabled={busy} onChange={e=>{setTeamId(e.target.value);reset()}}>
+        <option value="">{tr('请选择团队')}</option>{teams.map(t=><option key={t.jotmoId} value={t.jotmoId}>{t.name}</option>)}
+      </select></label>}
+      {teams?.length===0&&<p>{tr('你尚未加入团队')}</p>}
+      {team&&showForm&&target.mode==='create'&&<label style={styles.label}>{tr('群名称')}<input style={styles.input} maxLength={120} disabled={locked} value={name} onChange={e=>{setName(e.target.value);reset()}}/></label>}
+      {team&&!canManage&&<p role="status">{tr('仅团队所有者或管理员可创建或关联内部群。')}</p>}
+      {preview&&<Preview value={preview}/>}
+      {result?.state==='unresolved'&&<Status title={tr('正在核对原请求')} detail={tr('“{v0}”尚未确认，重新检查会继续原请求，不会重复建群。',{v0:result.label??''})}/>}
+      {result?.state==='activating'&&<Status title={tr('正在同步成员')} detail={tr('可关闭窗口，稍后打开查看进度。')}/>}
+      {result?.state==='ready'&&<Status title={tr('内部群已就绪')} detail={tr('成员已同步，可在群聊列表中打开。')}/>}
+      {result?.state==='rejected'&&<Status title={tr('关联未生效')} detail={tr('原群成员已变化，请完成后重新关联。')}/>}
+      {result?.state==='archived'&&<Status title={tr('内部群已归档')} detail={tr('团队已解散。')}/>}
+      {showRules&&<details style={styles.details}>
+        <summary style={styles.summary}>{tr('了解同步规则')}</summary>
+        <div style={styles.rules}>
+          <p>{tr('加入团队自动入群，离开团队立即失去群访问权限。')}</p>
+          <p>{tr('群内以本人身份发言，机器人和历史消息作者保持不变。')}</p>
+          <p>{tr('免打扰和首页显示可单独设置；团队解散后内部群归档。')}</p>
+        </div>
+      </details>}
+      {error&&<p role="alert" style={{margin:0,color:arkmeTheme.danger}}>{error}</p>}
     </div>
   </TeamFeatureDialog>
 }
-
-const styles: Record<string, CSSProperties> = {
-  body: { display: 'grid', gap: 14, padding: 20, fontSize: 13, outline: 'none' },
-  copy: { margin: 0, color: arkmeTheme.secondary, lineHeight: 1.7 },
-  label: { display: 'grid', gap: 8 },
-  input: { width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '9px 12px', border: `1px solid ${arkmeTheme.borderSoft}`, borderRadius: 8, background: arkmeTheme.base, color: arkmeTheme.text, font: 'inherit' },
+function Status({title,detail}:{title:string;detail:string}) {
+  return <div role="status" style={styles.status}><h3 style={styles.heading}>{title}</h3><p style={styles.copy}>{detail}</p></div>
+}
+function Preview({value:v}:{value:TeamInternalGroupPreview}) {
+  const row=(label:string,value:string,danger=false)=><div style={styles.row} key={label+value}><dt style={{color:danger?arkmeTheme.danger:arkmeTheme.secondary}}>{label}</dt><dd style={{margin:0}}>{value}</dd></div>
+  return <>
+    <div style={styles.target}><span style={{color:arkmeTheme.secondary}}>{tr(v.mode==='create'?'群名称':'关联群')}</span><strong>{v.label}</strong></div>
+    <section aria-label={tr('成员变更')} style={styles.preview}>
+      <h3 style={styles.heading}>{tr('成员变更')}</h3>
+      <div style={styles.counts}>
+        {v.add.length>0&&<span style={styles.count}>{tr('新增 {v0} 人',{v0:v.add.length})}</span>}
+        {v.remove.length>0&&<span style={styles.count}>{tr('移出 {v0} 人',{v0:v.remove.length})}</span>}
+        {v.retainCount>0&&<span style={styles.count}>{tr('保留 {v0} 人',{v0:v.retainCount})}</span>}
+      </div>
+      <dl style={{margin:0}}>
+        {v.add.length>0&&row(tr('新增成员'),v.add.map(p=>p.name).join('、'))}
+        {v.remove.length>0&&row(tr('移出成员'),v.remove.map(p=>p.name).join('、'),true)}
+        {row(tr('群主'),tr('{v0}（团队所有者）',{v0:v.owner.name}))}
+        {v.roleChanges.map(p=>row(tr('角色调整'),`${p.name}：${tr(roleName[p.before])} → ${tr(roleName[p.after])}`))}
+        {v.botCount>0&&row(tr('机器人'),tr('保留 {v0} 个',{v0:v.botCount}))}
+      </dl>
+    </section>
+    <section aria-label={tr('确认前请留意')} style={styles.rules}>
+      <h3 style={styles.heading}>{tr('确认前请留意')}</h3>
+      <p>{tr('新增或重新入群的成员，只能查看本次入群后的消息。')}{v.mode==='link'&&tr('保留成员的合法历史权限不变。')}</p>
+      <p>{tr('成员与角色随团队同步，不能单独退群或解除关联。')}</p>
+      {v.closePublicAccess&&<p>{tr('将关闭公开发现和公开入群。')}</p>}
+    </section>
+  </>
+}
+const styles:Record<string,CSSProperties>={
+  body:{display:'grid',gap:16,padding:20,fontSize:13,lineHeight:1.5,outline:'none',overflowWrap:'anywhere'},
+  copy:{margin:0,color:arkmeTheme.secondary,lineHeight:1.5},
+  preview:{display:'grid',gap:10,padding:14,border:`1px solid ${arkmeTheme.border}`,borderRadius:10},
+  heading:{fontSize:14,fontWeight:600,margin:0,color:arkmeTheme.text},
+  counts:{display:'flex',flexWrap:'wrap',gap:8},
+  count:{padding:'4px 8px',borderRadius:6,background:arkmeTheme.layer2},
+  row:{display:'grid',gridTemplateColumns:'72px minmax(0,1fr)',gap:8,padding:'5px 0'},
+  rules:{display:'grid',gap:6,color:arkmeTheme.secondary},
+  details:{borderTop:`1px solid ${arkmeTheme.borderSoft}`,paddingTop:4},
+  summary:{cursor:'pointer',padding:'10px 0',color:arkmeTheme.secondary},
+  status:{display:'grid',gap:8,textAlign:'center',padding:'28px 12px'},
+  target:{display:'grid',gridTemplateColumns:'72px minmax(0,1fr)',gap:8,padding:'10px 12px',background:arkmeTheme.layer1,borderRadius:8},
+  label:{display:'grid',gap:8},
+  input:{width:'100%',minWidth:0,boxSizing:'border-box',padding:'9px 12px',border:`1px solid ${arkmeTheme.borderSoft}`,borderRadius:8,background:arkmeTheme.layer1,color:arkmeTheme.text,font:'inherit'},
 }

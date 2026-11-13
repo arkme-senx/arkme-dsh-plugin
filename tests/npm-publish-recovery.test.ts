@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { parse } from 'yaml'
 import { describe, it, expect } from 'vitest'
@@ -40,7 +40,7 @@ exit "$TEST_NPM_STATUS"
       const output = join(dir, 'output')
       writeFileSync(output, '')
       const result = spawnSync('bash', ['-e', '-o', 'pipefail', '-c', command], {
-        cwd: dir, encoding: 'utf8', env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GITHUB_OUTPUT: output,
+        cwd: dir, encoding: 'utf8', timeout: 10_000, env: { ...process.env, PATH: `${dir}:${dirname(process.execPath)}:${process.env.PATH}`, GITHUB_OUTPUT: output,
           TEST_NPM_MESSAGE: message, TEST_NPM_STATUS: String(status), TEST_EXISTING_INTEGRITY: existingIntegrity ?? '',
           TEST_PUBLISH_MARKER: join(dir, 'published'), RELEASE_TARBALL: 'release.tgz', RELEASE_INTEGRITY: 'sha512-match' },
       })
@@ -48,5 +48,5 @@ exit "$TEST_NPM_STATUS"
       expect(readFileSync(output, 'utf8')).toBe(recover ? 'package_name=@senguoyun/dsh-arkme\nversion=0.1.58\n' : '')
       expect(existsSync(join(dir, 'published'))).toBe(!existingIntegrity)
     } finally { rmSync(dir, { recursive: true, force: true }) }
-  })
+  }, 15_000)
 })

@@ -585,6 +585,21 @@ export class ArkmeService {
     this.realtime.emitChatClientEvent({type:'team-invalidated',revision:this.realtime.nextChatClientRevision(),change:{kind:'team.notification-policy.changed'}})
     return value
   }
+  async teamGovernanceMembers(teamRef: string, pageCursor?: string, signal?: AbortSignal): Promise<import('./team-governance-contract.js').TeamGovernanceMembers> {
+    const page = await this.teamApp.execute('team.app.members', {teamRef, ...(pageCursor ? {pageCursor} : {})}, signal) as import('./team-app-contract.js').TeamMembers
+    return {membershipRevision:page.membershipRevision, canManageRoles:page.canManageRoles === true, canTransferOwnership:page.canTransferOwnership === true, canDissolve:page.canDissolve === true,
+      items:page.items.map(member => ({userRef:member.userRef, displayName:member.displayName, role:member.role})), hasMore:page.hasMore, ...(page.nextPageCursor ? {nextPageCursor:page.nextPageCursor} : {})}
+  }
+  async teamGovernance(request: import('./team-governance-contract.js').TeamGovernanceRequest, signal?: AbortSignal): Promise<import('./team-governance-contract.js').TeamGovernanceState> {
+    if (!request || !['state','role','transfer','dissolve'].includes(request.action)) throw new ArkmePluginError('team-governance-invalid','团队管理参数无效',false,400)
+    const {action, ...params} = request
+    return await this.teamApp.execute(`team.app.governance.${action}`, params, signal) as import('./team-governance-contract.js').TeamGovernanceState
+  }
+  async teamInternalGroup(request: import('./team-internal-group-contract.js').TeamInternalGroupRequest, signal?: AbortSignal): Promise<import('./team-internal-group-contract.js').TeamInternalGroupResult> {
+    if (!request || !['prepare','prepare-original','confirm','recover','ack'].includes(request.action)) throw new ArkmePluginError('internal-group-invalid','内部群请求无效',false,400)
+    const {action, ...params} = request
+    return await this.teamApp.execute(`team.app.internal-group.${action}`, params, signal) as import('./team-internal-group-contract.js').TeamInternalGroupResult
+  }
   async teamMemberManagement(request: import('./team-member-add-contract.js').TeamMemberManagementRequest, signal?: AbortSignal): Promise<import('./team-member-add-contract.js').TeamMemberManagementResult> {
     if (!request || !['candidates','add','recover','retry','ack'].includes(request.action)) throw new ArkmePluginError('team-member-request-invalid','成员管理请求无效',false,400)
     const {action, ...params} = request
@@ -1516,6 +1531,8 @@ arkoImagesV1:true,
         teamGroupWorkspace: 1,
         teamProfiles: true,
         teamMemberManagementV1: true,
+        teamInternalGroupsV1: true,
+        teamGovernanceV1: true,
         teamExternalChats: true,
         teamMessageExtensions: 1,
         teamMessageInteractions: 1,

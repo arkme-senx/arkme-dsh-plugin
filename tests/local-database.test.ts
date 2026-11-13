@@ -373,3 +373,17 @@ it('does not accumulate retired Bot handles in durable visibility metadata', asy
   expect((await db.readDirectoryCache(1))?.projection?.visibility).toEqual([{ entryKind: 'bot', entryRef: 'new', hidden: true }])
   db.close()
 })
+
+it('internal group receipt journal survives the actual local database facade and restart with account isolation',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'arkme internal group journal '))
+ const attempt={requestUid:'original',label:'工程群',input:{mode:'create' as const,team_id:'7',name:'工程群'}}
+ let db=new ArkmeLocalDatabase(dir,new ArkmeStateStore(dir))
+ try{
+  await db.teamInternalGroup('test:11','7',{put:attempt});db.close()
+  db=new ArkmeLocalDatabase(dir,new ArkmeStateStore(dir))
+  expect(await db.teamInternalGroup('test:11','7')).toEqual(attempt)
+  expect(await db.teamInternalGroup('test:12','7')).toBeUndefined()
+  await db.teamInternalGroup('test:11','7',{ack:'original'})
+  expect(await db.teamInternalGroup('test:11','7')).toBeUndefined()
+ }finally{db.close()}
+})

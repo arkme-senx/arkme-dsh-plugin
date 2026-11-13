@@ -1,4 +1,7 @@
 import {selectedTextPrepareTool,selectedTextForwardTool,selectedTextOriginalTool} from './conversation/selected-text-forward.js'
+import {teamGovernanceTools} from './contacts/team-governance.js'
+import {teamInternalGroupTools} from './contacts/team-internal-groups.js'
+
 import { recordHistoryToolModule } from './records/history.js'
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
@@ -96,6 +99,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   directoryReadToolModule,
   ...teamProfileTools,
   ...teamMemberTools,
+  ...teamInternalGroupTools,
+  ...teamGovernanceTools,
   ...teamExternalChatTools,
   ...teamMessageTools,
   ...codexWorkRecordTools,

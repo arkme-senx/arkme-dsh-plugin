@@ -19,8 +19,9 @@ export type TeamAppOperation = `team.app.${
   | 'visitor.private.open' | 'person.private.open' | 'visitor.world-target' | 'person.world-target' | 'people.remarks' | 'outbound.open'
   | 'group.context' | 'group.join' | 'group.directory' | 'group.request' | 'group.join-context' | 'group.command' | 'group.status' | 'group.participants' | 'group.approvals'
   | 'workspace' | 'workspace.folders' | 'workspace.request' | 'sources.cards' | 'sources.occurrences' | 'sources.locate'
-  | 'internal-group.prepare'
+  | 'internal-group.prepare' | 'internal-group.confirm' | 'internal-group.prepare-original' | 'internal-group.recover' | 'internal-group.ack'
   | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
+  | 'governance.state' | 'governance.role' | 'governance.transfer' | 'governance.dissolve'
   | 'world.view'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
@@ -99,6 +100,7 @@ export interface TeamReceipts {
 export interface TeamMembers {
   /** Present only for an authorized Team-side conversation-scoped read. */
   visitor?: TeamIdentity
+  canManageRoles?:boolean; canTransferOwnership?:boolean; canDissolve?:boolean
   membershipRevision: number; canAddMembers: boolean
   team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync; personKey?: string; personRef?: string; isMe?: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
   /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
@@ -139,3 +141,10 @@ export interface TeamMessageChangeHint {
   messageKeys?: readonly string[]
   conversationKeys?: string[]
 }
+
+/** Only Team facts are returned; raw organization/user identifiers stay Host-side. */
+export type { TeamGovernanceResult } from './team-governance-contract.js'
+export type TeamGovernanceIntent =
+ | {kind:'role';teamRef:string;userRef:string;name:string;role:'admin'|'member';revision:number}
+ | {kind:'transfer';teamRef:string;userRef:string;name:string;revision:number}
+ | {kind:'dissolve';teamRef:string;revision:number}

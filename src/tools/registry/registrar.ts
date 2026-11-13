@@ -31,7 +31,7 @@ const CORE_CONFIRMATION_TOOLS = new Set([
   'arkme_message_sync_retry',
   'arkme_recording_speaker_correct',
   'arkme_recording_speaker_evidence_build',
-  'arkme_team_members_add',
+  'arkme_team_members_add', 'arkme_team_internal_group_confirm', 'arkme_team_governance',
   'arkme_team_profile_update', 'arkme_team_external_chat_share', 'arkme_team_message_send', 'arkme_team_message_forward', 'arkme_team_message_copy_link', 'arkme_team_message_report', 'arkme_team_message_recall', 'arkme_team_message_delete', 'arkme_chat_message_action', 'arkme_team_message_edit', 'arkme_team_send_task', 'arkme_team_mark_change',
   'arkme_team_outbound_open',
   'arkme_team_groups_change',
@@ -155,6 +155,8 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
     return `是否对刚才选定的群聊执行“${labels[String(command?.action)]??'团队入群操作'}”？团队加入后，当前有效同事可查看并参与团队本次入群以来的群聊。`
   }
   if (name === 'arkme_team_notification_policy_set') return `是否确认${args.muted === true ? '开启' : '关闭'}刚才选定团队对话的个人消息免打扰？消息和未读记录仍会保留。`;
+  if (name === 'arkme_team_governance') return args.action === 'dissolve' ? '是否确认解散刚才选定的团队？其内部群将关闭并归档，此操作无法撤销。' : args.action === 'transfer' ? '是否确认将团队转让给刚才选定的成员？你将成为普通成员，内部群群主同步转移。' : '是否确认将刚才选定成员的团队角色调整为已核对的管理员或普通成员？内部群角色同步更新。'
+  if (name === 'arkme_team_internal_group_confirm') return args.action === 'ack' ? '是否已向用户展示并核对刚才内部群操作的最终结果？' : '是否确认刚才预览的内部群变更？成员随团队同步，新增和重新加入成员只看本次入群后的消息；原群成员、角色与公开入口按预览生效。';
   if (name === 'arkme_team_members_add') return '确认将选定的同事直接加入团队？他们将获得团队共享内容的访问权限。';
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'

@@ -262,3 +262,8 @@ export class ArkmeConversationMessageMergeOwner extends ConfirmedSendRetentionOw
     for (const [key, entry] of this.submissions) if (!entry.pending && entry.expiresAtMillis <= now) this.submissions.delete(key)
   }
 }
+
+/** Team admission narrows history without changing message content/version semantics. */
+export function conversationMessageVisibleFromSequence(item: ArkmeTimelineItem, floor?: number): boolean {
+  return floor === undefined || floor === 0 || item.isMe === true && item.status === 0 || (item.sequence ?? 0) >= floor
+}

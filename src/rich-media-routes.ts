@@ -223,7 +223,7 @@ export function createArkmeMediaHandler(service: ArkmeService, options: ArkmeRic
         'Accept-Ranges': response.headers.get('accept-ranges') ?? 'bytes',
       }
       if(descriptor.sourceBound)headers['Content-Security-Policy']="sandbox; default-src 'none'"
-      for (const name of ['content-length', 'content-range']) {
+      for (const name of ['content-length', 'content-range', 'content-disposition']) {
         const value = response.headers.get(name)
         if (value !== null) headers[name] = value
       }

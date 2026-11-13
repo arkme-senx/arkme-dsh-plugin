@@ -95,6 +95,24 @@ describe('canonical events and commit fences', () => {
       expect(store.read('scope', 'initial')?.cache?.stale).toBe(true)
     } finally { store.close() }
   })
+  it('keeps ordinary edit ordering across association and SQLite reloads', () => {
+    let { path, store } = setup()
+    const message = (version: number, textContent: string): ArkmeTimelinePage => {
+      const value = page(); value.unified!.events = [{ ...value.unified!.events[0]!, source: 'messages', kind: 'message',
+        item: { itemUid: 'record', timelineItemKey: 'relation', recordVersion: version, textContent } as never }]; return value
+    }
+    try {
+      store.write('scope', 'before', message(2, 'current v2'))
+      store.write('scope', 'associated', message(1, 'older v1'))
+      expect(store.read('scope', 'before')?.items[0]?.textContent).toBe('current v2')
+      store.close(); store = new UnifiedTimelineCache(path)
+      store.write('scope', 'edited', message(3, 'current v3'))
+      expect(store.read('scope', 'associated')?.items[0]?.textContent).toBe('current v3')
+      const unavailable = message(0, 'unavailable'); unavailable.unified!.events[0]!.contentStatus = 'unavailable'
+      store.write('scope', 'unavailable', unavailable)
+      expect(store.read('scope', 'before')?.unified?.events[0]?.contentStatus).toBe('unavailable')
+    } finally { store.close() }
+  })
   it('keeps coverage tokens window-local while hydrating shared updated bodies and gaps', () => {
     const { store } = setup()
     try {

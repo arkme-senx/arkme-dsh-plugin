@@ -242,6 +242,8 @@ function directorySourceIdentity(source: ArkmeSourceItem): string {
 type DirectorySourceScalarField = Exclude<keyof ArkmeSourceItem, 'avatarRefs' | 'groupAvatar' | 'privateInteraction'>
 
 const DIRECTORY_SOURCE_SCALAR_FIELDS: Record<DirectorySourceScalarField, true> = {
+  teamRosterManaged: true,
+  sourceVisibleFromSeq: true,
   canonicalChatSourceKey:true,
   accessKind:true,
   teamWorkspace:true,

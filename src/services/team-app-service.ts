@@ -1,3 +1,5 @@
+import { changeTeamGovernance } from './team-governance.js'
+import {TeamInternalGroups} from './team-internal-groups.js'
 import { isBackendRouteUnavailable } from './service-error.js'
 import {TeamMemberAddition} from './team-member-addition.js'
 import { teamHistoryOperation, teamHistoryChunk, type TeamHistoryAdapter } from './team-history-service.js'
@@ -60,6 +62,7 @@ function receiptCounts(raw: unknown) {
 }
 const invalid = (cause?: unknown) => new ArkmePluginError('team-reference-invalid', '团队消息引用无效，请重新打开', false, 409, { cause })
 const reasons: Record<string, string> = {
+  preview_stale: '团队或群成员已变化，请重新检查原请求后确认', members_managed_by_team: '该群成员由团队统一管理',
   team_group_forbidden:'你已无权访问或操作该团队群，请重新打开',team_group_membership_stale:'团队群资格已变化，请刷新后重试',invalid_team_group_request:'团队群请求无效',team_group_request_conflict:'同一入群请求的内容不一致，请核对原请求',
   feature_links_forbidden: '仅团队所有者或管理员可管理团队入口',
   invalid_feature_links: '请检查入口名称和网址',
@@ -106,7 +109,7 @@ export class TeamAppService {
   }
   private readonly codec: EncryptedReferenceCodec
   private readonly memberAvatars = new Map<string, { expires: number; value: { avatarRef?: string; avatarFallback?: import('../types.js').ArkmeGroupAvatarFallback } }>()
-  constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort,
+  constructor(private readonly runtime: ServiceRuntime, private readonly avatars: TeamMemberAvatarPort & Partial<Pick<import('./profile-service.js').ProfileService, 'publicProfileSummariesByUserIds'>>,
     private readonly privateChat?: Pick<ChatService, 'openPrivateChatFromUser'> & Partial<Pick<ChatService, 'chatSharedRecordingPreview'|'readSourceAround'>>,
     private readonly contacts?: Pick<SourceService, 'privateRemarksByUserIds'> & Partial<Pick<SourceService, 'openSourceRef'|'sealSourceRef'|'sourceItem'|'groupDirectoryAvatars'|'chatDirectorySourceKey'>>,
     private readonly memberCandidates?: TeamMemberCandidatePort,
@@ -120,7 +123,7 @@ export class TeamAppService {
   }
   private async open(kind: string, value: unknown, actor: number): Promise<Record<string, unknown>> {
     const decoded = await this.codec.open(`team-app-${kind}`, str(value))
-    if (decoded.viewer !== actor || ['member-candidate','member-candidate-cursor','entry-group'].includes(kind) && decoded.environment !== this.runtime.config.environment) throw invalid()
+    if (decoded.viewer !== actor || ['member-candidate','member-candidate-cursor','internal-group-preview','entry-group'].includes(kind) && decoded.environment !== this.runtime.config.environment) throw invalid()
     return decoded
   }
   async worldTeamID(ref: string, actor: number): Promise<import('../record-owner-id.js').RecordOwnerId> {
@@ -771,7 +774,7 @@ export class TeamAppService {
     }
     const teamID = async () => {
       const value = await this.open('team', p.teamRef, actor)
-      if ((operation === 'team.app.member-candidates' || operation.startsWith('team.app.members.add')) && value.environment !== this.runtime.config.environment) throw invalid()
+      if ((operation === 'team.app.member-candidates' || operation.startsWith('team.app.members.add') || operation.startsWith('team.app.internal-group.')) && value.environment !== this.runtime.config.environment) throw invalid()
       const id = recordOwnerId(value.team_id)
       if (!id) throw invalid()
       return id
@@ -1025,7 +1028,7 @@ export class TeamAppService {
             avatarState = 'unavailable'
           }
         }
-        return { ...(visitor ? {visitor} : {}), team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
+        return { ...(visitor ? {visitor} : {}), team: await this.team(selected, actor), totalCount: num(data.member_count), membershipRevision:num(data.membership_revision), canManageRoles:data.can_manage_roles===true, canTransferOwnership:data.can_transfer_ownership===true, canDissolve:data.can_dissolve===true, canAddMembers:data.can_add_members===true, hasMore: data.has_more === true, avatarState,
           ...(data.next_cursor ? { nextPageCursor: await this.ref('member-cursor', { cursor: data.next_cursor, ...(context ? {team_id: id, conversation_uid: context.conversation_uid} : {}) }, actor) } : {}),
           items: await Promise.all(members.map(async v => ({
             ...(context && recordOwnerId(v.user_id) ? {
@@ -1041,6 +1044,27 @@ export class TeamAppService {
             codexSync: readTeamMemberCodexSync(v.codex_sync),
           }))),
         } satisfies TeamMembers
+      }
+      case 'team.app.governance.state': {
+        const id = await teamID(), member = p.userRef ? await this.open('member', p.userRef, actor) : undefined
+        if (member && String(member.team_id) !== String(id)) throw invalid()
+        const state = await post('governance/state', {team_id:String(id), ...(member ? {target_user_id:String(member.user_id)} : {})}, true)
+        if (typeof state.team_active !== 'boolean' || typeof state.dissolving !== 'boolean' || !Number.isSafeInteger(state.membership_revision)) throw invalid()
+        const currentRole = (value:unknown) => value === 1 ? 'owner' as const : value === 2 ? 'admin' as const : value === 3 ? 'member' as const : undefined
+        return {active:state.team_active, dissolving:state.dissolving, membershipRevision:Number(state.membership_revision),
+          ...(currentRole(state.actor_role) ? {actorRole:currentRole(state.actor_role)} : {}),
+          ...(currentRole(state.target_role) ? {targetRole:currentRole(state.target_role)} : {})}
+      }
+      case 'team.app.governance.role': case 'team.app.governance.transfer': case 'team.app.governance.dissolve': {
+        const kind = operation === 'team.app.governance.role' ? 'role' : operation === 'team.app.governance.transfer' ? 'transfer' : 'dissolve'
+        const member = kind === 'dissolve' ? undefined : await this.open('member', p.userRef, actor)
+        const id = await teamID()
+        if (member && String(member.team_id) !== String(id)) throw invalid()
+        return await changeTeamGovernance((path, body) => post(path,body,path==='governance/state'), {
+          kind, teamID:id, ...(member ? {targetID:member.user_id}:{}),
+          revision:Number(p.expectedMembershipRevision),
+          ...(kind === 'role' ? {role:p.role as 'admin'|'member'}:{}),
+        })
       }
       case 'team.app.member.remove': {
         const ref = await this.open('member', p.userRef, actor)
@@ -1126,7 +1150,11 @@ export class TeamAppService {
           return {state:'ready',membershipPolicy:'independent',teams:[{...team,representation:selection}],fixedIdentity:{team,selection}} satisfies TeamGroupContext
         }
         const raw=await this.runtime.authenticatedChatPost<Record<string,unknown>>('/api/v1/chats/group-identity/context',{chat_session_uid:source.ownerRef},session,signal,{lane:'interactive-read',bypassCache:true})
-        if(raw.state!=='ready'||raw.membership_policy!=='independent'||!Number.isSafeInteger(raw.group_join_at)||!Array.isArray(raw.teams))throw invalid()
+        if(raw.state!=='ready'||!['independent','team_roster'].includes(str(raw.membership_policy))||!Number.isSafeInteger(raw.group_join_at)||!Array.isArray(raw.teams))throw invalid()
+        if(raw.membership_policy==='team_roster') {
+          if(raw.teams.length!==0)throw invalid()
+          return {state:'ready',membershipPolicy:'team_roster',groupJoinAt:num(raw.group_join_at),teams:[]} satisfies TeamGroupContext
+        }
         const codec=new GroupRepresentationCodec(this.runtime)
         const teams=await Promise.all(list(raw.teams).map(async candidate=>{
           const snapshot=await codec.snapshot({...candidate,group_join_at:raw.group_join_at},actor)
@@ -1194,26 +1222,48 @@ export class TeamAppService {
           ...(data.hasMore ? { nextCursor: await this.ref('member-candidate-cursor', { team_id: id, source, source_ref: sourceRef, cursor: data.nextCursor }, actor) } : {}),
         } satisfies TeamMemberCandidatePage
       }
-      case 'team.app.internal-group.prepare': {
-        // Preparation only. Never use personal create/add/remove to emulate a
-        // roster binding; backend must atomically preview and confirm its delta.
-        if (!['create', 'link'].includes(str(p.mode)) || !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()
+      case 'team.app.internal-group.prepare': case 'team.app.internal-group.prepare-original': case 'team.app.internal-group.confirm': case 'team.app.internal-group.recover': case 'team.app.internal-group.ack': {
+        if (operation === 'team.app.internal-group.prepare' && (!['create','link'].includes(str(p.mode)) || !/^[A-Za-z0-9._:-]{1,128}$/u.test(str(p.requestUid)) || (p.mode === 'create' ? !str(p.name).trim() || [...str(p.name).trim()].length > 120 : !str(p.sourceRef)))) throw invalid()
+        const id = String(await teamID()), journal = this.runtime.stateStore.teamInternalGroup
+        if (!journal) throw new ArkmePluginError('internal-group-recovery-unavailable', '内部群请求恢复暂不可用', true, 503)
+        const owner = new TeamInternalGroups({
+          journal: change => journal.call(this.runtime.stateStore, `${this.runtime.config.environment}:${actor}`, id, change),
+          post: async (path, body) => obj(await this.runtime.authenticatedChatPost(`/api/v1/chats/team-roster/${path}`, body, session, signal)),
+          seal: value => this.ref('internal-group-preview', value, actor),
+          open: async ref => { const value = await this.open('internal-group-preview', ref, actor); if (obj(value.input).team_id !== id) throw invalid(); return value },
+          preview: async (data, requestUid, previewRef) => {
+            const ids = ['add','remove','retain'].flatMap(k => Array.isArray(data[k]) ? data[k] as string[] : [])
+            const changes = list(data.role_changes), ownerId = str(data.owner_user_id)
+            if (!ownerId || !Number.isSafeInteger(data.expires_at) || ['add','remove','retain','bots','role_changes'].some(k => !Array.isArray(data[k]))) throw invalid()
+            ids.push(ownerId, ...changes.map(c => str(c.user_id)))
+            if (ids.some(v => !recordOwnerId(v))) throw invalid()
+            const safeIds = [...new Set(ids.map(Number).filter(n => Number.isSafeInteger(n) && n > 0))]
+            const labels = new Map(list(data.people).map(p => [str(p.user_id), str(p.name)]))
+            const profiles = !labels.size && this.avatars.publicProfileSummariesByUserIds ? await this.avatars.publicProfileSummariesByUserIds(safeIds, session, signal) : new Map()
+            const person = async (uid: string) => ({key: await this.key(`internal-group-person:${uid}`, actor), name: labels.get(uid) || profiles.get(Number(uid))?.nickname || (uid === String(actor) ? '我' : '成员资料暂不可用')})
+            return {state: 'preview', previewRef, requestUid, expiresAt: num(data.expires_at),
+              add: await Promise.all((data.add as string[]).map(person)), remove: await Promise.all((data.remove as string[]).map(person)),
+              retainCount: (data.retain as unknown[]).length, botCount: (data.bots as unknown[]).length,
+              owner: await person(ownerId), ownerChanged: !!str(data.previous_owner_user_id) && data.previous_owner_user_id !== ownerId,
+              roleChanges: await Promise.all(changes.map(async c => { if (![1,2,3].includes(num(c.before)) || ![1,2,3].includes(num(c.after))) throw invalid(); return {...await person(str(c.user_id)), before: role(c.before), after: role(c.after)} })),
+              closePublicAccess: data.close_public_access === true}
+          },
+        })
+        if (operation === 'team.app.internal-group.recover') return owner.recover()
+        if (operation === 'team.app.internal-group.prepare-original') return owner.prepareOriginal()
+        if (operation === 'team.app.internal-group.ack') return owner.ack(str(p.requestUid))
+        if (operation === 'team.app.internal-group.confirm') return owner.confirm(str(p.previewRef))
+        const mine = list((await post('list-mine', {}, true)).teams), team = mine.find(t => String(t.team_id) === id)
+        if (!team || !['owner','admin'].includes(role(team.role))) throw new ArkmePluginError('team-not_accessible', '仅团队所有者或管理员可创建或关联内部群', false, 403)
         if (p.mode === 'create') {
-          if (!str(p.name).trim() || str(p.name).trim().length > 120) throw invalid()
-        } else {
-          if (!this.contacts?.openSourceRef || !str(p.sourceRef)) throw invalid()
-          const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
-          if (source.kind !== 'group_chat') throw invalid()
+          const name = str(p.name).trim()
+          if (!name || [...name].length > 120) throw invalid()
+          return owner.prepare({mode:'create',team_id:id,name},str(p.requestUid),name)
         }
-        const id = await teamID(), mine = list((await post('list-mine', {}, true)).teams)
-        if (!mine.some(team => String(team.team_id) === String(id))) {
-          throw new ArkmePluginError('team-not_accessible', reasons.not_accessible!, false, 403)
-        }
-        const currentTeam = mine.find(team => String(team.team_id) === String(id))!
-        if (!['owner', 'admin'].includes(role(currentTeam.role))) {
-          throw new ArkmePluginError('team-not_accessible', '仅团队所有者或管理员可创建或关联内部群', false, 403)
-        }
-        return { state: 'backend_pending' } satisfies TeamGroupPending
+        if (p.mode !== 'link' || !this.contacts?.openSourceRef) throw invalid()
+        const source = await this.contacts.openSourceRef(str(p.sourceRef), actor)
+        if (source.kind !== 'group_chat') throw invalid()
+        return owner.prepare({mode:'link',team_id:id,chat_session_uid:source.ownerRef},str(p.requestUid),str(source.displayName)||'已选定群聊')
       }
       case 'team.app.outbound.open': {
         if (!validTeamOutboundRecipient(p.recipient) || !/^[A-Za-z0-9._:-]{1,128}$/.test(str(p.requestUid))) throw invalid()

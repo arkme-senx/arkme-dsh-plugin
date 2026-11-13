@@ -16,6 +16,7 @@ const channel = { team_id: '9223372036854775800', name: '即我团队', jotmo_id
 const conversation = { conversation_uid: 'conversation-private', team_id: channel.team_id, external_user_id: 90, channel, side: 'external', last_seq: 2, latest_team_reply_seq: 1, my_read_seq: 0, unread: 1 }
 const message = { message_uid: 'message-private', actor_user_id: 11, record_owner_user_id: 11, seq: 2, revision: 2, side: 'team', state: 'published', sender: { nickname: '小林', avatar_url: 'https://userfiles.jotmo.cc/test.png' }, record: { status: 'available', version: 3, text_content: '已收到', media: [{ file_asset_uid: 'asset-secret', file_name: 'photo.png', mime_type: 'image/png', size: 42, file_kind: 1, download_url: 'https://private-signed.invalid' }] } }
 function fixture(handler: (path: string, body: Record<string, unknown>) => unknown | Promise<unknown> = () => ({})) {
+  let internalPending: import('../src/team-internal-group-contract.js').TeamInternalGroupAttempt | undefined
   let pending: import('../src/team-member-add-contract.js').TeamMemberAdditionAttempt | undefined
   let session = { userId: 90, accessToken: 'app-token', refreshToken: 'app-refresh' }
   const requests: Array<{ path: string; body: Record<string, unknown>; headers: Headers }> = []
@@ -28,7 +29,7 @@ function fixture(handler: (path: string, body: Record<string, unknown>) => unkno
   })
   const config = { environment: 'test', teamBaseUrl: 'https://team.test', authBaseUrl: 'https://auth.test', chatBaseUrl: 'https://chat.test', recordBaseUrl: 'https://record.test', subjectBaseUrl: 'https://subject.test', routePath: '/custom/api', requestTimeoutMs: 500, shareWebsite: 'https://share.test', maxTextLength: 20000 } as ArkmeServiceConfig
   const recovery=new Map<string,import('../src/team-outbound-contract.js').TeamOutboundRecovery>()
-  const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { uniqueCode: async () => 'unique-machine-key', teamMemberAddition: async (_scope:string,_team:string,change?:any)=>{if(change?.put)pending=change.put;else if(change?.ack===pending?.requestUid)pending=undefined;return structuredClone(pending)},teamOutboundTarget:vi.fn(async(scope:string,uid:string)=>recovery.get(scope+uid)),retainTeamOutboundTarget:vi.fn(async(scope:string,uid:string,value:import('../src/team-outbound-contract.js').TeamOutboundRecovery)=>{recovery.set(scope+uid,value)}) } as StateStore, fetchImpl as typeof fetch)
+  const runtime = new ServiceRuntime(config, {} as ArkmeSessionStore, { teamInternalGroup: async (_scope:string,_team:string,change?:any)=>{if(change?.put)internalPending=change.put;else if(change?.ack===internalPending?.requestUid)internalPending=undefined;return structuredClone(internalPending)}, uniqueCode: async () => 'unique-machine-key', teamMemberAddition: async (_scope:string,_team:string,change?:any)=>{if(change?.put)pending=change.put;else if(change?.ack===pending?.requestUid)pending=undefined;return structuredClone(pending)},teamOutboundTarget:vi.fn(async(scope:string,uid:string)=>recovery.get(scope+uid)),retainTeamOutboundTarget:vi.fn(async(scope:string,uid:string,value:import('../src/team-outbound-contract.js').TeamOutboundRecovery)=>{recovery.set(scope+uid,value)}) } as StateStore, fetchImpl as typeof fetch)
   vi.spyOn(runtime, 'requireSession').mockImplementation(async () => ({ ...session }))
   vi.spyOn(runtime, 'accountScopedSession').mockImplementation(async () => ({ ...session }))
   const avatars = { publicAvatarPresentationsByArkmeIds: vi.fn(async () => new Map<string, { avatarRef: string }>()) }
@@ -145,6 +146,12 @@ describe('team group owner boundary', () => {
     expect(f.requests.some(v=>v.path.endsWith('/list-mine'))).toBe(false)
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
   })
+  it('treats a roster group as a ready self-only context without delegated teams',async()=>{
+    const f=fixture(()=>({state:'ready',membership_policy:'team_roster',group_join_at:9,teams:[]}))
+    expect(await f.service.execute('team.app.group.context',{sourceRef:'sealed-group',expectedAccountKey:'test:90'}))
+      .toEqual({state:'ready',membershipPolicy:'team_roster',groupJoinAt:9,teams:[]})
+    expect(f.requests.map(v=>v.path)).toEqual(['/api/v1/chats/group-identity/context'])
+  })
   it('rejects an invalid source, non-group source, missing idempotency key and changed account', async () => {
     const f=fixture()
     f.contacts.openSourceRef.mockRejectedValueOnce(new Error('invalid source'))
@@ -220,13 +227,13 @@ describe('team public card projection',()=>{
 describe('internal group preparation boundary', () => {
   const owner = { team_id: 17, jotmo_id: 'our_team', name: '团队', role: 1 }
   it('validates creation and linking without writing any group membership', async () => {
-    const f = fixture(() => ({ teams: [owner] }))
+    const f = fixture(path => path.endsWith('/preview') ? {preview_token:'server-token',expires_at:Date.now()+300000,add:['90'],remove:[],retain:[],bots:[],role_changes:[],owner_user_id:'90',history_policy:'new_admission_only;retain_existing_legal_history;bots_unchanged'} : {teams:[owner]})
     const teams = await f.service.execute('team.app.teams', {}) as Array<{ teamRef: string }>
     const params = { teamRef: teams[0]!.teamRef, expectedAccountKey: 'test:90', requestUid: 'attempt-1' }
-    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'create', name: '团队内部群' })).resolves.toEqual({ state: 'backend_pending' })
-    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'link', sourceRef: 'sealed-group' })).resolves.toEqual({ state: 'backend_pending' })
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'create', name: '团队内部群' })).resolves.toMatchObject({ state: 'preview', add:[{name:'我',key:expect.any(String)}], previewRef:expect.any(String) })
+    await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'link', sourceRef: 'sealed-group' })).resolves.toMatchObject({ state: 'preview', add:[{name:'我',key:expect.any(String)}], previewRef:expect.any(String) })
     expect(f.contacts.openSourceRef).toHaveBeenCalledWith('sealed-group', 90)
-    expect(f.requests.every(value => value.path === '/api/v1/team/list-mine')).toBe(true)
+    expect(f.requests.every(value => ['/api/v1/team/list-mine','/api/v1/chats/team-roster/preview'].includes(value.path))).toBe(true)
     expect(f.privateChat.openPrivateChatFromUser).not.toHaveBeenCalled()
   })
   it('rejects missing names, malformed requests and non-group sources before preparing', async () => {
@@ -238,7 +245,7 @@ describe('internal group preparation boundary', () => {
     }
     f.contacts.openSourceRef.mockResolvedValueOnce({ kind: 'private_chat' } as never)
     await expect(f.service.execute('team.app.internal-group.prepare', { ...params, mode: 'link', sourceRef: 'private' })).rejects.toThrow()
-    expect(f.requests).toHaveLength(1)
+    expect(f.requests.every(r => r.path === '/api/v1/team/list-mine')).toBe(true)
   })
   it('rechecks removed membership, admin role and account, without trusting the opened form', async () => {
     let members = [owner]
@@ -248,7 +255,7 @@ describe('internal group preparation boundary', () => {
     members = [{ ...owner, role: 3 }]
     await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow('仅团队所有者或管理员')
     members = []
-    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow('无权访问')
+    await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow('仅团队所有者或管理员')
     f.changeAccount()
     await expect(f.service.execute('team.app.internal-group.prepare', params)).rejects.toThrow()
     expect(f.requests).toHaveLength(3)

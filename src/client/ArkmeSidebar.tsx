@@ -67,7 +67,7 @@ import { fileSendPolicy, forgetFileSendAdmissions, rememberFileSendAdmission, re
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle'
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise'
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash'
-import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, conversationMessageDefaultUnread, mergeConversationMessages as mergeItems } from './conversation-message-merge.js'
+import { ArkmeConversationMessageMergeOwner, conversationMessageRenderKey, conversationMessageSendFailure, conversationMessageDefaultUnread, conversationMessageVisibleFromSequence, mergeConversationMessages as mergeItems } from './conversation-message-merge.js'
 export { ArkmeConversationMessageMergeOwner as ArkmeConfirmedSendRetentionOwner } from './conversation-message-merge.js'
 import { ArkmeComposerTargetPreview } from './ArkmeComposerTargetPreview.js'
 import { arkmeConversationMessageLayout, dayKey, timeLabel } from './conversation-message-presentation.js'
@@ -2025,7 +2025,7 @@ export function ArkmeSurface({
   )
   const teamIdentityScope=JSON.stringify([authenticatedAccountKey,conversationKey])
   const [teamIdentityState,setTeamIdentityState]=useState<{scope:string;value?:TeamGroupIdentity}>({scope:''})
-  const selectedTeamIdentity=source?.kind==='group_chat'&&teamIdentityState.scope===teamIdentityScope?teamIdentityState.value:undefined
+  const selectedTeamIdentity:TeamGroupIdentity|undefined=source?.teamRosterManaged===true?undefined:source?.kind==='group_chat'&&teamIdentityState.scope===teamIdentityScope?teamIdentityState.value:undefined
   const selectTeamIdentity=(value:TeamGroupIdentity|undefined)=>setTeamIdentityState({scope:teamIdentityScope,...(value?{value}:{})})
   const selectedTeamComposition = selectedTeamIdentity ? {
     draftScope: selectedTeamIdentity.team.key ?? selectedTeamIdentity.team.jotmoId,
@@ -2354,22 +2354,31 @@ export function ArkmeSurface({
   const appliedSyncResets = useRef(new WeakSet<object>())
   const hideSyncWindow = syncReset?.access === 'restricted'
     || syncReset !== undefined && !appliedSyncResets.current.has(syncReset)
-  const unifiedWindow = useMemo(() => hideSyncWindow ? undefined
+  const syncedWindow = useMemo(() => hideSyncWindow ? undefined
     : rawUnifiedWindow && syncChanges?.size ? projectCommittedChatWindow(rawUnifiedWindow, syncChanges) : rawUnifiedWindow,
   [hideSyncWindow, rawUnifiedWindow, syncChanges])
-  const items = useMemo(() => {
+  const syncedItems = useMemo(() => {
     if (hideSyncWindow) return []
     return syncChanges?.size ? rawItems.flatMap(item => projectCommittedChatMessage(item, syncChanges) ?? []) : rawItems
   }, [hideSyncWindow, rawItems, syncChanges])
   useLayoutEffect(() => {
     if (hideSyncWindow || timelineStateKey !== conversationKey || !syncChanges?.size) return
-    const itemsChanged = items.length !== rawItems.length || items.some((item, index) => item !== rawItems[index])
-    if (!itemsChanged && unifiedWindow === rawUnifiedWindow) return
+    const itemsChanged = syncedItems.length !== rawItems.length || syncedItems.some((item, index) => item !== rawItems[index])
+    if (!itemsChanged && syncedWindow === rawUnifiedWindow) return
     setTimelineView(current => current.sourceKey === timelineStateKey
       && current.items === rawItems && current.unified === rawUnifiedWindow
-      ? { ...current, items, unified: unifiedWindow }
+      ? { ...current, items: syncedItems, unified: syncedWindow }
       : current)
-  }, [conversationKey, hideSyncWindow, items, rawItems, rawUnifiedWindow, syncChanges, timelineStateKey, unifiedWindow])
+  }, [conversationKey, hideSyncWindow, rawItems, rawUnifiedWindow, syncChanges, syncedItems, syncedWindow, timelineStateKey])
+  const historyFloor = source?.teamRosterManaged === true ? source.sourceVisibleFromSeq ?? 0 : undefined
+  const items = useMemo(() => historyFloor
+    ? syncedItems.filter(item => conversationMessageVisibleFromSequence(item, historyFloor)) : syncedItems,
+  [historyFloor, syncedItems])
+  const unifiedWindow = useMemo(() => {
+    if (!syncedWindow || !historyFloor) return syncedWindow
+    const events = syncedWindow.events.filter(event => event.kind !== 'message' || conversationMessageVisibleFromSequence(event.item, historyFloor))
+    return events.length === syncedWindow.events.length ? syncedWindow : { ...syncedWindow, events }
+  }, [historyFloor, syncedWindow])
   const aiPolishSettingsRef = useRef(aiPolishSettings)
   const aiPolishNoticesRef = useRef(aiPolishNotices)
   aiPolishSettingsRef.current = aiPolishSettings
@@ -9046,6 +9055,21 @@ export function ArkmeSurface({
             aiPolishSettings={aiPolishSettings}
             onAiPolishSettingsChanged={setAiPolishSettings}
             onSourceProjectionUpdated={updateSourceProjection}
+            onInternalGroupReady={() => {
+              // Refresh current membership, history range and scoped media delivery
+              // after association; message content keeps its ordinary semantics.
+              for (const request of timelineRequestsRef.current.values()) request.controller.abort()
+              timelineRequestsRef.current.clear()
+              timelineGenerationRef.current += 1
+              updateSourceProjection({...source,teamRosterManaged:true})
+              const empty: ArkmeConversationTimelineSnapshot = {mode:'latest',items:[],aiPolishNotices:[],hasMore:false,newerHasMore:false,fetchedAtMillis:0}
+              conversationCacheRef.current.storeTimeline(conversationKey, empty)
+              setTimelineView({...empty,sourceKey:conversationKey,mode:'latest',aroundSequenceRange:undefined,aiPolishSettings:undefined,nextCursor:undefined,newerCursor:undefined,newerHasMore:false})
+              setInterwovenMoments([])
+              arkmeConversationMembers.clear(authenticatedAccountKey, source)
+              void loadTimeline(undefined,false,40,'return-to-latest').catch(caught=>setTimelineError(errorMessage(caught)))
+              void arkmeChatDirectory.refreshRoot({force:true}).catch(()=>undefined)
+            }}
             onMembershipChanged={applyGroupMembershipChange}
             onMessageDndUpdated={updateSourceMessageDndProjection}
             membersOpen={groupMembersOpen}
@@ -9727,7 +9751,7 @@ export function ArkmeSurface({
               {authenticatedAccountKey !== undefined && source?.kind === 'group_chat'
                 && activeRecordReeditComposer === undefined && <TeamGroupIdentityPicker
                   key={JSON.stringify([authenticatedAccountKey, source.sourceRef])}
-                  accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} selfAvatarRef={selfProfile?.avatarRef}
+                  accountKey={authenticatedAccountKey} sourceRef={source.sourceRef} teamRosterManaged={source.teamRosterManaged} selfAvatarRef={selfProfile?.avatarRef}
                   value={selectedTeamIdentity} onSelect={selectTeamIdentity}
                   disabled={composerFilesDisabled || activeSelectMode !== undefined}
                 />}

@@ -1,3 +1,4 @@
+import {recordOwnerId} from '../record-owner-id.js'
 import { OriginalFileStore, originalFileKey } from './original-file-store.js'
 import { recordingPlaybackPath, recordingPlaybackRef, recordingPlaybackLocator, sameRecordingPlaybackLocation, type RecordingPlaybackLocator, type RecordingPlaybackRef } from '../recording-playback-ref.js'
 import { createHash, randomUUID } from 'node:crypto'
@@ -65,7 +66,7 @@ export interface ArkmeMediaDescriptor {
   stableKey?: string
 }
 
-export interface ArkmeChatMediaSource {accessRef:string;chatSessionUid:string;relationUid:string;recordOwnerUserId:RecordOwnerId;recordUid:string;version:number;audienceKey:string}
+export interface ArkmeChatMediaSource {accessRef?:string;chatSessionUid:string;relationUid:string;recordOwnerUserId:RecordOwnerId;recordUid:string;version:number;audienceKey?:string}
 type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;worldSound?:never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;worldSound?:never;recordingClip?:never}
 
 type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
@@ -788,6 +789,11 @@ export class MediaService {
     const maximumBytes = isProfileImage ? MAX_ARKME_PROFILE_IMAGE_BYTES
       : isSelfRoleImage ? MAX_SELF_ROLE_AVATAR_BYTES : MAX_ARKME_IMAGE_BYTES
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
+    // Source bytes are never an independent image-cache grant. Every new read
+    // goes through the source stream, including AI/SDK image reads.
+    if (this.mediaRefs.get(imageRef.trim())?.chatSource !== undefined) {
+      return this.withImageDownloadPermit(() => this.readImageUncached(session, imageRef, byteLimit, options.signal))
+    }
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
     if (isProfileImage) await this.profile.openProfileImageRef(imageRef, session.userId)
     const persisted = isAvatar ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef, isProfileImage ? 24 * 60 * 60_000 : undefined).catch(() => undefined) : undefined
@@ -1060,6 +1066,7 @@ export class MediaService {
     if (imageRef.trim().startsWith('arkme-media-v1.')) {
       const { response, descriptor } = await this.fetchMedia(imageRef.trim(), undefined, signal)
       if (!descriptor.mimeType.trim().toLowerCase().startsWith('image/')) {
+        await response.body?.cancel()
         throw new ArkmePluginError('image-type-unsupported', '该媒体引用不是图片', false, 415)
       }
       return await this.imageBytesFromResponse(response, byteLimit)
@@ -1385,7 +1392,7 @@ export class MediaService {
       for (const raw of items) {
         const item = objectValue(raw)
         const uid = stringValue(item.file_asset_uid)
-        if (expected.has(uid) && stringValue(item.preview_url ?? item.download_url).trim() !== '') displays.set(uid, item)
+        if (expected.has(uid) && (stringValue(item.source_attachment_ref) !== '' || stringValue(item.preview_url ?? item.download_url).trim() !== '')) displays.set(uid, item)
       }
     }
     for (const snapshot of snapshots) accept(listValue(snapshot.media_display_items))
@@ -1511,6 +1518,7 @@ export class MediaService {
         mime_type: stringValue(file.mime_type ?? file.mimeType),
         size: numberValue(file.size), sort_order: options.longArticle ? index : numberValue(file.order ?? file.sort_order ?? index),
         duration_sec: numberValue(file.duration_sec ?? file.durationSec),
+        ...(Object.hasOwn(file, 'source_attachment_ref') ? { source_attachment_ref: file.source_attachment_ref } : {}),
         ...(downloadUrl === undefined ? {} : { download_url: downloadUrl }),
         ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
       }]
@@ -1617,7 +1625,19 @@ export class MediaService {
     return this.issueMediaRef(viewerUserId, { chatSource, sourceBound: true, purpose: 'thumbnail', mimeType, fileName, size }, identity)
   }
 
-  richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = [], source?: ArkmeChatMediaSource): ArkmeContentBlock[] {
+  // Coordinates identify one received occurrence; Chat remains the authority.
+  chatMediaSource(raw: unknown): ArkmeChatMediaSource | undefined {
+    const root=objectValue(raw),relation=objectValue(root.relation),record=objectValue(root.record)
+    const payload=jsonObjectValue(record.payload),core=objectValue(root.record_core)
+    const chatSessionUid=stringValue(relation.chat_session_uid),relationUid=stringValue(relation.rel_uid)
+    const recordUid=stringValue(relation.record_uid ?? payload.record_uid ?? core.record_uid)
+    const recordOwnerUserId=recordOwnerId(relation.record_owner_user_id ?? payload.owner_user_id ?? core.owner_user_id)
+    const version=numberValue(payload.version ?? core.version ?? root.version)
+    if(!chatSessionUid||!relationUid||!recordUid||!recordOwnerUserId||!Number.isSafeInteger(version)||version<1)return undefined
+    return {chatSessionUid,relationUid,recordUid,recordOwnerUserId,version}
+  }
+
+  richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = [],source?:ArkmeChatMediaSource): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
     const root = objectValue(raw)
     const record = objectValue(root.record)
@@ -1668,11 +1688,13 @@ export class MediaService {
       const thumbnailRef = kind === 'image'
         ? this.issuePhotoThumbnail(source, viewerUserId, displayByAsset.get(stringValue(upload.preview_asset_uid)), stringValue(upload.attachment_uid), fileName)
         : undefined
-      if(source) {
-        const attachment=stringValue(item.source_attachment_ref)
-        if(!attachment||!source.accessRef||!source.chatSessionUid||!source.relationUid||!source.recordUid||!source.recordOwnerUserId||source.version<1||!Number.isSafeInteger(source.version)||!source.audienceKey)return []
-        const chatSource={access_ref:source.accessRef,chat_session_uid:source.chatSessionUid,relation_uid:source.relationUid,record_owner_user_id:source.recordOwnerUserId,record_uid:source.recordUid,version:source.version,attachment}
-        const stableIdentity=JSON.stringify(['source-media',source.audienceKey,source.relationUid,source.recordUid,source.version,attachment])
+      if(source || Object.hasOwn(item, 'source_attachment_ref')) {
+        const occurrence=source ?? this.chatMediaSource(raw),attachment=stringValue(item.source_attachment_ref)
+        if(!occurrence||!occurrence.chatSessionUid||!occurrence.relationUid||!occurrence.recordUid||!occurrence.recordOwnerUserId
+          ||!Number.isSafeInteger(occurrence.version)||occurrence.version<1||!/^[a-f0-9]{64}$/u.test(attachment)
+          ||occurrence.accessRef!==undefined&&(!occurrence.accessRef||!occurrence.audienceKey))return []
+        const chatSource={...(occurrence.accessRef===undefined?{}:{access_ref:occurrence.accessRef}),chat_session_uid:occurrence.chatSessionUid,relation_uid:occurrence.relationUid,record_owner_user_id:occurrence.recordOwnerUserId,record_uid:occurrence.recordUid,version:occurrence.version,attachment}
+        const stableIdentity=JSON.stringify(['source-media',occurrence.audienceKey ?? occurrence.chatSessionUid,occurrence.relationUid,occurrence.recordUid,occurrence.version,attachment])
         const ref=this.issueMediaRef(viewerUserId,{chatSource,sourceBound:true,purpose:'original',mimeType,fileName,size:Math.max(0,Math.trunc(numberValue(item.size)))},stableIdentity)
         return [{kind,...(kind === 'image' ? photoPresentation : {}),...(thumbnailRef ? { thumbnailRef } : {}),mediaRef:ref,originalRef:ref,...(stringValue(upload.attachment_uid)===''?{}:{attachmentUid:stringValue(upload.attachment_uid)}),...(fileAssetUid?{fileAssetUid}:{}),fileName,mimeType,size:Math.max(0,Math.trunc(numberValue(item.size))),sortOrder:Math.trunc(numberValue(item.sort_order??index)),...(numberValue(item.duration_sec)>0?{durationSec:numberValue(item.duration_sec)}:{}),...([1,3].includes(Math.trunc(numberValue(item.render_role)))?{renderRole:Math.trunc(numberValue(item.render_role)) as 1|3}:{})}]
       }

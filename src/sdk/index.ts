@@ -4,6 +4,9 @@ export type * from '../login-devices-contract.js'
 export type {SelectedTextNoteQuote,SelectedTextForwardInput} from '../selected-text-note.js'
 import type { TranscriptViewPort } from '../transcript-view-contract.js'
 export type { TranscriptViewTarget,TranscriptViewReference,TranscriptViewSourceReference,TranscriptViewCommand,TranscriptViewReadItem,TranscriptViewSnapshot,PersonalTranscriptEntry,TranscriptViewReceipt,TranscriptViewSavedPage } from '../transcript-view-contract.js'
+export type {TeamGovernancePort, TeamGovernanceRequest, TeamGovernanceState, TeamGovernanceMembers, TeamGovernanceResult} from '../team-governance-contract.js'
+export type {TeamInternalGroupRequest, TeamInternalGroupResult, TeamInternalGroupPreview, TeamInternalGroupPort} from '../team-internal-group-contract.js'
+
 export type {ArkmeTeamMentionInput} from '../types.js'
 export type { ArkmeMessageExtensionSummary, ArkmeMessageExtensionSummaryItem } from '../message-extension-summary.js'
 export { GROUP_AI_POLISH_MEMBERSHIP_REQUIRED, isGroupAiPolishMembershipRequired } from '../group-ai-polish-access.js'
@@ -1080,6 +1083,32 @@ export class ArkmeSdk {
   }
   async setTeamNotificationPolicy(conversationRef:string,muted:boolean,signal?:AbortSignal):Promise<TeamNotificationPolicy> {
     await this.requireTeamNotifications(signal); return await this.call('team.notifications.set',{conversationRef,muted},signal)
+  }
+  /** Read App Team authority with its own opaque member references and current revision. */
+  async teamGovernanceMembers(teamRef: string, pageCursor?: string, signal?: AbortSignal): Promise<import('../team-governance-contract.js').TeamGovernanceMembers> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])]); signal.throwIfAborted()
+    if ((await this.capabilities(signal)).features.teamGovernanceV1 !== true) throw new Error('当前 Provider 不支持团队管理')
+    const result = await this.call<import('../team-governance-contract.js').TeamGovernanceMembers>('team.governance.members', {teamRef, ...(pageCursor ? {pageCursor} : {})}, signal)
+    signal.throwIfAborted(); return result
+  }
+  /** Confirm the exact latest roster revision and human-approved target. Lost replies use state, never automatic replay. */
+  async teamGovernance(request: import('../team-governance-contract.js').TeamGovernanceRequest, signal?: AbortSignal): Promise<import('../team-governance-contract.js').TeamGovernanceState> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])]); signal.throwIfAborted()
+    if ((await this.capabilities(signal)).features.teamGovernanceV1 !== true) throw new Error('当前 Provider 不支持团队管理')
+    const result = await this.call<import('../team-governance-contract.js').TeamGovernanceState>('team.governance', {request}, signal)
+    signal.throwIfAborted(); return result
+  }
+  /** teamRef is the current account's getTeamProfile().profileRef, never an OpenAPI reference.
+   * After applying a completed result, acknowledge its UID. On uncertain transport use recover/prepare-original.
+   */
+  async teamInternalGroup(request: import('../team-internal-group-contract.js').TeamInternalGroupRequest, signal?: AbortSignal): Promise<import('../team-internal-group-contract.js').TeamInternalGroupResult> {
+    signal = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    signal.throwIfAborted()
+    if ((await this.capabilities(signal)).features.teamInternalGroupsV1 !== true) throw new Error('当前 Provider 不支持团队内部群')
+    signal.throwIfAborted()
+    const result = await this.call<import('../team-internal-group-contract.js').TeamInternalGroupResult>('team.internal-group', {request}, signal)
+    signal.throwIfAborted()
+    return result
   }
   /** teamRef is the current account's getTeamProfile().profileRef, never an OpenAPI reference.
    * After applying a completed result, acknowledge its UID. On uncertain transport use recover/retry.

@@ -39,6 +39,7 @@ export interface StateStore extends RecentEmojiStore {
  teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>
  retainTeamOutboundTarget(scope:string,requestUid:string,value:import('../team-outbound-contract.js').TeamOutboundRecovery):Promise<void>
 
+  teamInternalGroup?(scope: string, teamId: string, change?: {put: import('../team-internal-group-contract.js').TeamInternalGroupAttempt}|{ack: string}): Promise<import('../team-internal-group-contract.js').TeamInternalGroupAttempt|undefined>
   teamMemberAddition?(scope: string, teamId: string, change?: {put: import('../team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}): Promise<import('../team-member-add-contract.js').TeamMemberAdditionAttempt | undefined>
   teamEntryPreferenceState?(accountKey: string, value?: unknown): Promise<unknown>
   teamAvatarManifest?(accountKey: string, side: import('../team-app-contract.js').TeamSide, images?: readonly import('../team-app-contract.js').TeamAvatarDescriptor[]): Promise<readonly import('../team-app-contract.js').TeamAvatarDescriptor[]>
@@ -1391,6 +1392,7 @@ export class ServiceRuntime {
     const url = new URL(path, base)
     if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin
       || url.username !== '' || url.password !== '' || url.hash !== ''
+      || (options.sourceAttachment && (service !== 'record' || path !== '/api/v1/content/source-stream'))
       || (options.maxBytes !== undefined && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0))) {
       throw new ArkmePluginError('media-path-invalid', '媒体请求路径无效', false, 400)
     }
@@ -1506,7 +1508,7 @@ export class ServiceRuntime {
           || start !== wantedStart || end !== wantedEnd || end < start || end >= total || length !== end - start + 1) throw invalid()
       }
       const headers = new Headers({ 'content-type': mime, 'content-length': String(length), 'cache-control': 'private, no-store', 'accept-ranges': 'bytes' })
-      for (const name of ['content-range', 'etag']) {
+      for (const name of ['content-range', 'etag', 'content-security-policy', 'content-disposition']) {
         const value = response.headers.get(name)
         if (value !== null) headers.set(name, value)
       }

@@ -142,9 +142,12 @@ function ScopedTeamGroupJoinPanel({ accountKey, source }: { accountKey: string; 
 /** Selection changes only the next publication. Rechecks never clear its draft. */
 type IdentityPickerProps = {
   accountKey: string; sourceRef: string; selfAvatarRef?: string | undefined; disabled?: boolean
+  teamRosterManaged?: boolean | undefined
   value?: TeamGroupIdentity | undefined; onSelect?(value: TeamGroupIdentity | undefined): void
 }
 export function TeamGroupIdentityPicker(props: IdentityPickerProps) {
+  // Internal groups publish as the current person; delegated Team identity is a different business.
+  if (props.teamRosterManaged) return null
   return <ScopedIdentityPicker key={JSON.stringify([props.accountKey, props.sourceRef])} {...props} />
 }
 

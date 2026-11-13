@@ -399,14 +399,14 @@ describe('TeamDetailPane', () => {
     const current = page(teamRefA, '团队 A')
     current.team.currentUserRole = 'owner'
     mocks.callArkme.mockImplementation(async operation => operation === 'team.app.members' ? current
-      : operation === 'team.app.teams' ? [current.team] : { state: 'backend_pending' })
+      : operation === 'team.app.teams' ? [current.team] : operation === 'team.app.internal-group.recover' ? {state:'none'} : {state:'preview',mode:'create',label:'团队 A内部群',previewRef:'opaque-preview',requestUid:'same-request',expiresAt:Date.now()+300000,add:[],remove:[],retainCount:1,botCount:0,owner:{key:'owner',name:'负责人'},ownerChanged:false,roleChanges:[],closePublicAccess:false})
     await act(async () => { renderer = create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />); await tick() })
     expect(mocks.callArkme.mock.calls.some(([op]) => op === 'team.app.teams')).toBe(false)
     await act(async () => { button(renderer!, '团队内部群›').props.onClick(); await tick() })
     expect(text(renderer!.root)).toContain('创建团队内部群')
     expect(renderer!.root.findByType('input').props.value).toBe('团队 A内部群')
-    await act(async () => { button(renderer!, '检查创建条件').props.onClick(); await tick() })
-    expect(text(renderer!.root)).toContain('尚未创建群聊')
+    await act(async () => { button(renderer!, '下一步').props.onClick(); await tick() })
+    expect(text(renderer!.root)).toContain('新增或重新入群的成员，只能查看本次入群后的消息。')
     expect(mocks.callArkme.mock.calls.find(([op]) => op === 'team.app.internal-group.prepare')?.[1])
       .toMatchObject({ mode: 'create', teamRef: teamRefA, expectedAccountKey: 'account-a' })
   })
@@ -515,4 +515,25 @@ describe('TeamDetailPane', () => {
     expect(text(renderer!.root)).not.toContain('团队 A')
     expect(renderer!.root.findByProps({ 'data-team-ref': teamRefB })).toBeDefined()
   })
+  it.each([
+    ['取消管理员', 'role', '取消团队管理员'],
+    ['转让团队', 'transfer', '转让团队'],
+    ['解散团队', 'dissolve', '解散团队'],
+  ] as const)('opens the owner governance confirmation from the real Team pane: %s', async (label, action, title) => {
+    const current = page(teamRefA, '团队 A', {canManageRoles:true,canTransferOwnership:true,canDissolve:true,membershipRevision:9})
+    current.team.currentUserRole = 'owner'
+    current.items[0] = {...current.items[0]!,role:'admin',canRemove:true,displayName:'同事'}
+    mocks.callArkme.mockImplementation(async (operation) => operation === 'team.app.members' ? current
+      : operation.startsWith('team.app.governance.') ? {active:action!=='dissolve',dissolving:action==='dissolve',membershipRevision:10}
+      : {self:null,localOnly:true,installations:[],tasks:[]})
+    await act(async () => {renderer=create(<TeamDetailPane accountKey="account-a" teamRef={teamRefA} />);await tick()})
+    expect(renderer!.root.findAllByType('button').some(node=>text(node)==='退出团队')).toBe(false)
+    await act(async () => {button(renderer!,label).props.onClick();await tick()})
+    const dialog=renderer!.root.findByProps({role:'dialog'})
+    expect(text(dialog)).toContain(title)
+    expect(mocks.callArkme.mock.calls.some(([op])=>op.startsWith('team.app.governance.'))).toBe(false)
+    await act(async () => {button(renderer!,'确认').props.onClick();await tick()})
+    expect(mocks.callArkme).toHaveBeenCalledWith(`team.app.governance.${action}`,expect.objectContaining({expectedAccountKey:'account-a',teamRef:teamRefA,expectedMembershipRevision:9}),expect.any(AbortSignal))
+  })
+
 })

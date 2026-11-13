@@ -1646,6 +1646,8 @@ arkoImagesV1?:true
     teamGroupWorkspace?: 1
     teamProfiles?: true
     teamMemberManagementV1?: true
+    teamInternalGroupsV1?: true
+    teamGovernanceV1?: true
     teamExternalChats?: true
     groupSelfNickname?: true
     commonGroups?: true
@@ -1916,6 +1918,10 @@ export interface ArkmeGroupAvatarPresentation {
 }
 
 export interface ArkmeSourceItem {
+  /** Irreversible Team roster authority for this group, observed from Chat. */
+  teamRosterManaged?: true
+  /** Current Team admission history boundary, supplied by Chat. */
+  sourceVisibleFromSeq?: number
   accessKind?:'personal_membership'|'team_delegation'
   teamWorkspace?:{ref:string;jotmoId:string}
   /** Viewer-visible private counterpart nickname, independent of the preferred remark. */
@@ -4603,6 +4609,9 @@ export type ArkmePluginOperation =
   | 'team.entries.list' | 'team.entries.query' | 'team.entries.change'
   | 'team.notifications.list' | 'team.notifications.get' | 'team.notifications.set'
   | 'team.members.manage'
+  | 'team.internal-group'
+  | 'team.governance'
+  | 'team.governance.members'
   | 'team.profile.get' | 'team.profile.update' | 'team.profile.avatar.upload' | 'team.profile.avatar.abort'
   | 'team.list'
   | 'team.resolve'

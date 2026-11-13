@@ -6295,7 +6295,7 @@ nextPublic = next
     source?: ArkmeChatMediaSource,
   ): Promise<ArkmeTimelineItem['forwardRecords'] | undefined> {
     return await projectForwardRecordsWithAvatars(this.media.recordContentPayload(raw), viewerUserId,
-      fallbackCreatedAtMillis, this.media, this.profile, source)
+      fallbackCreatedAtMillis, this.media, this.profile, source ?? this.media.chatMediaSource(raw))
   }
 
   chatSharedRecordingPreview(raw: unknown): ArkmeTimelineItem['sharedRecording'] | undefined {
@@ -7229,7 +7229,7 @@ nextPublic = next
       const quickNoteDetailsSupported = chatTimelineItemSupportsQuickNoteDetails(relation, recordOwnerUserId)
       const aiPolish = this.aiPolish.timelineAiPolish(record, payload)
       const sendAtMillis = numberValue(relation.attach_at ?? payload.send_at)
-      const mediaSource=source.groupDelegation?{accessRef:source.groupDelegation.accessRef,chatSessionUid:source.ownerRef,relationUid,recordOwnerUserId,recordUid:uid,version:numberValue(payload.version??record.version),audienceKey:audienceKey!}:undefined
+      const mediaSource=source.groupDelegation?{accessRef:source.groupDelegation.accessRef,chatSessionUid:source.ownerRef,relationUid,recordOwnerUserId,recordUid:uid,version:numberValue(payload.version??record.version),audienceKey:audienceKey!}:this.media.chatMediaSource(item)
       const forwardRecords = options.basicPresentation
         ? projectForwardRecordsPreview(this.media.recordContentPayload(item), session.userId, sendAtMillis, this.media, undefined, mediaSource)
         : await this.chatForwardRecordsPreview(item, session.userId, sendAtMillis, mediaSource)
@@ -7330,7 +7330,7 @@ nextPublic = next
         ...(conversationPreview === '' ? {} : { conversationPreview }),
         status: recordStatus,
         sequence: numberValue(relation.seq),
-        ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
+          ...(numberValue(record.version ?? payload.version) > 0 ? { recordVersion: numberValue(record.version ?? payload.version) } : {}),
         ...(aiPolish === undefined ? {} : { aiPolish }),
         ...(recordManualEditFact(item) === undefined ? {} : { hasManualEdit: recordManualEditFact(item) }),
         templateKind: numberValue(payload.template_kind),
