@@ -1698,10 +1698,11 @@ for (const dshRejected of [false, true]) {
       await vi.waitFor(() => expect(f.realtime.published).toContainEqual(expect.objectContaining({
         kind: 'session.response', envelope: expect.objectContaining({ request_ref: 'model-rejection', status: 'rejected' }),
       })))
-      const reply = f.realtime.published.map(value => value.envelope as { request_ref?: string; error?: { code: string; dsh_rejected?: boolean } })
+      const reply = f.realtime.published.map(value => value.envelope as { request_ref?: string; error?: { code: string; dsh_rejected?: boolean; command_settled?: boolean } })
         .find(value => value?.request_ref === 'model-rejection')!
       expect(reply.error?.code).toBe('REMOTE_TRANSPORT_FAILED')
       expect(reply.error?.dsh_rejected).toBe(dshRejected ? true : undefined)
+      expect(reply.error?.command_settled).toBe(dshRejected ? true : undefined)
       expect(select).toHaveBeenCalledTimes(1)
     } finally { await f.host.stop() }
   })

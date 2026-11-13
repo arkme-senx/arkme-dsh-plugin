@@ -820,7 +820,7 @@ describe('Arkme remote Host account contract', () => {
     const rejectedRequest = { ...selectRequest, request_ref: 'model-rejected' }
     for (let i = 0; i < 2; i++) {
       await expect(host.dispatchAuthorizedRequest(rejectedRequest, context)).resolves.toMatchObject({
-        status: 'rejected', error: { code: 'REMOTE_TRANSPORT_FAILED', dsh_rejected: true },
+        status: 'rejected', error: { code: 'REMOTE_TRANSPORT_FAILED', dsh_rejected: true, command_settled: true },
       })
     }
     expect(selectModel).toHaveBeenCalledTimes(2)
@@ -830,10 +830,37 @@ describe('Arkme remote Host account contract', () => {
     const uncertain = await host.dispatchAuthorizedRequest(uncertainRequest, context)
     expect(uncertain.error?.code).toBe('REMOTE_TRANSPORT_FAILED')
     expect(uncertain.error?.dsh_rejected).toBeUndefined()
+    expect(uncertain.error?.command_settled).toBeUndefined()
     const pending = await host.dispatchAuthorizedRequest(uncertainRequest, context)
     expect(pending.error?.code).toBe('COMMAND_OUTCOME_UNKNOWN')
     expect(pending.error?.dsh_rejected).toBeUndefined()
     expect(selectModel).toHaveBeenCalledTimes(3)
+
+    let finish!: () => void
+    const gate = new Promise<void>(resolve => { finish = resolve })
+    selectModel.mockImplementationOnce(async () => {
+      await gate
+      throw new DshRemoteError('SESSION_STATE_CHANGED', 'busy', true)
+    })
+    const dispatch = (host as unknown as { dispatchWrite(request: unknown, native: undefined,
+      scope: { ledger: DshRemoteCommandLedger; runtimeRef: string }): Promise<unknown> }).dispatchWrite.bind(host)
+    // Exercise the ledger owner after admission: the original deadline has
+    // elapsed, but its DSH call is still in flight when recovery asks again.
+    const late = { ...selectRequest, request_ref: 'live-model-write', execute_before: 1_000 }
+    const scope = { ledger, runtimeRef: 'runtime-01' }
+    const original = dispatch(late, undefined, scope)
+    const originalRejected = expect(original).rejects.toMatchObject({
+      code: 'SESSION_STATE_CHANGED', details: { commandSettled: true },
+    })
+    await vi.waitFor(() => expect(selectModel).toHaveBeenCalledTimes(4))
+    await expect(dispatch({ ...late, execute_before: 2_000 }, undefined, scope)).rejects.toMatchObject({ code: 'COMMAND_OUTCOME_UNKNOWN' })
+    expect(ledger.get({ accountId: '1', runtimeRef: 'runtime-01', requestRef: late.request_ref })?.state).toBe('pending')
+    finish()
+    await originalRejected
+    await expect(dispatch({ ...late, execute_before: 2_000 }, undefined, scope)).rejects.toMatchObject({
+      code: 'SESSION_STATE_CHANGED', details: { commandSettled: true },
+    })
+    expect(selectModel).toHaveBeenCalledTimes(4)
     ledger.close()
   })
 
