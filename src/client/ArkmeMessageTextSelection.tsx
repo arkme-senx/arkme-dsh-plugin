@@ -229,7 +229,7 @@ export function ArkmeMessageTextSelectionToolbar({ replySourceRef, onReply, repl
       dragging = false
       const previousRange = rangeBeforeMouseDown
       rangeBeforeMouseDown = undefined
-      if (event.button !== 0 || elementFor(event.target as Node)?.closest(excludedSelector)) return
+      if (event.button !== 0 || elementFor(event.target as Node)?.closest(`${excludedSelector},a,[role="link"]`)) return
       // An outside click on non-selectable UI can leave the old browser selection intact.
       if (previousRange && sameRange(previousRange, selectedRange(document.getSelection()))) return
       show()

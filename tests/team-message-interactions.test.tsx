@@ -15,13 +15,13 @@ const message: TeamMessage = { ref: 'team-message-ref', key: 'm1', seq: 1, revis
   state: 'published', createdAt: 1, canEdit: false, canDelete: false, version: 1, contentStatus: 'available', media: [],
   localMarkRef: 'team-mark-ref', content: { text_content: '前缀选中的文字后缀', template_kind: 1 } }
 let root: Root, host: HTMLDivElement
-const recall = vi.fn(), selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), snapshot = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
+const openPerson = vi.fn(), recall = vi.fn(), selectMessage = vi.fn(), toggleMessage = vi.fn(), detail = vi.fn(), snapshot = vi.fn(), edit = vi.fn(), remove = vi.fn(), mark = vi.fn(async () => undefined), error = vi.fn()
 const toolbar = () => document.querySelector('[role="toolbar"]')
 const labels = (node: Element | null) => [...node?.querySelectorAll('button') ?? []].map(b => b.textContent)
 function Fixture({ msg = message, includeToolbar = true, selecting = false, scopeControl, cloud = false, onReply }: { msg?: TeamMessage; includeToolbar?: boolean; selecting?: boolean; scopeControl?: ReactNode; cloud?: boolean; onReply?: (target: any, quote: any) => void }) {
   return <>{includeToolbar && <ArkmeMessageTextSelectionToolbar replySourceRef="team-conversation" onReply={onReply} onUnderline={mark} markStorage={cloud?'cloud':'local'} markScopeControl={scopeControl} />}
     <div data-arkme-message-selection-scope><TeamConversationMessage message={msg} conversationRef="team-conversation" avatar={<span />}
-      selecting={selecting} selected={selecting} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onRecall={recall} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
+      selecting={selecting} selected={selecting} onOpenPerson={openPerson} onSelect={selectMessage} onToggle={toggleMessage} onDetail={detail} onSnapshot={snapshot} writable showReceipts receiptStore={{subscribe:()=>()=>{},get:()=>emptyTeamReceipt,watch:()=>()=>{}} as unknown as TeamReceiptStore} busy={false} onRecall={recall} onEdit={edit} onReceipts={() => {}} onError={error} /></div></>
 }
 async function render(msg = message, includeToolbar = true) { await act(async () => root.render(<Fixture msg={msg} includeToolbar={includeToolbar} />)) }
 async function mouse(element: Element, type: string, button = 0) { await act(async () => { element.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button })) }) }
@@ -271,4 +271,68 @@ it('opens a Team message with Enter and Space without activating nested controls
   expect(detail).toHaveBeenCalledTimes(2)
   await act(async () => { bubble.querySelector('p')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })) })
   expect(detail).toHaveBeenCalledTimes(2)
+})
+
+it.each(['plain', 'markdown', 'legacy'])('highlights Team mentions in %s bodies without highlighting emails', async format => {
+ const text = format === 'markdown' ? '**🙂** @同事 联系 a@example.com' : '🙂 @同事 联系 a@example.com'
+ const content = { text_content: text, template_kind: 1,
+  ...(format === 'markdown' ? { content_payload: { text_format: 'markdown' } } : {}),
+  ...(format !== 'legacy' ? { mentions: [{ personRef: 'person-ref', displayName: '同事', startIndex: text.indexOf('@'), length: 3 }] } : {}),
+ }
+ await render({ ...message, content }, false)
+ const highlighted = [...host.querySelectorAll<HTMLSpanElement>('span')].filter(el => el.style.color.includes('state-business-primary'))
+ expect(highlighted.map(el => el.textContent)).toContain('@同事')
+ expect(highlighted.some(el => el.textContent?.includes('@example.com'))).toBe(false)
+ expect(host.textContent).toContain('a@example.com')
+})
+
+it.each(['plain', 'markdown'])('opens the exact mentioned person in %s without opening the message detail', async format => {
+ const text = format === 'markdown' ? '**🙂 正文** @同名 和 @同名' : '🙂 正文 @同名 和 @同名'
+ const mentions = [text.indexOf('@'), text.lastIndexOf('@')].map((startIndex, i) => ({personRef:`person-${i}`, displayName:'同名', startIndex, length:3}))
+ await render({...message, content:{text_content:text,template_kind:1,mentions,...(format==='markdown'?{content_payload:{text_format:'markdown'}}:{})}})
+ const links = [...host.querySelectorAll<HTMLElement>('[role="link"]')].filter(el => el.textContent==='@同名')
+ expect(links).toHaveLength(2)
+ await mouse(links[1]!, 'click')
+ expect(openPerson).toHaveBeenLastCalledWith({personRef:'person-1',nickname:'同名'})
+ await act(async()=>links[0]!.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true})))
+ expect(openPerson).toHaveBeenLastCalledWith({personRef:'person-0',nickname:'同名'})
+ expect(detail).not.toHaveBeenCalled()
+})
+it('does not open a person card for legacy mentions without identity or while selecting messages', async () => {
+ const text='正文 @同事'
+ await render({...message,content:{text_content:text,template_kind:1}})
+ expect(host.querySelector('[role="link"]')).toBeNull()
+ const msg={...message,content:{text_content:text,template_kind:1,mentions:[{personRef:'person-ref',displayName:'同事',startIndex:3,length:3}]}}
+ await act(async()=>root.render(<Fixture msg={msg} selecting />))
+ expect(host.querySelector('[role="link"]')).toBeNull()
+ expect(openPerson).not.toHaveBeenCalled()
+})
+
+it('opens a mention card without showing the selection toolbar after an accidental text selection', async () => {
+ const text='前缀 @同事 后缀'
+ await render({...message,content:{text_content:text,template_kind:1,mentions:[{personRef:'person-ref',displayName:'同事',startIndex:3,length:3}]}})
+ const link=host.querySelector<HTMLElement>('[role="link"]')!
+ const down=new MouseEvent('mousedown',{button:0,bubbles:true,cancelable:true})
+ await act(async()=>link.dispatchEvent(down))
+ expect(down.defaultPrevented).toBe(true)
+ const range=document.createRange();range.setStart(link.firstChild!,1);range.setEnd(link.firstChild!,2)
+ document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range)
+ await mouse(link,'mouseup')
+ expect(toolbar()).toBeNull()
+ await mouse(link,'click')
+ expect(openPerson).toHaveBeenCalledExactlyOnceWith({personRef:'person-ref',nickname:'同事'})
+ expect(toolbar()).toBeNull()
+})
+it('keeps mentions in ordinary prose selection and Select All', async () => {
+ const text='前缀 @同事 后缀'
+ await render({...message,content:{text_content:text,template_kind:1,mentions:[{personRef:'person-ref',displayName:'同事',startIndex:3,length:3}]}})
+ const p=host.querySelector('[data-arkme-text-selection] p')!
+ await mouse(p,'mousedown')
+ const range=document.createRange();range.selectNodeContents(p)
+ document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range)
+ await mouse(p,'mouseup')
+ expect(toolbar()).not.toBeNull()
+ await act(async()=>[...toolbar()!.querySelectorAll('button')].find(button=>button.textContent==='全选')!.click())
+ expect(document.getSelection()!.toString()).toBe(text)
+ expect(openPerson).not.toHaveBeenCalled()
 })

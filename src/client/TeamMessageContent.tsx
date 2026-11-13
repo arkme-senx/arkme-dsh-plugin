@@ -2,8 +2,8 @@ import {watchTeamSourceRead,teamChangeAffectsSource} from './team-source-read.js
 import {subscribeTeamMessageChanges} from './team-messaging-events.js'
 import {arkmeAuthStore} from './auth-store.js'
 import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
-import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
-import type { TeamConversation, TeamMessage } from '../team-app-contract.js'
+import type { ArkmeContentBlock, ArkmeTimelineItem, ArkmeTimelineMentionTarget } from '../types.js'
+import type { TeamConversation, TeamMessage, TeamIdentity } from '../team-app-contract.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
 import { ArkmeMediaAccessContext,type ArkmeMediaAccess } from './media-access.js'
 import type {ArkmeAttachmentNavigationEntry} from './attachment-preview-navigation.js'
@@ -20,7 +20,7 @@ export function teamMessagePresentation(message: TeamMessage): ArkmeTimelineItem
     itemUid: message.key, senderName: message.sender.nickname, isMe: message.own,
     sendAtMillis: message.createdAt, title: message.content?.title ?? '',
     textFormat: message.content?.content_payload?.text_format === 'markdown' ? 'markdown' : 'plain',
-    mentions:(message.content?.mentions ?? []).map(m=>({kind:'member',startIndex:m.startIndex,length:m.length,displayName:m.displayName})), textContent: message.content?.text_content ?? '', status: message.state === 'published' ? 1 : 2,
+    mentions:(message.content?.mentions ?? []).map(m=>({kind:'member',personRef:m.personRef,startIndex:m.startIndex,length:m.length,displayName:m.displayName})), textContent: message.content?.text_content ?? '', status: message.state === 'published' ? 1 : 2,
     version: message.version, recordVersion: message.version, templateKind: message.content?.template_kind ?? 1, displayKind: message.content?.display_kind ?? 0,
     ...(message.forwardRecords?{forwardRecords:message.forwardRecords}:{}),
     contentBlocks: (message.forwardRecords?[]:message.media).map((media, sortOrder): ArkmeContentBlock => {
@@ -46,7 +46,7 @@ export function teamAttachmentNavigationEntries(messages:readonly TeamMessage[],
 }
 
 /** Only presentation is shared. URL grants and every byte read remain Team-scoped. */
-export function TeamMessageContent({ message, conversationRef, presentation, onOpenArticle, conversationKey, readOnly = false,attachmentNavigationKey }: { attachmentNavigationKey?:string|undefined;readOnly?:boolean; conversationKey?:string | undefined; message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail'; onOpenArticle?: (()=>void) | undefined }) {
+export function TeamMessageContent({ message, conversationRef, presentation, onOpenArticle, conversationKey, readOnly = false,attachmentNavigationKey, onOpenPerson }: { onOpenPerson?: ((person: TeamIdentity) => void) | undefined; attachmentNavigationKey?:string|undefined;readOnly?:boolean; conversationKey?:string | undefined; message: TeamMessage; conversationRef?: string | undefined; presentation?: 'detail'; onOpenArticle?: (()=>void) | undefined }) {
   // Keep mounted media and its URL across equivalent authorized snapshots.
   // Keys include viewer, message, Record version and asset. Changed content or
   // lost access replaces/unmounts this scope; byte reads still reauthorize.
@@ -58,7 +58,9 @@ export function TeamMessageContent({ message, conversationRef, presentation, onO
   const mediaAccess=useTeamMessageMediaAccess(message,urls,conversationRef,conversationKey)
   if (message.historyPreview) return <div style={{whiteSpace:'pre-wrap'}}>{message.content?.text_content}</div>
   return <ArkmeMediaAccessContext.Provider value={mediaAccess}>
-    <ArkmeMessageContent sessionAttachmentPreview item={item} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(attachmentNavigationKey===undefined?{}:{attachmentNavigationKey})} {...(onOpenArticle ? {onArticleOpen:onOpenArticle} : {})} {...(presentation ? { presentation } : {})}
+    <ArkmeMessageContent sessionAttachmentPreview highlightMentions item={item}
+      {...(onOpenPerson ? { isMentionClickable: (_text: string, target?: ArkmeTimelineMentionTarget) => target?.kind === 'member' && !!target.personRef,
+        onMentionClick: (_text: string, target?: ArkmeTimelineMentionTarget) => { if (target?.kind === 'member' && target.personRef) onOpenPerson({personRef:target.personRef,nickname:target.displayName}) } } : {})} sourceIdentityKey={message.key} mediaSelectionIsExplicit {...(attachmentNavigationKey===undefined?{}:{attachmentNavigationKey})} {...(onOpenArticle ? {onArticleOpen:onOpenArticle} : {})} {...(presentation ? { presentation } : {})}
       selectionTarget={!readOnly && conversationRef && snapshot.current.localMarkRef && message.state === 'published' && message.contentStatus === 'available'
         ? { item, sourceRef: conversationRef, localMarkRef: snapshot.current.localMarkRef,cloudMarkRef:message.ref,excerptOrigin:{kind:'team_message',itemRef:message.ref} } : undefined} />
   </ArkmeMediaAccessContext.Provider>

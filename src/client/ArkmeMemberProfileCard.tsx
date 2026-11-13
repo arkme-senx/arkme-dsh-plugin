@@ -140,7 +140,7 @@ export function ArkmeMemberProfileCard(props: {
   if (scope !== issuedScope.current) return null
   return <ArkmePersonProfileDialog displayName={names.displayName} topicNickname={names.topicNickname}
     accountName={person?.accountName ?? props.accountName} isSelf={person?.isSelf ?? props.member.isSelf} avatarRef={props.member.avatarRef ?? person?.avatarRef} avatarFallback={props.member.avatarFallback ?? person?.avatarFallback}
-    imagePort={props.imagePort} imageKey={props.imageKey} accountScope={scope} copyLinkTarget={target} copyUrl={props.copyUrl}
+    imagePort={props.member.avatarRef ? props.imagePort : undefined} imageKey={props.member.avatarRef ? props.imageKey : undefined} accountScope={scope} copyLinkTarget={target} copyUrl={props.copyUrl}
     refreshing={props.refreshing ?? profileRefreshing} refreshError={props.refreshError ?? profileRefreshError}
     busy={props.busy} closeWhileBusy={props.closeWhileBusy === true || worldBusy && !props.busy} worldBusy={worldBusy} worldDisabled={!person && !target} loading={props.loading ?? false} pending={props.pending ?? false}
     hideSend={props.hideSend} error={error || props.error} onClose={props.onClose} onSend={() => { if (scope === identityShareAccountScope()) props.onSend() }}
