@@ -10,7 +10,7 @@ const expectedPublicMethods = [
   'runWithReadPriority', 'timelineBotPresentations',
   // S04/S05/R05: delegated correction learning, group review and explicit identity operations.
   'peopleIdentities', 'recordingSpeakerLearning', 'speakerDirectoryCorrectionItems', 'speakerGroupAction', 'speakerGroupMembers',
-  'loginDevices',
+  'loginDevices', 'gameRequest', 'reportDeviceActivity', 'reportIMReady',
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
   'recordingFileStorage', 'recordingAnalysis',
@@ -160,6 +160,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'game-service.ts', 'device-registration-service.ts',
   'login-devices-service.ts',
   'transcript-view-service.ts',
   'progressive-attachments.ts',
