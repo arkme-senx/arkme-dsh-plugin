@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, useLayoutEffect, useRef, useState } from 'react'
+import { act, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ArkmeUnifiedTimelineWindow } from '../src/unified-chat-timeline.js'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ArkmeConversationMemoryCache } from '../src/client/conversation-memory-cache.js'
@@ -16,10 +17,13 @@ let store: ArkmeConversationMemoryCache
 let scrollTop: number
 let viewportHeight: number
 let pageHeight: number
+let unmountedTailHeight: number
 let restoreIntent: { current: boolean | undefined }
 let pending: { current: ArkmeConversationViewportRestore | undefined }
 const rowCount: Record<string, number> = { A: 30, B: 12 }
-function Harness({ selected = 'A', active = true, hold = false, first = 0 }: { selected?: string; active?: boolean; hold?: boolean; first?: number }) {
+function Harness({ selected = 'A', active = true, hold = false, first = 0, readThrough, deferUnread = false, gap = false }: {
+  selected?: string; active?: boolean; hold?: boolean; first?: number; readThrough?: number; deferUnread?: boolean; gap?: boolean
+}) {
   const [rendered, setRendered] = useState(selected)
   const bodyRef = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -28,10 +32,17 @@ function Harness({ selected = 'A', active = true, hold = false, first = 0 }: { s
       setRendered(selected)
     }
   }, [selected, hold])
-  const remember = useConversationViewport({ active, sourceKey: selected, renderedSourceKey: rendered,
-    bodyRef, store, pendingRestore: pending, restoreIntent })
-  return <div ref={bodyRef} data-viewport={rendered} onScroll={remember}>
-    {Array.from({ length: rowCount[rendered]! }, (_, index) => <div key={`${rendered}-${first + index}`}
+  const count = rowCount[rendered]!
+  const window = useMemo(() => ({ windowTokens: ['window'], sources: [{ source: 'messages', status: 'ready' }],
+    events: Array.from({ length: count }, (_, index) => ({ kind: 'message', eventId: `${rendered}-${first + index}`,
+      contentStatus: 'available', item: { itemUid: `${rendered}-${first + index}`, sequence: first + index + 1,
+        status: 1, isMe: false, recordOwnerUserId: 1 } })).filter(event => !gap || event.item.sequence !== 31),
+  }) as unknown as ArkmeUnifiedTimelineWindow, [count, first, rendered, gap])
+  const { remember, unreadAnchorId } = useConversationViewport({ active, sourceKey: selected, renderedSourceKey: rendered,
+    bodyRef, store, pendingRestore: pending, restoreIntent,
+    readState: readThrough === undefined ? undefined : { through: readThrough, latestSequence: first + count, window } })
+  return <div ref={bodyRef} data-viewport={rendered} data-row-count={count} onScroll={remember}>
+    {Array.from({ length: count }, (_, index) => (!deferUnread || index < 30 || unreadAnchorId || scrollTop >= 3000) && <div key={`${rendered}-${first + index}`}
       data-arkme-conversation-row={`message:${rendered}-${first + index}`} data-row-index={index}>{rendered}:{first + index}</div>)}
   </div>
 }
@@ -41,7 +52,7 @@ function scroll(top: number) {
   body.scrollTop = top
   act(() => body.dispatchEvent(new Event('scroll')))
 }
-function maximum() { return Math.max(0, (host.firstElementChild?.children.length ?? 0) * pageHeight - viewportHeight) }
+function maximum() { return Math.max(0, Number((host.firstElementChild as HTMLElement)?.dataset.rowCount ?? 0) * pageHeight + unmountedTailHeight - viewportHeight) }
 function rect(top: number, height: number): DOMRect {
   return { top, bottom: top + height, left: 0, right: 800, width: 800, height, x: 0, y: top, toJSON: () => ({}) }
 }
@@ -52,14 +63,14 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   restoreIntent = { current: undefined }
   store = new ArkmeConversationMemoryCache(); pending = { current: undefined }
-  scrollTop = 0; viewportHeight = 500; pageHeight = 100; rowCount.A = 30; rowCount.B = 12
+  scrollTop = 0; viewportHeight = 500; pageHeight = 100; unmountedTailHeight = 0; rowCount.A = 30; rowCount.B = 12
   vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function () {
     scrollTop = Math.max(0, Math.min(scrollTop, maximum())); return scrollTop
   })
   vi.spyOn(HTMLElement.prototype, 'scrollTop', 'set').mockImplementation(function (top) {
     scrollTop = Math.max(0, Math.min(top, maximum()))
   })
-  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function () { return this.children.length * pageHeight })
+  vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function () { return Number(this.dataset.rowCount ?? this.children.length) * pageHeight + unmountedTailHeight })
   vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => viewportHeight)
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function () {
     return this.hasAttribute('data-viewport') ? rect(0, viewportHeight)
@@ -76,9 +87,10 @@ describe('conversation viewport ownership', () => {
     act(() => root.render(<div>closed</div>))
     const listeners = (spy: typeof addWindow, event: string) => spy.mock.calls.filter(([name]) => name === event).map(([, callback]) => callback)
     expect(listeners(removeWindow, 'blur')).toEqual(listeners(addWindow, 'blur'))
+    expect(listeners(removeWindow, 'focus')).toEqual(listeners(addWindow, 'focus'))
     expect(listeners(removeDocument, 'visibilitychange')).toEqual(listeners(addDocument, 'visibilitychange'))
   })
-  it.each(['blur', 'visibilitychange'] as const)('retains the reading row when new messages arrive after window %s', event => {
+  it.each(['blur', 'visibilitychange'] as const)('holds background rows and shows the start of a large batch after window %s', event => {
     render(); scroll(maximum())
     const body = host.firstElementChild as HTMLDivElement
     const position = scrollTop
@@ -95,13 +107,110 @@ describe('conversation viewport ownership', () => {
     vi.mocked(document.hasFocus).mockReturnValue(true)
     act(() => window.dispatchEvent(new Event('focus')))
     render()
-    expect(scrollTop).toBe(position)
-    expect(store.getViewport('A')?.anchorId).toBe(reading.anchorId)
+    expect(scrollTop).toBe(3000)
+    expect(store.getViewport('A')?.stickToBottom).toBe(false)
     // An explicit return still owns the latest edge after the pause.
     pending.current = { sourceKey: 'A', viewport: { scrollTop: 0, stickToBottom: true } }
     render()
     expect(scrollTop).toBe(maximum())
   })
+  it('follows a small background batch that fits in one screen', () => {
+    render(); scroll(maximum())
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    rowCount.A += 3
+    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+    render()
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(scrollTop).toBe(maximum())
+    expect(store.getViewport('A')?.stickToBottom).toBe(true)
+  })
+  it('keeps the current reading anchor when virtual chunks have no reliable unread identity', () => {
+    render(); scroll(maximum())
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    unmountedTailHeight = 3000
+    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+    render()
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(scrollTop).toBe(2500)
+    expect(store.getViewport('A')?.stickToBottom).toBe(false)
+  })
+  it('retains the latest intent through an automatic history page completed in the background', () => {
+    render(); scroll(maximum())
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    rowCount.A += 10
+    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: false }
+    render({ first: -10 })
+    rowCount.A += 3
+    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+    render({ first: -10 })
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(scrollTop).toBe(maximum())
+    expect(store.getViewport('A')?.stickToBottom).toBe(true)
+  })
+  it('keeps history stationary across duplicate inactive notifications and new rows', () => {
+    render(); scroll(730)
+    const reading = store.getViewport('A')!
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    rowCount.A += 5
+    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+    render()
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    render()
+    expect(scrollTop).toBe(730)
+    expect(store.getViewport('A')?.anchorId).toBe(reading.anchorId)
+    expect(store.getViewport('A')?.stickToBottom).toBe(false)
+  })
+
+  it('resumes a short non-scrollable conversation after background messages make it scrollable', () => {
+    rowCount.A = 2
+    render(); scroll(0)
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    rowCount.A = 20
+    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+    render()
+    expect(scrollTop).toBe(0)
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(scrollTop).toBe(200)
+    expect(store.getViewport('A')?.stickToBottom).toBe(false)
+  })
+
+  it.each([false, true])('does not override an explicit history target selected during suspension (committed: %s)', committed => {
+    render(); scroll(maximum())
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    pending.current = { sourceKey: 'A', viewport: { scrollTop: 730, stickToBottom: false } }
+    if (committed) render()
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    render()
+    expect(scrollTop).toBe(730)
+    expect(store.getViewport('A')?.stickToBottom).toBe(false)
+  })
+
+  it('does not carry suspended latest intent into another conversation', () => {
+    render(); scroll(maximum())
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => window.dispatchEvent(new Event('blur')))
+    store.storeViewport('B', { scrollTop: 300, stickToBottom: false })
+    render({ selected: 'B' })
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    render({ selected: 'B' })
+    expect(scrollTop).toBe(300)
+    expect(store.getViewport('B')?.stickToBottom).toBe(false)
+  })
+
   it.each([['arkmeSystemAnchorRef', 'systemRef'], ['offlineContextRef', 'contextRef']] as const)(
     'captures the visible offset and the %s locator', (attribute, field) => {
       render(); scroll(730)
@@ -303,4 +412,102 @@ it('reuses a surviving visible row rather than scanning preceding rows on every 
   const anchor = body.querySelector('[data-arkme-conversation-row="message:A-20"]')!
   anchor.remove()
   expect(arkmeConversationViewport(body).anchorId).toBe('message:A-21')
+})
+
+
+it.each(['before-focus', 'after-focus'] as const)('preserves the frozen unread boundary when a large batch arrives %s', order => {
+  render({ readThrough: 30 }); scroll(maximum())
+  const body = host.firstElementChild as HTMLDivElement
+  const frames = vi.spyOn(window, 'requestAnimationFrame')
+  vi.mocked(document.hasFocus).mockReturnValue(false)
+  act(() => window.dispatchEvent(new Event('blur')))
+  if (order === 'after-focus') {
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    expect(scrollTop).toBe(2500)
+  }
+  const viewport = arkmeConversationViewport(body, 'latest-anchor')
+  rowCount.A += 30
+  pending.current = { sourceKey: 'A', viewport, followLatest: true }
+  // A later read acknowledgement cannot move the captured entry boundary.
+  render({ readThrough: 60 })
+  vi.mocked(document.hasFocus).mockReturnValue(true)
+  act(() => window.dispatchEvent(new Event('focus')))
+  expect(scrollTop).toBe(3000)
+  expect(store.getViewport('A')?.anchorId).toBe('message:A-30')
+  expect(store.getViewport('A')?.stickToBottom).toBe(false)
+  expect(frames).not.toHaveBeenCalled()
+})
+
+it('mounts the first unread from the cached virtual window before restoring it', () => {
+  render({ readThrough: 30, deferUnread: true }); scroll(maximum())
+  vi.mocked(document.hasFocus).mockReturnValue(false)
+  act(() => window.dispatchEvent(new Event('blur')))
+  rowCount.A += 30
+  pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+  render({ readThrough: 30, deferUnread: true })
+  expect(host.querySelector('[data-arkme-conversation-row="message:A-30"]')).toBeNull()
+  vi.mocked(document.hasFocus).mockReturnValue(true)
+  act(() => window.dispatchEvent(new Event('focus')))
+  expect(scrollTop).toBe(3000)
+  expect(store.getViewport('A')?.anchorId).toBe('message:A-30')
+})
+
+it('keeps position through a cache gap and restores once the first unread is covered', () => {
+  render({ readThrough: 30 }); scroll(maximum())
+  vi.mocked(document.hasFocus).mockReturnValue(false)
+  act(() => window.dispatchEvent(new Event('blur')))
+  rowCount.A += 30
+  pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+  render({ readThrough: 30, gap: true })
+  vi.mocked(document.hasFocus).mockReturnValue(true)
+  act(() => window.dispatchEvent(new Event('focus')))
+  expect(scrollTop).toBe(2500)
+  const queries = vi.spyOn(host.firstElementChild!, 'querySelectorAll')
+  queries.mockClear()
+  for (let i = 0; i < 100; i++) render({ readThrough: 30, gap: true })
+  expect(queries).not.toHaveBeenCalled()
+  render({ readThrough: 30 })
+  expect(scrollTop).toBe(3000)
+})
+
+it('does not guess an unread position after the old window is replaced', () => {
+  render({ readThrough: 30 }); scroll(maximum())
+  vi.mocked(document.hasFocus).mockReturnValue(false)
+  act(() => window.dispatchEvent(new Event('blur')))
+  rowCount.A = 40
+  pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+  render({ readThrough: 30, first: 100 })
+  vi.mocked(document.hasFocus).mockReturnValue(true)
+  act(() => window.dispatchEvent(new Event('focus')))
+  expect(scrollTop).toBe(2500)
+  expect(store.getViewport('A')?.stickToBottom).toBe(false)
+})
+
+it('yields a pending foreground restore to manual history reading', () => {
+  render({ readThrough: 30 }); scroll(maximum())
+  vi.mocked(document.hasFocus).mockReturnValue(false)
+  act(() => window.dispatchEvent(new Event('blur')))
+  vi.mocked(document.hasFocus).mockReturnValue(true)
+  act(() => window.dispatchEvent(new Event('focus')))
+  act(() => host.firstElementChild!.dispatchEvent(new Event('wheel')))
+  scroll(730)
+  rowCount.A += 30
+  pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), followLatest: true }
+  render({ readThrough: 30 })
+  expect(scrollTop).toBe(730)
+})
+
+
+it('releases all manual-input listeners through 100 conversation switches', () => {
+  render({ active: false })
+  const body = host.firstElementChild as HTMLDivElement
+  const add = vi.spyOn(body, 'addEventListener'), remove = vi.spyOn(body, 'removeEventListener')
+  for (let turn = 0; turn < 100; turn++) render({ selected: turn % 2 ? 'A' : 'B' })
+  act(() => root.render(<div>closed</div>))
+  for (const event of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+    const listeners = (spy: typeof add) => spy.mock.calls.filter(([name]) => name === event).map(([, listener]) => listener)
+    expect(listeners(add)).toHaveLength(100)
+    expect(listeners(remove)).toEqual(listeners(add))
+  }
 })

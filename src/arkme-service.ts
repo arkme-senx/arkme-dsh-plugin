@@ -1428,6 +1428,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     const {distribution, capabilities} = resolveHostPolicy()
     return {
       hostPolicy: {distribution, capabilities},
+      ...(this.fileTransfers ? { fileSendPolicy: this.fileTransfers.capabilities() } : {}),
       captchaId: this.config.geetestCaptchaId,
       baiduMapBrowserAk: this.config.baiduMapBrowserAk?.trim() ?? '',
       environment: this.config.environment,

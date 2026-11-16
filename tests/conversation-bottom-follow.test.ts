@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
-import { cancelConversationFollow, followConversationBottom, isConversationFollowing } from '../src/client/conversation-bottom-follow.js'
+import { cancelConversationFollow, followConversationBottom, isConversationFollowing, scrollConversationTo } from '../src/client/conversation-bottom-follow.js'
 import { arkmeConversationViewport } from '../src/client/conversation-viewport.js'
 import { observeConversationResize } from '../src/client/conversation-resize-anchor.js'
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
@@ -108,15 +108,17 @@ it('does not skip the motion when commit or an unrelated main-thread task delays
   expect(f.frames.size).toBe(0)
   cancelConversationFollow(f.body)
 })
-it.each([2, 3])('bounds the motion of %i coalesced rows even when a frame is delayed', count => {
+it.each([2, 3, 30])('finishes %i coalesced rows with at most one screen of short animation', count => {
   const f = fixture(); f.body.scrollTop = 1000
   for (let i = 0; i < count; i++) f.grow()
   followConversationBottom(f.body)
+  expect(1000 + count * 100 - f.body.scrollTop).toBeLessThanOrEqual(500)
+  let frames = 0
   for (let i = 0; i < 60 && f.frames.size; i++) {
-    const previous = f.body.scrollTop
     f.frame(i === 1 ? 120 : 16)
-    expect(f.body.scrollTop - previous).toBeLessThanOrEqual(36)
+    frames++
   }
+  expect(frames).toBeLessThanOrEqual(12)
   expect(f.body.scrollTop).toBe(1000 + count * 100)
   expect(f.frames.size).toBe(0)
   cancelConversationFollow(f.body)
@@ -257,4 +259,39 @@ it('upgrades existing animation to an instant return, then animates actual new a
   expect(f.body.scrollTop).toBeLessThan(1050)
   cancelConversationFollow(f.body)
   expect(f.frames.size).toBe(0)
+})
+
+
+it.each([100, 1400])('bounds an explicit jump to %s and releases its animation owner', top => {
+  const f = fixture()
+  for (let i = 0; i < 30; i++) f.grow()
+  f.body.scrollTop = top === 100 ? 3900 : 0
+  const add = vi.spyOn(f.body, 'addEventListener'), remove = vi.spyOn(f.body, 'removeEventListener')
+  const finished = vi.fn()
+  scrollConversationTo(f.body, top, finished)
+  expect(finished).not.toHaveBeenCalled()
+  expect(Math.abs(f.body.scrollTop - top)).toBeLessThanOrEqual(500)
+  expect(isConversationFollowing(f.body)).toBe(false)
+  let frameCount = 0
+  while (f.frames.size && frameCount < 60) { f.frame(); frameCount++ }
+  expect(f.body.scrollTop).toBe(top)
+  expect(frameCount).toBeLessThanOrEqual(12)
+  expect(f.frames.size).toBe(0)
+  expect(finished).toHaveBeenCalledOnce()
+  cancelConversationFollow(f.body)
+  expect(finished).toHaveBeenCalledOnce()
+  expect(remove.mock.calls.map(([event]) => event)).toEqual(add.mock.calls.map(([event]) => event))
+})
+
+
+it.each(['same', 'reduced', 'hidden', 'cancelled'] as const)('finishes and cleans up an explicit %s navigation exactly once', mode => {
+  const f = fixture(), finished = vi.fn()
+  if (mode === 'reduced') vi.stubGlobal('matchMedia', () => ({ matches: true }))
+  if (mode === 'hidden') vi.mocked(document.hasFocus).mockReturnValue(false)
+  scrollConversationTo(f.body, mode === 'same' ? 500 : 100, finished)
+  if (mode === 'cancelled') f.body.dispatchEvent(new Event('wheel'))
+  expect(f.frames.size).toBe(0)
+  expect(finished).toHaveBeenCalledOnce()
+  cancelConversationFollow(f.body)
+  expect(finished).toHaveBeenCalledOnce()
 })

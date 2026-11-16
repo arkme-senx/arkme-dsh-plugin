@@ -3539,6 +3539,48 @@ describe('conversation send directory projection', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '搜索' }).find(node => node.type === 'input')).toBeUndefined()
   })
 
+  it.each([target, group])('sends the first text using bootstrap policy without a capability round trip ($kind)', async source => {
+    activeSource = source
+    arkmeChatDirectory.publish([source]); arkmeUi.selectSource(source)
+    const snapshot = arkmeAuthStore.getSnapshot()
+    vi.spyOn(arkmeAuthStore, 'getSnapshot').mockReturnValue({ ...snapshot, config: {
+      ...snapshot.config, environment: 'test', fileSendPolicy: { version: 1, textMessagesVersion: 1,
+        admissionRecoveryVersion: 1, maxFileBytes: 100, maxImageBytes: 50, maxAttachments: 9 },
+    } as import('../src/types.js').ArkmeClientConfig })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      if (operation === 'files.capabilities') throw new Error('sending must not query capabilities')
+      if (operation === 'files.send') return { taskRef: 'bootstrap-send', sourceRef: source.sourceRef,
+        recordUid: params.recordUid, relationUid: params.relationUid, content: { textContent: params.textContent },
+        fileRefs: [], files: [], createdAtMillis: 48, state: 'queued' }
+      if (operation === 'files.send.tasks') return []
+      return baseCall(operation, params, signal)
+    })
+    await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+    act(() => arkmeComposerDraftStore.setText(arkmeSourceComposerDraftKey(42, source)!, 'first message'))
+    await act(async () => renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick())
+    expect(mocks.callArkme).toHaveBeenCalledWith('files.send', expect.objectContaining({ textContent: 'first message', fileRefs: [] }))
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'files.capabilities')).toBe(false)
+  })
+
+  it('keeps an old Host probe out of the sending path and uses its existing direct send', async () => {
+    activeSource = target
+    arkmeChatDirectory.publish([target]); arkmeUi.selectSource(target)
+    const snapshot = arkmeAuthStore.getSnapshot()
+    vi.spyOn(arkmeAuthStore, 'getSnapshot').mockReturnValue({ ...snapshot, config: { environment: 'test' } as import('../src/types.js').ArkmeClientConfig })
+    const baseCall = mocks.callArkme.getMockImplementation()!
+    let release!: (policy: { version: number }) => void
+    mocks.callArkme.mockImplementation((operation, params, signal) => operation === 'files.capabilities'
+      ? new Promise(resolve => { release = resolve }) : baseCall(operation, params, signal))
+    try {
+      await act(async () => { renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />) })
+      act(() => arkmeComposerDraftStore.setText(arkmeSourceComposerDraftKey(42, target)!, 'legacy first message'))
+      await act(async () => renderer!.root.findByProps({ 'aria-label': '发送消息' }).props.onClick())
+      expect(mocks.callArkme).toHaveBeenCalledWith('source.send-text', expect.objectContaining({ textContent: 'legacy first message' }))
+      expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'files.send')).toBe(false)
+    } finally { release?.({ version: 1 }); await act(async () => {}) }
+  })
+
   it.each([target, group])('uses the persistent queue for ordinary chat text and restores its failed bubble', async source => {
     activeSource = source
     arkmeChatDirectory.publish([source])
@@ -9769,7 +9811,7 @@ describe('conversation send directory projection', () => {
       arkmeUi.showConversationTarget(target, 'navigation-target', 8)
       if (mode === 'hidden') renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} />)
     })
-    expect(body.scrollTo).toHaveBeenCalled()
+    expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
     expect(body.scrollTop).toBe(640)
   })
 
@@ -9803,7 +9845,7 @@ describe('conversation send directory projection', () => {
       arkmeUi.showConversationTarget(target, 'navigation-target', 8, undefined, undefined, true)
       if (mode === 'hidden') renderer!.update(<ArkmeSurface productChrome={false} productNavigation={false} />)
     })
-    expect(body.scrollTo).toHaveBeenCalled()
+    expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
     expect(body.scrollTop).toBe(640)
   })
 

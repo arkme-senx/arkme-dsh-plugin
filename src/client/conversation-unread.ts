@@ -26,11 +26,15 @@ export function findCachedConversationFirstUnread(
   window: ArkmeUnifiedTimelineWindow | undefined,
   through: number,
 ): ArkmeTimelineItem | undefined {
+  const firstUnread = cachedConversationUnreadCoverage(window, through)?.firstUnread
+  return firstUnread?.recordOwnerUserId ? firstUnread : undefined
+}
+
+export function cachedConversationUnreadCoverage(window: ArkmeUnifiedTimelineWindow | undefined, through: number) {
   if (!window?.windowTokens.length || window.sources.find(status => status.source === 'messages')?.status !== 'ready') return undefined
   const rows = window.events.flatMap(event => event.kind === 'message' && event.contentStatus === 'available'
     && event.item.status === 1 && event.item.sequence !== undefined ? [{ readSequence: event.item.sequence, item: event.item }] : [])
-  const { firstUnread } = buildConversationUnreadCoverage(rows, through)
-  return firstUnread?.recordOwnerUserId ? firstUnread : undefined
+  return buildConversationUnreadCoverage(rows, through)
 }
 
 /** A forward read starts at the cursor even when the unread backlog is outside the open window. */

@@ -1,3 +1,5 @@
+import { currentMessageSend, measureMessageSend } from '../message-send-host-timing.js'
+import { messageSendPoint } from '../message-send-timing.js'
 import type { PendingAttachment, AttachmentReceipt, ProgressiveCapability, ProgressiveTarget } from './progressive-attachments.js'
 import type { ArkmeUploadCompletion, ArkmeUploadCompletionRecovery } from './media-service.js'
 import type { TeamSendTask } from '../team-send-contract.js'
@@ -317,16 +319,24 @@ export class FileTransfers {
     return this.writeState(userId, 'text-sends.json', { version: 1, tasks: state.textTasks })
   }
   private saveTask(userId: number, state: FileState, task: StoredSendTask): Promise<void> {
-    return taskListKey(task) === 'textTasks' ? this.saveText(userId, state) : this.save(userId, state)
+    return measureMessageSend(task.recordUid, 'task-persist', () => taskListKey(task) === 'textTasks' ? this.saveText(userId, state) : this.save(userId, state), task.state)
   }
   private writeState(userId: number, name: 'state.json' | 'text-sends.json', value: object): Promise<void> {
     const lane = name === 'text-sends.json' ? 'textWrites' : 'writes'
+    const sendRecord = currentMessageSend()
+    const queuedAt = sendRecord ? performance.now() : 0
     const data = JSON.stringify(value)
+    messageSendPoint('host', sendRecord, 'task-serialized', { durationMs: performance.now() - queuedAt })
     const write = this[lane].catch(() => {}).then(async () => {
+      const writeStarted = sendRecord ? performance.now() : 0
+      messageSendPoint('host', sendRecord, 'disk-write-start', { queueMs: writeStarted - queuedAt })
       const target = join(this.root(userId), name)
       const temporary = `${target}.${randomUUID()}.tmp`
       try { await writeFile(temporary, data, { mode: 0o600 }); await rename(temporary, target) }
-      finally { await unlink(temporary).catch(() => {}) }
+      finally {
+        await unlink(temporary).catch(() => {})
+        messageSendPoint('host', sendRecord, 'disk-write-end', { durationMs: performance.now() - writeStarted })
+      }
     })
     this[lane] = write
     return write
@@ -980,7 +990,10 @@ export class FileTransfers {
     let ownerOutcome: FileTransferSendOutcome | undefined
     let deferred = false
     const lane = task.fileRefs.length > 0 && task.delivery !== 'progressive' ? 'legacyFileQueue' : 'queue'
-    this[lane] = this[lane].catch(() => {}).then(async () => {
+    const queuedAt = performance.now()
+    messageSendPoint('host', task.recordUid, 'task-queued', { lane, state: task.state })
+    this[lane] = this[lane].catch(() => {}).then(() => measureMessageSend(task.recordUid, 'task-worker', async () => {
+      messageSendPoint('host', task.recordUid, 'task-worker-admitted', { queueMs: performance.now() - queuedAt, lane })
       try {
         await this.assertUser(userId, controller.signal)
         if (task.delivery === undefined || task.delivery === 'negotiating') {
@@ -1032,7 +1045,8 @@ export class FileTransfers {
           amplitudes: [...task.backgroundSound.amplitudes],
         }
         try {
-          ownerOutcome = await this.ports.send(task, assets, backgroundSound, userId, controller.signal)
+          ownerOutcome = await measureMessageSend(task.recordUid, 'owner-send', () => this.ports.send(task, assets, backgroundSound, userId, controller.signal))
+          messageSendPoint('host', task.recordUid, 'owner-outcome', { state: ownerOutcome.kind })
         } catch {
           // A port contract violation must fail closed because the owner may have accepted the write.
           ownerOutcome = { kind: 'owner_outcome_unknown' }
@@ -1074,7 +1088,7 @@ export class FileTransfers {
           if (task.fileRefs.length && !controller.signal.aborted) this.ports.onProgressChange?.(userId, task.taskRef)
         }
       }
-    }).catch(() => {
+    })).catch(() => {
       if (task.delivery === 'progressive' && task.state === 'uncertain') return
       if (ownerOutcome?.kind === 'owner_accepted') {
         task.state = 'sent'; delete task.error; delete task.errorCode
