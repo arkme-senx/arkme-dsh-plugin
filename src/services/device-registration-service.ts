@@ -57,6 +57,20 @@ export class DeviceRegistrationService {
     if (scope.timer) clearTimeout(scope.timer)
     void this.tick(scope)
   }
+  // Game SDK readiness uses the same registration owner as existing callers.
+  // Never create a competing owner or unregister it when a game window closes.
+  async waitUntilReady(accountUserId: number, registrationId: string): Promise<void> {
+    await this.ready(accountUserId, registrationId)
+    const scope = this.scope
+    const deadline = Date.now() + 15000
+    while (scope && this.current(scope) && Date.now() < deadline) {
+      if (scope.binding && scope.registrationId === registrationId) return
+      if (!scope.running) await this.tick(scope)
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    throw new Error('设备 IM 登记尚未完成，请重试')
+  }
+
   activity(): void { if (this.scope) this.scope.active = true }
   clearUser(userId: number): void { if (this.scope?.session.userId === userId) this.stop() }
   dispose(): void { this.stop() }

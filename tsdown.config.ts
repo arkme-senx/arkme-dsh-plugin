@@ -12,6 +12,13 @@ const CLIENT_EXTERNALS = [
 
 export default defineConfig([
   {
+    name: '@senguoyun/dsh-arkme/game', entry: {game: 'src/client/game/standalone.tsx'},
+    outDir: 'lib', format: 'iife', platform: 'browser', target: 'es2022', fixedExtension: false,
+    dts: false, clean: false, minify: true, deps: {alwaysBundle: () => true},
+    define: {'process.env.NODE_ENV': JSON.stringify('production')},
+    outputOptions: {codeSplitting: false, entryFileNames: 'game.js'},
+  },
+  {
     name: '@senguoyun/dsh-arkme/screenshot-editor',
     entry: { 'screenshot-editor': 'src/client/screenshot-standalone.tsx' },
     outDir: 'lib', format: 'iife', platform: 'browser', target: 'es2022',
