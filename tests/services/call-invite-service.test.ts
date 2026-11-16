@@ -9,6 +9,7 @@ function setup(data: Record<string, unknown> = {}) {
     call_media_type: 0, sharer_profile: { user_id: 42, display_name: '分享者' }, ...data }))
   const current = vi.fn(async () => session)
   const runtime = { config: { webrtcBaseUrl: 'https://webrtc.test' }, requireSession: async () => session,
+    subscribeAccountScope: vi.fn(() => vi.fn()),
     accountScopedSession: current, authenticatedWebrtcPost: post } as unknown as ServiceRuntime
   const profile = { refreshProfile: async () => ({ profile: { displayName: '我' } }) } as unknown as ProfileService
   return { service: new OutgoingCallService(runtime, {} as never, profile), session, post, current }

@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test } from 'vitest';
 import assert from 'node:assert/strict';
 import { createIMBridge, imBridgePayload } from './im-bridge.js';
 test('shared IM observes identity readiness and kick only, and cleans up listeners', async () => {
