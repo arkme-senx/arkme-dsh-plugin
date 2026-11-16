@@ -225,3 +225,33 @@ it('compares actual visible revisions even when non-body mutations leave version
  expect(JSON.stringify(view.toJSON())).not.toContain('unreviewed hidden body')
  act(() => view.unmount())
 })
+
+
+it.each(['pending', 'failed'] as const)('renders %s historical uploads as static facts, never live upload blocks', async state => {
+  const result = page('historical body')
+  result.items[0]!.kind = 'original'
+  result.items[0]!.content.contentBlocks = [{ kind: 'image', mediaRef: '', fileName: 'old.png', mimeType: 'image/png', size: 10, sortOrder: 0, attachmentUid: 'slot', attachmentState: state }]
+  const view = await render({ page: vi.fn().mockResolvedValue(result) })
+  expect(view.root.findByType(ArkmeMessageContent).props.item.contentBlocks).toEqual([])
+  expect(JSON.stringify(view.toJSON())).toContain(state === 'pending' ? '此版本保存时附件尚未上传完成' : '此版本保存时附件上传失败')
+  expect(JSON.stringify(view.toJSON())).toContain('old.png')
+  expect(result.items[0]!.content.contentBlocks[0]!.attachmentState).toBe(state)
+  act(() => view.unmount())
+})
+
+it('renders available revision images even when the predecessor cannot hydrate its attachments', async () => {
+  const previous = page('same text').items[0]!
+  previous.editAtMillis -= 1000
+  previous.content.mediaUnavailable = true
+  const revision = page('same text').items[0]!
+  revision.content.contentBlocks = [{ kind: 'image', fileAssetUid: 'current', mediaRef: 'opaque-current', fileName: 'new.png', mimeType: 'image/png', size: 10, sortOrder: 0 }]
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(<ArkmeRecordRevisionDiff revision={revision} previous={previous} hasMore={false} senderName="peer" mine={false} />) })
+  const content = view.root.findByType(ArkmeMessageContent).props.item
+  expect(content.contentBlocks).toEqual(revision.content.contentBlocks)
+  expect(content.textContent).toBe('')
+  expect(content.itemUid).toBe(revision.revisionUid)
+  expect(content.messageActionRef).toBeUndefined()
+  expect(JSON.stringify(view.toJSON())).toContain('部分历史附件信息不完整')
+  act(() => view.unmount())
+})

@@ -47,6 +47,9 @@ export function ArkmeRecordRevisionDiff({ revision, previous, orderUncertain = f
     files: historyAttachmentDiff(previous.content, revision.content),
     formatChanged: (previous.content.textFormat ?? 'plain') !== (revision.content.textFormat ?? 'plain'),
   } : undefined, [comparable, previous, revision])
+  const pendingAttachments = revision.content.contentBlocks.filter(block => block.attachmentState)
+  const contentBlocks = revision.content.contentBlocks.filter(block => !block.attachmentState)
+  const showFullText = original || !diff
   const hasContext = diff && [diff.title, diff.text].some(part => part.changes > 0 && historyDiffContext(part.runs).some(run => run.kind === 'gap'))
   const summary = diff ? [
     diff.title.changes ? tr('标题有修改') : '',
@@ -76,14 +79,17 @@ export function ArkmeRecordRevisionDiff({ revision, previous, orderUncertain = f
     {!original && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 10 }}>
       {hasContext && <button type="button" style={linkStyle} aria-expanded={context} onClick={() => setContext(value => !value)}>{context ? tr('收起上下文') : tr('展开上下文')}</button>}
     </div>}
-    {(original || !diff) && <div data-arkme-history-full style={original ? {} : { marginTop: 8 }}>
-      {revision.content.title && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={revision.content.title} presentation="preview" /></h3>}
-      {(revision.content.textContent || revision.content.contentBlocks.length > 0 || (!revision.content.title && !revision.content.mediaUnavailable)) && <ArkmeMessageContent presentation="detail" item={{
-        ...revision.content, title: revision.content.title ?? '', textContent: revision.content.textContent ?? '',
+    {(showFullText || contentBlocks.length > 0) && <div data-arkme-history-full style={original ? {} : { marginTop: 8 }}>
+      {showFullText && revision.content.title && <h3 style={{ margin: '0 0 8px', fontSize: 14, lineHeight: 1.7 }}><ArkmeRichText text={revision.content.title} presentation="preview" /></h3>}
+      {(contentBlocks.length > 0 || showFullText && (revision.content.textContent || (!revision.content.title && !revision.content.mediaUnavailable && pendingAttachments.length === 0))) && <ArkmeMessageContent presentation="detail" item={{
+        ...revision.content, title: showFullText ? revision.content.title ?? '' : '', textContent: showFullText ? revision.content.textContent ?? '' : '', contentBlocks,
         mediaUnavailable: false, itemUid: revision.revisionUid, senderName, isMe: mine,
         sendAtMillis: revision.editAtMillis, status: 1,
       }} />}
-      {revision.content.mediaUnavailable && <p style={hintStyle}>{tr('部分历史附件暂不可用')}</p>}
     </div>}
+    {pendingAttachments.map((block, index) => <p key={block.attachmentUid ?? index} style={hintStyle}>
+      {block.fileName} · {tr(block.attachmentState === 'failed' ? '此版本保存时附件上传失败' : '此版本保存时附件尚未上传完成')}
+    </p>)}
+    {revision.content.mediaUnavailable && <p style={hintStyle}>{tr('部分历史附件暂不可用')}</p>}
   </div>
 }
