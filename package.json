@@ -313,6 +313,7 @@
     }
   },
   "bundledDependencies": [
+    "@tencentcloud/lite-chat",
     "serialport"
   ]
 }
