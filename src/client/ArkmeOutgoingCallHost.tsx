@@ -48,7 +48,7 @@ export function ArkmeOutgoingCallHost() {
   const scope = userId === undefined ? undefined : `${authState.auth?.environment}:${userId}`
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
   const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])
-  const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
+  const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.frameId || snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
     const disconnect = nativeCallWindow && connectNativeCallWindow(runtime, nativeCallWindow)
@@ -102,10 +102,10 @@ export function ArkmeOutgoingCallHost() {
           }}
         >{tr("关闭")}</button></div>
       </div> : <iframe
-        key={snapshot.callRequestId}
+        key={snapshot.frameId ?? snapshot.callRequestId}
         ref={attachCallFrame}
         src={callFrameUrl}
-        name={JSON.stringify({ callRequestId: snapshot.callRequestId })}
+        name={JSON.stringify({ callRequestId: snapshot.frameId ?? snapshot.callRequestId })}
         title={tr("与{v0}通话", { v0: snapshot.displayName })}
         allow="camera; microphone; autoplay"
         sandbox="allow-scripts allow-same-origin"
