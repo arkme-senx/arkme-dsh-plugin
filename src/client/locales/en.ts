@@ -735,6 +735,9 @@ AI 摘要：|AI summary:
 支持 ⌘V / Ctrl+V，也可以直接选择电脑中的图片|Press ⌘V / Ctrl+V, or choose an image from your computer
 选择二维码图片|Choose QR code image
 条新消息|new messages
+未读消息|Unread messages
+向下浏览未读消息|Jump down to unread messages
+暂时无法定位未读消息，请重试|Could not find the first unread message. Try again.
 暂时无法回到底部，请重试|Unable to jump to the latest message. Please retry.
 已移除，可在团队中重新打开|Removed. Reopen it from Teams.
 已移除对话，可在联系人中找回|Conversation removed. Find it again in Contacts.
@@ -1075,6 +1078,8 @@ AI智能体|AI agent
 群聊名称|Group name
 最新|Latest
 部分历史附件暂不可用|Some earlier attachments are unavailable
+此版本保存时附件尚未上传完成|The attachment had not finished uploading when this version was saved
+此版本保存时附件上传失败|The attachment upload had failed when this version was saved
 附件暂不可用|Attachment unavailable
 正在加载编辑记录…|Loading edit history…
 暂无编辑记录|No edit history

@@ -7,11 +7,15 @@ import { invalidateTeamMessageRead, teamChangeAffectsSource, teamChangeInConvers
 
 export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConversation,'ref'|'key'>,message:TeamMessage) {
  const conversationRef=conversation.ref,conversationKey=conversation.key
- const [page,setPage]=useState<TeamExtensionPage>()
- const [error,setError]=useState(''),[loading,setLoading]=useState(false),[invalidated,setInvalidated]=useState(false)
- const saved=useRef(new Map<string,TeamExtensionPage>()),pageScope=useRef('')
  const scope=`${accountKey}:${conversationKey}:${message.key}`
- const pending=useRef<AbortController>(),state=useRef<TeamExtensionPage>(),mounted=useRef(true)
+ const owner=useRef(`${accountKey}:${conversationKey}`)
+ // The timeline already authorized this material; only extension discovery waits for I/O.
+ const seed=():TeamExtensionPage|undefined=>owner.current===`${accountKey}:${conversationKey}`&&message.state==='published'&&message.version>0&&message.contentStatus==='available'&&!message.historyPreview
+  ? {message,items:[],totalCount:0,hasMore:false,nextSeq:0,throughSeq:0}:undefined
+ const [page,setPage]=useState<TeamExtensionPage|undefined>(seed)
+ const [error,setError]=useState(''),[loading,setLoading]=useState(false),[invalidated,setInvalidated]=useState(false)
+ const saved=useRef(new Map<string,TeamExtensionPage>()),pageScope=useRef(scope)
+ const pending=useRef<AbortController>(),state=useRef<TeamExtensionPage|undefined>(page),mounted=useRef(true)
  const load=useCallback(async(more=false)=>{
   pending.current?.abort();const controller=new AbortController();pending.current=controller
   setLoading(true);setError('')
@@ -41,7 +45,7 @@ export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConver
  },[conversationRef,message.ref,message.key,scope])
  useEffect(()=>{
   mounted.current=true
-  if(pageScope.current!==scope){state.current=undefined;setPage(undefined);setInvalidated(false)}
+  if(pageScope.current!==scope){state.current=seed();pageScope.current=scope;setPage(state.current);setInvalidated(false)}
   else if(state.current&&state.current.message.version!==message.version){
    const change={kind:'team.message.changed',messageKey:message.key}
    state.current={...state.current,message:invalidateTeamMessageRead(state.current.message,change,conversationKey),items:state.current.items.map(row=>invalidateTeamMessageRead(row,change,conversationKey))}

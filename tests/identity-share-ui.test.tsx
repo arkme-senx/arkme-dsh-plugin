@@ -402,3 +402,17 @@ it('copies the received URL even when its profile read is still pending', async 
   expect(button('发消息').disabled).toBe(true)
   await click(button('关闭'));await act(async()=>finish(person))
 })
+
+it.each([false,true])('keeps the image reader paired with its avatar source (Team avatar available: %s)', async hasTeamAvatar => {
+ const publicRef='arkme-profile-image-v1.person-card', teamRef='team-app-image.person-card'
+ const publicUrl='data:image/png;base64,cHVibGlj', teamUrl='data:image/png;base64,dGVhbQ=='
+ const teamPort={activateScope:vi.fn(),current:vi.fn(()=>teamUrl),load:vi.fn(async()=>teamUrl),subscribe:vi.fn(()=>()=>{}),revalidateActive:vi.fn(async()=>{})}
+ const publicLoad=vi.spyOn(arkmeAvatarImages,'load').mockResolvedValue(publicUrl)
+ vi.spyOn(arkmeAvatarImages,'current').mockImplementation(key=>key===publicRef?publicUrl:undefined)
+ api.call.mockImplementation(async op=>op==='identity.person.read'?{...person,avatarRef:publicRef}:op==='team.app.teams'?[]:{})
+ await mount(<ArkmeMemberProfileCard copyLinkTarget={{kind:'team-person',conversationRef:'conversation-ref',personRef:'person-ref'}}
+  member={{displayName:'同事',...(hasTeamAvatar?{avatarRef:teamRef}:{})}} imagePort={teamPort} imageKey="team-image-key" busy={false} onClose={()=>{}} onSend={()=>{}} />)
+ expect(document.querySelector('.arkme-person-identity [data-arkme-avatar] img')?.getAttribute('src')).toBe(hasTeamAvatar?teamUrl:publicUrl)
+ if(hasTeamAvatar){expect(teamPort.load).toHaveBeenCalledWith(teamRef,'team-image-key');expect(publicLoad).not.toHaveBeenCalled()}
+ else {expect(publicLoad).toHaveBeenCalledWith(publicRef,publicRef);expect(teamPort.load).not.toHaveBeenCalled()}
+})

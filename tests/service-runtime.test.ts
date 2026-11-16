@@ -759,17 +759,23 @@ it('removes a shared queued reaction read when its final consumer disconnects', 
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: {} })))
   const runtime = runtimeFixture(fetcher), path = '/api/v1/reactions/query', body = { targets: [] }
-  await runtime.authenticatedPost(path, body, session) // Consume the route burst token.
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  fetcher.mockImplementation(async () => { await held; return new Response(JSON.stringify({ code: 0, data: {} })) })
+  const occupied = Promise.all(Array.from({ length: 4 }, (_, index) =>
+    runtime.authenticatedPost(path, { index }, session)))
+  await vi.advanceTimersByTimeAsync(0)
   const a = new AbortController(), b = new AbortController()
   const first = runtime.authenticatedPost(path, body, session, a.signal)
   const second = runtime.authenticatedPost(path, body, session, b.signal)
   const firstRejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
   const secondRejected = expect(second).rejects.toMatchObject({ name: 'AbortError' })
   a.abort(); await firstRejected
-  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(fetcher).toHaveBeenCalledTimes(4)
   b.abort(); await secondRejected
   await vi.advanceTimersByTimeAsync(1000)
-  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(fetcher).toHaveBeenCalledTimes(4)
+  release(); await occupied
   runtime.dispose()
 })
 

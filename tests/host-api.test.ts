@@ -33,6 +33,14 @@ it('forwards timeline cancellation without accepting caller-owned user identity'
   expect(service.readSource).toHaveBeenCalledWith('topic-ref', { limit: 40, signal })
   await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', limit: 40, background: true }, undefined, undefined, undefined, undefined, signal)
   expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { limit: 40, signal, background: true })
+  await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', cursor: { afterSequence: 0 }, limit: 20 }, undefined, undefined, undefined, undefined, signal)
+  expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { cursor: { afterSequence: 0 }, limit: 20, signal })
+  await dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', cursor: { afterSequence: 834, firstUnread: true }, limit: 1 }, undefined, undefined, undefined, undefined, signal)
+  expect(service.readSource).toHaveBeenLastCalledWith('chat-ref', { cursor: { afterSequence: 834, firstUnread: true }, limit: 1, signal })
+
+  await expect(dispatchArkmeHostOperation(service as never, 'source.timeline', { sourceRef: 'chat-ref', cursor: { afterSequence: -1 } }))
+    .rejects.toMatchObject({ code: 'chat-timeline-sequence-invalid' })
+
 })
 
 it('passes contact detail request cancellation to each existing business owner', async () => {
@@ -782,14 +790,14 @@ describe('conversation member Host API dispatch', () => {
     }, undefined, undefined, undefined, undefined, signal)
     expect(service.readSource).toHaveBeenCalledWith('source-ref', { limit: 40, signal })
   })
-  it.each([7, '6690025278483443577'])('forwards the exact record identity and bounded around window for %s', async (ownerId) => {
+  it.each([7, '6690025278483443577'].flatMap(ownerId => [false, true].map(deferBotProfiles => ({ownerId, deferBotProfiles}))))('forwards the exact record identity and bounded around window for %s', async ({ownerId, deferBotProfiles}) => {
     const service = fakeService()
     await dispatchArkmeHostOperation(service as never, 'source.timeline-around', {
       sourceRef: 'source-ref', itemUid: 'record-parent', recordOwnerUserId: ownerId,
-      beforeLimit: 20, afterLimit: 21, chatSessionUid: 'must-not-forward',
+      beforeLimit: 20, afterLimit: 21, deferBotProfiles, chatSessionUid: 'must-not-forward',
     })
     expect(service.readSourceAround).toHaveBeenCalledWith('source-ref', 'record-parent', ownerId, {
-      beforeLimit: 20, afterLimit: 21,
+      beforeLimit: 20, afterLimit: 21, ...(deferBotProfiles ? {deferBotProfiles: true} : {}),
     })
   })
 
@@ -1883,4 +1891,32 @@ describe('correction selection request budget', () => {
       expect((await call('recordings.speaker.correction.apply', { padding: 'x'.repeat(1024 * 1024) })).status).toBe(413)
     } finally { server.close(); await once(server, 'close') }
   })
+})
+
+it.each([
+  ['query', 'background', 'background-read'],
+  ['query', 'interactive', 'interactive-read'],
+  ['query', 'invalid', undefined],
+  ['set', 'background', undefined],
+] as const)('applies the %s %s read hint only to supported reads', async (action, priority, lane) => {
+  const service = {
+    reactions: vi.fn(async () => ({ items: [] })),
+    runWithReadPriority: vi.fn(async (_lane: string, operation: () => Promise<unknown>) => operation()),
+  }
+  const server = createServer(createArkmeHostApi(service as never, { expectedPort: 0, allowNonLoopback: false }))
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const address = server.address()
+  if (!address || typeof address === 'string') throw new Error('test server address missing')
+  try {
+    const response = await fetch(`http://127.0.0.1:${address.port}/arkme-self/api`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Arkme-Read-Priority': priority },
+      body: JSON.stringify({ operation: 'reactions', params: { action, accountKey: 'test:42', targets: [] } }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true })
+    expect(service.reactions).toHaveBeenCalledOnce()
+    if (lane) expect(service.runWithReadPriority).toHaveBeenCalledWith(lane, expect.any(Function))
+    else expect(service.runWithReadPriority).not.toHaveBeenCalled()
+  } finally { server.closeAllConnections(); server.close(); await once(server, 'close') }
 })

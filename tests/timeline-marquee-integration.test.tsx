@@ -48,6 +48,8 @@ function renderedText(node: ReactTestInstance): string {
   return node.children.map(child => typeof child === 'string' ? child : renderedText(child)).join('')
 }
 beforeEach(() => {
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0))
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout)
     vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }))
   state.askRun.mockReset(); state.askBusy = false; state.askStatus = ''
   state.callArkme.mockReset()

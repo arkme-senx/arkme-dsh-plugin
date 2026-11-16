@@ -1,3 +1,6 @@
+import { messageSendRecord } from './message-send-timing.js'
+import { measureMessageSend } from './message-send-host-timing.js'
+import { readPriorityHeader, supportsBackgroundRead } from './read-scheduling.js'
 import { directoryTraceHeader, directoryTraceSignals, groupInteractionTrace, groupInteractionTraceEnabled, isDirectoryTraceId } from './group-interaction-diagnostics.js'
 import type { LocalRecorderOwner } from './local-recorder/owner.js'
 import { callLocalRecorder } from './local-recorder/routes.js'
@@ -56,7 +59,7 @@ import { invokeArkmeBundle } from './extensions/bundle-runtime.js'
 import { DshRemoteError } from './dsh-remote/errors.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
 import { ARKME_RUNTIME_INSTANCE_ID } from './runtime-instance.js'
-import { measureConversationRead } from './conversation-read-diagnostics.js'
+import { historyReadTrace, measureConversationRead } from './conversation-read-diagnostics.js'
 import {
   arkmeExtensionShareRefFromLink,
   arkmeIsGenericLinkMetadataTitle,
@@ -144,7 +147,11 @@ async function readRequest(req: IncomingMessage): Promise<ArkmePluginRequest> {
 }
 
 function writeJson(res: ServerResponse, status: number, body: ArkmePluginResponse, started?: number, phases?: string): void {
+  const encodeStarted = phases === undefined ? undefined : performance.now()
   const encoded = JSON.stringify(body)
+  if (encodeStarted !== undefined) {
+    phases = `${phases ? phases + ', ' : ''}arkme-host-encode;dur=${(performance.now() - encodeStarted).toFixed(1)}`
+  }
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(encoded),
@@ -691,13 +698,20 @@ function timelineCursorParam(params: Record<string, unknown>): ArkmeTimelineCurs
   const raw = params.cursor
   if (raw === null || typeof raw !== 'object') return undefined
   const cursor = raw as Record<string, unknown>
+  if (cursor.firstUnread !== undefined && (cursor.firstUnread !== true || cursor.afterSequence === undefined || cursor.unified !== undefined)) {
+    throw new ArkmePluginError('chat-timeline-sequence-invalid', '消息序号无效', false, 400)
+  }
   if (cursor.unified !== undefined) return { unified: cursor.unified as import('./unified-chat-timeline.js').ArkmeUnifiedTimelineQuery }
   const sendAtMillis = numberParam(cursor, 'sendAtMillis', 0)
   const itemUid = stringParam(cursor, 'itemUid')
   const beforeSequence = numberParam(cursor, 'beforeSequence', 0)
-  const afterSequence = numberParam(cursor, 'afterSequence', 0)
+  if (cursor.afterSequence !== undefined) {
+    if (!Number.isSafeInteger(cursor.afterSequence) || Number(cursor.afterSequence) < 0 || beforeSequence > 0) {
+      throw new ArkmePluginError('chat-timeline-sequence-invalid', '消息序号无效', false, 400)
+    }
+    return { afterSequence: Number(cursor.afterSequence), ...(cursor.firstUnread === true ? { firstUnread: true } : {}) }
+  }
   if (beforeSequence > 0) return { beforeSequence }
-  if (afterSequence > 0) return { afterSequence }
   return sendAtMillis > 0 && itemUid !== '' ? { sendAtMillis, itemUid } : undefined
 }
 
@@ -1099,7 +1113,7 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         writeJson(res, 200, { ok: true, value: await callLocalRecorder(options.localRecorder, request.operation, params, controller.signal) }, started)
         return
       }
-      const value = await measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
+      const dispatch = () => measureMessageSend(messageSendRecord(request.operation, params), 'host-operation', () => measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
         service,
         request.operation,
         params,
@@ -1116,7 +1130,13 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.accountSessions?.(),
         options.teamCodex,
         options.migrationManager,
-      ), measured => { phases = measured })
+      ), measured => { phases = measured }, request.operation === 'source.timeline' && isLoopback(req.socket.remoteAddress)
+        ? historyReadTrace(confirmationUrl.searchParams.get('historyTrace')) : undefined))
+      const priority = req.headers[readPriorityHeader.toLowerCase()]
+      const lane = supportsBackgroundRead(request.operation, params)
+        ? priority === 'background' ? 'background-read' : priority === 'interactive' ? 'interactive-read' : undefined
+        : undefined
+      const value = lane === undefined ? await dispatch() : await service.runWithReadPriority(lane, dispatch)
       writeJson(res, 200, { ok: true, value }, started, phases)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
@@ -2559,6 +2579,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     }
     case 'record.thoughts.query': return await service.recordThoughts(stringParam(params, 'expectedAccountScope'), params.recordUids, requestSignal)
     case 'chat.thoughts.query': return await service.chatThoughts(stringParam(params, 'expectedAccountScope'), stringParam(params, 'sourceRef'), params.messageActionRefs, requestSignal)
+    case 'source.bot-senders.presentation':
+      return await service.timelineBotPresentations(stringParam(params, 'sourceRef'), params.refs, requestSignal)
     case 'source.timeline': {
       const cursor = timelineCursorParam(params)
       return await service.readSource(
@@ -2566,6 +2588,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         { limit: numberParam(params, 'limit', 30), ...(cursor === undefined ? {} : { cursor }),
           ...(params?.background === true ? { background: true } : {}),
           ...(params?.firstPaint === true ? { firstPaint: true } : {}),
+          ...(params?.deferBotProfiles === true ? { deferBotProfiles: true } : {}),
           ...(params.desktopLocal === true ? { desktopLocal: true } : {}),
           ...(requestSignal === undefined ? {} : { signal: requestSignal }) },
       )
@@ -2577,6 +2600,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       {
         beforeLimit: numberParam(params, 'beforeLimit', 20),
         afterLimit: numberParam(params, 'afterLimit', 20),
+        ...(params?.deferBotProfiles === true ? { deferBotProfiles: true } : {}),
         ...(requestSignal === undefined ? {} : { signal: requestSignal }),
       },
     )
@@ -3311,6 +3335,9 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       })
     }
     case 'calls.invite.create': return await service.createShareCallLink(outgoingMediaTypeParam(params))
+    case 'calls.receiver.im-ready': return await service.reportIMReady(Number(params.accountUserId), requiredCallParam(params, 'registrationId', 'im-registration-invalid', 128))
+    case 'calls.receiver.activity': return service.reportDeviceActivity()
+    case 'game.request': return service.gameRequest(String(params.action ?? ''), (params.body ?? {}) as Record<string, unknown>, String(params.account ?? ''))
     case 'calls.receiver.prepare': return await service.prepareCallReceiver()
     case 'calls.receiver.claim': return await service.claimIncomingCall(requiredCallParam(params, 'callRequestId', 'call-request-invalid'))
     case 'calls.outgoing.prepare': return await service.prepareOutgoingCall({

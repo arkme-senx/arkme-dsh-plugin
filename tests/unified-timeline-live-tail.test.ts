@@ -15,6 +15,42 @@ const window = (sequences: number[]): ArkmeUnifiedTimelineWindow => ({ protocolV
   windowTokens: ['confirmed'], olderHasMore: true, newerHasMore: false, hasMore: true, olderCursor: 'older' })
 
 describe('confirmed live tail', () => {
+  it.each([2, 3])('recovers an existing image at version %s without advancing the sequence or replacing history', version => {
+    const owner = new UnifiedTimelineLiveTail()
+    const base = window([1, 2])
+    const event = base.events[1]!
+    if (event.kind !== 'message') throw new Error('expected message')
+    event.item = { ...event.item, recordVersion: 2, mediaUnavailable: true, contentBlocks: [], messageActionsV2: true }
+    const recovered = { ...item(2), recordVersion: version, contentBlocks: [{ kind: 'image' as const,
+      fileAssetUid: 'image', mediaRef: 'opaque-media', fileName: 'photo.jpg', mimeType: 'image/jpeg', size: 100, sortOrder: 0 }] }
+    const result = owner.receive(base, [recovered])
+    expect(result.events[1]).toMatchObject({ item: { ...recovered, messageActionsV2: true } })
+    expect(result.events[1]?.kind === 'message' && result.events[1].item.mediaUnavailable).not.toBe(true)
+    expect(result.events[0]).toBe(base.events[0])
+    expect(result.windowTokens).toBe(base.windowTokens)
+    expect(result.olderCursor).toBe(base.olderCursor)
+    expect(owner.hasPending).toBe(false)
+    expect(owner.receive(result, [recovered])).toBe(result)
+  })
+  it.each(['older', 'unknown', 'deleted', 'other-occurrence'] as const)('does not recover cached media across %s boundaries', boundary => {
+    const owner = new UnifiedTimelineLiveTail()
+    const base = window([1])
+    const event = base.events[0]!
+    if (event.kind !== 'message') throw new Error('expected message')
+    event.item = { ...event.item, recordVersion: 2, mediaUnavailable: true, status: boundary === 'deleted' ? 2 : 1 }
+    const incoming = { ...item(1), recordVersion: boundary === 'older' ? 1 : boundary === 'unknown' ? 0 : 2,
+      ...(boundary === 'other-occurrence' ? { timelineEventId: 'another-event', timelineItemKey: 'another-relation' } : {}), contentBlocks: [] }
+    expect(owner.receive(base, [incoming])).toBe(base)
+  })
+  it('retains a recovered live attachment when an older in-flight page returns', () => {
+    const owner = new UnifiedTimelineLiveTail()
+    const base = window([1])
+    const readRevision = owner.readRevision
+    const live = owner.receive(base, [{ ...item(2), recordVersion: 1, mediaUnavailable: true }])
+    const recovered = { ...item(2), recordVersion: 2, textContent: 'attachment ready' }
+    owner.receive(live, [recovered])
+    expect(owner.reconcile(base, readRevision).events.at(-1)).toMatchObject({ item: recovered })
+  })
   it('displays every continuous arrival before an in-flight page, retaining identities and bounded coverage', () => {
     const owner = new UnifiedTimelineLiveTail()
     let live = window([1])
@@ -117,12 +153,26 @@ it('projects committed edits and removals in a historical window without changin
   expect(projectCommittedChatWindow(history, changes).events).toEqual(projected.events)
 })
 
+it('requires a fresh canonical access decision before a synced body replaces a protected message', () => {
+  const blocked = { ...item(5), status: 0, quickNoteDetailsSupported: false, textContent: '此消息受隐私保护' }
+  const stale = { ...item(5), recordVersion: 7, textContent: 'previously readable body' }
+  const changes = new Map([['relation-5', { itemKey: 'relation-5', revision: 10, version: 7, item: stale }]])
+  expect(projectCommittedChatMessage(blocked, changes)).toBe(blocked)
+  const canonical = window([5])
+  canonical.events[0] = { ...canonical.events[0]!, kind: 'message', contentStatus: 'unavailable', item: blocked }
+  expect(projectCommittedChatWindow(canonical, changes)).toBe(canonical)
+  expect(projectCommittedChatMessage(blocked, new Map([['relation-5', { itemKey: 'relation-5', revision: 11, version: 0 }]]))).toBeUndefined()
+  expect(projectCommittedChatMessage(item(5), changes)?.textContent).toBe('previously readable body')
+})
+
 it('preserves the confirmed recall capability when a synced body replaces the same message', () => {
   const canonical = { ...item(5), isMe: true, messageActionRef: 'confirmed-ref', messageActionsV2: true }
   const synced = { ...item(5), isMe: true, messageActionRef: 'synced-ref', recordVersion: 2 }
   const change = { itemKey: 'relation-5', revision: 10, version: 2, item: synced }
-  expect(projectCommittedChatMessage(canonical, new Map([['relation-5', change]])))
-    .toMatchObject({ messageActionsV2: true, messageActionRef: 'synced-ref', recordVersion: 2 })
+  const changes = new Map([['relation-5', change]])
+  const projected = projectCommittedChatMessage(canonical, changes)!
+  expect(projected).toMatchObject({ messageActionsV2: true, messageActionRef: 'synced-ref', recordVersion: 2 })
+  expect(projectCommittedChatMessage(projected, changes)).toBe(projected)
   expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: undefined }]]))).toBeUndefined()
   expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: { ...synced, messageActionsV2: false } }]])))
     .toMatchObject({ messageActionsV2: false })

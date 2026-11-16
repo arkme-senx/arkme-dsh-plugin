@@ -71,6 +71,44 @@ it('failure on continuation keeps old data and a single raw refresh page is neve
   expect((await owner.read('ref', { mode: 'refresh', windowTokens: first.unified!.windowTokens })).cache?.persistence).toBe('deferred')
   expect(writes).toHaveBeenCalledTimes(1)
 })
+it.each(['initial', 'older', 'newer', 'around', 'refresh'].flatMap(mode => [3, undefined, null, 0, 1, '3'].map(status => ({ mode: mode as 'initial' | 'older' | 'newer' | 'around' | 'refresh', status }))))('does not publish or persist unconfirmed hydration $status during $mode', async ({ mode, status }) => {
+  const { owner, post, writes } = setup()
+  post.mockResolvedValueOnce(response('old', { older_cursor: 'older' }))
+  const first = await owner.read('ref')
+  const unavailable = response('unused', { timeline_items: Array.from({ length: 40 }, (_, n) => ({
+    event_id: `message-${n}`, kind: 'message', source: 'messages', occurred_at: n + 1, order_tie: String(n),
+    content_status: 'unavailable', payload: { record: { status } },
+  })) })
+  post.mockResolvedValueOnce(unavailable)
+  const query = mode === 'refresh' ? { mode, reconcile: true, windowTokens: first.unified!.windowTokens }
+    : mode === 'older' ? { mode, cursor: first.unified!.olderCursor! }
+      : mode === 'newer' ? { mode, cursor: first.unified!.newerCursor! }
+        : mode === 'around' ? { mode, itemUid: 'record', recordOwnerUserId: 2 } : { mode }
+  await expect(owner.read('ref', query)).rejects.toMatchObject({ code: 'chat-timeline-content-pending', retryable: true })
+  expect(writes).toHaveBeenCalledTimes(1)
+  expect((await owner.read('ref', { cacheOnly: true })).unified?.events[0]).toMatchObject({ text: 'old' })
+  post.mockResolvedValueOnce(response('recovered'))
+  expect((await owner.read('ref', query)).unified?.events[0]).toMatchObject({ text: 'recovered' })
+  expect(writes).toHaveBeenCalledTimes(2)
+})
+
+it.each([2, 4])('continues honoring authoritative unavailable hydration status %s', async status => {
+  const { owner, post, writes } = setup()
+  post.mockResolvedValueOnce(response('unused', { timeline_items: [{ event_id: 'message', kind: 'message', source: 'messages',
+    occurred_at: 1, order_tie: 'message', content_status: 'unavailable', payload: { record: { status } } }] }))
+  const page = await owner.read('ref')
+  expect(page.unified?.events).toEqual([expect.objectContaining({ contentStatus: 'unavailable', kind: 'notice',
+    text: status === 2 ? '原消息未找到' : '此消息受隐私保护' })])
+  expect(writes).toHaveBeenCalledOnce()
+})
+
+it('keeps authoritative recall notices even when their record hydration is pending', async () => {
+  const { owner, post } = setup()
+  post.mockResolvedValueOnce(response('unused', { timeline_items: [{ event_id: 'recall', kind: 'message_recalled', source: 'messages',
+    occurred_at: 1, order_tie: 'recall', content_status: 'unavailable', payload: { own: true, record: { status: 3 } } }] }))
+  expect((await owner.read('ref')).unified?.events[0]).toMatchObject({ kind: 'notice', text: '你撤回了一条消息' })
+})
+
 it('keeps network data available with an explicit persistence failure', async () => {
   const { owner } = setup(true)
   const result = await owner.read('ref')

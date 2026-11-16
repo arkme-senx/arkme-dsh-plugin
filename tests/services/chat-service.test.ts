@@ -216,7 +216,7 @@ describe('ChatService', () => {
       profile as never, new MediaService(runtime as never, {} as never, {} as never, { recordUid: () => 'bot-message' }),
       {} as never, {} as never, {} as never, { timelineAiPolish: () => undefined } as never, {} as never)
     const read = () => chat.readSource('source', { cursor: { beforeSequence: 1 }, signal: controller.signal })
-    if (scenario === 'cancelled') await expect(read()).rejects.toThrow('participant read failed')
+    if (scenario === 'cancelled') await expect(read()).rejects.toMatchObject({ name: 'AbortError' })
     else if (scenario === 'stale') await expect(read()).rejects.toBeInstanceOf(ArkmeStaleRequestError)
     else {
       expect((await read()).items[0]).toMatchObject({ senderName: 'Bot', textContent: 'Bot reply', isMe: false })
@@ -519,7 +519,7 @@ describe('ChatService', () => {
         expect(path).toBe('/api/v1/chat/timeline/tail')
         expect(body).toMatchObject({ chat_session_uid: 'chat-private', limit: 20 })
         if (body.after_seq === 13) return { items: [], next_after_seq: 13 }
-        expect(body.after_seq).toBe(12)
+        expect(body.after_seq).toBe(0)
         return {
           items: [{
             relation: { rel_uid: 'rel-13', record_uid: 'record-13', record_owner_user_id: 42, sender_user_id: 42, display_name_snapshot: '我', seq: 13, attach_at: 1300 },
@@ -543,13 +543,82 @@ describe('ChatService', () => {
       { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never,
     )
 
-    const firstPage = await chat.readSource('source-private', { cursor: { afterSequence: 12 }, limit: 20 })
+    const firstPage = await chat.readSource('source-private', { cursor: { afterSequence: 0 }, limit: 20 })
     const exhaustedPage = await chat.readSource('source-private', { cursor: { afterSequence: 13 }, limit: 20 })
 
     expect(firstPage).toMatchObject({ hasMore: true, nextCursor: { afterSequence: 13 } })
-    expect(firstPage.items.map(item => item.itemUid)).toEqual(['record-13'])
+    expect(firstPage.items).toMatchObject([{ itemUid: 'record-13', recordOwnerUserId: 42, sequence: 13 }])
     expect(exhaustedPage).toMatchObject({ hasMore: false })
     expect(exhaustedPage.nextCursor).toBeUndefined()
+  })
+
+  it.each([52, 1700, 17000])('seeks the oldest unread in one request for a backlog of %s', async unreadCount => {
+    const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
+      expect(path).toBe('/api/v1/chat/timeline/tail')
+      expect(body).toEqual({ chat_session_uid: 'chat-private', after_seq: 834, limit: 1, first_unread: true })
+      return { first_unread: true, next_after_seq: 5010, items: [{
+        relation: { rel_uid: 'first-unread', record_uid: 'record-5010', record_owner_user_id: 7, sender_user_id: 7, seq: 5010, attach_at: 50100 },
+        record: { status: 1, payload: { record_uid: 'record-5010', text_content: '第一条未读' } },
+      }] }
+    })
+    const runtime = {
+      config: { maxTextLength: 20_000 },
+      requireSession: vi.fn(async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' })),
+      stateStore: { uniqueCode: vi.fn(async () => 'timeline-unread-signing-key') },
+      authenticatedChatPost: post,
+    }
+    const source = {
+      openSourceRef: vi.fn(async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat-private', displayName: '同事' })),
+      sourceItem: vi.fn(async () => ({ sourceRef: 'source-private', kind: 'private_chat', displayName: '同事', activeAtMillis: 0, unreadCount })),
+      chatTimelineItemKey: chatTimelineItemKeyForTest,
+    }
+    const chat = new ChatService(runtime as never, source as never, {} as never,
+      { recordMediaUnavailable: () => false, richContentBlocks: vi.fn(() => []), recordContentPayload: vi.fn(() => ({})) } as never,
+      {} as never, {} as never, {} as never, { timelineAiPolish: vi.fn(() => undefined) } as never, {} as never)
+    const page = await chat.readSource('source-private', { cursor: { afterSequence: 834, firstUnread: true }, limit: 1 })
+    expect(page).toMatchObject({ hasMore: false, items: [{ itemUid: 'record-5010', sequence: 5010, recordOwnerUserId: 7 }] })
+    expect(post.mock.calls.map(([path]) => path)).toEqual(['/api/v1/chat/timeline/tail'])
+  })
+
+  it.each([false, true].flatMap(firstUnread => [false, true].map(deferBotProfiles => ({ firstUnread, deferBotProfiles }))))(
+    'defers optional bot profiles only when requested on forward reads (seek=$firstUnread defer=$deferBotProfiles)', async ({ firstUnread, deferBotProfiles }) => {
+    const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const profiles = { cached: vi.fn(async () => new Map()), read: vi.fn(async () => {
+      await gate
+      return new Map([['bot', { displayName: '完整机器人昵称' }]])
+    }) }
+    const post = vi.fn(async (path: string) => {
+      if (path === '/api/v1/chat/sync/session') return { checkpoint: 'complete', has_more: false, retry: false, manifest_only: true, sessions: [{
+        chat_session_uid: 'chat', accessible: true, session_kind: 1, membership_version: 1, complete: true,
+        position: { initialized: true, cursor: 0 }, manifest: [{ rel_uid: 'unread', state: 'available', unread: true, revision: 1, record_version: 1, seq: 1 }],
+      }] }
+      expect(path).toBe('/api/v1/chat/timeline/tail')
+      return { first_unread: true, next_after_seq: 1, items: [{ relation: { rel_uid: 'unread', record_uid: 'record', record_owner_user_id: 7,
+        sender_user_id: 9001, sender_actor_kind: 2, sender_bot_uid: 'bot', seq: 1, attach_at: 1 },
+        record: { status: 1, payload: { record_uid: 'record', text_content: '第一条机器人未读' } } }] }
+    })
+    const runtime = { config, requireSession: async () => session, stateStore: { uniqueCode: async () => 'fixture-key' }, authenticatedChatPost: post }
+    const source = { openSourceRef: async () => ({ version: 1, userId: 42, kind: 'private_chat', ownerRef: 'chat' }),
+      sourceItem: async () => ({ sourceRef: 'source', kind: 'private_chat', unreadCount: 1 }), chatTimelineItemKey: chatTimelineItemKeyForTest }
+    const chat = new ChatService(runtime as never, source as never, {} as never,
+      { recordMediaUnavailable: () => false, richContentBlocks: () => [], recordContentPayload: () => ({}) } as never,
+      {} as never, {} as never, {} as never, { timelineAiPolish: () => undefined } as never, {} as never,
+      undefined, undefined, undefined, profiles)
+    const pending = chat.readSource('source', { cursor: { afterSequence: 0, ...(firstUnread ? { firstUnread: true } : {}) },
+      ...(deferBotProfiles ? { deferBotProfiles: true } : {}) })
+    try {
+      await vi.waitFor(() => expect(deferBotProfiles ? profiles.cached : profiles.read).toHaveBeenCalledOnce())
+      if (deferBotProfiles) {
+        expect(profiles.read).not.toHaveBeenCalled()
+        expect((await pending).items[0]).toMatchObject({ textContent: '第一条机器人未读', senderName: 'Bot', senderBotPresentationRef: expect.any(String) })
+      }
+    } finally { release(); await pending }
+    if (!deferBotProfiles) {
+      expect(profiles.cached).not.toHaveBeenCalled()
+      expect((await pending).items[0]).toMatchObject({ senderName: '完整机器人昵称' })
+    }
   })
 
   it('hydrates a send-to-self extension parent from the same refreshed timeline page', async () => {
@@ -4061,4 +4130,29 @@ describe('owner-backed Arko reply contracts', () => {
     expect(post.mock.calls.filter(([path])=>path==='/api/v1/chats/extensions/tree/page')).toHaveLength(1)
     expect(post.mock.calls.filter(([path])=>path==='/api/v1/chats/extensions/private-thought-replies/page')).toHaveLength(2)
   })
+})
+
+
+it.each(['ignored', 'old-parameter', 'forbidden', 'network'] as const)('keeps unread seek compatibility distinct from authorization and network failures: %s', async scenario => {
+ const error = new ArkmePluginError(scenario === 'old-parameter' ? 'arkme-code-1001' : scenario, 'fixture', scenario === 'network', 502,
+  scenario === 'forbidden' ? { upstreamStatus: 403 } : undefined)
+ const post = vi.fn(async () => { if (scenario === 'ignored') return { items: [] }; throw error })
+ const chat = new ChatService({ config: {maxTextLength:20000}, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as never,
+  { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }) } as never, {} as never, {} as never,
+  {} as never, {} as never, {} as never, {} as never, {} as never)
+ const pending = chat.readSource('source', { cursor: { afterSequence: 0, firstUnread: true } })
+ if (scenario === 'ignored' || scenario === 'old-parameter') await expect(pending).rejects.toMatchObject({code:'chat-unread-locate-unsupported'})
+ else await expect(pending).rejects.toBe(error)
+ expect(post).toHaveBeenCalledOnce()
+})
+
+
+it('does not skip the first unread when its body is temporarily unavailable', async () => {
+ const post = vi.fn(async () => ({ first_unread: true, next_after_seq: 2, items: [{record:{status:3}}] }))
+ const chat = new ChatService({ config: {maxTextLength:20000}, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as never,
+  { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }) } as never, {} as never, {} as never,
+  {} as never, {} as never, {} as never, {} as never, {} as never)
+ await expect(chat.readSource('source', { cursor: { afterSequence: 0, firstUnread: true } }))
+  .rejects.toMatchObject({code:'chat-timeline-content-pending',retryable:true})
+ expect(post).toHaveBeenCalledOnce()
 })

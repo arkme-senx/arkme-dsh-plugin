@@ -20,14 +20,12 @@ export function unifiedTimelineSendOverlay(
   historicalFileIds: ReadonlySet<string> = new Set(),
 ): ArkmeTimelineItem[] {
   const ids = new Set<string>()
-  let firstSequence = Infinity
   let lastSequence = 0
   for (const event of window.events) {
     if (event.kind !== 'message') continue
     ids.add(event.item.itemUid)
     const sequence = event.item.sequence ?? 0
     if (sequence > 0) {
-      firstSequence = Math.min(firstSequence, sequence)
       lastSequence = Math.max(lastSequence, sequence)
     }
   }
@@ -38,9 +36,10 @@ export function unifiedTimelineSendOverlay(
     // Preserve uploading, failed and uncertain sends, including their retry UI.
     if (item.status !== 1) return true
     const sequence = item.sequence ?? 0
+    // A sparse body cache proves neither a lower bound nor an omitted send.
     if (sequence > 0 && lastSequence > 0) {
-      if (sequence < firstSequence || messagesReady && sequence <= lastSequence) return false
-    } else if (firstMillis !== undefined && item.sendAtMillis < firstMillis) return false
+      if (messagesReady && sequence <= lastSequence) return false
+    } else if (messagesReady && firstMillis !== undefined && item.sendAtMillis < firstMillis) return false
     // A history window must not acquire a second, disconnected latest tail.
     return !window.newerHasMore || !historicalFileIds.has(item.itemUid)
   })

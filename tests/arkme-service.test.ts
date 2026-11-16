@@ -1258,6 +1258,19 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('advertises the existing local send policy in bootstrap without remote IO', () => {
+    const fetcher = vi.fn(async () => { throw new Error('not used') })
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), fetcher)
+    try {
+      expect(service.clientConfig()).not.toHaveProperty('fileSendPolicy')
+      const policy = { version: 1, textMessagesVersion: 1, admissionRecoveryVersion: 1,
+        maxFileBytes: 100, maxImageBytes: 50, maxAttachments: 9 }
+      Object.assign(service, { fileTransfers: { capabilities: () => ({ ...policy }), dispose() {} } })
+      expect(service.clientConfig().fileSendPolicy).toEqual(policy)
+      expect(fetcher).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
   it('publishes MAS capabilities without exposing the credential namespace', () => {
     vi.stubEnv('ARKME_HOST_POLICY', JSON.stringify({
       schemaVersion: 1,
@@ -2973,7 +2986,7 @@ describe('ArkmeService', () => {
           }] : []),
           {
             relation: { rel_uid: 'chat-relation-unavailable', record_uid: 'chat-record-unavailable', sender_user_id: 20002, attach_at: 179, seq: 6 },
-            record: {},
+            record: { status: 2 },
           },
         ],
         has_more: true, next_before_seq: 6,
@@ -3087,7 +3100,7 @@ describe('ArkmeService', () => {
     const privateSourceKey = sources.items[0]!.sourceKey
     await expect(service.readSource(privateRef)).resolves.toMatchObject({
       items: [
-        { itemUid: 'chat-record-unavailable', status: 0, textContent: '内容暂时不可用' },
+        { itemUid: 'chat-record-unavailable', status: 0, textContent: '原消息未找到' },
         { textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
         { textContent: '我的回复', senderName: '我', isMe: true, sequence: 8, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
         {
@@ -3159,7 +3172,7 @@ describe('ArkmeService', () => {
       .toEqual({ rm_subject_id: 88010 })
     const groupTimeline = await service.readSource(groupRef)
     expect(groupTimeline.items).toHaveLength(3)
-    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toMatchObject({ status: 0, textContent: '内容暂时不可用' })
+    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toMatchObject({ status: 0, textContent: '原消息未找到' })
     expect(groupTimeline.items[1]?.messageRef).toMatch(/^arkme-message-v1\./)
     expect(groupTimeline.items[1]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./)
     expect(groupTimeline.items[1]?.timelineItemKey).toMatch(/^arkme-chat-timeline-item-v1\./)
@@ -6669,10 +6682,13 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
         status: 'status' in v ? v.status : 1, version: 'version' in v ? v.version : 7, text_content: v.uid } },
     }))
     const deleteBodies: unknown[] = []
+    let transientBodyFailure = true
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
       if (url.endsWith('/timeline/unified/v3')) {
-        return json({ code: 200, data: { ...unifiedResponse('chat-delete', { items, has_more: false }), message_actions_v2: true } })
+        return json({ code: 200, data: { ...unifiedResponse('chat-delete', {
+          items: transientBodyFailure ? items : items.filter(item => item.record.status !== 3), has_more: false,
+        }), message_actions_v2: true } })
       }
       if (url.endsWith('/api/v1/records/delete')) throw new Error('Unexpected Record deletion')
       if (url.endsWith('/api/v1/chats/messages/delete/v2')) {
@@ -6683,9 +6699,12 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
       return json({ code: 200, data: { items: [] } })
     })
     const sourceRef = sourceRefFor(kind, 'chat-delete', 'Delete test')
+    await expect(service.readSource(sourceRef, { limit: 30 })).rejects.toMatchObject({ code: 'chat-timeline-content-pending', retryable: true })
+    transientBodyFailure = false
     const page = await service.readSource(sourceRef, { limit: 30 })
     const tail = await service.readSource(sourceRef, { limit: 30, cursor: { unified: { mode: 'newer', cursor: page.unified!.newerCursor! } } })
     const around = await service.readSourceAround(sourceRef, 'own', 10001, { beforeLimit: 15, afterLimit: 15 })
+    expect(around.cache).toMatchObject({ origin: 'network', stale: false })
     const realtime = await (service as unknown as { chat: import('../src/services/chat-service.js').ChatService })
       .chat.chatTimelineItems({ items }, sessions.session, 'chat-delete', kind)
     for (const projected of [page.items, tail.items, around.items, realtime]) {
@@ -6812,4 +6831,34 @@ it('projects delegated historical media through the exact source stream without 
   await expect(service.fetchMedia(mediaRef)).rejects.toMatchObject({httpStatus:404})
   expect(requests.every(r=>['/api/v1/chats/records/revisions/query','/api/v1/content/source-stream'].includes(r.path))).toBe(true)
  }finally{service.dispose()}
+})
+
+
+it.each([false, true])('keeps around bot presentation opt-in without blocking deferred message bodies (defer=%s)', async deferBotProfiles => {
+  const sessions = new MemorySessionStore()
+  sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const item = { relation: { rel_uid: 'bot-row', record_uid: 'bot-record', record_owner_user_id: 7, sender_user_id: 9001,
+    sender_actor_kind: 2, sender_bot_uid: 'bot', seq: 2, attach_at: 100 },
+    record: { status: 1, payload: { record_uid: 'bot-record', owner_user_id: 7, text_content: '正文先显示', version: 1 } } }
+  const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+    if (String(input).endsWith('/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse('bot-cold', { items: [item], has_more: false }) })
+    return json({ code: 200, data: { items: [] } })
+  })
+  const reader = (service as unknown as { chat: { senderProfiles: { read: (...args: unknown[]) => Promise<Map<string, { displayName: string }>> } } }).chat.senderProfiles
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const read = vi.spyOn(reader, 'read').mockImplementation(async () => { await gate; return new Map([['bot', { displayName: '完整机器人昵称' }]]) })
+  let returned = false
+  const pending = service.readSourceAround(sourceRefFor('group_chat', 'bot-cold', 'Cold bot'), 'bot-record', 7, { deferBotProfiles })
+    .then(page => { returned = true; return page })
+  try {
+    if (deferBotProfiles) {
+      expect((await pending).items[0]).toMatchObject({ textContent: '正文先显示', senderName: 'Bot', senderBotPresentationRef: expect.any(String) })
+      expect(read).not.toHaveBeenCalled()
+    } else {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+      expect(returned).toBe(false)
+    }
+  } finally { release(); await pending }
+  if (!deferBotProfiles) expect((await pending).items[0]?.senderName).toBe('完整机器人昵称')
 })

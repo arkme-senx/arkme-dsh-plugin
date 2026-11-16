@@ -17,6 +17,8 @@ export type ArkmeRequestService =
 
 export interface ArkmeRequestLimit {
   maxConcurrent: number
+  /** Background reads leave capacity for active consumers of the same service. */
+  maxBackgroundConcurrent?: number
   ratePerSecond: number
   burst: number
   maxQueued: number
@@ -79,6 +81,7 @@ export interface ArkmeRequestStats {
 
 interface ResolvedLimit extends ArkmeRequestLimit {
   active: number
+  backgroundActive: number
   tokens: number
   lastRefillAt: number
   cooldownUntil: number
@@ -166,10 +169,12 @@ function resolveLimit(base: ArkmeRequestLimit, patch: Partial<ArkmeRequestLimit>
   const burst = positiveNumber(patch?.burst, base.burst)
   return {
     maxConcurrent: positiveInteger(patch?.maxConcurrent, base.maxConcurrent),
+    maxBackgroundConcurrent: positiveInteger(patch?.maxBackgroundConcurrent, base.maxBackgroundConcurrent ?? Number.MAX_SAFE_INTEGER),
     ratePerSecond: positiveNumber(patch?.ratePerSecond, base.ratePerSecond),
     burst,
     maxQueued: positiveInteger(patch?.maxQueued, base.maxQueued),
     active: 0,
+    backgroundActive: 0,
     tokens: burst,
     lastRefillAt: now,
     cooldownUntil: 0,
@@ -235,6 +240,7 @@ export class ArkmeRequestCoordinator {
     ] as ArkmeRequestService[]) {
       const base = {
         maxConcurrent: positiveInteger(options.defaultServiceLimit?.maxConcurrent, DEFAULT_SERVICE_LIMIT.maxConcurrent),
+        maxBackgroundConcurrent: positiveInteger(options.defaultServiceLimit?.maxBackgroundConcurrent, Number.MAX_SAFE_INTEGER),
         ratePerSecond: positiveNumber(options.defaultServiceLimit?.ratePerSecond, DEFAULT_SERVICE_LIMIT.ratePerSecond),
         burst: positiveNumber(options.defaultServiceLimit?.burst, DEFAULT_SERVICE_LIMIT.burst),
         maxQueued: positiveInteger(options.defaultServiceLimit?.maxQueued, DEFAULT_SERVICE_LIMIT.maxQueued),
@@ -577,6 +583,7 @@ export class ArkmeRequestCoordinator {
         service.tokens = Math.max(0, service.tokens - 1)
         lane.active += 1
         service.active += 1
+        if (queued.lane === 'background-read') service.backgroundActive += 1
       }
       if (queued.route !== undefined) {
         this.refill(queued.route)
@@ -596,6 +603,7 @@ export class ArkmeRequestCoordinator {
           this.activeTransports = Math.max(0, this.activeTransports - 1)
           lane.active = Math.max(0, lane.active - 1)
           service.active = Math.max(0, service.active - 1)
+          if (queued.lane === 'background-read') service.backgroundActive = Math.max(0, service.backgroundActive - 1)
         }
         if (queued.route !== undefined) queued.route.active = Math.max(0, queued.route.active - 1)
         this.drain()
@@ -621,7 +629,7 @@ export class ArkmeRequestCoordinator {
       const poolBlocked = queued.transport && this.activeTransports >= this.maxConcurrent
       if (poolBlocked) queued.blockedBy?.add('pool-concurrency')
       const laneBlocked = queued.transport && this.blocked(lane, 'lane', queued.blockedBy)
-      const serviceBlocked = queued.transport && this.blocked(service, 'service', queued.blockedBy)
+      const serviceBlocked = queued.transport && this.blocked(service, 'service', queued.blockedBy, queued.lane === 'background-read')
       const routeBlocked = queued.route !== undefined && this.blocked(queued.route, 'route', queued.blockedBy)
       if (poolBlocked || laneBlocked || serviceBlocked || routeBlocked) continue
       if (queued.lane !== 'background-read') return fallback < 0 ? index : fallback
@@ -631,15 +639,17 @@ export class ArkmeRequestCoordinator {
     return fallback
   }
 
-  private blocked(limit: ResolvedLimit, kind: string, reasons?: Set<string>): boolean {
+  private blocked(limit: ResolvedLimit, kind: string, reasons?: Set<string>, background = false): boolean {
     this.refill(limit)
     const concurrency = limit.active >= limit.maxConcurrent, rate = limit.tokens < 1, cooldown = this.now() < limit.cooldownUntil
+    const backgroundConcurrency = background && limit.backgroundActive >= (limit.maxBackgroundConcurrent ?? limit.maxConcurrent)
     if (reasons) {
       if (concurrency) reasons.add(`${kind}-concurrency`)
       if (rate) reasons.add(`${kind}-rate`)
       if (cooldown) reasons.add(`${kind}-cooldown`)
+      if (backgroundConcurrency) reasons.add(`${kind}-background-concurrency`)
     }
-    return concurrency || rate || cooldown
+    return concurrency || rate || cooldown || backgroundConcurrency
   }
 
   private refill(limit: ResolvedLimit): void {
@@ -661,6 +671,7 @@ export class ArkmeRequestCoordinator {
       if (route !== undefined) this.refill(route)
       if (route !== undefined && route.active >= route.maxConcurrent) continue
       if (queued.transport && (this.activeTransports >= this.maxConcurrent || lane.active >= lane.maxConcurrent || service.active >= service.maxConcurrent)) continue
+      if (queued.transport && queued.lane === 'background-read' && service.backgroundActive >= (service.maxBackgroundConcurrent ?? service.maxConcurrent)) continue
       const now = this.now()
       delay = Math.min(delay, Math.max(
         queued.transport ? this.tokenDelay(lane) : 0,

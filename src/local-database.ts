@@ -15,6 +15,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { CommonGroupDatabase } from './common-group-database.js'
+import type { BotDisplayCacheEntry } from './chat-sender-display.js'
 import type { ArkmeStateStore } from './state-store.js'
 import type {
   ArkmeCachedSnapshot,
@@ -193,6 +194,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         PRIMARY KEY(environment, viewer_id, target_id)
       );
       CREATE INDEX IF NOT EXISTS public_person_cache_age ON public_person_cache(environment, viewer_id, updated_at_millis DESC);
+      CREATE TABLE IF NOT EXISTS bot_display_cache (
+        scope TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at_millis INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS conversation_member_cache (
         user_id INTEGER NOT NULL,
         group_key TEXT NOT NULL,
@@ -695,6 +699,29 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       cachedAtMillis: row?.updated_at_millis ?? 0,
       revision: await this.revision(userId),
     }
+  }
+
+  async readBotDisplayCache(scope: string): Promise<readonly BotDisplayCacheEntry[]> {
+    const row = this.database.prepare('SELECT payload FROM bot_display_cache WHERE scope = ?').get(scope) as { payload: string } | undefined
+    if (!row || Buffer.byteLength(row.payload) > 1_000_000) return []
+    try {
+      const entries = JSON.parse(row.payload) as BotDisplayCacheEntry[]
+      if (!Array.isArray(entries) || entries.length > 512) return []
+      return entries.filter(entry => entry && typeof entry.uid === 'string' && entry.uid.length > 0 && entry.uid.length <= 512
+        && Number.isSafeInteger(entry.observedAt) && entry.observedAt > 0
+        && (entry.profile === undefined || entry.profile && typeof entry.profile.displayName === 'string'
+          && (entry.profile.avatarUrl === undefined || typeof entry.profile.avatarUrl === 'string')))
+    } catch { return [] }
+  }
+
+  async writeBotDisplayCache(scope: string, entries: readonly BotDisplayCacheEntry[]): Promise<void> {
+    const payload = JSON.stringify(entries)
+    if (entries.length > 512 || Buffer.byteLength(payload) > 1_000_000) return
+    this.database.prepare(`INSERT INTO bot_display_cache(scope,payload,updated_at_millis) VALUES(?,?,?)
+      ON CONFLICT(scope) DO UPDATE SET payload=excluded.payload, updated_at_millis=excluded.updated_at_millis`)
+      .run(scope, payload, Date.now())
+    this.database.prepare(`DELETE FROM bot_display_cache WHERE scope IN
+      (SELECT scope FROM bot_display_cache ORDER BY updated_at_millis DESC, scope LIMIT -1 OFFSET 128)`).run()
   }
 
   async clearPublicPeople(environment: string, viewer: number, target?: number): Promise<void> {

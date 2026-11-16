@@ -3,11 +3,14 @@ import type { ArkmeFilePolicy, ArkmeFileSendTask } from '../file-transfer-contra
 import { ArkmeClientError, callArkme } from './api.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 
-let filePolicy: { accountKey: string; result: Promise<ArkmeFilePolicy | undefined> } | undefined
+let filePolicy: { accountKey: string; result: Promise<ArkmeFilePolicy | undefined>; value?: ArkmeFilePolicy | undefined } | undefined
 
 export function fileSendPolicy(accountKey: string): Promise<ArkmeFilePolicy | undefined> {
   if (filePolicy?.accountKey === accountKey) return filePolicy.result
-  const result = withArkmeReadDeadline(signal => callArkme<ArkmeFilePolicy>('files.capabilities', undefined, signal)).catch(caught => {
+  const result = withArkmeReadDeadline(signal => callArkme<ArkmeFilePolicy>('files.capabilities', undefined, signal)).then(policy => {
+    if (filePolicy?.result === result) filePolicy.value = policy
+    return policy
+  }).catch(caught => {
     if (caught instanceof ArkmeClientError
       && (caught.body.code === 'operation-unknown' || caught.body.code === 'file-flow-unavailable')) return undefined
     if (filePolicy?.result === result) filePolicy = undefined
@@ -15,6 +18,11 @@ export function fileSendPolicy(accountKey: string): Promise<ArkmeFilePolicy | un
   })
   filePolicy = { accountKey, result }
   return result
+}
+
+/** Sending reads only a known capability; legacy negotiation happens before composition. */
+export function fileSendPolicySnapshot(accountKey: string, advertised?: ArkmeFilePolicy): ArkmeFilePolicy | undefined {
+  return advertised ?? (filePolicy?.accountKey === accountKey ? filePolicy.value : undefined)
 }
 
 export function resetFileSendPolicy(accountKey: string | undefined): void {

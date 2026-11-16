@@ -12,7 +12,7 @@ type Transport = (input: ReactionRequest, signal?: AbortSignal) => Promise<unkno
 export class ReactionPreviewStore {
   private scope: string | undefined
   private controller = new AbortController()
-  private targets = new Map<string, { target: ReactionPreviewTarget; count: number }>()
+  private targets = new Map<string, { target: ReactionPreviewTarget; count: number; interactive: number }>()
   private states = new Map<string, ReactionSnapshot>()
   private inactive = new Set<string>()
   private actorRefreshAt = new Map<string, number>()
@@ -20,7 +20,7 @@ export class ReactionPreviewStore {
   private failures = new Map<string, string>()
   private listeners = new Set<() => void>()
   private revision = 0
-  private reading: { controller: AbortController; entries: Map<string, { target: ReactionPreviewTarget; count: number }> } | undefined
+  private reading: { controller: AbortController; batch?: ReactionPreviewTarget[]; interactive: boolean; entries: Map<string, { target: ReactionPreviewTarget; count: number; interactive: number }> } | undefined
   private refreshing: Promise<void> | undefined
   private timer: ReturnType<typeof setTimeout> | undefined
   private timerDue = 0
@@ -38,7 +38,7 @@ export class ReactionPreviewStore {
     this.stop(); this.targets.clear(); this.states.clear(); this.inactive.clear(); this.actorRefreshAt.clear(); this.knownTargets.clear(); this.failures.clear(); this.pending = undefined; this.writing = false; this.refreshing = undefined; this.refreshAgain = false; this.retryMillis = this.pollMillis
     this.library.setScope(scope); this.publish()
   }
-  watch(scope: string, target: ReactionPreviewTarget): () => void {
+  watch(scope: string, target: ReactionPreviewTarget, interactive = true): () => void {
     if (scope !== this.scope) return () => {}
     const resolver = target.resolveActor ?? this.knownTargets.get(target.id)?.resolveActor
     if (resolver) target = { ...target, resolveActor: resolver }
@@ -48,15 +48,23 @@ export class ReactionPreviewStore {
     this.knownTargets.set(target.id, target)
     // Additional consumers share the same lifetime token so an in-flight read
     // still belongs to this message when notification warming joins it.
-    if (existing) { existing.target = target; existing.count++ }
-    else this.targets.set(target.id, { target, count: 1 })
-    if (this.refreshing) this.refreshAgain = true
-    this.schedule(40)
+    if (existing) { existing.target = target; existing.count++; existing.interactive += Number(interactive) }
+    else this.targets.set(target.id, { target, count: 1, interactive: Number(interactive) })
+    const reading = this.reading
+    if (interactive && reading?.batch?.some(value => value.id === target.id) && !reading.interactive) {
+      reading.interactive = true
+      // Join the existing Host read at foreground priority when a warmed row becomes visible.
+      void this.transport({ action: 'query', accountKey: scope, targets: reading.batch,
+        actorPresentation: 'deferred', readPriority: 'interactive' }, reading.controller.signal).catch(() => undefined)
+    }
+    if (this.refreshing) {
+      if (reading?.entries.get(target.id) !== this.targets.get(target.id)) this.refreshAgain = true
+    } else this.schedule(40)
     if (this.targets.size === 1 && typeof document !== 'undefined') document.addEventListener('visibilitychange', this.visibility)
     return () => {
       if (scope !== this.scope) return
       const current = this.targets.get(target.id)
-      if (current && current.count > 1) current.count--
+      if (current && current.count > 1) { current.count--; current.interactive -= Number(interactive) }
       else {
         this.targets.delete(target.id); this.failures.delete(target.id)
         // Conversation switches release polling, not the last confirmed display.
@@ -81,7 +89,7 @@ export class ReactionPreviewStore {
     if (scope !== this.scope || signal.aborted) return
     const missing = targets.filter(target => force || !this.states.has(target.id)).slice(0, 200)
     if (!missing.length) return
-    const releases = missing.map(target => this.watch(scope, target))
+    const releases = missing.map(target => this.watch(scope, target, false))
     let active = true
     let timer: ReturnType<typeof setTimeout> | undefined
     let finish!: () => void
@@ -128,7 +136,7 @@ export class ReactionPreviewStore {
     const due = Date.now() + delay
     if (this.timer !== undefined && this.timerDue <= due) return
     clearTimeout(this.timer); this.timerDue = due
-    this.timer = setTimeout(() => { this.timer = undefined; this.timerDue = 0; void this.refresh().catch(() => {}).finally(() => this.schedule(this.retryMillis)) }, delay)
+    this.timer = setTimeout(() => { this.timer = undefined; this.timerDue = 0; void this.refresh().catch(() => {}) }, delay)
   }
   snapshot(id: string) { return this.states.get(id) }
   busy(_id: string) { return this.writing }
@@ -138,8 +146,9 @@ export class ReactionPreviewStore {
     if (this.refreshing) return this.refreshing
     const scope = this.scope
     if (!scope) return
+    clearTimeout(this.timer); this.timer = undefined; this.timerDue = 0
     const controller = new AbortController(), entries = new Map(this.targets)
-    const reading = { controller, entries }
+    const reading: NonNullable<ReactionPreviewStore['reading']> = { controller, entries, interactive: false }
     this.reading = reading
     const signal = AbortSignal.any([this.controller.signal, controller.signal])
     const operation = (async () => {
@@ -148,8 +157,11 @@ export class ReactionPreviewStore {
       for (let offset = 0; offset < targets.length; offset += 50) {
         const batch = targets.slice(offset, offset + 50)
         const before = JSON.stringify(batch.map(t => [this.states.get(t.id), this.failures.get(t.id)]))
+        reading.batch = batch
+        reading.interactive = batch.some(target => (entries.get(target.id)?.interactive ?? 0) > 0)
         try {
-          const page = await this.transport({ action: 'query', accountKey: scope, targets: batch, actorPresentation: 'deferred' }, signal) as { items: ReactionSnapshot[] }
+          const page = await this.transport({ action: 'query', accountKey: scope, targets: batch, actorPresentation: 'deferred',
+            ...(reading.interactive ? { readPriority: 'interactive' as const } : {}) }, signal) as { items: ReactionSnapshot[] }
           if (signal.aborted) return
           const returned = new Set(page.items.map(item => item.target_id))
           for (const target of batch) if (this.targets.get(target.id) === entries.get(target.id)) {
@@ -210,7 +222,9 @@ export class ReactionPreviewStore {
       if (this.reading === reading) this.reading = undefined
       if (this.refreshing === operation) {
         this.refreshing = undefined
-        if (this.refreshAgain) { this.refreshAgain = false; this.schedule(0) }
+        const delay = this.refreshAgain ? 0 : this.retryMillis
+        this.refreshAgain = false
+        this.schedule(delay)
       }
     }
   }

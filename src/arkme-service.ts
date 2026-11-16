@@ -1,3 +1,4 @@
+import { DeviceRegistrationService } from './services/device-registration-service.js'
 import { LoginDevicesService } from './services/login-devices-service.js'
 import type { LoginDeviceRequest } from './login-devices-contract.js'
 import { WorldSoundService } from './services/world-sound-service.js'
@@ -73,7 +74,7 @@ import { SelfRoleAvatarStore } from './self-role-avatar-store.js'
 import { RecordingPresenceWriter, type CapturePresenceFact } from './services/recording-presence-writer.js'
 import { TeamAppService } from './services/team-app-service.js'
 import type { TeamAppOperation } from './team-app-contract.js'
-import { objectValue, stringValue } from './services/service.js'
+import { objectValue, stringValue, ArkmeUpstreamResponseError } from './services/service.js'
 import { ReactionService } from './services/reaction-service.js'
 import { WorldReactionService, worldReactionFailure } from './services/world-reaction-service.js'
 import { WorldLocalReactionService } from './services/world-local-reaction-service.js'
@@ -538,6 +539,7 @@ export class ArkmeService {
   private readonly bot: BotService
   private readonly messageActions: MessageActionService
   private readonly botConversation: BotConversationService
+  private readonly deviceRegistration: DeviceRegistrationService
   private readonly outgoingCall: OutgoingCallService
   private readonly world: WorldService
   private readonly worldSuggestionsOwner: WorldSuggestionsService
@@ -900,7 +902,8 @@ export class ArkmeService {
       new LocalMessageActionCapabilityCodec(async () => await this.runtime.stateStore.uniqueCode()),
       { read: (anchors, userId, signal) => this.arko.actionMessages(anchors, userId, signal) },
     )
-    this.outgoingCall = new OutgoingCallService(this.runtime, this.source, this.profile, outgoingCallBroker)
+    this.deviceRegistration = new DeviceRegistrationService(this.runtime)
+    this.outgoingCall = new OutgoingCallService(this.runtime, this.source, this.profile, outgoingCallBroker, this.deviceRegistration)
     this.world = new WorldService(
       this.runtime,
       { refreshProfile: async () => await this.refreshProfile() },
@@ -1405,6 +1408,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return snapshot
   }
 
+  runWithReadPriority<T>(lane: 'interactive-read' | 'background-read', operation: () => Promise<T>): Promise<T> {
+    return this.runtime.runWithReadPriority(lane, operation)
+  }
+
   setNativeAnnotationSource(source: NativeAnnotationSource, runtime?: () => string | undefined) { this.nativeAnnotationService.source = source; this.nativeAnnotationService.sourceRuntime = runtime }
   setNativeAnnotationHistorySync(resolver: NonNullable<NativeAnnotationsService['historySync']>) { this.nativeAnnotationService.historySync = resolver }
   setNativeAnnotationAccess(resolve: NonNullable<NativeAnnotationsService['resolveTarget']>, source: NativeAnnotationSource, publish: NonNullable<NativeAnnotationsService['publishSource']>) {
@@ -1421,6 +1428,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     const {distribution, capabilities} = resolveHostPolicy()
     return {
       hostPolicy: {distribution, capabilities},
+      ...(this.fileTransfers ? { fileSendPolicy: this.fileTransfers.capabilities() } : {}),
       captchaId: this.config.geetestCaptchaId,
       baiduMapBrowserAk: this.config.baiduMapBrowserAk?.trim() ?? '',
       environment: this.config.environment,
@@ -1661,6 +1669,42 @@ recordingAnalysisV1: true,
   }
 
   async createShareCallLink(mediaType: ArkmeOutgoingCallMediaType) { return await this.outgoingCall.createShareCallLink(mediaType) }
+  async reportIMReady(accountUserId: number, registrationId: string) { return await this.outgoingCall.reportIMReady(accountUserId, registrationId) }
+  reportDeviceActivity() { this.outgoingCall.reportDeviceActivity() }
+  async gameRequest(action: string, body: Record<string, unknown>, expectedAccount: string) {
+    const session = await this.runtime.requireSession()
+    const account = `${session.userId}:${this.runtime.config.webrtcBaseUrl}`
+    if (action === 'bootstrap') return { path: `${this.config.routePath}/game/index.html`, account }
+    if (account !== expectedAccount) throw new Error('游戏账号已变化，请关闭窗口后重试')
+    if (action === 'prepare') {
+      this.deviceRegistration.start(session)
+      const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>('/api/v1/trtc/credentials', {}, session)
+      return {credentials: {...credentials, expires_at: Date.now() + 3600000}}
+    }
+    if (action === 'ready') {
+      const expected = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>('/api/v1/trtc/credentials', {}, session)
+      if (body.registration_id !== expected.user_id) throw new Error('设备 IM 身份不匹配')
+      await this.deviceRegistration.waitUntilReady(session.userId, String(body.registration_id ?? ''))
+      return {ok: true}
+    }
+    if (action === 'profiles') {
+      // Resolve only members of a room visible to this authenticated device.
+      const reply = await this.runtime.authenticatedWebrtcPost<import('./client/game/contracts.js').Reply>('/api/v1/game/room/get', body, session)
+      const profiles = await this.profile.publicProfileSummariesByUserIds(reply.room.members.map(m => m.user_id), session)
+      return {profiles: reply.room.members.map(m => {
+        const p = profiles.get(m.user_id)
+        return {membershipId: m.membership_id, registrationId: m.registration_id, userId: m.user_id,
+          name: p?.nickname || p?.displayName || String(m.user_id), avatarUrl: p?.avatarUrl}
+      })}
+    }
+    if (!['create','activate','get','join','credentials','invite/rotate','heartbeat','leave','close'].includes(action)) throw new Error('未知游戏操作')
+    try { return await this.runtime.authenticatedWebrtcPost(`/api/v1/game/room/${action}`, body, session) }
+    catch (error) {
+      const reason = error instanceof ArkmeUpstreamResponseError ? stringValue(objectValue(error.responseData).reason) : ''
+      const messages: Record<string,string> = {game_disabled:'游戏灰度尚未开启',game_host_room_busy:'上一个房间仍在使用或清理中，请先退出旧房间，稍后重试',game_room_full:'房间人数已满',game_invite_invalid:'房间钥匙无效或已过期',game_room_closed:'房间已结束',game_device_binding_required:'设备 IM 登记已失效，请重新进入',game_room_unavailable:'房间或成员身份已失效，请退出后重新进入'}
+      throw new ArkmePluginError('game-request-failed', messages[reason] ?? '游戏连接失败，请稍后重试', true)
+    }
+  }
   async prepareCallReceiver() { return await this.outgoingCall.prepareCallReceiver() }
   async claimIncomingCall(callRequestId: string) { return await this.outgoingCall.claimIncomingCall(callRequestId) }
 
@@ -1716,8 +1760,8 @@ recordingAnalysisV1: true,
     this.source.dispose()
     this.aiPolish.dispose()
     this.arrangement.dispose()
-    this.runtime.dispose()
     this.outgoingCall.dispose()
+    this.runtime.dispose()
     this.interwoven.dispose()
     this.relatedQuickNote.dispose()
     this.world.dispose()
@@ -2730,9 +2774,17 @@ recordingAnalysisV1: true,
     }) } as T
   }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean; firstPaint?: boolean } = {}): Promise<ArkmeTimelinePage> {
+  timelineBotPresentations(sourceRef: string, refs: unknown, signal?: AbortSignal) {
+    return this.chat.timelineBotPresentations(sourceRef, refs, signal)
+  }
+
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean; firstPaint?: boolean; deferBotProfiles?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (options.cursor?.firstUnread !== undefined && (options.cursor.firstUnread !== true || options.cursor.afterSequence === undefined
+      || options.cursor.unified !== undefined || source.kind !== 'private_chat' && source.kind !== 'group_chat')) {
+      throw new ArkmePluginError('chat-timeline-sequence-invalid', '当前查询不支持定位未读消息', false, 400)
+    }
     const localInitial = options.cursor?.unified?.cacheOnly === true && options.cursor.unified.mode === 'initial'
     if (source.kind === 'send_to_self' && localInitial) {
       const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 40)))
@@ -2762,23 +2814,30 @@ recordingAnalysisV1: true,
       this.messageSync.preferConversation(session.userId, memberChat ? source.ownerRef : undefined)
     }
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+      if (options.cursor?.afterSequence !== undefined && !options.cursor.unified) {
+        if (!Number.isSafeInteger(options.cursor.afterSequence) || options.cursor.afterSequence < 0
+          || options.cursor.beforeSequence !== undefined || options.cursor.itemUid !== undefined || options.cursor.sendAtMillis !== undefined) {
+          throw new ArkmePluginError('chat-timeline-sequence-invalid', '消息序号无效', false, 400)
+        }
+        return await this.chat.readSource(sourceRef, options)
+      }
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
       if (!options.cursor?.unified?.cacheOnly) this.realtime.preferChatProjection(session.userId, source.ownerRef)
       const page = await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal, options.background === true, options.firstPaint === true)
+      }, options.signal, options.background === true, options.firstPaint === true, options.deferBotProfiles === true)
       if (!options.cursor?.unified?.cacheOnly && !source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
       return await this.withSelfRoleSnapshots(page, session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
-  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> {
+  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal; deferBotProfiles?: boolean } = {}): Promise<ArkmeTimelineAroundPage> {
     const session = await this.runtime.requireSession()
     const page = await this.unifiedTimeline.read(sourceRef, { mode: 'around', itemUid, recordOwnerUserId,
-      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal)
+      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal, false, false, options.deferBotProfiles === true)
     const window = page.unified!
     const anchorIndex = page.items.findIndex(item => item.itemUid === itemUid)
-    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window,
+    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window, cache: page.cache,
       anchorItemUid: itemUid, anchorIndex, anchorSequence: page.items[anchorIndex]?.sequence ?? 0,
       olderHasMore: window.olderHasMore, newerHasMore: window.newerHasMore,
       ...(window.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: window.olderCursor } } } : {}),

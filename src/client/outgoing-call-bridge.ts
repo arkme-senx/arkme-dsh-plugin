@@ -5,6 +5,7 @@ export const DESKTOP_CALL_CHANNEL = `jot${'mo'}-desktop-call`
 const DESKTOP_CALL_HOST_KEY = `__JOT${'MO'}_DESKTOP_CALL_HOST__`
 
 const BRIDGE_EVENT_TYPES = new Set([
+  'im_ready', 'im_kicked',
   'ready', 'state', 'incoming', 'calling', 'begin', 'end', 'user_reject', 'user_no_response',
   'user_line_busy', 'not_connected', 'permission_denied', 'fatal_error',
   'toggle_fullscreen_request', 'toggle_compact_mode_request', 'hide_window_request',
@@ -17,6 +18,7 @@ const HOST_COMMAND_TYPES = new Set([
 
 export interface DesktopCallBridgeEvent {
   type: string
+  registrationId?: string
   callerName?: string
   requestId?: string
   roomId?: string
@@ -79,6 +81,7 @@ export function parseCallMessage(payload: unknown): DesktopCallBridgeEvent | und
   const callerName = safeString(message.callerName ?? caller.name, 120)
   return {
     type: message.type,
+    ...(typeof message.registrationId === 'string' ? { registrationId: safeString(message.registrationId, 128)! } : {}),
     ...(callerName === undefined ? {} : { callerName }),
     ...(requestId === undefined ? {} : { requestId }),
     ...(roomId === undefined ? {} : { roomId }),

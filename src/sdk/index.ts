@@ -1,3 +1,5 @@
+import { messageSendPoint, messageSendRecord } from '../message-send-timing.js'
+import { readPriorityHeader, supportsBackgroundRead } from '../read-scheduling.js'
 import { directoryTraceHeader, groupInteractionTrace, isDirectoryTraceId } from '../group-interaction-diagnostics.js'
 import type { LoginDeviceRequest, LoginDeviceResult } from '../login-devices-contract.js'
 export type * from '../login-devices-contract.js'
@@ -532,11 +534,14 @@ export class ArkmeClientError extends Error {
 
 export type { ArkmeExtensionPublishPage } from '../extensions/types.js'
 
-/** Browser scheduling hint only; never part of the Host operation payload. */
+/** Transport scheduling hints; never part of the Host operation payload. */
 export interface ArkmeSdkTransportOptions {
   priority?: 'high' | 'low' | 'auto'
+  /** Host admission hint for allowlisted reads; does not change authorization or write ordering. */
+  readPriority?: 'interactive' | 'background'
   /** @internal Loopback directory timing correlation. */
   directoryTraceId?: string
+  historyTrace?: { id: string; response(status: number, serverTiming: string | null): void }
 }
 
 export interface ArkmeSdkOptions {
@@ -2504,7 +2509,7 @@ export class ArkmeSdk {
     sourceRef: string,
     itemUid: string,
     recordOwnerUserId: RecordOwnerId,
-    options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {},
+    options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal; deferBotProfiles?: boolean } = {},
   ): Promise<ArkmeTimelineAroundPage> {
     if (sourceRef.trim() === '' || itemUid.trim() === '' || recordOwnerId(recordOwnerUserId) === 0) {
       throw new TypeError('Arkme timeline around requires a source, record uid, and record owner')
@@ -2515,6 +2520,7 @@ export class ArkmeSdk {
       recordOwnerUserId,
       ...(options.beforeLimit === undefined ? {} : { beforeLimit: options.beforeLimit }),
       ...(options.afterLimit === undefined ? {} : { afterLimit: options.afterLimit }),
+      ...(options.deferBotProfiles === true ? { deferBotProfiles: true } : {}),
     }, options.signal)
   }
 
@@ -3540,15 +3546,25 @@ export class ArkmeSdk {
     const traceId = operation === 'private-interaction.directory' && isDirectoryTraceId(transport?.directoryTraceId)
       ? transport.directoryTraceId : undefined
     if (traceId) groupInteractionTrace('directory-fetch-start', { traceId })
-    const response = await this.fetchImpl(this.route, {
+    const sendRecord = messageSendRecord(operation, params)
+    const sendStarted = sendRecord ? performance.now() : 0
+    messageSendPoint('browser', sendRecord, 'loopback-start', { operation })
+    try {
+    const trace = transport?.historyTrace
+    const response = await this.fetchImpl(trace ? `${this.route}?historyTrace=${encodeURIComponent(trace.id)}` : this.route, {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...(traceId ? { [directoryTraceHeader]: traceId } : {}) },
+      headers: { 'Content-Type': 'application/json', ...(traceId ? { [directoryTraceHeader]: traceId } : {}),
+        ...(supportsBackgroundRead(operation, params) && (transport?.readPriority === 'interactive' || transport?.readPriority === 'background')
+          ? { [readPriorityHeader]: transport.readPriority } : {}),
+      },
       body: JSON.stringify({ operation, ...(params === undefined ? {} : { params }) }),
       ...(signal === undefined ? {} : { signal }),
       ...(transport?.priority === undefined ? {} : { priority: transport.priority }),
     })
     if (traceId) groupInteractionTrace('directory-fetch-headers', { traceId, status: response.status })
+    messageSendPoint('browser', sendRecord, 'loopback-headers', { durationMs: performance.now() - sendStarted, status: response.status })
+    trace?.response(response.status, response.headers.get('Server-Timing'))
     let body: ArkmePluginResponse<T>
     try {
       body = await response.json() as ArkmePluginResponse<T>
@@ -3560,8 +3576,10 @@ export class ArkmeSdk {
       })
     }
 
+    messageSendPoint('browser', sendRecord, 'loopback-decoded', { durationMs: performance.now() - sendStarted, ok: body.ok })
     if (!body.ok) throw new ArkmeClientError(body.error)
     return body.value
+    } finally { messageSendPoint('browser', sendRecord, 'loopback-end', { durationMs: performance.now() - sendStarted }) }
   }
 }
 

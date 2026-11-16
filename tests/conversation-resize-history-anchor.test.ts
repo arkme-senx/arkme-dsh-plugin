@@ -1,3 +1,5 @@
+import { beforeEach as beforeForegroundCase } from 'vitest'
+beforeForegroundCase(() => { vi.spyOn(document, 'hasFocus').mockReturnValue(true) })
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
 import { observeConversationResize } from '../src/client/conversation-resize-anchor.js'

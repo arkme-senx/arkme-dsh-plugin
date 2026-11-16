@@ -33,7 +33,10 @@ it('shows the shared user card; only explicit Send opens the verified private co
   const source = { sourceRef: 'private-source', kind: 'private_chat' }
   call.mockResolvedValue({ source })
   await act(async () => root.render(<Harness />))
+  const range=document.createRange();range.selectNodeContents(host.querySelector('button')!)
+  document.getSelection()!.removeAllRanges();document.getSelection()!.addRange(range)
   await act(async () => host.querySelector('button')!.click())
+  expect(document.getSelection()!.isCollapsed).toBe(true)
   expect(document.getElementById(document.querySelector('[role="dialog"]')?.getAttribute('aria-labelledby') ?? '')?.textContent).toBe('访客 的用户卡片')
   expect(call).not.toHaveBeenCalled()
   await act(async () => { findButton('发消息').click(); await tick() })

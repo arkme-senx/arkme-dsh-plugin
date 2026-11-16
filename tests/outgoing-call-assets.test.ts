@@ -171,7 +171,7 @@ describe('outgoing call assets', () => {
   it('posts terminal events to the DSH web iframe parent when native bridges are unavailable', async () => {
     const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
     const bridge = bundle.slice(bundle.indexOf('function resolveWebHostCallRequestId()'), bundle.indexOf('function escapeHtml(value)'))
-    const post = bundle.slice(bundle.indexOf('function postToFlutter(type, extra = {})'), bundle.indexOf('function setStatusText(text)'))
+    const post = bundle.slice(bundle.indexOf('function postToFlutter('), bundle.indexOf('function setStatusText(text)'))
 
     expect(bridge).toContain('JSON.parse(String(window.name || "{}"))')
     expect(bridge).toContain('channel: "jotmo-desktop-call"')
@@ -189,10 +189,10 @@ describe('outgoing call assets', () => {
     expect(bridge).toContain('message: payload')
   })
 
-  it('cache-busts the iframe document from the host using each call request id', async () => {
+  it('keeps the iframe URL stable for the shared communication runtime', async () => {
     const host = await readFile(join(import.meta.dirname, '..', 'src', 'client', 'ArkmeOutgoingCallHost.tsx'), 'utf8')
 
-    expect(host).toContain("const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`")
+    expect(host).toContain("const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.frameId || snapshot.callRequestId || 'idle')}`")
     expect(host).toContain('src={callFrameUrl}')
     expect(host).toContain('const attachCallFrame = useCallback(')
   })

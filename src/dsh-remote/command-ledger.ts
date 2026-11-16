@@ -154,10 +154,12 @@ export class DshRemoteCommandLedger {
 
   completeRejected(
     identity: Pick<DshRemoteLedgerIdentity, 'accountId' | 'runtimeRef' | 'requestRef'>,
-    error: Pick<DshRemoteError, 'code' | 'message' | 'retryable'>,
+    error: Pick<DshRemoteError, 'code' | 'message' | 'retryable'> & Partial<Pick<DshRemoteError, 'details'>>,
   ): DshRemoteLedgerEntry {
     return this.complete(identity, {
-      rejected: { code: error.code, message: error.message.slice(0, 500), retryable: error.retryable },
+      rejected: { code: error.code, message: error.message.slice(0, 500), retryable: error.retryable,
+        ...(error.details?.dshRejected === true ? { dshRejected: true } : {}),
+      },
     })
   }
 

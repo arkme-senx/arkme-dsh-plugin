@@ -1,4 +1,7 @@
+import { bindMessageSend, currentMessageSend } from '../message-send-host-timing.js'
+import { messageSendPoint } from '../message-send-timing.js'
 import { directoryTraceSignals, groupInteractionTrace } from '../group-interaction-diagnostics.js'
+import { bindConversationRead, conversationReadTracing, countConversationHttpAttempt, measureConversationReadPhase, noteConversationRead, recordConversationReadPhase } from '../conversation-read-diagnostics.js'
 import { ArkmePluginError } from './service-error.js'
 export { ArkmePluginError } from './service-error.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -75,6 +78,8 @@ arkoFileRefs(userId:number):Promise<string[]>
   writeAvatarCache?(userId: number, imageRef: string, image: import('../types.js').ArkmeImageBytes): Promise<void>
   selfRoleAvatarLocalRef?(userId: number, fileAssetUid: string): Promise<string | undefined>
   forgetCachedMembers?(userId: number, group: string, refs: readonly string[]): Promise<void>
+  readBotDisplayCache?(scope: string): Promise<readonly import('../chat-sender-display.js').BotDisplayCacheEntry[]>
+  writeBotDisplayCache?(scope: string, entries: readonly import('../chat-sender-display.js').BotDisplayCacheEntry[]): Promise<void>
   clearPublicPeople?(environment: string, viewer: number, target?: number): Promise<void>
   cachedPublicPerson?(environment: string, viewer: number, target: number): Promise<import('../public-person-cache.js').PublicPersonSnapshot | undefined>
   cachePublicPeople?(environment: string, viewer: number, entries: readonly import('../public-person-cache.js').PublicPersonSnapshot[], missing: readonly number[], observedAt: number): Promise<void>
@@ -147,6 +152,7 @@ arkoFileRefs(userId:number):Promise<string[]>
 }
 
 export interface ArkmeServiceConfig {
+  appVersion?: string
   environment: ArkmeEnvironment
   dshRemoteRealtimeBaseUrl?: string
   authBaseUrl: string
@@ -316,11 +322,17 @@ function waitForRefresh<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   })
 }
 
+const readConcurrencyOnly = { ratePerSecond: Number.MAX_SAFE_INTEGER, burst: Number.MAX_SAFE_INTEGER }
+
 export class ServiceRuntime {
   private memberCacheRevision = 0
   memberCacheEpoch(): number { return this.memberCacheRevision }
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
   invalidateMemberCache(): void { this.memberCacheRevision += 1 }
+  private readonly readPriority = new AsyncLocalStorage<'interactive-read' | 'background-read'>()
+  runWithReadPriority<T>(lane: 'interactive-read' | 'background-read', operation: () => Promise<T>): Promise<T> {
+    return this.readPriority.run(lane, operation)
+  }
   readonly requestCoordinator: ArkmeRequestCoordinator
   // Media holds permits until body completion, independently of short JSON reads.
   private readonly mediaStreamCoordinator = new ArkmeRequestCoordinator()
@@ -328,7 +340,9 @@ export class ServiceRuntime {
   // Background member rosters and other UI reads never inherit this context.
   private readonly messageSyncCoordinator = new ArkmeRequestCoordinator({
     maxConcurrent: 4, maxQueued: 128,
-    defaultRouteLimit: { maxConcurrent: 4, ratePerSecond: 8, burst: 8 },
+    laneLimits: { 'interactive-read': readConcurrencyOnly, 'background-read': readConcurrencyOnly },
+    defaultServiceLimit: readConcurrencyOnly,
+    defaultRouteLimit: { ...readConcurrencyOnly, maxConcurrent: 4 },
   })
   private readonly messageSyncLane = new AsyncLocalStorage<'interactive-read' | 'background-read'>()
   private readonly refreshInFlightByUserId = new Map<number, { refreshToken: string; promise: Promise<ArkmeSessionCredentials> }>()
@@ -347,9 +361,18 @@ export class ServiceRuntime {
     const chatBaseUrl = config.chatBaseUrl?.replace(/\/+$/, '')
     // Chat allows five list reads per second per account across devices. Keep
     // headroom and pace actual transports, including retries and other list readers.
-    this.requestCoordinator = new ArkmeRequestCoordinator(chatBaseUrl ? {
-      routeLimits: { [`${chatBaseUrl}/api/v1/chats/list`]: { ratePerSecond: 4 } },
-    } : undefined)
+    this.requestCoordinator = new ArkmeRequestCoordinator({
+      maxConcurrent: 12, maxQueued: 512,
+      laneLimits: {
+        'interactive-read': { ...readConcurrencyOnly, maxConcurrent: 6 },
+        'background-read': { ...readConcurrencyOnly, maxConcurrent: 6 },
+      },
+      defaultServiceLimit: { ...readConcurrencyOnly, maxConcurrent: 6, maxBackgroundConcurrent: 2 },
+      defaultRouteLimit: { ...readConcurrencyOnly, maxConcurrent: 4 },
+      ...(chatBaseUrl ? { routeLimits: {
+        [`${chatBaseUrl}/api/v1/chats/list`]: { maxConcurrent: 1, ratePerSecond: 4, burst: 1 },
+      } } : {}),
+    })
   }
 
   async startAccountScope(): Promise<void> { await this.accountSessions.start() }
@@ -470,9 +493,13 @@ export class ServiceRuntime {
     }
     const messageSync = admission === 'route-only' && route === 'chat.timeline.window'
     return await (messageSync ? this.messageSyncCoordinator : this.requestCoordinator).run({
-      scope: this.requestScope(session.userId), lane, service: 'extension',
+      scope: this.requestScope(session.userId), lane: this.readPriority.getStore() ?? lane, service: 'extension',
       admission,
       route, key: `owner-read:${route}:${stableReadParameters(parameters)}`, cancelWhenUnobserved: true,
+      ...(messageSync && conversationReadTracing() ? { onQueue: bindConversationRead<[event: 'enter' | 'start' | 'cancel' | 'join', detail: Record<string, string | number | boolean>]>((event, detail) => {
+        if (event !== 'enter') noteConversationRead('owner-admission', event)
+        if (typeof detail.queueWaitMs === 'number') recordConversationReadPhase('owner-queue', detail.queueWaitMs)
+      }) } : {}),
       ...(signal === undefined ? {} : { signal }),
       operation: async operationSignal => {
         await assertCurrentAccount(operationSignal)
@@ -712,11 +739,18 @@ export class ServiceRuntime {
           : trace.includes('RuntimeBotDisplayProfilesReader') ? 'bot-display' : 'directory' })
     }
     const traceId = directoryRead && signal ? directoryTraceSignals.get(signal) : undefined
-    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !traceId ? reactionQueue : (event, detail) => {
+    const sendRecord = currentMessageSend()
+    const historyTransport = conversationReadTracing() && baseUrl === this.config.chatBaseUrl && path.startsWith('/api/v1/chat/timeline/unified')
+    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !historyTransport && !traceId && !sendRecord ? reactionQueue : bindConversationRead((event, detail) => {
       reactionQueue?.(event, detail)
+      messageSendPoint('host', sendRecord, 'upstream-queue', { route: path, event, lane, queueMs: typeof detail.queueWaitMs === 'number' ? detail.queueWaitMs : undefined })
       if (traceId) groupInteractionTrace('directory-host-queue', { traceId, event, ...detail })
+      if (historyTransport) {
+        if (event !== 'enter') noteConversationRead('transport-admission', event)
+        if (typeof detail.queueWaitMs === 'number') recordConversationReadPhase('upstream-queue', detail.queueWaitMs)
+      }
       if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_queue', { atMillis: Date.now(), path, pool: messageSync ? 'message-sync' : 'shared', event, ...detail })
-    }
+    })
     return await measureReaction('upstream-total', { route: path }, () => coordinator.run<T>({
       scope: options.scope ?? 'public',
       lane,
@@ -733,7 +767,7 @@ export class ServiceRuntime {
         continuation: typeof body.cursor === 'string' && /^[a-f0-9]{64}$/.test(String(body.expected_version)),
       } : {}),
       ...(read ? {
-        lane: lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
+        lane: this.readPriority.getStore() ?? (lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const),
         route,
         key: `owner-read:${route}:${stableReadParameters(body)}${options.stringIdFields?.length?`:string-ids:${[...options.stringIdFields].sort().join(",")}`:""}`,
         cacheMs: 0,
@@ -746,19 +780,24 @@ export class ServiceRuntime {
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => read || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
       ...(onQueue ? { onQueue } : {}),
-      operation: bindReactionTrace(async coordinatedSignal => {
+      operation: bindMessageSend(bindReactionTrace(async coordinatedSignal => {
         const started = timelineDiagnostic ? Date.now() : 0
         let errorCode: string | undefined
-        try { return await measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
+        const send = () => measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
           baseUrl, path, body, bearer, successCodes, coordinatedSignal, preferDataError,
           preserveHttpError, preserveForbiddenError, requestTimeoutMs, options.chatAccessRef,options.stringIdFields, options.chatMessageActionsV2,
-        )) } catch (error) {
+        ))
+        try {
+          if (!historyTransport) return await send()
+          countConversationHttpAttempt()
+          return await measureConversationReadPhase('upstream-http', send)
+        } catch (error) {
           if (timelineDiagnostic) errorCode = error instanceof ArkmePluginError ? error.code : 'transport-error'
           throw error
         } finally {
           if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_http', { atMillis: Date.now(), path, millis: Date.now() - started, ...(errorCode ? { errorCode } : {}) })
         }
-      }),
+      })),
     })).catch((error): never => {
       if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
         throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })
@@ -787,6 +826,12 @@ export class ServiceRuntime {
     stringIdFields:readonly string[]=[],
     chatMessageActionsV2 = false,
   ): Promise<T> {
+    const sendRecord = currentMessageSend()
+    const sendStarted = sendRecord ? performance.now() : 0
+    const sendRequestId = sendRecord ? `arkme-send-${sendRecord}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` : undefined
+    let sendStatus: number | undefined
+    let sendCode: number | undefined
+    messageSendPoint('host', sendRecord, 'upstream-http-start', { route: path, requestId: sendRequestId })
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
     if (signal.aborted) abort()
@@ -805,6 +850,7 @@ export class ServiceRuntime {
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
         method: 'POST',
         headers: {
+          ...(sendRequestId ? { 'X-Request-ID': sendRequestId } : {}),
           ...(chatAccessRef ? { 'X-Chat-Access-Ref': chatAccessRef } : {}),
           ...(chatMessageActionsV2 ? { 'X-Arkme-Message-Actions': '2' } : {}),
           ...(multipart ? {} : { 'Content-Type': 'application/json' }),
@@ -815,6 +861,8 @@ export class ServiceRuntime {
         body: multipart ? body : stringifyOwnerJson(body,stringIdFields),
         signal: controller.signal,
       })
+      sendStatus = response.status
+      messageSendPoint('host', sendRecord, 'upstream-http-headers', { route: path, durationMs: performance.now() - sendStarted, status: response.status, requestId: response.headers.get('X-Request-ID') ?? sendRequestId })
       if (path === '/api/public/v1/auth/login-by-pwd' && response.headers.get('X-Jotmo-Auth-Failure') === 'device_verification_required') {
         throw new ArkmePluginError('device-verification-required', '此设备已取消信任，请使用验证码、扫码或授权方式重新登录', false, 403)
       }
@@ -868,6 +916,8 @@ export class ServiceRuntime {
       catch (error) {
         throw new ArkmePluginError('arkme-response-invalid', 'Arkme 服务返回了无效响应', true, 502, { cause: error })
       }
+      sendCode = envelope.code
+      messageSendPoint('host', sendRecord, 'upstream-http-decoded', { route: path, durationMs: performance.now() - sendStarted, code: envelope.code, requestId: sendRequestId })
       if (!successCodes.includes(envelope.code)) {
         const errorData = objectValue(envelope.data)
         const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
@@ -894,6 +944,7 @@ export class ServiceRuntime {
       }
       throw new ArkmePluginError('arkme-network-error', '无法连接Arkme 服务', true, 502, { cause: error })
     } finally {
+      messageSendPoint('host', sendRecord, 'upstream-http-end', { route: path, durationMs: performance.now() - sendStarted, status: sendStatus, code: sendCode, requestId: sendRequestId })
       clearTimeout(timeout)
       signal.removeEventListener('abort', abort)
     }
@@ -910,7 +961,7 @@ export class ServiceRuntime {
   ): Promise<T> {
     return await this.requestCoordinator.run({
       scope: options.scope ?? 'public',
-      lane: options.lane ?? 'interactive-read',
+      lane: this.readPriority.getStore() ?? options.lane ?? 'interactive-read',
       service: options.service ?? this.requestService(baseUrl),
       ...(options.key === undefined ? {} : { key: options.key }),
       ...(options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs }),
