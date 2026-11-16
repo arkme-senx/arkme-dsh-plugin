@@ -1,4 +1,5 @@
 import {it, expect, vi} from 'vitest'
+import {GameService} from '../src/services/game-service.js'
 import {ArkmeService} from '../src/arkme-service.js'
 
 function fixture() {
@@ -9,7 +10,8 @@ function fixture() {
   ]}})
   const profiles=vi.fn().mockResolvedValue(new Map([[510,{nickname:'小明',displayName:'账号名',avatarUrl:'https://example.com/avatar.png'}]]))
   const owner={runtime:{requireSession:async()=>session,config:{webrtcBaseUrl:'test'},authenticatedWebrtcPost:get},profile:{publicProfileSummariesByUserIds:profiles}}
-  const read=(body:Record<string,unknown>,account='510:test')=>ArkmeService.prototype.gameRequest.call(owner as never,'profiles',body,account)
+  const facade = {game: new GameService(owner.runtime as never, {} as never, owner.profile as never)}
+  const read=(body:Record<string,unknown>,account='510:test')=>ArkmeService.prototype.gameRequest.call(facade as never,'profiles',body,account)
   return {get,profiles,read}
 }
 it('resolves identities only from the authorized room, with user ID fallback',async()=>{

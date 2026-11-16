@@ -1773,27 +1773,28 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     const firstSession = { userId: 10001, accessToken: 'access-1', refreshToken: 'refresh-1' }
     const secondSession = { userId: 20002, accessToken: 'access-2', refreshToken: 'refresh-2' }
-    sessions.session = secondSession
-    vi.spyOn(sessions, 'read')
-      .mockResolvedValueOnce(firstSession)
-      .mockResolvedValueOnce(secondSession)
+    sessions.session = firstSession
     const state = new MemoryStateStore()
-    const fetchImpl = vi.fn<typeof fetch>(async () => json({
-      code: 200,
-      data: {
-        user_id: 10001,
-        nick_name: '旧账号',
-        jotmo_id: 'Old_account',
-        can_update_jotmo_id: true,
-        type: 1,
-      },
-    }))
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      sessions.session = secondSession
+      return json({
+        code: 200,
+        data: {
+          user_id: 10001,
+          nick_name: '旧账号',
+          jotmo_id: 'Old_account',
+          can_update_jotmo_id: true,
+          type: 1,
+        },
+      })
+    })
     const service = new ArkmeService(config, sessions, state, fetchImpl)
 
     await expect(service.setArkmeIdOnce('New_account')).rejects.toMatchObject({
       code: 'account-changed', retryable: false, httpStatus: 409,
     })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).includes('/update-jotmo-id'))).toBe(false)
   })
 
   it('validates Arkme IDs locally and maps authoritative availability reasons', async () => {
