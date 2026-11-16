@@ -94,7 +94,7 @@ describe('Bot identity through ServiceRuntime', () => {
     const firstRejected = expect(first).rejects.toBe(reason)
     const second = f.read()
     await f.snapshotStarted
-    await vi.waitFor(() => expect(request.mock.calls.filter(([path]) => path === '/api/v1/chats/display-snapshots')).toHaveLength(2))
+    await vi.waitFor(() => expect(request.mock.calls.filter(([path]) => path === '/api/v1/chats/display-snapshots')).toHaveLength(1))
     firstCaller.abort(reason)
     await firstRejected
     expect(f.snapshotSignal()?.aborted).toBe(false)
@@ -243,7 +243,7 @@ describe('Bot display boundary regressions', () => {
     const rejected = expect(first).rejects.toThrow('reader closed')
     const second = f.read()
     await ready
-    await vi.waitFor(() => expect(requests.mock.calls.filter(([path]) => path.endsWith('/group/list'))).toHaveLength(2))
+    await vi.waitFor(() => expect(requests.mock.calls.filter(([path]) => path.endsWith('/group/list'))).toHaveLength(1))
     caller.abort(new Error('reader closed'))
     await rejected
     expect(transport?.aborted).toBe(false)
@@ -277,9 +277,9 @@ describe('Bot display boundary regressions', () => {
       if (reason === 'budget') expect('value' in settled && settled.value.items[0]?.senderName).toBe('Bot')
       else if (reason === 'account') expect('error' in settled && settled.error).toBeInstanceOf(ArkmeStaleRequestError)
       else expect('error' in settled && settled.error).toBe(caller.signal.reason)
-      expect(requestSignal?.aborted).toBe(true)
+      expect(requestSignal?.aborted).toBe(reason !== 'caller')
       expect(spy).toHaveBeenCalledTimes(1)
       expect(f.fetchImpl).toHaveBeenCalledTimes(stage === 'group' ? 4 : 3)
-    } finally { caller.abort(); await pending.catch(() => {}); spy.mockRestore() }
+    } finally { caller.abort(); budget.abort(); await pending.catch(() => {}); spy.mockRestore() }
   })
 })

@@ -49,7 +49,7 @@ export type ArkmeUnifiedTimelineEvent = ArkmeTimelineEventOrder & (
   | { kind: 'moment'; item: ArkmeInterwovenMention }
   | { kind: 'member-event'; item: ArkmeMemberEvent }
   | { kind: 'member-join'; item: ArkmeTimelineMemberJoinEvent }
-  | { kind: 'notice'; text: string }
+  | { kind: 'notice'; text: string; retryable?: true; hidden?: true }
   | { kind: 'external'; title: string; text: string }
   | { kind: 'world-public'; recordRef: string; authorName: string }
   | { kind: 'offline-context'; entryRef: string; revision: string; title: string; summary: string }

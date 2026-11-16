@@ -548,18 +548,25 @@ describe('record re-edit attachment UI', () => {
     })
   })
 
-  it('replays a deferred timeline invalidation when around navigation fails', async () => {
+  it.each([false, true])('replays a deferred timeline invalidation once when around navigation fails (unified=%s)', async unified => {
     let rejectAround!: (reason: Error) => void
     const around = new Promise<never>((_resolve, reject) => { rejectAround = reject })
     const base = mocks.callArkme.getMockImplementation()!
     const refreshReads: unknown[] = []
     let changed = false
+    const page = (record: ArkmeTimelineItem) => ({ source, items: [record], hasMore: false, ...(unified ? { unified: {
+      protocolVersion: 2, events: [{ kind: 'message', eventId: 'record-event', source: 'messages', occurredAtMillis: 1,
+        orderTie: 'record-event', contentStatus: 'available', item: { ...record, timelineEventId: 'record-event', sequence: 1 } }],
+      sources: [{ source: 'messages', status: 'ready', itemCount: 1 }], complete: true, windowTokens: ['window'],
+      hasMore: false, olderHasMore: false, newerHasMore: false,
+    } } : {}) })
     mocks.callArkme.mockImplementation(async (operation, params) => {
       if (operation === 'source.timeline-around') return around
       if (operation === 'source.timeline' && changed) {
         refreshReads.push(params)
-        return { source, items: [{ ...item, version: 4, textContent: '定位失败后补刷的新正文' }], hasMore: false }
+        return page({ ...item, version: 4, textContent: '定位失败后补刷的新正文' })
       }
+      if (operation === 'source.timeline' && unified) return page(item)
       return base(operation, params)
     })
     await mount()
@@ -572,7 +579,14 @@ describe('record re-edit attachment UI', () => {
     })
     expect(refreshReads).toHaveLength(0)
     await act(async () => { rejectAround(new Error('未找到要定位的快记')); await flush() })
-    expect(refreshReads).toEqual([{ sourceRef: source.sourceRef, limit: 100, background: true, deferBotProfiles: true }])
+    await vi.waitFor(async () => {
+      await act(async () => { await flush() })
+      expect(refreshReads).toHaveLength(1)
+    })
+    expect(refreshReads).toHaveLength(1)
+    expect(refreshReads[0]).toMatchObject({ sourceRef: source.sourceRef, background: true, deferBotProfiles: true })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); await flush() })
+    expect(refreshReads).toHaveLength(1)
     expect(mocks.renderedItems.filter(value => value.itemUid === item.itemUid).at(-1))
       .toMatchObject({ version: 4, textContent: '定位失败后补刷的新正文' })
     expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'missing-target' })).toHaveLength(0)

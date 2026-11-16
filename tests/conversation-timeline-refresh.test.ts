@@ -209,6 +209,12 @@ describe('cache-first adjacent pages', () => {
     expect(localSignal?.aborted).toBe(true)
     expect(remote).toHaveBeenCalledOnce()
   })
+  it('does not let a cached terminal newer page hide a subsequently advanced message head', async () => {
+    const remote = vi.fn().mockResolvedValue(page([record(10)]))
+    await expect(readConversationAdjacentPage(vi.fn().mockResolvedValue(older), remote,
+      new AbortController().signal, false, 'old-tail', 'newer', undefined, 10)).resolves.toMatchObject({ items: [record(10)] })
+    expect(remote).toHaveBeenCalledOnce()
+  })
   it('does not start network when switching conversations during a local read', async () => {
     const scope = new AbortController()
     const local = vi.fn(async () => { scope.abort(); return older })

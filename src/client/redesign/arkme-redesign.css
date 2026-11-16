@@ -293,14 +293,6 @@ span.arkme-forward-search {
 @media (prefers-reduced-motion: reduce) {
   .arkme-message-send-spinner { animation: none; }
 }
-.arkme-conversation-records-reveal { animation: arkme-conversation-records-reveal 120ms ease-out both; }
-@keyframes arkme-conversation-records-reveal {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .arkme-conversation-records-reveal { animation: none; }
-}
 .arkme-redesign-route-chats [data-arkme-content-presentation="bubble"] p { font-size: 14px; line-height: 1.62; }
 .arkme-redesign-route-chats .arkme-conversation-composer { padding: 0 24px 20px !important; }
 .arkme-redesign-route-chats .arkme-conversation-composer-inner {

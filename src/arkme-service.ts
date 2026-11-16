@@ -1405,6 +1405,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return snapshot
   }
 
+  runWithReadPriority<T>(lane: 'interactive-read' | 'background-read', operation: () => Promise<T>): Promise<T> {
+    return this.runtime.runWithReadPriority(lane, operation)
+  }
+
   setNativeAnnotationSource(source: NativeAnnotationSource, runtime?: () => string | undefined) { this.nativeAnnotationService.source = source; this.nativeAnnotationService.sourceRuntime = runtime }
   setNativeAnnotationHistorySync(resolver: NonNullable<NativeAnnotationsService['historySync']>) { this.nativeAnnotationService.historySync = resolver }
   setNativeAnnotationAccess(resolve: NonNullable<NativeAnnotationsService['resolveTarget']>, source: NativeAnnotationSource, publish: NonNullable<NativeAnnotationsService['publishSource']>) {
@@ -2787,13 +2791,13 @@ recordingAnalysisV1: true,
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
-  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> {
+  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal; deferBotProfiles?: boolean } = {}): Promise<ArkmeTimelineAroundPage> {
     const session = await this.runtime.requireSession()
     const page = await this.unifiedTimeline.read(sourceRef, { mode: 'around', itemUid, recordOwnerUserId,
-      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal)
+      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal, false, false, options.deferBotProfiles === true)
     const window = page.unified!
     const anchorIndex = page.items.findIndex(item => item.itemUid === itemUid)
-    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window,
+    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window, cache: page.cache,
       anchorItemUid: itemUid, anchorIndex, anchorSequence: page.items[anchorIndex]?.sequence ?? 0,
       olderHasMore: window.olderHasMore, newerHasMore: window.newerHasMore,
       ...(window.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: window.olderCursor } } } : {}),

@@ -319,11 +319,17 @@ function waitForRefresh<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
   })
 }
 
+const readConcurrencyOnly = { ratePerSecond: Number.MAX_SAFE_INTEGER, burst: Number.MAX_SAFE_INTEGER }
+
 export class ServiceRuntime {
   private memberCacheRevision = 0
   memberCacheEpoch(): number { return this.memberCacheRevision }
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
   invalidateMemberCache(): void { this.memberCacheRevision += 1 }
+  private readonly readPriority = new AsyncLocalStorage<'interactive-read' | 'background-read'>()
+  runWithReadPriority<T>(lane: 'interactive-read' | 'background-read', operation: () => Promise<T>): Promise<T> {
+    return this.readPriority.run(lane, operation)
+  }
   readonly requestCoordinator: ArkmeRequestCoordinator
   // Media holds permits until body completion, independently of short JSON reads.
   private readonly mediaStreamCoordinator = new ArkmeRequestCoordinator()
@@ -331,7 +337,9 @@ export class ServiceRuntime {
   // Background member rosters and other UI reads never inherit this context.
   private readonly messageSyncCoordinator = new ArkmeRequestCoordinator({
     maxConcurrent: 4, maxQueued: 128,
-    defaultRouteLimit: { maxConcurrent: 4, ratePerSecond: 8, burst: 8 },
+    laneLimits: { 'interactive-read': readConcurrencyOnly, 'background-read': readConcurrencyOnly },
+    defaultServiceLimit: readConcurrencyOnly,
+    defaultRouteLimit: { ...readConcurrencyOnly, maxConcurrent: 4 },
   })
   private readonly messageSyncLane = new AsyncLocalStorage<'interactive-read' | 'background-read'>()
   private readonly refreshInFlightByUserId = new Map<number, { refreshToken: string; promise: Promise<ArkmeSessionCredentials> }>()
@@ -350,9 +358,18 @@ export class ServiceRuntime {
     const chatBaseUrl = config.chatBaseUrl?.replace(/\/+$/, '')
     // Chat allows five list reads per second per account across devices. Keep
     // headroom and pace actual transports, including retries and other list readers.
-    this.requestCoordinator = new ArkmeRequestCoordinator(chatBaseUrl ? {
-      routeLimits: { [`${chatBaseUrl}/api/v1/chats/list`]: { ratePerSecond: 4 } },
-    } : undefined)
+    this.requestCoordinator = new ArkmeRequestCoordinator({
+      maxConcurrent: 12, maxQueued: 512,
+      laneLimits: {
+        'interactive-read': { ...readConcurrencyOnly, maxConcurrent: 6 },
+        'background-read': { ...readConcurrencyOnly, maxConcurrent: 6 },
+      },
+      defaultServiceLimit: { ...readConcurrencyOnly, maxConcurrent: 6, maxBackgroundConcurrent: 2 },
+      defaultRouteLimit: { ...readConcurrencyOnly, maxConcurrent: 4 },
+      ...(chatBaseUrl ? { routeLimits: {
+        [`${chatBaseUrl}/api/v1/chats/list`]: { maxConcurrent: 1, ratePerSecond: 4, burst: 1 },
+      } } : {}),
+    })
   }
 
   async startAccountScope(): Promise<void> { await this.accountSessions.start() }
@@ -473,7 +490,7 @@ export class ServiceRuntime {
     }
     const messageSync = admission === 'route-only' && route === 'chat.timeline.window'
     return await (messageSync ? this.messageSyncCoordinator : this.requestCoordinator).run({
-      scope: this.requestScope(session.userId), lane, service: 'extension',
+      scope: this.requestScope(session.userId), lane: this.readPriority.getStore() ?? lane, service: 'extension',
       admission,
       route, key: `owner-read:${route}:${stableReadParameters(parameters)}`, cancelWhenUnobserved: true,
       ...(messageSync && conversationReadTracing() ? { onQueue: bindConversationRead<[event: 'enter' | 'start' | 'cancel' | 'join', detail: Record<string, string | number | boolean>]>((event, detail) => {
@@ -745,7 +762,7 @@ export class ServiceRuntime {
         continuation: typeof body.cursor === 'string' && /^[a-f0-9]{64}$/.test(String(body.expected_version)),
       } : {}),
       ...(read ? {
-        lane: lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const,
+        lane: this.readPriority.getStore() ?? (lane === 'background-read' || path === '/api/v1/reactions/notifications/query' ? 'background-read' as const : 'interactive-read' as const),
         route,
         key: `owner-read:${route}:${stableReadParameters(body)}${options.stringIdFields?.length?`:string-ids:${[...options.stringIdFields].sort().join(",")}`:""}`,
         cacheMs: 0,
@@ -927,7 +944,7 @@ export class ServiceRuntime {
   ): Promise<T> {
     return await this.requestCoordinator.run({
       scope: options.scope ?? 'public',
-      lane: options.lane ?? 'interactive-read',
+      lane: this.readPriority.getStore() ?? options.lane ?? 'interactive-read',
       service: options.service ?? this.requestService(baseUrl),
       ...(options.key === undefined ? {} : { key: options.key }),
       ...(options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs }),

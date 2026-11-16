@@ -51,3 +51,18 @@ it('preserves Host error semantics without retrying low-priority reads', async (
   await expect(createArkmeSdk({ fetchImpl }).call('team.app.image', {}, undefined, { priority: 'low' })).rejects.toMatchObject({ body })
   expect(fetchImpl).toHaveBeenCalledOnce()
 })
+
+it.each(['interactive', 'background'] as const)('carries %s Host read admission independently of Chromium priority', async readPriority => {
+  const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => success())
+  await createArkmeSdk({ fetchImpl }).call('private-interaction.directory', { cursor: 'next' }, undefined, { priority: 'high', readPriority })
+  const init = fetchImpl.mock.calls[0]![1]!
+  expect(new Headers(init.headers).get('X-Arkme-Read-Priority')).toBe(readPriority)
+  expect(init.priority).toBe('high')
+  expect(JSON.parse(String(init.body))).toEqual({ operation: 'private-interaction.directory', params: { cursor: 'next' } })
+})
+
+it.each(['source.send-text', 'auth.logout', 'unknown.operation'] as const)('ignores Host read priority for %s', async operation => {
+  const fetchImpl = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => success())
+  await createArkmeSdk({ fetchImpl }).call(operation as never, {}, undefined, { priority: 'low', readPriority: 'background' })
+  expect(new Headers(fetchImpl.mock.calls[0]![1]!.headers).has('X-Arkme-Read-Priority')).toBe(false)
+})

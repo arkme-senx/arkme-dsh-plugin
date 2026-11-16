@@ -21,6 +21,8 @@ export function projectCommittedChatMessage(
 ): ArkmeTimelineItem | undefined {
   const change = item.timelineItemKey ? changes.get(item.timelineItemKey) : undefined
   if (!change) return item
+  // A canonical access restriction must be cleared by a fresh authorized timeline read.
+  if (change.item && item.status === 0 && item.quickNoteDetailsSupported === false) return item
   if (change.version !== 0 && (item.recordVersion ?? item.version ?? 0) > change.version) return item
   if (change.item && change.item.messageActionsV2 === undefined && item.messageActionsV2 === true) {
     let projected = committedBodiesWithConfirmedActions.get(change.item)

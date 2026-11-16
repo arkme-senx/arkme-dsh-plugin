@@ -961,22 +961,23 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it.each([7, '6690025278483443577'])('requests an exact chat timeline window around a record for %s', async (ownerId) => {
+  it.each([7, '6690025278483443577'].flatMap(ownerId => [false, true].map(deferBotProfiles => ({ownerId, deferBotProfiles}))))('requests an exact chat timeline window around a record for %s', async ({ownerId, deferBotProfiles}) => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
       calls.push(JSON.parse(String(init?.body)))
       return success({
         source: { sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
         items: [], anchorItemUid: 'record-1', anchorSequence: 11, anchorIndex: 0,
+        cache: { origin: 'network', persistence: 'deferred', stale: true },
         olderHasMore: false, newerHasMore: false,
       })
     } })
 
-    await expect(sdk.readSourceAround('source-1', 'record-1', ownerId, { beforeLimit: 20, afterLimit: 30 }))
-      .resolves.toMatchObject({ anchorItemUid: 'record-1' })
+    await expect(sdk.readSourceAround('source-1', 'record-1', ownerId, { beforeLimit: 20, afterLimit: 30, deferBotProfiles }))
+      .resolves.toMatchObject({ anchorItemUid: 'record-1', cache: { origin: 'network', persistence: 'deferred', stale: true } })
     expect(calls).toEqual([{
       operation: 'source.timeline-around',
-      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: ownerId, beforeLimit: 20, afterLimit: 30 },
+      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: ownerId, beforeLimit: 20, afterLimit: 30, ...(deferBotProfiles ? {deferBotProfiles: true} : {}) },
     }])
   })
 

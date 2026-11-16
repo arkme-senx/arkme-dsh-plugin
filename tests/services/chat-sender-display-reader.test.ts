@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RuntimeBotDisplayProfilesReader, botDisplaySnapshot } from '../../src/services/chat-sender-display-reader.js'
+import { ArkmeStaleRequestError } from '../../src/request-coordinator.js'
 
 describe('Bot display infrastructure', () => {
   it.each([{ rm_subject_id: 253 }, { extra: { subject_id: 253 } }, { extra: { legacy_subject_id: 253 } }])('reads installed group sender names using explicit mapping %j', async mapping => {
@@ -62,6 +63,50 @@ describe('Bot display infrastructure', () => {
 })
 
 describe('Cached timeline bot display', () => {
+  it('rejects every subscriber of a stale account lookup without caching the failure', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    const input = { botUids: new Set(['bot']), chatSessionUid: 'chat', isGroup: false }
+    const snapshots = vi.fn().mockRejectedValueOnce(new ArkmeStaleRequestError()).mockResolvedValueOnce({ items: [{
+      session: { chat_session_uid: 'chat' }, bot_participants: [{ chat_session_uid: 'chat', bot_uid: 'bot',
+        display_name_snapshot: 'Bot', extra: { avatar_url: 'https://images.test/bot.png' } }],
+    }] })
+    const reader = new RuntimeBotDisplayProfilesReader({ config: { environment: 'test' }, stateStore: {},
+      authenticatedChatPost: snapshots } as never, {} as never)
+    const results = await Promise.allSettled([reader.read(input, session), reader.read(input, session)])
+    expect(results).toEqual([expect.objectContaining({ status: 'rejected', reason: expect.any(ArkmeStaleRequestError) }),
+      expect.objectContaining({ status: 'rejected', reason: expect.any(ArkmeStaleRequestError) })])
+    expect(snapshots).toHaveBeenCalledTimes(1)
+    expect(await reader.read(input, session)).toEqual(new Map([['bot', { displayName: 'Bot', avatarUrl: 'https://images.test/bot.png' }]]))
+    expect(snapshots).toHaveBeenCalledTimes(2)
+  })
+
+  it('evicts the oldest conversation caches after concurrent lookups settle', async () => {
+    const session = { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' }
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const snapshots = vi.fn(async (_path: string, body: { chat_session_uids: string[] }) => {
+      await gate
+      return { items: [{ session: { chat_session_uid: body.chat_session_uids[0] }, bot_participants: [{
+        chat_session_uid: body.chat_session_uids[0], bot_uid: 'bot', display_name_snapshot: 'Bot',
+        extra: { avatar_url: 'https://images.test/bot.png' },
+      }] }] }
+    })
+    const reader = new RuntimeBotDisplayProfilesReader({ config: { environment: 'test' }, stateStore: {},
+      authenticatedChatPost: snapshots } as never, {} as never)
+    const input = (index: number) => ({ botUids: new Set(['bot']), chatSessionUid: `chat-${index}`, isGroup: false })
+    const pending = []
+    for (let index = 0; index < 140; index++) {
+      pending.push(reader.read(input(index), session))
+      await Promise.resolve()
+    }
+    try { expect(snapshots).toHaveBeenCalledTimes(140) }
+    finally { release(); await Promise.all(pending) }
+    expect(await reader.cached(input(139), session)).toEqual(new Map([['bot', { displayName: 'Bot', avatarUrl: 'https://images.test/bot.png' }]]))
+    expect(await reader.cached(input(0), session)).toEqual(new Map())
+    expect(await reader.cached(input(12), session)).toEqual(new Map())
+    expect(snapshots).toHaveBeenCalledTimes(140)
+  })
+
   it('returns local data before the cloud, shares refresh across pages, and restores profiles and missing avatars from SQLite', async () => {
     const [{ mkdtempSync, rmSync }, { tmpdir }, { join }, { ArkmeLocalDatabase }, { ArkmeStateStore }] = await Promise.all([
       import('node:fs'), import('node:os'), import('node:path'), import('../../src/local-database.js'), import('../../src/state-store.js'),

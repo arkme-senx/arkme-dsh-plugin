@@ -47,6 +47,7 @@ function rect(top: number, height: number): DOMRect {
 }
 
 beforeEach(() => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   restoreIntent = { current: undefined }
@@ -68,6 +69,39 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('conversation viewport ownership', () => {
+  it('releases background listeners across repeated conversation switches and unmount', () => {
+    const addWindow = vi.spyOn(window, 'addEventListener'), removeWindow = vi.spyOn(window, 'removeEventListener')
+    const addDocument = vi.spyOn(document, 'addEventListener'), removeDocument = vi.spyOn(document, 'removeEventListener')
+    for (let turn = 0; turn < 100; turn++) render({ selected: turn % 2 ? 'A' : 'B' })
+    act(() => root.render(<div>closed</div>))
+    const listeners = (spy: typeof addWindow, event: string) => spy.mock.calls.filter(([name]) => name === event).map(([, callback]) => callback)
+    expect(listeners(removeWindow, 'blur')).toEqual(listeners(addWindow, 'blur'))
+    expect(listeners(removeDocument, 'visibilitychange')).toEqual(listeners(addDocument, 'visibilitychange'))
+  })
+  it.each(['blur', 'visibilitychange'] as const)('retains the reading row when new messages arrive after window %s', event => {
+    render(); scroll(maximum())
+    const body = host.firstElementChild as HTMLDivElement
+    const position = scrollTop
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => (event === 'blur' ? window : document).dispatchEvent(new Event(event)))
+    const reading = store.getViewport('A')!
+    expect(reading).toMatchObject({ stickToBottom: false, anchorId: 'message:A-25' })
+    const background = arkmeConversationViewport(body, 'latest-anchor')
+    expect(background.stickToBottom).toBe(false)
+    rowCount.A += 30
+    pending.current = { sourceKey: 'A', viewport: background, followLatest: true }
+    render()
+    expect(scrollTop).toBe(position)
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    render()
+    expect(scrollTop).toBe(position)
+    expect(store.getViewport('A')?.anchorId).toBe(reading.anchorId)
+    // An explicit return still owns the latest edge after the pause.
+    pending.current = { sourceKey: 'A', viewport: { scrollTop: 0, stickToBottom: true } }
+    render()
+    expect(scrollTop).toBe(maximum())
+  })
   it.each([['arkmeSystemAnchorRef', 'systemRef'], ['offlineContextRef', 'contextRef']] as const)(
     'captures the visible offset and the %s locator', (attribute, field) => {
       render(); scroll(730)

@@ -47,6 +47,7 @@ export async function readConversationAdjacentPage(
   requestedCursor: string | undefined,
   direction: 'older' | 'newer',
   cacheDecision?: (result: string) => void,
+  knownLatestSequence = 0,
 ): Promise<ArkmeTimelinePage> {
   if (offline) {
     const page = await withArkmeReadDeadline(readLocal, signal)
@@ -62,6 +63,8 @@ export async function readConversationAdjacentPage(
     const continuation = direction === 'older' ? window?.olderCursor : window?.newerCursor
     if (page?.cache?.origin === 'local' && page.cache.persistence === 'committed' && page.cache.stale === false
       && window?.complete && window.windowTokens.length
+      && (direction !== 'newer' || hasMore || Math.max(0, ...window.events.flatMap(event =>
+        event.kind === 'message' ? [event.item.sequence ?? 0] : [])) >= knownLatestSequence)
       && (!hasMore || continuation && continuation !== requestedCursor)) {
       cacheDecision?.('hit')
       return page

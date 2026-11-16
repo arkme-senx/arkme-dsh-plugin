@@ -70,14 +70,16 @@ export class RuntimeBotDisplayProfilesReader implements BotDisplayProfilesReader
       }).catch(() => undefined)
     }
     this.scopes.set(scope, cache)
-    if (this.scopes.size > 128) {
-      for (const [key, value] of this.scopes) {
-        if (value.flight || key === scope) continue
-        this.scopes.delete(key)
-        break
-      }
-    }
+    this.trimScopes(scope)
     return cache
+  }
+
+  private trimScopes(keep?: string): void {
+    for (const [key, value] of this.scopes) {
+      if (this.scopes.size <= 128) break
+      if (value.flight || key === keep) continue
+      this.scopes.delete(key)
+    }
   }
 
   private profiles(cache: Cache, input: ReadInput): BotDisplayProfiles {
@@ -120,7 +122,10 @@ export class RuntimeBotDisplayProfilesReader implements BotDisplayProfilesReader
       }))
       if (!missing.size) return this.profiles(cache, input)
       // A caller can leave without cancelling the shared lookup used by other pages.
-      cache.flight ??= this.refresh(scope, cache, { ...input, botUids: missing }, session).finally(() => { delete cache.flight })
+      cache.flight ??= this.refresh(scope, cache, { ...input, botUids: missing }, session).finally(() => {
+        delete cache.flight
+        this.trimScopes()
+      })
       if (!signal) await cache.flight
       else await new Promise<void>((resolve, reject) => {
         const abort = () => reject(signal.reason)
@@ -134,7 +139,8 @@ export class RuntimeBotDisplayProfilesReader implements BotDisplayProfilesReader
   private async refresh(scope: string, cache: Cache, input: ReadInput, session: ArkmeSessionCredentials): Promise<void> {
     let failed = false
     const profiles = await measureConversationReadPhase('bot-display-network',
-      () => this.readRemote(input, session, undefined, () => { failed = true })).catch(() => {
+      () => this.readRemote(input, session, undefined, () => { failed = true })).catch(error => {
+      if (error instanceof ArkmeStaleRequestError) throw error
       failed = true
       return new Map<string, BotDisplayProfile>()
     })

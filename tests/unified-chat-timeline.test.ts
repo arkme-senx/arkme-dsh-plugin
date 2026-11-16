@@ -127,8 +127,8 @@ describe('unified timeline owner contract', () => {
       expect(runtime.authenticatedChatPost.mock.calls).toHaveLength(mode === 'older' ? 2 : 1)
     } finally { service.dispose(); contexts.dispose() }
   })
-  it('accepts auxiliary-only pages and preserves unavailable message slots', async () => {
-    const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { secret: 'do not expose' } }] }
+  it('preserves confirmed missing message slots without exposing their payload', async () => {
+    const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { record: { status: 2 }, secret: 'do not expose' } }] }
     const post = vi.fn().mockResolvedValue(raw)
     const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
       { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
@@ -136,8 +136,23 @@ describe('unified timeline owner contract', () => {
     const result = await service.read('ref')
     expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chat/timeline/unified/v3')
     expect(result.items).toEqual([])
-    expect(result.unified?.events).toEqual([expect.objectContaining({ kind: 'notice', contentStatus: 'unavailable' })])
+    expect(result.unified?.events).toEqual([expect.objectContaining({ kind: 'notice', contentStatus: 'unavailable', text: '原消息未找到', hidden: true })])
     expect(JSON.stringify(result)).not.toContain('do not expose')
+  })
+  it.each(['interwoven', 'world_public', 'wechat_import'] as const)('keeps an unclassified %s failure retryable without blocking the rest of the page', async sourceKind => {
+    const raw = { ...response(), timeline_items: [{ event_id: 'pending', source: sourceKind, kind: 'group', occurred_at: 10,
+      order_tie: 'pending', content_status: 'unavailable', payload: {} }] }
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: async () => raw } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      { projectChatTimelineItems: async () => [] } as never, {} as never)
+    try {
+      const page = await service.read('ref')
+      expect(page.unified?.events[0]).toMatchObject({ kind: 'notice', text: '关联内容加载失败', retryable: true })
+      expect(page.unified?.complete).toBe(false)
+      expect(page.unified?.sources.find(source => source.source === sourceKind)?.status).toBe('gap')
+    }
+    finally { service.dispose() }
   })
   it('projects public publications as compact, restart-safe references without copying their full text', async () => {
     const raw = { ...response(), timeline_items: [{ event_id: 'world', kind: 'world_public', source: 'world_public', occurred_at: 10, order_tie: 'world', content_status: 'available', payload: { record_uid: 'private-locator', nick_name: '小明', text_content: 'very long public body' } }] }

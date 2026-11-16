@@ -346,6 +346,15 @@ export class UnifiedChatTimelineService {
     }
     const seal = (value: string, purpose: string) => codec.seal(JSON.stringify(['wire', protocol, value]), purpose)
     const { data, sources, events } = parseUnifiedTimelineResponse(raw, source.ownerRef, protocol)
+    // Only missing/protected and recall are access verdicts; incomplete reads cannot replace a committed window.
+    if (events.some(event => {
+      if (event.source === 'messages' && event.kind === 'message_recalled') return false
+      const status = objectValue(objectValue(event.payload).record).status
+      return event.content_status === 'unavailable' && (status === 3 || event.source === 'messages' && status !== 2 && status !== 4)
+        || event.source === 'messages' && event.kind === 'message' && status === 3
+    })) {
+      throw new ArkmePluginError('chat-timeline-content-pending', '消息加载失败，请重试', true, 503)
+    }
     const eventId = (value: string) => chatTimelineEventId(key, session.userId, this.runtime.config.environment, source.ownerRef, value)
     const native = events.filter(event => event.source === 'messages' && event.content_status === 'available')
     const groups = events.filter(event => event.source === 'interwoven' && event.content_status === 'available')
@@ -383,15 +392,25 @@ export class UnifiedChatTimelineService {
       } else if (order.contentStatus === 'unavailable') {
         const relation = objectValue(payload.relation)
         const uid = stringValue(relation.record_uid)
+        const status = objectValue(payload.record).status
+        if (event.source !== 'messages' && status !== 2 && status !== 4) {
+          sources.find(source => source.source === event.source)!.status = 'gap'
+          projected.push({ ...order, kind: 'notice', text: '关联内容加载失败', retryable: true })
+          continue
+        }
+        const protectedContent = status === 4
+        const text = event.source === 'messages'
+          ? protectedContent ? '此消息受隐私保护' : '原消息未找到'
+          : protectedContent ? '关联内容受隐私保护' : '关联内容未找到'
         if (event.source === 'messages' && uid) {
           projected.push({ ...order, kind: 'message', item: {
             itemUid: uid, timelineEventId: order.eventId,
             timelineItemKey: await this.source.chatTimelineItemKey(session.userId, source.ownerRef, stringValue(relation.rel_uid)),
-            senderName: '', isMe: false, sendAtMillis: order.occurredAtMillis, title: '', textContent: '内容暂时不可用',
+            senderName: '', isMe: false, sendAtMillis: order.occurredAtMillis, title: '', textContent: text,
             status: 0, quickNoteDetailsSupported: false,
             ...(Number.isSafeInteger(relation.seq) ? { sequence: Number(relation.seq) } : {}),
           } })
-        } else projected.push({ ...order, kind: 'notice', text: '内容暂时不可用' })
+        } else projected.push({ ...order, kind: 'notice', text, hidden: true })
       } else if (event.source === 'messages') {
         const relation = objectValue(payload.relation)
         const item = messageByRelation.get(await this.source.chatTimelineItemKey(session.userId, source.ownerRef, stringValue(relation.rel_uid)))
@@ -439,7 +458,7 @@ export class UnifiedChatTimelineService {
     }
     signal?.throwIfAborted()
     const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: projected.sort(compareUnifiedTimelineEvents), sources,
-      complete: data.complete as boolean, windowTokens: [seal(String(data.window_token), 'window')],
+      complete: data.complete === true && sources.every(source => source.status !== 'gap'), windowTokens: [seal(String(data.window_token), 'window')],
       ...(stringValue(data.older_cursor) ? { olderCursor: seal(String(data.older_cursor), 'older') } : {}),
       ...(stringValue(data.newer_cursor) ? { newerCursor: seal(String(data.newer_cursor), 'newer') } : {}),
       ...(stringValue(data.next_cursor) ? { nextCursor: seal(String(data.next_cursor), mode === 'initial' || mode === 'around' ? 'older' : mode) } : {}),

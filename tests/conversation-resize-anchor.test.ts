@@ -5,6 +5,28 @@ import { observeConversationResize, resizedConversationScrollTop, useConversatio
 
 afterEach(() => vi.unstubAllGlobals())
 describe('composer and message viewport resize', () => {
+  it('retains background reading through appended rows and resumes only after reaching the latest edge', () => {
+    let resized = () => {}, scrolled = () => {}, focused = false
+    vi.stubGlobal('ResizeObserver', class { constructor(callback: () => void) { resized = callback } observe() {} disconnect() {} })
+    const body = { scrollTop: 1400, scrollHeight: 2000, clientHeight: 600,
+      ownerDocument: { visibilityState: 'visible', hasFocus: () => focused },
+      getBoundingClientRect: () => ({ top: 0, bottom: 600 }),
+      addEventListener: vi.fn((_name, listener) => { scrolled = listener }), removeEventListener: vi.fn() }
+    const content = { getBoundingClientRect: () => ({ height: body.scrollHeight }), querySelectorAll: () => [] }
+    const dispose = observeConversationResize(body as unknown as HTMLElement, undefined, content as unknown as HTMLElement)
+    body.scrollHeight += 3000; resized()
+    expect(body.scrollTop).toBe(1400)
+    body.clientHeight = 500; resized(); dispose.commit(true)
+    expect(body.scrollTop).toBe(1400)
+    focused = true; resized()
+    expect(body.scrollTop).toBe(1400)
+    body.scrollHeight += 100; resized()
+    expect(body.scrollTop).toBe(1400)
+    body.scrollTop = body.scrollHeight - body.clientHeight; scrolled()
+    body.scrollHeight += 100; resized()
+    expect(body.scrollTop).toBe(body.scrollHeight - body.clientHeight)
+    dispose()
+  })
   it('does not lose the bottom when React commits before the resize delivery', () => {
     let resized = () => {}
     const disconnect = vi.fn()

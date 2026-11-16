@@ -26,7 +26,7 @@ beforeEach(() => {
 })
 afterEach(() => vi.restoreAllMocks())
 
-it.each(['world.interactions.list', 'world.notification-sources'] as const)('keeps %s fanout out of the browser connection queue so official entry and sends can proceed', async operation => {
+it.each(['world.interactions.list', 'world.notification-sources'] as const)('bounds %s loopback occupancy while official entry and sends remain independent', async operation => {
   const release: Array<() => void> = []
   provider.mockImplementation(async (requested: string) => {
     if (requested === operation) await new Promise<void>(resolve => release.push(resolve))
@@ -49,20 +49,21 @@ it.each(['world.interactions.list', 'world.notification-sources'] as const)('kee
   }
 })
 
-it('admits ordinary and Team avatar downloads while the general background budget is full', async () => {
+it('keeps image downloads bounded alongside passive JSON reads', async () => {
   const release: Array<() => void> = []
   provider.mockImplementation(async () => { await new Promise<void>(resolve => release.push(resolve)); return {} })
   const controller = new AbortController()
-  const operations = ['official-notifications.list', 'private-interaction.directory', ...passiveTeamReads, 'image.read', 'team.app.image', 'team.app.image', 'team.app.image'] as const
+  const operations = ['official-notifications.list', 'private-interaction.directory', 'image.read', 'team.app.image', 'team.app.image', 'team.app.image'] as const
   const reads = operations.map(operation => callArkme(operation, {}, controller.signal,
     operation === 'image.read' ? { ...background, avatarDownload: true } : background))
   const completion = Promise.allSettled(reads)
   try {
-    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(4))
-    expect(provider.mock.calls.map(args => args[0])).toEqual([...operations.slice(0, 2), 'image.read', 'team.app.image'])
-    release.shift()!()
-    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(5))
-    expect(provider.mock.calls[4]![0]).toBe(operations[2])
+    const jsonCount = operations.filter(operation => operation !== 'image.read' && operation !== 'team.app.image').length
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(jsonCount + 2))
+    expect(provider.mock.calls.map(args => args[0])).toEqual([...operations.slice(0, jsonCount), 'image.read', 'team.app.image'])
+    release[jsonCount]!()
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(jsonCount + 3))
+    expect(provider.mock.calls.at(-1)![0]).toBe('team.app.image')
   } finally {
     controller.abort(); release.forEach(resolve => resolve()); await completion
   }
@@ -73,7 +74,7 @@ it('removes cancelled queued work before it reaches the provider', async () => {
   provider.mockImplementation(async () => { await new Promise<void>(resolve => release.push(resolve)); return {} })
   const active = [callArkme('image.read', {}, undefined, background), callArkme('image.read', {}, undefined, background)]
   const controller = new AbortController()
-  const queued = callArkme('world.interactions.list', {}, controller.signal, background)
+  const queued = callArkme('image.read', {}, controller.signal, background)
   const rejected = expect(queued).rejects.toMatchObject({ name: 'AbortError' })
   try {
     await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(2))
@@ -88,7 +89,7 @@ it('rechecks identity when a queued read starts instead of using a new login wit
   provider.mockImplementation(async () => { await new Promise<void>(resolve => release.push(resolve)); return {} })
   const active = [callArkme('image.read', {}, undefined, background), callArkme('image.read', {}, undefined, background)]
   const completed = Promise.allSettled(active)
-  const queued = callArkme('private-interaction.directory', { cursor: 'old-account' }, undefined, background)
+  const queued = callArkme('image.read', { imageRef: 'old-account' }, undefined, background)
   const rejected = expect(queued).rejects.toMatchObject({ body: { code: 'read-account-changed' } })
   await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(2))
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 5 })
@@ -176,7 +177,7 @@ it.each(['image.read', 'team.app.image', 'world.interactions.list'] as const)('p
   const params = { reference: 'opaque' }
   await callArkme(operation, params, undefined, background)
   expect(provider).toHaveBeenCalledOnce()
-  expect(provider.mock.calls[0]![3]).toEqual({ priority: 'low' })
+  expect(provider.mock.calls[0]![3]).toEqual({ priority: 'low', readPriority: 'background' })
   expect(provider.mock.calls[0]![1]).not.toHaveProperty('priority')
 })
 
@@ -236,13 +237,13 @@ it.each(['settings.background-sound.set', 'user.profile.update', 'team.app.snaps
   expect(provider.mock.calls[0]?.[3]).toBeUndefined()
 })
 
-it.each(notificationReads)('applies the existing background budget and low Fetch hint to %s %j', async (operation, params) => {
+it.each(notificationReads)('passes a low Fetch hint to Host-scheduled %s %j', async (operation, params) => {
   provider.mockResolvedValue({})
   await callArkme(operation, params, undefined, background)
-  expect(provider.mock.calls).toEqual([[operation, params, expect.any(AbortSignal), { priority: 'low' }]])
+  expect(provider.mock.calls).toEqual([[operation, params, expect.any(AbortSignal), { priority: 'low', readPriority: 'background' }]])
 })
 
-it('shares two permits across mixed notification and passive reaction reads, and cancels all old-account work', async () => {
+it('bounds mixed JSON loopback occupancy and cancels all old-account work', async () => {
   const signals: AbortSignal[] = []
   provider.mockImplementation((_operation: string, _params: unknown, signal: AbortSignal) => {
     signals.push(signal)
@@ -285,7 +286,9 @@ it('never delays interactive, mutation, other-read or unknown actions inside mix
   try {
     await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(2))
     for (const [operation, params] of cases) reads.push(callArkme(operation, params, undefined, background))
-    expect(provider.mock.calls.slice(2)).toEqual(cases.map(([operation, params]) => [operation, params, undefined]))
+    expect(provider.mock.calls.slice(2)).toEqual(cases.map(([operation, params]) =>
+      operation === 'reactions' && params?.action === 'query' && params.readPriority === 'interactive'
+        ? [operation, params, undefined, { priority: 'high' }] : [operation, params, undefined]))
     await Promise.all(reads)
   } finally { release(); await Promise.allSettled([...active, ...reads]) }
 })

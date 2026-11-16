@@ -1,5 +1,5 @@
 import { recordOwnerId } from '../record-owner-id.js'
-import { cancelConversationFollow, followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
+import { cancelConversationFollow, conversationWindowActive, followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
 import { useCallback, useLayoutEffect, type MutableRefObject, type RefObject } from 'react'
 import {
   arkmeConversationRestoredScrollTop,
@@ -22,7 +22,8 @@ export interface ArkmeConversationViewportRestore {
 const readingAnchors = new WeakMap<HTMLDivElement, HTMLElement>()
 
 export function arkmeConversationViewport(root: HTMLDivElement, mode: 'auto' | 'messages' | 'history' | 'latest-anchor' = 'auto'): ArkmeConversationViewportSnapshot {
-  const stickToBottom = (mode === 'auto' || mode === 'latest-anchor') && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
+  const stickToBottom = (mode === 'auto' || mode === 'latest-anchor') && conversationWindowActive(root)
+    && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
   if (stickToBottom && mode !== 'latest-anchor') return { scrollTop: root.scrollTop, stickToBottom: true }
   const rootRect = root.getBoundingClientRect()
   const snapshot = (row: HTMLElement): ArkmeConversationViewportSnapshot | undefined => {
@@ -148,8 +149,27 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
 
   useLayoutEffect(() => {
     const node = bodyRef.current
-    return () => { if (node) cancelConversationFollow(node) }
-  }, [ready, sourceKey, bodyRef])
+    if (!ready || !node) return
+    const doc = node.ownerDocument, view = doc?.defaultView
+    const suspend = () => {
+      if (conversationWindowActive(node) || node.clientHeight <= 0) return
+      cancelConversationFollow(node)
+      const viewport = arkmeConversationViewport(node, 'history')
+      store.storeViewport(sourceKey, viewport)
+      // Keep explicit navigation ahead of a suspended automatic latest update.
+      if (!pendingRestore.current || pendingRestore.current.sourceKey === sourceKey && pendingRestore.current.followLatest) {
+        pendingRestore.current = { sourceKey, viewport }
+      }
+      if (restoreIntent) restoreIntent.current = false
+    }
+    view?.addEventListener('blur', suspend)
+    doc?.addEventListener('visibilitychange', suspend)
+    return () => {
+      cancelConversationFollow(node)
+      view?.removeEventListener('blur', suspend)
+      doc?.removeEventListener('visibilitychange', suspend)
+    }
+  }, [ready, sourceKey, bodyRef, store, pendingRestore, restoreIntent])
 
   useLayoutEffect(() => {
     const pending = pendingRestore.current

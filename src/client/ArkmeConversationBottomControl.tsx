@@ -57,7 +57,7 @@ export function ArkmeConversationBottomControl({ showBackToBottom, newMessageCou
       {(showButton || pending || failed) && <button data-arkme-feedback="neutral" type="button" aria-label={badgeCount ? `${label} · ${badgeCount}` : label}
         title={pending ? `${label}…` : label} aria-busy={pending} disabled={pending}
         onClick={() => { void activate() }} style={{ ...button, position: 'relative', flexShrink: 0, opacity: pending ? 0.6 : 1,
-          ...(unreadCount === undefined ? { minWidth: 50, padding: historical ? '0 12px' : 0, height: 30 } : { width: 36, height: 36 }) }}>
+          minWidth: 50, height: 30, padding: historical && unreadCount === undefined ? '0 12px' : 0 }}>
         {badgeCount > 0 && <span data-arkme-unread-badge style={{ position: 'absolute', top: -7, right: -6, borderRadius: 10,
           minWidth: 18, padding: '1px 4px', lineHeight: '16px', background: arkmeTheme.accent, color: '#fff', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>
           {badgeCount > 999 ? '999+' : badgeCount}
