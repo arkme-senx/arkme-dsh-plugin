@@ -153,12 +153,26 @@ it('projects committed edits and removals in a historical window without changin
   expect(projectCommittedChatWindow(history, changes).events).toEqual(projected.events)
 })
 
+it('requires a fresh canonical access decision before a synced body replaces a protected message', () => {
+  const blocked = { ...item(5), status: 0, quickNoteDetailsSupported: false, textContent: '此消息受隐私保护' }
+  const stale = { ...item(5), recordVersion: 7, textContent: 'previously readable body' }
+  const changes = new Map([['relation-5', { itemKey: 'relation-5', revision: 10, version: 7, item: stale }]])
+  expect(projectCommittedChatMessage(blocked, changes)).toBe(blocked)
+  const canonical = window([5])
+  canonical.events[0] = { ...canonical.events[0]!, kind: 'message', contentStatus: 'unavailable', item: blocked }
+  expect(projectCommittedChatWindow(canonical, changes)).toBe(canonical)
+  expect(projectCommittedChatMessage(blocked, new Map([['relation-5', { itemKey: 'relation-5', revision: 11, version: 0 }]]))).toBeUndefined()
+  expect(projectCommittedChatMessage(item(5), changes)?.textContent).toBe('previously readable body')
+})
+
 it('preserves the confirmed recall capability when a synced body replaces the same message', () => {
   const canonical = { ...item(5), isMe: true, messageActionRef: 'confirmed-ref', messageActionsV2: true }
   const synced = { ...item(5), isMe: true, messageActionRef: 'synced-ref', recordVersion: 2 }
   const change = { itemKey: 'relation-5', revision: 10, version: 2, item: synced }
-  expect(projectCommittedChatMessage(canonical, new Map([['relation-5', change]])))
-    .toMatchObject({ messageActionsV2: true, messageActionRef: 'synced-ref', recordVersion: 2 })
+  const changes = new Map([['relation-5', change]])
+  const projected = projectCommittedChatMessage(canonical, changes)!
+  expect(projected).toMatchObject({ messageActionsV2: true, messageActionRef: 'synced-ref', recordVersion: 2 })
+  expect(projectCommittedChatMessage(projected, changes)).toBe(projected)
   expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: undefined }]]))).toBeUndefined()
   expect(projectCommittedChatMessage(canonical, new Map([['relation-5', { ...change, item: { ...synced, messageActionsV2: false } }]])))
     .toMatchObject({ messageActionsV2: false })

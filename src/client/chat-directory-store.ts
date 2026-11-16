@@ -66,6 +66,8 @@ interface ArkmeChatReadTarget {
 interface ArkmeChatReadWatermark {
   effectiveReadSequence: number
   unreadCount: number
+  latestSequence?: number
+  optimistic?: true
 }
 
 interface ArkmeChatDirectoryIndexes {
@@ -116,24 +118,16 @@ function findSourceIndex(
 function recordReadWatermark(
   watermarks: Map<string, ArkmeChatReadWatermark>,
   indexes: ArkmeChatDirectoryIndexes,
-  mutation: ArkmeChatReadTarget & { unreadCount: number },
+  mutation: ArkmeChatReadTarget & { unreadCount: number; latestSequence?: number },
 ): void {
   rememberSourceKey(indexes, mutation.sourceRef, mutation.sourceKey)
   const effectiveReadSequence = normalizedSequence(mutation.effectiveReadSequence)
   if (effectiveReadSequence <= 0) return
   const key = identityForSource(indexes, mutation.sourceRef, mutation.sourceKey)
   const unreadCount = normalizedCount(mutation.unreadCount)
-  const existing = watermarks.get(key)
-  if (existing === undefined || effectiveReadSequence > existing.effectiveReadSequence) {
-    watermarks.set(key, { effectiveReadSequence, unreadCount })
-    return
-  }
-  if (effectiveReadSequence === existing.effectiveReadSequence) {
-    watermarks.set(key, {
-      effectiveReadSequence,
-      unreadCount: Math.min(existing.unreadCount, unreadCount),
-    })
-  }
+  mergeReadWatermark(watermarks, key, {
+    effectiveReadSequence, unreadCount, latestSequence: normalizedSequence(mutation.latestSequence) || effectiveReadSequence,
+  })
 }
 
 function applyReadWatermark(
@@ -147,12 +141,14 @@ function applyReadWatermark(
   const watermark = watermarks.get(identityForSource(indexes, source.sourceRef, effectiveSourceKey))
   if (watermark === undefined) return source
   const latestSequence = normalizedSequence(source.latestSequence)
-  if (latestSequence > watermark.effectiveReadSequence) return source
+  const frontier = watermark.latestSequence ?? watermark.effectiveReadSequence
+  if (latestSequence > frontier || (source.readSequence ?? -1) >= watermark.effectiveReadSequence) return source
+  if (!watermark.optimistic) {
+    return applyReadAckProjection(source, { ...watermark, sourceRef: source.sourceRef })
+  }
+  if (latestSequence !== frontier && latestSequence > watermark.effectiveReadSequence) return source
   const unreadCount = Math.min(normalizedCount(source.unreadCount), watermark.unreadCount)
-  const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
-  return unreadCount === source.unreadCount && hasUnreadMention === source.hasUnreadMention
-    ? source
-    : projectSourceAttention({ ...source, unreadCount, ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) })
+  return unreadCount === source.unreadCount ? source : projectSourceAttention(source, unreadCount)
 }
 
 function mergeUnreadMention(existing: ArkmeSourceItem | undefined, source: ArkmeSourceItem): boolean | undefined {
@@ -227,6 +223,12 @@ function mergeSourceProjection(
           }
         })(),
       }
+  if (existing && sourceSequence <= existingSequence && (source.readSequence ?? -1) < (existing.readSequence ?? -1)) {
+    if (existing.readSequence !== undefined) merged.readSequence = existing.readSequence
+    merged.unreadCount = existing.unreadCount
+    if (existing.hasUnreadMention === undefined) delete merged.hasUnreadMention
+    else merged.hasUnreadMention = existing.hasUnreadMention
+  }
   return applyReadWatermark(projectSourceAttention(retainNewerArkmeChatActivity(existing, retainNewerArkmeChatPolicy(existing, merged))), watermarks, indexes, sourceKey)
 }
 
@@ -336,16 +338,11 @@ function mergeReadWatermark(
   watermark: ArkmeChatReadWatermark,
 ): void {
   const existing = target.get(key)
-  if (existing === undefined || watermark.effectiveReadSequence > existing.effectiveReadSequence) {
-    target.set(key, { ...watermark })
-    return
-  }
-  if (watermark.effectiveReadSequence === existing.effectiveReadSequence) {
-    target.set(key, {
-      effectiveReadSequence: watermark.effectiveReadSequence,
-      unreadCount: Math.min(existing.unreadCount, watermark.unreadCount),
-    })
-  }
+  if (existing === undefined || watermark.effectiveReadSequence > existing.effectiveReadSequence
+    || watermark.effectiveReadSequence === existing.effectiveReadSequence && (
+      !watermark.optimistic && existing.optimistic
+      || (watermark.latestSequence ?? 0) >= (existing.latestSequence ?? 0) && watermark.optimistic === existing.optimistic
+    )) target.set(key, watermark)
 }
 
 /** Unread belongs to the ACK's server frontier, which may precede or lead the directory. */
@@ -353,12 +350,12 @@ function applyReadAckProjection(source: ArkmeSourceItem, target: ArkmeChatReadTa
   const effectiveReadSequence = normalizedSequence(target.effectiveReadSequence)
   const frontier = normalizedSequence(target.latestSequence)
   const latestSequence = frontier >= effectiveReadSequence ? frontier : effectiveReadSequence
-  if (normalizedSequence(source.latestSequence) > latestSequence) return source
+  if (normalizedSequence(source.latestSequence) > latestSequence || (source.readSequence ?? -1) > effectiveReadSequence) return source
   const unreadCount = normalizedCount(target.unreadCount)
   const hasUnreadMention = unreadCount <= 0 && source.hasUnreadMention !== undefined ? false : source.hasUnreadMention
   const advanceFrontier = frontier >= effectiveReadSequence && frontier > normalizedSequence(source.latestSequence)
-  return !advanceFrontier && source.unreadCount === unreadCount && source.hasUnreadMention === hasUnreadMention ? source
-    : projectSourceAttention({ ...source, unreadCount, ...(advanceFrontier ? { latestSequence: frontier } : {}),
+  return !advanceFrontier && source.readSequence === effectiveReadSequence && source.unreadCount === unreadCount && source.hasUnreadMention === hasUnreadMention ? source
+    : projectSourceAttention({ ...source, readSequence: effectiveReadSequence, unreadCount, ...(advanceFrontier ? { latestSequence: frontier } : {}),
       ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }) })
 }
 
@@ -449,7 +446,9 @@ export class ArkmeChatDirectoryStore {
   private pendingMutations: ArkmeChatDirectoryMutation[] = []
   private readonly readWatermarks = new Map<string, ArkmeChatReadWatermark>()
   private readonly optimisticReadWatermarks = new Map<string, ArkmeChatReadWatermark>()
-  private readonly optimisticUnreadBackups = new Map<string, Pick<ArkmeSourceItem, "unreadCount" | "hasUnreadMention">>()
+  private readonly optimisticUnreadBackups = new Map<string, {
+    unreadCount: number; hasUnreadMention: boolean | undefined; latestSequence: number | undefined; readSequence: number | undefined
+  }>()
   private readonly sourceKeysByRef = new Map<string, string>()
 
   constructor(options: ArkmeChatDirectoryStoreOptions = {}) {
@@ -884,6 +883,7 @@ export class ArkmeChatDirectoryStore {
     sourceKey: string | undefined,
     effectiveReadSequence: number,
     seedSources: readonly ArkmeSourceItem[] = [],
+    newlyRead?: number,
   ): boolean {
     const target = this.normalizedReadTarget(source.sourceRef, sourceKey ?? source.sourceKey, effectiveReadSequence)
     if (target === undefined) return false
@@ -894,12 +894,19 @@ export class ArkmeChatDirectoryStore {
     const currentSource = sourceIndex >= 0
       ? this.snapshot.sources[sourceIndex]
       : seedSourceIndex >= 0 ? seedSources[seedSourceIndex] : source
-    if (currentSource === undefined || normalizedSequence(currentSource.latestSequence) > target.effectiveReadSequence
-      || (normalizedCount(currentSource.unreadCount) <= 0 && currentSource.hasUnreadMention !== true)) return false
+    if (!currentSource) return false
+    const frontier = normalizedSequence(currentSource.latestSequence)
     const existing = this.optimisticReadWatermarks.get(identity)
-    if (existing !== undefined && existing.effectiveReadSequence >= target.effectiveReadSequence && existing.unreadCount === 0) return false
-    this.optimisticUnreadBackups.set(identity, { unreadCount: normalizedCount(currentSource.unreadCount), hasUnreadMention: currentSource.hasUnreadMention === true })
-    this.optimisticReadWatermarks.set(identity, { effectiveReadSequence: target.effectiveReadSequence, unreadCount: 0 })
+    const previous = this.optimisticUnreadBackups.get(identity)
+    const backup = previous && previous.latestSequence === currentSource.latestSequence && previous.readSequence === currentSource.readSequence
+      ? previous : { unreadCount: normalizedCount(currentSource.unreadCount), hasUnreadMention: currentSource.hasUnreadMention,
+          latestSequence: currentSource.latestSequence, readSequence: currentSource.readSequence }
+    if (existing && existing.effectiveReadSequence >= effectiveReadSequence) return false
+    const unreadCount = frontier <= effectiveReadSequence ? 0
+      : newlyRead !== undefined && newlyRead > 0 && newlyRead < backup.unreadCount ? backup.unreadCount - newlyRead : undefined
+    if (unreadCount === undefined || unreadCount >= currentSource.unreadCount && currentSource.hasUnreadMention !== true) return false
+    this.optimisticUnreadBackups.set(identity, backup)
+    this.optimisticReadWatermarks.set(identity, { effectiveReadSequence, unreadCount, latestSequence: frontier, optimistic: true })
     const sources = sourceIndex >= 0
       ? this.snapshot.sources
       : seedSources.length > 0 ? [...seedSources] : [source, ...this.snapshot.sources]
@@ -933,8 +940,11 @@ export class ArkmeChatDirectoryStore {
     const sources = this.snapshot.sources.map(source => {
       if (backup === undefined) return source
       if (identityForSource(indexes, source.sourceRef, source.sourceKey) !== identity) return source
-      if (normalizedSequence(source.latestSequence) > target.effectiveReadSequence) return source
-      return projectSourceAttention({ ...source, ...backup })
+      if (source.latestSequence !== backup.latestSequence || source.readSequence !== backup.readSequence) return source
+      const restored = { ...source, unreadCount: backup.unreadCount }
+      if (backup.hasUnreadMention === undefined) delete restored.hasUnreadMention
+      else restored.hasUnreadMention = backup.hasUnreadMention
+      return projectSourceAttention(restored)
     })
     this.commit(applyDirectoryMutations(
       sources,
@@ -1035,10 +1045,11 @@ export class ArkmeChatDirectoryStore {
     if (optimistic === undefined) return
     if (optimistic.effectiveReadSequence > target.effectiveReadSequence) {
       // The remaining unseen count can shrink while the optimistic frontier stays unchanged.
-      if (target.latestSequence === optimistic.effectiveReadSequence
+      if (target.latestSequence === optimistic.latestSequence
         && target.effectiveReadSequence >= (this.readWatermarks.get(identity)?.effectiveReadSequence ?? 0)) {
         const unreadCount = normalizedCount(target.unreadCount)
-        this.optimisticUnreadBackups.set(identity, { unreadCount, hasUnreadMention: unreadCount > 0 && this.optimisticUnreadBackups.get(identity)?.hasUnreadMention === true })
+        this.optimisticUnreadBackups.set(identity, { unreadCount, latestSequence: target.latestSequence,
+          readSequence: target.effectiveReadSequence, hasUnreadMention: unreadCount > 0 && this.optimisticUnreadBackups.get(identity)?.hasUnreadMention === true })
       }
       return
     }
@@ -1051,7 +1062,9 @@ export class ArkmeChatDirectoryStore {
     const identity = identityForSource(indexes, target.sourceRef, target.sourceKey)
     return this.snapshot.sources.map(source => {
       if (identityForSource(indexes, source.sourceRef, source.sourceKey) !== identity) return source
-      if ((this.readWatermarks.get(identity)?.effectiveReadSequence ?? 0) > target.effectiveReadSequence) return source
+      const watermark = this.readWatermarks.get(identity)
+      if (watermark && (watermark.effectiveReadSequence > target.effectiveReadSequence
+        || watermark.effectiveReadSequence === target.effectiveReadSequence && (watermark.latestSequence ?? 0) > (target.latestSequence ?? target.effectiveReadSequence))) return source
       return applyReadAckProjection(source, target)
     })
   }

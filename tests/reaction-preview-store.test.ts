@@ -11,11 +11,14 @@ function setup(transport = (input: ReactionRequest) => reactionFixture.call('rea
 it('keeps an in-flight message read when notification warming joins its subscription', async () => {
  vi.useFakeTimers()
  let finish!: (value: unknown) => void
- const store = setup(() => new Promise(resolve => { finish = resolve }))
+ const transport = vi.fn(() => new Promise(resolve => { finish = resolve }))
+ const store = setup(transport)
  const reading = store.refresh()
  const release = store.watch('test:a', { ...target, sourceRef: 'latest-source' })
  finish(await reactionFixture.call('reactions', { action: 'query', accountKey: 'test:a', targets: [target] }))
  await reading
+ await vi.advanceTimersByTimeAsync(40)
+ expect(transport).toHaveBeenCalledOnce()
  expect(store.snapshot(target.id)).toBeDefined()
  release()
  expect(store.snapshot(target.id)).toBeDefined()
@@ -331,4 +334,22 @@ it('sends a cold click after interactive facts without waiting for actor present
   expect(calls[0]).toMatchObject({ action: 'query', actorPresentation: 'deferred', readPriority: 'interactive' })
   expect(calls.some(call => call.action === 'set')).toBe(true)
  } finally { release(); await clicking }
+})
+
+it('promotes a notification-warmed target once when its message becomes visible', async () => {
+ vi.useFakeTimers()
+ let finish!: (value: unknown) => void
+ const pending = new Promise(resolve => { finish = resolve })
+ const transport = vi.fn(async () => pending)
+ const store = new ReactionPreviewStore(transport); stores.push(store); store.setScope('test:a')
+ const warming = store.prepare('test:a', [target], new AbortController().signal)
+ expect(transport).toHaveBeenCalledTimes(1)
+ const first = store.watch('test:a', target)
+ const second = store.watch('test:a', target)
+ expect(transport).toHaveBeenCalledTimes(2)
+ expect(transport.mock.calls[1]?.[0]).toMatchObject({ action: 'query', readPriority: 'interactive', actorPresentation: 'deferred' })
+ finish(await reactionFixture.call('reactions', { action: 'query', accountKey: 'test:a', targets: [target] }))
+ await warming
+ expect(store.snapshot(target.id)).toBeDefined()
+ first(); second()
 })

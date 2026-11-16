@@ -71,6 +71,7 @@ it.each([true, false])('cleans up the Team selection toolbar across rerenders an
   const unregister = registerLocalSnapshotForward(presenter)
   try {
     await render()
+    await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
     await select(1)
     const first = toolbars()[0]!
     expect(first?.textContent).toContain('团队内部')

@@ -1405,6 +1405,10 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
     return snapshot
   }
 
+  runWithReadPriority<T>(lane: 'interactive-read' | 'background-read', operation: () => Promise<T>): Promise<T> {
+    return this.runtime.runWithReadPriority(lane, operation)
+  }
+
   setNativeAnnotationSource(source: NativeAnnotationSource, runtime?: () => string | undefined) { this.nativeAnnotationService.source = source; this.nativeAnnotationService.sourceRuntime = runtime }
   setNativeAnnotationHistorySync(resolver: NonNullable<NativeAnnotationsService['historySync']>) { this.nativeAnnotationService.historySync = resolver }
   setNativeAnnotationAccess(resolve: NonNullable<NativeAnnotationsService['resolveTarget']>, source: NativeAnnotationSource, publish: NonNullable<NativeAnnotationsService['publishSource']>) {
@@ -2732,9 +2736,17 @@ recordingAnalysisV1: true,
     }) } as T
   }
 
-  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean; firstPaint?: boolean } = {}): Promise<ArkmeTimelinePage> {
+  timelineBotPresentations(sourceRef: string, refs: unknown, signal?: AbortSignal) {
+    return this.chat.timelineBotPresentations(sourceRef, refs, signal)
+  }
+
+  async readSource(sourceRef: string, options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; background?: boolean; desktopLocal?: boolean; firstPaint?: boolean; deferBotProfiles?: boolean } = {}): Promise<ArkmeTimelinePage> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (options.cursor?.firstUnread !== undefined && (options.cursor.firstUnread !== true || options.cursor.afterSequence === undefined
+      || options.cursor.unified !== undefined || source.kind !== 'private_chat' && source.kind !== 'group_chat')) {
+      throw new ArkmePluginError('chat-timeline-sequence-invalid', '当前查询不支持定位未读消息', false, 400)
+    }
     const localInitial = options.cursor?.unified?.cacheOnly === true && options.cursor.unified.mode === 'initial'
     if (source.kind === 'send_to_self' && localInitial) {
       const limit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 40)))
@@ -2764,23 +2776,30 @@ recordingAnalysisV1: true,
       this.messageSync.preferConversation(session.userId, memberChat ? source.ownerRef : undefined)
     }
     if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+      if (options.cursor?.afterSequence !== undefined && !options.cursor.unified) {
+        if (!Number.isSafeInteger(options.cursor.afterSequence) || options.cursor.afterSequence < 0
+          || options.cursor.beforeSequence !== undefined || options.cursor.itemUid !== undefined || options.cursor.sendAtMillis !== undefined) {
+          throw new ArkmePluginError('chat-timeline-sequence-invalid', '消息序号无效', false, 400)
+        }
+        return await this.chat.readSource(sourceRef, options)
+      }
       if (options.cursor && !options.cursor.unified) throw new ArkmePluginError('chat-timeline-legacy-cursor', '请重新打开聊天以建立统一时间线窗口', false, 409)
       if (!options.cursor?.unified?.cacheOnly) this.realtime.preferChatProjection(session.userId, source.ownerRef)
       const page = await this.unifiedTimeline.read(sourceRef, {
         ...options.cursor?.unified, ...(options.limit === undefined ? {} : { limit: options.limit }),
-      }, options.signal, options.background === true, options.firstPaint === true)
+      }, options.signal, options.background === true, options.firstPaint === true, options.deferBotProfiles === true)
       if (!options.cursor?.unified?.cacheOnly && !source.groupDelegation && !options.signal?.aborted) this.directory.rememberTimelinePreview(session.userId, page)
       return await this.withSelfRoleSnapshots(page, session.userId)
     }
     return await this.withSelfRoleSnapshots(await this.chat.readSource(sourceRef, options), session.userId)
   }
-  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal } = {}): Promise<ArkmeTimelineAroundPage> {
+  async readSourceAround(sourceRef: string, itemUid: string, recordOwnerUserId: RecordOwnerId, options: { beforeLimit?: number; afterLimit?: number; signal?: AbortSignal; deferBotProfiles?: boolean } = {}): Promise<ArkmeTimelineAroundPage> {
     const session = await this.runtime.requireSession()
     const page = await this.unifiedTimeline.read(sourceRef, { mode: 'around', itemUid, recordOwnerUserId,
-      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal)
+      limit: Math.min(100, (options.beforeLimit ?? 20) + (options.afterLimit ?? 20) + 1) }, options.signal, false, false, options.deferBotProfiles === true)
     const window = page.unified!
     const anchorIndex = page.items.findIndex(item => item.itemUid === itemUid)
-    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window,
+    return await this.withSelfRoleSnapshots({ source: page.source, items: page.items, unified: window, cache: page.cache,
       anchorItemUid: itemUid, anchorIndex, anchorSequence: page.items[anchorIndex]?.sequence ?? 0,
       olderHasMore: window.olderHasMore, newerHasMore: window.newerHasMore,
       ...(window.olderCursor ? { olderCursor: { unified: { mode: 'older' as const, cursor: window.olderCursor } } } : {}),

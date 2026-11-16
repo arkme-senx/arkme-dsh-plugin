@@ -42,10 +42,10 @@ function abortable(signal?: AbortSignal) {
 
 async function occupyBackground() {
   const controller = new AbortController()
-  const completed = Promise.allSettled([1, 2].map(index => callArkme(
-    'image.read', { imageRef: String(index) }, controller.signal, { priority: 'background' },
+  const completed = Promise.allSettled(['image.read', 'image.read', 'provider.capabilities', 'provider.capabilities'].map((operation, index) => callArkme(
+    operation as 'image.read' | 'provider.capabilities', { imageRef: String(index) }, controller.signal, { priority: 'background' },
   )))
-  try { await vi.waitFor(() => expect(calls('image.read')).toHaveLength(2)) }
+  try { await vi.waitFor(() => { expect(calls('image.read')).toHaveLength(2); expect(calls('provider.capabilities')).toHaveLength(2) }) }
   catch (error) { controller.abort(); await completed; throw error }
   return async () => { controller.abort(); await completed }
 }
@@ -53,7 +53,7 @@ async function occupyBackground() {
 beforeEach(() => {
   provider.mockReset()
   provider.mockImplementation(async (operation: string, params: Record<string, unknown> | undefined, signal?: AbortSignal) => {
-    if (operation === 'image.read') return abortable(signal)
+    if (operation === 'image.read' || operation === 'provider.capabilities') return abortable(signal)
     if (operation === 'official-notifications.summary') return summary
     if (operation === 'official-notifications.list') return params?.cursor ? { items: [{ ...notice, id: 'notice-two' }], nextCursor: '' } : page
     if (['arrangements.reminders.list', 'world.mine', 'ai-letter.list'].includes(operation)) return { items: [] }

@@ -154,7 +154,7 @@ describe('SearchService', () => {
     })
     let write: Promise<unknown> | undefined
     try {
-      await vi.waitFor(() => expect(reads).toHaveLength(kind === 'scene' ? 1 : 4), { timeout: 2_000 })
+      await vi.waitFor(() => expect(reads).toHaveLength(4), { timeout: 2_000 })
       write = runtime.authenticatedPost('/write-fixture', {}, session)
       await vi.waitFor(() => expect(written).toBe(true), { timeout: 500 })
       await expect(write).resolves.toEqual({ saved: true })

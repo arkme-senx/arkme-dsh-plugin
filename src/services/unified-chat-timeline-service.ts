@@ -1,4 +1,4 @@
-import { measureConversationReadPhase } from '../conversation-read-diagnostics.js'
+import { measureConversationReadPhase, noteConversationRead } from '../conversation-read-diagnostics.js'
 import { isSystemTimelineAnchorSource, systemTimelineAnchorCodec } from './system-timeline-anchor.js'
 import type { OfflineContextService } from './offline-context-service.js'
 import { TimelineCacheWorker, type TimelineCachePort, type TimelineCacheCommand } from '../timeline-cache-port.js'
@@ -184,19 +184,19 @@ export class UnifiedChatTimelineService {
     await this.invalidating
   }
 
-  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal, background = false, firstPaint = false): Promise<ArkmeTimelinePage> {
+  async read(sourceRef: string, query: ArkmeUnifiedTimelineQuery = {}, signal?: AbortSignal, background = false, firstPaint = false, deferBotProfiles = false): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object' || Array.isArray(query)) throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const operation = (shared: AbortSignal) => this.readOwned(sourceRef, query,
-      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]), background, firstPaint)
+      AbortSignal.any([shared, AbortSignal.timeout(Math.min(this.runtime.config.requestTimeoutMs ?? 30000, 30000))]), background, firstPaint, deferBotProfiles)
     // SQLite has its own bounded Worker admission and epoch/commit fences. It must
     // never wait behind an unrelated conversation's network/recovery deadline.
     return !query.cacheOnly && this.runtime.runCompositeOwnerRead
-      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query, ...(firstPaint ? { firstPaint } : {}) }, operation, signal,
+      ? await this.runtime.runCompositeOwnerRead('chat.timeline.window', { sourceRef, query, ...(firstPaint ? { firstPaint } : {}), ...(deferBotProfiles ? { deferBotProfiles } : {}) }, operation, signal,
         background || query.mode === 'refresh' ? 'background-read' : 'interactive-read')
       : await operation(signal ?? new AbortController().signal)
   }
 
-  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean, firstPaint: boolean): Promise<ArkmeTimelinePage> {
+  private async readOwned(sourceRef: string, query: ArkmeUnifiedTimelineQuery, signal: AbortSignal, background: boolean, firstPaint: boolean, deferBotProfiles: boolean): Promise<ArkmeTimelinePage> {
     if (!query || typeof query !== 'object') throw new ArkmePluginError('chat-timeline-query-invalid', '时间线读取参数无效', false)
     const epoch = this.epoch
     const { session, source } = await measureConversationReadPhase('scope', async () => {
@@ -259,7 +259,9 @@ export class UnifiedChatTimelineService {
       let cached: ArkmeTimelinePage | undefined
       try { cached = cache ? await measureConversationReadPhase('projection', () => this.callStorage<ArkmeTimelinePage | undefined>(cache, { kind: 'read', scope, request: requestKey,
         ...(query.anchorId ? { anchorId: query.anchorId.replace(/^(message|moment|notice|external|world-public):/, '') } : {}),
-        latest: mode === 'initial' && !query.anchorId })) : undefined } catch { /* Unavailable storage is a cache miss, not authoritative empty history. */ }
+        latest: mode === 'initial' && !query.anchorId })) : undefined
+        noteConversationRead('cache-result', !cache ? 'storage-unavailable' : !cached ? 'window-missing' : cached.cache?.stale ? 'window-stale' : 'window-found')
+      } catch { noteConversationRead('cache-result', 'storage-error') }
       // Window coverage and synced bodies have independent commit clocks. An old
       // latest window must not hide a newer, already durable local message tail.
       const latestLocal = mode === 'initial' && !query.anchorId && !query.cursor
@@ -344,13 +346,24 @@ export class UnifiedChatTimelineService {
     }
     const seal = (value: string, purpose: string) => codec.seal(JSON.stringify(['wire', protocol, value]), purpose)
     const { data, sources, events } = parseUnifiedTimelineResponse(raw, source.ownerRef, protocol)
+    // Only missing/protected and recall are access verdicts; incomplete reads cannot replace a committed window.
+    if (events.some(event => {
+      if (event.source === 'messages' && event.kind === 'message_recalled') return false
+      const status = objectValue(objectValue(event.payload).record).status
+      return event.content_status === 'unavailable' && (status === 3 || event.source === 'messages' && status !== 2 && status !== 4)
+        || event.source === 'messages' && event.kind === 'message' && status === 3
+    })) {
+      throw new ArkmePluginError('chat-timeline-content-pending', '消息加载失败，请重试', true, 503)
+    }
     const eventId = (value: string) => chatTimelineEventId(key, session.userId, this.runtime.config.environment, source.ownerRef, value)
     const native = events.filter(event => event.source === 'messages' && event.content_status === 'available')
     const groups = events.filter(event => event.source === 'interwoven' && event.content_status === 'available')
     const joins = events.filter(event => event.source === 'group_metadata' && event.kind === 'member_join' && event.content_status === 'available')
     const [messages, moments, joinPresentations] = await measureConversationReadPhase('network-projection', () => Promise.all([
       this.chat.projectChatTimelineItems(native.map(event => event.payload), source, session, signal,
-        firstPaint && !source.groupDelegation && (mode === 'initial' || mode === 'around') ? { deferHumanAvatars: true } : undefined),
+        deferBotProfiles && !source.groupDelegation
+          ? { deferBotProfiles: true, deferHumanAvatars: firstPaint && (mode === 'initial' || mode === 'around') }
+          : firstPaint && !source.groupDelegation && (mode === 'initial' || mode === 'around') ? { deferHumanAvatars: true } : undefined),
       groups.length ? this.interwoven.projectUnifiedGroups({ groups: groups.map(e => e.payload), prepared_at: data.prepared_at }, source, session, 0, signal).then(page => page.moments) : [],
       joins.length ? this.chat.projectUnifiedMemberJoins(joins.map(event => ({ ...objectValue(event.payload), join_at: event.occurred_at })), source, session, signal) : [],
     ]))
@@ -383,15 +396,25 @@ export class UnifiedChatTimelineService {
       } else if (order.contentStatus === 'unavailable') {
         const relation = objectValue(payload.relation)
         const uid = stringValue(relation.record_uid)
+        const status = objectValue(payload.record).status
+        if (event.source !== 'messages' && status !== 2 && status !== 4) {
+          sources.find(source => source.source === event.source)!.status = 'gap'
+          projected.push({ ...order, kind: 'notice', text: '关联内容加载失败', retryable: true })
+          continue
+        }
+        const protectedContent = status === 4
+        const text = event.source === 'messages'
+          ? protectedContent ? '此消息受隐私保护' : '原消息未找到'
+          : protectedContent ? '关联内容受隐私保护' : '关联内容未找到'
         if (event.source === 'messages' && uid) {
           projected.push({ ...order, kind: 'message', item: {
             itemUid: uid, timelineEventId: order.eventId,
             timelineItemKey: await this.source.chatTimelineItemKey(session.userId, source.ownerRef, stringValue(relation.rel_uid)),
-            senderName: '', isMe: false, sendAtMillis: order.occurredAtMillis, title: '', textContent: '内容暂时不可用',
+            senderName: '', isMe: false, sendAtMillis: order.occurredAtMillis, title: '', textContent: text,
             status: 0, quickNoteDetailsSupported: false,
             ...(Number.isSafeInteger(relation.seq) ? { sequence: Number(relation.seq) } : {}),
           } })
-        } else projected.push({ ...order, kind: 'notice', text: '内容暂时不可用' })
+        } else projected.push({ ...order, kind: 'notice', text, hidden: true })
       } else if (event.source === 'messages') {
         const relation = objectValue(payload.relation)
         const item = messageByRelation.get(await this.source.chatTimelineItemKey(session.userId, source.ownerRef, stringValue(relation.rel_uid)))
@@ -439,7 +462,7 @@ export class UnifiedChatTimelineService {
     }
     signal?.throwIfAborted()
     const unified: ArkmeUnifiedTimelineWindow = { protocolVersion: 2, events: projected.sort(compareUnifiedTimelineEvents), sources,
-      complete: data.complete as boolean, windowTokens: [seal(String(data.window_token), 'window')],
+      complete: data.complete === true && sources.every(source => source.status !== 'gap'), windowTokens: [seal(String(data.window_token), 'window')],
       ...(stringValue(data.older_cursor) ? { olderCursor: seal(String(data.older_cursor), 'older') } : {}),
       ...(stringValue(data.newer_cursor) ? { newerCursor: seal(String(data.newer_cursor), 'newer') } : {}),
       ...(stringValue(data.next_cursor) ? { nextCursor: seal(String(data.next_cursor), mode === 'initial' || mode === 'around' ? 'older' : mode) } : {}),

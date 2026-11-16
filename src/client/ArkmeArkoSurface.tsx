@@ -566,7 +566,7 @@ export function ArkmeArkoSurface() {
     return () => {
       const value = timelineSnapshot.current
       if (!value) return
-      const snapshot = { ...value, savedAtMillis: Date.now(), ...(body ? { viewport: { ...arkmeConversationViewport(body,false,true), followTail: followTailRef.current } } : {}) }
+      const snapshot = { ...value, savedAtMillis: Date.now(), ...(body ? { viewport: { ...arkmeConversationViewport(body, 'latest-anchor'), followTail: followTailRef.current } } : {}) }
       arkoTimelineMemory.set(accountKey, snapshot)
       void callArkme('arko.timeline.cache', { accountScope: accountKey, value: snapshot }).catch(() => undefined)
     }
@@ -579,7 +579,7 @@ export function ArkmeArkoSurface() {
     const timer = setTimeout(() => {
       const value = timelineSnapshot.current, body = bodyRef.current
       if (!value) return
-      const snapshot = { ...value, savedAtMillis: Date.now(), ...(body ? { viewport: { ...arkmeConversationViewport(body,false,true), followTail: followTailRef.current } } : {}) }
+      const snapshot = { ...value, savedAtMillis: Date.now(), ...(body ? { viewport: { ...arkmeConversationViewport(body, 'latest-anchor'), followTail: followTailRef.current } } : {}) }
       arkoTimelineMemory.set(accountKey, snapshot)
       void callArkme('arko.timeline.cache', { accountScope: accountKey, value: snapshot }).catch(() => undefined)
     }, 700)

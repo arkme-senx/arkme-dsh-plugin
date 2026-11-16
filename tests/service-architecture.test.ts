@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 const root = fileURLToPath(new URL('..', import.meta.url))
 
 const expectedPublicMethods = [
+  'runWithReadPriority', 'timelineBotPresentations',
   // S04/S05/R05: delegated correction learning, group review and explicit identity operations.
   'peopleIdentities', 'recordingSpeakerLearning', 'speakerDirectoryCorrectionItems', 'speakerGroupAction', 'speakerGroupMembers',
   'loginDevices',

@@ -5,6 +5,7 @@ import { arkmeConversationViewport } from '../src/client/conversation-viewport.j
 import { observeConversationResize } from '../src/client/conversation-resize-anchor.js'
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 function fixture() {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   let now = 0, height = 1500
   const frames = new Map<number, FrameRequestCallback>()
   let serial = 0
@@ -18,6 +19,36 @@ function fixture() {
     const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(now))
   } }
 }
+it.each(['blur', 'visibilitychange'] as const)('cancels a paused %s animation and never replays it on return', event => {
+  const f = fixture(); f.body.scrollTop = 1000
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+  f.grow(); followConversationBottom(f.body); f.frame()
+  const reading = f.body.scrollTop
+  vi.mocked(document.hasFocus).mockReturnValue(false)
+  if (event === 'visibilitychange') visibility.mockReturnValue('hidden')
+  ;(event === 'blur' ? window : document).dispatchEvent(new Event(event))
+  expect(f.frames.size).toBe(0)
+  expect(isConversationFollowing(f.body)).toBe(false)
+  for (let i = 0; i < 100; i++) { f.grow(); followConversationBottom(f.body) }
+  f.frame(60_000)
+  expect(f.body.scrollTop).toBe(reading)
+  expect(f.frames.size).toBe(0)
+  vi.mocked(document.hasFocus).mockReturnValue(true)
+  visibility.mockReturnValue('visible')
+  window.dispatchEvent(new Event('focus')); f.frame()
+  expect(f.body.scrollTop).toBe(reading)
+  expect(f.frames.size).toBe(0)
+})
+
+it('rechecks focus in a frame even if the browser has not delivered its blur event', () => {
+  const f = fixture(); f.body.scrollTop = 1000
+  f.grow(); followConversationBottom(f.body)
+  vi.mocked(document.hasFocus).mockReturnValue(false)
+  f.frame(60_000)
+  expect(f.body.scrollTop).toBe(1000)
+  expect(f.frames.size).toBe(0)
+  expect(isConversationFollowing(f.body)).toBe(false)
+})
 it('moves retained rows continuously instead of snapping an entire incoming row in one frame', () => {
   const f = fixture()
   f.body.scrollTop = 1000
@@ -141,9 +172,13 @@ it('cancels all work on scope disposal', () => {
   const f = fixture()
   const remove = vi.spyOn(f.body, 'removeEventListener')
   const dispatch = vi.spyOn(f.body, 'dispatchEvent')
+  const removeWindow = vi.spyOn(window, 'removeEventListener')
+  const removeDocument = vi.spyOn(document, 'removeEventListener')
   followConversationBottom(f.body); cancelConversationFollow(f.body)
   expect(f.frames.size).toBe(0)
   expect(remove).toHaveBeenCalledTimes(4)
+  expect(removeWindow).toHaveBeenCalledWith('blur', expect.any(Function))
+  expect(removeDocument).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
   expect(dispatch).not.toHaveBeenCalled()
 })
 it('rebases an active motion after a retained window slides without replaying old coordinates', () => {

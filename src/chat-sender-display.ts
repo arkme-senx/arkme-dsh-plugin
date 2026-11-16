@@ -6,6 +6,11 @@ export interface BotDisplayProfile {
   readonly displayName: string
   readonly avatarUrl?: string
 }
+export interface BotDisplayCacheEntry {
+  readonly uid: string
+  readonly profile?: BotDisplayProfile
+  readonly observedAt: number
+}
 export type BotDisplayProfiles = ReadonlyMap<string, BotDisplayProfile>
 export interface BotDisplaySnapshot {
   readonly chatSessionUid: string
@@ -13,11 +18,13 @@ export interface BotDisplaySnapshot {
   readonly groupTarget?: ArkmeGroupBotBindingTarget
 }
 export interface BotDisplayProfilesReader {
+  cached?(input: Parameters<BotDisplayProfilesReader['read']>[0], session: ArkmeSessionCredentials): Promise<BotDisplayProfiles>
   read(input: {
     readonly botUids: ReadonlySet<string>
     readonly chatSessionUid: string
     readonly isGroup: boolean
     readonly snapshot?: BotDisplaySnapshot
+    readonly uncached?: boolean
   }, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<BotDisplayProfiles>
 }
 
