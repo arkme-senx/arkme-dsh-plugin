@@ -1,3 +1,5 @@
+import { recordingDeliveryQuery, type RecordingDeliveryQuery, type RecordingDeliveryPage } from '../recording-delivery.js'
+import { recordingReceiptLabel } from '../recording-delivery.js'
 import { parseRecordingLearning } from '../recording-learning-contract.js'
 import { bindingWire, executionMetadata, type ModelBinding } from '../model-execution.js'
 import {rebaseExcerptSelection,matchExcerptOriginal} from './excerpt-original.js'
@@ -237,7 +239,14 @@ function recordingImportOwnerStatus(
       : '已保存到云端 · 转写已暂停，本月录音转写额度不足' }
   }
   if (ownerProgress?.serviceUnavailable) return { status: 'waiting', statusDetail: '服务暂时不可用，稍后自动重试' }
-  if (!owner.hasFinishedUpload) return { status: 'uploading', statusDetail: '上传中' }
+  if (owner.delivery?.coverage === 'interrupted') return { status: 'incomplete', statusDetail: recordingReceiptLabel(owner.delivery) }
+  if (owner.delivery?.coverage === 'receiving') {
+    const processing = ownerProgress?.displayStatus
+    const detail = processing === 'transcribing' ? '已有内容正在转写'
+      : processing === 'speaker-recognizing' ? '已有内容正在识别说话人' : ''
+    return { status: 'accepted', statusDetail: `${recordingReceiptLabel(owner.delivery)}${detail ? ` · ${detail}` : ''}` }
+  }
+  if (!owner.hasFinishedUpload && owner.delivery?.coverage !== 'complete') return { status: 'waiting', statusDetail: '接收状态待确认' }
   if (task.processingCompleted) {
     if (ownerProgress?.displayStatus === 'partial') return { status: 'partial', statusDetail: '部分完成' }
     if (ownerProgress?.displayStatus === 'failed') return { status: 'failed', statusDetail: '处理失败' }
@@ -1733,6 +1742,24 @@ export class RecordingService {
     }
   }
 
+  /** Pure cloud read. Unlike the built-in import list, never resumes local uploads. */
+  async recordingDeliveryPage(input: RecordingDeliveryQuery, signal?: AbortSignal): Promise<RecordingDeliveryPage> {
+    this.assertWorkbenchEnabled()
+    const query = recordingDeliveryQuery(input)
+    signal?.throwIfAborted()
+    const session = await this.runtime.requireSession()
+    const page = await this.recordingImportOwnerGateway.listOwnerTasks({
+      ...query, viewerUserId: session.userId, ...(signal === undefined ? {} : { signal }),
+    })
+    const key = await this.recordingRefKey(RECORDING_IMPORT_SESSION_REF_PREFIX)
+    const items = await Promise.all(page.tasks.map(task => this.projectRecordingImportOwnerTask(task, session.userId, key)))
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) {
+      throw new ArkmePluginError('recording-delivery-account-changed', '账号已变化，请重新查看录音', false, 409)
+    }
+    return { items, offset: query.offset, hasMore: page.hasMore, ...(page.total === undefined ? {} : { total: page.total }) }
+  }
+
   async recordingImportHistory(input: {
     toMillis: number
     limit: number
@@ -1793,7 +1820,8 @@ export class RecordingService {
       sessionId: target.sessionId,
       ...(signal === undefined ? {} : { signal }),
     })
-    if (start + owner.durationMillis > Date.now()) {
+    const span = owner.delivery?.displayEndAt == null ? owner.endAtMillis - owner.startAtMillis : owner.delivery.displayEndAt - owner.startAtMillis
+    if (start + Math.max(0, span) > Date.now()) {
       throw new ArkmePluginError('recording-import-end-invalid', '录音结束时间不能晚于当前时间', false)
     }
     await this.recordingImportOwnerGateway.updateOwnerSessionStart({
@@ -2010,10 +2038,11 @@ export class RecordingService {
       fileName: owner.fileName,
       fileSize: owner.fileSize,
       parsedSize: owner.parsedSize,
+      ...(owner.delivery === undefined ? {} : { delivery: owner.delivery }),
       durationMillis: owner.durationMillis,
       startAtMillis: owner.startAtMillis,
       endAtMillis: owner.endAtMillis,
-      progress: 1,
+      progress: null,
       status: status.status,
       statusDetail: status.statusDetail,
       createdAtMillis: owner.createdAtMillis,
@@ -2049,10 +2078,11 @@ export class RecordingService {
       fileName: owner.fileName,
       fileSize: owner.fileSize,
       parsedSize: owner.parsedSize,
+      ...(owner.delivery === undefined ? {} : { delivery: owner.delivery }),
       durationMillis: owner.durationMillis,
       startAtMillis: owner.startAtMillis,
       endAtMillis: owner.endAtMillis,
-      progress: owner.hasFinishedUpload ? 1 : owner.fileSize <= 0 ? 0 : Math.min(1, owner.parsedSize / owner.fileSize),
+      progress: null,
       status: status.status,
       statusDetail: status.statusDetail,
       createdAtMillis: owner.createdAtMillis,

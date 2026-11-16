@@ -1,3 +1,4 @@
+import { parseRecordingDelivery } from '../recording-delivery.js'
 import { abortRecordingFileUpload, uploadRecordingFile } from './recording-file-upload.js'
 import { assertRecordingImportBatchActive } from '../recording-import-contract.js'
 import { RECORDING_IMPORT_CONTRACT_VERSION } from '../recording-workflow-contract.js'
@@ -162,6 +163,7 @@ function ownerSession(value: unknown, viewerUserId: number): RecordingImportOwne
   const explicitEndAtMillis = owner.end_at === undefined ? 0 : optionalIntegerValue(owner.end_at)
   if (durationMillis === undefined || durationMillis < 0 || explicitEndAtMillis === undefined
     || explicitEndAtMillis < 0) return undefined
+  const delivery = parseRecordingDelivery(owner.delivery)
   const inferredEndAtMillis = startAtMillis + durationMillis
   if (!Number.isSafeInteger(inferredEndAtMillis)) return undefined
   return {
@@ -176,6 +178,7 @@ function ownerSession(value: unknown, viewerUserId: number): RecordingImportOwne
     createdAtMillis: nonNegativeIntegerValue(owner.create_at),
     updatedAtMillis: nonNegativeIntegerValue(owner.update_at),
     hasFinishedUpload: owner.has_finish_spk === true,
+    ...(delivery === undefined ? {} : { delivery }),
   }
 }
 
@@ -362,13 +365,13 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         }
         return { session: owner, processingCompleted }
       })
-      const sealed = ownerSnapshots.filter(task => task.session.hasFinishedUpload)
+      const sessionsWithProgress = ownerSnapshots
       let progress = new Map<string, RecordingImportOwnerProgress>()
-      if (sealed.length > 0) {
+      if (sessionsWithProgress.length > 0) {
         try {
           progress = await this.loadOwnerProgressForSession(
             input.viewerUserId,
-            sealed.map(task => task.session.sessionId),
+            sessionsWithProgress.map(task => task.session.sessionId),
             input.signal,
           )
         } catch (error) {

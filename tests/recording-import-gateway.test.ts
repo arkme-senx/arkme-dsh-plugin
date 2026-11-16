@@ -485,6 +485,7 @@ describe('AudioRecordingImportGateway', () => {
       { path: '/api/v1/audio/get-session-ls', body: { to_stamp: 1_725_100_000_000, limit: 100, offset: 0, query_new: false, task_scope: 'completed' } },
       { path: '/api/v1/audio/get-session-deal-status', body: { session_ids: ['session-1'] } },
       { path: '/api/v1/audio/get-session-ls', body: { to_stamp: 1_725_100_000_000, limit: 100, offset: 0, query_new: false, task_scope: 'active' } },
+      { path: '/api/v1/audio/get-session-deal-status', body: { session_ids: ['session-active'] } },
     ])
   })
 

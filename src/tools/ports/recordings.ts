@@ -7,6 +7,7 @@ import type { PreparedRecordingDirectory, RecordingDirectoryInput, RecordingDire
 /** Import commands and scoped speaker/entity reads; no retired transcript/calendar/cursor ports. */
 export interface ArkmeRecordingToolPort extends RecordingEntityPort {
  recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
+  recordingDeliveryPage(input: import('../../recording-delivery.js').RecordingDeliveryQuery, signal?: AbortSignal): Promise<import('../../recording-delivery.js').RecordingDeliveryPage>
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<import('../../recording-file-storage.js').RecordingFileStoragePage>
   recordingSpeakerEvidenceQuery(query: import('../../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../../recording-evidence-contract.js').RecordingEvidenceResult>
   previewRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<import('../../types.js').ArkmeRecordingSpeakerCorrectionPreview>

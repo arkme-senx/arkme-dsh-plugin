@@ -41,6 +41,27 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  it('reads cloud delivery without inspecting or resuming local imports and discards account changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-delivery-read-'))
+    let userId = 42
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const store = new ArkmeStateStore(root), gateway = gatewayNoop()
+    const owner = await gateway.loadOwnerSession({ viewerUserId: 42, sessionId: 'session' })
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([owner]))
+    const listLocal = vi.spyOn(store, 'listRecordingImportJobs').mockRejectedValue(new Error('must not inspect local jobs'))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const query = { scope: 'active' as const, toMillis: 1800000000000, limit: 20, offset: 0 }
+    try {
+      const result = await service.recordingDeliveryPage(query)
+      expect(result.items).toHaveLength(1)
+      expect(result.items[0]).toMatchObject({ fileName: 'owner.wav', progress: null })
+      expect(result.items[0]).not.toHaveProperty('sessionId')
+      expect(listLocal).not.toHaveBeenCalled()
+      gateway.listOwnerTasks = vi.fn(async () => { userId = 43; return ownerPage([owner]) })
+      await expect(service.recordingDeliveryPage(query)).rejects.toThrow('账号已变化')
+    } finally { service.dispose(); await rm(root, { recursive: true, force: true }) }
+  })
+
   it('accepts native uploads without the new header using the registered strategy after Host restart', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-native-strategy-host-'))
     const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
@@ -1453,7 +1474,7 @@ describe('RecordingService', () => {
     expect(current).toHaveLength(2)
     expect(current).toContainEqual(expect.objectContaining({
       kind: 'owner',
-      fileName: 'processing.m4a', status: 'uploading', statusDetail: '上传中',
+      fileName: 'processing.m4a', status: 'waiting', statusDetail: '接收状态待确认',
       startAtMillis, endAtMillis: startAtMillis + 60_000,
       importProgress: expect.objectContaining({ totalDurationMillis: 18_000 }),
       sessionRef: expect.stringMatching(/^arkme-recording-import-session-v1\./),
@@ -1903,7 +1924,7 @@ describe('RecordingService', () => {
 
     expect(current).toEqual([expect.objectContaining({
       kind: 'owner', fileName: 'still-processing.wav',
-      status: 'uploading', statusDetail: '上传中',
+      status: 'waiting', statusDetail: '接收状态待确认',
     })])
   })
 

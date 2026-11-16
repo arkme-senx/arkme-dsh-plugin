@@ -92,6 +92,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
       <RecordingComparisonPane pagination={{
         cursor: data[source].nextCursor ? `${data[source].viewRef}:${data[source].nextCursor}` : undefined,
         loading: source === 'system' ? primaryPages.loading : enhancedPages.loading,
+        updating: source === 'system' ? primaryPages.updating : enhancedPages.updating,
         error: source === 'system' ? primaryPages.error : enhancedPages.error,
         next: source === 'system' ? primaryPages.next : enhancedPages.next,
       }}>

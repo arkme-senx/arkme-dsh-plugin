@@ -1,3 +1,4 @@
+import { RecordingViewUpdating } from '../recording-transcript-page.js'
 import { RecordingVersionDetails } from './recordings/RecordingVersionDetails.js'
 import { RecordingSourceNotice } from './recordings/RecordingSourceNotice.js'
 import { LocalRecorderEntry } from './recordings/LocalRecorderEntry.js'
@@ -865,13 +866,13 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const transcriptExport = useRecordingTranscriptExport(`${pageScope}:${active && ui.mode === 'recordings'}`, pages.through)
   useEffect(() => {
     const target = transcriptContinuationRef.current
-    if (!active || activeTab !== 'transcript' || !day?.transcript.nextCursor || pages.loading || pages.error !== '' || !target || typeof IntersectionObserver === 'undefined') return
+    if (!active || activeTab !== 'transcript' || !day?.transcript.nextCursor || pages.loading || pages.updating || pages.error !== '' || !target || typeof IntersectionObserver === 'undefined') return
     const observer = new IntersectionObserver(entries => {
       if (entries.some(entry => entry.isIntersecting)) void pages.next().catch(() => undefined)
     }, { root: transcriptRootRef.current, rootMargin: '400px' })
     observer.observe(target)
     return () => observer.disconnect()
-  }, [active, activeTab, day?.transcript.nextCursor, pages.loading, pages.error, pages.next])
+  }, [active, activeTab, day?.transcript.nextCursor, pages.loading, pages.error, pages.updating, pages.next])
   const playback = useRecordingPlayback(recordingMediaPath, async (last, signal) => (await pages.through(last.startAtMillis, signal))?.items ?? [], day?.transcript.items)
   const selectedTimelineMillis = playback.positionAtMillis
   const displayedPane = useRef('')
@@ -1073,7 +1074,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   }, [dayScope, recordingRefreshRevision, fileRefreshRevision, dayRetryRevision, pages.refresh])
 
   const coverageProcessing = day?.coverage?.intervals.some(range => range.status === 'processing') === true
-  const dayNeedsRefresh = recordingDayNeedsRefresh(day)
+  const dayNeedsRefresh = recordingDayNeedsRefresh(day) || pages.updating
   useEffect(() => {
     if (!active || !dayLoaded || (!awaitingCoverageSync && !awaitingAsrInputMetrics && !dayNeedsRefresh && !day?.coverage?.intervals.some(range => range.status === 'processing'))) return
     const controller = new AbortController()
@@ -1119,7 +1120,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
             }
             setSummaryVersionId(current => notificationWindow && current === ui.recordingTarget?.summary?.versionId ? current : reconcileRecordingVersionId(current, latest!.summary.items))
             setTimelineVersionId(current => notificationWindow && current === ui.recordingTarget?.timeline?.versionId ? current : reconcileRecordingVersionId(current, latest!.timeline.items))
-          } catch (error) { if (!controller.signal.aborted) failure ||= errorMessage(error) }
+          } catch (error) { if (!controller.signal.aborted && !(error instanceof RecordingViewUpdating)) failure ||= errorMessage(error) }
         }))
         if (controller.signal.aborted || currentDayScope.current !== dayScope) return
         setDayRefreshError(failure)
@@ -1128,7 +1129,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         }
         const latestMetrics = (readPartsRef.current?.scope === dayScope ? readPartsRef.current.value.metrics : undefined)
           ?? latest?.metrics ?? latest?.transcript.dailyMetrics
-        if (latest && (failure || awaitingCoverageSync || (latestMetrics?.asrInputPendingCount ?? 0) > 0 || recordingDayNeedsRefresh(latest) || latest.coverage?.intervals.some(range => range.status === 'processing'))) {
+        if (latest && (pages.updating || failure || awaitingCoverageSync || (latestMetrics?.asrInputPendingCount ?? 0) > 0 || recordingDayNeedsRefresh(latest) || latest.coverage?.intervals.some(range => range.status === 'processing'))) {
           timer = setTimeout(() => { void poll() }, attempts < 90 ? failure ? 5000 : 3000 : 15000)
         }
       } catch (error) {
@@ -1138,7 +1139,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     }
     timer = setTimeout(() => { void poll() }, 1_500)
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer) }
-  }, [active, dayLoaded, awaitingCoverageSync, awaitingAsrInputMetrics, coverageProcessing, dayNeedsRefresh, selectedDate, auth.auth?.userId, auth.auth?.environment, pages.refresh, recordingRefreshRevision, fileRefreshRevision, notificationWindow, dayRetryRevision])
+  }, [active, dayLoaded, awaitingCoverageSync, awaitingAsrInputMetrics, coverageProcessing, dayNeedsRefresh, selectedDate, auth.auth?.userId, auth.auth?.environment, pages.refresh, pages.updating, recordingRefreshRevision, fileRefreshRevision, notificationWindow, dayRetryRevision])
 
   const appliedSummaryTarget = useRef<typeof ui.recordingTarget>()
   const [missingSummaryTarget, setMissingSummaryTarget] = useState<typeof ui.recordingTarget>()
@@ -1528,7 +1529,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
           else void playback.playItem(item)
         }}
       />
-    })}</ul>{pages.error !== '' && <div role="alert" style={styles.error}>{pages.error}</div>}
+    })}</ul>{pages.updating && <div role="status">{tr('录音内容正在更新，稍后自动继续加载')}</div>}{pages.error !== '' && <div role="alert" style={styles.error}>{pages.error}</div>}
       {section.nextCursor !== '' && <><div role="status" aria-live="polite" style={styles.status}>{tr('已加载 {count} 段，至 {time}', { count: section.items.length, time: recordingTranscriptTimeLabel(section.items.at(-1)?.endAtMillis ?? selectedDate.getTime()) })}</div>
         {pages.loading && <ArkmeRecordingTranscriptLoading reading />}
         <button ref={transcriptContinuationRef} type="button" disabled={pages.loading} onClick={() => { void (transcriptSearch.trim() === '' ? pages.next() : pages.through()).catch(() => undefined) }} style={{ ...styles.actionButton, width: 'auto', height: 'auto', padding: '8px 12px', whiteSpace: 'nowrap' }}>{pages.loading ? '正在读取…' : pages.error !== '' ? '重试加载' : '加载更多'}</button></>}

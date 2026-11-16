@@ -176,7 +176,8 @@ describe('workbench page lifetime', () => {
       expect(settled).toBe(true)
       expect(calls.read).toHaveBeenCalledTimes(3)
       expect(pager.loading).toBe(false)
-      expect(pager.error).toContain('持续更新')
+      expect(pager.error).toBe('')
+      expect(pager.updating).toBe(true)
       expect(current.items.map(item => item.text)).toEqual(['a'])
       expect(current.viewRef).toBe('view')
     } finally {
@@ -202,7 +203,7 @@ describe('workbench page lifetime', () => {
     let result: unknown
     await act(async () => { result = await pager.through().then(nextCommand).catch(error => error) })
     expect(result).toBeInstanceOf(Error)
-    expect(String(result)).toContain('持续更新')
+    expect(String(result)).toContain('正在更新')
     expect(nextCommand).not.toHaveBeenCalled()
     expect(freshReads).toBe(2)
     expect(calls.read).toHaveBeenCalledTimes(5)
