@@ -1,4 +1,6 @@
 import { beginClientSendTiming, clientSendTimingPoint } from '../message-send-timing.js'
+import {parseGameCommand} from './game/command.js'
+import {openGame} from './game/window.js'
 import { HistoryPageTiming, historyTimingEnabled } from './conversation-history-timing.js'
 import { presentTimelineBotSender, useTimelineBotPresentations } from './timeline-bot-presentations.js'
 import { groupInteractionTrace, groupInteractionTraceKey } from '../group-interaction-diagnostics.js'
@@ -5188,6 +5190,20 @@ export function ArkmeSurface({
   }, [])
 
   const send = async () => {
+    // Bare game commands are consumed; copied invitation sentences remain ordinary notes.
+    if (composerDraftKey && activeRecordReeditComposer === undefined) {
+      const gameDraft = arkmeComposerDraftStore.get(composerDraftKey)
+      try {
+        const command = parseGameCommand(serializeArkmeComposerDraft(gameDraft).text)
+        if (command) {
+          if (source?.kind !== 'group_chat') throw new Error('请在群聊输入框中使用游戏口令')
+          if (gameDraft.attachments.length || gameDraft.extensionTarget || composerArticleStore.get(articleDraftKey)) throw new Error('请单独发送纯文本游戏口令，不要附带附件或引用')
+          await openGame(command)
+          if (arkmeComposerDraftStore.get(composerDraftKey) === gameDraft) arkmeComposerDraftStore.clear(composerDraftKey)
+          return
+        }
+      } catch (caught) { setError(errorMessage(caught)); return }
+    }
     const sendStartedAt = Date.now()
     const scope = captureComposerAsyncScope()
     const representationAtSendStart = selectedTeamIdentity?.selection

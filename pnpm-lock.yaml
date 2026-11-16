@@ -47,6 +47,9 @@ importers:
       '@sentry/node':
         specifier: 10.73.0
         version: 10.73.0(@opentelemetry/core@2.11.0(@opentelemetry/api@1.9.1))
+      '@tencentcloud/lite-chat':
+        specifier: 1.6.11
+        version: 1.6.11
       '@tiptap/core':
         specifier: ^3.31.0
         version: 3.31.0(@tiptap/pm@3.31.0)
@@ -2380,6 +2383,9 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@tencentcloud/lite-chat@1.6.11':
+    resolution: {integrity: sha512-nxznntQDOEtTjmnCgwwIKn5b87C9Jy/pgb6toLRJY8Hq0CUhDv7tOJbcJizxbwWAJ8QQOSU5jrkNS0ERnNPxMQ==}
 
   '@tiptap/core@3.31.0':
     resolution: {integrity: sha512-SY3yE2ACharFvk0BKgotV6SbwV8R4tN5fGtWOM6deY4JNF3v6CXOD78RFwjs2HSohGWBRyJVPDvrX9nfi8Nsxg==}
@@ -6328,6 +6334,8 @@ snapshots:
   '@stablelib/base64@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@tencentcloud/lite-chat@1.6.11': {}
 
   '@tiptap/core@3.31.0(@tiptap/pm@3.31.0)':
     dependencies:
