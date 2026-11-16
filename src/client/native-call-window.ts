@@ -16,7 +16,7 @@ export function connectNativeCallWindow(runtime: OutgoingCallRuntime, bridge: Ca
   let presentation = ''
   function sync() {
     const state = runtime.getSnapshot()
-    const id = state.visible || state.retainFrame ? state.callRequestId : ''
+    const id = state.visible || state.retainFrame ? (state.frameId ?? state.callRequestId) : ''
     if (id !== currentId) {
       if (currentId) bridge.release(currentId)
       currentId = id

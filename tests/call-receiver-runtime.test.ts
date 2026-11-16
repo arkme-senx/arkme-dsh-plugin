@@ -90,19 +90,30 @@ describe('desktop incoming call lifecycle', () => {
     expect(runtime.getSnapshot()).toMatchObject({ phase: 'listening', visible: false })
   })
 
-  it('suspends receiving for an outgoing call and does not send credentials into the old iframe', async () => {
+  it('reuses the shared IM frame for outgoing calls and retains it after hangup', async () => {
     const { runtime, controller } = setup()
     const target = await ready(runtime)
     controller.request({ sourceRef: 'private-ref', displayName: '小林', mediaType: 'audio' })
     await settle()
     expect(runtime.getSnapshot().phase).toBe('bootstrapping')
-    expect(target.commands().map(command => command.type)).toEqual(['bootstrap', 'logout'])
-    const outbound = frame()
-    runtime.attachFrame(outbound.frame)
-    runtime.handleBridgeMessage({ type: 'ready' })
-    expect(outbound.commands().map(command => command.type)).toEqual(['bootstrap', 'call'])
+    expect(target.commands().map(command => command.type)).toEqual(['bootstrap', 'call'])
     runtime.handleBridgeMessage({ type: 'incoming', mediaType: 'audio', callerName: '旁路来电' })
     expect(runtime.getSnapshot().displayName).toBe('小林')
+    const frameId = runtime.getSnapshot().frameId
+    runtime.handleBridgeMessage({ type: 'end' }); await vi.advanceTimersByTimeAsync(700)
+    expect(runtime.getSnapshot()).toMatchObject({ phase: 'listening', frameId, retainFrame: true })
+    expect(target.commands().some(command => command.type === 'logout')).toBe(false)
+  })
+
+  it('reports only the expected SDK identity and stops retries after being kicked', async () => {
+    const { runtime, api } = setup(); await ready(runtime)
+    runtime.handleBridgeMessage({ type: 'im_ready', registrationId: 'wrong' })
+    expect(api.mock.calls.some(([op]) => op === 'calls.receiver.im-ready')).toBe(false)
+    runtime.handleBridgeMessage({ type: 'im_ready', registrationId: 'me' })
+    expect(api).toHaveBeenCalledWith('calls.receiver.im-ready', { accountUserId: 42, registrationId: 'me' })
+    const before = api.mock.calls.filter(([op]) => op === 'calls.receiver.prepare').length
+    runtime.handleBridgeMessage({ type: 'im_kicked' }); await vi.advanceTimersByTimeAsync(120_000)
+    expect(api.mock.calls.filter(([op]) => op === 'calls.receiver.prepare')).toHaveLength(before)
   })
 
   it('drops receiver credentials and pending readiness when logging out', async () => {
