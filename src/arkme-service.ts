@@ -1665,6 +1665,8 @@ recordingAnalysisV1: true,
   }
 
   async createShareCallLink(mediaType: ArkmeOutgoingCallMediaType) { return await this.outgoingCall.createShareCallLink(mediaType) }
+  async reportIMReady(accountUserId: number, registrationId: string) { return await this.outgoingCall.reportIMReady(accountUserId, registrationId) }
+  reportDeviceActivity() { this.outgoingCall.reportDeviceActivity() }
   async prepareCallReceiver() { return await this.outgoingCall.prepareCallReceiver() }
   async claimIncomingCall(callRequestId: string) { return await this.outgoingCall.claimIncomingCall(callRequestId) }
 
@@ -1720,8 +1722,8 @@ recordingAnalysisV1: true,
     this.source.dispose()
     this.aiPolish.dispose()
     this.arrangement.dispose()
-    this.runtime.dispose()
     this.outgoingCall.dispose()
+    this.runtime.dispose()
     this.interwoven.dispose()
     this.relatedQuickNote.dispose()
     this.world.dispose()

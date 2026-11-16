@@ -1385,7 +1385,7 @@ export class MediaService {
       for (const raw of items) {
         const item = objectValue(raw)
         const uid = stringValue(item.file_asset_uid)
-        if (expected.has(uid) && stringValue(item.preview_url ?? item.download_url).trim() !== '') displays.set(uid, item)
+        if (expected.has(uid) && (stringValue(item.preview_url).trim() || stringValue(item.download_url).trim()) !== '') displays.set(uid, item)
       }
     }
     for (const snapshot of snapshots) accept(listValue(snapshot.media_display_items))
@@ -1473,7 +1473,7 @@ export class MediaService {
         displayItemsByRecordUid.set(recordUid, items)
         const hasDeliverableItem = items.some(rawItem => {
           const item = objectValue(rawItem)
-          return stringValue(item.preview_url ?? item.download_url).trim() !== ''
+          return (stringValue(item.preview_url).trim() || stringValue(item.download_url).trim()) !== ''
         })
         if (!hasDeliverableItem) unavailableRecordUids.add(recordUid)
       }
@@ -1534,7 +1534,7 @@ export class MediaService {
 
   favoriteStickerMediaRef(raw: unknown, viewerUserId: number): string | undefined {
     const item = objectValue(raw)
-    const remoteUrl = stringValue(item.preview_url ?? item.download_url).trim()
+    const remoteUrl = (stringValue(item.preview_url).trim() || stringValue(item.download_url).trim())
     if (remoteUrl === '') return undefined
     const fileAssetUid = stringValue(item.file_asset_uid).trim()
     const fileName = stringValue(item.file_name).trim() || '收藏表情'
@@ -1676,7 +1676,7 @@ export class MediaService {
         const ref=this.issueMediaRef(viewerUserId,{chatSource,sourceBound:true,purpose:'original',mimeType,fileName,size:Math.max(0,Math.trunc(numberValue(item.size)))},stableIdentity)
         return [{kind,...(kind === 'image' ? photoPresentation : {}),...(thumbnailRef ? { thumbnailRef } : {}),mediaRef:ref,originalRef:ref,...(stringValue(upload.attachment_uid)===''?{}:{attachmentUid:stringValue(upload.attachment_uid)}),...(fileAssetUid?{fileAssetUid}:{}),fileName,mimeType,size:Math.max(0,Math.trunc(numberValue(item.size))),sortOrder:Math.trunc(numberValue(item.sort_order??index)),...(numberValue(item.duration_sec)>0?{durationSec:numberValue(item.duration_sec)}:{}),...([1,3].includes(Math.trunc(numberValue(item.render_role)))?{renderRole:Math.trunc(numberValue(item.render_role)) as 1|3}:{})}]
       }
-      const remoteUrl = stringValue(kind === 'image' ? item.preview_url ?? item.download_url : item.download_url).trim()
+      const remoteUrl = (kind === 'image' ? stringValue(item.preview_url).trim() : '') || stringValue(item.download_url).trim()
       if (remoteUrl === '') return []
       const originalUrl = stringValue(item.download_url).trim()
       const originalRef = originalUrl === '' ? undefined : this.issueMediaRef(viewerUserId, {

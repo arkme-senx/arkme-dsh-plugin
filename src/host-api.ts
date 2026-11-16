@@ -3333,6 +3333,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       })
     }
     case 'calls.invite.create': return await service.createShareCallLink(outgoingMediaTypeParam(params))
+    case 'calls.receiver.im-ready': return await service.reportIMReady(Number(params.accountUserId), requiredCallParam(params, 'registrationId', 'im-registration-invalid', 128))
+    case 'calls.receiver.activity': return service.reportDeviceActivity()
     case 'calls.receiver.prepare': return await service.prepareCallReceiver()
     case 'calls.receiver.claim': return await service.claimIncomingCall(requiredCallParam(params, 'callRequestId', 'call-request-invalid'))
     case 'calls.outgoing.prepare': return await service.prepareOutgoingCall({

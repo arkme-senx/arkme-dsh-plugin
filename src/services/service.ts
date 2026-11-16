@@ -150,6 +150,7 @@ arkoFileRefs(userId:number):Promise<string[]>
 }
 
 export interface ArkmeServiceConfig {
+  appVersion?: string
   environment: ArkmeEnvironment
   dshRemoteRealtimeBaseUrl?: string
   authBaseUrl: string

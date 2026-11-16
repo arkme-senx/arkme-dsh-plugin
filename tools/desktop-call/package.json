@@ -1,0 +1,15 @@
+{
+  "name": "desktop-call-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild ./src/index.js --bundle --format=esm --platform=browser --outfile=../../assets/desktop_call/bundle.js"
+  },
+  "dependencies": {
+    "@tencentcloud/lite-chat": "1.6.11",
+    "@trtc/call-engine-lite-js": "^3.5.9"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.2"
+  }
+}

@@ -26,6 +26,7 @@ export interface OutgoingCallRuntimeSnapshot {
   phase: OutgoingCallPhase
   assetBasePath: string
   callRequestId: string
+  frameId?: string
   displayName: string
   mediaType: ArkmeOutgoingCallMediaType
   statusText: string
@@ -124,6 +125,8 @@ export class OutgoingCallRuntime {
   private receiverUserId: number | undefined
   private receiverScope: string | undefined
   private receiverBootstrap: ArkmeCallReceiverPrepareResult['bootstrap'] | undefined
+  private imUserId: string | undefined
+  private imKicked = false
   private receiverReady = false
   private receiverError = ''
   private receiverRetryTimer: ReturnType<typeof globalThis.setTimeout> | undefined
@@ -135,6 +138,7 @@ export class OutgoingCallRuntime {
     const mounted = this.unsubscribeController !== undefined
     // Account changes invalidate pending credentials, calls and callbacks together.
     this.dispose()
+    this.imKicked = false
     this.receiverUserId = userId
     this.receiverScope = scope
     if (mounted) this.mount()
@@ -148,7 +152,7 @@ export class OutgoingCallRuntime {
   }
 
   private async startReceiver(): Promise<void> {
-    if (this.receiverUserId === undefined || this.unregisterReceiver === undefined || this.snapshot.phase !== 'idle') return
+    if (this.imKicked || this.receiverUserId === undefined || this.unregisterReceiver === undefined || this.snapshot.phase !== 'idle') return
     this.clearReceiverTimers()
     const userId = this.receiverUserId
     const generation = ++this.generation
@@ -158,7 +162,8 @@ export class OutgoingCallRuntime {
     this.callSent = false
     this.receiverBootstrap = undefined
     this.frame = null
-    this.update({ phase: 'listening', retainFrame: true, visible: false, callRequestId: this.randomId(), error: '' })
+    const frameId = this.randomId()
+    this.update({ phase: 'listening', retainFrame: true, visible: false, callRequestId: frameId, frameId, error: '' })
     this.receiverBootTimer = this.startTimeout(() => {
       if (generation === this.generation && !this.receiverReady) this.receiverFailed('通话服务连接超时，请重试')
     }, 15_000)
@@ -167,6 +172,7 @@ export class OutgoingCallRuntime {
       if (generation !== this.generation) return
       if (result.accountUserId !== userId) throw new Error('登录账号已变化，请重试')
       this.receiverBootstrap = result.bootstrap
+      this.imUserId = result.bootstrap.userId
       this.flushBootstrap()
     } catch (error) {
       if (generation === this.generation) this.receiverFailed(failureFrom(error).message)
@@ -182,7 +188,7 @@ export class OutgoingCallRuntime {
     this.bootstrapSent = false
     this.receiverError = message
     this.update({ phase: 'idle', visible: false, retainFrame: false, callRequestId: '', error: message })
-    if (this.receiverUserId !== undefined && this.unregisterReceiver !== undefined) {
+    if (!this.imKicked && this.receiverUserId !== undefined && this.unregisterReceiver !== undefined) {
       this.receiverRetryTimer = this.startTimeout(() => { void this.startReceiver() }, 30_000)
     }
   }
@@ -252,6 +258,9 @@ export class OutgoingCallRuntime {
   mount(): void {
     if (this.unsubscribeController !== undefined) return
     this.diag('mount', {})
+    globalThis.addEventListener?.('focus', this.reportActivity)
+    globalThis.addEventListener?.('pointerdown', this.reportActivity)
+    globalThis.addEventListener?.('keydown', this.reportActivity)
     const consume = () => {
       const request = this.controller.consume()
       if (request !== undefined) {
@@ -267,6 +276,12 @@ export class OutgoingCallRuntime {
     void this.pollToolIntent().catch(() => undefined)
   }
 
+  private activityAt = 0
+  private readonly reportActivity = (): void => {
+    if (Date.now() - this.activityAt < 30_000) return
+    this.activityAt = Date.now()
+    if (this.receiverUserId !== undefined) void this.callApi('calls.receiver.activity').catch(() => undefined)
+  }
   attachFrame(frame: HTMLIFrameElement | NativeCallEndpoint | null): void {
     this.frame = frame
     this.diag('frame_attached', { hasFrame: frame !== null })
@@ -279,7 +294,7 @@ export class OutgoingCallRuntime {
     const message = parseDesktopCallBridgeEvent(event, {
       expectedSource: source,
       expectedOrigin: this.origin(),
-      callRequestId: this.snapshot.callRequestId,
+      callRequestId: this.snapshot.frameId ?? this.snapshot.callRequestId,
     })
     if (message === undefined) {
       if (event.source === source) this.diag('bridge_message_ignored', {
@@ -303,6 +318,19 @@ export class OutgoingCallRuntime {
       return
     }
     if (this.snapshot.phase === 'idle') return
+    if (message.type === 'im_kicked') {
+      this.imKicked = true
+      this.clearReceiverTimers()
+      this.receiverFailed('当前通信账号已由其他窗口接管')
+      return
+    }
+    if (message.type === 'im_ready') {
+      if (this.receiverUserId !== undefined && message.registrationId === this.imUserId) {
+        void this.callApi('calls.receiver.im-ready', { accountUserId: this.receiverUserId,
+          registrationId: message.registrationId }).catch(() => undefined)
+      }
+      return
+    }
     if (message.type === 'incoming') { void this.receiveIncoming(message); return }
     if (message.type === 'ready') {
       if (this.snapshot.phase === 'listening') {
@@ -438,6 +466,9 @@ export class OutgoingCallRuntime {
   }
 
   dispose(): void {
+    globalThis.removeEventListener?.('focus', this.reportActivity)
+    globalThis.removeEventListener?.('pointerdown', this.reportActivity)
+    globalThis.removeEventListener?.('keydown', this.reportActivity)
     this.generation += 1
     this.clearReceiverTimers()
     this.unregisterReceiver?.()
@@ -446,6 +477,7 @@ export class OutgoingCallRuntime {
     this.receiverBootstrap = undefined
     this.receiverUserId = undefined
     this.receiverScope = undefined
+    this.imUserId = undefined
     this.unsubscribeController?.()
     this.unsubscribeController = undefined
     if (this.pollTimer !== undefined) this.stopInterval(this.pollTimer)
@@ -492,17 +524,20 @@ export class OutgoingCallRuntime {
     this.claiming = false
     this.claimEpoch += 1
     this.clearReceiverTimers()
-    this.receiverReady = false
-    this.receiverBootstrap = undefined
-    if (this.snapshot.phase === 'listening') {
-      if (this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
-      this.frame = null
+    const reuseIM = this.snapshot.phase === 'listening' && this.receiverReady && this.frame !== null
+    if (!reuseIM) {
+      this.receiverReady = false
+      this.receiverBootstrap = undefined
+      if (this.snapshot.phase === 'listening') {
+        if (this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
+        this.frame = null
+      }
     }
     this.intent = intent
-    this.bootstrapSent = false
+    this.bootstrapSent = reuseIM
     this.callSent = false
     this.update({
-      visible: true, retainFrame: false, phase: 'preparing', callRequestId, displayName: request.displayName,
+      visible: true, retainFrame: reuseIM, frameId: reuseIM ? (this.snapshot.frameId ?? this.snapshot.callRequestId) : callRequestId, phase: 'preparing', callRequestId, displayName: request.displayName,
       mediaType: request.mediaType, statusText: '正在准备呼叫…', error: '', compact: false, fullscreen: false,
     })
     try {
@@ -530,7 +565,11 @@ export class OutgoingCallRuntime {
       })
       this.update({ phase: 'bootstrapping', displayName: prepared.displayName, statusText: '正在初始化通话…' })
       this.startHeartbeat()
-      this.flushBootstrap()
+      if (reuseIM) {
+        if (prepared.bootstrap.userId !== this.imUserId) throw new Error('通信账号已变化')
+        prepared.bootstrap.userSig = ''
+        this.flushCall()
+      } else this.flushBootstrap()
     } catch (error) {
       if (generation !== this.generation) return
       const failure = failureFrom(error)
@@ -706,12 +745,18 @@ export class OutgoingCallRuntime {
       intentId: intent.intentId, claimToken: intent.claimToken, status: 'failed', code, message,
     }).catch(() => undefined)
     if (generation !== this.generation) return
-    if (this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
+    const keepIM = this.receiverReady && !this.imKicked && this.receiverUserId !== undefined && this.frame !== null
+    if (!keepIM && this.frame !== null) sendDesktopCallCommand(this.frame, 'logout')
     await this.releaseLease()
     if (generation !== this.generation) return
     this.prepared = undefined
-    this.bootstrapSent = false
+    this.bootstrapSent = keepIM
     this.callSent = false
+    if (keepIM) {
+      this.update({ visible: false, retainFrame: true, phase: 'listening', callRequestId: this.randomId(), displayName: '', statusText: '等待来电', error: '', compact: false, fullscreen: false })
+      if (settled !== undefined) this.controller.notifySettled(settled)
+      return
+    }
     this.update({
       visible: false, retainFrame: false, phase: 'idle', callRequestId: '', displayName: '', mediaType: 'audio',
       statusText: '', error: '', compact: false, fullscreen: false,

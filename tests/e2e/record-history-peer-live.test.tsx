@@ -26,7 +26,11 @@ it.skipIf(!ready)('peer history UI → public SDK/Host → Chat → Record → M
  const root = await mkdtemp(join(tmpdir(), 'peer history ')), state = new ArkmeStateStore(root)
  const session = { userId: f.peer, accessToken: 'synthetic-peer', refreshToken: 'synthetic-only' }
  const config = { environment: 'test', chatBaseUrl: chatUrl, recordBaseUrl: f.recordUrl, authBaseUrl: 'http://127.0.0.1:1', requestTimeoutMs: 15000, fileStateDirectory: root } as ArkmeServiceConfig
- const runtime = new ServiceRuntime(config, { read: async () => session, write: async () => {}, delete: async () => {} }, state)
+ // Storage bytes are synthetic; the exact historical grant comes through real Chat and Record HTTP.
+ const imageBytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64')
+ const runtime = new ServiceRuntime(config, { read: async () => session, write: async () => {}, delete: async () => {} }, state, async (url,init) =>
+  String(url)==='https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/history/old.png'
+   ? new Response(imageBytes,{headers:{'Content-Type':'image/png'}}) : fetch(url,init))
  const source = new SourceService(runtime, {} as never, {} as never)
  const media = new MediaService(runtime, {} as never, {} as never, {} as never)
  const chat = new ChatService(runtime, source, {} as never, media, {} as never, {} as never, {} as never, {} as never, {} as never)
@@ -70,6 +74,14 @@ it.skipIf(!ready)('peer history UI → public SDK/Host → Chat → Record → M
   await fetch(chatUrl+'/review',{method:'POST'});await act(async()=>retry().props.onClick())
   await wait(()=>expect(view!.root.findAllByProps({'data-arkme-history-bubble':true})).toHaveLength(54))
   const page=await sdk.recordEditHistory(sourceRef,actionRef)
+  const historicalPhoto=page.items.find(item=>item.version===53)!
+  expect(historicalPhoto.content.mediaUnavailable).not.toBe(true)
+  expect(historicalPhoto.content.contentBlocks).toMatchObject([{kind:'image',fileAssetUid:'historical-photo',fileName:'old.png'}])
+  expect(historicalPhoto.content.contentBlocks[0]!.mediaRef).toBeTruthy()
+  const downloaded=await media.fetchMedia(historicalPhoto.content.contentBlocks[0]!.mediaRef)
+  expect(Buffer.from(await downloaded.response.arrayBuffer())).toEqual(imageBytes)
+  expect(page.items.find(item=>item.version===55)!.content.contentBlocks).toEqual([])
+  expect(JSON.stringify(view!.toJSON())).toContain('old.png')
   const tool=createArkmeCoreToolDefinitions(facade as never).find(t=>t.name==='arkme_record_history')!
   const output=JSON.stringify(await tool.execute({source_ref:sourceRef,message_action_ref:actionRef,cursor_version:0},{callId:'peer-history-read',signal:new AbortController().signal} as never))
   expect(output).toContain('history 55');expect(output).not.toContain('historical private device');expect(output).not.toContain('history rejected 52')

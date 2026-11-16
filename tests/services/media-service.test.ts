@@ -17,6 +17,20 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it.each(['', '   ', undefined])('uses the original when the image preview is %j', async preview => {
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' } }, async write() {}, async delete() {} }
+    const fetchImpl = vi.fn(async () => new Response('image', { headers: { 'content-type': 'image/jpeg' } }))
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    const original = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/photo.jpg'
+    const raw = { content_payload: { media_refs: [{ file_asset_uid: 'photo', file_kind: 1, file_name: 'photo.jpg',
+      mime_type: 'image/jpeg', preview_url: preview, download_url: original }] } }
+    const blocks = media.richContentBlocks(raw, 42)
+    expect(blocks).toHaveLength(1)
+    expect(media.recordMediaUnavailable(raw, blocks)).toBe(false)
+    expect(await (await media.fetchMedia(blocks[0]!.mediaRef)).response.text()).toBe('image')
+    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith(new URL(original), expect.anything())
+  })
   it('resolves a private locator on demand and does not cache its mutable revision', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' } },

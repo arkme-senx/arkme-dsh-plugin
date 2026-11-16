@@ -12,6 +12,9 @@ async function verify(name, expected) {
 }
 
 await verify('bundle.js', manifest.bundleSha256)
+await verify('../../' + manifest.localSource, manifest.localSourceSha256)
+await verify('../../tools/desktop-call/src/im-bridge.js', manifest.imBridgeSha256)
+await verify('../../tools/desktop-call/package-lock.json', manifest.buildLockSha256)
 await verify('call-linear-strong.svg', manifest.iconSha256)
 if (manifest.outgoingOnly !== false || manifest.supportsIncoming !== true) throw new Error('desktop call assets must support incoming invitations')
 console.log('desktop call assets verified')

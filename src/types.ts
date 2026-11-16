@@ -2189,6 +2189,8 @@ export interface ArkmeTimelineMentionTarget {
   displayName: string
   /** Browser-safe account-and-session scoped member identity for opening the profile card. */
   memberRef?: string
+  /** Browser-safe Team conversation-scoped person identity for the profile card. */
+  personRef?: string
   botRef?: string
   /** Opaque account-scoped Bot identity, for exact matching within loaded chat messages. */
   botDirectoryKey?: string
@@ -4975,6 +4977,8 @@ export type ArkmePluginOperation =
   | 'calls.outgoing.intent.resolve'
   | 'calls.outgoing.prepare'
   | 'calls.invite.create'
+  | 'calls.receiver.im-ready'
+  | 'calls.receiver.activity'
   | 'calls.receiver.prepare'
   | 'calls.receiver.claim'
   | 'calls.outgoing.heartbeat'

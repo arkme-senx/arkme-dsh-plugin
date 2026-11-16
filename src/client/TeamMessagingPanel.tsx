@@ -1044,6 +1044,11 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
       setSelectionRequest({text:inserted.text,start:inserted.caretIndex,end:inserted.caretIndex})
     },
   })
+  const openMentionPerson = current.side === 'team' ? (person: TeamIdentity) => {
+    const known = [current.visitor, ...visibleMessages.map(message => message.sender), ...(receiptState.value?.members ?? [])]
+      .find(identity => identity?.personRef === person.personRef)
+    visitorActions.openProfile(known ?? person)
+  } : undefined
   const locateVisitorRecord = (message: TeamMessage, signal: AbortSignal) => readLocatedMessage(message.ref, message.key, signal)
   useLayoutEffect(() => {
     if (!locatedKey) return
@@ -1391,7 +1396,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
         anchorId={pendingJump.current ? `message:${pendingJump.current}` : viewport.current?.anchorId}>
       {displayedMessages.map((m, index) => <li key={timelineRowIds[index]!.renderKey} style={{ listStyle: 'none' }}>
         {(index === 0 || dayKey(m.createdAt) !== dayKey(displayedMessages[index - 1]!.createdAt)) && <div style={{ ...messageLayout.date, textAlign: 'center' }}><ArkmeConversationDate at={m.createdAt} /></div>}
-        <TeamConversationMessage attachmentNavigationKey={m.key} reactionSelfName={reactionActors.selfName} reactionSelfAvatarRef={reactionActors.selfAvatarRef} resolveReactionActor={reactionActors.resolveActor} accountKey={accountKey} conversationKey={conversation.key} message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
+        <TeamConversationMessage onOpenPerson={openMentionPerson} attachmentNavigationKey={m.key} reactionSelfName={reactionActors.selfName} reactionSelfAvatarRef={reactionActors.selfAvatarRef} resolveReactionActor={reactionActors.resolveActor} accountKey={accountKey} conversationKey={conversation.key} message={m} conversationRef={conversation.ref} located={locatedKey === m.key}
           followedByRecall={displayedMessages[index + 1]?.state === 'recalled' && dayKey(displayedMessages[index + 1]!.createdAt) === dayKey(m.createdAt)}
           avatar={current.side === 'team' && !selection.ids
             ? visitorActions.avatar(<TeamAvatar identity={m.sender} size={messageLayout.messageAvatar.width as number} />, m.side === 'external' ? undefined : m.sender)
@@ -1443,7 +1448,7 @@ export function TeamConversationPane({ conversation, accountKey, onReadChanged, 
       sourceBadge={<ArkmeDetailConversationBadge name={current.side === 'team' ? current.visitor?.nickname ?? current.channel.name : current.channel.name}
         avatar={current.side === 'team' && current.visitor ? <TeamAvatar identity={current.visitor} size={16} /> : <ArkmeTeamChannelAvatar channel={current.channel} size={16} />}
         onClick={() => setDetailKey(undefined)} />}
-      onPrivateChatOpened={source => arkmeUi.selectSource(source)} onClose={() => setDetailKey(undefined)} /> : <TeamMessageDetail key={`${accountKey}:${detail.key}`} accountKey={accountKey} message={detail} conversation={current} displayIdentity={personName}
+      onPrivateChatOpened={source => arkmeUi.selectSource(source)} onClose={() => setDetailKey(undefined)} /> : <TeamMessageDetail key={`${accountKey}:${detail.key}`} accountKey={accountKey} message={detail} conversation={current} onOpenPerson={openMentionPerson} displayIdentity={personName}
       footer={(target, readable) => target.state === 'published' && target.version > 0 && !sourceOnly ? <TeamDetailReplyComposer key={target.key} accountKey={accountKey}
         conversationKey={conversation.key} messageKey={target.key} version={target.version} expectedReplySeq={current.latestTeamReplySeq} disabled={!readable || !current.channel.enabled || current.blocked}
         onAttach={busy || editing || capturePreparing || draft.attempt ? undefined : files => attachToExtension(target, files)}
