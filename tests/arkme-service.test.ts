@@ -1258,6 +1258,19 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('advertises the existing local send policy in bootstrap without remote IO', () => {
+    const fetcher = vi.fn(async () => { throw new Error('not used') })
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), fetcher)
+    try {
+      expect(service.clientConfig()).not.toHaveProperty('fileSendPolicy')
+      const policy = { version: 1, textMessagesVersion: 1, admissionRecoveryVersion: 1,
+        maxFileBytes: 100, maxImageBytes: 50, maxAttachments: 9 }
+      Object.assign(service, { fileTransfers: { capabilities: () => ({ ...policy }), dispose() {} } })
+      expect(service.clientConfig().fileSendPolicy).toEqual(policy)
+      expect(fetcher).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
   it('publishes MAS capabilities without exposing the credential namespace', () => {
     vi.stubEnv('ARKME_HOST_POLICY', JSON.stringify({
       schemaVersion: 1,

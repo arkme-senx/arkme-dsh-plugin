@@ -1,3 +1,5 @@
+import { bindMessageSend, currentMessageSend } from '../message-send-host-timing.js'
+import { messageSendPoint } from '../message-send-timing.js'
 import { directoryTraceSignals, groupInteractionTrace } from '../group-interaction-diagnostics.js'
 import { bindConversationRead, conversationReadTracing, countConversationHttpAttempt, measureConversationReadPhase, noteConversationRead, recordConversationReadPhase } from '../conversation-read-diagnostics.js'
 import { ArkmePluginError } from './service-error.js'
@@ -737,9 +739,11 @@ export class ServiceRuntime {
           : trace.includes('RuntimeBotDisplayProfilesReader') ? 'bot-display' : 'directory' })
     }
     const traceId = directoryRead && signal ? directoryTraceSignals.get(signal) : undefined
+    const sendRecord = currentMessageSend()
     const historyTransport = conversationReadTracing() && baseUrl === this.config.chatBaseUrl && path.startsWith('/api/v1/chat/timeline/unified')
-    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !historyTransport && !traceId ? reactionQueue : bindConversationRead((event, detail) => {
+    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !historyTransport && !traceId && !sendRecord ? reactionQueue : bindConversationRead((event, detail) => {
       reactionQueue?.(event, detail)
+      messageSendPoint('host', sendRecord, 'upstream-queue', { route: path, event, lane, queueMs: typeof detail.queueWaitMs === 'number' ? detail.queueWaitMs : undefined })
       if (traceId) groupInteractionTrace('directory-host-queue', { traceId, event, ...detail })
       if (historyTransport) {
         if (event !== 'enter') noteConversationRead('transport-admission', event)
@@ -776,7 +780,7 @@ export class ServiceRuntime {
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
       serviceCooldownMs: error => read || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
       ...(onQueue ? { onQueue } : {}),
-      operation: bindReactionTrace(async coordinatedSignal => {
+      operation: bindMessageSend(bindReactionTrace(async coordinatedSignal => {
         const started = timelineDiagnostic ? Date.now() : 0
         let errorCode: string | undefined
         const send = () => measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
@@ -793,7 +797,7 @@ export class ServiceRuntime {
         } finally {
           if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_http', { atMillis: Date.now(), path, millis: Date.now() - started, ...(errorCode ? { errorCode } : {}) })
         }
-      }),
+      })),
     })).catch((error): never => {
       if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
         throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })
@@ -822,6 +826,12 @@ export class ServiceRuntime {
     stringIdFields:readonly string[]=[],
     chatMessageActionsV2 = false,
   ): Promise<T> {
+    const sendRecord = currentMessageSend()
+    const sendStarted = sendRecord ? performance.now() : 0
+    const sendRequestId = sendRecord ? `arkme-send-${sendRecord}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` : undefined
+    let sendStatus: number | undefined
+    let sendCode: number | undefined
+    messageSendPoint('host', sendRecord, 'upstream-http-start', { route: path, requestId: sendRequestId })
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
     if (signal.aborted) abort()
@@ -840,6 +850,7 @@ export class ServiceRuntime {
       const response = await this.fetchImpl(joinUrl(baseUrl, path), {
         method: 'POST',
         headers: {
+          ...(sendRequestId ? { 'X-Request-ID': sendRequestId } : {}),
           ...(chatAccessRef ? { 'X-Chat-Access-Ref': chatAccessRef } : {}),
           ...(chatMessageActionsV2 ? { 'X-Arkme-Message-Actions': '2' } : {}),
           ...(multipart ? {} : { 'Content-Type': 'application/json' }),
@@ -850,6 +861,8 @@ export class ServiceRuntime {
         body: multipart ? body : stringifyOwnerJson(body,stringIdFields),
         signal: controller.signal,
       })
+      sendStatus = response.status
+      messageSendPoint('host', sendRecord, 'upstream-http-headers', { route: path, durationMs: performance.now() - sendStarted, status: response.status, requestId: response.headers.get('X-Request-ID') ?? sendRequestId })
       if (path === '/api/public/v1/auth/login-by-pwd' && response.headers.get('X-Jotmo-Auth-Failure') === 'device_verification_required') {
         throw new ArkmePluginError('device-verification-required', '此设备已取消信任，请使用验证码、扫码或授权方式重新登录', false, 403)
       }
@@ -903,6 +916,8 @@ export class ServiceRuntime {
       catch (error) {
         throw new ArkmePluginError('arkme-response-invalid', 'Arkme 服务返回了无效响应', true, 502, { cause: error })
       }
+      sendCode = envelope.code
+      messageSendPoint('host', sendRecord, 'upstream-http-decoded', { route: path, durationMs: performance.now() - sendStarted, code: envelope.code, requestId: sendRequestId })
       if (!successCodes.includes(envelope.code)) {
         const errorData = objectValue(envelope.data)
         const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
@@ -929,6 +944,7 @@ export class ServiceRuntime {
       }
       throw new ArkmePluginError('arkme-network-error', '无法连接Arkme 服务', true, 502, { cause: error })
     } finally {
+      messageSendPoint('host', sendRecord, 'upstream-http-end', { route: path, durationMs: performance.now() - sendStarted, status: sendStatus, code: sendCode, requestId: sendRequestId })
       clearTimeout(timeout)
       signal.removeEventListener('abort', abort)
     }

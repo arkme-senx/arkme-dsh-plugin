@@ -1,3 +1,4 @@
+import { beginClientSendTiming, clientSendTimingPoint } from '../message-send-timing.js'
 import { HistoryPageTiming, historyTimingEnabled } from './conversation-history-timing.js'
 import { presentTimelineBotSender, useTimelineBotPresentations } from './timeline-bot-presentations.js'
 import { groupInteractionTrace, groupInteractionTraceKey } from '../group-interaction-diagnostics.js'
@@ -29,7 +30,7 @@ import { useWorldPublishHost } from './WorldPublishHost.js'
 import { openWorldPublish } from './world-publish-entry.js'
 import { registerLocalSnapshotForward, type LocalForwardPreview } from './local-snapshot-forward.js'
 import {SharePrivateChat} from './TeamExternalChats.js'
-import { cancelConversationFollow, followConversationBottom } from './conversation-bottom-follow.js'
+import { cancelConversationFollow, followConversationBottom, scrollConversationTo } from './conversation-bottom-follow.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
@@ -66,7 +67,7 @@ import { MAX_ACTIVE_TIMELINE_EVENTS, MAX_ACTIVE_TIMELINE_TOKENS } from './unifie
 import { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
 export { arkmeClipboardFiles, arkmeClipboardImageFiles } from './clipboard-files.js'
 import { ArkmeSendTaskStatus } from './ArkmeSendTaskStatus.js'
-import { fileSendPolicy, forgetFileSendAdmissions, rememberFileSendAdmission, resetFileSendPolicy, retryFileSendAdmission, useFileSendAdmissions } from './file-send-admission.js'
+import { fileSendPolicy, fileSendPolicySnapshot, forgetFileSendAdmissions, rememberFileSendAdmission, resetFileSendPolicy, retryFileSendAdmission, useFileSendAdmissions } from './file-send-admission.js'
 import { WarningCircleIcon } from '@phosphor-icons/react/dist/csr/WarningCircle'
 import { ArrowClockwiseIcon } from '@phosphor-icons/react/dist/csr/ArrowClockwise'
 import { TrashIcon } from '@phosphor-icons/react/dist/csr/Trash'
@@ -1875,7 +1876,12 @@ export function ArkmeSurface({
   const auth = authStoreSnapshot.auth ?? initialAuth
   const authenticatedUserId = auth?.status === 'authenticated' ? auth.userId : undefined
   const authenticatedAccountKey = arkmeAuthenticatedAccountKey(auth)
-  useEffect(() => resetFileSendPolicy(authenticatedAccountKey), [authenticatedAccountKey])
+  const advertisedFilePolicy = authStoreSnapshot.config?.environment === auth?.environment
+    ? authStoreSnapshot.config?.fileSendPolicy : undefined
+  useEffect(() => {
+    resetFileSendPolicy(authenticatedAccountKey)
+    if (active && authenticatedAccountKey && !advertisedFilePolicy) void fileSendPolicy(authenticatedAccountKey).catch(() => {})
+  }, [active, authenticatedAccountKey, advertisedFilePolicy])
   useEffect(() => {
     reactionPreview.setScope(authenticatedAccountKey)
   }, [authenticatedAccountKey, auth?.environment])
@@ -4150,19 +4156,23 @@ export function ArkmeSurface({
           viewportRestoreIntentRef.current = false
           const calendarLocate = ownsCalendarNavigation(target.revision)
           cancelConversationFollow(body)
-          body.scrollTo({ top: arkmeConversationTargetScrollTop(body, row, calendarLocate || target.firstUnread ? 'start' : 'center'),
-            // Virtual context chunks can change height while mounting. Match the
-            // around-page path: establish the viewport before releasing its anchor.
-            behavior: calendarLocate || target.contextRef || target.systemRef || target.firstUnread ? 'auto' : 'smooth' })
-          if (target.firstUnread) {
-            conversationCacheRef.current.storeViewport(conversationKey, arkmeConversationViewport(body, 'history'))
-            unreadLocateReadScope.current = visibleUnreadLocateKey
+          const top = arkmeConversationTargetScrollTop(body, row, calendarLocate || target.firstUnread ? 'start' : 'center')
+          const finish = () => {
+            if (reactionLocateController.signal.aborted || arkmeUi.getSnapshot().conversationTarget?.revision !== target.revision) return
+            if (target.firstUnread) {
+              conversationCacheRef.current.storeViewport(conversationKey, arkmeConversationViewport(body, 'history'))
+              unreadLocateReadScope.current = visibleUnreadLocateKey
+            }
+            conversationTargetLocatedRevisionRef.current = target.revision
+            const calendarFinished = finishCalendarNavigation(target.revision)
+            if (!target.firstUnread) highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
+            if (target.openDetail === true) openLocatedDetail(target.itemUid, target.revision)
+            arkmeUi.consumeConversationTarget(target.revision)
           }
-          conversationTargetLocatedRevisionRef.current = target.revision
-          const calendarFinished = finishCalendarNavigation(target.revision)
-          if (!target.firstUnread) highlightLocatedMessage(body, row, highlightUid, target.transientHighlight === true, calendarFinished || target.transientHighlight === true)
-          if (target.openDetail === true) openLocatedDetail(target.itemUid, target.revision)
-          arkmeUi.consumeConversationTarget(target.revision)
+          if (calendarLocate || target.contextRef || target.systemRef || target.firstUnread) {
+            body.scrollTo({ top, behavior: 'auto' })
+            finish()
+          } else scrollConversationTo(body, top, finish)
         }
         if (target.transientHighlight) {
           const settle = () => { if (!reactionLocateController.signal.aborted) cancelReactionLayout = afterReactionLayout(row, locate) }
@@ -5264,6 +5274,7 @@ export function ArkmeSurface({
         ? JSON.stringify(['send',representation??null])
         : JSON.stringify(['source-message-extension', targetDraftKey, extensionTarget.item.itemUid, extensionTarget.quote ?? null, representation??null]),
     )
+    beginClientSendTiming(recordUid, sendStartedAt, targetSource.kind)
     const mentionTrace = targetSource.kind === 'group_chat' && serializedDraft.mentions.some(mention => mention.mentionRef)
       ? groupInteractionTraceKey(recordUid) : undefined
     if (mentionTrace) groupInteractionTrace('send-click', { message: mentionTrace, startedAt: sendStartedAt })
@@ -5359,6 +5370,7 @@ export function ArkmeSurface({
     if (sameTargetComposer()) {
       setItems(current => mergeItems(current, [optimistic]))
     }
+    clientSendTimingPoint(recordUid, 'optimistic-enqueued')
     if (sameTargetComposer()) setError('')
     let roleBound = false
     if (roleAtSendStart !== undefined) {
@@ -5389,6 +5401,7 @@ export function ArkmeSurface({
     let inputCapture: ArkmeRecordInputCaptureResult
     try {
       inputCapture = await capturePromise
+      clientSendTimingPoint(recordUid, 'input-capture-ready')
     } catch (caught) {
       let roleCleanupFailed = false
       if (roleBound && roleAtSendStart !== undefined && sameTargetAccount()) {
@@ -5575,13 +5588,16 @@ export function ArkmeSurface({
           }
         }
       }
+      clientSendTimingPoint(recordUid, 'attachments-ready')
       const allFileRefs = [...pendingFileRefs, ...backgroundSoundFileRefs]
       const durableText = allFileRefs.length === 0 && backgroundSoundAssets.length === 0
         && (isArkmeSelfWorkspaceSource(targetSource) || isArkmeChatDirectorySource(targetSource))
-        && (await fileSendPolicy(targetAccountKey))?.textMessagesVersion === 1
+        && fileSendPolicySnapshot(targetAccountKey, advertisedFilePolicy)?.textMessagesVersion === 1
+      clientSendTimingPoint(recordUid, 'send-policy-ready')
       if (allFileRefs.length > 0 || durableText) {
         if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
         const locationCapture = await locationCapturePromise
+        clientSendTimingPoint(recordUid, 'location-ready')
         if (!sameTargetAccount()) throw new Error('账号已切换，本次位置采集结果已丢弃')
         const fileSendParams = {
           ...(representation?{representation}:{}), sendAtMillis:now,
@@ -5611,7 +5627,9 @@ export function ArkmeSurface({
         try {
           providerWriteStarted = true
           if (mentionTrace) groupInteractionTrace('submit-to-host', { message: mentionTrace, route: 'durable' })
+          clientSendTimingPoint(recordUid, 'host-submit')
           acceptedTask = await callArkme<ArkmeFileSendTask>('files.send', fileSendParams)
+          clientSendTimingPoint(recordUid, 'local-admission-received')
           if (mentionTrace) groupInteractionTrace('host-admission-returned', { message: mentionTrace })
         } catch (caught) {
           let taskLookupSucceeded = false
@@ -5656,6 +5674,7 @@ export function ArkmeSurface({
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
       providerWriteStarted = true
       if (mentionTrace) groupInteractionTrace('submit-to-host', { message: mentionTrace, route: 'direct' })
+      clientSendTimingPoint(recordUid, 'host-submit')
       const result = textFormat === 'markdown' || pendingAssets.length > 0 || backgroundSoundAssets.length > 0 || (isArkmeSelfWorkspaceSource(targetSource) && pendingBotMentions.length > 0)
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
           ...(representation?{representation}:{}), sendAtMillis:now,
@@ -5681,6 +5700,7 @@ export function ArkmeSurface({
         })
       providerWriteSucceeded = true
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送结果已丢弃')
+      clientSendTimingPoint(recordUid, 'provider-result-received')
       if (mentionTrace) groupInteractionTrace('send-confirmed-in-ui', { message: mentionTrace, sequence: result.sequence })
       await rebindRole(result.itemUid)
       backgroundDirectUploadCacheRef.current.delete(recordUid)
@@ -8126,7 +8146,7 @@ export function ArkmeSurface({
     const request = nativeForwardRequestRef.current
     if (request && forwardTargetPicker?.native !== request) request.finish({ completed: false })
   }, [forwardTargetPicker])
-  const rememberConversationViewport = useConversationViewport({
+  const { remember: rememberConversationViewport, cancelResume: cancelConversationResume, unreadAnchorId: resumedUnreadAnchorId } = useConversationViewport({
     // The loading placeholder has the right source key but no message geometry.
     // Restoring there would consume and overwrite the persisted history anchor.
     active: activeConversation && timelineLoadingKey !== conversationKey && (timelineError === '' || displayRows.length > 0),
@@ -8136,6 +8156,12 @@ export function ArkmeSurface({
     store: conversationCacheRef.current,
     pendingRestore: pendingViewportRestoreRef,
     restoreIntent: viewportRestoreIntentRef,
+    readState: sourceIsChat && conversationReadSource?.readSequence !== undefined ? {
+      through: conversationReadSource.readSequence,
+      latestSequence: Math.max(conversationReadSource.latestSequence ?? 0, chatDelta.latestSequence ?? 0, windowMessageSequence),
+      window: unifiedWindow,
+    } : undefined,
+    navigationRevision: ui.conversationTarget?.revision,
   })
   useLayoutEffect(() => {
     if (!historyTimingEnabled) return
@@ -8220,6 +8246,7 @@ export function ArkmeSurface({
     measureVisibleRead()
   }, [rememberConversationViewport, updateScrollAffordances, measureVisibleRead])
   const returnToLatest = useCallback(async () => {
+    cancelConversationResume()
     setCalendarMomentWindow(undefined)
     const body = bodyRef.current
     if (body === null || !activeConversation || timelineStateKey !== conversationKey) return
@@ -8244,7 +8271,7 @@ export function ArkmeSurface({
     conversationCacheRef.current.storeViewport(timelineStateKey, arkmeConversationViewport(body))
     setHighlightedTargetUid('')
     bottomVisibility.measure()
-  }, [activeConversation, bottomVisibility.measure, conversationKey, loadTimeline, newerHasMore, timelineMode, timelineStateKey])
+  }, [activeConversation, bottomVisibility.measure, conversationKey, loadTimeline, newerHasMore, timelineMode, timelineStateKey, cancelConversationResume])
   const detailGroupTarget = useMemo(
     () => detailState?.kind === 'success'
       ? resolveInterwovenGroupTarget(chatDirectory.sources, detailState.detail.groupName)
@@ -9516,6 +9543,7 @@ export function ArkmeSurface({
                 rowIds={displayRows} scrollport={bodyRef} renderRow={renderMessageRow}
                 anchorId={ui.conversationTarget?.itemUid
                   ? arkmeConversationTargetAnchor(displayRows, ui.conversationTarget)
+                  : resumedUnreadAnchorId !== undefined ? resumedUnreadAnchorId
                   : pendingViewportRestoreRef.current?.sourceKey === conversationKey
                   ? pendingViewportRestoreRef.current.viewport?.anchorId
                   : conversationCacheRef.current.getViewport(conversationKey)?.anchorId} />

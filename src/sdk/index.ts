@@ -1,3 +1,4 @@
+import { messageSendPoint, messageSendRecord } from '../message-send-timing.js'
 import { readPriorityHeader, supportsBackgroundRead } from '../read-scheduling.js'
 import { directoryTraceHeader, groupInteractionTrace, isDirectoryTraceId } from '../group-interaction-diagnostics.js'
 import type { LoginDeviceRequest, LoginDeviceResult } from '../login-devices-contract.js'
@@ -3545,6 +3546,10 @@ export class ArkmeSdk {
     const traceId = operation === 'private-interaction.directory' && isDirectoryTraceId(transport?.directoryTraceId)
       ? transport.directoryTraceId : undefined
     if (traceId) groupInteractionTrace('directory-fetch-start', { traceId })
+    const sendRecord = messageSendRecord(operation, params)
+    const sendStarted = sendRecord ? performance.now() : 0
+    messageSendPoint('browser', sendRecord, 'loopback-start', { operation })
+    try {
     const trace = transport?.historyTrace
     const response = await this.fetchImpl(trace ? `${this.route}?historyTrace=${encodeURIComponent(trace.id)}` : this.route, {
       method: 'POST',
@@ -3558,6 +3563,7 @@ export class ArkmeSdk {
       ...(transport?.priority === undefined ? {} : { priority: transport.priority }),
     })
     if (traceId) groupInteractionTrace('directory-fetch-headers', { traceId, status: response.status })
+    messageSendPoint('browser', sendRecord, 'loopback-headers', { durationMs: performance.now() - sendStarted, status: response.status })
     trace?.response(response.status, response.headers.get('Server-Timing'))
     let body: ArkmePluginResponse<T>
     try {
@@ -3570,8 +3576,10 @@ export class ArkmeSdk {
       })
     }
 
+    messageSendPoint('browser', sendRecord, 'loopback-decoded', { durationMs: performance.now() - sendStarted, ok: body.ok })
     if (!body.ok) throw new ArkmeClientError(body.error)
     return body.value
+    } finally { messageSendPoint('browser', sendRecord, 'loopback-end', { durationMs: performance.now() - sendStarted }) }
   }
 }
 

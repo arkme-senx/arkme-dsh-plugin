@@ -19,7 +19,7 @@ function Fixture() {
     style={{ listStyle: 'none', boxSizing: 'border-box', minHeight: 40 + row.index % 7 * 17, padding: 8, borderBottom: '1px solid #ddd' }}>
     <b>{row.id}</b> 消息 {revision}<div>{'正文 '.repeat(10 + row.index % 6)}</div></li>), [rows, revision])
   useLayoutEffect(() => { pending.current = { sourceKey: source, viewport: cache.getViewport(source) } }, [source, revision])
-  const remember = useConversationViewport({ active: true, sourceKey: source, renderedSourceKey: source,
+  const { remember } = useConversationViewport({ active: true, sourceKey: source, renderedSourceKey: source,
     bodyRef: body, store: cache, pendingRestore: pending, restoreIntent: intent })
   useConversationResizeAnchor(body, source, undefined, false, list, intent)
   Object.assign(window, { timelineTest: { select: setSource, refresh: () => setRevision(value => value + 1),

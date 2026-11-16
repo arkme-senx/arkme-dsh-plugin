@@ -45,6 +45,8 @@ export interface ArkmeCaptchaResult {
 }
 
 export interface ArkmeClientConfig {
+  /** Fixed local send-owner contract, advertised with the existing bootstrap. */
+  fileSendPolicy?: import('./file-transfer-contract.js').ArkmeFilePolicy
   hostPolicy?: Pick<ArkmeHostPolicy, 'distribution' | 'capabilities'>
   captchaId: string
   /** Public Baidu JavaScript API browser key, never a server secret. */

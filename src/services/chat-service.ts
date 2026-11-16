@@ -1,3 +1,5 @@
+import { currentMessageSend } from '../message-send-host-timing.js'
+import { messageSendPoint } from '../message-send-timing.js'
 import { isBackendRouteUnavailable } from './service-error.js'
 import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { readExtensionSummaryBatch } from '../message-extension-summary.js'
@@ -7732,6 +7734,10 @@ nextPublic = next
     session: ArkmeSessionCredentials,
     input: ArkmeSentMessageActionInput,
   ): Promise<ArkmeSourceSendResult> {
+    const sendRecord = currentMessageSend()
+    const started = sendRecord ? performance.now() : 0
+    messageSendPoint('host', sendRecord, 'receipt-projection-start')
+    try {
     if (sent.localState !== 'synced') return sent
     const recordUid = sent.itemUid.trim() || input.recordUid.trim()
     const relationUid = input.relationUid?.trim() ?? ''
@@ -7787,6 +7793,7 @@ nextPublic = next
     } catch {
       return sent
     }
+    } finally { messageSendPoint('host', sendRecord, 'receipt-projection-end', { durationMs: performance.now() - started }) }
   }
 
   private withPersonalRecordCapabilities(
