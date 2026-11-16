@@ -6,3 +6,6 @@ coverage/
 dist/
 design-audit/**/*.png
 .codex-artifacts/
+
+# Game browser smoke artifacts
+test-results/game/

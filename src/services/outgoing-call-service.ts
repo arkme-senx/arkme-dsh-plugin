@@ -32,8 +32,9 @@ export class OutgoingCallService {
     private readonly source: SourceService,
     private readonly profile: ProfileService,
     private readonly broker = new ArkmeOutgoingCallBroker(),
+    devices?: DeviceRegistrationService,
   ) {
-    this.devices = new DeviceRegistrationService(runtime)
+    this.devices = devices ?? new DeviceRegistrationService(runtime)
     this.stopDeviceScope = runtime.subscribeAccountScope(() => {
       const revision = ++this.deviceScopeRevision
       void runtime.accountScopedSession().then(session => {

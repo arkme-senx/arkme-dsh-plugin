@@ -1,3 +1,4 @@
+import { createGameAssetHandler } from './game-assets.js'
 import { LocalRecorderOwner } from './local-recorder/owner.js'
 import { createLocalRecorderMediaHandler } from './local-recorder/routes.js'
 import { AccountModelConnector } from './account-model-connector.js'
@@ -820,6 +821,8 @@ export function apply(ctx: Context, config: Config): void {
     teamService,
     teamCodex,
   })
+  const gameAssetHandler = createGameAssetHandler(`${config.routePath}/game`)
+  ctx.effect(() => ctx.webServer.register({ kind: 'prefix', path: `${config.routePath}/game`, handler: gameAssetHandler }), 'dsh-arkme: independent game assets')
   const callAssetHandler = createOutgoingCallAssetHandler({ routePrefix: `${config.routePath}/call` })
   const richMediaOptions = {
     expectedPort: webPort,

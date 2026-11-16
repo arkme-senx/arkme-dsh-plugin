@@ -125,6 +125,7 @@
     "@phosphor-icons/react": "2.1.10",
     "@rc-component/tour": "2.4.0",
     "@sentry/node": "10.73.0",
+    "@tencentcloud/lite-chat": "1.6.11",
     "@tiptap/core": "^3.31.0",
     "@tiptap/extension-code-block": "^3.31.0",
     "@tiptap/extension-table": "^3.31.0",

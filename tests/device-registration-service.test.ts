@@ -66,6 +66,15 @@ describe('device registration lifecycle', () => {
     const count = post.mock.calls.length; await vi.advanceTimersByTimeAsync(120_000); expect(post.mock.calls).toHaveLength(count)
     service.dispose()
   })
+  it('allows game readiness to await the existing owner without rotating registration', async () => {
+    vi.useFakeTimers();const {service,post}=setup()
+    service.start(session());await settle()
+    const ready=service.waitUntilReady(42,'test_alice__cz');await vi.advanceTimersByTimeAsync(200);await ready
+    await service.waitUntilReady(42,'test_alice__cz')
+    expect(post.mock.calls.filter(([p])=>p==='/api/v1/device/register')).toHaveLength(1)
+    expect(post.mock.calls.filter(([p])=>p.endsWith('/im-binding/register'))).toHaveLength(1)
+    service.dispose()
+  })
   it('does not invent client IDs and ignores readiness from an old account', async () => {
     vi.useFakeTimers();const { service, post } = setup()
     service.start({ ...session(), accessToken: 'invalid' });await settle();expect(post).not.toHaveBeenCalled()
