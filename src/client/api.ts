@@ -346,7 +346,7 @@ export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
-  options?: { priority?: 'background'; avatarDownload?: true; traceId?: string },
+  options?: { priority?: 'background'; avatarDownload?: true; traceId?: string; historyTrace?: import('../sdk/index.js').ArkmeSdkTransportOptions['historyTrace'] },
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
@@ -374,8 +374,9 @@ export async function callArkme<T>(
   try {
     const parameters = accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }
     const background = options?.priority === 'background' && supportsBackgroundRead(operation, params)
-    const foregroundTimeline = operation === 'source.timeline' && params?.background !== true
-    // The Host already paces continuation pages. Keep Browser admission for task starts.
+    const foregroundTimeline = (operation === 'source.timeline' || operation === 'source.timeline-around') && params?.background !== true
+      || operation === 'reactions' && params?.action === 'query' && params.readPriority === 'interactive'
+    // Continuation pages retain the Host's admission and directory trace.
     const hostScheduledContinuation = operation === 'private-interaction.directory'
       && typeof params?.cursor === 'string' && params.cursor.length > 0
       && typeof params.expectedVersion === 'string' && /^[a-f0-9]{64}$/.test(params.expectedVersion)
@@ -425,21 +426,25 @@ export async function callArkme<T>(
       }
       const traceId = operation === 'private-interaction.directory' ? options?.traceId : undefined
       if (traceId) groupInteractionTrace('directory-bridge-dispatch', { traceId, priority: fetchPriority })
-      const value = fetchPriority === undefined && traceId === undefined
+      const value = fetchPriority === undefined && !options?.historyTrace && traceId === undefined && !background
         ? await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
-        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, { ...(fetchPriority ? { priority: fetchPriority } : {}), ...(traceId ? { directoryTraceId: traceId } : {}) })
+        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, {
+          ...(fetchPriority === undefined ? {} : { priority: fetchPriority }),
+          ...(background ? { readPriority: 'background' as const } : {}),
+          ...(traceId ? { directoryTraceId: traceId } : {}),
+          ...(options?.historyTrace ? { historyTrace: options.historyTrace } : {}),
+        })
       if (background) {
         requestSignal?.throwIfAborted()
         if (currentScope() !== scope) throw changedAccount()
       }
       return value
     }
-    // Keep the permit until callProvider has consumed the entire JSON body.
-    // No key/recovery: existing owners retain deduplication and retry semantics.
+    // Limit background loopback occupancy, independently of the Host upstream budgets.
     const imageService = operation === 'team.app.image' ? 'team'
       : operation === 'image.read' && options?.avatarDownload ? 'chat' : undefined
     const value = background && !hostScheduledContinuation ? await backgroundUiReads.run({
-      scope: scope ?? 'anonymous', lane: imageService ? 'image' : 'background-read',
+      scope: scope ?? 'anonymous', lane: imageService !== undefined || operation === 'image.read' ? 'image' : 'background-read',
       service: imageService ?? 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
       operation: dispatch,
     }) : await dispatch(backgroundSignal ?? signal)

@@ -1,6 +1,8 @@
 import type { ArkmeTimelineItem } from './types.js'
 import type { ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
+export const CHAT_MESSAGE_SYNC_SESSION_ROUTE = '/api/v1/chat/sync/session'
+
 /** Public facts. Counts describe one frozen cohort, never read acknowledgements. */
 export interface ArkmeMessageSyncProgress {
   accountKey: string

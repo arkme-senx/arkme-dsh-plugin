@@ -105,6 +105,23 @@ export class UnifiedTimelineCache {
     const rows = this.prepare('SELECT c.payload,e.token FROM entries e JOIN contents c ON c.scope=e.scope AND c.event_id=e.event_id WHERE e.scope=? AND e.request=? ORDER BY e.ordinal LIMIT 2000').all(scope, row.request) as unknown as Array<{ payload: string; token: string }>
     // Coverage belongs to the window reference, while the body is shared.
     page.unified.events = rows.map(row => ({ ...JSON.parse(row.payload), ...(row.token ? { windowToken: row.token } : {}) }) as ArkmeUnifiedTimelineEvent)
+    const pendingSources = new Set<ArkmeUnifiedTimelineEvent['source']>()
+    // Old projections discarded the failure reason. Revalidate them without replaying their placeholder bodies.
+    page.unified.events = page.unified.events.filter(event => {
+      if (event.contentStatus !== 'unavailable') return true
+      if (event.kind === 'notice' && event.retryable) { pendingSources.add(event.source); return true }
+      const text = event.kind === 'message' ? event.item.textContent : event.kind === 'notice' ? event.text : undefined
+      if (text === '内容暂时不可用' || text === '内容暂不可用') { pendingSources.add(event.source); return false }
+      if (event.kind === 'notice' && text === '内容已不可用') event.text = '此消息已无法查看'
+      // Migrate old status rows without discarding their access fences or hiding recall notices.
+      if (event.kind === 'notice' && ['原消息未找到', '此消息受隐私保护', '关联内容未找到', '关联内容受隐私保护', '此消息已无法查看'].includes(event.text)) event.hidden = true
+      return true
+    })
+    if (pendingSources.size) {
+      if (!page.unified.events.length) return undefined
+      page.unified.complete = false
+      page.unified.sources = page.unified.sources.map(source => pendingSources.has(source.source) ? { ...source, status: 'gap' } : source)
+    }
     const retired = new Set((this.prepare("SELECT source FROM sources WHERE scope=? AND status='not_applicable'").all(scope) as unknown as Array<{ source: string }>).map(row => row.source))
     page.unified.events = page.unified.events.filter(event => !retired.has(event.source))
     page.unified.sources = page.unified.sources.map(source => retired.has(source.source) ? { ...source, status: 'not_applicable', itemCount: 0 } : source)
@@ -112,7 +129,7 @@ export class UnifiedTimelineCache {
     page.items = page.unified.events.flatMap(event => event.kind === 'message' ? [event.item] : [])
     const fence = Number(this.prepare('SELECT fence FROM scopes WHERE scope=?').get(scope)?.fence ?? 0)
     const refreshTicket = Number(this.prepare('SELECT ticket FROM refresh_hints WHERE scope=?').get(scope)?.ticket ?? 0)
-    page.cache = { origin: 'local', persistence: 'committed', revision: row.ticket, stale: Math.max(fence, refreshTicket) > row.ticket }
+    page.cache = { origin: 'local', persistence: 'committed', revision: row.ticket, stale: pendingSources.size > 0 || Math.max(fence, refreshTicket) > row.ticket }
     this.prepare('UPDATE pages SET touched=? WHERE scope=? AND request=?').run(this.reserve(), scope, row.request)
     return page
   }
@@ -189,7 +206,8 @@ export class UnifiedTimelineCache {
       this.remove(scope, request)
       this.prepare('INSERT INTO pages VALUES (?,?,?,?,?,?)').run(scope, request, metadata, ticket, ticket, options.latest ? 1 : 0)
       const content = this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,?,?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET payload=excluded.payload,version=excluded.version,ticket=max(contents.ticket,excluded.ticket)
-        WHERE excluded.version>contents.version OR excluded.ticket>=contents.ticket AND (excluded.version>=contents.version OR excluded.version=0 AND json_extract(excluded.payload,'$.contentStatus')='unavailable')`)
+        WHERE (excluded.ticket>=contents.ticket OR json_extract(contents.payload,'$.contentStatus')<>'unavailable')
+          AND (excluded.version>contents.version OR excluded.ticket>=contents.ticket AND (excluded.version>=contents.version OR excluded.version=0 AND json_extract(excluded.payload,'$.contentStatus')='unavailable'))`)
       const entry = this.prepare('INSERT INTO entries VALUES (?,?,?,?,?)')
       const sourceStates = new Map(this.prepare('SELECT source,retired_ticket,status FROM sources WHERE scope=?').all(scope).map(row => [String(row.source), row]))
       window.events.forEach((event, ordinal) => {
@@ -252,7 +270,7 @@ export class UnifiedTimelineCache {
         for (const row of rows) {
           const event = JSON.parse(String(row.payload)) as ArkmeUnifiedTimelineEvent
           const hidden = { eventId: event.eventId, source: event.source, occurredAtMillis: event.occurredAtMillis, orderTie: event.orderTie,
-            ...(event.windowToken ? { windowToken: event.windowToken } : {}), contentStatus: 'unavailable', kind: 'notice', text: '内容已不可用' }
+            ...(event.windowToken ? { windowToken: event.windowToken } : {}), contentStatus: 'unavailable', kind: 'notice', text: '此消息已无法查看', hidden: true }
           this.prepare('UPDATE contents SET payload=?,ticket=? WHERE scope=? AND event_id=?').run(JSON.stringify(hidden), ticket, scope, String(row.event_id))
         }
       }

@@ -1,5 +1,12 @@
 // Exact UI action labels, expanded from shared nouns during localization.
 export const actionEnglish: Record<string,string> = {
+  '原消息未找到': 'Original message not found',
+  '此消息受隐私保护': 'This message is protected by privacy settings',
+  '关联内容未找到': 'Linked content not found',
+  '关联内容受隐私保护': 'Linked content is protected by privacy settings',
+  '此消息已无法查看': 'This message is no longer accessible',
+  '消息加载失败，请重试': 'Messages failed to load. Please retry.',
+  '关联内容加载失败': 'Linked content failed to load',
   '最近操作': 'Recent activity',
   '版本详情': 'Version details',
   '此版本来源与当前录音一致。': 'This version uses the current recording sources.',

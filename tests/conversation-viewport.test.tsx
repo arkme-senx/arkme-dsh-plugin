@@ -47,11 +47,12 @@ function rect(top: number, height: number): DOMRect {
 }
 
 beforeEach(() => {
+  vi.spyOn(document, 'hasFocus').mockReturnValue(true)
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   restoreIntent = { current: undefined }
   store = new ArkmeConversationMemoryCache(); pending = { current: undefined }
-  scrollTop = 0; viewportHeight = 500; pageHeight = 100; rowCount.B = 12
+  scrollTop = 0; viewportHeight = 500; pageHeight = 100; rowCount.A = 30; rowCount.B = 12
   vi.spyOn(HTMLElement.prototype, 'scrollTop', 'get').mockImplementation(function () {
     scrollTop = Math.max(0, Math.min(scrollTop, maximum())); return scrollTop
   })
@@ -68,6 +69,39 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('conversation viewport ownership', () => {
+  it('releases background listeners across repeated conversation switches and unmount', () => {
+    const addWindow = vi.spyOn(window, 'addEventListener'), removeWindow = vi.spyOn(window, 'removeEventListener')
+    const addDocument = vi.spyOn(document, 'addEventListener'), removeDocument = vi.spyOn(document, 'removeEventListener')
+    for (let turn = 0; turn < 100; turn++) render({ selected: turn % 2 ? 'A' : 'B' })
+    act(() => root.render(<div>closed</div>))
+    const listeners = (spy: typeof addWindow, event: string) => spy.mock.calls.filter(([name]) => name === event).map(([, callback]) => callback)
+    expect(listeners(removeWindow, 'blur')).toEqual(listeners(addWindow, 'blur'))
+    expect(listeners(removeDocument, 'visibilitychange')).toEqual(listeners(addDocument, 'visibilitychange'))
+  })
+  it.each(['blur', 'visibilitychange'] as const)('retains the reading row when new messages arrive after window %s', event => {
+    render(); scroll(maximum())
+    const body = host.firstElementChild as HTMLDivElement
+    const position = scrollTop
+    vi.mocked(document.hasFocus).mockReturnValue(false)
+    act(() => (event === 'blur' ? window : document).dispatchEvent(new Event(event)))
+    const reading = store.getViewport('A')!
+    expect(reading).toMatchObject({ stickToBottom: false, anchorId: 'message:A-25' })
+    const background = arkmeConversationViewport(body, 'latest-anchor')
+    expect(background.stickToBottom).toBe(false)
+    rowCount.A += 30
+    pending.current = { sourceKey: 'A', viewport: background, followLatest: true }
+    render()
+    expect(scrollTop).toBe(position)
+    vi.mocked(document.hasFocus).mockReturnValue(true)
+    act(() => window.dispatchEvent(new Event('focus')))
+    render()
+    expect(scrollTop).toBe(position)
+    expect(store.getViewport('A')?.anchorId).toBe(reading.anchorId)
+    // An explicit return still owns the latest edge after the pause.
+    pending.current = { sourceKey: 'A', viewport: { scrollTop: 0, stickToBottom: true } }
+    render()
+    expect(scrollTop).toBe(maximum())
+  })
   it.each([['arkmeSystemAnchorRef', 'systemRef'], ['offlineContextRef', 'contextRef']] as const)(
     'captures the visible offset and the %s locator', (attribute, field) => {
       render(); scroll(730)
@@ -114,7 +148,7 @@ describe('conversation viewport ownership', () => {
   it('preserves the visible row before animating a same-height sliding window', () => {
     render(); scroll(maximum())
     const body = host.firstElementChild as HTMLDivElement
-    const captured = arkmeConversationViewport(body, false, true)
+    const captured = arkmeConversationViewport(body, 'latest-anchor')
     const callbacks: FrameRequestCallback[] = []
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => { callbacks.push(callback); return callbacks.length })
     pending.current = { sourceKey: 'A', viewport: captured, followLatest: true }
@@ -188,10 +222,16 @@ describe('conversation viewport ownership', () => {
     render(); expect(scrollTop).toBe(maximum())
   })
 
-  it('keeps explicit newer-page navigation separate from restoring the saved anchor', () => {
-    render(); scroll(730)
-    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), newerPageStartAnchorId: 'message:A-15' }
-    render(); expect(scrollTop).toBe(1500)
+  it('keeps the last visible window in place when a newer page appends', () => {
+    render(); scroll(maximum())
+    const body = host.firstElementChild as HTMLDivElement
+    const viewport = arkmeConversationViewport(body, 'history')
+    pending.current = { sourceKey: 'A', viewport }
+    rowCount.A += 20
+    render()
+    expect(scrollTop).toBe(viewport.scrollTop)
+    expect(scrollTop).toBeLessThan(maximum())
+    expect(restoreIntent.current).toBe(false)
   })
 
   it('passes explicit follow intent to deferred layout without treating clamped history as latest', () => {
@@ -200,9 +240,6 @@ describe('conversation viewport ownership', () => {
     pending.current = { sourceKey: 'A', viewport: { scrollTop: 9000, stickToBottom: false } }
     render()
     expect(scrollTop).toBe(maximum())
-    expect(restoreIntent.current).toBe(false)
-    pending.current = { sourceKey: 'A', viewport: undefined, newerPageStartAnchorId: 'message:A-29' }
-    render()
     expect(restoreIntent.current).toBe(false)
     restoreIntent.current = undefined
     render()
@@ -229,12 +266,6 @@ describe('conversation viewport ownership', () => {
     render(); expect(pending.current?.sourceKey).toBe('B'); expect(scrollTop).toBe(730)
   })
 
-  it('uses the saved pixel fallback when an explicit newer-page row is absent', () => {
-    render(); scroll(730)
-    pending.current = { sourceKey: 'A', viewport: store.getViewport('A'), newerPageStartAnchorId: 'message:missing' }
-    render(); expect(scrollTop).toBe(730)
-  })
-
   it('retains history across rerenders without a replacement or restore request', () => {
     render(); scroll(730); const saved = store.getViewport('A')
     render(); render()
@@ -255,7 +286,7 @@ describe('conversation viewport ownership', () => {
     render(); scroll(maximum())
     const body = host.firstElementChild as HTMLDivElement
     expect(arkmeConversationViewport(body).stickToBottom).toBe(true)
-    expect(arkmeConversationViewport(body, true)).toMatchObject({ stickToBottom: false, anchorId: 'message:A-25' })
+    expect(arkmeConversationViewport(body, 'messages')).toMatchObject({ stickToBottom: false, anchorId: 'message:A-25' })
   })
 })
 

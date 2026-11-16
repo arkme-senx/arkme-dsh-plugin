@@ -1,5 +1,6 @@
 import { refreshUnifiedTimelineWindow } from './unified-timeline-window.js'
 import type { ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage } from '../types.js'
+import { ArkmeClientError } from './api.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 
 const INITIAL_CACHE_BUDGET_MS = 120
@@ -35,6 +36,47 @@ export async function readInitialConversationCache<T>(
     if (budget.aborted && error === budget.reason) return undefined
     throw error
   }
+}
+
+/** An exact committed history page can satisfy its remote cursor while it is current. */
+export async function readConversationAdjacentPage(
+  readLocal: (signal: AbortSignal) => Promise<ArkmeTimelinePage>,
+  readRemote: () => Promise<ArkmeTimelinePage>,
+  signal: AbortSignal,
+  offline: boolean,
+  requestedCursor: string | undefined,
+  direction: 'older' | 'newer',
+  cacheDecision?: (result: string) => void,
+  knownLatestSequence = 0,
+): Promise<ArkmeTimelinePage> {
+  if (offline) {
+    const page = await withArkmeReadDeadline(readLocal, signal)
+    signal.throwIfAborted()
+    cacheDecision?.('offline')
+    return page
+  }
+  try {
+    const page = await readInitialConversationCache(readLocal, signal, false)
+    signal.throwIfAborted()
+    const window = page?.unified
+    const hasMore = direction === 'older' ? window?.olderHasMore : window?.newerHasMore
+    const continuation = direction === 'older' ? window?.olderCursor : window?.newerCursor
+    if (page?.cache?.origin === 'local' && page.cache.persistence === 'committed' && page.cache.stale === false
+      && window?.complete && window.windowTokens.length
+      && (direction !== 'newer' || hasMore || Math.max(0, ...window.events.flatMap(event =>
+        event.kind === 'message' ? [event.item.sequence ?? 0] : [])) >= knownLatestSequence)
+      && (!hasMore || continuation && continuation !== requestedCursor)) {
+      cacheDecision?.('hit')
+      return page
+    }
+    cacheDecision?.(!page ? 'budget-expired' : page.cache?.stale ? 'stale' : !window?.complete ? 'incomplete' : 'unusable-window')
+  } catch (error) {
+    signal.throwIfAborted()
+    if (error instanceof ArkmeClientError && ['read-account-changed', 'chat-timeline-source-invalid'].includes(error.body.code)) throw error
+    cacheDecision?.(error instanceof ArkmeClientError && error.body.code === 'chat-timeline-cache-miss' ? 'miss' : 'read-error')
+  }
+  signal.throwIfAborted()
+  return await readRemote()
 }
 
 /** The loaded read window, independent of cache storage and message enhancement state. */

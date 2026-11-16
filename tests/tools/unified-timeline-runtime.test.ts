@@ -72,5 +72,10 @@ it('discovers and invokes the unified owner through an official DSH session, pre
     expect(readWorldRecord).toHaveBeenCalledWith('public-ref', controller.signal)
     expect(post.mock.calls).toHaveLength(2)
     expect(readSource).toHaveBeenCalledWith('opaque-source', expect.objectContaining({ cursor: { unified: { mode: 'initial' } }, signal: expect.any(AbortSignal) }))
+    const forward = await ctx.tools.execute({ callId: CallId('forward-read'), agent: agent as never,
+      signal: controller.signal, name: 'arkme_source_read', arguments: { source_ref: 'opaque-source', cursor: { afterSequence: 0 } } })
+    expect(forward.isError).toBe(false)
+    expect(readSource).toHaveBeenCalledWith('opaque-source', expect.objectContaining({ cursor: { afterSequence: 0 }, signal: expect.any(AbortSignal) }))
+
   } finally { owner.dispose(); cache.close(); rmSync(directory, { recursive: true, force: true }); await ctx.fiber.dispose() }
 })

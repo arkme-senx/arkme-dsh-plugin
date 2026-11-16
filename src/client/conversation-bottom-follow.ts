@@ -5,10 +5,15 @@ interface ConversationFollow {
 }
 const followers = new WeakMap<HTMLElement, ConversationFollow>()
 const FOLLOW_MILLIS = 180
+export function conversationWindowActive(body: HTMLElement): boolean {
+  const doc = body.ownerDocument
+  return doc === undefined || doc.visibilityState !== 'hidden' && (doc.hasFocus?.() ?? true)
+}
 export function isConversationFollowing(body: HTMLElement): boolean { return followers.has(body) }
 export function cancelConversationFollow(body: HTMLElement): void { followers.get(body)?.cancel() }
 
 export function followConversationBottom(body: HTMLElement, rebased = false, motion?: 'animated' | 'instant'): void {
+  if (!conversationWindowActive(body)) { cancelConversationFollow(body); return }
   const current = followers.get(body)
   if (current) { current.retarget(rebased, motion); return }
   const view = body.ownerDocument?.defaultView
@@ -37,7 +42,10 @@ export function followConversationBottom(body: HTMLElement, rebased = false, mot
     if (anchor) body.style.setProperty('overflow-anchor', anchor, anchorPriority)
     else body.style.removeProperty('overflow-anchor')
     for (const type of events) body.removeEventListener(type, onInput)
+    view.removeEventListener('blur', cancel)
+    body.ownerDocument.removeEventListener('visibilitychange', onVisibilityChange)
   }
+  const onVisibilityChange = () => { if (!conversationWindowActive(body)) cancel() }
   const onInput = () => {
     cancel()
     // Persist user intent immediately; disposal itself must not synthesize input.
@@ -46,6 +54,7 @@ export function followConversationBottom(body: HTMLElement, rebased = false, mot
   const tick = (now: number) => {
     frame = undefined
     if (!followers.has(body)) return
+    if (!conversationWindowActive(body)) { cancel(); return }
     // A delayed commit/frame must not consume the unseen animation and turn
     // its first painted step into a snap. One bounded motion still owns all data.
     elapsed += Math.min(24, Math.max(0, now - previousFrame))
@@ -91,5 +100,7 @@ export function followConversationBottom(body: HTMLElement, rebased = false, mot
   }
   followers.set(body, { cancel, retarget })
   for (const type of events) body.addEventListener(type, onInput, { passive: true })
+  view.addEventListener('blur', cancel)
+  body.ownerDocument.addEventListener('visibilitychange', onVisibilityChange)
   retarget()
 }

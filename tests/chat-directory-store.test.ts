@@ -62,6 +62,28 @@ describe('ArkmeChatDirectoryStore', () => {
     expect(store.getSnapshot().sources[0]).toMatchObject({ unreadCount: 1, hasUnreadMention: true })
   })
 
+  it('reduces a partial read immediately, then reconciles the confirmed boundary and preserves newer arrivals', () => {
+    const store = new ArkmeChatDirectoryStore()
+    const source = { sourceRef: 'partial', sourceKey: 'chat:partial', kind: 'group_chat' as const,
+      displayName: '群', activeAtMillis: 1, unreadCount: 30, readSequence: 10, latestSequence: 40 }
+    store.publish([source])
+    store.markReadOptimistic(source, source.sourceKey, 20, [], 10)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ readSequence: 10, unreadCount: 20 })
+    store.markReadOptimistic(source, source.sourceKey, 25, [], 15)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ readSequence: 10, unreadCount: 15 })
+    store.updateReadAck(source.sourceRef, source.sourceKey, 20, 20, 40)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ readSequence: 20, unreadCount: 15 })
+    store.rejectOptimisticRead(source.sourceRef, source.sourceKey, 25)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ readSequence: 20, unreadCount: 20 })
+
+    store.markReadOptimistic(source, source.sourceKey, 25, [], 5)
+    store.upsert({ ...source, latestSequence: 41, readSequence: 20, unreadCount: 21 })
+    store.updateReadAck(source.sourceRef, source.sourceKey, 25, 15, 40)
+    expect(store.getSnapshot().sources[0]).toMatchObject({ latestSequence: 41, readSequence: 20, unreadCount: 21 })
+    store.upsert({ ...source, latestSequence: 41, readSequence: 25, unreadCount: 16 })
+    expect(store.getSnapshot().sources[0]).toMatchObject({ latestSequence: 41, readSequence: 25, unreadCount: 16 })
+  })
+
   it('waits for instance preparation before loading the first directory and coalesces concurrent reads', async () => {
     const prepared = Promise.withResolvers<void>()
     const prepareLoad = vi.fn(() => prepared.promise)
@@ -790,6 +812,8 @@ describe('ArkmeChatDirectoryStore', () => {
         isMuted: false,
       }, {
         ...baseline,
+        readSequence: 10,
+        latestSequence: 10,
         unreadCount: 0,
         badgeUnreadCount: 0,
         notificationAllowed: true,

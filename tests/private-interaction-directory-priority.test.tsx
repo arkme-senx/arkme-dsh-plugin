@@ -34,14 +34,14 @@ afterEach(async () => {
 async function occupyImages() {
   const controller = new AbortController()
   images.add(controller)
-  const pending = Promise.allSettled([1, 2].map(index => callArkme('image.read', { imageRef: String(index) }, controller.signal, { priority: 'background' })))
-  await vi.waitFor(() => expect(provider.mock.calls.filter(args => args[0] === 'image.read')).toHaveLength(2))
+  const pending = Promise.allSettled(['image.read', 'image.read', 'provider.capabilities', 'provider.capabilities'].map((operation, index) => callArkme(operation as 'image.read' | 'provider.capabilities', { imageRef: String(index) }, controller.signal, { priority: 'background' })))
+  await vi.waitFor(() => { expect(provider.mock.calls.filter(args => args[0] === 'image.read')).toHaveLength(2); expect(provider.mock.calls.filter(args => args[0] === 'provider.capabilities')).toHaveLength(2) })
   return { controller, pending }
 }
 function installProvider() {
   let reads = 0
   provider.mockImplementation(async (operation: string, params: Record<string, unknown>, signal?: AbortSignal) => {
-    if (operation === 'image.read') return await new Promise((_resolve, reject) => {
+    if (operation === 'image.read' || operation === 'provider.capabilities') return await new Promise((_resolve, reject) => {
       if (signal?.aborted) reject(signal.reason)
       else signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
     })
@@ -83,7 +83,7 @@ it('replaces an already queued automatic retry instead of waiting for its old pr
 it('lets a continuation reach Host when Browser background slots are occupied', async () => {
   const first = Promise.withResolvers<ReturnType<typeof page>>()
   provider.mockImplementation(async (operation, params, signal: AbortSignal) => {
-    if (operation === 'image.read') return await new Promise((_resolve, reject) =>
+    if (operation === 'image.read' || operation === 'provider.capabilities') return await new Promise((_resolve, reject) =>
       signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
     return params.cursor ? page('older') : first.promise
   })

@@ -1,3 +1,4 @@
+import { isBackendRouteUnavailable } from './service-error.js'
 import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { readExtensionSummaryBatch } from '../message-extension-summary.js'
 import type { PendingAttachment } from './progressive-attachments.js'
@@ -24,6 +25,7 @@ import type { RecordEditHistoryTarget } from './record-edit-history-service.js'
 import { recordOwnerId, type RecordOwnerId } from '../record-owner-id.js'
 import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { identifyTimelineSender, botDisplayName, type BotDisplayProfiles, type BotDisplayProfilesReader } from '../chat-sender-display.js'
+import { TimelineTokenCodec } from './timeline-token.js'
 import { RuntimeBotDisplayProfilesReader, botDisplaySnapshot } from './chat-sender-display-reader.js'
 import { recordDeletionCapability } from '../record-deletion-ref.js'
 import { sealRecordTopicAssignmentRef } from '../record-topic-assignment-ref.js'
@@ -2542,7 +2544,7 @@ export class ChatService {
 
   async readSource(
       sourceRef: string,
-      options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal } = {},
+      options: { limit?: number; cursor?: ArkmeTimelineCursor; signal?: AbortSignal; deferBotProfiles?: boolean } = {},
     ): Promise<ArkmeTimelinePage> {
       const session = await this.runtime.requireSession()
       const source = await this.source.openSourceRef(sourceRef, session.userId)
@@ -2759,27 +2761,50 @@ export class ChatService {
           this.aiPolish.queryGroupAiPolishNotices(source.ownerRef, session, options.signal),
         ])
         : undefined
-      if ((options.cursor?.afterSequence ?? 0) > 0) {
-        const afterSequence = Math.max(0, Math.trunc(options.cursor?.afterSequence ?? 0))
-        const data = await this.sourceChatPost<Record<string, unknown>>(source,
-          '/api/v1/chat/timeline/tail',
-          { chat_session_uid: source.ownerRef, after_seq: afterSequence, limit },
-          session,
-          options.signal,
-          {
-            lane: 'interactive-read',
-            key: `timeline-tail:${source.ownerRef}:${String(afterSequence)}:${String(limit)}`,
-            failureCooldownMs: 2_000,
-          },
-        )
-        const items = await this.projectChatTimelineItems(listValue(data.items), source, session, options.signal)
-        const nextAfterSequence = Math.max(afterSequence, Math.trunc(numberValue(data.next_after_seq)))
-        const hasMore = nextAfterSequence > afterSequence
-        return {
-          source: await this.source.sourceItem(source),
-          items,
-          hasMore,
-          ...(hasMore ? { nextCursor: { afterSequence: nextAfterSequence } } : {}),
+      if (options.cursor?.afterSequence !== undefined) {
+        const firstUnread = options.cursor.firstUnread === true
+        if (firstUnread && source.groupDelegation) throw new ArkmePluginError('chat-unread-locate-unsupported', '当前会话需要按消息分页定位', false, 501)
+        let afterSequence = options.cursor.afterSequence
+        const pageLimit = firstUnread ? 1 : limit
+        const signal = firstUnread ? AbortSignal.any([...(options.signal ? [options.signal] : []), AbortSignal.timeout(30_000)]) : options.signal
+        for (;;) {
+          signal?.throwIfAborted()
+          const data = await this.sourceChatPost<Record<string, unknown>>(source,
+            '/api/v1/chat/timeline/tail',
+            { chat_session_uid: source.ownerRef, after_seq: afterSequence, limit: pageLimit, ...(firstUnread ? { first_unread: true } : {}) },
+            session,
+            signal,
+            {
+              lane: 'interactive-read',
+              key: `timeline-tail:${source.ownerRef}:${String(afterSequence)}:${String(pageLimit)}${firstUnread ? ":first-unread" : ""}`,
+              failureCooldownMs: 2_000,
+            },
+          ).catch(caught => {
+            if (firstUnread && (isBackendRouteUnavailable(caught) || caught instanceof ArkmePluginError && (caught.upstreamStatus === 400 || caught.code === 'arkme-code-1001'))) {
+              throw new ArkmePluginError('chat-unread-locate-unsupported', '当前服务需要按消息分页定位', false, 501)
+            }
+            throw caught
+          })
+          if (firstUnread && data.first_unread !== true) throw new ArkmePluginError('chat-unread-locate-unsupported', '当前服务需要按消息分页定位', false, 501)
+          if (firstUnread && listValue(data.items).some(raw => ![1, 2, 4].includes(numberValue(objectValue(objectValue(raw).record).status)))) {
+            throw new ArkmePluginError('chat-timeline-content-pending', '消息加载失败，请重试', true, 503)
+          }
+          const items = await this.projectChatTimelineItems(listValue(data.items), source, session, signal,
+            { basicPresentation: true, ...(options.deferBotProfiles ? { deferBotProfiles: true } : {}) })
+          const nextAfterSequence = Math.max(afterSequence, Math.trunc(numberValue(data.next_after_seq)))
+          const hasMore = nextAfterSequence > afterSequence
+          if (firstUnread) {
+            const incoming = items.filter(item => (item.sequence ?? 0) > afterSequence && item.status === 1 && item.recordOwnerUserId && (item.isIncomingForRead ?? !item.isMe))
+            if (incoming.length || !hasMore) return { source: await this.source.sourceItem(source), items: incoming, hasMore: false }
+            afterSequence = nextAfterSequence
+            continue
+          }
+          return {
+            source: await this.source.sourceItem(source),
+            items,
+            hasMore,
+            ...(hasMore ? { nextCursor: { afterSequence: nextAfterSequence } } : {}),
+          }
         }
       }
       const data = await this.sourceChatPost<Record<string, unknown>>(source,
@@ -6044,7 +6069,9 @@ nextPublic = next
         )
         const responseSessionUid = stringValue(data.chat_session_uid).trim()
         const responseUserId = numberValue(data.user_id)
-        const effectiveReadSequence = numberValue(data.effective_read_seq)
+        const snapshot = objectValue(data.unread_snapshot)
+        // The snapshot is read after the cursor write and can include another device's newer read.
+        const effectiveReadSequence = numberValue(snapshot.read_seq ?? data.effective_read_seq)
         const readAt = numberValue(data.read_at)
         const sessionLastSequence = numberValue(data.session_last_seq)
         const unreadCount = numberValue(data.unread_count)
@@ -6060,8 +6087,10 @@ nextPublic = next
         if (cached !== undefined) {
           this.source.setChatSourceByKey(cacheKey, {
             ...cached,
-            unreadCount,
-            ...(unreadCount <= 0 ? { hasUnreadMention: false } : {}),
+            ...((cached.readSequence ?? 0) <= effectiveReadSequence && (cached.latestSequence ?? 0) <= sessionLastSequence
+              ? { readSequence: effectiveReadSequence, latestSequence: sessionLastSequence, unreadCount,
+                  ...(unreadCount <= 0 ? { hasUnreadMention: false } : {}) }
+              : {}),
           })
         }
         this.realtime.emitChatClientEvent({
@@ -6236,6 +6265,7 @@ nextPublic = next
           ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId)
             : senderUserId > 0 ? { avatarRef: await this.profile.sealProfileImageRef(session.userId, senderUserId) } : {}),
           isMe,
+          ...(isBot && senderUserId === session.userId ? { isIncomingForRead: false } : {}),
           ...(callRecord === undefined ? {} : { callRecord }),
           ...(mentionsViewer ? { mentionsViewer: true } : {}),
           ...(mentions === undefined ? {} : { mentions }),
@@ -7205,14 +7235,25 @@ nextPublic = next
     source: ArkmeSourceRefPayload,
     session: ArkmeSessionCredentials,
     signal?: AbortSignal,
-    options: { basicPresentation?: boolean; deferHumanAvatars?: boolean } = {},
+    options: { basicPresentation?: boolean; deferHumanAvatars?: boolean; deferBotProfiles?: boolean } = {},
   ): Promise<ArkmeTimelineItem[]> {
     const items: ArkmeTimelineItem[] = []
     const renderableItems = rawItems.filter(raw => numberValue(objectValue(objectValue(raw).record).status) === 1)
-    const botProfiles = await this.timelineBotDisplayProfiles(renderableItems, session, source.ownerRef, source.kind, signal)
+    const deferBotProfiles = options.deferBotProfiles === true && !source.groupDelegation && this.senderProfiles.cached !== undefined
+    const botProfiles = await this.timelineBotDisplayProfiles(renderableItems, session, source.ownerRef, source.kind, signal, undefined, deferBotProfiles)
     const senderUserIdByIndex = new Map<number, number>()
     const signingKey = await this.runtime.stateStore.uniqueCode()
     const audienceKey=source.groupDelegation?await this.source.sourceScopeKey(source):undefined
+    const botPresentation = deferBotProfiles ? this.botPresentationCodec(signingKey, session.userId, source.ownerRef) : undefined
+    const botPresentationRefs = new Map<string, string>()
+    const presentationRef = (uid: string) => {
+      if (!botPresentation || !uid) return undefined
+      const known = botPresentationRefs.get(uid)
+      if (known) return known
+      const ref = botPresentation.seal(uid, 'bot-sender')
+      botPresentationRefs.set(uid, ref)
+      return ref
+    }
     for (const raw of renderableItems) {
       const item = objectValue(raw)
       const relation = timelineSenderRelation(item)
@@ -7249,7 +7290,8 @@ nextPublic = next
         ? this.arko.currentUserAgentSourceFallback(session.userId, rawAgentSource)
         : rawAgentSource
       const contentBlocks = this.media.richContentBlocks(item, session.userId, [], mediaSource)
-      const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles,source,audienceKey)
+      const extensionProjection = this.timelineExtensionProjection(item, session.userId, botProfiles,source,audienceKey,presentationRef)
+      const senderBotPresentationRef = presentationRef(timelineSenderBotUid(relation))
       const senderName = this.timelineSenderName(relation, botProfiles)
       const mentions = await this.timelineMentionTargets(record, payload, session.userId, source.ownerRef)
       const captureContext = timelineCaptureContext({ ...record, ...payload })
@@ -7316,10 +7358,12 @@ nextPublic = next
         ...(isBot ? { senderKind: 'bot' as const } : {}),
         ...(isBot && timelineSenderBotUid(relation) ? {
           senderBotDirectoryKey: arkmeBotDirectoryKey(session.userId, timelineSenderBotUid(relation), signingKey),
+          ...(senderBotPresentationRef ? { senderBotPresentationRef } : {}),
         } : {}),
         ...(isBot ? this.timelineBotAvatar(relation, botProfiles, session.userId) : {}),
         ...(agentSource === undefined ? {} : { agentSource }),
         isMe,
+        ...(isBot && senderUserId === session.userId ? { isIncomingForRead: false } : {}),
         ...(callRecord === undefined ? {} : { callRecord }),
         ...(mentions === undefined ? {} : { mentions }),
         sendAtMillis,
@@ -7377,7 +7421,7 @@ nextPublic = next
   private async timelineBotDisplayProfiles(
     rawItems: unknown[], session: ArkmeSessionCredentials, chatSessionUid: string,
     sourceKind: ArkmeSourceRefPayload['kind'] | undefined, signal?: AbortSignal,
-    knownBundle?: Record<string, unknown>,
+    knownBundle?: Record<string, unknown>, cacheOnly = false, uncached = false,
   ): Promise<BotDisplayProfiles> {
     const botIds = new Set(rawItems.flatMap(raw => {
       const item = objectValue(raw)
@@ -7385,9 +7429,42 @@ nextPublic = next
       const preview = objectValue(item.extension_parent_preview ?? item.extensionParentPreview)
       return [timelineSenderBotUid(timelineSenderRelation(item)), timelineSenderBotUid(timelineSenderRelation(preview))].filter(Boolean)
     }))
-    return await this.senderProfiles.read({ botUids: botIds, chatSessionUid, isGroup: sourceKind === 'group_chat',
-      ...(knownBundle === undefined ? {} : { snapshot: botDisplaySnapshot(knownBundle) }),
+    const input = { botUids: botIds, chatSessionUid, isGroup: sourceKind === 'group_chat', ...(uncached ? { uncached: true } : {}),
+      ...(knownBundle === undefined ? {} : { snapshot: botDisplaySnapshot(knownBundle) }) }
+    return cacheOnly && this.senderProfiles.cached
+      ? await this.senderProfiles.cached(input, session)
+      : await this.senderProfiles.read(input, session, signal)
+  }
+
+  private botPresentationCodec(key: string, userId: number, chatSessionUid: string): TimelineTokenCodec {
+    return new TimelineTokenCodec(key, JSON.stringify([this.runtime.config.environment, userId, chatSessionUid]))
+  }
+
+  async timelineBotPresentations(sourceRef: string, refs: unknown, signal?: AbortSignal) {
+    if (!Array.isArray(refs) || refs.length === 0 || refs.length > 100
+      || refs.some(ref => typeof ref !== 'string' || !ref || ref.length > 4096)) {
+      throw new ArkmePluginError('bot-senders-invalid', '机器人资料引用无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if (source.groupDelegation || source.kind !== 'private_chat' && source.kind !== 'group_chat') {
+      throw new ArkmePluginError('bot-senders-source-invalid', '会话不支持读取机器人资料', false, 400)
+    }
+    const codec = this.botPresentationCodec(await this.runtime.stateStore.uniqueCode(), session.userId, source.ownerRef)
+    const entries = [...new Set<string>(refs)].map(ref => ({ ref, uid: codec.open(ref, 'bot-sender') }))
+    const profiles = await this.senderProfiles.read({
+      botUids: new Set(entries.map(({ uid }) => uid)), chatSessionUid: source.ownerRef, isGroup: source.kind === 'group_chat',
     }, session, signal)
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) {
+      throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+    }
+    return entries.flatMap(({ ref, uid }) => {
+      const profile = profiles.get(uid)
+      return profile ? [{ ref, senderName: profile.displayName,
+        ...this.bot.botAvatarProjection({ avatar_url: profile.avatarUrl }, session.userId, uid) }] : []
+    })
   }
 
   private timelineSenderName(relation: Record<string, unknown>, profiles: BotDisplayProfiles): string {
@@ -7413,11 +7490,13 @@ nextPublic = next
     botProfiles: BotDisplayProfiles,
     source?:ArkmeSourceRefPayload,
     audienceKey?:string,
+    presentationRef?: (uid: string) => string | undefined,
   ): Pick<ArkmeTimelineItem, 'extensionParentRecordUid' | 'extensionParent'> | undefined {
     const edge = objectValue(item.extension_edge ?? item.extensionEdge)
     const quoteProjection = projectedMessageQuote(edge.quote_reply ?? item.quote_reply, item.extension_projection_state === 'unavailable' ? 'unavailable' : edge.quote_reply_state ?? item.quote_reply_state)
     const preview = objectValue(item.extension_parent_preview ?? item.extensionParentPreview)
     const previewRelation = timelineSenderRelation(preview)
+    const senderBotPresentationRef = presentationRef?.(timelineSenderBotUid(previewRelation))
     const previewRecord = objectValue(preview.record)
     const previewPayload = objectValue(previewRecord.payload)
     const parentRecordUid = stringValue(
@@ -7438,6 +7517,7 @@ nextPublic = next
     if (previewRecordUid === '' || previewRecordUid !== parentRecordUid) {
       return { extensionParentRecordUid: parentRecordUid, ...(quoteProjection.quoteState === undefined ? {} : { extensionParent: {
         itemUid: parentRecordUid, senderName: this.timelineSenderName(previewRelation, botProfiles), title: '', textContent: '',
+        ...(senderBotPresentationRef ? { senderBotPresentationRef } : {}),
         ...quoteProjection,
         ...(recordOwnerId(edge.parent_record_owner_user_id) ? { recordOwnerUserId: recordOwnerId(edge.parent_record_owner_user_id) } : {}),
       } }) }
@@ -7456,6 +7536,7 @@ nextPublic = next
         ...quoteProjection,
         itemUid: parentRecordUid,
         senderName: this.timelineSenderName(previewRelation, botProfiles),
+        ...(senderBotPresentationRef ? { senderBotPresentationRef } : {}),
         title: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(previewPayload.title),
         textContent: quoteProjection.quoteState === 'unavailable' ? '' : stringValue(previewPayload.text_content ?? previewPayload.textContent),
         ...(recordOwnerUserId !== 0 ? { recordOwnerUserId } : {}),
@@ -7476,6 +7557,7 @@ nextPublic = next
       item.extensionParent = {
         itemUid: parent.itemUid,
         senderName: parent.senderName,
+        ...(parent.senderBotPresentationRef ? { senderBotPresentationRef: parent.senderBotPresentationRef } : {}),
         title: parent.title,
         textContent: parent.textContent,
         textFormat: parent.textFormat ?? 'plain',

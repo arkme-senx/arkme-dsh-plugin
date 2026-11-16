@@ -190,3 +190,19 @@ it('clears loaded Team pixels on account change without reusing them in the next
  expect(old.hasAttribute('src')).toBe(false);expect(images()).toHaveLength(0)
  await render({...message,media:message.media.slice(0,1)});await visible();expect(admitted()[0]).not.toBe(old)
 })
+
+it('keeps both image permits available when a third background JSON read is queued', async () => {
+ let release!: () => void
+ const gate = new Promise<void>(resolve => { release = resolve })
+ let started = 0
+ const jobs = [0, 1, 2].map(() => backgroundUiReads.run({ scope: 'test:42', lane: 'background-read', service: 'other',
+  operation: async () => { started++; await gate },
+ }))
+ try {
+  await act(async () => Promise.resolve())
+  expect(started).toBe(2)
+  await render(); await visible()
+  expect(admitted().map(image => image.alt)).toEqual(['a.png', 'b.png'])
+  expect(started).toBe(2)
+ } finally { release(); await act(async () => { await Promise.all(jobs) }) }
+})

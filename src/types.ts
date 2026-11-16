@@ -2093,6 +2093,8 @@ export interface ArkmeTimelineCursor {
   itemUid?: string
   beforeSequence?: number
   afterSequence?: number
+  /** Seek the first incoming unread message after the confirmed sequence. */
+  firstUnread?: true
 }
 
 /** A browser-safe topic projection attached to an item in a personal aggregate or topic-subtree feed. */
@@ -2257,11 +2259,14 @@ export interface ArkmeTimelineItem {
   senderKind?: 'human' | 'bot'
   /** Account-scoped opaque Bot identity for matching a sender to existing Bot directory entries. */
   senderBotDirectoryKey?: string
+  senderBotPresentationRef?: string
   senderName: string
   agentSource?: ArkmeTimelineAgentSource
   /** Opaque Provider image reference for the concrete message sender. */
   avatarRef?: string
   isMe: boolean
+  /** Matches Chat unread sender identity when a Bot's display alignment differs. */
+  isIncomingForRead?: boolean
   /** Browser-safe projection of whether this incoming message mentions the current viewer. */
   mentionsViewer?: boolean
   /** Browser-safe mention ranges projected from provider metadata; used for exact highlight and member cards. */
@@ -2304,6 +2309,7 @@ export interface ArkmeTimelineItem {
 }
 
 export interface ArkmeTimelineExtensionParent {
+  senderBotPresentationRef?: string
   /** Immutable selected text, only from the validated quote_reply protocol. */
   quote?: import('./message-quote.js').ArkmeMessageQuote
   quoteState?: 'available' | 'edited' | 'unavailable'
@@ -2920,6 +2926,7 @@ export interface ArkmeTimelinePage {
 
 /** A continuous chat timeline window centered on an exact record. */
 export interface ArkmeTimelineAroundPage {
+  cache?: ArkmeTimelinePage['cache']
   unified?: import('./unified-chat-timeline.js').ArkmeUnifiedTimelineWindow
   source: ArkmeSourceItem
   items: ArkmeTimelineItem[]
@@ -4855,6 +4862,7 @@ export type ArkmePluginOperation =
   | 'chat.sync.retry'
   | 'source.timeline'
   | 'source.timeline-around'
+  | 'source.bot-senders.presentation'
   | 'source.members'
   | 'source.members.page'
   | 'source.members.presentation'

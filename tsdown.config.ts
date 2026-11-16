@@ -47,6 +47,7 @@ export default defineConfig([
     outDir: 'lib',
     format: 'esm',
     platform: 'node',
+    define: { '__ARKME_LOCAL_HISTORY_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_HISTORY_TIMING === '1') },
     target: 'es2024',
     fixedExtension: false,
     dts: false,
@@ -83,6 +84,7 @@ export default defineConfig([
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
+      '__ARKME_LOCAL_HISTORY_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_HISTORY_TIMING === '1'),
     },
     outputOptions: {
       // DSH registers one factory per browser entry; relative chunks have no module-table entry.

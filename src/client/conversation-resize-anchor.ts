@@ -1,12 +1,12 @@
-import { followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
+import { conversationWindowActive, followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
 import { useLayoutEffect, useRef, type MutableRefObject, type RefObject } from 'react'
 
 interface ViewportMetrics { scrollTop: number; scrollHeight: number; clientHeight: number }
 
-export function resizedConversationScrollTop(before: ViewportMetrics, after: ViewportMetrics): number {
+export function resizedConversationScrollTop(before: ViewportMetrics, after: ViewportMetrics, followBottom = true): number {
   const maximum = Math.max(0, after.scrollHeight - after.clientHeight)
   // Match the conversation's existing 80px near-bottom policy.
-  return before.scrollHeight - before.scrollTop - before.clientHeight <= 80
+  return followBottom && before.scrollHeight - before.scrollTop - before.clientHeight <= 80
     ? maximum
     : Math.max(0, Math.min(before.scrollTop, maximum))
 }
@@ -50,17 +50,18 @@ export function observeConversationResize(body: HTMLElement, endAccessory?: HTML
     const nextAccessoryHeight = endAccessory?.getBoundingClientRect().height ?? 0
     const accessoryDelta = nextAccessoryHeight - accessoryHeight
     const nextContentHeight = content?.getBoundingClientRect().height ?? 0
-    if (isConversationFollowing(body)) {
+    const followBottom = conversationWindowActive(body)
+    if (followBottom && isConversationFollowing(body)) {
       // Align deferred virtual-chunk/media layout before paint too. User input
       // cancels latest-edge intent instead of competing with a scroll animation.
       followConversationBottom(body)
     } else if (before.clientHeight > 0 && after.clientHeight > 0 && before.clientHeight !== after.clientHeight) {
-      body.scrollTop = resizedConversationScrollTop(before, after)
+      body.scrollTop = resizedConversationScrollTop(before, after, followBottom)
     } else if (after.clientHeight > 0 && nextContentHeight !== contentHeight) {
       // Timeline commits rebase this owner below. Later virtual-chunk/media
       // layout must retain that reading row too, including when native scroll
       // anchoring cannot follow a chunk replaced by its measured height.
-      if (before.scrollHeight - before.scrollTop - before.clientHeight <= 80) {
+      if (followBottom && before.scrollHeight - before.scrollTop - before.clientHeight <= 80) {
         body.scrollTop = Math.max(0, after.scrollHeight - after.clientHeight)
       } else if (anchor !== undefined && content?.contains(anchor.row)) {
         const delta = anchor.row.getBoundingClientRect().top - body.getBoundingClientRect().top - anchor.offset
@@ -70,7 +71,7 @@ export function observeConversationResize(body: HTMLElement, endAccessory?: HTML
       }
     } else if (after.clientHeight > 0 && accessoryDelta !== 0) {
       // Only undo the accessory's height delta, not anchors already restored by timeline paging.
-      body.scrollTop = resizedConversationScrollTop({ ...after, scrollHeight: after.scrollHeight - accessoryDelta }, after)
+      body.scrollTop = resizedConversationScrollTop({ ...after, scrollHeight: after.scrollHeight - accessoryDelta }, after, followBottom)
     }
     accessoryHeight = nextAccessoryHeight
     contentHeight = nextContentHeight
@@ -91,7 +92,7 @@ export function observeConversationResize(body: HTMLElement, endAccessory?: HTML
         resize()
         return
       }
-      if (followBottom) {
+      if (followBottom && conversationWindowActive(body)) {
         if (isConversationFollowing(body)) followConversationBottom(body)
         else body.scrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
       }

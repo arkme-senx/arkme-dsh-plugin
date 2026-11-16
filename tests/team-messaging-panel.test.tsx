@@ -1,3 +1,5 @@
+import { beforeEach as beforeForegroundCase } from 'vitest'
+beforeForegroundCase(() => { vi.spyOn(document, 'hasFocus').mockReturnValue(true) })
 import { ArkmeArticlePicker } from '../src/client/ArkmeArticlePicker.js'
 import { ArkmeComposerResourcePicker } from '../src/client/ArkmeComposerResourcePicker.js'
 import {ArkmeRecordInputCaptureOwner} from '../src/client/record-input-capture.js'
