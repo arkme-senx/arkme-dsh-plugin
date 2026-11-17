@@ -1,3 +1,4 @@
+import { recordingAudioDurationLabel } from './recording-audio-duration.js'
 import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { RecordingImportQueue } from '../../recording-import-queue.js'
@@ -270,22 +271,8 @@ function taskSessionRef(task: ImportTask): string | undefined {
   return isLocalImportTask(task) ? undefined : task.sessionRef
 }
 
-function durationLabel(durationMillis: number | null): string {
-  if (durationMillis === null) return tr('待确认')
-  if (durationMillis < 1_000) return `${String(Math.max(0, durationMillis))}ms`
-  const seconds = Math.max(0, Math.floor(durationMillis / 1_000))
-  const hours = Math.floor(seconds / 3_600)
-  const minutes = Math.floor(seconds % 3_600 / 60)
-  const remainingSeconds = seconds % 60
-  return `${hours > 0 ? `${String(hours)}h` : ''}${minutes > 0 ? `${String(minutes)}m` : ''}${remainingSeconds > 0 ? `${String(remainingSeconds)}s` : ''}`
-}
-
 function taskAudioDuration(task: ImportTask): string {
-  if ('delivery' in task && task.delivery) {
-    const value = task.delivery
-    return durationLabel(value.audioDurationMs) + (value.audioDurationMs !== null && !value.durationFinal ? tr('（已确认部分）') : '')
-  }
-  return durationLabel(task.durationMillis)
+  return recordingAudioDurationLabel(task.durationMillis, 'delivery' in task ? task.delivery : undefined)
 }
 function taskFileSize(task: ImportTask): string {
   if ('delivery' in task && task.delivery) {
@@ -1758,7 +1745,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
             return <div key={row.id} style={styles.row} role="row">
               <span style={styles.cellCenter}>{row.submitting ? null : <input style={styles.checkbox} aria-label={tr("选择 {v0}", { v0: row.file.name })} type="checkbox" checked={row.selected} disabled={pending} onChange={event => { updateRow(row.id, { selected: event.target.checked }) }} />}</span>
               <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><span style={styles.timeEditor}><input style={styles.timeInput} aria-label={tr("{v0}录音开始时间", { v0: row.file.name })} type="datetime-local" step={1} value={row.startAt} disabled={rowLocked} onChange={event => { updateRow(row.id, { startAt: event.target.value, error: '' }) }} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
-              <span style={styles.cellCenter}>{row.selection?.ok === true ? durationLabel(duration) : '—'}</span><span style={styles.cellCenter}>{row.file.size === 0 && row.source?.kind === 'handle' ? '—' : fileSizeLabel(row.file.size)}</span>
+              <span style={styles.cellCenter}>{row.selection?.ok === true ? recordingAudioDurationLabel(duration) : '—'}</span><span style={styles.cellCenter}>{row.file.size === 0 && row.source?.kind === 'handle' ? '—' : fileSizeLabel(row.file.size)}</span>
               <span style={styles.ownership} aria-label={tr("{v0}数据归属", { v0: row.file.name })}><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'self'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'self' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'self') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'self' }) }}>{tr("我的")}</button><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'other'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'other' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'other') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'other' }) }}>{tr("他人")}</button></span>
               <span style={styles.status}>{row.needsAccess ? <button type="button" style={styles.historyButton} disabled={pending} onClick={() => { void restoreAccess(row) }}>恢复访问</button> : row.validating ? <span title={tr('正在读取文件并校验格式与时长；云端文件可能需要先由系统下载。')}>{row.preparing ? tr('正在准备') : tr('等待准备')}</span> : rowError !== '' ? <><small style={styles.error}>{row.selection?.ok === true ? tr('导入失败') : tr('准备失败')}</small><button type="button" aria-label={tr('重试 {v0}', { v0: row.file.name })} disabled={pending} style={styles.historyButton} onClick={() => { void submitRows(row.id) }}>{tr('重试')}</button></> : row.submitting ? uploadActive ? <><span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(uploadProgress * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(uploadProgress * 100)}%` }} /></span><span>{tr("上传中")}</span></> : tr("排队中") : tr("待导入")}</span><span style={styles.cellCenter}>{processingDurationCell(processingSource)}</span>
               <button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: row.file.name })} style={styles.iconButton} disabled={pending || row.submitting} onClick={() => { publishRows(current => current.filter(item => item.id !== row.id)) }}><Trash size={20} /></button>

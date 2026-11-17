@@ -9,8 +9,9 @@ import { tr, arkmeIntlLocale } from '../locale.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 import type { PublicRecordingImportCurrentSnapshot, PublicRecordingImportHistoryPage } from '../../recording-import-shared.js'
+import { recordingAudioDurationLabel } from './recording-audio-duration.js'
 import { recordingImportEndTimeError, recordingImportLocalInputValue } from './ArkmeRecordingImportDialog.js'
-import { recordingFileAudioDuration, recordingFileDisplayEnd, recordingFileExpectedBytes, mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, type RecordingFile } from './recording-day-files.js'
+import { recordingFileDisplayEnd, recordingFileExpectedBytes, mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, type RecordingFile } from './recording-day-files.js'
 
 export interface RecordingFilesCount {
   dateStamp: number
@@ -52,14 +53,6 @@ const COMPLETED_SCAN_TTL = 60_000
 
 function instant(value: number | null, showDate = true) {
   return value !== null && value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
-}
-function duration(value: number | null) {
-  if (value === null) return tr('时长待确认')
-  if (value < 1000) return `${String(Math.max(0, value))}ms`
-  const seconds = Math.floor(Math.max(0, value) / 1000)
-  if (seconds < 60) return tr('{v0}秒', { v0: seconds })
-  const minutes = Math.floor(seconds / 60)
-  return seconds % 60 === 0 ? tr('{v0}分钟', { v0: minutes }) : tr('{v0}分{v1}秒', { v0: minutes, v1: seconds % 60 })
 }
 function size(value: number | null) { return value === null ? tr('总大小待确认') : value === 0 ? '0 B' : recordingMegabytesLabel(value) }
 
@@ -336,7 +329,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
             <div title={file.fileName} style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
             <div style={{ ...note, flex: '0 1 auto', minWidth: 0, maxWidth: '100%', display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
               <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(recordingFileDisplayEnd(file), crossDay)}</span>
-              <span>· {duration(recordingFileAudioDuration(file))}</span><span>· {size(recordingFileExpectedBytes(file))}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
+              <span>· {recordingAudioDurationLabel(file.durationMillis, 'delivery' in file ? file.delivery : undefined)}</span><span>· {size(recordingFileExpectedBytes(file))}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
             </div>
           </div>
           {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', alignSelf: 'flex-start', marginTop: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}

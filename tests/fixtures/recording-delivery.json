@@ -27,7 +27,7 @@
     "capture_end_at": 1700000060800,
     "display_end_at": 1700000060800,
     "audio_duration_ms": 840,
-    "duration_final": false
+    "duration_final": true
   },
   "empty": {
     "registered_sources": 0,
@@ -57,7 +57,7 @@
     "capture_end_at": 1700000060800,
     "display_end_at": 1700000060800,
     "audio_duration_ms": 840,
-    "duration_final": true
+    "duration_final": false
   },
   "processed": {
     "registered_sources": 1,

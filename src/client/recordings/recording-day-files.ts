@@ -37,8 +37,6 @@ const labels: Record<RecordingImportDisplayStatus, string> = {
 }
 export const recordingFileStatusLabel = (file: RecordingFile) => ('delivery' in file && file.delivery ? file.statusDetail : labels[file.status]) ?? '状态暂不可用'
 
-export const recordingFileAudioDuration = (file: RecordingFile): number | null =>
-  'delivery' in file && file.delivery ? file.delivery.audioDurationMs : file.durationMillis
 export const recordingFileDisplayEnd = (file: RecordingFile): number | null =>
   'delivery' in file && file.delivery ? file.delivery.displayEndAt : file.endAtMillis
 export const recordingFileExpectedBytes = (file: RecordingFile): number | null =>
