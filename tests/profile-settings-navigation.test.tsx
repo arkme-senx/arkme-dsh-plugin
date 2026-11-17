@@ -16,7 +16,12 @@ beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   mocks.call.mockReset()
-  mocks.call.mockImplementation(async (operation: string) => operation === 'arko.deleted' ? { items: [], hasMore: false } : operation === 'data.deleted' ? { accountScope: 'prod:11', items: [{ recordUid: 'rec1', version: 2, title: '已删快记', text: '详情', sendAtMillis: 12345 }], mayHaveMore: false } : { accountScope: 'prod:11', canExport: true, recordCount: 10, voiceCount: 1, imageCount: 2, message: '', latestAtMillis: 0 })
+  mocks.call.mockImplementation(async (operation: string) => {
+    if (operation === 'recordings.ai-deletion.settings') return { enabled: false }
+    if (operation === 'arko.deleted') return { items: [], hasMore: false }
+    if (operation === 'data.deleted') return { accountScope: 'prod:11', items: [{ recordUid: 'rec1', version: 2, title: '已删快记', text: '详情', sendAtMillis: 12345 }], mayHaveMore: false }
+    return { accountScope: 'prod:11', canExport: true, recordCount: 10, voiceCount: 1, imageCount: 2, message: '', latestAtMillis: 0 }
+  })
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'prod', userId: 11 })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
@@ -56,15 +61,16 @@ describe('profile/settings navigation', () => {
     expect(nav).not.toContain('设置声音识别')
     expect(nav).not.toContain('打开 DSH 应用设置')
   })
-  it('shows data entries without requesting or mutating data on entry', async () => {
+  it('shows data entries and only reads the current account’s local deletion setting on entry', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
-    expect(mocks.call).not.toHaveBeenCalled()
+    expect(mocks.call).toHaveBeenCalledExactlyOnceWith('recordings.ai-deletion.settings', { accountScope: 'prod:11' }, expect.any(AbortSignal))
+    expect(host.querySelector<HTMLInputElement>('input[role="switch"]')?.checked).toBe(false)
     expect([...host.querySelectorAll('.arkme-data-entries button')].map(b => b.textContent)).toEqual(['已归档主题', '最近删除', '导入数据', '导出数据'])
     expect(host.querySelector('.arkme-data-open-platform a')?.getAttribute('href')).toBe('https://openapi.jotmo.cc/docs')
     await act(async () => button('导入数据').click())
     expect(host.querySelector('a')?.href).toBe('https://jiwo.cc/import')
     expect(host.querySelector('a')?.rel).toContain('noopener')
-    expect(mocks.call).not.toHaveBeenCalled()
+    expect(mocks.call).toHaveBeenCalledTimes(1)
   })
   it('requires explicit restore confirmation; cancel never writes', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
@@ -94,12 +100,13 @@ describe('profile/settings navigation', () => {
   it('preflights export without creating a session before confirmation', async () => {
     await act(async () => root.render(<ArkmeDataManagementSettings />))
     await act(async () => button('导出数据').click())
-    expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['data.export.preflight'])
+    const operations = () => mocks.call.mock.calls.map(call => call[0])
+    expect(operations()).toEqual(['recordings.ai-deletion.settings', 'data.export.preflight'])
     expect(host.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('增量导出')
     expect(button('选择文件夹')).toBeDefined()
     expect(button('导出到文件夹').disabled).toBe(true)
     await act(async () => button('导出到文件夹').click())
-    expect(mocks.call.mock.calls.map(c => c[0])).toEqual(['data.export.preflight'])
+    expect(operations()).toEqual(['recordings.ai-deletion.settings', 'data.export.preflight'])
 
   })
   it('renders usage in settings and unmounts account content immediately on logout', async () => {
