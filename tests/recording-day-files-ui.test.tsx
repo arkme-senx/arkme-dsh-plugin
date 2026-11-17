@@ -494,3 +494,18 @@ it.each(['available','unavailable'] as const)('gates the single-file comparison 
   expect(request[1]).toMatchObject({ action:'sources',sessionRef:'ref1',includeAvailability:true })
   expect(request[1]).not.toHaveProperty('startAtMillis')
 })
+
+
+it('uses the same name for unnamed recordings in the file list, menu and delete confirmation', async () => {
+  completed = [file({ fileName: '  ', startAtMillis: day + 1000,
+    delivery: { ...parseRecordingDelivery(fixture.awaiting_end)!, displayEndAt: day + 301000 },
+  })]
+  const name = '录音 2026/10/12 00:00:01'
+  await render()
+  expect(host.querySelector(`[title="${name}"]`)?.textContent).toBe(name)
+  await openMenu(name)
+  await click('删除文件')
+  expect(document.querySelector('dialog')?.textContent).toContain(name)
+  expect(document.querySelector('dialog')?.querySelectorAll('p')[1]?.textContent).toBe('10/12 00:00 — 10/12 00:05')
+  expect(completed[0]!.fileName).toBe('  ')
+})
