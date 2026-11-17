@@ -179,6 +179,7 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
   const [draftState, setDraftState] = useState<'unsaved' | 'saving' | 'saved' | 'failed'>('unsaved')
 
   const changeRevision = useRef(0)
+  const editWrite = useRef<{ itemUid: string; revision: number; editAtMillis: number; revisionUid: string; durationMillis: number }>()
   const windowModeRef = useRef(windowMode); windowModeRef.current = windowMode
   useEffect(() => {
     if (windowMode?.invalidated) { skipUnmountSaveRef.current = true; setAccountChanged(true); setError('账号已切换，请关闭后重新打开长文') }
@@ -236,7 +237,10 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
       textFormat: articleRef.current ? 'markdown' as const : draftFormat,
       ...(articleRef.current ? { document: articleRef.current.document, images: imagesRef.current } : {}),
       ...(!publishedUid.current ? getIds() : { baseVersion: baseVersionRef.current }),
-      durationMillis: durationBaseRef.current + Math.max(0, running),
+      ...(editWrite.current && editWrite.current.itemUid === publishedUid.current && editWrite.current.revision === changeRevision.current
+        ? { editAtMillis: editWrite.current.editAtMillis, revisionUid: editWrite.current.revisionUid } : {}),
+      durationMillis: editWrite.current?.itemUid === publishedUid.current && editWrite.current?.revision === changeRevision.current
+        ? editWrite.current!.durationMillis : durationBaseRef.current + Math.max(0, running),
     }
     const revision = changeRevision.current
     setDraftState('saving')
@@ -407,7 +411,7 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
       const draft = await callArkme<ArkmeLongArticleDraft | undefined>('source.long-article.draft.get', draftParams)
       if (skipUnmountSaveRef.current) return
       if (draft !== undefined && (draft.title !== detail.title || draft.textContent !== detail.textContent || draft.document !== undefined)) {
-        if (draft.autoPublish && draft.baseVersion === detail.version) { enterEditing(draft); return }
+        if (draft.autoPublish) { enterEditing(draft); return }
         setDraftPreview(false)
         setRecoveryDraft(draft)
         return
@@ -443,8 +447,13 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
     setStartedAtMillis(Date.now())
     skipUnmountSaveRef.current = false
     setEditing(true)
-    if (draft) { changeRevision.current++; setPendingPublication(true) }
-    setError(nextVersion !== detail.version ? '此草稿基于旧版本，正文已有新修改；草稿已保留，请核对后重新编辑。' : '')
+    if (draft) {
+      changeRevision.current++
+      editWrite.current = { itemUid: detail.itemUid, revision: changeRevision.current,
+        editAtMillis: draft.editAtMillis ?? (draft.updatedAtMillis > 0 ? draft.updatedAtMillis : Date.now()), revisionUid: draft.revisionUid ?? crypto.randomUUID(), durationMillis: draft.durationMillis }
+      setPendingPublication(true)
+    }
+    setError('')
   }
 
   useEffect(() => { if (!loading && detail?.editable && !editing && !recoveryDraft) void beginEditing() }, [loading, detail?.editable, editing])
@@ -454,7 +463,6 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
     if (dictationBusy || composing.current) throw new Error('请等待当前输入完成')
     if (loading || !capabilityReady || (draftFormat === 'markdown' && !markdownEnabled) || (markdownEnabled && !articleRef.current)) throw new Error('编辑器尚未准备完成')
     if (accountChanged || skipUnmountSaveRef.current) throw new Error('账号已切换，请重新打开长文')
-    if (publishedUid.current && baseVersionRef.current !== publishedDetail.current?.version) throw new Error('长文已在其他位置更新，修改已保存在本机，请核对版本后继续')
     const value = articleRef.current
     if (preparingImages || value?.pendingImages || value?.failedImages) throw new Error('请等待图片准备完成，或重试、删除失败图片')
     const normalizedTitle = titleRef.current.trim(), format = value ? 'markdown' : draftFormat
@@ -467,6 +475,9 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
     const duration = durationBaseRef.current + (startedAtRef.current > 0 ? Math.max(0, Date.now() - startedAtRef.current) : 0)
     const firstPublish = !publishedUid.current
     if(firstPublish)publicationTime.current??=submittedAt
+    else if (!editWrite.current || editWrite.current.itemUid !== publishedUid.current || editWrite.current.revision !== revision) {
+      editWrite.current = { itemUid: publishedUid.current!, revision, editAtMillis: submittedAt, revisionUid: crypto.randomUUID(), durationMillis: duration }
+    }
     submittingRef.current = true; setSubmitting(true); setError(''); setFailedReferences([])
     try {
       await windowModeRef.current?.verifyAccount()
@@ -507,8 +518,9 @@ function ArkmeLongArticleContent({ sourceRef, item, draftScope, representation, 
       } else {
         updated = await callArkme<ArkmeLongArticleDetail>('source.long-article.update', {
           sourceRef, itemUid: publishedUid.current, title: normalizedTitle, textContent: normalizedText,
-          ...(value ? { textFormat: format, images: value.images } : {}), version: baseVersionRef.current,
-          editDurationMillis: duration,
+          ...(value ? { textFormat: format, images: value.images } : {}),
+          editAtMillis: editWrite.current!.editAtMillis, revisionUid: editWrite.current!.revisionUid,
+          editDurationMillis: editWrite.current!.durationMillis,
         })
       }
       if (skipUnmountSaveRef.current) throw new Error('账号已切换，请重新打开长文')

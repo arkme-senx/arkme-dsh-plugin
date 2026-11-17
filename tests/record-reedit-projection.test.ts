@@ -20,6 +20,15 @@ describe('re-edit presentation is not a canonical record', () => {
     const newer = { ...original, version: 8, textContent: '其他设备更新' }
     expect(projectRecordReedit(newer, [pending])).toBe(newer)
   })
+  it('previews against the version visible at submission, while later versions and revocation still win', () => {
+    const visible = { ...original, recordVersion: 9 }
+    const local = { ...pending, projectionBaseVersion: 9 }
+    expect(projectRecordReedit(visible, [local]).textContent).toBe(pending.textContent)
+    const newer = { ...visible, recordVersion: 10, textContent: '保存后到达的新版本' }
+    expect(projectRecordReedit(newer, [local])).toBe(newer)
+    const removed = { ...visible, status: 0 }
+    expect(projectRecordReedit(removed, [local])).toBe(removed)
+  })
   it('retains the successful candidate until its version reaches the timeline', () => {
     const committed = { ...pending, state: 'committed' as const, result: { status: 'committed' as const, itemUid: 'r', version: 8, revisionUid: 'revision', projectionState: 'pending' as const } }
     expect(projectRecordReedit(original, [committed]).textContent).toBe('新文')
@@ -96,4 +105,10 @@ describe('re-edit presentation is not a canonical record', () => {
       ])
     expect(projectRecordReedit(item, [{ ...job, attachments: [] }]).contentBlocks).toEqual([])
   })
+})
+
+it('never projects a late accepted history candidate over the current message',()=>{
+ const item={itemUid:'record',status:1,recordVersion:7,title:'',textContent:'当前正文'} as import('../src/types.js').ArkmeTimelineItem
+ const job={itemUid:'record',state:'committed',baseVersion:7,title:'',textContent:'迟到的旧编辑',attachments:[],result:{status:'committed',itemUid:'record',version:12,revisionUid:'late',projectionState:'pending',appliedToCurrent:false}} as import('../src/record-reedit-contract.js').ArkmeRecordReeditSubmissionView
+ expect(projectRecordReedit(item,[job])).toBe(item)
 })

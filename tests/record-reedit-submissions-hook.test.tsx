@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.callArkme }))
 
 import { projectRecordReedit, useRecordReeditSubmissions } from '../src/client/record-reedit-submissions.js'
-import { recordReeditBackground } from '../src/client/record-reedit-background.js'
+import { recordReeditBackground, RecordReeditAcceptanceUnknown } from '../src/client/record-reedit-background.js'
 
 const original: ArkmeTimelineItem = {
   itemUid: 'record-a', title: '', textContent: '原正文', status: 1, version: 3, sendAtMillis: 1,
@@ -54,7 +54,50 @@ describe('record re-edit submission hook owns canonical handoff', () => {
   })
   afterEach(() => {
     act(() => renderer?.unmount())
+    recordReeditBackground.clear()
     vi.useRealTimers()
+  })
+
+  it.each(['accepted', 'uncertain'] as const)('preserves the clicked preview boundary across %s receipt handoff and polling', async phase => {
+    receipts = []
+    const visible = { ...original, recordVersion: 4 }
+    const pending = { ...committed, state: 'pending', result: undefined } as ArkmeRecordReeditSubmissionView
+    await mount({ items: [visible] })
+    await act(async () => {
+      if (phase === 'accepted') state.accepted({ ...pending, projectionBaseVersion: 4 })
+      else recordReeditBackground.start({ accountKey: 'account-a', sourceKey: 'source-a',
+        view: { ...pending, submissionId: 'local', projectionBaseVersion: 4 },
+        run: async () => { throw new RecordReeditAcceptanceUnknown('连接中断') }, failed: vi.fn() })
+      await flush()
+    })
+    expect(projectRecordReedit(visible, state.jobs).textContent).toBe(pending.textContent)
+    receipts = [pending]
+    await act(async () => { if (phase === 'uncertain') await state.refresh(true); else await vi.advanceTimersByTimeAsync(1500) })
+    expect(state.jobs[0]).toMatchObject({ baseVersion: 3, projectionBaseVersion: 4 })
+    expect(projectRecordReedit(visible, state.jobs).textContent).toBe(pending.textContent)
+    expect(refreshCurrentWindow).not.toHaveBeenCalled()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    expect(state.jobs[0]?.projectionBaseVersion).toBe(4)
+    const newer = { ...visible, recordVersion: 5 }
+    expect(projectRecordReedit(newer, state.jobs)).toBe(newer)
+  })
+
+  it('retains one poll and no window reads with a large restored receipt set', async () => {
+    const history = Array.from({ length: 5000 }, (_, index) => ({ ...committed,
+      submissionId: `past-${index}`, itemUid: `other-${index}`, result: { ...committed.result!, itemUid: `other-${index}` } }))
+    receipts = history
+    const visible = { ...original, recordVersion: 4 }
+    await mount({ items: [visible] })
+    const pending = { ...committed, state: 'pending', result: undefined } as ArkmeRecordReeditSubmissionView
+    await act(async () => { state.accepted({ ...pending, projectionBaseVersion: 4 }); await flush() })
+    receipts = [...history, pending]
+    const started = process.hrtime.bigint()
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+    const millis = Number(process.hrtime.bigint() - started) / 1e6
+    expect(readCalls()).toHaveLength(2)
+    expect(refreshCurrentWindow).not.toHaveBeenCalled()
+    expect(projectRecordReedit(visible, state.jobs).textContent).toBe(pending.textContent)
+    console.log('reedit-receipt-profile', JSON.stringify({ receipts: receipts.length, millis, reads: readCalls().length, timelineReads: refreshCurrentWindow.mock.calls.length }))
   })
 
   it.each(['empty', 'failed', 'outside-window'] as const)('stops polling after discovering %s receipts', async kind => {

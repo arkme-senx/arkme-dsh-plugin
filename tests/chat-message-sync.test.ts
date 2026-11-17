@@ -263,3 +263,38 @@ it('publishes same-sequence edits and permission changes only from the committed
     ])
   } finally { s.close() }
 })
+
+it('retained old body stays readable while edited body is pending', () => {
+ const s=setup()
+ try {
+  s.begin();s.page([session([work()])]);s.action('freeze');s.page([session([body(work())])],false)
+  expect(s.execute({action:'read',scope:'test:1:chat',limit:40})).toMatchObject({events:[{item:{recordVersion:1}}]})
+  s.page([session([{...work(),revision:2,version:2,state:'pending'}])])
+  expect(s.execute({action:'read',scope:'test:1:chat',limit:40})).toMatchObject({events:[{item:{recordVersion:1}}]})
+ } finally {s.close()}
+})
+
+it.each(['removed','restricted'] as const)('keeps old edit bodies only until explicit %s', state => {
+ const s=setup()
+ try {
+  s.begin();s.page([session([work()])]);s.action('freeze');s.page([session([body(work())])],false)
+  s.page([session([{...work(),revision:2,version:2,state:'pending'}])])
+  s.reopen()
+  expect(s.execute({action:'read',scope:'test:1:chat',limit:40,anchorId:'key:one'})).toMatchObject({events:[{item:{recordVersion:1}}]})
+  s.page([session([{...work(),revision:3,version:3,state}])],false)
+  expect(s.execute({action:'read',scope:'test:1:chat',limit:40})).toBeUndefined()
+ }finally{s.close()}
+})
+it('keeps retained-body pagination indexed while versions are pending',()=>{
+ const s=setup()
+ try {
+  s.begin();s.page([session([work()])]);s.action('freeze');s.page([session([body(work())])],false)
+  const db=new DatabaseSync(join(s.path,TIMELINE_CACHE_FILE),{readOnly:true})
+  try {
+   const plan=db.prepare(`EXPLAIN QUERY PLAN SELECT c.payload,w.sequence,c.ticket FROM message_sync_work w JOIN contents c ON c.scope=w.scope AND c.event_id=w.event_id
+    WHERE w.scope=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' AND w.sequence<? ORDER BY w.sequence DESC LIMIT ?`).all('test:1:chat',Number.MAX_SAFE_INTEGER,41)
+   expect(plan.some(row=>String(row.detail).includes('message_sync_cached'))).toBe(true)
+   expect(plan.some(row=>String(row.detail).includes('TEMP B-TREE'))).toBe(false)
+  }finally{db.close()}
+ }finally{s.close()}
+})

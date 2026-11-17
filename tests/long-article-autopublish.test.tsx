@@ -16,9 +16,10 @@ beforeEach(() => {
   vi.useFakeTimers(); mocks.call.mockReset(); close.mockReset(); updated.mockReset(); created.mockReset()
   mocks.listeners = {}
   vi.stubGlobal('window', { addEventListener: (event: string, listener: () => void) => { mocks.listeners[event] = listener }, removeEventListener: vi.fn(), setInterval, clearInterval })
+  let serverVersion = detail.version
   mocks.call.mockImplementation(async (op, p) => op === 'provider.capabilities' ? { features: { markdownLongArticles: false } }
     : op === 'source.long-article.detail' ? { ...detail, itemUid: p.itemUid }
-    : op === 'source.long-article.update' ? { ...detail, ...p, version: p.version + 1 }
+    : op === 'source.long-article.update' ? { ...detail, ...p, version: ++serverVersion }
     : op === 'source.send-rich' ? { itemUid: 'created', status: 1, messageActionRef: 'signed-created' } : undefined)
 })
 afterEach(async () => { if (renderer) await act(async () => renderer!.unmount()); renderer = undefined; vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -36,23 +37,24 @@ it('publishes after five idle seconds, saves locally first and leaves the editor
   expect(status().children.filter(value => typeof value === 'string').join('')).toContain('待发布')
   await act(async () => vi.advanceTimersByTimeAsync(4_999)); expect(writes()).toHaveLength(0)
   await act(async () => vi.advanceTimersByTimeAsync(1))
-  expect(writes()[0]![1]).toMatchObject({ itemUid: 'article', textContent: '新正文', version: 4 })
+  expect(writes()[0]![1]).toMatchObject({ itemUid: 'article', textContent: '新正文', editAtMillis: expect.any(Number), revisionUid: expect.any(String) })
+  expect(writes()[0]![1]).not.toHaveProperty('version')
   const operations = mocks.call.mock.calls.map(([op]) => op)
   expect(operations.indexOf('source.long-article.draft.put')).toBeLessThan(operations.indexOf('source.long-article.update'))
   expect(input('长文正文').props.value).toBe('新正文'); expect(close).not.toHaveBeenCalled()
   expect(status().children.filter(value => typeof value === 'string').join('')).toContain('已发布')
 })
-it('preserves typing during a write, then serially publishes the latest revision using the new version', async () => {
+it('preserves typing during a write, then serially publishes the latest revision with a new stable identity', async () => {
   let resolve!: (value: unknown) => void
   await mount(); const original = mocks.call.getMockImplementation()!
-  mocks.call.mockImplementation((op, p) => op === 'source.long-article.update' && p.version === 4 ? new Promise(done => { resolve = done }) : original(op, p))
+  mocks.call.mockImplementation((op, p) => op === 'source.long-article.update' && p.textContent === '第一版' ? new Promise(done => { resolve = done }) : original(op, p))
   edit('第一版'); await act(async () => vi.advanceTimersByTimeAsync(5_000))
   expect(input('长文正文').props.disabled).toBe(false)
   expect(status().children.filter(value => typeof value === 'string').join('')).toContain('发布中')
   edit('第二版')
   await act(async () => { resolve({ ...detail, textContent: '第一版', version: 5 }) })
   expect(writes()).toHaveLength(2)
-  expect(writes()[1]![1]).toMatchObject({ textContent: '第二版', version: 5 })
+  expect(writes()[1]![1]).toMatchObject({ textContent: '第二版' })
   expect(input('长文正文').props.value).toBe('第二版')
 })
 it('flushes before article navigation and before share/export barriers', async () => {
@@ -71,8 +73,10 @@ it('flushes close immediately and retains the article when publication fails', a
   await act(async () => renderer!.root.findAllByType('button').find(node => node.props['aria-label'] === '关闭长文')!.props.onClick())
   expect(close).not.toHaveBeenCalled(); expect(input('长文正文').props.value).toBe('不能丢的内容')
   expect(status().children.filter(value => typeof value === 'string').join('')).toContain('发布失败')
+  const firstIdentity = writes()[0]![1]
   mocks.call.mockImplementation(original)
   await act(async () => { mocks.listeners.online!() })
+  expect(writes()[1]![1]).toMatchObject({ editAtMillis: firstIdentity.editAtMillis, revisionUid: firstIdentity.revisionUid, editDurationMillis: firstIdentity.editDurationMillis })
   expect(status().children.filter(value => typeof value === 'string').join('')).toContain('已发布')
 })
 it('pauses during IME composition and resumes on composition end', async () => {
@@ -95,14 +99,14 @@ it('never automatically sends a composer attachment draft', async () => {
   const prepared = vi.fn(); await mount({ item: undefined, onPrepared: prepared }); edit('附件标题', '长文标题'); edit('附件正文')
   await act(async () => vi.advanceTimersByTimeAsync(60_000)); expect(writes()).toHaveLength(0); expect(prepared).not.toHaveBeenCalled()
 })
-it('recovers a durable automatic draft with the original CAS version and publishes without another edit click', async () => {
+it('recovers a durable automatic draft with its original completion time and publishes without another edit click', async () => {
   const original = mocks.call.getMockImplementation()!
   mocks.call.mockImplementation((op, p) => op === 'source.long-article.draft.get'
-    ? { sourceRef: 'self', itemUid: 'article', autoPublish: true, baseVersion: 4, title: '标题', textContent: '重开后待发布的正文', durationMillis: 50, updatedAtMillis: 1 }
+    ? { sourceRef: 'self', itemUid: 'article', autoPublish: true, baseVersion: 1, title: '标题', textContent: '重开后待发布的正文', durationMillis: 50, updatedAtMillis: 1 }
     : original(op, p))
   await mount(); expect(input('长文正文').props.value).toBe('重开后待发布的正文')
   await act(async () => vi.advanceTimersByTimeAsync(5_000))
-  expect(writes()[0]![1]).toMatchObject({ version: 4, textContent: '重开后待发布的正文' })
+  expect(writes()[0]![1]).toMatchObject({ editAtMillis: 1, textContent: '重开后待发布的正文' })
 })
 it('flushes outstanding edits when its parent section unmounts', async () => {
   await mount(); edit('切走模块前的内容')

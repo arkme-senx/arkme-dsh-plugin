@@ -1542,7 +1542,7 @@ describe('outgoing call Host API dispatch', () => {
 
     expect(service.longArticleDetail).toHaveBeenCalledWith('source-1', 'record-1', undefined, 'signed-message')
     expect(service.updateLongArticle).toHaveBeenCalledWith('source-1', 'record-1', {
-      title: '标题', textContent: '正文', version: 2, editDurationMillis: 1200,
+      title: '标题', textContent: '正文', editDurationMillis: 1200,
     })
     expect(service.putLongArticleDraft).toHaveBeenCalledWith({
       sourceRef: 'source-1', itemUid: 'record-1', title: '草稿', textContent: '正文',
@@ -1571,7 +1571,7 @@ describe('outgoing call Host API dispatch', () => {
     })
     expect(service.prepareRecordReedit).toHaveBeenNthCalledWith(1, {
       sourceRef: 'source-1', itemUid: 'record-1', newText: '最终正文',
-    }, { expectedBaseVersion: 3 })
+    })
     expect(draft).toEqual({ saved: true, draftRevision: 7 })
     expect(service.commitRecordReedit).toHaveBeenCalledWith(expect.objectContaining({ sourceIdentityKey: 'host-only' }))
     expect(updated).toMatchObject({ status: 'committed', version: 4 })
@@ -1620,7 +1620,7 @@ describe('outgoing call Host API dispatch', () => {
       sourceRef: 's', itemUid: 'r', attachments: [], expectedVersion: 7, expectedDraftRevision: 4, expectedUserId: 999,
     })
     expect(accepted).toMatchObject({ state: 'pending' })
-    expect(service.submitRecordReedit).toHaveBeenCalledWith({ sourceRef: 's', itemUid: 'r', attachments: [], expectedVersion: 7, expectedDraftRevision: 4 })
+    expect(service.submitRecordReedit).toHaveBeenCalledWith({ sourceRef: 's', itemUid: 'r', attachments: [], expectedDraftRevision: 4 })
     expect(service.commitRecordReedit).not.toHaveBeenCalled()
   })
   it('does not discard a newer draft than the one confirmed in the editor', async () => {

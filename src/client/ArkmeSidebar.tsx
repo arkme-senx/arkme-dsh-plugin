@@ -2114,7 +2114,6 @@ export function ArkmeSurface({
         itemUid: target.item.itemUid,
         newText: target.textContent,
         mentions: target.mentions ?? [],
-        expectedVersion: snapshot.draft?.baseVersion ?? snapshot.version,
         expectedDraftRevision: target.persisted.draftRevision,
         attachments: target.attachments.map(attachment => attachment.selection),
         ...(supportsTitle ? { newTitle: nextTitle } : {}),
@@ -2359,7 +2358,7 @@ export function ArkmeSurface({
   const windowMessageSequence = useMemo(() => Math.max(0, ...(rawUnifiedWindow?.events ?? [])
     .flatMap(event => event.kind === 'message' ? [event.item.sequence ?? 0] : [])), [rawUnifiedWindow])
   // Reaching the end is a snapshot fact, not a promise that no later message can arrive.
-  const newerHasMore = snapshotNewerHasMore || sourceIsChat && timelineMode === 'around'
+  const newerHasMore = snapshotNewerHasMore || sourceIsChat
     && timelineStateKey === conversationKey && newerCursor !== undefined && windowMessageSequence > 0
     && knownLatestSequence > windowMessageSequence
   const syncReset = chatDelta.syncReset
@@ -6733,15 +6732,9 @@ export function ArkmeSurface({
     }
   }, [fileAdmissionScope, fileTasks.tasks, items, hideSyncWindow, liveTextSends, visibleFileAdmissions])
 
-  const { displayItems, reeditItems, sendPlaceholders } = useMemo(() => {
+  const { canonicalDisplayItems, sendPlaceholders } = useMemo(() => {
     const remoteIds = new Set(items.map(item => item.itemUid))
-    const reeditItems = new Set<ArkmeTimelineItem>()
-    const remoteItems = items.map(item => {
-      const bound = bindSentFileTaskLocals(item, fileTasks.tasks)
-      const projected = projectRecordReedit(bound, reeditSubmissions.jobs)
-      if (projected !== bound) reeditItems.add(projected)
-      return projected
-    })
+    const remoteItems = items.map(item => bindSentFileTaskLocals(item, fileTasks.tasks))
     const extensionItems = publicTimelineExtensionSends(extensionSendTasks).filter(task => !remoteIds.has(task.result?.recordUid ?? task.recordUid)).map(detailExtensionSendTimelineItem)
     const sendPlaceholders = new Map<string, 'admission' | 'confirmed'>()
     const taskItems = visibleFileTasks.flatMap(task => {
@@ -6772,8 +6765,18 @@ export function ArkmeSurface({
         // Sync projections are wire items and do not carry local photo presentation.
         return [committed === item ? item : bindSentFileTaskLocals(committed, fileTasks.tasks)]
       }) : displayItems
-    return { displayItems: source ? recordMutations.projectWindow(visible, source, selfSources).sort(compareTimelineMessages) : visible, reeditItems, sendPlaceholders }
-  }, [items, hideSyncWindow, syncChanges, visibleFileTasks, fileTasks.tasks, fileTasks.activeTaskKeys, fileAdmissionScope, liveTextSends, timelineMode, reeditSubmissions.jobs, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
+    return { canonicalDisplayItems: source ? recordMutations.projectWindow(visible, source, selfSources).sort(compareTimelineMessages) : visible, sendPlaceholders }
+  }, [items, hideSyncWindow, syncChanges, visibleFileTasks, fileTasks.tasks, fileTasks.activeTaskKeys, fileAdmissionScope, liveTextSends, timelineMode, recordMutations, recordMutationSnapshot, source, selfSources, extensionSendTasks])
+  const { displayItems, reeditItems } = useMemo(() => {
+    const reeditItems = new Set<ArkmeTimelineItem>()
+    // Apply local edits last so same-version sync bodies cannot overwrite the preview.
+    const projected = canonicalDisplayItems.map(item => {
+      const edited = projectRecordReedit(item, reeditSubmissions.jobs)
+      if (edited !== item) reeditItems.add(edited)
+      return edited
+    })
+    return { displayItems: projected, reeditItems }
+  }, [canonicalDisplayItems, reeditSubmissions.jobs])
   const waitingDeliveryKey = useMemo(() => {
     const waiting = new Set([...sendPlaceholders].filter(([, kind]) => kind === 'confirmed').map(([uid]) => uid))
     if (sourceIsChat && unifiedWindow && timelineMode !== 'around' && !hideSyncWindow) {
@@ -6876,6 +6879,7 @@ export function ArkmeSurface({
       if (hideSyncWindow) return []
       if (unifiedWindow) {
         const messageByEvent = new Map(displayItems.filter(item => item.timelineEventId !== undefined).map(item => [item.timelineEventId, item]))
+        const reeditByOccurrence = new Map([...reeditItems].map(item => [arkmeTimelineOccurrenceKey(item), item]))
         return [
           ...(communityWelcome !== undefined && source !== undefined && welcomeMatchesSource(communityWelcome, authenticatedAccountKey, source)
             && timelineMode !== 'around' ? [{ kind: 'community-welcome' as const, id: `community-welcome:${communityWelcome.occurredAtMillis}`,
@@ -6884,9 +6888,11 @@ export function ArkmeSurface({
             ? event.contentStatus !== 'unavailable' && (!source || recordMutations.project(event.item, source, selfSources) !== undefined)
             : event.kind !== 'notice' || !event.hidden).map(event => {
             if (event.kind === 'message') {
+              const occurrence = reeditByOccurrence.get(arkmeTimelineOccurrenceKey(event.item))
               const item = messageByEvent.get(event.eventId)
+                ?? (event.item.status === 1 && occurrence && (occurrence.recordVersion ?? occurrence.version ?? 0) >= (event.item.recordVersion ?? event.item.version ?? 0) ? occurrence : undefined)
                 ?? bindSentFileTaskLocals(source ? recordMutations.project(event.item, source, selfSources)! : event.item, fileTasks.tasks)
-              return { kind: 'message' as const, id: `message:${event.eventId}`, renderKey: conversationMessageRenderKey(item), occurredAtMillis: event.occurredAtMillis,
+              return { kind: 'message' as const, id: `message:${event.eventId}`, renderKey: conversationMessageRenderKey(item.timelineEventId ? item : { ...item, timelineEventId: event.eventId }), occurredAtMillis: event.occurredAtMillis,
                 readSequence: event.contentStatus === 'available' && event.item.status === 1 ? event.item.sequence : undefined, item }
             }
             return event.kind === 'world-public' || event.kind === 'offline-context' ? { ...event, id: event.eventId }
@@ -6929,7 +6935,7 @@ export function ArkmeSurface({
       ? compareTimelineMessages(left.item, right.item)
       : left.occurredAtMillis - right.occurredAtMillis || left.id.localeCompare(right.id))
     },
-    [hideSyncWindow, unifiedWindow, sourceIsChat, aiPolishNotices, displayItems, fileTasks.tasks, fileTasks.activeTaskKeys, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps, recordMutations, selfSources,
+    [hideSyncWindow, unifiedWindow, sourceIsChat, aiPolishNotices, displayItems, reeditItems, fileTasks.tasks, fileTasks.activeTaskKeys, interwovenWindow, visibleConversationJoinEvents,memberEventTimeline.events,memberEventTimeline.gaps, recordMutations, selfSources,
       communityWelcome, authenticatedAccountKey, source?.sourceRef, source?.sourceKey, source?.kind, source?.displayName, timelineMode],
   )
   const cachedWindowSyncFailed = conversationWindowRequested() && error === '' && timelineError !== '' && liveDisplayRows.length > 0
@@ -7284,6 +7290,9 @@ export function ArkmeSurface({
       return
     }
     if (recordReeditBackground.pending(target.accountKey, target.item.itemUid)) return
+    const visibleItem = items.find(item => item.itemUid === target.item.itemUid)
+    const projectionBaseVersion = Math.max(target.snapshot?.version ?? 0, target.item.recordVersion ?? target.item.version ?? 1,
+      visibleItem?.recordVersion ?? visibleItem?.version ?? 0)
     target.persisted.exclusive = true
     // Freeze capture ownership before releasing this input; its completion must
     // not consume text/audio from the ordinary composer or another edit.
@@ -7297,6 +7306,7 @@ export function ArkmeSurface({
     const queued = recordReeditBackground.start({
       accountKey: target.accountKey, sourceKey: target.sourceKey,
       view: { submissionId: `local-reedit:${crypto.randomUUID()}`, itemUid: target.item.itemUid,
+        projectionBaseVersion,
         baseVersion: target.snapshot?.version ?? target.item.recordVersion ?? target.item.version ?? 1,
         state: 'pending', title: nextTitle, textContent: nextText, mentions: target.mentions ?? [],
         attachments: target.snapshot ? target.attachments : (target.item.contentBlocks ?? []).flatMap(block => block.fileAssetUid ? [{
@@ -7344,7 +7354,6 @@ export function ArkmeSurface({
           sourceRef: target.sourceRef,
           itemUid: target.item.itemUid,
           newText: nextText,
-          expectedVersion: snapshot.draft?.baseVersion ?? snapshot.version,
           expectedDraftRevision: target.persisted.draftRevision,
           attachments: prepared.attachments.map(attachment => attachment.selection),
           mentions: prepared.mentions ?? [],
@@ -7356,7 +7365,7 @@ export function ArkmeSurface({
           }
           throw caught
         })
-        reeditSubmissions.accepted(result)
+        reeditSubmissions.accepted({ ...result, projectionBaseVersion })
         updateRecordReeditCandidate(target, () => undefined)
         return result
       },
@@ -7378,7 +7387,7 @@ export function ArkmeSurface({
     } else {
       target.persisted.exclusive = false
     }
-  }, [persistRecordReeditDraft, source, reeditSubmissions.accepted, updateRecordReeditCandidate, detachRecordReeditCandidate, recordInputCaptureDraftKey, recordInputCaptureOwner, authenticatedUserId])
+  }, [persistRecordReeditDraft, source, items, reeditSubmissions.accepted, updateRecordReeditCandidate, detachRecordReeditCandidate, recordInputCaptureDraftKey, recordInputCaptureOwner, authenticatedUserId])
   const recoverRecordReedit = useCallback(async () => {
     const target = recordReeditComposerRef.current
     if (target === undefined || target.busy || !target.recoveryConfirmation
@@ -8819,8 +8828,8 @@ export function ArkmeSurface({
                               actorAvatarRef={selfProfile?.avatarRef}
                               onAdd={() => setReactionMenuRequest({ scope: authenticatedAccountKey, occurrenceKey: arkmeTimelineOccurrenceKey(item), toggle: true })} />}
                             {extensionSendTasks.filter(task => (task.result?.recordUid ?? task.recordUid) === item.itemUid).map(task => <DetailExtensionSendStatus key={task.recordUid} task={task} />)}
-                            {timelineReeditJobs.filter(job => job.itemUid === item.itemUid && job.state !== 'committed').map(job => <div key={job.submissionId} role="status" aria-label={tr("重新编辑保存状态")} style={styles.polishMeta}>
-                              {job.state === 'failed' ? tr("保存失败：{v0}", { v0: job.error ?? '请恢复编辑后重试' }) : job.state === 'uncertain' ? '保存结果待确认' : tr('保存中…')}
+                            {timelineReeditJobs.filter(job => job.itemUid === item.itemUid && (job.state === 'failed' || job.state === 'uncertain')).map(job => <div key={job.submissionId} role="status" aria-label={tr("重新编辑保存状态")} style={styles.polishMeta}>
+                              {job.state === 'failed' ? tr("保存失败：{v0}", { v0: job.error ?? '请恢复编辑后重试' }) : '保存结果待确认'}
                               {job.state === 'failed' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.openRecordReedit(item) }}>{tr("恢复编辑")}</button>}
                               {job.state === 'uncertain' && <button data-arkme-feedback="neutral" type="button" style={styles.retry} onClick={event => { event.stopPropagation(); void timelineActions.current.refreshReedits(true).catch(caught => setError(errorMessage(caught))) }}>{tr("核对结果")}</button>}
                             </div>)}

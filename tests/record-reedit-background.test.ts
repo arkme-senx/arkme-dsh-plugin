@@ -11,6 +11,21 @@ function storage() {
 const flush = async () => { for (let n = 0; n < 8; n++) await Promise.resolve() }
 
 describe('background re-edit preparation', () => {
+  it('keeps the preview boundary through acceptance and reload without changing receipt identity metadata', async () => {
+    const journal = storage(), queue = new RecordReeditBackgroundQueue(journal)
+    queue.start({ accountKey: 'test:42', sourceKey: 'all', view: { ...view, projectionBaseVersion: 5 },
+      run: async () => { throw new RecordReeditAcceptanceUnknown('连接中断') }, failed: vi.fn() })
+    await flush()
+    const restored = new RecordReeditBackgroundQueue(journal)
+    expect(restored.views('test:42', 'all')[0]).toMatchObject({ projectionBaseVersion: 5, baseVersion: 3 })
+    restored.observe('test:42', 'all', [{ ...view, submissionId: 'host' }])
+    expect(restored.views('test:42', 'all')).toEqual([])
+    queue.clear()
+    queue.start({ accountKey: 'test:42', sourceKey: 'all', view: { ...view, projectionBaseVersion: 5 },
+      run: async () => ({ ...view, submissionId: 'host' }), failed: vi.fn() })
+    await flush()
+    expect(queue.views('test:42', 'all')[0]).toMatchObject({ projectionBaseVersion: 5, baseVersion: 3, submissionId: 'host' })
+  })
   it('publishes immediately, survives conversation changes, and hands off only after a matching Host receipt', async () => {
     const queue = new RecordReeditBackgroundQueue()
     let finish!: (value: ArkmeRecordReeditSubmissionView) => void

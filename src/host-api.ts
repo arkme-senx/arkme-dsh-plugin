@@ -3247,7 +3247,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         textContent: stringParam(params, 'textContent'),
         ...(params.textFormat === 'markdown' || params.textFormat === 'plain' ? { textFormat: params.textFormat } : {}),
         ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),
-        version: Math.trunc(numberParam(params, 'version', 0)),
+        ...(params.editAtMillis === undefined ? {} : { editAtMillis: numberParam(params, 'editAtMillis', 0) }),
+        ...(params.revisionUid === undefined ? {} : { revisionUid: stringParam(params, 'revisionUid') }),
         editDurationMillis: Math.max(0, Math.trunc(numberParam(params, 'editDurationMillis', 0))),
       },
     )
@@ -3257,6 +3258,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       stringParam(params,'draftScope') || undefined,
     )
     case 'source.long-article.draft.put': return await service.putLongArticleDraft({
+      ...(params.editAtMillis === undefined ? {} : { editAtMillis: numberParam(params, 'editAtMillis', 0) }),
+      ...(params.revisionUid === undefined ? {} : { revisionUid: stringParam(params, 'revisionUid') }),
       ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
       ...(stringParam(params,'draftScope')?{draftScope:stringParam(params,'draftScope')} : {}),
       ...(params.autoPublish === true ? { autoPublish: true } : {}),
@@ -3292,7 +3295,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
         ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
         ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
-        expectedVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)),
+        ...(params.expectedVersion === undefined ? {} : { expectedVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)) }),
       })
       return { saved: true, draftRevision: prepared.draftRevision }
     }
@@ -3316,9 +3319,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
         ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
       }
-      const expectedBaseVersion = Math.trunc(numberParam(params, 'expectedVersion', 0))
-      if (operation === 'source.record-reedit.submit') return await service.submitRecordReedit({ ...input, expectedVersion: expectedBaseVersion })
-      const prepared = await service.prepareRecordReedit(input, { expectedBaseVersion })
+      if (operation === 'source.record-reedit.submit') return await service.submitRecordReedit(input)
+      const prepared = await service.prepareRecordReedit(input)
       return await service.commitRecordReedit(prepared)
     }
     case 'source.record-reedit.draft.delete': {
