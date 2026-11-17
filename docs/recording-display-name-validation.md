@@ -65,8 +65,16 @@ The existing calendar duration template `录音 {v0}` still translates to
 
 ## Integration note
 
+The implementation and validation baseline above remains `f223e0b4c`. At push
+time, querying the remote directly found `master` at
+`1943e705aa6d2824fb634f87f000da2ecbd09798` (v3.0.64). The checkout's configured
+fetch refspecs do not track master, so an ordinary `git fetch origin master` had
+left the local `origin/master` reference stale. An explicit destination refspec
+updated it. The new master has five commits beyond the implementation baseline.
+
 `origin/dev` at `04b000d12a75d90c191358d4f635966a653ef6d1` has separate recording
-delivery/duration changes. A read-only three-way merge check found overlapping
+delivery/duration changes. Read-only three-way merge checks against both current
+master and dev found overlapping
 lines in `ArkmeRecordingImportDialog.tsx`, `ArkmeRecordingFiles.tsx` and
 `tests/recording-import-dialog.test.tsx`. Integration must preserve those
 duration/status semantics and their tests while adding the display-name helper;
