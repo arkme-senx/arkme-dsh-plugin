@@ -6,7 +6,7 @@ export const speakerReference = 'speaker:bbbbbbbbbbbbbbbb'
 export const emptyCoverage = { ready_count: 0, processing_count: 0, failed_count: 0, silent_count: 0, candidate_count: 0 }
 export interface OwnerTestUtterance {
   text: string; start?: number; end?: number; ordinal?: number; childId?: string
-  event?: string; background?: boolean
+  event?: string; background?: boolean; privateViewVersion?: string
   edit?: { s: number; e: number; revision: string; source_number: number; assignment_number: number; formal_speaker_uid?: string; partition_id?: string }; soundSource?: string; containsPlayback?: boolean
   speaker?: { reference?: string; kind?: string; label?: string; user_id?: number }
 }
@@ -44,7 +44,7 @@ export function recordingOwnerResponse(path: string, body: Record<string, unknow
   const fragments = items.flatMap((item, index) => {
     const chars = Array.from(item.text)
     return Array.from({ length: Math.ceil(chars.length / 4_000) }, (_, part) => ({
-      speaker_edit: item.edit, sound_source: item.soundSource, contains_playback: item.containsPlayback, utterance_index: index, clip_locator: { child_id: item.childId ?? childId, source: body.source, ordinal: item.ordinal ?? index },
+      private_view_version: item.privateViewVersion, speaker_edit: item.edit, sound_source: item.soundSource, contains_playback: item.containsPlayback, utterance_index: index, clip_locator: { child_id: item.childId ?? childId, source: body.source, ordinal: item.ordinal ?? index },
       start_offset_ms: item.start ?? index * 2_000, end_offset_ms: item.end ?? (item.start ?? index * 2_000) + 1_000,
       text: chars.slice(part * 4_000, (part + 1) * 4_000).join(''), text_start_offset: part * 4_000,
       text_end_offset: Math.min((part + 1) * 4_000, chars.length), text_total_length: chars.length,

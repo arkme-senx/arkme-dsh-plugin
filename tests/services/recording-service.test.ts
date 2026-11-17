@@ -138,6 +138,37 @@ describe('RecordingService', () => {
     } finally { service.dispose() }
   })
 
+  it('locates corrected text while keeping the original search identity', async () => {
+    const day = new Date(2026, 10, 16).getTime()
+    const startAt = day + 3_600_000
+    const text = '周三开会', corrected = '周五培训', privateViewVersion = 'b'.repeat(64)
+    const identity = { sessionId: recordingId, childId, itemIndex: 7, transcriptSource: 'system' }
+    const hash = recordingSearchIdentityHash(identity)
+    const version = recordingSearchVersion({ ...identity, asrItemIndex: 7, startAtMillis: startAt, endAtMillis: startAt + 1000, text })
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    let stale = false
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'corrected-transcript' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? '{}'))
+      const target = { kind: 'recording', source_uid: recordingId, segment_uid: `${childId}:primary:7` }
+      if (path.endsWith('/transcript-views/read')) {
+        expect(body.targets).toEqual([target])
+        const data = { items: [{ ...target, original_version: stale ? 'c'.repeat(64) : privateViewVersion, complete: true, revision: 1, text: corrected }] }
+        return new Response(JSON.stringify({ code: 200, data }))
+      }
+      const data = recordingOwnerResponse(path, body, [{ startAt, duration: 10_000, items: [{ text, start: 0, end: 1000, ordinal: 7, privateViewVersion }] }])
+      if (!data) throw new Error(`Unexpected read ${path}`)
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      const located = await service.locateTranscript(day, startAt, hash, version)
+      expect(located?.items[0]).toMatchObject({ text: corrected, searchIdentityHash: hash, itemId: located?.focusItemId })
+      expect(JSON.stringify(located)).not.toContain(recordingId)
+      stale = true
+      await expect(service.locateTranscript(day, startAt, hash, version)).rejects.toMatchObject({ code: 'recording-view-changed' })
+    } finally { service.dispose() }
+  })
+
   it('scopes accelerated search to the day, rejects a replaced session, and exposes no Audio IDs', async () => {
     const day = new Date(2026, 10, 16).getTime()
     let userId = 42, replace = false
