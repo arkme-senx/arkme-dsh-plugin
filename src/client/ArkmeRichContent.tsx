@@ -49,6 +49,7 @@ import type { ArkmeLinkLabelMode, ArkmeLinkRenderer } from './ArkmeLinkText.js'
 import { retainPartialTimelineMedia } from './timeline-media.js'
 import { galleryImageDimensions, rememberGalleryImageDimensions, isLongGalleryImage, singleGalleryImageSize, type GalleryImageDimensions } from './media-gallery-layout.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { recordingForwardItem, recordingShareTitle } from '../recording-forward-presentation.js'
 import { forgetVideoPreviewFrame, rememberVideoPreviewFrame, videoPreviewAccountKey, videoPreviewFrame } from './video-preview-frame.js'
 
 const mediaRoute = '/arkme-self/api/media'
@@ -1258,6 +1259,8 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
     <SelectedTextSelfNoteContent contentRef={contentRef} value={selfQuote} detail={presentation === 'detail'} recordUid={item.itemUid} {...(sourceRef&&item.messageActionRef?{sourceRef,messageActionRef:item.messageActionRef}:{})} />
   </div>
   if (item.forwardRecords !== undefined) {
+    const recording = recordingForwardItem(item.forwardRecords)
+    const forwardTitle = recording ? recordingShareTitle(recording.senderName, recording.segmentCount ?? recording.segments.length) : item.forwardRecords.title
     const itemLines = item.forwardRecords.items.flatMap(value => {
       if (value.segments?.length) return value.segments.map(segment => `${segment.speakerName}：${segment.textContent || '语音片段'}`)
       const summary = value.forwardRecords?.title || value.title.trim() || (value.textFormat === 'markdown' ? arkmeMarkdownPlainText(value.textContent) : value.textContent) || value.contentLabel || value.contentBlocks?.[0]?.fileName || '非文本内容'
@@ -1265,7 +1268,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
     })
     const previewLines = (itemLines.length > 0 ? itemLines : item.forwardRecords.summaryLines).slice(0, 3)
     const preview = <>
-      <span style={{ ...styles.forwardTitle, display: 'block' }} title={arkmeEmojiPlainText(item.forwardRecords.title)}><ArkmeRichText text={item.forwardRecords.title} presentation="preview" /></span>
+      <span style={{ ...styles.forwardTitle, display: 'block' }} title={arkmeEmojiPlainText(forwardTitle)}><ArkmeRichText text={forwardTitle} presentation="preview" /></span>
       <span style={styles.forwardLines}>
         {(previewLines.length > 0 ? previewLines : ['原快记暂不可查看']).map((line, index) => <span
           key={`${String(index)}:${line}`}
@@ -1274,7 +1277,7 @@ export function ArkmeMessageContent({ sessionAttachmentPreview = false, attachme
       </span>
     </>
     return <div ref={contentRef} style={styles.forwardCard} data-arkme-forward-records-card="true">
-      {onForwardDetailOpen ? <button type="button" aria-label={item.forwardRecords.title} onClick={onForwardDetailOpen}
+      {onForwardDetailOpen ? <button type="button" aria-label={forwardTitle} onClick={onForwardDetailOpen}
         style={{ display: 'block', width: '100%', padding: '10px 12px', borderRadius: 8, border: `1px solid ${arkmeTheme.borderSoft}`, background: arkmeTheme.layer1, color: 'inherit', textAlign: 'left', font: 'inherit', cursor: 'pointer' }}>
         {preview}
       </button> : preview}

@@ -71,7 +71,7 @@ describe('recording copy-link read projection', () => {
   function reader(data: ReturnType<typeof raw>) {
     const post = vi.fn(async () => data)
     const media = { forwardContentBlocks: vi.fn(() => []) }
-    const service = new ChatService({ requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as never, {} as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const service = new ChatService({ config: { chatBaseUrl: 'https://chat.jotmo.cc' }, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as never, {} as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
     return { service, post }
   }
   it('retains only authorized segments and renders their speakers and offsets in the common detail', async () => {
@@ -87,5 +87,21 @@ describe('recording copy-link read projection', () => {
   it('rejects malformed segment ranges instead of showing invented timestamps', async () => {
     const data = raw(); data.items[0]!.structured_content.long_recording_segments[0]!.end_millis = -1
     await expect(reader(data).service.resolveMessageCopyLink(result.sid)).rejects.toThrow()
+  })
+  it.each([
+    [`/api/public/v1/chats/messages/copy-link/${result.sid}/audio`, 12000, true],
+    [`/api/public/v1/chats/messages/copy-link/${result.sid}/audio`, 13000, false],
+    ['https://example.org/original.wav', 12000, false],
+  ] as const)('only plays the approved audio endpoint for the same link and selection duration', async (url, duration, playable) => {
+    const data = raw()
+    const source = data.items[0]!
+    source.title = 'original-recording.wav'
+    Object.assign(source.structured_content, { recording_audio: { url, duration_millis: duration } })
+    const { items: [shared] } = await reader(data).service.resolveMessageCopyLink(result.sid)
+    expect(shared?.structuredContent?.recordingAudioUrl).toBe(playable ? `https://chat.jotmo.cc${url}` : undefined)
+    const html = renderToStaticMarkup(<CopyLinkSnapshotContent item={shared!} snapshot={{ itemUid: 'snapshot' } as ArkmeTimelineItem} shareWebsite="https://jotmo.com" />)
+    expect(html.includes('preload="none"')).toBe(playable)
+    expect(html.includes('aria-label="播放 · 乙')).toBe(playable)
+    expect(html).not.toContain('original-recording.wav')
   })
 })

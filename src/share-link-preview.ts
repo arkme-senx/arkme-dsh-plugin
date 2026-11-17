@@ -220,12 +220,14 @@ export function projectSharePreview(target: ShareLinkTarget, raw: unknown): Shar
       : structure.structured_kind === 1 || Array.isArray(structure.long_recording_segments) ? 'recording'
       : ['agent_message', 'dsh_native', 'dsh_question'].includes(String(item.source_kind)) ? 'agent'
       : first?.file_kind === 1 ? 'image' : first?.file_kind === 3 ? 'video' : first?.file_kind === 2 ? 'audio' : first?.file_kind === 4 ? 'file' : 'message'
-    const result = assign(item.title, item.sender_display_name, item.sender_avatar_url, sourceSummary(item))
+    const segmentCount = list(structure.long_recording_segments).length
+    const recordingShare = kind === 'recording' && segmentCount > 0
+    const result = assign(recordingShare ? undefined : item.title, item.sender_display_name, item.sender_avatar_url, sourceSummary(item))
     const thumb = previewImageUrl(media.find(m => (m.file_kind === 1 || m.file_kind === 3) && m.preview_url)?.preview_url)
     const duration = Number(structure.duration_millis ?? previewObject(structure.voice).duration_millis)
     const timestamp = time(item.send_at)
     const fileSize = Number(first?.size)
-    return { ...result, kind, ...(thumb ? { thumbnailUrl: thumb } : {}), ...(timestamp ? { timestamp } : {}),
+    return { ...result, kind, ...(recordingShare ? { count: segmentCount } : {}), ...(thumb ? { thumbnailUrl: thumb } : {}), ...(timestamp ? { timestamp } : {}),
       ...(Number.isFinite(duration) && duration > 0 ? { durationMillis: duration } : {}),
       ...(kind === 'file' && Number.isFinite(fileSize) && fileSize > 0 ? { fileSize } : {}) }
   }
