@@ -125,7 +125,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
 
   const next = useCallback(() => read(), [read])
   const refresh = useCallback((first: ArkmeRecordingTranscriptPage, signal?: AbortSignal) => read(first, true, signal), [read])
-  const through = useCallback(async (time?: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptPage | undefined> => {
+  const through = useCallback(async (time?: number, signal?: AbortSignal, shared = false): Promise<ArkmeRecordingTranscriptPage | undefined> => {
     signal?.throwIfAborted()
     const owner = currentScope.current
     let value = latest.current
@@ -138,7 +138,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
       const cursor = `${value.viewRef}:${value.nextCursor}`
       if (cursors.has(cursor)) throw new Error('录音分页未前进')
       cursors.add(cursor)
-      value = await read(undefined, false, signal, budget)
+      value = await read(undefined, false, shared ? undefined : signal, budget)
     }
     signal?.throwIfAborted()
     if (owner !== currentScope.current) throw new DOMException('录音读取已取消', 'AbortError')

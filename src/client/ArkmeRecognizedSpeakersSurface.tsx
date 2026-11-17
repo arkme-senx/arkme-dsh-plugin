@@ -63,7 +63,7 @@ function speakerNameAvatarFallback(row: SpeakerDirectoryPerson) {
   }}>{initial}</span>
 }
 function personStats(row: SpeakerDirectoryPerson) {
-  const recent = row.lastSeenAt > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(row.lastSeenAt) : tr('时间未知')
+  const recent = row.lastSeenAt > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(row.lastSeenAt) : tr('时间未知')
   return tr('出现 {v0} 天 · 最近 {v1}', { v0: row.dayCount, v1: recent })
 }
 function statusText(status: SpeakerDirectoryStatus | undefined): string {

@@ -205,8 +205,51 @@ it('retains the original reading and menu surfaces for ordinary recording rows',
  expect(host.querySelectorAll('article button')).toHaveLength(0)
  expect(host.textContent).not.toMatch(/历史更正|我的修改/)
  await openContext()
- expect([...document.querySelectorAll('[role="menuitem"]')].map(button => button.textContent)).toEqual(['复制', '多选', '播放'])
+ expect([...document.querySelectorAll('[role="menuitem"]')].map(button => button.textContent)).toEqual(['复制', '编辑转写', '多选', '播放'])
  expect(mocks.call.mock.calls.some(([operation]) => operation === 'transcript.views.saved')).toBe(false)
+})
+
+it('edits the existing recording bubble, copies its saved words in multi-select, and restores the original', async () => {
+ const text = '下午开会，下午发版。'
+ await act(async () => root.render(<Fixture text={text} />))
+ await openContext(); await click('编辑转写')
+ const editor = host.querySelector('[data-transcript-row="one"] textarea') as HTMLTextAreaElement
+ expect(editor.value).toBe(text)
+ expect(document.activeElement).toBe(editor)
+ await input('下午开会，明天发版。'); await click('保存')
+ expect(host.querySelector('textarea')).toBeNull()
+ expect(host.querySelector('[data-transcript-row="one"] [data-arkme-text-selection]')?.textContent).toBe('下午开会，明天发版。')
+ expect(mocks.call).toHaveBeenCalledWith('transcript.views.change', expect.objectContaining({
+  accountKey: 'prod:11', command: expect.objectContaining({ action: 'replace', expected_revision: 0,
+   anchor: expect.objectContaining({ start: 5, end: 7, text: '下午' }), replacement: '明天' }),
+ }), undefined)
+ await openContext(); await click('多选'); await click('复制')
+ expect(mocks.copy).toHaveBeenLastCalledWith(expect.stringContaining('下午开会，明天发版。'))
+ await click('个人更正 · 恢复原文')
+ expect(host.querySelector('[data-transcript-row="one"] [data-arkme-text-selection]')?.textContent).toBe(text)
+ expect(mocks.play).not.toHaveBeenCalled()
+})
+
+it('keeps the draft on a save conflict and cancels without changing the displayed text', async () => {
+ await act(async () => root.render(<Fixture />))
+ await openContext(); await click('编辑转写'); await input('还未保存的更正')
+ stored.set('recording:123:one', { revision: 1, original, text: '另一设备上的更正', marks: [] })
+ await click('保存')
+ expect(host.querySelector('textarea')?.value).toBe('还未保存的更正')
+ expect(host.querySelector('[data-transcript-editor] [role="alert"]')).not.toBeNull()
+ await click('取消')
+ expect(host.querySelector('textarea')).toBeNull()
+ expect(stored.get('recording:123:one')?.text).toBe('另一设备上的更正')
+})
+
+it('discards an unsaved inline draft when switching dates and never opens it on the next date', async () => {
+ await act(async () => root.render(<Fixture />))
+ await openContext(); await click('编辑转写'); await input('这一天的私人草稿')
+ await act(async () => root.render(<Fixture scope="recording:456" />))
+ await act(async () => root.render(<Fixture />))
+ expect(host.querySelector('textarea')).toBeNull()
+ expect(host.textContent).not.toContain('这一天的私人草稿')
+ expect(mocks.call.mock.calls.some(([operation]) => operation === 'transcript.views.change')).toBe(false)
 })
 
 it.each(['corrected', 'restored'] as const)('can reset a private view after the source version changes (%s)', async state => {

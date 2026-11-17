@@ -7,7 +7,7 @@ import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { useRecordingStrategyPlayback } from './useRecordingStrategyPlayback.js'
 import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow } from './RecordingComparisonView.js'
-const clock = (millis: number) => new Date(millis).toLocaleTimeString('zh-CN', { hour12: false })
+const clock = (millis: number) => new Date(millis).toLocaleTimeString('zh-CN', { hourCycle: 'h23' })
 
 /** Separate from Doubao enhancement: only the initial strategy is official. */
 export function RecordingStrategyComparison({ sessionRef, initialSource, fileName, mediaPath, onClose }: {
@@ -82,7 +82,7 @@ export function RecordingStrategyComparison({ sessionRef, initialSource, fileNam
       {sources.nextCursor && <RecordingTranscriptButton disabled={sourcesBusy} onClick={() => { void moreSources() }}>更多音频</RecordingTranscriptButton>}
       {error && <p role="alert" style={{ color: theme.danger }}>{error} <RecordingTranscriptButton onClick={() => sourceRef ? setRevision(n => n + 1) : setSourceRevision(n => n + 1)}>重试</RecordingTranscriptButton></p>}
       {!options && !error && <p role="status">{sourcesLoaded && sources.items.length === 0 ? '此录音暂无可对比的音频源件。' : '正在读取策略结果…'}</p>}
-      {options && <p>{!options.officialComplete ? '请等待正式结果处理完成。' : options.officialFailed ? '正式处理未全部成功；请在录音文件中重试原任务。' : options.canStart ? `原件可用于其他策略处理，截止 ${new Date(options.expiresAtMillis).toLocaleString('zh-CN')}。` : '原件不可用于新的策略处理，已有结果仍可查看和播放。'}</p>}
+      {options && <p>{!options.officialComplete ? '请等待正式结果处理完成。' : options.officialFailed ? '正式处理未全部成功；请在录音文件中重试原任务。' : options.canStart ? `原件可用于其他策略处理，截止 ${new Date(options.expiresAtMillis).toLocaleString('zh-CN', { hourCycle: 'h23' })}。` : '原件不可用于新的策略处理，已有结果仍可查看和播放。'}</p>}
     </div>}>
     {options && strategies.map(strategy => {
       const official = strategy.id === options.officialStrategy

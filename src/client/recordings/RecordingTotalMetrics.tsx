@@ -22,7 +22,7 @@ function metricLabel(value: number | null | undefined, state: RecordingMetricSta
 export function RecordingTotalMetrics({ metrics, loading, error = false, progress, onRetry, monthStamp = Date.now() }: { metrics?: Metrics | undefined; loading: boolean; error?: boolean; progress?: RecordingTotalsProgress | undefined; onRetry?: (() => void) | undefined; monthStamp?: number }) {
   useArkmeLocale()
   const hint = tr('按当前月份每天详情中的云端录音存储和转写输入时长累加。转写输入包含已记录的系统模型重试，不包含豆包。')
-  const updated = metrics ? `${tr('更新于')} ${new Intl.DateTimeFormat(arkmeIntlLocale(), { dateStyle: 'short', timeStyle: 'short' }).format(metrics.asOfMillis)}` : ''
+  const updated = metrics ? `${tr('更新于')} ${new Intl.DateTimeFormat(arkmeIntlLocale(), { hourCycle: 'h23', dateStyle: 'short', timeStyle: 'short' }).format(metrics.asOfMillis)}` : ''
   const labels = [
     [tr('云端录音存储'), metrics?.storage.bytes == null ? metricLabel(null, metrics?.storage.state, recordingBytesLabel) : recordingBytesLabel(metrics.storage.bytes) + tr(metrics.storage.state === 'ready' ? '（已记录）' : '（部分已记录）')],
     [tr('转写输入时长'), metrics?.asrInput.durationMillis == null && (metrics?.asrInput.missingHistoryCount ?? 0) > 0 ? tr('历史计量缺失') : metricLabel(metrics?.asrInput.durationMillis, metrics?.asrInput.state, recordingInputDurationLabel, metrics?.asrInput.estimated)],

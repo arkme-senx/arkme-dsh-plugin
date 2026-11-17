@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
+import { ArkmeLocalDateTimeInput } from '../src/client/ArkmeLocalDateTimeInput.js'
 import { LocalRecorderPanel } from '../src/client/recordings/LocalRecorderEntry.js'
 import type { LocalRecorderSnapshot } from '../src/local-recorder/contract.js'
 let renderer: ReactTestRenderer | undefined
@@ -11,7 +12,7 @@ const snapshot = (): LocalRecorderSnapshot => ({ supported: true, devices: [{ id
   storage: { status: 'ready', totalBytes: 1000000, usedBytes: 250000, remainingBytes: 750000, remainingSeconds: 60, generation: 1 }, updatedAtMillis: 1, job: null, recordingCount: 1,
   recordings: [{ id: 'volume.1', sessionId: 1, startAtMillis: null, durationMillis: 12000, complete: true, cached: true }] }] })
 const button = (label: string) => renderer!.root.findAllByType('button').find(node => node.props['aria-label'] === label || node.children.join('') === label)!
-const datetime = () => renderer!.root.findAllByType('input').find(node => node.props.type === 'datetime-local')!
+const datetime = () => renderer!.root.findByType(ArkmeLocalDateTimeInput)
 async function render(value = snapshot()) {
   mocks.call.mockImplementation(async operation => operation === 'recorders.local.prepare' ? { ref: 'b'.repeat(64), fileName: 'test.wav', durationMillis: 12000, size: 384044 } : value)
   await act(async () => { renderer = create(<LocalRecorderPanel mediaPath="/arkme-self/api/media" onClose={() => {}} onShowImports={() => {}} />) })
@@ -27,7 +28,8 @@ describe('native-style local recorder workspace', () => {
     await render(); await act(async () => { button('导入即我').props.onClick() })
     expect(button('确认导入').props.disabled).toBe(true)
     expect(mocks.call.mock.calls.some(row => row[0] === 'recorders.local.import')).toBe(false)
-    await act(async () => { datetime().props.onChange({ target: { value: '2026-01-01T12:00' } }) }); expect(button('确认导入').props.disabled).toBe(false)
+    await act(async () => { datetime().props.onValueChange('2026-01-01T24:00') }); expect(button('确认导入').props.disabled).toBe(true)
+    await act(async () => { datetime().props.onValueChange('2026-01-01T23:05') }); expect(button('确认导入').props.disabled).toBe(false)
     await act(async () => { button('播放').props.onClick() }); expect(renderer!.root.findByType('audio').props.src).toBe(`/arkme-self/api/recording/local-audio?ref=${'b'.repeat(64)}`)
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('/Users/')
   })

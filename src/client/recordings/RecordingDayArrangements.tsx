@@ -116,7 +116,7 @@ function RecordingArrangementDrawer({ dateStamp, page, loading, error, expanded,
         <div className="arkme-day-arrangements">{page?.items.map(item => <article className="arkme-arrangement-card" key={item.arrangementRef}>
           <button type="button" className="arkme-day-arrangement-summary" aria-expanded={expanded === item.arrangementRef} onClick={() => onToggle(item.arrangementRef)}>
             <span className="arkme-day-arrangement-heading"><strong>{item.title}</strong><span className="arkme-day-arrangement-status" data-arrangement-status={item.status}>{tr(item.status === 'unknown' ? '安排' : arrangementColumnLabels[item.status])}</span></span>
-            {item.dueAtMillis !== undefined && <small>{tr('安排时间')}：{new Date(item.dueAtMillis).toLocaleString(arkmeIntlLocale())}</small>}
+            {item.dueAtMillis !== undefined && <small>{tr('安排时间')}：{new Date(item.dueAtMillis).toLocaleString(arkmeIntlLocale(), { hourCycle: 'h23' })}</small>}
           </button>
           <ArkmeArrangementContent item={item} expanded={expanded === item.arrangementRef} onSourceNavigate={onClose} />
         </article>)}</div>

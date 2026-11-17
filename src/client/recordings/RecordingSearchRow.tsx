@@ -6,10 +6,10 @@ import { recordingSpeakerColor } from './recording-speaker-presentation.js'
 import { RecordingTranscriptText } from './RecordingTranscriptText.js'
 import { tr } from '../locale.js'
 
-export function RecordingSearchRow({ item }: {item: ArkmeRecordingSearchItem}) {
-  return <button type="button" data-arkme-feedback="neutral" onClick={() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis, item.match)}
+export function RecordingSearchRow({ item, onOpen }: {item: ArkmeRecordingSearchItem; onOpen?: () => void}) {
+  return <button type="button" data-arkme-feedback="neutral" onClick={onOpen ?? (() => arkmeUi.showRecordingTarget(item.dateStamp, item.startAtMillis, item.match))}
     style={{display:'block',width:'100%',textAlign:'left',border:0,borderBottom:`1px solid ${arkmeTheme.border}`,background:'transparent',padding:'12px 16px',cursor:'pointer',font:'inherit'}}>
-    <time data-recording-search-group-time="true" style={{display:'block',marginBottom:4,fontSize:12,color:arkmeTheme.secondary}}>{tr('录音')} · {new Date(item.startAtMillis).toLocaleString()}</time>
+    <time data-recording-search-group-time="true" style={{display:'block',marginBottom:4,fontSize:12,color:arkmeTheme.secondary}}>{tr('录音')} · {new Date(item.startAtMillis).toLocaleString(undefined, { hourCycle: 'h23' })}</time>
     {[item.previous, item.match, item.next].map((segment, index) => segment && <span key={index} data-recording-search-segment={segment === item.match ? 'match' : 'context'}
       style={{display:'grid',gridTemplateColumns:'minmax(0,min(104px,32%)) minmax(0,1fr)',gap:8,padding:'3px 0',color:segment === item.match ? arkmeTheme.text : arkmeTheme.secondary}}>
       <span style={{display:'flex',alignItems:'flex-start',gap:6,fontSize:12}}>

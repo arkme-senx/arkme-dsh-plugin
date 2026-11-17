@@ -1437,8 +1437,24 @@ export interface ArkmeRecordingTarget {
   dateStamp: number
   startAtMillis: number
   segment?: ArkmeRecordingSearchIdentity
+  transcriptSearchQuery?: string
   summary?: { versionId?: string }
   timeline?: { versionId?: string }
+}
+
+export interface ArkmeRecordingTranscriptContext {
+  items: ArkmeRecordingWorkbenchItem[]
+  revisions?: Record<string, string>
+}
+
+export interface ArkmeRecordingTranscriptLocation extends ArkmeRecordingTranscriptContext {
+  focusItemId: string
+}
+
+export interface ArkmeRecordingDaySearchCandidate {
+  identityHash: string
+  startAtMillis: number
+  snippet: string
 }
 
 export interface ArkmeRecordingSearchItem {
@@ -4505,6 +4521,9 @@ export type ArkmePluginOperation =
   | 'recordings.strategies.start'
   | 'recordings.strategies.preference.set'
   | 'recordings.transcript.page'
+  | 'recordings.transcript.locate'
+  | 'recordings.transcript.context'
+  | 'recordings.transcript.search'
   | 'source.person-records.page'
   | 'articles.list'
   | 'native-chat.annotations'

@@ -282,7 +282,7 @@ describe('recording import dialog behavior', () => {
     await remount(journal)
     expect(renderedText(renderer.root)).toContain('candidate.m4a')
     expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
-    expect(renderer.root.findByProps({ 'aria-label': 'candidate.m4a录音开始时间' }).props.value).toBe(record.startAt)
+    expect(renderer.root.findByProps({ label: 'candidate.m4a录音开始时间' }).props.value).toBe(record.startAt)
     await remount(journal, 43)
     expect(renderedText(renderer.root)).not.toContain('candidate.m4a')
   })
@@ -701,7 +701,7 @@ describe('recording import dialog behavior', () => {
     await act(async () => { submit.props.onClick(); submit.props.onClick(); await tick() })
 
     expect(renderedText(renderer.root.findByProps({ 'aria-label': '录音导入队列' }))).toContain('已加入导入队列 · 2 个文件，正在准备 1 个')
-    expect(renderer.root.findByProps({ 'aria-label': 'cloud.m4a录音开始时间' }).props.disabled).toBe(true)
+    expect(renderer.root.findByProps({ label: 'cloud.m4a录音开始时间' }).props.disabled).toBe(true)
     expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
     expect(mocks.inspectArkmeRecordingSelection).toHaveBeenCalledTimes(2)
 
@@ -737,7 +737,7 @@ describe('recording import dialog behavior', () => {
     expect(button(renderer, '导入').props.disabled).toBe(false)
     await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(1)
-    expect(renderer.root.findByProps({ 'aria-label': 'second-0.m4a录音开始时间' }).props.disabled).toBe(true)
+    expect(renderer.root.findByProps({ label: 'second-0.m4a录音开始时间' }).props.disabled).toBe(true)
     expect(renderedText(renderer.root.findByProps({ 'aria-label': '录音导入队列' }))).toContain('排队 51 个')
     await act(async () => { release(); await tick() })
     const calls = mocks.uploadArkmeRecording.mock.calls
@@ -835,7 +835,7 @@ describe('recording import dialog behavior', () => {
     await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
     const first = mocks.uploadArkmeRecording.mock.calls[0]!
     expect(first[4].batch).toMatchObject({ itemCount: 2, itemIndex: 0 })
-    expect(renderer.root.findByProps({ 'aria-label': 'A.m4a录音开始时间' }).props.disabled).toBe(true)
+    expect(renderer.root.findByProps({ label: 'A.m4a录音开始时间' }).props.disabled).toBe(true)
     await act(async () => { renderer.root.findByProps({ 'aria-label': '重试 A.m4a' }).props.onClick(); await tick() })
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(3)
     expect(mocks.uploadArkmeRecording.mock.calls[2]![4].batch).toEqual(first[4].batch)
@@ -862,7 +862,7 @@ describe('recording import dialog behavior', () => {
     expect(rows[1]?.children[1]).toMatchObject({
       props: { style: expect.objectContaining({ display: 'grid' }) },
     })
-    expect(rows[1]?.findByProps({ 'aria-label': 'A.m4a录音开始时间' })).toBeDefined()
+    expect(rows[1]?.findByProps({ label: 'A.m4a录音开始时间' })).toBeDefined()
     expect(rows[1]?.findByProps({ 'aria-label': 'A.m4a录音结束时间' })).toBeDefined()
     expect(renderedText(rows[1]!)).toContain('待导入')
     expect(renderedText(rows[1]!)).not.toContain('待上传')
@@ -919,7 +919,7 @@ describe('recording import dialog behavior', () => {
     expect(renderedText(taskRow)).toContain('2KB')
     expect(renderedText(taskRow)).toContain('3秒')
     expect(renderedText(taskRow)).toContain('他人')
-    expect(taskRow.findByProps({ 'aria-label': '后台.m4a录音开始时间' }).props.value).toBe('2026-08-26T02:47:11')
+    expect(taskRow.findByProps({ label: '后台.m4a录音开始时间' }).props.value).toBe('2026-08-26T02:47:11')
     expect(renderedText(taskRow)).toContain('02:47:14')
     expect(renderedText(taskRow)).toContain('转写中')
     const statusCell = taskRow.find(node => typeof node.props.title === 'string' && node.props.title.includes('转写中'))
@@ -1130,7 +1130,7 @@ describe('recording import dialog behavior', () => {
       width: '100%', minWidth: 748,
     })
     expect(renderedText(history)).toContain('已完成.wav')
-    expect(history.findByProps({ 'aria-label': '已完成.wav录音开始时间' }).props.value).toBe('2026-08-25T18:30:00')
+    expect(history.findByProps({ label: '已完成.wav录音开始时间' }).props.value).toBe('2026-08-25T18:30:00')
     expect(renderedText(history)).toContain('18:31:05')
     expect(renderedText(history)).toContain('1分5秒')
     expect(renderedText(history)).toContain('18s')
@@ -1380,19 +1380,19 @@ describe('recording import dialog behavior', () => {
       />)
       await tick()
     })
-    const input = renderer.root.findByProps({ 'aria-label': '修改时间.wav录音开始时间' })
+    const input = renderer.root.findByProps({ label: '修改时间.wav录音开始时间' })
     const nextValue = '2026-08-25T18:29:00'
 
     await act(async () => {
-      input.props.onChange({ target: { value: nextValue } })
-      input.props.onBlur({ target: { value: nextValue } })
+      input.props.onValueChange(nextValue)
+      input.props.onCommit(nextValue)
       await tick()
     })
 
     expect(mocks.callArkme).toHaveBeenCalledWith('recordings.import.session.update-start', {
       sessionRef: 'session-edit', startAtMillis: new Date(nextValue).getTime(),
     })
-    expect(renderer.root.findByProps({ 'aria-label': '修改时间.wav录音开始时间' }).props.value).toBe(nextValue)
+    expect(renderer.root.findByProps({ label: '修改时间.wav录音开始时间' }).props.value).toBe(nextValue)
     expect(renderedText(renderer.root.findByProps({ role: 'alert' }))).toContain('任务刷新失败')
   })
 
@@ -1427,16 +1427,16 @@ describe('recording import dialog behavior', () => {
       await tick()
     })
     await act(async () => { button(renderer, '已完成').props.onClick(); await tick() })
-    const input = renderer.root.findByProps({ 'aria-label': '已完成修改.wav录音开始时间' })
+    const input = renderer.root.findByProps({ label: '已完成修改.wav录音开始时间' })
     const nextValue = '2026-08-25T18:29:00'
 
     await act(async () => {
-      input.props.onChange({ target: { value: nextValue } })
-      input.props.onBlur({ target: { value: nextValue } })
+      input.props.onValueChange(nextValue)
+      input.props.onCommit(nextValue)
       await tick()
     })
 
-    expect(renderer.root.findByProps({ 'aria-label': '已完成修改.wav录音开始时间' }).props.value).toBe(nextValue)
+    expect(renderer.root.findByProps({ label: '已完成修改.wav录音开始时间' }).props.value).toBe(nextValue)
     expect(renderedText(renderer.root.findByProps({ role: 'alert' }))).toContain('当前显示上次结果，云端同步失败')
   })
 
@@ -1786,7 +1786,7 @@ describe('recording import dialog behavior', () => {
 
     expect(renderer.root.findByProps({ 'aria-label': '选择录音文件' }).props.disabled).toBe(false)
     expect(renderer.root.findAllByProps({ 'aria-label': '选择 B.m4a' })).toHaveLength(0)
-    expect(renderer.root.findByProps({ 'aria-label': 'B.m4a录音开始时间' }).props.disabled).toBe(true)
+    expect(renderer.root.findByProps({ label: 'B.m4a录音开始时间' }).props.disabled).toBe(true)
     expect(renderer.root.findByProps({ 'aria-label': '删除 B.m4a' }).props.disabled).toBe(true)
     expect(renderedText(renderer.root)).not.toContain('已选择2个')
     expect(renderer.root.findAllByProps({ 'aria-label': '上传进度 0%' })).toHaveLength(1)

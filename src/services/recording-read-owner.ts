@@ -142,6 +142,9 @@ function compare(a: RecordingOwnerFragment, b: RecordingOwnerFragment): number {
 function validateWindow(window: RecordingReadWindow): void {
   integer(window.startAt); integer(window.endAt, window.startAt + 1)
 }
+function locationRangeTooDense(): never {
+  throw new ArkmePluginError('recording-location-range-too-dense', '该时段转写过多，请在当天转写中继续查找', true, 422)
+}
 
 /** Authenticated, cancellable consumption of Audio's semantic read contract.
  * No OSS path, speaker-number inference, or full-day fallback belongs here. */
@@ -164,12 +167,14 @@ export class RecordingReadOwner {
     return result
   }
 
-  async recordings(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingOwnerFact[]> {
+  async recordings(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal, maxRecordings = Infinity): Promise<RecordingOwnerFact[]> {
     validateWindow(window)
     const facts: RecordingOwnerFact[] = []
     const seen = new Set<string>(), cursors = new Set<string>()
     let cursor = '', metadataBatch = true
+    let remainingPages = Number.isFinite(maxRecordings) ? 2 : Infinity
     do {
+      if (remainingPages-- <= 0) return locationRangeTooDense()
       const row = record(await this.read('/api/v1/audio/recordings/query', {
         start_at: window.startAt, end_at: window.endAt, order: 'asc', limit: 50, ...(cursor === '' ? {} : { page_cursor: cursor }),
       }, session, signal))
@@ -183,6 +188,7 @@ export class RecordingReadOwner {
         seen.add(fact.recording_uid); facts.push(fact)
       }
       cursor = nextCursor(row)
+      if (facts.length > maxRecordings || cursor && facts.length === maxRecordings) return locationRangeTooDense()
       // Bounded owner scans may filter every candidate in a page. A changing
       // cursor still makes progress; only a repeated cursor is invalid.
       if (cursor !== '' && cursors.has(cursor)) return invalid()
@@ -377,11 +383,11 @@ export class RecordingReadOwner {
     return projectRecordingDailyMetrics(storage, [], input)
   }
 
-  async dayPage(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, continuation?: RecordingDayReadCursor, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
+  async dayPage(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, continuation?: RecordingDayReadCursor, signal?: AbortSignal, maxRecordings = Infinity): Promise<RecordingOwnerDayPage> {
     validateWindow(window)
     if (continuation !== undefined && (continuation.startAt !== window.startAt || continuation.endAt !== window.endAt || continuation.source !== source)) return stale()
     const state: RecordingDayReadCursor = continuation === undefined
-      ? { ...window, source, positions: (await this.recordings(window, session, signal)).map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false })) }
+      ? { ...window, source, positions: (await this.recordings(window, session, signal, maxRecordings)).map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false })) }
       : structuredClone(continuation)
     if (this.metadataBatch) {
       const metadata = await this.batchMetadata(state.positions, window, source, session, signal)
@@ -599,8 +605,8 @@ export class RecordingReadOwner {
 
   /** Explicit full-content consumer. No caller can mistake an initial page for
    * a full transcript when generating, searching or exporting a day. */
-  async completeDay(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
-    return this.completeWindow(window, source, session, signal)
+  async completeDay(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal, maxPages = Infinity): Promise<RecordingOwnerDayPage> {
+    return this.completeWindow(window, source, session, signal, undefined, maxPages)
   }
 
   /** Entity evidence selects recordings by day but addresses exact source rows,
@@ -612,11 +618,13 @@ export class RecordingReadOwner {
     return this.completeWindow(window, source, session, signal, cursor)
   }
 
-  private async completeWindow(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal, cursor?: RecordingDayReadCursor): Promise<RecordingOwnerDayPage> {
+  private async completeWindow(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal, cursor?: RecordingDayReadCursor, maxPages = Infinity): Promise<RecordingOwnerDayPage> {
     const items: RecordingOwnerFragment[] = []
+    const maxRecordings = Number.isFinite(maxPages) ? 32 : Infinity
     let page: RecordingOwnerDayPage
     do {
-      page = await this.dayPage(window, source, session, cursor, signal)
+      if (maxPages-- <= 0) return locationRangeTooDense()
+      page = await this.dayPage(window, source, session, cursor, signal, maxRecordings)
       for (const fragment of page.items) {
         const last = items.at(-1)
         if (last !== undefined && last.recordingId === fragment.recordingId && last.index === fragment.index) {

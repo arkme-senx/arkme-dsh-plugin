@@ -15,7 +15,7 @@ import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
 import { RecordingReadOwner, type RecordingReadView, type RecordingDayReadCursor, type RecordingOwnerFragment, type RecordingOwnerDayPage } from './recording-read-owner.js'
 import { createMessageCopyLink } from './message-copy-link-create.js'
-import type { ArkmeRecordingWindow } from '../types.js'
+import type { ArkmeRecordingDaySearchCandidate, ArkmeRecordingTranscriptContext, ArkmeRecordingTranscriptLocation, ArkmeRecordingWindow } from '../types.js'
 import { recordingCreateRequestUID, sameRecordingImportBatch, recordingBatchOffset } from '../recording-import-identity.js'
 import { validRecordingImportBatch, type RecordingImportBatch } from '../recording-workflow-contract.js'
 import { parseRecordingHistory, type RecordingHistoryPage } from '../recording-history.js'
@@ -2334,6 +2334,90 @@ export class RecordingService {
 
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}): Promise<ArkmeRecordingTranscriptPage> {
     return await this.recordingTranscriptPageWithSession(dateStamp, await this.runtime.requireSession(), options)
+  }
+
+  async locateTranscript(
+    dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal,
+  ): Promise<ArkmeRecordingTranscriptLocation | null> {
+    this.assertWorkbenchEnabled()
+    const dayStart = this.recordingDayStart(dateStamp)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    if (!Number.isSafeInteger(startAtMillis) || startAtMillis < dateStamp || startAtMillis >= dayEnd.getTime()
+      || !/^[a-f0-9]{64}$/.test(identityHash) || version.length > 128) {
+      throw new ArkmePluginError('recording-location-input-invalid', '原句定位参数无效', false, 400)
+    }
+
+    const session = await this.runtime.requireSession()
+    const page = await this.readOwner.completeDay({
+      startAt: Math.max(0, dateStamp, startAtMillis - 15_000),
+      endAt: Math.min(dayEnd.getTime(), startAtMillis + 15_000),
+    }, 'primary', session, signal, 3)
+    const index = page.items.findIndex(item => item.startAt === startAtMillis && recordingSearchIdentityHash({
+      sessionId: item.recordingId, childId: item.locator.child_id, itemIndex: item.locator.ordinal, transcriptSource: 'system',
+    }) === identityHash)
+    if (index < 0) return null
+    const item = this.ownerTranscriptItem(page.items[index]!, session.userId, new Map())
+    if (version && (item.searchVersion ?? recordingSearchVersion(item)) !== version) return null
+
+    const context = { ...page, items: page.items.slice(Math.max(0, index - 5), index + 6) }
+    return { focusItemId: item.itemId, ...await this.projectTranscriptContext(dateStamp, context, session, signal) }
+  }
+
+  async transcriptContext(dateStamp: number, startAt: number, endAt: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptContext> {
+    this.assertWorkbenchEnabled()
+    const dayStart = this.recordingDayStart(dateStamp)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    if (dateStamp !== dayStart.getTime() || !Number.isSafeInteger(startAt) || !Number.isSafeInteger(endAt)
+      || startAt < Math.max(0, dateStamp) || endAt > dayEnd.getTime() || endAt <= startAt || endAt - startAt > 3_600_000) {
+      throw new ArkmePluginError('recording-context-input-invalid', '转写上下文范围无效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    const page = await this.readOwner.completeDay({ startAt, endAt }, 'primary', session, signal, 2)
+    // Audio can also return an utterance that overlaps the start boundary.
+    // Partition the day by utterance start so adjacent windows own it once.
+    const context = { ...page, items: page.items.filter(item => item.startAt >= startAt && item.startAt < endAt) }
+    return await this.projectTranscriptContext(dateStamp, context, session, signal)
+  }
+
+  private async projectTranscriptContext(dateStamp: number, page: RecordingOwnerDayPage, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptContext> {
+    const section = await this.ownerTranscriptSection(page, 'system', session, signal)
+    const [key, speakerKey] = await Promise.all([this.recordingRefKey('arkme-recording-item-v1'), this.recordingRefKey('arkme-recording-speaker-v1')])
+    await this.ensureRecordingSession(session, signal)
+    const items = section.items.map(row => this.workbenchItem(dateStamp, row, session.userId, key, speakerKey))
+    return {
+      items,
+      revisions: Object.fromEntries(items.map((row, index) => [row.sessionKey, section.items[index]!.readView.revision])),
+    }
+  }
+
+  async searchDayTranscript(dateStamp: number, query: string, signal?: AbortSignal): Promise<ArkmeRecordingDaySearchCandidate[]> {
+    this.assertWorkbenchEnabled()
+    const dayStart = this.recordingDayStart(dateStamp)
+    const dayEnd = new Date(dayStart)
+    dayEnd.setDate(dayEnd.getDate() + 1)
+    const keyword = query.trim()
+    if (!keyword || Array.from(keyword).length > 64) throw new ArkmePluginError('recording-day-search-input-invalid', '当天转写关键词无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/transcripts/search', {
+      start_at: dateStamp, keyword, transcript_source: 'system', limit: 50,
+    }, session, signal, { bypassCache: true, lane: 'interactive-read' })
+    await this.ensureRecordingSession(session, signal)
+    if (!Array.isArray(data.item_ls) || data.item_ls.length > 50) throw new ArkmePluginError('recording-day-search-invalid', '当天转写搜索响应无效', true, 502)
+    return data.item_ls.flatMap(raw => {
+      const { session_id, child_id, item_index, transcript_source, start_at, snippet } = objectValue(raw)
+      if (typeof session_id !== 'string' || !session_id || session_id.length > 128
+        || typeof child_id !== 'string' || !child_id || child_id.length > 128
+        || typeof item_index !== 'number' || !Number.isSafeInteger(item_index) || item_index < 0 || transcript_source !== 'system'
+        || typeof start_at !== 'number' || !Number.isSafeInteger(start_at) || start_at < dateStamp || start_at >= dayEnd.getTime()
+        || typeof snippet !== 'string' || snippet.length > 4_000) return []
+      return [{
+        identityHash: recordingSearchIdentityHash({ sessionId: session_id, childId: child_id, itemIndex: item_index, transcriptSource: 'system' }),
+        startAtMillis: start_at,
+        snippet,
+      }]
+    })
   }
 
   private async readDayOverviewSnapshot(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal, onFragment?: (item: RecordingOwnerFragment) => void) {

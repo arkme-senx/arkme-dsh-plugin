@@ -4,11 +4,54 @@ import { recordingSearchIdentityHash } from '../src/recording-search-version.js'
 const mocks = vi.hoisted(() => ({call:vi.fn()}))
 vi.mock('../src/client/api.js', async original => ({...await original<typeof import('../src/client/api.js')>(),callArkme:mocks.call}))
 import { ArkmeRecordingSurface, ArkmeRecordingTranscriptRow } from '../src/client/ArkmeRecordingSurface.js'
+import { ArkmeClientError } from '../src/client/api.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 let renderer: ReactTestRenderer | undefined
 const target = {sessionId:'s',childId:'c',itemIndex:0,transcriptSource:'system' as const,transcriptVersion:'v'}
 afterEach(async () => { await act(async()=>renderer?.unmount());arkmeUi.showRecordings();vi.restoreAllMocks() })
 describe('precise recording search navigation',()=>{
+  it('shows the original passage and carried query before the day body finishes', async () => {
+    const day = new Date(); day.setHours(0, 0, 0, 0)
+    const original = { itemId: 'located', itemRef: 'opaque', startAtMillis: day.getTime() + 1000, text: '这里命中',
+      speakerColorIndex: 0, speakerLabel: '我', searchIdentityHash: recordingSearchIdentityHash(target) }
+    const pending = Promise.withResolvers<unknown>()
+    mocks.call.mockReset().mockImplementation(async (operation) => {
+      if (operation === 'recordings.calendar') return { days: [] }
+      if (operation === 'recordings.day') return pending.promise
+      if (operation === 'recordings.transcript.locate') return { focusItemId: original.itemId, items: [original] }
+      throw new Error(`Unexpected ${operation}`)
+    })
+    arkmeUi.showRecordingTarget(day.getTime(), original.startAtMillis, target, undefined, '命中')
+    await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={()=>{}} recordingRefreshRevision={0} />) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)) })
+    expect(mocks.call.mock.calls.find(([op]) => op === 'recordings.transcript.locate')?.[1]).toEqual({
+      dateStamp: day.getTime(), startAtMillis: original.startAtMillis, identityHash: original.searchIdentityHash, version: 'v',
+    })
+    expect(renderer!.root.findByProps({ 'data-recording-located-transcript': true })).toBeDefined()
+    expect(renderer!.root.findByProps({ 'aria-label': '搜索当天转写' }).props.value).toBe('命中')
+    expect(renderer!.root.findByType(ArkmeRecordingTranscriptRow).props.searchHighlighted).toBe(true)
+    expect(mocks.call.mock.calls.some(([op]) => op === 'recordings.transcript.page' || op === 'recordings.playback.open')).toBe(false)
+  })
+
+  it('keeps exact navigation working on a host that has not added the location operation', async () => {
+    const day = new Date(); day.setHours(0, 0, 0, 0)
+    const item = { itemId: 'found', itemRef: 'opaque', startAtMillis: day.getTime() + 1000, text: '命中',
+      transcriptSource: 'system', speakerColorIndex: 0, speakerLabel: '我',
+      searchIdentityHash: recordingSearchIdentityHash(target), searchVersion: 'v' }
+    mocks.call.mockReset().mockImplementation(async operation => {
+      if (operation === 'recordings.calendar') return { days: [] }
+      if (operation === 'recordings.transcript.locate') throw new ArkmeClientError({ code: 'operation-unknown', message: 'unknown', retryable: false })
+      if (operation === 'recordings.day') return { dateStamp: day.getTime(), transcript: { state: 'ready', items: [item], nextCursor: '', viewRef: 'day-view' },
+        summary: { state: 'empty', items: [] }, timeline: { state: 'empty', items: [] } }
+      throw new Error(`Unexpected ${operation}`)
+    })
+    arkmeUi.showRecordingTarget(day.getTime(), item.startAtMillis, target, undefined, '命中')
+    await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={()=>{}} recordingRefreshRevision={0} />) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)) })
+    expect(renderer!.root.findByType(ArkmeRecordingTranscriptRow).props.searchHighlighted).toBe(true)
+    expect(mocks.call.mock.calls.filter(([operation]) => operation === 'recordings.transcript.locate')).toHaveLength(1)
+  })
+
   it('reads later pages after the day arrives before resolving an exact search target', async () => {
     const day = new Date(); day.setHours(0, 0, 0, 0)
     const item = {itemId:'exact',itemRef:'ref',sessionKey:'opaque',transcriptSource:'system',startAtMillis:day.getTime()+1000,endAtMillis:day.getTime()+2000,speakerKey:'sp',speakerColorIndex:0,speakerLabel:'张三',sameSpeakerItemCount:1,text:'命中',textStartOffset:0,textEndOffset:2,textTotalLength:2,searchIdentityHash:recordingSearchIdentityHash(target),searchVersion:'v'}

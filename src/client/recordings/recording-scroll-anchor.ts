@@ -1,4 +1,4 @@
-export interface RecordingScrollAnchor { item: string; time: number; offset: number; pane: HTMLElement; restore(): void }
+export interface RecordingScrollAnchor { item: string; time: number; offset: number; viewportTop: number; pane: HTMLElement; restore(): void }
 
 export function captureRecordingScrollAnchor(pane: HTMLElement | null, preferredItemId?: string): RecordingScrollAnchor | undefined {
   if (pane === null) return undefined
@@ -8,7 +8,8 @@ export function captureRecordingScrollAnchor(pane: HTMLElement | null, preferred
   const preferred = rows.find(row => row.dataset.recordingTranscriptItem === preferredItemId)
   const row = preferred && visible(preferred) ? preferred : rows.find(visible)
   if (row === undefined) return undefined
-  const anchor: RecordingScrollAnchor = { item: row.dataset.recordingTranscriptItem!, time: Number(row.dataset.recordingStart), offset: row.getBoundingClientRect().top - bounds.top, pane, restore: () => { restoreRecordingScrollAnchor(pane, anchor) } }
+  const viewportTop = row.getBoundingClientRect().top
+  const anchor: RecordingScrollAnchor = { item: row.dataset.recordingTranscriptItem!, time: Number(row.dataset.recordingStart), offset: viewportTop - bounds.top, viewportTop, pane, restore: () => { restoreRecordingScrollAnchor(pane, anchor) } }
   return anchor
 }
 
@@ -19,4 +20,17 @@ export function restoreRecordingScrollAnchor(pane: HTMLElement | null, anchor: P
   const row = rows.find(element => element.dataset.recordingTranscriptItem === anchor.item)
     ?? rows.find(element => Number(element.dataset.recordingStart) >= anchor.time) ?? rows.at(-1)
   if (row !== undefined && pane.contains(row)) pane.scrollTop += row.getBoundingClientRect().top - pane.getBoundingClientRect().top - anchor.offset
+}
+
+/** A short located excerpt may need extra room below it to preserve its
+ * position when rows are prepended before the first later page arrives. */
+export function restoreRecordingContextAnchor(anchor: RecordingScrollAnchor, spacer: HTMLElement): void {
+  const pane = anchor.pane
+  const row = pane.querySelector<HTMLElement>(`[data-recording-transcript-item="${CSS.escape(anchor.item)}"]`)
+  if (!row || !pane.contains(spacer)) return
+  const bounds = pane.getBoundingClientRect()
+  const desired = Math.max(0, pane.scrollTop + row.getBoundingClientRect().top - anchor.viewportTop)
+  const contentBottom = pane.scrollTop + spacer.getBoundingClientRect().top - bounds.top - pane.clientTop
+  spacer.style.height = `${Math.max(0, Math.ceil(desired + pane.clientHeight - contentBottom))}px`
+  pane.scrollTop = desired
 }

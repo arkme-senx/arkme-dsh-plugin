@@ -8,7 +8,7 @@ import { ArkmeRecordingSpeakerCorrection } from './ArkmeRecordingSpeakerCorrecti
 import { recordingConsistencyLabel, useRecordingConsistency } from './use-recording-consistency.js'
 
 const button: CSSProperties = { border: `1px solid ${color.border}`, borderRadius: 6, padding: '6px 9px', background: color.base, color: color.text, font: 'inherit', fontSize: 12, cursor: 'pointer' }
-const time = (stamp: number) => new Date(stamp).toLocaleTimeString('zh-CN', { hour12: false })
+const time = (stamp: number) => new Date(stamp).toLocaleTimeString('zh-CN', { hourCycle: 'h23' })
 type EvidenceRow = Extract<ArkmeRecordingSpeakerEvidence, { supported: true }>['items'][number]
 type Filter = 'all' | 'a' | 'b' | 'ambiguous' | 'insufficient'
 

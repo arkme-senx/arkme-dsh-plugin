@@ -4,6 +4,7 @@ import { arkmeTheme } from '../arkme-theme.js'
 import type { LocalRecorderAudio, LocalRecorderDevice, LocalRecorderSnapshot, LocalRecorderRecordingPage, LocalRecorderRecording } from '../../local-recorder/contract.js'
 import type { PublicRecordingImportJob } from '../../recording-import-contract.js'
 import { tr } from '../locale.js'
+import { ArkmeLocalDateTimeInput, parseArkmeLocalDateTime } from '../ArkmeLocalDateTimeInput.js'
 import recorderCss from './local-recorder.css?inline'
 
 const button: CSSProperties = { padding: '7px 12px', borderRadius: 8, border: `1px solid ${arkmeTheme.border}`, background: arkmeTheme.base, color: arkmeTheme.text, cursor: 'pointer', font: 'inherit' }
@@ -11,7 +12,7 @@ const bytes = (value: number) => value < 1000000 ? `${(value / 1000).toFixed(1)}
 const duration = (millis: number) => `${Math.floor(millis / 3600000).toString().padStart(2, '0')}:${Math.floor(millis / 60000 % 60).toString().padStart(2, '0')}:${Math.floor(millis / 1000 % 60).toString().padStart(2, '0')}`
 const elapsed = (millis: number) => millis < 1000 ? tr('不足 1 秒') : `${Math.floor(millis / 1000)} ${tr('秒')}`
 const localDate = (stamp: number | null) => stamp === null ? '' : new Date(stamp - new Date(stamp).getTimezoneOffset() * 60000).toISOString().slice(0, 23)
-const date = (stamp: number | null, full = false) => stamp === null ? tr('时间待核对') : new Date(stamp).toLocaleString(undefined, { year: 'numeric', month: full ? 'long' : '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+const date = (stamp: number | null, full = false) => stamp === null ? tr('时间待核对') : new Date(stamp).toLocaleString(undefined, { year: 'numeric', month: full ? 'long' : '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
 const voltage = (value: number | null | undefined) => value == null ? tr('未知') : `${(value / 1000).toFixed(3)} V`
 const firmware = (value: number | null | undefined) => value == null ? tr('未知') : `V${(value >>> 16) & 255}.${value >>> 8 & 255}.${value & 255}`
 const stopReason = (row: LocalRecorderRecording, syncing: boolean, scanComplete: boolean) => {
@@ -41,6 +42,7 @@ export function LocalRecorderPanel({ mediaPath, onClose, onShowImports }: { medi
   const device = snapshot?.devices.find(row => row.id === deviceId) ?? snapshot?.devices[0]
   const recording = device?.recordings.find(row => row.id === recordingId)
   selected.current = recording?.id ?? ''
+  const startAtMillis = parseArkmeLocalDateTime(startAt)
   const syncing = device?.job?.state === 'syncing', transfer = device?.job?.transfer
   const progress = transfer?.totalBlocks ? Math.max(0, Math.min(1, transfer.scannedBlocks / transfer.totalBlocks)) : null
   const mediaUrl = (ref: string, download = false) => `${mediaPath.replace(/\/media$/, '')}/recording/local-audio?ref=${encodeURIComponent(ref)}${download ? '&download=1' : ''}`
@@ -172,7 +174,7 @@ export function LocalRecorderPanel({ mediaPath, onClose, onShowImports }: { medi
             <div className="arkme-rec-recording-title"><h2>{date(recording.startAtMillis, true)}</h2><p>{tr('录音会话')} #{recording.sessionId}{!device?.connected && <span> · {tr('离线缓存')}</span>}</p></div>
             <div className="arkme-rec-metrics"><Metric title="时长" value={duration(recording.durationMillis)} icon="clock" /><Metric title="音频数据量" value={info ? bytes(info.audioBytes) : '—'} icon="drive" /><Metric title="结束原因" value={stopReason(recording, Boolean(syncing), device?.job?.state === 'completed')} icon="alert" /></div>
             <section className="arkme-rec-audio-section" aria-label={tr('音频文件')}><h3>{tr('音频文件')} · 1 {tr('个')}</h3><div className="arkme-rec-audio-card">
-              <div className="arkme-rec-file-heading"><span className="arkme-rec-file-icon"><Glyph name="wave" size={27} /></span><div><strong>{tr('完整录音文件')}</strong><p>{date(recording.startAtMillis)}{recording.complete ? ' – ' : ` · ${tr('已缓存至')} `}{endTime === null ? tr('时间待核对') : new Date(endTime).toLocaleTimeString(undefined, { hour12: false })}</p><small>{tr('时长')} {duration(playMillis)} · {tr(prepared?.recordingId === recording.id ? (recording.info && prepared.audio.durationMillis < recording.info.cachedDurationMillis ? '有新增音频，播放时更新' : '音频已就绪') : recording.complete ? '已缓存，点击播放准备音频' : '已缓存部分，可先试听')}</small></div>
+              <div className="arkme-rec-file-heading"><span className="arkme-rec-file-icon"><Glyph name="wave" size={27} /></span><div><strong>{tr('完整录音文件')}</strong><p>{date(recording.startAtMillis)}{recording.complete ? ' – ' : ` · ${tr('已缓存至')} `}{endTime === null ? tr('时间待核对') : new Date(endTime).toLocaleTimeString(undefined, { hourCycle: 'h23' })}</p><small>{tr('时长')} {duration(playMillis)} · {tr(prepared?.recordingId === recording.id ? (recording.info && prepared.audio.durationMillis < recording.info.cachedDurationMillis ? '有新增音频，播放时更新' : '音频已就绪') : recording.complete ? '已缓存，点击播放准备音频' : '已缓存部分，可先试听')}</small></div>
                 <button type="button" className="arkme-rec-button arkme-rec-primary" disabled={Boolean(pending)} onClick={play}>{tr(pending === 'play' ? '正在准备音频…' : playing ? '暂停' : '播放')}</button></div>
               {prepared?.recordingId === recording.id && <audio ref={audio} preload="metadata" src={mediaUrl(prepared.audio.ref)} onTimeUpdate={() => setPosition(audio.current?.currentTime ?? 0)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => setError('本地音频暂不可用，请重新准备后重试')} />}
               <div className="arkme-rec-player"><button type="button" className="arkme-rec-play-toggle" aria-label={tr(playing ? '暂停录音' : '播放录音')} disabled={Boolean(pending)} onClick={play}><Glyph name={playing ? 'pause' : 'play'} size={17} /></button>
@@ -181,11 +183,12 @@ export function LocalRecorderPanel({ mediaPath, onClose, onShowImports }: { medi
               <div className="arkme-rec-file-actions"><button type="button" className="arkme-rec-button" disabled={Boolean(pending)} onClick={() => { void action('save', () => prepare(true)) }}>{tr('另存为 WAV')}</button>
                 <button type="button" className="arkme-rec-button" disabled={Boolean(pending) || !recording.complete} onClick={() => setImportOpen(open => !open)}>{tr('导入即我')}</button></div>
               {!recording.complete && <p className="arkme-rec-hint">{tr('这条录音尚未结束或未同步完整，可先播放、另存为，完成同步后再导入。')}</p>}
-              {importOpen && <div className="arkme-rec-import" role="group" aria-label={tr('确认导入即我')}><label>{tr('录音开始时间')}<input type="datetime-local" step="0.001" value={startAt} onChange={event => { startDirty.current = true; setStartAt(event.target.value) }} /></label>
+              {importOpen && <div className="arkme-rec-import" role="group" aria-label={tr('确认导入即我')}><div className="arkme-rec-import-field"><span>{tr('录音开始时间')}</span><ArkmeLocalDateTimeInput label={tr('录音开始时间')} value={startAt} milliseconds
+                onValueChange={next => { startDirty.current = true; setStartAt(next) }} /></div>
                 <label>{tr('录音归属')}<select value={ownership} onChange={event => setOwnership(event.target.value as 'self' | 'other')}><option value="self">{tr('自己')}</option><option value="other">{tr('他人')}</option></select></label>
                 <p>{tr('确认时间与归属后，音频将进入当前即我账号的导入队列。')}</p>
-                <button type="button" className="arkme-rec-button arkme-rec-primary" disabled={Boolean(pending) || !startAt || !recording.complete} onClick={() => { void action('import', async () => {
-                  await callArkme<PublicRecordingImportJob>('recorders.local.import', { deviceId: device!.id, recordingId: recording.id, startAtMillis: new Date(startAt).getTime(), ownership }, lifetime.current?.signal)
+                <button type="button" className="arkme-rec-button arkme-rec-primary" disabled={Boolean(pending) || !Number.isFinite(startAtMillis) || !recording.complete} onClick={() => { void action('import', async () => {
+                  await callArkme<PublicRecordingImportJob>('recorders.local.import', { deviceId: device!.id, recordingId: recording.id, startAtMillis, ownership }, lifetime.current?.signal)
                   if (!lifetime.current?.signal.aborted) { setNotice('已加入即我录音导入队列'); setImportOpen(false) }
                 }) }}>{tr(pending === 'import' ? '正在导入…' : '确认导入')}</button></div>}
             </div></section>
