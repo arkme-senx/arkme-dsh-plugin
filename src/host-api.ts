@@ -7,6 +7,7 @@ import {readTeamMentionInputs} from './services/group-team-mention.js'
 import { ARRANGEMENT_OCCURRENCE_ACTIONS } from './arrangement-occurrence.js'
 import { exportSelection } from './services/record-export-range-service.js'
 import { DayReviewConfirmation } from './calendar-day-review-confirmation.js'
+import { RECORDING_DELETION_CONFIRMATION_QUERY } from './recording-deletion-contract.js'
 import {readTeamRepresentationSelection} from './services/group-representation.js'
 import { recordingStrategy } from './recording-strategy-contract.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
@@ -961,6 +962,13 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
     res.once('close', abortDisconnectedRequest)
     try {
       const confirmationUrl = new URL(req.url ?? '/', `http://localhost:${options.expectedPort}`)
+      if (confirmationUrl.searchParams.has(RECORDING_DELETION_CONFIRMATION_QUERY)) {
+        if (!isLoopback(req.socket.remoteAddress) || ![`localhost:${options.expectedPort}`, `127.0.0.1:${options.expectedPort}`].includes(req.headers.host ?? '')) {
+          throw new ArkmePluginError('loopback-required', '请在当前电脑上确认录音删除', false, 403)
+        }
+        await service.recordingDeletionConfirmations.handle(req, res, confirmationUrl.searchParams.get(RECORDING_DELETION_CONFIRMATION_QUERY)!, controller.signal)
+        return
+      }
       if (confirmationUrl.searchParams.has('dayReviewConfirmation')) {
         if (!isLoopback(req.socket.remoteAddress) || ![`localhost:${options.expectedPort}`, `127.0.0.1:${options.expectedPort}`].includes(req.headers.host ?? '')) throw new ArkmePluginError('loopback-required', '确认只能从当前本机页面打开', false, 403)
         const id = confirmationUrl.searchParams.get('dayReviewConfirmation')!
@@ -994,6 +1002,10 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation === 'recordings.ai-deletion.settings'
+        && (!isLoopback(req.socket.remoteAddress) || !origin || new URL(origin).host !== req.headers.host)) {
+        throw new ArkmePluginError('origin-required', '请从本机即我设置管理录音删除权限', false, 403)
+      }
       if (request.operation === 'private-interaction.directory' && traceReceivedAt !== undefined
         && isDirectoryTraceId(traceHeader) && isLoopback(req.socket.remoteAddress)) {
         directoryTraceSignals.set(controller.signal, traceHeader)
@@ -1889,6 +1901,14 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'offline-context': return await service.offlineContext(params as unknown as OfflineContextRequest,requestSignal)
     case 'recordings.delivery.page': return service.recordingDeliveryPage(recordingDeliveryQuery(params), requestSignal)
     case 'recordings.files.storage': return service.recordingFileStorage({ sessionRefs: params.sessionRefs as string[] }, requestSignal)
+    case 'recordings.ai-deletion.settings': {
+      if (params.enabled !== undefined && typeof params.enabled !== 'boolean' || params.enabled !== undefined && typeof params.timeZone !== 'string') {
+        throw new ArkmePluginError('invalid-params', '录音删除设置参数无效', false, 400)
+      }
+      return await service.recordingDeletionSettings(stringParam(params, 'accountScope'),
+        typeof params.timeZone === 'string' ? { timeZone: params.timeZone, ...(typeof params.enabled === 'boolean' ? { enabled: params.enabled } : {}) } : undefined,
+        requestSignal)
+    }
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
