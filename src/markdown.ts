@@ -138,6 +138,16 @@ export function arkmeLiteralMarkdownNodes(options?: { articleImages?: boolean; l
   return (tree: MarkdownNode, file: { value?: unknown }) => {
     const source = String(file.value ?? '')
     const visit = (node: MarkdownNode) => {
+      // Let the shared text renderer resolve bare www. links and their punctuation.
+      if (node.type === 'link') {
+        const literal = source.slice(node.position?.start.offset, node.position?.end.offset)
+        if (/^www\./iu.test(literal)) {
+          node.type = 'text'
+          node.value = literal
+          delete node.url
+          delete node.children
+        }
+      }
       if (options?.articleImages && node.type === 'image' && (options.localArticleImages ? arkmeArticleImageReference(node.url ?? '') : /^arkme-asset:[A-Za-z0-9._:-]{1,256}$/u.test(node.url ?? ''))) {
         node.data = { hName: 'span', hProperties: { 'data-arkme-image-ref': node.url, 'data-arkme-image-alt': node.alt ?? '' } }
         return
