@@ -33,7 +33,8 @@ export class ChatMessageSyncStore {
       CREATE INDEX IF NOT EXISTS message_sync_pending ON message_sync_work(account,retry_at,uid,sequence) WHERE pending=1;
       CREATE INDEX IF NOT EXISTS message_sync_fair ON message_sync_work(account,uid,retry_at,sequence) WHERE pending=1;
       CREATE INDEX IF NOT EXISTS message_sync_pin ON message_sync_work(scope,event_id);
-      CREATE INDEX IF NOT EXISTS message_sync_local ON message_sync_work(scope,sequence DESC) WHERE pending=0 AND state='available';
+      DROP INDEX IF EXISTS message_sync_local;
+      CREATE INDEX IF NOT EXISTS message_sync_cached ON message_sync_work(scope,sequence DESC) WHERE stored_version>=0 AND state IN ('available','pending','missing');
       CREATE INDEX IF NOT EXISTS message_sync_item ON message_sync_work(scope,item_key);
       CREATE TRIGGER IF NOT EXISTS sync_account_added AFTER INSERT ON message_sync_accounts BEGIN UPDATE cache_stats SET bytes=bytes+length(CAST(NEW.checkpoint AS BLOB))+128 WHERE id=1; END;
       CREATE TRIGGER IF NOT EXISTS sync_account_changed AFTER UPDATE OF checkpoint ON message_sync_accounts BEGIN UPDATE cache_stats SET bytes=bytes+length(CAST(NEW.checkpoint AS BLOB))-length(CAST(OLD.checkpoint AS BLOB)) WHERE id=1; END;
@@ -303,16 +304,16 @@ export class ChatMessageSyncStore {
       // with JSON extraction otherwise scans every retained body in the chat.
       // CROSS JOIN keeps the selective record lookup ahead of the retention join.
       anchor = this.prepare(`SELECT w.sequence FROM message_sync_work w JOIN contents c ON c.scope=w.scope AND c.event_id=w.event_id
-        WHERE w.scope=? AND w.event_id=? AND w.pending=0 AND w.state='available' LIMIT 1`).get(scope, anchorId)
+        WHERE w.scope=? AND w.event_id=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' LIMIT 1`).get(scope, anchorId)
         ?? this.prepare(`SELECT w.sequence FROM message_sync_work w JOIN contents c ON c.scope=w.scope AND c.event_id=w.event_id
-          WHERE w.scope=? AND w.item_key=? AND w.pending=0 AND w.state='available' LIMIT 1`).get(scope, anchorId)
+          WHERE w.scope=? AND w.item_key=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' LIMIT 1`).get(scope, anchorId)
         ?? this.prepare(`SELECT w.sequence FROM contents c CROSS JOIN message_sync_work w ON w.scope=c.scope AND w.event_id=c.event_id
-          WHERE c.scope=? AND c.source='messages' AND json_extract(c.payload,'$.item.itemUid')=? AND w.pending=0 AND w.state='available' LIMIT 1`).get(scope, anchorId)
+          WHERE c.scope=? AND c.source='messages' AND json_extract(c.payload,'$.item.itemUid')=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' LIMIT 1`).get(scope, anchorId)
       if (!anchor) return undefined
     }
     const upper = before ?? (anchor ? Number(anchor.sequence) + Math.floor(limit / 2) + 1 : Number.MAX_SAFE_INTEGER)
     const rows = this.prepare(`SELECT c.payload,w.sequence,c.ticket FROM message_sync_work w JOIN contents c ON c.scope=w.scope AND c.event_id=w.event_id
-      WHERE w.scope=? AND w.pending=0 AND w.state='available' AND w.sequence<? ORDER BY w.sequence DESC LIMIT ?`).all(scope, upper, limit + 1)
+      WHERE w.scope=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' AND w.sequence<? ORDER BY w.sequence DESC LIMIT ?`).all(scope, upper, limit + 1)
     if (!rows.length) return undefined
     const selected: Row[] = []; let bytes = 0
     for (const row of rows.slice(0, limit)) {

@@ -1575,6 +1575,7 @@ recordingAnalysisV1: true,
         arkoThoughtRepliesV1: true,
         arkoThoughtContinuationsV1: true,
         recordEditHistoryV1: true,
+        recordReeditTimeOrderedV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
         worldReactionArchiveVersionsV1: true,
@@ -3413,9 +3414,10 @@ recordingAnalysisV1: true,
     itemUid: string,
     input: import('./types.js').ArkmeLongArticleUpdateInput,
   ): Promise<ArkmeLongArticleDetail> {
+    input = { ...input, editAtMillis: input.editAtMillis ?? Date.now() }
     const userId = (await this.runtime.requireSession()).userId
     const existing = await this.chat.longArticleDetail(sourceRef, itemUid)
-    if (!existing.editable || existing.version !== input.version) throw new ArkmePluginError('long-article-update-invalid', '长文内容或版本无效，请刷新后重试', false, 409)
+    if (!existing.editable) throw new ArkmePluginError('long-article-update-invalid', '当前长文不可编辑', false, 403)
     if (existing.textFormat === 'markdown' && this.config.markdownLongArticlesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 长文编辑尚未开放', false, 403)
     if ((existing.contentBlocks?.some(block => block.kind === 'image') || (existing.textFormat === 'markdown' && longArticleImageDestinations(existing.textContent).some(node => node.url.startsWith('arkme-asset:')))) && input.images === undefined) throw new ArkmePluginError('long-article-images-required', '请使用支持图文的长文编辑器，避免丢失图片', false, 409)
     const content = await this.prepareLongArticle(input, existing)

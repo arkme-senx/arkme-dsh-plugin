@@ -1709,6 +1709,7 @@ recordingAnalysisV1?: true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
     recordEditHistoryV1?: true
+    recordReeditTimeOrderedV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
@@ -2719,7 +2720,10 @@ export interface ArkmeLongArticleUpdateInput {
   textContent: string
   textFormat?: 'plain' | 'markdown'
   images?: ArkmeLongArticleImage[]
-  version: number
+  /** @deprecated Editor metadata only; no write precondition. */
+  version?: number
+  editAtMillis?: number
+  revisionUid?: string
   editDurationMillis: number
 }
 export interface ArkmeLongArticleDetail {
@@ -2743,6 +2747,8 @@ export interface ArkmeLongArticleDetail {
 }
 
 export interface ArkmeLongArticleDraft {
+  editAtMillis?: number
+  revisionUid?: string
   sendAtMillis?:number
   draftScope?:string
   /** Pending automatic publication; composer attachment drafts never set this. */

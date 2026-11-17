@@ -118,10 +118,10 @@ describe('late re-edit hydration', () => {
     expect(result.mentions).toEqual(detail.mentions)
     expect(hydrateRecordReeditEditor({ ...original, textContent: '@小红 新内容' }, detail).mentions).toEqual([])
   })
-  it('keeps a changed remote baseline as a conflict instead of silently rebasing typed text', () => {
+  it('preserves typed text when the remote baseline changes without requiring a version', () => {
     const typed = { ...initial(), textContent: '本地修改' }
-    expect(hydrateRecordReeditEditor(typed, { ...snapshot, textContent: '其他入口修改' })).toMatchObject({ textContent: '本地修改', conflict: 'record' })
+    expect(hydrateRecordReeditEditor(typed, { ...snapshot, textContent: '其他入口修改' })).toMatchObject({ textContent: '本地修改' })
     typed.persisted.expectedVersion = 2
-    expect(hydrateRecordReeditEditor(typed, snapshot).conflict).toBe('record')
+    expect(hydrateRecordReeditEditor(typed, snapshot).conflict).toBeUndefined()
   })
 })

@@ -119,6 +119,7 @@ export interface ArkmeRecordReeditPrepareInput {
   mentions?: ArkmeRecordReeditMention[]
   newTitle?: string
   attachments?: ArkmeRecordReeditAttachmentSelection[]
+  /** @deprecated Optional legacy editor baseline; never sent as a Record write precondition. */
   expectedVersion?: number
   expectedDraftRevision?: number
   capture?: ArkmeRecordReeditCapture
@@ -150,6 +151,8 @@ export interface ArkmeRecordReeditCommitResult {
   version: number
   revisionUid: string
   projectionState: 'pending'
+  /** False when accepted history must not overlay the current canonical body. */
+  appliedToCurrent?: boolean
 }
 
 /** A local receipt, never a replacement for Record's version or revision. */
