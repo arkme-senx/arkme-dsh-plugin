@@ -32,12 +32,14 @@ import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } fro
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import deliveryFixture from './fixtures/recording-delivery.json'
 import { parseRecordingDelivery } from '../src/recording-delivery.js'
+import { connectArkmeLocale, useArkmeLocale } from '../src/client/locale.js'
 
 // File-selection tests exercise an opened panel, like the real toolbar action.
 // Hidden-page ownership and automatic recovery are tested with native Web Locks
 // in recording-import-ownership.test.tsx.
 function createOpenedDialog(element: ReactElement<{ ref?: Ref<ArkmeRecordingImportDialogHandle> }>, options?: Parameters<typeof create>[1]) {
   function OpenedDialog() {
+    useArkmeLocale()
     const ref = useRef<ArkmeRecordingImportDialogHandle>(null)
     useLayoutEffect(() => { ref.current!.open() }, [])
     return cloneElement(element, { ref })
@@ -96,6 +98,7 @@ describe('recording import dialog behavior', () => {
 
   afterEach(async () => {
     await act(async () => { renderer?.unmount(); await tick() })
+    connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} })()
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -1078,6 +1081,67 @@ describe('recording import dialog behavior', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); await tick() })
 
     expect(renderer.root.findByProps({ 'aria-label': '处理耗时 14s' })).toBeDefined()
+  })
+
+  it('labels unnamed current and completed recordings without changing their owner identity', async () => {
+    const startAtMillis = new Date(2026, 10, 16, 18, 35, 12).getTime()
+    const name = '录音 2026/11/16 18:35:12'
+    vi.useFakeTimers(); vi.setSystemTime(startAtMillis + 12000)
+    const task = {
+      kind: 'owner', taskKey: 'unnamed-task', sessionRef: 'unnamed-session', ownership: 'self',
+      fileName: '', fileSize: 4096, parsedSize: 4096, durationMillis: 3000,
+      startAtMillis, endAtMillis: startAtMillis + 3000, createdAtMillis: startAtMillis,
+      updatedAtMillis: startAtMillis + 12000, progress: 1, status: 'transcribing', statusDetail: '转写中',
+      importProgress: {
+        status: 'processing', totalDurationMillis: 12000,
+        serverNowMillis: startAtMillis + 12000, observedAtMillis: startAtMillis + 12000,
+        rows: [{ code: 'upload', status: 'completed', startedAtMillis: startAtMillis,
+          endedAtMillis: startAtMillis + 12000, durationMillis: 12000,
+          provider: '', model: '', modelVersion: '', modelDurationMillis: 0,
+          nextRelation: 'continuous', relationDurationMillis: 0 }],
+      },
+    }
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (op, ...args) => {
+      if (op === 'recordings.import.list') return currentSnapshot([task])
+      if (op === 'recordings.import.history') return { items: [{ ...task, fileName: '  ', status: 'completed' }], total: 1, offset: 0, hasMore: false }
+      return original(op, ...args)
+    })
+    await act(async () => {
+      renderer.unmount()
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/import" defaultStartAtMillis={startAtMillis} currentUserId={42} onAccepted={() => {}} />)
+      await tick()
+    })
+    expect(renderer.root.findByProps({ title: name }).children).toEqual([name])
+    expect(renderer.root.findByProps({ 'aria-label': `${name}录音开始时间` })).toBeDefined()
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '处理耗时 12s' }).props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 600, right: 648, top: 400, bottom: 428 }) } })
+      await tick()
+    })
+    expect(renderer.root.findByProps({ 'aria-label': `${name}处理耗时详情` })).toBeDefined()
+    await act(async () => { renderer.root.findByProps({ 'aria-label': `关闭 ${name}处理耗时详情` }).props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': `删除 ${name}` }).props.onClick(); await tick() })
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '确认删除录音' }))).toContain(name)
+    await act(async () => {
+      connectArkmeLocale({ getLocale: () => ({ active: 'en' }), subscribe: () => () => {} })()
+      await tick()
+    })
+    expect(renderedText(renderer.root)).toContain('Recording 11/16/2026, 18:35:12')
+    expect(renderedText(renderer.root)).not.toContain(name)
+    await act(async () => {
+      connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} })()
+      await tick()
+    })
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '确认删除录音' }))).toContain(name)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '取消删除' }).props.onClick(); await tick() })
+    await act(async () => { button(renderer, '已完成').props.onClick(); await tick() })
+    const history = renderer.root.findByProps({ 'aria-label': '已完成录音导入' })
+    expect(history.findByProps({ title: name }).children).toEqual([name])
+    await act(async () => { history.findByProps({ 'aria-label': `删除 ${name}` }).props.onClick(); await tick() })
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '确认删除录音' }))).toContain(name)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '确认删除' }).props.onClick(); await tick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.import.session.delete', { sessionRef: 'unnamed-session' })
+    expect(task.fileName).toBe('')
   })
 
   it('opens the desktop completed page and keeps terminal owner tasks out of the current list', async () => {

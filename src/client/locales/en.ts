@@ -244,6 +244,8 @@ AI 自动分析|Automatic AI analysis
 个人档案|Personal profile
 根据开启后的新材料自动更新目标。|Automatically update goals using new material after opt-in.
 录音语音触发|Recording voice triggers
+录音 {startTime}|Recording {startTime}
+未命名录音|Unnamed recording
 确认保存当前内容|Confirm saving the displayed content
 内容边界待确认，仅保存当前显示的文字。请试听核对后保存。|The content boundary is uncertain. Only the displayed text will be saved. Listen and verify before saving.
 原文或原音已更新，这条旧识别记录无法保存。请查看当前录音，或忽略此记录。|The transcript or audio has changed, so this old candidate cannot be saved. Review the current recording or ignore this candidate.

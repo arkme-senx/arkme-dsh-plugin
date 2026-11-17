@@ -1,3 +1,4 @@
+import { createRecordingDisplayNameFormatter } from './recording-display-name.js'
 import { useRecordingComparisonAvailability } from './useRecordingComparisonAvailability.js'
 import { RecordingStrategyComparison } from './RecordingStrategyComparison.js'
 import { RecordingFileStorageLabel, recordingMegabytesLabel, useRecordingFileStorage } from './recording-file-storage.js'
@@ -63,6 +64,7 @@ export function ArkmeRecordingFiles(props: Props) {
 }
 
 function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
+  const recordingDisplayName = createRecordingDisplayNameFormatter()
   const [comparison, setComparison] = useState<{sessionRef: string; fileName: string}>()
   const [current, setCurrent] = useState<RecordingFile[]>([])
   const [history, setHistory] = useState<RecordingFile[]>([])
@@ -321,20 +323,21 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
     {currentWarning && <p role="status" style={note}>{currentWarning}{currentReadFailed && <button type="button" style={{ ...button, marginLeft: 8 }} disabled={loading || currentLoading || busy} onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button>}</p>}
     <ul aria-label={tr('音频文件列表')} style={{ margin: 0, padding: 0, listStyle: 'none' }}>
       {files.map(file => {
+        const displayName = recordingDisplayName(file)
         const crossDay = file.startAtMillis < from || file.endAtMillis >= to
         const attention = ['partial', 'paused', 'cancelled', 'unavailable'].includes(file.status)
         const statusColor = file.status === 'failed' ? theme.danger : attention ? theme.warning : theme.accent
         const statusBackground = file.status === 'failed' ? theme.dangerSoft : attention ? theme.warningSoft : theme.accentSoft
         return <li key={recordingFileKey(file)} data-recording-file-key={recordingFileKey(file)} style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, padding: '8px 0', borderBottom: `1px solid ${theme.borderSoft}` }}>
           <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 24, rowGap: 2 }}>
-            <div title={file.fileName} style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
+            <div title={displayName} style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{displayName}</div>
             <div style={{ ...note, flex: '0 1 auto', minWidth: 0, maxWidth: '100%', display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
               <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(recordingFileDisplayEnd(file), crossDay)}</span>
               <span>· {recordingAudioDurationLabel(file.durationMillis, 'delivery' in file ? file.delivery : undefined)}</span><span>· {size(recordingFileExpectedBytes(file))}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
             </div>
           </div>
           {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', alignSelf: 'flex-start', marginTop: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
-          <button type="button" aria-haspopup="menu" aria-expanded={menu?.file === file} aria-label={tr('管理 {v0}', { v0: file.fileName })} disabled={busy} style={{ ...button, flex: 'none', alignSelf: 'flex-start', padding: 2, width: 28, minHeight: 28, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: theme.secondary }} onClick={event => {
+          <button type="button" aria-haspopup="menu" aria-expanded={menu?.file === file} aria-label={tr('管理 {v0}', { v0: displayName })} disabled={busy} style={{ ...button, flex: 'none', alignSelf: 'flex-start', padding: 2, width: 28, minHeight: 28, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: theme.secondary }} onClick={event => {
             if (menu?.file === file) { setMenu(undefined); return }
             const anchor = event.currentTarget, rect = anchor.getBoundingClientRect()
             setMenu({ file, anchor, left: Math.max(8, Math.min(rect.right - 168, window.innerWidth - 176)), top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 128)) })
@@ -353,7 +356,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
       const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length
       buttons[next]?.focus()
     }}>
-      {'sessionRef' in menu.file && menu.file.sessionRef && comparisonAvailability.availability.strategy === 'available' && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: file.fileName }); setMenu(undefined) }}>策略对比</button>}
+      {'sessionRef' in menu.file && menu.file.sessionRef && comparisonAvailability.availability.strategy === 'available' && <button role="menuitem" type="button" style={button} onClick={() => { const file = menu.file; if ('sessionRef' in file && file.sessionRef) setComparison({ sessionRef: file.sessionRef, fileName: recordingDisplayName(file) }); setMenu(undefined) }}>策略对比</button>}
       {comparisonSession && comparisonAvailability.loading && <button role="menuitem" type="button" disabled style={button}>正在检查策略对比…</button>}
       {comparisonSession && !comparisonAvailability.loading && comparisonAvailability.availability.strategy === 'unknown' && <button role="menuitem" type="button" style={button} onClick={comparisonAvailability.retry}>重试检查策略对比</button>}
       {(['start', 'ownership', 'delete'] as const).filter(kind => !('importRef' in menu.file) || kind === 'delete').map(kind => <button key={kind} role="menuitem" type="button" style={{ ...button, display: 'block', width: '100%', textAlign: 'left', border: 0, background: 'transparent', color: kind === 'delete' ? theme.danger : theme.text }} onClick={() => openAction(menu.file, kind)}>{tr(kind === 'start' ? '修改录音时间' : kind === 'ownership' ? '修改数据归属' : '删除文件')}</button>)}
@@ -361,7 +364,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
     {action && <dialog ref={dialog} aria-label={tr(action.kind === 'delete' ? '确认删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}
       onCancel={event => { event.preventDefault(); if (!busy) setAction(undefined) }} style={{ width: 'min(440px, calc(100vw - 48px))', boxSizing: 'border-box', padding: 24, border: `1px solid ${theme.border}`, borderRadius: 12, background: theme.base, color: theme.text, boxShadow: theme.shadow }}>
       <h3 style={{ marginTop: 0 }}>{tr(action.kind === 'delete' ? '删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}</h3>
-      <p style={{ overflowWrap: 'anywhere' }}>{action.file.fileName}</p><p style={note}>{instant(action.file.startAtMillis)} — {instant(recordingFileDisplayEnd(action.file))}</p>
+      <p style={{ overflowWrap: 'anywhere' }}>{recordingDisplayName(action.file)}</p><p style={note}>{instant(action.file.startAtMillis)} — {instant(recordingFileDisplayEnd(action.file))}</p>
       {action.kind === 'delete' ? <p style={note}>{tr('将删除整份音频及关联录音数据，跨日部分也会受影响。删除后无法恢复。')}</p>
         : action.kind === 'start' ? <div style={note}>{tr('录音开始时间')} <ArkmeLocalDateTimeInput label={tr('录音开始时间')} value={start} onValueChange={setStart} disabled={busy} style={control} /></div>
           : <><select aria-label={tr('文件数据归属')} value={ownership} disabled={busy} onChange={event => setOwnership(event.target.value as 'self' | 'other')} style={control}><option value="self">{tr('我的')}</option><option value="other">{tr('他人')}</option></select><p style={note}>{tr('我的数据写入时间轴，他人仅保存')}</p></>}
