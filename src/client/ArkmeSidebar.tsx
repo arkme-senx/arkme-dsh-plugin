@@ -35,6 +35,7 @@ import {SharePrivateChat} from './TeamExternalChats.js'
 import { cancelConversationFollow, followConversationBottom, scrollConversationTo } from './conversation-bottom-follow.js'
 import { usePrivateMessageDnd } from './private-message-dnd.js'
 import { CopyLinkSnapshotContent } from './CopyLinkSnapshotContent.js'
+import { recordingShareTitle } from '../recording-forward-presentation.js'
 import { registerConversationWindowContent, readConversationWindowContent, restoreConversationWindowContent, type ConversationWindowBootstrap } from './conversation-window-bootstrap.js'
 import { ArkmeComposerInputStats, useArkmeComposerInputTimePreference } from './ArkmeComposerInputStats.js'
 import { OfflineContextMessageLink, useOfflineContextMessageLinks } from './offline-context/OfflineContextMessageLink.js'
@@ -1658,7 +1659,11 @@ function CopyLinkDetailDrawer({
   const panelRef = useRef<HTMLElement>(null)
   const resize = useResizableNoteDetail(panelRef)
   const detail = state.status === 'ready' ? state.detail : undefined
-  const title = detail?.displayTitle.trim() || '快记详情'
+  const recording = detail?.items.length === 1 ? detail.items[0] : undefined
+  const segments = recording?.structuredContent?.longRecordingSegments
+  const title = recording && segments?.length
+    ? recordingShareTitle(recording.senderDisplayName, segments.length)
+    : detail?.displayTitle.trim() || '快记详情'
   const subtitle = detail === undefined ? '' : copyLinkDetailDateRange(detail.items)
   const generatedAt = detail === undefined ? '' : forwardFullTimeLabel(detail.generatedAtMillis)
   const shareDisabled = state.status !== 'ready'

@@ -2490,6 +2490,7 @@ export interface ArkmeForwardRecordPreviewItem {
   contentLabel?: string
   sourceType?: 'codex' | 'team_message' | 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
   segments?: ArkmeForwardTranscriptSegment[]
+  segmentCount?: number
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: true
   truncated?: true
@@ -2851,6 +2852,7 @@ export interface ArkmeMessageCopyLinkStructuredContent {
   durationMillis: number
   /** Only the server-authorized selection snapshot; never the full source session. */
   longRecordingSegments?: ArkmeForwardTranscriptSegment[]
+  recordingAudioUrl?: string
 }
 
 export interface ArkmeMessageCopyLinkSnapshotItem {

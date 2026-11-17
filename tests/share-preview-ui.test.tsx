@@ -5,6 +5,7 @@ import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { sharePreviewInlineLabel } from '../src/client/ArkmeShareLinkPreview.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
+import { RecordingShareSegments } from '../src/client/RecordingShareSegments.js'
 import { parseShareLink } from '../src/share-link-preview.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { sharePreviewClient } from '../src/client/share-preview-client.js'
@@ -24,6 +25,33 @@ async function render(text: string, onOpen = vi.fn(), format: 'plain' | 'markdow
   await act(async () => root.render(<ArkmeMessageContent item={{ itemUid: 'test-link', senderName: '我', isMe: true,
     sendAtMillis: 1, status: 1, title: '', textContent: text, textFormat: format }} onMessageCopyLinkOpen={onOpen} />))
 }
+
+it('plays only the selected range of the assembled audio and stops at its end', async () => {
+  let paused = true
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => { paused = false })
+  const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => { paused = true })
+  await act(async () => root.render(<RecordingShareSegments audioUrl="/authorized-excerpt" segments={[
+    { speakerName: '甲', textContent: '第一段', startMillis: 20000, endMillis: 22000 },
+    { speakerName: '乙', textContent: '第二段', startMillis: 81000, endMillis: 84000 },
+  ]} />))
+  const audio = node.querySelector('audio')!
+  Object.defineProperties(audio, {
+    readyState: { value: 1 },
+    duration: { value: 5 },
+    paused: { get: () => paused },
+  })
+  expect(play).not.toHaveBeenCalled()
+  await act(async () => node.querySelectorAll('button')[1]!.click())
+  expect(play).toHaveBeenCalledOnce()
+  expect(audio.currentTime).toBe(2)
+  await act(async () => {
+    audio.currentTime = 5.1
+    audio.dispatchEvent(new Event('timeupdate'))
+  })
+  expect(pause).toHaveBeenCalledOnce()
+  expect(audio.currentTime).toBe(5)
+})
+
 describe('inline share link labels', () => {
   it.each([
     ['发给自己', true, true, '小林', '我'],
@@ -79,6 +107,18 @@ describe('inline share link labels', () => {
     expect(node.querySelector('[data-arkme-link-label]')?.getAttribute('style')).toContain('white-space: nowrap')
     expect(card.href).toBe(url)
     await act(async () => card.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })))
+    expect(open).toHaveBeenCalledWith('Abcdef1234567890')
+  })
+  it('uses the recording sharer and selection count in the resolved link label', async () => {
+    vi.spyOn(sharePreviewClient, 'acquire').mockReturnValue({
+      promise: Promise.resolve({ kind: 'recording', state: 'ready', author: '小林', authorIsMe: true, count: 3, title: '原始录音.wav' }),
+      release() {},
+    })
+    const open = vi.fn()
+    await render(url, open)
+    const card = node.querySelector('a')!
+    expect(card.textContent).toBe('小林的3段录音')
+    await act(async () => card.click())
     expect(open).toHaveBeenCalledWith('Abcdef1234567890')
   })
   it('keeps every link in its original position and surrounding prose outside anchors', async () => {

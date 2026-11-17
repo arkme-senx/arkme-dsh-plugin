@@ -410,7 +410,7 @@ describe('Arkme rich content presentation', () => {
     expect(html).toContain('01:00:00')
     expect(html).toContain('12:38')
     expect(html).not.toContain('重复摘要')
-    expect(html.match(/data-arkme-forward-recording-segment/gu)).toHaveLength(3)
+    expect(html.match(/data-arkme-shared-recording-segment/gu)).toHaveLength(3)
   })
 
   it.each(['call', 'mixed', 'empty'] as const)('does not mistake %s forwarding for a single recording snapshot', kind => {

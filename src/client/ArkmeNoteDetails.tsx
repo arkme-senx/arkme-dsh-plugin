@@ -88,7 +88,8 @@ import {
   type ArkmeComposerMention,
 } from './composer-draft-store.js'
 import { localFileBlock } from './file-send-tasks.js'
-import { recordingSpeakerColor } from './recordings/recording-speaker-presentation.js'
+import { RecordingShareSegments } from './RecordingShareSegments.js'
+import { recordingForwardItem, recordingShareTitle } from '../recording-forward-presentation.js'
 import {
   arkmeComposerMentionTrigger,
   arkmeGroupMentionCandidates,
@@ -1377,30 +1378,21 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
   const onBack = path.length ? () => setTrail({ itemUid: item.itemUid, path: path.slice(0, -1) }) : undefined
   useLayoutEffect(() => { if (body.current) body.current.scrollTop = 0 }, [item.itemUid, pathKey])
   if (forward === undefined) return null
-  const recording = forward.items.length === 1 ? forward.items[0] : undefined
-  if (recording?.sourceType === 'long_recording_segments' && (recording.segments?.length ?? 0) > 0) {
-    const segments = recording.segments!
+  const recording = recordingForwardItem(forward)
+  if (recording) {
+    const segments = recording.segments
     const startedAt = recording.sendAtMillis
     const selectedAt = startedAt > 0 ? startedAt + Math.min(...segments.map(segment => segment.startMillis)) : 0
     const selectedDate = selectedAt > 0 ? new Date(selectedAt) : undefined
-    return <ArkmeDetailShell title={recording.title || forward.title || tr("录音转写")} label={tr("录音片段详情")}
+    const forwardedAt = forward.createdAtMillis > 0 ? `${dateLabel(forward.createdAtMillis)} ${timeLabel(forward.createdAtMillis)}` : ''
+    return <ArkmeDetailShell title={recordingShareTitle(recording.senderName, recording.segmentCount ?? segments.length)} label={tr("录音片段详情")}
+      footer={forwardedAt ? tr("转发于 {v0}", { v0: forwardedAt }) : tr("转发时间未知")}
       subtitle={selectedDate === undefined ? '' : `${formatArkmeDate(selectedDate, arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })} ${formatArkmeTime(selectedDate, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}
       bodyRef={body} {...(onBack ? { onBack } : {})}>
       {!path.length && sourceBadge}
       {readStatus}
       <div data-arkme-forward-recording-detail>
-        {segments.map((segment, index) => {
-          const hours = Math.floor(segment.startMillis / 3_600_000)
-          const time = hours > 0 ? `${String(hours).padStart(2, '0')}:${offsetLabel(segment.startMillis % 3_600_000)}` : offsetLabel(segment.startMillis)
-          return <div key={index} data-arkme-forward-recording-segment style={{ padding: '8px 0', borderTop: index === 0 ? undefined : `0.5px solid ${arkmeTheme.borderSoft}` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, lineHeight: '22px' }}>
-              <span aria-hidden style={{ width: 12, height: 12, flex: 'none', borderRadius: '50%', background: recordingSpeakerColor(segment.speakerNumber ?? index) }} />
-              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, fontWeight: 500, letterSpacing: '.02px' }}>{segment.speakerName}</span>
-              <time style={{ marginLeft: 4, color: arkmeTheme.tertiary, fontSize: 12, letterSpacing: '.24px' }}>{time}</time>
-            </div>
-            <p style={{ margin: '6px 0 0 20px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 14, lineHeight: '22px', letterSpacing: '.28px' }}><ArkmeRichText text={segment.textContent} presentation="preview" /></p>
-          </div>
-        })}
+        <RecordingShareSegments segments={segments} />
       </div>
       {!path.length && <RecordThoughtContent item={item} />}
       {(forward.truncated || recording.truncated) && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}

@@ -3447,6 +3447,20 @@ export class ChatService {
       }
       const items = rawItems.map(raw => {
         const item = messageCopyLinkSnapshotItemFromData(raw)
+        const structured = item.structuredContent
+        if (structured?.longRecordingSegments?.length) {
+          const audio = objectValue(objectValue(objectValue(raw).structured_content).recording_audio)
+          const path = `/api/public/v1/chats/messages/copy-link/${normalizedSid}/audio`
+          const duration = structured.longRecordingSegments.reduce((sum, segment) => sum + segment.endMillis - segment.startMillis, 0)
+          const url = audio.url === path && duration > 0 && audio.duration_millis === duration
+            ? new URL(path, this.runtime.config.chatBaseUrl).href
+            : undefined
+          return {
+            ...item,
+            mediaItems: [],
+            structuredContent: { ...structured, ...(url ? { recordingAudioUrl: url } : {}) },
+          }
+        }
         if (item.displayKind !== 1 && item.templateKind !== 8 && !(item.templateKind === 5 && item.structuredContent?.structuredKind === 1)) return item
         const contentBlocks = this.media.forwardContentBlocks(listValue(objectValue(raw).media_items), session.userId, { longArticle: item.displayKind === 1 || item.templateKind === 8 })
         return { ...item, contentBlocks, ...(item.mediaItems.length > contentBlocks.length ? { mediaUnavailable: true } : {}) }
