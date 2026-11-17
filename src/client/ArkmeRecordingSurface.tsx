@@ -1066,6 +1066,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       })
       .catch(error => {
         if (controller.signal.aborted || currentDayScope.current !== dayScope || readRevision !== dayReadRevision.current) return
+        if (error instanceof RecordingViewUpdating) return
         if (dayRef.current) setDayRefreshError(errorMessage(error))
         else setDayError(errorMessage(error))
       })
@@ -1089,7 +1090,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
         let latest = dayRef.current
         if (!latest) return
         const requested = new Set<import('../types.js').ArkmeRecordingDayPart>()
-        if (awaitingCoverageSync || awaitingAsrInputMetrics || latest.transcript.processingCount > 0 || (latest.transcript.captureCoverage?.receiving ?? 0) > 0) requested.add('transcript')
+        if (pages.updating || awaitingCoverageSync || awaitingAsrInputMetrics || latest.transcript.processingCount > 0 || (latest.transcript.captureCoverage?.receiving ?? 0) > 0) requested.add('transcript')
         if (latest.summary.state === 'processing') requested.add('summary')
         if (latest.timeline.state === 'processing') requested.add('timeline')
         if (coverageProcessing || awaitingCoverageSync) requested.add('coverage')

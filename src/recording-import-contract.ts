@@ -74,6 +74,7 @@ export interface RecordingDirectorySource extends RecordingImportSource {
 }
 
 export interface RecordingImportOwnerSession {
+  hasFailedChildren?: boolean
   delivery?: import('./recording-delivery.js').RecordingDelivery
   sessionId: string
   ownership: 'self' | 'other'

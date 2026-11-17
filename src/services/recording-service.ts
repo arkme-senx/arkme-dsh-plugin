@@ -248,8 +248,10 @@ function recordingImportOwnerStatus(
   }
   if (!owner.hasFinishedUpload && owner.delivery?.coverage !== 'complete') return { status: 'waiting', statusDetail: '接收状态待确认' }
   if (task.processingCompleted) {
+    // A terminal owner may include failed parts; optional model detail failure
+    // must not erase the outcome already confirmed by the list projection.
     if (ownerProgress?.displayStatus === 'partial') return { status: 'partial', statusDetail: '部分完成' }
-    if (ownerProgress?.displayStatus === 'failed') return { status: 'failed', statusDetail: '处理失败' }
+    if (owner.hasFailedChildren || ownerProgress?.displayStatus === 'failed') return { status: 'failed', statusDetail: '处理失败' }
     if (ownerProgress?.displayStatus === 'completed') return { status: 'completed', statusDetail: '导入完成' }
     return { status: 'completed', statusDetail: '已完成' }
   }

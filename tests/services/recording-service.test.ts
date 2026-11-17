@@ -1698,7 +1698,7 @@ describe('RecordingService', () => {
     })
   })
 
-  it('keeps an owner-completed task available when optional processing details are unavailable', async () => {
+  it.each([false, true])('preserves settled outcome when optional details are unavailable (failed=%s)', async hasFailedChildren => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-completed-progress-unavailable-'))
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -1710,7 +1710,7 @@ describe('RecordingService', () => {
       fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
       startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
       createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_002_000,
-      hasFinishedUpload: true,
+      hasFinishedUpload: true, hasFailedChildren,
     }, processingCompleted: true, progress: {
       displayStatus: 'unavailable',
     } }], total: 1, hasMore: false }))
@@ -1723,7 +1723,7 @@ describe('RecordingService', () => {
       toMillis: 1_725_100_000_000, limit: 50, offset: 0,
     })
     expect(history).toEqual(expect.objectContaining({
-      items: [expect.objectContaining({ status: 'completed' })],
+      items: [expect.objectContaining({ status: hasFailedChildren ? 'failed' : 'completed' })],
     }))
     expect(history.items[0]).not.toHaveProperty('importProgress')
   })

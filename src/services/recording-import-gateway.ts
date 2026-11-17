@@ -41,13 +41,6 @@ const AUDIO_IMPORT_DUPLICATE_BATCH_SIZE = 100
 const AUDIO_IMPORT_PROGRESS_BATCH_SIZE = 100
 const AUDIO_IMPORT_OWNER_PAGE_SIZE = 100
 const AUDIO_DIRECTORY_IMPORT_SCAN_LIMIT = 10_000
-const OWNER_SCAN_TTL = 5 * 60_000
-interface OwnerScan {
-  tasks: RecordingImportOwnerTaskSnapshot[]
-  remoteOffset: number
-  exhausted: boolean
-  touchedAt: number
-}
 
 const IMPORT_PROGRESS_CODES = new Set<RecordingImportProgressCode>([
   'upload',
@@ -178,6 +171,7 @@ function ownerSession(value: unknown, viewerUserId: number): RecordingImportOwne
     createdAtMillis: nonNegativeIntegerValue(owner.create_at),
     updatedAtMillis: nonNegativeIntegerValue(owner.update_at),
     hasFinishedUpload: owner.has_finish_spk === true,
+    ...(typeof owner.has_failed_child === 'boolean' ? { hasFailedChildren: owner.has_failed_child } : {}),
     ...(delivery === undefined ? {} : { delivery }),
   }
 }
@@ -188,14 +182,6 @@ function remoteFileName(job: RecordingImportJob): string {
 }
 
 export class AudioRecordingImportGateway implements RecordingImportGateway, RecordingImportOwnerGateway {
-  private readonly ownerScans = new Map<string, OwnerScan>()
-  private ownerScanRevision = 0
-
-  private invalidateOwnerScans() {
-    this.ownerScanRevision++
-    this.ownerScans.clear()
-  }
-
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly uploadFile: typeof uploadRecordingFile = uploadRecordingFile,
@@ -316,93 +302,79 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     if (limit === 0) return { tasks: [], hasMore: false }
     input.signal?.throwIfAborted()
     await this.requireViewerSession(input.viewerUserId)
-    const now = Date.now()
-    for (const [key, scan] of this.ownerScans) {
-      if (now - scan.touchedAt > OWNER_SCAN_TTL) this.ownerScans.delete(key)
+    // Filter business source in Audio before pagination. Never retain or read
+    // the prefix before the requested page, including for Tools/SDK callers.
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(limit) || limit > 500) {
+      throw new RecordingImportContractError('recording-import-page-invalid', '录音分页范围无效')
     }
-    const key = `${input.viewerUserId}:${input.scope}:${input.toMillis}`
-    // Offset zero is an explicit refresh. Continuations reuse the raw-server
-    // cursor, including rows filtered out of the uploaded-file projection.
-    const cached = offset > 0 ? this.ownerScans.get(key) : undefined
-    const revision = this.ownerScanRevision
-    const scoped = cached ? [...cached.tasks] : []
-    const targetCount = offset + limit + 1
-    let remoteOffset = cached?.remoteOffset ?? 0
-    let exhausted = cached?.exhausted ?? false
-    while (!exhausted && scoped.length < targetCount) {
-      const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
-        input.viewerUserId,
-        '/api/v1/audio/get-session-ls',
-        {
-          to_stamp: Math.trunc(input.toMillis),
-          limit: AUDIO_IMPORT_OWNER_PAGE_SIZE,
-          offset: remoteOffset,
-          query_new: false,
-          task_scope: input.scope,
-        },
-        input.signal,
-      )
-      const rawSessions = Array.isArray(data.session_ls) ? data.session_ls : []
-      const ownerSessions = rawSessions
-        .map(raw => ({ raw: objectValue(raw), session: ownerSession(raw, input.viewerUserId) }))
-        .filter((owner): owner is { raw: Record<string, unknown>; session: RecordingImportOwnerSession } =>
-          owner.session !== undefined)
-      const ownerSnapshots = ownerSessions.map(({ raw, session: owner }) => {
-        if (typeof raw.has_done_child !== 'boolean') {
-          throw new RecordingImportContractError(
-            'recording-import-owner-completion-unavailable',
-            'Audio 暂未返回录音处理终态，请稍后重试',
-            true,
-          )
-        }
-        const processingCompleted = raw.has_done_child
-        if ((input.scope === 'completed') !== processingCompleted) {
-          throw new RecordingImportContractError(
-            'recording-import-owner-scope-invalid',
-            'Audio 返回的录音任务范围无效，请稍后重试',
-            true,
-          )
-        }
-        return { session: owner, processingCompleted }
-      })
-      const sessionsWithProgress = ownerSnapshots
-      let progress = new Map<string, RecordingImportOwnerProgress>()
-      if (sessionsWithProgress.length > 0) {
-        try {
-          progress = await this.loadOwnerProgressForSession(
-            input.viewerUserId,
-            sessionsWithProgress.map(task => task.session.sessionId),
-            input.signal,
-          )
-        } catch (error) {
-          if (input.signal?.aborted === true || this.isAccountMismatch(error)) throw error
-          /* Processing details are optional enrichment; owner task scope remains authoritative. */
-        }
+    const data = await this.authenticatedOwnerPost<Record<string, unknown>>(
+      input.viewerUserId,
+      '/api/v1/audio/get-session-ls',
+      {
+        to_stamp: Math.trunc(input.toMillis),
+        limit,
+        offset,
+        query_new: false,
+        task_scope: input.scope,
+        source: 2,
+      },
+      input.signal,
+    )
+    const rawSessions = Array.isArray(data.session_ls) ? data.session_ls : []
+    const serverTotal = optionalIntegerValue(data.total)
+    const total = serverTotal !== undefined && serverTotal >= 0 ? serverTotal : rawSessions.length < limit ? offset + rawSessions.length : undefined
+    if (rawSessions.length > limit || rawSessions.some(raw => ownerSession(raw, input.viewerUserId) === undefined)) {
+      throw new RecordingImportContractError('recording-import-owner-scope-invalid', 'Audio 返回的录音任务范围无效，请稍后重试', true)
+    }
+    const ownerSessions = rawSessions
+      .map(raw => ({ raw: objectValue(raw), session: ownerSession(raw, input.viewerUserId) }))
+      .filter((owner): owner is { raw: Record<string, unknown>; session: RecordingImportOwnerSession } =>
+        owner.session !== undefined)
+    const ownerSnapshots = ownerSessions.map(({ raw, session: owner }) => {
+      if (typeof raw.has_done_child !== 'boolean') {
+        throw new RecordingImportContractError(
+          'recording-import-owner-completion-unavailable',
+          'Audio 暂未返回录音处理终态，请稍后重试',
+          true,
+        )
       }
-      for (const task of ownerSnapshots) {
-        const ownerProgress = progress.get(task.session.sessionId)
-        scoped.push({
-          ...task,
-          ...(ownerProgress === undefined ? {} : { progress: ownerProgress }),
-        })
+      const processingCompleted = raw.has_done_child
+      if ((input.scope === 'completed') !== processingCompleted) {
+        throw new RecordingImportContractError(
+          'recording-import-owner-scope-invalid',
+          'Audio 返回的录音任务范围无效，请稍后重试',
+          true,
+        )
       }
-      remoteOffset += rawSessions.length
-      if (rawSessions.length < AUDIO_IMPORT_OWNER_PAGE_SIZE) {
-        exhausted = true
-        break
+      return { session: owner, processingCompleted }
+    })
+    const sessionsWithProgress = ownerSnapshots
+    let progress = new Map<string, RecordingImportOwnerProgress>()
+    if (sessionsWithProgress.length > 0) {
+      try {
+        progress = await this.loadOwnerProgressForSession(
+          input.viewerUserId,
+          sessionsWithProgress.map(task => task.session.sessionId),
+          input.signal,
+        )
+      } catch (error) {
+        if (input.signal?.aborted === true || this.isAccountMismatch(error)) throw error
+        /* Processing details are optional enrichment; owner task scope remains authoritative. */
       }
     }
+    const tasks = sessionsWithProgress.map(task => {
+      const ownerProgress = progress.get(task.session.sessionId)
+      return {
+        ...task,
+        ...(ownerProgress === undefined ? {} : { progress: ownerProgress }),
+      }
+    })
     input.signal?.throwIfAborted()
     await this.requireViewerSession(input.viewerUserId)
-    if (revision === this.ownerScanRevision) {
-      this.ownerScans.set(key, { tasks: scoped, remoteOffset, exhausted, touchedAt: Date.now() })
-      // Keep only a few live scans; these are transient, account-scoped reads.
-      while (this.ownerScans.size > 8) this.ownerScans.delete(this.ownerScans.keys().next().value!)
-    }
     return {
-      tasks: scoped.slice(offset, offset + limit),
-      ...(exhausted ? { total: scoped.length } : {}),
-      hasMore: scoped.length > offset + limit || !exhausted,
+      tasks,
+      ...(total === undefined ? {} : { total }),
+      hasMore: tasks.length === limit && (total === undefined || offset + tasks.length < total),
     }
   }
 
@@ -705,16 +677,13 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
     signal?: AbortSignal,
     options: ArkmeRemoteRequestOptions = {},
   ): Promise<T> {
-    if (options.lane === 'write') this.invalidateOwnerScans()
-    try { return await this.runtime.authenticatedAudioPost<T>(
+    return await this.runtime.authenticatedAudioPost<T>(
       path,
       body,
       await this.requireViewerSession(viewerUserId),
       signal,
       options,
-    ) } finally {
-      if (options.lane === 'write') this.invalidateOwnerScans()
-    }
+    )
   }
 
   private isAccountMismatch(error: unknown): boolean {

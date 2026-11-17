@@ -34,6 +34,11 @@ const server = createServer({ key: await readFile(key), cert: await readFile(cer
     const chunks=[]; for await (const chunk of req) chunks.push(chunk)
     const body=chunks.length?JSON.parse(Buffer.concat(chunks).toString()):{}
     const path=new URL(req.url,'https://localhost').pathname; calls.push({path,body})
+    if (path.endsWith('/get-session-deal-status') && body.session_ids?.includes(fixture.failed_session_id)) {
+      // Only the optional detail endpoint is unavailable; the real list still
+      // owns the terminal failure fact and must not turn it into success.
+      res.writeHead(200, {'content-type':'application/json'}); res.end(JSON.stringify({code:503,message:'isolated optional detail outage'})); return
+    }
     if (['/get-session-ls', '/get-session-by-id', '/modify-session-start', '/get-session-deal-status', '/files/storage'].some(suffix => path.endsWith(suffix))) {
       const upstream = await fetch(fixture.url + path, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify(body) })
       res.writeHead(upstream.status, {'content-type':'application/json'}); res.end(await upstream.text()); return
@@ -101,9 +106,15 @@ try {
   assert.equal(moved.startAtMillis,editedStart)
   assert.equal(moved.delivery.captureStartAt,complete.delivery.captureStartAt)
   assert.equal(moved.delivery.displayEndAt,complete.delivery.displayEndAt+120000)
+  const completedPage=await sdk.recordingDeliveryPage({...query,scope:'completed'})
+  assert.equal(completedPage.items.length,1)
+  assert.equal(completedPage.items[0].fileName,'解码失败.jlc3')
+  assert.equal(completedPage.items[0].status,'failed')
+  assert.equal(completedPage.items[0].delivery.audioDurationMs,null)
+  assert.equal(completedPage.items[0].delivery.durationFinal,false)
   sdk.dispose();await assert.rejects(()=>sdk.recordingDeliveryPage(query))
   assert.equal(calls.filter(call=>/strategy-comparison\/start|del-session|uploads\//.test(call.path)).length,0)
-  await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',artifact:resolve(artifact),profile,realSession:true,publicSdk:true,browser:true,realAudioMongo:true,receiptFacts:result.items.map(item=>item.delivery)},null,2))
+  await writeFile(join(capture,'acceptance.json'),JSON.stringify({officialRuntime:'0.2.1-rc.2',artifact:resolve(artifact),profile,realSession:true,publicSdk:true,browser:true,realAudioMongo:true,failedWithoutModelDetails:completedPage.items[0].status==='failed',receiptFacts:result.items.map(item=>item.delivery)},null,2))
   await page.evaluate(()=>fetch('/arkme-self/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({operation:'auth.logout',params:{}})}))
   console.log('DELIVERY_INSTALLED_ACCEPTANCE_OK',capture)
 } finally {

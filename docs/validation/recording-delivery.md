@@ -1,3 +1,5 @@
+本文件保留上一轮交付记录；本轮基线整合、真实缺陷修复与最新门禁以 [最终审查记录](recording-delivery-final-review-20261116.md) 为准。
+
 # 录音交付、接收事实与展示优化
 
 本轮在 PC 插件 `origin/dev` cbddca489f09e84221c8cf417402b4e74b49cf2c 上开发。分支 `codex/c20261116-recording-delivery`。LC3 编解码与模型配方不在本轮变更范围。
