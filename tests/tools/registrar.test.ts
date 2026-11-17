@@ -528,6 +528,7 @@ describe('registerArkmeTools', () => {
       'arkme_text_ai_video',
       'arkme_files_list', 'arkme_files_search', 'arkme_file_prepare', 'arkme_files_send', 'arkme_file_task', 'arkme_file_receive',
       'arkme_directory_list',
+      'arkme_recording_delete_prepare',
     ])
     const assembly = await ctx.systemPrompt.assemble()
     expect(assembly.sections.find(section => section.name === 'tool:arkme')?.text)

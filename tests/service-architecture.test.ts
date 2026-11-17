@@ -14,6 +14,7 @@ const expectedPublicMethods = [
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
   'recordingFileStorage', 'recordingDeliveryPage', 'recordingAnalysis',
+  'recordingDeletionSettings', 'recordingDeletionPlan', 'recordingDeletionStatus', // Built-in settings and local DSH read-only preparation and receipt.
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'sourceMessageThoughts', // Signed-message reader shared by public SDK and Tools.

@@ -1,4 +1,5 @@
 import { GameService } from './services/game-service.js'
+import { RecordingDeletionConfirmations } from './recording-deletion-confirmation.js'
 import { DeviceRegistrationService } from './services/device-registration-service.js'
 import { LoginDevicesService } from './services/login-devices-service.js'
 import type { LoginDeviceRequest } from './login-devices-contract.js'
@@ -518,6 +519,8 @@ export class ArkmeService {
   private readonly explore: ExploreService
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
+  /** @internal Built-in loopback confirmation page. */
+  readonly recordingDeletionConfirmations: RecordingDeletionConfirmations
   private readonly profile: ProfileService
   private readonly loginDeviceService: LoginDevicesService
   private readonly deviceLock: DeviceLockService
@@ -1078,6 +1081,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       profile: this.profile, media: this.media, userCandidates: this.contactDirectory,
       forwardGateway: new OwnerRecordingForwardGateway(this.runtime, this.source, this.realtime, this.chat),
     })
+    this.recordingDeletionConfirmations = new RecordingDeletionConfirmations(this.recording, config.routePath)
     this.recordingEntitiesOwner = new RecordingEntityService(this.runtime, this.recording)
     this.personalKeywords = new PersonalKeywordService(this.runtime)
     this.statistics = new StatisticsService(this.runtime, this.privacy)
@@ -1196,6 +1200,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   private clearAccountState(userIds: readonly number[]): void {
+    this.recordingDeletionConfirmations.invalidate()
     this.recordExport.dispose(); this.directoryExport.dispose()
     this.realtimeDictation?.dispose()
     this.dictationOwner?.dispose()
@@ -1696,6 +1701,7 @@ recordingAnalysisV1: true,
   async callShareViewers(callRef: string, cursor = '', signal?: AbortSignal) { return await this.callHistory.shareViewers(callRef, cursor, signal) }
   async retryCallSummary(callRef: string, signal?: AbortSignal): Promise<ArkmeCallSummaryRetryResult> { return await this.callHistory.retryCallSummary(callRef, signal) }
   dispose(): void {
+    this.recordingDeletionConfirmations.invalidate()
     this.worldSuggestionsOwner.dispose()
     this.recordExport.dispose(); this.directoryExport.dispose()
     this.realtimeDictation?.dispose()
@@ -1816,6 +1822,17 @@ recordingAnalysisV1: true,
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
   recordingDeliveryPage(input: import('./recording-delivery.js').RecordingDeliveryQuery, signal?: AbortSignal) { return this.recording.recordingDeliveryPage(input, signal) }
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
+  /** @internal Built-in loopback settings only. */
+  async recordingDeletionSettings(scope: string, change?: { enabled?: boolean; timeZone: string }, signal?: AbortSignal) {
+    const { permission } = await this.recording.recordingDeletionPermission(scope, change, signal)
+    return { enabled: permission !== undefined, timeZone: permission?.timeZone }
+  }
+  /** @internal Local DSH tool preparation. */
+  recordingDeletionPlan(input: import('./recording-deletion-contract.js').RecordingDeletionRequest, signal?: AbortSignal) {
+    return this.recordingDeletionConfirmations.prepare(input, signal)
+  }
+  /** @internal Local DSH tool receipt. */
+  recordingDeletionStatus(planRef: string, signal?: AbortSignal) { return this.recordingDeletionConfirmations.status(planRef, signal) }
   /** UI, Tools and SDK share the account-scoped Audio candidate owner. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
     return new RecordingVoiceTriggerService(this.runtime, (query, signal) => this.recording.recordingVoiceSourceItems(query, signal)).request(action, input, signal)

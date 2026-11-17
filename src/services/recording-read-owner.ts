@@ -348,12 +348,12 @@ export class RecordingReadOwner {
   }
 
   /** Old servers expose metrics on a small text page. Never follow its cursor. */
-  async calendarDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal) {
-    return await this.readDayMetrics(window, session, signal, true)
+  async calendarDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal, facts?: readonly RecordingOwnerFact[]) {
+    return await this.readDayMetrics(window, session, signal, true, facts)
   }
 
-  private async readDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal: AbortSignal | undefined, allowLegacy: boolean) {
-    const facts = await this.recordings(window, session, signal)
+  private async readDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal: AbortSignal | undefined, allowLegacy: boolean, readFacts?: readonly RecordingOwnerFact[]) {
+    const facts = readFacts ?? await this.recordings(window, session, signal)
     // Older owners keep supplying metrics on the first text page. Do not add
     // another body scan solely to make the loading indicator disappear.
     if (!this.metadataBatch && !allowLegacy) return undefined
