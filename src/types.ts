@@ -655,6 +655,8 @@ export interface ArkmeBotSummary {
   conversationListActivityAtMillis?: number
   /** Safe preview of the latest private-chat message. */
   latestMessagePreview?: string
+  /** Explicit owner denial clears a previously cached preview immediately. */
+  conversationAccessDenied?: true
   /** Unread count projected from the canonical Chat conversation, when Chat owns the Bot conversation. */
   unreadCount?: number
   /** Attention count after applying the canonical Chat notification policy. */
@@ -4325,6 +4327,7 @@ export type ArkmeChatClientEvent = {
   revision: number
   userId: number
   taskRef: string
+  task?: import('./file-transfer-contract.js').ArkmeFileSendTask
 } | {
   type: 'message-sync-progress'
   revision: number

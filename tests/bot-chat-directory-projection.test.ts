@@ -20,6 +20,12 @@ const matchingSource: ArkmeSourceItem = {
 }
 
 describe('Bot Chat directory projection', () => {
+  it('clears a cached preview on explicit owner denial even when its old activity is newer', () => {
+    const previous = { ...subjectBot, latestMessageAtMillis: 100, latestMessagePreview: 'private body' }
+    const denied = { ...subjectBot, latestMessagePreview: '', conversationAccessDenied: true as const, directChatAvailable: false }
+    expect(mergeBotDirectorySnapshots([previous], [denied])[0]?.latestMessagePreview).toBe('')
+    expect(mergeBotDirectoryActivity([previous], [denied])[0]).toMatchObject({ latestMessagePreview: '', directChatAvailable: false })
+  })
   it('removes only the generic source row owned by the same Chat Bot and keeps the Bot presentation identity', () => {
     const unrelated = { ...matchingSource, sourceRef: 'unrelated', sourceKey: 'other-key' }
     const projected = projectBotChatDirectory([matchingSource, unrelated], [chatBot, subjectBot])

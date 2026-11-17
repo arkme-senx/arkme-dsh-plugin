@@ -621,6 +621,8 @@ export class BotService {
       ...(createdAtMillis === 0 ? {} : { createdAtMillis }),
       ...(conversationListActivityAtMillis === 0 ? {} : { conversationListActivityAtMillis }),
       ...(latestMessageAtMillis === 0 ? {} : { latestMessageAtMillis }),
+      ...(typeof raw.latest_message_preview === 'string' ? { latestMessagePreview: raw.latest_message_preview } : {}),
+      ...(raw.conversation_access_denied === true ? { conversationAccessDenied: true as const } : {}),
       ...this.botAvatarProjection(raw, userId, botId),
     }
   }

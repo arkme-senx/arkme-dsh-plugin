@@ -1,4 +1,3 @@
-import { observeClientSendPaint } from '../message-send-timing.js'
 import { ArkmeReadReceiptPanel, ArkmeReadReceiptMember, readReceiptStyles as styles } from './ArkmeReadReceiptPanel.js'
 export { arkmeMessageReadReceiptPanelLayout } from './ArkmeReadReceiptPanel.js'
 import { tr, useArkmeLocale } from './locale.js'
@@ -200,8 +199,6 @@ export function ArkmeMessageReadReceiptLine(props: {
 }) {
   useArkmeLocale()
   const elementRef = useRef<HTMLDivElement>(null)
-  const sendLoading = !!props.sendingLabel || props.hideReceipt === true || props.item.status === 0
-  useEffect(() => observeClientSendPaint(props.item.itemUid, sendLoading, elementRef.current), [props.item.itemUid, sendLoading])
   const line = <div
     ref={elementRef}
     data-arkme-message-content-line={props.item.itemUid}

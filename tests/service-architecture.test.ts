@@ -229,7 +229,7 @@ const expectedServiceFiles = [
   'team-history-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-member-addition.ts', 'team-entry-preference-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
-  'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',
+  'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts', 'ordered-chat-send.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {
