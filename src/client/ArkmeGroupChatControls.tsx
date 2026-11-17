@@ -1,3 +1,4 @@
+import { arkmeDayKey, arkmeWallClockIso } from './display-time-zone.js'
 import {useGroupTeamMentions} from './use-group-team-mentions.js'
 import {GroupTeamsSection} from './GroupTeamsSection.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
@@ -502,10 +503,10 @@ function qrDataUrl(content: string): string {
 
 function inviteExpireText(expireAtMillis: number): string {
   if (expireAtMillis <= 0) return '二维码有效期24小时'
-  const date = new Date(expireAtMillis)
-  const pad = (value: number) => String(value).padStart(2, '0')
-  const year = date.getFullYear() === new Date().getFullYear() ? '' : `${String(date.getFullYear())}-`
-  return `二维码有效期至 ${year}${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  if (!Number.isFinite(new Date(expireAtMillis).getTime())) return '二维码有效期24小时'
+  const wall = arkmeWallClockIso(expireAtMillis)
+  const year = wall.slice(0, 4) === arkmeDayKey(Date.now()).slice(0, 4) ? '' : wall.slice(0, 5)
+  return `二维码有效期至 ${year}${wall.slice(5, 16).replace('T', ' ')}`
 }
 
 function InviteActionIcon({ kind }: { kind: 'copy' | 'save' | 'add' }) {

@@ -1,5 +1,6 @@
 import { loginDevicesEnglish } from './locales/login-devices-en.js'
 import { useSyncExternalStore } from 'react'
+import { useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { arkmeEnglish } from './locales/en.js'
 import { mobileEnglish } from './locales/mobile-en.js'
 import { actionEnglish } from './locales/actions-en.js'
@@ -39,6 +40,9 @@ export function connectArkmeLocale(source: LocaleSource): () => void {
 }
 
 export function useArkmeLocale(): ArkmeLocale {
+  // Localized surfaces render both translated text and dates. Repaint them
+  // when either presentation preference changes.
+  useArkmeEffectiveTimeZone()
   return useSyncExternalStore(subscribe, getArkmeLocale, getArkmeLocale)
 }
 

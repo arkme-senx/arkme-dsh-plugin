@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../display-time-zone.js'
 import { PeopleSurface } from './PeopleSurface.js'
 import { ArkmeAutomaticAiSettings } from '../ArkmeAutomaticAiSettings.js'
 import { ExploreSettingsDialog } from './ExploreSettingsDialog.js'
@@ -21,7 +22,7 @@ import { isRelationView, relationViewCache } from './relation-view-cache.js'
 import { exploreIcons } from './ExploreNavigation.js'
 
 const message=(e:unknown)=>e instanceof Error?e.message:tr('加载失败，请重试')
-const date=(value:number)=>value>0?new Intl.DateTimeFormat(arkmeIntlLocale(),{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(value):''
+const date=(value:number)=>value>0?formatArkmeDateTime(value, arkmeIntlLocale(), {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):''
 interface ExploreViewMemory { filter:string; query:string; page:ExplorePage|undefined; selected:ExploreItem|undefined; listTop:number; detailTop:number; savedAt:number }
 const remembered=new Map<string,ExploreViewMemory>()
 let memoryScope=''

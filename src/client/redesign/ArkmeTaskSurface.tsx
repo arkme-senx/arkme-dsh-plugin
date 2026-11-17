@@ -1,3 +1,4 @@
+import { arkmeDayDelta, formatArkmeTime, formatArkmeDate } from '../display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { useRef, useState, type FormEvent } from 'react'
 import { ArrowUp } from '@phosphor-icons/react/ArrowUp'
@@ -17,14 +18,12 @@ function taskTime(updatedAt: number): string {
   if (delta < 60_000) return '刚刚'
   if (delta < 3_600_000) return tr("{v0} 分钟前", { v0: String(Math.max(1, Math.floor(delta / 60_000))) })
   const date = new Date(updatedAt)
-  const today = new Date()
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+  const daysAgo = -arkmeDayDelta(date)
+  if (daysAgo === 0) {
+    return formatArkmeTime(date, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
   }
-  const yesterday = new Date(today)
-  yesterday.setDate(today.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) return '昨天'
-  return date.toLocaleDateString(arkmeIntlLocale(), { month: 'numeric', day: 'numeric' })
+  if (daysAgo === 1) return tr('昨天')
+  return formatArkmeDate(date, arkmeIntlLocale(), { month: 'numeric', day: 'numeric' })
 }
 
 export function ArkmeTaskDirectory({

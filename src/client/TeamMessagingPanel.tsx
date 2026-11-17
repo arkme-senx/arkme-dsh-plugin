@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import {ArkmeMentionSuggestions} from './ArkmeMentionSuggestions.js'
 import {useMentionSuggestions} from './use-mention-suggestions.js'
 import {useTeamMentionCandidates} from './use-team-mention-candidates.js'
@@ -1583,7 +1584,7 @@ export function TeamChannelSettings({ teamRef, accountKey, onChanged }: { teamRe
         <summary><span>{tr('加入申请')}</span><small>{pendingCount > 0 ? tr('{v0} 条待处理', { v0: pendingCount }) : tr('没有待处理申请')}</small></summary>
         <div className="team-setting-disclosure-body">
           {applications?.items.map(a => <div className="team-member-row" key={a.ref}>
-            <span><strong>{a.name}</strong><small>{new Date(a.requestedAt).toLocaleString()}</small></span>
+            <span><strong>{a.name}</strong><small>{formatArkmeDateTime(a.requestedAt)}</small></span>
             {a.state === 'pending' && <div className="team-application-actions"><button disabled={busy} onClick={() => { void mutate(() => callArkme('team.app.application.decide', { applicationRef: a.ref, approve: false }, ctrl.current.signal)) }}>{tr('拒绝')}</button>
               <button className="arkme-team-action" disabled={busy} onClick={() => { setConfirm({ label: tr('同意 {name} 加入后，对方可查看全部团队对话历史并代表团队回复。确认同意？', { name: a.name }), run: () => callArkme('team.app.application.decide', { applicationRef: a.ref, approve: true }, ctrl.current.signal) }) }}>{tr('同意')}</button></div>}
           </div>)}

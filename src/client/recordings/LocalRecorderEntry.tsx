@@ -1,3 +1,4 @@
+import { formatArkmeDateTime, formatArkmeTime } from '../display-time-zone.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { callArkme } from '../api.js'
 import { arkmeTheme } from '../arkme-theme.js'
@@ -12,7 +13,7 @@ const bytes = (value: number) => value < 1000000 ? `${(value / 1000).toFixed(1)}
 const duration = (millis: number) => `${Math.floor(millis / 3600000).toString().padStart(2, '0')}:${Math.floor(millis / 60000 % 60).toString().padStart(2, '0')}:${Math.floor(millis / 1000 % 60).toString().padStart(2, '0')}`
 const elapsed = (millis: number) => millis < 1000 ? tr('不足 1 秒') : `${Math.floor(millis / 1000)} ${tr('秒')}`
 const localDate = (stamp: number | null) => stamp === null ? '' : new Date(stamp - new Date(stamp).getTimezoneOffset() * 60000).toISOString().slice(0, 23)
-const date = (stamp: number | null, full = false) => stamp === null ? tr('时间待核对') : new Date(stamp).toLocaleString(undefined, { year: 'numeric', month: full ? 'long' : '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+const date = (stamp: number | null, full = false) => stamp === null ? tr('时间待核对') : formatArkmeDateTime(stamp, undefined, { year: 'numeric', month: full ? 'long' : '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
 const voltage = (value: number | null | undefined) => value == null ? tr('未知') : `${(value / 1000).toFixed(3)} V`
 const firmware = (value: number | null | undefined) => value == null ? tr('未知') : `V${(value >>> 16) & 255}.${value >>> 8 & 255}.${value & 255}`
 const stopReason = (row: LocalRecorderRecording, syncing: boolean, scanComplete: boolean) => {
@@ -174,7 +175,7 @@ export function LocalRecorderPanel({ mediaPath, onClose, onShowImports }: { medi
             <div className="arkme-rec-recording-title"><h2>{date(recording.startAtMillis, true)}</h2><p>{tr('录音会话')} #{recording.sessionId}{!device?.connected && <span> · {tr('离线缓存')}</span>}</p></div>
             <div className="arkme-rec-metrics"><Metric title="时长" value={duration(recording.durationMillis)} icon="clock" /><Metric title="音频数据量" value={info ? bytes(info.audioBytes) : '—'} icon="drive" /><Metric title="结束原因" value={stopReason(recording, Boolean(syncing), device?.job?.state === 'completed')} icon="alert" /></div>
             <section className="arkme-rec-audio-section" aria-label={tr('音频文件')}><h3>{tr('音频文件')} · 1 {tr('个')}</h3><div className="arkme-rec-audio-card">
-              <div className="arkme-rec-file-heading"><span className="arkme-rec-file-icon"><Glyph name="wave" size={27} /></span><div><strong>{tr('完整录音文件')}</strong><p>{date(recording.startAtMillis)}{recording.complete ? ' – ' : ` · ${tr('已缓存至')} `}{endTime === null ? tr('时间待核对') : new Date(endTime).toLocaleTimeString(undefined, { hourCycle: 'h23' })}</p><small>{tr('时长')} {duration(playMillis)} · {tr(prepared?.recordingId === recording.id ? (recording.info && prepared.audio.durationMillis < recording.info.cachedDurationMillis ? '有新增音频，播放时更新' : '音频已就绪') : recording.complete ? '已缓存，点击播放准备音频' : '已缓存部分，可先试听')}</small></div>
+              <div className="arkme-rec-file-heading"><span className="arkme-rec-file-icon"><Glyph name="wave" size={27} /></span><div><strong>{tr('完整录音文件')}</strong><p>{date(recording.startAtMillis)}{recording.complete ? ' – ' : ` · ${tr('已缓存至')} `}{endTime === null ? tr('时间待核对') : formatArkmeTime(endTime, undefined, { hourCycle: 'h23' })}</p><small>{tr('时长')} {duration(playMillis)} · {tr(prepared?.recordingId === recording.id ? (recording.info && prepared.audio.durationMillis < recording.info.cachedDurationMillis ? '有新增音频，播放时更新' : '音频已就绪') : recording.complete ? '已缓存，点击播放准备音频' : '已缓存部分，可先试听')}</small></div>
                 <button type="button" className="arkme-rec-button arkme-rec-primary" disabled={Boolean(pending)} onClick={play}>{tr(pending === 'play' ? '正在准备音频…' : playing ? '暂停' : '播放')}</button></div>
               {prepared?.recordingId === recording.id && <audio ref={audio} preload="metadata" src={mediaUrl(prepared.audio.ref)} onTimeUpdate={() => setPosition(audio.current?.currentTime ?? 0)} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)} onError={() => setError('本地音频暂不可用，请重新准备后重试')} />}
               <div className="arkme-rec-player"><button type="button" className="arkme-rec-play-toggle" aria-label={tr(playing ? '暂停录音' : '播放录音')} disabled={Boolean(pending)} onClick={play}><Glyph name={playing ? 'pause' : 'play'} size={17} /></button>

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../display-time-zone.js'
 import { ArkmeCallDetailDrawer } from '../ArkmeCallDetailDrawer.js'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { PEOPLE_SOURCES, PEOPLE_SOURCE_LABELS, personMatches, type PersonFacet, type UnifiedPerson } from '../../people-contract.js'
@@ -15,7 +16,7 @@ import { tr, arkmeIntlLocale } from '../locale.js'
 import { isPeopleView, peopleViewCache } from './people-view-cache.js'
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : tr('读取失败，请重试')
-const date = (value: number) => value > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : ''
+const date = (value: number) => value > 0 ? formatArkmeDateTime(value, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : ''
 
 export function PeopleLoading({ reads, onRetry }: { reads: ReturnType<typeof usePeopleDirectory>['reads']; onRetry(): void }) {
   return <div className="people-loading">

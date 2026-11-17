@@ -1,3 +1,4 @@
+import { useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ArkmeExportSelection, ArkmeRangeExportPreview } from '../data-management.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -6,8 +7,9 @@ import { recordExportDateError, type RecordExportDates, type RecordExportRangeKi
 /** Display remembered counts while Host validates the selection and directory.
  * Only the current Host response authorizes export; the Host owns plan reuse. */
 export function useRecordExportRange(scope: string, supported: boolean, mode: RecordExportRangeKind, dates: RecordExportDates, includeAttachments: boolean, order: 1 | 2, destinationRef?:string) {
-  const selection = useMemo<ArkmeExportSelection>(() => ({ mode, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', includeAttachments,
-    ...(mode === 'dates' ? { startDate: dates.start, endDate: dates.end } : {}) }), [mode, dates.start, dates.end, includeAttachments])
+  const timeZone = useArkmeEffectiveTimeZone()
+  const selection = useMemo<ArkmeExportSelection>(() => ({ mode, timeZone, includeAttachments,
+    ...(mode === 'dates' ? { startDate: dates.start, endDate: dates.end } : {}) }), [mode, dates.start, dates.end, includeAttachments, timeZone])
   const [revision, setRevision] = useState(0)
   const refreshNext = useRef(false)
   const displayed = useRef(new Map<string, ArkmeRangeExportPreview>())

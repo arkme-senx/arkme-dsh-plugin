@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -49,7 +50,7 @@ function epochMillis(value: number): number { return Number.isFinite(value) && v
 function sentAtLabel(value: number, explicitMillis = false): string {
   const timestamp = explicitMillis ? (Number.isFinite(value) && value > 0 ? value : 0) : epochMillis(value)
   if (timestamp === 0) return tr("未记录")
-  return new Date(timestamp).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  return formatArkmeDateTime(timestamp, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 export function arkmeMessageSnapshotDurationLabel(value: number): string {
   const seconds = Math.max(0, Math.floor(value / 1000))

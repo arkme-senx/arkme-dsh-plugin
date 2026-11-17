@@ -1,3 +1,4 @@
+import { arkmeDayKey, formatArkmeDate, formatArkmeTime } from './display-time-zone.js'
 import { arkmeIntlLocale } from './locale.js'
 import type { ArkmeSelfRecordItem } from '../types.js'
 
@@ -19,20 +20,19 @@ export function mergeRecordPages(
 
 export function recordDayKey(millis: number): string {
   if (millis <= 0) return 'unknown'
-  const date = new Date(millis)
-  return `${String(date.getFullYear())}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  return arkmeDayKey(millis)
 }
 
 export function recordDayLabel(millis: number): string {
   if (millis <= 0) return '时间未知'
-  return new Date(millis).toLocaleDateString(arkmeIntlLocale(), {
+  return formatArkmeDate(millis, arkmeIntlLocale(), {
     year: 'numeric', month: '2-digit', day: '2-digit',
   })
 }
 
 export function recordTimeLabel(millis: number): string {
   if (millis <= 0) return ''
-  return new Date(millis).toLocaleTimeString(arkmeIntlLocale(), {
+  return formatArkmeTime(millis, arkmeIntlLocale(), {
     hour: '2-digit', minute: '2-digit', hour12: false,
   })
 }

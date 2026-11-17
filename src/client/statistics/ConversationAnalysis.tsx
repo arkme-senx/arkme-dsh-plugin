@@ -1,3 +1,4 @@
+import { arkmeDayKey, useArkmeEffectiveTimeZone } from '../display-time-zone.js'
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar'
@@ -62,8 +63,8 @@ export function ConversationAnalysisPanel({ source, accountScope, refreshRevisio
 }) {
   useArkmeLocale()
   const [sender, setSender] = useState('all'), [person, setPerson] = useState<ConversationWordParticipant>(), [peopleOpen, setPeopleOpen] = useState(false)
-  const [range, setRange] = useState<'all' | 'month' | 'custom'>('all'), [month, setMonth] = useState(() => dateKey(new Date()).slice(0, 7))
-  const [dates, setDates] = useState({ from: dateKey(new Date()), to: dateKey(new Date()) }), [applied, setApplied] = useState(dates), [rangeError, setRangeError] = useState('')
+  const [range, setRange] = useState<'all' | 'month' | 'custom'>('all'), [month, setMonth] = useState(() => arkmeDayKey(Date.now()).slice(0, 7))
+  const [dates, setDates] = useState({ from: arkmeDayKey(Date.now()), to: arkmeDayKey(Date.now()) }), [applied, setApplied] = useState(dates), [rangeError, setRangeError] = useState('')
   const [supported, setSupported] = useState(false), [tab, setTab] = useState<'words' | 'activity'>('words')
   const bounds = useMemo(() => {
     if (range === 'all') return { fromDate: null, toDate: null }
@@ -71,7 +72,8 @@ export function ConversationAnalysisPanel({ source, accountScope, refreshRevisio
     const [year, m] = month.split('-').map(Number)
     return { fromDate: `${month}-01`, toDate: dateKey(new Date(year!, m!, 0)) }
   }, [range, month, applied])
-  const query: ConversationWordsQuery = { accountScope, sourceRef: source.sourceRef, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, ...bounds, sender }
+  const timezone = useArkmeEffectiveTimeZone()
+  const query: ConversationWordsQuery = { accountScope, sourceRef: source.sourceRef, timezone, ...bounds, sender }
   const queryKey = JSON.stringify(query)
   const choose = (p: ConversationWordParticipant | undefined) => { setPerson(p); setSender(p?.isSelf ? 'self' : p?.ref ?? 'all'); setPeopleOpen(false) }
   return <><style>{conversationAnalysisStyles}</style><ArkmeDetailShell title={tr('对话分析')} subtitle={source.displayName} label={tr('对话分析面板')} className="conversation-words" onClose={onClose}
@@ -84,10 +86,10 @@ export function ConversationAnalysisPanel({ source, accountScope, refreshRevisio
       {([['words', '词频'], ['activity', '活跃时间']] as const).map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} aria-pressed={tab === value} onClick={() => { if (value !== tab) { setTab(value); setPeopleOpen(false); setSupported(false) } }}>{tr(label)}</button>)}
     </div>
     <div className="cw-controls"><label>{tr('时间范围')}<select aria-label={tr('分析时间范围')} value={range} onChange={e => { setRange(e.target.value as typeof range); setRangeError('') }}><option value="all">{tr('全部时间')}</option><option value="month">{tr('按月')}</option><option value="custom">{tr('自定日期')}</option></select></label>
-      {range === 'month' && <input type="month" aria-label={tr('分析月份')} value={month} max={dateKey(new Date()).slice(0, 7)} onChange={e => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(e.target.value)) setMonth(e.target.value) }} />}</div>
+      {range === 'month' && <input type="month" aria-label={tr('分析月份')} value={month} max={arkmeDayKey(Date.now()).slice(0, 7)} onChange={e => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(e.target.value)) setMonth(e.target.value) }} />}</div>
     {range === 'custom' && <form className="cw-controls" onSubmit={event => { event.preventDefault(); if (!dates.from || !dates.to || dates.from > dates.to) setRangeError(tr('请选择有效的起止日期')); else { setApplied({ ...dates }); setRangeError('') } }}>
       <input type="date" aria-label={tr('分析开始日期')} required value={dates.from} max={dates.to} onInput={e => { const value = e.currentTarget.value; setDates(v => ({ ...v, from: value })) }} onChange={e => setDates(v => ({ ...v, from: e.target.value }))} />
-      <input type="date" aria-label={tr('分析结束日期')} required value={dates.to} min={dates.from} max={dateKey(new Date())} onInput={e => { const value = e.currentTarget.value; setDates(v => ({ ...v, to: value })) }} onChange={e => setDates(v => ({ ...v, to: e.target.value }))} /><button type="submit">{tr('应用')}</button>
+      <input type="date" aria-label={tr('分析结束日期')} required value={dates.to} min={dates.from} max={arkmeDayKey(Date.now())} onInput={e => { const value = e.currentTarget.value; setDates(v => ({ ...v, to: value })) }} onChange={e => setDates(v => ({ ...v, to: e.target.value }))} /><button type="submit">{tr('应用')}</button>
       {(dates.from !== applied.from || dates.to !== applied.to) && <span className="cw-muted">{tr('日期更改尚未应用')}</span>}</form>}
     {rangeError && <p role="alert">{rangeError}</p>}
     <div className="cw-controls" role="group" aria-label={tr('分析对象')}><span className="cw-muted">{tr('分析对象')}</span>

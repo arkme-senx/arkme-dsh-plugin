@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -1038,7 +1039,7 @@ export function formatMarketplaceDate(value: number): string {
   const millis = value < 10_000_000_000 ? value * 1000 : value
   const date = new Date(millis)
   if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' }).format(date)
+  return formatArkmeDateTime(date, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
 export function extensionCommunityAuthor(item: ArkmeExtensionCatalogItem): { name: string; github: boolean } {

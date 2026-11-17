@@ -1,3 +1,4 @@
+import { arkmeDayKey, formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ListChecks } from '@phosphor-icons/react/dist/icons/ListChecks'
@@ -16,7 +17,7 @@ import { useConversationRecognition } from './use-conversation-recognition.js'
 
 function time(value?: number) {
   return value && Number.isFinite(new Date(value).getTime())
-    ? new Intl.DateTimeFormat(arkmeIntlLocale(), { ...(new Date(value).getFullYear() !== new Date().getFullYear() ? { year: 'numeric' as const } : {}), month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(value) : ''
+    ? formatArkmeDateTime(value, arkmeIntlLocale(), { ...(arkmeDayKey(value).slice(0, 4) !== arkmeDayKey(Date.now()).slice(0, 4) ? { year: 'numeric' as const } : {}), month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : ''
 }
 const normalize = (text: string) => text.trim().replace(/\s+/gu, ' ')
 type Props = { accountScope: string; active: boolean; refreshRevision: number } &

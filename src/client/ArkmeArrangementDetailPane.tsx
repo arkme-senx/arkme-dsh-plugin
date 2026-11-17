@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle'
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { arrangementColumns, arrangementColumnLabels, moveArrangement, readArrangementForTransition, type ArrangementColumn } from './arrangement-board-model.js'
@@ -25,7 +26,7 @@ import { withArkmeReadDeadline } from './read-deadline.js'
 import type { ArrangementWorkspaceItem } from './arrangement-workspace-model.js'
 const statusIcons = { identified: Lightbulb, following: ArrowsClockwise, completed: CheckCircle, deleted: undefined, unknown: undefined }
 const statusLabels = { identified: '已识别', following: '跟进中', completed: '已完成', deleted: '已删除', unknown: '状态待确认' }
-function fullTime(value?: number) { return value && Number.isFinite(new Date(value).getTime()) ? new Intl.DateTimeFormat(arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(value) : tr('未设置') }
+function fullTime(value?: number) { return value && Number.isFinite(new Date(value).getTime()) ? formatArkmeDateTime(value, arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short', hour12: false }) : tr('未设置') }
 
 export function ArkmeArrangementDetailPane({ accountScope, onSettings, onApplied, onRedirect, onRestored, item, busy, onClose, onComplete, onDelete, onReminder, onEdited, readDetail = true }: {
   onEdited?(): void; onRestored?(): void; readDetail?: boolean; accountScope: string; onSettings(): void; onApplied(item: ArkmeArrangementItem): void; onRedirect(item: ArkmeArrangementItem): void;

@@ -20,6 +20,7 @@ import { useSelectedMessageSearch } from './message-selection-search.js'
 import { applyMessageTextReplacement, preparePlainTextReplacement, resolveMessageTextReplacement } from './message-text-replacement.js'
 import { quoteDigest } from './message-quote-selection.js'
 import { copyText } from './clipboard-text.js'
+import { formatArkmeTime } from './display-time-zone.js'
 
 export interface TranscriptInteractionRow { id: string; text: string; speaker: string; at: number; playable: boolean;viewRef?:string;sourceVersion?:string;excerptOrigin?:{kind:'recording'|'call';itemRef:string};excerptSource?:import('../record-excerpt.js').RecordExcerptSource }
 function TextTarget({ target, children }: { target: MessageSelectionTarget; children: ReactNode }) {
@@ -286,7 +287,7 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, preferU
     document.querySelector(`[data-transcript-scope="${CSS.escape(sourceRef)}"] [data-transcript-search-active]`)?.scrollIntoView({ block: 'center' })
   }, [sourceRef, activeMatch?.id, activeMatch?.start])
   const copyRows = async (ids: string[]) => {
-    try { await copyText(latest.current.rows.filter(row => ids.includes(row.id)).sort((a,b) => a.at - b.at).map(row => `${row.speaker} ${new Date(row.at).toLocaleTimeString(undefined, { hourCycle: 'h23' })}\n${display(row)}`).join('\n\n')) }
+    try { await copyText(latest.current.rows.filter(row => ids.includes(row.id)).sort((a,b) => a.at - b.at).map(row => `${row.speaker} ${formatArkmeTime(row.at, undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })}\n${display(row)}`).join('\n\n')) }
     catch (error) { setNotice(message(error)) }
   }
   const renderText = (row: TranscriptInteractionRow, render?: (text: string) => ReactNode) => {

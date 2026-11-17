@@ -18,9 +18,4 @@ export function sameRecordingImportBatch(a?: RecordingImportBatch, b?: Recording
   return a === undefined || b === undefined ? a === b : a.batchId === b.batchId && a.itemIndex === b.itemIndex
     && a.itemCount === b.itemCount && a.timeZone === b.timeZone
 }
-/** JS's offset at the recording instant, but in the frozen batch timezone. */
-export function recordingBatchOffset(at: number, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).formatToParts(at)
-  const number = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find(part => part.type === type)!.value)
-  return Date.UTC(number('year'), number('month') - 1, number('day'), number('hour'), number('minute'), number('second')) - Math.floor(at / 1000) * 1000
-}
+export { recordingBatchOffset } from './recording-time.js'

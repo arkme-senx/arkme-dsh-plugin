@@ -1,3 +1,4 @@
+import { formatArkmeDateTime, formatArkmeTime } from '../../display-time-zone.js'
 import {codexAccessRevoked} from '../../../team-codex-access.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { callArkme } from '../../api.js'
@@ -22,7 +23,7 @@ const taskGroupKey = (task: CodexViewTask): string => {
 }
 
 const errorText = (error: unknown): string => error instanceof Error ? tr(error.message) : tr('工作动态加载失败，请重试')
-const time = (at: number): string => new Date(at).toLocaleString(arkmeIntlLocale(), { month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit' })
+const time = (at: number): string => formatArkmeDateTime(at, arkmeIntlLocale(), { month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit' })
 function status(task: TeamCodexTask): string {
   if (task.excluded || task.projectExcluded) return tr('已排除')
   if (task.status === 'pending') return tr('等待接入确认')
@@ -356,7 +357,7 @@ export function TeamCodexActivity({ teamRef, team, active = true, conversation =
       <CodexTaskStateDot status={codexTaskPhase(task)}/>
       <span className="arkme-team-codex-task-title"><strong title={task.title}>{task.title}</strong>{!conversation && liveTask(task) && (task.state==='working'||!!(task.queue?.items.length??task.queueSummary?.count)) && <small>{status(task)}{!!(task.queue?.items.length??task.queueSummary?.count) && ` · ${queueLabel(task)}`}</small>}</span>
       {conversation && <time title={time(task.updatedAt)} dateTime={new Date(task.updatedAt).toISOString()}>{codexConversationTime(task.updatedAt,Date.now())}</time>}
-      {!conversation && <time title={time(task.updatedAt)}>{new Date(task.updatedAt).toLocaleTimeString(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'})}</time>}
+      {!conversation && <time title={time(task.updatedAt)}>{formatArkmeTime(task.updatedAt, arkmeIntlLocale(), {hour:'2-digit',minute:'2-digit'})}</time>}
     </button>
     {onOpenTask && <button type="button" className="arkme-codex-overview-actions" aria-label={tr('管理任务：{title}',{title:task.title})} aria-expanded={expanded===task.id && taskMenu}
       onClick={()=>{setExpanded(task.id);setTaskMenu(expanded===task.id ? !taskMenu : true)}}>⋯</button>}

@@ -1,3 +1,4 @@
+import { arkmeDayDelta, formatArkmeDateTime } from './display-time-zone.js'
 import type { WorldSubscriptionNotice, WorldSubscriptionNoticePage } from '../world-subscription-contract.js'
 import { recordingNotifications, useRecordingNotifications } from './recording-notification-store.js'
 import { recordingNoticeTitle, recordingNoticePreview } from './ArkmeRecordingNotificationDetail.js'
@@ -108,9 +109,9 @@ function dateLabel(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), {
+  return formatArkmeDateTime(date, arkmeIntlLocale(), {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date)
+  })
 }
 
 function arrangementItem(event: ArkmeArrangementReminderEvent): ArkmeNotificationItem {
@@ -640,7 +641,7 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
           <div role="list" aria-label={tr('通知消息')}>
             {filteredItems.length === 0 && !filterLoading && <div className="arkme-notification-empty">{activeKind === 'all' ? tr('暂时没有通知') : `${notificationFilterLabel(activeKind)}${tr('暂时没有通知')}`}<br />{tr('新的通知会显示在这里')}</div>}
             {scope && filteredItems.map((item, index) => <ArkmeNotificationMessage key={item.id} item={item} scope={scope} category={notificationKindLabel(item.kind)}
-              timeLabel={index === 0 || item.atMillis - filteredItems[index - 1]!.atMillis >= 5 * 60_000 || new Date(item.atMillis).toDateString() !== new Date(filteredItems[index - 1]!.atMillis).toDateString() ? dateLabel(item.atMillis) : ''}
+              timeLabel={index === 0 || item.atMillis - filteredItems[index - 1]!.atMillis >= 5 * 60_000 || arkmeDayDelta(item.atMillis, filteredItems[index - 1]!.atMillis) !== 0 ? dateLabel(item.atMillis) : ''}
               readOnly={preview} busy={busyId === item.id} onOpen={item => { void openItem(item) }} />)}
           </div>
         </div>

@@ -1,3 +1,4 @@
+import { formatArkmeDate, formatArkmeTime } from './display-time-zone.js'
 import {useGroupTeamMentions} from './use-group-team-mentions.js'
 import { WorldPublicationBadge, WorldPublicationActions } from './WorldPublicationControls.js'
 import { arkoInteractionJump } from './arko-interaction-jump.js'
@@ -151,12 +152,12 @@ function epoch(value: number): number {
 
 function dateLabel(value: number): string {
   const time = epoch(value)
-  return time === 0 ? '' : new Date(time).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })
+  return time === 0 ? '' : formatArkmeDate(time, arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })
 }
 
 function timeLabel(value: number): string {
   const time = epoch(value)
-  return time === 0 ? '' : new Date(time).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+  return time === 0 ? '' : formatArkmeTime(time, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function offsetLabel(value: number): string {
@@ -1383,7 +1384,7 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
     const selectedAt = startedAt > 0 ? startedAt + Math.min(...segments.map(segment => segment.startMillis)) : 0
     const selectedDate = selectedAt > 0 ? new Date(selectedAt) : undefined
     return <ArkmeDetailShell title={recording.title || forward.title || tr("录音转写")} label={tr("录音片段详情")}
-      subtitle={selectedDate === undefined ? '' : `${selectedDate.toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })} ${selectedDate.toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}
+      subtitle={selectedDate === undefined ? '' : `${formatArkmeDate(selectedDate, arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })} ${formatArkmeTime(selectedDate, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })}`} onClose={onClose}
       bodyRef={body} {...(onBack ? { onBack } : {})}>
       {!path.length && sourceBadge}
       {readStatus}

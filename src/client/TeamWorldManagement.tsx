@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { WorldInfiniteScrollTrigger } from './ArkmeWorldSurface.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
@@ -119,7 +120,7 @@ export function TeamWorldManagement({ accountKey, context, onClose, onChanged }:
       : archive ? <WorldReactionArchive accountKey={accountKey} context={archive} /> : <>
         {items.map(item => <article key={item.recordRef} data-team-page-row={item.recordRef} style={{ padding: '16px 0', borderBottom: `1px solid ${c.borderSoft}` }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 9 }}>
-            <time style={{ color: c.tertiary, fontSize: 11 }} dateTime={new Date(item.updatedAt).toISOString()}>{new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(item.updatedAt)}</time>
+            <time style={{ color: c.tertiary, fontSize: 11 }} dateTime={new Date(item.updatedAt).toISOString()}>{formatArkmeDateTime(item.updatedAt, arkmeIntlLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time>
             <ArkmeActionMenu open={menu === item.recordRef} onClose={() => setMenu(undefined)} label={tr('团队内容操作')} align="end"
               anchor={<button type="button" style={{ ...actionStyle, padding: 0, display: 'flex' }} disabled={busy} aria-label={tr('更多内容操作')} onClick={() => { setMore(false); setMenu(item.recordRef) }}><DotsThree size={20} /></button>}
               actions={[...(!item.deleted ? [{ id: 'visibility', label: tr(item.publicRequested ? '取消公开' : '公开'), onSelect: () => { setMenu(undefined); item.publicRequested ? void prepareArchive(item, true) : void submit(item, 'publish') } }] : []),

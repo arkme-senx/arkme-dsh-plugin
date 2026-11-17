@@ -1,3 +1,5 @@
+import { arkmeDayKey } from './display-time-zone.js'
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { Fragment, useCallback, useContext, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
@@ -25,10 +27,8 @@ const scenes: Array<{ key: ArkmeSearchSceneKind; label: string }> = [
 const button: CSSProperties = { border: 0, borderRadius: 6, padding: '7px 9px', background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer', font: 'inherit', fontSize: 13 }
 const row: CSSProperties = { display: 'flex', alignItems: 'center', gap: 6 }
 function searchMonth(millis: number): string {
-  const date = new Date(millis)
-  if (!Number.isFinite(date.valueOf())) return '更早'
-  const now = new Date()
-  return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() ? '这个月' : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
+  const month = arkmeDayKey(millis).slice(0, 7)
+  return month === arkmeDayKey(Date.now()).slice(0, 7) ? '这个月' : month || '更早'
 }
 function mediaFailureKey(item: ArkmeSearchRecordItem, assetUid: string): string {
   return JSON.stringify([item.sourceKind, item.sourceUid, item.recordOwnerUserId, item.recordUid, assetUid])
@@ -269,7 +269,7 @@ function SearchDetail({ item, assetUid, initialDetail, onRetryDetail, onUnavaila
       <button data-arkme-feedback="neutral" type="button" style={button} disabled={item.targetSource === undefined || item.recordOwnerUserId === undefined || detail === undefined} onClick={onLocate}>{tr("定位到消息")}</button></div>
     {error !== '' ? <div role="alert" style={status}>{error}<button data-arkme-feedback="neutral" type="button" style={button} onClick={retry}>{tr("重试")}</button></div>
       : detail === undefined ? <div role="status" style={status}>{tr("加载详情…")}</div>
-        : <><p style={{ color: arkmeTheme.secondary, fontSize: 12 }}>{detail.senderName} · {new Date(detail.sendAtMillis).toLocaleString(arkmeIntlLocale())}</p>
+        : <><p style={{ color: arkmeTheme.secondary, fontSize: 12 }}>{detail.senderName} · {formatArkmeDateTime(detail.sendAtMillis, arkmeIntlLocale())}</p>
           <ArkmeMessageContent item={detail} presentation="detail" collapseText={false} sessionAttachmentPreview sourceIdentityKey={mediaFailureKey(item, '')} {...(item.targetSource === undefined ? {} : { sourceRef: item.targetSource.sourceRef })} /></>}
   </div>
 }

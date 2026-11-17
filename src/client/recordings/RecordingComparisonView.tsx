@@ -1,3 +1,4 @@
+import { formatArkmeTime } from '../display-time-zone.js'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -97,7 +98,7 @@ export function RecordingComparisonPane({ pagination, children }: { pagination?:
 export function RecordingComparisonRow({ speaker, colorIndex, startAtMillis, endAtMillis, text, active, background, playLabel, onPlay }: {
   speaker: string; colorIndex: number; startAtMillis: number; endAtMillis: number; text: string; active: boolean; background?: boolean; playLabel: string; onPlay(): void
 }) {
-  const time = new Date(startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hourCycle: 'h23' })
+  const time = formatArkmeTime(startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })
   const duration = Math.max(0, (endAtMillis - startAtMillis) / 1000)
   return <div role="button" tabIndex={0} aria-label={playLabel} title={tr('双击播放')} data-transcript-time={startAtMillis}
     onDoubleClick={onPlay} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onPlay() } }}

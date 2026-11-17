@@ -1,3 +1,5 @@
+import { useConversationCivilDay } from './ArkmeConversationDate.js'
+import { formatArkmeDateTime, useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
@@ -203,7 +205,7 @@ function selectedDayLabel(date: Date, today: Date): string {
 
 function timeLabel(value: number): string {
   return Number.isFinite(value) && value > 0
-    ? new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+    ? formatArkmeDateTime(new Date(value), arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
     : ''
 }
 
@@ -522,8 +524,9 @@ export function ArkmeSelfCalendarPopover({
   getReadingDate?: (() => string | undefined) | undefined
 }) {
   useArkmeLocale()
-  const today = useMemo(() => startOfLocalDay(new Date()), [])
-  const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
+  const timezone = useArkmeEffectiveTimeZone()
+  const todayKey = useConversationCivilDay()
+  const today = useMemo(() => new Date(`${todayKey}T00:00:00`), [todayKey])
   const panel = useRef<HTMLElement>(null)
   const { layout, resizing, resizeProps } = useCalendarPopoverLayout(open, anchor, panel, accountScope)
   const [selectionStatus, setSelectionStatus] = useState('')
@@ -759,8 +762,9 @@ function ArkmeCalendarSurfaceBody({
   onClose, anchor = 'directory', accountScope,
 }: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
   useArkmeLocale()
-  const today = useMemo(() => startOfLocalDay(new Date()), [])
-  const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
+  const timezone = useArkmeEffectiveTimeZone()
+  const todayKey = useConversationCivilDay()
+  const today = useMemo(() => new Date(`${todayKey}T00:00:00`), [todayKey])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
   const [selectedDate, setSelectedDate] = useState(today)
   const [detailsOpen, setDetailsOpen] = useState(true)

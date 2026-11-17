@@ -1,3 +1,4 @@
+import { arkmeDayDelta, formatArkmeTime, formatArkmeDate } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeCallShareControls } from './ArkmeCallShareControls.js'
@@ -368,11 +369,10 @@ function shortTime(millis: number): string {
   if (!Number.isFinite(millis) || millis <= 0) return ''
   const date = new Date(millis)
   if (Number.isNaN(date.getTime())) return ''
-  const today = new Date()
-  if (date.toDateString() === today.toDateString()) {
-    return tr("今天 {v0}", { v0: date.toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }) })
+  if (arkmeDayDelta(date) === 0) {
+    return tr("今天 {v0}", { v0: formatArkmeTime(date, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }) })
   }
-  return date.toLocaleDateString(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' })
+  return formatArkmeDate(date, arkmeIntlLocale(), { month: '2-digit', day: '2-digit' })
 }
 
 function mediaLabel(type: ArkmeCallMediaType): string {

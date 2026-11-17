@@ -1,3 +1,4 @@
+import { formatArkmeTime } from './display-time-zone.js'
 import { arkmeIntlLocale, tr } from './locale.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -39,7 +40,7 @@ export function formatDuration(seconds: number): string {
 
 export function clockTime(millis: number): string {
   if (!Number.isFinite(millis) || millis <= 0) return ''
-  return new Date(millis).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+  return formatArkmeTime(millis, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function cleanAvatarRef(value: string | undefined): string | undefined {

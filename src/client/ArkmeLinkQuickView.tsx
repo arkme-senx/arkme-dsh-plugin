@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../types.js'
@@ -53,7 +54,7 @@ function LinkRecord({ item, scrollRoot, onOpenRecord }: {
   const [expanded, setExpanded] = useState(false)
   const urls = links(item)
   const date = Number.isFinite(item.sendAtMillis) && item.sendAtMillis > 0
-    ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' }).format(item.sendAtMillis) : ''
+    ? formatArkmeDateTime(item.sendAtMillis, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' }) : ''
   return <article style={styles.card} data-arkme-link-record="true">
     {(expanded ? urls : urls.slice(0, 5)).map(href => <LinkResult key={href} href={href} scrollRoot={scrollRoot} />)}
     <footer style={styles.footer}>

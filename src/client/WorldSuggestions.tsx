@@ -1,3 +1,4 @@
+import { formatArkmeDate } from './display-time-zone.js'
 import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type { WorldSuggestion, WorldSuggestionJob, WorldSuggestionModel, WorldSuggestionPrepared, WorldSuggestionsRequest, WorldSuggestionsResponse, WorldSuggestionsState } from '../world-suggestions-contract.js'
@@ -131,7 +132,7 @@ function SuggestionsPanel({ account, onClose, onCount }: { account: string; onCl
         <p style={{ margin: '0 0 12px', fontSize: 13, lineHeight: 1.8, color: theme.accent, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>✦ {item.reason}</p>
         {item.title && <h3 style={{ fontSize: 14, margin: '0 0 8px', overflowWrap: 'anywhere' }}>{item.title}</h3>}
         <p style={{ fontSize: 13, lineHeight: 1.8, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: 0 }}>{item.preview}</p>
-        <p style={muted}>{new Date(item.occurredAtMillis).toLocaleDateString()}</p>
+        <p style={muted}>{formatArkmeDate(item.occurredAtMillis)}</p>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}><button style={button} type="button" disabled={busy} onClick={() => void prepare(item, false)}>查看原文</button><button style={button} type="button" disabled={busy} onClick={() => void hide(item)}>暂不分享</button><button style={{ ...button, color: theme.accent }} type="button" disabled={busy} onClick={() => void prepare(item, true)}>发到世界</button></div>
       </article>)}
     </>}

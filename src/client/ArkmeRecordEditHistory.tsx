@@ -1,3 +1,4 @@
+import { arkmeDayKey, arkmeDayDelta, arkmeWallClockIso } from './display-time-zone.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeRecordEditHistoryPage, ArkmeRecordEditHistoryReader } from '../record-edit-history.js'
@@ -134,13 +135,13 @@ export function ArkmeRecordEditHistory({ sourceRef, messageActionRef, reader = h
 }
 
 function historyTimeLabel(value: number): string {
-  const date = new Date(value)
-  const now = new Date()
-  const pad = (part: number) => String(part).padStart(2, '0')
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
-  const offset = Math.round((new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() - new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()) / 86_400_000)
-  if (offset === 0) return time
-  if (offset === 1) return tr("昨天 {v0}", { v0: time })
-  if (offset === 2) return tr("前天 {v0}", { v0: time })
-  return `${date.getFullYear() === now.getFullYear() ? '' : `${date.getFullYear()}-`}${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`
+  const date = arkmeDayKey(value)
+  if (!date) return ''
+  const now = Date.now()
+  const time = arkmeWallClockIso(value).slice(11, 16)
+  const daysAgo = -arkmeDayDelta(value, now)
+  if (daysAgo === 0) return time
+  if (daysAgo === 1) return tr("昨天 {v0}", { v0: time })
+  if (daysAgo === 2) return tr("前天 {v0}", { v0: time })
+  return `${date.slice(0, 4) === arkmeDayKey(now).slice(0, 4) ? date.slice(5) : date} ${time}`
 }

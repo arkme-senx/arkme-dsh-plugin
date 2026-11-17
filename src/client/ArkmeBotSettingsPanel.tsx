@@ -1,3 +1,4 @@
+import { formatArkmeDate } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -206,7 +207,7 @@ export function ArkmeBotSettingsPanel({ bot, onClose, onUpdated, onDeleted }: {
             {profile.tokenPreview !== '' && <><span style={{ ...styles.label, marginTop: 10 }}>{tr("凭据预览")}</span><p style={styles.code}>{token === '' ? profile.tokenPreview : token}</p>{token === '' && profile.canRevealToken && profile.tokenRevealEnabled && <button data-arkme-feedback="neutral" type="button" style={styles.action} disabled={disabled} onClick={() => { void revealToken() }}>{tr("显示完整凭据")}</button>}</>}
             {profile.provider === 'openclaw' && <><div style={styles.row}><span>{tr("群聊中允许 @ 此 Bot")}</span><Toggle checked={mentionEntryEnabled} disabled={disabled} onChange={setMentionEntryEnabled} /></div><button data-arkme-feedback="primary" type="button" style={{ ...styles.primary, ...(disabled ? { opacity: .5, cursor: 'default' } : {}) }} disabled={disabled} onClick={() => { void save() }}>{busy === '' ? tr("保存") : busy}</button></>}
           </section>}
-          {detail === 'groups' && <section style={styles.section}>{profile.joinedGroups.length === 0 ? <p style={styles.hint}>{tr("尚未加入群聊")}</p> : profile.joinedGroups.map((group, index) => <div key={`${group.title}:${index}`} style={{ ...styles.row, borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}><span>{group.title}</span><span style={styles.meta}>{group.installedAtMillis > 0 ? new Date(group.installedAtMillis).toLocaleDateString(arkmeIntlLocale()) : ''}</span></div>)}</section>}
+          {detail === 'groups' && <section style={styles.section}>{profile.joinedGroups.length === 0 ? <p style={styles.hint}>{tr("尚未加入群聊")}</p> : profile.joinedGroups.map((group, index) => <div key={`${group.title}:${index}`} style={{ ...styles.row, borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}><span>{group.title}</span><span style={styles.meta}>{group.installedAtMillis > 0 ? formatArkmeDate(group.installedAtMillis, arkmeIntlLocale()) : ''}</span></div>)}</section>}
           {error !== '' && <p role="alert" style={styles.error}>{error}</p>}
         </>}
       </div>

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Desktop } from '@phosphor-icons/react/dist/icons/Desktop'
@@ -17,7 +18,7 @@ import { tr, arkmeIntlLocale, useArkmeLocale } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 
 const request = <T extends LoginDeviceResult>(input: LoginDeviceRequest, signal?: AbortSignal) => callArkme<T>('account.devices', input, signal)
-const date = (at: number | null) => at ? new Date(at).toLocaleString(arkmeIntlLocale()) : tr('活跃时间暂不可用')
+const date = (at: number | null) => at ? formatArkmeDateTime(at, arkmeIntlLocale()) : tr('活跃时间暂不可用')
 const mobile = (d: LoginDevice) => d.platform === 'ios' || d.platform === 'android'
 const computer = (d: LoginDevice) => ['macos', 'windows', 'linux'].includes(d.platform)
 const identifiable = (d: LoginDevice) => mobile(d) || computer(d) || d.platform === 'web'
