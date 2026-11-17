@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { callArkme } from '../api.js'
 import { tr, arkmeIntlLocale } from '../locale.js'
+import { ArkmeLocalDateTimeInput, parseArkmeLocalDateTime } from '../ArkmeLocalDateTimeInput.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 import type { PublicRecordingImportCurrentSnapshot, PublicRecordingImportHistoryPage } from '../../recording-import-shared.js'
@@ -52,7 +53,7 @@ const PAGE_SIZE = 50
 const COMPLETED_SCAN_TTL = 60_000
 
 function instant(value: number | null, showDate = true) {
-  return value !== null && value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
+  return value !== null && value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—'
 }
 function size(value: number | null) { return value === null ? tr('总大小待确认') : value === 0 ? '0 B' : recordingMegabytesLabel(value) }
 
@@ -245,7 +246,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
   const mutate = async () => {
     if (!action || busy) return
     const { file, kind } = action
-    const startAtMillis = new Date(start).getTime()
+    const startAtMillis = parseArkmeLocalDateTime(start)
     if (kind === 'start') {
       const error = recordingImportEndTimeError(startAtMillis, Math.max(0, file.endAtMillis - file.startAtMillis))
       if (error) { setMutationError(tr(error)); return }
@@ -362,7 +363,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
       <h3 style={{ marginTop: 0 }}>{tr(action.kind === 'delete' ? '删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}</h3>
       <p style={{ overflowWrap: 'anywhere' }}>{action.file.fileName}</p><p style={note}>{instant(action.file.startAtMillis)} — {instant(recordingFileDisplayEnd(action.file))}</p>
       {action.kind === 'delete' ? <p style={note}>{tr('将删除整份音频及关联录音数据，跨日部分也会受影响。删除后无法恢复。')}</p>
-        : action.kind === 'start' ? <label style={note}>{tr('录音开始时间')} <input type="datetime-local" step={1} aria-label={tr('录音开始时间')} value={start} onChange={event => setStart(event.target.value)} disabled={busy} style={control} /></label>
+        : action.kind === 'start' ? <div style={note}>{tr('录音开始时间')} <ArkmeLocalDateTimeInput label={tr('录音开始时间')} value={start} onValueChange={setStart} disabled={busy} style={control} /></div>
           : <><select aria-label={tr('文件数据归属')} value={ownership} disabled={busy} onChange={event => setOwnership(event.target.value as 'self' | 'other')} style={control}><option value="self">{tr('我的')}</option><option value="other">{tr('他人')}</option></select><p style={note}>{tr('我的数据写入时间轴，他人仅保存')}</p></>}
       {mutationError && <p role="alert" style={{ ...note, color: theme.danger }}>{mutationError}</p>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}><button type="button" style={button} disabled={busy} onClick={() => setAction(undefined)}>{tr('取消')}</button><button type="button" style={{ ...button, color: action.kind === 'delete' ? theme.danger : theme.text }} disabled={busy} onClick={() => { void mutate() }}>{tr(busy ? '处理中…' : action.kind === 'delete' ? '确认删除' : '保存')}</button></div>

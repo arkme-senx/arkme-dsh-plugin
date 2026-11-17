@@ -742,7 +742,13 @@ function ArkmeSearchSurfaceBody({
       </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label={tr("录音转写搜索结果")}>
         <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span></h3>
         {recordingError !== '' && <div style={styles.error} role="alert">{tr("录音·转写暂不可用：")}{recordingError}<button type="button" aria-label="重试录音转写" style={styles.retryLoadMore} disabled={searchLoading.recordings || recordingPageLoading} onClick={() => {void loadRecordingPage()}}>{tr("重试")}</button></div>}
-        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingSearchRow key={`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`} item={item} />)}</div>
+        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingSearchRow key={`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`} item={item}
+          onOpen={() => {
+            const date = new Date(item.startAtMillis)
+            date.setHours(0, 0, 0, 0)
+            arkmeUi.showRecordingTarget(date.getTime(), item.startAtMillis, item.match, undefined, recordingResultQuery.current)
+            onClose?.()
+          }} />)}</div>
           : !searchLoading.recordings && recordingError === '' && !recordings?.hasMore && <Status loading={false} empty />}
         {recordings?.hasMore && recordingError === '' && <button type="button" aria-label="加载更多录音转写" style={styles.retryLoadMore} disabled={searchLoading.recordings || recordingPageLoading} onClick={() => {void loadRecordingPage()}}>{recordingPageLoading ? tr("正在加载…") : tr("加载更多")}</button>}
       </div>}

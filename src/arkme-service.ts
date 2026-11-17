@@ -1825,6 +1825,15 @@ recordingAnalysisV1: true,
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
+  async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal) {
+    return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal)
+  }
+  async recordingTranscriptContext(dateStamp: number, startAtMillis: number, endAtMillis: number, signal?: AbortSignal) {
+    return await this.recording.transcriptContext(dateStamp, startAtMillis, endAtMillis, signal)
+  }
+  async searchRecordingDayTranscript(dateStamp: number, query: string, signal?: AbortSignal) {
+    return await this.recording.searchDayTranscript(dateStamp, query, signal)
+  }
   async recordingDayOverview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeRecordingDayOverview> { return await this.recording.recordingDayOverview(dateStamp, viewRef, cursor, signal) }
   async recordingDayReview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<{ viewRef: string; items: import('./types.js').ArkmeRecordingWorkbenchItem[] }> { return await this.recording.recordingDayReview(dateStamp, viewRef, cursor, signal) }
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }

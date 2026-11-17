@@ -18,7 +18,7 @@ const button: CSSProperties = { border: `1px solid ${theme.border}`, borderRadiu
 const quiet: CSSProperties = { ...button, border: 0, background: 'transparent', color: theme.secondary }
 const input: CSSProperties = { width: '100%', boxSizing: 'border-box', border: `1px solid ${theme.border}`, borderRadius: 7, background: theme.input, color: theme.text, padding: '8px 10px', font: 'inherit', fontSize: 14 }
 const message = (error: unknown) => error instanceof Error ? error.message : tr('语音触发读取失败')
-const clock = (time: number) => new Date(time).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+const clock = (time: number) => new Date(time).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
 /** No background work until this entry is opened. All recording sources share one owner. */
 export function RecordingVoiceTriggerEntry({ style, mediaPath }: { style?: CSSProperties | undefined; mediaPath: string }) {

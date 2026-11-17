@@ -1,4 +1,5 @@
 import { readCompleteRecordingTranscript } from '../../src/recording-transcript-page.js'
+import { recordingSearchIdentityHash, recordingSearchVersion } from '../../src/recording-search-version.js'
 import { recordingOwnerResponse, type OwnerTestRecording, recordingId, childId, recordingRevision, speakerReference } from '../fixtures/recording-owner.js'
 import { recordingImportBatchID } from '../../src/recording-workflow-contract.js'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -41,6 +42,106 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  it('locates an exact original in a bounded day window and rejects stale versions', async () => {
+    const day = new Date(2026, 10, 16).getTime()
+    const startAt = day + 2 * 3_600_000
+    const startAtMillis = startAt + 1000
+    const text = '郭老师'
+    const identity = { sessionId: recordingId, childId, itemIndex: 7, transcriptSource: 'system' }
+    const hash = recordingSearchIdentityHash(identity)
+    const version = recordingSearchVersion({ ...identity, asrItemIndex: 7, startAtMillis, endAtMillis: startAtMillis + 1000, text })
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'located-transcript' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? '{}'))
+      calls.push({ path, body })
+      const data = recordingOwnerResponse(path, body, [{ startAt, duration: 40_000, items: [
+        { text, start: 1000, end: 2000, ordinal: 7 },
+        { text, start: 2000, end: 3000, ordinal: 8 },
+        { text: '远处的转写', start: 30_000 },
+      ] }])
+      if (!data) throw new Error(`Unexpected read ${path}`)
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      const located = await service.locateTranscript(day, startAtMillis, hash, version)
+      expect(located?.items).toHaveLength(2)
+      expect(located?.items.find(item => item.itemId === located.focusItemId)).toMatchObject({ text, searchIdentityHash: hash })
+      expect(JSON.stringify(located)).not.toContain(recordingId)
+      expect(calls.every(({body}) => Number(body.end_at) - Number(body.start_at) <= 30_000)).toBe(true)
+      await expect(service.locateTranscript(day, startAtMillis, hash, 'stale')).resolves.toBeNull()
+      await expect(service.locateTranscript(day, startAtMillis + 1000, hash, version)).resolves.toBeNull()
+      const before = calls.length
+      await expect(service.locateTranscript(day, day - 1, hash, version)).rejects.toMatchObject({ code: 'recording-location-input-invalid' })
+      expect(calls).toHaveLength(before)
+    } finally { service.dispose() }
+  })
+
+  it('scopes accelerated search to the day, rejects a replaced session, and exposes no Audio IDs', async () => {
+    const day = new Date(2026, 10, 16).getTime()
+    let userId = 42, replace = false
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const read = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(new URL(String(input)).pathname).toBe('/api/v1/audio/transcripts/search')
+      expect(JSON.parse(String(init?.body))).toEqual({ start_at: day, keyword: '郭老师', transcript_source: 'system', limit: 50 })
+      const row = { session_id: recordingId, child_id: childId, item_index: 7, transcript_source: 'system', start_at: day + 10, snippet: '郭老师' }
+      if (replace) userId++
+      return new Response(JSON.stringify({ code: 200, data: { item_ls: [row, { ...row, start_at: day - 1 }, { ...row, item_index: -1 }] } }))
+    })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, {} as StateStore, read), dependencies())
+    try {
+      const items = await service.searchDayTranscript(day, ' 郭老师 ')
+      expect(items).toHaveLength(1)
+      expect(items[0]).toMatchObject({ startAtMillis: day + 10, snippet: '郭老师' })
+      expect(JSON.stringify(items)).not.toContain(recordingId)
+      await expect(service.searchDayTranscript(day, '字'.repeat(65))).rejects.toMatchObject({ code: 'recording-day-search-input-invalid' })
+      expect(read).toHaveBeenCalledOnce()
+      replace = true
+      await expect(service.searchDayTranscript(day, '郭老师')).rejects.toThrow('账号')
+    } finally { service.dispose() }
+  })
+
+  it('reads only the requested context interval, assigns overlaps once and discards a changed account', async () => {
+    const day = new Date(2026, 10, 16).getTime(), recording = day + 60_000
+    let userId = 42, replace = false
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const start = recording + 2000, end = recording + 4000
+    const read = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body))
+      expect(body).toMatchObject({ start_at: start, end_at: end })
+      const data = recordingOwnerResponse(path, body, [{ startAt: recording, duration: 60_000, items: [
+        { text: '跨入区间的旧句', start: 1000, end: 2500 },
+        { text: '前沿句', start: 2000, end: 3000 },
+        { text: '区间内的后句', start: 3000, end: 4000 },
+        { text: '下一页首句', start: 4000, end: 5000 },
+      ] }])
+      if (!data) throw new Error(`Unexpected read ${path}`)
+      if (replace) userId++
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'context' } as StateStore, read)
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      for (const [from, to] of [[day - 1, end], [end, start], [start, start + 3_600_001]] as const) {
+        await expect(service.transcriptContext(day, from, to)).rejects.toMatchObject({ code: 'recording-context-input-invalid' })
+      }
+      await expect(service.transcriptContext(day + 1, start, end)).rejects.toMatchObject({ code: 'recording-date-invalid' })
+      expect(read).not.toHaveBeenCalled()
+      const signal = new AbortController()
+      signal.abort()
+      await expect(service.transcriptContext(day, start, end, signal.signal)).rejects.toMatchObject({ name: 'AbortError' })
+      expect(read).not.toHaveBeenCalled()
+      const context = await service.transcriptContext(day, start, end)
+      expect(context.items.map(item => item.text)).toEqual(['前沿句', '区间内的后句'])
+      expect(context.revisions).toEqual({ [context.items[0]!.sessionKey]: recordingRevision })
+      expect(JSON.stringify(context)).not.toContain(recordingId)
+      expect(read.mock.calls.length).toBeLessThanOrEqual(3)
+      replace = true
+      await expect(service.transcriptContext(day, start, end)).rejects.toThrow()
+    } finally { service.dispose() }
+  })
+
   it('reads cloud delivery without inspecting or resuming local imports and discards account changes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-delivery-read-'))
     let userId = 42

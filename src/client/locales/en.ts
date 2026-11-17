@@ -7,6 +7,20 @@ export const arkmeEnglish: Record<string, string> = Object.fromEntries(`
 自动识别快记中的实体，运行时消耗 AI 额度。|Automatically recognize entities in notes, using AI allowance.
 通话结束后自动生成 AI 总结，生成时会消耗 AI 积分。|Automatically generate an AI summary after calls. Generation uses AI credits.
 发生时间|Time recorded
+已定位的转写|Located transcript
+已定位原句|Original passage located
+查看当天全部转写|View the full day
+正在定位原句…|Locating the original passage…
+加载更早的转写|Load earlier transcript
+加载更晚的转写|Load later transcript
+正在加载更早的转写…|Loading earlier transcript…
+正在加载更晚的转写…|Loading later transcript…
+重试加载更早的转写|Retry loading earlier transcript
+重试加载更晚的转写|Retry loading later transcript
+已到当天最早的转写|Start of the day's transcript
+已到当天最晚的转写|End of the day's transcript
+转写已更新，重新定位|Transcript updated. Locate again
+原句定位失败|Could not locate the original passage
 当前状态|Current status
 已停用，停用后 Arkme 已启动|Disabled. Arkme started after disabling the extension.
 插件名称|Plugin name

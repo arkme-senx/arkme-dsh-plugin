@@ -1759,6 +1759,22 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.day.review': return await service.recordingDayReview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
     case 'recordings.day.overview': return await service.recordingDayOverview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
+    case 'recordings.transcript.locate': {
+      if (params.version !== undefined && (typeof params.version !== 'string' || !params.version.trim())) {
+        throw new ArkmePluginError('recording-location-input-invalid', '原句定位参数无效', false, 400)
+      }
+      return await service.locateRecordingTranscript(
+        numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
+        stringParam(params, 'identityHash'), stringParam(params, 'version'), requestSignal,
+      )
+    }
+    case 'recordings.transcript.context': return await service.recordingTranscriptContext(
+      numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
+      numberParam(params, 'endAtMillis', Number.NaN), requestSignal,
+    )
+    case 'recordings.transcript.search': return await service.searchRecordingDayTranscript(
+      numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'query'), requestSignal,
+    )
     case 'recordings.transcript.page': {
       const source = params.source ?? 'system'
       if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string') {

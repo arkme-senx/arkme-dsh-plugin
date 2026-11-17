@@ -5,6 +5,7 @@ import { RecordingImportQueue } from '../../recording-import-queue.js'
 import { recordingImportBatchID, type RecordingImportBatch } from '../../recording-workflow-contract.js'
 import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
+import { ArkmeLocalDateTimeInput, parseArkmeLocalDateTime } from '../ArkmeLocalDateTimeInput.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type DragEvent } from 'react'
 import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/icons/ArrowCounterClockwise'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
@@ -154,7 +155,7 @@ const styles: Record<string, CSSProperties> = {
   fileCell: { minWidth: 0, padding: '10px 8px 10px 2px', display: 'grid', gap: 4 },
   fileName: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: desktop.text, fontSize: 12 },
   timeEditor: { display: 'flex', alignItems: 'center', gap: 8, color: desktop.secondary, fontSize: 13 },
-  timeInput: { width: 174, height: 26, boxSizing: 'border-box', padding: '3px 6px', border: `1px solid ${desktop.border}`, borderRadius: 4, background: desktop.surface, color: desktop.secondary, font: 'inherit', fontSize: 11 },
+  timeInput: { height: 26, boxSizing: 'border-box', padding: '3px 6px', border: `1px solid ${desktop.border}`, borderRadius: 4, background: desktop.surface, color: desktop.secondary, font: 'inherit', fontSize: 11 },
   endTime: { minWidth: 72, height: 24, padding: '2px 6px', boxSizing: 'border-box', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: `1px solid ${desktop.border}`, borderRadius: 4, color: desktop.tertiary, fontSize: 11, fontVariantNumeric: 'tabular-nums' },
   ownership: { justifySelf: 'center', width: 90, height: 28, padding: 2, display: 'grid', gridTemplateColumns: '1fr 1fr', border: 0, borderRadius: 4, background: desktop.selected },
   ownershipButton: { border: 0, borderRadius: 3, background: 'transparent', color: desktop.tertiary, cursor: 'pointer', fontSize: 12 },
@@ -1218,7 +1219,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     if (!remaining.length) return
     const inspected = await Promise.all(remaining.map(async row => {
       const selection = await prepareFile(row)
-      const start = new Date(row.startAt).getTime()
+      const start = parseArkmeLocalDateTime(row.startAt)
       const validationError = selection.ok ? recordingImportEndTimeError(start, selection.durationMillis ?? 0) : selection.message
       if (!controller.signal.aborted && validationError !== '') updateRow(row.id, { error: validationError })
       return { row: { ...row, selection }, start, error: validationError }
@@ -1574,7 +1575,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     const sessionRef = taskSessionRef(task)
     if (sessionRef === undefined) return
     const key = sessionRef
-    const startAtMillis = new Date(value).getTime()
+    const startAtMillis = parseArkmeLocalDateTime(value)
     const validationError = recordingImportEndTimeError(startAtMillis, Math.max(0, task.endAtMillis - task.startAtMillis))
     if (validationError !== '') { setError(validationError); return }
     void mutateOwner({
@@ -1630,18 +1631,16 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     const sessionRef = taskSessionRef(task)
     const key = sessionRef ?? ('importRef' in task ? task.importRef : task.taskKey)
     const value = ownerStartOverrides[key] ?? recordingImportLocalInputValue(new Date(task.startAtMillis))
-    const displayedStartAtMillis = ownerStartOverrides[key] === undefined ? task.startAtMillis : new Date(value).getTime()
+    const displayedStartAtMillis = ownerStartOverrides[key] === undefined ? task.startAtMillis : parseArkmeLocalDateTime(value)
     const end = 'delivery' in task && task.delivery ? task.delivery.displayEndAt : task.endAtMillis
     const endLabel = end === null ? tr('待确认') : recordingImportEndLabel(displayedStartAtMillis, Math.max(0, end - task.startAtMillis))
-    return <span style={styles.fileCell}><span style={styles.fileName} title={task.fileName}>{task.fileName}</span><span style={styles.timeEditor}><input
+    return <span style={styles.fileCell}><span style={styles.fileName} title={task.fileName}>{task.fileName}</span><span style={styles.timeEditor}><ArkmeLocalDateTimeInput
       style={styles.timeInput}
-      aria-label={tr("{v0}录音开始时间", { v0: task.fileName })}
-      type="datetime-local"
-      step={1}
+      label={tr("{v0}录音开始时间", { v0: task.fileName })}
       value={value}
       disabled={pending || sessionRef === undefined}
-      onChange={event => { setOwnerStartOverrides(current => ({ ...current, [key]: event.target.value })) }}
-      onBlur={event => { if (event.target.value !== recordingImportLocalInputValue(new Date(task.startAtMillis))) changeOwnerStart(task, historyView, event.target.value) }}
+      onValueChange={next => setOwnerStartOverrides(current => ({ ...current, [key]: next }))}
+      onCommit={next => { if (next !== recordingImportLocalInputValue(new Date(task.startAtMillis))) changeOwnerStart(task, historyView, next) }}
     /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: task.fileName })}>{endLabel}</span></span></span>
   }
 
@@ -1735,7 +1734,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
           <input ref={fileInputRef} hidden multiple disabled={fileSelectionDisabled} aria-label={tr("选择录音文件")} type="file" accept=".wav,.mp3,.m4a,audio/wav,audio/mpeg,audio/mp4" onChange={event => { if (!fileSelectionDisabled && event.target.files !== null) void receiveFiles([...event.target.files]); event.target.value = '' }} />
           <div style={{ ...styles.dropzone, ...(fileSelectionDisabled ? { opacity: .55, cursor: 'default' } : {}) }} role="button" aria-disabled={fileSelectionDisabled} tabIndex={fileSelectionDisabled ? -1 : 0} onClick={event => { if (!fileSelectionDisabled) void chooseFiles({ type: event.type, trusted: event.isTrusted, detail: event.detail }) }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!fileSelectionDisabled && !event.repeat) void chooseFiles({ type: event.type, trusted: event.isTrusted }) } }} onDragEnter={event => { event.preventDefault(); if (!fileSelectionDisabled) setDragging(true) }} onDragOver={event => { event.preventDefault() }} onDragLeave={() => { setDragging(false) }} onDrop={(event: DragEvent<HTMLDivElement>) => { event.preventDefault(); setDragging(false); if (!fileSelectionDisabled) { const items = [...event.dataTransfer.items].filter(item => item.kind === 'file'); const handles = items.map(item => (item as unknown as { getAsFileSystemHandle?: () => Promise<RecordingFileHandle | null> }).getAsFileSystemHandle?.() ?? Promise.resolve(null)); void receiveFiles([...event.dataTransfer.files], handles) } }}><span style={styles.dropCopy}><UploadSimple size={18} aria-hidden /><span>{tr("点击、拖拽上传音频文件（支持多选）")}</span><small style={styles.hint}>{tr("支持 WAV、MP3、M4A 格式")}</small></span>{dragging && <span style={styles.dragOverlay}>{tr("松开上传至 Arkme")}</span>}</div>
           {(rows.length > 0 || visibleJobs.length > 0) && <div style={styles.tableViewport}><div style={styles.table} role="table" aria-label={tr("待导入录音")}><div style={styles.tableHeader} role="row"><span /><span>{tr("文件名称")}</span><span style={styles.cellCenter}>{tr("录音时长")}</span><span style={styles.cellCenter}>{tr("文件大小")}</span><span style={styles.cellCenter} title={tr("我的数据写入时间轴，他人仅保存")}>{tr("数据归属")}</span><span style={styles.cellCenter}>{tr("上传状态")}</span><span style={styles.cellCenter} title={tr("包含排队等待，不代表网络传输耗时")}>{tr("处理耗时")}</span><span /></div><div style={styles.rowList} role="rowgroup" aria-label={tr("录音文件列表")}>{rows.map(row => {
-            const start = new Date(row.startAt).getTime(); const duration = row.selection?.ok === true ? row.selection.durationMillis ?? 0 : 0
+            const start = parseArkmeLocalDateTime(row.startAt); const duration = row.selection?.ok === true ? row.selection.durationMillis ?? 0 : 0
             const timeError = row.selection?.ok === true ? recordingImportEndTimeError(start, duration) : ''
             const rowLocked = pending || row.submitting || row.batch !== undefined
             const rowError = row.error || (row.selection?.ok === false ? row.selection.message : '')
@@ -1744,7 +1743,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
             const processingSource = stagedProcessingSource(row, durationNowMillis)
             return <div key={row.id} style={styles.row} role="row">
               <span style={styles.cellCenter}>{row.submitting ? null : <input style={styles.checkbox} aria-label={tr("选择 {v0}", { v0: row.file.name })} type="checkbox" checked={row.selected} disabled={pending} onChange={event => { updateRow(row.id, { selected: event.target.checked }) }} />}</span>
-              <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><span style={styles.timeEditor}><input style={styles.timeInput} aria-label={tr("{v0}录音开始时间", { v0: row.file.name })} type="datetime-local" step={1} value={row.startAt} disabled={rowLocked} onChange={event => { updateRow(row.id, { startAt: event.target.value, error: '' }) }} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
+              <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><span style={styles.timeEditor}><ArkmeLocalDateTimeInput style={styles.timeInput} label={tr("{v0}录音开始时间", { v0: row.file.name })} value={row.startAt} disabled={rowLocked}
+                onValueChange={next => updateRow(row.id, { startAt: next, error: '' })} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
               <span style={styles.cellCenter}>{row.selection?.ok === true ? recordingAudioDurationLabel(duration) : '—'}</span><span style={styles.cellCenter}>{row.file.size === 0 && row.source?.kind === 'handle' ? '—' : fileSizeLabel(row.file.size)}</span>
               <span style={styles.ownership} aria-label={tr("{v0}数据归属", { v0: row.file.name })}><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'self'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'self' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'self') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'self' }) }}>{tr("我的")}</button><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'other'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'other' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'other') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'other' }) }}>{tr("他人")}</button></span>
               <span style={styles.status}>{row.needsAccess ? <button type="button" style={styles.historyButton} disabled={pending} onClick={() => { void restoreAccess(row) }}>恢复访问</button> : row.validating ? <span title={tr('正在读取文件并校验格式与时长；云端文件可能需要先由系统下载。')}>{row.preparing ? tr('正在准备') : tr('等待准备')}</span> : rowError !== '' ? <><small style={styles.error}>{row.selection?.ok === true ? tr('导入失败') : tr('准备失败')}</small><button type="button" aria-label={tr('重试 {v0}', { v0: row.file.name })} disabled={pending} style={styles.historyButton} onClick={() => { void submitRows(row.id) }}>{tr('重试')}</button></> : row.submitting ? uploadActive ? <><span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(uploadProgress * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(uploadProgress * 100)}%` }} /></span><span>{tr("上传中")}</span></> : tr("排队中") : tr("待导入")}</span><span style={styles.cellCenter}>{processingDurationCell(processingSource)}</span>

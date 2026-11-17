@@ -232,13 +232,13 @@ export function recordingTimelineTickTimes(windowStart: number, windowEnd: numbe
 const styles: Record<string, CSSProperties> = {
   shell: { display: 'grid', gap: 8, padding: '4px 8px', boxSizing: 'border-box', background: desktop.base },
   overviewRow: { position: 'relative', minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', alignItems: 'start', gap: 0 },
-  overviewColumn: { minWidth: 0, height: 60, position: 'relative' },
-  overview: { position: 'relative', overflow: 'hidden', height: 18, marginTop: 26, boxSizing: 'border-box', touchAction: 'none', borderRadius: 10, border: `1px solid ${desktop.trackBorder}`, background: desktop.track, cursor: 'pointer' },
+  overviewColumn: { minWidth: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr)', gap: 4, paddingBottom: 1, position: 'relative' },
+  overview: { position: 'relative', overflow: 'hidden', height: 18, boxSizing: 'border-box', touchAction: 'none', borderRadius: 10, border: `1px solid ${desktop.trackBorder}`, background: desktop.track, cursor: 'pointer' },
   overviewSegment: { position: 'absolute', top: 5, height: 6, minWidth: 2, borderRadius: 3 },
   overviewWindow: { position: 'absolute', zIndex: 3, top: 0, bottom: 0, minWidth: 2, boxSizing: 'border-box', border: `1px solid ${desktop.secondary}`, borderRadius: 10, background: 'transparent', pointerEvents: 'none' },
-  overviewLabels: { position: 'absolute', top: 48, left: 0, right: 0, height: 11, color: desktop.tertiary, fontSize: 10, lineHeight: '11px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
+  overviewLabels: { position: 'relative', height: 11, color: desktop.tertiary, fontSize: 10, lineHeight: '11px', fontVariantNumeric: 'tabular-nums', pointerEvents: 'none' },
   overviewLabel: { position: 'absolute', transform: 'translateX(-50%)', whiteSpace: 'nowrap' },
-  detailPopover: { position: 'absolute', zIndex: 20, top: 60, width: 'min(560px, 100%)', boxSizing: 'border-box', padding: '8px 12px', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.base, boxShadow: arkmeTheme.shadow },
+  detailPopover: { position: 'absolute', zIndex: 20, top: '100%', width: 'min(560px, 100%)', boxSizing: 'border-box', padding: '8px 12px', border: `1px solid ${desktop.border}`, borderRadius: 10, background: desktop.base, boxShadow: arkmeTheme.shadow },
   zoomControls: { height: 20, display: 'flex', alignItems: 'center', gap: 10, color: desktop.text },
   zoomButton: { width: 16, height: 16, padding: 0, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: 'inherit', cursor: 'pointer' },
   zoomHint: { marginLeft: -2, color: desktop.tertiary, fontSize: 10, lineHeight: '20px', whiteSpace: 'nowrap' },
@@ -532,6 +532,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     zoomTo(zoomIndex + wheel.zoomStep, ratio, anchorMillis)
   }
 
+  const overviewPlayheadVisible = playheadMillis !== undefined && playheadMillis >= bounds.start && playheadMillis < bounds.end
   const playheadVisible = playheadMillis !== undefined && playheadMillis >= windowStart && playheadMillis <= windowEnd
   const canPlayAtSelection = hasActivePlayback || playheadMillis !== undefined && items.some(item => (
     playheadMillis >= item.startAtMillis && playheadMillis < item.endAtMillis
@@ -592,7 +593,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
         suppressFocus.current = true; overviewRef.current?.focus({ preventScroll: true }); suppressFocus.current = false
       }}>
 
-      <div style={styles.overviewColumn} aria-label={tr("24 小时概览")}>
+      <div style={overviewPlayheadVisible ? { ...styles.overviewColumn, paddingTop: 26 } : styles.overviewColumn} aria-label={tr("24 小时概览")}>
         <div
           style={{ ...styles.overview, ...(!hasRecording ? { cursor: 'default' } : {}) }}
           ref={overviewRef}
@@ -651,13 +652,12 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
             style={{ position: 'absolute', zIndex: 4, top: 1, bottom: 1, minWidth: 4, borderRadius: 3, background: desktop.text,
               left: `${recordingSegmentLayout(readingRange.startAtMillis, readingRange.endAtMillis, bounds.start, bounds.end).leftPercent}%`,
               width: `${recordingSegmentLayout(readingRange.startAtMillis, readingRange.endAtMillis, bounds.start, bounds.end).widthPercent}%` }} />}
-          {playheadMillis !== undefined && playheadMillis >= bounds.start && playheadMillis < bounds.end && <span
+          {overviewPlayheadVisible && <span
             data-recording-playhead-at={playheadMillis} aria-label={`播放位置 ${timeLabel(playheadMillis)}`}
             style={{ ...styles.playhead, background: arkmeTheme.danger, left: `${(playheadMillis - bounds.start) / DAY_MILLIS * 100}%` }} />}
           {zoomIndex > 0 && <span aria-hidden style={{ ...styles.overviewWindow, left: `${String(overviewWindowLeft)}%`, width: `${String(overviewWindowWidth)}%` }} />}
         </div>
-        {playheadMillis !== undefined && playheadMillis >= bounds.start && playheadMillis < bounds.end
-          && renderPlayheadControl((playheadMillis - bounds.start) / DAY_MILLIS * 100)}
+        {overviewPlayheadVisible && renderPlayheadControl((playheadMillis - bounds.start) / DAY_MILLIS * 100)}
         <span style={styles.overviewLabels} aria-hidden>
           {['00:00', '06:00', '12:00', '18:00', '24:00'].map((label, index) => <span key={label} style={{
             ...styles.overviewLabel,
