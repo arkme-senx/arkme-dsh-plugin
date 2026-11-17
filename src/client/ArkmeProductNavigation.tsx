@@ -16,6 +16,7 @@ import { Waveform } from '@phosphor-icons/react/dist/icons/Waveform'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { Database } from '@phosphor-icons/react/dist/icons/Database'
 import { GearSix } from '@phosphor-icons/react/dist/icons/GearSix'
+import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple'
 import { GlobeHemisphereWest } from '@phosphor-icons/react/dist/icons/GlobeHemisphereWest'
 import { AddressBook } from '@phosphor-icons/react/dist/icons/AddressBook'
 import type { Icon } from '@phosphor-icons/react/lib'
@@ -31,6 +32,7 @@ import { callArkme } from './api.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ArkmePersonalDayCalendar } from './ArkmePersonalDayCalendar.js'
 import { arkmeAuthStore } from './auth-store.js'
+import { arkmeAppUpdateStore, hasPendingAppUpdate } from './app-update-store.js'
 import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { ARKME_NAVIGATION_WIDTH, ARKME_PROFILE_AVATAR_SIZE } from './arkme-layout.js'
@@ -150,6 +152,7 @@ export function ArkmeProductNavigation({
   usePhoneBindingStatus()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
+  const appUpdate = useSyncExternalStore(arkmeAppUpdateStore.subscribe, arkmeAppUpdateStore.getSnapshot, arkmeAppUpdateStore.getSnapshot)
   const directory = useSyncExternalStore(
     arkmeChatDirectory.subscribe,
     arkmeChatDirectory.getConversationSnapshot,
@@ -411,6 +414,22 @@ export function ArkmeProductNavigation({
             <button data-arkme-feedback="neutral" type="button" onClick={() => { setProfileOpen(false); arkmeUi.openDshSettings() }}><GearSix size={19} /><span><strong>{tr("设置")}</strong></span><CaretRight size={15} /></button>
           </div>
         </div>, document.body)}
+        {hasPendingAppUpdate(appUpdate.status) && <button
+          type="button"
+          aria-label={tr('版本更新')}
+          aria-describedby={navigationHint.describedBy('app-update')}
+          onMouseEnter={event => { navigationHint.show(event.currentTarget, 'app-update', tr('版本更新')) }}
+          onMouseMove={event => { navigationHint.show(event.currentTarget, 'app-update', tr('版本更新')) }}
+          onMouseLeave={navigationHint.hide}
+          onFocus={event => { navigationHint.show(event.currentTarget, 'app-update', tr('版本更新'), true) }}
+          onBlur={navigationHint.hide}
+          onClick={() => { navigationHint.hide(); setProfileOpen(false); void arkmeAppUpdateStore.open() }}
+        >
+          <span style={styles.icon}>
+            <DownloadSimple size={20} weight="regular" aria-hidden />
+            <span aria-hidden style={{ position: 'absolute', top: -3, right: -5, width: 6, height: 6, borderRadius: '50%', background: theme.danger }} />
+          </span>
+        </button>}
         <button ref={profileTriggerRef} type="button" className={`arkme-redesign-profile${profileOpen ? ' is-active' : ''}`} aria-label={tr("个人资料")}
           aria-describedby={navigationHint.describedBy('profile')}
           onMouseEnter={event => { if (!profileOpen) navigationHint.show(event.currentTarget, 'profile', profileHint) }}
