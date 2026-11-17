@@ -1,3 +1,5 @@
+import type { ArkmeRecordingWindow } from '../../types.js'
+import { useArkmeDisplayTimeZone } from '../display-time-zone.js'
 import { useRecordingComparisonAvailability } from './useRecordingComparisonAvailability.js'
 import { RecordingStrategyComparison } from './RecordingStrategyComparison.js'
 import { RecordingFileStorageLabel, recordingMegabytesLabel, useRecordingFileStorage } from './recording-file-storage.js'
@@ -25,6 +27,7 @@ interface Props {
   mediaPath?: string
   accountKey: string | undefined
   dateStamp: number
+  dayWindow?: ArkmeRecordingWindow | undefined
   refreshRevision: number
   active: boolean
   onChanged(): void
@@ -52,8 +55,8 @@ const note: CSSProperties = { color: theme.secondary, fontSize: 12, lineHeight: 
 const PAGE_SIZE = 50
 const COMPLETED_SCAN_TTL = 60_000
 
-function instant(value: number | null, showDate = true) {
-  return value !== null && value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—'
+function instant(value: number | null, showDate = true, timeZone?: string) {
+  return value !== null && value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }) : '—'
 }
 function size(value: number | null) { return value === null ? tr('总大小待确认') : value === 0 ? '0 B' : recordingMegabytesLabel(value) }
 
@@ -62,7 +65,8 @@ export function ArkmeRecordingFiles(props: Props) {
   return props.accountKey ? <RecordingFiles key={props.accountKey} {...props} /> : <p style={note}>{tr('登录后查看音频文件')}</p>
 }
 
-function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChanged, onCountChange }: Props) {
+function RecordingFiles({ mediaPath, dateStamp, dayWindow, active, refreshRevision, onChanged, onCountChange }: Props) {
+  const timeZone = useArkmeDisplayTimeZone()
   const [comparison, setComparison] = useState<{sessionRef: string; fileName: string}>()
   const [current, setCurrent] = useState<RecordingFile[]>([])
   const [history, setHistory] = useState<RecordingFile[]>([])
@@ -236,8 +240,8 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
   // External updates keep existing rows visible. Local deletion only removes
   // its confirmed row and lets the calendar refresh independently.
   const files = useMemo(() => mergeRecordingFiles(history, current)
-    .filter(file => recordingFileMatchesDay(file, dateStamp, 'recorded'))
-    .sort((a, b) => a.startAtMillis - b.startAtMillis || recordingFileKey(a).localeCompare(recordingFileKey(b))), [history, current, dateStamp])
+    .filter(file => recordingFileMatchesDay(file, dateStamp, 'recorded', dayWindow))
+    .sort((a, b) => a.startAtMillis - b.startAtMillis || recordingFileKey(a).localeCompare(recordingFileKey(b))), [history, current, dateStamp, dayWindow])
   const openAction = (file: RecordingFile, kind: Action['kind']) => {
     setMenu(undefined)
     setStart(recordingImportLocalInputValue(new Date(file.startAtMillis)))
@@ -309,7 +313,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
       }
     }
   }
-  const { from, to } = recordingFileDayBounds(dateStamp)
+  const { from, to } = recordingFileDayBounds(dateStamp, dayWindow)
   const complete = !loading && !currentLoading && !hasMore && !historyError && !currentWarning
   const storage = useRecordingFileStorage(files, active, `${dateStamp}:${revision}:${refreshRevision}`)
 
@@ -329,7 +333,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
           <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 24, rowGap: 2 }}>
             <div title={file.fileName} style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
             <div style={{ ...note, flex: '0 1 auto', minWidth: 0, maxWidth: '100%', display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
-              <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(recordingFileDisplayEnd(file), crossDay)}</span>
+              <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay, timeZone)}–{instant(recordingFileDisplayEnd(file), crossDay, timeZone)}</span>
               <span>· {recordingAudioDurationLabel(file.durationMillis, 'delivery' in file ? file.delivery : undefined)}</span><span>· {size(recordingFileExpectedBytes(file))}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
             </div>
           </div>
@@ -361,7 +365,7 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
     {action && <dialog ref={dialog} aria-label={tr(action.kind === 'delete' ? '确认删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}
       onCancel={event => { event.preventDefault(); if (!busy) setAction(undefined) }} style={{ width: 'min(440px, calc(100vw - 48px))', boxSizing: 'border-box', padding: 24, border: `1px solid ${theme.border}`, borderRadius: 12, background: theme.base, color: theme.text, boxShadow: theme.shadow }}>
       <h3 style={{ marginTop: 0 }}>{tr(action.kind === 'delete' ? '删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}</h3>
-      <p style={{ overflowWrap: 'anywhere' }}>{action.file.fileName}</p><p style={note}>{instant(action.file.startAtMillis)} — {instant(recordingFileDisplayEnd(action.file))}</p>
+      <p style={{ overflowWrap: 'anywhere' }}>{action.file.fileName}</p><p style={note}>{instant(action.file.startAtMillis, true, timeZone)} — {instant(recordingFileDisplayEnd(action.file), true, timeZone)}</p>
       {action.kind === 'delete' ? <p style={note}>{tr('将删除整份音频及关联录音数据，跨日部分也会受影响。删除后无法恢复。')}</p>
         : action.kind === 'start' ? <div style={note}>{tr('录音开始时间')} <ArkmeLocalDateTimeInput label={tr('录音开始时间')} value={start} onValueChange={setStart} disabled={busy} style={control} /></div>
           : <><select aria-label={tr('文件数据归属')} value={ownership} disabled={busy} onChange={event => setOwnership(event.target.value as 'self' | 'other')} style={control}><option value="self">{tr('我的')}</option><option value="other">{tr('他人')}</option></select><p style={note}>{tr('我的数据写入时间轴，他人仅保存')}</p></>}

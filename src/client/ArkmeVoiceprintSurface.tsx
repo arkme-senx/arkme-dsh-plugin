@@ -1,3 +1,4 @@
+import { formatArkmeDate } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import type {
@@ -88,7 +89,7 @@ function message(error: unknown, fallback: string): string {
 }
 
 function dateLabel(millis: number): string {
-  return millis <= 0 ? '时间未知' : new Date(millis).toLocaleDateString(arkmeIntlLocale())
+  return millis <= 0 ? '时间未知' : formatArkmeDate(millis, arkmeIntlLocale())
 }
 
 function copyText(value: string): void {

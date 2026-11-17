@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../../display-time-zone.js'
 import { useState } from 'react'
 import type { TeamCodexTask } from '../../../team-codex-contract.js'
 import { arkmeIntlLocale, tr } from '../../locale.js'
@@ -16,7 +17,7 @@ export function CodexSyncStatus({ task }: { task: TeamCodexTask }) {
   const [details, setDetails] = useState(false)
   if (!task.captureHealth && !task.cloud?.remote) return null
   const at = task.captureHealth?.lastReceivedAt ?? task.updatedAt
-  const stamp = new Date(at).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const stamp = formatArkmeDateTime(at, arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   const explanation = task.captureHealth?.status === 'offline'
     ? '已找到本机配置的采集来源，但采集服务未运行或已切换账号。请在绑定账号的正式客户端恢复接入；刷新对话不会补回未采集的内容。'
     : task.captureHealth?.status === 'buffering'

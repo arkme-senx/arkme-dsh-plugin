@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
 import type { TeamConversation, TeamIdentity, TeamMessage } from '../team-app-contract.js'
 import type { TeamHistoryOptions, TeamHistoryResponse, TeamHistoryWord } from '../team-history-contract.js'
@@ -28,7 +29,7 @@ function TeamHistoryRows({ messages, conversation, accountKey, opening, onLocate
   }
   return <>{messages.map(message => <button type="button" key={message.key} data-team-history-hit={message.key} disabled={!!opening} onClick={() => onLocate(message)}
     style={{ display: 'block', width: '100%', textAlign: 'left', padding: '12px 0', border: 0, borderBottom: `1px solid ${arkmeTheme.borderSoft}`, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer' }}>
-    <span style={{ display: 'block', color: arkmeTheme.secondary, fontSize: 12, marginBottom: 6 }}>{message.own ? tr('我') : identity(message.sender).nickname} · {teamHistoryDate(message.createdAt) ? new Date(message.createdAt).toLocaleString() : tr('时间未提供')}{opening === message.key ? ` · ${tr('正在定位…')}` : ''}</span>
+    <span style={{ display: 'block', color: arkmeTheme.secondary, fontSize: 12, marginBottom: 6 }}>{message.own ? tr('我') : identity(message.sender).nickname} · {teamHistoryDate(message.createdAt) ? formatArkmeDateTime(message.createdAt) : tr('时间未提供')}{opening === message.key ? ` · ${tr('正在定位…')}` : ''}</span>
     <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', fontSize: 14 }}>{teamHistoryText(message) || tr('[消息]')}</span>
   </button>)}</>
 }

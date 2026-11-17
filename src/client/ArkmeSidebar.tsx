@@ -1,3 +1,4 @@
+import { arkmeDayDelta, arkmeDayKey, arkmeWallClockIso, useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import {parseGameCommand} from './game/command.js'
 import {openGame} from './game/window.js'
 import { HistoryPageTiming, historyTimingEnabled } from './conversation-history-timing.js'
@@ -247,7 +248,7 @@ import { ArkmeArrangementSurface } from './ArkmeArrangementSurface.js'
 import { ArkmeRecognizedSpeakersSurface } from './ArkmeRecognizedSpeakersSurface.js'
 import { ArkmeDirectRecordingStatus, useDirectRecordingOwner } from './recordings/ArkmeDirectRecording.js'
 import { ArkmeSelfCalendarPopover } from './ArkmeCalendarSurface.js'
-import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from './recordings/ArkmeRecordingImportDialog.js'
+import { ArkmeRecordingImportDialog, recordingImportFeedbackEqual, type ArkmeRecordingImportDialogHandle, type RecordingImportFeedback } from './recordings/ArkmeRecordingImportDialog.js'
 import { ArkmeRetainedCallPage } from './ArkmeRetainedCallPage.js'
 import { ArkmeWorldSurface } from './ArkmeWorldSurface.js'
 import { ArkmeComposerCard } from './ArkmeComposerCard.js'
@@ -1114,16 +1115,13 @@ export function arkmeMemberJoinDisplayName(person: ArkmeConversationMemberJoinPe
 }
 
 export function arkmeMemberJoinTimeLabel(value: number, nowMillis = Date.now()): string {
-  const date = new Date(value)
-  const now = new Date(nowMillis)
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const target = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  const dayOffset = Math.round((start - target) / 86_400_000)
+  const dayOffset = -arkmeDayDelta(value, nowMillis)
   const time = timeLabel(value)
   if (dayOffset === 0) return time
   if (dayOffset === 1) return tr("昨天 {v0}", { v0: time })
   if (dayOffset === 2) return tr("前天 {v0}", { v0: time })
-  return `${String(date.getMonth() + 1).padStart(2, '0')}月${String(date.getDate()).padStart(2, '0')}日 ${time}`
+  const day = arkmeDayKey(value)
+  return `${day.slice(5, 7)}月${day.slice(8, 10)}日 ${time}`
 }
 
 export function arkmeVisibleMemberJoinInvitees(
@@ -1481,22 +1479,21 @@ function normalizedEpochMillis(value: number): number {
 function forwardDateLabel(value: number): string {
   const millis = normalizedEpochMillis(value)
   if (millis <= 0) return ''
-  const date = new Date(millis)
-  return `${String(date.getFullYear())}年${String(date.getMonth() + 1)}月${String(date.getDate())}日`
+  const [year, month, day] = arkmeDayKey(millis).split('-').map(Number)
+  return `${year}年${month}月${day}日`
 }
 
 function forwardShortTimeLabel(value: number): string {
   const millis = normalizedEpochMillis(value)
   if (millis <= 0) return ''
-  const date = new Date(millis)
-  return `${String(date.getMonth() + 1).padStart(2, '0')}月${String(date.getDate()).padStart(2, '0')}日 ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  const wall = arkmeWallClockIso(millis)
+  return `${wall.slice(5, 7)}月${wall.slice(8, 10)}日 ${wall.slice(11, 16)}`
 }
 
 function forwardFullTimeLabel(value: number): string {
   const millis = normalizedEpochMillis(value)
   if (millis <= 0) return ''
-  const date = new Date(millis)
-  return `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
+  return arkmeWallClockIso(millis).slice(0, 19).replace('T', ' ')
 }
 
 function copyLinkDetailDateRange(items: readonly Pick<ArkmeMessageCopyLinkSnapshotItem, 'sendAtMillis'>[]): string {
@@ -1524,11 +1521,8 @@ function copyLinkDetailExtensionTarget(detail: ArkmeMessageCopyLinkResolveResult
 export function arkmeForwardTargetTimeLabel(value: number, now: number = Date.now()): string {
   const millis = normalizedEpochMillis(value)
   if (millis <= 0) return ''
-  const date = new Date(millis)
-  if (dayKey(millis) === dayKey(now)) {
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-  }
-  return `${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`
+  const wall = arkmeWallClockIso(millis)
+  return dayKey(millis) === dayKey(now) ? wall.slice(11, 16) : wall.slice(5, 10).replace('-', '/')
 }
 
 function arkmeDraftForwardRecordsTitleWithFallback(rawName: string, sourceCount: number, fallbackName: string): string {
@@ -1863,6 +1857,7 @@ export function ArkmeSurface({
   active = true,
 }: ArkmeSurfaceProps = {}) {
   const locale = useArkmeLocale()
+  const displayTimeZone = useArkmeEffectiveTimeZone()
   const ui = useSyncExternalStore(arkmeUi.subscribe, arkmeUi.getViewSnapshot, arkmeUi.getViewSnapshot)
   const notificationActivation = useSyncExternalStore(
     arkmeNotificationActivation.subscribe,
@@ -1901,13 +1896,13 @@ export function ArkmeSurface({
   }, [communityWelcome, authenticatedAccountKey])
   const welcomeSuggestionRef = useRef<{ key: string; text: string }>()
   const recordingImportDialogRef = useRef<ArkmeRecordingImportDialogHandle>(null)
-  const [recordingImportFeedback, setRecordingImportFeedback] = useState<{ accountKey: string | undefined; status: RecordingImportButtonStatus }>()
-  const updateRecordingImportStatus = useCallback((status: RecordingImportButtonStatus) => {
-    setRecordingImportFeedback(current => current?.accountKey === authenticatedAccountKey && current?.status === status
-      ? current : { accountKey: authenticatedAccountKey, status })
+  const [recordingImportFeedback, setRecordingImportFeedback] = useState<{ accountKey: string | undefined; feedback: RecordingImportFeedback }>()
+  const updateRecordingImportFeedback = useCallback((feedback: RecordingImportFeedback) => {
+    setRecordingImportFeedback(current => current && current.accountKey === authenticatedAccountKey
+      && recordingImportFeedbackEqual(current.feedback, feedback) ? current : { accountKey: authenticatedAccountKey, feedback })
   }, [authenticatedAccountKey])
-  const recordingImportStatus = recordingImportFeedback?.accountKey === authenticatedAccountKey
-    ? recordingImportFeedback?.status ?? 'idle' : 'idle'
+  const currentRecordingImportFeedback = recordingImportFeedback?.accountKey === authenticatedAccountKey
+    ? recordingImportFeedback?.feedback : undefined
   const [recordingImportDefaultStartAtMillis, setRecordingImportDefaultStartAtMillis] = useState(() => {
     const today = new Date()
     today.setHours(0, 0, 0, 0)
@@ -8198,8 +8193,8 @@ export function ArkmeSurface({
     return arkmeConversationReadingDate(bodyRef.current, [
       ...interwovenWindow.prelude.map(item => ({ id: `moment:${item.momentId}`, kind: 'moment', occurredAtMillis: item.occurredAtMillis })),
       ...displayRows,
-    ])
-  }, [activeConversation, timelineStateKey, conversationKey, displayRows, interwovenWindow.prelude])
+    ], displayTimeZone)
+  }, [activeConversation, timelineStateKey, conversationKey, displayRows, interwovenWindow.prelude, displayTimeZone])
   const updateScrollAffordances = useConversationScrollFrame(`${authenticatedAccountKey}:${conversationKey}:${activeConversation}`, () => {
     bottomVisibility.measure()
   })
@@ -8522,7 +8517,7 @@ export function ArkmeSurface({
       currentUserId={authenticatedUserId}
       accountKey={authenticatedAccountKey ?? `prod:${authenticatedUserId}`}
       foreground={recordingImportForeground}
-      onStatusChange={updateRecordingImportStatus}
+      onFeedbackChange={updateRecordingImportFeedback}
       onAccepted={() => { setRecordingRefreshRevision(value => value + 1) }}
     />
     : null
@@ -8962,7 +8957,7 @@ export function ArkmeSurface({
     activeSelectMode, archiveReadOnly, authenticatedAccountKey, composerDraftKey, composerFilesDisabled,
     timelineReediting, conversationKey, conversationOverlayKey, timelineFileTasksByItem, retryingFileTasks, sendPlaceholders,
     highlightedTargetUid, mentionOpensMemberProfile, messageActionBusy, recordReeditHighlightUid,
-    reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale, reactionMenuRequest, extensionSendTasks, timelineBotPresentations])
+    reeditItems, timelineReeditJobs, shareWebsite, showMessageAvatars, locale, displayTimeZone, reactionMenuRequest, extensionSendTasks, timelineBotPresentations])
   const unwindowedMessageRows = useMemo(() => source && !unifiedWindow
     ? displayRows.map((_, index) => renderMessageRow(index)) : null,
   [source, unifiedWindow, displayRows, renderMessageRow])
@@ -9432,7 +9427,7 @@ export function ArkmeSurface({
             key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}
             onOpenRecordingImport={openRecordingImport}
             recordingRefreshRevision={recordingRefreshRevision}
-            recordingImportStatus={recordingImportStatus}
+            recordingImportFeedback={currentRecordingImportFeedback}
           />
           : ui.mode === 'recognized-speakers' ? <ArkmeRecognizedSpeakersSurface
             key={`recognized-speakers:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}

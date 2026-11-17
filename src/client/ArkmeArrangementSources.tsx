@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeArrangementEvidence, ArkmeArrangementSourceTarget, ArkmeCallHistoryItem } from '../types.js'
 import { ArkmeClientError, callArkme } from './api.js'
@@ -75,11 +76,11 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
     const team=quote?.state==='ready'?quote.teamConversation:undefined
     return <div className="arkme-arrangement-source-item" key={e.id}>
     {team && <div className="arkme-arrangement-source-conversation"><strong>{tr('团队对话')} · {team.conversation.channel.name}</strong>
-      <span>{team.message.sender.nickname}</span><small>{new Date(team.message.createdAt).toLocaleString()}</small></div>}
+      <span>{team.message.sender.nickname}</span><small>{formatArkmeDateTime(team.message.createdAt)}</small></div>}
     {conversation && <div className="arkme-arrangement-source-conversation">
       <strong>{tr(conversation.source.kind==='group_chat'?'群聊':'私聊')} · {conversation.source.displayName}</strong>
       <button type="button" className="arkme-arrangement-recording-source" disabled={!!pending} onClick={event=>{event.stopPropagation();void open(e)}}>{tr('定位原消息')} ↗</button>
-      {conversation.sendAtMillis>0&&<small>{new Date(conversation.sendAtMillis).toLocaleString()}</small>}
+      {conversation.sendAtMillis>0&&<small>{formatArkmeDateTime(conversation.sendAtMillis)}</small>}
     </div>}
     {!conversation && (e.canOpen && quote?.state!=='unavailable' ? <button className="arkme-arrangement-recording-source" type="button" disabled={!!pending} onClick={event=>{event.stopPropagation();void open(e,!showText)}}>{tr(labels[e.kind])}{e.sourceDate?` · ${Number(e.sourceDate.slice(5,7))}月${Number(e.sourceDate.slice(8,10))}日`:''} · {pending?tr('正在打开…'):tr('查看原文')} ↗</button>
       : <div className="arkme-arrangement-recording-unavailable">{tr(labels[e.kind])}{e.unavailableReason?` · ${tr(e.unavailableReason)}`:''}</div>)}
@@ -103,7 +104,7 @@ export function ArkmeArrangementSources({ arrangementRef, sources, expanded, onN
     {error&&<div role="alert" className="arkme-arrangement-content-empty">{error} {failedRequest&&<button type="button" className="arkme-arrangement-recording-source" onClick={event=>{event.stopPropagation();void open(failedRequest.evidence,failedRequest.alternatives)}}>{tr('重试')}</button>}</div>}
     {target?.kind==='document'&&<ArkmeDetailShell title={target.title} label={target.title} onClose={()=>setTarget(undefined)}><div style={{whiteSpace:'pre-wrap'}}>{target.text}</div></ArkmeDetailShell>}
     {target?.kind==='team_conversation'&&<ArkmeDetailShell title={target.conversation.channel.name} label={tr('来源团队消息')} onClose={()=>setTarget(undefined)}>
-      <p>{target.message.sender.nickname} · {new Date(target.message.createdAt).toLocaleString()}</p>
+      <p>{target.message.sender.nickname} · {formatArkmeDateTime(target.message.createdAt)}</p>
       <TeamMessageContent message={target.message} conversationRef={target.conversation.ref} conversationKey={target.conversation.key} readOnly />
     </ArkmeDetailShell>}
     {target?.kind==='record'&&<ArkmeTimelineDetailDrawer item={target.item} canExtend={false} showOriginal={original} onToggleOriginal={()=>setOriginal(v=>!v)} onClose={()=>setTarget(undefined)}/>}

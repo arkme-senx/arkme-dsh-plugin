@@ -1,3 +1,4 @@
+import { formatArkmeTime } from '../display-time-zone.js'
 import type { OfflineContextPreview } from '../../offline-context-contract.js'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
@@ -15,7 +16,7 @@ import { tr, useArkmeLocale } from '../locale.js'
 import css from './offline-context.css?inline'
 
 export function offlineClock(value: number): string {
-  return new Date(value).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return formatArkmeTime(value, 'zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export interface OfflineContextCardProps {

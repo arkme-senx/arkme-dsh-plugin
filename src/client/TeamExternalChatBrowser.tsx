@@ -1,3 +1,4 @@
+import { formatArkmeDate, formatArkmeTime } from './display-time-zone.js'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
@@ -232,14 +233,14 @@ function Reader({share, onBack}: {share: ExternalChatShare; onBack(): void}) {
         {!page.items.length && <Empty title={tr('暂无消息')}/>}
         {ordered.map(item => {
           const stamp = item.sendAtMillis > 0 ? new Date(item.sendAtMillis) : undefined
-          const date = stamp?.toLocaleDateString(arkmeIntlLocale(), {year: 'numeric', month: 'short', day: 'numeric'}) ?? ''
+          const date = (stamp === undefined ? undefined : formatArkmeDate(stamp, arkmeIntlLocale(), {year: 'numeric', month: 'short', day: 'numeric'})) ?? ''
           const showDay = date !== day; day = date
           const right = item.senderSide === 'sharer'
           return <div key={item.itemUid}>
             {showDay && date && <div className="arkme-external-day">{date}</div>}
             <article className="arkme-external-message" data-side={right ? 'right' : 'left'} data-message-key={item.itemUid} aria-label={item.senderName}>
               <Avatar name={item.senderName} side={right ? 'sharer' : 'peer'}/>
-              <div className="arkme-external-message-content"><div className="arkme-external-message-meta"><span>{item.senderName}</span>{stamp && <time dateTime={stamp.toISOString()}>{stamp.toLocaleTimeString(arkmeIntlLocale(), {hour: '2-digit', minute: '2-digit', hour12: false})}</time>}</div><div className="arkme-external-bubble"><SharedMessageBody item={item} sourceKey={share.key}/></div></div>
+              <div className="arkme-external-message-content"><div className="arkme-external-message-meta"><span>{item.senderName}</span>{stamp && <time dateTime={stamp.toISOString()}>{formatArkmeTime(stamp, arkmeIntlLocale(), {hour: '2-digit', minute: '2-digit', hour12: false})}</time>}</div><div className="arkme-external-bubble"><SharedMessageBody item={item} sourceKey={share.key}/></div></div>
             </article>
           </div>
         })}

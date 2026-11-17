@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useRef, useState } from 'react'
 import { ArkmeClientError, type ArkmeSdk } from '../sdk/index.js'
 import type { ArkmeExtensionPublishPage, ArkmeExtensionPublishResult } from '../extensions/types.js'
@@ -48,7 +49,7 @@ export function ArkmeExtensionPublishHistory({ sdk, onPublished }: { sdk: ArkmeS
         {(item.error_message || item.validation_error_message) && <div>{item.error_message || item.validation_error_message}</div>}
         <small style={{ display: 'block', overflowWrap: 'anywhere' }}>发布编号：{item.publish_session_id}</small>
         {item.error_code && <small style={{ display: 'block' }}>错误：{item.error_code}</small>}
-        {item.can_resume && item.recovery_expires_at !== undefined && <div>恢复截止：{new Date(item.recovery_expires_at).toLocaleString()}</div>}
+        {item.can_resume && item.recovery_expires_at !== undefined && <div>恢复截止：{formatArkmeDateTime(item.recovery_expires_at)}</div>}
         {(item.retry_after_millis ?? 0) > 0 && <div>请在约 {Math.ceil((item.retry_after_millis ?? 0) / 1000)} 秒后刷新状态。</div>}
         {item.can_resume && <button type="button" disabled={busy} onClick={() => { void resume(item) }}>恢复发布</button>}
       </article>)}

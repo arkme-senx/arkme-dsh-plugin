@@ -1,3 +1,4 @@
+import { arkmeWallClockIso } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { longArticleWindowBridge } from './long-article-window.js'
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
@@ -43,10 +44,8 @@ const styles: Record<string, CSSProperties> = {
 }
 
 function formatDate(value: number): string {
-  if (value <= 0) return ''
-  const date = new Date(value)
-  const two = (part: number) => String(part).padStart(2, '0')
-  return `${String(date.getFullYear())}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
+  if (value <= 0 || !Number.isFinite(new Date(value).getTime())) return ''
+  return arkmeWallClockIso(value).slice(0, 16).replace('T', ' ')
 }
 
 function errorMessage(error: unknown): string {

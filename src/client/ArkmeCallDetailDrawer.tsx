@@ -1,3 +1,4 @@
+import { formatArkmeTime } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { RecordThoughtContent } from './RecordThoughts.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
@@ -28,7 +29,7 @@ export function callDetailDuration(seconds: number | undefined): string {
 
 function startTime(millis: number): string {
   if (!Number.isFinite(millis) || millis <= 0) return '--:--'
-  return new Date(millis).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+  return formatArkmeTime(millis, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function ArkmeCallDetailDrawer({ item, callRef: sourceCallRef, onClose, initialVideoUrl }: { item?: ArkmeTimelineItem; callRef?: string; onClose: () => void; initialVideoUrl?: string | undefined }) {

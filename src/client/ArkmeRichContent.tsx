@@ -1,3 +1,4 @@
+import { arkmeWallClockIso } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ImageSquare } from '@phosphor-icons/react/dist/icons/ImageSquare'
 import { VideoCamera } from '@phosphor-icons/react/dist/icons/VideoCamera'
@@ -1106,7 +1107,7 @@ function arkmeSharedRecordingClockText(value: number): string {
   const millis = value > 0 && value < 100_000_000_000 ? value * 1000 : value
   if (millis <= 0) return ''
   const date = new Date(millis)
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  return arkmeWallClockIso(date.getTime()).slice(11, 16)
 }
 
 export function arkmeSharedRecordingTimeText(

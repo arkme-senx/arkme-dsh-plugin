@@ -1805,8 +1805,8 @@ recordingAnalysisV1: true,
   async recordingTotalsIndex(account: string, toMillis: number, offset: number, signal?: AbortSignal) { return await this.recording.recordingTotalsIndex(account, toMillis, offset, signal) }
   /** @internal Account-scoped, read-only local aggregation. */
   async recordingTotalsBucket(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsBucket(account, dateStamp, signal) }
-  async recordingTotalsDay(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsDay(account, dateStamp, signal) }
-  async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
+  async recordingTotalsDay(account: string, dateStamp: number, signal?: AbortSignal, window?: ArkmeRecordingWindow) { return await this.recording.recordingTotalsDay(account, dateStamp, signal, window) }
+  async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal, timeZone?: string): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal, timeZone) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
   /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal, kind: ArkmeRecordingProjectionKind = 'summary'): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal,kind) }
@@ -1825,11 +1825,11 @@ recordingAnalysisV1: true,
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
-  async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal) {
-    return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal)
+  async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
+    return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal, window)
   }
-  async recordingTranscriptContext(dateStamp: number, startAtMillis: number, endAtMillis: number, signal?: AbortSignal) {
-    return await this.recording.transcriptContext(dateStamp, startAtMillis, endAtMillis, signal)
+  async recordingTranscriptContext(dateStamp: number, startAtMillis: number, endAtMillis: number, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
+    return await this.recording.transcriptContext(dateStamp, startAtMillis, endAtMillis, signal, window)
   }
   async searchRecordingDayTranscript(dateStamp: number, query: string, signal?: AbortSignal) {
     return await this.recording.searchDayTranscript(dateStamp, query, signal)

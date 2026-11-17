@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
 import { ExportIcon } from '@phosphor-icons/react/dist/csr/Export'
 import { useEffect, useId, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
@@ -141,7 +142,7 @@ function CallShareControls({ callRef, compact }: { callRef: string; compact: boo
           <ArkmeUserAvatar {...(item.avatarRef ? { avatarRef: item.avatarRef } : {})} size={32} label={`${item.displayName}头像`} />
           <span style={{ minWidth: 0, display: 'grid', gap: 4 }}>
             <span style={{ overflowWrap: 'anywhere', color: arkmeTheme.text }}>{item.displayName}</span>
-            <time dateTime={new Date(item.viewedAtMillis).toISOString()} style={{ color: arkmeTheme.tertiary }}>{new Date(item.viewedAtMillis).toLocaleString('zh-CN', { hour12: false })}</time>
+            <time dateTime={new Date(item.viewedAtMillis).toISOString()} style={{ color: arkmeTheme.tertiary }}>{formatArkmeDateTime(item.viewedAtMillis, 'zh-CN', { hour12: false })}</time>
           </span>
         </li>)}</ul>}
         {pending && <p role="status">加载中…</p>}

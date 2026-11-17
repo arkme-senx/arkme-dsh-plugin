@@ -1,3 +1,4 @@
+import { arkmeDayKey, arkmeDayDelta, arkmeWallClockIso } from './display-time-zone.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useState, type CSSProperties } from 'react'
 import copyIcon from '../../assets/search_file_icons/copy.png'
@@ -26,18 +27,15 @@ const assetUrl = (value: string, type = 'svg+xml') => /^(data:|\/)/.test(value) 
 const clamp = (lines: number): CSSProperties => ({ display: '-webkit-box', WebkitLineClamp: lines, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' })
 const plain: CSSProperties = { font: 'inherit', border: 0, cursor: 'pointer', color: arkmeTheme.text, background: 'transparent' }
 export function searchUploadDate(millis: number): string {
-  const date = new Date(millis)
-  if (!Number.isFinite(date.valueOf())) return ''
-  const now = new Date()
-  const pad = (value: number) => String(value).padStart(2, '0')
-  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}`
-  const day = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
-  const today = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
-  const offset = (today - day) / 86_400_000
-  if (offset === 0) return time
-  if (offset === 1) return tr("昨天 {v0}", { v0: time })
-  if (offset === 2) return tr("前天 {v0}", { v0: time })
-  return `${date.getFullYear() === now.getFullYear() ? '' : `${date.getFullYear()}-`}${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`
+  const date = arkmeDayKey(millis)
+  if (!date) return ''
+  const now = Date.now()
+  const time = arkmeWallClockIso(millis).slice(11, 16)
+  const daysAgo = -arkmeDayDelta(millis, now)
+  if (daysAgo === 0) return time
+  if (daysAgo === 1) return tr("昨天 {v0}", { v0: time })
+  if (daysAgo === 2) return tr("前天 {v0}", { v0: time })
+  return `${date.slice(0, 4) === arkmeDayKey(now).slice(0, 4) ? date.slice(5) : date} ${time}`
 }
 export function searchDuration(seconds: number): string {
   const value = Math.max(0, Math.floor(seconds))

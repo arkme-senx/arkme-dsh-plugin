@@ -99,7 +99,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   }
   useSelectedMessageSearch(conversation.ref, text => {onOpenPanel();setQuery(text);setOpen('search');requestAnimationFrame(()=>input.current?.focus({preventScroll:true}))})
   const loadCalendarMonth = async (range:{startDate:string;endDate:string;timezone:string},signal:AbortSignal) => {
-    const options={...localDateWindow(range.startDate,range.endDate),timezone:range.timezone,requestId:crypto.randomUUID()}
+    const options={...localDateWindow(range.startDate,range.endDate,range.timezone),requestId:crypto.randomUUID()}
     const manifest=await prepareHistory(conversation.ref,accountKey,'dates',options,signal)
     const page=await historyCall(conversation.ref,accountKey,'dates',{resultRef:manifest.resultRef!,limit:100},signal)
     if(page.hasMore)throw new Error(tr('日期索引不完整，请重新读取'))

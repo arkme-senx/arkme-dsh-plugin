@@ -1,3 +1,4 @@
+import { formatArkmeTime, formatArkmeDateTime } from '../display-time-zone.js'
 import { RecordingLearningStatus } from './RecordingLearningStatus.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeRecordingDay, ArkmeRecordingSoundSource, ArkmeRecordingSpeakerCandidate, ArkmeRecordingSpeakerCorrectionInput, ArkmeRecordingSpeakerCorrectionUndoInput, ArkmeRecordingSpeakerCorrectionResult, ArkmeRecordingWorkbenchItem } from '../../types.js'
@@ -11,7 +12,7 @@ import { resetRecordingSpeakerCaches } from './recording-speaker-options-store.j
 import { useRecordingSpeakerCorrection } from './use-recording-speaker-correction.js'
 
 const button: CSSProperties = { border: `1px solid ${color.border}`, borderRadius: 6, padding: '6px 9px', background: color.base, color: color.text, font: 'inherit', fontSize: 12, cursor: 'pointer' }
-const time = (stamp: number) => new Date(stamp).toLocaleTimeString('zh-CN', { hourCycle: 'h23' })
+const time = (stamp: number) => formatArkmeTime(stamp, 'zh-CN', { hourCycle: 'h23' })
 
 /** Nearby is temporal context for manual review, never an assertion of voice similarity. */
 export function nearbyCorrectionItems(items: readonly ArkmeRecordingWorkbenchItem[], anchor: ArkmeRecordingWorkbenchItem) {
@@ -224,7 +225,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, assignmen
     {undoReview && <div aria-label={tr('撤销影响预览')} style={{ padding: 10, background: color.layer2, borderRadius: 6 }}>
       <strong>{tr('撤销影响预览')}</strong>
       {undoRanges?.length ? undoRanges.map((row, index) => <div key={index} style={{ padding: '8px 0', borderBottom: `1px solid ${color.border}` }}>
-        <div>{new Date(row.occurredAt).toLocaleString(undefined, { hourCycle: 'h23' })} · {rangeText(row)} {tr('秒')}</div>
+        <div>{formatArkmeDateTime(row.occurredAt, undefined, { hourCycle: 'h23' })} · {rangeText(row)} {tr('秒')}</div>
         <div>{tr('当前归属：')}{row.after.filter(r => r.startOffsetMillis < row.endOffsetMillis && row.startOffsetMillis < r.endOffsetMillis).map(r => `${rangeText(r)} ${r.label}`).join('；')}</div>
         <div>{tr('恢复归属：')}{row.before.filter(r => r.startOffsetMillis < row.endOffsetMillis && row.startOffsetMillis < r.endOffsetMillis).map(r => `${rangeText({ startOffsetMillis: Math.max(r.startOffsetMillis, row.startOffsetMillis), endOffsetMillis: Math.min(r.endOffsetMillis, row.endOffsetMillis) })} ${r.label}`).join('；')}</div>
       </div>) : <p>{tr('将撤销本次区间纠错，恢复原归属；若片段已有后续修改，后端会拒绝覆盖。')}</p>}
@@ -232,7 +233,7 @@ export function ArkmeRecordingSpeakerCorrection({ item, items, target, assignmen
       <button style={button} disabled={pending} onClick={() => setUndoReview(false)}>{tr('返回修改')}</button>
     </div>}
     {(learningRef ?? (context?.supported ? context.learningRef : undefined)) && <RecordingLearningStatus learningRef={(learningRef ?? (context?.supported ? context.learningRef : undefined))!} refreshKey={learningRevision}/> }
-    {prepared && !notice && <div style={{ padding: 10, background: color.layer2 }}>{prepared.selections?.map(selection => <p key={selection.itemRef}>{tr('仅修改当前句 {v0}–{v1} 秒', { v0: selection.startOffsetMillis / 1000, v1: selection.endOffsetMillis / 1000 })}</p>)}<p>{tr('后台已核实 {v0} 段；仅修改明确选择的片段，不合并历史或未来身份。', { v0: previewCount })}</p><p>{new Date(Math.min(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.startAtMillis))).toLocaleString(undefined, { hourCycle: 'h23' })} — {new Date(Math.max(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.endAtMillis))).toLocaleString(undefined, { hourCycle: 'h23' })}</p><button style={button} disabled={pending || !!unresolved.current} onClick={() => setPrepared(undefined)}>{tr('返回修改')}</button> <button style={button} disabled={pending || outcomeUnknown} onClick={() => { if (!locked.current) void submit(unresolved.current ?? { action: 'apply', input: prepared }) }}>{tr('确认保存')}</button></div>}
+    {prepared && !notice && <div style={{ padding: 10, background: color.layer2 }}>{prepared.selections?.map(selection => <p key={selection.itemRef}>{tr('仅修改当前句 {v0}–{v1} 秒', { v0: selection.startOffsetMillis / 1000, v1: selection.endOffsetMillis / 1000 })}</p>)}<p>{tr('后台已核实 {v0} 段；仅修改明确选择的片段，不合并历史或未来身份。', { v0: previewCount })}</p><p>{formatArkmeDateTime(Math.min(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.startAtMillis)), undefined, { hourCycle: 'h23' })} — {formatArkmeDateTime(Math.max(...availableItems.filter(row => selected.has(row.itemId)).map(row => row.endAtMillis)), undefined, { hourCycle: 'h23' })}</p><button style={button} disabled={pending || !!unresolved.current} onClick={() => setPrepared(undefined)}>{tr('返回修改')}</button> <button style={button} disabled={pending || outcomeUnknown} onClick={() => { if (!locked.current) void submit(unresolved.current ?? { action: 'apply', input: prepared }) }}>{tr('确认保存')}</button></div>}
     {notice ? <>
       <div role="status" style={{ padding: 10, borderRadius: 6, background: color.layer2 }}>{notice}{receipt?.warning && <p>{receipt.warning}</p>}</div>
       <div style={{ display: 'flex', gap: 8 }}>

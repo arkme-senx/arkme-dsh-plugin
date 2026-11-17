@@ -1,3 +1,4 @@
+import { recordingCalendarDate } from '../display-time-zone.js'
 import type { RecordingTotalsBucket } from '../../recording-total-metrics.js'
 import { isRecordingLocalDateOnOrAfterMinimum } from '../../recording-time.js'
 import { aggregate, validBucket, type RecordingTotalsProgress } from './recording-total-scan.js'
@@ -6,8 +7,8 @@ interface Entry { checkedAt: number; bucket: RecordingTotalsBucket; needsRefresh
 export interface RecordingMonthCache { version: 1; monthStamp: number; entries: Record<string, Entry>; snapshot?: RecordingTotalsProgress }
 export const emptyRecordingMonthCache = (monthStamp: number): RecordingMonthCache => ({ version: 1, monthStamp, entries: {} })
 
-export function recordingMonthDays(monthStamp: number, now = Date.now()): number[] {
-  const start = new Date(monthStamp), today = new Date(now); today.setHours(0, 0, 0, 0)
+export function recordingMonthDays(monthStamp: number, now = Date.now(), timeZone?: string): number[] {
+  const start = new Date(monthStamp), today = recordingCalendarDate(now, timeZone)
   if (!Number.isSafeInteger(monthStamp) || start.getDate() !== 1 || start.getHours() !== 0 || start.getMinutes() !== 0 || start.getSeconds() !== 0 || start.getMilliseconds() !== 0
     || !isRecordingLocalDateOnOrAfterMinimum(monthStamp) || monthStamp > today.getTime()) throw new Error('录音统计月份无效')
   const end = new Date(start.getFullYear(), start.getMonth() + 1, 1), days: number[] = []
@@ -15,11 +16,11 @@ export function recordingMonthDays(monthStamp: number, now = Date.now()): number
   return days
 }
 
-export function readRecordingMonthCache(raw: string | null, monthStamp: number, now = Date.now()): RecordingMonthCache {
+export function readRecordingMonthCache(raw: string | null, monthStamp: number, now = Date.now(), timeZone?: string): RecordingMonthCache {
   try {
     const value = JSON.parse(raw ?? 'null') as RecordingMonthCache
     if (value?.version !== 1 || value.monthStamp !== monthStamp || !value.entries || typeof value.entries !== 'object' || Array.isArray(value.entries) || Object.keys(value.entries).length > 31) throw Error()
-    const allowed = new Set(recordingMonthDays(monthStamp, now))
+    const allowed = new Set(recordingMonthDays(monthStamp, now, timeZone))
     for (const [key, entry] of Object.entries(value.entries)) if (!allowed.has(Number(key)) || !entry || !Number.isSafeInteger(entry.checkedAt) || entry.checkedAt <= 0 || entry.checkedAt > now + 60_000 || entry.needsRefresh !== undefined && entry.needsRefresh !== true || !validBucket(entry.bucket)) throw Error()
     // Recompute persisted snapshots from validated day values only.
     delete value.snapshot
@@ -36,12 +37,12 @@ export function recordingMonthSnapshot(cache: RecordingMonthCache, days: number[
 
 /** At most 31 local days; never enumerate account history or request media. */
 export async function scanRecordingMonth(input: {
-  cache: RecordingMonthCache; signal: AbortSignal; force?: boolean; now?: () => number
+  cache: RecordingMonthCache; signal: AbortSignal; force?: boolean; now?: () => number; timeZone?: string | undefined
   bucket: (dateStamp: number) => Promise<RecordingTotalsBucket>; publish: (value: RecordingTotalsProgress) => void
 }) {
   const { cache, signal } = input, now = input.now ?? Date.now, started = now()
   signal.throwIfAborted()
-  const days = recordingMonthDays(cache.monthStamp, started), done = new Set<number>(), failed = new Set<number>()
+  const days = recordingMonthDays(cache.monthStamp, started, input.timeZone), done = new Set<number>(), failed = new Set<number>()
   const fresh = (day: number) => {
     const old = cache.entries[day]
     if (!old || old.needsRefresh) return false

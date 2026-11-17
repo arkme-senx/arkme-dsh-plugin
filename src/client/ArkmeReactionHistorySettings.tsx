@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactionHistoryPolicy, ReactionHistoryPolicyResult } from '../reaction-contract.js'
 import { callArkme } from './api.js'
@@ -47,7 +48,7 @@ function HistoryMonth({ scope, month }: { scope: string; month: string }) {
     {data.busy && <p role="status">加载中…</p>}
     {data.error && <p role="alert">{data.error} <button type="button" onClick={() => void data.load()}>重试</button></p>}
     {!data.busy && !data.error && !data.events.length && <p>这个月没有表态记录</p>}
-    <ul>{data.events.map((event,index) => <li key={index}><time>{new Date(event.at).toLocaleString()}</time> · {event.added ? '表态' : '取消表态'} <ReactionLabel label={event.label} /><p>{event.source}{event.text ? ' · '+event.text : ''}</p></li>)}</ul>
+    <ul>{data.events.map((event,index) => <li key={index}><time>{formatArkmeDateTime(event.at)}</time> · {event.added ? '表态' : '取消表态'} <ReactionLabel label={event.label} /><p>{event.source}{event.text ? ' · '+event.text : ''}</p></li>)}</ul>
     {data.hasMore && <button type="button" disabled={data.busy} onClick={() => void data.load(true)}>加载更多</button>}
   </>
 }

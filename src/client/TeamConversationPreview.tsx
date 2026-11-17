@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react'
 import { createPortal } from 'react-dom'
@@ -184,7 +185,7 @@ function TeamPreviewMessages({ accountKey, conversation, onConversation }: { acc
     {page?.messages.map(message => <article key={message.key} data-arkme-conversation-row={message.key} style={{ display: 'flex', flexDirection: message.own ? 'row-reverse' : 'row', gap: 8, marginTop: 14 }}>
       <ArkmeUserAvatar size={30} label={message.sender.nickname} avatarRef={message.sender.imageRef} imageKey={message.sender.imageKey} imagePort={teamAvatarImages} />
       <div style={{ maxWidth: 'calc(100% - 38px)', minWidth: 0 }}>
-        <div style={{ fontSize: 11, color: arkmeTheme.secondary, marginBottom: 4 }}>{message.sender.nickname} · {new Date(message.createdAt).toLocaleString()}</div>
+        <div style={{ fontSize: 11, color: arkmeTheme.secondary, marginBottom: 4 }}>{message.sender.nickname} · {formatArkmeDateTime(message.createdAt)}</div>
         <div style={{ padding: '8px 10px', borderRadius: 10, background: message.own ? arkmeTheme.messageOwn : arkmeTheme.messageOther }}>
           {message.state === 'published' && message.contentStatus === 'available' ? <TeamMessageContent readOnly attachmentNavigationKey={message.key} message={message} conversationRef={conversation.ref} conversationKey={conversation.key} /> : <span style={{ color: arkmeTheme.secondary }}>{message.contentStatus === 'revalidating' ? tr('正在确认…') : '消息已删除或暂不可用'}</span>}
         </div>
