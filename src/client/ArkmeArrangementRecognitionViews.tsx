@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { Gear } from '@phosphor-icons/react/dist/icons/Gear'
 import { Stack } from '@phosphor-icons/react/dist/icons/Stack'
 import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle'
@@ -79,7 +80,7 @@ export function TraceContent({ trace }: { trace: ArrangementRecognitionTrace }) 
         </div>
         <div>
           <dt>{tr('执行时间')}</dt>
-          <dd>{new Date(trace.started_at).toLocaleString()}</dd>
+          <dd>{formatArkmeDateTime(trace.started_at)}</dd>
         </div>
         <div>
           <dt>{tr('来源')}</dt>

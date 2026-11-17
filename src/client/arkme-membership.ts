@@ -1,3 +1,4 @@
+import { formatArkmeDate } from './display-time-zone.js'
 import { arkmeIntlLocale, tr } from './locale.js'
 import { useCallback, useEffect, useState } from 'react'
 import type { ArkmeMembership } from '../types.js'
@@ -13,7 +14,7 @@ export function membershipDescription(state: MembershipState): string {
   const member = state.value
   if (member.memberType === 0) return tr('查看更多存储、转写与协作权益')
   if (member.lifetime) return tr('永久会员')
-  const date = member.expireAtMillis === null ? tr('有效期以手机端为准') : tr('{date} 到期', { date: new Date(member.expireAtMillis).toLocaleDateString(arkmeIntlLocale()) })
+  const date = member.expireAtMillis === null ? tr('有效期以手机端为准') : tr('{date} 到期', { date: formatArkmeDate(member.expireAtMillis, arkmeIntlLocale()) })
   return member.gifted ? tr('赠送会员 · {date}', { date }) : date
 }
 

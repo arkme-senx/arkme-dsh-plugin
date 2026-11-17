@@ -169,12 +169,12 @@ describe('message report UI', () => {
     await act(async () => {
       renderer = create(<ArkmeMessageReportDialog item={message} onClose={vi.fn()} onSubmitted={onSubmitted} />)
     })
-    expect(addEventListener).toHaveBeenCalledOnce()
+    expect(addEventListener.mock.calls.filter(([event]) => event === 'keydown')).toHaveLength(1)
 
     await act(async () => {
       renderer!.update(<ArkmeMessageReportDialog item={message} onClose={vi.fn()} onSubmitted={onSubmitted} />)
     })
-    expect(addEventListener).toHaveBeenCalledOnce()
-    expect(removeEventListener).not.toHaveBeenCalled()
+    expect(addEventListener.mock.calls.filter(([event]) => event === 'keydown')).toHaveLength(1)
+    expect(removeEventListener.mock.calls.filter(([event]) => event === 'keydown')).toHaveLength(0)
   })
 })

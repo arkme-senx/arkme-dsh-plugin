@@ -14,7 +14,7 @@ vi.mock('../src/client/recordings/recording-import-journal.js', async importOrig
   ownImportQueue: async (_key: string, _signal: AbortSignal, work: () => Promise<void>) => { await work() },
 }))
 
-import { ArkmeRecordingImportDialog, ArkmeRecordingImportTrigger, type ArkmeRecordingImportDialogHandle, type RecordingImportButtonStatus } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
+import { ArkmeRecordingImportDialog, ArkmeRecordingImportTrigger, type ArkmeRecordingImportDialogHandle, type RecordingImportFeedback } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 const job = (phase: PublicRecordingImportJob['phase'], importRef = 'local'): PublicRecordingImportJob => toPublicRecordingImportJob({
@@ -31,12 +31,12 @@ describe('recording import button feedback', () => {
   const dialog = { open: false, showModal() { this.open = true }, close() { this.open = false }, focus() {} }
 
   function Surface({ account = 'one', foreground = true }: { account?: string; foreground?: boolean }) {
-    const [feedback, setFeedback] = useState<{ account: string; status: RecordingImportButtonStatus }>()
+    const [feedback, setFeedback] = useState<{ account: string; activity: RecordingImportFeedback }>()
     return <>
-      <ArkmeRecordingImportTrigger status={feedback?.account === account ? feedback.status : 'idle'} onClick={() => handle.current?.open()} />
+      <ArkmeRecordingImportTrigger feedback={feedback?.account === account ? feedback.activity : undefined} onClick={() => handle.current?.open()} />
       <ArkmeRecordingImportDialog key={account} ref={handle} importPath="/import" defaultStartAtMillis={1_725_000_000_000}
         currentUserId={account === 'one' ? 42 : 43} foreground={foreground} onAccepted={() => {}}
-        onStatusChange={status => setFeedback(current => current?.account === account && current.status === status ? current : { account, status })} />
+        onFeedbackChange={activity => setFeedback(current => current?.account === account && current.activity === activity ? current : { account, activity })} />
     </>
   }
 
@@ -76,17 +76,19 @@ describe('recording import button feedback', () => {
     expect(label()).toBe('导入历史音频')
     const width = trigger().props.style.width
     expect(width).toBeGreaterThan(0)
-    for (const [phase, expected] of [['prepared', '正在准备录音'], ['uploading', '音频上传中'], ['finalizing', '正在完成导入'], ['accepted', '导入历史音频']] as const) {
+    for (const [phase, expected] of [['prepared', 'preparing'], ['uploading', 'uploading'], ['finalizing', 'finalizing'], ['accepted', 'processing']] as const) {
       items = [job(phase)]
       await open()
       await poll()
-      expect(label()).toBe(expected)
+      expect(label()).toBe('1 个文件处理中')
+      expect(trigger().props['data-arkme-recording-import-status']).toBe(expected)
+      expect(trigger().findAllByProps({ className: 'arkme-recording-import-progress' })).toHaveLength(1)
       expect(trigger().props.style.width).toBe(width)
       expect(trigger().props.disabled).not.toBe(true)
     }
   })
 
-  it('does not show uploads for unsubmitted files, cancelled tasks, or Audio transcription', async () => {
+  it('counts Audio transcription but excludes unsubmitted and cancelled files', async () => {
     items = [job('cancelled'), {
       kind: 'owner', taskKey: 'owner', sessionRef: 'audio', ownership: 'self', fileName: 'cloud.m4a',
       fileSize: 4, parsedSize: 4, durationMillis: 1_000, startAtMillis: 1, endAtMillis: 1_001,
@@ -97,9 +99,42 @@ describe('recording import button feedback', () => {
       renderer.root.findByProps({ 'aria-label': '选择录音文件' }).props.onChange({ target: { files: [new File(['data'], 'new.m4a')], value: '' } })
       await tick()
     })
-    expect(label()).toBe('导入历史音频')
+    expect(label()).toBe('1 个文件处理中')
+    const days = [...renderer.root.findByType(ArkmeRecordingImportTrigger).props.feedback.days.values()]
+    expect(days.reduce((sum, day) => sum + day.staged, 0)).toBe(1)
     await close()
-    expect(notice()).toHaveLength(0)
+    expect(notice()).toHaveLength(1)
+  })
+
+  it('moves a staged date immediately and counts a matching local/owner handoff only once', async () => {
+    await open()
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '选择录音文件' }).props.onChange({
+        target: { files: [new File(['data'], '20240615124500.m4a')], value: '' },
+      })
+      await tick()
+    })
+    const feedback = (): RecordingImportFeedback => renderer.root.findByType(ArkmeRecordingImportTrigger).props.feedback
+    expect(feedback().days.get('2024-06-15')).toEqual({ staged: 1, processing: 0 })
+    const dateField = renderer.root.findByProps({ 'aria-label': '20240615124500.m4a录音开始时间 · 日期' })
+    await act(async () => { dateField.props.onChange({ target: { value: '2024-06-16' } }) })
+    expect(feedback().days.has('2024-06-15')).toBe(false)
+    expect(feedback().days.get('2024-06-16')).toEqual({ staged: 1, processing: 0 })
+
+    const local = job('accepted', 'already-uploaded')
+    const { fileName, fileSize, durationMillis, startAtMillis, endAtMillis, createdAtMillis, updatedAtMillis } = local
+    items = [local, {
+      kind: 'owner', taskKey: 'audio-task', sessionRef: 'audio-ref', ownership: 'self',
+      fileName, fileSize, parsedSize: fileSize, durationMillis, startAtMillis, endAtMillis, createdAtMillis, updatedAtMillis,
+      progress: null, status: 'speaker-waiting', statusDetail: '等待识别说话人',
+      localImportTiming: { startedAtMillis: createdAtMillis, acceptedAtMillis: updatedAtMillis },
+    }]
+    await open()
+    expect(feedback().processingCount).toBe(1)
+    items = []
+    await poll()
+    expect(feedback().processingCount).toBe(0)
+    expect(feedback().days.get('2024-06-16')).toEqual({ staged: 1, processing: 0 })
   })
 
   it('keeps cloud preparation running after closing the dialog and switching away', async () => {
@@ -119,14 +154,14 @@ describe('recording import button feedback', () => {
       renderer.root.findAll(node => node.type === 'button' && node.children.includes('导入'))[0]!.props.onClick()
       await tick()
     })
-    expect(label()).toBe('正在准备录音')
+    expect(label()).toBe('1 个文件处理中')
     expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
     await close()
     expect(dialog.open).toBe(false)
-    expect(notice()[0]?.children.join('')).toContain('录音会继续准备')
+    expect(notice()[0]?.children.join('')).toContain('音频仍会在后台处理')
 
     await act(async () => { renderer.update(<Surface foreground={false} />); await tick() })
-    expect(label()).toBe('正在准备录音')
+    expect(label()).toBe('1 个文件处理中')
     await act(async () => { prepared(); await tick() })
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledOnce()
     expect(label()).toBe('导入历史音频')
@@ -140,10 +175,12 @@ describe('recording import button feedback', () => {
     }
     items = [owner]
     await open()
-    expect(label()).toBe('音频上传中')
-    items = [{ ...owner, parsedSize: 4, progress: 1, status: 'transcribing', statusDetail: '转写中' }]
-    await poll()
-    expect(label()).toBe('导入历史音频')
+    expect(label()).toBe('1 个文件处理中')
+    for (const status of ['waiting', 'speaker-waiting', 'speaker-recognizing', 'transcript-waiting', 'transcribing'] as const) {
+      items = [{ ...owner, parsedSize: 4, progress: 1, status, statusDetail: '处理中' }]
+      await poll()
+      expect(label()).toBe('1 个文件处理中')
+    }
     items = [{ ...owner, parsedSize: 4, progress: 1, status: 'failed', statusDetail: '处理失败' }]
     await poll()
     expect(label()).toBe('导入历史音频')
@@ -165,10 +202,10 @@ describe('recording import button feedback', () => {
       renderer.root.findAll(node => node.type === 'button' && node.children.includes('导入'))[0]!.props.onClick()
       await tick()
     })
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('1 个文件处理中')
     await act(async () => { renderer.root.findByType('dialog').props.onCancel({ preventDefault() {} }); await tick() })
     expect(notice()).toHaveLength(1)
-    expect(notice()[0]!.children.join('')).toContain('音频会继续上传')
+    expect(notice()[0]!.children.join('')).toContain('音频仍会在后台处理')
     expect(signal?.aborted).toBe(false)
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000); await tick() })
     expect(notice()).toHaveLength(0)
@@ -183,15 +220,15 @@ describe('recording import button feedback', () => {
   it('prioritizes active uploads over failures, exposes failures afterward, and follows retry', async () => {
     items = [job('failed'), job('uploading', 'second')]
     await open()
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('1 个文件处理中')
     items = [job('failed'), job('finalizing', 'second')]
     await poll()
-    expect(label()).toBe('正在完成导入')
-    items = [job('failed'), job('accepted', 'second')]
+    expect(label()).toBe('1 个文件处理中')
+    items = [job('failed')]
     await poll()
     expect(label()).toBe('导入失败，查看')
     await act(async () => { renderer.root.findByProps({ 'aria-label': '重试 local.m4a' }).props.onClick(); await tick() })
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('1 个文件处理中')
   })
 
   it.each(['success', 'failure'] as const)('retains an admitted upload when an older list returns %s during a multi-file submission', async result => {
@@ -233,9 +270,12 @@ describe('recording import button feedback', () => {
 
     mocks.callArkme.mockRejectedValueOnce(new Error('任务列表暂不可用'))
     await act(async () => { rejectSecond(new Error('第二个文件上传失败')); await tick() })
-    expect(label()).toBe('正在准备录音')
+    expect(label()).toBe('2 个文件处理中')
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
     items = [owner, job('accepted', 'first')]
+    await poll()
+    expect(label()).toBe('2 个文件处理中')
+    items = []
     await poll()
     expect(label()).toBe('导入失败，查看')
   })
@@ -247,8 +287,11 @@ describe('recording import button feedback', () => {
     expect(notice()).toHaveLength(1)
     items = [job('finalizing')]
     await poll()
-    expect(notice()[0]!.children.join('')).toContain('正在完成导入')
+    expect(notice()[0]!.children.join('')).toContain('音频仍会在后台处理')
     items = [job('accepted')]
+    await poll()
+    expect(label()).toBe('1 个文件处理中')
+    items = []
     await poll()
     expect(label()).toBe('导入历史音频')
     expect(notice()).toHaveLength(0)
@@ -256,7 +299,7 @@ describe('recording import button feedback', () => {
     await open()
     await close()
     expect(notice()).toHaveLength(1)
-    expect(notice()[0]!.children.join('')).toContain('正在完成导入')
+    expect(notice()[0]!.children.join('')).toContain('音频仍会在后台处理')
   })
 
   it('silently closes for navigation, keeps observing background work, and isolates accounts', async () => {
@@ -264,10 +307,10 @@ describe('recording import button feedback', () => {
     await open()
     await act(async () => { handle.current?.close(); renderer.update(<Surface foreground={false} />); await tick() })
     expect(notice()).toHaveLength(0)
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('1 个文件处理中')
     items = [job('finalizing')]
     await poll()
-    expect(label()).toBe('正在完成导入')
+    expect(label()).toBe('1 个文件处理中')
     items = []
     await act(async () => { renderer.update(<Surface account="two" />); await tick() })
     expect(label()).toBe('导入历史音频')
@@ -318,7 +361,7 @@ describe('recording import button feedback', () => {
     await open()
     mocks.callArkme.mockResolvedValueOnce({ items: [], owner: { state: 'unavailable', message: 'Audio 暂不可用' } })
     await poll()
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('1 个文件处理中')
     expect(renderer.root.findByProps({ role: 'alert' }).children.join('')).toContain('Audio 暂不可用')
     await close()
     expect(notice()).toHaveLength(1)
@@ -344,7 +387,7 @@ describe('recording import button feedback', () => {
       await tick()
     })
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('1 个文件处理中')
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '选择录音文件' }).props.onChange({ target: { files: [new File(['data'], 'third.m4a')], value: '' } })
       await tick()
@@ -353,6 +396,6 @@ describe('recording import button feedback', () => {
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
     await close()
     expect(dialog.open).toBe(false)
-    expect(label()).toBe('音频上传中')
+    expect(label()).toBe('1 个文件处理中')
   })
 })

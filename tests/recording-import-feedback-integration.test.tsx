@@ -24,7 +24,7 @@ import { ArkmeSurface } from '../src/client/ArkmeSidebar.js'
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import type { PublicRecordingImportJob } from '../src/recording-import-shared.js'
-import { ArkmeRecordingImportDialog, ArkmeRecordingImportTrigger } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
+import { ArkmeRecordingImportDialog, ArkmeRecordingImportTrigger, recordingImportLocalInputValue } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 
 describe('account-owned recording import feedback wiring', () => {
@@ -42,18 +42,22 @@ describe('account-owned recording import feedback wiring', () => {
     await act(async () => { renderer = create(<ArkmeSurface initialAuth={auth} />) })
     const owner = () => renderer.root.findByType(ArkmeRecordingImportDialog)
     const trigger = () => renderer.root.findByType(ArkmeRecordingImportTrigger)
-    await act(async () => { owner().props.onStatusChange('uploading') })
-    expect(trigger().props.status).toBe('uploading')
+    const day = recordingImportLocalInputValue(new Date()).slice(0, 10)
+    const days = new Map([[day, { staged: 0, processing: 2 }]])
+    await act(async () => { owner().props.onFeedbackChange({ status: 'uploading', processingCount: 2, days }) })
+    expect(trigger().props.feedback.status).toBe('uploading')
+    expect(renderer.root.findByProps({ 'data-arkme-recording-day-import': 'processing' }).parent?.props.title).toBe('2 个文件处理中')
 
     await act(async () => { arkmeUi.showSearch() })
     expect(renderer.root.findAllByType(ArkmeRecordingImportTrigger)).toHaveLength(0)
     expect(renderer.root.findAllByType(ArkmeRecordingImportDialog)).toHaveLength(1)
-    await act(async () => { owner().props.onStatusChange('finalizing'); arkmeUi.showRecordings() })
-    expect(trigger().props.status).toBe('finalizing')
+    await act(async () => { owner().props.onFeedbackChange({ status: 'finalizing', processingCount: 2, days }); arkmeUi.showRecordings() })
+    expect(trigger().props.feedback.status).toBe('finalizing')
 
     await act(async () => { renderer.update(<ArkmeSurface initialAuth={{ ...auth, userId: 43 }} />) })
     expect(owner().props.currentUserId).toBe(43)
-    expect(trigger().props.status).toBe('idle')
+    expect(trigger().props.feedback?.processingCount ?? 0).toBe(0)
+    expect(renderer.root.findAllByProps({ 'data-arkme-recording-day-import': 'processing' })).toHaveLength(0)
   })
 
   it('ignores the previous account response after the new account has loaded real task feedback', async () => {
@@ -74,9 +78,9 @@ describe('account-owned recording import feedback wiring', () => {
     }
     await act(async () => { pendingLists[1]!({ items: [task], owner: { state: 'available' } }) })
     const trigger = () => renderer.root.findByType(ArkmeRecordingImportTrigger)
-    expect(trigger().props.status).toBe('finalizing')
+    expect(trigger().props.feedback.status).toBe('finalizing')
     await act(async () => { pendingLists[0]!({ items: [{ ...task, importRef: 'old-account-task', phase: 'uploading' }], owner: { state: 'available' } }) })
-    expect(trigger().props.status).toBe('finalizing')
+    expect(trigger().props.feedback.status).toBe('finalizing')
     expect(renderer.root.findByType(ArkmeRecordingImportDialog).props.currentUserId).toBe(43)
   })
 })

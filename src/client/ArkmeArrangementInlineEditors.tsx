@@ -1,3 +1,5 @@
+import { arrangementDateTimeMillis } from './arrangement-date.js'
+import { arkmeCivilDay, arkmeWallClockIso, getArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
@@ -34,12 +36,12 @@ export function ArrangementTitleEditor({ title, disabled, onSave }: {
 }
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
-const timeKey = (date: Date) => `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`
 export function ArrangementReminderTimeEditor({ at, disabled, onSave }: {
   at?: number | undefined; disabled: boolean; onSave(at: number): Promise<boolean>
 }) {
   const [open, setOpen] = useState(false), [date, setDate] = useState(''), [time, setTime] = useState(''), [error, setError] = useState('')
   const [month, setMonth] = useState(() => new Date()), [position, setPosition] = useState({left:0,top:0})
+  const draftZone = useRef(getArkmeEffectiveTimeZone())
   const anchor = useRef<HTMLButtonElement>(null), panel = useRef<HTMLDivElement>(null), saving = useRef(false)
   useLayoutEffect(() => {
     if (!open) return
@@ -60,13 +62,14 @@ export function ArrangementReminderTimeEditor({ at, disabled, onSave }: {
   const save = async (day: string, clock: string) => {
     setError('')
     if (!day || !clock || disabled || saving.current) return
-    const value = new Date(`${day}T${clock}:00`)
-    if (!Number.isFinite(value.getTime()) || dateKey(value) !== day || timeKey(value) !== clock || value.getTime() <= Date.now()) {
-      setError(tr('请选择有效的未来提醒时间')); return
-    }
-    if (value.getTime() === at) return
+    const wall = at && arkmeWallClockIso(at, draftZone.current)
+    if (wall && wall.slice(0, 16) === `${day}T${clock}`) return
+    let value: number
+    try { value = arrangementDateTimeMillis(day, clock, draftZone.current) }
+    catch { setError(tr('请选择有效的未来提醒时间')); return }
+    if (value <= Date.now()) { setError(tr('请选择有效的未来提醒时间')); return }
     saving.current = true
-    try { if (!await onSave(value.getTime())) setError(tr('保存失败，请重新选择时间重试')) }
+    try { if (!await onSave(value)) setError(tr('保存失败，请重新选择时间重试')) }
     finally { saving.current = false }
   }
   const first = new Date(month.getFullYear(),month.getMonth(),1)
@@ -74,7 +77,17 @@ export function ArrangementReminderTimeEditor({ at, disabled, onSave }: {
   const days = Array.from({length:42},(_,i) => {const d=new Date(start);d.setDate(start.getDate()+i);return d})
   return <>
     <button ref={anchor} type="button" className="arkme-arrangement-time-edit" aria-label={tr('编辑提醒时间')} title={tr('编辑提醒时间')} aria-expanded={open} disabled={disabled}
-      onClick={() => { if (open) {setOpen(false);return} const initial = new Date(at || Date.now());setDate(at ? dateKey(initial) : '');setTime(at ? timeKey(initial) : '09:00');setMonth(initial);setError('');setOpen(true) }}><PencilSimple size={16} aria-hidden /></button>
+      onClick={() => {
+        if (open) { setOpen(false); return }
+        const zone = getArkmeEffectiveTimeZone()
+        draftZone.current = zone
+        const wall = at && arkmeWallClockIso(at, zone)
+        setDate(wall ? wall.slice(0, 10) : '')
+        setTime(wall ? wall.slice(11, 16) : '09:00')
+        setMonth(arkmeCivilDay(at || Date.now(), zone))
+        setError('')
+        setOpen(true)
+      }}><PencilSimple size={16} aria-hidden /></button>
     {open && createPortal(<div ref={panel} role="dialog" aria-label={tr('编辑提醒时间')} tabIndex={-1} className="arkme-arrangement-time-popover" style={position}
       onKeyDown={event => { if (event.key==='Escape') {event.stopPropagation();setOpen(false);anchor.current?.focus()} }}>
       <header><button type="button" aria-label={tr('上个月')} onClick={() => setMonth(new Date(month.getFullYear(),month.getMonth()-1,1))}><CaretLeft size={16} aria-hidden /></button>
@@ -84,7 +97,7 @@ export function ArrangementReminderTimeEditor({ at, disabled, onSave }: {
         {days.map(day=><button key={dateKey(day)} type="button" disabled={disabled} aria-label={dateKey(day)} aria-pressed={date===dateKey(day)} data-outside={day.getMonth()!==month.getMonth()}
           onClick={() => { const key=dateKey(day), clock=time || '09:00';setDate(key);setTime(clock);void save(key,clock) }}>{day.getDate()}</button>)}
       </div>
-      <label>{tr('提醒时间')}<input type="time" aria-label={tr('提醒时刻')} value={time} disabled={disabled} onChange={event => {setTime(event.target.value);void save(date,event.target.value)}} /></label>
+      <label>{tr('提醒时间')} · {draftZone.current}<input type="time" aria-label={tr('提醒时刻')} value={time} disabled={disabled} onChange={event => {setTime(event.target.value);void save(date,event.target.value)}} /></label>
       {disabled && <small role="status">{tr('正在保存…')}</small>}
       {error && <p role="alert">{error}</p>}
     </div>,document.body)}

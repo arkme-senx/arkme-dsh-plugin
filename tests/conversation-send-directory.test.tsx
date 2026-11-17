@@ -1858,7 +1858,7 @@ describe('conversation send directory projection', () => {
     })
 
     expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.draft.put', {
-      sourceRef: 'source-harness', itemUid: 'record-reedit-close', newText: nextText, mentions: [], expectedVersion: 3,
+      sourceRef: 'source-harness', itemUid: 'record-reedit-close', newText: nextText, mentions: [],
       attachments: [], expectedDraftRevision: 0,
     })
     expect(renderer!.root.findAllByProps({ 'data-arkme-composer-reedit-target': 'true' })).toHaveLength(0)
@@ -1971,7 +1971,7 @@ describe('conversation send directory projection', () => {
       })
 
       expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', expect.objectContaining({
-        sourceRef: 'source-harness', itemUid: 'record-reedit-commit', newText: nextText, expectedVersion: 3,
+        sourceRef: 'source-harness', itemUid: 'record-reedit-commit', newText: nextText,
         attachments: [], expectedDraftRevision: 1,
         capture: expect.objectContaining({ completedAtMillis: expect.any(Number), captureContext: expect.any(Object) }),
       }))
@@ -11351,7 +11351,7 @@ describe('conversation send directory projection', () => {
     if (['latest', 'around', 'virtualized'].includes(mode)) expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(reads)
   })
 
-  it.each([target, group].flatMap(selected => [false, true].map(gap => ({ selected, gap, kind: selected.kind }))))('appends new unread bodies to a historical $kind window that had reached the latest edge (gap: $gap)', async ({ selected, gap }) => {
+  it.each([target, group].flatMap(selected => [false, true].flatMap(gap => ['latest', 'around'].map(mode => ({ selected, gap, mode, kind: selected.kind })))))('appends new unread bodies to a $mode $kind window that had reached the latest edge (gap: $gap)', async ({ selected, gap, mode }) => {
     activeSource = selected; arkmeUi.selectSource(selected)
     const base = mocks.callArkme.getMockImplementation()!
     const previous: ArkmeTimelineItem = { itemUid: 'old-tail', sequence: 8, recordOwnerUserId: 7,
@@ -11372,7 +11372,7 @@ describe('conversation send directory projection', () => {
           newerReads++
           return unifiedFixture(selected, [9, 10, 11].map(sequence => ({ ...previous, itemUid: sequence === 11 ? 'new-tail' : 'gap-9', sequence, sendAtMillis: sequence, textContent: 'new unread body' })))
         }
-        return unifiedFixture(selected, [{ ...previous, itemUid: 'unloaded-tail', sequence: 7 }])
+        return mode === 'latest' ? initial : unifiedFixture(selected, [{ ...previous, itemUid: 'unloaded-tail', sequence: 7 }])
       }
       if (operation === 'source.timeline-around') return { ...initial, anchorItemUid: previous.itemUid,
         anchorIndex: 0, anchorSequence: 8, olderHasMore: false, newerHasMore: false,
@@ -11389,8 +11389,8 @@ describe('conversation send directory projection', () => {
       createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body
         : element.props.style?.width === '100%' && element.props.style?.height === 1 ? {} : null,
     }) })
-    await act(async () => { arkmeUi.showConversationTarget(selected, 'old-tail', 8, 7) })
-    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.timeline-around')).toBe(true)
+    if (mode === 'around') await act(async () => { arkmeUi.showConversationTarget(selected, 'old-tail', 8, 7) })
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.timeline-around')).toBe(mode === 'around')
     expect(arkmeUi.getSnapshot().conversationTarget).toBeUndefined()
     if (gap) {
       const committed = unifiedFixture(selected, [previous, { ...previous, itemUid: 'local-9', sequence: 9, sendAtMillis: 9 }])
@@ -11404,7 +11404,10 @@ describe('conversation send directory projection', () => {
     body.scrollHeight += 100
     await act(async () => { arkmeChatTimelineDelta.publish([{ source: { ...selected, latestSequence: incoming.sequence }, items: [incoming] }]) })
     if (gap) {
+      expect(newerReads).toBe(0)
       expect(newerObservers.length).toBeGreaterThan(0)
+      await act(async () => { newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver) })
+      expect(newerReads).toBe(1)
       await act(async () => { newerObservers.at(-1)!([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver) })
       expect(newerReads).toBe(1)
       expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'gap-9' })).toHaveLength(1)

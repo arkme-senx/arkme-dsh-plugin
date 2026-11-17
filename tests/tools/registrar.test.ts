@@ -779,7 +779,7 @@ describe('registerArkmeTools', () => {
     } as unknown as Agent
     const signal = new AbortController().signal
     const args = { source_ref: 'arkme-source-v1.secret', item_uid: 'record-secret-1', new_text: '修改后的正文',
-      ...(withAttachments ? { attachments: [{ file_asset_uid: 'retained' }, { file_ref: 'arkme-file-v1.11111111-1111-4111-8111-111111111111' }], expected_version: 8 } : {}) }
+      ...(withAttachments ? { attachments: [{ file_asset_uid: 'retained' }, { file_ref: 'arkme-file-v1.11111111-1111-4111-8111-111111111111' }] } : {}) }
 
     const prepared = await ctx.tools.execute({
       callId: CallId('record-reedit-prepare'), name: 'arkme_record_reedit', arguments: args, agent, signal,
@@ -796,7 +796,7 @@ describe('registerArkmeTools', () => {
       expect(preparedValue).toContain('调整顺序')
       expect(preparedValue).not.toContain('附件将保持不变')
       expect(prepareRecordReedit).toHaveBeenCalledWith(expect.objectContaining({
-        attachments: [{ fileAssetUid: 'retained' }, { fileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111' }], expectedVersion: 8,
+        attachments: [{ fileAssetUid: 'retained' }, { fileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111' }],
       }))
     } else expect(preparedValue).toContain('附件将保持不变')
     expect(preparedValue).not.toContain('record-secret-1')

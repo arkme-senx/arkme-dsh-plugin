@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../../display-time-zone.js'
 import { useEffect, useId, useState } from 'react'
 import { IconChevronDownOutlineMedium, IconChevronUpOutlineMedium, IconQueueOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamCodexQueuedRequest, TeamCodexTask } from '../../../team-codex-contract.js'
@@ -86,7 +87,7 @@ export function CodexQueueDock({ task }: { task: TeamCodexTask }) {
         <span className="arkme-codex-queue-chevron" aria-hidden="true">{collapsed ? <IconChevronUpOutlineMedium size={14}/> : <IconChevronDownOutlineMedium size={14}/>}</span>
       </button>}
       {warning && <div className="arkme-codex-queue-notice" role="status" title={warningTitle}>{!count && lead}<span>{warning}
-        {count>0 && task.cloud?.remote && task.queue && <> · {tr('上次更新 {time}',{time:new Date(task.queue.checkedAt).toLocaleString()})}</>}
+        {count>0 && task.cloud?.remote && task.queue && <> · {tr('上次更新 {time}',{time:formatArkmeDateTime(task.queue.checkedAt)})}</>}
       </span></div>}
       {!!count && <ul id={listId} className="arkme-codex-queue-list" aria-label={tr('排队请求')} hidden={!listVisible}>
         {listVisible && items.map(item => {

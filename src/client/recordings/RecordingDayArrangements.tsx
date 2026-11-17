@@ -1,3 +1,5 @@
+import { recordingBatchOffset } from '../../recording-time.js'
+import { formatArkmeDateTime, recordingDisplayWindow } from '../display-time-zone.js'
 import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -20,13 +22,13 @@ const coverageMessages: Record<string, string> = {
 }
 const unknownCoverageMessage = '当天录音安排的识别完整性尚未确认，当前仅显示已确认的安排。'
 
-type Props = { dateStamp: number; accountScope: string; active: boolean; refreshRevision: string }
+type Props = { dateStamp: number; timeZone?: string | undefined; accountScope: string; active: boolean; refreshRevision: string }
 
 export function RecordingDayArrangements(props: Props) {
-  return <DayArrangements key={`${props.accountScope}:${props.dateStamp}`} {...props} />
+  return <DayArrangements key={`${props.accountScope}:${props.dateStamp}:${props.timeZone ?? ''}`} {...props} />
 }
 
-function DayArrangements({ dateStamp, accountScope, active, refreshRevision }: Props) {
+function DayArrangements({ dateStamp, timeZone, accountScope, active, refreshRevision }: Props) {
   useArkmeLocale()
   const [page, setPage] = useState<ArkmeRecordingArrangementPage>()
   const [loading, setLoading] = useState(false)
@@ -35,13 +37,14 @@ function DayArrangements({ dateStamp, accountScope, active, refreshRevision }: P
   const [expanded, setExpanded] = useState<string>()
   const [query, setQuery] = useState({ offset: 0, revision: 0, snapshotVersion: '' })
   const refresh = () => setQuery(previous => ({ offset: 0, revision: previous.revision + 1, snapshotVersion: '' }))
-  const tzOffsetMillis = -new Date(dateStamp).getTimezoneOffset() * 60_000
+  const dayStart = recordingDisplayWindow(new Date(dateStamp), timeZone)?.dateStamp ?? dateStamp
+  const tzOffsetMillis = timeZone ? recordingBatchOffset(dayStart, timeZone) : -new Date(dateStamp).getTimezoneOffset() * 60_000
   useEffect(() => {
     if (!active || !accountScope) { setOpen(false); if (query.offset) refresh(); return }
     const controller = new AbortController()
     setLoading(true); setError(false)
     void withArkmeReadDeadline(signal => callArkme<ArkmeRecordingArrangementPage>('arrangements.recording-day', {
-      dateStamp, tzOffsetMillis, limit: 20, offset: query.offset,
+      dateStamp: dayStart, tzOffsetMillis, limit: 20, offset: query.offset,
       ...(query.snapshotVersion ? { snapshotVersion: query.snapshotVersion } : {}),
     }, signal), controller.signal).then(next => {
       if (controller.signal.aborted) return
@@ -53,7 +56,7 @@ function DayArrangements({ dateStamp, accountScope, active, refreshRevision }: P
     }).catch(() => { if (!controller.signal.aborted) { setError(true); if (!query.offset) setPage(undefined) } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [accountScope, active, dateStamp, tzOffsetMillis, query, refreshRevision])
+  }, [accountScope, active, dayStart, tzOffsetMillis, query, refreshRevision])
   useEffect(() => {
     if (!active || !accountScope) return
     // Returning from the arrangement board must reflect its current statuses.
@@ -116,7 +119,7 @@ function RecordingArrangementDrawer({ dateStamp, page, loading, error, expanded,
         <div className="arkme-day-arrangements">{page?.items.map(item => <article className="arkme-arrangement-card" key={item.arrangementRef}>
           <button type="button" className="arkme-day-arrangement-summary" aria-expanded={expanded === item.arrangementRef} onClick={() => onToggle(item.arrangementRef)}>
             <span className="arkme-day-arrangement-heading"><strong>{item.title}</strong><span className="arkme-day-arrangement-status" data-arrangement-status={item.status}>{tr(item.status === 'unknown' ? '安排' : arrangementColumnLabels[item.status])}</span></span>
-            {item.dueAtMillis !== undefined && <small>{tr('安排时间')}：{new Date(item.dueAtMillis).toLocaleString(arkmeIntlLocale(), { hourCycle: 'h23' })}</small>}
+            {item.dueAtMillis !== undefined && <small>{tr('安排时间')}：{formatArkmeDateTime(item.dueAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })}</small>}
           </button>
           <ArkmeArrangementContent item={item} expanded={expanded === item.arrangementRef} onSourceNavigate={onClose} />
         </article>)}</div>

@@ -1,4 +1,5 @@
 import { formatConversationDate } from './conversation-date-format.js'
+import { arkmeDayDelta } from './display-time-zone.js'
 import type { CSSProperties } from 'react'
 import { ARKME_CONVERSATION_ROW_HEIGHT } from './arkme-layout.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -39,12 +40,10 @@ export function conversationTimeLabel(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return ''
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return ''
-  const now = new Date()
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+  const daysAgo = -arkmeDayDelta(value)
   const time = formatConversationDate(date, 'time')
-  if (day === start) return time
-  if (day === start - 86_400_000) return tr("昨天 {v0}", { v0: time })
-  if (day > start - 7 * 86_400_000) return formatConversationDate(date, 'weekday')
+  if (daysAgo === 0) return time
+  if (daysAgo === 1) return tr("昨天 {v0}", { v0: time })
+  if (daysAgo < 7) return formatConversationDate(date, 'weekday')
   return formatConversationDate(date, 'day')
 }

@@ -1,3 +1,4 @@
+import { arkmeDayDelta, formatArkmeDateTime, useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { Sun } from '@phosphor-icons/react/dist/icons/Sun'
 import { CalendarDots } from '@phosphor-icons/react/dist/icons/CalendarDots'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
@@ -29,12 +30,12 @@ import { arrangementViews, arrangementViewLabels, nextArrangementMidnight, type 
 const arrangementViewIcons = { today: Sun, week: CalendarDots, all: CalendarBlank, completed: CheckCircle, deleted: Trash } satisfies Record<ArrangementView, typeof Sun>
 
 function validTime(value?: number): value is number { return !!value && Number.isFinite(new Date(value).getTime()) }
-function fullTime(value?: number) { return validTime(value) ? new Intl.DateTimeFormat(arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short', hour12: false }).format(value) : tr('未设置') }
+function fullTime(value?: number) { return validTime(value) ? formatArkmeDateTime(value, arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short', hour12: false }) : tr('未设置') }
 function rowTime(value: number | undefined, now: number) {
   if (!validTime(value)) return tr('未定时间')
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), new Date(value).toDateString() === new Date(now).toDateString()
+  return formatArkmeDateTime(value, arkmeIntlLocale(), arkmeDayDelta(value, now) === 0
     ? { hour: '2-digit', minute: '2-digit', hour12: false }
-    : { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(value)
+    : { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 export function ArkmeArrangementWorkspace(props: { initialArrangementRef?: string | undefined; accountScope: string; onAddArrangement(): void; createdItems?: ArkmeArrangementItem[] }) {
@@ -47,7 +48,8 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
   const reviewCount = useOccurrenceReviewCount(accountScope)
   const [view, setView] = useState<ArrangementView>('today')
   const [now, setNow] = useState(Date.now)
-  const data = useArrangementWorkspace(accountScope, view, now)
+  const timeZone = useArkmeEffectiveTimeZone()
+  const data = useArrangementWorkspace(accountScope, view, now, timeZone)
   const [selected, setSelected] = useState<ArrangementWorkspaceItem>()
   const [targetError, setTargetError] = useState(false)
   const [targetAttempt, setTargetAttempt] = useState(0)
@@ -72,10 +74,10 @@ function ArrangementWorkspace({ initialArrangementRef, accountScope, onAddArrang
   useEffect(() => { const controller = new AbortController(); lifetime.current = controller; return () => { controller.abort() } }, [])
   useEffect(() => {
     const refreshClock = () => setNow(Date.now())
-    const timer = setTimeout(refreshClock, nextArrangementMidnight(now))
+    const timer = setTimeout(refreshClock, nextArrangementMidnight(Date.now(), timeZone))
     window.addEventListener('focus', refreshClock)
     return () => { clearTimeout(timer); window.removeEventListener('focus', refreshClock) }
-  }, [now])
+  }, [now, timeZone])
   useEffect(()=>{const refresh=()=>{void latestData.current.refresh()};window.addEventListener('arkme-arrangement-occurrences-changed',refresh);return()=>window.removeEventListener('arkme-arrangement-occurrences-changed',refresh)},[])
 
   const previousCreated = useRef(createdItems)

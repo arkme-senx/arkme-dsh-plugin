@@ -167,6 +167,9 @@ Arko 回复建议|Arko suggestions
 即我设置|Arkme settings
 即我设置分类|Arkme settings categories
 语言|Language
+显示时区|Display time zone
+中国（北京时间 UTC+08:00）|China (Beijing time UTC+08:00)
+其他时区|Other time zones
 外观|Appearance
 浅色|Light
 深色|Dark
@@ -870,6 +873,13 @@ AI 小结|AI recap
 当天暂无音频文件|No audio files for this day
 暂未找到当天文件，列表尚未查全|No files found for this day yet. More files remain to be checked.
 共 {v0} 个文件|{v0} files
+共 {v0} 个|{v0} total
+已选 {v0} 个|{v0} selected
+选择音频文件|Choose audio files
+{v0} 个文件处理中|{v0} files processing
+{v0} 个文件待导入|{v0} files ready to import
+导入处理说明|About import processing
+关闭窗口后音频仍会在后台处理。|Audio will continue processing in the background after you close this window.
 已找到 {v0} 个文件|{v0} files found so far
 文件列表未能继续加载，请重试|Could not load more files. Please retry.
 部分未完成文件暂未同步，请重试|Some unfinished files could not be synced. Please retry.

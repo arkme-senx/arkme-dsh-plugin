@@ -171,6 +171,8 @@ function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | und
   const itemUid = typeof source.itemUid === 'string' && source.itemUid.trim() !== '' ? source.itemUid.trim() : undefined
   return {
     sourceRef: source.sourceRef,
+    ...(typeof source.editAtMillis === 'number' && Number.isSafeInteger(source.editAtMillis) && source.editAtMillis > 0 ? { editAtMillis: source.editAtMillis } : {}),
+    ...(typeof source.revisionUid === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(source.revisionUid) ? { revisionUid: source.revisionUid } : {}),
     ...(typeof source.sendAtMillis==='number'&&Number.isSafeInteger(source.sendAtMillis)&&source.sendAtMillis>0?{sendAtMillis:source.sendAtMillis}:{}),
     ...(typeof source.draftScope==='string'&&source.draftScope.length<=256?{draftScope:source.draftScope}:{}),
     ...(source.autoPublish === true ? { autoPublish: true } : {}),
@@ -475,7 +477,8 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
   if (job.expectedCommittedFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(job.expectedCommittedFingerprint)) return false
   switch (job.state) {
     case 'committed': return job.result?.status === 'committed' && job.result.itemUid === draft.itemUid
-      && job.result.version === draft.baseVersion + 1 && typeof job.result.revisionUid === 'string'
+      && Number.isSafeInteger(job.result.version) && job.result.version > 0 && typeof job.result.revisionUid === 'string'
+      && (job.result.appliedToCurrent === undefined || typeof job.result.appliedToCurrent === 'boolean')
     case 'committing':
     case 'uncertain': return typeof job.expectedCommittedFingerprint === 'string' && job.result === undefined
     case 'pending':

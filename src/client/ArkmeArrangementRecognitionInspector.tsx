@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ArkmeArrangementHistoricalMerge } from './ArkmeArrangementOccurrenceActions.js'
 import { ArkmeArrangementDialog } from './ArkmeArrangementDialog.js'
@@ -347,11 +348,11 @@ export function ArkmeArrangementRecognitionProcess({
                         <th>{tr('时间')}</th>
                         <td>
                           {item.dueAtMillis
-                            ? new Date(item.dueAtMillis).toLocaleString()
+                            ? formatArkmeDateTime(item.dueAtMillis)
                             : tr('未设置')}
                         </td>
                         <td>
-                          {next.due_at ? new Date(next.due_at).toLocaleString() : tr('未设置')}
+                          {next.due_at ? formatArkmeDateTime(next.due_at) : tr('未设置')}
                         </td>
                       </tr>
                     </tbody>

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import type { ArkmeDesktopQuarantineStatus } from '../extensions/desktop-quarantine.js'
@@ -85,7 +86,7 @@ export function ArkmeExtensionRecoveryNotice({
   const localSafeMode = status.mode === 'local-safe-mode'
   const unknown = tr('未记录')
   const diagnostics = [
-    tr('发生时间') + '  ' + (status.createdAtMillis === undefined ? unknown : new Date(status.createdAtMillis).toLocaleString(arkmeIntlLocale())),
+    tr('发生时间') + '  ' + (status.createdAtMillis === undefined ? unknown : formatArkmeDateTime(status.createdAtMillis, arkmeIntlLocale())),
     tr('当前状态') + '  ' + tr('已停用，停用后 Arkme 已启动'),
     ...entries.flatMap(entry => [
       tr('插件名称') + '  ' + entry.packageName,

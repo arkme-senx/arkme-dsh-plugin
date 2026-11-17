@@ -258,6 +258,12 @@ function billingPaymentMethodParam(params: Record<string, unknown>): ArkmeBillin
   return value
 }
 
+function recordingWindowParam(value: unknown): import('./types.js').ArkmeRecordingWindow {
+  const params = objectValue(value)
+  return { dateStamp: numberParam(params, 'dateStamp', Number.NaN), endStamp: numberParam(params, 'endStamp', Number.NaN),
+    timeZone: stringParam(params, 'timeZone'), date: stringParam(params, 'date') }
+}
+
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
   const value = params[key]
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -1751,11 +1757,13 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.totals.index': return await service.recordingTotalsIndex(stringParam(params, 'account'), numberParam(params, 'toMillis', Number.NaN), numberParam(params, 'offset', Number.NaN), requestSignal)
     case 'recordings.totals.bucket': return await service.recordingTotalsBucket(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
-    case 'recordings.totals.day': return await service.recordingTotalsDay(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.totals.day': return await service.recordingTotalsDay(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal,
+      ...(params.window === undefined ? [] as const : [recordingWindowParam(params.window)] as const))
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', Number.NaN),
       numberParam(params, 'toStamp', Number.NaN),
       requestSignal,
+      ...(params.timeZone === undefined ? [] as const : [stringParam(params, 'timeZone')] as const),
     )
     case 'recordings.day.review': return await service.recordingDayReview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
     case 'recordings.day.overview': return await service.recordingDayOverview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
@@ -1766,11 +1774,13 @@ export async function dispatchArkmeHostOperation(
       return await service.locateRecordingTranscript(
         numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
         stringParam(params, 'identityHash'), stringParam(params, 'version'), requestSignal,
+        ...(params.window === undefined ? [] as const : [recordingWindowParam(params.window)] as const),
       )
     }
     case 'recordings.transcript.context': return await service.recordingTranscriptContext(
       numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
       numberParam(params, 'endAtMillis', Number.NaN), requestSignal,
+      ...(params.window === undefined ? [] as const : [recordingWindowParam(params.window)] as const),
     )
     case 'recordings.transcript.search': return await service.searchRecordingDayTranscript(
       numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'query'), requestSignal,
@@ -1782,7 +1792,7 @@ export async function dispatchArkmeHostOperation(
       }
       return await service.recordingTranscriptPage(numberParam(params, 'dateStamp', Number.NaN), {
         source, cursor: stringParam(params, 'cursor'), signal: requestSignal,
- ...(params.window === undefined ? {} : {window: {dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN), endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN), timeZone:stringParam(objectValue(params.window),'timeZone'), date:stringParam(objectValue(params.window),'date')}}),
+        ...(params.window === undefined ? {} : { window: recordingWindowParam(params.window) }),
       })
     }
     case 'recordings.entities.start': return await service.startRecordingEntities({
@@ -1813,12 +1823,7 @@ export async function dispatchArkmeHostOperation(
       undoRef: stringParam(params, 'undoRef'), requestId: stringParam(params, 'requestId'),
     }, requestSignal)
     case 'recordings.day': {
-      const window = params.window === undefined ? undefined : {
-        dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN),
-        endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN),
-        timeZone: stringParam(objectValue(params.window), 'timeZone'),
-        date: stringParam(objectValue(params.window), 'date'),
-      }
+      const window = params.window === undefined ? undefined : recordingWindowParam(params.window)
       const dateStamp = numberParam(params, 'dateStamp', Number.NaN)
       if (params.part !== undefined) {
         if (typeof params.part !== 'string' || !['transcript', 'coverage', 'metrics', 'summary', 'timeline'].includes(params.part)) throw new ArkmePluginError('recording-day-part-invalid', '录音读取分区无效', false, 400)
@@ -3242,7 +3247,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         textContent: stringParam(params, 'textContent'),
         ...(params.textFormat === 'markdown' || params.textFormat === 'plain' ? { textFormat: params.textFormat } : {}),
         ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),
-        version: Math.trunc(numberParam(params, 'version', 0)),
+        ...(params.editAtMillis === undefined ? {} : { editAtMillis: numberParam(params, 'editAtMillis', 0) }),
+        ...(params.revisionUid === undefined ? {} : { revisionUid: stringParam(params, 'revisionUid') }),
         editDurationMillis: Math.max(0, Math.trunc(numberParam(params, 'editDurationMillis', 0))),
       },
     )
@@ -3252,6 +3258,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       stringParam(params,'draftScope') || undefined,
     )
     case 'source.long-article.draft.put': return await service.putLongArticleDraft({
+      ...(params.editAtMillis === undefined ? {} : { editAtMillis: numberParam(params, 'editAtMillis', 0) }),
+      ...(params.revisionUid === undefined ? {} : { revisionUid: stringParam(params, 'revisionUid') }),
       ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
       ...(stringParam(params,'draftScope')?{draftScope:stringParam(params,'draftScope')} : {}),
       ...(params.autoPublish === true ? { autoPublish: true } : {}),
@@ -3287,7 +3295,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
         ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
         ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
-        expectedVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)),
+        ...(params.expectedVersion === undefined ? {} : { expectedVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)) }),
       })
       return { saved: true, draftRevision: prepared.draftRevision }
     }
@@ -3311,9 +3319,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
         ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
       }
-      const expectedBaseVersion = Math.trunc(numberParam(params, 'expectedVersion', 0))
-      if (operation === 'source.record-reedit.submit') return await service.submitRecordReedit({ ...input, expectedVersion: expectedBaseVersion })
-      const prepared = await service.prepareRecordReedit(input, { expectedBaseVersion })
+      if (operation === 'source.record-reedit.submit') return await service.submitRecordReedit(input)
+      const prepared = await service.prepareRecordReedit(input)
       return await service.commitRecordReedit(prepared)
     }
     case 'source.record-reedit.draft.delete': {

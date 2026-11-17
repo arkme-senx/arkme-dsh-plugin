@@ -219,3 +219,18 @@ describe('composer and message viewport resize', () => {
     expect(disconnect).toHaveBeenCalledOnce()
   })
 })
+
+it.each([false, true])('temporary collapse must not convert history into bottom follow (viewport also resized: %s)', viewportResized => {
+ let resized=()=>{}
+ vi.stubGlobal('ResizeObserver',class {constructor(callback:()=>void){resized=callback}observe(){}disconnect(){}})
+ const body={scrollTop:400,scrollHeight:2000,clientHeight:600,addEventListener(){},removeEventListener(){},getBoundingClientRect:()=>({top:0,bottom:600})}
+ let height=2000
+ const content={getBoundingClientRect:()=>({height}),querySelectorAll:()=>[]}
+ const dispose=observeConversationResize(body as unknown as HTMLElement,undefined,content as unknown as HTMLElement)
+ try {
+  height=500;body.scrollHeight=500;body.scrollTop=0;resized()
+  if(viewportResized){body.clientHeight=400;resized()}
+  height=2000;body.scrollHeight=2000;resized()
+  expect(body.scrollTop).toBe(400)
+ } finally {dispose();vi.unstubAllGlobals()}
+})

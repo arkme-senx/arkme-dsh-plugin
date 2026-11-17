@@ -1,3 +1,5 @@
+import { arkmeDayKey } from '../display-time-zone.js'
+import { formatArkmeTime } from '../display-time-zone.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { ArkmeRecordingDay, ArkmeRecordingSpeakerEvidence, ArkmeRecordingSpeakerOption, ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { callArkme } from '../api.js'
@@ -8,14 +10,14 @@ import { ArkmeRecordingSpeakerCorrection } from './ArkmeRecordingSpeakerCorrecti
 import { recordingConsistencyLabel, useRecordingConsistency } from './use-recording-consistency.js'
 
 const button: CSSProperties = { border: `1px solid ${color.border}`, borderRadius: 6, padding: '6px 9px', background: color.base, color: color.text, font: 'inherit', fontSize: 12, cursor: 'pointer' }
-const time = (stamp: number) => new Date(stamp).toLocaleTimeString('zh-CN', { hourCycle: 'h23' })
+const time = (stamp: number) => formatArkmeTime(stamp, 'zh-CN', { hourCycle: 'h23' })
 type EvidenceRow = Extract<ArkmeRecordingSpeakerEvidence, { supported: true }>['items'][number]
 type Filter = 'all' | 'a' | 'b' | 'ambiguous' | 'insufficient'
 
 export function speakerReviewItems(items: readonly ArkmeRecordingWorkbenchItem[], anchor: ArkmeRecordingWorkbenchItem, nearby = false) {
   const rows = new Map([anchor, ...items].map(row => [row.itemId, row]))
   return [...rows.values()].filter(row => row.transcriptSource === anchor.transcriptSource
-    && new Date(row.startAtMillis).toDateString() === new Date(anchor.startAtMillis).toDateString()
+    && arkmeDayKey(row.startAtMillis) === arkmeDayKey(anchor.startAtMillis)
     && (nearby ? Math.abs(row.startAtMillis - anchor.startAtMillis) <= 10 * 60_000 : row.speakerKey === anchor.speakerKey))
     .sort((a, b) => a.startAtMillis - b.startAtMillis || a.itemId.localeCompare(b.itemId))
 }

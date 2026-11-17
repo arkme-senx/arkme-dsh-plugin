@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { WorldInfiniteScrollTrigger } from './ArkmeWorldSurface.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { TeamWorldActivity as Activity, TeamWorldContext } from '../team-world-contract.js'
@@ -64,7 +65,7 @@ function ActivityList({ accountKey, team, scrollRootRef }: { scrollRootRef: { re
     {error && <p role="alert">{error} <button type="button" style={actionStyle} onClick={() => void load()}>{tr('重试')}</button></p>}
     {items.map(item => <article key={item.requestUid} data-team-page-row={item.requestUid} style={{ padding: '16px 0', borderBottom: `1px solid ${c.borderSoft}` }}>
       <strong>{!team && <>{item.preview?.teamName ?? tr('团队')} · </>}{tr(actions[item.action])}</strong>
-      <time style={{ display: 'block', color: c.secondary, fontSize: 11, marginTop: 6 }}>{new Date(item.acceptedAt).toLocaleString()}</time>
+      <time style={{ display: 'block', color: c.secondary, fontSize: 11, marginTop: 6 }}>{formatArkmeDateTime(item.acceptedAt)}</time>
       {item.preview ? <><p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{[item.preview.title, item.preview.text].filter(Boolean).join('\n')}</p><TeamWorldImages imageRefs={item.preview.imageRefs ?? []} /></> : <p style={{ color: c.secondary }}>{tr('当前内容不可查看')}</p>}
     </article>)}
     {busy && <p role="status">{tr('加载中…')}</p>}

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { arkmeIntlLocale, tr } from './locale.js'
 
 export function validArrangementReminderTime(value: number | undefined): value is number {
@@ -15,7 +16,7 @@ export function ArkmeArrangementReminder({ atMillis, now }: { atMillis: number |
       <path d="M15.02 19.0601C15.02 20.7101 13.67 22.0601 12.02 22.0601C11.2 22.0601 10.44 21.7201 9.90002 21.1801C9.36002 20.6401 9.02002 19.8801 9.02002 19.0601" strokeWidth="1.5" strokeMiterlimit="10" />
     </svg>
     <time dateTime={date.toISOString()} aria-label={tr('通知时间')}>
-      {new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(date)}
+      {formatArkmeDateTime(date, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
     </time>
   </div>
 }

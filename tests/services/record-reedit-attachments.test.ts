@@ -47,7 +47,7 @@ async function setup(overrides: Record<string, unknown> = {}, onCommitted?: () =
     async requireSession() { return { userId, accessToken: 'access', refreshToken: 'refresh' } },
     async authenticatedPost(path: string, body: Record<string, unknown>) {
       if (path === '/api/v1/records/detail') return { record_core: structuredClone(core) }
-      if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: receipts.has(String(body.revision_uid)), accepted_version: receipts.get(String(body.revision_uid)) ?? 0, current_version: core.version }
+      if (path === '/api/v1/records/receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: receipts.has(String(body.revision_uid)), accepted_version: receipts.get(String(body.revision_uid)) ?? 0, current_version: core.version }
       if (path === '/api/v1/records/update') return await update(body)
       if (path === '/api/v1/records/media/batch-list') return await readMedia()
       throw new Error(path)
@@ -90,7 +90,7 @@ describe('Record attachment re-edit', () => {
       restored = x.restart(true)
       await restored.commitRecordReedit(context)
       expect(x.writes).toHaveLength(1)
-      expect(x.writes[0]).toMatchObject({ record_duration_millis: 1000, edit_duration_millis: 5000,
+      expect(x.writes[0]).toMatchObject({ edit_at: capture.completedAtMillis, edit_duration_millis: 5000,
         edit_capture_context: { schema_version: 1, captured_at: capture.completedAtMillis, client_name: '编辑设备', network_name: '编辑网络', electric: 0 },
         content_payload: { media_refs: expect.arrayContaining([{ file_asset_uid: 'new-background', content_file_role: 4, binding_type: 4, render_role: 1, sort_order: 2, file_name: 'background.webm' }]),
           background_sound_amplitudes: [0.2, 0.5] } })
@@ -343,7 +343,7 @@ describe('Record attachment re-edit', () => {
     } finally { restarted.dispose() }
   })
 
-  it.each(['record', 'draft', 'version-missing'] as const)('does not rebase a recovered editor when its %s evidence changed', async changed => {
+  it.each(['record', 'draft', 'version-missing'] as const)('retains draft CAS while allowing restored %s version metadata', async changed => {
     const x = await setup()
     await x.service.recordReeditEditor('source', 'r1')
     const old = await x.service.saveRecordReeditDraft({ ...target, newText: '保留的旧草稿', expectedVersion: 7, attachments: [] })
@@ -352,12 +352,12 @@ describe('Record attachment re-edit', () => {
     x.service.dispose()
     const restarted = x.restart(true)
     try {
-      await expect(restarted.saveRecordReeditDraft({ ...target, newText: '不得覆盖', expectedDraftRevision: old.draftRevision,
-        ...(changed === 'version-missing' ? {} : { expectedVersion: 7 }) }))
-        .rejects.toMatchObject({ code: changed === 'record' ? 'record-reedit-conflict'
-          : changed === 'draft' ? 'record-reedit-draft-changed' : 'record-reedit-version-invalid' })
+      const save = restarted.saveRecordReeditDraft({ ...target, newText: '恢复候选', expectedDraftRevision: old.draftRevision,
+        ...(changed === 'version-missing' ? {} : { expectedVersion: 7 }) })
+      if (changed === 'draft') await expect(save).rejects.toMatchObject({ code: 'record-reedit-draft-changed' })
+      else await expect(save).resolves.toMatchObject({ itemUid: 'r1' })
       const draft = await new ArkmeStateStore(x.root).getRecordReeditDraft(42, old.sourceIdentityKey, 'r1')
-      expect(draft?.textContent).toBe(changed === 'draft' ? '其他入口的新草稿' : '保留的旧草稿')
+      expect(draft?.textContent).toBe(changed === 'draft' ? '其他入口的新草稿' : '恢复候选')
       expect(x.writes).toHaveLength(0)
     } finally { restarted.dispose() }
   })
@@ -826,8 +826,8 @@ describe('Record attachment re-edit', () => {
     const x = await setup()
     await x.service.recordReeditEditor('source', 'r1')
     try {
-      await expect(x.service.submitRecordReedit({ ...target, newText: '过期候选', expectedVersion: 6, attachments: [] }))
-        .rejects.toMatchObject({ code: 'record-reedit-conflict' })
+      await expect(x.service.submitRecordReedit({ ...target, newText: '无效候选', attachments: [{ fileAssetUid: 'foreign' }] }))
+        .rejects.toMatchObject({ code: 'record-reedit-attachment-invalid' })
       const receipt = await x.service.submitRecordReedit({ ...target, newText: '新的候选', expectedVersion: 7, attachments: [] })
       expect(receipt.textContent).toBe('新的候选')
       await vi.waitFor(async () => expect((await x.service.recordReeditSubmissions('source'))[0]?.state).toBe('committed'))
@@ -881,7 +881,7 @@ describe('Record attachment re-edit', () => {
     expect(x.writes).toHaveLength(0)
   })
 
-  it('unblocks recovery when reconciliation proves the owner has a conflicting newer version', async () => {
+  it('keeps an unknown edit recoverable when another edit changes the owner', async () => {
     const x = await setup()
     await x.service.recordReeditEditor('source', 'r1')
     x.files.uploadRefs.mockRejectedValueOnce(new Error('offline'))
@@ -894,12 +894,12 @@ describe('Record attachment re-edit', () => {
     x.core.text_content = '另一端的新正文'
     const restarted = x.restart()
     await restarted.resumeRecordReeditSubmissions('source')
-    await vi.waitFor(async () => expect((await restarted.recordReeditSubmissions('source'))[0]?.state).toBe('failed'))
+    await vi.waitFor(async () => expect((await restarted.recordReeditSubmissions('source'))[0]?.state).toBe('uncertain'))
     expect((await restarted.recordReeditEditor('source', 'r1')).draft?.textContent).toBe('保留候选')
     expect(x.writes).toHaveLength(0)
     const discard = await restarted.prepareDiscardRecordReeditDraft('source', 'r1')
-    await expect(restarted.discardRecordReeditDraft(discard)).resolves.toMatchObject({ status: 'discarded' })
-    expect(await restarted.recordReeditSubmissions('source')).toEqual([])
+    await expect(restarted.discardRecordReeditDraft(discard)).rejects.toThrow('仍在保存或核对')
+    expect((await restarted.recordReeditSubmissions('source'))[0]?.state).toBe('uncertain')
   })
 
   it('recovers a failed submission candidate even after its editable draft was removed', async () => {
@@ -1029,8 +1029,8 @@ describe('Record attachment re-edit', () => {
     x.core.version = 8
     const saved = await x.service.saveRecordReeditDraft({ ...target, newText: '离线候选', expectedVersion: 7, attachments: [{ fileAssetUid: 'a' }] })
     expect(saved.baseVersion).toBe(7)
-    await expect(x.service.commitRecordReedit(saved)).rejects.toMatchObject({ code: 'record-reedit-conflict' })
-    expect(x.writes).toHaveLength(0)
+    await expect(x.service.commitRecordReedit(saved)).resolves.toMatchObject({ status: 'committed', version: 9 })
+    expect(x.writes).toHaveLength(1)
   })
 
   it('retains failed submissions and their files without blocking other drafts', async () => {
@@ -1165,7 +1165,7 @@ describe('Record attachment re-edit', () => {
     } finally { x.service.dispose() }
   })
 
-  it.each(['waveform', 'asset'] as const)('detects a background %s change without dropping the prepared draft', async changed => {
+  it.each(['waveform', 'asset'] as const)('preserves the current background %s when committing the explicit text candidate', async changed => {
     const x = await setup({ content_payload: { payload_kind: 2, schema_version: 1, text_state: 1,
       media_refs: [media('a'), { ...media('background', 1), content_file_role: 4 }], background_sound_amplitudes: [0.2] } })
     try {
@@ -1173,9 +1173,12 @@ describe('Record attachment re-edit', () => {
       const payload = x.core.content_payload as any
       if (changed === 'waveform') payload.background_sound_amplitudes = [0.7]
       else payload.media_refs[1].file_asset_uid = 'another-background'
-      await expect(x.service.commitRecordReedit(prepared)).rejects.toMatchObject({ code: 'record-reedit-conflict' })
-      expect(x.writes).toEqual([])
-      expect(await x.stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'r1')).toBeDefined()
+      await expect(x.service.commitRecordReedit(prepared)).resolves.toMatchObject({ status: 'committed' })
+      expect(x.writes).toHaveLength(1)
+      const written = x.writes[0]!.content_payload as any
+      if (changed === 'waveform') expect(written.background_sound_amplitudes).toEqual([0.7])
+      else expect(written.media_refs.some((ref: any) => ref.file_asset_uid === 'another-background')).toBe(true)
+      expect(await x.stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'r1')).toBeUndefined()
     } finally { x.service.dispose() }
   })
 
@@ -1374,8 +1377,6 @@ describe('Record attachment re-edit', () => {
     { attachments: [{ fileAssetUid: 'a', fileRef }], expectedVersion: 7, code: 'record-reedit-attachment-invalid' },
     { attachments: Array.from({ length: 10 }, (_, i) => ({ fileAssetUid: `asset-${i}` })), expectedVersion: 7, code: 'record-reedit-attachment-invalid' },
     { attachments: [{ fileRef: '/tmp/file.png' }], expectedVersion: 7, code: 'record-reedit-attachment-invalid' },
-    { attachments: [], expectedVersion: undefined, code: 'record-reedit-version-invalid' },
-    { attachments: [], expectedVersion: 6, code: 'record-reedit-conflict' },
   ])('rejects invalid selections or missing/stale baseline: $code', async input => {
     const x = await setup()
     await expect(x.service.prepareRecordReedit({ ...target, ...input } as never)).rejects.toMatchObject({ code: input.code })
@@ -1409,13 +1410,14 @@ describe('Record attachment re-edit', () => {
     expect((await x.service.recordReeditEditor('source', 'r1')).draft?.attachments?.map(v => v.selection)).toEqual(restored?.attachments)
   })
 
-  it('does not rebase a restored attachment draft onto a newer owner version', async () => {
+  it('commits restored attachment selections without a version precondition', async () => {
     const x = await setup()
     await x.service.prepareRecordReedit({ ...target, expectedVersion: 7, attachments: [{ fileAssetUid: 'a' }] })
     x.core.version = 8
     const p = await x.service.prepareRecordReedit(target)
     expect(p.baseVersion).toBe(7)
-    await expect(x.service.commitRecordReedit(p)).rejects.toMatchObject({ code: 'record-reedit-conflict' })
+    await expect(x.service.commitRecordReedit(p)).resolves.toMatchObject({ status: 'committed', version: 9 })
+    expect(x.writes[0]).not.toHaveProperty('version')
   })
 
   it('rejects a stale UI draft revision without overwriting another consumer', async () => {
@@ -1503,3 +1505,78 @@ it('keeps same-record drafts separate for two teams and a new admission, and blo
   expect(x.writes).toEqual([])
  } finally {x.service.dispose();await rm(x.root,{recursive:true,force:true})}
 })
+
+  it('uses frozen completion time and accepts a server version jump without input version', async () => {
+    const x = await setup()
+    const capture = { completedAtMillis: 1700000000000, captureContext: { clientName: 'test' } }
+    try {
+      await x.service.recordReeditEditor('source', 'r1')
+      x.core.version = 30
+      const receipt = await x.service.submitRecordReedit({ ...target, newText: '新正文', attachments: [], capture })
+      await vi.waitFor(async () => expect((await x.service.recordReeditSubmissions('source'))[0]?.state).toBe('committed'))
+      const committed = (await x.service.recordReeditSubmissions('source'))[0]!
+      expect(committed.result).toMatchObject({ version: 31, appliedToCurrent: true })
+      const restored = x.restart(true)
+      try { expect((await restored.recordReeditSubmissions('source'))[0]?.result).toMatchObject({ version: 31, appliedToCurrent: true }) }
+      finally { restored.dispose() }
+      expect(x.writes[0]).toMatchObject({ edit_at: capture.completedAtMillis, revision_uid: receipt.submissionId })
+      for (const field of ['version', 'expected_version', 'expected_edit_epoch', 'edit_protocol_version', 'record_duration_millis']) expect(x.writes[0]).not.toHaveProperty(field)
+    } finally { x.service.dispose() }
+  })
+  it('accepts late history without projecting its candidate over the current body', async () => {
+    const x = await setup()
+    x.update.mockImplementationOnce(async body => { x.writes.push(body); return { record_core: { ...x.core, version: 12, text_content: '较新的正文' }, revision_uid: body.revision_uid } })
+    try {
+      const p = await x.service.prepareRecordReedit({ ...target, newText: '迟到的编辑' })
+      await expect(x.service.commitRecordReedit(p)).resolves.toMatchObject({ status: 'committed', version: 12, appliedToCurrent: false })
+    } finally { x.service.dispose() }
+  })
+
+  it.each([404, 503])('only falls back to the legacy receipt route when the route is absent (%s)', async status => {
+    const x = await setup()
+    const post = x.runtime.authenticatedPost.bind(x.runtime)
+    const calls: string[] = []
+    vi.spyOn(x.runtime, 'authenticatedPost').mockImplementation(async (path, body) => {
+      calls.push(path)
+      if (path === '/api/v1/records/receipt/get') throw new ArkmePluginError('upstream', 'unavailable', true, 502, { upstreamStatus: status })
+      if (path === '/api/v1/records/write-receipt/get') return post('/api/v1/records/receipt/get', body)
+      return post(path, body)
+    })
+    x.update.mockImplementationOnce(async body => {
+      x.writes.push(body); x.core.version = 31; x.receipts.set(String(body.revision_uid), 31)
+      throw new ArkmePluginError('network', 'lost acknowledgement', true, 502, { writeOutcomeUnknown: true })
+    })
+    try {
+      const p = await x.service.prepareRecordReedit({ ...target, newText: '新正文' })
+      const result = x.service.commitRecordReedit(p)
+      if (status === 404) await expect(result).resolves.toMatchObject({ version: 31, appliedToCurrent: false })
+      else await expect(result).rejects.toMatchObject({ code: 'record-reedit-outcome-unknown' })
+      expect(calls.includes('/api/v1/records/write-receipt/get')).toBe(status === 404)
+      expect(x.writes).toHaveLength(1)
+    } finally { x.service.dispose() }
+  })
+
+  it('updates long articles without a version and preserves completion identity across draft reload', async () => {
+    const x = await setup({ template_kind: 1, display_kind: 1, title: '标题', content_payload: { payload_kind: 1 } })
+    const identity = { editAtMillis: 1700000000000, revisionUid: 'article-edit-stable' }
+    try {
+      await x.service.putLongArticleDraft({ ...target, title: '新标题', textContent: '新正文', autoPublish: true, baseVersion: 1, durationMillis: 0, updatedAtMillis: 1, ...identity })
+      expect(await new ArkmeStateStore(x.root).getLongArticleDraft(42, 'source', 'r1')).toMatchObject(identity)
+      await expect(x.service.updateLongArticle('source', 'r1', { title: '新标题', textContent: '新正文', editDurationMillis: 0, ...identity })).resolves.toMatchObject({ version: 8, textContent: '新正文' })
+      expect(x.writes[0]).toMatchObject({ edit_at: identity.editAtMillis, revision_uid: identity.revisionUid })
+      expect(x.writes[0]).not.toHaveProperty('version')
+      expect(x.writes[0]).not.toHaveProperty('record_duration_millis')
+    } finally { x.service.dispose() }
+  })
+
+  it('recovers a long article by exact receipt even when newer content has won', async () => {
+    const x = await setup({ template_kind: 1, display_kind: 1, title: '标题', content_payload: { payload_kind: 1 } })
+    x.update.mockImplementationOnce(async body => {
+      x.writes.push(body); x.core.version = 40; x.core.text_content = '其他位置更新的正文'; x.receipts.set(String(body.revision_uid), 31)
+      throw new ArkmePluginError('network', 'lost acknowledgement', true, 502, { writeOutcomeUnknown: true })
+    })
+    try {
+      await expect(x.service.updateLongArticle('source', 'r1', { title: '新标题', textContent: '迟到正文', version: 1, editDurationMillis: 0 })).resolves.toMatchObject({ version: 40, textContent: '其他位置更新的正文' })
+      expect(x.writes).toHaveLength(1)
+    } finally { x.service.dispose() }
+  })

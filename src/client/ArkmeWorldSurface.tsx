@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { WorldSubscribeButton, WorldSubscriptionEntry } from './WorldSubscriptions.js'
 import { WorldSuggestionsEntry } from './WorldSuggestions.js'
@@ -309,7 +310,7 @@ function messageOf(error: unknown, fallback: string): string {
 
 function dateTimeLabel(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return ''
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+  return formatArkmeDateTime(new Date(value), arkmeIntlLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 function worldVoiceprintContent(item: Pick<ArkmeWorldFeedItem, 'headline' | 'textContent'>): string {

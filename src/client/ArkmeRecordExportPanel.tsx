@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { DownloadSimple } from '@phosphor-icons/react/dist/icons/DownloadSimple';
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise';
 import { CheckCircle } from '@phosphor-icons/react/dist/icons/CheckCircle';
@@ -103,10 +104,10 @@ export function ArkmeRecordExportPanel({ scope, preflight, loading = false, onRe
                     (event.currentTarget.parentElement?.children[next] as HTMLButtonElement)?.focus();
                 }
             }}>{tr(value === 'incremental' ? '增量导出' : value === 'dates' ? '按日期导出' : '全部导出')}</button>)}</div>{range === 'dates' && <ArkmeExportDateRange value={dates} disabled={locked} onChange={setDates}/>}</div>
- {range === 'incremental' && <div className="arkme-export-incremental"><strong>{savedAt ? tr('上次成功保存：') + new Date(savedAt).toLocaleString(arkmeIntlLocale()) : preview?.baselineRequired ? tr('先建立完整备份') : state.loading ? tr('正在读取增量进度…') : state.error ? tr('增量进度读取失败') : tr('尚未建立完整备份')}</strong><p>{tr('自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。')}</p></div>}
+ {range === 'incremental' && <div className="arkme-export-incremental"><strong>{savedAt ? tr('上次成功保存：') + formatArkmeDateTime(savedAt, arkmeIntlLocale()) : preview?.baselineRequired ? tr('先建立完整备份') : state.loading ? tr('正在读取增量进度…') : state.error ? tr('增量进度读取失败') : tr('尚未建立完整备份')}</strong><p>{tr('自动保存新增、修改和移除的内容，包括补录的旧日期记录。增量不限次数，不占用全量导出额度。')}</p></div>}
  {range === 'dates' && <p className="arkme-export-notice">{tr('按记录显示日期筛选，包含结束日期全天。')}</p>}
  {range !== 'incremental' && <p className="arkme-export-notice">{tr(preview?.localSnapshotOnly ? '当前离线，将导出上次完整保存的本地副本。' : preview?.localReplica ? '复用本地备份，仅同步变化，不占用全量导出次数。' : '日期与全部导出共用原有云端导出额度；本地已有原文件会优先复用。')}</p>}
- {preview?.localSnapshotOnly && savedAt > 0 && <p className="arkme-export-notice">{tr('数据截至：')}{new Date(savedAt).toLocaleString(arkmeIntlLocale())}</p>}
+ {preview?.localSnapshotOnly && savedAt > 0 && <p className="arkme-export-notice">{tr('数据截至：')}{formatArkmeDateTime(savedAt, arkmeIntlLocale())}</p>}
  <div className="arkme-export-summary" aria-label={tr('备份内容')}>{[{ label: '条快记', value: preview?.previewUid ? preview.recordCount : undefined }, { label: '张图片', value: preview?.previewUid ? preview.imageCount : undefined }, { label: '段语音', value: preview?.previewUid ? preview.voiceCount : undefined }].map(v => <span className="arkme-export-summary-item" key={v.label}><strong>{v.value === undefined ? '—' : v.value.toLocaleString(arkmeIntlLocale())}</strong><span>{tr(v.label)}</span></span>)}</div>
  {preview?.countsPending && <p className="arkme-export-notice">{tr('以上为所选范围的本地已保存数量，完成同步后更新。')}</p>}
  {state.loading && <p className="arkme-export-notice" role="status">{tr(preview ? '正在确认导出信息…' : '正在统计本次导出范围…')}</p>}

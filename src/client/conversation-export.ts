@@ -1,3 +1,4 @@
+import { arkmeDayKey, arkmeWallClockIso, getArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { exportTopicMarkdown } from '../record-export-topic.js'
 import { tr } from './locale.js'
 import type {
@@ -74,19 +75,7 @@ function pad(value: number): string {
 }
 
 export function arkmeConversationExportTimestamp(date: Date): string {
-  return `${String(date.getFullYear())}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
-}
-
-function localDateTime(date: Date): string {
-  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
-
-function localDate(date: Date): string {
-  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function localTime(date: Date): string {
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return arkmeWallClockIso(date.getTime()).slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
 }
 
 function fileSegment(value: string): string {
@@ -130,7 +119,7 @@ export function arkmeConversationExportFileName(
 }
 
 function markdownForItem(item: ArkmeTimelineItem): string {
-  const lines: string[] = [`### ${localTime(new Date(item.sendAtMillis))} · ${escapePlainMarkdown(`${item.senderName || '未知发送者'}${item.representation?` · 代表${item.representation.name}`:''}`)}`, '']
+  const lines: string[] = [`### ${arkmeWallClockIso(item.sendAtMillis).slice(11, 19)} · ${escapePlainMarkdown(`${item.senderName || '未知发送者'}${item.representation?` · 代表${item.representation.name}`:''}`)}`, '']
   if (item.selfTopic?.topicHierarchyKey.trim()) lines.push(exportTopicMarkdown(item.selfTopic.title).trimEnd(), '')
   const title = item.title.trim()
   if (title !== '' && title !== item.textContent.trim()) lines.push(`**标题：** ${escapePlainMarkdown(title)}`, '')
@@ -169,7 +158,7 @@ export function arkmeConversationExportMarkdown(input: {
   const lines = [
     `# ${scope}`,
     '',
-    `- 导出时间：${localDateTime(input.exportedAt)}`,
+    `- 导出时间：${arkmeWallClockIso(input.exportedAt.getTime()).slice(0, 19).replace('T', ' ')} (${getArkmeEffectiveTimeZone()})`,
     `- 内容数量：${String(input.items.length)}`,
     `- 导出范围：${input.source.kind === 'topic' ? '当前主题及全部子主题' : input.source.kind === 'send_to_self' ? '全部可访问快记' : input.source.kind === 'default_category' ? '未分类快记' : '当前对话全部可访问消息'}`,
     '',
@@ -178,7 +167,7 @@ export function arkmeConversationExportMarkdown(input: {
   ]
   let currentDate = ''
   for (const item of input.items) {
-    const date = localDate(new Date(item.sendAtMillis))
+    const date = arkmeDayKey(item.sendAtMillis)
     if (date !== currentDate) {
       currentDate = date
       lines.push(`## ${date}`, '')

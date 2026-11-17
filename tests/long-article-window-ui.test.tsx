@@ -111,7 +111,7 @@ it('opens an owned article editing immediately and flushes on native close', asy
  expect(renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.value).toBe('原标题')
  act(() => renderer!.root.findByProps({ 'aria-label': '长文标题' }).props.onChange({ target: { value: '修改后' } }))
  await act(async () => requestClose())
- expect(mocks.call).toHaveBeenCalledWith('source.long-article.update', expect.objectContaining({ itemUid: 'original', version: 4, title: '修改后' }))
+ expect(mocks.call).toHaveBeenCalledWith('source.long-article.update', expect.objectContaining({ itemUid: 'original', editAtMillis: expect.any(Number), title: '修改后' }))
  expect(mocks.call.mock.calls.some(([op]) => op === 'source.send-rich' || op === 'source.long-article.publish')).toBe(false)
  expect(updated).toHaveBeenCalledWith(expect.objectContaining({ version: 5 }))
  expect(close).toHaveBeenCalledOnce()

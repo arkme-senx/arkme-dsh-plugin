@@ -1,6 +1,7 @@
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { RecordingSearchRow } from './recordings/RecordingSearchRow.js'
+import { arkmeDayKey, formatArkmeDateTime, recordingCalendarDate, useArkmeDisplayTimeZone } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { hasEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
@@ -140,15 +141,14 @@ export interface ArkmeSearchSurfaceProps {
 
 function syncedDshKey(item: ArkmeSearchRecordItem): string { return item.dshOrigin?.sessionId ?? `legacy:${item.sourceUid ?? ''}` }
 function errorMessage(error: unknown): string { return error instanceof ArkmeClientError ? error.body.message : error instanceof Error ? error.message : String(error) }
-function dateTimeLabel(value: number): string { return Number.isFinite(value) && value > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '' }
+function dateTimeLabel(value: number): string { return Number.isFinite(value) && value > 0 ? formatArkmeDateTime(new Date(value), arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : '' }
 function displayUrl(item: ArkmeFileAssetDisplayItem | undefined): string { return item?.previewUrl || item?.downloadUrl || '' }
 function mediaUrl(mediaRef: string): string { return `${mediaRoute}?ref=${encodeURIComponent(mediaRef)}` }
 function imageMonthLabel(value: number): string {
-  const date = new Date(value)
-  if (!Number.isFinite(value) || value <= 0 || Number.isNaN(date.valueOf())) return '更早'
-  const now = new Date()
-  if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth()) return tr("这个月")
-  return `${String(date.getFullYear())}年${String(date.getMonth() + 1).padStart(2, '0')}月`
+  const month = value > 0 ? arkmeDayKey(value).slice(0, 7) : ''
+  if (!month) return '更早'
+  if (month === arkmeDayKey(Date.now()).slice(0, 7)) return tr("这个月")
+  return `${month.slice(0, 4)}年${month.slice(5)}月`
 }
 function RecordMeta({ item }: { item: ArkmeSearchRecordItem }) {
   const dateLabel = dateTimeLabel(item.sendAtMillis)
@@ -261,6 +261,7 @@ function ArkmeSearchSurfaceBody({
   variant = 'page', initialQuery, initialQueryRevision, searchDshMessages, onOpenDshSession, onOpenRecord, onClose,
 }: ArkmeSearchSurfaceProps = {}) {
   useArkmeLocale()
+  const timeZone = useArkmeDisplayTimeZone()
   const [query, setQuery] = useState(() => initialQuery === undefined
     ? ''
     : arkmeHashTagSearchQuery(initialQuery) ?? initialQuery.trim())
@@ -742,10 +743,9 @@ function ArkmeSearchSurfaceBody({
       </div> : <div style={{ height: '100%', overflowY: 'auto' }} aria-label={tr("录音转写搜索结果")}>
         <h3 style={styles.resultHeader}><span>{recordings === undefined ? '关联录音' : `${String(recordingItems.length)}个关联录音`}</span></h3>
         {recordingError !== '' && <div style={styles.error} role="alert">{tr("录音·转写暂不可用：")}{recordingError}<button type="button" aria-label="重试录音转写" style={styles.retryLoadMore} disabled={searchLoading.recordings || recordingPageLoading} onClick={() => {void loadRecordingPage()}}>{tr("重试")}</button></div>}
-        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingSearchRow key={`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`} item={item}
+        {recordingItems.length > 0 ? <div style={styles.list}>{recordingItems.map(item => <RecordingSearchRow key={`${item.sessionId}:${item.match.transcriptSource}:${item.match.childId}:${item.match.itemIndex}`} item={item} timeZone={timeZone}
           onOpen={() => {
-            const date = new Date(item.startAtMillis)
-            date.setHours(0, 0, 0, 0)
+            const date = recordingCalendarDate(item.startAtMillis, timeZone)
             arkmeUi.showRecordingTarget(date.getTime(), item.startAtMillis, item.match, undefined, recordingResultQuery.current)
             onClose?.()
           }} />)}</div>

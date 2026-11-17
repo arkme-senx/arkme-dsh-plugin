@@ -18,6 +18,7 @@ import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
 import { arkmeUi, type ArkmeSettingsSection } from './ui-controller.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { setArkmeDisplayTimeZone, useArkmeDisplayTimeZone } from './display-time-zone.js'
 import settingsCss from './settings-dialog.css?inline'
 
 type Section = ArkmeSettingsSection | 'general' | 'about'
@@ -34,6 +35,8 @@ type Preferences = Pick<Context, 'locale' | 'theme' | 'on'>
 /** Use the existing global preference owners, never a second settings file. */
 function CommonPreferences({ preferences }: { preferences: Preferences }) {
   const language = useSyncExternalStore(fn => preferences.locale.subscribe(fn), () => preferences.locale.getSnapshot())
+  const timeZone = useArkmeDisplayTimeZone()
+  const timeZones = Intl.supportedValuesOf('timeZone').filter(value => value !== 'Asia/Shanghai')
   const [appearance, setAppearance] = useState(() => preferences.theme.getTheme())
   useEffect(() => {
     setAppearance(preferences.theme.getTheme())
@@ -44,6 +47,17 @@ function CommonPreferences({ preferences }: { preferences: Preferences }) {
     <label className="arkme-settings-preference"><span>{tr('语言')}</span>
       <select aria-label={tr('语言')} value={language.active} onChange={event => preferences.locale.setLocale(event.target.value)}>
         {language.locales.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>
+    <label className="arkme-settings-preference"><span>{tr('显示时区')}</span>
+      <select aria-label={tr('显示时区')} value={timeZone ?? 'system'} onChange={event => setArkmeDisplayTimeZone(event.target.value)}>
+        <option value="system">{tr('跟随系统')}</option>
+        <option value="Asia/Shanghai">{tr('中国（北京时间 UTC+08:00）')}</option>
+        <optgroup label={tr('其他时区')}>
+          <option value="UTC">UTC</option>
+          {timeZone && timeZone !== 'UTC' && timeZone !== 'Asia/Shanghai' && !timeZones.includes(timeZone) && <option value={timeZone}>{timeZone}</option>}
+          {timeZones.map(value => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}
+        </optgroup>
       </select>
     </label>
     <div className="arkme-settings-preference"><span>{tr('外观')}</span><div role="group" aria-label={tr('外观')}>

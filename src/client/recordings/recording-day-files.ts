@@ -1,3 +1,4 @@
+import type { ArkmeRecordingWindow } from '../../types.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportHistoryItem, RecordingImportDisplayStatus } from '../../recording-import-shared.js'
 
 export type RecordingFile = PublicRecordingImportCurrentItem | PublicRecordingImportHistoryItem
@@ -7,7 +8,8 @@ export function recordingFileKey(file: RecordingFile): string {
   return 'importRef' in file ? file.importRef : file.taskKey
 }
 
-export function recordingFileDayBounds(dateStamp: number) {
+export function recordingFileDayBounds(dateStamp: number, window?: ArkmeRecordingWindow) {
+  if (window) return { from: window.dateStamp, to: window.endStamp }
   const start = new Date(dateStamp)
   start.setHours(0, 0, 0, 0)
   const end = new Date(start)
@@ -15,9 +17,9 @@ export function recordingFileDayBounds(dateStamp: number) {
   return { from: start.getTime(), to: end.getTime() }
 }
 
-export function recordingFileMatchesDay(file: RecordingFile, dateStamp: number, basis: RecordingFileDateBasis): boolean {
+export function recordingFileMatchesDay(file: RecordingFile, dateStamp: number, basis: RecordingFileDateBasis, window?: ArkmeRecordingWindow): boolean {
   if (basis === 'all') return true
-  const { from, to } = recordingFileDayBounds(dateStamp)
+  const { from, to } = recordingFileDayBounds(dateStamp, window)
   // Cloud files use session creation; pending local jobs use job creation. Neither is upload completion.
   if (basis === 'uploaded') return file.createdAtMillis > 0 && file.createdAtMillis >= from && file.createdAtMillis < to
   return file.startAtMillis < to && Math.max(recordingFileDisplayEnd(file) ?? file.endAtMillis, file.startAtMillis + 1) > from

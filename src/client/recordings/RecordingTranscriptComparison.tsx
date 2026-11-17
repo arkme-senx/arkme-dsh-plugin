@@ -1,3 +1,4 @@
+import { formatArkmeTime } from '../display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import type { PreparedRecordingComparison } from './prepare-recording-transcript-comparison.js'
@@ -99,7 +100,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
         {data[source].items.map(item => <RecordingComparisonRow key={item.itemId} speaker={item.speakerLabel} colorIndex={item.speakerColorIndex}
           startAtMillis={item.startAtMillis} endAtMillis={item.endAtMillis} text={item.text} background={item.isBackground}
           active={player.activeItemRef === item.itemRef && player.positionAtMillis !== undefined && player.positionAtMillis >= item.startAtMillis && player.positionAtMillis < item.endAtMillis}
-          playLabel={`播放${source === 'system' ? '系统' : '豆包'}片段 ${new Date(item.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hourCycle: 'h23' })}`} onPlay={() => play(item)} />)}
+          playLabel={`播放${source === 'system' ? '系统' : '豆包'}片段 ${formatArkmeTime(item.startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })}`} onPlay={() => play(item)} />)}
         {data[source].items.length === 0 && <p style={{ color: colors.secondary }}>{pending && source === 'doubao' ? '正在转写，请稍候' : data[source].message || '暂无转写'}</p>}
         {source === 'doubao' && data.failedCount > 0 && <p role="status" style={{ color: colors.danger }}>{data.failedCount} {tr('个片段转写失败')}</p>}
         {source === 'doubao' && data.silentCount > 0 && <p role="status">{data.silentCount} {tr('个片段未识别到人声')}</p>}

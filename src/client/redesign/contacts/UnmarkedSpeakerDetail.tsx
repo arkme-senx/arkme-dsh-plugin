@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../../display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../../locale.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
@@ -115,9 +116,9 @@ function durationPresentation(durationMillis: number): string {
 
 function latestPresentation(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '时间未知'
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), {
+  return formatArkmeDateTime(new Date(value), arkmeIntlLocale(), {
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  }).format(new Date(value)).replaceAll('/', '.')
+  }).replaceAll('/', '.')
 }
 
 function isCandidateNotFound(error: unknown): boolean {

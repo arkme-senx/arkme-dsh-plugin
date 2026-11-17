@@ -1575,6 +1575,7 @@ recordingAnalysisV1: true,
         arkoThoughtRepliesV1: true,
         arkoThoughtContinuationsV1: true,
         recordEditHistoryV1: true,
+        recordReeditTimeOrderedV1: true,
         reactionsV1: true,
         worldReactionsV1: true,
         worldReactionArchiveVersionsV1: true,
@@ -1805,8 +1806,8 @@ recordingAnalysisV1: true,
   async recordingTotalsIndex(account: string, toMillis: number, offset: number, signal?: AbortSignal) { return await this.recording.recordingTotalsIndex(account, toMillis, offset, signal) }
   /** @internal Account-scoped, read-only local aggregation. */
   async recordingTotalsBucket(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsBucket(account, dateStamp, signal) }
-  async recordingTotalsDay(account: string, dateStamp: number, signal?: AbortSignal) { return await this.recording.recordingTotalsDay(account, dateStamp, signal) }
-  async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal) }
+  async recordingTotalsDay(account: string, dateStamp: number, signal?: AbortSignal, window?: ArkmeRecordingWindow) { return await this.recording.recordingTotalsDay(account, dateStamp, signal, window) }
+  async recordingCalendar(fromStamp: number, toStamp: number, signal?: AbortSignal, timeZone?: string): Promise<ArkmeRecordingCalendarMonth> { return await this.recording.recordingCalendar(fromStamp, toStamp, signal, timeZone) }
   async recordingTranscript(dateStamp: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptSection> { return await this.recording.recordingTranscript(dateStamp, signal) }
   async recordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, signal?: AbortSignal): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.recordingProjection(dateStamp, kind, signal) }
   /** @internal Built-in loopback UI only. */ async recordingSummaryModelConfig(signal?: AbortSignal, kind: ArkmeRecordingProjectionKind = 'summary'): Promise<ArkmeRecordingSummaryModelConfig> { return await this.recording.recordingSummaryModelConfig(signal,kind) }
@@ -1825,11 +1826,11 @@ recordingAnalysisV1: true,
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
-  async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal) {
-    return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal)
+  async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
+    return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal, window)
   }
-  async recordingTranscriptContext(dateStamp: number, startAtMillis: number, endAtMillis: number, signal?: AbortSignal) {
-    return await this.recording.transcriptContext(dateStamp, startAtMillis, endAtMillis, signal)
+  async recordingTranscriptContext(dateStamp: number, startAtMillis: number, endAtMillis: number, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
+    return await this.recording.transcriptContext(dateStamp, startAtMillis, endAtMillis, signal, window)
   }
   async searchRecordingDayTranscript(dateStamp: number, query: string, signal?: AbortSignal) {
     return await this.recording.searchDayTranscript(dateStamp, query, signal)
@@ -3413,9 +3414,10 @@ recordingAnalysisV1: true,
     itemUid: string,
     input: import('./types.js').ArkmeLongArticleUpdateInput,
   ): Promise<ArkmeLongArticleDetail> {
+    input = { ...input, editAtMillis: input.editAtMillis ?? Date.now() }
     const userId = (await this.runtime.requireSession()).userId
     const existing = await this.chat.longArticleDetail(sourceRef, itemUid)
-    if (!existing.editable || existing.version !== input.version) throw new ArkmePluginError('long-article-update-invalid', '长文内容或版本无效，请刷新后重试', false, 409)
+    if (!existing.editable) throw new ArkmePluginError('long-article-update-invalid', '当前长文不可编辑', false, 403)
     if (existing.textFormat === 'markdown' && this.config.markdownLongArticlesEnabled !== true) throw new ArkmePluginError('markdown-send-disabled', 'Markdown 长文编辑尚未开放', false, 403)
     if ((existing.contentBlocks?.some(block => block.kind === 'image') || (existing.textFormat === 'markdown' && longArticleImageDestinations(existing.textContent).some(node => node.url.startsWith('arkme-asset:')))) && input.images === undefined) throw new ArkmePluginError('long-article-images-required', '请使用支持图文的长文编辑器，避免丢失图片', false, 409)
     const content = await this.prepareLongArticle(input, existing)

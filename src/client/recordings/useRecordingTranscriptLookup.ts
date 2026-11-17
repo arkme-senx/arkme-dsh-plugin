@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ArkmeRecordingDaySearchCandidate, ArkmeRecordingSearchIdentity, ArkmeRecordingTranscriptLocation } from '../../types.js'
+import type { ArkmeRecordingDaySearchCandidate, ArkmeRecordingSearchIdentity, ArkmeRecordingTranscriptLocation, ArkmeRecordingWindow } from '../../types.js'
 import { ArkmeClientError, callArkme } from '../api.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 import { recordingSearchTargetHash } from './recording-search-target.js'
 import { findRecordingTranscriptMatches } from './recording-transcript-search.js'
 
-type LocationRequest = { dateStamp: number; startAtMillis: number } & (
+type LocationRequest = { dateStamp: number; startAtMillis: number; window?: ArkmeRecordingWindow } & (
   { target: ArkmeRecordingSearchIdentity } | { identityHash: string; query?: string }
 )
 type LocationState = { kind: 'loading' | 'missing' | 'unsupported' }
@@ -42,6 +42,7 @@ export function useRecordingTranscriptLocation(scope: string) {
       const { dateStamp, startAtMillis } = request
       const value = await withArkmeReadDeadline(signal => callArkme<ArkmeRecordingTranscriptLocation | null>('recordings.transcript.locate', {
         dateStamp, startAtMillis, identityHash, ...(version ? { version } : {}),
+        ...(request.window ? { window: request.window } : {}),
       }, signal), controller.signal)
       const query = 'query' in request ? request.query : undefined
       const matches = !query || value && findRecordingTranscriptMatches(value.items.filter(item => item.itemId === value.focusItemId), query).length > 0

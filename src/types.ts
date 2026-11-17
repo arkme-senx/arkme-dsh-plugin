@@ -1709,6 +1709,7 @@ recordingAnalysisV1?: true
     arkoThoughtRepliesV1?: true
     arkoThoughtContinuationsV1?: true
     recordEditHistoryV1?: true
+    recordReeditTimeOrderedV1?: true
     reactionsV1?: true
     worldReactionsV1?: true
     worldReactionArchiveVersionsV1?: true
@@ -2489,6 +2490,7 @@ export interface ArkmeForwardRecordPreviewItem {
   contentLabel?: string
   sourceType?: 'codex' | 'team_message' | 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
   segments?: ArkmeForwardTranscriptSegment[]
+  segmentCount?: number
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: true
   truncated?: true
@@ -2719,7 +2721,10 @@ export interface ArkmeLongArticleUpdateInput {
   textContent: string
   textFormat?: 'plain' | 'markdown'
   images?: ArkmeLongArticleImage[]
-  version: number
+  /** @deprecated Editor metadata only; no write precondition. */
+  version?: number
+  editAtMillis?: number
+  revisionUid?: string
   editDurationMillis: number
 }
 export interface ArkmeLongArticleDetail {
@@ -2743,6 +2748,8 @@ export interface ArkmeLongArticleDetail {
 }
 
 export interface ArkmeLongArticleDraft {
+  editAtMillis?: number
+  revisionUid?: string
   sendAtMillis?:number
   draftScope?:string
   /** Pending automatic publication; composer attachment drafts never set this. */
@@ -2845,6 +2852,7 @@ export interface ArkmeMessageCopyLinkStructuredContent {
   durationMillis: number
   /** Only the server-authorized selection snapshot; never the full source session. */
   longRecordingSegments?: ArkmeForwardTranscriptSegment[]
+  recordingAudioUrl?: string
 }
 
 export interface ArkmeMessageCopyLinkSnapshotItem {

@@ -1,3 +1,5 @@
+import { getArkmeDisplayTimeZone, useArkmeDisplayTimeZone } from '../display-time-zone.js'
+import { recordingBatchOffset } from '../../recording-time.js'
 import { arkmeIntlLocale, tr, useArkmeLocale } from '../locale.js'
 import type { ReactNode } from 'react'
 import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
@@ -203,12 +205,9 @@ function speakerStatsDurationLabel(durationMillis: number): string {
 }
 
 function timeLabel(value: number, showSeconds = true): string {
-  const date = new Date(value)
-  const hours = String(date.getHours()).padStart(2, '0')
-  const minutes = String(date.getMinutes()).padStart(2, '0')
-  return showSeconds
-    ? `${hours}:${minutes}:${String(date.getSeconds()).padStart(2, '0')}`
-    : `${hours}:${minutes}`
+  const zone = getArkmeDisplayTimeZone()
+  const offset = zone ? recordingBatchOffset(value, zone) : -new Date(value).getTimezoneOffset() * 60_000
+  return new Date(value + offset).toISOString().slice(11, showSeconds ? 19 : 16)
 }
 
 const TIMELINE_TICK_STEPS_SECONDS = [
@@ -276,7 +275,7 @@ const styles: Record<string, CSSProperties> = {
   loadingControl: { width: 200, height: 16, alignSelf: 'center', borderRadius: 8, background: desktop.hover },
 }
 
-export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, metricsLoading, textCountLoading = false, arrangementEntry, dayStartMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, hasActivePlayback = false, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
+export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverageState = 'ready', dailyMetrics, metricsLoading, textCountLoading = false, arrangementEntry, dayStartMillis, dayEndMillis, playheadMillis, readingRange, onNavigateAtMillis, isPlaying, hasActivePlayback = false, playbackLoading = false, loading = false, emptyState, onEditSpeaker, onReviewSpeaker, onImportAudio, onSelectAtMillis, onTogglePlayback }: {
   items: RecordingTimelineItem[]
   coverage?: readonly ArkmeRecordingCoverageInterval[]
   coverageState?: 'ready' | 'partial' | 'error'
@@ -285,6 +284,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   textCountLoading?: boolean
   arrangementEntry?: ReactNode
   dayStartMillis?: number
+  dayEndMillis?: number
   playheadMillis?: number
   readingRange?: RecordingReadingRange | undefined
   onNavigateAtMillis?(value: number): void
@@ -300,6 +300,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   onTogglePlayback(): void
 }) {
   useArkmeLocale()
+  const timeZone = useArkmeDisplayTimeZone()
   // Keep the transcript list available, but its timeline must share the coverage ownership scope.
   const items = useMemo(() => allItems.filter(item => item.recordingBelongsToViewer !== false), [allItems])
   const hasRecording = items.length > 0 || coverage.length > 0
@@ -310,8 +311,17 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   const derivedBounds = useMemo(() => recordingTimelineDayBounds(items), [items])
   const bounds = useMemo(() => ({
     start: dayStartMillis ?? derivedBounds.start,
-    end: (dayStartMillis ?? derivedBounds.start) + DAY_MILLIS,
-  }), [dayStartMillis, derivedBounds.start])
+    end: dayEndMillis ?? (dayStartMillis ?? derivedBounds.start) + DAY_MILLIS,
+  }), [dayStartMillis, dayEndMillis, derivedBounds.start])
+  const dayLength = Math.max(1, bounds.end - bounds.start)
+  const overviewTicks = useMemo(() => Array.from({ length: Math.ceil(dayLength / 3_600_000) - 1 }, (_, index) => {
+    const elapsed = (index + 1) * 3_600_000
+    const label = timeLabel(bounds.start + elapsed, false)
+    return { elapsed, left: elapsed / dayLength * 100, label, major: ['06:00', '12:00', '18:00'].includes(label) }
+  }), [bounds.start, dayLength, timeZone])
+  const overviewLabels = dayLength === DAY_MILLIS
+    ? ['00:00', '06:00', '12:00', '18:00', '24:00'].map((label, index) => ({ label, left: index * 25 }))
+    : [{ label: timeLabel(bounds.start, false), left: 0 }, ...overviewTicks.filter(tick => tick.major), { label: '24:00', left: 100 }]
   const initialView = recordingTimelineInitialView(items, bounds.start, bounds.end)
   const [focusZoomIndex, setFocusZoomIndex] = useState(initialView.zoomIndex)
   const [focusWindowStart, setFocusWindowStart] = useState(initialView.windowStart)
@@ -551,8 +561,8 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
       {detail ? <span style={timeStyle}>{timeLabel(playheadMillis!)}</span> : <time style={timeStyle}>{timeLabel(playheadMillis!)}</time>}
     </span>
   }
-  const overviewWindowLeft = (windowStart - bounds.start) / DAY_MILLIS * 100
-  const overviewWindowWidth = Math.min(100, visibleMillis / DAY_MILLIS * 100)
+  const overviewWindowLeft = (windowStart - bounds.start) / dayLength * 100
+  const overviewWindowWidth = Math.min(100, visibleMillis / dayLength * 100)
   const detailTicks = recordingTimelineTickTimes(windowStart, windowEnd)
   const showTickSeconds = visibleMillis <= 60_000
   const navigateOverview = (clientX: number, element: HTMLDivElement) => {
@@ -634,8 +644,8 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
           }}
           onPointerCancel={() => { overviewDragRef.current = false }}
         >
-          {Array.from({ length: 23 }, (_, index) => index + 1).map(hour => <span key={hour} aria-hidden data-recording-hour-tick={hour}
-            style={{ position: 'absolute', left: `${hour / 24 * 100}%`, bottom: 2, width: 1, height: hour % 6 === 0 ? 12 : 5,
+          {overviewTicks.map((tick, index) => <span key={tick.elapsed} aria-hidden data-recording-hour-tick={index + 1}
+            style={{ position: 'absolute', left: `${tick.left}%`, bottom: 2, width: 1, height: tick.major ? 12 : 5,
               background: desktop.tick, pointerEvents: 'none' }} />)}
           {renderCoverage(bounds.start, bounds.end, true)}
           {overviewItems.map(item => {
@@ -654,15 +664,15 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
               width: `${recordingSegmentLayout(readingRange.startAtMillis, readingRange.endAtMillis, bounds.start, bounds.end).widthPercent}%` }} />}
           {overviewPlayheadVisible && <span
             data-recording-playhead-at={playheadMillis} aria-label={`播放位置 ${timeLabel(playheadMillis)}`}
-            style={{ ...styles.playhead, background: arkmeTheme.danger, left: `${(playheadMillis - bounds.start) / DAY_MILLIS * 100}%` }} />}
+            style={{ ...styles.playhead, background: arkmeTheme.danger, left: `${(playheadMillis - bounds.start) / dayLength * 100}%` }} />}
           {zoomIndex > 0 && <span aria-hidden style={{ ...styles.overviewWindow, left: `${String(overviewWindowLeft)}%`, width: `${String(overviewWindowWidth)}%` }} />}
         </div>
-        {overviewPlayheadVisible && renderPlayheadControl((playheadMillis - bounds.start) / DAY_MILLIS * 100)}
+        {overviewPlayheadVisible && renderPlayheadControl((playheadMillis - bounds.start) / dayLength * 100)}
         <span style={styles.overviewLabels} aria-hidden>
-          {['00:00', '06:00', '12:00', '18:00', '24:00'].map((label, index) => <span key={label} style={{
+          {overviewLabels.map(({ label, left }) => <span key={left} style={{
             ...styles.overviewLabel,
-            left: `${String(index * 25)}%`,
-            ...(index === 0 ? { transform: 'none' } : index === 4 ? { transform: 'translateX(-100%)' } : {}),
+            left: `${left}%`,
+            ...(left === 0 ? { transform: 'none' } : left === 100 ? { transform: 'translateX(-100%)' } : {}),
           }}>{label}</span>)}
         </span>
       </div>

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime, useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeAccountStorageUsage, ArkmeStorageCategory } from '../account-usage.js'
 import type { ArkmeTokenUsageCall, ArkmeTokenUsageOperation, ArkmeTokenUsagePage, ArkmeTokenUsageSummary, ArkmeUsageTokens } from '../account-usage-details.js'
@@ -6,7 +7,7 @@ import { arkmeIntlLocale, tr, useArkmeLocale } from './locale.js'
 
 const count = (value: number) => new Intl.NumberFormat(arkmeIntlLocale()).format(value)
 function time(value: number, timezone?: string) {
-  return value > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', ...(timezone ? { timeZone: timezone } : {}) }).format(value) : tr('未知')
+  return value > 0 ? formatArkmeDateTime(value, arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: timezone }) : tr('未知')
 }
 function monthLabel(value: string) {
   return new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: 'long', timeZone: 'UTC' }).format(new Date(`${value}-01T00:00:00Z`))
@@ -120,8 +121,8 @@ function OperationList({ scope, summary }: { scope: string; summary: ArkmeTokenU
 export function ArkmeTokenUsageBreakdown({ scope, revision }: { scope: string; revision: number }) {
   useArkmeLocale()
   const [month, setMonth] = useState(''), [retry, setRetry] = useState(0)
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
-  const key = `${scope}:${month}:${revision}:${retry}`
+  const timezone = useArkmeEffectiveTimeZone()
+  const key = `${scope}:${month}:${timezone}:${revision}:${retry}`
   const [state, setState] = useState<{ key: string; status: 'ready'; value: ArkmeTokenUsageSummary } | { key: string; status: 'error' }>()
   const [months, setMonths] = useState<string[]>([])
   useEffect(() => {
