@@ -132,18 +132,17 @@ describe('ArkmeService Bot owner adapter', () => {
     expect(result.items[0]).toMatchObject({ name: '按时间排序', createdAtMillis: 1_788_000_000_000 })
   })
 
-  it('hydrates the Bot conversation directory with each latest private-chat message', async () => {
+  it('uses the Bot directory summary without opening private-chat history', async () => {
+    const requests: string[] = []
     const sessions = new BotTestSessionStore({ userId: 10001, accessToken: 'access', refreshToken: 'refresh' })
     const service = new ArkmeService(config, sessions, stateStore, async input => {
       const url = String(input)
+      requests.push(url)
       if (url.endsWith('/list')) return json({ code: 200, data: { bots: [{
         bot_id: 'bot-owner-id-directory', name: '目录 Bot', provider: 'openclaw', description: '', status: 'offline',
         subject_uid: 'subject-directory', chat_session_uid: '', created_at: 1_788_000_000_000_000,
+        latest_message_at: 1_788_000_200_000, latest_message_preview: '最新消息',
       }] } })
-      if (url.endsWith('/private-chat/open')) return json({ code: 200, data: { messages: [
-        { role: 'assistant', content: '较早消息', created_at: 1_788_000_100_000_000 },
-        { role: 'user', content: '最新消息', created_at: 1_788_000_200_000_000 },
-      ] } })
       throw new Error(`unexpected request ${url}`)
     })
 
@@ -153,6 +152,7 @@ describe('ArkmeService Bot owner adapter', () => {
       name: '目录 Bot', createdAtMillis: 1_788_000_000_000,
       latestMessageAtMillis: 1_788_000_200_000, latestMessagePreview: '最新消息',
     })
+    expect(requests).toEqual(['https://bot.test/api/v1/bot/list'])
   })
 
   it('projects owned OpenClaw and Webhook Bots without exposing raw IDs', async () => {

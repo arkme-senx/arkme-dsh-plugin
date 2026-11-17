@@ -129,18 +129,6 @@ function dedupeMessages(messages: readonly ArkmeBotConversationMessage[]): Arkme
   })
 }
 
-function withLatestActivity(bot: ArkmeBotSummary, messages: readonly ArkmeBotConversationMessage[]): ArkmeBotSummary {
-  const latest = messages.reduce<ArkmeBotConversationMessage | undefined>((current, message) => (
-    current === undefined || message.createdAtMillis >= current.createdAtMillis ? message : current
-  ), undefined)
-  if (latest === undefined) return bot
-  return {
-    ...bot,
-    ...(latest.createdAtMillis > 0 ? { latestMessageAtMillis: latest.createdAtMillis } : {}),
-    ...(latest.content === '' ? {} : { latestMessagePreview: latest.content }),
-  }
-}
-
 class SubjectBotConversationAdapter implements BotConversationOwnerAdapter {
   constructor(private readonly runtime: ServiceRuntime, private readonly messageActions?: MessageActionService) {}
 
@@ -336,22 +324,8 @@ export class BotConversationService {
   }
 
   async directory(options: { signal?: AbortSignal } = {}): Promise<ArkmeBotConversationDirectory> {
-    const session = await this.runtime.requireSession()
-    const { items } = await this.bot.listBots(options)
-    const hydrated = await Promise.all(items.map(async bot => {
-      const reference = await this.bot.openBotRef(bot.botRef, session.userId)
-      if (reference.target.kind !== 'subject') return bot
-      try {
-        const conversation = await this.subject.open({
-          session,
-          reference: { ...reference, target: reference.target },
-        }, options.signal)
-        return withLatestActivity(bot, conversation.messages)
-      } catch {
-        return bot
-      }
-    }))
-    return { items: hydrated }
+    // Directory reads must never ensure/open conversations or project their full history.
+    return await this.bot.listBots(options)
   }
 
   async open(botRef: string, options: { signal?: AbortSignal } = {}): Promise<ArkmeBotConversation> {

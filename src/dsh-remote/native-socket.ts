@@ -5,6 +5,7 @@ import type { DshAccountSessions } from './account-sessions.js'
 import { DshRemoteError, asDshRemoteError } from './errors.js'
 import { nativeRecord, NATIVE_SESSION_READ_ENDPOINTS } from './native-transport.js'
 import { DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES } from './types.js'
+import { parseDshDirectoryDelta } from './account-session-directory.js'
 
 /** Multiplex native reads outside the browser's HTTP/1 connection pool. */
 export class DshNativeSocket {
@@ -22,9 +23,10 @@ export class DshNativeSocket {
     this.heartbeat.unref()
   }
   readonly handler = (req: IncomingMessage, socket: Duplex, head: Buffer): void => {
-    let allowed = false
+    let allowed = false, observeOnly = false
     try {
       const origin = new URL(req.headers.origin ?? '')
+      observeOnly = new URL(req.url ?? '/', `http://localhost:${this.port}`).searchParams.get('observe') === '1'
       allowed = req.method === 'GET' && (this.allowNonLoopback || ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? ''))
         && ['http:', 'https:'].includes(origin.protocol) && ['127.0.0.1', 'localhost'].includes(origin.hostname)
         && Number(origin.port || (origin.protocol === 'https:' ? 443 : 80)) === this.port
@@ -42,8 +44,10 @@ export class DshNativeSocket {
         if (client.bufferedAmount + Buffer.byteLength(frame) > DSH_REMOTE_MAX_FRAGMENTED_PAYLOAD_BYTES) client.close(1009, 'Native response limit')
         else client.send(frame)
       }
-      void this.directory()?.observeHistorySync?.(event => send({ event: 'history-sync', ...event }), lifetime.signal)
-        .catch(() => client.close(1008, 'History scope closed'))
+      if (!observeOnly) {
+        void this.directory()?.observeHistorySync?.(event => send({ event: 'history-sync', ...event }), lifetime.signal)
+          .catch(() => client.close(1008, 'History scope closed'))
+      }
       client.on('message', async data => {
         let id: string | undefined, controller: AbortController | undefined
         try {
@@ -54,13 +58,19 @@ export class DshNativeSocket {
           if (requests.has(id)) { client.close(1008, 'Duplicate native request'); return }
           if (this.pending >= 64) throw new DshRemoteError('RUNTIME_LIMIT_REACHED', '原生订阅请求数量超限')
           const params = nativeRecord(message.params), body = nativeRecord(params.body)
-          if (body.mode !== 'pull' && body.mode !== 'close'
+          if (body.mode !== 'observe' && body.mode !== 'pull' && body.mode !== 'close'
             && !(body.mode === 'call' && NATIVE_SESSION_READ_ENDPOINTS.includes(body.endpoint as typeof NATIVE_SESSION_READ_ENDPOINTS[number]))) {
             throw new DshRemoteError('REMOTE_REQUEST_INVALID', '原生读取通道不接受写操作')
           }
           const directory = this.directory()
           if (!directory) throw new DshRemoteError('REMOTE_LOGIN_REQUIRED', '请先登录')
           controller = new AbortController(); requests.set(id, controller); this.pending++
+          if (body.mode === 'observe') {
+            const notify = (delta?: unknown) => send({ id, event: 'directory-changed', directoryDelta: parseDshDirectoryDelta(delta) })
+            if (params.runtimeRef === undefined && params.sessionRef === undefined) await directory.observeDirectory(controller.signal, notify)
+            else await directory.observe(params, controller.signal, notify)
+            return
+          }
           const value = await directory.native(params, controller.signal)
           if (!controller.signal.aborted) send({ id, ok: true, value })
         } catch (error) {

@@ -1,5 +1,3 @@
-import { currentMessageSend } from '../message-send-host-timing.js'
-import { messageSendPoint } from '../message-send-timing.js'
 import { isBackendRouteUnavailable } from './service-error.js'
 import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { readExtensionSummaryBatch } from '../message-extension-summary.js'
@@ -4767,7 +4765,6 @@ nextPublic = next
       try { await this.realtime.invalidateRecordProjection({ contentOnly: true }) } catch { /* Accepted write remains successful if local refresh fails. */ }
       return await appendCommentWarning({ sourceRef: targetSourceRef, itemUid: recordUid, status: numberValue(data.status), localState: 'synced' })
     }
-  
   /** Selected prose is already final: no whole-message polish or quote-derived mentions. */
   async sendSourceExcerpt(sourceRef:string,text:string,excerpt:RecordExcerpt,options:{recordUid:string;relationUid?:string;sendAtMillis?:number;expectedUserId:number;signal?:AbortSignal}):Promise<ArkmeSourceSendResult> {
     const session=await this.runtime.requireSession()
@@ -4976,7 +4973,6 @@ nextPublic = next
       if (agentAuthored && sent.localState === 'synced') void this.arko.agentSourceDisplayName(session)
       return sent
     }
-  
   private async mentionContentPayload(
     source: ArkmeSourceRefPayload,
     rawText: string,
@@ -5379,7 +5375,6 @@ nextPublic = next
       signal,
     )
   }
-  
   async sendSourceRich(
       sourceRef: string,
       input: ArkmeRichSendInput,
@@ -5729,7 +5724,6 @@ nextPublic = next
       ...(representation === undefined ? {} : { representation }),
     }
   }
-  
   async confirmSourceSend(input:import('../file-transfer-contract.js').ArkmeFileSendInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult|undefined|null|false>{
     const session=await this.runtime.requireSession(),source=await this.source.openSourceRef(input.sourceRef,session.userId)
     if (source.kind === 'send_to_self' || source.kind === 'default_category' || source.kind === 'topic') {
@@ -5872,7 +5866,6 @@ nextPublic = next
     if (!item.messageActionRef) throw new ArkmePluginError('long-article-ref-invalid', '长文暂不可添加，请重试', true)
     return { detail, messageActionRef: item.messageActionRef }
   }
-  
   async updateLongArticle(
       sourceRef: string,
       itemUid: string,
@@ -5880,19 +5873,15 @@ nextPublic = next
     ): Promise<ArkmeLongArticleDetail> {
       return await this.withLongArticleActions(await this.record.updateLongArticle(sourceRef, itemUid, input))
     }
-  
   async getLongArticleDraft(sourceRef: string, itemUid?: string, draftScope?:string): Promise<ArkmeLongArticleDraft | undefined> {
       return await this.record.getLongArticleDraft(sourceRef, itemUid, draftScope)
     }
-  
   async putLongArticleDraft(draft: ArkmeLongArticleDraft): Promise<void> {
       return await this.record.putLongArticleDraft(draft)
     }
-  
   async removeLongArticleDraft(sourceRef: string, itemUid?: string, expectedRecordUid?: string, draftScope?:string): Promise<void> {
       return await this.record.removeLongArticleDraft(sourceRef, itemUid, expectedRecordUid, draftScope)
     }
-  
   async uploadLocalFile(
       filePath: string,
       metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
@@ -5900,7 +5889,6 @@ nextPublic = next
     ): Promise<ArkmeUploadedAsset> {
       return await this.media.uploadLocalFile(filePath, metadata, options)
     }
-  
   async fetchMedia(
       mediaRef: string,
       range?: string,
@@ -5909,7 +5897,6 @@ nextPublic = next
     ): Promise<{ response: Response; descriptor: ArkmeMediaDescriptor }> {
       return await this.media.fetchMedia(mediaRef, range, signal, false, method)
     }
-  
   async sendDirectText(
       recipientArkmeId: string,
       textContent: string,
@@ -5966,7 +5953,6 @@ nextPublic = next
         targetKind: 'direct',
       }
     }
-  
   async reportMessagePreparing(
     sourceRef: string, prepareAtMillis: number, options: { signal?: AbortSignal } = {},
   ): Promise<void> {
@@ -6110,7 +6096,6 @@ nextPublic = next
         return { sourceRef, effectiveReadSequence, unreadCount, latestSequence: sessionLastSequence }
       } finally { finishRead(confirmedSequence) }
     }
-  
   async chatSourceFromBundle(
       bundle: Record<string, unknown>,
       session: ArkmeSessionCredentials,
@@ -6319,7 +6304,6 @@ nextPublic = next
         chatSessionUid: reference.sourceKind === 'chat_relation' ? reference.chatSessionUid : '',
       }
     }
-  
   async chatForwardRecordsPreview(
     raw: unknown,
     viewerUserId: number,
@@ -7097,7 +7081,6 @@ nextPublic = next
     }
     return { userId: peerIds[0]!, displayName: source.displayName }
   }
-  
   private async rawChatMembers(
     source: ArkmeSourceRefPayload,
     activeOnly: boolean,
@@ -7734,10 +7717,6 @@ nextPublic = next
     session: ArkmeSessionCredentials,
     input: ArkmeSentMessageActionInput,
   ): Promise<ArkmeSourceSendResult> {
-    const sendRecord = currentMessageSend()
-    const started = sendRecord ? performance.now() : 0
-    messageSendPoint('host', sendRecord, 'receipt-projection-start')
-    try {
     if (sent.localState !== 'synced') return sent
     const recordUid = sent.itemUid.trim() || input.recordUid.trim()
     const relationUid = input.relationUid?.trim() ?? ''
@@ -7793,7 +7772,6 @@ nextPublic = next
     } catch {
       return sent
     }
-    } finally { messageSendPoint('host', sendRecord, 'receipt-projection-end', { durationMs: performance.now() - started }) }
   }
 
   private withPersonalRecordCapabilities(
@@ -8090,7 +8068,6 @@ nextPublic = next
     try { return objectValue(decodeOpaqueJson(encoded)) }
     catch (error) { throw new ArkmePluginError(code, message, false, 400, { cause: error }) }
   }
-  
   async openMessageRef(messageRef: string, expectedUserId: number): Promise<ArkmeMessageRefPayload> {
       const parts = messageRef.trim().split('.')
       if (parts.length !== 3 || parts[0] !== 'arkme-message-v1') {

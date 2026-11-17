@@ -1,7 +1,5 @@
 import { defineConfig } from 'tsdown'
 
-const SEND_TIMING_DEFINE = { '__ARKME_LOCAL_SEND_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_SEND_TIMING === '1') }
-
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
@@ -26,7 +24,7 @@ export default defineConfig([
     outDir: 'lib', format: 'iife', platform: 'browser', target: 'es2022',
     fixedExtension: false, dts: false, clean: false, minify: true,
     deps: { alwaysBundle: () => true, onlyBundle: ['react', 'react-dom', 'scheduler'] },
-    define: { ...SEND_TIMING_DEFINE, 'process.env.NODE_ENV': JSON.stringify('production') },
+    define: { 'process.env.NODE_ENV': JSON.stringify('production') },
     outputOptions: { codeSplitting: false, entryFileNames: 'screenshot-editor.js' },
   },
   {
@@ -49,7 +47,7 @@ export default defineConfig([
     outDir: 'lib',
     format: 'esm',
     platform: 'node',
-    define: { ...SEND_TIMING_DEFINE, '__ARKME_LOCAL_HISTORY_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_HISTORY_TIMING === '1') },
+    define: { '__ARKME_LOCAL_HISTORY_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_HISTORY_TIMING === '1') },
     target: 'es2024',
     fixedExtension: false,
     dts: false,
@@ -84,7 +82,7 @@ export default defineConfig([
     sourcemap: true,
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
-    define: { ...SEND_TIMING_DEFINE,
+    define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
       '__ARKME_LOCAL_HISTORY_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_HISTORY_TIMING === '1'),
     },
@@ -132,7 +130,7 @@ export default defineConfig([
     fixedExtension: false, dts: false, clean: false,
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
-    define: { ...SEND_TIMING_DEFINE, 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
+    define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
     outputOptions: {
       codeSplitting: false,
       entryFileNames: 'harness-model-client.js',
@@ -148,7 +146,7 @@ export default defineConfig([
     fixedExtension: false, dts: false, clean: false,
     external: CLIENT_EXTERNALS,
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
-    define: { ...SEND_TIMING_DEFINE, 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
+    define: { 'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production') },
     outputOptions: {
       codeSplitting: false,
       entryFileNames: 'harness-native-selection-client.js',
@@ -172,7 +170,6 @@ export default defineConfig([
   },
   {
     name: '@senguoyun/dsh-arkme/harness-sidebar',
-    define: SEND_TIMING_DEFINE,
     entry: { 'harness-sidebar-client': 'src/client/harness-sidebar-client.ts' },
     outDir: 'lib', format: 'cjs', platform: 'browser', inputOptions: { platform: 'browser' }, target: 'es2022',
     fixedExtension: false, dts: false, clean: false,
@@ -188,7 +185,6 @@ export default defineConfig([
   },
   {
     name: '@senguoyun/dsh-arkme/sdk',
-    define: SEND_TIMING_DEFINE,
     entry: { sdk: 'src/sdk/index.ts' },
     outDir: 'lib',
     format: 'esm',

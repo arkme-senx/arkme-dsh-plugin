@@ -1,5 +1,3 @@
-import { messageSendRecord } from './message-send-timing.js'
-import { measureMessageSend } from './message-send-host-timing.js'
 import { recordingDeliveryQuery } from './recording-delivery.js'
 import { readPriorityHeader, supportsBackgroundRead } from './read-scheduling.js'
 import { directoryTraceHeader, directoryTraceSignals, groupInteractionTrace, groupInteractionTraceEnabled, isDirectoryTraceId } from './group-interaction-diagnostics.js'
@@ -1114,7 +1112,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         writeJson(res, 200, { ok: true, value: await callLocalRecorder(options.localRecorder, request.operation, params, controller.signal) }, started)
         return
       }
-      const dispatch = () => measureMessageSend(messageSendRecord(request.operation, params), 'host-operation', () => measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
+
+      const dispatch = () => measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
         service,
         request.operation,
         params,
@@ -1132,12 +1131,12 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.teamCodex,
         options.migrationManager,
       ), measured => { phases = measured }, request.operation === 'source.timeline' && isLoopback(req.socket.remoteAddress)
-        ? historyReadTrace(confirmationUrl.searchParams.get('historyTrace')) : undefined))
+        ? historyReadTrace(confirmationUrl.searchParams.get('historyTrace')) : undefined)
       const priority = req.headers[readPriorityHeader.toLowerCase()]
       const lane = supportsBackgroundRead(request.operation, params)
         ? priority === 'background' ? 'background-read' : priority === 'interactive' ? 'interactive-read' : undefined
         : undefined
-      const value = lane === undefined ? await dispatch() : await service.runWithReadPriority(lane, dispatch)
+      const value = await (lane === undefined ? dispatch() : service.runWithReadPriority(lane, dispatch))
       writeJson(res, 200, { ok: true, value }, started, phases)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return

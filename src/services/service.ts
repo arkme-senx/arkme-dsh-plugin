@@ -1,8 +1,7 @@
-import { bindMessageSend, currentMessageSend } from '../message-send-host-timing.js'
-import { messageSendPoint } from '../message-send-timing.js'
 import { directoryTraceSignals, groupInteractionTrace } from '../group-interaction-diagnostics.js'
 import { bindConversationRead, conversationReadTracing, countConversationHttpAttempt, measureConversationReadPhase, noteConversationRead, recordConversationReadPhase } from '../conversation-read-diagnostics.js'
 import { ArkmePluginError } from './service-error.js'
+import { OrderedChatSends, type OrderedChatSend } from './ordered-chat-send.js'
 export { ArkmePluginError } from './service-error.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { measureReaction, bindReactionTrace, reactionQueueObserver } from '../reaction-host-diagnostics.js'
@@ -325,6 +324,10 @@ function waitForRefresh<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T
 const readConcurrencyOnly = { ratePerSecond: Number.MAX_SAFE_INTEGER, burst: Number.MAX_SAFE_INTEGER }
 
 export class ServiceRuntime {
+  private orderedChatSendVersion = 0
+  private readonly orderedChatSends = new OrderedChatSends(entries => this.dispatchOrderedChatSends(entries))
+  orderedChatSendsReady(): boolean { return this.orderedChatSendVersion === 1 }
+  runOrderedChatSends(actions: readonly (() => Promise<void>)[]): Promise<void> { return this.orderedChatSends.run(actions) }
   private memberCacheRevision = 0
   memberCacheEpoch(): number { return this.memberCacheRevision }
   // A conservative runtime-wide fence drops old cache fills after confirmed member mutations.
@@ -703,6 +706,17 @@ export class ServiceRuntime {
     return false
   }
 
+  /** Preserve these reads' independent, one-shot semantics; only admission changes. */
+  private registeredIndependentRead(baseUrl: string, path: string): boolean {
+    if (baseUrl === this.config.chatBaseUrl && ['/api/v1/conversation-list/preferences/query', '/api/v1/chats/read-receipts/summary-list'].includes(path)) return true
+    if (baseUrl === this.config.recordBaseUrl && [
+      '/api/v1/records/annotations/list', '/api/v1/records/annotations/capabilities',
+      '/api/v1/topics/display/list', '/api/v1/topics/hierarchy/relations/list',
+      '/api/v1/records/uncategorized/query', '/api/v1/records/uncategorized/summary',
+    ].includes(path)) return true
+    return baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/group/list'
+  }
+
   async post<T>(
     baseUrl: string,
     path: string,
@@ -718,6 +732,7 @@ export class ServiceRuntime {
     const directoryRead = baseUrl === this.config.chatBaseUrl && path === '/api/v1/chats/interwoven/directory/query'
       && !(body instanceof FormData)
     const read = this.registeredRead(baseUrl, path) && !(body instanceof FormData)
+    const independentRead = this.registeredIndependentRead(baseUrl, path) && !(body instanceof FormData)
     const requestTimeoutMs = options.requestTimeoutMs ?? this.config.requestTimeoutMs
     const route = `${baseUrl.replace(/\/+$/, '')}${path}`
     const projectionLane = this.messageSyncLane.getStore()
@@ -739,11 +754,9 @@ export class ServiceRuntime {
           : trace.includes('RuntimeBotDisplayProfilesReader') ? 'bot-display' : 'directory' })
     }
     const traceId = directoryRead && signal ? directoryTraceSignals.get(signal) : undefined
-    const sendRecord = currentMessageSend()
     const historyTransport = conversationReadTracing() && baseUrl === this.config.chatBaseUrl && path.startsWith('/api/v1/chat/timeline/unified')
-    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !historyTransport && !traceId && !sendRecord ? reactionQueue : bindConversationRead((event, detail) => {
+    const onQueue: Parameters<ArkmeRequestCoordinator['run']>[0]['onQueue'] = !timelineDiagnostic && !historyTransport && !traceId ? reactionQueue : bindConversationRead((event, detail) => {
       reactionQueue?.(event, detail)
-      messageSendPoint('host', sendRecord, 'upstream-queue', { route: path, event, lane, queueMs: typeof detail.queueWaitMs === 'number' ? detail.queueWaitMs : undefined })
       if (traceId) groupInteractionTrace('directory-host-queue', { traceId, event, ...detail })
       if (historyTransport) {
         if (event !== 'enter') noteConversationRead('transport-admission', event)
@@ -753,7 +766,10 @@ export class ServiceRuntime {
     })
     return await measureReaction('upstream-total', { route: path }, () => coordinator.run<T>({
       scope: options.scope ?? 'public',
-      lane,
+
+      ...(baseUrl === this.config.chatBaseUrl && ['/api/v1/chats/messages/preparing', '/api/v1/chats/messages/preparing/cancel'].includes(path)
+        ? { deferToWrites: true } : {}),
+      lane: independentRead ? this.readPriority.getStore() ?? (lane === 'background-read' ? 'background-read' : 'interactive-read') : lane,
       service: options.service ?? this.requestService(baseUrl),
       ...(options.key === undefined ? {} : { key: options.key }),
       ...(options.cacheMs === undefined ? {} : { cacheMs: options.cacheMs }),
@@ -778,9 +794,9 @@ export class ServiceRuntime {
       } : {}),
       shouldCooldown: error => !(error instanceof ArkmePluginError)
         || !['auth-http-401', 'auth-http-403', 'login-expired'].includes(error.code),
-      serviceCooldownMs: error => read || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
+      serviceCooldownMs: error => read || independentRead || options.publishServiceCooldown === false ? 0 : this.remoteServiceCooldownMs(error),
       ...(onQueue ? { onQueue } : {}),
-      operation: bindMessageSend(bindReactionTrace(async coordinatedSignal => {
+      operation: bindReactionTrace(async coordinatedSignal => {
         const started = timelineDiagnostic ? Date.now() : 0
         let errorCode: string | undefined
         const send = () => measureReaction('upstream-http', { route: path }, () => this.postDirect<T>(
@@ -797,7 +813,7 @@ export class ServiceRuntime {
         } finally {
           if (timelineDiagnostic) console.info('dsh-arkme: timeline_transport_http', { atMillis: Date.now(), path, millis: Date.now() - started, ...(errorCode ? { errorCode } : {}) })
         }
-      })),
+      }),
     })).catch((error): never => {
       if (options.trackWriteOutcome === true && error instanceof ArkmeRequestQueueOverflowError) {
         throw new ArkmePluginError('arkme-request-queue-full', '发送请求较多，请稍后重试', true, 503, { cause: error })
@@ -825,13 +841,8 @@ export class ServiceRuntime {
     chatAccessRef?: string,
     stringIdFields:readonly string[]=[],
     chatMessageActionsV2 = false,
+    responseOverride?: Response,
   ): Promise<T> {
-    const sendRecord = currentMessageSend()
-    const sendStarted = sendRecord ? performance.now() : 0
-    const sendRequestId = sendRecord ? `arkme-send-${sendRecord}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}` : undefined
-    let sendStatus: number | undefined
-    let sendCode: number | undefined
-    messageSendPoint('host', sendRecord, 'upstream-http-start', { route: path, requestId: sendRequestId })
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal.reason)
     if (signal.aborted) abort()
@@ -847,10 +858,9 @@ export class ServiceRuntime {
     const timeout = setTimeout(() => controller.abort(), Math.max(requestBudget, requestTimeoutMs))
     try {
       const multipart = body instanceof FormData
-      const response = await this.fetchImpl(joinUrl(baseUrl, path), {
+      const response = responseOverride ?? await this.fetchImpl(joinUrl(baseUrl, path), {
         method: 'POST',
         headers: {
-          ...(sendRequestId ? { 'X-Request-ID': sendRequestId } : {}),
           ...(chatAccessRef ? { 'X-Chat-Access-Ref': chatAccessRef } : {}),
           ...(chatMessageActionsV2 ? { 'X-Arkme-Message-Actions': '2' } : {}),
           ...(multipart ? {} : { 'Content-Type': 'application/json' }),
@@ -861,8 +871,6 @@ export class ServiceRuntime {
         body: multipart ? body : stringifyOwnerJson(body,stringIdFields),
         signal: controller.signal,
       })
-      sendStatus = response.status
-      messageSendPoint('host', sendRecord, 'upstream-http-headers', { route: path, durationMs: performance.now() - sendStarted, status: response.status, requestId: response.headers.get('X-Request-ID') ?? sendRequestId })
       if (path === '/api/public/v1/auth/login-by-pwd' && response.headers.get('X-Jotmo-Auth-Failure') === 'device_verification_required') {
         throw new ArkmePluginError('device-verification-required', '此设备已取消信任，请使用验证码、扫码或授权方式重新登录', false, 403)
       }
@@ -916,8 +924,6 @@ export class ServiceRuntime {
       catch (error) {
         throw new ArkmePluginError('arkme-response-invalid', 'Arkme 服务返回了无效响应', true, 502, { cause: error })
       }
-      sendCode = envelope.code
-      messageSendPoint('host', sendRecord, 'upstream-http-decoded', { route: path, durationMs: performance.now() - sendStarted, code: envelope.code, requestId: sendRequestId })
       if (!successCodes.includes(envelope.code)) {
         const errorData = objectValue(envelope.data)
         const serviceErrorCode = preferDataError ? stringValue(errorData.error_code).trim() : ''
@@ -935,6 +941,8 @@ export class ServiceRuntime {
             ...(metadata.retry_scope === 'route' || metadata.retry_scope === 'request' ? { retryScope: metadata.retry_scope } : {}) },
         )
       }
+      if (baseUrl === this.config.chatBaseUrl && path === '/api/v1/chats/records/send'
+        && objectValue(envelope.data).ordered_send_version === 1) this.orderedChatSendVersion = 1
       return (envelope.data ?? {}) as T
     } catch (error) {
       if (signal.aborted) throw signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
@@ -944,7 +952,6 @@ export class ServiceRuntime {
       }
       throw new ArkmePluginError('arkme-network-error', '无法连接Arkme 服务', true, 502, { cause: error })
     } finally {
-      messageSendPoint('host', sendRecord, 'upstream-http-end', { route: path, durationMs: performance.now() - sendStarted, status: sendStatus, code: sendCode, requestId: sendRequestId })
       clearTimeout(timeout)
       signal.removeEventListener('abort', abort)
     }
@@ -1304,6 +1311,11 @@ export class ServiceRuntime {
   ): Promise<T> {
     const { refreshOnUnauthorized = true, ...remoteOptions } = options
     let session = initialSession ?? await this.requireSession()
+    if (path === '/api/v1/chats/records/send') {
+      const captured = this.orderedChatSends.capture<T>({ body, session, signal, options: remoteOptions, refreshOnUnauthorized,
+        scalar: () => this.authenticatedChatPost(path, body, session, signal, options) })
+      if (captured) return await captured
+    }
     const requestOptions = () => this.authenticatedRequestOptions(session, 'chat', 'write', remoteOptions)
     try {
       return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
@@ -1314,6 +1326,120 @@ export class ServiceRuntime {
       }
       session = await this.refreshAccessToken(session)
       return await this.post<T>(this.config.chatBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+    }
+  }
+
+  private async dispatchOrderedChatSends(entries: OrderedChatSend[]): Promise<void> {
+    const first = entries[0]!
+    const scalar = async () => {
+      for (const entry of entries) {
+        try { entry.resolve(await entry.scalar()) } catch (error) { entry.reject(error) }
+      }
+    }
+    if (entries.length < 2 || !this.orderedChatSendsReady()
+      || entries.some(entry => entry.session.userId !== first.session.userId
+        || entry.session.refreshToken !== first.session.refreshToken
+        || entry.refreshOnUnauthorized !== first.refreshOnUnauthorized
+        || entry.body.chat_session_uid !== first.body.chat_session_uid
+        || entry.options.chatAccessRef !== first.options.chatAccessRef
+        || entry.options.chatMessageActionsV2 !== first.options.chatMessageActionsV2)) return await scalar()
+    const path = '/api/v1/chats/records/send-ordered'
+
+    const body = stringifyOwnerJson({ items: entries.map(entry => entry.body) })
+    if (Buffer.byteLength(body) > 1024 * 1024) return await scalar()
+    const signal = AbortSignal.any(entries.flatMap(entry => entry.signal ? [entry.signal] : []))
+    let sent = false, next = 0, halted = false
+    try {
+      await this.requestCoordinator.run({ scope: this.authenticatedRequestOptions(first.session, 'chat', 'write', {}).scope ?? 'public',
+        lane: 'write', service: 'chat', signal,
+        operation: async coordinatedSignal => {
+          const controller = new AbortController()
+          const abort = () => controller.abort(coordinatedSignal.reason)
+          if (coordinatedSignal.aborted) abort(); else coordinatedSignal.addEventListener('abort', abort, { once: true })
+          const timer = setTimeout(() => controller.abort(), this.config.requestTimeoutMs)
+          let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+          try {
+            let session = first.session
+            const send = () => {
+              sent = true
+              return this.fetchImpl(joinUrl(this.config.chatBaseUrl, path), { method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Accept-Language': 'zh-CN', Usersource: '3',
+                  Authorization: `Bearer ${session.accessToken}`,
+                  ...(first.options.chatAccessRef ? { 'X-Chat-Access-Ref': first.options.chatAccessRef } : {}),
+                  ...(first.options.chatMessageActionsV2 ? { 'X-Arkme-Message-Actions': '2' } : {}) },
+                body, signal: controller.signal })
+            }
+
+            let response = await send()
+            if (first.refreshOnUnauthorized !== false && [401, 403].includes(response.status)) {
+              await response.body?.cancel()
+              session = await this.refreshAccessToken(session)
+              response = await send()
+            }
+
+            if ([404, 405].includes(response.status)) {
+              await response.body?.cancel(); this.orderedChatSendVersion = 0
+              sent = false
+              return
+            }
+            if (!response.ok) {
+              await this.postDirect(this.config.chatBaseUrl, path, {}, undefined, [200], controller.signal, false, true, false,
+                this.config.requestTimeoutMs, undefined, [], false, response)
+              throw new ArkmePluginError('arkme-response-invalid', '发送流响应无效', true, 502)
+            }
+            if (!response.body || !response.headers.get('content-type')?.startsWith('application/x-ndjson')) {
+              throw new ArkmePluginError('arkme-response-invalid', '发送流响应无效', true, 502)
+            }
+            reader = response.body.getReader()
+            const decoder = new TextDecoder()
+            let buffer = '', received = 0
+            for (;;) {
+              const chunk = await reader.read()
+              if (chunk.done) { buffer += decoder.decode(); break }
+              received += chunk.value.byteLength
+              if (received > 1024 * 1024) throw new Error('Ordered send response too large')
+              buffer += decoder.decode(chunk.value, { stream: true })
+              for (let newline; (newline = buffer.indexOf('\n')) >= 0;) {
+                const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1)
+                if (!line.trim()) continue
+                if (line.length > 128 * 1024) throw new Error('Ordered send frame too large')
+                const frame = objectValue(parseOwnerJson(line))
+                if (frame.index !== next || next >= entries.length || !Number.isInteger(frame.status)
+                  || Number(frame.status) < 200 || Number(frame.status) > 599 || typeof frame.attempted !== 'boolean') throw new Error('Invalid ordered send frame')
+                const entry = entries[next]!, payload = objectValue(frame.payload), data = objectValue(payload.data)
+                if (typeof payload.code !== 'number' || !Number.isFinite(payload.code)) throw new Error('Invalid ordered send payload')
+                if (frame.attempted === halted) throw new Error('Invalid ordered send continuation')
+                if (frame.attempted && payload.code !== 200) halted = true
+                if (payload.code === 200 && (frame.attempted !== true || data.record_uid !== entry.body.record_uid
+                  || data.rel_uid !== entry.body.rel_uid || data.chat_session_uid !== entry.body.chat_session_uid
+                  || !Number.isSafeInteger(data.seq) || Number(data.seq) < 1)) throw new Error('Ordered send identity mismatch')
+                try {
+                  const value = await this.postDirect(this.config.chatBaseUrl, '/api/v1/chats/records/send', entry.body,
+                    undefined, [200], controller.signal, false, true, false, this.config.requestTimeoutMs, undefined, [], false,
+                    new Response(JSON.stringify(payload), { status: Number(frame.status), headers: { 'Content-Type': 'application/json' } }))
+                  entry.resolve(value)
+                } catch (error) {
+                  entry.reject(frame.attempted === false ? new ArkmePluginError('send-order-unattempted', '前序发送待确认，本条尚未提交', true, 409)
+                    : frame.attempted && error instanceof ArkmePluginError
+                    && (remoteWriteOutcomeUnknown(error) || error.code === 'arkme-code-1002') ? withUnknownWriteOutcome(error) : error)
+                }
+
+                next++
+              }
+              if (buffer.length > 128 * 1024) throw new Error('Ordered send frame too large')
+            }
+            if (buffer.trim() || next !== entries.length) throw new Error('Ordered send stream ended before all receipts')
+          } finally {
+            clearTimeout(timer); coordinatedSignal.removeEventListener('abort', abort)
+            await reader?.cancel().catch(() => {}); reader?.releaseLock()
+          }
+        },
+      })
+      if (!sent) await scalar()
+    } catch (error) {
+      const known = error instanceof ArkmePluginError ? error
+        : new ArkmePluginError('arkme-network-error', '发送确认中断，请先核对消息', true, 502, { cause: error })
+      for (; next < entries.length; next++) entries[next]!.reject(sent ? withUnknownWriteOutcome(known) : known)
     }
   }
 

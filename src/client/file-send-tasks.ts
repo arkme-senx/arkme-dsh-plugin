@@ -1,9 +1,10 @@
 import type { ArkmeComposerAttachment } from './composer-draft-store.js'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ArkmeFileSendTask, ArkmeLocalFile } from '../file-transfer-contract.js'
 import type { ArkmeContentBlock, ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
 import { retainFileMessageRenderKey } from './conversation-message-merge.js'
+import { withArkmeReadDeadline } from './read-deadline.js'
 
 export function composerAttachmentBlock(attachment: ArkmeComposerAttachment, sortOrder: number): ArkmeContentBlock | undefined {
   if (attachment.localFile) return localFileBlock(attachment.localFile, sortOrder)
@@ -128,19 +129,20 @@ export function arkmeFileSendTasksEqual(
 const EMPTY_FILE_SEND_TASKS: readonly ArkmeFileSendTask[] = Object.freeze([])
 const EMPTY_ACTIVE_TASK_KEYS: ReadonlySet<string> = new Set()
 
-const fileTaskWakeListeners = new Set<(userId: number, taskRef: string) => void>()
-export function wakeArkmeFileTask(userId: number, taskRef: string): void {
-  for (const listener of fileTaskWakeListeners) listener(userId, taskRef)
+const fileTaskWakeListeners = new Set<(userId: number, taskRef: string, task?: ArkmeFileSendTask) => void>()
+export function wakeArkmeFileTask(userId: number, taskRef: string, task?: ArkmeFileSendTask): void {
+  for (const listener of fileTaskWakeListeners) listener(userId, taskRef, task)
 }
 
 export function useArkmeDeliveryTasks<T>(
   sourceRef: string | undefined,
   userId: string | number | undefined,
-  adapter: { read(scope: string, signal: AbortSignal): Promise<T[]>; poll?(scope: string, known: readonly T[], signal: AbortSignal): Promise<T[] | undefined>; active(tasks: readonly T[]): boolean; belongs(task: T, scope: string): boolean; key(task: T): string; subscribe?(listener: (userId: number, taskRef: string) => void): () => void },
+  adapter: { read(scope: string, signal: AbortSignal): Promise<T[]>; poll?(scope: string, known: readonly T[], signal: AbortSignal): Promise<T[] | undefined>; active(tasks: readonly T[]): boolean; belongs(task: T, scope: string): boolean; key(task: T): string; revision?(task: T): number; subscribe?(listener: (userId: number, taskRef: string, task?: T) => void): () => void;
+  },
   enabled = true,
 ) {
   const [snapshot, setSnapshot] = useState<{ sourceRef: string; userId: string | number; tasks: T[]; activeKeys: ReadonlySet<string> }>()
-  const [revision, setRevision] = useState(0)
+  const deliveryOwner = useRef<{ sourceRef: string; userId: string | number; accept(task: T): void; refresh(): void } | undefined>(undefined)
   useEffect(() => {
     if (!enabled || sourceRef === undefined || userId === undefined) return
     let active = true
@@ -149,6 +151,8 @@ export function useArkmeDeliveryTasks<T>(
     let pending = false
     let failures = 0
     let wakePending = false
+    let fullRefreshPending = false
+    const acceptedDuringRead = new Map<string, T>()
     let knownTasks: readonly T[] = snapshot?.sourceRef === sourceRef && snapshot.userId === userId ? snapshot.tasks : []
     const browserDocument = typeof document === 'undefined' ? undefined : document
     const foreground = () => browserDocument?.visibilityState !== 'hidden'
@@ -156,83 +160,139 @@ export function useArkmeDeliveryTasks<T>(
       if (timer !== undefined) clearTimeout(timer)
       timer = undefined
     }
+    const newerTask = (left: T | undefined, right: T): T => left && adapter.revision
+      && adapter.revision(left) > adapter.revision(right) ? left : right
+    const publish = (tasks: T[], acceptedKey?: string) => {
+      knownTasks = tasks
+      setSnapshot(current => ({ sourceRef, userId, tasks,
+        activeKeys: new Set(tasks.filter(task => adapter.key(task) === acceptedKey || adapter.active([task])
+          || current?.sourceRef === sourceRef && current.userId === userId && current.activeKeys.has(adapter.key(task)))
+          .map(adapter.key)),
+      }))
+    }
     const schedule = (delay = FILE_TASK_POLL_INTERVAL_MS) => {
       clearTimer()
       if (!active || !foreground()) return
-      timer = setTimeout(() => { timer = undefined; void poll(true) }, delay)
+
+      timer = setTimeout(() => {
+        timer = undefined
+
+        const full = fullRefreshPending; fullRefreshPending = false
+        void poll(!full)
+      }, delay)
     }
     const poll = async (incremental = false) => {
       if (!active || pending || !foreground()) return
       pending = true
+      if (!incremental) fullRefreshPending = false
       const request = new AbortController()
       controller = request
       try {
         const useDelta = incremental && adapter.poll !== undefined
-        const tasks = useDelta ? await adapter.poll!(sourceRef, knownTasks, request.signal) : await adapter.read(sourceRef, request.signal)
+        let tasks = await withArkmeReadDeadline(async signal => {
+
+          return useDelta ? await adapter.poll!(sourceRef, knownTasks, signal) : await adapter.read(sourceRef, signal)
+        }, request.signal)
         if (!active || request.signal.aborted) return
         failures = 0
         if (tasks === undefined && useDelta) return
         if (!Array.isArray(tasks)) throw new Error('发送任务响应无效')
+        // An older snapshot must not remove or regress a task accepted during this read.
+        if (acceptedDuringRead.size) {
+          const received = tasks
+          tasks = [...received.filter(task => !acceptedDuringRead.has(adapter.key(task))),
+            ...[...acceptedDuringRead.values()].map(task => newerTask(received.find(value => adapter.key(value) === adapter.key(task)), task))]
+        }
+
         const changed = useDelta || JSON.stringify(knownTasks) !== JSON.stringify(tasks)
-        knownTasks = tasks
-        if (changed) setSnapshot(current => ({ sourceRef, userId, tasks,
-          // Only the current task list owns these keys; account/source changes
-          // and task eviction release them. Restored sent receipts are not new sends.
-          activeKeys: new Set(tasks.filter(task => adapter.active([task])
-            || current?.sourceRef === sourceRef && current.userId === userId && current.activeKeys.has(adapter.key(task)))
-            .map(adapter.key)),
-        }))
+
+        if (changed) publish(tasks)
+        else knownTasks = tasks
       } catch {
-        if (!request.signal.aborted) failures += 1
+
+        if (!request.signal.aborted) { failures += 1; fullRefreshPending = true }
       } finally {
         if (controller === request) controller = undefined
         pending = false
+        acceptedDuringRead.clear()
+
         if (!active) return
-        if (wakePending && foreground()) { wakePending = false; void poll(true) }
+        if (wakePending && foreground()) {
+          wakePending = false
+          const full = fullRefreshPending; fullRefreshPending = false
+
+          if (full || adapter.active(knownTasks)) void poll(!full)
+        }
         else if (adapter.active(knownTasks)) schedule()
         else if (failures > 0 && failures <= FILE_TASK_INITIAL_RETRY_LIMIT) schedule(FILE_TASK_POLL_INTERVAL_MS * failures)
       }
     }
     const onVisibilityChange = () => {
-      if (foreground()) void poll()
+
+      if (foreground()) void poll(false)
       else { clearTimer(); controller?.abort() }
     }
-    const unsubscribe = adapter.subscribe?.((actor, taskRef) => {
-      if (actor !== userId || !foreground() || !knownTasks.some(task => adapter.key(task) === taskRef)) return
+    const unsubscribe = adapter.subscribe?.((actor, taskRef, task) => {
+      if (actor === userId && task && adapter.key(task) === taskRef && adapter.belongs(task, sourceRef)) {
+        const previous = knownTasks.find(value => adapter.key(value) === taskRef)
+        const next = newerTask(previous, task)
+        if (next === previous) return
+        if (pending) acceptedDuringRead.set(taskRef, next)
+        publish([...knownTasks.filter(value => adapter.key(value) !== taskRef), next])
+
+        clearTimer()
+        if (adapter.active(knownTasks)) schedule()
+        return
+      }
+      if (actor !== userId || !foreground() || !knownTasks.some(task => adapter.key(task) === taskRef && adapter.active([task]))) {
+        return
+      }
+
       if (pending) { wakePending = true; return }
       clearTimer()
       void poll(true)
     })
+    const owner = { sourceRef, userId,
+      accept(task: T) {
+        task = newerTask(knownTasks.find(value => adapter.key(value) === adapter.key(task)), task)
+        publish([...knownTasks.filter(value => adapter.key(value) !== adapter.key(task)), task], adapter.key(task))
+        clearTimer()
+        if (pending) acceptedDuringRead.set(adapter.key(task), task)
+        else if (adapter.active(knownTasks)) schedule()
+      },
+      refresh() {
+        clearTimer()
+        if (pending) { wakePending = true; fullRefreshPending = true; controller?.abort() }
+        else void poll(false)
+      },
+    }
+    deliveryOwner.current = owner
     void poll()
     browserDocument?.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       active = false
+      if (deliveryOwner.current === owner) deliveryOwner.current = undefined
       unsubscribe?.()
       clearTimer()
       controller?.abort()
       browserDocument?.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [enabled, sourceRef, userId, revision, adapter])
+  }, [enabled, sourceRef, userId, adapter])
   return {
     tasks: snapshot?.sourceRef === sourceRef && snapshot?.userId === userId ? snapshot?.tasks ?? (EMPTY_FILE_SEND_TASKS as readonly T[]) : (EMPTY_FILE_SEND_TASKS as readonly T[]),
     activeTaskKeys: snapshot !== undefined && snapshot.sourceRef === sourceRef && snapshot.userId === userId ? snapshot.activeKeys : EMPTY_ACTIVE_TASK_KEYS,
-    refresh: () => setRevision(value => value + 1),
+    refresh: () => { deliveryOwner.current?.refresh() },
     accept: (task: T) => {
       if (sourceRef === undefined || userId === undefined || !adapter.belongs(task, sourceRef)) return
-      setSnapshot(current => {
-        const sameScope = current?.sourceRef === sourceRef && current.userId === userId
-        return { sourceRef, userId,
-          tasks: [...(sameScope ? current.tasks.filter(value => adapter.key(value) !== adapter.key(task)) : []), task],
-          activeKeys: new Set([...(sameScope ? current.activeKeys : []), adapter.key(task)]),
-        }
-      })
-      setRevision(value => value + 1)
+
+      const owner = deliveryOwner.current
+      if (owner?.sourceRef === sourceRef && owner.userId === userId) owner.accept(task)
     },
   }
 }
 
 const fileTaskAdapter = {
-  subscribe(listener: (userId: number, taskRef: string) => void) {
+  subscribe(listener: (userId: number, taskRef: string, task?: ArkmeFileSendTask) => void) {
     fileTaskWakeListeners.add(listener)
     return () => { fileTaskWakeListeners.delete(listener) }
   },
@@ -255,6 +315,7 @@ const fileTaskAdapter = {
   active: arkmeFileSendTasksNeedPolling,
   belongs: (task: ArkmeFileSendTask, scope: string) => task.sourceRef === scope,
   key: (task: ArkmeFileSendTask) => task.taskRef,
+  revision: (task: ArkmeFileSendTask) => task.revision ?? 0,
 }
 export function useArkmeFileSendTasks(sourceRef: string | undefined, userId: number | undefined, enabled = true) {
   return useArkmeDeliveryTasks(sourceRef, userId, fileTaskAdapter, enabled)

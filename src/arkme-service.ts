@@ -1120,8 +1120,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       media: this.media,
       chat: this.chat,
       teamMedia:this.teamApp,
-      onProgressChange: (userId, taskRef) => this.realtime.emitChatClientEvent({
-        type: 'file-send-progress', userId, taskRef, revision: this.realtime.nextChatClientRevision(),
+      onProgressChange: (userId, taskRef, task) => this.realtime.emitChatClientEvent({
+        type: 'file-send-progress', userId, taskRef, ...(task ? { task } : {}), revision: this.realtime.nextChatClientRevision(),
       }),
       openPath: async (path, signal) => {
         if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
