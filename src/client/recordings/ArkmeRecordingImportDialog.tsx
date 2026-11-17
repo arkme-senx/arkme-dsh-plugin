@@ -1,6 +1,7 @@
 import { recordingCalendarDate, recordingCivilKey, useArkmeDisplayTimeZone } from '../display-time-zone.js'
 import { recordingAudioDurationLabel } from './recording-audio-duration.js'
 import { recordingDisplayName } from './recording-display-name.js'
+import { recordingFileExpectedBytes, recordingTaskStatusLabel } from './recording-day-files.js'
 import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { RecordingImportQueue } from '../../recording-import-queue.js'
@@ -299,12 +300,8 @@ function taskAudioDuration(task: ImportTask): string {
   return recordingAudioDurationLabel(task.durationMillis, 'delivery' in task ? task.delivery : undefined)
 }
 function taskFileSize(task: ImportTask): string {
-  if ('delivery' in task && task.delivery) {
-    return task.delivery.expectedBytes === null
-      ? tr('已接收 {v0} · 总大小待确认', { v0: fileSizeLabel(task.delivery.receivedBytes) })
-      : fileSizeLabel(task.delivery.expectedBytes)
-  }
-  return task.fileSize > 0 ? fileSizeLabel(task.fileSize) : tr('待确认')
+  const bytes = recordingFileExpectedBytes(task)
+  return bytes === null ? '—' : fileSizeLabel(bytes)
 }
 
 function fileSizeLabel(bytes: number): string {
@@ -335,8 +332,9 @@ function recordingImportEndLabel(startAtMillis: number, durationMillis: number):
 }
 
 function taskStatusTitle(task: ImportTask): string {
-  const lines = [task.statusDetail]
-  if ('progress' in task && typeof task.progress === 'number' && task.progress > 0 && task.progress < 1) {
+  const lines = [tr(recordingTaskStatusLabel(task))]
+  if (!('delivery' in task && task.delivery?.coverage === 'receiving')
+    && 'progress' in task && typeof task.progress === 'number' && task.progress > 0 && task.progress < 1) {
     lines.push(tr("上传进度：{v0}%", { v0: String(Math.round(task.progress * 100)) }))
   }
   return lines.join('\n')
@@ -1763,8 +1761,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     }}
     onMouseLeave={() => { setStatusDetails(undefined) }}
   >
-    {task.status !== 'completed' && typeof task.progress === 'number' && <span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(Math.max(0, Math.min(1, task.progress)) * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(Math.max(0, Math.min(1, task.progress)) * 100)}%` }} /></span>}
-    <span style={styles.statusLabel}>{task.statusDetail}</span>
+    {!('delivery' in task && task.delivery?.coverage === 'receiving') && task.status !== 'completed' && typeof task.progress === 'number' && <span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(Math.max(0, Math.min(1, task.progress)) * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(Math.max(0, Math.min(1, task.progress)) * 100)}%` }} /></span>}
+    <span style={styles.statusLabel}>{tr(recordingTaskStatusLabel(task))}</span>
     {(task.status === 'paused' || task.statusDetail.includes('额度不足')) && <button type="button" style={styles.secondaryButton} onClick={() => { close(); arkmeUi.openDshSettings('arkme-usage') }}>{tr('errorCode' in task && task.errorCode === 'recording_storage_exhausted' ? '管理空间' : '查看额度')}</button>}
     {'sessionRef' in task && (task.status === 'paused' || task.status === 'partial' || task.status === 'failed') && <button type="button" disabled={pending} style={styles.secondaryButton} onClick={() => {
       setPending(true); setError('')

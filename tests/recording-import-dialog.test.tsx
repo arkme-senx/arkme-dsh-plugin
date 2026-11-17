@@ -1095,7 +1095,7 @@ describe('recording import dialog behavior', () => {
       kind: 'owner', taskKey: 'unnamed-task', sessionRef: 'unnamed-session', ownership: 'self',
       fileName: '', fileSize: 4096, parsedSize: 4096, durationMillis: 3000,
       startAtMillis, endAtMillis: startAtMillis + 3000, createdAtMillis: startAtMillis,
-      updatedAtMillis: startAtMillis + 12000, progress: 1, status: 'transcribing', statusDetail: '转写中',
+      updatedAtMillis: startAtMillis + 12000, progress: 0.5, status: 'accepted', statusDetail: '已接收 0 个文件 / 共 1 个',
       delivery: { ...parseRecordingDelivery(deliveryFixture.awaiting_end)!,
         captureStartAt: startAtMillis, displayEndAt: null, audioDurationMs: 65000,
         durationFinal: false, receivedBytes: 1024, expectedBytes: null },
@@ -1129,7 +1129,11 @@ describe('recording import dialog behavior', () => {
     expect(renderer.root.findByProps({ 'aria-label': `${name}录音结束时间` }).children).toEqual(['待确认'])
     const currentRow = renderer.root.findByProps({ 'aria-label': '待导入录音' }).findAllByProps({ role: 'row' })[1]!
     expect(renderedText(currentRow.children[2] as ReactTestInstance)).toBe('—')
-    expect(renderedText(currentRow.children[3] as ReactTestInstance)).toContain('总大小待确认')
+    expect(renderedText(currentRow.children[3] as ReactTestInstance)).toBe('—')
+    expect(renderedText(currentRow)).toContain('上传中')
+    expect(renderedText(currentRow)).not.toContain('已接收')
+    expect(currentRow.findAllByProps({ 'aria-label': '上传进度 50%' })).toHaveLength(0)
+    expect(currentRow.findAllByProps({ title: '上传中' })).toHaveLength(1)
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '处理耗时 12s' }).props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 600, right: 648, top: 400, bottom: 428 }) } })
       await tick()

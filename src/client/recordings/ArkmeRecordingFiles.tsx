@@ -59,7 +59,7 @@ const COMPLETED_SCAN_TTL = 60_000
 function instant(value: number | null, showDate = true, timeZone?: string) {
   return value !== null && value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone }) : '—'
 }
-function size(value: number | null) { return value === null ? tr('总大小待确认') : value === 0 ? '0 B' : recordingMegabytesLabel(value) }
+function size(value: number | null) { return value === null ? '—' : value === 0 ? '0 B' : recordingMegabytesLabel(value) }
 
 /** Account-key remount isolates file actions and late responses across login changes. */
 export function ArkmeRecordingFiles(props: Props) {
