@@ -1,3 +1,4 @@
+export type { RecordingDelivery } from './recording-delivery.js'
 export const MAX_RECORDING_IMPORT_BYTES = 1024 * 1024 * 1024
 export const MAX_RECORDING_IMPORT_DURATION_MILLIS = 10 * 60 * 60 * 1000
 
@@ -14,6 +15,7 @@ export type RecordingImportPhase =
   | 'cancelled'
 
 export type RecordingImportDisplayStatus =
+  | 'incomplete'
   | 'paused'
   | 'preparing'
   | 'uploading'
@@ -93,6 +95,7 @@ export interface PublicRecordingImportOwnerTask {
   kind: 'owner'
   taskKey: string
   sessionRef: string
+  delivery?: import('./recording-delivery.js').RecordingDelivery
   ownership: 'self' | 'other'
   fileName: string
   fileSize: number
@@ -100,7 +103,7 @@ export interface PublicRecordingImportOwnerTask {
   durationMillis: number
   startAtMillis: number
   endAtMillis: number
-  progress: number
+  progress: number | null
   status: RecordingImportDisplayStatus
   statusDetail: string
   createdAtMillis: number
@@ -124,6 +127,7 @@ export interface PublicRecordingImportCurrentSnapshot {
 export interface PublicRecordingImportHistoryItem {
   taskKey: string
   sessionRef: string
+  delivery?: import('./recording-delivery.js').RecordingDelivery
   ownership: 'self' | 'other'
   fileName: string
   fileSize: number
@@ -131,7 +135,7 @@ export interface PublicRecordingImportHistoryItem {
   durationMillis: number
   startAtMillis: number
   endAtMillis: number
-  progress: number
+  progress: number | null
   status: RecordingImportDisplayStatus
   statusDetail: string
   createdAtMillis: number

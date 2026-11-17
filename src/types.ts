@@ -1665,6 +1665,7 @@ arkoImagesV1?:true
 recordingAnalysisV1?: true
     recordingStrategiesV1?: true
     recordingFileStorageV1?: true
+    recordingDeliveryV1?: true
     recordingStrategyRecordingsV1?: true
     recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
@@ -5034,6 +5035,7 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.active'
 
   | 'recordings.files.storage'
+  | 'recordings.delivery.page'
   | 'recordings.import.file'
   | 'recordings.import.status'
   | 'recordings.import.retry'

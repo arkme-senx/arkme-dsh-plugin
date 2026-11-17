@@ -30,6 +30,8 @@ vi.mock('../src/client/recordings/recording-import-journal.js', async importOrig
 
 import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } from '../src/client/recordings/ArkmeRecordingImportDialog.js'
 import { arkmeTheme } from '../src/client/arkme-theme.js'
+import deliveryFixture from './fixtures/recording-delivery.json'
+import { parseRecordingDelivery } from '../src/recording-delivery.js'
 
 // File-selection tests exercise an opened panel, like the real toolbar action.
 // Hidden-page ownership and automatic recovery are tested with native Web Locks
@@ -106,6 +108,33 @@ describe('recording import dialog behavior', () => {
       await tick()
     })
   }
+
+  it('shows total duration or a dash without exposing internal confirmation states', async () => {
+    const partial = { ...parseRecordingDelivery(deliveryFixture.awaiting_end)!, audioDurationMs: 65000 }
+    const deliveries = [partial, { ...partial, durationFinal: true },
+      { ...partial, audioDurationMs: null }, { ...partial, audioDurationMs: 0, durationFinal: true }]
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((op, ...args) => op === 'recordings.import.list'
+      ? currentSnapshot(deliveries.map((delivery, index) => ({
+          kind: 'owner', taskKey: `duration-${index}`, sessionRef: `duration-${index}`, ownership: 'self',
+          fileName: `时长${index}.wav`, fileSize: 3400, parsedSize: 3400, durationMillis: 999000,
+          startAtMillis: 1725000000000, endAtMillis: 1725000065000, createdAtMillis: 1725000000000,
+          updatedAtMillis: 1725000065000, progress: null, status: 'processing', statusDetail: '处理中', delivery,
+        }))) : original(op, ...args))
+    await act(async () => {
+      renderer.unmount()
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/arkme-self/api/recording/import"
+        defaultStartAtMillis={1725000000000} currentUserId={42} onAccepted={() => {}} />)
+      await tick()
+    })
+    const rows = renderer.root.findByProps({ 'aria-label': '待导入录音' }).findAllByProps({ role: 'row' }).slice(1)
+    expect(rows).toHaveLength(4)
+    expect(renderedText(rows[0]!.children[2] as ReactTestInstance)).toBe('—')
+    expect(renderedText(rows[1]!)).toContain('1分5秒')
+    expect(renderedText(rows[1]!)).not.toContain('（部分）')
+    expect(renderedText(rows[2]!.children[2] as ReactTestInstance)).toBe('—')
+    expect(renderedText(rows[3]!)).toContain('0秒')
+  })
 
   it('submits new batches without strategy parameters or account preference reads', async () => {
     let strategy = 'baseline-sd-asr/20261026'
@@ -838,7 +867,7 @@ describe('recording import dialog behavior', () => {
     expect(renderedText(rows[1]!)).toContain('待导入')
     expect(renderedText(rows[1]!)).not.toContain('待上传')
     expect(renderedText(rows[1]!)).toContain('1B')
-    expect(renderedText(rows[1]!)).toContain('1s')
+    expect(renderedText(rows[1]!)).toContain('1秒')
     expect(renderedText(rows[1]!)).not.toContain('00:00:01')
     expect(JSON.stringify(renderer.toJSON())).not.toContain('录音时间')
     expect(JSON.stringify(renderer.toJSON())).not.toContain('返回上传')
@@ -888,7 +917,7 @@ describe('recording import dialog behavior', () => {
     expect(taskRow.children).toHaveLength(8)
     expect(renderedText(taskRow)).toContain('后台.m4a')
     expect(renderedText(taskRow)).toContain('2KB')
-    expect(renderedText(taskRow)).toContain('3s')
+    expect(renderedText(taskRow)).toContain('3秒')
     expect(renderedText(taskRow)).toContain('他人')
     expect(taskRow.findByProps({ 'aria-label': '后台.m4a录音开始时间' }).props.value).toBe('2026-08-26T02:47:11')
     expect(renderedText(taskRow)).toContain('02:47:14')
@@ -1103,9 +1132,9 @@ describe('recording import dialog behavior', () => {
     expect(renderedText(history)).toContain('已完成.wav')
     expect(history.findByProps({ 'aria-label': '已完成.wav录音开始时间' }).props.value).toBe('2026-08-25T18:30:00')
     expect(renderedText(history)).toContain('18:31:05')
-    expect(renderedText(history)).toContain('1m5s')
+    expect(renderedText(history)).toContain('1分5秒')
     expect(renderedText(history)).toContain('18s')
-    expect(history.findByProps({ 'aria-label': '已完成.wav录音时长 1m5s' }).props.style).toMatchObject({
+    expect(history.findByProps({ 'aria-label': '已完成.wav录音时长 1分5秒' }).props.style).toMatchObject({
       padding: '0 6px', boxSizing: 'border-box', fontSize: 12,
     })
     expect(history.findByProps({ 'aria-label': '已完成.wav文件大小 4KB' }).props.style).toMatchObject({

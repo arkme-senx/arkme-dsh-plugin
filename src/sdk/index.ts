@@ -1,4 +1,6 @@
 import { messageSendPoint, messageSendRecord } from '../message-send-timing.js'
+import { recordingDeliveryQuery, type RecordingDeliveryQuery, type RecordingDeliveryPage } from '../recording-delivery.js'
+export type { RecordingDelivery, RecordingDeliveryQuery, RecordingDeliveryPage } from '../recording-delivery.js'
 import { readPriorityHeader, supportsBackgroundRead } from '../read-scheduling.js'
 import { directoryTraceHeader, groupInteractionTrace, isDirectoryTraceId } from '../group-interaction-diagnostics.js'
 import type { LoginDeviceRequest, LoginDeviceResult } from '../login-devices-contract.js'
@@ -867,6 +869,16 @@ export class ArkmeSdk {
     } else if (features.recordingStrategiesV1 !== true) throw new Error('当前 Provider 不支持录音策略对比')
     return this.call(input.action === 'start' ? 'recordings.strategies.start' : input.action === 'preference-set' ? 'recordings.strategies.preference.set' : 'recordings.strategies', { ...input }, signal)
   }
+  async recordingDeliveryPage(input: RecordingDeliveryQuery, signal?: AbortSignal): Promise<RecordingDeliveryPage> {
+    const query = recordingDeliveryQuery(input)
+    const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
+    scoped.throwIfAborted()
+    if ((await this.capabilities(scoped)).features.recordingDeliveryV1 !== true) throw new Error('当前服务不支持录音接收查询')
+    const page = await this.call<RecordingDeliveryPage>('recordings.delivery.page', { ...query }, scoped)
+    scoped.throwIfAborted()
+    return page
+  }
+
   async recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<RecordingFileStoragePage> {
     const sessionRefs = recordingStorageSessionRefs(input.sessionRefs)
     const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])

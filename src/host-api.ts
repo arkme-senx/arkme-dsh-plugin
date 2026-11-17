@@ -1,5 +1,6 @@
 import { messageSendRecord } from './message-send-timing.js'
 import { measureMessageSend } from './message-send-host-timing.js'
+import { recordingDeliveryQuery } from './recording-delivery.js'
 import { readPriorityHeader, supportsBackgroundRead } from './read-scheduling.js'
 import { directoryTraceHeader, directoryTraceSignals, groupInteractionTrace, groupInteractionTraceEnabled, isDirectoryTraceId } from './group-interaction-diagnostics.js'
 import type { LocalRecorderOwner } from './local-recorder/owner.js'
@@ -1866,6 +1867,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       ownership: recordingImportOwnershipParam(params),
     }, requestSignal)
     case 'offline-context': return await service.offlineContext(params as unknown as OfflineContextRequest,requestSignal)
+    case 'recordings.delivery.page': return service.recordingDeliveryPage(recordingDeliveryQuery(params), requestSignal)
     case 'recordings.files.storage': return service.recordingFileStorage({ sessionRefs: params.sessionRefs as string[] }, requestSignal)
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(

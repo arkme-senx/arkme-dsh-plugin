@@ -1,3 +1,4 @@
+import { recordingDeliveryTool } from './delivery.js'
 import { transcriptViewTools } from './transcript-views.js'
 import { recordingVoiceReadTool, recordingVoiceWriteTool } from './voice-triggers.js'
 import { recordingEvidenceReadToolModule, recordingEvidenceBuildToolModule } from './speaker-evidence.js'
@@ -13,4 +14,4 @@ import { recordingImportFolderToolModule } from './import-folder.js'
 import { recordingFileStorageTool } from './file-storage.js'
 
 // Local file acquisition stays in the plugin. Transcript/calendar reads belong to OpenAPI; speaker statistics share the directory Host owner.
-export const recordingToolModules = [...transcriptViewTools, recordingVoiceReadTool, recordingVoiceWriteTool, ...recordingAnalysisTools, recordingFileStorageTool, ...recordingStrategyTools, ...offlineContextTools, recordingEvidenceReadToolModule, recordingEvidenceBuildToolModule, recordingCorrectionContextToolModule, recordingCorrectionWriteToolModule, recordingEntityToolModule, recordingEntityStartToolModule, ...recordingWorkflowTools, recordingImportToolModule, recordingImportFolderToolModule, speakerPresenceToolModule] as const
+export const recordingToolModules = [...transcriptViewTools, recordingVoiceReadTool, recordingVoiceWriteTool, ...recordingAnalysisTools, recordingDeliveryTool, recordingFileStorageTool, ...recordingStrategyTools, ...offlineContextTools, recordingEvidenceReadToolModule, recordingEvidenceBuildToolModule, recordingCorrectionContextToolModule, recordingCorrectionWriteToolModule, recordingEntityToolModule, recordingEntityStartToolModule, ...recordingWorkflowTools, recordingImportToolModule, recordingImportFolderToolModule, speakerPresenceToolModule] as const
