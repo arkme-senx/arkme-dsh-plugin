@@ -18,7 +18,9 @@ import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
 import { arkmeUi, type ArkmeSettingsSection } from './ui-controller.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { tr, useArkmeLocale } from './locale.js'
-import { setArkmeDisplayTimeZone, useArkmeDisplayTimeZone } from './display-time-zone.js'
+import { setArkmeDisplayTimeZone, useArkmeDisplayTimeZone, useArkmeEffectiveTimeZone } from './display-time-zone.js'
+import { RECORDING_DELETION_SETTINGS_QUERY } from '../recording-deletion-contract.js'
+import { callArkme } from './api.js'
 import settingsCss from './settings-dialog.css?inline'
 
 type Section = ArkmeSettingsSection | 'general' | 'about'
@@ -103,6 +105,7 @@ function SettingsHost({ preferences }: { preferences: Preferences }) {
   const [modelTab, setModelTab] = useState<ModelSettingsTab>('official')
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const account = auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined
+  const timeZone = useArkmeEffectiveTimeZone()
   useEffect(() => arkmeUi.bindSettingsOpener(next => { setModelTab('official'); setSection(next ?? 'arkme-account') }), [])
   useEffect(() => {
     const open = (event: Event) => {
@@ -117,6 +120,20 @@ function SettingsHost({ preferences }: { preferences: Preferences }) {
     return () => { document.removeEventListener(HARNESS_MODELS_SETTINGS_OPEN, open); document.removeEventListener(HARNESS_MODELS_SETTINGS_CLOSE, close) }
   }, [account])
   useEffect(() => { setSection(undefined) }, [account])
+  useEffect(() => {
+    if (!account) return
+    const url = new URL(window.location.href)
+    if (url.searchParams.get(RECORDING_DELETION_SETTINGS_QUERY) !== '1') return
+    url.searchParams.delete(RECORDING_DELETION_SETTINGS_QUERY)
+    window.history.replaceState(window.history.state, '', url)
+    setSection('arkme-data')
+  }, [account])
+  useEffect(() => {
+    if (!account) return
+    const controller = new AbortController()
+    void callArkme('recordings.ai-deletion.settings', { accountScope: account, timeZone }, controller.signal).catch(() => undefined)
+    return () => controller.abort()
+  }, [account, timeZone])
   return section === undefined ? null : <ArkmeSettingsDialog section={section} preferences={preferences}
     modelTab={modelTab} onSelect={next => { setModelTab('official'); setSection(next) }} onClose={() => setSection(undefined)} />
 }

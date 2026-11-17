@@ -13,7 +13,8 @@ import { recordingStrategy, type RecordingStrategy } from '../recording-strategy
 import { recordingUploadedByViewer } from '../recording-coverage.js'
 import { projectRecordingDailyMetrics } from '../recording-daily-metrics.js'
 import { recordingPlaybackLocator, type RecordingPlaybackLocator } from '../recording-playback-ref.js'
-import { RecordingReadOwner, type RecordingReadView, type RecordingDayReadCursor, type RecordingOwnerFragment, type RecordingOwnerDayPage } from './recording-read-owner.js'
+import { RecordingReadOwner, type RecordingReadView, type RecordingDayReadCursor, type RecordingOwnerFragment, type RecordingOwnerDayPage, type RecordingOwnerFact } from './recording-read-owner.js'
+import { RECORDING_DELETION_DAYS_LIMIT, RECORDING_DELETION_LIMIT, type RecordingDeletionFile, type RecordingDeletionRequest, type RecordingDeletionSelection } from '../recording-deletion-contract.js'
 import { createMessageCopyLink } from './message-copy-link-create.js'
 import type { ArkmeRecordingDaySearchCandidate, ArkmeRecordingTranscriptContext, ArkmeRecordingTranscriptLocation, ArkmeRecordingWindow } from '../types.js'
 import { recordingCreateRequestUID, sameRecordingImportBatch, recordingBatchOffset } from '../recording-import-identity.js'
@@ -393,6 +394,91 @@ export class RecordingService {
   async recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<import('../recording-file-storage.js').RecordingFileStoragePage> {
     this.assertWorkbenchEnabled()
     return new RecordingFileStorageService(this.runtime, ref => this.openRecordingImportSessionRef(ref)).query(input, signal)
+  }
+
+  async recordingDeletionPermission(expectedScope?: string, change?: { enabled?: boolean; timeZone: string }, signal?: AbortSignal) {
+    this.assertWorkbenchEnabled()
+    const session = await this.runtime.requireSession()
+    const scope = `${this.runtime.config.environment}:${session.userId}`
+    if (expectedScope !== undefined && expectedScope !== scope) throw new ArkmePluginError('account-changed', '账号已切换，请重新打开设置', false, 409)
+    const store = this.runtime.stateStore
+    if (!store.recordingDeletionPermission) throw new ArkmePluginError('recording-delete-unavailable', '录音删除设置暂不可用', false, 503)
+    if (change !== undefined) {
+      if (typeof change.timeZone !== 'string' || change.timeZone.length > 80) throw new ArkmePluginError('recording-date-invalid', '录音时区无效', false, 400)
+      try { change = { ...change, timeZone: new Intl.DateTimeFormat('en', { timeZone: change.timeZone }).resolvedOptions().timeZone } }
+      catch { throw new ArkmePluginError('recording-date-invalid', '录音时区无效', false, 400) }
+    }
+    await this.ensureRecordingSession(session, signal)
+    const permission = await store.recordingDeletionPermission(scope, change, signal)
+    await this.ensureRecordingSession(session, signal)
+    return { scope, permission }
+  }
+
+  async recordingDeletionSelection(input: RecordingDeletionRequest, timeZone: string, signal?: AbortSignal): Promise<RecordingDeletionSelection> {
+    this.assertWorkbenchEnabled()
+    const { dates, aboveBytes } = input
+    const invalid = () => new ArkmePluginError('recording-delete-selection-invalid', '请选择有效的录音日期和存储阈值', false, 400)
+    if (!Array.isArray(dates) || dates.length < 1 || dates.length > RECORDING_DELETION_DAYS_LIMIT
+      || dates.some(date => typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+      || new Set(dates).size !== dates.length
+      || aboveBytes !== undefined && (typeof aboveBytes !== 'number' || !Number.isSafeInteger(aboveBytes) || aboveBytes < 0)) throw invalid()
+    const session = await this.runtime.requireSession()
+    const owner = new RecordingReadOwner(this.runtime, 'background-read')
+    const days: RecordingDeletionSelection['days'] = []
+    const chosen = new Map<string, RecordingOwnerFact>()
+    for (const date of [...dates].sort() as string[]) {
+      let window: { startAt: number; endAt: number }
+      try {
+        const range = recordingZonedWindow(date, timeZone)
+        window = { startAt: range.dateStamp, endAt: range.endStamp }
+      } catch { throw invalid() }
+      if (window.endAt <= window.startAt || window.startAt < 0 || window.startAt > Date.now()) throw invalid()
+      const all = await owner.recordings(window, session, signal, RECORDING_DELETION_LIMIT)
+      if (all.some(fact => fact.uploaderUserId === undefined)) {
+        throw new ArkmePluginError('recording-delete-owner-unavailable', '无法核实录音文件归属，请稍后重试', true, 502)
+      }
+      const owned = all.filter(fact => fact.uploaderUserId === session.userId)
+      const metrics = await owner.calendarDayMetrics(window, session, signal, owned)
+      const bytes = metrics ? recordingTotalsFromDaily(metrics).storage.bytes : null
+      const selected = typeof aboveBytes !== 'number' || bytes !== null && bytes > aboveBytes
+      days.push({ date, bytes, selected })
+      if (!selected) continue
+      for (const fact of owned) chosen.set(fact.recording_uid, fact)
+      if (chosen.size > RECORDING_DELETION_LIMIT) throw new ArkmePluginError('recording-delete-selection-large', '单批最多 100 份录音，请缩小日期范围', false, 400)
+    }
+    const files: RecordingDeletionFile[] = []
+    const ordered = [...chosen.values()].sort((a, b) => a.start_at - b.start_at || a.recording_uid.localeCompare(b.recording_uid))
+    for (let offset = 0; offset < ordered.length; offset += 20) {
+      const batch = ordered.slice(offset, offset + 20)
+      const refs = await Promise.all(batch.map(async fact => await this.recordingImportSessionRef({ sessionId: fact.recording_uid }, session.userId)))
+      const storage = await this.recordingFileStorage({ sessionRefs: refs }, signal)
+      for (let position = 0; position < batch.length; position += 4) {
+        const group = batch.slice(position, position + 4)
+        const details = await Promise.all(group.map(async (fact, index) => {
+          await this.assertRecordingImportOwnerMutationSafe(session.userId, fact.recording_uid)
+          await this.ensureRecordingSession(session, signal)
+          const raw = objectValue(await this.runtime.authenticatedAudioPost('/api/v1/audio/get-session-by-id', { session_id: fact.recording_uid }, session, signal, { lane: 'background-read', bypassCache: true }))
+          const endAt = Math.max(fact.end_at, fact.start_at + fact.duration_ms)
+          if (raw.id !== fact.recording_uid || raw.user_id !== session.userId || raw.start_at !== fact.start_at
+            || raw.has_finish_spk !== true || fact.capture_state === 'receiving' || endAt <= fact.start_at) {
+            throw new ArkmePluginError('recording-delete-file-not-ready', '部分录音仍在上传或已变化，请核对文件后再试', true, 409)
+          }
+          return { sessionId: fact.recording_uid, ownerVersion: fact.owner_version, startAt: fact.start_at, endAt,
+            bytes: storage.items[position + index]!.bytes, fileName: stringValue(raw.orig_name).trim().slice(0, 255) }
+        }))
+        files.push(...details)
+      }
+    }
+    await this.ensureRecordingSession(session, signal)
+    return { days, files, timeZone }
+  }
+
+  /** The desktop confirmation owns the frozen account, selection and approval. */
+  async deleteRecordingFromConfirmedSelection(sessionId: string, scope: string, authorize: () => Promise<void>): Promise<void> {
+    const session = await this.runtime.requireSession()
+    if (scope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('account-changed', '账号已切换，批量删除已停止', false, 409)
+    const ref = await this.recordingImportSessionRef({ sessionId }, session.userId)
+    await this.deleteRecordingImportSession(ref, undefined, authorize)
   }
 
   async recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
@@ -1864,12 +1950,13 @@ export class RecordingService {
     await this.runtime.authenticatedAudioPost('/api/v1/audio/retry-transcription', { session_id: target.sessionId }, session, signal, { lane: 'write', bypassCache: true })
   }
 
-  async deleteRecordingImportSession(sessionRef: string, signal?: AbortSignal): Promise<void> {
+  async deleteRecordingImportSession(sessionRef: string, signal?: AbortSignal, authorize?: () => Promise<void>): Promise<void> {
     this.assertWorkbenchEnabled()
     const session = await this.runtime.requireSession()
     const target = await this.openRecordingImportSessionRef(sessionRef)
     await this.assertRecordingImportOwnerMutationSafe(session.userId, target.sessionId)
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
+    if (authorize) await authorize()
     await this.recordingImportOwnerGateway.deleteOwnerSession({
       viewerUserId: session.userId,
       sessionId: target.sessionId,

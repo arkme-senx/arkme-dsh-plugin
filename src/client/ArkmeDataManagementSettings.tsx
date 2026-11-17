@@ -1,6 +1,7 @@
 import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeRecordExportPanel } from './ArkmeRecordExportPanel.js'
 import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
+import { ArkmeRecordingDeletionSettings } from './ArkmeRecordingDeletionSettings.js'
 import { ArkmeConfirmDialog, ArkmeConfirmDialogPreview } from './ArkmeConfirmDialog.js'
 import { readDeletedItems, deletedItemRecovery, type DeletedItem, type DeletedItemsPage } from './data-deleted-items.js'
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
@@ -125,6 +126,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       <h2>{({ home: '数据管理', archived: '已归档主题', deleted: '最近删除', import: '导入数据', export: '导出数据' })[page]}</h2></header>
     {page === 'home' ? <>
       <p className="arkme-data-hint">{tr("管理、迁入和保留属于你的记录。")}</p>
+      <ArkmeRecordingDeletionSettings scope={scope} />
       <OpenPlatformEntry />
       <div className="arkme-data-entries">
         <button type="button" onClick={() => setPage('archived')}><Archive size={20} aria-hidden /><span>{tr("已归档主题")}</span><CaretRight size={15} aria-hidden /></button>

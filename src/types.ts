@@ -5117,6 +5117,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'recordings.presence.capture'
   | 'recordings.calendar'
   | 'recordings.totals.index'
+  | 'recordings.ai-deletion.settings'
   | 'recordings.totals.bucket'
   | 'recordings.totals.day'
   | 'recordings.day.review'
