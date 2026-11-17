@@ -1092,6 +1092,9 @@ describe('recording import dialog behavior', () => {
       fileName: '', fileSize: 4096, parsedSize: 4096, durationMillis: 3000,
       startAtMillis, endAtMillis: startAtMillis + 3000, createdAtMillis: startAtMillis,
       updatedAtMillis: startAtMillis + 12000, progress: 1, status: 'transcribing', statusDetail: '转写中',
+      delivery: { ...parseRecordingDelivery(deliveryFixture.awaiting_end)!,
+        captureStartAt: startAtMillis, displayEndAt: null, audioDurationMs: 65000,
+        durationFinal: false, receivedBytes: 1024, expectedBytes: null },
       importProgress: {
         status: 'processing', totalDurationMillis: 12000,
         serverNowMillis: startAtMillis + 12000, observedAtMillis: startAtMillis + 12000,
@@ -1104,7 +1107,12 @@ describe('recording import dialog behavior', () => {
     const original = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (op, ...args) => {
       if (op === 'recordings.import.list') return currentSnapshot([task])
-      if (op === 'recordings.import.history') return { items: [{ ...task, fileName: '  ', status: 'completed' }], total: 1, offset: 0, hasMore: false }
+      if (op === 'recordings.import.history') return { items: [{ ...task, fileName: '  ', status: 'completed',
+        delivery: { ...task.delivery, coverage: 'complete', endReceived: true, intakeClosed: true,
+          captureEndAt: startAtMillis + 65000, displayEndAt: startAtMillis + 65000,
+          expectedSources: 1, registeredSources: 1, receivedSources: 1,
+          durationFinal: true, receivedBytes: 8192, expectedBytes: 8192 },
+      }], total: 1, offset: 0, hasMore: false }
       return original(op, ...args)
     })
     await act(async () => {
@@ -1114,6 +1122,10 @@ describe('recording import dialog behavior', () => {
     })
     expect(renderer.root.findByProps({ title: name }).children).toEqual([name])
     expect(renderer.root.findByProps({ 'aria-label': `${name}录音开始时间` })).toBeDefined()
+    expect(renderer.root.findByProps({ 'aria-label': `${name}录音结束时间` }).children).toEqual(['待确认'])
+    const currentRow = renderer.root.findByProps({ 'aria-label': '待导入录音' }).findAllByProps({ role: 'row' })[1]!
+    expect(renderedText(currentRow.children[2] as ReactTestInstance)).toBe('—')
+    expect(renderedText(currentRow.children[3] as ReactTestInstance)).toContain('总大小待确认')
     await act(async () => {
       renderer.root.findByProps({ 'aria-label': '处理耗时 12s' }).props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 600, right: 648, top: 400, bottom: 428 }) } })
       await tick()
@@ -1137,6 +1149,9 @@ describe('recording import dialog behavior', () => {
     await act(async () => { button(renderer, '已完成').props.onClick(); await tick() })
     const history = renderer.root.findByProps({ 'aria-label': '已完成录音导入' })
     expect(history.findByProps({ title: name }).children).toEqual([name])
+    expect(history.findByProps({ 'aria-label': `${name}录音时长 1分5秒` })).toBeDefined()
+    expect(history.findByProps({ 'aria-label': `${name}录音结束时间` }).children).toEqual(['18:36:17'])
+    expect(renderedText(history)).toContain('8KB')
     await act(async () => { history.findByProps({ 'aria-label': `删除 ${name}` }).props.onClick(); await tick() })
     expect(renderedText(renderer.root.findByProps({ 'aria-label': '确认删除录音' }))).toContain(name)
     await act(async () => { renderer.root.findByProps({ 'aria-label': '确认删除' }).props.onClick(); await tick() })

@@ -1,6 +1,6 @@
 # Unnamed recording display labels
 
-Baseline: `origin/master` at `f223e0b4c27c23810a0b8ec100e0220a9c2fa20e`.
+Baseline: `origin/master` at `1943e705aa6d2824fb634f87f000da2ecbd09798` (v3.0.64).
 Branch: `codex/c20261117-recording-display-name`.
 
 ## Behavior and ownership
@@ -39,47 +39,46 @@ The existing calendar duration template `录音 {v0}` still translates to
 
 ## Validation
 
-- Related baseline: 99 tests passed before edits.
-- Focused regressions after final-review corrections: 118 tests passed, including
+- Focused regressions after rebase: 122 tests passed across five files, including
   blank/whitespace names, existing names, invalid dates, Chinese/English labels,
   current/completed lists, deletion identity, changing language while confirming
   deletion, formatter allocation for 500 records, timezone changes and the existing
-  calendar recording-duration label.
-- Node 24.22.1: typecheck and the full suite passed after the corrections;
-  18,080 tests passed, 42 skipped (1,586 files passed, 32 skipped).
-- Build passed. Plugin version and dependency lockfile remain unchanged.
-- An immutable `@senguoyun/dsh-arkme` 3.0.62 tarball was installed using the official
+  calendar recording-duration label. Combined cases verify that unnamed sessions
+  retain unknown duration/end/size while receiving, confirmed duration/end/size
+  when complete, and the server-projected end in the delete confirmation.
+- Node 24.22.1: typecheck, build and the full suite passed after rebase;
+  18,487 tests passed, 42 skipped (1,609 files passed, 32 skipped).
+- The first full-suite attempt overlapped a separate package build and failed in
+  a packaging hook. All seven package tests passed in isolation; the complete
+  suite then passed with no separate build/pack running concurrently.
+- Plugin version and dependency lockfile match the new baseline.
+- An immutable `@senguoyun/dsh-arkme` 3.0.64 tarball was installed using the official
   DSH CLI into a fresh temporary profile with a space-containing path. Runtime:
   unmodified official npm DSH 0.2.1-rc.2 on Node 24.22.1, macOS.
 - Actual browser acceptance with isolated synthetic API data verified current and
   completed lists, the audio file page and a deletion confirmation. A blank name
-  displayed its date/time label; an existing `会议录音.m4a` name was preserved. No
-  production deletion was performed. The fixture does not implement the unrelated
+  displayed its date/time label; an existing `会议录音.m4a` name was preserved.
+  The same browser run verified unknown and final delivery duration, expected
+  size and projected end time alongside those names. No production deletion was
+  performed. The fixture does not implement the unrelated
   calendar/storage endpoints, so those panels are not acceptance evidence.
-- The corrected build was repackaged and the same browser scenarios were verified
-  again in a separate fresh official DSH profile.
-- The tarball contains no local worktree paths. Its bundled serialport dependency
+- The tarball has 4,290 entries, SHA-256
+  `227365f056fc3802f5cd5aff74bf9a7ac43f3a2b6303c091cab2b8b089f77119`.
+  It contains no local worktree paths or secret files. Its bundled serialport dependency
   is already declared in the baseline package manifest.
 - No DSH source or resident profile was changed. No production deployment or
   Windows/Linux browser acceptance was performed.
 
 ## Integration note
 
-The implementation and validation baseline above remains `f223e0b4c`. At push
-time, querying the remote directly found `master` at
-`1943e705aa6d2824fb634f87f000da2ecbd09798` (v3.0.64). The checkout's configured
-fetch refspecs do not track master, so an ordinary `git fetch origin master` had
-left the local `origin/master` reference stale. An explicit destination refspec
-updated it. The new master has five commits beyond the implementation baseline.
-
-`origin/dev` at `04b000d12a75d90c191358d4f635966a653ef6d1` has separate recording
-delivery/duration changes. Read-only three-way merge checks against both current
-master and dev found overlapping
-lines in `ArkmeRecordingImportDialog.tsx`, `ArkmeRecordingFiles.tsx` and
-`tests/recording-import-dialog.test.tsx`. Integration must preserve those
-duration/status semantics and their tests while adding the display-name helper;
-neither complete component should be replaced with the other branch's version.
-The integrated result requires regression validation before release.
+The branch was rebased onto the baseline above after explicitly fetching the
+remote master ref into `origin/master`. Conflicts in
+`ArkmeRecordingImportDialog.tsx`, `ArkmeRecordingFiles.tsx` and
+`tests/recording-import-dialog.test.tsx` were resolved by combining the display
+labels with the baseline's `ArkmeLocalDateTimeInput`, projected delivery end,
+final-duration selection and expected-byte display. Both sets of tests remain;
+neither component was replaced wholesale. The validation above covers this
+integrated result. There are no unresolved conflicts.
 
 Before submission, the four changed production sources were compared with the
 accepted tarball's source map; all four matched byte for byte.
