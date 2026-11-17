@@ -1,4 +1,4 @@
-# Unnamed recording display labels
+# Recording names and upload-state presentation
 
 Baseline and PR target: `origin/dev` at `04b000d12a75d90c191358d4f635966a653ef6d1` (v3.0.64).
 Branch: `codex/c20261117-recording-display-name`.
@@ -37,7 +37,7 @@ The existing calendar duration template `录音 {v0}` still translates to
 | Tools | N/A: no new Host capability; generated UI labels are not source data | Public Tools contracts unchanged |
 | SDK | N/A: no new Host capability; raw filename semantics must remain unchanged | Public SDK contracts unchanged |
 
-## Validation
+## Name-label validation (18d928922)
 
 - Focused regressions after rebase: 122 tests passed across five files, including
   blank/whitespace names, existing names, invalid dates, Chinese/English labels,
@@ -69,22 +69,54 @@ The existing calendar duration template `录音 {v0}` still translates to
 - No DSH source or resident profile was changed. No production deployment or
   Windows/Linux browser acceptance was performed.
 
+## Upload-state simplification and current acceptance
+
+The service's `receivedBytes` counts fully acknowledged source files. It is not
+an in-flight byte counter: the session end can be known while the source file is
+still unconfirmed. Showing “received 0 B” in the file-size column misrepresented
+that distinction. The UI now displays only `expectedBytes` when known, otherwise
+an em dash. A confirmed zero remains zero; partial received bytes do not substitute
+for an unknown total. Local file sizes retain their existing known-size behavior.
+
+Receiving owner tasks with status `accepted` display “上传中” in both import and
+day-file views. Source-file counts and model-derived percentages are omitted from
+that receiving status, including its tooltip. Paused, failed, quota, unavailable
+and interrupted states remain distinguishable and actionable. Once intake is
+complete, the existing speaker-recognition/transcription states remain visible.
+The shared formatter adds no state, cache, requests or Host behavior.
+
+Current validation (Node 24.22.1, official DSH 0.2.1-rc.2 on macOS):
+
+- 112 focused tests passed across delivery, import dialog and day-file tests.
+  Cases cover unknown totals versus confirmed zero, preserved error/pause states,
+  receiving-status text/tooltip/progress, and completed metadata.
+- Typecheck and build passed. Full suite: 18,481 passed, 49 skipped, with one
+  failure in the recorder runtime dependency suite's package setup. All seven
+  tests in that suite passed on an isolated rerun (4.54 seconds). This is not
+  recorded as a wholly green single full-suite run.
+- The immutable package was installed into a fresh isolated DSH profile using
+  the official CLI. Chrome verified receiving and completed rows, original and
+  fallback names, audio files and delete confirmation using synthetic data.
+- Artifact SHA-256:
+  `7e1ed4dca2e285b4de7742dc1f8b68c7fe09bb2377d89e3243c16b605dd7c6e3`.
+  Version and lockfile remain unchanged at the dev baseline.
+- With the user's authorization, the local resident plugin was updated with this
+  package while preserving its credentials, configuration and data. The existing
+  browser cookie remained valid. Production account 4 showed two receiving rows
+  as “上传中” with unknown sizes as “—”; completed records loaded normally and
+  no browser page errors occurred. This was a local plugin update, not a cloud
+  service deployment. No production records were deleted.
+- Tools/SDK remain N/A because this changes only UI presentation. Host ownership,
+  receipt counters, identifiers and upload protocol are unchanged. No DSH source
+  was modified. Windows/Linux browser acceptance was not performed; this change
+  contains no native or process integration code.
+
 ## Integration note
 
-The branch is one task commit directly on the fetched dev baseline. Its diff
-contains only the eight display-name implementation, regression and validation
-files. It retains the baseline's `ArkmeLocalDateTimeInput`, projected delivery
-end, final-duration selection and expected-byte display alongside the new labels.
-
-The dev and previously tested master baselines have identical Git trees
-(`c3b76fb62352daa35e7d46fc4b73cab993cb6def`). Rebasing the task onto dev and
-consolidating its commits changed no source or test content; only this validation
-document was updated afterward to identify the correct target. The full-suite
-and packaged-browser evidence above therefore covers the same code. The 122
-focused tests were also rerun on dev. There are no unresolved conflicts.
-
-Before submission, the four changed production sources were compared with the
-accepted tarball's source map; all four matched byte for byte.
+The PR targets `dev`; the diff contains only recording-name and upload-presentation
+implementation, regression and validation files. It retains the baseline date/time
+input, projected end boundaries, final-duration selection, backend size facts,
+mutation identities and recovery actions. No configuration or schema is added.
 
 ## Name-formatting diagnostic
 
