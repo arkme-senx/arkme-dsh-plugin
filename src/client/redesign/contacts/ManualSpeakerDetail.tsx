@@ -14,7 +14,7 @@ const openRecording = (at: number) => {
   arkmeUi.showRecordingTarget(day.getTime(), at)
 }
 const dateLabel = (at: number) => new Intl.DateTimeFormat(arkmeIntlLocale(), {
-  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 }).format(at)
 
 export function ManualSpeakerDetail({ accountKey, speaker, load = loadMembers, onOpenRecording = openRecording }: {

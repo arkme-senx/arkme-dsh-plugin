@@ -107,7 +107,7 @@ describe('Arkme tool catalog', () => {
       'arkme_extension_review_create',
       'arkme_relation_pages',
       'arkme_transcript_views', 'arkme_transcript_view_change',
-      'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_analysis_models', 'arkme_recording_analysis', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
+      'arkme_recording_voice_triggers', 'arkme_recording_voice_trigger_command', 'arkme_recording_analysis_models', 'arkme_recording_analysis', 'arkme_recording_delivery', 'arkme_recording_file_storage', 'arkme_recording_strategies', 'arkme_recording_strategy_start', 'arkme_recording_strategy_preference',
       'arkme_offline_context_read', 'arkme_offline_context_command',
       'arkme_recording_speaker_evidence', 'arkme_recording_speaker_evidence_build', 'arkme_recording_speaker_correction_context', 'arkme_recording_speaker_correct',
       'arkme_recording_entities', 'arkme_recording_entities_start',

@@ -347,8 +347,12 @@ describe('ArkmeRecordingSurface layout', () => {
 
   it('keeps long recording days responsive without a ResizeObserver per transcript row', async () => {
     const source = await readFile(new URL('../src/client/ArkmeRecordingSurface.tsx', import.meta.url), 'utf8')
+    const row = source.slice(source.indexOf('export function ArkmeRecordingTranscriptRow'),
+      source.indexOf('function ArkmeRecordingTranscriptLoading'))
 
-    expect(source).not.toContain('new ResizeObserver')
+    expect(row).not.toContain('ResizeObserver')
+    expect(source.match(/new ResizeObserver\(/g)).toHaveLength(1)
+    expect(source).toContain('observer.observe(pane)')
     expect(source).not.toContain('document.createRange()')
     expect(source).toContain("className=\"arkme-recording-transcript-speaker\"")
   })

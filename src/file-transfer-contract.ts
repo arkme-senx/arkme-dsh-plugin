@@ -54,6 +54,8 @@ export interface ArkmeFileBackgroundSoundInput {
 
 export interface ArkmeFileSendTask extends ArkmeFileSendInput {
   taskRef: string
+  /** Owner-persisted ordering for snapshots and delivery events; absent on older Hosts. */
+  revision?: number
   createdAtMillis: number
   state: 'queued' | 'uploading' | 'sending' | 'sent' | 'failed' | 'uncertain'
   files: Array<ArkmeLocalFile & { progress: ArkmeFileProgress; asset?: ArkmeUploadedAsset; attachmentUid?: string }>

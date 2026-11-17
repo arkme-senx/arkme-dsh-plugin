@@ -29,6 +29,14 @@ export interface ArkmeAppUpdateStoreSnapshot {
   error: string
 }
 
+// Match the desktop notice eligibility; closing it only changes expanded,
+// so the sidebar entry remains available throughout the pending update.
+export function hasPendingAppUpdate(state: ArkmeAppUpdateSnapshot | undefined): boolean {
+  return state !== undefined && !!state.latestVersion?.trim()
+    && typeof state.latestVersionCode === 'number' && state.latestVersionCode > state.currentVersionCode
+    && ['available', 'downloading', 'downloaded', 'installing', 'failed'].includes(state.status)
+}
+
 interface ArkmeDesktopUpdateBridge {
   status: () => Promise<ArkmeAppUpdateSnapshot | null>
   onChanged: (listener: (state: ArkmeAppUpdateSnapshot | null) => void) => () => void

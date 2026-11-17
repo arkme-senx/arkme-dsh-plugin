@@ -67,10 +67,16 @@ it('never lets playback buttons seek, pan, or activate the parent with Space', (
 })
 
 it.each([0, 86399000])('places the overview control above the cursor with a bounded hit area at day offset %s', offset => {
+  act(() => root.render(<ArkmeRecordingTimeline items={[item]} dayStartMillis={day}
+    onSelectAtMillis={play} onTogglePlayback={pause} />))
+  const column = host.querySelector<HTMLElement>('[aria-label="24 小时概览"]')!
+  expect(column.style.paddingTop).toBe('')
+  expect(column.querySelector('[data-recording-cursor-control="overview"]')).toBeNull()
   act(() => root.render(<ArkmeRecordingTimeline items={[item]} dayStartMillis={day} playheadMillis={day + offset}
     isPlaying onSelectAtMillis={play} onTogglePlayback={pause} />))
   const control = host.querySelector<HTMLElement>('[data-recording-cursor-control="overview"]')!
   expect(control.parentElement?.getAttribute('aria-label')).toBe('24 小时概览')
+  expect(column.style.paddingTop).toBe('26px')
   expect(control.style.left).toContain('clamp(')
   expect(control.style.top).toBe('0px')
   expect(control.querySelector('button[aria-label="暂停录音"]')).not.toBeNull()

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyMessageTextReplacement, resolveMessageTextReplacement } from '../src/client/message-text-replacement.js'
-import { quoteCanonicalText, type ArkmeMessageQuote } from '../src/message-quote.js'
+import { applyMessageTextReplacement, preparePlainTextReplacement, resolveMessageTextReplacement } from '../src/client/message-text-replacement.js'
+import { quoteCanonicalText, readMessageQuote, type ArkmeMessageQuote } from '../src/message-quote.js'
 
 const anchor = (canonical: string, start: number, end: number): ArkmeMessageQuote => ({ version: 1, projection: 'arkme-text-v1',
   sourceDigest: 'a'.repeat(64), start, end, text: canonical.slice(start, end), prefix: canonical.slice(Math.max(0, start - 32), start), suffix: canonical.slice(end, end + 32) })
@@ -36,5 +36,24 @@ describe('selected occurrence replacement', () => {
     expect(applyMessageTextReplacement(source, range, '大家好', mentions)).toEqual({ text: '大家好 @甲', mentions: [{ ...mentions[0], startIndex: 4 }] })
     expect(() => applyMessageTextReplacement(source, { start: 4, end: 5, original: '甲', markdown: false }, '乙', mentions)).toThrow('完整选择')
     expect(applyMessageTextReplacement(source, { start: 3, end: 5, original: '@甲', markdown: false }, '朋友', mentions).mentions).toEqual([])
+  })
+})
+
+describe('inline transcript edit', () => {
+  it.each([
+    ['前一句 后一句', '前一句 新增 后一句'],
+    ['第一行\n\n第二行', '第一行\n第二行'],
+    ['开始', '新增开始'],
+    ['结束', '结束新增'],
+    ['🙂 对', '🙃 对'],
+    ['🙂', '🙂好'],
+    ['[jm_emoji:thumb_up] 对', '[jm_emoji:thumb_down] 对'],
+    ['全部删掉', ''],
+    ['词'.repeat(2500) + '错', '词'.repeat(2500) + '对'],
+  ])('preserves the exact surrounding wire text for case %#', (source, draft) => {
+    const patch = preparePlainTextReplacement(source, draft, 'a'.repeat(64))
+    expect(readMessageQuote(patch.anchor)).toBeDefined()
+    const range = resolveMessageTextReplacement({ textContent: source }, patch.anchor)
+    expect(applyMessageTextReplacement(source, range, patch.replacement).text).toBe(draft)
   })
 })

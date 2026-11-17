@@ -1120,8 +1120,8 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       media: this.media,
       chat: this.chat,
       teamMedia:this.teamApp,
-      onProgressChange: (userId, taskRef) => this.realtime.emitChatClientEvent({
-        type: 'file-send-progress', userId, taskRef, revision: this.realtime.nextChatClientRevision(),
+      onProgressChange: (userId, taskRef, task) => this.realtime.emitChatClientEvent({
+        type: 'file-send-progress', userId, taskRef, ...(task ? { task } : {}), revision: this.realtime.nextChatClientRevision(),
       }),
       openPath: async (path, signal) => {
         if (this.localFileOpener === undefined) throw new Error('当前 DSH 宿主未提供本机文件打开能力')
@@ -1553,6 +1553,7 @@ arkoImagesV1:true,
 recordingAnalysisV1: true,
         recordingStrategiesV1: true,
         recordingFileStorageV1: true,
+        recordingDeliveryV1: true,
         recordingStrategyRecordingsV1: true,
         recordingProcessingPreferenceV1: true,
         offlineContextV1:true,
@@ -1812,6 +1813,7 @@ recordingAnalysisV1: true,
   /** @internal Built-in loopback UI only. */ async setRecordingSummaryModelRoute(routeKey: string, signal?: AbortSignal, kind: ArkmeRecordingProjectionKind = 'summary'): Promise<ArkmeRecordingSummaryModelRouteUpdate> { return await this.recording.setRecordingSummaryModelRoute(routeKey, signal,kind) }
   /** @internal Built-in loopback UI only. */ async generateRecordingProjection(dateStamp: number, kind: ArkmeRecordingProjectionKind, routeKey = '', signal?: AbortSignal, window?: ArkmeRecordingWindow): Promise<ArkmeRecordingSection<ArkmeRecordingVersion>> { return await this.recording.generateRecordingProjection(dateStamp, kind, routeKey, signal, window) }
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
+  recordingDeliveryPage(input: import('./recording-delivery.js').RecordingDeliveryQuery, signal?: AbortSignal) { return this.recording.recordingDeliveryPage(input, signal) }
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
   /** UI, Tools and SDK share the account-scoped Audio candidate owner. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
@@ -1823,6 +1825,15 @@ recordingAnalysisV1: true,
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
+  async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal) {
+    return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal)
+  }
+  async recordingTranscriptContext(dateStamp: number, startAtMillis: number, endAtMillis: number, signal?: AbortSignal) {
+    return await this.recording.transcriptContext(dateStamp, startAtMillis, endAtMillis, signal)
+  }
+  async searchRecordingDayTranscript(dateStamp: number, query: string, signal?: AbortSignal) {
+    return await this.recording.searchDayTranscript(dateStamp, query, signal)
+  }
   async recordingDayOverview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<import('./types.js').ArkmeRecordingDayOverview> { return await this.recording.recordingDayOverview(dateStamp, viewRef, cursor, signal) }
   async recordingDayReview(dateStamp: number, viewRef: string, cursor: string, signal?: AbortSignal): Promise<{ viewRef: string; items: import('./types.js').ArkmeRecordingWorkbenchItem[] }> { return await this.recording.recordingDayReview(dateStamp, viewRef, cursor, signal) }
   async recordingDay(dateStamp: number, signal?: AbortSignal, window?: import('./types.js').ArkmeRecordingWindow): Promise<ArkmeRecordingDay> { return await this.recording.recordingDay(dateStamp, signal, window) }

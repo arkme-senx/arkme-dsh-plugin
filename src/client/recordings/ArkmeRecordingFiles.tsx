@@ -6,11 +6,13 @@ import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
 import { callArkme } from '../api.js'
 import { tr, arkmeIntlLocale } from '../locale.js'
+import { ArkmeLocalDateTimeInput, parseArkmeLocalDateTime } from '../ArkmeLocalDateTimeInput.js'
 import { arkmeTheme as theme } from '../arkme-theme.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 import type { PublicRecordingImportCurrentSnapshot, PublicRecordingImportHistoryPage } from '../../recording-import-shared.js'
+import { recordingAudioDurationLabel } from './recording-audio-duration.js'
 import { recordingImportEndTimeError, recordingImportLocalInputValue } from './ArkmeRecordingImportDialog.js'
-import { mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, type RecordingFile } from './recording-day-files.js'
+import { recordingFileDisplayEnd, recordingFileExpectedBytes, mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, type RecordingFile } from './recording-day-files.js'
 
 export interface RecordingFilesCount {
   dateStamp: number
@@ -50,16 +52,10 @@ const note: CSSProperties = { color: theme.secondary, fontSize: 12, lineHeight: 
 const PAGE_SIZE = 50
 const COMPLETED_SCAN_TTL = 60_000
 
-function instant(value: number, showDate = true) {
-  return value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hour12: false }) : '—'
+function instant(value: number | null, showDate = true) {
+  return value !== null && value > 0 ? new Date(value).toLocaleString(arkmeIntlLocale(), { ...(showDate ? { month: '2-digit', day: '2-digit' } as const : {}), hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—'
 }
-function duration(value: number) {
-  const seconds = Math.floor(Math.max(0, value) / 1000)
-  if (seconds < 60) return tr('{v0}秒', { v0: seconds })
-  const minutes = Math.floor(seconds / 60)
-  return seconds % 60 === 0 ? tr('{v0}分钟', { v0: minutes }) : tr('{v0}分{v1}秒', { v0: minutes, v1: seconds % 60 })
-}
-function size(value: number) { return value > 0 ? recordingMegabytesLabel(value) : '—' }
+function size(value: number | null) { return value === null ? tr('总大小待确认') : value === 0 ? '0 B' : recordingMegabytesLabel(value) }
 
 /** Account-key remount isolates file actions and late responses across login changes. */
 export function ArkmeRecordingFiles(props: Props) {
@@ -250,9 +246,9 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
   const mutate = async () => {
     if (!action || busy) return
     const { file, kind } = action
-    const startAtMillis = new Date(start).getTime()
+    const startAtMillis = parseArkmeLocalDateTime(start)
     if (kind === 'start') {
-      const error = recordingImportEndTimeError(startAtMillis, file.durationMillis)
+      const error = recordingImportEndTimeError(startAtMillis, Math.max(0, file.endAtMillis - file.startAtMillis))
       if (error) { setMutationError(tr(error)); return }
     }
     const controller = new AbortController(); mutation.current = controller
@@ -333,8 +329,8 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
           <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 24, rowGap: 2 }}>
             <div title={file.fileName} style={{ flex: '1 1 180px', minWidth: 0, maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, lineHeight: '22px', color: theme.text }}>{file.fileName}</div>
             <div style={{ ...note, flex: '0 1 auto', minWidth: 0, maxWidth: '100%', display: 'flex', flexWrap: 'wrap', columnGap: 6 }}>
-              <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(file.endAtMillis, crossDay)}</span>
-              <span>· {duration(file.durationMillis)}</span><span>· {size(file.fileSize)}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
+              <span title={crossDay ? tr('跨日文件，显示完整录音范围') : undefined}>{instant(file.startAtMillis, crossDay)}–{instant(recordingFileDisplayEnd(file), crossDay)}</span>
+              <span>· {recordingAudioDurationLabel(file.durationMillis, 'delivery' in file ? file.delivery : undefined)}</span><span>· {size(recordingFileExpectedBytes(file))}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
             </div>
           </div>
           {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', alignSelf: 'flex-start', marginTop: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
@@ -365,9 +361,9 @@ function RecordingFiles({ mediaPath, dateStamp, active, refreshRevision, onChang
     {action && <dialog ref={dialog} aria-label={tr(action.kind === 'delete' ? '确认删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}
       onCancel={event => { event.preventDefault(); if (!busy) setAction(undefined) }} style={{ width: 'min(440px, calc(100vw - 48px))', boxSizing: 'border-box', padding: 24, border: `1px solid ${theme.border}`, borderRadius: 12, background: theme.base, color: theme.text, boxShadow: theme.shadow }}>
       <h3 style={{ marginTop: 0 }}>{tr(action.kind === 'delete' ? '删除音频文件' : action.kind === 'start' ? '修改录音时间' : '修改数据归属')}</h3>
-      <p style={{ overflowWrap: 'anywhere' }}>{action.file.fileName}</p><p style={note}>{instant(action.file.startAtMillis)} — {instant(action.file.endAtMillis)}</p>
+      <p style={{ overflowWrap: 'anywhere' }}>{action.file.fileName}</p><p style={note}>{instant(action.file.startAtMillis)} — {instant(recordingFileDisplayEnd(action.file))}</p>
       {action.kind === 'delete' ? <p style={note}>{tr('将删除整份音频及关联录音数据，跨日部分也会受影响。删除后无法恢复。')}</p>
-        : action.kind === 'start' ? <label style={note}>{tr('录音开始时间')} <input type="datetime-local" step={1} aria-label={tr('录音开始时间')} value={start} onChange={event => setStart(event.target.value)} disabled={busy} style={control} /></label>
+        : action.kind === 'start' ? <div style={note}>{tr('录音开始时间')} <ArkmeLocalDateTimeInput label={tr('录音开始时间')} value={start} onValueChange={setStart} disabled={busy} style={control} /></div>
           : <><select aria-label={tr('文件数据归属')} value={ownership} disabled={busy} onChange={event => setOwnership(event.target.value as 'self' | 'other')} style={control}><option value="self">{tr('我的')}</option><option value="other">{tr('他人')}</option></select><p style={note}>{tr('我的数据写入时间轴，他人仅保存')}</p></>}
       {mutationError && <p role="alert" style={{ ...note, color: theme.danger }}>{mutationError}</p>}
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}><button type="button" style={button} disabled={busy} onClick={() => setAction(undefined)}>{tr('取消')}</button><button type="button" style={{ ...button, color: action.kind === 'delete' ? theme.danger : theme.text }} disabled={busy} onClick={() => { void mutate() }}>{tr(busy ? '处理中…' : action.kind === 'delete' ? '确认删除' : '保存')}</button></div>

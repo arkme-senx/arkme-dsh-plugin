@@ -41,6 +41,8 @@ export interface ArkmeCoordinatedRequest<T> {
   scope: string
   lane: ArkmeRequestLane
   service: ArkmeRequestService
+  /** Optional presence mutations yield to durable writes within the same budget. */
+  deferToWrites?: boolean
   /** Composite owners retain their route budget; their child transports own lane/service admission. */
   admission?: 'transport' | 'route-only'
   /** Omit for mutations and other calls that must never be coalesced. */
@@ -92,6 +94,7 @@ interface QueuedPermit {
   service: ArkmeRequestService
   transport: boolean
   continuation: boolean
+  deferToWrites: boolean
   route?: ResolvedLimit
   sequence: number
   onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue']
@@ -141,6 +144,12 @@ const LANE_PRIORITY: Record<ArkmeRequestLane, number> = {
   'interactive-read': 2,
   'background-read': 3,
   image: 4,
+}
+
+function compareQueuedPermits(left: QueuedPermit, right: QueuedPermit): number {
+  return LANE_PRIORITY[left.lane] - LANE_PRIORITY[right.lane]
+    || Number(left.deferToWrites) - Number(right.deferToWrites)
+    || left.sequence - right.sequence
 }
 
 export class ArkmeStaleRequestError extends Error {
@@ -335,8 +344,7 @@ export class ArkmeRequestCoordinator {
     const queued = this.queue.find(item => item.signal === entry.controller.signal)
     if (queued === undefined) return
     queued.lane = lane
-    this.queue.sort((left, right) => LANE_PRIORITY[left.lane] - LANE_PRIORITY[right.lane]
-      || left.sequence - right.sequence)
+    this.queue.sort(compareQueuedPermits)
     this.drain()
   }
 
@@ -437,7 +445,7 @@ export class ArkmeRequestCoordinator {
     const deadline = recovery === undefined ? undefined : setTimeout(() => controller.abort(recovery.timeout()), recovery.deadlineMs)
     try {
       while (true) {
-        release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue, request.admission, request.continuation)
+        release = await this.acquire(request.lane, request.service, controller.signal, route, request.onQueue, request.admission, request.continuation, request.lane === 'write' && request.deferToWrites === true)
         if (controller.signal.aborted) throw abortError(controller.signal.reason)
         if (this.epoch(scope) !== epoch) throw new ArkmeStaleRequestError()
         let value: T
@@ -526,6 +534,7 @@ export class ArkmeRequestCoordinator {
     onQueue?: ArkmeCoordinatedRequest<unknown>['onQueue'],
     admission: 'transport' | 'route-only' = 'transport',
     continuation = false,
+    deferToWrites = false,
   ): Promise<() => void> {
     if (signal.aborted) return Promise.reject(abortError(signal.reason))
     const laneLimit = this.laneLimits.get(lane)!
@@ -553,12 +562,12 @@ export class ArkmeRequestCoordinator {
         onQueue?.('cancel', { lane: queued.lane, service, queueWaitMs: this.now() - queued.queuedAt, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
         reject(abortError(signal.reason))
       }
-      queued = { lane, service, transport, continuation, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
+      queued = { lane, service, transport, continuation, deferToWrites, ...(route === undefined ? {} : { route }), sequence: this.sequence++, signal, resolve, reject, abort, queuedAt: this.now(), ...(onQueue ? { onQueue, blockedBy: new Set<string>() } : {}) }
       signal.addEventListener('abort', abort, { once: true })
       this.queue.push(queued)
       onQueue?.('enter', { lane, service, queueLength: this.queue.length, laneQueued, serviceQueued, laneActive: laneLimit.active, serviceActive: serviceLimit.active })
-      this.queue.sort((left, right) => LANE_PRIORITY[left.lane] - LANE_PRIORITY[right.lane]
-        || left.sequence - right.sequence)
+
+      this.queue.sort(compareQueuedPermits)
       this.drain()
     })
   }
@@ -595,6 +604,7 @@ export class ArkmeRequestCoordinator {
       }
       this.bump(queued, 'started')
       queued.onQueue?.('start', { lane: queued.lane, service: queued.service, queueWaitMs: this.now() - queued.queuedAt, queueLength: this.queue.length, blockedBy: [...(queued.blockedBy ?? [])].join(',') })
+
       let released = false
       queued.resolve(() => {
         if (released) return
@@ -682,10 +692,11 @@ export class ArkmeRequestCoordinator {
       ))
     }
     if (!Number.isFinite(delay)) return
+    const scheduledDelay = Math.min(2_147_483_647, Math.max(1, Math.ceil(delay)))
     this.timer = setTimeout(() => {
       this.timer = undefined
       this.drain()
-    }, Math.min(2_147_483_647, Math.max(1, Math.ceil(delay))))
+    }, scheduledDelay)
   }
 
   private tokenDelay(limit: ResolvedLimit): number {

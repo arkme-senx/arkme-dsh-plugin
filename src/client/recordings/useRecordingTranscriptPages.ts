@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeRecordingTranscriptPage } from '../../types.js'
-import { appendRecordingTranscriptPage, isRecordingViewChanged, restoreRecordingTranscriptPrefix } from '../../recording-transcript-page.js'
+import { appendRecordingTranscriptPage, isRecordingViewChanged, RecordingViewUpdating, restoreRecordingTranscriptPrefix } from '../../recording-transcript-page.js'
 import { callArkme } from '../api.js'
 
 type ViewRecoveryBudget = { remaining: number }
 function consumeRecovery(budget: ViewRecoveryBudget, count = 1): void {
-  if (count > budget.remaining) throw new Error('录音正文持续更新，请稍后重试')
+  if (count > budget.remaining) throw new RecordingViewUpdating()
   budget.remaining -= count
 }
 
@@ -18,14 +18,15 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
     budget: ViewRecoveryBudget; recoveries: number }>()
   const publishedView = useRef(page?.viewRef)
   const [loading, setLoading] = useState(false), [error, setError] = useState('')
+  const [updating, setUpdating] = useState(false)
   useEffect(() => {
-    setError(''); setLoading(false)
+    setError(''); setLoading(false); setUpdating(false)
     return () => { active.current?.controller.abort(); active.current = undefined }
   }, [scope, page?.dateStamp, page?.transcriptSource])
   useEffect(() => {
     if (page?.viewRef !== publishedView.current) {
       active.current?.controller.abort(); active.current = undefined
-      setError(''); setLoading(false)
+      setError(''); setLoading(false); setUpdating(false)
     }
   }, [page?.viewRef])
 
@@ -104,11 +105,13 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
           }
         }
         ensureCurrent()
+        setUpdating(false)
         latest.current = merged; publishedView.current = merged.viewRef; publish.current(merged)
         return merged
       } catch (reason) {
         if (!controller.signal.aborted && owner === currentScope.current && !(reason instanceof DOMException && reason.name === 'AbortError')) {
-          setError(reason instanceof Error ? reason.message : '读取录音失败')
+          setUpdating(reason instanceof RecordingViewUpdating)
+          setError(reason instanceof RecordingViewUpdating ? '' : reason instanceof Error ? reason.message : '读取录音失败')
         }
         throw reason
       } finally {
@@ -122,7 +125,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
 
   const next = useCallback(() => read(), [read])
   const refresh = useCallback((first: ArkmeRecordingTranscriptPage, signal?: AbortSignal) => read(first, true, signal), [read])
-  const through = useCallback(async (time?: number, signal?: AbortSignal): Promise<ArkmeRecordingTranscriptPage | undefined> => {
+  const through = useCallback(async (time?: number, signal?: AbortSignal, shared = false): Promise<ArkmeRecordingTranscriptPage | undefined> => {
     signal?.throwIfAborted()
     const owner = currentScope.current
     let value = latest.current
@@ -135,12 +138,12 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
       const cursor = `${value.viewRef}:${value.nextCursor}`
       if (cursors.has(cursor)) throw new Error('录音分页未前进')
       cursors.add(cursor)
-      value = await read(undefined, false, signal, budget)
+      value = await read(undefined, false, shared ? undefined : signal, budget)
     }
     signal?.throwIfAborted()
     if (owner !== currentScope.current) throw new DOMException('录音读取已取消', 'AbortError')
     return value
   }, [read])
 
-  return { next, refresh, through, loading, error }
+  return { next, refresh, through, loading, error, updating }
 }

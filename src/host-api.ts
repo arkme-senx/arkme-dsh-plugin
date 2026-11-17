@@ -1,5 +1,4 @@
-import { messageSendRecord } from './message-send-timing.js'
-import { measureMessageSend } from './message-send-host-timing.js'
+import { recordingDeliveryQuery } from './recording-delivery.js'
 import { readPriorityHeader, supportsBackgroundRead } from './read-scheduling.js'
 import { directoryTraceHeader, directoryTraceSignals, groupInteractionTrace, groupInteractionTraceEnabled, isDirectoryTraceId } from './group-interaction-diagnostics.js'
 import type { LocalRecorderOwner } from './local-recorder/owner.js'
@@ -1113,7 +1112,8 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         writeJson(res, 200, { ok: true, value: await callLocalRecorder(options.localRecorder, request.operation, params, controller.signal) }, started)
         return
       }
-      const dispatch = () => measureMessageSend(messageSendRecord(request.operation, params), 'host-operation', () => measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
+
+      const dispatch = () => measureConversationRead(request.operation, () => dispatchArkmeHostOperation(
         service,
         request.operation,
         params,
@@ -1131,12 +1131,12 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
         options.teamCodex,
         options.migrationManager,
       ), measured => { phases = measured }, request.operation === 'source.timeline' && isLoopback(req.socket.remoteAddress)
-        ? historyReadTrace(confirmationUrl.searchParams.get('historyTrace')) : undefined))
+        ? historyReadTrace(confirmationUrl.searchParams.get('historyTrace')) : undefined)
       const priority = req.headers[readPriorityHeader.toLowerCase()]
       const lane = supportsBackgroundRead(request.operation, params)
         ? priority === 'background' ? 'background-read' : priority === 'interactive' ? 'interactive-read' : undefined
         : undefined
-      const value = lane === undefined ? await dispatch() : await service.runWithReadPriority(lane, dispatch)
+      const value = await (lane === undefined ? dispatch() : service.runWithReadPriority(lane, dispatch))
       writeJson(res, 200, { ok: true, value }, started, phases)
     } catch (error) {
       if (controller.signal.aborted && res.destroyed) return
@@ -1759,6 +1759,22 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.day.review': return await service.recordingDayReview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
     case 'recordings.day.overview': return await service.recordingDayOverview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
+    case 'recordings.transcript.locate': {
+      if (params.version !== undefined && (typeof params.version !== 'string' || !params.version.trim())) {
+        throw new ArkmePluginError('recording-location-input-invalid', '原句定位参数无效', false, 400)
+      }
+      return await service.locateRecordingTranscript(
+        numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
+        stringParam(params, 'identityHash'), stringParam(params, 'version'), requestSignal,
+      )
+    }
+    case 'recordings.transcript.context': return await service.recordingTranscriptContext(
+      numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
+      numberParam(params, 'endAtMillis', Number.NaN), requestSignal,
+    )
+    case 'recordings.transcript.search': return await service.searchRecordingDayTranscript(
+      numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'query'), requestSignal,
+    )
     case 'recordings.transcript.page': {
       const source = params.source ?? 'system'
       if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string') {
@@ -1866,6 +1882,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       ownership: recordingImportOwnershipParam(params),
     }, requestSignal)
     case 'offline-context': return await service.offlineContext(params as unknown as OfflineContextRequest,requestSignal)
+    case 'recordings.delivery.page': return service.recordingDeliveryPage(recordingDeliveryQuery(params), requestSignal)
     case 'recordings.files.storage': return service.recordingFileStorage({ sessionRefs: params.sessionRefs as string[] }, requestSignal)
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(

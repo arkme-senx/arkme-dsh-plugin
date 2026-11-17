@@ -49,6 +49,83 @@ function runtimeFixture(
 
 afterEach(() => { vi.useRealTimers() })
 
+it.each([
+  ['chat', '/api/v1/conversation-list/preferences/query'], ['chat', '/api/v1/chats/read-receipts/summary-list'],
+  ['record', '/api/v1/records/annotations/list'], ['record', '/api/v1/records/annotations/capabilities'],
+  ['record', '/api/v1/topics/display/list'], ['record', '/api/v1/topics/hierarchy/relations/list'],
+  ['record', '/api/v1/records/uncategorized/query'], ['record', '/api/v1/records/uncategorized/summary'],
+  ['bot', '/api/v1/bot/group/list'],
+])('admits %s %s as an independent read without adding cache or coalescing', async (service, route) => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const fetcher = vi.fn(async () => { await gate; return new Response(JSON.stringify({ code: 200, data: {} })) })
+  const runtime = runtimeFixture(fetcher)
+  const base = config[`${service}BaseUrl` as 'chatBaseUrl']
+  try {
+    const read = () => runtime.post(base, route, {}, 'token', [200])
+    const first = read(), second = read()
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
+    const owner = service === 'bot' ? 'other' : service
+    expect(runtime.requestStats()[`interactive-read:${owner}`]?.started).toBe(2)
+    expect(runtime.requestStats()[`write:${owner}`]?.started ?? 0).toBe(0)
+    release(); await Promise.all([first, second]); await read()
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  } finally { release(); runtime.dispose() }
+})
+
+it('keeps query failures one-shot and leaves writes independent of their cooldown', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response('', { status: 503 }))
+    .mockResolvedValue(new Response(JSON.stringify({ code: 200, data: {} })))
+  const runtime = runtimeFixture(fetcher)
+  try {
+    await expect(runtime.post(config.chatBaseUrl, '/api/v1/conversation-list/preferences/query', {}, 'token', [200])).rejects.toMatchObject({ upstreamStatus: 503 })
+    expect(fetcher).toHaveBeenCalledOnce()
+    await expect(runtime.post(config.chatBaseUrl, '/api/v1/chats/records/send', {}, 'token', [200])).resolves.toEqual({})
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  } finally { runtime.dispose() }
+})
+
+it('recognizes query routes when services share a gateway base URL', async () => {
+  const unified = { ...config, chatBaseUrl: config.recordBaseUrl, botBaseUrl: config.recordBaseUrl }
+  const runtime = new ServiceRuntime(unified, sessions, {} as StateStore,
+    vi.fn(async () => new Response(JSON.stringify({ code: 200, data: {} }))))
+  try {
+    await runtime.post(unified.recordBaseUrl, '/api/v1/topics/display/list', {}, 'token', [200])
+    await runtime.post(unified.botBaseUrl, '/api/v1/bot/group/list', {}, 'token', [200])
+    expect(runtime.requestStats()['interactive-read:chat']?.started).toBe(2)
+    expect(runtime.requestStats()['write:chat']?.started ?? 0).toBe(0)
+  } finally { runtime.dispose() }
+})
+
+it.each(['/api/v1/records/annotations/create', '/api/v1/records/annotations/remove', '/api/v1/bot/private-chat/open'])('preserves mutation admission and independent writes for %s', async route => {
+  const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({ code: 200, data: {} }))))
+  const base = route.startsWith('/api/v1/bot/') ? config.botBaseUrl : config.recordBaseUrl
+  try {
+    await Promise.all([runtime.post(base, route, {}, 'token', [200]), runtime.post(base, route, {}, 'token', [200])])
+    expect(runtime.requestStats()[`write:${base === config.botBaseUrl ? 'other' : 'record'}`]?.started).toBe(2)
+  } finally { runtime.dispose() }
+})
+
+it('admits a message before an earlier queued presence cancellation using the same write rate budget', async () => {
+  vi.useFakeTimers()
+  const order: string[] = []
+  const runtime = runtimeFixture(vi.fn(async (url: string | URL | Request) => {
+    order.push(String(url)); return new Response(JSON.stringify({ code: 200, data: {} }))
+  }))
+  try {
+    for (let index = 0; index < 8; index++) await runtime.post(config.chatBaseUrl, '/api/v1/chats/records/send', { index }, 'token', [200])
+    order.length = 0
+    const presence = runtime.post(config.chatBaseUrl, '/api/v1/chats/messages/preparing/cancel', {}, 'token', [200])
+    const send = runtime.post(config.chatBaseUrl, '/api/v1/chats/records/send', {}, 'token', [200])
+    await vi.advanceTimersByTimeAsync(200)
+    await send
+    expect(order).toEqual([`${config.chatBaseUrl}/api/v1/chats/records/send`])
+    await vi.advanceTimersByTimeAsync(200); await presence
+    expect(order[1]).toBe(`${config.chatBaseUrl}/api/v1/chats/messages/preparing/cancel`)
+    expect(runtime.requestStats()['write:chat']?.started).toBe(10)
+  } finally { runtime.dispose() }
+})
+
 it('coalesces login device reads without caching and keeps the remaining observer alive', async () => {
   let release!: () => void
   const gate = new Promise<void>(resolve => { release = resolve })

@@ -18,6 +18,9 @@ function invalid(message = '录音内容已变化，请刷新后重试'): never 
 export class RecordingViewChanged extends Error {
   constructor() { super('录音内容正在更新'); this.name = 'RecordingViewChanged' }
 }
+export class RecordingViewUpdating extends Error {
+  constructor() { super('录音内容正在更新，稍后自动继续加载'); this.name = 'RecordingViewUpdating' }
+}
 export function isRecordingViewChanged(error: unknown): boolean {
   return error instanceof RecordingViewChanged || (typeof error === 'object' && error !== null
     && 'body' in error && typeof error.body === 'object' && error.body !== null

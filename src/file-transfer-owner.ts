@@ -19,13 +19,15 @@ export function createArkmeFileTransfers(options: {
   media: MediaService
   teamMedia?:Pick<import('./services/team-app-service.js').TeamAppService,'fetchMedia'>
   chat: ChatService
-  onProgressChange?: (userId: number, taskRef: string) => void
+  onProgressChange?: (userId: number, taskRef: string, task?: import('./file-transfer-contract.js').ArkmeFileSendTask) => void
   openPath?: (path: string, signal: AbortSignal) => Promise<void>
 }): FileTransfers | undefined {
   if (options.directory === undefined) return undefined
   const progressive = new ProgressiveAttachments(options.runtime)
   return new FileTransfers(options.directory, {
     ...(options.onProgressChange ? { onProgressChange: options.onProgressChange } : {}),
+    orderedSendsReady: () => options.runtime.orderedChatSendsReady(),
+    runOrderedSends: actions => options.runtime.runOrderedChatSends(actions),
     currentUser: async () => (await options.runtime.requireSession()).userId,
     retainedFileRefs: async userId => [...await options.runtime.stateStore.recordReeditFileRefs(userId), ...await options.runtime.stateStore.arkoFileRefs(userId)],
     validateSource: async (sourceRef, userId) => {

@@ -45,6 +45,36 @@ beforeEach(() => {
 })
 afterEach(async () => { await act(async () => renderer?.unmount()); arkmeUi.showConversations(); arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'test' }); vi.useRealTimers() })
 
+it('recovers changing transcript pages while an independent summary remains processing', async () => {
+  let changed = false, stable = false
+  const original = mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async (op, p) => {
+    if (op === 'recordings.transcript.page') throw { body: { code: 'recording-view-changed' } }
+    if (op !== 'recordings.day') return original(op, p)
+    const value = makeDay(p.dateStamp)
+    value.summary.state = 'processing'
+    if (changed) {
+      value.transcript.viewRef = 'new-view'
+      value.transcript.nextCursor = stable ? '' : 'new-cursor'
+      value.transcript.items[0].text = stable ? '稳定后的正文' : '尚未核验的正文'
+    }
+    return p.part ? { dateStamp: p.dateStamp, totalDurationMillis: value.totalDurationMillis, [p.part]: value[p.part as keyof ArkmeRecordingDay] } : value
+  })
+  await act(async () => { renderer = create(ui()) })
+  expect(rendered()).toContain('有录音')
+  await click('总结')
+  await click('转写')
+  changed = true
+  await act(async () => { renderer.update(ui(1)) })
+  await act(async () => vi.advanceTimersByTimeAsync(1000))
+  expect(rendered()).toContain('有录音')
+  expect(rendered()).toContain('录音内容正在更新，稍后自动继续加载')
+  expect(rendered()).not.toContain('更新暂未完成')
+  stable = true
+  await act(async () => vi.advanceTimersByTimeAsync(5000))
+  expect(rendered()).toContain('稳定后的正文')
+})
+
 it('keeps the selected summary mounted while a background refresh is pending and after a newer version arrives', async () => {
   await open()
   const body = renderer.root.findByType(ArkmeMarkdownBody)

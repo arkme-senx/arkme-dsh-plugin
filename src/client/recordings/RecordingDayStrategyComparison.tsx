@@ -13,7 +13,7 @@ import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 import { RecordingDayComparisonProgress } from './RecordingDayComparisonProgress.js'
 import comparisonCss from './recording-day-comparison.css?inline'
 
-const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })
+const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hourCycle: 'h23', hour: '2-digit', minute: '2-digit' })
 
 /** A calendar comparison is a read view over all source-owned results, never a
  * replacement day result, merged speaker identity, or automatic reprocessing. */

@@ -349,7 +349,7 @@ describe('recording import button feedback', () => {
       renderer.root.findByProps({ 'aria-label': '选择录音文件' }).props.onChange({ target: { files: [new File(['data'], 'third.m4a')], value: '' } })
       await tick()
     })
-    expect(renderer.root.findByProps({ 'aria-label': 'third.m4a录音开始时间' }).props.disabled).toBe(false)
+    expect(renderer.root.findByProps({ label: 'third.m4a录音开始时间' }).props.disabled).toBe(false)
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
     await close()
     expect(dialog.open).toBe(false)

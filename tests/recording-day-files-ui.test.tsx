@@ -6,6 +6,8 @@ import type { PublicRecordingImportCurrentItem, PublicRecordingImportHistoryItem
 const mock = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: mock.call }))
 import { ArkmeRecordingFiles } from '../src/client/recordings/ArkmeRecordingFiles.js'
+import fixture from './fixtures/recording-delivery.json'
+import { parseRecordingDelivery } from '../src/recording-delivery.js'
 
 const day = new Date(2026, 9, 12).getTime()
 const file = (patch: Partial<PublicRecordingImportHistoryItem> = {}): PublicRecordingImportHistoryItem => ({ taskKey: 'one', sessionRef: 'ref1', ownership: 'self', fileName: '会议.m4a', fileSize: 1048576, parsedSize: 100, durationMillis: 60000, startAtMillis: day, endAtMillis: day + 60000, progress: 1, status: 'completed', statusDetail: '', createdAtMillis: day, updatedAtMillis: day, ...patch })
@@ -30,6 +32,27 @@ beforeEach(() => {
   })
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
+
+it('shows only the total duration, with a dash until it is available', async () => {
+  const partial = { ...parseRecordingDelivery(fixture.awaiting_end)!, audioDurationMs: 65000 }
+  completed = [
+    file({ taskKey: 'partial', delivery: partial }),
+    file({ taskKey: 'final', delivery: { ...partial, durationFinal: true } }),
+    file({ taskKey: 'unknown', delivery: { ...partial, audioDurationMs: null } }),
+    file({ taskKey: 'empty', delivery: { ...partial, audioDurationMs: 0, durationFinal: true } }),
+  ]
+  await render()
+  const text = (key: string) => host.querySelector(`[data-recording-file-key="${key}"]`)!.textContent!
+  expect(text('partial')).not.toContain('1分5秒')
+  expect(text('partial')).toContain('· —')
+  expect(text('final')).toContain('1分5秒')
+  expect(text('final')).not.toContain('（部分）')
+  expect(text('unknown')).toContain('· —')
+  expect(host.textContent).not.toContain('时长待确认')
+  expect(host.textContent).not.toContain('（部分）')
+  expect(text('unknown')).not.toContain('1分钟')
+  expect(text('empty')).toContain('0秒')
+})
 
 it('shows measured storage beside original size and queries only files on the selected day in bounded batches', async () => {
   completed = Array.from({ length: 23 }, (_, i) => file({ taskKey: `f${i}`, sessionRef: `s${i}`, fileName: `文件${i}.wav` }))

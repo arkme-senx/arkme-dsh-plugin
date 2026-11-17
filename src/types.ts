@@ -655,6 +655,8 @@ export interface ArkmeBotSummary {
   conversationListActivityAtMillis?: number
   /** Safe preview of the latest private-chat message. */
   latestMessagePreview?: string
+  /** Explicit owner denial clears a previously cached preview immediately. */
+  conversationAccessDenied?: true
   /** Unread count projected from the canonical Chat conversation, when Chat owns the Bot conversation. */
   unreadCount?: number
   /** Attention count after applying the canonical Chat notification policy. */
@@ -1435,8 +1437,24 @@ export interface ArkmeRecordingTarget {
   dateStamp: number
   startAtMillis: number
   segment?: ArkmeRecordingSearchIdentity
+  transcriptSearchQuery?: string
   summary?: { versionId?: string }
   timeline?: { versionId?: string }
+}
+
+export interface ArkmeRecordingTranscriptContext {
+  items: ArkmeRecordingWorkbenchItem[]
+  revisions?: Record<string, string>
+}
+
+export interface ArkmeRecordingTranscriptLocation extends ArkmeRecordingTranscriptContext {
+  focusItemId: string
+}
+
+export interface ArkmeRecordingDaySearchCandidate {
+  identityHash: string
+  startAtMillis: number
+  snippet: string
 }
 
 export interface ArkmeRecordingSearchItem {
@@ -1665,6 +1683,7 @@ arkoImagesV1?:true
 recordingAnalysisV1?: true
     recordingStrategiesV1?: true
     recordingFileStorageV1?: true
+    recordingDeliveryV1?: true
     recordingStrategyRecordingsV1?: true
     recordingProcessingPreferenceV1?: true
     offlineContextV1?:true
@@ -4324,6 +4343,7 @@ export type ArkmeChatClientEvent = {
   revision: number
   userId: number
   taskRef: string
+  task?: import('./file-transfer-contract.js').ArkmeFileSendTask
 } | {
   type: 'message-sync-progress'
   revision: number
@@ -4501,6 +4521,9 @@ export type ArkmePluginOperation =
   | 'recordings.strategies.start'
   | 'recordings.strategies.preference.set'
   | 'recordings.transcript.page'
+  | 'recordings.transcript.locate'
+  | 'recordings.transcript.context'
+  | 'recordings.transcript.search'
   | 'source.person-records.page'
   | 'articles.list'
   | 'native-chat.annotations'
@@ -5034,6 +5057,7 @@ export type ArkmePluginOperation =
   | 'topic.dissolve.active'
 
   | 'recordings.files.storage'
+  | 'recordings.delivery.page'
   | 'recordings.import.file'
   | 'recordings.import.status'
   | 'recordings.import.retry'

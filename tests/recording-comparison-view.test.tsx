@@ -92,3 +92,14 @@ it('scrolls each column independently and paginates only the column near its bot
   expect(next[0]).toHaveBeenCalledOnce()
   expect(next[1]).toHaveBeenCalledOnce()
 })
+
+it('keeps the transcript visible and exposes an explicit retry while a view is updating', async () => {
+  const next = vi.fn().mockResolvedValue(undefined)
+  await render(<RecordingComparisonPane pagination={{ cursor: 'next', loading: false, updating: true, error: '', next }}><p>已读正文</p></RecordingComparisonPane>)
+  expect(document.body.textContent).toContain('已读正文')
+  expect(document.body.textContent).toContain('录音内容正在更新')
+  expect(document.querySelector('[role="alert"]')).toBeNull()
+  expect(next).not.toHaveBeenCalled()
+  await act(async () => { document.querySelector<HTMLButtonElement>('button')!.click() })
+  expect(next).toHaveBeenCalledOnce()
+})

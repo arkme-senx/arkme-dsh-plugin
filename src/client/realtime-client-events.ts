@@ -254,7 +254,7 @@ export function useArkmeRealtimeClientEvents(
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
         if (update.type === 'file-send-progress') {
-          wakeArkmeFileTask(update.userId, update.taskRef)
+          wakeArkmeFileTask(update.userId, update.taskRef, update.task)
           return
         }
         diagnoseAttention('accepted', update)

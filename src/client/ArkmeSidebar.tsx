@@ -1,4 +1,3 @@
-import { beginClientSendTiming, clientSendTimingPoint } from '../message-send-timing.js'
 import {parseGameCommand} from './game/command.js'
 import {openGame} from './game/window.js'
 import { HistoryPageTiming, historyTimingEnabled } from './conversation-history-timing.js'
@@ -5290,7 +5289,6 @@ export function ArkmeSurface({
         ? JSON.stringify(['send',representation??null])
         : JSON.stringify(['source-message-extension', targetDraftKey, extensionTarget.item.itemUid, extensionTarget.quote ?? null, representation??null]),
     )
-    beginClientSendTiming(recordUid, sendStartedAt, targetSource.kind)
     const mentionTrace = targetSource.kind === 'group_chat' && serializedDraft.mentions.some(mention => mention.mentionRef)
       ? groupInteractionTraceKey(recordUid) : undefined
     if (mentionTrace) groupInteractionTrace('send-click', { message: mentionTrace, startedAt: sendStartedAt })
@@ -5386,7 +5384,6 @@ export function ArkmeSurface({
     if (sameTargetComposer()) {
       setItems(current => mergeItems(current, [optimistic]))
     }
-    clientSendTimingPoint(recordUid, 'optimistic-enqueued')
     if (sameTargetComposer()) setError('')
     let roleBound = false
     if (roleAtSendStart !== undefined) {
@@ -5417,7 +5414,6 @@ export function ArkmeSurface({
     let inputCapture: ArkmeRecordInputCaptureResult
     try {
       inputCapture = await capturePromise
-      clientSendTimingPoint(recordUid, 'input-capture-ready')
     } catch (caught) {
       let roleCleanupFailed = false
       if (roleBound && roleAtSendStart !== undefined && sameTargetAccount()) {
@@ -5604,16 +5600,13 @@ export function ArkmeSurface({
           }
         }
       }
-      clientSendTimingPoint(recordUid, 'attachments-ready')
       const allFileRefs = [...pendingFileRefs, ...backgroundSoundFileRefs]
       const durableText = allFileRefs.length === 0 && backgroundSoundAssets.length === 0
         && (isArkmeSelfWorkspaceSource(targetSource) || isArkmeChatDirectorySource(targetSource))
         && fileSendPolicySnapshot(targetAccountKey, advertisedFilePolicy)?.textMessagesVersion === 1
-      clientSendTimingPoint(recordUid, 'send-policy-ready')
       if (allFileRefs.length > 0 || durableText) {
         if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
         const locationCapture = await locationCapturePromise
-        clientSendTimingPoint(recordUid, 'location-ready')
         if (!sameTargetAccount()) throw new Error('账号已切换，本次位置采集结果已丢弃')
         const fileSendParams = {
           ...(representation?{representation}:{}), sendAtMillis:now,
@@ -5643,9 +5636,7 @@ export function ArkmeSurface({
         try {
           providerWriteStarted = true
           if (mentionTrace) groupInteractionTrace('submit-to-host', { message: mentionTrace, route: 'durable' })
-          clientSendTimingPoint(recordUid, 'host-submit')
           acceptedTask = await callArkme<ArkmeFileSendTask>('files.send', fileSendParams)
-          clientSendTimingPoint(recordUid, 'local-admission-received')
           if (mentionTrace) groupInteractionTrace('host-admission-returned', { message: mentionTrace })
         } catch (caught) {
           let taskLookupSucceeded = false
@@ -5690,7 +5681,6 @@ export function ArkmeSurface({
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送已取消')
       providerWriteStarted = true
       if (mentionTrace) groupInteractionTrace('submit-to-host', { message: mentionTrace, route: 'direct' })
-      clientSendTimingPoint(recordUid, 'host-submit')
       const result = textFormat === 'markdown' || pendingAssets.length > 0 || backgroundSoundAssets.length > 0 || (isArkmeSelfWorkspaceSource(targetSource) && pendingBotMentions.length > 0)
         ? await callArkme<ArkmeSourceSendResult>('source.send-rich', {
           ...(representation?{representation}:{}), sendAtMillis:now,
@@ -5716,7 +5706,6 @@ export function ArkmeSurface({
         })
       providerWriteSucceeded = true
       if (!sameTargetAccount()) throw new Error('账号已切换，本次发送结果已丢弃')
-      clientSendTimingPoint(recordUid, 'provider-result-received')
       if (mentionTrace) groupInteractionTrace('send-confirmed-in-ui', { message: mentionTrace, sequence: result.sequence })
       await rebindRole(result.itemUid)
       backgroundDirectUploadCacheRef.current.delete(recordUid)

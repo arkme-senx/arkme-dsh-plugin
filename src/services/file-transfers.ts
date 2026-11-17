@@ -1,5 +1,3 @@
-import { currentMessageSend, measureMessageSend } from '../message-send-host-timing.js'
-import { messageSendPoint } from '../message-send-timing.js'
 import type { PendingAttachment, AttachmentReceipt, ProgressiveCapability, ProgressiveTarget } from './progressive-attachments.js'
 import type { ArkmeUploadCompletion, ArkmeUploadCompletionRecovery } from './media-service.js'
 import type { TeamSendTask } from '../team-send-contract.js'
@@ -16,14 +14,16 @@ import { isLongArticleImageMimeType, LONG_ARTICLE_IMAGE_MAX_BYTES } from '../lon
 
 type Metadata = Pick<ArkmeLocalFile, 'fileName' | 'mimeType' | 'size'>
 interface StoredFile extends ArkmeLocalFile { sha256: string; createdAtMillis: number; asset?: ArkmeUploadedAsset; retention?: 'references'; longArticle?: true }
-interface StoredSendTask extends ArkmeFileSendTask { inlinePhotoPreviewSupported?: true; photoThumbnailSupported?: true; photoThumbnails?: Record<string, ProgressiveTarget>; completions?: Record<string, { generation: number; completion: ArkmeUploadCompletion }>; retryAfterMillis?: number; sourceKey?: string; contentDigest?: string }
+interface StoredSendTask extends ArkmeFileSendTask { orderedPipeline?: true; awaitingPipeline?: true; inlinePhotoPreviewSupported?: true; photoThumbnailSupported?: true; photoThumbnails?: Record<string, ProgressiveTarget>; completions?: Record<string, { generation: number; completion: ArkmeUploadCompletion }>; retryAfterMillis?: number; sourceKey?: string; contentDigest?: string }
 interface FileState { version: 1; files: Record<string, StoredFile>; tasks: StoredSendTask[]; textTasks: StoredSendTask[]; originals: Record<string, string>; teamSends?: TeamSendTask[] }
 export type FileTransferSendOutcome =
   | { kind: 'owner_accepted'; result: ArkmeSourceSendResult }
   | { kind: 'owner_not_accepted'; message: string; code?: string; retryable?: boolean; retryAfterMillis?: number }
   | { kind: 'owner_outcome_unknown'; message?: string; code?: string; retryAfterMillis?: number }
 export interface FileTransferPorts {
-  onProgressChange?(userId: number, taskRef: string): void
+  onProgressChange?(userId: number, taskRef: string, task?: ArkmeFileSendTask): void
+  orderedSendsReady?(): boolean
+  runOrderedSends?(actions: readonly (() => Promise<void>)[]): Promise<void>
   currentUser(): Promise<number>
   retainedFileRefs?(userId: number): Promise<readonly string[]>
   validateSource(sourceRef: string, userId: number): Promise<string | void>
@@ -100,7 +100,9 @@ export class FileTransfers {
   private mutations: Promise<unknown> = Promise.resolve()
   private directUploads: Promise<unknown> = Promise.resolve()
   private readonly uploadingRefs = new Set<string>()
-  private queue: Promise<void> = Promise.resolve()
+  private readonly queuedBodies: Array<{ key: string; controller: AbortController; scope: string; task: StoredSendTask; state: FileState; work: () => Promise<void>; done: () => void }> = []
+  private readonly activeBodyScopes = new Set<string>()
+  private readonly blockedBodyScopes = new Map<string, FileState>()
   private legacyFileQueue: Promise<void> = Promise.resolve()
   private photoThumbnailQueue: Promise<void> = Promise.resolve()
   private photoThumbnailDrain: AbortController | undefined
@@ -122,9 +124,14 @@ export class FileTransfers {
   }
 
   capabilities(): ArkmeFilePolicy { return { ...this.policy } }
-  cancelActive(): void { ++this.recoveryGeneration; clearTimeout(this.recoveryTimer); this.recoveryTimer = undefined; this.recovering = undefined; this.recoveryUser = undefined; for (const controller of this.controllers) controller.abort(); this.receptions.clear() }
+  cancelActive(): void {
+    ++this.recoveryGeneration; clearTimeout(this.recoveryTimer); this.recoveryTimer = undefined; this.recovering = undefined; this.recoveryUser = undefined
+    for (const controller of this.controllers) controller.abort()
+    for (const job of this.queuedBodies.splice(0)) { this.scheduled.delete(job.key); this.controllers.delete(job.controller); job.done() }
+    this.blockedBodyScopes.clear(); this.receptions.clear()
+  }
   dispose(): void { this.closed = true; this.cancelActive() }
-  async settled(): Promise<void> { await this.recovering; await Promise.allSettled(this.reconciling.values()); await this.queue; await this.legacyFileQueue; await this.uploadQueue; await this.photoThumbnailQueue; await this.directUploads.catch(() => {}); await Promise.all(this.jobs); await Promise.all([this.writes, this.textWrites]) }
+  async settled(): Promise<void> { await this.recovering; await Promise.allSettled(this.reconciling.values()); await Promise.all(this.scheduled.values()); await this.legacyFileQueue; await this.uploadQueue; await this.photoThumbnailQueue; await this.directUploads.catch(() => {}); await Promise.all(this.jobs); await Promise.all([this.writes, this.textWrites]) }
 
   async resume(): Promise<void> {
     if (this.closed) return
@@ -133,6 +140,9 @@ export class FileTransfers {
     if (this.recoveryUser !== undefined) this.cancelActive()
     this.recoveryUser = user
     const state = await this.state(user)
+    for (const task of allTasks(state)) if (task.orderedPipeline && task.state === 'uncertain') {
+      this.blockedBodyScopes.set(`${user}:${task.sourceKey ?? task.sourceRef}`, state)
+    }
     for (const task of allTasks(state)) if (task.state === 'queued') this.schedule(user, state, task)
     this.armRecovery(user, state)
     this.resumePhotoThumbnails(user, state)
@@ -298,7 +308,7 @@ export class FileTransfers {
           if ((task.retryAttempts ?? 0) >= 6) delete task.nextRetryAtMillis
           const interrupted = ['sending', 'queued', 'uploading'].includes(task.state)
           if (task.state === 'sending') { task.state = 'uncertain'; task.error = '发送结果待确认，请先核对会话，避免重复发送' }
-          else if (task.state === 'queued' || task.state === 'uploading') { task.state = 'failed'; task.error = '上次传输已中断，请重试' }
+          else if ((task.state === 'queued' && !task.awaitingPipeline) || task.state === 'uploading') { task.state = 'failed'; task.error = '上次传输已中断，请重试' }
           if (interrupted && task.retryAttempts !== undefined && task.retryAttempts < 6 && task.retryable !== false) {
             task.retryable = true; task.nextRetryAtMillis = Date.now()
           }
@@ -306,6 +316,9 @@ export class FileTransfers {
         // Save migrated text first. A restart between writes prefers the new ledger.
         if (redacted || migrated.length) await this.saveText(userId, state)
         if (migrated.length) await this.save(userId, state)
+        for (const task of allTasks(state)) if (task.orderedPipeline && task.state === 'uncertain') {
+          this.blockedBodyScopes.set(`${userId}:${task.sourceKey ?? task.sourceRef}`, state)
+        }
         return state
       })()
       this.states.set(userId, loaded)
@@ -319,23 +332,18 @@ export class FileTransfers {
     return this.writeState(userId, 'text-sends.json', { version: 1, tasks: state.textTasks })
   }
   private saveTask(userId: number, state: FileState, task: StoredSendTask): Promise<void> {
-    return measureMessageSend(task.recordUid, 'task-persist', () => taskListKey(task) === 'textTasks' ? this.saveText(userId, state) : this.save(userId, state), task.state)
+    task.revision = (task.revision ?? 0) + 1
+    return taskListKey(task) === 'textTasks' ? this.saveText(userId, state) : this.save(userId, state)
   }
   private writeState(userId: number, name: 'state.json' | 'text-sends.json', value: object): Promise<void> {
     const lane = name === 'text-sends.json' ? 'textWrites' : 'writes'
-    const sendRecord = currentMessageSend()
-    const queuedAt = sendRecord ? performance.now() : 0
     const data = JSON.stringify(value)
-    messageSendPoint('host', sendRecord, 'task-serialized', { durationMs: performance.now() - queuedAt })
     const write = this[lane].catch(() => {}).then(async () => {
-      const writeStarted = sendRecord ? performance.now() : 0
-      messageSendPoint('host', sendRecord, 'disk-write-start', { queueMs: writeStarted - queuedAt })
       const target = join(this.root(userId), name)
       const temporary = `${target}.${randomUUID()}.tmp`
       try { await writeFile(temporary, data, { mode: 0o600 }); await rename(temporary, target) }
       finally {
         await unlink(temporary).catch(() => {})
-        messageSendPoint('host', sendRecord, 'disk-write-end', { durationMs: performance.now() - writeStarted })
       }
     })
     this[lane] = write
@@ -508,10 +516,12 @@ export class FileTransfers {
       ? await this.ports.validateSource(sourceRef, user) : undefined
     await this.assertUser(user)
     const watched = watchTaskRefs === undefined ? undefined : new Set(watchTaskRefs)
-    return tasks.filter(task => (watched === undefined || watched.has(task.taskRef)
+    const result = tasks.filter(task => (watched === undefined || watched.has(task.taskRef)
       || task.state === 'queued' || task.state === 'uploading' || task.state === 'sending' || task.nextRetryAtMillis !== undefined)
       && (!sourceRef || task.sourceRef === sourceRef || sourceKey && task.sourceKey === sourceKey))
       .map(task => this.publicTask(watched?.has(task.taskRef) ? { ...task, content: {} } : task, sourceRef))
+
+    return result
   }
   /** Internal Team delivery uses the existing account store and file-reference lock. */
   async teamSends(userId: number): Promise<TeamSendTask[]> {
@@ -559,6 +569,7 @@ export class FileTransfers {
       try { await this.saveTask(userId, state, task) }
       catch (error) { state[key] = previousTasks; throw error }
     })
+    this.drainBodies()
   }
   async reconcile(taskRef: string): Promise<ArkmeFileSendTask> {
     const userId = await this.ports.currentUser()
@@ -595,7 +606,7 @@ export class FileTransfers {
           return this.publicTask(task)
         })
       } finally { this.controllers.delete(controller) }
-    })().finally(() => this.reconciling.delete(key))
+    })().finally(() => { this.reconciling.delete(key); this.drainBodies() })
     this.reconciling.set(key, work)
     return work
   }
@@ -827,7 +838,7 @@ export class FileTransfers {
     }
     return true
   }
-  private publicTask({ completions: _completions, retryAfterMillis: _retryAfterMillis, sourceKey: _sourceKey, contentDigest: _contentDigest, inlinePhotoPreviewSupported: _inlinePhotoPreviewSupported, photoThumbnailSupported: _photoThumbnailSupported, photoThumbnails: _photoThumbnails, ...task }: StoredSendTask, sourceRef = task.sourceRef): ArkmeFileSendTask {
+  private publicTask({ orderedPipeline: _orderedPipeline, awaitingPipeline: _awaitingPipeline, completions: _completions, retryAfterMillis: _retryAfterMillis, sourceKey: _sourceKey, contentDigest: _contentDigest, inlinePhotoPreviewSupported: _inlinePhotoPreviewSupported, photoThumbnailSupported: _photoThumbnailSupported, photoThumbnails: _photoThumbnails, ...task }: StoredSendTask, sourceRef = task.sourceRef): ArkmeFileSendTask {
     return clone({ ...task, sourceRef, ...(task.result ? { result: { ...task.result, sourceRef } } : {}) })
   }
 
@@ -989,11 +1000,11 @@ export class FileTransfers {
     const controller = new AbortController(); this.controllers.add(controller)
     let ownerOutcome: FileTransferSendOutcome | undefined
     let deferred = false
+    let unattempted = false
     const lane = task.fileRefs.length > 0 && task.delivery !== 'progressive' ? 'legacyFileQueue' : 'queue'
-    const queuedAt = performance.now()
-    messageSendPoint('host', task.recordUid, 'task-queued', { lane, state: task.state })
-    this[lane] = this[lane].catch(() => {}).then(() => measureMessageSend(task.recordUid, 'task-worker', async () => {
-      messageSendPoint('host', task.recordUid, 'task-worker-admitted', { queueMs: performance.now() - queuedAt, lane })
+
+    const work = () => (async () => {
+
       try {
         await this.assertUser(userId, controller.signal)
         if (task.delivery === undefined || task.delivery === 'negotiating') {
@@ -1037,6 +1048,7 @@ export class FileTransfers {
           }
         }
         await this.assertUser(userId, controller.signal)
+        delete task.awaitingPipeline
         task.state = 'sending'; await this.saveTask(userId, state, task)
         const assets = task.files.map(file => file.asset!)
         const assetByRef = new Map(task.fileRefs.map((ref, index) => [ref, assets[index]!]))
@@ -1045,8 +1057,8 @@ export class FileTransfers {
           amplitudes: [...task.backgroundSound.amplitudes],
         }
         try {
-          ownerOutcome = await measureMessageSend(task.recordUid, 'owner-send', () => this.ports.send(task, assets, backgroundSound, userId, controller.signal))
-          messageSendPoint('host', task.recordUid, 'owner-outcome', { state: ownerOutcome.kind })
+          ownerOutcome = await this.ports.send(task, assets, backgroundSound, userId, controller.signal)
+
         } catch {
           // A port contract violation must fail closed because the owner may have accepted the write.
           ownerOutcome = { kind: 'owner_outcome_unknown' }
@@ -1056,6 +1068,9 @@ export class FileTransfers {
           delete task.location
           task.state = 'sent'; delete task.error; delete task.errorCode
           this.compactTextReceipt(task)
+        } else if (ownerOutcome.kind === 'owner_not_accepted' && ownerOutcome.code === 'send-order-unattempted') {
+          task.state = 'queued'; task.awaitingPipeline = true; unattempted = true
+          delete task.error; delete task.errorCode; delete task.nextRetryAtMillis
         } else if (ownerOutcome.kind === 'owner_not_accepted') {
           task.state = 'failed'; task.error = ownerOutcome.message
           if (ownerOutcome.retryable !== undefined) task.retryable = ownerOutcome.retryable
@@ -1085,10 +1100,13 @@ export class FileTransfers {
           this.controllers.delete(controller)
           this.planRecovery(task)
           await this.saveTask(userId, state, task)
-          if (task.fileRefs.length && !controller.signal.aborted) this.ports.onProgressChange?.(userId, task.taskRef)
+          if (!controller.signal.aborted) {
+
+            try { this.ports.onProgressChange?.(userId, task.taskRef, this.publicTask(task)) } catch { /* Polling recovers a missed notification. */ }
+          }
         }
       }
-    })).catch(() => {
+    })().catch(() => {
       if (task.delivery === 'progressive' && task.state === 'uncertain') return
       if (ownerOutcome?.kind === 'owner_accepted') {
         task.state = 'sent'; delete task.error; delete task.errorCode
@@ -1101,8 +1119,69 @@ export class FileTransfers {
         task.state = 'failed'
         task.error ??= '本地发送状态保存失败，请重试'
       }
-    }).finally(() => { this.scheduled.delete(key); this.armRecovery(userId, state) })
-    this.scheduled.set(key, this[lane])
+    }).finally(() => {
+      this.scheduled.delete(key)
+      if (unattempted && !controller.signal.aborted) this.schedule(userId, state, task)
+      this.armRecovery(userId, state)
+    })
+    if (lane === 'legacyFileQueue') {
+      this.legacyFileQueue = this.legacyFileQueue.catch(() => {}).then(work)
+      this.scheduled.set(key, this.legacyFileQueue)
+    } else {
+      let done!: () => void
+      this.scheduled.set(key, new Promise<void>(resolve => { done = resolve }))
+      const scope = `${userId}:${task.sourceKey ?? task.sourceRef}`, order = allTasks(state)
+      const before = this.queuedBodies.findIndex(job => job.scope === scope && order.indexOf(job.task) > order.indexOf(task))
+      this.queuedBodies.splice(before < 0 ? this.queuedBodies.length : before, 0, { key, controller, scope, task, state, work, done })
+      queueMicrotask(() => this.drainBodies())
+    }
+  }
+
+  private drainBodies(): void {
+    const plainKeys = new Set(['textContent', 'textFormat', 'sendAtMillis', 'title', 'displayKind', 'thinkingDurationMillis', 'recordDurationMillis', 'captureContext'])
+    const batchable = (task: StoredSendTask) => task.fileRefs.length === 0 && !task.backgroundSound && /^(?:private_chat|group_chat):/.test(task.sourceKey ?? '')
+      && Object.keys(task.content).every(key => plainKeys.has(key))
+      && this.ports.runOrderedSends && this.ports.orderedSendsReady?.()
+    // At most two conversations run at once; each conversation has one ordered body owner.
+    while (this.activeBodyScopes.size < 2) {
+      const index = this.queuedBodies.findIndex(job => {
+        if (this.activeBodyScopes.has(job.scope)) return false
+        const blockedState = this.blockedBodyScopes.get(job.scope)
+        if (!blockedState) return true
+        // A truncated response can leave several outcomes unknown; resolve every predecessor.
+        const blocked = allTasks(blockedState).find(task => task.orderedPipeline
+          && (task.sourceKey ?? task.sourceRef) === job.scope.slice(job.scope.indexOf(':') + 1)
+          && (task.state === 'uncertain' || task.state === 'failed' && task.nextRetryAtMillis !== undefined
+            || task.state === 'queued' && !task.awaitingPipeline))
+        if (!blocked) {
+          this.blockedBodyScopes.delete(job.scope); return true
+        }
+        return blocked === job.task && blocked.state === 'queued'
+      })
+      if (index < 0) return
+      const first = this.queuedBodies.splice(index, 1)[0]!
+      const group = [first]
+      if (batchable(first.task)) {
+        for (let i = 0; i < this.queuedBodies.length && group.length < 5;) {
+          const next = this.queuedBodies[i]!
+          if (next.scope !== first.scope) { i++; continue }
+          if (!batchable(next.task)) break
+          group.push(...this.queuedBodies.splice(i, 1))
+        }
+      }
+      this.activeBodyScopes.add(first.scope)
+      if (group.length > 1) for (const job of group) job.task.orderedPipeline = true
+      const flight = (group.length > 1 ? this.ports.runOrderedSends!(group.map(job => job.work)) : first.work())
+        .catch(() => {}).finally(() => {
+          const unknown = group.find(job => job.task.orderedPipeline && job.task.state === 'uncertain')
+          if (unknown && !unknown.controller.signal.aborted && !this.closed) this.blockedBodyScopes.set(first.scope, unknown.state)
+          this.activeBodyScopes.delete(first.scope)
+          for (const job of group) job.done()
+          this.drainBodies()
+        })
+      this.jobs.add(flight)
+      void flight.finally(() => this.jobs.delete(flight))
+    }
   }
 
   async reception(mediaRef: string, start = false): Promise<ArkmeFileReception> {

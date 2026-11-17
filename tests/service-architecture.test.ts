@@ -13,7 +13,7 @@ const expectedPublicMethods = [
   'loginDevices', 'gameRequest', 'reportDeviceActivity', 'reportIMReady',
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
-  'recordingFileStorage', 'recordingAnalysis',
+  'recordingFileStorage', 'recordingDeliveryPage', 'recordingAnalysis',
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
   'sourceMessageThoughts', // Signed-message reader shared by public SDK and Tools.
@@ -97,12 +97,12 @@ const expectedPublicMethods = [
   'searchContact', 'addContact', 'joinContactTeam',
   'listDirectory', 'directoryContactProfile', 'updateDirectoryContactRemark', 'directoryContactWorld', 'openDirectoryContactChat', 'openDirectoryGroupChat',
   'unmarkedSpeakerOptions', 'retryUnmarkedSpeakerInference', 'unmarkedSpeakerSegments', 'markUnmarkedSpeaker',
-  'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTotalsDay', 'recordingTranscript', 'recordingProjection',
+  'createExtensionReview', 'recordingCalendar', 'recordingTotalsIndex', 'recordingTotalsBucket', 'recordingTotalsDay', 'recordingTranscript', 'recordingTranscriptContext', 'recordingProjection',
   'recordingStrategies', 'recordingComparison', 'startRecordingComparison', 'startRecordingEntities', 'recordingForwardCapabilities', 'forwardRecording', 'copyRecordingLink',
   'recordingWorkflow', 'recordingSummaryModelConfig', 'setRecordingSummaryModelRoute', 'generateRecordingProjection',
   'recordingHistory', 'recordingPresence', 'reportRecordingPresence', 'resumeRecordingPresence',
   'recordingEntityFeedback', 'undoRecordingEntityFeedback', 'recordingEntities', 'recordingPersonReferences', 'recordingEntityOccurrences',
-  'recordingDay', 'recordingDayOverview', 'recordingDayPart', 'recordingDayReview', 'recordingTranscriptPage', 'recordingDayArrangements', 'recordingPlayback',
+  'recordingDay', 'recordingDayOverview', 'recordingDayPart', 'recordingDayReview', 'recordingTranscriptPage', 'locateRecordingTranscript', 'searchRecordingDayTranscript', 'recordingDayArrangements', 'recordingPlayback',
   'speakerDirectorySummary', 'speakerDirectoryList', 'speakerDirectorySeen', 'speakerDirectoryOpen', 'speakerDirectoryAvatars',
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'previewRecordingSpeakerCorrection', 'recordingSpeakerEvidenceQuery', 'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
@@ -229,7 +229,7 @@ const expectedServiceFiles = [
   'team-history-service.ts',
   'team-service.ts', 'team-app-service.ts', 'team-member-addition.ts', 'team-entry-preference-service.ts', 'team-send-queue.ts',
   'voiceprint-service.ts', 'user-ban-service.ts', 'call-history-service.ts', 'privacy-visibility.ts',
-  'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts',
+  'link-metadata-service.ts', 'location-search-service.ts', 'share-preview-service.ts', 'message-action-infrastructure.ts', 'message-action-service.ts', 'message-copy-link-create.ts', 'ordered-chat-send.ts',
 ].sort()
 
 function publicMethodNames(path: string): string[] {

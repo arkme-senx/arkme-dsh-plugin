@@ -4,6 +4,7 @@ import type { ArkmeMessageQuote } from '../message-quote.js'
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent, type ReactNode } from 'react'
 import { Copy } from '@phosphor-icons/react/dist/icons/Copy'
 import { CheckSquare } from '@phosphor-icons/react/dist/icons/CheckSquare'
+import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { Play } from '@phosphor-icons/react/dist/icons/Play'
 import type { ArkmeTimelineItem } from '../types.js'
 import type { MessageUnderlineChange } from '../message-annotations.js'
@@ -16,7 +17,7 @@ import { ArkmeMessageTextSelectionToolbar, useMessageTextSelectionTarget, type M
 import { useMessageUnderlines } from './ArkmeMessageUnderlines.js'
 import type { MessageMarkTransport } from './message-underline-session.js'
 import { useSelectedMessageSearch } from './message-selection-search.js'
-import { applyMessageTextReplacement, resolveMessageTextReplacement } from './message-text-replacement.js'
+import { applyMessageTextReplacement, preparePlainTextReplacement, resolveMessageTextReplacement } from './message-text-replacement.js'
 import { quoteDigest } from './message-quote-selection.js'
 import { copyText } from './clipboard-text.js'
 
@@ -29,8 +30,55 @@ const smallButton = { border: 0, background: 'transparent', color: arkmeTheme.se
 const controlButton = { ...smallButton, border: `1px solid ${arkmeTheme.border}`, borderRadius: 6, color: arkmeTheme.text, padding: '5px 9px', fontSize: 12 }
 const message = (e: unknown) => e instanceof Error ? e.message : '云端保存失败，请重试'
 
+function TranscriptInlineEditor({ text, onSave, onClose }: {
+  text: string; onSave(draft: string): Promise<void>; onClose(): void
+}) {
+  const [draft, setDraft] = useState(text)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const input = useRef<HTMLTextAreaElement>(null)
+  const saving = useRef(false)
+  useEffect(() => { input.current?.focus({ preventScroll: true }) }, [])
+
+  const save = async () => {
+    if (saving.current) return
+    if (draft === text) { onClose(); return }
+    saving.current = true
+    setBusy(true)
+    setError('')
+    try { await onSave(draft); onClose() }
+    catch (error) { setError(message(error)) }
+    finally { saving.current = false; setBusy(false) }
+  }
+
+  return <span role="group" aria-label={tr('编辑转写')} data-transcript-editor
+    style={{ display: 'block', width: 360, maxWidth: '100%' }}
+    onClick={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}
+    onContextMenu={event => event.stopPropagation()}
+    onKeyDown={event => {
+      if (event.key === 'Escape' && !event.nativeEvent.isComposing) {
+        event.stopPropagation()
+        if (!saving.current) onClose()
+      }
+    }}>
+    <textarea ref={input} aria-label={tr('转写内容')} rows={2} value={draft} disabled={busy}
+      onChange={event => setDraft(event.target.value)}
+      style={{ display: 'block', width: '100%', minHeight: 56, maxHeight: 240, boxSizing: 'border-box',
+        resize: 'vertical', border: `1px solid ${arkmeTheme.border}`, borderRadius: 6, padding: 6,
+        background: arkmeTheme.input, color: arkmeTheme.text, font: 'inherit' }} />
+    {error && <span role="alert" style={{ display: 'block', marginTop: 4, fontSize: 12, color: arkmeTheme.danger }}>{tr(error)}</span>}
+    <span style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 4 }}>
+      <button type="button" disabled={busy} style={smallButton} onClick={onClose}>{tr('取消')}</button>
+      <button type="button" disabled={busy} style={{ ...smallButton, color: arkmeTheme.accent }} onClick={() => { void save() }}>
+        {tr(busy ? '保存中…' : '保存')}
+      </button>
+    </span>
+  </span>
+}
+
 type TranscriptMenuPoint = { id: string; x: number; y: number }
 type TranscriptMenuHandle = { open(point: TranscriptMenuPoint): void }
+type TranscriptEdit = { row: TranscriptInteractionRow; epoch: number; text: string; entry: PersonalTranscriptEntry | undefined }
 
 /** Opening a menu must not reconcile thousands of transcript rows in its parent. */
 const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
@@ -38,7 +86,9 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
   onCopy(row: TranscriptInteractionRow): void
   onSelect(row: TranscriptInteractionRow): void
   onPlay(row: TranscriptInteractionRow): void
-}>(function TranscriptContextMenu({ rows, onCopy, onSelect, onPlay }, ref) {
+  canEdit(row: TranscriptInteractionRow): boolean
+  onEdit(row: TranscriptInteractionRow): void
+}>(function TranscriptContextMenu({ rows, onCopy, onSelect, onPlay, canEdit, onEdit }, ref) {
   const [point, setPoint] = useState<TranscriptMenuPoint>()
   useImperativeHandle(ref, () => ({ open: setPoint }), [])
   const row = point ? rows.find(row => row.id === point.id) : undefined
@@ -47,14 +97,15 @@ const TranscriptContextMenu = forwardRef<TranscriptMenuHandle, {
   const close = () => setPoint(undefined)
   return <ArkmeActionMenu point={point} label="转写操作" onClose={close} autoFocus actions={[
     { id: 'copy', label: '复制', icon: <Copy />, onSelect: () => { close(); onCopy(row) } },
+    ...(canEdit(row) ? [{ id: 'edit', label: tr('编辑转写'), icon: <PencilSimple />, onSelect: () => { close(); onEdit(row) } }] : []),
     { id: 'select', label: '多选', icon: <CheckSquare />, onSelect: () => { close(); onSelect(row) } },
     { id: 'play', label: '播放', icon: <Play />, disabled: !row.playable, onSelect: () => { close(); onPlay(row) } },
   ]} />
 })
 
 /** Private transcript views share selection UI; ASR and chat facts retain their owners. */
-export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay, onStop, playing = false, onMultiSelect, onFind, onPublish }: {
-  scope: string; rows: TranscriptInteractionRow[]; enabled?: boolean
+export function useTranscriptInteractions({ scope, rows, enabled = true, preferUnreadRows = false, onPlay, onStop, playing = false, onMultiSelect, onFind, onPublish }: {
+  scope: string; rows: TranscriptInteractionRow[]; enabled?: boolean; preferUnreadRows?: boolean
   onPlay(ids: string[]): void; onStop?(): void; playing?: boolean; onMultiSelect?(id: string): void; onFind?(text: string): void; onPublish?(ids:string[]):void
 }) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -71,6 +122,10 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
   const entriesRef = useRef(entries); entriesRef.current = entries
   const [notice, setNotice] = useState(''), [retry, setRetry] = useState(0)
   const menuRef = useRef<TranscriptMenuHandle>(null)
+  const [edit, setEdit] = useState<TranscriptEdit>()
+  const editing = enabled && edit?.epoch === epoch && rows.some(row => row.id === edit.row.id) ? edit : undefined
+  const activeEdit = useRef(editing); activeEdit.current = editing
+  useEffect(() => { if (!editing) setEdit(undefined) }, [editing])
   const [selected, setSelected] = useState<Set<string>>()
   const restoring = useRef(new Set<string>())
   const [search, setSearch] = useState(''), [matchIndex, setMatchIndex] = useState(0)
@@ -139,7 +194,11 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
       loading=true
       const requestEpoch=accessEpoch.current
       try {
-        const ids = (JSON.parse(idsKey) as string[][]).map(row=>row[0]!)
+        const visibleRows = JSON.parse(idsKey) as Array<[id: string, version: string | null, ref: string | null]>
+        const unreadRows = preferUnreadRows
+          ? visibleRows.filter(([id, version, ref]) => ref && entriesRef.current[id]?.originalVersion !== version)
+          : []
+        const ids = (unreadRows.length ? unreadRows : visibleRows).map(([id]) => id)
         for (let i = 0; i < ids.length; i += 40) await currentRead.current(ids.slice(i, i + 40), controller.signal,true)
         if (!controller.signal.aborted && accessEpoch.current === requestEpoch) setNotice('')
       } catch (error) { if (!controller.signal.aborted && currentKey.current === key && accessEpoch.current === requestEpoch) setNotice(message(error)) } finally {loading=false}
@@ -148,11 +207,38 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
     const selectionChanged=()=>{if(!window.getSelection()?.toString())void refresh()}
     void refresh(); if (typeof window !== 'undefined') window.addEventListener('focus', refresh);document.addEventListener('selectionchange',selectionChanged)
     return () => { clearInterval(timer);controller.abort(); if (typeof window !== 'undefined') window.removeEventListener('focus', refresh);document.removeEventListener('selectionchange',selectionChanged) }
-  }, [key, idsKey, enabled, retry])
+  }, [key, idsKey, enabled, retry, preferUnreadRows])
   useEffect(() => { setSelected(undefined); setSearch(''); setNotice('') }, [key, enabled])
   const display = (row: TranscriptInteractionRow, entry = entriesRef.current[row.id]) => entry && entry.originalVersion === row.sourceVersion ? (entry.legacy?.original === entry.original ? entry.legacy.text : entry.text) : row.text
-  const target = (row: TranscriptInteractionRow): MessageSelectionTarget => {
-    const text = display(row)
+  const canEditRow = (row: TranscriptInteractionRow) => {
+    const entry = entriesRef.current[row.id]
+    return scope.startsWith('recording:') && !!account && !!row.viewRef && !!row.sourceVersion && !editing
+      && !entry?.legacy && !entry?.pendingCommand && !!display(row).trim()
+  }
+  const startEdit = (row: TranscriptInteractionRow) => {
+    const entry = entriesRef.current[row.id]
+    setEdit({ row, epoch, text: display(row), entry: entry?.originalVersion === row.sourceVersion ? entry : undefined })
+  }
+  const saveEdit = async (edit: TranscriptEdit, draft: string) => {
+    const currentRow = () => {
+      guard()
+      if (activeEdit.current !== edit) throw new Error('转写页面已切换，请重新选择')
+      const current = latest.current.rows.find(row => row.id === edit.row.id)
+      if (!current?.viewRef || current.sourceVersion !== edit.row.sourceVersion || current.text !== edit.row.text) {
+        throw new Error('云端原文已更新，请重新打开编辑')
+      }
+      return current
+    }
+    const row = currentRow()
+    const entry = edit.entry ?? (await read([row.id]))[row.id]
+    if (!entry || entry.originalVersion !== row.sourceVersion || display(row, entry) !== edit.text) {
+      throw new Error('转写已更新，请重新打开编辑')
+    }
+    const sourceDigest = await quoteDigest(target(row, edit.text).item)
+    const patch = preparePlainTextReplacement(edit.text, draft, sourceDigest)
+    await change(currentRow(), entry, patch)
+  }
+  const target = (row: TranscriptInteractionRow, text = display(row)): MessageSelectionTarget => {
     return { sourceRef,...(row.excerptOrigin?{excerptOrigin:row.excerptOrigin}:{}),...(row.excerptSource?{excerptSource:row.excerptSource}:{}),selectionDomain: 'transcript', localMarkRef: JSON.stringify([row.id, text]),
       item: { itemUid: row.id, senderName: row.speaker, isMe: false, sendAtMillis: row.at, title: '', textContent: text, textFormat: 'plain', status: 1 } }
   }
@@ -200,10 +286,14 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
     document.querySelector(`[data-transcript-scope="${CSS.escape(sourceRef)}"] [data-transcript-search-active]`)?.scrollIntoView({ block: 'center' })
   }, [sourceRef, activeMatch?.id, activeMatch?.start])
   const copyRows = async (ids: string[]) => {
-    try { await copyText(latest.current.rows.filter(row => ids.includes(row.id)).sort((a,b) => a.at - b.at).map(row => `${row.speaker} ${new Date(row.at).toLocaleTimeString()}\n${display(row)}`).join('\n\n')) }
+    try { await copyText(latest.current.rows.filter(row => ids.includes(row.id)).sort((a,b) => a.at - b.at).map(row => `${row.speaker} ${new Date(row.at).toLocaleTimeString(undefined, { hourCycle: 'h23' })}\n${display(row)}`).join('\n\n')) }
     catch (error) { setNotice(message(error)) }
   }
   const renderText = (row: TranscriptInteractionRow, render?: (text: string) => ReactNode) => {
+    if (editing?.row.id === row.id) return <span data-transcript-scope={sourceRef} data-transcript-row={row.id}>
+      <TranscriptInlineEditor text={editing.text} onSave={draft => saveEdit(editing, draft)}
+        onClose={() => setEdit(current => current === editing ? undefined : current)} />
+    </span>
     const text = display(row), entry = entries[row.id], mine = results.filter(hit => hit.id === row.id)
     let child: ReactNode = render ? render(text) : text
     if (search && mine.length) {
@@ -253,6 +343,7 @@ export function useTranscriptInteractions({ scope, rows, enabled = true, onPlay,
       }} />
     {marks.layer}
     <TranscriptContextMenu key={`menu:${key}:${epoch}`} ref={menuRef} rows={rows}
+      canEdit={canEditRow} onEdit={startEdit}
       onCopy={row => { void copyText(display(row)).catch(e => { if (alive.current && currentKey.current === key) setNotice(message(e)) }) }}
       onSelect={row => { if (latest.current.onMultiSelect) latest.current.onMultiSelect(row.id); else setSelected(new Set([row.id])) }}
       onPlay={row => latest.current.onPlay([row.id])} />
