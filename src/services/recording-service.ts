@@ -23,6 +23,7 @@ import { parseRecordingTotalMetrics } from '../recording-total-metrics.js'
 import type { RecordingTotalsIndexPage } from '../recording-total-metrics.js'
 import { projectRecordingTotalsBucket, recordingTotalsFromDaily } from '../recording-total-projection.js'
 import { parseRecordingPresence, type RecordingPresenceSnapshot } from '../recording-presence.js'
+import type { TranscriptViewSnapshot, TranscriptViewTarget } from '../transcript-view-contract.js'
 import { recordingSearchVersion, recordingSearchIdentityHash } from '../recording-search-version.js'
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -2429,10 +2430,51 @@ export class RecordingService {
     const [key, speakerKey] = await Promise.all([this.recordingRefKey('arkme-recording-item-v1'), this.recordingRefKey('arkme-recording-speaker-v1')])
     await this.ensureRecordingSession(session, signal)
     const items = section.items.map(row => this.workbenchItem(dateStamp, row, session.userId, key, speakerKey, window))
+    const revisedText = await this.applyPrivateContextText(section.items, session, signal)
     return {
-      items,
+      items: items.map(item => revisedText.has(item.itemId) ? { ...item, text: revisedText.get(item.itemId)! } : item),
       revisions: Object.fromEntries(items.map((row, index) => [row.sessionKey, section.items[index]!.readView.revision])),
     }
+  }
+
+  private async applyPrivateContextText(
+    items: readonly ArkmeRecordingPrivateTranscriptItem[], session: ArkmeSessionCredentials, signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, string>> {
+    const text = new Map<string, string>()
+    const edits = items.flatMap(item => item.privateViewVersion && item.textStartOffset === 0 && item.textEndOffset === item.textTotalLength ? [{
+      item,
+      target: {
+        kind: 'recording', source_uid: item.sessionId,
+        segment_uid: `${item.childId}:${item.transcriptSource === 'system' ? 'primary' : 'enhanced'}:${item.asrItemIndex}`,
+      } satisfies TranscriptViewTarget,
+    }] : [])
+    for (let offset = 0; offset < edits.length; offset += 40) {
+      signal?.throwIfAborted()
+      const batch = edits.slice(offset, offset + 40)
+      const known = new Map(batch.map(({ item, target }) => [JSON.stringify([target.source_uid, target.segment_uid]), item]))
+      const snapshots = await this.runtime.authenticatedAudioPost<{ items: TranscriptViewSnapshot[] }>(
+        '/api/v1/audio/transcript-views/read', { targets: batch.map(({ target }) => target) }, session, signal,
+        { lane: 'interactive-read', bypassCache: true },
+      )
+      if (!Array.isArray(snapshots.items) || snapshots.items.length !== batch.length) {
+        throw new ArkmePluginError('recording-private-view-invalid', '修订转写读取不完整，请重试', true, 502)
+      }
+      for (const snapshot of snapshots.items) {
+        const key = JSON.stringify([snapshot?.source_uid, snapshot?.segment_uid])
+        const item = known.get(key)
+        if (!item || snapshot?.complete !== true || snapshot.kind !== 'recording'
+          || typeof snapshot.text !== 'string' || !Number.isSafeInteger(snapshot.revision) || snapshot.revision < 0) {
+          throw new ArkmePluginError('recording-private-view-invalid', '修订转写响应无效', true, 502)
+        }
+        if (snapshot.original_version !== item.privateViewVersion) {
+          throw new ArkmePluginError('recording-view-changed', '录音原文已更新，请重新定位', true, 409)
+        }
+        known.delete(key)
+        if (snapshot.revision > 0 && snapshot.text !== item.text) text.set(item.itemId, snapshot.text)
+      }
+    }
+    if (edits.length > 0) await this.ensureRecordingSession(session, signal)
+    return text
   }
 
   async searchDayTranscript(dateStamp: number, query: string, signal?: AbortSignal): Promise<ArkmeRecordingDaySearchCandidate[]> {
