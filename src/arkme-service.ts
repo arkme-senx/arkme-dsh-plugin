@@ -519,6 +519,7 @@ export class ArkmeService {
   private readonly explore: ExploreService
   private readonly recordingEntitiesOwner: RecordingEntityService
   private readonly recording: RecordingService
+  /** @internal Built-in loopback confirmation page. */
   readonly recordingDeletionConfirmations: RecordingDeletionConfirmations
   private readonly profile: ProfileService
   private readonly loginDeviceService: LoginDevicesService
@@ -1821,13 +1822,16 @@ recordingAnalysisV1: true,
   recordingStrategies(input: Record<string, unknown>, signal?: AbortSignal) { return this.recording.recordingStrategies(input, signal) }
   recordingDeliveryPage(input: import('./recording-delivery.js').RecordingDeliveryQuery, signal?: AbortSignal) { return this.recording.recordingDeliveryPage(input, signal) }
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal) { return this.recording.recordingFileStorage(input, signal) }
+  /** @internal Built-in loopback settings only. */
   async recordingDeletionSettings(scope: string, change?: { enabled?: boolean; timeZone: string }, signal?: AbortSignal) {
     const { permission } = await this.recording.recordingDeletionPermission(scope, change, signal)
     return { enabled: permission !== undefined, timeZone: permission?.timeZone }
   }
+  /** @internal Local DSH tool preparation. */
   recordingDeletionPlan(input: import('./recording-deletion-contract.js').RecordingDeletionRequest, signal?: AbortSignal) {
     return this.recordingDeletionConfirmations.prepare(input, signal)
   }
+  /** @internal Local DSH tool receipt. */
   recordingDeletionStatus(planRef: string, signal?: AbortSignal) { return this.recordingDeletionConfirmations.status(planRef, signal) }
   /** UI, Tools and SDK share the account-scoped Audio candidate owner. */
   recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal) {
