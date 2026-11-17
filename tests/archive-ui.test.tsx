@@ -28,7 +28,11 @@ const click = async (text: string) => {
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true
   HTMLElement.prototype.scrollIntoView = vi.fn()
-  mock.call.mockReset().mockImplementation(async (operation: string) => operation === 'archives.list' ? page : [{ ...inherited, sourceRef: 'parent', selfArchived: true, revision: 7 }])
+  mock.call.mockReset().mockImplementation(async (operation: string) => {
+    if (operation === 'recordings.ai-deletion.settings') return { enabled: false }
+    if (operation === 'archives.list') return page
+    return [{ ...inherited, sourceRef: 'parent', selfArchived: true, revision: 7 }]
+  })
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 42 })
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
@@ -325,11 +329,11 @@ it('adds archives to the existing data management without replacing its other en
   const close = vi.fn()
   await act(async () => { root.render(<ArkmeDataManagementSettings close={close} />) })
   for (const title of ['已归档主题', '最近删除', '导入数据', '导出数据']) expect(host.textContent).toContain(title)
-  expect(mock.call).not.toHaveBeenCalled()
+  expect(mock.call).toHaveBeenCalledExactlyOnceWith('recordings.ai-deletion.settings', { accountScope: 'test:42' }, expect.any(AbortSignal))
   await click('已归档主题')
   expect(host.querySelectorAll('h2')).toHaveLength(1)
   expect(host.querySelector('h2')?.textContent).toBe('已归档主题')
-  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['archives.list'])
+  expect(mock.call.mock.calls.map(call => call[0])).toEqual(['recordings.ai-deletion.settings', 'archives.list'])
   await click(`打开主题：${inherited.source.displayName}`)
   expect(close).toHaveBeenCalledOnce()
   await click('‹ 数据管理')
