@@ -1,5 +1,7 @@
 import { recordingCalendarDate, recordingCivilKey, useArkmeDisplayTimeZone } from '../display-time-zone.js'
 import { recordingAudioDurationLabel } from './recording-audio-duration.js'
+import { recordingDisplayName } from './recording-display-name.js'
+import { recordingFileExpectedBytes, recordingTaskStatusLabel } from './recording-day-files.js'
 import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
 import { RecordingImportQueue } from '../../recording-import-queue.js'
@@ -66,7 +68,7 @@ type OwnershipChange =
 
 type ImportDeletion =
   | { kind: 'job'; job: PublicRecordingImportJob }
-  | { kind: 'owner'; sessionRef: string; fileName: string; history: boolean }
+  | { kind: 'owner'; task: PublicRecordingImportOwnerTask | PublicRecordingImportHistoryItem; history: boolean }
 
 type OwnerMutationIntent =
   | { kind: 'start'; sessionRef: string; startAtMillis: number }
@@ -103,7 +105,7 @@ interface ProcessingDetailsRow {
 
 interface ProcessingDetailsSource {
   key: string
-  fileName: string
+  displayName: string
   durationMillis: number
   rows: ProcessingDetailsRow[]
   ownerClock?: Pick<PublicRecordingImportProgress, 'serverNowMillis' | 'observedAtMillis'>
@@ -298,12 +300,8 @@ function taskAudioDuration(task: ImportTask): string {
   return recordingAudioDurationLabel(task.durationMillis, 'delivery' in task ? task.delivery : undefined)
 }
 function taskFileSize(task: ImportTask): string {
-  if ('delivery' in task && task.delivery) {
-    return task.delivery.expectedBytes === null
-      ? tr('已接收 {v0} · 总大小待确认', { v0: fileSizeLabel(task.delivery.receivedBytes) })
-      : fileSizeLabel(task.delivery.expectedBytes)
-  }
-  return task.fileSize > 0 ? fileSizeLabel(task.fileSize) : tr('待确认')
+  const bytes = recordingFileExpectedBytes(task)
+  return bytes === null ? '—' : fileSizeLabel(bytes)
 }
 
 function fileSizeLabel(bytes: number): string {
@@ -334,8 +332,9 @@ function recordingImportEndLabel(startAtMillis: number, durationMillis: number):
 }
 
 function taskStatusTitle(task: ImportTask): string {
-  const lines = [task.statusDetail]
-  if ('progress' in task && typeof task.progress === 'number' && task.progress > 0 && task.progress < 1) {
+  const lines = [tr(recordingTaskStatusLabel(task))]
+  if (!('delivery' in task && task.delivery?.coverage === 'receiving')
+    && 'progress' in task && typeof task.progress === 'number' && task.progress > 0 && task.progress < 1) {
     lines.push(tr("上传进度：{v0}%", { v0: String(Math.round(task.progress * 100)) }))
   }
   return lines.join('\n')
@@ -592,7 +591,7 @@ function stagedProcessingSource(row: StagedRecording, nowMillis: number): Proces
   if (!row.submitting || startedAtMillis <= 0) return undefined
   return {
     key: stagedProcessingKey(row),
-    fileName: row.file.name,
+    displayName: row.file.name,
     durationMillis: Math.max(0, nowMillis - startedAtMillis),
     rows: localStageRows(startedAtMillis, false),
   }
@@ -600,6 +599,7 @@ function stagedProcessingSource(row: StagedRecording, nowMillis: number): Proces
 
 function taskProcessingSource(
   task: ImportTask,
+  displayName: string,
   nowMillis: number,
   browserUploadTiming?: BrowserUploadPresentationTiming,
 ): ProcessingDetailsSource | undefined {
@@ -608,7 +608,7 @@ function taskProcessingSource(
   const progress = taskProgress(task)
   return {
     key: taskProcessingKey(task),
-    fileName: task.fileName,
+    displayName,
     durationMillis,
     rows: taskProgressRows(task, browserUploadTiming),
     ...(progress === undefined ? {} : {
@@ -870,6 +870,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     ...liveDurationTasks.flatMap(task => {
       const source = taskProcessingSource(
         task,
+        recordingDisplayName(task),
         durationNowMillis,
         browserUploadTimingsRef.current.get(taskProcessingKey(task)),
       )
@@ -1728,24 +1729,24 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     || !selectedRows.some(canEnqueue) || activeDuplicateNames.length > 0
   const queuedCount = submittingRows.filter(row => (row.uploadStartedAtMillis ?? 0) === 0).length
 
-  const taskTimeEditor = (task: ImportTask, historyView: boolean) => {
+  const taskTimeEditor = (task: ImportTask, historyView: boolean, displayName: string) => {
     const sessionRef = taskSessionRef(task)
     const key = sessionRef ?? ('importRef' in task ? task.importRef : task.taskKey)
     const value = ownerStartOverrides[key] ?? recordingImportLocalInputValue(new Date(task.startAtMillis))
     const displayedStartAtMillis = ownerStartOverrides[key] === undefined ? task.startAtMillis : parseArkmeLocalDateTime(value)
     const end = 'delivery' in task && task.delivery ? task.delivery.displayEndAt : task.endAtMillis
     const endLabel = end === null ? tr('待确认') : recordingImportEndLabel(displayedStartAtMillis, Math.max(0, end - task.startAtMillis))
-    return <span style={styles.fileCell}><span style={styles.fileName} title={task.fileName}>{task.fileName}</span><span style={styles.timeEditor}><ArkmeLocalDateTimeInput
+    return <span style={styles.fileCell}><span style={styles.fileName} title={displayName}>{displayName}</span><span style={styles.timeEditor}><ArkmeLocalDateTimeInput
       style={styles.timeInput}
-      label={tr("{v0}录音开始时间", { v0: task.fileName })}
+      label={tr("{v0}录音开始时间", { v0: displayName })}
       value={value}
       disabled={pending || sessionRef === undefined}
       onValueChange={next => setOwnerStartOverrides(current => ({ ...current, [key]: next }))}
       onCommit={next => { if (next !== recordingImportLocalInputValue(new Date(task.startAtMillis))) changeOwnerStart(task, historyView, next) }}
-    /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: task.fileName })}>{endLabel}</span></span></span>
+    /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: displayName })}>{endLabel}</span></span></span>
   }
 
-  const taskOwnership = (task: ImportTask, historyView: boolean) => <span style={styles.ownership} aria-label={tr("{v0}数据归属", { v0: task.fileName })}>
+  const taskOwnership = (task: ImportTask, historyView: boolean, displayName: string) => <span style={styles.ownership} aria-label={tr("{v0}数据归属", { v0: displayName })}>
     <button data-arkme-feedback="neutral" type="button" aria-pressed={task.ownership === 'self'} disabled={pending || taskSessionRef(task) === undefined} style={{ ...styles.ownershipButton, ...(task.ownership === 'self' ? styles.ownershipSelected : {}) }} onClick={() => { const sessionRef = taskSessionRef(task); if (task.ownership !== 'self' && sessionRef !== undefined) setOwnershipChange({ kind: 'owner', sessionRef, ownership: 'self', history: historyView }) }}>{tr("我的")}</button>
     <button data-arkme-feedback="neutral" type="button" aria-pressed={task.ownership === 'other'} disabled={pending || taskSessionRef(task) === undefined} style={{ ...styles.ownershipButton, ...(task.ownership === 'other' ? styles.ownershipSelected : {}) }} onClick={() => { const sessionRef = taskSessionRef(task); if (task.ownership !== 'other' && sessionRef !== undefined) setOwnershipChange({ kind: 'owner', sessionRef, ownership: 'other', history: historyView }) }}>{tr("他人")}</button>
   </span>
@@ -1760,8 +1761,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     }}
     onMouseLeave={() => { setStatusDetails(undefined) }}
   >
-    {task.status !== 'completed' && typeof task.progress === 'number' && <span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(Math.max(0, Math.min(1, task.progress)) * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(Math.max(0, Math.min(1, task.progress)) * 100)}%` }} /></span>}
-    <span style={styles.statusLabel}>{task.statusDetail}</span>
+    {!('delivery' in task && task.delivery?.coverage === 'receiving') && task.status !== 'completed' && typeof task.progress === 'number' && <span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(Math.max(0, Math.min(1, task.progress)) * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(Math.max(0, Math.min(1, task.progress)) * 100)}%` }} /></span>}
+    <span style={styles.statusLabel}>{tr(recordingTaskStatusLabel(task))}</span>
     {(task.status === 'paused' || task.statusDetail.includes('额度不足')) && <button type="button" style={styles.secondaryButton} onClick={() => { close(); arkmeUi.openDshSettings('arkme-usage') }}>{tr('errorCode' in task && task.errorCode === 'recording_storage_exhausted' ? '管理空间' : '查看额度')}</button>}
     {'sessionRef' in task && (task.status === 'paused' || task.status === 'partial' || task.status === 'failed') && <button type="button" disabled={pending} style={styles.secondaryButton} onClick={() => {
       setPending(true); setError('')
@@ -1786,9 +1787,10 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     >{label}</button>
   }
 
-  const taskDurationCell = (task: ImportTask) => processingDurationCell(
+  const taskDurationCell = (task: ImportTask, displayName: string) => processingDurationCell(
     taskProcessingSource(
       task,
+      displayName,
       durationNowMillis,
       browserUploadTimingsRef.current.get(taskProcessingKey(task)),
     ),
@@ -1796,7 +1798,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
 
   const deleteTask = (task: RecordingImportSnapshot, historyView: boolean) => {
     if (isLocalRecordingImport(task)) setJobDeletion({ kind: 'job', job: task })
-    else setJobDeletion({ kind: 'owner', sessionRef: task.sessionRef, fileName: task.fileName, history: historyView })
+    else setJobDeletion({ kind: 'owner', task, history: historyView })
   }
 
   return <>
@@ -1898,7 +1900,10 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
               <span style={styles.status}>{row.needsAccess ? <button type="button" style={styles.historyButton} disabled={pending} onClick={() => { void restoreAccess(row) }}>恢复访问</button> : row.validating ? <span title={tr('正在读取文件并校验格式与时长；云端文件可能需要先由系统下载。')}>{row.preparing ? tr('正在准备') : tr('等待准备')}</span> : rowError !== '' ? <><small style={styles.error}>{row.selection?.ok === true ? tr('导入失败') : tr('准备失败')}</small><button type="button" aria-label={tr('重试 {v0}', { v0: row.file.name })} disabled={pending} style={styles.historyButton} onClick={() => { void submitRows(row.id) }}>{tr('重试')}</button></> : row.submitting ? uploadActive ? <><span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(uploadProgress * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(uploadProgress * 100)}%` }} /></span><span>{tr("上传中")}</span></> : tr("排队中") : tr("待导入")}</span><span style={styles.cellCenter}>{processingDurationCell(processingSource)}</span>
               <button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: row.file.name })} style={styles.iconButton} disabled={pending || row.submitting} onClick={() => { publishRows(current => current.filter(item => item.id !== row.id)) }}><Trash size={20} /></button>
             </div>
-          })}{visibleJobs.map(job => <div key={isLocalRecordingImport(job) ? job.importRef : job.taskKey} style={styles.row} role="row"><span aria-hidden />{taskTimeEditor(job, false)}<span style={styles.cellCenter}>{taskAudioDuration(job)}</span><span style={styles.cellCenter}>{taskFileSize(job)}</span>{taskOwnership(job, false)}{taskStatusCell(job)}<span style={styles.cellCenter}>{taskDurationCell(job)}</span><span>{isLocalRecordingImport(job) && job.retryable && <button data-arkme-feedback="neutral" type="button" aria-label={tr("重试 {v0}", { v0: job.fileName })} disabled={pending} style={styles.iconButton} onClick={() => { void mutateJob('recordings.import.retry', job) }}><ArrowCounterClockwise size={13} /></button>}<button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: job.fileName })} disabled={pending} style={styles.iconButton} onClick={() => { deleteTask(job, false) }}><Trash size={20} /></button></span></div>)}</div></div></div>}
+          })}{visibleJobs.map(job => {
+            const displayName = recordingDisplayName(job)
+            return <div key={isLocalRecordingImport(job) ? job.importRef : job.taskKey} style={styles.row} role="row"><span aria-hidden />{taskTimeEditor(job, false, displayName)}<span style={styles.cellCenter}>{taskAudioDuration(job)}</span><span style={styles.cellCenter}>{taskFileSize(job)}</span>{taskOwnership(job, false, displayName)}{taskStatusCell(job)}<span style={styles.cellCenter}>{taskDurationCell(job, displayName)}</span><span>{isLocalRecordingImport(job) && job.retryable && <button data-arkme-feedback="neutral" type="button" aria-label={tr("重试 {v0}", { v0: displayName })} disabled={pending} style={styles.iconButton} onClick={() => { void mutateJob('recordings.import.retry', job) }}><ArrowCounterClockwise size={13} /></button>}<button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: displayName })} disabled={pending} style={styles.iconButton} onClick={() => { deleteTask(job, false) }}><Trash size={20} /></button></span></div>
+          })}</div></div></div>}
         </>
       </div>
       </> : <section style={styles.historyDialog} aria-label={tr("已完成录音导入")}>
@@ -1924,9 +1929,10 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
                       }
                     }}>
                       {history.items.map(item => {
+                        const displayName = recordingDisplayName(item)
                         const duration = taskAudioDuration(item)
                         const fileSize = taskFileSize(item)
-                        return <div key={item.taskKey} style={styles.historyRow} role="row">{taskTimeEditor(item, true)}<span aria-label={tr("{v0}录音时长 {v1}", { v0: item.fileName, v1: duration })} style={styles.historyMetricCell}>{duration}</span><span aria-label={tr("{v0}文件大小 {v1}", { v0: item.fileName, v1: fileSize })} style={styles.historyMetricCell}>{fileSize}</span>{taskOwnership(item, true)}{taskStatusCell(item)}<span style={styles.cellCenter}>{taskDurationCell(item)}</span><button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: item.fileName })} disabled={pending} style={styles.iconButton} onClick={() => { setJobDeletion({ kind: 'owner', sessionRef: item.sessionRef, fileName: item.fileName, history: true }) }}><Trash size={20} /></button></div>
+                        return <div key={item.taskKey} style={styles.historyRow} role="row">{taskTimeEditor(item, true, displayName)}<span aria-label={tr("{v0}录音时长 {v1}", { v0: displayName, v1: duration })} style={styles.historyMetricCell}>{duration}</span><span aria-label={tr("{v0}文件大小 {v1}", { v0: displayName, v1: fileSize })} style={styles.historyMetricCell}>{fileSize}</span>{taskOwnership(item, true, displayName)}{taskStatusCell(item)}<span style={styles.cellCenter}>{taskDurationCell(item, displayName)}</span><button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: displayName })} disabled={pending} style={styles.iconButton} onClick={() => { setJobDeletion({ kind: 'owner', task: item, history: true }) }}><Trash size={20} /></button></div>
                       })}
                       {history.loadingMore && <div style={styles.historyLoadMore}><span data-arkme-recording-history-spinner="small" style={styles.historyTailSpinner} />{tr("正在加载更多...")}</div>}
                       {history.error !== '' && !history.retryReset && <div role="alert" style={styles.historyLoadMore}><button data-arkme-feedback="neutral" type="button" style={{ ...styles.historyButton, color: arkmeTheme.accent }} onClick={() => { void loadHistory(false, history.toMillis) }}>{tr("加载失败，点击重试")}</button></div>}
@@ -1937,13 +1943,13 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
         </div>
       </section>}
       {activeDuplicateNames.length > 0 && <div style={styles.modalBackdrop} onClick={event => { if (event.target === event.currentTarget) clearDuplicateNames() }}><section role="dialog" aria-modal="true" aria-label={tr("重复录音文件")} style={styles.duplicateDialog}><h3 style={styles.confirmTitle}>{tr("发现")} {activeDuplicateNames.length} {tr("个重复文件")}</h3><p style={styles.confirmCopy}>{tr("将跳过这些文件，并继续导入其余音频")}</p><div style={styles.duplicateFiles}>{activeDuplicateNames.map(name => <div key={name}>{name}</div>)}</div><span style={styles.confirmActions}><button data-arkme-feedback="primary" type="button" style={styles.primaryButton} onClick={skipDuplicateRows}>{tr("跳过并继续")}</button></span></section></div>}
-      {jobDeletion !== undefined && <div style={styles.modalBackdrop}><section role="dialog" aria-modal="true" aria-label={tr("确认删除录音")} style={styles.confirmDialog}><h3 style={styles.confirmTitle}>{tr("是否删除")} {jobDeletion.kind === 'job' ? jobDeletion.job.fileName : jobDeletion.fileName} ?</h3><p style={styles.confirmCopy}>{tr("删除后无法恢复")}</p><span style={styles.confirmActions}><button data-arkme-feedback="neutral" type="button" aria-label={tr("取消删除")} style={styles.secondaryButton} onClick={() => { setJobDeletion(undefined) }}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" aria-label={tr("确认删除")} style={styles.primaryButton} onClick={() => { const target = jobDeletion; setJobDeletion(undefined); if (target.kind === 'job') void mutateJob('recordings.import.cancel', target.job); else void mutateOwner({ kind: 'delete', sessionRef: target.sessionRef }, target.history) }}>{tr("确认")}</button></span></section></div>}
+      {jobDeletion !== undefined && <div style={styles.modalBackdrop}><section role="dialog" aria-modal="true" aria-label={tr("确认删除录音")} style={styles.confirmDialog}><h3 style={styles.confirmTitle}>{tr("是否删除")} {recordingDisplayName(jobDeletion.kind === 'job' ? jobDeletion.job : jobDeletion.task)} ?</h3><p style={styles.confirmCopy}>{tr("删除后无法恢复")}</p><span style={styles.confirmActions}><button data-arkme-feedback="neutral" type="button" aria-label={tr("取消删除")} style={styles.secondaryButton} onClick={() => { setJobDeletion(undefined) }}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" aria-label={tr("确认删除")} style={styles.primaryButton} onClick={() => { const target = jobDeletion; setJobDeletion(undefined); if (target.kind === 'job') void mutateJob('recordings.import.cancel', target.job); else void mutateOwner({ kind: 'delete', sessionRef: target.task.sessionRef }, target.history) }}>{tr("确认")}</button></span></section></div>}
       {ownershipChange !== undefined && <div style={styles.modalBackdrop}><section role="dialog" aria-modal="true" aria-label={tr("确认修改数据归属")} style={styles.confirmDialog}><h3 style={styles.confirmTitle}>{tr("确定修改音频文件的数据归属吗？")}</h3><p style={styles.confirmCopy}>{tr("我的数据写入时间轴，他人仅保存")}</p><span style={styles.confirmActions}><button data-arkme-feedback="neutral" type="button" aria-label={tr("取消")} style={styles.secondaryButton} onClick={() => { setOwnershipChange(undefined) }}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" aria-label={tr("确认")} style={styles.primaryButton} onClick={() => { const target = ownershipChange; setOwnershipChange(undefined); if (target.kind === 'staged') updateRow(target.id, { ownership: target.ownership }); else void mutateOwner({ kind: 'ownership', sessionRef: target.sessionRef, ownership: target.ownership }, target.history) }}>{tr("确认")}</button></span></section></div>}
       {processingDetails !== undefined && processingSource !== undefined && (() => {
         const progressRows = processingSource.rows
         return <div role="presentation" style={{ position: 'fixed', zIndex: 7, inset: 0 }} onMouseDown={event => { if (event.target === event.currentTarget) setProcessingDetails(undefined) }}>
-          <section aria-label={tr("{v0}处理耗时详情", { v0: processingSource.fileName })} style={{ ...styles.detailsPopover, left: processingDetails.left, top: processingDetails.top, width: processingDetails.width }}>
-            <div style={styles.detailsTitle}><span>{tr("处理耗时")}</span><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 {v0}处理耗时详情", { v0: processingSource.fileName })} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined) }} /></div>
+          <section aria-label={tr("{v0}处理耗时详情", { v0: processingSource.displayName })} style={{ ...styles.detailsPopover, left: processingDetails.left, top: processingDetails.top, width: processingDetails.width }}>
+            <div style={styles.detailsTitle}><span>{tr("处理耗时")}</span><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭 {v0}处理耗时详情", { v0: processingSource.displayName })} style={styles.iconButton} onClick={() => { setProcessingDetails(undefined) }} /></div>
             <div style={{ ...styles.detailsGrid, ...styles.detailsHeader }}>
               <span style={styles.detailsPhaseCell}>{tr("阶段 / 模型")}</span><span style={styles.detailsCell}>{tr("状态")}</span><span style={styles.detailsCell}>{tr("开始时间")}</span><span style={styles.detailsCell}>{tr("结束时间")}</span><span style={styles.detailsCell} title={tr("包含排队等待，不代表网络传输耗时")}>{tr("用户耗时")}</span><span style={styles.detailsCell}>{tr("模型耗时")}</span><span style={styles.detailsCell}>{tr("关系 / 说明")}</span>
             </div>
@@ -1961,7 +1967,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
           </section>
         </div>
       })()}
-      {statusDetails !== undefined && <div role="tooltip" aria-label={tr("{v0}上传状态详情", { v0: statusDetails.task.fileName })} style={{ ...styles.statusTooltip, left: statusDetails.left, top: statusDetails.top }}>{taskStatusTitle(statusDetails.task)}</div>}
+      {statusDetails !== undefined && <div role="tooltip" aria-label={tr("{v0}上传状态详情", { v0: recordingDisplayName(statusDetails.task) })} style={{ ...styles.statusTooltip, left: statusDetails.left, top: statusDetails.top }}>{taskStatusTitle(statusDetails.task)}</div>}
     </dialog>
   </>
 })

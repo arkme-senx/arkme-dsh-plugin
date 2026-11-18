@@ -37,7 +37,16 @@ const labels: Record<RecordingImportDisplayStatus, string> = {
   'speaker-recognizing': '识别说话人中', 'transcript-waiting': '等待转写', transcribing: '转写中',
   completed: '已完成', partial: '部分完成', failed: '失败', cancelled: '已取消', unavailable: '状态暂不可用',
 }
-export const recordingFileStatusLabel = (file: RecordingFile) => ('delivery' in file && file.delivery ? file.statusDetail : labels[file.status]) ?? '状态暂不可用'
+/** Receipt counts are internal delivery facts, not transfer progress. Keep
+ * actionable failures/pauses while presenting an ongoing delivery simply. */
+export function recordingTaskStatusLabel(file: RecordingFile): string {
+  if ('delivery' in file && file.delivery) {
+    if (file.delivery.coverage === 'receiving' && file.status === 'accepted') return '上传中'
+    if (file.delivery.coverage === 'interrupted' && file.status === 'incomplete') return '部分录音未收齐'
+  }
+  return file.statusDetail
+}
+export const recordingFileStatusLabel = (file: RecordingFile) => ('delivery' in file && file.delivery ? recordingTaskStatusLabel(file) : labels[file.status]) ?? '状态暂不可用'
 
 export const recordingFileDisplayEnd = (file: RecordingFile): number | null =>
   'delivery' in file && file.delivery ? file.delivery.displayEndAt : file.endAtMillis
