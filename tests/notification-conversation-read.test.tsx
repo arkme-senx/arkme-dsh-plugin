@@ -12,7 +12,7 @@ vi.mock('../src/client/official-notification-store.js', () => ({
   useOfficialNotifications: () => ({ items: [{ id: 'official-one', title: '公告', summary: '公告内容', publishedAtMillis: 100, readAtMillis: 0 }], summary: { total: 1, unreadCount: 1 }, ready: true }),
   officialNotifications: { read: mocks.officialRead },
 }))
-vi.mock('../src/client/world-notification-reader.js', () => ({ readWorldNotifications: async () => [], readWorldReactionNotifications: mocks.world }))
+vi.mock('../src/client/world-notification-reader.js', () => ({ readWorldNotifications: mocks.world }))
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { ArkmeNotificationCenter, arkmeNotificationStore } from '../src/client/ArkmeNotificationCenter.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
@@ -120,42 +120,27 @@ it('previews real notification cards and categories without read receipts, then 
   expect(mocks.recordingRead).toHaveBeenCalledOnce()
 })
 
-const worldNotice = { id: 'same', revision: 1, actorUserId: 8, unread: true, target: { id: 'world-target', worldRecordRef: 'reaction-context' }, recordRef: 'public-navigation', selections: [{ key: 'like', expression: { text: '赞' }, at: 1000 }] }
-it('shows World reactions in the existing list, ACKs only their owner, and opens the public thread', async () => {
-  mocks.world.mockResolvedValue([worldNotice])
+const worldReply = { interactionRef: 'public-reply', textContent: '世界评论正文', authorName: '世界作者', publishedAtMillis: 1000, unavailable: false }
+it('keeps World replies visible and navigable without fetching or acknowledging reactions', async () => {
+  mocks.world.mockResolvedValue([worldReply])
   const open = vi.spyOn(arkmeUi, 'showWorldInteraction').mockImplementation(() => {})
   await act(async () => root.render(<ArkmeNotificationCenter />)); await tick()
-  expect(container.textContent).toContain('收到世界表态')
-  expect(mocks.call).toHaveBeenCalledWith('world.reactions', { action: 'notifications-read', accountKey: 'test:742', items: [{ id: 'same', revision: 1 }] }, expect.any(AbortSignal))
-  expect(mocks.call.mock.calls.some(([op,p]) => op === 'reactions' && p?.action === 'notifications-read')).toBe(false)
-  const row = container.querySelector<HTMLElement>('[data-notification-id="world-reaction:same:1"]')!
+  expect(container.textContent).toContain('世界作者 回复了你的世界')
+  const row = container.querySelector<HTMLElement>('[data-notification-id="world:public-reply"]')!
   await act(async () => row.querySelector<HTMLButtonElement>('.arkme-notification-link')!.click())
-  expect(open).toHaveBeenCalledExactlyOnceWith('public-navigation')
-  expect(mocks.call.mock.calls.some(([op]) => op === 'source.timeline-around')).toBe(false)
+  expect(open).toHaveBeenCalledExactlyOnceWith('public-reply')
+  expect(mocks.call.mock.calls.some(([op]) => op === 'reactions' || op === 'world.reactions')).toBe(false)
 })
-it('keeps failed World receipts unread and prevents a concurrent pre-ACK refresh from restoring unread', async () => {
-  mocks.world.mockResolvedValue([worldNotice])
-  await act(async () => { await arkmeNotificationStore.refresh('test:742') })
-  mocks.call.mockRejectedValueOnce(Error('offline'))
-  await expect(arkmeNotificationStore.markWorldReactionsRead([worldNotice], 'test:742', new AbortController().signal)).rejects.toThrow('offline')
-  expect(arkmeNotificationStore.getSnapshot().worldReactionItems[0]?.unread).toBe(true)
-  let finish!: (rows: any[]) => void
-  mocks.world.mockImplementationOnce(() => new Promise(done => { finish = done }))
-  const refreshing = arkmeNotificationStore.refresh('test:742')
-  await arkmeNotificationStore.markWorldReactionsRead([worldNotice], 'test:742', new AbortController().signal)
-  finish([worldNotice, { ...worldNotice, id: 'new', revision: 2 }]); await refreshing
-  expect(arkmeNotificationStore.getSnapshot().worldReactionItems[0]?.unread).toBe(false)
-  expect(arkmeNotificationStore.getSnapshot().worldReactionItems[1]?.unread).toBe(true)
-})
-it('discards a late prior-account World inbox response and does not acknowledge the old account', async () => {
+it('discards a late prior-account World reply response', async () => {
   let finish!: (rows: any[]) => void
   mocks.world.mockImplementationOnce(() => new Promise(done => { finish = done }))
   const old = arkmeNotificationStore.refresh('test:742')
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 743 })
   await arkmeNotificationStore.refresh('test:743')
-  finish([worldNotice]); await old
-  expect(arkmeNotificationStore.getSnapshot().worldReactionItems).toEqual([])
+  finish([worldReply]); await old
+  expect(arkmeNotificationStore.getSnapshot().scope).toBe('test:743')
+  expect(arkmeNotificationStore.getSnapshot().worldItems).toEqual([])
   const before = mocks.call.mock.calls.length
-  await arkmeNotificationStore.markWorldReactionsRead([worldNotice], 'test:742', new AbortController().signal)
+  await arkmeNotificationStore.markWorldViewed(5, 'test:742', new AbortController().signal)
   expect(mocks.call).toHaveBeenCalledTimes(before)
 })
