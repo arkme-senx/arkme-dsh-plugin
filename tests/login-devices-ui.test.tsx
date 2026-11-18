@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
 vi.mock('../src/client/read-intent-visibility.js', () => ({ suspendArkmeVisibleReadIntent: () => () => {} }))
 import { ArkmeLoginDevices, LoginDeviceEntry } from '../src/client/ArkmeLoginDevices.js'
+import { publishLoginDeviceChange } from '../src/client/login-device-events.js'
 
 const device = { id: 'stable', ref: 'opaque', name: '工作电脑', platform: 'macos', isCurrent: false, presence: 'unknown', lastActiveAt: null, canLogout: true, canForget: true, notificationsSupported: false }
 const page = { accountScope: 'test:7', items: [device], total: 1, countComplete: false, observedAt: 1800000000000 }
@@ -17,10 +18,84 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open', '') }
   HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
+  publishLoginDeviceChange('test:7', undefined)
   mocks.call.mockReset(); mocks.call.mockResolvedValue(page)
 })
-afterEach(async () => { await act(async () => root.unmount()); host.remove() })
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.useRealTimers() })
 describe('confirmed login devices UI', () => {
+  it('coalesces device events into one read and one trailing read while preserving open settings', async () => {
+    vi.useFakeTimers()
+    const phone = { ...device, platform: 'ios', presence: 'offline', notificationsSupported: true }
+    const initial = { ...page, items: [phone] }
+    const online = { ...initial, items: [{ ...phone, ref: 'reissued-ref', presence: 'online' }] }
+    mocks.call.mockImplementation(async (_operation, input) => input.action === 'notifications'
+      ? { accountScope: page.accountScope, supported: true, messages: true, calls: true, revision: 1 }
+      : initial)
+    await render()
+    const settings = () => document.querySelector<HTMLButtonElement>('.device-expand')!
+    await act(async () => settings().click())
+    let finish!: (value: typeof online) => void
+    const reads = () => mocks.call.mock.calls.filter(([, input]) => input.action === 'list').length
+    mocks.call.mockImplementationOnce(() => new Promise(resolve => { finish = resolve })).mockResolvedValueOnce(online)
+    await act(async () => {
+      publishLoginDeviceChange('prod:7', true)
+      await vi.advanceTimersByTimeAsync(150)
+    })
+    expect(reads()).toBe(1)
+    await act(async () => {
+      for (let i = 0; i < 40; i++) publishLoginDeviceChange('test:7', true)
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(reads()).toBe(2)
+    await act(async () => {
+      for (let i = 0; i < 40; i++) publishLoginDeviceChange('test:7', true)
+      await vi.advanceTimersByTimeAsync(500)
+    })
+    expect(reads()).toBe(2)
+    await act(async () => { finish(online); await vi.advanceTimersByTimeAsync(100) })
+    expect(reads()).toBe(3)
+    expect(document.querySelector('.device-status')?.textContent).toBe('在线')
+    expect(settings().getAttribute('aria-expanded')).toBe('true')
+    expect(mocks.call.mock.calls.filter(([, input]) => input.action === 'notifications')).toHaveLength(1)
+    await act(async () => { await vi.advanceTimersByTimeAsync(5 * 60_000) })
+    expect(reads()).toBe(3)
+    mocks.call.mockRejectedValueOnce(new Error('expired device reference'))
+    await act(async () => button('消息通知').click())
+    expect(mocks.call.mock.lastCall?.[1]).toMatchObject({ action: 'set-notifications', ref: phone.ref, revision: 1 })
+    await act(async () => button('重新核实').click())
+    expect(mocks.call.mock.lastCall?.[1]).toMatchObject({ action: 'notifications', ref: 'reissued-ref' })
+  })
+
+  it('retains stale rows on disconnect and catches up once visible, with no reads after closing', async () => {
+    vi.useFakeTimers()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    await render()
+    await act(async () => publishLoginDeviceChange('test:7', false))
+    expect(document.body.textContent).toContain('设备状态可能已过期')
+    expect(document.body.textContent).toContain(device.name)
+    visibility.mockReturnValue('hidden')
+    await act(async () => {
+      publishLoginDeviceChange('test:7', true)
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(mocks.call).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).toContain('设备状态可能已过期')
+    visibility.mockReturnValue('visible')
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(mocks.call).toHaveBeenCalledTimes(2)
+    expect(document.body.textContent).not.toContain('设备状态可能已过期')
+    await act(async () => publishLoginDeviceChange('test:7', true))
+    await act(async () => root.render(null))
+    await act(async () => {
+      publishLoginDeviceChange('test:7', true)
+      await vi.advanceTimersByTimeAsync(200)
+    })
+    expect(mocks.call).toHaveBeenCalledTimes(2)
+  })
+
   it('explains that forgetting signs out the target and requires verification', async () => {
     mocks.call.mockImplementation(async (_op, input) => input.action === 'prepare' ? { accountScope: 'test:7', kind: 'forget', name: '工作电脑', ticket: 'forget-ticket', expiresAt: Date.now() + 300000 } : page)
     await render()

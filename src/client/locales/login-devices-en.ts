@@ -15,6 +15,7 @@ export const loginDevicesEnglish: Record<string, string> = {
   '已移除常用设备并撤销登录权限，再次登录需要验证。': 'Device forgotten and login access revoked. Verification is required to sign in again.',
   '设备已退出登录。': 'Device signed out.', '登录权限已撤销；设备再次联网时完成退出。': 'Login access revoked. The device will finish signing out when it reconnects.',
   '暂时无法刷新，请检查网络后重试。': 'Unable to refresh. Check your connection and try again.',
+  '实时连接已断开，设备状态可能已过期。': 'Live connection lost. Device status may be out of date.',
   '暂时无法读取设备列表': 'Unable to read devices', '这不代表你的设备已退出登录。': 'This does not mean your devices have signed out.', '暂无可显示的设备': 'No devices to display',
   '移除常用设备会同时退出该设备的登录，再次登录需要验证；云端聊天记录会保留。': 'Forgetting a trusted device also signs it out. Verification is required to sign in again. Cloud chats are kept.',
   '管理已记住的设备，下次登录更安心': 'Manage devices remembered for future logins', '查看近期登录与退出记录': 'Review recent logins and sign-outs',

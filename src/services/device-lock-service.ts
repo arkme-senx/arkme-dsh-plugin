@@ -29,13 +29,23 @@ export class DeviceLockService {
   private supported: boolean | undefined
   private refreshAgain = false
   private readonly realtime: DeviceControlRealtime
+  private realtimeUserId: number | undefined
   constructor(private readonly runtime: ServiceRuntime, private readonly localLogout: (expected: ArkmeSessionCredentials) => Promise<unknown>,
-    private readonly config: ArkmeDesktopBridgeConfig | undefined = arkmeDesktopBridgeConfigFromEnv(process.env)) {
+    private readonly config: ArkmeDesktopBridgeConfig | undefined = arkmeDesktopBridgeConfigFromEnv(process.env),
+    private readonly onLoginDevicesChanged?: (state: { accountScope: string; connected: boolean }) => void) {
     this.realtime = new DeviceControlRealtime(deviceControlRealtimeOrigin(runtime.config), () => {
       if (this.disposed) return
+      const state = this.loginDevicesConnection()
+      if (state) this.onLoginDevicesChanged?.(state)
       if (this.task !== undefined) this.refreshAgain = true
       else void this.refresh().catch(() => undefined)
     })
+  }
+  loginDevicesConnection() {
+    if (this.realtimeUserId !== undefined) return {
+      accountScope: `${this.runtime.config.environment}:${this.realtimeUserId}`,
+      connected: this.realtime.connected,
+    }
   }
   peek(): ArkmeDeviceLockSnapshot { return this.state }
   private async bridge(action: ArkmeDesktopBridgeAction, payload: object = {}): Promise<NativeSnapshot> {
@@ -83,7 +93,7 @@ export class DeviceLockService {
       await this.localLogout(session); session = undefined
     }
     if (session === undefined) {
-      this.realtime.close(); this.boundToken = ''
+      this.realtime.close(); this.realtimeUserId = undefined; this.boundToken = ''
       native = await this.bridge('device.lock.sync')
       if (native.sessionEnded && await this.runtime.sessionStore.read() === undefined) native = await this.bridge('device.lock.cleanup')
       return this.project(native, false)
@@ -99,13 +109,16 @@ export class DeviceLockService {
       native = await this.bridge('device.lock.bind', { accessToken: session.accessToken, loginKey: loginKey(session) }); this.boundToken = session.accessToken
     }
     if (native.sessionEnded && sameLogin(session, native)) {
-      this.realtime.close(); await this.localLogout(session)
+      this.realtime.close(); this.realtimeUserId = undefined; await this.localLogout(session)
       native = await this.bridge('device.lock.cleanup'); this.boundToken = ''; return this.project(native, false)
     }
     // A stopped Host or replaced login must not start a late orphan transport.
     const current = await this.runtime.accountScopedSession()
     if (this.disposed || current?.userId !== session.userId || current?.refreshToken !== session.refreshToken) return this.project(native, false)
-    if (native.sessionId !== undefined) this.realtime.connect(session.userId, native.sessionId, session.accessToken)
+    if (native.sessionId !== undefined) {
+      this.realtimeUserId = session.userId
+      this.realtime.connect(session.userId, native.sessionId, session.accessToken)
+    }
     return this.project(native, this.boundToken !== '')
   }
   async lock(): Promise<ArkmeDeviceLockSnapshot> {
@@ -136,6 +149,6 @@ export class DeviceLockService {
     if (session === undefined || (native.loginKey !== undefined && !sameLogin(session, native))) return false
     this.project(await this.bridge('device.lock.logout', { ...(native.sessionId === undefined ? {} : { sessionId: native.sessionId }), loginKey: loginKey(session) }), true); return true
   }
-  async afterLogout(): Promise<void> { this.realtime.close(); this.boundToken = ''; const native = await this.bridge('device.lock.status'); this.project(native.sessionEnded ? await this.bridge('device.lock.cleanup') : native, false) }
-  dispose(): void { this.disposed = true; clearTimeout(this.timer); this.realtime.close(); this.boundToken = '' }
+  async afterLogout(): Promise<void> { this.realtime.close(); this.realtimeUserId = undefined; this.boundToken = ''; const native = await this.bridge('device.lock.status'); this.project(native.sessionEnded ? await this.bridge('device.lock.cleanup') : native, false) }
+  dispose(): void { this.disposed = true; clearTimeout(this.timer); this.realtime.close(); this.realtimeUserId = undefined; this.boundToken = '' }
 }
