@@ -14,11 +14,12 @@ vi.mock('../src/client/arko-conversation-preview-sync.js', () => ({
 }))
 
 import { ArkmeNavigation, ArkmeNotificationsRow } from '../src/client/ArkmeVirtualWorkspace.js'
-import { ArkmeNotificationCenter, arkmeNotificationStore } from '../src/client/ArkmeNotificationCenter.js'
+import { ArkmeNotificationCenter, arkmeNotificationStore, useArkmeNotificationSummary } from '../src/client/ArkmeNotificationCenter.js'
 import { ArkmeProductNavigation } from '../src/client/ArkmeProductNavigation.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeChatDirectory } from '../src/client/chat-directory-store.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
+import { reactionNotifications } from '../src/client/reaction-notifications.js'
 import { socialAccessStore } from '../src/client/social-access-store.js'
 import { startOfficialTeamMembership, refreshOfficialTeamMembership } from '../src/client/official-team-membership.js'
 import { startTeamDirectory, refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
@@ -423,63 +424,38 @@ describe('notification directory stability', () => {
   })
 })
 
-it.each(['missing conversation', 'missing message', 'network error', 'success', 'unloaded conversation'])(
- 'reaction notification: %s preserves history and validates the navigation target independently of reading', async outcome => {
-  const success = outcome === 'success' || outcome === 'unloaded conversation'
-  const reaction = { id: 'a'.repeat(64), revision: 1, actorUserId: 2, sourceKey: outcome === 'missing conversation' || outcome === 'unloaded conversation' ? 'missing' : sources[0]!.sourceKey,
-    ...(outcome === 'unloaded conversation' ? { source: { ...sources[0]!, sourceKey: 'missing', sourceRef: 'resolved-old-source', displayName: '旧会话' }, actorName: '备注名' } : {}),
-    itemUid: 'target-message', recordOwnerUserId: 7001, sendAtMillis: timestamp, text: 'original message',
-    selections: [{ key: 'b'.repeat(64), expression: { text: '赞' }, at: timestamp }], unread: true }
+it('excludes cached reactions from the inbox, directory badge, preview and filter without consuming them', async () => {
+  const cached = [{ id: 'old-reaction', revision: 1, actorUserId: 2, sourceKey: sources[0]!.sourceKey,
+    itemUid: 'message', recordOwnerUserId: 7001, sendAtMillis: timestamp + 900,
+    text: '旧表态内容', selections: [{ key: 'like', expression: { text: '赞' }, at: timestamp + 900 }], unread: true }]
+  const history = vi.spyOn(reactionNotifications, 'forHistory').mockReturnValue(cached)
+  const acquire = vi.spyOn(reactionNotifications, 'acquireHistory')
+  const seen = vi.spyOn(reactionNotifications, 'seen')
   const original = mocks.callArkme.getMockImplementation()!
   mocks.callArkme.mockImplementation(async (operation: string, input: any, ...rest: unknown[]) => {
-    if (operation === 'reactions') {
-      if (input.action === 'notifications') return { items: input.include_read || reaction.unread ? [{ ...reaction }] : [], has_more: false, after_id: '' }
-      if (input.action === 'notifications-read') { reaction.unread = false; return { ok: true } }
-    }
-    if (operation === 'source.timeline-around') {
-      if (outcome === 'network error') throw Error('offline')
-      return { items: success ? [{ itemUid: reaction.itemUid }] : [] }
-    }
+    if (operation === 'reactions' || operation === 'world.reactions') throw Error('表态服务不可用')
     return original(operation, input, ...rest)
   })
-  const open = vi.spyOn(arkmeUi, 'showConversationTarget').mockImplementation(() => undefined)
-  await act(async () => { renderer = create(<ArkmeNotificationCenter />) })
-  const row = () => renderer!.root.findAll(node => node.props.role === 'listitem' && String(node.props['aria-label']).startsWith('表态：'))[0]!
-  expect(row()).toBeDefined()
-  await act(async () => { row().findByType('button').props.onClick(); await new Promise(resolve => setTimeout(resolve, 0)) })
-  const acks = mocks.callArkme.mock.calls.filter(([operation, input]) => operation === 'reactions' && input.action === 'notifications-read')
-  expect(acks).toHaveLength(0)
-  expect(open).toHaveBeenCalledTimes(success ? 1 : 0)
-  if (outcome === 'unloaded conversation') expect(open).toHaveBeenCalledWith(expect.objectContaining({ sourceRef: 'resolved-old-source' }), reaction.itemUid, reaction.sendAtMillis, reaction.recordOwnerUserId, undefined, true)
-  expect(row()).toBeDefined()
-  expect(row().findAll(node => node.props['aria-label'] === '未读')).toHaveLength(0)
-  if (!success) expect(renderer!.root.findAll(node => node.props.role === 'alert').length).toBeGreaterThan(0)
-  await act(async () => { renderer!.unmount(); renderer = undefined })
-  await act(async () => { renderer = create(<ArkmeNotificationCenter />) })
-  expect(row()).toBeDefined()
-  expect(row().findAll(node => node.props['aria-label'] === '未读')).toHaveLength(0)
- })
+  let summary!: ReturnType<typeof useArkmeNotificationSummary>
+  function Probe() { summary = useArkmeNotificationSummary(); return null }
+  await act(async () => { renderer = create(<><Probe /><ArkmeNotificationCenter /></>) })
+  expect(summary).toMatchObject({ hasNotifications: true, unreadCount: 1, atMillis: notice.eventAtMillis })
+  expect(summary.preview).toContain('已加载的通知')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('旧表态内容')
+  expect(renderer!.root.findAll(node => node.props?.role === 'listitem' && String(node.props['aria-label']).startsWith('表态：'))).toHaveLength(0)
+  vi.stubGlobal('document', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+  await act(async () => renderer!.root.findByProps({ 'aria-label': '通知类型' }).props.onClick())
+  expect(renderer!.root.findAllByProps({ role: 'menuitemradio' }).map(button => button.findAllByType('span')[0]!.children.join(''))).not.toContain('表态')
+  expect(history).not.toHaveBeenCalled(); expect(acquire).not.toHaveBeenCalled(); expect(seen).not.toHaveBeenCalled()
+  expect(mocks.callArkme.mock.calls.some(([op]) => op === 'reactions' || op === 'world.reactions')).toBe(false)
+  expect(cached[0]!.unread).toBe(true)
+})
 
-it('keeps reaction history without a manual all-read action or background acknowledgements', async () => {
- const rows = Array.from({ length: 101 }, (_, i) => ({ id: i.toString(16).padStart(64, '0'), revision: 1,
-  actorUserId: 2, sourceKey: sources[0]!.sourceKey, itemUid: `message-${i}`, recordOwnerUserId: 7001,
-  sendAtMillis: timestamp, text: 'original', selections: [{ key: 'b'.repeat(64), expression: { text: '赞' }, at: timestamp }], unread: true }))
- const original = mocks.callArkme.getMockImplementation()!
- mocks.callArkme.mockImplementation(async (operation: string, input: any, ...rest: unknown[]) => {
-  if (operation === 'reactions' && input.action === 'notifications') {
-   const offset = input.after_id ? rows.findIndex(row => row.id === input.after_id) + 1 : 0
-   const page = rows.slice(offset, offset + 50)
-   return { items: page, after_id: offset + 50 < rows.length ? page.at(-1)!.id : '', has_more: offset + 50 < rows.length }
-  }
-  if (operation === 'reactions' && input.action === 'notifications-read') return { ok: true }
-  return original(operation, input, ...rest)
- })
- await act(async () => { renderer = create(<ArkmeNotificationCenter />) })
- const reactionRows = () => renderer!.root.findAll(node => node.props.role === 'listitem' && String(node.props['aria-label']).startsWith('表态：'))
- expect(reactionRows()).toHaveLength(101)
- expect(renderer!.root.findAllByType('button').some(button => button.children.includes('全部已读'))).toBe(false)
- const batches = mocks.callArkme.mock.calls.filter(([operation, input]) => operation === 'reactions' && input.action === 'notifications-read')
- expect(batches).toHaveLength(0)
- expect(reactionRows()).toHaveLength(101)
- expect(reactionRows().every(row => row.findAll(node => node.props['aria-label'] === '未读').length === 0)).toBe(true)
+it('does not create a notification directory entry for reaction-only history', async () => {
+  notices = []
+  vi.spyOn(reactionNotifications, 'forHistory').mockReturnValue([{ id: 'reaction-only', revision: 1,
+    actorUserId: 2, sourceKey: sources[0]!.sourceKey, itemUid: 'message', recordOwnerUserId: 7001,
+    sendAtMillis: timestamp, text: '旧表态', selections: [], unread: true }])
+  await act(async () => { renderer = create(<ArkmeNotificationsRow selected={false} onClick={() => {}} />) })
+  expect(renderer!.toJSON()).toBeNull()
 })
