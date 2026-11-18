@@ -81,43 +81,84 @@ function PersonDetail({ row, accountKey, directory, loadMembers, onChanged }: {
 }) {
   const [detail, setDetail] = useState<SpeakerDirectoryDetail>()
   const [members, setMembers] = useState<ArkmeRecordingSpeakerMembers>()
+  const [presenceState, setPresenceState] = useState<ArkmeRecordingSpeakerMembers['state']>()
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
+  const retryAtRef = useRef(0)
+  const versionHint = useRef<{ ref: string; version: string }>()
   useEffect(() => {
     const controller = new AbortController()
     let retry: ReturnType<typeof setTimeout> | undefined
-    setDetail(undefined); setMembers(undefined); setError('')
-    void directory.open(accountKey, row.detailRef, controller.signal).then(async value => {
-      if (controller.signal.aborted) return
-      setDetail(value)
-      if (value.type === 'speaker') {
-        const result = await loadMembers(value.speakerRef, controller.signal, value.expectedVersion)
+    let opened: SpeakerDirectoryDetail | undefined
+    let expectedVersion: string | undefined
+    let busy = false, retryAt = retryAtRef.current
+    const schedule = (delay: number) => {
+      retryAt = Date.now() + Math.max(1_000, delay)
+      retryAtRef.current = retryAt
+      clearTimeout(retry)
+      retry = setTimeout(() => { void load() }, Math.max(1, retryAt - Date.now()))
+    }
+    const load = async () => {
+      if (controller.signal.aborted || busy || !directoryVisible()) return
+      if (retryAt > Date.now()) { clearTimeout(retry); retry = setTimeout(() => { void load() }, retryAt - Date.now()); return }
+      busy = true; setLoading(true); setError('')
+      try {
+        if (!opened) {
+          opened = await directory.open(accountKey, row.detailRef, controller.signal)
+          if (controller.signal.aborted) return
+          expectedVersion = versionHint.current?.ref === row.detailRef ? versionHint.current.version : opened.type === 'speaker' ? opened.expectedVersion : undefined
+          setDetail(opened)
+        }
+        if (opened.type !== 'speaker') return
+        const result = await loadMembers(opened.speakerRef, controller.signal, expectedVersion)
         if (controller.signal.aborted) return
-        setMembers(result)
-        if (result.state === 'stale') onChanged()
-        else if (result.state !== 'fresh') retry = setTimeout(() => { if (directoryVisible()) setRevision(value => value + 1) }, Math.max(5_000, result.retryAfterMs ?? 10_000))
+        setPresenceState(result.state)
+        if (result.version) versionHint.current = { ref: row.detailRef, version: result.version }
+        if (result.state === 'fresh') { retryAtRef.current = 0; setMembers(result) }
+        else {
+          // The directory may still refer to an older presence snapshot. Keep
+          // this person open and retry against the version returned by its owner.
+          if (result.version) expectedVersion = result.version
+          schedule(Math.max(5_000, result.retryAfterMs ?? 10_000))
+        }
+      } catch (error) {
+        if (controller.signal.aborted) return
+        setError(failureMessage(error))
+        if (directoryErrorCode(error) === 'unmarked-candidate-not-found') onChanged()
+        const delay = speakerRetryDelay(error)
+        if (delay !== undefined) schedule(Math.max(5_000, delay))
+      } finally {
+        busy = false
+        if (!controller.signal.aborted) setLoading(false)
       }
-    }).catch(error => {
-      if (controller.signal.aborted) return
-      if (directoryErrorCode(error) === 'unmarked-candidate-not-found') onChanged()
-      else setError(failureMessage(error))
-    })
-    return () => { controller.abort(); clearTimeout(retry) }
+    }
+    const wake = () => { void load() }
+    void load()
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', wake)
+    if (typeof window !== 'undefined') { window.addEventListener('online', wake); window.addEventListener('focus', wake) }
+    return () => {
+      controller.abort(); clearTimeout(retry)
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', wake)
+      if (typeof window !== 'undefined') { window.removeEventListener('online', wake); window.removeEventListener('focus', wake) }
+    }
   }, [row.detailRef, accountKey, directory, loadMembers, onChanged, revision])
-  if (error) return <div role="alert" style={styles.error}>{error} <button style={styles.button} onClick={() => setRevision(value => value + 1)}>{tr('重试')}</button></div>
-  if (!detail) return <div role="status" style={styles.state}>{tr('正在加载人物详情…')}</div>
-  if (detail.type === 'candidate') return <UnmarkedSpeakerDetail accountKey={accountKey} candidateRef={detail.candidateRef} onDirectoryRefresh={onChanged} onCandidateCleared={onChanged} />
+  const retry = <button type="button" style={styles.button} disabled={loading} onClick={() => { setLoading(true); setRevision(value => value + 1) }}>{tr(loading ? '正在加载…' : '重试')}</button>
+  if (row.type === 'unmarked' && error) return <div role="alert" style={styles.error}>{error} {retry}</div>
+  if (row.type === 'unmarked' && !detail) return <div role="status" style={styles.state}>{tr('正在加载人物详情…')}</div>
+  if (detail?.type === 'candidate') return <UnmarkedSpeakerDetail accountKey={accountKey} candidateRef={detail.candidateRef} onDirectoryRefresh={onChanged} onCandidateCleared={onChanged} />
   return <section aria-label={tr('已标记说话人详情')}>
     <h2 style={styles.detailTitle}>{row.displayName}{row.isSelf ? ` · ${tr('我')}` : ''}</h2>
     <p style={{ ...styles.meta, margin: 0 }}>{personStats(row)}</p>
     <h3 style={styles.detailSection}>{tr('对应的识别说话人')}</h3>
     <p style={{ ...styles.meta, whiteSpace: 'normal' }}>{tr('展示全部历史已转写片段中可核实的关联。')}</p>
-    {!members || members.state !== 'fresh' ? <div role="status" style={styles.state}>{members?.state === 'failed' ? tr('出现统计暂不可用') : tr('出现统计整理中')}</div>
-      : members.items.length === 0 ? <div style={styles.state}>{tr('暂无可核实的关联说话人。')}</div>
+    {error ? <div role="alert" style={styles.error}>{error} {retry}</div>
+      : (!members || presenceState !== 'fresh' || loading) && <div role="status" aria-busy={loading} style={styles.state}>{presenceState === 'failed' ? tr('出现统计暂不可用') : tr('出现统计整理中')} {retry}</div>}
+    {members && (members.items.length === 0 ? <div style={styles.state}>{tr('暂无可核实的关联说话人。')}</div>
         : <ul style={styles.list}>{members.items.map(member => <li key={member.identityKey} style={styles.memberRow}>
           <UnmarkedSpeakerTokenAvatar token={member.token} size={36} label={tr('说话人 {v0}', { v0: member.token })} />
           <span style={styles.copy}><span style={styles.name}>{tr('说话人 {v0}', { v0: member.token })}</span><span style={styles.meta}>{tr('出现 {v0} 天', { v0: member.dayCount })}</span></span>
-        </li>)}</ul>}
+        </li>)}</ul>)}
   </section>
 }
 
@@ -135,6 +176,9 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
   const [loading, setLoading] = useState(true), [moreLoading, setMoreLoading] = useState(false)
   const [error, setError] = useState(''), [seenError, setSeenError] = useState('')
   const [selected, setSelected] = useState<SpeakerDirectoryPerson>()
+  const selectedRef = useRef(selected); selectedRef.current = selected
+  const selectionGeneration = useRef(0)
+  const recoveredGeneration = useRef<number>()
   const [similarOpen, setSimilarOpen] = useState(false)
   const [avatars, setAvatars] = useState<Record<string, string | null>>({})
   const rootRef = useRef<HTMLDivElement>(null), listScroll = useRef(0), hadSelection = useRef(false)
@@ -147,7 +191,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
     hadSelection.current = selected !== undefined
   }, [selected])
   const [revision, setRevision] = useState(0)
-  const force = useRef(false), recoveryAttempts = useRef(0)
+  const force = useRef(false)
   const controllerRef = useRef<AbortController>()
   const snapshot = useSyncExternalStore(directory.subscribe, () => directory.get(accountKey), () => directory.get(accountKey))
   const summary = snapshot.summary
@@ -157,12 +201,13 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
   useEffect(() => { if (!directory.hasPendingSeen(accountKey)) setSeenError('') }, [directory, accountKey, snapshot])
   useEffect(() => { const timer = setTimeout(() => setQueryText(normalizeDirectoryQuery(input)), 300); return () => clearTimeout(timer) }, [input])
   const refresh = useCallback(() => { force.current = true; directory.invalidate(accountKey); setRevision(value => value + 1) }, [directory, accountKey])
+  useLayoutEffect(() => { selectionGeneration.current++; setSelected(undefined); setSimilarOpen(false) }, [query])
   useEffect(() => {
     const controller = new AbortController(); controllerRef.current = controller
     let retry: ReturnType<typeof setTimeout> | undefined
     let busy = false
     const cached = directory.peek(accountKey, query)
-    setList(cached); setSelected(undefined); setError(''); setMoreLoading(false)
+    setList(cached); setError(''); setMoreLoading(false)
     const load = async () => {
       if (busy || !directoryVisible() || controller.signal.aborted) return
       if (!directoryQueryValid(query.query)) { setLoading(false); return }
@@ -171,7 +216,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
         const result = await directory.first(accountKey, query, controller.signal, force.current)
         if (!controller.signal.aborted) {
           force.current = false; setList(result); setError('')
-          setSelected(previous => previous && result.items.find(item => item.personKey === previous.personKey))
+          setSelected(previous => previous && (result.items.find(item => item.personKey === previous.personKey) ?? previous))
         }
       } catch (error) {
         if (controller.signal.aborted) return
@@ -201,15 +246,16 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
     return () => { disposed = true; if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', confirm) }
   }, [accountKey, directory, list, loading, queryPending, filter, queryText, refresh])
   const recoverDetail = useCallback(() => {
-    if (!selected || recoveryAttempts.current >= 1) { setSelected(undefined); refresh(); return }
-    recoveryAttempts.current += 1
+    const selected = selectedRef.current, generation = selectionGeneration.current
+    if (!selected || recoveredGeneration.current === generation) return
     const controller = controllerRef.current
     if (!controller) return
+    recoveredGeneration.current = generation
     void directory.first(accountKey, query, controller.signal, true).then(next => {
-      if (controller.signal.aborted) return
-      setList(next); setSelected(next.items.find(item => item.personKey === selected.personKey))
-    }).catch(error => { if (!controller.signal.aborted) { setSelected(undefined); setError(failureMessage(error)) } })
-  }, [accountKey, directory, selected, query, refresh])
+      if (controller.signal.aborted || generation !== selectionGeneration.current) return
+      setList(next); setSelected(previous => previous?.personKey === selected.personKey ? next.items.find(item => item.personKey === selected.personKey) ?? previous : previous)
+    }).catch(error => { if (!controller.signal.aborted && generation === selectionGeneration.current) setError(failureMessage(error)) })
+  }, [accountKey, directory, query])
   const loadMore = async () => {
     const controller = controllerRef.current
     if (!list || !controller || moreLoading || queryPending) return
@@ -270,7 +316,7 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
     <div style={styles.inner}>
       <header style={styles.header}><button type="button" style={styles.button} onClick={onBack}>{tr('‹ 返回录音')}</button>
         <div><h1 style={styles.title}>{tr('已识别说话人')}</h1><p style={styles.subhead}>{tr('查看录音中已标记和未标记的说话人')}</p></div>
-        <button type="button" style={{ ...styles.button, marginLeft: 'auto' }} onClick={refresh} disabled={loading}>{tr('刷新')}</button>
+        <button type="button" style={{ ...styles.button, marginLeft: 'auto' }} onClick={() => { recoveredGeneration.current = undefined; refresh() }} disabled={loading}>{tr('刷新')}</button>
       </header>
       <div style={styles.filters}>
         {([['all', '全部', displayedSummary?.totalCount], ['marked', '已标记', displayedSummary?.markedCount], ['unmarked', '未标记', displayedSummary?.unmarkedCount]] as const).map(([kind, label, count]) => <button key={kind} type="button" aria-pressed={filter === kind} style={{ ...styles.filter, ...(filter === kind ? styles.selectedFilter : {}) }} onClick={() => setFilter(kind)}>{tr(label)}{!disabled && count != null ? ` ${count}` : ''}</button>)}
@@ -289,17 +335,17 @@ function DirectorySurface({ accountKey, onBack, directory = recognizedSpeakerDir
         <div className="arkme-recognized-speakers-list" aria-busy={loading || queryPending}>
           {!disabled && (loading || queryPending) && rows.length === 0 ? <div role="status" style={styles.state}>{tr('正在加载说话人…')}</div>
             : !disabled && !error && rows.length === 0 && list?.coverage === 'complete' && !queryPending ? <div role="status" style={styles.state}>{tr(queryText ? '没有匹配的说话人' : filter === 'all' ? '暂无已识别说话人' : '该分类暂无说话人')}</div>
-              : <ul style={styles.list}>{rows.map(row => <li key={row.personKey} style={{ display: 'flex', alignItems: 'center', gap: 4 }}><button type="button" className="arkme-recognized-speakers-row" aria-current={selected?.personKey === row.personKey ? 'true' : undefined} style={{ ...styles.row, minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => { recoveryAttempts.current = 0; setSelected(row); setSimilarOpen(false) }}>
+              : <ul style={styles.list}>{rows.map(row => <li key={row.personKey} style={{ display: 'flex', alignItems: 'center', gap: 4 }}><button type="button" className="arkme-recognized-speakers-row" aria-current={selected?.personKey === row.personKey ? 'true' : undefined} style={{ ...styles.row, minWidth: 0, flex: 1, cursor: 'pointer' }} onClick={() => { selectionGeneration.current++; setSelected(row); setSimilarOpen(false) }}>
                 {row.type === 'unmarked' ? <UnmarkedSpeakerTokenAvatar token={row.displayNumber > 0 ? String(row.displayNumber) : ''} size={38} label={row.displayName} /> : <ArkmeUserAvatar {...(avatars[row.detailRef] ? { avatarRef: avatars[row.detailRef]! } : {})} fallbackContent={speakerNameAvatarFallback(row)} size={38} label={row.displayName} />}
                 <span style={styles.copy}><span style={styles.name}>{row.displayName}{row.isSelf ? ` · ${tr('我')}` : ''}</span><span style={styles.meta}>{personStats(row)}</span></span>
                 <span style={styles.badge}>{tr(row.type === 'marked' ? '已标记' : '未标记')} ›</span>
-              </button><button type="button" style={{ ...styles.button, flexShrink: 0, fontSize: 11 }} aria-label={tr('查找与 {v0} 相似的声音', { v0: row.displayName })} onClick={() => { recoveryAttempts.current = 0; setSelected(row); setSimilarOpen(true) }}>{tr('找相似')}</button></li>)}</ul>}
+              </button><button type="button" style={{ ...styles.button, flexShrink: 0, fontSize: 11 }} aria-label={tr('查找与 {v0} 相似的声音', { v0: row.displayName })} onClick={() => { selectionGeneration.current++; setSelected(row); setSimilarOpen(true) }}>{tr('找相似')}</button></li>)}</ul>}
           {!disabled && !queryPending && list?.hasMore && <button type="button" disabled={moreLoading || loading} style={{ ...styles.button, marginTop: 14 }} onClick={() => { void loadMore() }}>{tr(moreLoading ? '正在加载…' : '加载更多说话人')}</button>}
         </div>
-        {selected && !disabled && <div style={styles.detail}><button type="button" className="arkme-recognized-speakers-mobile-back" style={styles.button} onClick={() => setSelected(undefined)}>{tr('‹ 返回列表')}</button>
+        {selected && !disabled && <div style={styles.detail}><button type="button" className="arkme-recognized-speakers-mobile-back" style={styles.button} onClick={() => { selectionGeneration.current++; setSelected(undefined) }}>{tr('‹ 返回列表')}</button>
           {similarOpen ? <SimilarSpeakersPanel accountKey={accountKey} row={selected} directory={directory} onBack={() => setSimilarOpen(false)} /> : <>
             <button type="button" style={{ ...styles.button, marginBottom: 12 }} onClick={() => setSimilarOpen(true)}>{tr('找相似声音')}</button>
-            <PersonDetail key={selected.detailRef} row={selected} accountKey={accountKey} directory={directory} loadMembers={loadMarkedMembers} onChanged={recoverDetail} />
+            <PersonDetail key={selected.personKey} row={selected} accountKey={accountKey} directory={directory} loadMembers={loadMarkedMembers} onChanged={recoverDetail} />
           </>}
         </div>}
       </div>
