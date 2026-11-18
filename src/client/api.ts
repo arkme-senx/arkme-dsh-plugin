@@ -171,6 +171,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.day.review'
   | 'recordings.day.overview'
   | 'recordings.day'
+  | 'recordings.transcript.versions'
   | 'recordings.transcript.page'
   | 'recordings.transcript.locate'
   | 'recordings.transcript.context'

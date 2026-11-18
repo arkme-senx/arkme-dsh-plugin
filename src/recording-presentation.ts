@@ -5,6 +5,7 @@ import type {
   ArkmeRecordingTimelineDetailItem,
   ArkmeRecordingTimelineEvent,
   ArkmeRecordingTranscriptItem,
+  ArkmeRecordingWorkbenchItem,
   ArkmeRecordingVersion,
   ArkmeRecordingVersionStatus,
 } from './types.js'
@@ -31,8 +32,17 @@ function recordingGenerationDurationLabel(startSeconds: number, endSeconds: numb
   return `${String(Math.floor(seconds / 3_600))}小时${String(Math.floor((seconds % 3_600) / 60))}分`
 }
 
+export type RecordingGenerationTranscriptItem = Pick<ArkmeRecordingTranscriptItem,
+  'text' | 'startAtMillis' | 'endAtMillis' | 'speakerLabel' | 'isSelf' | 'soundSource' | 'containsPlayback'> & {
+    event?: string
+    generationText?: string
+    speakerIdentityUnknown?: boolean
+    activeRanges?: NonNullable<ArkmeRecordingWorkbenchItem['activeRanges']>
+    activeRangesComplete?: boolean
+  }
+
 export function buildRecordingGenerationTranscript(
-  items: readonly (ArkmeRecordingTranscriptItem & { event?: string; generationText?: string })[],
+  items: readonly RecordingGenerationTranscriptItem[],
   kind: 'summary' | 'timeline',
   dayStartMillis: number,
   timeZone?: string,
@@ -47,21 +57,27 @@ export function buildRecordingGenerationTranscript(
     const endSeconds = Math.round((item.endAtMillis - dayStartMillis) / 1_000)
     const event = item.event?.trim() ?? ''
     const text = item.generationText?.trim() || item.text
+    const partial = item.activeRanges?.map(range => {
+      const relative = (at: number) => recordingGenerationClockLabel((at - dayStartMillis) / 1_000)
+      return `${relative(range.startAtMillis)}–${relative(range.endAtMillis)}`
+    }).join('、')
+    const timing = partial ? `${item.activeRangesComplete === false ? "部分有效时段" : "有效时段"}：${partial}` : recordingGenerationDurationLabel(startSeconds, endSeconds)
     return [
       `说话人：${item.speakerLabel}`,
       ...(item.soundSource === 'playback' ? ['[声音来源：播放内容；不能据此认定该人物在现场发言或表达观点]'] : item.containsPlayback ? ['[本片段部分声音来自播放内容；不能把整段归为现场人物发言]'] : []),
-      ...(item.isSelf ? [] : ['[important_note]: 这句话不是我本人说的']),
-      `[${timeZone ? new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(item.startAtMillis) : `${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)}`} ${recordingGenerationDurationLabel(startSeconds, endSeconds)}] ${event}：`,
+      ...(item.speakerIdentityUnknown ? ['[important_note]: 无法验证是否为我本人发言，勿推断身份'] : item.isSelf ? [] : ['[important_note]: 这句话不是我本人说的']),
+      `[${timeZone ? new Intl.DateTimeFormat('sv-SE', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }).format(item.startAtMillis) : `${recordingGenerationDateLabel(item.startAtMillis)} ${recordingGenerationClockLabel(startSeconds)}`} ${timing}] ${event}：`,
       text,
     ].join('\n')
   })
-  sections.push(selfSpeakerLabel === '' ? '其中，没有发现我自己说的话' : `其中，${selfSpeakerLabel}是我自己`)
+  if (selfSpeakerLabel !== '') sections.push(`其中，${selfSpeakerLabel}是我自己`)
+  else if (!available.some(item => item.speakerIdentityUnknown)) sections.push('其中，没有发现我自己说的话')
   sections.push([
     `不需要开头中的声明或推测，直接输出「${kind === 'timeline' ? '时间轴' : '总结'}」正文内容，`,
     '不需要结语中的「帮我干」的内容，直接生成正文部分',
     '总结时，不能将不是我说的话，归结为我说的内容',
     '禁止在输出结果中出现[important_note]等内部字段',
-    ...(kind === 'timeline' ? ['如果某些时段或一整天都没有我的说话的数据，则认为录制都是环境音，以此环境音分析我的一天或每个时间段可能在做什么'] : []),
+    ...(kind === 'timeline' && !available.some(item => item.speakerIdentityUnknown) ? ['如果某些时段或一整天都没有我的说话的数据，则认为录制都是环境音，以此环境音分析我的一天或每个时间段可能在做什么'] : []),
   ].join('\n'))
   return sections.join('\n\n')
 }

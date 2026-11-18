@@ -60,13 +60,13 @@ export function appendRecordingTranscriptPage(current: ArkmeRecordingTranscriptP
     }
   }
   if (next.nextCursor === '' && items.some(item => item.textEndOffset !== item.textTotalLength)) invalid('录音正文尚未读取完整')
-  return { ...next, ...(next.dailyMetrics === undefined ? {} : { dailyMetrics: { ...next.dailyMetrics, textCount: items.reduce((sum, item) => sum + recordingTextCount(item.text), 0) } }), state: items.length > 0 ? 'ready' : next.state, items, message: items.length > 0 ? '' : next.message }
+  return { ...next, ...(current.presentationRef ? { presentationRef: current.presentationRef } : {}), ...(next.dailyMetrics === undefined ? {} : { dailyMetrics: { ...next.dailyMetrics, textCount: items.reduce((sum, item) => sum + recordingTextCount(item.text), 0) } }), state: items.length > 0 ? 'ready' : next.state, items, message: items.length > 0 ? '' : next.message }
 }
 
 /** A refresh with the same snapshot may update progress without throwing away
  * already loaded text. A changed revision starts at the new first page. */
 export function refreshRecordingTranscriptPage(current: ArkmeRecordingTranscriptPage, first: ArkmeRecordingTranscriptPage): ArkmeRecordingTranscriptPage {
-  if (current.viewRef === '' || current.viewRef !== first.viewRef || current.dateStamp !== first.dateStamp || current.transcriptSource !== first.transcriptSource) return first
+  if (current.viewRef === '' || current.viewRef !== first.viewRef || current.dateStamp !== first.dateStamp || current.transcriptSource !== first.transcriptSource || current.presentationRef !== first.presentationRef) return first
   return { ...first, ...(first.dailyMetrics === undefined ? {} : { dailyMetrics: { ...first.dailyMetrics, textCount: current.items.reduce((sum, item) => sum + recordingTextCount(item.text), 0) } }), items: current.items, nextCursor: current.nextCursor }
 }
 
@@ -74,10 +74,10 @@ export function refreshRecordingTranscriptPage(current: ArkmeRecordingTranscript
  * is a read operation: speaker edits and selected forwarding commands keep
  * their original references and must not use this recovery as a write retry. */
 export async function restoreRecordingTranscriptPrefix(previous: ArkmeRecordingTranscriptPage, first: ArkmeRecordingTranscriptPage,
-  read: (cursor: string) => Promise<ArkmeRecordingTranscriptPage>, signal: AbortSignal): Promise<ArkmeRecordingTranscriptPage> {
+  read: (cursor: string) => Promise<ArkmeRecordingTranscriptPage>, signal: AbortSignal, force = false): Promise<ArkmeRecordingTranscriptPage> {
   if (previous.dateStamp !== first.dateStamp || previous.transcriptSource !== first.transcriptSource) invalid()
-  let restored = refreshRecordingTranscriptPage(previous, first)
-  if (restored.viewRef === previous.viewRef) return restored
+  let restored = force ? first : refreshRecordingTranscriptPage(previous, first)
+  if (!force && restored.viewRef === previous.viewRef && restored.presentationRef === previous.presentationRef) return restored
   const boundary = previous.items.at(-1)?.startAtMillis
   const cursors = new Set<string>()
   while (boundary !== undefined && restored.nextCursor !== '' && (restored.items.at(-1)?.startAtMillis ?? -Infinity) <= boundary) {

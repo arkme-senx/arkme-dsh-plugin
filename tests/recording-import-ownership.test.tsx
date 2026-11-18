@@ -9,6 +9,7 @@ vi.mock('../src/client/api.js', () => ({
     if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
     if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
     if (operation === 'recordings.workflow') return { supported: false }
+    if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
     throw new Error(`unexpected operation: ${operation}`)
   }),
   uploadArkmeRecording: vi.fn(), lookupArkmeRecordingImport: vi.fn(async () => null),

@@ -299,7 +299,8 @@ describe('recording import tool integration', () => {
       expect(finishChild).toHaveBeenCalledOnce()
       expect(finishSession).toHaveBeenCalledOnce()
       expect(await readFile((await service.fileReadLocal(file.fileRef)).path)).toEqual(f.bytes)
-      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/import-batches/capabilities'))).toHaveLength(2)
+      // Initial and retried admissions each resolve both batch and durable task capability.
+      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/import-batches/capabilities'))).toHaveLength(4)
       expect(network.mock.calls.filter(([url]) => String(url).endsWith('/processing-preference'))).toHaveLength(0)
       const jobs = await store.listRecordingImportJobs(42)
       expect(jobs[0]!.batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
