@@ -74,6 +74,7 @@ describe('retained transcript Host projection', () => {
     expect(b.viewRef).toBe(a.viewRef)
     expect(b.items[0]).toMatchObject({ text: '音频删除后保留', itemRef: '', playable: false })
     expect(b.items[0]?.retainedPlaybackRef).toBeUndefined()
+    expect(b.dailyMetrics).toMatchObject({ textCount: 7, archiveState: 'unavailable' })
     expect(JSON.stringify([a, b])).not.toMatch(/private-owner-next|snapshot:owner|123456789012345678901237|secret-access|secret-refresh/)
     expect(fixture.post.mock.calls.filter(([path]) => path === queryPath).map(([, body]) => body)).toEqual([
       { start_at: window.dateStamp, end_at: window.endStamp, tz_offset: 28_800_000, transcript_source: 'primary', limit: 100 },

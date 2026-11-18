@@ -1,5 +1,6 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, expect, it, vi } from 'vitest'
+import { projectRecordingDailyMetrics } from '../src/recording-daily-metrics.js'
 import type { ArkmeRecordingTranscriptPage, ArkmeRecordingWorkbenchItem } from '../src/types.js'
 
 const calls = vi.hoisted(() => ({ host: vi.fn() }))
@@ -102,4 +103,30 @@ it('labels effective time ranges on one row and disables playback for partially 
   expect(row.findByType('time').props.title).toMatch(/有效时段 .*:00:01–.*:00:11、.*:00:21–.*:00:31/)
   expect(row.findByProps({ 'aria-label': '原音不可用' }).props.disabled).toBe(true)
   expect(toggle).not.toHaveBeenCalled()
+})
+
+
+it('counts all retained transcript pages while the storage owner reports zero bytes', async () => {
+  const zeroStorage = { bytes: 0, archive_bytes: 0, clip_bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 0 }
+  const withPageMetrics = (value: ArkmeRecordingTranscriptPage) => ({
+    ...value, dailyMetrics: projectRecordingDailyMetrics({ ...zeroStorage, unknown_count: 1 }, value.items),
+  })
+  calls.host.mockImplementation(async (operation: string, { dateStamp, part, cursor }: { dateStamp: number; part?: string; cursor?: string }) => {
+    if (operation === 'recordings.day' && part === 'metrics') return { dateStamp, metrics: projectRecordingDailyMetrics(zeroStorage, []) }
+    if (operation === 'recordings.day') return {
+      dateStamp, totalDurationMillis: 0, coverage: { state: 'ready', intervals: [] },
+      transcript: withPageMetrics(page(dateStamp, '保留 正文', undefined, 'retained-rest')),
+      summary: { state: 'empty', items: [], message: '' }, timeline: { state: 'empty', items: [], message: '' },
+    }
+    if (operation === 'recordings.transcript.page' && cursor === 'retained-rest') return withPageMetrics(page(dateStamp, '第二页'))
+    if (operation === 'recordings.transcript.versions') return { supported: true, versions: [], nextCursor: '' }
+    if (operation === 'recordings.calendar') return { days: [] }
+    return { options: [] }
+  })
+  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+  const metrics = renderer!.root.findByProps({ 'aria-label': '当天录音统计' })
+  const labels = metrics.findAllByType('span').map(node => node.children.join(''))
+  expect(labels).toContain('云端录音存储 0 B（已记录）')
+  expect(labels).toContain('转写 7 字')
+  expect(calls.host.mock.calls.filter(([op, params]) => op === 'recordings.transcript.page' && params.cursor === 'retained-rest')).toHaveLength(1)
 })
