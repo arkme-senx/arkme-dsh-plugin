@@ -1,10 +1,11 @@
+import { registerImportManifest } from './recording-import-registration.js'
+import { RecordingImportQueue } from '../../recording-import-queue.js'
 import { recordingCalendarDate, recordingCivilKey, useArkmeDisplayTimeZone } from '../display-time-zone.js'
 import { recordingAudioDurationLabel } from './recording-audio-duration.js'
 import { recordingDisplayName } from './recording-display-name.js'
 import { recordingFileExpectedBytes, recordingTaskStatusLabel } from './recording-day-files.js'
 import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { recordingStrategy, type RecordingStrategy } from '../../recording-strategy-contract.js'
-import { RecordingImportQueue } from '../../recording-import-queue.js'
 import { recordingImportBatchID, type RecordingImportBatch } from '../../recording-workflow-contract.js'
 import { arkmeUi } from '../ui-controller.js'
 import { tr } from '../locale.js'
@@ -814,8 +815,8 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
   const browserUploadTimingsRef = useRef(new Map<string, BrowserUploadPresentationTiming>())
   const submissionControllersRef = useRef(new Set<AbortController>())
   const submissionOwnersRef = useRef(new Map<string, AbortController>())
-  const submissionQueueRef = useRef(new RecordingImportQueue(1))
   const backgroundNoticeShownRef = useRef(false)
+  const stageQueueRef = useRef(new RecordingImportQueue(1))
   const inspectionQueueRef = useRef<RecordingImportPreparationQueue>()
   const inspectionsRef = useRef(new Map<string, Promise<ArkmeRecordingSelection>>())
   const inspectionActiveRef = useRef(false)
@@ -1294,6 +1295,28 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     publishRows(current => current.map(row => row.id === id ? { ...row, ...update } : row))
   }
 
+  const editStagedMetadata = async (id: string, update: Pick<Partial<StagedRecording>, 'startAt' | 'ownership'>) => {
+    const row = rowsRef.current.find(item => item.id === id)
+    if (!row || row.submitting) return
+    if (!row.submission) { updateRow(id, { ...update, error: '' }); return }
+    const signal = lifecycleAbortRef.current?.signal
+    setPending(true)
+    try {
+      await callArkme('recordings.import.tasks.cancel', { taskId: id, expectedUserId: currentUserId }, signal)
+      if (signal?.aborted) return
+      const nextId = recordingImportBatchID()
+      publishRows(current => current.map(item => {
+        if (item.id !== id) return item
+        const { submission: _submission, batch: _batch, ...retained } = withoutStagedUpload(item)
+        return { ...retained, ...update, id: nextId, error: '' }
+      }))
+      persistRows(rowsRef.current, true)
+      await journalTail.current
+    } catch (reason) {
+      if (!signal?.aborted) setError(reason instanceof Error ? reason.message : '任务参数修改失败，请重试')
+    } finally { if (!signal?.aborted) setPending(false) }
+  }
+
   const skipDuplicateRows = () => {
     const nameKeys = new Set(activeDuplicateNames.map(recordingImportFileNameKey))
     publishRows(current => current.filter(row => !nameKeys.has(recordingImportFileNameKey(row.file.name))))
@@ -1386,69 +1409,85 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     }
     await journalTail.current
     if (controller.signal.aborted) return
+    // Register the entire durable manifest before stage/hash/upload can consume a slot.
+    for (let offset = 0; offset < prepared.length; offset += 100) {
+      await registerImportManifest(() => callArkme('recordings.import.tasks.register', {
+        expectedUserId: currentUserId,
+        tasks: prepared.slice(offset, offset + 100).map(({ row, start }) => ({
+          task_id: row.id, file_name: row.file.name, file_size: row.file.size, start_at: start,
+          duration_ms: Math.round(row.selection?.ok ? row.selection.durationMillis ?? 0 : 0),
+          belong_user_id: row.ownership === 'self' ? currentUserId : 0,
+          ...(row.batch ? { batch_id: row.batch.batchId } : {}),
+          item_index: row.batch?.itemIndex ?? 0, item_count: row.batch?.itemCount ?? 1,
+        })),
+      }, controller.signal), controller.signal, () => setWorkflowNotice(tr('文件已保存在本地，云端任务尚未登记；网络恢复后将自动重试。')))
+    }
     const workflowSupported = prepared.some(item => item.row.batch !== undefined)
     setWorkflowAvailable(workflowSupported)
     setWorkflowNotice('')
     const succeeded = new Set<string>()
-    for (const { row, start } of prepared) {
-      if (controller.signal.aborted) break
-      const uploadStartedAtMillis = Date.now()
-      updateRow(row.id, { error: '', uploadStartedAtMillis, uploadedBytes: 0 })
-      try {
-        const native = row.source?.kind === 'desktop' ? desktopImportBridge() : undefined
-        const nativeToken = row.source?.kind === 'desktop' ? row.source.token : undefined
-        const cancelNative = () => { if (native) void native.cancel(row.id).catch(() => undefined) }
-        controller.signal.addEventListener('abort', cancelNative, { once: true })
-        const accepted = await (native && nativeToken ? native.upload(nativeToken, {
-          id: row.id, path: importPath, headers: {
-            'Content-Type': row.file.type || (row.file.name.toLowerCase().endsWith('.wav') ? 'audio/wav' : row.file.name.toLowerCase().endsWith('.mp3') ? 'audio/mpeg' : 'audio/mp4'),
-            'X-Arkme-File-Name': encodeURIComponent(row.file.name), 'X-Arkme-Start-At': String(start),
-            'X-Arkme-Belong-User': String(row.ownership === 'self' ? currentUserId : 0), 'X-Arkme-Recording-Kind': '3',
-            'X-Arkme-Import-Task': row.id,
-            ...(row.batch ? { 'X-Arkme-Import-Batch': encodeURIComponent(JSON.stringify(row.batch)) } : {}),
-          },
-        }) as Promise<PublicRecordingImportJob> : uploadArkmeRecording(
-          importPath,
-          row.file,
-          start,
-          row.ownership === 'self' ? currentUserId : 0,
-          {
-            ...(row.batch === undefined ? {} : { batch: row.batch }),
-            clientTaskId: row.id,
-            ...(row.strategy === undefined ? {} : { strategy: row.strategy }),
-            signal: controller.signal,
-            onProgress: progress => {
-              if (controller.signal.aborted || !inspectionActiveRef.current) return
-              updateRow(row.id, { uploadedBytes: progress.uploadedBytes })
-            },
-          },
-        )).finally(() => { controller.signal.removeEventListener('abort', cancelNative) })
+    await stageQueueRef.current.run(async () => {
+      for (const { row, start } of prepared) {
         if (controller.signal.aborted) break
-        browserUploadTimingsRef.current.set(taskProcessingKey(accepted), {
-          startedAtMillis: uploadStartedAtMillis,
-          acceptedAtMillis: Date.now(),
-        })
-        jobsLoadRevisionRef.current += 1
-        jobsInitializedRef.current = true
-        publishJobs([
-          accepted,
-          ...jobsRef.current.filter(task => !isLocalRecordingImport(task) || task.importRef !== accepted.importRef),
-        ])
-        setProcessingDetails(current => current?.sourceKey === stagedProcessingKey(row)
-          ? { ...current, sourceKey: taskProcessingKey(accepted) }
-          : current)
-        succeeded.add(row.id)
-        submissionOwnersRef.current.delete(row.id)
-        publishRows(current => current.filter(item => item.id !== row.id))
-      } catch (reason) {
-        if (!controller.signal.aborted) {
+        const uploadStartedAtMillis = Date.now()
+        updateRow(row.id, { error: '', uploadStartedAtMillis, uploadedBytes: 0 })
+        try {
+          const native = row.source?.kind === 'desktop' ? desktopImportBridge() : undefined
+          const nativeToken = row.source?.kind === 'desktop' ? row.source.token : undefined
+          const cancelNative = () => { if (native) void native.cancel(row.id).catch(() => undefined) }
+          controller.signal.addEventListener('abort', cancelNative, { once: true })
+          const accepted = await (native && nativeToken ? native.upload(nativeToken, {
+            id: row.id, path: importPath, headers: {
+              'Content-Type': row.file.type || (row.file.name.toLowerCase().endsWith('.wav') ? 'audio/wav' : row.file.name.toLowerCase().endsWith('.mp3') ? 'audio/mpeg' : 'audio/mp4'),
+              'X-Arkme-File-Name': encodeURIComponent(row.file.name), 'X-Arkme-Start-At': String(start),
+              'X-Arkme-Belong-User': String(row.ownership === 'self' ? currentUserId : 0), 'X-Arkme-Recording-Kind': '3',
+              'X-Arkme-Import-Task': row.id,
+              ...(row.batch ? { 'X-Arkme-Import-Batch': encodeURIComponent(JSON.stringify(row.batch)) } : {}),
+            },
+          }) as Promise<PublicRecordingImportJob> : uploadArkmeRecording(
+            importPath,
+            row.file,
+            start,
+            row.ownership === 'self' ? currentUserId : 0,
+            {
+              ...(row.batch === undefined ? {} : { batch: row.batch }),
+              clientTaskId: row.id,
+              ...(row.strategy === undefined ? {} : { strategy: row.strategy }),
+              signal: controller.signal,
+              onProgress: progress => {
+                if (controller.signal.aborted || !inspectionActiveRef.current) return
+                updateRow(row.id, { uploadedBytes: progress.uploadedBytes })
+              },
+            },
+          )).finally(() => { controller.signal.removeEventListener('abort', cancelNative) })
+          if (controller.signal.aborted) break
+          browserUploadTimingsRef.current.set(taskProcessingKey(accepted), {
+            startedAtMillis: uploadStartedAtMillis,
+            acceptedAtMillis: Date.now(),
+          })
+          jobsLoadRevisionRef.current += 1
+          jobsInitializedRef.current = true
+          publishJobs([
+            accepted,
+            ...jobsRef.current.filter(task => !isLocalRecordingImport(task) || task.importRef !== accepted.importRef),
+          ])
+          setProcessingDetails(current => current?.sourceKey === stagedProcessingKey(row)
+            ? { ...current, sourceKey: taskProcessingKey(accepted) }
+            : current)
+          succeeded.add(row.id)
           submissionOwnersRef.current.delete(row.id)
-          publishRows(current => current.map(item => item.id === row.id
-            ? { ...withoutStagedUpload(item), error: reason instanceof Error ? reason.message : '录音导入失败' }
-            : item))
+          publishRows(current => current.filter(item => item.id !== row.id))
+        } catch (reason) {
+          if (!controller.signal.aborted) {
+            await callArkme('recordings.import.tasks.fail', { taskId: row.id, expectedUserId: currentUserId }, controller.signal).catch(() => undefined)
+            submissionOwnersRef.current.delete(row.id)
+            publishRows(current => current.map(item => item.id === row.id
+              ? { ...withoutStagedUpload(item), error: reason instanceof Error ? reason.message : '录音导入失败' }
+              : item))
+          }
         }
       }
-    }
+    }, controller.signal)
     if (succeeded.size > 0) void loadJobs(lifecycleAbortRef.current?.signal)
   }
 
@@ -1497,14 +1536,12 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
     setWorkflowNotice(tr('已加入导入队列，可以继续添加文件；关闭此窗口后后台会继续处理。'))
     publishRows(current => current.map(row => ids.has(row.id) ? { ...row, submitting: true, error: '' } : row))
     persistRows(rowsRef.current, true)
-    void submissionQueueRef.current.run(
-      async () => {
+    void (async () => {
         const resolved = await snapshot
         if ('error' in resolved) throw resolved.error
         if (controller.signal.aborted) return
         if (!controller.signal.aborted) await processSubmission(requested, controller, duplicateCheck)
-      }, controller.signal,
-    ).catch(reason => {
+      })().catch(reason => {
       if (!controller.signal.aborted && inspectionActiveRef.current) {
         setError(reason instanceof Error ? reason.message : '导入暂未完成，请重试')
       }
@@ -1894,11 +1931,14 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
             return <div key={row.id} style={styles.row} role="row">
               <span style={styles.cellCenter}>{row.submitting ? null : <input style={styles.checkbox} aria-label={tr("选择 {v0}", { v0: row.file.name })} type="checkbox" checked={row.selected} disabled={pending} onChange={event => { updateRow(row.id, { selected: event.target.checked }) }} />}</span>
               <span style={styles.fileCell}><span style={styles.fileName}>{row.file.name}</span><span style={styles.timeEditor}><ArkmeLocalDateTimeInput style={styles.timeInput} label={tr("{v0}录音开始时间", { v0: row.file.name })} value={row.startAt} disabled={rowLocked}
-                onValueChange={next => updateRow(row.id, { startAt: next, error: '' })} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
+                onValueChange={next => { void editStagedMetadata(row.id, { startAt: next }) }} /><span aria-hidden>–</span><span style={styles.endTime} aria-label={tr("{v0}录音结束时间", { v0: row.file.name })}>{row.selection?.ok === true ? recordingImportEndLabel(start, duration) : '—'}</span></span>{timeError !== '' && <small style={styles.error}>{timeError}</small>}{rowError !== '' && rowError !== timeError && <small style={styles.error}>{rowError}</small>}</span>
               <span style={styles.cellCenter}>{row.selection?.ok === true ? recordingAudioDurationLabel(duration) : '—'}</span><span style={styles.cellCenter}>{row.file.size === 0 && row.source?.kind === 'handle' ? '—' : fileSizeLabel(row.file.size)}</span>
               <span style={styles.ownership} aria-label={tr("{v0}数据归属", { v0: row.file.name })}><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'self'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'self' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'self') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'self' }) }}>{tr("我的")}</button><button data-arkme-feedback="neutral" type="button" aria-pressed={row.ownership === 'other'} disabled={rowLocked} style={{ ...styles.ownershipButton, ...(row.ownership === 'other' ? styles.ownershipSelected : {}) }} onClick={() => { if (row.ownership !== 'other') setOwnershipChange({ kind: 'staged', id: row.id, ownership: 'other' }) }}>{tr("他人")}</button></span>
               <span style={styles.status}>{row.needsAccess ? <button type="button" style={styles.historyButton} disabled={pending} onClick={() => { void restoreAccess(row) }}>恢复访问</button> : row.validating ? <span title={tr('正在读取文件并校验格式与时长；云端文件可能需要先由系统下载。')}>{row.preparing ? tr('正在准备') : tr('等待准备')}</span> : rowError !== '' ? <><small style={styles.error}>{row.selection?.ok === true ? tr('导入失败') : tr('准备失败')}</small><button type="button" aria-label={tr('重试 {v0}', { v0: row.file.name })} disabled={pending} style={styles.historyButton} onClick={() => { void submitRows(row.id) }}>{tr('重试')}</button></> : row.submitting ? uploadActive ? <><span style={styles.progress} aria-label={tr("上传进度 {v0}%", { v0: String(Math.round(uploadProgress * 100)) })}><span style={{ ...styles.progressValue, display: 'block', width: `${String(uploadProgress * 100)}%` }} /></span><span>{tr("上传中")}</span></> : tr("排队中") : tr("待导入")}</span><span style={styles.cellCenter}>{processingDurationCell(processingSource)}</span>
-              <button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: row.file.name })} style={styles.iconButton} disabled={pending || row.submitting} onClick={() => { publishRows(current => current.filter(item => item.id !== row.id)) }}><Trash size={20} /></button>
+              <button data-arkme-feedback="neutral" type="button" aria-label={tr("删除 {v0}", { v0: row.file.name })} style={styles.iconButton} disabled={pending || row.submitting} onClick={() => { void (async () => {
+                if (row.submission) await callArkme('recordings.import.tasks.cancel', { taskId: row.id, expectedUserId: currentUserId }, lifecycleAbortRef.current?.signal)
+                publishRows(current => current.filter(item => item.id !== row.id))
+              })().catch(reason => setError(reason instanceof Error ? reason.message : '取消失败，请重试')) }}><Trash size={20} /></button>
             </div>
           })}{visibleJobs.map(job => {
             const displayName = recordingDisplayName(job)
@@ -1944,7 +1984,7 @@ export const ArkmeRecordingImportDialog = forwardRef<ArkmeRecordingImportDialogH
       </section>}
       {activeDuplicateNames.length > 0 && <div style={styles.modalBackdrop} onClick={event => { if (event.target === event.currentTarget) clearDuplicateNames() }}><section role="dialog" aria-modal="true" aria-label={tr("重复录音文件")} style={styles.duplicateDialog}><h3 style={styles.confirmTitle}>{tr("发现")} {activeDuplicateNames.length} {tr("个重复文件")}</h3><p style={styles.confirmCopy}>{tr("将跳过这些文件，并继续导入其余音频")}</p><div style={styles.duplicateFiles}>{activeDuplicateNames.map(name => <div key={name}>{name}</div>)}</div><span style={styles.confirmActions}><button data-arkme-feedback="primary" type="button" style={styles.primaryButton} onClick={skipDuplicateRows}>{tr("跳过并继续")}</button></span></section></div>}
       {jobDeletion !== undefined && <div style={styles.modalBackdrop}><section role="dialog" aria-modal="true" aria-label={tr("确认删除录音")} style={styles.confirmDialog}><h3 style={styles.confirmTitle}>{tr("是否删除")} {recordingDisplayName(jobDeletion.kind === 'job' ? jobDeletion.job : jobDeletion.task)} ?</h3><p style={styles.confirmCopy}>{tr("删除后无法恢复")}</p><span style={styles.confirmActions}><button data-arkme-feedback="neutral" type="button" aria-label={tr("取消删除")} style={styles.secondaryButton} onClick={() => { setJobDeletion(undefined) }}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" aria-label={tr("确认删除")} style={styles.primaryButton} onClick={() => { const target = jobDeletion; setJobDeletion(undefined); if (target.kind === 'job') void mutateJob('recordings.import.cancel', target.job); else void mutateOwner({ kind: 'delete', sessionRef: target.task.sessionRef }, target.history) }}>{tr("确认")}</button></span></section></div>}
-      {ownershipChange !== undefined && <div style={styles.modalBackdrop}><section role="dialog" aria-modal="true" aria-label={tr("确认修改数据归属")} style={styles.confirmDialog}><h3 style={styles.confirmTitle}>{tr("确定修改音频文件的数据归属吗？")}</h3><p style={styles.confirmCopy}>{tr("我的数据写入时间轴，他人仅保存")}</p><span style={styles.confirmActions}><button data-arkme-feedback="neutral" type="button" aria-label={tr("取消")} style={styles.secondaryButton} onClick={() => { setOwnershipChange(undefined) }}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" aria-label={tr("确认")} style={styles.primaryButton} onClick={() => { const target = ownershipChange; setOwnershipChange(undefined); if (target.kind === 'staged') updateRow(target.id, { ownership: target.ownership }); else void mutateOwner({ kind: 'ownership', sessionRef: target.sessionRef, ownership: target.ownership }, target.history) }}>{tr("确认")}</button></span></section></div>}
+      {ownershipChange !== undefined && <div style={styles.modalBackdrop}><section role="dialog" aria-modal="true" aria-label={tr("确认修改数据归属")} style={styles.confirmDialog}><h3 style={styles.confirmTitle}>{tr("确定修改音频文件的数据归属吗？")}</h3><p style={styles.confirmCopy}>{tr("我的数据写入时间轴，他人仅保存")}</p><span style={styles.confirmActions}><button data-arkme-feedback="neutral" type="button" aria-label={tr("取消")} style={styles.secondaryButton} onClick={() => { setOwnershipChange(undefined) }}>{tr("取消")}</button><button data-arkme-feedback="primary" type="button" aria-label={tr("确认")} style={styles.primaryButton} onClick={() => { const target = ownershipChange; setOwnershipChange(undefined); if (target.kind === 'staged') void editStagedMetadata(target.id, { ownership: target.ownership }); else void mutateOwner({ kind: 'ownership', sessionRef: target.sessionRef, ownership: target.ownership }, target.history) }}>{tr("确认")}</button></span></section></div>}
       {processingDetails !== undefined && processingSource !== undefined && (() => {
         const progressRows = processingSource.rows
         return <div role="presentation" style={{ position: 'fixed', zIndex: 7, inset: 0 }} onMouseDown={event => { if (event.target === event.currentTarget) setProcessingDetails(undefined) }}>

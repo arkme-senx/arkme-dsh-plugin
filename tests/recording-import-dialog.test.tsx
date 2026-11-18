@@ -73,6 +73,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: false }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
@@ -145,6 +147,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: false }
       throw new Error(operation)
     })
@@ -277,6 +281,23 @@ describe('recording import dialog behavior', () => {
       await tick()
     })
   }
+  it('preserves editing a failed submitted file by cancelling its old identity before creating a new candidate', async () => {
+    const journal=memoryJournal(); await remount(journal)
+    mocks.uploadArkmeRecording.mockRejectedValueOnce(new Error('stage failed'))
+    await choose([new File(['a'],'editable.m4a')])
+    await act(async()=>{button(renderer,'导入').props.onClick();await tick()})
+    const old=[...journal.records.values()][0]!
+    expect(old.submission).toBeTruthy()
+    await act(async()=>{renderer.root.findByProps({label:'editable.m4a录音开始时间'}).props.onValueChange('2024-09-01T10:00');await tick()})
+    const edited=[...journal.records.values()][0]!
+    expect(edited.id).not.toBe(old.id);expect(edited.submission).toBeUndefined();expect(edited.batch).toBeUndefined()
+    expect(edited.source).toEqual(old.source);expect(edited.startAt).toBe('2024-09-01T10:00')
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.import.tasks.cancel',{taskId:old.id,expectedUserId:42},expect.any(AbortSignal))
+    await act(async()=>{button(renderer,'导入').props.onClick();await tick()})
+    expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
+    expect(mocks.uploadArkmeRecording.mock.calls[1]![4].clientTaskId).toBe(edited.id)
+  })
+
   it('restores unsubmitted candidates without uploading or losing start and ownership', async () => {
     const journal = memoryJournal(); await remount(journal)
     await choose([new File(['a'], 'candidate.m4a')])
@@ -348,6 +369,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: true }
       throw new Error('unexpected')
     })
@@ -365,6 +388,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: false }
       throw new Error('unexpected')
     })
@@ -381,7 +406,9 @@ describe('recording import dialog behavior', () => {
         if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
         if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
-        if (operation === 'recordings.workflow') {
+        if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
+      if (operation === 'recordings.workflow') {
           if (capabilityError) throw new Error(message)
           return { supported: true }
         }
@@ -620,6 +647,8 @@ describe('recording import dialog behavior', () => {
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: false }
       if (operation === 'recordings.import.preflight') {
         preflightCalls += 1
@@ -696,6 +725,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: true }
       throw new Error('unexpected')
     })
@@ -731,6 +762,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: true }
       throw new Error('unexpected')
     })
@@ -743,6 +776,8 @@ describe('recording import dialog behavior', () => {
     expect(button(renderer, '导入').props.disabled).toBe(false)
     await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(1)
+    const registrations = mocks.callArkme.mock.calls.filter(call => call[0] === 'recordings.import.tasks.register')
+    expect(registrations.map(call => call[1].tasks.length)).toEqual([40, 12])
     expect(renderer.root.findByProps({ label: 'second-0.m4a录音开始时间' }).props.disabled).toBe(true)
     expect(renderedText(renderer.root.findByProps({ 'aria-label': '录音导入队列' }))).toContain('排队 51 个')
     await act(async () => { release(); await tick() })
@@ -807,6 +842,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: true }
       throw new Error('unexpected')
     })
@@ -833,6 +870,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: true }
       throw new Error('unexpected')
     })
@@ -1844,6 +1883,8 @@ describe('recording import dialog behavior', () => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') return currentSnapshot()
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: false }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
@@ -1950,6 +1991,8 @@ describe('recording import dialog behavior', () => {
     let listCalls = 0
     mocks.callArkme.mockImplementation(async operation => {
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.workflow') return { supported: false }
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.import.list') {
