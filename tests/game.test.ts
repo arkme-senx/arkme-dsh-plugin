@@ -145,10 +145,11 @@ describe('host authority', () => {
     a.sync(m, 0)
     const id = m[0]!.membership_id
     const action = { id: 'ready', round: a.state.round, version: a.state.version, kind: 'ready' as const }
-    a.apply(id, action, m, 0)
-    a.apply(id, action, m, 0)
-    expect(a.state.ready).toEqual([id])
-    for (const p of m.slice(1))
+    const guest = m[1]!.membership_id
+    a.apply(guest, action, m, 0)
+    a.apply(guest, action, m, 0)
+    expect(a.state.ready).toEqual([id, guest])
+    for (const p of m.slice(2))
       a.apply(p.membership_id, { id: 'r', round: a.state.round, version: a.state.version, kind: 'ready' }, m, 0)
     expect(a.apply(id, { id: 'start', round: a.state.round, version: a.state.version, kind: 'start' }, m, 0)).toBe('')
     a.sync([...m, ...members(8).slice(6)], 0)
@@ -177,4 +178,100 @@ describe('host authority', () => {
       a.apply(m[0]!.membership_id, { id: 'stale', round: 'lobby', version: 0, kind: 'count', value: 2 }, m, 0),
     ).toContain('更新')
   })
+})
+
+it('uses the configured duration for the first and following turns', () => {
+  for (const seconds of [30,60,90,120]) {
+    const b = createBoard(['a','b'], 1000, seconds)
+    expect(b.deadline).toBe(1000+seconds*1000)
+    expect(timeout(b,b.deadline).deadline).toBe(b.deadline+seconds*1000)
+  }
+})
+
+it('only the host changes duration in the lobby, clears ready, and freezes it for the round', () => {
+  const m = members(2), a = new Authority(m[0]!.membership_id)
+  a.sync(m,0)
+  let id = 0
+  const act = (sender: string, kind: any, value?: unknown) => a.apply(sender,
+    {id: String(++id), kind, value, round:a.state.round, version:a.state.version}, m,0)
+  const host=m[0]!.membership_id, guest=m[1]!.membership_id
+  act(host,'count',2)
+  act(host,'ready')
+  expect(act(guest,'duration',30)).toContain('不能')
+  expect(act(host,'duration',31)).toContain('不能')
+  expect(act(host,'duration',90)).toBe('')
+  expect(a.state.ready).toEqual([host])
+  act(host,'ready'); act(guest,'ready'); act(host,'start')
+  expect(a.state.board?.deadline).toBe(90000)
+  expect(act(host,'duration',120)).toContain('不能')
+  a.state.board!.ended=true
+  act(host,'next')
+  expect(act(host,'duration',120)).toBe('')
+})
+it('keeps the host ready through roster, count, duration and next-round changes', () => {
+  const m=members(3), host=m[0]!.membership_id, a=new Authority(host)
+  a.sync(m.slice(0,2),0)
+  expect(a.state.ready).toEqual([host])
+  let id=0
+  const act=(sender:string,kind:any,value?:unknown)=>a.apply(sender,{id:String(++id),kind,value,round:a.state.round,version:a.state.version},m,0)
+  act(host,'count',2)
+  act(m[1]!.membership_id,'ready')
+  expect(a.state.ready).toHaveLength(2)
+  act(host,'count',3)
+  expect(a.state.ready).toEqual([host])
+  act(m[1]!.membership_id,'ready')
+  act(host,'duration',30)
+  expect(a.state.ready).toEqual([host])
+  a.sync(m.slice(0,2),0)
+  expect(a.state.ready).toEqual([host])
+  act(host,'ready')
+  expect(a.state.ready).toEqual([host])
+  act(host,'count',2)
+  act(m[1]!.membership_id,'ready')
+  expect(act(host,'start')).toBe('')
+  a.state.board!.ended=true
+  act(host,'next')
+  expect(a.state.ready).toEqual([host])
+})
+it('preserves a disconnected player and restores the seat after readmission', () => {
+  const m=members(2),a=new Authority(m[0]!.membership_id)
+  a.sync(m,0);a.state.board=createBoard(a.state.players,0)
+  const old=m[1]!.membership_id, pieces=Object.keys(a.state.board.pieces).length
+  a.sync([m[0]!],1000)
+  expect(Object.keys(a.state.board.pieces)).toHaveLength(pieces)
+  expect(a.state.board.ended).toBe(false)
+  const returned={...m[1]!,membership_id:'returned',join_seq:3}
+  a.sync([m[0]!,returned],2000)
+  expect(a.state.board.players[1]!.id).toBe('returned')
+  expect(Object.values(a.state.board.pieces).filter(x=>x==='returned')).toHaveLength(10)
+  expect(Object.values(a.state.board.pieces)).not.toContain(old)
+})
+it('does not give a retired player their seat back on readmission', () => {
+  const m=members(3),a=new Authority(m[0]!.membership_id)
+  a.sync(m,0);a.state.board=createBoard(a.state.players,0)
+  a.state.board=retire(a.state.board,m[1]!.membership_id,1000)
+  a.sync([m[0]!,m[2]!,{...m[1]!,membership_id:'returned',join_seq:4}],2000)
+  expect(a.state.players).not.toContain('returned')
+  expect(a.state.board.players.some(p=>p.id==='returned')).toBe(false)
+})
+it('never restores a disconnected seat to another device or user', () => {
+  const m=members(2),a=new Authority(m[0]!.membership_id)
+  a.sync(m,0);a.state.board=createBoard(a.state.players,0)
+  a.sync([m[0]!,{...m[1]!,membership_id:'other-device',client_id:999}],1000)
+  expect(a.state.board.players[1]!.id).toBe(m[1]!.membership_id)
+  expect(a.state.players).not.toContain('other-device')
+})
+it('still retires disconnected players only after three timed-out turns', () => {
+  const m=members(3),a=new Authority(m[0]!.membership_id)
+  a.sync(m,0);a.state.board=createBoard(a.state.players,0,30)
+  const missing=m[1]!.membership_id
+  a.sync([m[0]!,m[2]!],1000)
+  for(let i=0;i<3;i++){
+    a.state.board.turn=1
+    a.tick(a.state.board.deadline)
+  }
+  expect(a.state.board.players[1]!.retired).toBe(true)
+  expect(Object.values(a.state.board.pieces)).not.toContain(missing)
+  a.sync([m[0]!,m[2]!,{...m[1]!,membership_id:'spectator'}],a.state.board.deadline)
+  expect(a.state.players).not.toContain('spectator')
 })

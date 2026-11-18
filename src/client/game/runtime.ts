@@ -1,3 +1,4 @@
+import {isGameType, type GameType} from './game-types.js'
 import {encodeState,decodeState} from './wire-state.js'
 import { Authority, type State, type Action } from './authority.js'
 import { GameIM, type WireMessage } from './im.js'
@@ -13,6 +14,8 @@ export class GameRuntime {
   animationEpoch = 0
   online = false
   closed = false
+  reconnecting = false
+  connectionError = false
   initializationFailed = false
   messages: WireMessage[] = []
   private offset = 0
@@ -24,7 +27,11 @@ export class GameRuntime {
   private registration = ''
   private runtime = crypto.randomUUID()
   private requestId = crypto.randomUUID()
+  private readmitting = false
   private command?: GameCommand
+  private selectedGame: GameType = 'chinese_checkers'
+  private actionQueue: Promise<void> = Promise.resolve()
+  get gameType(): GameType { return isGameType(this.room?.game_type) ? this.room.game_type : this.selectedGame }
   private timer?: ReturnType<typeof setInterval>
   private disposed = false
   private busy = false
@@ -48,7 +55,7 @@ export class GameRuntime {
     return this.room?.host_membership_id === this.me
   }
   get paused() {
-    return !this.online || !this.state || this.now > this.leaseUntil || (!this.host && this.now - this.lastHost > 15000)
+    return this.closed || this.reconnecting || this.connectionError || !this.online || !this.state || this.now > this.leaseUntil || (!this.host && this.now - this.lastHost > 15000)
   }
   private body() {
     return { room_id: this.room?.room_id, membership_id: this.me, runtime_id: this.host ? this.runtime : undefined }
@@ -60,8 +67,9 @@ export class GameRuntime {
     this.leaseUntil = r.room.members.find((m) => m.membership_id === this.me)?.lease_expires_at ?? 0
     if (r.invite_token) this.token = r.invite_token
   }
-  async enter(command: GameCommand) {
+  async enter(command: GameCommand, gameType: GameType = this.selectedGame) {
     if (this.busy || this.disposed) return
+    this.selectedGame = gameType
     this.command = command
     this.busy = true
     this.error = ''
@@ -82,11 +90,12 @@ export class GameRuntime {
           this.room?.im_group_id ?? '',
           (m) => this.receive(m),
           (ready, kicked) => {
+            if (this.disposed) return
             if (!ready) this.animationEpoch++
             this.online = ready
+            this.connectionError = !ready
             if (kicked) {
-              this.error = '游戏登录已失效，请退出后重新进入'
-              void this.leave()
+              this.error = '游戏登录已断开，请点击立即重连'
             } else if (ready) {
               void this.recover()
             }
@@ -104,10 +113,15 @@ export class GameRuntime {
       const reply = await this.api(
         command.kind === 'create' ? 'create' : 'join',
         command.kind === 'create'
-          ? { request_id: this.requestId, runtime_id: this.runtime, game_type: 'chinese_checkers' }
+          ? { request_id: this.requestId, runtime_id: this.runtime, game_type: this.selectedGame }
           : { request_id: this.requestId, room_id: command.roomId, invite_token: command.token },
       )
       this.accept(reply)
+      if (!isGameType(reply.room.game_type)) {
+        await this.api('leave', this.body()).catch(() => {})
+        await this.finish('当前版本不支持此游戏，请更新插件')
+        return
+      }
       if (this.disposed) {
         await this.api('leave', this.body()).catch(() => {})
         return
@@ -123,7 +137,7 @@ export class GameRuntime {
       this.timer = setInterval(() => void this.tick(), 1000)
       if (this.host) {
         if (!this.authority) {
-          this.authority = new Authority(this.me)
+          this.authority = new Authority(this.me, this.gameType)
           this.authority.sync(this.room.members, this.now)
           this.state = this.authority.state
         }
@@ -154,6 +168,75 @@ export class GameRuntime {
   async retry() {
     if (this.command) await this.enter(this.command)
   }
+  async reconnect() {
+    if (this.busy || this.reconnecting || this.disposed || !this.room) return
+    this.reconnecting = true
+    this.busy = true
+    this.error = ''
+    this.animationEpoch++
+    this.changed()
+    try {
+      try { await this.refresh(false) }
+      catch (e) {
+        if (!(e instanceof Error) || e.message !== '房间或成员身份已失效，请退出后重新进入' || this.host || this.command?.kind !== 'join') throw e
+        await this.readmit()
+      }
+      if (this.disposed) return
+      const r = await this.api('credentials', this.body())
+      if (this.disposed) return
+      const c = r.credentials
+      if (!c || c.user_id !== this.registration || !this.im) throw new Error('游戏凭证不可用')
+      await this.im.login(c.user_id, c.user_sig)
+      if (this.disposed) return
+      this.credentialExpires = c.expires_at
+      this.online = true
+      if (this.host) await this.snapshot()
+      else { this.lastSync = 0; this.lastHost = 0; await this.sync() }
+      await this.history()
+      this.error = ''
+      this.connectionError = false
+    } catch (e) {
+      const message = e instanceof Error ? e.message : '重连失败，请重试'
+      if (['房间已结束', '设备 IM 登记已失效，请重新进入'].includes(message) || (this.host && message === '房间或成员身份已失效，请退出后重新进入'))
+        await this.finish(message)
+      else { this.error = message; this.connectionError = true }
+    } finally {
+      this.busy = false
+      this.reconnecting = false
+      this.changed()
+    }
+  }
+  private async readmit() {
+    if (this.command?.kind !== 'join' || this.host) throw new Error('无法恢复原房间')
+    if (!this.readmitting) { this.requestId = crypto.randomUUID(); this.readmitting = true }
+    const r = await this.api('join', {room_id: this.command.roomId, invite_token: this.command.token, request_id: this.requestId})
+    if (this.disposed) {
+      await this.api('leave', {room_id:r.room.room_id, membership_id:r.membership_id}).catch(() => {})
+      return
+    }
+    this.accept(r)
+    if (!r.room.members.some(m=>m.membership_id===this.me && m.status==='active')) throw new Error('腾讯群正在准备，请稍后重试')
+    this.readmitting = false
+    this.pending = undefined
+    this.lastHost = 0
+    this.lastSync = 0
+    this.lastBeat = this.now
+    this.im!.group = r.room.im_group_id
+    clearInterval(this.timer)
+    this.timer = setInterval(() => void this.tick(), 1000)
+  }
+  private async finish(message: string) {
+    this.disposed = true
+    this.closed = true
+    this.online = false
+    this.initializationFailed = false
+    this.pending = undefined
+    clearInterval(this.timer)
+    this.error = message
+    this.status = message
+    this.changed()
+    await this.im?.destroy().catch(() => {})
+  }
   private envelope(type: string, payload: unknown) {
     return { protocol_version: 1, room_id: this.room!.room_id, runtime_id: this.room!.runtime_id, type, payload }
   }
@@ -177,11 +260,16 @@ export class GameRuntime {
     if (!this.room || this.busy || this.disposed) return
     try {
       await this.refresh()
+      if (this.disposed) return
       if (this.host) await this.snapshot()
       else await this.sync()
       await this.history()
+      this.error = ''
+      this.connectionError = false
+      this.changed()
     } catch {
       this.error = '连接恢复中，请稍候'
+      this.connectionError = true
       this.changed()
     }
   }
@@ -238,10 +326,10 @@ export class GameRuntime {
           s.version < (this.state?.version ?? 0) ||
           !Array.isArray(s.players) ||
           !Array.isArray(s.ready) ||
-          ![2, 3, 4, 6].includes(s.count)
+          !Number.isInteger(s.count)
         )
           return
-        try { this.state = decodeState(s) } catch { return }
+        try { this.state = decodeState(s, this.gameType) } catch { return }
         this.status = ''
       }
       if (packet.type === 'digest' && !this.host && packet.payload?.version !== (this.state?.version ?? 0))
@@ -261,7 +349,12 @@ export class GameRuntime {
     }
     this.changed()
   }
-  private async handleAction(sender: string, action: Action) {
+  private handleAction(sender: string, action: Action): Promise<void> {
+    const next = this.actionQueue.catch(() => {}).then(() => this.processAction(sender, action))
+    this.actionQueue = next
+    return next
+  }
+  private async processAction(sender: string, action: Action) {
     if (!this.authority || !this.room || !action || this.paused) return
     const error = this.authority.apply(sender, action, this.room.members, this.now)
     this.state = this.authority.state
@@ -296,21 +389,24 @@ export class GameRuntime {
       throw e
     }
   }
-  private async refresh() {
+  private async refresh(publish = true) {
     const r = await this.api('heartbeat', this.body())
     if (this.disposed) return
     this.accept(r)
     if (this.room?.status === 'closing' || this.room?.status === 'closed') {
-      await this.leave()
-      this.error = '房间已结束'
+      await this.finish('房间已结束')
       return
     }
-    if (this.authority?.sync(r.room.members, this.now)) await this.snapshot()
+    if (!this.room?.members.some(m => m.membership_id === this.me && m.status === 'active' && m.lease_expires_at > this.now)) {
+      throw new Error('房间或成员身份已失效，请退出后重新进入')
+    }
+    if (this.authority?.sync(r.room.members, this.now) && this.online && publish) await this.snapshot()
   }
   private ticking = false
   private async tick() {
     if (
       this.ticking ||
+      this.reconnecting ||
       this.disposed ||
       !this.room ||
       !this.room.members.some((m) => m.membership_id === this.me && m.status === 'active')
@@ -322,6 +418,7 @@ export class GameRuntime {
       if (now - this.lastBeat >= 10000) {
         this.lastBeat = now
         await this.refresh()
+        if (this.disposed) return
       }
       if (now >= this.leaseUntil) {
         this.error = '房间租约已失效，请退出后重新进入'
@@ -354,8 +451,10 @@ export class GameRuntime {
           else await this.send('action', this.pending.action)
         }
       }
-    } catch {
-      this.error = '房间连接异常，正在重试'
+    } catch (e) {
+      const message = e instanceof Error ? e.message : ''
+      if (['房间已结束', '设备 IM 登记已失效，请重新进入'].includes(message) || (this.host && message === '房间或成员身份已失效，请退出后重新进入')) await this.finish(message)
+      else { this.error = '房间连接异常，请尝试立即重连'; this.connectionError = true }
     } finally {
       this.ticking = false
       this.changed()
@@ -372,6 +471,10 @@ export class GameRuntime {
   }
   async leave() {
     if (this.disposed) return
+    const activeBoard = this.state?.gomoku ?? this.state?.board
+    if (!this.host && this.room && this.online && this.state && activeBoard && !activeBoard.ended) {
+      await this.send('action', {id: crypto.randomUUID(), round:this.state.round, version:this.state.version, kind:'withdraw'}).catch(() => {})
+    }
     this.disposed = true
     this.closed = true
     clearInterval(this.timer)
