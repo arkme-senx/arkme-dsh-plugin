@@ -18,6 +18,7 @@ import type { RecordingImportGateway } from '../src/recording-import-coordinator
 const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
 beforeEach(() => {
   vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
+    if (path === '/api/v1/audio/import-batches/capabilities') return { import_tasks_supported: false }
     if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
     return originalAudioPost.call(this, path, body, session, ...rest)
   })
