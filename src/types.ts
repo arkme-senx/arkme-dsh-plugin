@@ -4377,6 +4377,12 @@ export type ArkmeChatClientEvent = {
   connectionGeneration: number
   /** Latest server-owned full attention summary for Browser SSE reconnects. */
   attentionSummary?: ArkmeChatAttentionSummary
+  loginDevicesConnection?: { accountScope: string; connected: boolean }
+} | {
+  type: 'login-devices-changed'
+  revision: number
+  accountScope: string
+  connected: boolean
 } | {
   type: 'sessions-delta'
   revision: number
