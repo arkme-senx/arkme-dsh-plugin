@@ -33,6 +33,8 @@ describe('device control realtime wire', () => {
     expect(socket.sent[1]).toMatchObject({type: 'channel.subscribe', module: 'device_control', namespace: 'device_control', channel_ref: '42'})
     receive({type: 'channel.subscribed', request_id: socket.sent[1].request_id})
     expect(socket.sent[2]).toMatchObject({type: 'service.register', module: 'device_control', namespace: 'device_control', protocol: 'jotmo.device-control', descriptor: {}})
+    receive({type: 'channel.event', module: 'device_control', namespace: 'device_control', channel_ref: '42'})
+    expect(changed).not.toHaveBeenCalled()
     receive({type: 'service.registered', request_id: socket.sent[2].request_id})
     expect(changed).toHaveBeenCalledTimes(1)
     receive({type: 'channel.event', module: 'other', namespace: 'device_control', channel_ref: '42'})
