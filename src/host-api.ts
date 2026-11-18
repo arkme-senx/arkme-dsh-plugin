@@ -1797,13 +1797,25 @@ export async function dispatchArkmeHostOperation(
     case 'recordings.transcript.search': return await service.searchRecordingDayTranscript(
       numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'query'), requestSignal,
     )
-    case 'recordings.transcript.page': {
+    case 'recordings.transcript.versions': {
       const source = params.source ?? 'system'
       if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string') {
+        throw new ArkmePluginError('recording-page-input-invalid', '录音版本参数无效', false, 400)
+      }
+      return await service.recordingTranscriptVersions(numberParam(params, 'dateStamp', Number.NaN), {
+        source, cursor: stringParam(params, 'cursor'), signal: requestSignal,
+        ...(params.window === undefined ? {} : { window: recordingWindowParam(params.window) }),
+      })
+    }
+    case 'recordings.transcript.page': {
+      const source = params.source ?? 'system'
+      if (source !== 'system' && source !== 'doubao' || params.cursor !== undefined && typeof params.cursor !== 'string'
+        || params.versionRef !== undefined && typeof params.versionRef !== 'string') {
         throw new ArkmePluginError('recording-page-input-invalid', '录音分页参数无效', false, 400)
       }
       return await service.recordingTranscriptPage(numberParam(params, 'dateStamp', Number.NaN), {
         source, cursor: stringParam(params, 'cursor'), signal: requestSignal,
+        ...(typeof params.versionRef === 'string' && params.versionRef ? { versionRef: params.versionRef } : {}),
         ...(params.window === undefined ? {} : { window: recordingWindowParam(params.window) }),
       })
     }

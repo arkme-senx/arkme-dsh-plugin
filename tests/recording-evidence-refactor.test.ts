@@ -18,6 +18,7 @@ function fixture() {
     child_ls: [{ id: anchorChild, session_id: anchorSession, start_at: 0, asr: [{ s: 0, e: 4000, n: 1, t: '锚点' }] }] }
   const receipts = new Map<string, unknown>()
   const post = vi.fn(async (path: string, body: Record<string, unknown>): Promise<unknown> => {
+    if (path.startsWith('/api/v1/audio/transcript-versions/')) throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
     if (path.includes('/recordings/')) return correctionOwnerResponse(path, body, data)
     if (path.endsWith('/get-speaker-ls')) return { spk_ls: [{ id: person, nick_name: '人物', reference: 'speaker:1234567890abcdef' }] }
     if (path.endsWith('/members') || path.endsWith('/candidates')) return members

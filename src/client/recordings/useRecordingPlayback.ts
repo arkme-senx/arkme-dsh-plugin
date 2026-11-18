@@ -2,6 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeRecordingPlayback, ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { callArkme } from '../api.js'
 
+export function recordingItemPlaybackRef(item: ArkmeRecordingWorkbenchItem): string {
+  return item.playable === false ? '' : item.retainedPlaybackRef || item.itemRef
+}
+
 export interface RecordingPlaybackController {
   activeItemRef: string
   /** Timeline cursor: user selection while idle, owner-offset-mapped media position during playback. */
@@ -60,18 +64,19 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
   useEffect(() => stop, [stop])
 
   const openItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis: number, stopAtMillis?: number) => {
+    if (!recordingItemPlaybackRef(item)) { stop(); return }
     const requestRevision = ++requestRevisionRef.current
     requestAbortRef.current?.abort()
     const requestController = new AbortController()
     requestAbortRef.current = requestController
     setError(''); releaseMedia(false)
-    setActiveItemRef(item.itemRef)
+    setActiveItemRef(recordingItemPlaybackRef(item))
     setPositionAtMillis(seekAtMillis)
     setIsLoading(true)
     try {
       const playback = await callArkme<ArkmeRecordingPlayback>(
         'recordings.playback.open',
-        { itemRef: item.itemRef },
+        { itemRef: recordingItemPlaybackRef(item) },
         requestController.signal,
       )
       if (requestRevisionRef.current !== requestRevision) return
@@ -111,7 +116,7 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
         audio.removeEventListener('ended', onEnded)
         audio.removeEventListener('error', onError)
       }
-      setActiveItemRef(item.itemRef)
+      setActiveItemRef(recordingItemPlaybackRef(item))
       await audio.play()
     } catch (reason) {
       if (requestRevisionRef.current !== requestRevision) return
@@ -184,8 +189,8 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     const playing = audioRef.current
     if (playing !== undefined) {
       playing.item = item
-      setActiveItemRef(item.itemRef)
-    } else if (requestAbortRef.current !== undefined && previous?.itemRef !== item.itemRef) {
+      setActiveItemRef(recordingItemPlaybackRef(item))
+    } else if (requestAbortRef.current !== undefined && (previous && recordingItemPlaybackRef(previous)) !== recordingItemPlaybackRef(item)) {
       void openItem(item, positionAtMillis ?? item.startAtMillis)
     }
   }, [currentItems, stop])
@@ -200,7 +205,7 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
   }
 
   const playAt = async (items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number) => {
-    const ordered = [...items].sort((left, right) => left.startAtMillis - right.startAtMillis
+    const ordered = items.filter(recordingItemPlaybackRef).sort((left, right) => left.startAtMillis - right.startAtMillis
       || left.endAtMillis - right.endAtMillis || left.itemId.localeCompare(right.itemId))
     const index = ordered.findIndex(item => selectedAtMillis >= item.startAtMillis && selectedAtMillis < item.endAtMillis)
     if (index < 0) {
@@ -212,7 +217,7 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     const selectedItem = ordered[index]!
     const active = audioRef.current
     if (active !== undefined && !active.audio.paused
-      && active.item.itemRef === selectedItem.itemRef
+      && recordingItemPlaybackRef(active.item) === recordingItemPlaybackRef(selectedItem)
       && active.item.startAtMillis === selectedItem.startAtMillis
       && active.item.endAtMillis === selectedItem.endAtMillis) {
       try {

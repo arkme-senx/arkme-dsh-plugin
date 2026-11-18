@@ -10,6 +10,8 @@ export interface ArkmeRecordingToolPort extends RecordingEntityPort {
   recordingDeliveryPage(input: import('../../recording-delivery.js').RecordingDeliveryQuery, signal?: AbortSignal): Promise<import('../../recording-delivery.js').RecordingDeliveryPage>
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<import('../../recording-file-storage.js').RecordingFileStoragePage>
   recordingDeletionPlan(input: import('../../recording-deletion-contract.js').RecordingDeletionRequest, signal?: AbortSignal): ReturnType<import('../../recording-deletion-confirmation.js').RecordingDeletionConfirmations['prepare']>
+  recordingTranscriptVersions(dateStamp: number, options?: Pick<import('../../types.js').ArkmeRecordingTranscriptPageOptions, 'window' | 'cursor' | 'source' | 'signal'>): Promise<import('../../types.js').ArkmeRecordingTranscriptVersionPage>
+  recordingTranscriptPage(dateStamp: number, options?: import('../../types.js').ArkmeRecordingTranscriptPageOptions): Promise<import('../../types.js').ArkmeRecordingTranscriptPage>
   recordingDeletionStatus(planRef: string, signal?: AbortSignal): ReturnType<import('../../recording-deletion-confirmation.js').RecordingDeletionConfirmations['status']>
   recordingSpeakerEvidenceQuery(query: import('../../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../../recording-evidence-contract.js').RecordingEvidenceResult>
   previewRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<import('../../types.js').ArkmeRecordingSpeakerCorrectionPreview>

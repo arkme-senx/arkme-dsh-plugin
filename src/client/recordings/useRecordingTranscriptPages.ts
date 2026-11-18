@@ -31,7 +31,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
   }, [page?.viewRef])
 
   const read = useCallback(async (first?: ArkmeRecordingTranscriptPage, refresh = false, callerSignal?: AbortSignal,
-    budget: ViewRecoveryBudget = { remaining: 2 }): Promise<ArkmeRecordingTranscriptPage | undefined> => {
+    budget: ViewRecoveryBudget = { remaining: 2 }, force = false): Promise<ArkmeRecordingTranscriptPage | undefined> => {
     const requestedOwner = currentScope.current
     callerSignal?.throwIfAborted()
     while (active.current !== undefined) {
@@ -59,7 +59,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
     const fetchPage = async (cursor?: string) => {
       ensureCurrent()
       const value = await callArkme<ArkmeRecordingTranscriptPage>('recordings.transcript.page', {
-        dateStamp: start.dateStamp, source: start.transcriptSource, ...(start.window ? { window: start.window } : {}), ...(cursor ? { cursor } : {}),
+        dateStamp: start.dateStamp, source: start.transcriptSource, ...(start.versionRef ? { versionRef: start.versionRef } : {}), ...(start.window ? { window: start.window } : {}), ...(cursor ? { cursor } : {}),
       }, controller.signal)
       ensureCurrent()
       return value
@@ -77,12 +77,12 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
       })
       ensureCurrent()
     }
-    const restore = async (initial?: ArkmeRecordingTranscriptPage) => {
+    const restore = async (initial?: ArkmeRecordingTranscriptPage, force = false) => {
       // A read action can restart twice, including all reconstructed pages.
       // Keep the validated prefix if concurrent writes do not settle.
       for (;;) {
         try {
-          return await restoreRecordingTranscriptPrefix(start, initial ?? await fetchPage(), fetchPage, controller.signal)
+          return await restoreRecordingTranscriptPrefix(start, initial ?? await fetchPage(), fetchPage, controller.signal, force)
         } catch (reason) {
           if (!isRecordingViewChanged(reason)) throw reason
           initial = undefined
@@ -95,7 +95,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
     operation.promise = (async () => {
       try {
         let merged: ArkmeRecordingTranscriptPage
-        if (refresh) merged = await restore(first)
+        if (refresh) merged = await restore(first, force)
         else {
           try { merged = appendRecordingTranscriptPage(start, await fetchPage(start.nextCursor)) }
           catch (reason) {
@@ -124,7 +124,7 @@ export function useRecordingTranscriptPages(page: ArkmeRecordingTranscriptPage |
   }, [])
 
   const next = useCallback(() => read(), [read])
-  const refresh = useCallback((first: ArkmeRecordingTranscriptPage, signal?: AbortSignal) => read(first, true, signal), [read])
+  const refresh = useCallback((first: ArkmeRecordingTranscriptPage, signal?: AbortSignal, force = false) => read(first, true, signal, undefined, force), [read])
   const through = useCallback(async (time?: number, signal?: AbortSignal, shared = false): Promise<ArkmeRecordingTranscriptPage | undefined> => {
     signal?.throwIfAborted()
     const owner = currentScope.current

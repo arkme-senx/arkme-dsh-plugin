@@ -1493,6 +1493,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         ...(this.config.recordingWorkbenchEnabled !== false && this.config.recordingImportDirectory
           ? { recordingFileImport: true as const } : {}),
         recordingTranscriptPages: true,
+        recordingTranscriptVersions: true,
         authStatus: true,
         passwordLogin: true,
         realtimeDictationV1: true,
@@ -1842,6 +1843,7 @@ recordingAnalysisV1: true,
   async copyRecordingLink(itemRefs: readonly string[], signal?: AbortSignal) { return await this.recording.copyRecordingLink(itemRefs, signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
+  async recordingTranscriptVersions(dateStamp: number, options: Pick<ArkmeRecordingTranscriptPageOptions, 'cursor' | 'window' | 'source' | 'signal'> = {}) { return await this.recording.recordingTranscriptVersions(dateStamp, options) }
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
   async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
     return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal, window)
