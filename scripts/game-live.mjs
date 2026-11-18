@@ -4,6 +4,8 @@ import { createServer } from 'node:http'
 import { writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
+const gameType=process.env.GAME_LIVE_TYPE||'chinese_checkers'
+if(!['chinese_checkers','multiplayer_gomoku'].includes(gameType))throw Error('Unsupported game type')
 const ids=process.argv.slice(2).map(Number)
 if(ids.length<2||ids.some(x=>!Number.isSafeInteger(x)||x<=0)||new Set(ids).size!==ids.length)throw Error('Supply distinct authorized test users')
 const {chromium}=await import(process.env.GAME_PLAYWRIGHT_MODULE||'playwright')
@@ -53,7 +55,7 @@ try{
   await p.goto('http://127.0.0.1:'+server.address().port)
   await p.evaluate(()=>{window.game=new window.GameRuntime(window.request,()=>{},()=>{})})
  }
- await pages[0].evaluate(()=>window.game.enter({kind:'create'}))
+ await pages[0].evaluate(type=>window.game.enter({kind:'create'},type),gameType)
  const createError=await pages[0].evaluate(()=>window.game.error)
  if(createError.includes('game_disabled')||createError.includes('game_im_admin_not_configured')){
   report.result='blocked';report.blocker=createError.includes('game_im_admin_not_configured')?'test_im_admin_not_configured':'test_game_feature_disabled';check('deployed_create_route_configuration_blocked')
@@ -88,22 +90,38 @@ try{
  for(const p of pages.slice(1)){await p.evaluate(c=>window.game.enter(c),invite);await retry(p)}
  await waitAll(()=>!!window.game.state);check('real_im_snapshot_received',{members:pages.length})
  const count=Number(process.env.GAME_LIVE_PLAYERS)||(pages.length>=6?6:[2,3,4].includes(pages.length)?pages.length:2)
- if(![2,3,4,6].includes(count)||count>pages.length)throw Error("invalid player count")
+ if(!(gameType==='multiplayer_gomoku'?[2,3,4,5,6]:[2,3,4,6]).includes(count)||count>pages.length)throw Error("invalid player count")
  await pages[0].evaluate(n=>window.game.act('count',n),count)
  await new Promise(r=>setTimeout(r,11000))
- for(const p of pages.slice(0,count)){await p.evaluate(()=>window.game.act('ready'));await p.waitForFunction(()=>!window.game.awaitingAction);await new Promise(r=>setTimeout(r,1000))}
- await pages[0].evaluate(()=>window.game.act('start'));await waitAll(()=>!!window.game.state?.board)
+ for(const p of pages.slice(1,count)){await p.evaluate(()=>window.game.act('ready'));await p.waitForFunction(()=>!window.game.awaitingAction);await new Promise(r=>setTimeout(r,1000))}
+ await pages[0].evaluate(()=>window.game.act('start'));await waitAll(()=>!!(window.game.state?.gomoku||window.game.state?.board))
  check('real_im_ready_and_start',{players:count,observers:pages.length-count})
  if(pages.length>count){
-  const before=await pages[0].evaluate(()=>JSON.stringify(window.game.state.board))
-  await pages[count].evaluate(()=>window.game.act('move',[[5,-4],[4,-4]]))
+  const before=await pages[0].evaluate(()=>JSON.stringify(window.game.state.gomoku||window.game.state.board))
+  await pages[count].evaluate(type=>window.game.act(type==='multiplayer_gomoku'?'place':'move',type==='multiplayer_gomoku'?105:[[5,-4],[4,-4]]),gameType)
   await pages[count].waitForFunction(()=>!window.game.awaitingAction&&!!window.game.error)
-  if(before!==await pages[0].evaluate(()=>JSON.stringify(window.game.state.board)))throw Error('observer changed board')
+  if(before!==await pages[0].evaluate(()=>JSON.stringify(window.game.state.gomoku||window.game.state.board)))throw Error('observer changed board')
   check('observer_move_rejected')
  }
- await pages[0].evaluate(()=>window.game.act('move',[[5,-4],[4,-4]]));await waitAll(()=>window.game.state?.board?.turn===1)
- if(new Set(await Promise.all(pages.map(p=>p.evaluate(()=>JSON.stringify(window.game.state.board))))).size!==1)throw Error('board mismatch')
+ await pages[0].evaluate(type=>window.game.act(type==='multiplayer_gomoku'?'place':'move',type==='multiplayer_gomoku'?105:[[5,-4],[4,-4]]),gameType);await waitAll(()=>(window.game.state?.gomoku||window.game.state?.board)?.turn===1)
+ if(new Set(await Promise.all(pages.map(p=>p.evaluate(()=>JSON.stringify(window.game.state.gomoku||window.game.state.board))))).size!==1)throw Error('board mismatch')
  check('real_im_move_and_consistent_board')
+ if(gameType==='multiplayer_gomoku'){
+  await pages[1].evaluate(()=>window.game.reconnect())
+  await pages[1].waitForFunction(()=>!window.game.paused&&!window.game.reconnecting)
+  if(new Set(await Promise.all(pages.map(p=>p.evaluate(()=>JSON.stringify(window.game.state.gomoku))))).size!==1)throw Error('reconnected board mismatch')
+  check('gomoku_reconnect_preserves_board')
+  if(count===2){
+   for(let i=0;i<4;i++){
+    await pages[1].evaluate(cell=>window.game.act('place',cell),i*2)
+    await waitAll(()=>window.game.state.gomoku.turn===0)
+    await pages[0].evaluate(cell=>window.game.act('place',cell),106+i)
+    await waitAll(()=>window.game.state.gomoku.turn===1||window.game.state.gomoku.ended)
+   }
+   await waitAll(()=>window.game.state.gomoku.ended&&window.game.state.gomoku.winningLine?.length===5)
+   check('gomoku_real_five_in_row_all_members_end')
+  }
+ }
  await pages[0].evaluate(()=>window.game.text('Arkme 群游戏真实联调'))
  await Promise.all(pages.slice(1).map(p=>p.waitForFunction(()=>window.game.messages.some(m=>m.payload.text==='Arkme 群游戏真实联调'))))
  check('real_text_group_chat');report.result='passed'

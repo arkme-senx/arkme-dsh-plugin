@@ -29,17 +29,19 @@ export interface Board {
   pieces: Record<string, string>
   players: Player[]
   turn: number
+  turnSeconds?: number
   deadline: number
   winner?: string | undefined
   ended: boolean
 }
-export function createBoard(ids: string[], now: number): Board {
+export function createBoard(ids: string[], now: number, turnSeconds = 60): Board {
+  if (![30, 60, 90, 120].includes(turnSeconds)) throw new Error('回合时长无效')
   const layout = layouts[ids.length]
   if (!layout) throw new Error('人数必须为 2、3、4 或 6')
   const players = ids.map((id, i) => ({ id, camp: layout[i]!, timeouts: 0, retired: false }))
   const pieces: Record<string, string> = {}
   for (const p of players) for (const c of camps[p.camp]!) pieces[key(c)] = p.id
-  return { pieces, players, turn: 0, deadline: now + 60000, ended: false }
+  return { pieces, players, turn: 0, turnSeconds, deadline: now + turnSeconds * 1000, ended: false }
 }
 function segment(a: Cell, b: Cell): { direction: Cell; distance: number } | null {
   for (const d of directions)
@@ -89,7 +91,7 @@ function advance(b: Board, now: number) {
   do {
     b.turn = (b.turn + 1) % b.players.length
   } while (b.players[b.turn]!.retired)
-  b.deadline = now + 60000
+  b.deadline = now + (b.turnSeconds ?? 60) * 1000
 }
 export function move(board: Board, id: string, path: Cell[], now: number): Board {
   if (now >= board.deadline || !validatePath(board, id, path)) throw new Error('当前走棋无效或回合已结束')

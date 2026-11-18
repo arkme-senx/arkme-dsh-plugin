@@ -8,7 +8,7 @@ import { ArkmeNotificationMessage } from './ArkmeNotificationMessage.js'
 import { useNotificationScroll, useNotificationVisibleRead } from './use-notification-viewport.js'
 import { CONVERSATION_SELECTOR_CSS } from './conversation-selector-style.js'
 import conversationCss from './notification-conversation.css?inline'
-import { readWorldReactionNotifications, readWorldNotifications, type WorldNotificationInteraction } from './world-notification-reader.js'
+import { readWorldNotifications, type WorldNotificationInteraction } from './world-notification-reader.js'
 import { officialNotifications, useOfficialNotifications } from './official-notification-store.js'
 import type { OfficialNotificationSnapshot } from './official-notification-store.js'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
@@ -20,17 +20,12 @@ import type {
   ArkmeAiLetterUnread,
   ArkmeWorldInteractionSummary,
 } from '../types.js'
-import type { WorldReactionNotificationPage } from '../world-reaction-contract.js'
-import type { ReactionNotification } from '../reaction-contract.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
-import { arkmeChatDirectory } from './chat-directory-store.js'
 import { arkmeUi } from './ui-controller.js'
-import { reactionNotifications } from './reaction-notifications.js'
-import { expressionLabel } from './reaction-expression.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 
-export type ArkmeNotificationKind = 'official' | 'arrangement' | 'reaction' | 'world' | 'ai' | 'recording' | 'subscription'
+export type ArkmeNotificationKind = 'official' | 'arrangement' | 'world' | 'ai' | 'recording' | 'subscription'
 
 export interface ArkmeNotificationItem {
   id: string
@@ -41,8 +36,6 @@ export interface ArkmeNotificationItem {
   atMillis: number
   unread: boolean
   arrangement?: ArkmeArrangementReminderEvent
-  reaction?: ReactionNotification
-  worldReaction?: WorldReactionNotificationPage['items'][number]
   recording?: RecordingWorkflowNotice
   aiLetter?: ArkmeAiLetterItem
   subscription?: WorldSubscriptionNotice
@@ -57,7 +50,6 @@ interface NotificationSnapshot {
   error: string | undefined
   arrangementItems: ArkmeArrangementReminderEvent[]
   worldItems: ArkmeNotificationItem[]
-  worldReactionItems: ArkmeNotificationItem[]
   worldUnreadCount: number
   worldSeenThroughSequence: number
   worldError: string | undefined
@@ -80,7 +72,6 @@ const EMPTY_SNAPSHOT: NotificationSnapshot = {
   error: undefined,
   arrangementItems: [],
   worldItems: [],
-  worldReactionItems: [],
   worldUnreadCount: 0,
   worldSeenThroughSequence: 0,
   worldError: undefined,
@@ -127,32 +118,6 @@ function arrangementItem(event: ArkmeArrangementReminderEvent): ArkmeNotificatio
   }
 }
 
-export function reactionItem(item: ReactionNotification): ArkmeNotificationItem {
-  const selected = item.selections.at(-1)?.expression
-  const expression = selected ? expressionLabel(selected) || tr('表态') : tr('表态')
-  const source = item.source
-  const sourceLabel = source && (source.kind === 'private_chat' || source.kind === 'group_chat')
-    ? `${tr(source.kind === 'group_chat' ? '群聊' : '私聊')} · ${source.displayName}` : tr('会话暂不可用')
-  return {
-    id: `reaction:${item.id}:${item.revision}`,
-    kind: 'reaction',
-    title: `${item.actorName ? tr('收到{name}的表态', { name: item.actorName }) : tr('收到表态')} · ${expression}`,
-    sourceLabel,
-    preview: item.text || tr('点击查看原消息'),
-    atMillis: item.selections.at(-1)?.at || item.sendAtMillis,
-    unread: item.unread !== false,
-    reaction: item,
-  }
-}
-
-export function worldReactionItem(item: WorldReactionNotificationPage['items'][number]): ArkmeNotificationItem {
-  const selected = item.selections.at(-1)
-  return { id: `world-reaction:${item.id}:${item.revision}`, kind: 'reaction',
-    title: `${tr('收到世界表态')} · ${selected ? expressionLabel(selected.expression) : tr('表态')}`,
-    sourceLabel: tr('世界'), preview: tr('点击查看世界内容'), atMillis: selected?.at ?? 0,
-    unread: item.unread !== false, worldReaction: item }
-}
-
 function worldItem(item: WorldNotificationInteraction): ArkmeNotificationItem {
   return {
     id: `world:${item.interactionRef}`, kind: 'world',
@@ -189,7 +154,6 @@ class ArkmeNotificationStore {
   private listeners = new Set<() => void>()
   private controller: AbortController | undefined
   private inflight: Promise<void> | undefined
-  private worldReadRevision = 0
   private subscriptionRequest?: AbortController
   private subscriptionFlight: Promise<void> | undefined
   private subscriptionReads = new Map<string, number>()
@@ -267,7 +231,6 @@ class ArkmeNotificationStore {
     this.controller = controller
     // Same-account refreshes keep their last projection; another account starts empty.
     const previous = this.snapshot.scope === scope ? this.snapshot : EMPTY_SNAPSHOT
-    const readRevision = this.worldReadRevision
     const operation = (async () => {
       this.publish({
         ...previous,
@@ -277,13 +240,12 @@ class ArkmeNotificationStore {
         worldError: undefined,
         aiError: undefined,
       })
-      const [arrangementsResult, worldSummaryResult, worldNotificationsResult, worldReactionsResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
+      const [arrangementsResult, worldSummaryResult, worldNotificationsResult, aiUnreadResult, aiListResult] = await Promise.allSettled([
         callArkme<ArkmeArrangementReminderPage>('arrangements.reminders.list', {
           unreadOnly: false, limit: 50, offset: 0,
         }, controller.signal, { priority: 'background' }),
         callArkme<ArkmeWorldInteractionSummary>('world.interactions.summary', undefined, controller.signal, { priority: 'background' }),
         readWorldNotifications(controller.signal),
-        readWorldReactionNotifications(scope, controller.signal),
         callArkme<ArkmeAiLetterUnread>('ai-letter.unread', undefined, controller.signal, { priority: 'background' }),
         callArkme<ArkmeAiLetterPage>('ai-letter.list', { periodType: 0, cursorStartAt: 0, limit: 20 }, controller.signal, { priority: 'background' }),
       ])
@@ -312,13 +274,6 @@ class ArkmeNotificationStore {
         worldError ??= worldNotificationsResult.reason instanceof Error ? worldNotificationsResult.reason.message : tr('世界互动暂时无法加载')
       }
 
-      // A pre-ACK response must never restore an already-read revision.
-      const readRows = new Map(this.snapshot.worldReactionItems.filter(row => !row.unread && row.worldReaction).map(row => [row.worldReaction!.id, row.worldReaction!.revision]))
-      const worldReactionItems = worldReactionsResult.status === 'fulfilled'
-        ? worldReactionsResult.value.map(item => worldReactionItem(readRevision !== this.worldReadRevision && (readRows.get(item.id) ?? 0) >= item.revision ? { ...item, unread: false } : item))
-        : this.snapshot.worldReactionItems
-      if (worldReactionsResult.status === 'rejected') worldError ??= tr('世界表态通知暂时无法加载')
-
       let aiUnreadCount = this.snapshot.aiUnreadCount
       let aiLatestUnread = this.snapshot.aiLatestUnread
       let aiError: string | undefined
@@ -344,7 +299,6 @@ class ArkmeNotificationStore {
         error,
         arrangementItems,
         worldItems,
-        worldReactionItems,
         worldUnreadCount,
         worldSeenThroughSequence,
         worldError,
@@ -388,15 +342,6 @@ class ArkmeNotificationStore {
     })
   }
 
-  async markWorldReactionsRead(items: WorldReactionNotificationPage['items'], scope: string, signal: AbortSignal): Promise<void> {
-    if (signal.aborted || accountScope() !== scope || this.snapshot.scope !== scope || !items.length) return
-    await callArkme('world.reactions', { action: 'notifications-read', accountKey: scope, items: items.map(({ id, revision }) => ({ id, revision })) }, signal)
-    if (signal.aborted || accountScope() !== scope || this.snapshot.scope !== scope) return
-    this.worldReadRevision++
-    this.publish({ ...this.snapshot, worldReactionItems: this.snapshot.worldReactionItems.map(row =>
-      row.worldReaction && items.some(item => item.id === row.worldReaction!.id && item.revision >= row.worldReaction!.revision) ? { ...row, unread: false } : row) })
-  }
-
   async markAiRead(letterIds: readonly string[], scope = this.snapshot.scope, signal?: AbortSignal): Promise<void> {
     const ids = [...new Set(letterIds.map(value => value.trim()).filter(value => value !== ''))]
     if (ids.length === 0 || !scope || accountScope() !== scope) return
@@ -417,7 +362,6 @@ function useNotificationItems(): {
   snapshot: NotificationSnapshot
   official: OfficialNotificationSnapshot
   recording: ReturnType<typeof useRecordingNotifications>
-  reactionItems: ReactionNotification[]
   items: ArkmeNotificationItem[]
 } {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot).auth
@@ -426,27 +370,22 @@ function useNotificationItems(): {
   const recording = useRecordingNotifications(scope)
   const storedSnapshot = useSyncExternalStore(arkmeNotificationStore.subscribe, arkmeNotificationStore.getSnapshot, arkmeNotificationStore.getSnapshot)
   const snapshot = storedSnapshot.scope === scope ? storedSnapshot : EMPTY_SNAPSHOT
-  const reactionRevision = useSyncExternalStore(reactionNotifications.subscribe, reactionNotifications.getSnapshot, reactionNotifications.getSnapshot)
   useEffect(() => {
-    const release = scope === undefined ? undefined : reactionNotifications.acquireHistory(scope)
     void arkmeNotificationStore.refresh(scope)
     const releaseSubscriptions = scope ? arkmeNotificationStore.acquireSubscriptions(scope) : undefined
-    const refreshOnFocus = () => { void arkmeNotificationStore.refreshSubscriptions(scope); void arkmeNotificationStore.refresh(scope); void reactionNotifications.refreshHistory() }
+    const refreshOnFocus = () => { void arkmeNotificationStore.refreshSubscriptions(scope); void arkmeNotificationStore.refresh(scope) }
     window.addEventListener('focus', refreshOnFocus)
-    return () => { release?.(); releaseSubscriptions?.(); window.removeEventListener('focus', refreshOnFocus) }
+    return () => { releaseSubscriptions?.(); window.removeEventListener('focus', refreshOnFocus) }
   }, [scope])
-  const reactionItems = useMemo(() => scope === undefined ? [] : reactionNotifications.forHistory(scope), [reactionRevision, scope])
   const items = useMemo(() => [
     ...official.items.map(item => ({ id: `official:${item.id}`, kind: 'official' as const, title: item.title, preview: item.summary, atMillis: item.publishedAtMillis, unread: item.readAtMillis === 0 })),
     ...recording.items.map(item => ({ id: `recording:${item.id}`, kind: 'recording' as const, title: recordingNoticeTitle(item), preview: recordingNoticePreview(item), atMillis: item.atMillis, unread: item.readAtMillis === 0, recording: item })),
     ...snapshot.arrangementItems.map(arrangementItem),
     ...snapshot.subscriptionItems,
     ...snapshot.worldItems,
-    ...snapshot.worldReactionItems,
     ...snapshot.aiItems,
-    ...reactionItems.map(reactionItem),
-  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, reactionItems, snapshot.subscriptionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems, snapshot.worldReactionItems])
-  return { scope, snapshot, official, recording, reactionItems, items }
+  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, snapshot.subscriptionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems])
+  return { scope, snapshot, official, recording, items }
 }
 
 export function useArkmeNotificationSummary(): { ready: boolean; hasNotifications: boolean; unreadCount: number; preview: string; atMillis: number } {
@@ -469,7 +408,6 @@ function notificationKindLabel(kind: ArkmeNotificationKind): string {
     case 'recording': return tr('录音')
     case 'official': return tr('官方')
     case 'arrangement': return tr('安排')
-    case 'reaction': return tr('表态')
     case 'subscription': return tr('订阅')
     case 'world': return tr('世界')
     case 'ai': return tr('AI 来信')
@@ -477,7 +415,7 @@ function notificationKindLabel(kind: ArkmeNotificationKind): string {
 }
 
 const notificationFilterKinds: readonly (ArkmeNotificationKind | 'all')[] = [
-  'all', 'official', 'arrangement', 'reaction', 'world', 'subscription', 'ai', 'recording',
+  'all', 'official', 'arrangement', 'world', 'subscription', 'ai', 'recording',
 ]
 
 function notificationFilterLabel(kind: ArkmeNotificationKind | 'all'): string {
@@ -544,19 +482,6 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
       if (item.arrangement && item.unread) submit([item.id], () => arkmeNotificationStore.markArrangementRead(item.arrangement!.eventRef, scope, signal))
       if (item.aiLetter?.unread) submit([item.id], () => arkmeNotificationStore.markAiRead([item.aiLetter!.letterId], scope, signal))
     }
-    const reactions = visible.flatMap(item => item.reaction && item.unread ? [item.reaction] : [])
-    for (let offset = 0; offset < reactions.length; offset += 50) {
-      const batch = reactions.slice(offset, offset + 50)
-      submit(batch.map(item => `reaction:${item.id}:${item.revision}`), async () => {
-        await reactionNotifications.seen(scope, batch)
-        if (reactionNotifications.forHistory(scope).some(row => row.unread !== false && batch.some(item => item.id === row.id && item.revision === row.revision))) throw new Error('Receipt pending')
-      })
-    }
-    const worldReactions = visible.flatMap(item => item.worldReaction && item.unread ? [item.worldReaction] : [])
-    for (let offset = 0; offset < worldReactions.length; offset += 50) {
-      const batch = worldReactions.slice(offset, offset + 50)
-      submit(batch.map(item => `world-reaction:${item.id}:${item.revision}`), () => arkmeNotificationStore.markWorldReactionsRead(batch, scope, signal))
-    }
     // World exposes a conversation-level watermark, not per-message receipts.
     // Only viewing its newest loaded message may advance that captured server cursor.
     const newestWorld = snapshot.worldItems[0]
@@ -577,24 +502,9 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
         if (row.kind === 'publication') { if (!row.publication) throw new Error(tr('这条内容已不可查看')); arkmeUi.showWorldInteraction(row.publication.recordRef) }
         else arkmeUi.showUserWorld({ userId: row.actor.userId, displayName: row.actor.name })
       }
-      else if (item.worldReaction) {
-        if (!item.worldReaction.recordRef) throw new Error(tr('这条世界内容暂时无法打开，请刷新通知'))
-        arkmeUi.showWorldInteraction(item.worldReaction.recordRef)
-      }
       else if (item.kind === 'world' && item.worldInteractionRef) arkmeUi.showWorldInteraction(item.worldInteractionRef)
-      else if (item.reaction && scope) {
-        const reaction = item.reaction
-        const source = arkmeChatDirectory.getSnapshot().sources.find(candidate => candidate.sourceKey === reaction.sourceKey) ?? reaction.source
-        if (!source) throw new Error('Missing source')
-        const page = await callArkme<import('../types.js').ArkmeTimelineAroundPage>('source.timeline-around', {
-          sourceRef: source.sourceRef, itemUid: reaction.itemUid, recordOwnerUserId: reaction.recordOwnerUserId, beforeLimit: 1, afterLimit: 1,
-        })
-        if (accountScope() !== scope) return
-        if (!page.items.some(message => message.itemUid === reaction.itemUid)) throw new Error('Missing message')
-        arkmeUi.showConversationTarget(source, reaction.itemUid, reaction.sendAtMillis, reaction.recordOwnerUserId, undefined, true)
-      }
     } catch (error) {
-      if (accountScope() === scope) setActionError(item.kind === 'reaction' ? tr('暂时无法打开对应消息，请稍后重试') : error instanceof Error ? error.message : tr('通知操作失败，请重试'))
+      if (accountScope() === scope) setActionError(error instanceof Error ? error.message : tr('通知操作失败，请重试'))
     } finally { if (accountScope() === scope) setBusyId(undefined) }
   }, [scope, preview])
 
@@ -623,10 +533,9 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     </header>
     {actionError && <div role="alert" className="arkme-notification-status">{actionError}</div>}
     {recording.error && (activeKind === 'all' || activeKind === 'recording') && <div role="status" className="arkme-notification-status">{tr('录音通知暂时不可用')} <button onClick={() => { void recordingNotifications.refresh() }}>{tr('重试录音通知')}</button></div>}
-    {reactionNotifications.historyError && (activeKind === 'all' || activeKind === 'reaction') && <div role="status" className="arkme-notification-status">{tr(reactionNotifications.historyError)} <button onClick={() => { void reactionNotifications.refreshHistory() }}>{tr('重试')}</button></div>}
     {official.error && (activeKind === 'all' || activeKind === 'official') && <div role="status" className="arkme-notification-status">{tr('官方通知暂时不可用')} <button onClick={() => { void officialNotifications.refresh() }}>{tr('重试')}</button></div>}
     {snapshot.error && (activeKind === 'all' || activeKind === 'arrangement') && <div role="alert" className="arkme-notification-status">{snapshot.error}</div>}
-    {snapshot.worldError && (activeKind === 'all' || activeKind === 'world' || activeKind === 'reaction') && <div role="status" className="arkme-notification-status">{tr('世界互动暂时无法加载')}</div>}
+    {snapshot.worldError && (activeKind === 'all' || activeKind === 'world') && <div role="status" className="arkme-notification-status">{tr('世界互动暂时无法加载')}</div>}
     {snapshot.subscriptionError && (activeKind === 'all' || activeKind === 'subscription') && <div role="status" className="arkme-notification-status">{snapshot.subscriptionError} <button type="button" disabled={snapshot.subscriptionLoading} onClick={() => { void arkmeNotificationStore.refreshSubscriptions(scope) }}>{tr('重试')}</button></div>}
     {snapshot.aiError && (activeKind === 'all' || activeKind === 'ai') && <div role="status" className="arkme-notification-status">{tr('AI 来信暂时无法加载')}</div>}
     {filterLoading && filteredItems.length === 0 && <div role="status" className="arkme-notification-status">{tr('正在加载通知…')}</div>}
