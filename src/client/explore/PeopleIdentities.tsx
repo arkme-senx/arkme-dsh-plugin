@@ -1,4 +1,6 @@
 import { formatArkmeDateTime } from '../display-time-zone.js'
+import { LinkSimple } from '@phosphor-icons/react/dist/icons/LinkSimple'
+import { Users } from '@phosphor-icons/react/dist/icons/Users'
 import { useEffect, useRef, useState } from 'react'
 import type { PeopleIdentityCapabilities, PeopleIdentityLink, PeopleIdentityPreview, PeopleIdentityReceipt, UnifiedPerson } from '../../people-contract.js'
 import { PEOPLE_SOURCE_LABELS } from '../../people-contract.js'
@@ -42,9 +44,13 @@ export function PeopleIdentities({ person, people, accountScope, onChanged, onCl
       .then(value => { if (!c.signal.aborted) { setLinks(value.links); setOperationRef(value.operationRef) } }).catch(e => { if (!c.signal.aborted) setError(message(e)) }).finally(() => { if (!c.signal.aborted) setBusy(false) }) }
     return () => c.abort()
   }, [personRef, revision])
+  // A detached identity can appear under both its old and new person keys.
+  // Keep one candidate per source identity, preferring the later directory view.
+  const candidateFacets = [...new Map(candidatePeople.flatMap(p => p.facets)
+    .map(f => [f.identityKey ?? f.key, f])).values()]
   const candidates = mode === 'merge'
     ? candidatePeople.filter(p => p.key !== person.key && p.facets.some(f => f.personRef)).map(p => ({ key: p.key, label: p.name, params: { otherPersonRef: p.facets.find(f => f.personRef)!.personRef } }))
-    : candidatePeople.flatMap(p => p.facets).filter(f => f.identityRef && f.source !== 'relations' && !person.facets.some(own => own.key === f.key) && !links.some(l => l.identityKey === f.identityKey))
+    : candidateFacets.filter(f => f.identityRef && f.source !== 'relations' && !person.facets.some(own => own.key === f.key) && !links.some(l => l.identityKey === f.identityKey))
       .map(f => ({ key: f.key, label: `${f.name} · ${tr(PEOPLE_SOURCE_LABELS[f.source])}`, params: { identityRef: f.identityRef, ...(!personRef && f.personRef ? { otherPersonRef: f.personRef } : {}) } }))
   const prepare = async (kind: string, label: string, params: Record<string, unknown>) => {
     if (!can(kind) || busy || (!personRef && !anchorIdentityRef)) return
@@ -89,7 +95,7 @@ export function PeopleIdentities({ person, people, accountScope, onChanged, onCl
       return <div className="people-identity" key={link.identityKey}><div><strong>{facet?.name ?? tr(link.namespace === 'relation_entity' ? '已合并人物' : link.namespace === 'audio_speaker' ? '录音身份' : '联系人身份')}</strong><details className="explore-muted"><summary>{tr('查看关联依据')}</summary>{link.provenance?.kind === 'user_decision' ? <p>{tr('你已手动确认')} · {formatArkmeDateTime(link.provenance.confirmedAt)}<br/>{tr('操作')}：{tr(({link:'关联',unlink:'解除关联',merge:'合并人物',split:'拆出人物',undo:'撤销操作',materialize:'建立人物档案'} as Record<string,string>)[link.provenance.action] ?? '人工确认')}<br/>{tr('依据与当前关联版本一致')}</p> : <p>{tr('来源依据未记录')}</p>}</details></div>
         {link.namespace === 'relation_entity' && link.splitRef && <button className="explore-button" disabled={!can('split') || busy || !!preview} onClick={() => void prepare('split', tr('拆出为独立人物'), { otherPersonRef: link.splitRef })}>{tr('拆出人物')}</button>}{link.namespace !== 'relation_entity' && <button className="explore-button" disabled={!can('unlink') || busy || !!preview} onClick={() => void prepare('unlink', `${tr('解除关联')}：${facet?.name ?? tr('此身份')}`, { identityRef: link.identityRef })}>{tr('解除关联')}</button>}</div>
     })}
-    {(personRef || anchorIdentityRef) && <><div className="explore-filters">{(['link', 'merge'] as const).map(kind => <button key={kind} className="explore-filter" aria-pressed={mode === kind} disabled={busy || !can(kind)} onClick={() => { setMode(kind); setChoice('') }}>{tr(kind === 'link' ? '关联已有身份' : '合并人物')}</button>)}</div>
+    {(personRef || anchorIdentityRef) && <><div className="identity-mode-switch">{(['link', 'merge'] as const).map(kind => <button key={kind} className="explore-filter" aria-pressed={mode === kind} disabled={busy || !can(kind)} onClick={() => { setMode(kind); setChoice('') }}>{kind==='link'?<LinkSimple size={16} aria-hidden="true"/>:<Users size={16} aria-hidden="true"/>}{tr(kind === 'link' ? '关联已有身份' : '合并人物')}</button>)}</div>
       <input className="explore-search" aria-label={tr('搜索关联候选')} placeholder={tr('搜索全账号人物或身份')} value={query} onChange={e => { setQuery(e.target.value); setChoice('') }}/><PeopleLoading reads={directory.reads} onRetry={directory.refresh}/><div role="radiogroup" aria-label={tr('选择身份或人物')} style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--dsw-alias-border-1, #e5e5e5)', borderRadius: 8 }} onScroll={event => { const el = event.currentTarget; if (el.scrollHeight - el.scrollTop - el.clientHeight < 60 && directory.hasMore && !Object.values(directory.reads).some(r => r.loading || r.error)) directory.loadMore() }}>{candidates.map(c => <label key={c.key} className="explore-row" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, cursor: busy ? 'default' : 'pointer' }}><input type="radio" name="identity-candidate" value={c.key} checked={choice === c.key} disabled={busy} onChange={() => setChoice(c.key)} style={{ width: 16, height: 16, flexShrink: 0, margin: 0 }}/><span>{c.label}</span></label>)}{!candidates.length && <p className="explore-muted" style={{ padding: 12 }}>{tr('暂无匹配的人物或身份')}</p>}{directory.hasMore && <button className="explore-source-link" disabled={Object.values(directory.reads).some(r => r.loading)} onClick={directory.loadMore}>{tr('加载更多候选')}</button>}</div>
       {choice && <p className="explore-muted" role="note">{tr(query.trim() ? '候选来自人物目录搜索，名称命中不代表已经确认是同一人。' : '候选来自现有人物与身份目录，尚未确认是同一人。')}<br/>{tr('已有绑定和排除关系将在预览时核验，不会自动关联。')}</p>}
       <div className="explore-detail-actions"><button className="explore-button" disabled={busy || !choice || !can(mode)} onClick={() => { const c = candidates.find(c => c.key === choice); if (c) void prepare(mode, `${tr(mode === 'merge' ? '合并人物' : '关联身份')}：${!personRef && 'otherPersonRef' in c.params ? `${person.name} → ${c.label}` : `${c.label} → ${person.name}`}`, c.params) }}>{tr('预览影响')}</button>

@@ -114,3 +114,15 @@ it('shows verified provenance and cautious candidate explanation without writing
  expect(document.body.textContent).toContain('尚未确认是同一人')
  expect(mocks.call.mock.calls.some(c=>c[1].action==='apply')).toBe(false)
 })
+
+
+it('deduplicates an identity across old and detached person views without merging names', async () => {
+  const detached: UnifiedPerson = { ...other, key: 'detached', facets: [{ ...other.facets[0]!, personRef: '', identityRef: 'fresh-speaker-ref' }] }
+  const namesake: UnifiedPerson = { ...other, key: 'namesake', facets: [{ ...other.facets[0]!, key: 'different-speaker', identityKey: 'different-id', identityRef: 'different-ref' }] }
+  mocks.call.mockImplementation(async (_op, p) => p.action === 'capabilities' ? capabilities : p.action === 'list' ? { links: [] } : { commandRef: 'preview', changeCount: 1, expiresAt: Date.now() + 600000 })
+  await act(async () => root.render(<PeopleIdentities person={person} people={[person, other, detached, namesake]} accountScope="deduplicate-detached" onChanged={() => {}} onClose={() => {}}/>))
+  expect(document.querySelectorAll('input[type="radio"]')).toHaveLength(2)
+  await choose('speaker'); await click('预览影响')
+  expect(mocks.call.mock.calls.filter(c => c[1].action === 'preview').at(-1)?.[1]).toMatchObject({ kind: 'link', identityRef: 'fresh-speaker-ref' })
+  expect(mocks.call.mock.calls.some(c => c[1].action === 'apply')).toBe(false)
+})

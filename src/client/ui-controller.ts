@@ -372,11 +372,11 @@ export class ArkmeUiController {
     this.publish({ ...rest, mode: 'explore', exploreModule: module })
   }
 
-  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity, window?: import('../types.js').ArkmeRecordingWindow, transcriptSearchQuery?: string): void {
+  showRecordingTarget(dateStamp: number, startAtMillis: number, segment?: ArkmeRecordingSearchIdentity, window?: import('../types.js').ArkmeRecordingWindow, transcriptSearchQuery?: string, enhancedItem?: ArkmeRecordingTarget['enhancedItem']): void {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'recordings', recordingTarget: {
-      dateStamp, startAtMillis, ...(window ? { window } : {}), ...(segment === undefined ? {} : { segment }),
+      dateStamp, startAtMillis, ...(enhancedItem ? {enhancedItem} : {}), ...(window ? { window } : {}), ...(segment === undefined ? {} : { segment }),
       ...(transcriptSearchQuery === undefined ? {} : { transcriptSearchQuery, revision: ++this.recordingTargetRevision }),
     } })
   }

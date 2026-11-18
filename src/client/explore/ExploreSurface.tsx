@@ -1,4 +1,9 @@
 import { formatArkmeDateTime } from '../display-time-zone.js'
+import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
+import { Check } from '@phosphor-icons/react/dist/icons/Check'
+import { Flag } from '@phosphor-icons/react/dist/icons/Flag'
+import { EyeSlash } from '@phosphor-icons/react/dist/icons/EyeSlash'
+import { ArrowUUpLeft } from '@phosphor-icons/react/dist/icons/ArrowUUpLeft'
 import { PeopleSurface } from './PeopleSurface.js'
 import { ArkmeAutomaticAiSettings } from '../ArkmeAutomaticAiSettings.js'
 import { ExploreSettingsDialog } from './ExploreSettingsDialog.js'
@@ -32,6 +37,10 @@ function ExploreLoading({label,rows}:{label:string;rows:number}) {
     <div className="explore-more"><span className="explore-loading-dot"/>{label}</div>
     <div aria-hidden="true">{Array.from({length:rows},(_,i)=><div className="explore-skeleton" key={i}><i/><i/></div>)}</div>
   </div>
+}
+
+const goalActionIcons: Partial<Record<ExploreAction['id'], typeof Check>> = {
+  correct: PencilSimple, complete: Check, abandon: Flag, ignore: EyeSlash, undo: ArrowUUpLeft,
 }
 
 export function ExploreSurface({module,accountScope}:{module:ExploreModule;accountScope:string}) {
@@ -149,7 +158,16 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
     sourceRequest.current?.abort();const c=new AbortController();sourceRequest.current=c;setSourcePending(ref);setSourceError('')
     try{const result=await callArkme<ExploreSource>('explore.source',{ref},c.signal);if(c.signal.aborted)return
       if(result.kind==='conversation')arkmeUi.showConversationTarget(result.source,result.itemUid,result.sendAtMillis,undefined,undefined,true)
-      else setSource(result)
+      else if(module==='goals' && result.kind==='recording') {
+        const item=result.items.find(row=>row.itemId===result.focusItemId)
+        if(item && result.segment) {
+          arkmeUi.showRecordingTarget(result.dateStamp,item.startAtMillis,result.segment)
+        } else if(item?.transcriptSource==='doubao' && item.searchVersion) {
+          arkmeUi.showRecordingTarget(result.dateStamp,item.startAtMillis,undefined,undefined,undefined,{itemId:item.itemId,version:item.searchVersion})
+        } else {
+          throw new Error(tr('来源暂不可定位'))
+        }
+      } else setSource(result)
     }catch(e){if(!c.signal.aborted)setSourceError(message(e))}finally{if(!c.signal.aborted)setSourcePending('')}
   }
   const startAction=(action:ExploreAction,ref:string)=>{setActionMenu(false);setMutation({action,ref});setNotice('')}
@@ -178,14 +196,16 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
           {moreError?<div role="alert" className="explore-error">{moreError}<button className="explore-source-link" onClick={()=>void load(true)}>{tr('重试加载')}</button></div>:<div ref={sentinel} className="explore-more" aria-hidden="true"/>}
         </div>
       </aside>
-      <main className="explore-detail" ref={detailRoot} onScroll={e=>{position.current.detailTop=e.currentTarget.scrollTop}}>
-        {selected?<><button className="explore-mobile-back explore-button" onClick={()=>setSelected(undefined)}><ArrowLeft size={16}/>{tr('返回列表')}</button><h1>{detail?.item.title??selected.title}</h1><div className="explore-muted">{(detail?.item??selected).category} {(detail?.item??selected).status}</div>
+      <main data-goal-detail={module==='goals'||undefined} className="explore-detail" ref={detailRoot} onScroll={e=>{position.current.detailTop=e.currentTarget.scrollTop}}>
+        {selected?<><button className="explore-mobile-back explore-button" onClick={()=>setSelected(undefined)}><ArrowLeft size={16}/>{tr('返回列表')}</button><div className="explore-detail-heading"><h1>{detail?.item.title??selected.title}</h1><div className="explore-muted">{(detail?.item??selected).category} {(detail?.item??selected).status}</div></div>
           {(detail?.item.summary??selected.summary)&&<p className="explore-detail-summary">{detail?.item.summary??selected.summary}</p>}
           {overviewLoading&&<div className="explore-inline-loading" role="status">{tr('正在更新人物信息…')}</div>}
           {overviewError&&<div role="alert" className="explore-error">{overviewError}<button className="explore-source-link" onClick={()=>void readOverview(selected)}>{tr('重试人物信息')}</button></div>}
-          {detail&&<><div className="explore-detail-actions">{detail.actions.map(a=><button className="explore-button" key={a.id} onClick={()=>startAction(a,selected.ref)}>{tr(a.label)}</button>)}</div>
+          {detail&&<><div className="explore-detail-actions">{detail.actions.map(a=>{
+            const ActionIcon=module==='goals'?goalActionIcons[a.id]:undefined
+            return <button className="explore-button" data-action={a.id} key={a.id} onClick={()=>startAction(a,detail.mutationRef??selected.ref)}>{ActionIcon&&<ActionIcon size={16} aria-hidden="true"/>}{tr(a.label)}</button>})}</div>
           {selected.linkedContactName&&<section className="explore-field"><h3>{tr('关联联系人')}</h3><p>{selected.linkedContactName}</p></section>}
-          {detail.fields.filter(f=>f.value!==detail.item.summary&&(f.label!=='关联联系人'||!selected.linkedContactName)).map((f,i)=><section key={`${f.label}:${i}`} className="explore-field"><h3>{tr(f.label)}</h3><p>{f.value}</p></section>)}
+          {detail.fields.filter(f=>f.value!==detail.item.summary&&(f.label!=='关联联系人'||!selected.linkedContactName)).map((f,i)=><section key={`${f.label}:${i}`} data-manual-state={f.label==='人工状态'||undefined} className="explore-field"><h3>{tr(f.label)}</h3><p>{f.value}</p></section>)}
           <section className="explore-sources"><h3>{tr('识别依据与相关记录')}</h3>{detail.evidence.map(e=><article className="explore-evidence" data-anchor={e.anchor} key={e.key}><div className="explore-muted">{e.speaker&&<strong>{e.speaker} · </strong>}{e.label}{e.date>0&&` · ${date(e.date)}`}{e.anchor&&` · ${tr('关键依据')}`}</div><p>{e.text||tr('查看来源内容')}</p>{e.mentions&&e.mentions.length>1&&<div className="explore-muted">{tr('此原文提及')} {e.mentions.length} {tr('处')}</div>}{e.ref?<button className="explore-source-link" disabled={!!sourcePending} onClick={()=>void openSource(e.ref!)}>{sourcePending===e.ref?tr('正在打开…'):tr('定位原文')} ↗</button>:<span className="explore-muted">{tr(e.unavailableReason??'来源暂不可定位')}</span>}</article>)}{!detail.evidence.length&&!detailLoading&&!detailError&&<p className="explore-muted">{tr('暂未提供可查看的来源依据')}</p>}</section>
           {detail.notice&&<p className="explore-muted">{tr(detail.notice)}</p>}
           {sourceError&&<div role="alert" className="explore-error">{sourceError}</div>}
@@ -206,19 +226,21 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
 }
 
 function ExploreMutationDialog({module,request,detail,onClose,onSaved}:{module:ExploreModule;request:{action:ExploreAction;ref:string};detail:ExploreDetail|undefined;onClose:()=>void;onSaved:()=>void}) {
-  const [value,setValue]=useState(request.action.id==='correct'?detail?.item.summary??'':''),[title,setTitle]=useState(detail?.item.title??''),[saving,setSaving]=useState(false),[error,setError]=useState('')
+  const [value,setValue]=useState(request.action.id==='correct'?(module==='goals'?detail?.item.title:detail?.item.summary)??'':''),[title,setTitle]=useState(detail?.item.title??''),[saving,setSaving]=useState(false),[error,setError]=useState('')
   const [calendarType,setCalendarType]=useState<'solar'|'lunar'>(detail?.dateInput?.calendarType??'solar'),[year,setYear]=useState(detail?.dateInput?.year?String(detail.dateInput.year):''),[month,setMonth]=useState(detail?.dateInput?.month?String(detail.dateInput.month):''),[day,setDay]=useState(detail?.dateInput?.day?String(detail.dateInput.day):''),[leapMonth,setLeapMonth]=useState(detail?.dateInput?.leapMonth??false),[targetRef,setTargetRef]=useState('')
   const controller=useRef<AbortController>();useEffect(()=>()=>controller.current?.abort(),[])
+  const [requestId]=useState(()=>crypto.randomUUID())
   const id=request.action.id,needsText=['correct','supplement','create'].includes(id)
   const submit=async()=>{if(saving)return;const c=new AbortController();controller.current=c;setSaving(true);setError('')
-    try{const input:ExploreMutation={ref:request.ref,action:id,...(needsText?{value}:{}),...(id==='reclassify'?{targetRef}:{}),...(id==='confirm'?{title,calendarType,year:year?Number(year):0,month:Number(month),day:Number(day),leapMonth}:{})}
+    try{const input:ExploreMutation={ref:request.ref,action:id,...(module==='goals'?{requestId}:{}),...(needsText?{value}:{}),...(id==='reclassify'?{targetRef}:{}),...(id==='confirm'?{title,calendarType,year:year?Number(year):0,month:Number(month),day:Number(day),leapMonth}:{})}
       await callArkme('explore.mutate',{...input},c.signal);if(!c.signal.aborted)onSaved()
     }catch(e){if(!c.signal.aborted)setError(message(e))}finally{if(!c.signal.aborted)setSaving(false)}
   }
-  return <ArkmeDetailShell title={tr(request.action.label)} label={tr(request.action.label)} onClose={()=>{if(!saving)onClose()}}><form className="arkme-explore-dialog" onSubmit={e=>{e.preventDefault();void submit()}}>
-    {needsText?<label>{tr(id==='create'?'事件名称':'内容')}<textarea autoFocus value={value} onChange={e=>setValue(e.target.value)} maxLength={10000} required/></label>:id==='confirm'?<><label>{tr('名称')}<input value={title} onChange={e=>setTitle(e.target.value)} maxLength={200} required/></label><label>{tr('历法')}<select value={calendarType} onChange={e=>setCalendarType(e.target.value as 'solar'|'lunar')}><option value="solar">{tr('公历')}</option><option value="lunar">{tr('农历')}</option></select></label><div className="explore-date-fields"><label>{tr('年份（可不填）')}<input type="number" min={1} max={9999} value={year} onChange={e=>setYear(e.target.value)}/></label><label>{tr('月')}<input type="number" min={1} max={12} value={month} required onChange={e=>setMonth(e.target.value)}/></label><label>{tr('日')}<input type="number" min={1} max={calendarType==='lunar'?30:31} value={day} required onChange={e=>setDay(e.target.value)}/></label></div>{calendarType==='lunar'&&<label><input style={{width:'auto',marginRight:8}} type="checkbox" checked={leapMonth} onChange={e=>setLeapMonth(e.target.checked)}/>{tr('闰月')}</label>}</>:id==='reclassify'?<label>{tr('目标事件分类')}<select required value={targetRef} onChange={e=>setTargetRef(e.target.value)}><option value="">{tr('选择分类')}</option>{detail?.reclassifyTargets?.map(x=><option key={x.ref} value={x.ref}>{x.label}</option>)}</select></label>:<p className="explore-muted">{tr(id==='delete'?module==='relations'?'删除该识别实体及其关联展示？原始记录保留。':'删除这条档案内容？原始记录保留。':id==='dismiss'?'忽略这条识别结果？':id==='stop'?'停止当前分析，保留已有结果。':id==='refresh'||id==='activate'||id==='resume'?'将按当前数据范围进行分析，可能产生 AI 用量。已有结果会继续保留。':request.action.label)}</p>}
+  const goalCorrection=module==='goals' && id==='correct'
+  return <ArkmeDetailShell headerContent={goalCorrection?<h3 className="goal-correction-title"><PencilSimple size={18} aria-hidden="true"/>{tr(request.action.label)}</h3>:undefined} title={tr(request.action.label)} label={tr(request.action.label)} onClose={()=>{if(!saving)onClose()}}><form data-goal-correction={goalCorrection||undefined} className="arkme-explore-dialog" onSubmit={e=>{e.preventDefault();void submit()}}>
+    {needsText?<label>{tr(id==='create'?'事件名称':goalCorrection?'目标内容':'内容')}<textarea autoFocus value={value} onChange={e=>setValue(e.target.value)} maxLength={module==='goals'?2000:10000} required/></label>:id==='confirm'?<><label>{tr('名称')}<input value={title} onChange={e=>setTitle(e.target.value)} maxLength={200} required/></label><label>{tr('历法')}<select value={calendarType} onChange={e=>setCalendarType(e.target.value as 'solar'|'lunar')}><option value="solar">{tr('公历')}</option><option value="lunar">{tr('农历')}</option></select></label><div className="explore-date-fields"><label>{tr('年份（可不填）')}<input type="number" min={1} max={9999} value={year} onChange={e=>setYear(e.target.value)}/></label><label>{tr('月')}<input type="number" min={1} max={12} value={month} required onChange={e=>setMonth(e.target.value)}/></label><label>{tr('日')}<input type="number" min={1} max={calendarType==='lunar'?30:31} value={day} required onChange={e=>setDay(e.target.value)}/></label></div>{calendarType==='lunar'&&<label><input style={{width:'auto',marginRight:8}} type="checkbox" checked={leapMonth} onChange={e=>setLeapMonth(e.target.checked)}/>{tr('闰月')}</label>}</>:id==='reclassify'?<label>{tr('目标事件分类')}<select required value={targetRef} onChange={e=>setTargetRef(e.target.value)}><option value="">{tr('选择分类')}</option>{detail?.reclassifyTargets?.map(x=><option key={x.ref} value={x.ref}>{x.label}</option>)}</select></label>:<p className="explore-muted">{tr(id==='delete'?module==='relations'?'删除该识别实体及其关联展示？原始记录保留。':'删除这条档案内容？原始记录保留。':id==='dismiss'?'忽略这条识别结果？':id==='stop'?'停止当前分析，保留已有结果。':id==='refresh'||id==='activate'||id==='resume'?'将按当前数据范围进行分析，可能产生 AI 用量。已有结果会继续保留。':request.action.label)}</p>}
     {error&&<div role="alert" className="explore-error">{error}</div>}
-    <div style={{display:'flex',justifyContent:'flex-end',gap:10}}><button type="button" className="explore-button" disabled={saving} onClick={onClose}>{tr('取消')}</button><button type="submit" className="explore-button explore-primary" disabled={saving}>{saving?tr('正在保存…'):tr('确认')}</button></div>
+    <div style={{display:'flex',justifyContent:'flex-end',gap:10}}><button type="button" className="explore-button" disabled={saving} onClick={onClose}>{tr('取消')}</button><button type="submit" className="explore-button explore-primary" disabled={saving}>{saving?tr('正在保存…'):tr(goalCorrection?'保存修改':'确认')}</button></div>
   </form></ArkmeDetailShell>
 }
 

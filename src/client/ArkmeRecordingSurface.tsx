@@ -1625,6 +1625,17 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     }
   }
 
+  const enhancedTarget=exactTargetActive && activeTab==='transcript' ? ui.recordingTarget?.enhancedItem : undefined
+  useEffect(() => {
+    if(!enhancedTarget || !active) return
+    if(!workbenchEnabled) { setExportNotice(tr('来源暂不可定位')); return }
+    const controller=new AbortController()
+    void prepareRecordingTranscriptComparison(selectedDate.getTime(),controller.signal)
+      .then(value=>{if(!controller.signal.aborted)setComparison(value)})
+      .catch(reason=>{if(!controller.signal.aborted)setExportNotice(errorMessage(reason))})
+    return ()=>controller.abort()
+  }, [enhancedTarget,active,workbenchEnabled,selectedDate])
+
   const toggleTranscriptSelection = (item: ArkmeRecordingWorkbenchItem) => {
     if (item.textEndOffset < item.textTotalLength) { setExportNotice('请先加载这句话的完整正文'); return }
     if (selectedForwardItems.some(selected => selected.itemId === item.itemId)) {
@@ -1999,7 +2010,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     {active && activeTab === 'transcript' && workbenchEnabled && !tour.sample && speechScope === entities.scope && <RecordingSpeechStatistics
       key={entities.scope} query={{ accountScope: entityAccount, date: selectedDayKey, timezone: timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone }}
       refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}:${speechRevision}`} onClose={() => setSpeechScope('')} onSource={openSpeechSource} />}
-    {workbenchEnabled && comparison !== undefined && <RecordingTranscriptComparison key={`${String(selectedDate.getTime())}:${String(auth.auth?.userId)}`} dateStamp={selectedDate.getTime()} mediaPath={recordingMediaPath} prepared={comparison} onClose={() => { setComparison(undefined) }} />}
+    {workbenchEnabled && comparison !== undefined && <RecordingTranscriptComparison key={`${String(selectedDate.getTime())}:${String(auth.auth?.userId)}`} dateStamp={selectedDate.getTime()} mediaPath={recordingMediaPath} prepared={comparison} target={enhancedTarget} onClose={() => { setComparison(undefined) }} />}
     {workbenchEnabled && forwardOpen && <RecordingTranscriptForward attempt={forwardAttempt} onClose={() => { setForwardOpen(false) }} onComplete={message => { setForwardOpen(false); setSelectionMode(false); setExportNotice(message) }} />}
     {workbenchEnabled && editingSpeaker !== undefined && <ArkmeRecordingSpeakerEditor
       item={editingSpeaker.item}

@@ -71,3 +71,42 @@
 .people-tabs{padding:0 0 10px;border-bottom:1px solid var(--dsw-alias-border-l2,#e5e7eb)}
 .people-picker-list{max-height:55vh;overflow:auto}
 .people-picker-list .explore-row{color:inherit;font:inherit}
+
+/* Goal detail and identity controls share the existing desktop theme. */
+[data-goal-detail] .explore-detail-heading {
+  display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px;
+}
+[data-goal-detail] .explore-detail-heading h1 { margin:0; overflow-wrap:anywhere }
+[data-goal-detail] .explore-detail-heading .explore-muted {
+  padding:2px 10px; border-radius:999px; background:var(--dsw-alias-interactive-bg-hover,#f2f3f5);
+}
+[data-goal-detail] .explore-detail-actions {
+  padding-bottom:18px; border-bottom:1px solid var(--dsw-alias-border-l2,#dadde1);
+}
+[data-goal-detail] .explore-detail-actions button,
+[data-goal-correction] .explore-button {
+  min-height:34px; padding:6px 12px; border:1px solid var(--dsw-alias-border-l2,#dadde1); border-radius:7px;
+}
+[data-goal-detail] .explore-detail-actions button,
+.goal-correction-title, .identity-mode-switch button {
+  display:inline-flex; align-items:center; justify-content:center; gap:7px;
+}
+[data-goal-detail] [data-action=abandon] { margin-inline-start:6px }
+[data-goal-detail] [data-manual-state] { display:flex; align-items:baseline; gap:12px }
+[data-goal-detail] [data-manual-state] :is(h3,p) { margin:0 }
+[data-goal-detail] .explore-field p { max-width:70ch; line-height:1.75 }
+[data-goal-detail] .explore-evidence { border:1px solid var(--dsw-alias-border-l2,#dadde1); }
+[data-goal-detail] .explore-evidence .explore-source-link { display:block; margin-inline-start:auto; }
+.goal-correction-title { margin:0; font-size:15px; font-weight:600 }
+.arkme-explore-dialog[data-goal-correction] { padding:16px 0 0; gap:16px; border-top:1px solid var(--dsw-alias-border-l2,#dadde1) }
+[data-goal-correction] label { display:grid; gap:8px; font-weight:600 }
+[data-goal-correction] textarea { min-height:112px; line-height:1.65; font-weight:400; resize:vertical }
+.identity-mode-switch {
+  display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:3px; padding:3px;
+  border-radius:9px; background:var(--dsw-alias-interactive-bg-hover,#f0f1f3);
+}
+.identity-mode-switch button { min-height:34px; border:1px solid transparent; border-radius:7px }
+.identity-mode-switch button[aria-pressed=true] {
+  background:var(--dsw-alias-bg-base,#fff); border-color:var(--dsw-alias-border-l2,#dadde1); font-weight:600;
+}
+.identity-mode-switch + .explore-search { margin:0 }
