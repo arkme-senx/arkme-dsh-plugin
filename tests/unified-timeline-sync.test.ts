@@ -9,7 +9,7 @@ import type { TimelineCachePort, TimelineCacheCommand } from '../src/timeline-ca
 import type { ArkmeTimelineItem, ArkmeTimelinePage } from '../src/types.js'
 const cleanup: Array<() => void> = []
 afterEach(() => { for (const close of cleanup.splice(0)) close() })
-const response = (text = 'old', extra = {}) => ({ protocol_version: 2, chat_session_uid: 'chat',
+const response = (text = 'old', extra = {}) => ({ protocol_version: 3, chat_session_uid: 'chat',
   timeline_items: [{ event_id: 'event', kind: 'wechat_import', source: 'wechat_import', occurred_at: 10, order_tie: 'event', content_status: 'available', payload: { text_content: text } }],
   sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', item_count: source === 'wechat_import' ? 1 : 0 })),
   complete: true, window_token: 'window', older_has_more: false, newer_has_more: false, has_more: false, newer_cursor: 'tail', ...extra })
@@ -27,7 +27,12 @@ function setup(unavailable = false, readbackMissing = false, createPort?: (port:
       case 'reserve': result = store.reserve(); break
       case 'invalidate-all': store.invalidateAll(); break
       case 'read': result = readbackMissing ? undefined : store.read(command.scope, command.request, command.anchorId, command.latest); break
-      case 'write': writes(command); result = store.write(command.scope, command.request, command.page, command.options); break
+      case 'write': {
+        writes(command)
+        const accepted = store.write(command.scope, command.request, command.page, command.options)
+        result = accepted && command.readBack ? (readbackMissing ? undefined : store.read(command.scope, command.request)) : accepted
+        break
+      }
       case 'invalidate': store.invalidate(command.scope, command.timelineItemKey, command.terminal, command.refreshOnly); break
       case 'invalidate-source': store.invalidateSource(command.sourceKey, command.timelineItemKey, command.terminal, command.refreshOnly); break
     }
@@ -66,6 +71,44 @@ it('failure on continuation keeps old data and a single raw refresh page is neve
   expect((await owner.read('ref', { mode: 'refresh', windowTokens: first.unified!.windowTokens })).cache?.persistence).toBe('deferred')
   expect(writes).toHaveBeenCalledTimes(1)
 })
+it.each(['initial', 'older', 'newer', 'around', 'refresh'].flatMap(mode => [3, undefined, null, 0, 1, '3'].map(status => ({ mode: mode as 'initial' | 'older' | 'newer' | 'around' | 'refresh', status }))))('does not publish or persist unconfirmed hydration $status during $mode', async ({ mode, status }) => {
+  const { owner, post, writes } = setup()
+  post.mockResolvedValueOnce(response('old', { older_cursor: 'older' }))
+  const first = await owner.read('ref')
+  const unavailable = response('unused', { timeline_items: Array.from({ length: 40 }, (_, n) => ({
+    event_id: `message-${n}`, kind: 'message', source: 'messages', occurred_at: n + 1, order_tie: String(n),
+    content_status: 'unavailable', payload: { record: { status } },
+  })) })
+  post.mockResolvedValueOnce(unavailable)
+  const query = mode === 'refresh' ? { mode, reconcile: true, windowTokens: first.unified!.windowTokens }
+    : mode === 'older' ? { mode, cursor: first.unified!.olderCursor! }
+      : mode === 'newer' ? { mode, cursor: first.unified!.newerCursor! }
+        : mode === 'around' ? { mode, itemUid: 'record', recordOwnerUserId: 2 } : { mode }
+  await expect(owner.read('ref', query)).rejects.toMatchObject({ code: 'chat-timeline-content-pending', retryable: true })
+  expect(writes).toHaveBeenCalledTimes(1)
+  expect((await owner.read('ref', { cacheOnly: true })).unified?.events[0]).toMatchObject({ text: 'old' })
+  post.mockResolvedValueOnce(response('recovered'))
+  expect((await owner.read('ref', query)).unified?.events[0]).toMatchObject({ text: 'recovered' })
+  expect(writes).toHaveBeenCalledTimes(2)
+})
+
+it.each([2, 4])('continues honoring authoritative unavailable hydration status %s', async status => {
+  const { owner, post, writes } = setup()
+  post.mockResolvedValueOnce(response('unused', { timeline_items: [{ event_id: 'message', kind: 'message', source: 'messages',
+    occurred_at: 1, order_tie: 'message', content_status: 'unavailable', payload: { record: { status } } }] }))
+  const page = await owner.read('ref')
+  expect(page.unified?.events).toEqual([expect.objectContaining({ contentStatus: 'unavailable', kind: 'notice',
+    text: status === 2 ? '原消息未找到' : '此消息受隐私保护' })])
+  expect(writes).toHaveBeenCalledOnce()
+})
+
+it('keeps authoritative recall notices even when their record hydration is pending', async () => {
+  const { owner, post } = setup()
+  post.mockResolvedValueOnce(response('unused', { timeline_items: [{ event_id: 'recall', kind: 'message_recalled', source: 'messages',
+    occurred_at: 1, order_tie: 'recall', content_status: 'unavailable', payload: { own: true, record: { status: 3 } } }] }))
+  expect((await owner.read('ref')).unified?.events[0]).toMatchObject({ kind: 'notice', text: '你撤回了一条消息' })
+})
+
 it('keeps network data available with an explicit persistence failure', async () => {
   const { owner } = setup(true)
   const result = await owner.read('ref')
@@ -85,9 +128,24 @@ it('preserves the durable invalidation state reported by readback', async () => 
   const call = port.call.bind(port)
   vi.spyOn(port, 'call').mockImplementation(async command => {
     const value = await call<any>(command)
-    return command.kind === 'read' && value ? { ...value, cache: { ...value.cache, stale: true } } : value
+    return command.kind === 'write' && command.readBack && value ? { ...value, cache: { ...value.cache, stale: true } } : value
   })
   expect((await owner.read('ref')).cache).toMatchObject({ persistence: 'committed', stale: true })
+})
+it('starts the remote page while the reserved cache ticket is still in the worker queue', async () => {
+  const { owner, post, port } = setup()
+  const call = port.call.bind(port)
+  let release!: () => void
+  const ticketBlocked = new Promise<void>(resolve => { release = resolve })
+  vi.spyOn(port, 'call').mockImplementation(async command => {
+    if (command.kind === 'reserve') await ticketBlocked
+    return await call(command)
+  })
+  const page = owner.read('ref')
+  try {
+    await vi.waitFor(() => expect(post).toHaveBeenCalledTimes(1))
+  } finally { release() }
+  expect((await page).cache?.persistence).toBe('committed')
 })
 it('does not publish a stale response when its durable commit is rejected by a newer refresh', async () => {
   const { owner, port } = setup()

@@ -1,3 +1,5 @@
+import { arkmeDayKey, arkmeWallClockIso, getArkmeEffectiveTimeZone } from './display-time-zone.js'
+import { exportTopicMarkdown } from '../record-export-topic.js'
 import { tr } from './locale.js'
 import type {
   ArkmeSourceItem, ArkmeSourceList, ArkmeTimelineCursor, ArkmeTimelineItem, ArkmeTimelinePage,
@@ -73,19 +75,7 @@ function pad(value: number): string {
 }
 
 export function arkmeConversationExportTimestamp(date: Date): string {
-  return `${String(date.getFullYear())}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
-}
-
-function localDateTime(date: Date): string {
-  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
-}
-
-function localDate(date: Date): string {
-  return `${String(date.getFullYear())}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function localTime(date: Date): string {
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  return arkmeWallClockIso(date.getTime()).slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
 }
 
 function fileSegment(value: string): string {
@@ -102,14 +92,6 @@ function durationLabel(seconds: number | undefined): string {
   const minutes = Math.floor(rounded / 60)
   const remainder = rounded % 60
   return `${pad(minutes)}:${pad(remainder)}`
-}
-
-function topicPathForItem(item: ArkmeTimelineItem, topics: readonly ArkmeSourceItem[]): string {
-  const topic = item.selfTopic
-  if (topic === undefined) return ''
-  const source = topics.find(candidate => candidate.topicHierarchyKey === topic.topicHierarchyKey)
-  if (source === undefined) return topic.title?.trim() ?? ''
-  return arkmeTopicPathNames(source, topics).join(' / ') || topic.title?.trim() || source.displayName
 }
 
 export function arkmeConversationExportScopeLabel(
@@ -136,8 +118,9 @@ export function arkmeConversationExportFileName(
   return `${scope}-${arkmeConversationExportTimestamp(exportedAt)}.md`
 }
 
-function markdownForItem(item: ArkmeTimelineItem, topics: readonly ArkmeSourceItem[]): string {
-  const lines: string[] = [`### ${localTime(new Date(item.sendAtMillis))} · ${escapePlainMarkdown(`${item.senderName || '未知发送者'}${item.representation?` · 代表${item.representation.name}`:''}`)}`, '']
+function markdownForItem(item: ArkmeTimelineItem): string {
+  const lines: string[] = [`### ${arkmeWallClockIso(item.sendAtMillis).slice(11, 19)} · ${escapePlainMarkdown(`${item.senderName || '未知发送者'}${item.representation?` · 代表${item.representation.name}`:''}`)}`, '']
+  if (item.selfTopic?.topicHierarchyKey.trim()) lines.push(exportTopicMarkdown(item.selfTopic.title).trimEnd(), '')
   const title = item.title.trim()
   if (title !== '' && title !== item.textContent.trim()) lines.push(`**标题：** ${escapePlainMarkdown(title)}`, '')
   const blocks = [...(item.contentBlocks ?? [])].sort((left, right) => left.sortOrder - right.sortOrder)
@@ -160,8 +143,6 @@ function markdownForItem(item: ArkmeTimelineItem, topics: readonly ArkmeSourceIt
     lines.push(`- ${kind}：${escapePlainMarkdown(block.fileName || '未命名文件')}${duration}`)
   }
   if (item.mediaUnavailable === true) lines.push('- 媒体：部分附件当前不可用')
-  const topicPath = topicPathForItem(item, topics)
-  if (topicPath !== '') lines.push(`- 主题：${escapePlainMarkdown(topicPath)}`)
   lines.push('', '---', '')
   return lines.join('\n')
 }
@@ -177,7 +158,7 @@ export function arkmeConversationExportMarkdown(input: {
   const lines = [
     `# ${scope}`,
     '',
-    `- 导出时间：${localDateTime(input.exportedAt)}`,
+    `- 导出时间：${arkmeWallClockIso(input.exportedAt.getTime()).slice(0, 19).replace('T', ' ')} (${getArkmeEffectiveTimeZone()})`,
     `- 内容数量：${String(input.items.length)}`,
     `- 导出范围：${input.source.kind === 'topic' ? '当前主题及全部子主题' : input.source.kind === 'send_to_self' ? '全部可访问快记' : input.source.kind === 'default_category' ? '未分类快记' : '当前对话全部可访问消息'}`,
     '',
@@ -186,12 +167,12 @@ export function arkmeConversationExportMarkdown(input: {
   ]
   let currentDate = ''
   for (const item of input.items) {
-    const date = localDate(new Date(item.sendAtMillis))
+    const date = arkmeDayKey(item.sendAtMillis)
     if (date !== currentDate) {
       currentDate = date
       lines.push(`## ${date}`, '')
     }
-    lines.push(markdownForItem(item, topics))
+    lines.push(markdownForItem(item))
   }
   if (input.items.length === 0) lines.push('当前范围内没有可导出的内容。', '')
   return `${lines.join('\n').trimEnd()}\n`

@@ -82,6 +82,29 @@ export class TeamWorldService {
     return { requestUid, contentRef: await this.contentRef(actor, team, id(v.content_uid)), revision: positive(v.revision), acceptedAt: nonnegative(v.accepted_at), pending: v.pending,
       ...(v.result ? { result: { visibility: r.visibility as NonNullable<TeamWorldReceipt['result']>['visibility'], contentRevision: id(r.content_revision), publicationVersion: positive(r.publication_version) } } : {}) }
   }
+  /** Source linkage is private metadata and is never reconstructed from body text. */
+  async sourcePublicationLinks(uids: string[], signal?: AbortSignal): Promise<Record<string, unknown>[]> {
+    const session = await this.runtime.requireSession(), out: Record<string, unknown>[] = []
+    let after = ''
+    for (let page = 0; page < 10; page++) {
+      const data = obj(await this.runtime.authenticatedPost('/api/v1/team-world/source-links', { record_uids: uids, after_id: after, limit: 50 }, session, signal, { bypassCache: true, cacheMs: 0, lane: 'background-read' }))
+      out.push(...rows(data.items))
+      if (typeof data.has_more !== 'boolean') throw invalid()
+      if (!data.has_more) return out
+      const next = id(data.next_id); if (next <= after) throw invalid(); after = next
+    }
+    throw new ArkmePluginError('world-source-links-limit', '发布关联较多，请在团队内容管理中查看', true, 429)
+  }
+  async publicationLink(team: RecordOwnerId, uid: string, signal?: AbortSignal): Promise<Record<string, unknown> | undefined> {
+    const session = await this.runtime.requireSession()
+    const data = obj(await this.runtime.authenticatedPost('/api/v1/team-world/by-publication', { team_id: owner(team), publication_uid: id(uid) }, session, signal, { bypassCache: true, cacheMs: 0, lane: 'interactive-read' }))
+    return data.item === null ? undefined : obj(data.item)
+  }
+  async unpublishLink(link: Record<string, unknown>, request: string, expectedUserId: number, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession(), team = owner(link.team_id)
+    if (session.userId !== expectedUserId) throw invalid()
+    return this.execute({ accountKey: `${this.runtime.config.environment}:${session.userId}`, action: 'submit', teamRef: await this.ports.teamRef(team, session.userId), contentRef: await this.contentRef(session.userId, team, id(link.content_uid)), expectedRevision: positive(link.revision), requestUid: id(request), change: 'unpublish' }, signal) as Promise<TeamWorldReceipt>
+  }
   async execute(input: TeamWorldRequest, signal?: AbortSignal): Promise<unknown> {
     const session = await this.runtime.requireSession(), actor = session.userId
     if (input.accountKey !== `${this.runtime.config.environment}:${actor}`) throw new ArkmePluginError('team-world-account-changed', '账号已变化，请重新打开', false, 409)

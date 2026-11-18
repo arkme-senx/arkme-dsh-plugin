@@ -1,3 +1,4 @@
+import { SpeakerGroupService } from './speaker-group-service.js'
 import { RecordingReadOwner } from './recording-read-owner.js'
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto'
 import type { SpeakerDirectoryAvatar, SpeakerDirectoryDetail, SpeakerDirectoryPage, SpeakerDirectorySeen, SpeakerDirectoryStatus, SpeakerDirectorySummary } from '../speaker-directory-contract.js'
@@ -31,7 +32,7 @@ function inputString(value: unknown, maxBytes: number, fallback = ''): string {
 }
 
 export class SpeakerDirectoryService {
-  constructor(private readonly runtime: ServiceRuntime, private readonly recording: Pick<RecordingService, 'directorySpeakerRef' | 'directorySpeakerAvatars'>,
+  constructor(private readonly runtime: ServiceRuntime, private readonly recording: Pick<RecordingService, 'directorySpeakerRef' | 'directorySpeakerAvatars'> & Partial<Pick<RecordingService, 'recordingCorrectionSample' | 'recordingGroupRows'>>,
     private readonly unmarked: Pick<UnmarkedSpeakerService, 'directoryCandidateRef'> & Partial<Pick<UnmarkedSpeakerService, 'segments'>>,
     private readonly media?: Pick<MediaService, 'issueRecordingPlaybackMediaRef'>) {}
 
@@ -45,6 +46,13 @@ export class SpeakerDirectoryService {
     if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换，请重新打开目录', false, 409)
     return { data: objectValue(data), session }
   }
+
+  private groups() {
+    if(!this.recording.recordingGroupRows)throw invalid()
+    return new SpeakerGroupService(this.runtime,{recordingGroupRows:this.recording.recordingGroupRows.bind(this.recording)},(value,owner)=>this.readDetailRef(value,owner))
+  }
+  async groupMembers(input:Record<string,unknown>,signal?:AbortSignal){return this.groups().members(input,signal)}
+  async groupAction(input:Record<string,unknown>,signal?:AbortSignal){return this.groups().action(input.action,input,signal)}
 
   async summary(input: Record<string, unknown>, signal?: AbortSignal): Promise<SpeakerDirectorySummary> {
     const body: Record<string, unknown> = {}
@@ -129,7 +137,7 @@ export class SpeakerDirectoryService {
     const version = inputString(input.version, 512), cursor = inputString(input.cursor, 4096)
     if (cursor && !version) throw new ArkmePluginError('speaker-similarity-version-required', '请先读取相似声音第一页', false)
     try {
-      const { data } = await this.request('similar', { schema_version: 1, detail_ref: { type: ref.type, id: ref.id, expected_version: ref.expectedVersion },
+      const { data } = await this.request('similar', { schema_version: 2, detail_ref: { type: ref.type, id: ref.id, expected_version: ref.expectedVersion },
         limit: 20, cursor, version }, signal, session.userId)
       const key = await this.key()
       // The returned anchor must be the requested identity, not an unrelated nearest neighbour.
@@ -148,6 +156,28 @@ export class SpeakerDirectoryService {
       if (this.unavailable(error)) return { supported: false }
       throw error
     }
+  }
+
+  /** Return bounded representative rows for explicit selection, never a whole-group mutation. */
+  async correctionItems(input: Record<string, unknown>, signal?: AbortSignal) {
+    const session = await this.runtime.requireSession(), ref = await this.readDetailRef(input.detailRef, session.userId)
+    if (!this.recording.recordingCorrectionSample) throw invalid()
+    const { data } = await this.request('voice-samples', { schema_version: 1, detail_ref: { type: ref.type, id: ref.id, expected_version: ref.expectedVersion }, limit: 3 }, signal, session.userId)
+    if (data.supported !== true || data.schema_version !== 1 || !Array.isArray(data.items) || data.items.length > 3) throw invalid()
+    const source = objectValue(data.detail_ref)
+    if (source.type !== ref.type || source.id !== ref.id) throw invalid()
+    const items = await Promise.all(data.items.map(async value => {
+      const locator = objectValue(objectValue(value).locator), start = integer(locator.start_at), end = integer(locator.end_at)
+      if (end <= start || !Number.isSafeInteger(locator.num)) throw invalid()
+      return this.recording.recordingCorrectionSample!({ sessionId: str(locator.session_id), childId: str(locator.child_id), start, end, num: locator.num as number }, signal)
+    }))
+    // Re-read the same owner membership after resolving current source revisions.
+    // A moved or changed representative row must not silently enter another group's command.
+    const after = await this.request('voice-samples', { schema_version: 1, detail_ref: { type: ref.type, id: ref.id, expected_version: ref.expectedVersion }, limit: 3 }, signal, session.userId)
+    if (JSON.stringify(after.data) !== JSON.stringify(data)) throw new ArkmePluginError('speaker-sample-changed', '片段归属已变化，请重新查找', true, 409)
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('speaker-directory-account-changed', '账号已切换', false, 409)
+    return { items }
   }
 
   async voiceSamples(input: Record<string, unknown>, signal?: AbortSignal): Promise<SpeakerVoiceSamples> {

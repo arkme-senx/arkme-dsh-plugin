@@ -18,7 +18,10 @@ export interface TeamForwardInput {
 }
 export type {TeamRecordMetadata,TeamMessageSnapshot} from './team-snapshot-contract.js'
 export interface TeamRecallResult {message: import('./team-app-contract.js').TeamMessage; changed: boolean}
+export interface TeamMentionCandidatePage { items: import('./team-app-contract.js').TeamIdentity[]; hasMore: boolean; nextCursor?: string }
 export interface TeamMessagePort {
+  readTeamMentionCandidates(conversationRef:string,teamRef:string,options?:{cursor?:string;limit?:number},signal?:AbortSignal):Promise<TeamMentionCandidatePage>
+ deleteTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<import('./chat-message-actions.js').TeamMessageDeletionResult>
  recallTeamMessage(conversationRef:string,messageRef:string,signal?:AbortSignal):Promise<TeamRecallResult>
  editTeamMessage(command:import('./team-snapshot-contract.js').TeamEditCommand,signal?:AbortSignal):Promise<{version:number}>
  readTeamEditReceipt(conversationRef:string,messageRef:string,revisionUid:string,signal?:AbortSignal):Promise<import('./team-snapshot-contract.js').TeamEditReceipt>

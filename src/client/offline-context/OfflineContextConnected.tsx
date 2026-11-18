@@ -119,13 +119,15 @@ function ConnectedCard({ entryRef, revision, source, relinkOptions, onChanged }:
   </>
 }
 
-export function OfflineContextCandidates(props: { source: ArkmeSourceItem; items: ArkmeTimelineItem[]; state?: 'suggested' | 'dismissed'; onChanged(): void }) {
+export function OfflineContextCandidates(props: { source: ArkmeSourceItem; items: ArkmeTimelineItem[]; state?: 'suggested' | 'dismissed'; presentation?: 'inline' | 'directory'; onChanged(): void }) {
+  if(props.source.accessKind==='team_delegation')return null
+
   // The keyed lifetime prevents a late result from crossing conversations.
   return <CandidateList key={`${props.source.sourceRef}:${props.state ?? 'suggested'}`} {...props} />
 }
 
-function CandidateList({ source, items, state = 'suggested', onChanged }: {
-  source: ArkmeSourceItem; items: ArkmeTimelineItem[]; state?: 'suggested' | 'dismissed'; onChanged(): void
+function CandidateList({ source, items, state = 'suggested', presentation = 'inline', onChanged }: {
+  source: ArkmeSourceItem; items: ArkmeTimelineItem[]; state?: 'suggested' | 'dismissed'; presentation?: 'inline' | 'directory'; onChanged(): void
 }) {
   const [open, setOpen] = useState(false)
   const [page, setPage] = useState<OfflineContextList>()
@@ -136,7 +138,7 @@ function CandidateList({ source, items, state = 'suggested', onChanged }: {
   const invalidation = useSyncExternalStore(arkmeChatTimelineDelta.subscribe, () => arkmeChatTimelineDelta.getSnapshotForSource(source.sourceKey ?? source.sourceRef).invalidationRevision, () => 0)
   useEffect(() => {
     const controller = new AbortController(); pageController.current = controller; setBusy(true); setError('')
-    void sdk.offlineContext({ operation: 'capability' }, controller.signal).catch(() => undefined).then(async value => {
+    void sdk.offlineContext({ operation: 'capability' }, controller.signal).then(async value => {
       if (controller.signal.aborted) return
       if (!(value as OfflineContextCapability | undefined)?.supported) { setPage(undefined); return }
       const result = await sdk.offlineContext({ operation: 'list', sourceRef: source.sourceRef, state }, controller.signal)
@@ -147,7 +149,8 @@ function CandidateList({ source, items, state = 'suggested', onChanged }: {
   }, [source.sourceRef, state, refresh, invalidation])
   const relinkOptions = useMemo(() => offlineRelinkOptions(items), [items])
   const failure = error && <p role="alert">{error}<button type="button" disabled={busy} onClick={() => setRefresh(v => v + 1)}>{tr('重试')}</button></p>
-  if (!page?.entries.length) return failure || null
+  if (!page?.entries.length) return failure || (presentation === 'directory'
+    ? <p role="status">{busy ? tr('正在读取…') : tr('暂无线下交流')}</p> : null)
   const content = <>
     {busy && <p role="status">{tr('正在读取…')}</p>}{failure}
     {page.entries.map(entry => <ConnectedCard key={entry.id} entryRef={entry.id} revision={entry.revision} source={source} relinkOptions={relinkOptions} onChanged={() => { setRefresh(v => v + 1); onChanged() }} />)}
@@ -163,5 +166,5 @@ function CandidateList({ source, items, state = 'suggested', onChanged }: {
       }).catch(() => { if (!signal.aborted) setError(tr('读取失败，请重试')) }).finally(() => { if (!signal.aborted) setBusy(false) })
     }}>{tr('加载更多')}</button>}
   </>
-  return state === 'dismissed' ? content : <OfflineContextPending count={page.entries.length} hasMore={!!page.nextCursor} open={open} onToggle={() => setOpen(value => !value)}>{content}</OfflineContextPending>
+  return presentation === 'directory' || state === 'dismissed' ? content : <OfflineContextPending count={page.entries.length} hasMore={!!page.nextCursor} open={open} onToggle={() => setOpen(value => !value)}>{content}</OfflineContextPending>
 }

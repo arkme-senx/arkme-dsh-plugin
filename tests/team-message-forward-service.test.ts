@@ -60,3 +60,55 @@ it('keeps the accepted card and stable comment identity when only the comment re
  expect(comments.map(call=>(call[1] as Record<string,unknown>).record_uid)).toEqual([commentUid,commentUid])
  expect(comments.map(call=>(call[1] as Record<string,unknown>).send_at)).toEqual([input.sendAtMillis,input.sendAtMillis])
 })
+
+it('forwards Record and Chat selectors to the Team owner and keeps comment retry identity',async()=>{
+ const f=fixture(),command={targetConversationRef:'team-target',expectedUserId:11,requestId:recordUid,sendAtMillis:input.sendAtMillis,commentText:'comment',sources:[{record_uid:'body',chat_session_uid:'chat',relation_uid:'relation'}]}
+ f.runtime.authenticatedTeamPost.mockImplementation(async(path:string)=>path.endsWith('/messages/send')?{message_uid:'comment',side:'team',state:'preparing',seq:0}:{message_uid:'accepted',side:'team',state:'published',seq:7})
+ const partial=await f.service.forwardRecords(command)
+ expect(partial.warningText).toContain('附言尚未确认')
+ expect(f.runtime.authenticatedTeamPost.mock.calls[0]?.[1]).toMatchObject({conversation_uid:'target-conversation',side:'team',record_sources:command.sources})
+ expect(f.runtime.authenticatedTeamPost.mock.calls[0]?.[1]).not.toHaveProperty('content')
+ f.runtime.authenticatedTeamPost.mockResolvedValue({message_uid:'accepted',side:'team',state:'published',seq:7})
+ expect((await f.service.forwardRecords(command)).warningText).toBeUndefined()
+ const requests=f.runtime.authenticatedTeamPost.mock.calls
+ expect(requests[0]?.[1]).toEqual(requests[2]?.[1]);expect(requests[1]?.[1]).toEqual(requests[3]?.[1])
+ expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled();expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+})
+it('rejects account switches before publication, unconfirmed Team receipts and aborts before IO',async()=>{
+ const f=fixture(),command={targetConversationRef:'team-target',expectedUserId:11,requestId:recordUid,sendAtMillis:input.sendAtMillis,sources:[{record_uid:'body',record_owner_user_id:11}]}
+ f.runtime.accountScopedSession.mockResolvedValueOnce({userId:22,refreshToken:'other'} as never)
+ await expect(f.service.forwardRecords(command)).rejects.toMatchObject({code:'team-account-changed'})
+ expect(f.runtime.authenticatedTeamPost).not.toHaveBeenCalled()
+ f.runtime.authenticatedTeamPost.mockResolvedValueOnce({message_uid:'pending',side:'team',state:'preparing',seq:0})
+ await expect(f.service.forwardRecords(command)).rejects.toMatchObject({code:'team-forward-outcome-unknown'})
+ const controller=new AbortController();controller.abort()
+ await expect(f.service.forwardRecords(command,controller.signal)).rejects.toBeTruthy()
+ expect(f.runtime.authenticatedTeamPost).toHaveBeenCalledOnce()
+})
+
+it('binds delegated Team forwarding to its sealed team identity and access reference on every retry',async()=>{
+ const f=fixture('group_chat')
+ const delegation={accessRef:'signed-current-access',teamId:'9007199254740993',membershipKind:'member',membershipRevision:7,groupMembershipUid:'group-admission',groupMembershipRevision:3,visibleFromSeq:10}
+ f.source.openSourceRef.mockResolvedValue({kind:'group_chat',ownerRef:'native-owner',groupDelegation:delegation} as never)
+ const command={...input,commentText:'附言',commentRecordUid:'22222222-2222-5222-8222-222222222222'}
+ f.runtime.authenticatedChatPost.mockRejectedValueOnce(new Error('response lost'))
+ await expect(f.service.forward(command)).rejects.toThrow('response lost')
+ expect(await f.service.forward(command)).toMatchObject({localState:'synced'})
+ const calls=f.runtime.authenticatedChatPost.mock.calls as unknown as unknown[][]
+ for(const call of calls){
+  expect(call[0]).toBe('/api/v1/chats/records/forward')
+  expect(call[1]).toMatchObject({representation:{team_id:'9007199254740993',membership_kind:'member',membership_revision:7,group_join_at:0,group_membership_uid:'group-admission',group_membership_revision:3},comment_text:'附言',client_request_id:input.requestId})
+  expect(call[4]).toEqual({chatAccessRef:'signed-current-access',trackWriteOutcome:true})
+ }
+ expect(calls[0]![1]).toEqual(calls[1]![1])
+ expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+})
+it('does not retry a revoked delegated target as a personal Chat member',async()=>{
+ const f=fixture('group_chat')
+ f.source.openSourceRef.mockResolvedValue({kind:'group_chat',ownerRef:'native-owner',groupDelegation:{accessRef:'revoked-access',teamId:'7',membershipKind:'member',membershipRevision:2,groupMembershipUid:'revoked-group',groupMembershipRevision:1,visibleFromSeq:1}} as never)
+ f.runtime.authenticatedChatPost.mockRejectedValue(new Error('current group access denied'))
+ await expect(f.service.forward(input)).rejects.toThrow('current group access denied')
+ expect(f.runtime.authenticatedChatPost).toHaveBeenCalledOnce()
+ expect((f.runtime.authenticatedChatPost.mock.calls as unknown as unknown[][])[0]![4]).toEqual({chatAccessRef:'revoked-access',trackWriteOutcome:true})
+ expect(f.changed).not.toHaveBeenCalled()
+})

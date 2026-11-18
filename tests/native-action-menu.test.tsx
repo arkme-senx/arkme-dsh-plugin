@@ -20,10 +20,12 @@ afterEach(async () => {
   expect(document.querySelector('[role="menu"]')).toBeNull()
 })
 
-it('uses the real native Menu and retains its viewport fitting for pointer anchors', async () => {
+it.each(['point', 'external-trigger'] as const)('keeps the native %s menu out of flow and retains viewport fitting', async anchoring => {
   expect(typeof Menu).toBe('function')
   const select = vi.fn(), disabled = vi.fn(), close = vi.fn()
-  await act(async () => root.render(<ArkmeActionMenu label="统一菜单" point={{ x: 1199, y: 799 }} onClose={close} actions={[
+  const anchorProps = anchoring === 'point' ? { point: { x: 1199, y: 799 } }
+    : { getAnchorRect: () => new DOMRect(1199, 799, 34, 34) }
+  await act(async () => root.render(<ArkmeActionMenu label="统一菜单" {...anchorProps} onClose={close} actions={[
     { id: 'copy', label: '复制', onSelect: select },
     { id: 'disabled', label: '不可用', disabled: true, onSelect: disabled },
     { id: 'delete', label: '删除', danger: true, onSelect: vi.fn() },
@@ -31,7 +33,7 @@ it('uses the real native Menu and retains its viewport fitting for pointer ancho
   const menu = document.querySelector<HTMLElement>('[role="menu"]')!
   expect(menu.getAttribute('aria-label')).toBe('统一菜单')
   expect(host.contains(menu)).toBe(false)
-  // Even the native empty anchor must not create a line between conversation rows.
+  // Empty native anchors must neither add a line nor introduce a flex gap.
   const anchor = host.querySelector<HTMLElement>('[data-arkme-command-menu]')!
   expect(getComputedStyle(anchor).position).toBe('fixed')
   expect(anchor.style.height).toBe('0px')
@@ -48,11 +50,15 @@ it('uses the real native Menu and retains its viewport fitting for pointer ancho
 it('navigates enabled items by keyboard and restores focus on Escape', async () => {
   const close = vi.fn()
   await act(async () => root.render(<ArkmeActionMenu label="键盘菜单" autoFocus onClose={close}
+    getAnchorRect={() => new DOMRect(100, 50, 34, 34)}
     anchor={<button>打开菜单</button>} actions={[
       { id: 'one', label: '第一项', onSelect: vi.fn() },
       { id: 'disabled', label: '禁用', disabled: true, onSelect: vi.fn() },
       { id: 'last', label: '末项', onSelect: vi.fn() },
     ]} />))
+  const anchor = getComputedStyle(host.querySelector<HTMLElement>('[data-arkme-command-menu]')!)
+  expect(anchor.display).toBe('inline-flex')
+  expect(anchor.position).not.toBe('fixed')
   const buttons = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
   expect(document.activeElement).toBe(buttons[0])
   host.querySelector('button')!.focus()
@@ -135,6 +141,59 @@ it('ignores scroll notifications queued before the point menu opened, but dismis
     await act(async () => menu.dispatchEvent(new Event('scroll')))
     expect(close).not.toHaveBeenCalled()
     await act(async () => scrollport.dispatchEvent(new Event('scroll')))
+    expect(close).toHaveBeenCalledOnce()
+  } finally { scrollport.remove() }
+})
+
+it.each(['wheel', 'touchmove', 'keyboard', 'offscreen', 'detached', 'outside', 'escape'] as const)('retains a live message menu through automatic source scrolling until %s', async dismissal => {
+  const close = vi.fn(), stale = vi.fn(), fresh = vi.fn()
+  const scrollport = document.createElement('div'), bubble = document.createElement('div')
+  scrollport.append(bubble); document.body.append(scrollport)
+  vi.spyOn(scrollport, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 900, 600))
+  const bounds = vi.spyOn(bubble, 'getBoundingClientRect').mockReturnValue(new DOMRect(400, 400, 200, 80))
+  const render = (synced: boolean) => <ArkmeActionMenu label="实时消息菜单" point={{ x: 450, y: 430 }} pointAnchor={bubble} onClose={close}
+    actions={[{ id: 'link', label: synced ? '复制链接' : '发送中', disabled: !synced, onSelect: synced ? fresh : stale }]} />
+  try {
+    await act(async () => root.render(render(false)))
+    const menu = document.querySelector<HTMLElement>('[role="menu"]')!
+    const position = { left: menu.style.left, top: menu.style.top }
+    expect(menu.querySelector('button')!.disabled).toBe(true)
+    await act(async () => {
+      root.render(render(true))
+      scrollport.dispatchEvent(new Event('scroll'))
+    })
+    expect(close).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="menu"]')).toBe(menu)
+    expect({ left: menu.style.left, top: menu.style.top }).toEqual(position)
+    expect(menu.querySelector('button')!.disabled).toBe(false)
+    expect(menu.textContent).toContain('复制链接')
+    // Interaction inside the menu remains local, including its own scrolling.
+    await act(async () => {
+      menu.dispatchEvent(new WheelEvent('wheel', { bubbles: true }))
+      menu.dispatchEvent(new Event('scroll'))
+    })
+    expect(close).not.toHaveBeenCalled()
+    await act(async () => menu.querySelector('button')!.click())
+    expect(fresh).toHaveBeenCalledOnce(); expect(stale).not.toHaveBeenCalled()
+    close.mockClear()
+    await act(async () => {
+      if (dismissal === 'offscreen') {
+        bounds.mockReturnValue(new DOMRect(400, -100, 200, 80))
+        scrollport.dispatchEvent(new Event('scroll'))
+      } else if (dismissal === 'detached') {
+        bubble.remove(); scrollport.dispatchEvent(new Event('scroll'))
+      } else if (dismissal === 'outside') {
+        document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }))
+      } else if (dismissal === 'escape') {
+        menu.querySelector('button')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      } else if (dismissal === 'keyboard') {
+        scrollport.dispatchEvent(new KeyboardEvent('keydown', { key: 'PageUp', bubbles: true }))
+      } else scrollport.dispatchEvent(new Event(dismissal, { bubbles: true }))
+    })
+    expect(close).toHaveBeenCalledOnce()
+    await act(async () => root.render(null))
+    scrollport.dispatchEvent(new Event('scroll'))
+    scrollport.dispatchEvent(new Event('wheel', { bubbles: true }))
     expect(close).toHaveBeenCalledOnce()
   } finally { scrollport.remove() }
 })

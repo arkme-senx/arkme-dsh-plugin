@@ -81,6 +81,7 @@ export function parseArkmeRecordReeditAttachments(value: unknown): ArkmeRecordRe
 export interface ArkmeRecordReeditMention {
   originalIndex?: number
   mentionRef?: string
+  teamMentionRef?:string
   botRef?: string
   all?: boolean
   displayName: string
@@ -93,16 +94,18 @@ export function parseArkmeRecordReeditMentions(value: unknown): ArkmeRecordReedi
   return value.map(raw => {
     if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new TypeError('重新编辑 @ 数据无效')
     const item = raw as ArkmeRecordReeditMention
-    const keys = ['originalIndex', 'mentionRef', 'botRef', 'all'].filter(key => (raw as Record<string, unknown>)[key] !== undefined)
+    const keys = ['originalIndex', 'mentionRef', 'botRef', 'teamMentionRef', 'all'].filter(key => (raw as Record<string, unknown>)[key] !== undefined)
     if (keys.length !== 1 || typeof item.displayName !== 'string' || item.displayName.trim() === ''
       || !Number.isSafeInteger(item.startIndex) || item.startIndex < 0 || !Number.isSafeInteger(item.length) || item.length < 2
       || (item.originalIndex !== undefined && (!Number.isSafeInteger(item.originalIndex) || item.originalIndex < 0))
       || (item.mentionRef !== undefined && (typeof item.mentionRef !== 'string' || item.mentionRef.trim() === ''))
+      || (item.teamMentionRef!==undefined&&(typeof item.teamMentionRef!=='string'||!item.teamMentionRef.trim()))
       || (item.botRef !== undefined && (typeof item.botRef !== 'string' || item.botRef.trim() === ''))
       || (item.all !== undefined && item.all !== true)) throw new TypeError('重新编辑 @ 数据无效')
     return { displayName: item.displayName, startIndex: item.startIndex, length: item.length,
       ...(item.originalIndex === undefined ? {} : { originalIndex: item.originalIndex }),
       ...(item.mentionRef === undefined ? {} : { mentionRef: item.mentionRef }),
+      ...(item.teamMentionRef===undefined?{}:{teamMentionRef:item.teamMentionRef}),
       ...(item.botRef === undefined ? {} : { botRef: item.botRef }),
       ...(item.all === true ? { all: true } : {}),
     }
@@ -116,6 +119,7 @@ export interface ArkmeRecordReeditPrepareInput {
   mentions?: ArkmeRecordReeditMention[]
   newTitle?: string
   attachments?: ArkmeRecordReeditAttachmentSelection[]
+  /** @deprecated Optional legacy editor baseline; never sent as a Record write precondition. */
   expectedVersion?: number
   expectedDraftRevision?: number
   capture?: ArkmeRecordReeditCapture
@@ -147,6 +151,8 @@ export interface ArkmeRecordReeditCommitResult {
   version: number
   revisionUid: string
   projectionState: 'pending'
+  /** False when accepted history must not overlay the current canonical body. */
+  appliedToCurrent?: boolean
 }
 
 /** A local receipt, never a replacement for Record's version or revision. */
@@ -167,6 +173,8 @@ export interface ArkmeRecordReeditSubmissionView {
 
 /** Host command data; presentation never selects the content to write. */
 export interface ArkmeRecordReeditCommand {
+  revisionUid?: string
+  editorSnapshot?: { avatar?: string; nickname?: string }
   context: ArkmeRecordReeditPreparedContext
   draft: import('./types.js').ArkmeRecordReeditDraft
 }

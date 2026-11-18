@@ -1,3 +1,4 @@
+import { dispatchArkmeHostOperation } from '../src/host-api.js'
 import { correctionOwnerResponse } from './fixtures/recording-correction-owner.js'
 import { describe, expect, it, vi } from 'vitest'
 import { RecordingService, type RecordingServiceDependencies } from '../src/services/recording-service.js'
@@ -234,4 +235,76 @@ it('preview is read-only and apply preserves its signed intent without expanding
   expect(f.writes()).toHaveLength(0)
   await f.service.applyRecordingSpeakerCorrection({ ...input, intentToken: preview.intentToken })
   expect(f.writes()[0]![1]).toMatchObject({ intent_token: 'signed-intent', items: [expect.objectContaining({ item_index: 1 })] })
+})
+
+it('requires explicit cross-date opt-in and preserves bounded anonymous target and exclusion locators', async () => {
+  const f = fixture(), other = fixture(date + 86400000)
+  const first = (await f.service.recordingDay(date)).transcript.items[0]!
+  const later = (await other.service.recordingDay(date + 86400000)).transcript.items[1]!
+  const input = { ...request(first.itemRef), itemRefs: [first.itemRef, later.itemRef], rejectCurrent: false, detach: false, target: { kind: 'anonymous' as const } }
+  await expect(f.service.previewRecordingSpeakerCorrection(input)).rejects.toMatchObject({ code: 'recording-correction-scope-invalid' })
+  await f.service.previewRecordingSpeakerCorrection({ ...input, crossDateSelection: true })
+  expect(f.post.mock.calls.findLast(([path]) => path.endsWith('/preview'))![1]).toMatchObject({ cross_date_selection: true, target: { kind: 'anonymous' }, items: [{ item_index: 0 }, { item_index: 1 }] })
+  await f.service.previewRecordingSpeakerCorrection({ ...request(first.itemRef), rejectCurrent: false, detach: false, rejectedCandidateItemRef: later.itemRef, crossDateSelection: true })
+  expect(f.post.mock.calls.findLast(([path]) => path.endsWith('/preview'))![1]).toMatchObject({ rejected_candidate_item: { item_index: 1, transcript_source: 'system' } })
+  await expect(f.service.previewRecordingSpeakerCorrection({ ...input, crossDateSelection: true, itemRefs: Array(101).fill(first.itemRef) })).rejects.toMatchObject({ code: 'recording-correction-invalid' })
+})
+
+it('resolves representative child-relative coordinates into exact owner rows, not dates or nearby fragments', async () => {
+  const f = fixture()
+  const row = await f.service.recordingCorrectionSample({ sessionId: '123456789012345678901234', childId: '234567890123456789012345', start: 1000, end: 2000, num: 1 })
+  expect(row).toMatchObject({ startAtMillis: date + 1000, endAtMillis: date + 2000, text: '手机播放' })
+  await expect(f.service.recordingCorrectionSample({ sessionId: '123456789012345678901234', childId: 'wrong-child', start: 1000, end: 2000, num: 1 })).rejects.toMatchObject({ code: 'speaker-sample-changed' })
+})
+
+
+it('preserves the signed cross-date preview command through the real Host apply dispatcher', async () => {
+  const f = fixture(), later = fixture(date + 86400000)
+  const first = (await f.service.recordingDay(date)).transcript.items[0]!
+  const second = (await later.service.recordingDay(date + 86400000)).transcript.items[1]!
+  const input = { itemRef: first.itemRef, itemRefs: [first.itemRef, second.itemRef], expectedVersion: 'v1', idempotencyKey: 'host-cross-date-0001', detach: false, crossDateSelection: true, target: { kind: 'anonymous' } }
+  const service = { previewRecordingSpeakerCorrection: f.service.previewRecordingSpeakerCorrection.bind(f.service), applyRecordingSpeakerCorrection: f.service.applyRecordingSpeakerCorrection.bind(f.service) }
+  const preview = await dispatchArkmeHostOperation(service as never, 'recordings.speaker.correction.preview', input) as { intentToken: string }
+  const previewBody = f.post.mock.calls.findLast(([path]) => path.endsWith('/preview'))![1]
+  await dispatchArkmeHostOperation(service as never, 'recordings.speaker.correction.apply', { ...input, intentToken: preview.intentToken })
+  expect(f.writes()).toHaveLength(1)
+  expect(f.writes()[0]![1]).toEqual({ ...previewBody, intent_token: preview.intentToken })
+})
+
+it('preserves anonymous exclusion and assignment preservation through the real Host dispatcher', async () => {
+  const f = fixture(), day = await f.service.recordingDay(date)
+  const first = day.transcript.items[0]!, anchor = day.transcript.items[1]!
+  const input = { itemRef: first.itemRef, itemRefs: [first.itemRef], expectedVersion: 'v1', idempotencyKey: 'host-exclusion-0001', detach: false, crossDateSelection: true, rejectedCandidateItemRef: anchor.itemRef, preserveAssignment: true }
+  const service = { previewRecordingSpeakerCorrection: f.service.previewRecordingSpeakerCorrection.bind(f.service), applyRecordingSpeakerCorrection: f.service.applyRecordingSpeakerCorrection.bind(f.service) }
+  const preview = await dispatchArkmeHostOperation(service as never, 'recordings.speaker.correction.preview', input) as { intentToken: string }
+  const previewBody = f.post.mock.calls.findLast(([path]) => path.endsWith('/preview'))![1]
+  await dispatchArkmeHostOperation(service as never, 'recordings.speaker.correction.apply', { ...input, intentToken: preview.intentToken })
+  expect(f.writes()[0]![1]).toEqual({ ...previewBody, intent_token: preview.intentToken })
+})
+
+it('reports a local scope rejection as definitely uncommitted without sending Audio apply', async () => {
+  const f = fixture(), later = fixture(date + 86400000)
+  const first = (await f.service.recordingDay(date)).transcript.items[0]!
+  const second = (await later.service.recordingDay(date + 86400000)).transcript.items[1]!
+  await expect(f.service.applyRecordingSpeakerCorrection({ ...request(first.itemRef), itemRefs: [first.itemRef, second.itemRef] })).rejects.toMatchObject({ code: 'recording-correction-rejected', httpStatus: 409 })
+  expect(f.writes()).toHaveLength(0)
+})
+
+describe('current correction learning adapter', () => {
+  it('binds reads and retry capabilities to the saved command and account', async () => {
+    const f = fixture(), original = f.post.getMockImplementation()!
+    const current = { schema_version: 1, correction_id: 'correction', version: 'learning-v1', total_count: 1, eligible_count: 1, ready_count: 0,
+      items: [{ item: { start_at: 0, end_at: 1000 }, status: 'failed', reason: 'timeout', eligible: true, sample_count: 0, retryable: true,
+        jobs: [{ job_id: '123456789012345678901234', attempt: 2 }] }] }
+    f.post.mockImplementation(async (path, body) => path.includes('/speaker-corrections/learning') ? current : original(path, body))
+    const day = await f.service.recordingDay(date)
+    const saved = await f.service.applyRecordingSpeakerCorrection(request(day.transcript.items[0]!.itemRef))
+    expect(saved.learningRef).toBeTruthy()
+    const status = await f.service.recordingSpeakerLearning(saved.learningRef!)
+    await f.service.recordingSpeakerLearning(saved.learningRef!, status.items[0]!.retryRefs[0]!)
+    expect(f.post.mock.calls.find(([path]) => path.endsWith('/learning/retry'))?.[1]).toMatchObject({ correction_id: 'correction', job_id: '123456789012345678901234', expected_attempt: 2 })
+    expect(f.writes()).toHaveLength(1)
+    f.session.userId = 43
+    await expect(f.service.recordingSpeakerLearning(saved.learningRef!)).rejects.toMatchObject({ httpStatus: 403 })
+  })
 })

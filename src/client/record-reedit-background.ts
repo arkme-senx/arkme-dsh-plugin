@@ -1,9 +1,14 @@
 import type { ArkmeRecordReeditSubmissionView } from '../record-reedit-contract.js'
 
+export type RecordReeditPresentationView = ArkmeRecordReeditSubmissionView & {
+  /** Version visible at the click, independent of the editor's older metadata. */
+  projectionBaseVersion?: number
+}
+
 interface BackgroundEdit {
   accountKey: string
   sourceKey: string
-  view: ArkmeRecordReeditSubmissionView
+  view: RecordReeditPresentationView
   phase: 'preparing' | 'accepted' | 'failed' | 'uncertain'
 }
 
@@ -23,6 +28,7 @@ export class RecordReeditBackgroundQueue {
         if (typeof entry?.accountKey !== 'string' || typeof entry.sourceKey !== 'string'
           || typeof entry.view?.itemUid !== 'string' || typeof entry.view.title !== 'string'
           || typeof entry.view.textContent !== 'string' || !Array.isArray(entry.view.attachments)) continue
+        if (!Number.isSafeInteger(entry.view.projectionBaseVersion) || (entry.view.projectionBaseVersion ?? 0) <= 0) delete entry.view.projectionBaseVersion
         const uncertain = entry.phase !== 'failed'
         this.entries.set(this.key(entry.accountKey, entry.view.itemUid), { ...entry, phase: uncertain ? 'uncertain' : 'failed',
           view: { ...entry.view, state: uncertain ? 'uncertain' : 'failed', error: '保存被中断，修改内容已保留，请先核对结果' } })
@@ -47,7 +53,7 @@ export class RecordReeditBackgroundQueue {
     const view = this.entries.get(this.key(accountKey, itemUid))?.view
     return view && ['pending', 'committing', 'uncertain'].includes(view.state)
   }
-  start(input: { accountKey: string; sourceKey: string; view: ArkmeRecordReeditSubmissionView;
+  start(input: { accountKey: string; sourceKey: string; view: RecordReeditPresentationView;
     run(): Promise<ArkmeRecordReeditSubmissionView>; failed(error: unknown): void }) {
     const key = this.key(input.accountKey, input.view.itemUid)
     if (this.pending(input.accountKey, input.view.itemUid)) return false
@@ -56,7 +62,8 @@ export class RecordReeditBackgroundQueue {
     this.publish()
     void Promise.resolve().then(() => { this.persist(); return input.run() }).then(view => {
       if (this.entries.get(key) !== entry) return
-      entry.view = view; entry.phase = 'accepted'; this.publish()
+      entry.view = { ...view, ...(entry.view.projectionBaseVersion === undefined ? {} : { projectionBaseVersion: entry.view.projectionBaseVersion }) }
+      entry.phase = 'accepted'; this.publish()
       try { this.persist() } catch { /* Host already owns a durable receipt. */ }
     }).catch(error => {
       if (this.entries.get(key) !== entry) return

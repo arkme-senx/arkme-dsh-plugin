@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from '../../ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from '../../locale.js'
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/X'
 import type { ArkmeDirectoryContactProfile } from '../../../types.js'
 
 export type ContactRemarkSaver = (contactRef: string, remark: string, signal: AbortSignal) => Promise<ArkmeDirectoryContactProfile>
@@ -78,7 +78,7 @@ export function ContactRemarkDialog({ profile, saveRemark, onClose, onSaved }: {
       onKeyDown={onKeyDown} onSubmit={event => { event.preventDefault(); void submit() }}>
       <header className="arkme-contact-remark-header">
         <h2 id={`${id}-title`}>{tr("修改备注")}</h2>
-        <button data-arkme-feedback="neutral" type="button" className="arkme-contact-remark-close" aria-label={tr("关闭修改备注")} disabled={busy} onClick={onClose}><X size={20} aria-hidden /></button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" className="arkme-contact-remark-close" aria-label={tr("关闭修改备注")} disabled={busy} onClick={onClose} />
       </header>
       <label className="arkme-contact-remark-label" htmlFor={`${id}-input`}>{tr("备注名")}</label>
       <input ref={inputRef} className="arkme-contact-remark-input" id={`${id}-input`} value={draft} placeholder={tr("输入备注名")} maxLength={100}

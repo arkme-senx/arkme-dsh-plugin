@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../../display-time-zone.js'
 import { useEffect, useState } from 'react'
 import type { ArkmeDirectoryItem, ArkmeRecordingSpeakerMembers } from '../../../types.js'
 import { callArkme } from '../../api.js'
@@ -13,9 +14,9 @@ const openRecording = (at: number) => {
   const day = new Date(at); day.setHours(0, 0, 0, 0)
   arkmeUi.showRecordingTarget(day.getTime(), at)
 }
-const dateLabel = (at: number) => new Intl.DateTimeFormat(arkmeIntlLocale(), {
-  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-}).format(at)
+const dateLabel = (at: number) => formatArkmeDateTime(at, arkmeIntlLocale(), {
+  year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+})
 
 export function ManualSpeakerDetail({ accountKey, speaker, load = loadMembers, onOpenRecording = openRecording }: {
   accountKey: string; speaker: Speaker; load?: ManualSpeakerMembersLoader; onOpenRecording?(at: number): void

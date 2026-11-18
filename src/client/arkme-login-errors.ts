@@ -2,6 +2,7 @@ import { ArkmeClientError } from './api.js'
 import type { ArkmeLoginLocaleKey, ArkmeLoginTranslate } from './arkme-login-locales.js'
 
 const errorKeys: Readonly<Record<string, ArkmeLoginLocaleKey>> = {
+  'device-verification-required': 'error.device.verification',
   'password-account-invalid': 'error.password.account',
   'password-invalid': 'error.password.empty',
   'password-login-rejected': 'error.password.rejected',

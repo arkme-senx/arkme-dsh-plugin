@@ -6,7 +6,7 @@ import { ArkmeUpstreamResponseError } from '../src/services/service.js'
 import { OfflineContextService } from '../src/services/offline-context-service.js'
 
 const statuses = () => CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready' as const, itemCount: 0 }))
-function response() { return { protocol_version: 2, chat_session_uid: 'chat', timeline_items: [], sources: statuses().map(s => ({ source: s.source, status: s.status, item_count: 0 })), complete: true, window_token: 'window', has_more: false, older_has_more: false, newer_has_more: false } }
+function response() { return { protocol_version: 3, chat_session_uid: 'chat', timeline_items: [], sources: statuses().map(s => ({ source: s.source, status: s.status, item_count: 0 })), complete: true, window_token: 'window', has_more: false, older_has_more: false, newer_has_more: false } }
 function event(eventId: string, source: ArkmeUnifiedTimelineEvent['source'] = 'messages', occurredAtMillis = 10): ArkmeUnifiedTimelineEvent {
   return { eventId, source, occurredAtMillis, orderTie: eventId, contentStatus: 'available', kind: 'notice', text: eventId }
 }
@@ -127,17 +127,59 @@ describe('unified timeline owner contract', () => {
       expect(runtime.authenticatedChatPost.mock.calls).toHaveLength(mode === 'older' ? 2 : 1)
     } finally { service.dispose(); contexts.dispose() }
   })
-  it('accepts auxiliary-only pages and preserves unavailable message slots', async () => {
-    const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { secret: 'do not expose' } }] }
+  it.each([
+    ['group_chat', false, true, '群内昵称撤回了一条消息'],
+    ['group_chat', true, true, '你撤回了一条消息'],
+    ['private_chat', false, true, '对方撤回了一条消息'],
+    ['group_chat', false, false, '对方撤回了一条消息'],
+  ])('projects recall identity for %s, own=%s, identity=%s', async (kind, own, identity, text) => {
+    const runtime = { requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: async () => ({ ...response(), timeline_items: [
+        { event_id: 'recall', source: 'messages', kind: 'message_recalled', occurred_at: 10, order_tie: 'r', content_status: 'unavailable',
+          payload: { own, ...(identity ? { sender_user_id: 2001, display_name_snapshot: '群内昵称' } : {}) } },
+      ] }) }
+    const chat = new ChatService(runtime as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const project = vi.spyOn(chat, 'projectChatTimelineItems').mockResolvedValue([])
+    const service = new UnifiedChatTimelineService(runtime as never,
+      { openSourceRef: async () => ({ kind, ownerRef: 'chat' }), sourceItem: async () => ({ kind }) } as never, chat, {} as never)
+    try {
+      const page = await service.read('ref')
+      expect(page.items).toEqual([])
+      expect(project.mock.calls[0]?.[0]).toEqual([])
+      const notice = page.unified!.events[0]!
+      expect(notice).toMatchObject({ kind: 'notice', text, contentStatus: 'unavailable' })
+      if (kind === 'group_chat' && identity) {
+        expect(notice).toMatchObject({ recallSender: { senderName: '群内昵称', isMe: own, memberRef: expect.stringMatching(/^arkme-chat-member/) } })
+        expect(JSON.stringify(page)).not.toContain('sender_user_id')
+      } else expect(notice).not.toHaveProperty('recallSender')
+    } finally { service.dispose() }
+  })
+  it('preserves confirmed missing message slots without exposing their payload', async () => {
+    const raw = { ...response(), timeline_items: [{ event_id: 'm', kind: 'message', source: 'messages', occurred_at: 10, order_tie: 'm', content_status: 'unavailable', payload: { record: { status: 2 }, secret: 'do not expose' } }] }
     const post = vi.fn().mockResolvedValue(raw)
     const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' }, stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
       { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
       { projectChatTimelineItems: async () => [] } as never, {} as never)
     const result = await service.read('ref')
-    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chat/timeline/unified/v2')
+    expect(post.mock.calls[0]?.[0]).toBe('/api/v1/chat/timeline/unified/v3')
     expect(result.items).toEqual([])
-    expect(result.unified?.events).toEqual([expect.objectContaining({ kind: 'notice', contentStatus: 'unavailable' })])
+    expect(result.unified?.events).toEqual([expect.objectContaining({ kind: 'notice', contentStatus: 'unavailable', text: '原消息未找到', hidden: true })])
     expect(JSON.stringify(result)).not.toContain('do not expose')
+  })
+  it.each(['interwoven', 'world_public', 'wechat_import'] as const)('keeps an unclassified %s failure retryable without blocking the rest of the page', async sourceKind => {
+    const raw = { ...response(), timeline_items: [{ event_id: 'pending', source: sourceKind, kind: 'group', occurred_at: 10,
+      order_tie: 'pending', content_status: 'unavailable', payload: {} }] }
+    const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
+      stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: async () => raw } as never,
+      { openSourceRef: async () => ({ kind: 'private_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'private_chat' }) } as never,
+      { projectChatTimelineItems: async () => [] } as never, {} as never)
+    try {
+      const page = await service.read('ref')
+      expect(page.unified?.events[0]).toMatchObject({ kind: 'notice', text: '关联内容加载失败', retryable: true })
+      expect(page.unified?.complete).toBe(false)
+      expect(page.unified?.sources.find(source => source.source === sourceKind)?.status).toBe('gap')
+    }
+    finally { service.dispose() }
   })
   it('projects public publications as compact, restart-safe references without copying their full text', async () => {
     const raw = { ...response(), timeline_items: [{ event_id: 'world', kind: 'world_public', source: 'world_public', occurred_at: 10, order_tie: 'world', content_status: 'available', payload: { record_uid: 'private-locator', nick_name: '小明', text_content: 'very long public body' } }] }
@@ -156,7 +198,7 @@ describe('unified timeline owner contract', () => {
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'chat-timeline-window-invalid' })
     post.mockRejectedValue(new ArkmeUpstreamResponseError('arkme-code-2002', 'bad', false, 502, { reason: 'other' }))
     await expect(service.read('ref')).rejects.toMatchObject({ code: 'arkme-code-2002' })
-    expect(post.mock.calls.every(call => call[0] === '/api/v1/chat/timeline/unified/v2')).toBe(true)
+    expect(post.mock.calls.every(call => call[0] === '/api/v1/chat/timeline/unified/v3')).toBe(true)
   })
 })
 
@@ -244,13 +286,17 @@ describe('sealed system event navigation', () => {
  it('uses one exact around request and rejects cross-account, conversation, environment and forged anchors', async () => {
   const { systemTimelineAnchorCodec } = await import('../src/services/system-timeline-anchor.js')
   const ref = systemTimelineAnchorCodec('key', 'test', 1, 'chat').seal('group_metadata', 'group_invite:chat')
-  const post = vi.fn(async () => response())
+  const post = vi.fn(async () => ({ ...response(), timeline_items: [{
+    event_id: 'group_invite:chat', source: 'group_metadata', kind: 'group_invite',
+    occurred_at: 1700000000000, order_tie: 'invite', content_status: 'available', payload: {},
+  }] }))
   const service = new UnifiedChatTimelineService({ requireSession: async () => ({ userId: 1 }), config: { environment: 'test' },
     stateStore: { uniqueCode: async () => 'key' }, authenticatedChatPost: post } as never,
     { openSourceRef: async () => ({ kind: 'group_chat', ownerRef: 'chat' }), sourceItem: async () => ({ kind: 'group_chat' }) } as never,
     { projectChatTimelineItems: async () => [] } as never, {} as never)
   try {
-   await service.read('ref', { mode: 'around', systemRef: ref, limit: 40 })
+   const page = await service.read('ref', { mode: 'around', systemRef: ref, limit: 40 })
+   expect(page.unified?.events[0]).toMatchObject({ kind: 'notice', systemRef: ref })
    expect(post).toHaveBeenCalledTimes(1)
    expect(post.mock.calls[0]).toEqual(expect.arrayContaining([expect.objectContaining({ mode: 'around', anchor_source: 'group_metadata', anchor_id: 'group_invite:chat' })]))
    for (const other of [systemTimelineAnchorCodec('key', 'test', 2, 'chat'), systemTimelineAnchorCodec('key', 'prod', 1, 'chat'), systemTimelineAnchorCodec('key', 'test', 1, 'other'), systemTimelineAnchorCodec('other-key', 'test', 1, 'chat')]) {

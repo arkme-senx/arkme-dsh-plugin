@@ -61,7 +61,7 @@ arkmeAuthStore.subscribe(() => {
 export async function assignRecordingSpeaker(
   key: string,
   binding: RecordingSpeakerItemBinding,
-  input: { scope: 'item' | 'speaker'; speakerRef?: string; newSpeakerName?: string; expectedCount?: number },
+  input: { scope: 'item' | 'speaker'; speakerRef?: string; newSpeakerName?: string; explicitNewPerson?: boolean; expectedCount?: number },
 ): Promise<ArkmeRecordingSpeakerMutationResult | undefined> {
   return await mutateRecordingSpeaker(key, binding, 'recordings.speaker.assign-item', input)
 }
@@ -79,7 +79,7 @@ async function mutateRecordingSpeaker(
   key: string,
   binding: RecordingSpeakerItemBinding,
   operation: 'recordings.speaker.assign-item' | 'recordings.speaker.unassign-item',
-  input: { scope: 'item' | 'speaker'; speakerRef?: string; newSpeakerName?: string; expectedCount?: number },
+  input: { scope: 'item' | 'speaker'; speakerRef?: string; newSpeakerName?: string; explicitNewPerson?: boolean; expectedCount?: number },
 ): Promise<ArkmeRecordingSpeakerMutationResult | undefined> {
   return await recordingSpeakerItemContexts.mutate(key, binding, async context => {
     try {

@@ -14,6 +14,15 @@ import { ArkmeLivePhotoBadge } from '../src/client/ArkmeLivePhotoBadge.js'
 import { ArkmeTimelineDetailDrawer, ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { arkmeClipboardImageFiles, arkmeShouldDismissAnchoredMenu, arkmeShouldToggleMessageSelectFromRowClick } from '../src/client/ArkmeSidebar.js'
 
+function imageNodeAttributes() {
+  const attributes = new Map<string, string>()
+  return {
+    hasAttribute: (name: string) => attributes.has(name),
+    setAttribute: (name: string, value: string) => { attributes.set(name, value) },
+    removeAttribute: (name: string) => { attributes.delete(name) },
+  }
+}
+
 describe('Arkme rich content presentation', () => {
   it('keeps forwarded articles as cards without a duplicate attachment gallery', () => {
     const html = renderToStaticMarkup(<ForwardRecordsDetail onClose={() => {}} item={{
@@ -57,6 +66,7 @@ describe('Arkme rich content presentation', () => {
     })
     let width = 400
     const imageNode = {
+      ...imageNodeAttributes(),
       naturalWidth: 200, naturalHeight: 100,
       parentElement: { getBoundingClientRect: () => ({ left: 10, top: 20 }) },
       getBoundingClientRect: () => ({ left: 10, top: 20, width, height: 400 }),
@@ -203,6 +213,7 @@ describe('Arkme rich content presentation', () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
             ? {
+              ...imageNodeAttributes(),
               naturalWidth: 1600, naturalHeight: 800, animate,
               getBoundingClientRect: () => {
                 const style = view!.root.findByType('img').props.style
@@ -242,7 +253,7 @@ describe('Arkme rich content presentation', () => {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={() => {}} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
-            ? { naturalWidth: width, naturalHeight: height }
+            ? { ...imageNodeAttributes(), naturalWidth: width, naturalHeight: height }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: coveredWidth, scrollHeight: coveredHeight, scrollLeft: 0, scrollTop: 0 },
         })
       })
@@ -274,7 +285,7 @@ describe('Arkme rich content presentation', () => {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
-            ? { naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
+            ? { ...imageNodeAttributes(), naturalWidth: 400, naturalHeight: 800, getBoundingClientRect: () => ({ left: 10, top: 50, width: 1000, height: 800 }) }
             : null,
         })
       })
@@ -309,7 +320,7 @@ describe('Arkme rich content presentation', () => {
       await act(async () => {
         view = create(<ArkmeMediaPreview blocks={[image]} selected={image} onSelect={() => {}} onClose={onClose} />, {
           createNodeMock: element => element.props.role === 'dialog' ? { focus: vi.fn(), contains: () => false } : element.type === 'img'
-            ? { naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
+            ? { ...imageNodeAttributes(), naturalWidth: 400, naturalHeight: 200, getBoundingClientRect: () => ({ left: 300, top: 300, width: 400, height: 200 }) }
             : { clientWidth: 1000, clientHeight: 800, scrollWidth: 1600, scrollHeight: 800, scrollLeft: 0, scrollTop: 0 },
         })
       })
@@ -399,7 +410,7 @@ describe('Arkme rich content presentation', () => {
     expect(html).toContain('01:00:00')
     expect(html).toContain('12:38')
     expect(html).not.toContain('重复摘要')
-    expect(html.match(/data-arkme-forward-recording-segment/gu)).toHaveLength(3)
+    expect(html.match(/data-arkme-shared-recording-segment/gu)).toHaveLength(3)
   })
 
   it.each(['call', 'mixed', 'empty'] as const)('does not mistake %s forwarding for a single recording snapshot', kind => {
@@ -612,6 +623,7 @@ describe('Arkme rich content presentation', () => {
     expect(html).toContain('长文正文')
     expect(html).toContain('/arkme-self/api/media?ref=image-ref')
     expect(html).toContain('<video')
+    expect(html).toMatch(/<video[^>]*object-fit:contain/)
     expect(html).toContain('<audio')
     expect(html).toContain('data-arkme-file-card="file"')
     expect(html).toContain('4 B · 未下载')
@@ -1251,4 +1263,47 @@ describe('forward detail summary content', () => {
     expect(markup).toContain('小林：完整摘要')
     expect(summaryLines[0]).toBe('[jm_emoji:heart_eyes][im_emoji:thumb_up]')
   })
+})
+
+it('renders pending attachments without media fetches or download/preview controls', () => {
+  const html = renderToStaticMarkup(<ArkmeMessageContent item={{ itemUid: 'message', title: '', textContent: '先到的正文', senderName: '甲', isMe: false, status: 1, sendAtMillis: 1,
+    contentBlocks: [
+      { kind: 'image', attachmentUid: 'image', attachmentState: 'pending', mediaRef: '', fileName: 'image.png', mimeType: 'image/png', size: 10, sortOrder: 0 },
+      { kind: 'video', attachmentUid: 'video', attachmentState: 'failed', mediaRef: '', fileName: 'video.mp4', mimeType: 'video/mp4', size: 10, sortOrder: 1 },
+      { kind: 'file', attachmentUid: 'file', attachmentState: 'pending', mediaRef: '', fileName: 'file.pdf', mimeType: 'application/pdf', size: 10, sortOrder: 2 },
+      { kind: 'audio', attachmentUid: 'audio', attachmentState: 'pending', mediaRef: '', fileName: 'audio.mp3', mimeType: 'audio/mpeg', size: 10, sortOrder: 3 },
+    ] }} />)
+  expect(html).toContain('先到的正文'); expect(html).toContain('附件上传中'); expect(html).toContain('附件上传失败')
+  expect(html).not.toContain('<video'); expect(html).not.toContain('<audio'); expect(html).not.toContain('?ref=')
+  expect(html.match(/data-arkme-pending-attachment=/g)).toHaveLength(4)
+  expect(html.match(/role="progressbar"/g)).toHaveLength(3)
+  expect(html).not.toContain('aria-valuenow')
+  expect(html).toContain('data-arkme-file-icon="pdf"')
+  expect(html).toContain('data-arkme-file-icon="audio"')
+  expect(html).toContain('aspect-ratio:1')
+  expect(html).not.toContain('min-width:100px')
+  const buttons = html.match(/<button\b[^>]*>/g) ?? []
+  expect(buttons).toHaveLength(1)
+  expect(buttons[0]).toContain('disabled')
+})
+
+
+it('shows actual upload progress as a ring and removes it when ready', () => {
+  const item = { itemUid: 'upload', title: '', textContent: '', senderName: '我', isMe: true, status: 1, sendAtMillis: 1 }
+  const block = { kind: 'image' as const, mediaRef: '', localFileRef: 'arkme-file-v1.11111111-1111-4111-8111-111111111111', fileName: 'photo.png', mimeType: 'image/png', size: 100, sortOrder: 0 }
+  const uploading = renderToStaticMarkup(<ArkmeMessageContent item={{ ...item, contentBlocks: [{ ...block, uploadProgress: { phase: 'uploading', sentBytes: 42, totalBytes: 100 } }] }} />)
+  expect(uploading).toContain('aria-valuenow="42"')
+  expect(uploading).toContain('stroke-dasharray="42 100"')
+  const ready = renderToStaticMarkup(<ArkmeMessageContent item={{ ...item, contentBlocks: [{ ...block, uploadProgress: { phase: 'ready', sentBytes: 100, totalBytes: 100 } }] }} />)
+  expect(ready).not.toContain('role="progressbar"')
+})
+
+
+it('previews staged audio locally while its remote attachment is pending', () => {
+  const localFileRef = 'arkme-file-v1.11111111-1111-4111-8111-111111111111'
+  const html = renderToStaticMarkup(<ArkmeMessageContent item={{ itemUid: 'audio-upload', title: '', textContent: '', senderName: '我', isMe: true, status: 1, sendAtMillis: 1,
+    contentBlocks: [{ kind: 'audio', attachmentUid: 'audio', attachmentState: 'pending', mediaRef: localFileRef, localFileRef, fileName: 'audio.wav', mimeType: 'audio/wav', size: 100, sortOrder: 0 }],
+  }} />)
+  expect(html).toContain(`/arkme-self/api/files/local?ref=${localFileRef}`)
+  expect(html).not.toContain(`/api/media?ref=${localFileRef}`)
 })

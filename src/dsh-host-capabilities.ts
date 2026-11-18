@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { isAbsolute } from 'node:path'
 
 export interface DshServiceContextLike {
   get(name: string): unknown
@@ -26,6 +27,38 @@ interface DshApiProxyLike {
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+export async function pickDshHostDirectory(
+  ctx: DshServiceContextLike,
+  signal: AbortSignal,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string | null> {
+  signal.throwIfAborted()
+  const endpoint = environment.ARKME_DIRECTORY_PICKER_BRIDGE_URL?.trim()
+  const token = environment.ARKME_DIRECTORY_PICKER_BRIDGE_TOKEN?.trim()
+  if (endpoint || token) {
+    let url: URL
+    try { url = new URL(endpoint ?? '') } catch { throw new Error('桌面目录选择配置无效') }
+    if (url.protocol !== 'http:' || !['127.0.0.1', '[::1]'].includes(url.hostname)
+      || !url.port || url.pathname !== '/choose-directory' || url.search || url.hash || url.username || url.password
+      || !token || token.length < 16 || token.length > 512 || /\s/.test(token)) throw new Error('桌面目录选择配置无效')
+    // Desktop owns its modal dialog; the DSH Windows worker has a separate IPC lifecycle.
+    const response = await fetchImpl(url, { method: 'POST', redirect: 'error', signal,
+      headers: { 'content-type': 'application/json', 'x-arkme-picker-token': token },
+      body: JSON.stringify({ title: '选择导出文件夹' }) })
+    if (!response.ok) throw new Error('桌面目录选择失败，请重试')
+    const value: unknown = await response.json()
+    if (isRecord(value) && value.canceled === true) return null
+    if (!isRecord(value) || value.canceled !== false || typeof value.path !== 'string'
+      || value.path.includes('\0') || !isAbsolute(value.path)) throw new Error('桌面目录选择返回了无效响应')
+    return value.path
+  }
+  const picker = ctx.get('directoryPicker') as { capability?: () => { kind: string; pick: (signal: AbortSignal) => Promise<string | null> } } | undefined
+  const capability = picker?.capability?.()
+  if (capability?.kind !== 'native') throw new Error('当前宿主没有本机目录选择能力，请在桌面客户端导出')
+  return capability.pick(signal)
 }
 
 function sessionController(value: unknown): DshSessionControllerLike | undefined {

@@ -5,6 +5,30 @@ import type { ArkmeService } from '../src/arkme-service.js'
 import { createArkmeHostApi, dispatchArkmeHostOperation } from '../src/host-api.js'
 
 describe('recording UI-only host operations', () => {
+  it('passes the read scope and cancellation to the context owner', async () => {
+    const recordingTranscriptContext = vi.fn(async () => ({ items: [], revisions: {} }))
+    const service = { recordingTranscriptContext } as unknown as ArkmeService
+    const { signal } = new AbortController()
+    await dispatchArkmeHostOperation(service, 'recordings.transcript.context', {
+      dateStamp: 100, startAtMillis: 200, endAtMillis: 300,
+    }, undefined, undefined, undefined, undefined, signal)
+    expect(recordingTranscriptContext).toHaveBeenCalledWith(100, 200, 300, signal)
+  })
+
+  it('dispatches a cancellable exact location and rejects malformed supplied versions', async () => {
+    const locateRecordingTranscript = vi.fn(async () => null)
+    const service = { locateRecordingTranscript } as unknown as ArkmeService
+    const { signal } = new AbortController()
+    const params = { dateStamp: 100, startAtMillis: 200, identityHash: 'a'.repeat(64), version: 'original' }
+    await dispatchArkmeHostOperation(service, 'recordings.transcript.locate', params, undefined, undefined, undefined, undefined, signal)
+    expect(locateRecordingTranscript).toHaveBeenCalledWith(100, 200, params.identityHash, 'original', signal)
+    for (const version of ['', 123, null]) {
+      await expect(dispatchArkmeHostOperation(service, 'recordings.transcript.locate', { ...params, version }))
+        .rejects.toMatchObject({ code: 'recording-location-input-invalid' })
+    }
+    expect(locateRecordingTranscript).toHaveBeenCalledOnce()
+  })
+
   it('dispatches only an explicitly selected day part and rejects invalid selectors', async () => {
     const recordingDayPart = vi.fn(async () => ({ dateStamp: 10 })), recordingDay = vi.fn()
     const service = { recordingDayPart, recordingDay } as unknown as ArkmeService
@@ -79,8 +103,8 @@ describe('recording UI-only host operations', () => {
 
     expect(recordingCalendar).toHaveBeenCalledWith(10, 20, controller.signal)
     expect(recordingDay).toHaveBeenCalledWith(10, controller.signal)
-    expect(recordingSummaryModelConfig).toHaveBeenCalledWith(controller.signal)
-    expect(setRecordingSummaryModelRoute).toHaveBeenCalledWith('dashscope/glm-5', controller.signal)
+    expect(recordingSummaryModelConfig).toHaveBeenCalledWith(controller.signal, 'summary')
+    expect(setRecordingSummaryModelRoute).toHaveBeenCalledWith('dashscope/glm-5', controller.signal, 'summary')
     expect(generateRecordingProjection).toHaveBeenCalledWith(10, 'summary', 'dashscope/glm-5', controller.signal)
   })
 
@@ -212,6 +236,14 @@ describe('recording UI-only host operations', () => {
       itemRef: 'item-opaque', speakerRef: 'speaker-opaque', scope: 'speaker',
     }, undefined)
   })
+
+  it('forwards explicit independent-person creation only for a literal boolean', async()=>{
+    const assignRecordingSpeaker=vi.fn(async()=>({dateStamp:10}));const service={assignRecordingSpeaker} as unknown as ArkmeService;
+    for(const flag of [true,false,'true']) {
+      await dispatchArkmeHostOperation(service,'recordings.speaker.assign-item',{itemRef:'item',newSpeakerName:'同名人物',scope:'item',explicitNewPerson:flag});
+      expect(assignRecordingSpeaker).toHaveBeenLastCalledWith({itemRef:'item',newSpeakerName:'同名人物',scope:'item',...(flag===true?{explicitNewPerson:true}:{})},undefined);
+    }
+  });
 
   it('validates correction selectors and never forwards caller-supplied owner ids', async () => {
     const applyRecordingSpeakerCorrection = vi.fn(async () => ({ affectedCount: 1 }))

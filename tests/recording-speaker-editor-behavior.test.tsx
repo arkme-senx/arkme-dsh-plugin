@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ callArkme: vi.fn(), recommendation: vi.fn(), cached: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: (operation: string, ...args: unknown[]) => ['recordings.speaker.correction.context', 'recordings.speaker.consistency'].includes(operation) ? Promise.resolve({ supported: false }) : operation === 'recordings.speaker.cached-options' ? mocks.cached(...args) : operation === 'recordings.speaker.recommendation' ? mocks.recommendation(...args) : mocks.callArkme(operation, ...args) }))
 
-vi.mock('../src/client/explore/PersonPicker.js', () => ({ PersonPicker: ({ onChoose }: { onChoose(value: { label: string; speakerRef: string }): void }) => <button onClick={() => onChoose({ label: '已有关联人物', speakerRef: 'person-speaker-ref' })}>选择测试人物</button> }))
+vi.mock('../src/client/explore/PersonPicker.js', () => ({ PersonPicker: ({ onChoose, onCreate }: { onCreate(name:string):void; onChoose(value: { label: string; speakerRef: string }): void }) => <><button onClick={()=>onCreate('林老师')}>新建同名测试人物</button><button onClick={() => onChoose({ label: '已有关联人物', speakerRef: 'person-speaker-ref' })}>选择测试人物</button></> }))
 
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 
@@ -31,6 +31,19 @@ describe('recording speaker editor failure recovery', () => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
+
+
+  it('preserves explicit same-name creation through the save request', async()=>{
+    mocks.callArkme.mockImplementation(async op=>op==='recordings.speaker.options'?[{optionKey:'existing',speakerRef:'old-ref',kind:'speaker',label:'林老师',recommended:false,currentAssignment:false,isCurrentUser:false}]:op==='recordings.speaker.assign-item'?{day:{dateStamp:1}}:[]);
+    await act(async()=>{renderer=create(<ArkmeRecordingSpeakerEditor item={{itemId:'distinct',itemRef:'distinct-ref',speakerLabel:'未知',speakerColorIndex:1,speakerNumber:1,speakerKey:'distinct',text:'内容',startAtMillis:1000,endAtMillis:2000,isBackground:false,isSelf:false}} onUpdated={()=>{}} onClose={()=>{}}/>);await tick()});
+    const button=(label:string)=>renderer.root.findAll(n=>n.type==='button'&&n.children.join('').includes(label))[0]!;
+    await act(async()=>{button('从人物档案选择').props.onClick();await tick()});
+    await act(async()=>{button('新建同名测试人物').props.onClick();await tick()});
+    expect(button('保存标记').props.disabled).toBe(false);
+    expect(mocks.callArkme.mock.calls.some(([op])=>op==='recordings.speaker.assign-item')).toBe(false);
+    await act(async()=>{button('保存标记').props.onClick();await tick()});
+    expect(mocks.callArkme.mock.calls.find(([op])=>op==='recordings.speaker.assign-item')?.[1]).toMatchObject({newSpeakerName:'林老师',explicitNewPerson:true,scope:'item'});
+  });
 
   it('stages a directory person and saves only on confirmation with the existing speaker reference', async () => {
     mocks.callArkme.mockImplementation(async (op) => op === 'recordings.speaker.assign-item' ? { day: { dateStamp: 1 } } : [])

@@ -18,6 +18,15 @@ function fixture() {
 }
 
 describe('snapshot media through existing APIs', () => {
+  it.each(['', '  '])('accepts inline originals with blank preview %j without an extra lookup', async preview => {
+    const f = fixture()
+    const raw = snapshot([ref('image', { preview_url: preview, download_url: 'https://example.test/image' })])
+    const [display] = await f.media.hydrateRecordSnapshotMediaPage([raw], session)
+    expect(display).toHaveLength(1)
+    expect(f.media.richContentBlocks(raw, session.userId, display)).toHaveLength(1)
+    expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+    expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
+  })
   it('deduplicates a page, batches beyond 50 and preserves each snapshot membership', async () => {
     const f = fixture()
     const refs = Array.from({ length: 51 }, (_, i) => ref(`file-${i}`))
@@ -103,4 +112,15 @@ describe('snapshot media through existing APIs', () => {
     })
     await expect(changed.media.hydrateRecordSnapshotMediaPage([snapshot([ref('f')])], session)).rejects.toThrow()
   })
+})
+
+
+it.each([42,99])('does not hydrate delegated history through personal media authority even for owner %s',async owner=>{
+ const f=fixture(),delegated={...chat,recordOwnerUserId:owner,chatAccessRef:'opaque-team-audience'}
+ const raw=snapshot([ref('historical')])
+ const inline={...raw,media_display_items:[{...ref('historical'),download_url:'https://example.test/author-private-asset'}]}
+ expect(await f.media.hydrateRecordSnapshotMediaPage([raw,inline],session,delegated)).toEqual([[],[]])
+ expect(f.runtime.authenticatedChatPost).not.toHaveBeenCalled()
+ expect(f.runtime.authenticatedPost).not.toHaveBeenCalled()
+ expect(f.runtime.authenticatedAuthGet).not.toHaveBeenCalled()
 })

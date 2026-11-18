@@ -62,3 +62,25 @@ it('rejects an unsupported provider before starting export',async()=>{
  await expect(sdk.exportRecords(options)).rejects.toMatchObject({body:{code:'CAPABILITY_UNSUPPORTED'}})
  expect(fetchImpl).toHaveBeenCalledOnce()
 })
+
+it('preserves directory phases and accepts a date result smaller than the synchronized delta', async()=>{
+ const directoryResult={...result,kind:'directory',directoryRef:'chosen',count:0};
+ const {sdk}=await live(async(_signal,notify)=>{
+  notify({count:0,phase:'preparing'} as never);notify({count:8,phase:'syncing'} as never);
+  notify({count:8,phase:'writing'} as never);notify({count:8,phase:'confirming'} as never);
+  return directoryResult;
+ });
+ const updates:unknown[]=[];
+ await expect(sdk.exportRecords({...options,destinationRef:'chosen'},undefined,p=>updates.push(p))).resolves.toMatchObject({count:0,kind:'directory'});
+ expect(updates).toEqual(expect.arrayContaining([{count:0,phase:'preparing'},{count:8,phase:'syncing'},{count:8,phase:'writing'},{count:8,phase:'confirming'}]));
+});
+it.each(['invalid', 1, null])('rejects an invalid directory phase %s',async phase=>{
+ const sdk=createArkmeSdk({fetchImpl:async(_url,init)=>JSON.parse(String(init?.body)).operation==='provider.capabilities'
+  ?new Response(JSON.stringify({ok:true,value:{contractVersion:1,features:{recordExportV1:true}}}))
+  :new Response(JSON.stringify({kind:'progress',count:0,phase})+'\n'+JSON.stringify({kind:'result',value:result})+'\n',{headers:{'Content-Type':'application/x-ndjson'}})});
+ await expect(sdk.exportRecords(options,undefined,()=>{})).rejects.toMatchObject({body:{code:'local-response-invalid'}});
+});
+it('still rejects a ZIP result smaller than its streamed count',async()=>{
+ const {sdk}=await live(async(_signal,notify)=>{notify({count:101});return result});
+ await expect(sdk.exportRecords(options,undefined,()=>{})).rejects.toMatchObject({body:{code:'local-response-invalid'}});
+});

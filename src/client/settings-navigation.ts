@@ -2,7 +2,7 @@ import type { ArkmeSettingsSection } from './ui-controller.js'
 import { tr } from './locale.js'
 
 const labels: Record<ArkmeSettingsSection, string> = {
-  'arkme-account': '我的账户', 'arkme-usage': '用量与额度', 'arkme-data': '数据管理',
+  'arkme-account': '我的账户', 'arkme-models': '模型', 'arkme-usage': '用量与额度', 'arkme-data': '数据管理',
 }
 
 /** The current Harness shell has no section-navigation API. Limit this adapter

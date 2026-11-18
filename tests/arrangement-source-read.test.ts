@@ -40,6 +40,7 @@ describe('saved arrangement source owner protocol', () => {
   it.each([
     ['id', 'another-evidence'], ['kind', 'agent'], ['role', 'supplement'], ['room_id', 'different-room'],
     ['start_ms', 1201], ['record_uid', 'injected-destination'], ['occurred_at', 99], ['text', 42],
+    ['team_conversation_uid','wrong-team'],['team_message_uid','wrong-message'],['team_side','external'],
   ])('rejects changed or malformed source field %s', async (key, value) => {
     const { source, read } = fixture(); source[key] = value
     await expect(read()).rejects.toMatchObject({ code: 'arrangement-source-contract-invalid' })

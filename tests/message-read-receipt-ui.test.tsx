@@ -12,7 +12,7 @@ const receiptMock = vi.hoisted(() => ({
     subscribe: () => () => undefined,
     getSnapshot: () => 1,
     getAccountGeneration: () => 0,
-    register: () => ({ setVisible: vi.fn(), dispose: vi.fn() }),
+    register: vi.fn(() => ({ setVisible: vi.fn(), dispose: vi.fn() })),
     get: () => receiptMock.entry,
     retry: vi.fn(),
     detail: vi.fn(),
@@ -61,6 +61,23 @@ afterEach(() => {
 })
 
 describe('Arkme message read receipt UI', () => {
+  it.each([false, true])('does not query or display personal member receipts in a delegated view (optimistic=%s)', defaultUnread => {
+    receiptMock.entry = { status: 'ready', summary: summary({ readCount: 1, unreadCount: 0, status: 'read' }) }
+    act(() => { renderer = create(<ArkmeMessageReadReceipt source={{ ...source('group_chat'), accessKind: 'team_delegation' }} item={message()} defaultUnread={defaultUnread} />) })
+    expect(renderer.toJSON()).toBeNull()
+    expect(receiptMock.store.register).not.toHaveBeenCalled()
+  })
+
+  it('releases personal receipt observation when the same group changes to a delegated view', () => {
+    const group=source('group_chat')
+    act(() => { renderer=create(<ArkmeMessageReadReceipt source={group} item={message()} />) })
+    const release=receiptMock.store.register.mock.results[0]!.value.dispose
+    act(() => { renderer!.update(<ArkmeMessageReadReceipt source={{...group,accessKind:'team_delegation'}} item={message()} defaultUnread />) })
+    expect(release).toHaveBeenCalledOnce()
+    expect(renderer!.toJSON()).toBeNull()
+    expect(receiptMock.store.register).toHaveBeenCalledOnce()
+  })
+
   it('flips the detail panel above a lower-edge trigger using its measured height', () => {
     expect(arkmeMessageReadReceiptPanelLayout(
       { left: 900, right: 918, top: 620, bottom: 660, width: 18, height: 40 },

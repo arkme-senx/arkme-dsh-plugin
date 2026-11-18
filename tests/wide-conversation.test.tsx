@@ -131,6 +131,7 @@ describe('shared wide conversation integration', () => {
     const reads = anchors.map((item, index) => vi.spyOn(item.element, 'getBoundingClientRect')
       .mockImplementation(() => ({ top: index * 300 - root.scrollTop } as DOMRect)))
     root.scrollTop = 310
+    vi.spyOn(root.ownerDocument, 'hasFocus').mockReturnValue(true)
     followConversationBottom(root)
     expect(conversationRailActive(root, anchors)).toBe(3)
     expect(reads.every(read => read.mock.calls.length === 0)).toBe(true)

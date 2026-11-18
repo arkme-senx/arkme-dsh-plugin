@@ -141,3 +141,25 @@ describe('speaker-directory owner contract', () => {
     await expect(unmarked.directoryCandidateRef('opaque')).rejects.toMatchObject({ code: 'unmarked-candidate-not-found' })
   })
 })
+
+it('resolves only owner representative locators for explicit correction selection and rejects wrong groups', async () => {
+  const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
+  const sample = { sample_key: 's', locator: { session_id: 'session', child_id: 'child', start_at: 1000, end_at: 2000, num: 4 } }
+  const resolve = vi.fn(async () => ({ itemId: 'bounded-row', itemRef: 'sealed-item' }))
+  Object.assign(f.recording, { recordingCorrectionSample: resolve })
+  f.post.mockResolvedValue({ supported: true, schema_version: 1, detail_ref: candidate.detail_ref, items: [sample] } as never)
+  expect(await f.service.correctionItems({ detailRef: ref })).toEqual({ items: [{ itemId: 'bounded-row', itemRef: 'sealed-item' }] })
+  expect(resolve).toHaveBeenCalledWith({ sessionId: 'session', childId: 'child', start: 1000, end: 2000, num: 4 }, undefined)
+  f.post.mockResolvedValue({ supported: true, schema_version: 1, detail_ref: { type: 'candidate', id: 'other' }, items: [sample] } as never)
+  await expect(f.service.correctionItems({ detailRef: ref })).rejects.toMatchObject({ code: 'speaker-directory-contract-invalid' })
+  f.switchUser()
+  await expect(f.service.correctionItems({ detailRef: ref })).rejects.toMatchObject({ code: 'speaker-directory-account-mismatch' })
+})
+
+it('rejects representative membership changed while current item references were resolving', async () => {
+  const f = fixture(), ref = (await f.service.list({})).items[0]!.detailRef
+  const data = { supported: true, schema_version: 1, detail_ref: candidate.detail_ref, items: [{ sample_key: 's', locator: { session_id: 'session', child_id: 'child', start_at: 1000, end_at: 2000, num: 4 } }] }
+  Object.assign(f.recording, { recordingCorrectionSample: vi.fn(async () => ({ itemId: 'bounded-row', itemRef: 'sealed-item' })) })
+  f.post.mockResolvedValueOnce(data as never).mockResolvedValueOnce({ ...data, items: [] } as never)
+  await expect(f.service.correctionItems({ detailRef: ref })).rejects.toMatchObject({ code: 'speaker-sample-changed' })
+})

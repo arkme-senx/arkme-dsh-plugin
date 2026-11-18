@@ -44,3 +44,29 @@ it('persists only confirmation data and retries the same upload after lost compl
     expect(db.selfRoleSync.pendingAvatarCompletion(7, 'local-avatar')).toBeUndefined()
   } finally { db.close(); await rm(root, { recursive: true, force: true }) }
 })
+
+it.each([false, true])('records safe transport diagnostics and distinguishes cancellation: %s', async cancelled => {
+  const root = await mkdtemp(join(tmpdir(), 'upload diagnostics '))
+  const path = join(root, 'private-name.txt')
+  await writeFile(path, 'bytes')
+  const controller = new AbortController()
+  const code = cancelled ? 'ABORT_ERR' : 'UND_ERR_SOCKET'
+  const failure = new TypeError('fetch failed https://storage.test/private?signature=secret', { cause: Object.assign(new Error('secret'), { code }) })
+  const post = vi.fn(async (path: string) => path.endsWith('prepare-upload')
+    ? { upload_session_uid: 'private-session', upload_url: 'https://storage.test/private?signature=secret' } : {})
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const media = new MediaService({ config: {}, requireSession: async () => ({ userId: 7 }), authenticatedPost: post,
+    fetchImpl: async (_url: unknown, init: { body: AsyncIterable<Uint8Array> }) => {
+      for await (const _ of init.body) { /* Consume the real stream before simulating connection loss. */ }
+      if (cancelled) controller.abort()
+      throw failure
+    },
+  } as never, {} as never, {} as never, {} as never)
+  try {
+    await expect(media.uploadLocalFile(path, { size: 5, sha256: 'a'.repeat(64), mimeType: 'text/plain', fileName: 'private-name.txt', fileKind: 4 }, { signal: controller.signal })).rejects.toBe(failure)
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(warn.mock.calls[0]![1] as string)).toMatchObject({ phase: 'storage', cancelled, causeCodes: [code], completionPersisted: false })
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/secret|private|storage\.test|fetch failed/)
+    expect(post.mock.calls.map(call => call[0])).toContain('/api/v1/files/abort-upload')
+  } finally { warn.mockRestore(); await rm(root, { recursive: true, force: true }) }
+})

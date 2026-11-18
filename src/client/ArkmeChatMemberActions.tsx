@@ -1,3 +1,4 @@
+import { arkmeDayKey, arkmeDayDelta, arkmeWallClockIso } from './display-time-zone.js'
 import type { MemberActionTarget } from './member-interaction.js'
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { ArkmeMessageTimestamp } from './ArkmeMessageTimestamp.js'
@@ -313,18 +314,15 @@ export function arkmeMemberRecordTotal(
 }
 
 export function formatArkmeMemberRecordTime(timestamp: number, nowMillis = Date.now()): string {
-  const value = new Date(timestamp)
-  const now = new Date(nowMillis)
-  const pad = (part: number) => String(part).padStart(2, '0')
-  const time = `${pad(value.getHours())}:${pad(value.getMinutes())}`
-  const valueDay = new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime()
-  const nowDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const dayDistance = Math.round((nowDay - valueDay) / 86_400_000)
-  if (dayDistance === 0) return time
-  if (dayDistance === 1) return tr("昨天 {v0}", { v0: time })
-  if (dayDistance === 2) return tr("前天 {v0}", { v0: time })
-  if (value.getFullYear() === now.getFullYear()) return `${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${time}`
-  return `${String(value.getFullYear())}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ${time}`
+  const date = arkmeDayKey(timestamp)
+  if (!date) return ''
+  const now = nowMillis
+  const time = arkmeWallClockIso(timestamp).slice(11, 16)
+  const daysAgo = -arkmeDayDelta(timestamp, now)
+  if (daysAgo === 0) return time
+  if (daysAgo === 1) return tr("昨天 {v0}", { v0: time })
+  if (daysAgo === 2) return tr("前天 {v0}", { v0: time })
+  return `${date.slice(0, 4) === arkmeDayKey(now).slice(0, 4) ? date.slice(5) : date} ${time}`
 }
 
 export type ArkmeMemberRecordTimelineEntry =

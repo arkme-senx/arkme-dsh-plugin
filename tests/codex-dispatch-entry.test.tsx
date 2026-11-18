@@ -13,7 +13,7 @@ it('opens an honest standalone-helper explanation without install, permission or
   expect(text(dialog)).toContain('无需修改 Arkme 客户端')
   expect(text(dialog)).toContain('当前验证版尚未接通 Arkme 接单')
   expect(dialog.props['aria-modal']).toBe('true')
-  expect(dialog.findAllByType('button').map(node => text(node))).toEqual(['×', '知道了'])
+  expect(dialog.findAllByType('button').map(node => node.props['aria-label'] ?? text(node))).toEqual(['关闭', '知道了'])
   expect(dialog.findAllByType('a')).toHaveLength(0)
   act(() => dialog.props.onKeyDown({ key: 'Escape', preventDefault() {}, stopPropagation() {} }))
   expect(renderer!.root.findAllByProps({ role: 'dialog' })).toHaveLength(0)

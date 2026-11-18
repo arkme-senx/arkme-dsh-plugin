@@ -70,7 +70,7 @@ export function installHarnessConversationLayoutLoader(ctx: ClientContext, doc: 
     return { WidthHandle: width.WidthHandle, TurnNavigator: rail.TurnNavigator,
       resolveContentWidth: width.resolveContentWidth, rootClass: [width.classes.root, typeof width.classes.body === 'string' ? width.classes.body : undefined].filter(Boolean).join(' ') } as HarnessConversationLayout
   }).catch(() => {
-    console.warn('Arkme wide conversation unavailable; standard chat layout retained.')
+    console.warn('Arkme native conversation controls unavailable.')
     return undefined
   })
   load = loader

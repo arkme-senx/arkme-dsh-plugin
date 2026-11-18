@@ -1,9 +1,10 @@
 import { MESSAGE_QUOTE_LIMIT } from './message-quote.js'
-import { readExcerptSource, type RecordExcerptSource } from './record-excerpt.js'
+import { readExcerptSource, readExcerptSelection, type RecordExcerptSelection, type RecordExcerptSource } from './record-excerpt.js'
 
 /** A personal reading snapshot, not a server-verified extension relation. */
 export interface SelectedTextNoteQuote {
   version: 1
+  sourceSelection?: RecordExcerptSelection
   sourceLabel: string
   senderName: string
   sourceAtMillis: number
@@ -27,9 +28,11 @@ export function readSelectedTextNoteQuote(value: unknown): SelectedTextNoteQuote
     || typeof q.text !== 'string' || !q.text.trim() || q.text.length > MESSAGE_QUOTE_LIMIT) return undefined
   const origin=q.origin
   if(origin!==undefined&&(!['recording','team_message','codex','dsh','call'].includes(origin.kind)||typeof origin.itemRef!=='string'||!origin.itemRef||origin.itemRef.length>16000))return undefined
+  const selection=readExcerptSelection(q.sourceSelection,q.text)
+  if(q.sourceSelection!==undefined&&!selection)return undefined
   const source = readExcerptSource(q.source)
   if(q.source !== undefined && !source)return undefined
-  return { version: 1, sourceLabel: q.sourceLabel.trim(), senderName: q.senderName.trim(), sourceAtMillis: q.sourceAtMillis, text: q.text, ...(source?{source}:{}),...(origin?{origin:{kind:origin.kind,itemRef:origin.itemRef}}:{}) }
+  return { ...(selection?{sourceSelection:selection}:{}),version: 1, sourceLabel: q.sourceLabel.trim(), senderName: q.senderName.trim(), sourceAtMillis: q.sourceAtMillis, text: q.text, ...(source?{source}:{}),...(origin?{origin:{kind:origin.kind,itemRef:origin.itemRef}}:{}) }
 }
 export function selectedTextNoteHeader(quote: SelectedTextNoteQuote): string {
   const time = quote.sourceAtMillis > 0 ? new Date(quote.sourceAtMillis).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false }) : '原时间未提供'
@@ -46,7 +49,7 @@ export function selectedTextForwardPrefix(quote: SelectedTextNoteQuote, header =
   return `${header}\n${quote.text}\n\n附言\n`
 }
 export function selectedTextForwardWireText(comment: string, quote: SelectedTextNoteQuote): string {
-  return comment.trim() ? `${selectedTextForwardPrefix(quote)}${comment.trim()}` : `${selectedTextNoteHeader(quote)}\n${quote.text}`.trimEnd()
+  return comment.trim() ? `${selectedTextForwardPrefix(quote)}${comment.trim()}` : `${selectedTextNoteHeader(quote)}\n${quote.text}`
 }
 
 /** Recheck the current text after edits or presentation refreshes; never render a stale snapshot. */
@@ -54,11 +57,15 @@ export function selectedTextNotePresentation(text: string, saved: SelectedTextNo
   if (!saved) return undefined
   if (saved.kind === 'forward') {
     const bare = `${saved.header}\n${saved.quote.text}`
-    if (text === bare.trimEnd()) return { ...saved, quote: { ...saved.quote, text: saved.quote.text.trimEnd() }, noteText: '' }
+    if (text === bare) return { ...saved, quote: { ...saved.quote, text: saved.quote.text }, noteText: '' }
     const prefix = selectedTextForwardPrefix(saved.quote, saved.header)
     return text.startsWith(prefix) && text.slice(prefix.length).trim() ? { ...saved, noteText: text.slice(prefix.length) } : undefined
   }
   const prefix = selectedTextNotePrefix(saved.quote, saved.header)
   const noteText = text.startsWith(prefix) ? text.slice(prefix.length) : ''
   return text.startsWith(prefix) ? { ...saved, noteText } : undefined
+}
+
+export interface SelectedTextForwardInput {
+ expectedAccountKey:string;targetSourceRef:string;recordUid:string;relationUid:string;sendAtMillis:number;commentText:string;quote:SelectedTextNoteQuote
 }

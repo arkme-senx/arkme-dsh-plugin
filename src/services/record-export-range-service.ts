@@ -33,8 +33,9 @@ export function wireExportSelection(selection: ArkmeExportSelection, orderKind: 
 /** A v2 range is never downgraded to v1. Checkpoints are owner/host facts; the
  * browser never supplies a device ID or infers a checkpoint from wall time. */
 export class RecordExportRangeService {
+  private readonly attachmentCapabilities = new Map<string,boolean>()
   private readonly codec: EncryptedReferenceCodec
-  constructor(private readonly runtime: ServiceRuntime) { this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid) }
+  constructor(private readonly runtime: ServiceRuntime, private readonly reuseAttachments = false) { this.codec = new EncryptedReferenceCodec(() => runtime.stateStore.uniqueCode(), invalid) }
   async session(scope: string) {
     const session = await this.runtime.requireSession()
     if (scope !== `${this.runtime.config.environment}:${session.userId}`) throw new ArkmePluginError('record-export-account-changed', '账号已切换，请重新打开导出', false, 409)
@@ -46,7 +47,7 @@ export class RecordExportRangeService {
   }
   async post(scope: string, path: string, body: Record<string, unknown>, signal?: AbortSignal, read = false) {
     const session = await this.session(scope)
-    const result = await this.runtime.authenticatedPost<unknown>(`${ROOT}/${path}`, body, session, signal,
+    const result = await this.runtime.authenticatedPost<unknown>(`${ROOT}/${path}`, this.reuseAttachments && !['capabilities','state'].includes(path) ? {...body,policy_version:3} : body, session, signal,
       read ? { lane: 'interactive-read', bypassCache: true, cacheMs: 0 } : undefined)
     const current = await this.session(scope)
     if (current.refreshToken !== session.refreshToken) throw invalid()
@@ -55,6 +56,7 @@ export class RecordExportRangeService {
   async supported(scope: string, signal?: AbortSignal): Promise<boolean> {
     try {
       const value = await this.post(scope, 'capabilities', {}, signal, true)
+      this.attachmentCapabilities.set(scope,value.attachment_reuse===true && value.incremental_no_quota===true && value.policy_version===3)
       return value.protocol_version === 2 && value.date_range === true && value.incremental === true && value.explicit_saved_confirmation === true
     } catch (error) {
       if (error instanceof ArkmePluginError && (error.upstreamStatus === 404 || error.httpStatus === 404)) return false
@@ -68,7 +70,9 @@ export class RecordExportRangeService {
   async preview(scope: string, raw: unknown, orderKind: 1 | 2, signal?: AbortSignal): Promise<ArkmeRangeExportPreview> {
     const selection = exportSelection(raw)
     if (![1, 2].includes(orderKind)) throw invalid()
-    const value = await this.post(scope, 'prepare', { device_id: await this.device(scope), selection: wireExportSelection(selection, orderKind) }, signal, true)
+    if(!this.attachmentCapabilities.has(scope))await this.supported(scope,signal)
+    if(this.reuseAttachments && !this.attachmentCapabilities.get(scope))return {accountScope:scope,supported:true,folderSupported:false,canExport:false,baselineRequired:false,message:'当前服务尚未支持文件夹导出，请更新后重试。',recordCount:0,imageCount:0,voiceCount:0,newCount:0,updatedCount:0,removedCount:0,chainVersion:0,savedAtMillis:0}
+    const value = await this.post(scope, 'prepare', { device_id: await this.device(scope), selection: wireExportSelection(selection, orderKind), ...(this.reuseAttachments?{reuse_attachments:true}:{}) }, signal, true)
     if (value.protocol_version !== 2 || typeof value.can_export !== 'boolean' || typeof value.baseline_required !== 'boolean') throw invalid()
     const chain = value.chain ? exportObject(value.chain) : undefined, plan = value.plan ? exportObject(value.plan) : undefined
     if (value.can_export && !plan || plan && (typeof plan.preview_uid !== 'string' || !plan.preview_uid || plan.preview_uid.length > 100 || typeof plan.selection_fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(plan.selection_fingerprint))) throw invalid()
@@ -77,7 +81,7 @@ export class RecordExportRangeService {
       const received = exportObject(plan.selection), expected = wireExportSelection(selection, orderKind)
       if (Object.entries(expected).some(([key, val]) => received[key] !== val)) throw invalid()
     }
-    return { accountScope: scope, supported: true, canExport: value.can_export, baselineRequired: value.baseline_required,
+    return { accountScope: scope, supported: true, folderSupported: plan?.reuse_attachments===true || this.attachmentCapabilities.get(scope)===true, canExport: value.can_export, baselineRequired: value.baseline_required,
       message: typeof value.quota_message === 'string' ? value.quota_message : '',
       ...(plan ? { previewUid: String(plan.preview_uid), selectionFingerprint: String(plan.selection_fingerprint) } : {}),
       recordCount: plan ? exportInteger(plan.record_count) : 0, imageCount: plan ? exportInteger(plan.total_image_count) : 0, voiceCount: plan ? exportInteger(plan.total_voice_count) : 0,

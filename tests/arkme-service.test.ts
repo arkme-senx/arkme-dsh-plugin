@@ -163,7 +163,7 @@ const config: ArkmeServiceConfig = {
 }
 
 function unifiedResponse(sessionUid: string, data: { items: any[]; has_more?: boolean; next_before_seq?: number }) {
-  return { protocol_version: 2, chat_session_uid: sessionUid, complete: true,
+  return { protocol_version: 3, chat_session_uid: sessionUid, complete: true,
     sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'messages' ? 'ready' : 'not_applicable', item_count: source === 'messages' ? data.items.length : 0 })),
     timeline_items: data.items.map((payload, index) => {
       const relation = { ...payload.relation, rel_uid: payload.relation.rel_uid || payload.relation.record_uid }
@@ -241,21 +241,27 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const fetcher = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => json({ code: 200, data: { items: [{
-      revision_uid: 'rev-old', record_uid: 'record-1', revision_type: 1, edit_at: 1712990001000, text_content: 'old text',
+      revision_uid: 'rev-old', record_uid: 'record-1', revision_type: 1, version: 2, edit_at: 1712990001000, text_content: 'old text',
       content_payload: { media_refs: [{ file_asset_uid: 'old-image', sort_order: 0 }] },
       media_display_items: [{ file_asset_uid: 'old-image', file_kind: 1, file_name: 'old.png', preview_url: 'https://media.test/old.png' }],
     }], has_more: false } }))
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), fetcher)
-    const payload = Buffer.from(JSON.stringify({ version: 1, sourceKind: 'chat_relation', userId: 10001,
-      sourceOwnerRef: 'chat-1', chatSessionUid: 'chat-1', relationUid: 'rel-1', recordUid: 'record-1',
-      recordOwnerUserId: 20002, senderUserId: 20002, senderName: 'someone',
-    })).toString('base64url')
-    const action = `arkme-message-action-v1.${payload}.${createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')}`
+    const signedAction = (ownerUserId: number) => {
+      const payload = Buffer.from(JSON.stringify({ version: 1, sourceKind: 'chat_relation', userId: 10001,
+        sourceOwnerRef: 'chat-1', chatSessionUid: 'chat-1', relationUid: 'rel-1', recordUid: 'record-1',
+        recordOwnerUserId: ownerUserId, senderUserId: ownerUserId, senderName: 'author',
+      })).toString('base64url')
+      return `arkme-message-action-v1.${payload}.${createHmac('sha256', 'dsh-device-1').update(payload).digest('base64url')}`
+    }
+    const action = signedAction(10001)
     try {
       const result = await service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action)
       expect(result.items[0]).toMatchObject({ revisionUid: 'rev-old', content: { textContent: 'old text', contentBlocks: [{ fileAssetUid: 'old-image' }] } })
       expect(JSON.stringify(result)).not.toContain('https://media.test')
       expect(fetcher.mock.calls[0]?.[0]).toContain('/api/v1/chats/records/revisions/query')
+      const peerAction = signedAction(20002)
+      await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction)).resolves.toMatchObject({ items: [{ revisionUid: 'rev-old' }] })
+      await expect(service.recordRevisionSnapshot(sourceRefFor('group_chat', 'chat-1', 'group'), peerAction, 'rev-old')).rejects.toMatchObject({ code: 'record-snapshot-private' })
       const count = fetcher.mock.calls.length
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-2', 'other'), action)).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
       await expect(service.recordEditHistoryPage(sourceRefFor('group_chat', 'chat-1', 'group'), action + 'x')).rejects.toMatchObject({ code: 'message-action-ref-invalid' })
@@ -325,7 +331,7 @@ describe('ArkmeService', () => {
     const uploadRefs = vi.fn(async () => [])
     Object.assign(service as unknown as Record<string, unknown>, {
       chat: { sourceMessageExtensionContext, extendSourceMessage },
-      fileTransfers: { uploadRefs, cancelActive: vi.fn() },
+      fileTransfers: { uploadRefs, cancelActive: vi.fn(), dispose: vi.fn() },
     })
 
     await expect(service.extendSourceMessage(
@@ -349,7 +355,7 @@ describe('ArkmeService', () => {
     const uploadRefs = vi.fn(async () => [])
     Object.assign(service as unknown as Record<string, unknown>, {
       chat: { sourceMessageExtensionContext, extendSourceMessage },
-      fileTransfers: { uploadRefs, cancelActive: vi.fn() },
+      fileTransfers: { uploadRefs, cancelActive: vi.fn(), dispose: vi.fn() },
     })
 
     await expect(service.extendSourceMessage(
@@ -789,7 +795,8 @@ describe('ArkmeService', () => {
   it('hydrates calendar chat sources from record origin once per page, excluding protected rows', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
-    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      if (String(input).endsWith('/api/v1/chats/display-snapshots')) return json({ code: 200, data: { items: JSON.parse(String(init?.body)).chat_session_uids.map((uid: string) => ({ session: { chat_session_uid: uid, session_kind: 2, title: '项目群' } })) } })
       if (String(input).endsWith('/api/v1/records/privacy/visibility-snapshot')) return json({ code: 0, data: { items: [], has_more: false } })
       if (String(input).endsWith('/api/v1/calendar/records/query')) return json({ code: 0, data: {
         items: [1, 2, 3].map(id => ({ record_uid: `r${id}`, send_at: 100, record_core: {
@@ -813,14 +820,10 @@ describe('ArkmeService', () => {
     expect(hydrate.mock.calls[0]?.[0]).toHaveLength(1)
     expect(JSON.stringify(page)).not.toContain('origin_container_ref')
     resolve.mockRestore()
-    const list = vi.spyOn(source, 'listSources').mockImplementation(async () => {
-      source.setChatSource(10001, 'chat-1', { sourceRef: 'safe-ref', kind: 'group_chat', displayName: '项目群' })
-      source.setChatSource(10001, 'chat-2', { sourceRef: 'safe-ref-2', kind: 'private_chat', displayName: '同事' })
-      return { items: [], hasMore: false }
-    })
+    const list = vi.spyOn(source, 'listSources')
     const targets = await source.chatSourcesBySessionUids(['chat-1', 'chat-2', 'chat-1'])
     expect(targets.size).toBe(2)
-    expect(list).toHaveBeenCalledTimes(1)
+    expect(list).not.toHaveBeenCalled()
 
   })
 
@@ -1255,6 +1258,19 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('advertises the existing local send policy in bootstrap without remote IO', () => {
+    const fetcher = vi.fn(async () => { throw new Error('not used') })
+    const service = new ArkmeService(config, new MemorySessionStore(), new MemoryStateStore(), fetcher)
+    try {
+      expect(service.clientConfig()).not.toHaveProperty('fileSendPolicy')
+      const policy = { version: 1, textMessagesVersion: 1, admissionRecoveryVersion: 1,
+        maxFileBytes: 100, maxImageBytes: 50, maxAttachments: 9 }
+      Object.assign(service, { fileTransfers: { capabilities: () => ({ ...policy }), dispose() {} } })
+      expect(service.clientConfig().fileSendPolicy).toEqual(policy)
+      expect(fetcher).not.toHaveBeenCalled()
+    } finally { service.dispose() }
+  })
+
   it('publishes MAS capabilities without exposing the credential namespace', () => {
     vi.stubEnv('ARKME_HOST_POLICY', JSON.stringify({
       schemaVersion: 1,
@@ -1275,7 +1291,7 @@ describe('ArkmeService', () => {
     }
   })
 
-  it('prepares an outgoing video call from a fresh Arkme private-chat source', async () => {
+  it.each([undefined, [], ['peer__c2'], ['other']])('prepares an outgoing call with recipient push policy %j', async (mutedAccounts) => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const requests: Array<{ url: string; body: Record<string, unknown> }> = []
@@ -1301,6 +1317,7 @@ describe('ArkmeService', () => {
       } })
       if (url.endsWith('/api/v1/trtc/create-room')) return json({ code: 200, data: {
         room_id: 'room-private-1', shared_topic_id: 99, callee_accounts: ['peer__c2'],
+        call_push_disabled_accounts: mutedAccounts,
       } })
       throw new Error(`unexpected URL ${url}`)
     })
@@ -1311,17 +1328,18 @@ describe('ArkmeService', () => {
       callRequestId: 'request-1',
     })
 
-    expect(requests.map(item => item.url)).toEqual([
-      'https://chat.test/api/v1/chats/detail',
+    expect(requests[0]?.url).toBe('https://chat.test/api/v1/chats/detail')
+    expect(requests.at(-1)?.url).toBe('https://webrtc.test/api/v1/trtc/create-room')
+    expect(requests.slice(1, -1).map(item => item.url).sort()).toEqual([
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
+      'https://auth.test/api/v1/auth/get-public-users-by-ids',
       'https://auth.test/api/v1/auth/get-user-info',
-      'https://auth.test/api/v1/auth/get-public-users-by-ids',
-      'https://auth.test/api/v1/auth/get-public-users-by-ids',
       'https://webrtc.test/api/v1/trtc/credentials',
-      'https://webrtc.test/api/v1/trtc/create-room',
     ])
     expect(requests.at(-1)?.body).toMatchObject({
       chat_session_uid: 'chat-private-1',
       callee_user_ids: [20002],
+      include_call_notification_policy: true,
       call_media_type: 1,
       caller_name: '我的昵称',
     })
@@ -1341,11 +1359,17 @@ describe('ArkmeService', () => {
         roomId: 'room-private-1',
         mediaType: 'video',
         calleeAccounts: ['peer__c2'],
+        offlinePushInfo: { isDisablePush: mutedAccounts?.includes('peer__c2') ?? false },
         calleeName: '小林',
         callerName: '我的昵称',
         timeoutSec: 30,
       },
     })
+    const data = JSON.parse(result.call.userData)
+    expect(data.sharedTopicId).toBe(99)
+    expect(data.callerName).toBe('我的昵称')
+    expect(data.arkmeCallNotification).toEqual(mutedAccounts?.includes('peer__c2')
+      ? { version: 1, roomId: 'room-private-1', mutedAccounts: ['peer__c2'] } : undefined)
   })
 
   it('rejects a non-private outgoing source before contacting remote services', async () => {
@@ -1749,27 +1773,28 @@ describe('ArkmeService', () => {
     const sessions = new MemorySessionStore()
     const firstSession = { userId: 10001, accessToken: 'access-1', refreshToken: 'refresh-1' }
     const secondSession = { userId: 20002, accessToken: 'access-2', refreshToken: 'refresh-2' }
-    sessions.session = secondSession
-    vi.spyOn(sessions, 'read')
-      .mockResolvedValueOnce(firstSession)
-      .mockResolvedValueOnce(secondSession)
+    sessions.session = firstSession
     const state = new MemoryStateStore()
-    const fetchImpl = vi.fn<typeof fetch>(async () => json({
-      code: 200,
-      data: {
-        user_id: 10001,
-        nick_name: '旧账号',
-        jotmo_id: 'Old_account',
-        can_update_jotmo_id: true,
-        type: 1,
-      },
-    }))
+    const fetchImpl = vi.fn<typeof fetch>(async () => {
+      sessions.session = secondSession
+      return json({
+        code: 200,
+        data: {
+          user_id: 10001,
+          nick_name: '旧账号',
+          jotmo_id: 'Old_account',
+          can_update_jotmo_id: true,
+          type: 1,
+        },
+      })
+    })
     const service = new ArkmeService(config, sessions, state, fetchImpl)
 
     await expect(service.setArkmeIdOnce('New_account')).rejects.toMatchObject({
       code: 'account-changed', retryable: false, httpStatus: 409,
     })
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls.some(([url]) => String(url).includes('/update-jotmo-id'))).toBe(false)
   })
 
   it('validates Arkme IDs locally and maps authoritative availability reasons', async () => {
@@ -2946,7 +2971,7 @@ describe('ArkmeService', () => {
           { user_id: 50005, nick_name: '公开用户昵称小赵' },
         ].filter(item => (body.user_ids as number[]).includes(item.user_id)),
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [
           {
             relation: { rel_uid: 'chat-relation-1', record_uid: 'chat-record-1', sender_user_id: 20002, display_name_snapshot: '小林', attach_at: 180, seq: 7 },
@@ -2962,7 +2987,7 @@ describe('ArkmeService', () => {
           }] : []),
           {
             relation: { rel_uid: 'chat-relation-unavailable', record_uid: 'chat-record-unavailable', sender_user_id: 20002, attach_at: 179, seq: 6 },
-            record: {},
+            record: { status: 2 },
           },
         ],
         has_more: true, next_before_seq: 6,
@@ -3076,7 +3101,7 @@ describe('ArkmeService', () => {
     const privateSourceKey = sources.items[0]!.sourceKey
     await expect(service.readSource(privateRef)).resolves.toMatchObject({
       items: [
-        { itemUid: 'chat-record-unavailable', status: 0, textContent: '内容暂时不可用' },
+        { itemUid: 'chat-record-unavailable', status: 0, textContent: '原消息未找到' },
         { textContent: '聊天正文', senderName: '小林', isMe: false, sequence: 7, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
         { textContent: '我的回复', senderName: '我', isMe: true, sequence: 8, avatarRef: expect.stringMatching(/^arkme-profile-image-v1\./) },
         {
@@ -3148,7 +3173,7 @@ describe('ArkmeService', () => {
       .toEqual({ rm_subject_id: 88010 })
     const groupTimeline = await service.readSource(groupRef)
     expect(groupTimeline.items).toHaveLength(3)
-    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toMatchObject({ status: 0, textContent: '内容暂时不可用' })
+    expect(groupTimeline.items.find(item => item.itemUid === 'chat-record-unavailable')).toMatchObject({ status: 0, textContent: '原消息未找到' })
     expect(groupTimeline.items[1]?.messageRef).toMatch(/^arkme-message-v1\./)
     expect(groupTimeline.items[1]?.messageWithdrawalRef).toMatch(/^arkme-message-withdrawal-v1\./)
     expect(groupTimeline.items[1]?.timelineItemKey).toMatch(/^arkme-chat-timeline-item-v1\./)
@@ -4124,7 +4149,7 @@ describe('ArkmeService', () => {
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'record-history-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 500, seq: 8 },
           record: {
@@ -4236,7 +4261,7 @@ describe('ArkmeService', () => {
         display_name: '海底捞',
         version: 2,
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
         items: [{
           relation: { record_uid: 'agent-record-1', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 1787036400000, seq: 11 },
           record: { status: 1, payload: { text_content: '缓存名字代发', creation_source: 1 } },
@@ -4549,7 +4574,7 @@ describe('ArkmeService', () => {
           { user_id: 10001, nick_name: '我', head_img: 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/a/10001/me.png?x-oss-signature=me' },
         ],
       } })
-      if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, { items: [], has_more: false }) })
+      if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, { items: [], has_more: false }) })
       throw new Error(`unexpected ${url}`)
     })
 
@@ -5212,19 +5237,18 @@ describe('ArkmeService', () => {
     expect(requests.map(request => [request.method, request.url.split('?')[0]])).toEqual([
       ['POST', 'https://intelligent.test/api/v1/qa/latest-session'],
       ['POST', 'https://intelligent.test/api/v1/qa/new-session'],
-      ['POST', 'https://intelligent.test/api/v1/agent/model/list'],
       ['POST', 'https://intelligent.test/api/v1/qa/new-msg-v2'],
       ['GET', 'https://intelligent.test/api/v1/qa/stream-v2'],
     ])
-    expect(requests[3]?.body).toMatchObject({
+    expect(requests[2]?.body).toMatchObject({
       model: 2,
       session_id: 88,
       content: '帮我总结今天的快记',
       extra: '{}',
       client_turn_uid: '11111111-1111-4111-8111-111111111111',
       client_capabilities: ['dsh.arko.v1'],
-      model_route_key: 'dashscope/qwen3.8-max',
     })
+    expect(requests[2]?.body).not.toHaveProperty('model_route_key')
     expect(requests.every(request => request.authorization === 'Bearer access')).toBe(true)
   })
 
@@ -5929,7 +5953,7 @@ describe('ArkmeService', () => {
     expect(requests.some(request => request.url.endsWith('/shared-recording'))).toBe(false)
     expect(requests.some(request => request.url.endsWith('/shared-recording/revoke'))).toBe(false)
   })
-  it('creates plain-text long articles and edits the same owner record with CAS duration facts', async () => {
+  it('creates plain-text long articles and edits the same owner record with time-ordered duration facts', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
@@ -5980,8 +6004,7 @@ describe('ArkmeService', () => {
       title: '初始标题', text_content: '初始正文', record_duration_millis: 3200,
     })
 
-    // Pending automatic edits must keep their original CAS version, even if the
-    // server changes before the next opening. Never migrate them onto a newer base.
+    // Restored drafts retain their original editor metadata.
     await service.putLongArticleDraft({ sourceRef: source.sourceRef, itemUid: 'article-1', autoPublish: true,
       title: '待发布', textContent: '本地修改', textFormat: 'plain', baseVersion: 1, durationMillis: 50, updatedAtMillis: 1 })
     version = 2
@@ -6008,8 +6031,8 @@ describe('ArkmeService', () => {
     expect(openRecordDeletionRef(actionsAfter.recordDeletionRef!, await state.uniqueCode()).recordVersion).toBe(2)
     expect(actionsAfter.textContent).toBe('更新正文')
     expect(calls.find(call => call.url.endsWith('/api/v1/records/update'))?.body).toMatchObject({
-      record_uid: 'article-1', template_kind: 1, version: 1,
-      record_duration_millis: 3200, edit_duration_millis: 1400,
+      record_uid: 'article-1', template_kind: 1, edit_at: expect.any(Number), revision_uid: expect.any(String),
+      edit_duration_millis: 1400,
     })
     textFormat = 'markdown'
     textContent = '# 完整长文\n' + '**正文**'.repeat(5000)
@@ -6311,7 +6334,7 @@ describe('ArkmeService', () => {
         const url = String(input)
         if (url === signedUrl) return new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } })
         const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
-        if (url.endsWith('/api/v1/chat/timeline/unified/v2')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
+        if (url.endsWith('/api/v1/chat/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse(JSON.parse(String(init?.body)).chat_session_uid, {
           items: [{
             relation: { record_uid: 'record-media', sender_user_id: 10001, display_name_snapshot: '我', attach_at: 100, seq: 3 },
             record: { status: 1, payload: {
@@ -6637,7 +6660,7 @@ describe('ArkmeService', () => {
 
 
 describe('chat deletion capabilities from hydrated Record payloads', () => {
-  it.each(['private_chat', 'group_chat'] as const)('preserves authoritative deletion facts across %s projections', async kind => {
+  it.each(['private_chat', 'group_chat'] as const)('uses the Chat V2 receipt without exposing Record deletion in %s projections', async kind => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const variants = [
@@ -6659,36 +6682,40 @@ describe('chat deletion capabilities from hydrated Record payloads', () => {
         status: 'status' in v ? v.status : 1, version: 'version' in v ? v.version : 7, text_content: v.uid } },
     }))
     const deleteBodies: unknown[] = []
+    let transientBodyFailure = true
     const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
       const url = String(input)
-      if (url.endsWith('/timeline/unified/v2')) {
-        return json({ code: 200, data: unifiedResponse('chat-delete', { items, has_more: false }) })
+      if (url.endsWith('/timeline/unified/v3')) {
+        return json({ code: 200, data: { ...unifiedResponse('chat-delete', {
+          items: transientBodyFailure ? items : items.filter(item => item.record.status !== 3), has_more: false,
+        }), message_actions_v2: true } })
       }
-      if (url.endsWith('/api/v1/records/delete')) {
-        deleteBodies.push(JSON.parse(String(init?.body)))
-        return json({ code: 0, data: {
-          record_core: { record_uid: 'own', owner_user_id: 10001, status: 2, version: 8 },
-        } })
+      if (url.endsWith('/api/v1/records/delete')) throw new Error('Unexpected Record deletion')
+      if (url.endsWith('/api/v1/chats/messages/delete/v2')) {
+        const body = JSON.parse(String(init?.body))
+        deleteBodies.push(body)
+        return json({ code: 200, data: { ...body, deleted_at: 120 } })
       }
       return json({ code: 200, data: { items: [] } })
     })
     const sourceRef = sourceRefFor(kind, 'chat-delete', 'Delete test')
+    await expect(service.readSource(sourceRef, { limit: 30 })).rejects.toMatchObject({ code: 'chat-timeline-content-pending', retryable: true })
+    transientBodyFailure = false
     const page = await service.readSource(sourceRef, { limit: 30 })
     const tail = await service.readSource(sourceRef, { limit: 30, cursor: { unified: { mode: 'newer', cursor: page.unified!.newerCursor! } } })
     const around = await service.readSourceAround(sourceRef, 'own', 10001, { beforeLimit: 15, afterLimit: 15 })
+    expect(around.cache).toMatchObject({ origin: 'network', stale: false })
     const realtime = await (service as unknown as { chat: import('../src/services/chat-service.js').ChatService })
       .chat.chatTimelineItems({ items }, sessions.session, 'chat-delete', kind)
     for (const projected of [page.items, tail.items, around.items, realtime]) {
-      const own = projected.find(item => item.itemUid === 'own')!
-      expect(own?.recordDeletionRef).toBeDefined()
-      expect(openRecordDeletionRef(own.recordDeletionRef!, 'dsh-device-1')).toMatchObject({
-        recordUid: 'own', recordVersion: 7, userId: 10001, sourceKind: kind, sourceOwnerRef: 'chat-delete',
-      })
-      expect(projected.filter(item => item.recordDeletionRef).map(item => item.itemUid)).toEqual(['own'])
+      expect(projected.every(item => !item.recordDeletionRef)).toBe(true)
     }
-    await expect(service.deleteSourceRecords(sourceRef, [page.items.find(item => item.itemUid === 'own')!.recordDeletionRef!]))
-      .resolves.toMatchObject({ items: [{ recordUid: 'own', result: 'deleted', version: 8 }] })
-    expect(deleteBodies).toEqual([{ record_uid: 'own', version: 7 }])
+    const own = page.items.find(item => item.itemUid === 'own')!
+    expect(own.messageActionsV2).toBe(true)
+    await expect(service.changeChatMessage(sourceRef, own.messageActionRef!, 'delete'))
+      .resolves.toMatchObject({ timelineItemKey: own.timelineItemKey, changedAtMillis: 120 })
+    await expect(service.deleteSourceRecords(sourceRef, ['old-record-ref'])).rejects.toThrow('请使用会话消息删除')
+    expect(deleteBodies).toEqual([{ chat_session_uid: 'chat-delete', rel_uid: 'own' }])
   })
 })
 
@@ -6772,4 +6799,66 @@ it('uses the fixed 50 MiB image limit without querying server capabilities', asy
   const service=new ArkmeService({...config,markdownLongArticlesEnabled:true,maxUploadBytes:200},sessions,new MemoryStateStore(),fetchImpl)
   await expect(service.stageLongArticleImage('/unused',{fileName:'large.png',mimeType:'image/png',size:50 * 1024 * 1024 + 1})).rejects.toMatchObject({code:'long-article-image-too-large'})
   expect(fetchImpl).not.toHaveBeenCalled()
+})
+
+
+it('projects delegated historical media through the exact source stream without personal hydration',async()=>{
+ const sessions=new MemorySessionStore();sessions.session={userId:10001,accessToken:'access',refreshToken:'refresh'}
+ let revoked=false
+ const requests:Array<{path:string;body:Record<string,unknown>;headers:Headers}>=[]
+ const fetcher=vi.fn(async(input:string|URL|Request,init?:RequestInit)=>{
+  const path=new URL(String(input)).pathname,body=JSON.parse(String(init?.body??'{}'))
+  requests.push({path,body,headers:new Headers(init?.headers)})
+  if(path==='/api/v1/chats/records/revisions/query')return json({code:200,data:{items:[{revision_uid:'old',record_uid:'record-1',revision_type:5,version:1,edit_at:1712990001000,text_content:'approved history',content_payload:{media_refs:[
+   {file_asset_uid:'bound',file_name:'bound.png',mime_type:'image/png',source_attachment_ref:'a'.repeat(64)},
+   {file_asset_uid:'unbound',file_name:'private.png',mime_type:'image/png',download_url:'https://media.test/private'},
+  ]}}],has_more:false}})
+  if(path==='/api/v1/content/source-stream')return new Response(revoked?null:'image',{status:revoked?404:200,headers:{'content-type':'image/png','content-length':revoked?'0':'5','X-Jotmo-Source-Stream':'1'}})
+  throw new Error('unexpected personal media lookup: '+path)
+ })
+ const service=new ArkmeService(config,sessions,new MemoryStateStore(),fetcher)
+ vi.spyOn((service as any).chat,'recordEditHistoryTarget').mockResolvedValue({kind:'chat',viewerUserId:10001,recordUid:'record-1',recordOwnerUserId:10001,chatSessionUid:'chat-1',relationUid:'rel-1',chatAccessRef:'opaque-team-frame',audienceKey:'stable-admission'})
+ try {
+  const page=await service.recordEditHistoryPage('team-source','team-action')
+  const content=page.items[0]!.content
+  expect(content).toMatchObject({textContent:'approved history',mediaUnavailable:true,contentBlocks:[{fileAssetUid:'bound'}]})
+  expect(JSON.stringify(page)).not.toMatch(/opaque-team-frame|https:\/\/media.test|source_attachment_ref/)
+  const mediaRef=content.contentBlocks![0]!.mediaRef
+  expect(await (await service.fetchMedia(mediaRef)).response.text()).toBe('image')
+  expect(requests[0]!.headers.get('X-Chat-Access-Ref')).toBe('opaque-team-frame')
+  expect(requests[1]!.body).toMatchObject({access_ref:'opaque-team-frame',chat_session_uid:'chat-1',relation_uid:'rel-1',record_owner_user_id:10001,record_uid:'record-1',version:1,attachment:'a'.repeat(64)})
+  revoked=true
+  await expect(service.fetchMedia(mediaRef)).rejects.toMatchObject({httpStatus:404})
+  expect(requests.every(r=>['/api/v1/chats/records/revisions/query','/api/v1/content/source-stream'].includes(r.path))).toBe(true)
+ }finally{service.dispose()}
+})
+
+
+it.each([false, true])('keeps around bot presentation opt-in without blocking deferred message bodies (defer=%s)', async deferBotProfiles => {
+  const sessions = new MemorySessionStore()
+  sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+  const item = { relation: { rel_uid: 'bot-row', record_uid: 'bot-record', record_owner_user_id: 7, sender_user_id: 9001,
+    sender_actor_kind: 2, sender_bot_uid: 'bot', seq: 2, attach_at: 100 },
+    record: { status: 1, payload: { record_uid: 'bot-record', owner_user_id: 7, text_content: '正文先显示', version: 1 } } }
+  const service = new ArkmeService(config, sessions, new MemoryStateStore(), async input => {
+    if (String(input).endsWith('/timeline/unified/v3')) return json({ code: 200, data: unifiedResponse('bot-cold', { items: [item], has_more: false }) })
+    return json({ code: 200, data: { items: [] } })
+  })
+  const reader = (service as unknown as { chat: { senderProfiles: { read: (...args: unknown[]) => Promise<Map<string, { displayName: string }>> } } }).chat.senderProfiles
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const read = vi.spyOn(reader, 'read').mockImplementation(async () => { await gate; return new Map([['bot', { displayName: '完整机器人昵称' }]]) })
+  let returned = false
+  const pending = service.readSourceAround(sourceRefFor('group_chat', 'bot-cold', 'Cold bot'), 'bot-record', 7, { deferBotProfiles })
+    .then(page => { returned = true; return page })
+  try {
+    if (deferBotProfiles) {
+      expect((await pending).items[0]).toMatchObject({ textContent: '正文先显示', senderName: 'Bot', senderBotPresentationRef: expect.any(String) })
+      expect(read).not.toHaveBeenCalled()
+    } else {
+      await vi.waitFor(() => expect(read).toHaveBeenCalledOnce())
+      expect(returned).toBe(false)
+    }
+  } finally { release(); await pending }
+  if (!deferBotProfiles) expect((await pending).items[0]?.senderName).toBe('完整机器人昵称')
 })

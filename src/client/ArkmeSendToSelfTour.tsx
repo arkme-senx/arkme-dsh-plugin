@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import TourModule, { type TourProps } from '@rc-component/tour'
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
@@ -76,7 +77,7 @@ function SendToSelfTourPanel({ current, onPrevious, onNext, onDismiss }: {
     aria-label={tr("发给自己引导")} aria-describedby="arkme-self-tour-description">
     <div className="arkme-home-tour-header">
       <span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / 2</span>
-      <button type="button" className="arkme-home-tour-close" aria-label={tr("关闭发给自己引导")} onClick={onDismiss}>×</button>
+      <ArkmeCloseButton type="button" className="arkme-home-tour-close" aria-label={tr("关闭发给自己引导")} onClick={onDismiss} />
     </div>
     <h2>{steps[current]!.title}</h2><p id="arkme-self-tour-description">{steps[current]!.description}</p>
     <div className="arkme-home-tour-actions">

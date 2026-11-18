@@ -4,8 +4,12 @@
   "callEnginePackage": "@trtc/call-engine-lite-js",
   "callEngineRange": "^3.5.9",
   "upstreamBundleSha256": "6ff59d3eb9ce4d7556ba4054bac0df22ae279a7bccc56ccbf5712b6f475c95ce",
-  "bundleSha256": "839e0376d8916472d99fe4b0cbcc39b165c3dc96ac00b31b15fb3910bcdf6917",
+  "bundleSha256": "ff206f0eb8ab06c629f8baf6622f9d9f5c72cdee183a25a508904212435590d9",
   "iconSha256": "583d7dbd34069c5b50ca294a071637bbd3beed913cecdb91a202c001004eed45",
   "outgoingOnly": false,
-  "supportsIncoming": true
+  "supportsIncoming": true,
+  "localSource": "tools/desktop-call/src/index.js",
+  "localSourceSha256": "080437bf55a4345fd056ee9c82478cb0ddfe6e17fe77b110080a9a6a8d2b82c4",
+  "imBridgeSha256": "f62b2fd6a1061f5e82fd51c7c9a45c9cd44fd1ed19fe94178a102a8e8970fc13",
+  "buildLockSha256": "7389384d29dcad954c50c0fb55aa038d97170a671d07507890da1f6ad3730f95"
 }

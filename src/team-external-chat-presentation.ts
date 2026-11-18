@@ -1,5 +1,6 @@
 import type { ArkmeContentBlock, ArkmeTimelineItem } from './types.js'
 import { projectForwardRecordsPreview } from './forward-records-presentation.js'
+import { walkForwardRecordItems } from './forward-record-tree.js'
 
 const object = (v: unknown): Record<string, unknown> => v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {}
 const rows = (v: unknown): unknown[] => Array.isArray(v) ? v : []
@@ -53,6 +54,6 @@ export function sharedForwardPreview(body: Record<string, unknown>, attachments:
       return index < 0 ? [] : [{...blocks[index]!, ...(options?.longArticle ? {fileAssetUid: `media-${fileIndex}`} : {})}]
     }),
   })
-  if (result) for (const item of result.items) delete item.senderUserId
+  if (result) for (const item of walkForwardRecordItems(result)) delete item.senderUserId
   return result
 }

@@ -148,3 +148,16 @@ describe('ChatService background-sound payload owner', () => {
     })).toBe('not-recorded')
   })
 })
+
+it('sends metadata-first image/video/file slots in the same content payload without fake asset IDs', async () => {
+  const { chat, authenticatedChatPost } = fixture()
+  await chat.sendSourceRich('source-ref', { textContent: '#项目' }, { recordUid: 'record-1', relationUid: 'relation-1', pendingAttachments: [1, 3, 4].map((fileKind, i) => ({
+    fileRef: `local-${i}`, fileName: `file-${i}`, mimeType: 'application/octet-stream', size: 10,
+    fileKind: fileKind as 1 | 3 | 4, attachmentUid: `slot-${i}`, generation: 1, sortOrder: i,
+  })) })
+  const body = authenticatedChatPost.mock.calls[0]![1] as Record<string, any>
+  expect(body.template_kind).toBe(2)
+  expect(body.content_payload).toMatchObject({ payload_kind: 2, hash_tags: [{ tag: '项目' }], media_refs: [1, 3, 4].map((kind, i) => ({
+    file_asset_uid: '', file_name: `file-${i}`, upload: { attachment_uid: `slot-${i}`, generation: 1, state: 'pending', kind, size: 10 },
+  })) })
+})

@@ -43,7 +43,7 @@ describe('recording transcript avatar lifecycle', () => {
       />)}</>)
     })
     expect(mocks.call).toHaveBeenCalledTimes(1)
-    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' }, undefined, { priority: 'background' })
+    expect(mocks.call).toHaveBeenCalledWith('image.read', { imageRef: 'avatar-self' }, undefined, { priority: 'background', avatarDownload: true })
     expect(renderer!.root.findAllByType('img')).toHaveLength(0)
     const stopPropagation = vi.fn()
     act(() => {

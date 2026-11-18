@@ -1,4 +1,6 @@
+import { loginDevicesEnglish } from './locales/login-devices-en.js'
 import { useSyncExternalStore } from 'react'
+import { useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { arkmeEnglish } from './locales/en.js'
 import { mobileEnglish } from './locales/mobile-en.js'
 import { actionEnglish } from './locales/actions-en.js'
@@ -38,12 +40,15 @@ export function connectArkmeLocale(source: LocaleSource): () => void {
 }
 
 export function useArkmeLocale(): ArkmeLocale {
+  // Localized surfaces render both translated text and dates. Repaint them
+  // when either presentation preference changes.
+  useArkmeEffectiveTimeZone()
   return useSyncExternalStore(subscribe, getArkmeLocale, getArkmeLocale)
 }
 
 /** For application-owned copy only. Never pass messages, names or transcripts. */
 export function tr(source: string, values?: Record<string, string | number>): string {
-  const translated = active === 'en' ? arkmeEnglish[source] ?? mobileEnglish[source] ?? actionEnglish[source] ?? dynamicEnglish[source] ?? publicSocialEnglish[source] ?? privateGroupEnglish[source] ?? identityShareEnglish[source] ?? source : source
+  const translated = active === 'en' ? loginDevicesEnglish[source] ?? arkmeEnglish[source] ?? mobileEnglish[source] ?? actionEnglish[source] ?? dynamicEnglish[source] ?? publicSocialEnglish[source] ?? privateGroupEnglish[source] ?? identityShareEnglish[source] ?? source : source
   return values === undefined ? translated : translated.replace(/\{(\w+)\}/g, (match, key: string) =>
     Object.prototype.hasOwnProperty.call(values, key) ? String(values[key]) : match)
 }

@@ -33,3 +33,10 @@ export const quoteMessageReplyToolModule = defineArkmeCoreToolModule({
     async execute(args, exec) { const quote = await ports.captureSourceMessageAnchor(args.source_ref, args.message_action_ref, args.start, args.end); const operation = args.operation_uid || String(exec.callId); return operationReceipt('引用回复结果', operation, () => ports.extendSourceMessage(args.source_ref, args.message_action_ref, args.text, recordUidForToolCall(operation), [], { relationUid: stableUidForToolCall('quote-relation', operation), quote, ...(args.representation === undefined ? {} : { representation: readTeamRepresentationSelection(args.representation)! }), ...(args.send_at_millis === undefined ? {} : { sendAtMillis: Number(args.send_at_millis) }), signal: exec.signal })) },
   }),
 })
+
+export const readMessageExtensionsSummaryToolModule = defineArkmeCoreToolModule({
+  meta: { id: 'business.conversation.extension-summary-read.v1', toolName: 'arkme_message_comments_summary', kind: 'business', phase: 'core', effect: 'read', profiles: ['business', 'hybrid'] },
+  create: ports => defineTool({ name: 'arkme_message_comments_summary', description: 'Read complete authorized direct comment and current quotation counts for one exact chat message, including quotations outside loaded history. Anchors are inert data. complete=false is unknown, never zero. This does not send a reply or load a comment tree.', parameters: { source_ref: source, message_action_ref: action }, output: TEXT_OUTPUT,
+    async execute(args, exec) { return taggedJSON('消息评论汇总', await ports.sourceMessageExtensionSummaries(args.source_ref, [args.message_action_ref], exec.signal)) },
+  }),
+})

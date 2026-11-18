@@ -1,4 +1,4 @@
-import type { ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSourceSendResult, ArkmeUploadedAsset } from './types.js'
+import type { ArkmeContentBlock, ArkmeRecordLocationCapture, ArkmeRichSendInput, ArkmeSourceSendResult, ArkmeUploadedAsset } from './types.js'
 export const ARKME_TOOL_FILE_MAX_BYTES = 64 * 1024
 
 export interface ArkmeFilePolicy {
@@ -6,6 +6,12 @@ export interface ArkmeFilePolicy {
   maxFileBytes: number
   maxImageBytes: number
   maxAttachments: number
+  /** Metadata-first implementation; each send negotiates server support. */
+  metadataFirstVersion?: 2
+  /** Empty fileRefs with nonempty text use the same durable send owner. */
+  textMessagesVersion?: 1
+  /** A restored browser submission is checked against its original remote UID before replay. */
+  admissionRecoveryVersion?: 1
 }
 
 export interface ArkmeLocalFile {
@@ -14,6 +20,10 @@ export interface ArkmeLocalFile {
   mimeType: string
   size: number
   fileKind: 1 | 2 | 3 | 4
+  imageDimensions?: ArkmeContentBlock['imageDimensions']
+  inlinePhotoPreview?: string
+  /** Set by the file owner. Missing on legacy files; never evidence of current remote access. */
+  origin?: 'local' | 'received'
 }
 
 export interface ArkmeFileProgress {
@@ -44,15 +54,22 @@ export interface ArkmeFileBackgroundSoundInput {
 
 export interface ArkmeFileSendTask extends ArkmeFileSendInput {
   taskRef: string
+  /** Owner-persisted ordering for snapshots and delivery events; absent on older Hosts. */
+  revision?: number
   createdAtMillis: number
   state: 'queued' | 'uploading' | 'sending' | 'sent' | 'failed' | 'uncertain'
-  files: Array<ArkmeLocalFile & { progress: ArkmeFileProgress; asset?: ArkmeUploadedAsset }>
+  files: Array<ArkmeLocalFile & { progress: ArkmeFileProgress; asset?: ArkmeUploadedAsset; attachmentUid?: string }>
+  /** Frozen before the first remote write; old persisted tasks keep legacy delivery. */
+  delivery?: 'negotiating' | 'progressive' | 'legacy'
   result?: ArkmeSourceSendResult
   /** Sanitized owner error code. Definite rejection and unknown outcome remain distinct via state. */
   errorCode?: string
   /** Definite terminal rejection remains terminal across restart and later permission changes. */
   retryable?: boolean
   error?: string
+  /** Absent on legacy tasks, which require an explicit retry before automatic recovery. */
+  retryAttempts?: number
+  nextRetryAtMillis?: number
 }
 
 export interface ArkmeFileReception {

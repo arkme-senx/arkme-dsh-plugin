@@ -1,3 +1,4 @@
+import { groupInteractionTrace } from '../group-interaction-diagnostics.js'
 export { connectRealtimeDictation } from '../realtime-dictation-client.js'
 import type { RecordingImportBatch } from '../recording-workflow-contract.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -7,7 +8,7 @@ import type { RecordAppOperation } from '../record-app-contract.js'
 import { conversationWindowBridge, conversationWindowRequested } from './conversation-window.js'
 import { callArkme as callProvider } from '../sdk/index.js'
 import type { PublicRecordingImportCurrentItem, PublicRecordingImportJob } from '../recording-import-shared.js'
-import type { ArkmePluginOperation } from '../types.js'
+import type { ArkmePluginOperation, ArkmePluginResponse, ArkmeTimelineCursor } from '../types.js'
 import { backgroundUiReads, supportsBackgroundRead } from './background-read.js'
 import { socialWriteAction } from './social-write-policy.js'
 
@@ -117,6 +118,7 @@ export async function lookupArkmeRecordingImport(importPath: string, taskId: str
 }
 
 type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation
+  | 'recordings.ai-deletion.settings'
   | 'dictation.transcribe'
   | 'emoji.recent.list'
   | 'conversation.viewport.read'
@@ -170,6 +172,9 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.day.overview'
   | 'recordings.day'
   | 'recordings.transcript.page'
+  | 'recordings.transcript.locate'
+  | 'recordings.transcript.context'
+  | 'recordings.transcript.search'
   | 'recordings.compare'
   | 'recordings.compare.start'
   | 'recordings.strategies'
@@ -186,6 +191,9 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.workflow'
   | 'recordings.import.preflight'
   | 'recordings.import.strategies.register'
+  | 'recordings.import.tasks.register'
+  | 'recordings.import.tasks.cancel'
+  | 'recordings.import.tasks.fail'
   | 'recordings.import.status'
   | 'recordings.import.retry'
   | 'recordings.import.cancel'
@@ -202,6 +210,9 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'speaker-directory.avatars'
   | 'speaker-directory.similar'
   | 'speaker-directory.voice-samples'
+  | 'speaker-directory.group-members'
+  | 'speaker-directory.group-action'
+  | 'speaker-directory.correction-items'
   | 'recordings.speaker.presence'
   | 'recordings.speaker.members'
   | 'recordings.speaker.cached-options'
@@ -212,13 +223,17 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'recordings.speaker.unassign-item'
   | 'recordings.entities.feedback'
   | 'recordings.entities.feedback.undo'
+  | 'recordings.speaker.correction.items'
   | 'recordings.speaker.correction.context'
   | 'recordings.speaker.correction.result'
+  | 'recordings.speaker.correction.learning'
+  | 'recordings.speaker.correction.learning.retry'
   | 'recordings.speaker.correction.apply'
   | 'recordings.speaker.correction.undo'
   | 'topic.create'
   | 'topic.rename'
   | 'topic.home-visibility'
+  | 'topic.hidden-source'
   | 'topic.dissolve'
   | 'topic.dissolve.status'
   | 'topic.dissolve.active'
@@ -259,13 +274,16 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.message-copy-link'
   | 'source.message-copy-link.resolve'
   | 'source.message-copy-link.extend'
+  | 'source.message-extension.summaries'
   | 'source.message-extension.context'
   | 'source.message-extension.capabilities'
   | 'source.message-thoughts.query'
   | 'source.message-thought-continuations.query'
   | 'source.message-thought-continuations.retry'
-  | 'transcript.local.read'
-  | 'transcript.local.change'
+  | 'transcript.views.saved' | 'transcript.views.receipt' | 'transcript.views.capabilities'
+  | 'transcript.views.read'
+  | 'transcript.views.change'
+  | 'transcript.views.import'
   | 'source.local-message-mark.capabilities'
   | 'source.local-message-mark.list'
   | 'source.local-message-mark.change'
@@ -275,7 +293,7 @@ type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOpera
   | 'source.message-underline.change'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
-  | 'source.record-delete'
+  | 'source.record-delete' | 'source.chat-message-action'
   | 'source.record-topic.assign'
   | 'source.forward-messages'
   | 'message-actions.copy-link'
@@ -335,7 +353,7 @@ export async function callArkme<T>(
   operation: ArkmeUiOperation,
   params?: Record<string, unknown>,
   signal?: AbortSignal,
-  options?: { priority?: 'background' },
+  options?: { priority?: 'background'; avatarDownload?: true; traceId?: string; historyTrace?: import('../sdk/index.js').ArkmeSdkTransportOptions['historyTrace'] },
 ): Promise<T> {
   if (conversationWindowRequested() && !await conversationWindowBridge()?.active()) throw new Error('会话窗口已失效，请关闭后重新打开')
   const auth = arkmeAuthStore.getSnapshot().auth
@@ -362,7 +380,16 @@ export async function callArkme<T>(
   let cleanupBackground: (() => void) | undefined
   try {
     const parameters = accountKey === undefined ? params : { ...params, expectedAccountKey: params?.expectedAccountKey ?? accountKey }
-    const background = options?.priority === 'background' && supportsBackgroundRead(operation)
+    const background = options?.priority === 'background' && supportsBackgroundRead(operation, params)
+    const foregroundTimeline = (operation === 'source.timeline' || operation === 'source.timeline-around') && params?.background !== true
+      || operation === 'reactions' && params?.action === 'query' && params.readPriority === 'interactive'
+    // Continuation pages retain the Host's admission and directory trace.
+    const hostScheduledContinuation = operation === 'private-interaction.directory'
+      && typeof params?.cursor === 'string' && params.cursor.length > 0
+      && typeof params.expectedVersion === 'string' && /^[a-f0-9]{64}$/.test(params.expectedVersion)
+    // Host priority starts after loopback delivery. Do not let Chromium defer an admitted continuation.
+    const fetchPriority = hostScheduledContinuation ? 'high' : background ? 'low'
+      : foregroundTimeline || operation === 'team.app.timeline' || operation === 'team.app.preflight' ? 'high' : undefined
     const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
     const currentScope = () => {
       const current = arkmeAuthStore.getSnapshot().auth
@@ -387,19 +414,47 @@ export async function callArkme<T>(
     }
     const dispatch = async (requestSignal?: AbortSignal): Promise<T> => {
       if (background && currentScope() !== scope) throw changedAccount()
-      const value = await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
+      const query = operation === 'source.timeline' ? (parameters?.cursor as ArkmeTimelineCursor | undefined)?.unified : undefined
+      const localRead = typeof window === 'undefined' ? undefined : (window as Window & {
+        arkmeDesktop?: { localChatRead?: (account: string, input: unknown) => Promise<ArkmePluginResponse<T>> }
+      }).arkmeDesktop?.localChatRead
+      const localInput = operation === 'conversation.viewport.read' && parameters?.accountKey === scope
+        ? { kind: 'viewport', surface: parameters?.surface }
+        : query?.mode === 'initial' && query.cacheOnly === true && !query.cursor
+          ? { kind: 'timeline', sourceRef: parameters?.sourceRef, limit: parameters?.limit ?? 30, anchorId: query.anchorId }
+          : undefined
+      if (localRead && scope && localInput) {
+        requestSignal?.throwIfAborted()
+        const result = await localRead(scope, localInput)
+        requestSignal?.throwIfAborted()
+        if (currentScope() !== scope) throw changedAccount()
+        if (result.ok) return result.value
+        if (result.error.code !== 'chat-desktop-local-unsupported') throw new ArkmeClientError(result.error)
+      }
+      const traceId = operation === 'private-interaction.directory' ? options?.traceId : undefined
+      if (traceId) groupInteractionTrace('directory-bridge-dispatch', { traceId, priority: fetchPriority })
+      const value = fetchPriority === undefined && !options?.historyTrace && traceId === undefined && !background
+        ? await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal)
+        : await callProvider<T>(operation as ArkmePluginOperation, parameters, requestSignal, {
+          ...(fetchPriority === undefined ? {} : { priority: fetchPriority }),
+          ...(background ? { readPriority: 'background' as const } : {}),
+          ...(traceId ? { directoryTraceId: traceId } : {}),
+          ...(options?.historyTrace ? { historyTrace: options.historyTrace } : {}),
+        })
       if (background) {
         requestSignal?.throwIfAborted()
         if (currentScope() !== scope) throw changedAccount()
       }
       return value
     }
-    // Keep the permit until callProvider has consumed the entire JSON body.
-    // No key/recovery: existing owners retain deduplication and retry semantics.
-    const value = background ? await backgroundUiReads.run({
-      scope: scope ?? 'anonymous', lane: 'background-read', service: 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
+    // Limit background loopback occupancy, independently of the Host upstream budgets.
+    const imageService = operation === 'team.app.image' ? 'team'
+      : operation === 'image.read' && options?.avatarDownload ? 'chat' : undefined
+    const value = background && !hostScheduledContinuation ? await backgroundUiReads.run({
+      scope: scope ?? 'anonymous', lane: imageService !== undefined || operation === 'image.read' ? 'image' : 'background-read',
+      service: imageService ?? 'other', ...(backgroundSignal === undefined ? {} : { signal: backgroundSignal }),
       operation: dispatch,
-    }) : await dispatch(signal)
+    }) : await dispatch(backgroundSignal ?? signal)
     if (background) {
       // Account changes can arrive while the coordinator unwinds after dispatch.
       backgroundSignal?.throwIfAborted()

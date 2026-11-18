@@ -13,6 +13,11 @@ describe('similar speaker evidence contract', () => {
     expect(speakerGroupConsistencyLabel(parseGroupConsistency({ ...group(), state: 'partial', analyzed_count: 10 }))).toBe('93（局部）')
     expect(() => parseGroupConsistency({ ...group(), state: 'insufficient' })).toThrow()
   })
+  it('allows marked candidates only under negotiated schema 2', () => {
+    const parseMarked = (schema_version: number) => parseSpeakerSimilarity({ ...response(), schema_version }, raw => ({ ...person(String(raw)), type: 'marked' }))
+    expect(() => parseMarked(1)).toThrow()
+    expect(parseMarked(2)).toMatchObject({ items: [{ person: { type: 'marked' } }] })
+  })
   it.each(['metric', 'model', 'score', 'nan-distance', 'range', 'coverage', 'duplicate', 'self', 'cursor', 'building-rows', 'false-complete', 'definition'])('rejects %s evidence', kind => {
     const raw = response()
     if (kind === 'metric') raw.metric = 'similarity'

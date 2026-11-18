@@ -1,12 +1,15 @@
+import { arkmeDayKey } from './display-time-zone.js'
 import { recordOwnerId } from '../record-owner-id.js'
-import { cancelConversationFollow, followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
-import { useCallback, useLayoutEffect, type MutableRefObject, type RefObject } from 'react'
+import type { ArkmeUnifiedTimelineWindow } from '../unified-chat-timeline.js'
+import { cachedConversationUnreadCoverage } from './conversation-unread.js'
+import { cancelConversationFollow, conversationWindowActive, followConversationBottom, isConversationFollowing } from './conversation-bottom-follow.js'
+import { useCallback, useLayoutEffect, useRef, useState, type MutableRefObject, type RefObject } from 'react'
 import {
   arkmeConversationRestoredScrollTop,
   type ArkmeConversationViewportSnapshot,
 } from './conversation-memory-cache.js'
 
-/** Viewport persistence only; message data, cursors and access refs stay with their owners. */
+/** Viewport persistence only; message data and server cursors stay with their owners. */
 export interface ArkmeConversationViewportStore {
   getViewport(sourceKey: string): ArkmeConversationViewportSnapshot | undefined
   storeViewport(sourceKey: string, viewport: ArkmeConversationViewportSnapshot): void
@@ -15,22 +18,24 @@ export interface ArkmeConversationViewportStore {
 export interface ArkmeConversationViewportRestore {
   sourceKey: string
   viewport: ArkmeConversationViewportSnapshot | undefined
-  /** Explicit newer-page navigation, not a saved reading position. */
-  newerPageStartAnchorId?: string
   /** Capture before replacing rows; latest-edge alignment belongs to the same paint. */
   followLatest?: boolean | undefined
 }
 
-export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = false, captureLatestAnchor = false): ArkmeConversationViewportSnapshot {
-  const stickToBottom = !messagesOnly && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
-  if (stickToBottom && !captureLatestAnchor) return { scrollTop: root.scrollTop, stickToBottom: true }
+const readingAnchors = new WeakMap<HTMLDivElement, HTMLElement>()
+
+export function arkmeConversationViewport(root: HTMLDivElement, mode: 'auto' | 'messages' | 'history' | 'latest-anchor' = 'auto'): ArkmeConversationViewportSnapshot {
+  const stickToBottom = (mode === 'auto' || mode === 'latest-anchor') && conversationWindowActive(root)
+    && (isConversationFollowing(root) || root.scrollHeight - root.scrollTop - root.clientHeight <= 80)
+  if (stickToBottom && mode !== 'latest-anchor') return { scrollTop: root.scrollTop, stickToBottom: true }
   const rootRect = root.getBoundingClientRect()
-  for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
-    if (messagesOnly && !row.dataset.arkmeConversationRow?.startsWith('message:')) continue
+  const snapshot = (row: HTMLElement): ArkmeConversationViewportSnapshot | undefined => {
+    if (mode === 'messages' && !row.dataset.arkmeConversationRow?.startsWith('message:')) return undefined
     const rowRect = row.getBoundingClientRect()
-    if (rowRect.bottom <= rootRect.top || rowRect.top >= rootRect.bottom) continue
+    if (rowRect.bottom <= rootRect.top || rowRect.top >= rootRect.bottom) return undefined
     const anchorId = row.dataset.arkmeConversationRow
     if (anchorId !== undefined) {
+      readingAnchors.set(root, row)
       let messageAnchor: ArkmeConversationViewportSnapshot['messageAnchor']
       if (anchorId.startsWith('message:') && row.dataset.arkmeMessageItemUid) {
         const owner = recordOwnerId(row.dataset.arkmeMessageOwnerId)
@@ -42,16 +47,31 @@ export function arkmeConversationViewport(root: HTMLDivElement, messagesOnly = f
         anchorId,
         anchorOffset: rowRect.top - rootRect.top,
         ...(messageAnchor ? { messageAnchor } : {}),
+        ...(row.dataset.offlineContextRef ? { contextRef: row.dataset.offlineContextRef }
+          : row.dataset.arkmeSystemAnchorRef ? { systemRef: row.dataset.arkmeSystemAnchorRef } : {}),
       }
     }
   }
+  // Any surviving visible row is a stable reading anchor. Reuse it through
+  // small scrolls instead of walking every earlier mounted row on each event.
+  const previous = readingAnchors.get(root)
+  if (previous && root.contains?.(previous)) {
+    const value = snapshot(previous)
+    if (value) return value
+  }
+  for (const row of root.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')) {
+    if (row === previous) continue
+    const value = snapshot(row)
+    if (value) return value
+  }
+  readingAnchors.delete(root)
   return { scrollTop: root.scrollTop, stickToBottom }
 }
 
 /** Read actual message/interaction rows only when opening a calendar; never count system notices. */
 export function arkmeConversationReadingDate(root: HTMLDivElement | null, rows: readonly {
   id: string; kind: string; occurredAtMillis: number
-}[]): string | undefined {
+}[], timeZone?: string): string | undefined {
   if (root === null || root.clientHeight <= 0) return undefined
   const messages = rows.filter(row => row.kind === 'message' || row.kind === 'moment')
   // Use the actual bottom, not the wider auto-follow threshold: nearby history must retain its date.
@@ -65,10 +85,7 @@ export function arkmeConversationReadingDate(root: HTMLDivElement | null, rows: 
   const anchorId = atBottom ? messages.at(-1)?.id : visible?.dataset.arkmeConversationRow
   const timestamp = messages.find(row => row.id === anchorId)?.occurredAtMillis
   if (timestamp === undefined || !Number.isFinite(timestamp) || timestamp <= 0) return undefined
-  const date = new Date(timestamp)
-  if (!Number.isFinite(date.getTime())) return undefined
-  return [String(date.getFullYear()).padStart(4, '0'), String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0')].join('-')
+  return arkmeDayKey(timestamp, timeZone) || undefined
 }
 
 export function arkmeConversationTargetScrollTop(root: HTMLDivElement, row: HTMLElement, align: 'start' | 'center'): number {
@@ -109,7 +126,7 @@ export function arkmeConversationAnchorOffset(root: HTMLDivElement, anchorId: st
 }
 
 /** Bind the shared scrollport to its committed conversation, never to an outgoing cleanup. */
-export function useConversationViewport({ active, sourceKey, renderedSourceKey, bodyRef, store, pendingRestore, restoreIntent }: {
+export function useConversationViewport({ active, sourceKey, renderedSourceKey, bodyRef, store, pendingRestore, restoreIntent, readState, navigationRevision }: {
   active: boolean
   sourceKey: string
   renderedSourceKey: string
@@ -117,8 +134,82 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
   store: ArkmeConversationViewportStore
   pendingRestore: MutableRefObject<ArkmeConversationViewportRestore | undefined>
   restoreIntent?: MutableRefObject<boolean | undefined>
+  readState?: { through: number; latestSequence: number; window: ArkmeUnifiedTimelineWindow | undefined } | undefined
+  navigationRevision?: number | undefined
 }) {
   const ready = active && sourceKey !== '' && sourceKey === renderedSourceKey
+  const currentRead = useRef(readState)
+  currentRead.current = readState
+  const [unreadAnchorId, setUnreadAnchorId] = useState<string>()
+  const suspended = useRef<{ sourceKey: string; followLatest: boolean; pending: ArkmeConversationViewportRestore;
+    tailId?: string | undefined; through?: number | undefined;
+    checkedWindow?: ArkmeUnifiedTimelineWindow | undefined;
+    coverage?: ReturnType<typeof cachedConversationUnreadCoverage>;
+    attempted?: boolean; frontier?: number | undefined; mountAnchor?: string; mountPending?: boolean }>()
+  const cancelResume = useCallback(() => {
+    suspended.current = undefined
+    setUnreadAnchorId(undefined)
+  }, [])
+  const resume = useCallback(() => {
+    const saved = suspended.current, node = bodyRef.current
+    if (!ready || !saved || saved.sourceKey !== sourceKey || !node || node.clientHeight <= 0 || !conversationWindowActive(node)) return false
+    const pending = pendingRestore.current
+    // A search/unread/calendar navigation made while inactive still wins.
+    if (!saved.followLatest || pending && pending !== saved.pending
+      && (pending.sourceKey !== sourceKey || pending.followLatest === undefined)) { cancelResume(); return false }
+    const state = currentRead.current
+    if (saved.attempted && pending === undefined && saved.checkedWindow === state?.window
+      && saved.frontier === state?.latestSequence && !saved.mountPending) return true
+    saved.attempted = true
+    saved.frontier = state?.latestSequence
+    saved.mountPending = false
+    pendingRestore.current = undefined
+    const rows = [...node.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')]
+    const maximum = Math.max(0, node.scrollHeight - node.clientHeight)
+    let start: number | undefined
+    if (saved.through !== undefined && state) {
+      if (saved.checkedWindow !== state.window) {
+        saved.checkedWindow = state.window
+        saved.coverage = cachedConversationUnreadCoverage(state.window, saved.through)
+      }
+      const first = saved.coverage?.firstUnread
+      if (first) {
+        const event = state.window?.events.find(event => event.kind === 'message' && event.item === first)
+        const anchorId = event ? `message:${event.eventId}` : undefined
+        const row = rows.find(row => row.dataset.arkmeConversationRow === anchorId)
+        if (row) start = node.scrollTop + row.getBoundingClientRect().top - node.getBoundingClientRect().top
+        // Mount the cached target through the existing virtual list, without fetching.
+        else if (anchorId && saved.mountAnchor !== anchorId) {
+          saved.mountAnchor = anchorId
+          saved.mountPending = true
+          setUnreadAnchorId(anchorId)
+        }
+      } else if (saved.coverage && saved.coverage.counts.length > 0
+        && saved.through + saved.coverage.counts.length >= state.latestSequence) start = maximum
+    } else {
+      const tail = saved.tailId === undefined ? undefined : rows.find(row => row.dataset.arkmeConversationRow === saved.tailId)
+      if (tail && tail !== rows.at(-1)) start = node.scrollTop + tail.getBoundingClientRect().bottom - node.getBoundingClientRect().top
+    }
+    cancelConversationFollow(node)
+    if (start === undefined) {
+      // Missing cache coverage is not permission to skip unread messages.
+      const anchorOffset = arkmeConversationAnchorOffset(node, saved.pending.viewport?.anchorId)
+      node.scrollTop = arkmeConversationRestoredScrollTop(saved.pending.viewport, {
+        currentScrollTop: node.scrollTop, scrollHeight: node.scrollHeight,
+        ...(anchorOffset === undefined ? {} : { anchorOffset }),
+      })
+      store.storeViewport(sourceKey, arkmeConversationViewport(node, 'history'))
+      if (restoreIntent) restoreIntent.current = false
+      return true
+    }
+    const top = Math.max(0, Math.min(maximum, start))
+    cancelResume()
+    if (top >= maximum - 1) followConversationBottom(node, false, 'instant')
+    else node.scrollTop = top
+    store.storeViewport(sourceKey, arkmeConversationViewport(node))
+    if (restoreIntent) restoreIntent.current = top >= maximum - 1
+    return true
+  }, [ready, sourceKey, bodyRef, store, pendingRestore, restoreIntent, cancelResume])
   useLayoutEffect(() => {
     if (!ready) return
     const cached = store.getViewport(sourceKey)
@@ -132,17 +223,70 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
 
   useLayoutEffect(() => {
     const node = bodyRef.current
-    return () => { if (node) cancelConversationFollow(node) }
-  }, [ready, sourceKey, bodyRef])
+    if (!ready || !node) return
+    const doc = node.ownerDocument, view = doc?.defaultView
+    const suspend = () => {
+      if (conversationWindowActive(node)) { resume(); return }
+      if (node.clientHeight <= 0 || suspended.current?.sourceKey === sourceKey) return
+      const followLatest = store.getViewport(sourceKey)?.stickToBottom === true || isConversationFollowing(node)
+        || node.scrollHeight - node.scrollTop - node.clientHeight <= 80
+      cancelConversationFollow(node)
+      const viewport = arkmeConversationViewport(node, 'history')
+      store.storeViewport(sourceKey, viewport)
+      const pending = { sourceKey, viewport }
+      const tail = [...node.querySelectorAll<HTMLElement>('[data-arkme-conversation-row]')].at(-1)
+      suspended.current = { sourceKey, followLatest, pending,
+        tailId: tail?.dataset.arkmeConversationRow, through: currentRead.current?.through }
+      // Keep explicit navigation ahead of a suspended automatic latest update.
+      if (!pendingRestore.current || pendingRestore.current.sourceKey === sourceKey && pendingRestore.current.followLatest) {
+        pendingRestore.current = pending
+      }
+      if (restoreIntent) restoreIntent.current = false
+    }
+    view?.addEventListener('blur', suspend)
+    view?.addEventListener('focus', resume)
+    doc?.addEventListener('visibilitychange', suspend)
+    const onInput = () => { if (conversationWindowActive(node)) cancelResume() }
+    const inputEvents = ['wheel', 'touchstart', 'pointerdown', 'keydown'] as const
+    for (const type of inputEvents) node.addEventListener?.(type, onInput, { passive: true })
+    return () => {
+      cancelConversationFollow(node)
+      suspended.current = undefined
+      view?.removeEventListener('blur', suspend)
+      view?.removeEventListener('focus', resume)
+      doc?.removeEventListener('visibilitychange', suspend)
+      for (const type of inputEvents) node.removeEventListener?.(type, onInput)
+    }
+  }, [ready, sourceKey, bodyRef, store, pendingRestore, restoreIntent, resume, cancelResume])
+
+  useLayoutEffect(cancelResume, [sourceKey, store, navigationRevision, cancelResume])
 
   useLayoutEffect(() => {
+    if (resume()) return
     const pending = pendingRestore.current
     const body = bodyRef.current
     if (!ready || body === null || body.clientHeight <= 0 || pending?.sourceKey !== sourceKey) return
+    if (suspended.current && pending !== suspended.current.pending && pending.followLatest === undefined) {
+      suspended.current.followLatest = false
+    }
     const anchorOffset = arkmeConversationAnchorOffset(body, pending.viewport?.anchorId)
-    const newerPageStartOffset = arkmeConversationAnchorOffset(body, pending.newerPageStartAnchorId)
     const maximumScrollTop = Math.max(0, body.scrollHeight - body.clientHeight)
-    if (pending.followLatest && pending.viewport?.stickToBottom && pending.newerPageStartAnchorId === undefined) {
+    if (pending.followLatest && pending.viewport?.stickToBottom) {
+      const state = currentRead.current
+      if (state) {
+        const coverage = cachedConversationUnreadCoverage(state.window, state.through)
+        const first = coverage?.firstUnread
+        const event = first && state.window?.events.find(event => event.kind === 'message' && event.item === first)
+        const offset = event ? arkmeConversationAnchorOffset(body, `message:${event.eventId}`) : undefined
+        const unreadTop = offset === undefined ? undefined : body.scrollTop + offset
+        const readingTop = anchorOffset !== undefined && pending.viewport.anchorOffset !== undefined
+          ? body.scrollTop + anchorOffset - pending.viewport.anchorOffset : pending.viewport.scrollTop
+        if (first && (unreadTop === undefined || unreadTop >= readingTop + body.clientHeight - 1 && unreadTop < maximumScrollTop - 1)
+          || state.latestSequence > state.through && (coverage === undefined || state.through + coverage.counts.length < state.latestSequence)) {
+          suspended.current = { sourceKey, followLatest: true, pending, through: state.through }
+          if (resume()) return
+        }
+      }
       // A checkpoint may trim/prepend rows without changing total height. Keep
       // a surviving row at its pre-commit position before following the new tail.
       let rebased = false
@@ -153,33 +297,31 @@ export function useConversationViewport({ active, sourceKey, renderedSourceKey, 
           rebased = true
         }
       }
-      followConversationBottom(body, rebased)
+      // Actual new timeline arrivals resume normal motion after an explicit jump;
+      // ResizeObserver retargets keep the existing jump/follow intent intact.
+      followConversationBottom(body, rebased, 'animated')
     } else {
       cancelConversationFollow(body)
-      body.scrollTop = pending.newerPageStartAnchorId === undefined
-        ? arkmeConversationRestoredScrollTop(pending.viewport, {
-          currentScrollTop: body.scrollTop,
-          scrollHeight: body.scrollHeight,
-          ...(anchorOffset === undefined ? {} : { anchorOffset }),
-        })
-        : Math.max(0, Math.min(maximumScrollTop, newerPageStartOffset === undefined
-          ? pending.viewport?.scrollTop ?? body.scrollTop
-          : body.scrollTop + newerPageStartOffset))
+      body.scrollTop = arkmeConversationRestoredScrollTop(pending.viewport, {
+        currentScrollTop: body.scrollTop,
+        scrollHeight: body.scrollHeight,
+        ...(anchorOffset === undefined ? {} : { anchorOffset }),
+      })
     }
     store.storeViewport(sourceKey, arkmeConversationViewport(body))
     if (restoreIntent !== undefined) {
       // Deferred layout follows the requested position, not temporary geometry.
-      restoreIntent.current = pending.newerPageStartAnchorId === undefined
-        && (pending.viewport === undefined || pending.viewport.stickToBottom)
+      restoreIntent.current = pending.viewport === undefined || pending.viewport.stickToBottom
     }
     pendingRestore.current = undefined
   })
 
-  return useCallback(() => {
+  const remember = useCallback(() => {
     const body = bodyRef.current
     if (!ready || body === null || body.clientHeight <= 0) return undefined
     const viewport = arkmeConversationViewport(body)
     store.storeViewport(sourceKey, viewport)
     return viewport
   }, [ready, sourceKey, bodyRef, store])
+  return { remember, cancelResume, unreadAnchorId }
 }

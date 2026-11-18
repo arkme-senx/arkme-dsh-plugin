@@ -23,7 +23,9 @@ it.skipIf(!rootUrl)('runs Go HTTP handlers, Mongo snapshot, streamed ZIP and sav
   expect(preview.recordCount).toBe(1)
   const result = await owner.run({ expectedAccountScope: scope, confirmed: true, orderKind: 1, selection, previewUid: preview.previewUid })
   expect(result.count).toBe(1); expect(result.quotaFinalized).toBe(true)
-  expect((await readFile((await owner.read(result.fileRef)).path)).subarray(0, 2).toString()).toBe('PK')
+  const archive = await readFile((await owner.read(result.fileRef)).path)
+  expect(archive.subarray(0, 2).toString()).toBe('PK')
+  expect(archive.toString()).toContain('主题：真实主题 &lt;&amp;&gt; \\[测试\\]\n\nHTTP标题\n\n真实隔离数据库正文')
   expect((await ranges.state(scope, undefined, false)).chainVersion).toBe(0)
   expect((await owner.confirmSaved(scope, result.savedConfirmationRef!)).chainVersion).toBe(1)
   expect((await owner.confirmSaved(scope, result.savedConfirmationRef!)).chainVersion).toBe(1)
@@ -34,4 +36,25 @@ it.skipIf(!rootUrl)('runs Go HTTP handlers, Mongo snapshot, streamed ZIP and sav
   const dateResult = await owner.run({ expectedAccountScope: scope, confirmed: true, orderKind: 1, selection: { ...selection, mode: 'dates', startDate: '2026-11-03', endDate: '2026-11-03' }, previewUid: dates.previewUid })
   await owner.confirmSaved(scope, dateResult.savedConfirmationRef!)
   expect((await ranges.state(scope, undefined, false)).chainVersion).toBe(1)
+})
+
+it.skipIf(!rootUrl)('writes a folder and automatically commits its saved checkpoint against the real Go handler', async () => {
+  const backend=process.env.ARKME_RANGE_BACKEND_URL
+  if(!backend)throw new Error('Real isolated export backend is required')
+  const {RecordDirectoryExportService}=await import('../src/services/record-directory-export-service.js')
+  const {mkdtemp,readFile,rm}=await import('node:fs/promises')
+  const {join}=await import('node:path');const {tmpdir}=await import('node:os')
+  const root=await mkdtemp(join(tmpdir(),'go-folder-export-'))
+  const runtime={config:{environment:'test',fileStateDirectory:join(root,'host')},stateStore:{uniqueCode:async()=>root},requireSession:async()=>({userId:10001,refreshToken:'fixture'}),fetchImpl:fetch,authenticatedPost:async(path:string,body:unknown)=>{const response=await fetch(backend+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const value=await response.json();if(value.code!==0)throw new Error(value.message);return value.data}}
+  const service=new RecordDirectoryExportService(runtime as never);service.attach(async()=>root)
+  try{
+    const selected=await service.pick('test:10001'),selection={mode:'all',timeZone:'UTC',includeAttachments:false} as const
+    const preview=await service.preview('test:10001',selection,1,selected.destinationRef)
+    const result=await service.run({expectedAccountScope:'test:10001',confirmed:true,orderKind:1,selection,previewUid:preview.previewUid!,destinationRef:selected.destinationRef!})
+    expect(result.kind).toBe('directory');expect(result.count).toBe(1);expect(result.savedAtMillis).toBeGreaterThan(0)
+    const text = await readFile(join(root,'即我备份-test-10001',result.fileName),'utf8')
+    expect(text).toContain('真实隔离数据库正文')
+    expect(text).toContain('主题：真实主题 &lt;&amp;&gt; \\[测试\\]')
+    expect((await service.preview('test:10001',selection,1,selected.destinationRef)).localReplica).toBe(true)
+  }finally{service.dispose();await rm(root,{recursive:true,force:true})}
 })

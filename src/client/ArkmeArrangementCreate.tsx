@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
 import { ArkmeComposerSendButton } from './ArkmeComposerSendButton.js'
@@ -135,7 +136,7 @@ function ArrangementCreate({ accountScope, open, dateContext, onClose, onSaved }
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
       }
     }}>
-      <header><h2>{tr('添加安排')}</h2><button type="button" aria-label={tr('关闭')} disabled={saving} onClick={onClose}><X size={20} aria-hidden /></button></header>
+      <header><h2>{tr('添加安排')}</h2><ArkmeCloseButton type="button" aria-label={tr('关闭')} disabled={saving} onClick={onClose} /></header>
       {dateContext && <div className="arkme-arrangement-default-date" role="note">
         <span>{tr('默认日期：{date}', { date: dateContext.defaultDate })}</span>
         <small>{tr('未写日期时使用此日期，内容中的明确日期优先。')}</small>

@@ -2,6 +2,7 @@ import { openTeamEntryMessages } from '../../team-entry-navigation.js'
 import {TeamExternalChats} from '../../TeamExternalChats.js'
 import {ArkmeTeamAvatar} from '../../ArkmeTeamAvatar.js'
 import {TeamProfileEditor} from './TeamProfileEditor.js'
+import {TeamFeatureLinks} from './TeamFeatureLinks.js'
 import type {ArkmeTeamProfile} from '../../../team-profile-contract.js'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
@@ -308,9 +309,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     </header>
     {externalChatsOpen && <TeamExternalChats teamRef={page.team.teamRef} teamKey={page.team.key} teamName={page.team.name} onClose={()=>setExternalChatsOpen(false)}/>}
     <section className="arkme-team-features" aria-label={tr('团队功能')}>
-      <div className="arkme-team-features-container">
-        <h2>{tr('团队功能')}</h2>
-        <div className="arkme-team-feature-list">
+      <TeamFeatureLinks accountKey={accountKey} teamRef={page.team.teamRef}>
           <button type="button" className="arkme-team-feature" aria-haspopup="dialog" aria-expanded={!!syncTeam} disabled={codexBusy} onClick={() => { void openCodex() }}>
             <span className="arkme-team-feature-icon" aria-hidden="true">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -339,8 +338,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
             <span className="arkme-team-feature-icon" aria-hidden="true"><ChatCircle size={22}/></span>
             <span>{tr('对外私聊')}</span><span className="arkme-team-feature-arrow" aria-hidden="true">›</span>
           </button>
-        </div>
-      </div>
+      </TeamFeatureLinks>
     </section>
     <section className="arkme-team-members" aria-label={tr("{v0}的成员", { v0: page.team.name })}>
       <div className="arkme-team-members-container">
@@ -382,7 +380,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
     </section>
     {editing&&<TeamProfileEditor profile={editing} onClose={()=>setEditing(undefined)} onUpdated={profile=>{
       setEditing(undefined);if(profile)setState(current=>current.page?{...current,page:{...current.page,team:{...current.page.team,name:profile.name,profileRevision:profile.profileRevision,canEditProfile:profile.canEditProfile,avatar:profile.avatar}}}:current)
-      arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey)
+      arkmeContactsTab.invalidateDirectoryCache();invalidateTeamMessages(accountKey, false, {kind:'team.profile.changed'})
     }}/>}
     {syncTeam && <TeamCodexSyncDialog team={syncTeam} onClose={() => setSyncTeam(undefined)} onViewConversations={() => {
       setSyncTeam(undefined)
@@ -394,7 +392,7 @@ function ScopedTeamDetailPane({ accountKey, teamRef, initialView }: { accountKey
 
     {internalGroupOpen && <TeamInternalGroupDialog accountKey={accountKey} target={{ mode: 'create', teamJotmoId: page.team.jotmoId }} onClose={() => setInternalGroupOpen(false)} />}
     {/* A fresh directory read may reseal the same team. Keep this open command scoped to its original reference. */}
-    {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey) }} onClose={() => setMemberAdditionRef(undefined)} />}
+    {memberAdditionRef && <TeamAddMembersDialog accountKey={accountKey} teamRef={memberAdditionRef} teamName={page.team.name} onChanged={() => { void load(undefined, true); arkmeContactsTab.invalidateDirectoryCache(); invalidateTeamMessages(accountKey, false, {kind:'team.directory.changed'}) }} onClose={() => setMemberAdditionRef(undefined)} />}
     {page.team.currentUserRole !== 'owner' && <div className="arkme-team-detail-footer">
       {confirmLeave ? <div className="team-confirm" role="alert">
         <p>{tr('退出后将无法查看或回复团队对话。确认退出？')}</p>

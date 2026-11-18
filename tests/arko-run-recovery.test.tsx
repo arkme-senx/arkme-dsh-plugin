@@ -4,11 +4,13 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeArkoSurface } from '../src/client/ArkmeArkoSurface.js'
 import { readLatestArkoMessages } from '../src/client/arko-history-browser.js'
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { callArkme } from '../src/client/api.js'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { arkmeArkoProfileStore } from '../src/client/arko-profile-store.js'
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: vi.fn() }))
 beforeEach(() => {
+  arkoTimelineMemory.clear()
   vi.useFakeTimers()
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('requestAnimationFrame', () => 0)
@@ -16,7 +18,7 @@ beforeEach(() => {
   arkmeArkoProfileStore.activateUser(undefined)
   arkmeAuthStore.setAuth({ status: 'authenticated', environment: 'test', userId: 10001 })
 })
-afterEach(() => { arkmeArkoProfileStore.activateUser(undefined); vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks() })
+afterEach(() => { arkoTimelineMemory.clear(); arkmeArkoProfileStore.activateUser(undefined); vi.useRealTimers(); vi.unstubAllGlobals(); vi.clearAllMocks() })
 const running = (sessionId: number) => ({ messageId: 9, sessionId, role: 'assistant', text: '正在生成的实际回答', reasoning: '', status: 2, runUid: 'current-run', runStatus: 'running', createdAtMillis: 1000, createdRecordUids: [] })
 
 it.each([{ hiddenPages: 0, sessionId: 88 }, { hiddenPages: 2, sessionId: 88 }, { hiddenPages: 2, sessionId: 77 }])('restores current Run after candidate continuation: %j', async ({ hiddenPages, sessionId }) => {

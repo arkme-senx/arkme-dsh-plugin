@@ -3,7 +3,7 @@ import type { ArkmeRecordReeditSubmissionView } from '../record-reedit-contract.
 import type { ArkmeTimelineItem } from '../types.js'
 import { callArkme } from './api.js'
 import { localFileBlock } from './file-send-tasks.js'
-import { recordReeditBackground } from './record-reedit-background.js'
+import { recordReeditBackground, type RecordReeditPresentationView } from './record-reedit-background.js'
 
 /** Shared by display handoff and receipt acknowledgement; newer edits always win. */
 export function recordReeditProjectionSettled(item: ArkmeTimelineItem, job: ArkmeRecordReeditSubmissionView): boolean {
@@ -13,10 +13,10 @@ export function recordReeditProjectionSettled(item: ArkmeTimelineItem, job: Arkm
     && (item.status !== 1 || item.mediaUnavailable !== true))
 }
 
-export function projectRecordReedit(item: ArkmeTimelineItem, jobs: readonly ArkmeRecordReeditSubmissionView[]): ArkmeTimelineItem {
+export function projectRecordReedit(item: ArkmeTimelineItem, jobs: readonly RecordReeditPresentationView[]): ArkmeTimelineItem {
   const job = jobs.find(value => value.itemUid === item.itemUid)
   const version = item.recordVersion ?? item.version ?? 0
-  if (!job || item.status !== 1 || (job.result ? recordReeditProjectionSettled(item, job) : version > job.baseVersion)) return item
+  if (!job || item.status !== 1 || job.result?.appliedToCurrent === false || (job.result ? recordReeditProjectionSettled(item, job) : version > (job.projectionBaseVersion ?? job.baseVersion))) return item
   const voiceBlock = job.voiceFileAssetUid
     ? [...(item.contentBlocks ?? []), ...(job.voiceBlock ? [job.voiceBlock] : [])]
       .find(block => block.kind === 'audio' && block.fileAssetUid === job.voiceFileAssetUid)
@@ -60,7 +60,7 @@ export function useRecordReeditSubmissions(
   const { generation, requestGeneration } = scope.current
   const revision = useRef(0)
   const resumedGeneration = useRef(-1)
-  const [snapshot, setSnapshot] = useState<{ key: string; generation: number; requestGeneration: number; jobs: ArkmeRecordReeditSubmissionView[] }>({ key, generation, requestGeneration: -1, jobs: [] })
+  const [snapshot, setSnapshot] = useState<{ key: string; generation: number; requestGeneration: number; jobs: RecordReeditPresentationView[] }>({ key, generation, requestGeneration: -1, jobs: [] })
   const backgroundRevision = useSyncExternalStore(recordReeditBackground.subscribe, recordReeditBackground.getRevision, recordReeditBackground.getRevision)
   const jobs = useMemo(() => {
     const remote = snapshot.key === key && snapshot.generation === generation ? snapshot.jobs : []
@@ -80,8 +80,20 @@ export function useRecordReeditSubmissions(
     const jobs = await callArkme<ArkmeRecordReeditSubmissionView[]>('source.record-reedit.submissions', { sourceRef })
     if (scope.current.requestGeneration !== requestGeneration || scope.current.generation !== generation
       || scope.current.key !== key || started !== revision.current || !Array.isArray(jobs)) return
+    const local = recordReeditBackground.views(accountKey, sourceKey)
     if (reconcile) recordReeditBackground.observe(accountKey, sourceKey, jobs, true)
-    setSnapshot({ key, generation, requestGeneration, jobs })
+    setSnapshot(previous => {
+      const known = [...(previous.key === key && previous.generation === generation ? previous.jobs : []),
+        ...local]
+      const byId = new Map(known.map(job => [job.submissionId, job]))
+      const uncertainByItem = new Map(known.filter(job => job.state === 'uncertain').map(job => [job.itemUid, job]))
+      return { key, generation, requestGeneration, jobs: jobs.map(job => {
+        const uncertain = uncertainByItem.get(job.itemUid)
+        const prior = byId.get(job.submissionId) ?? (uncertain?.baseVersion === job.baseVersion
+          && uncertain.title === job.title && uncertain.textContent === job.textContent ? uncertain : undefined)
+        return prior?.projectionBaseVersion === undefined ? job : { ...job, projectionBaseVersion: prior.projectionBaseVersion }
+      }) }
+    })
   }, [sourceRef, accountKey, active, key, generation, requestGeneration, sourceKey])
   useEffect(() => {
     let disposed = false
@@ -105,7 +117,7 @@ export function useRecordReeditSubmissions(
     }
     return () => { disposed = true; clearTimeout(timer) }
   }, [refresh, active, sourceRef, accountKey, needsPolling, needsDiscovery, requestGeneration])
-  const accepted = useCallback((job: ArkmeRecordReeditSubmissionView) => {
+  const accepted = useCallback((job: RecordReeditPresentationView) => {
     if (scope.current.key !== key || scope.current.generation !== generation) return
     revision.current += 1
     setSnapshot(previous => ({ ...previous, key, generation, jobs: [...(previous.key === key && previous.generation === generation ? previous.jobs : []).filter(value => value.itemUid !== job.itemUid), job] }))

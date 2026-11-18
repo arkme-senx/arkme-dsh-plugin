@@ -55,3 +55,14 @@ it('pages and batches message filters, ignoring unavailable or unconfirmed entri
   expect(r.root.findAllByType('button')).toHaveLength(1) // the same entry is deduplicated across batches
   await act(async () => r.unmount())
 })
+
+it('drops personal message links when the same group is selected through delegation',async()=>{
+ api.offlineContext.mockImplementation(async input=>input.operation==='capability'?{supported:true}:{entries:[entry],hasMore:false})
+ let r!:ReactTestRenderer
+ await act(async()=>{r=create(<View/>)})
+ expect(r.root.findAllByType('button')).toHaveLength(1)
+ const requests=api.offlineContext.mock.calls.length
+ await act(async()=>r.update(<View chat={{...source,kind:'group_chat',accessKind:'team_delegation'}}/>))
+ expect(r.toJSON()).toBeNull();expect(api.offlineContext).toHaveBeenCalledTimes(requests)
+ await act(async()=>r.unmount())
+})

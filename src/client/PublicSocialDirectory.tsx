@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { IdentityCopyLinkButton } from './IdentityCopyLinkButton.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ArkmeSourceItem } from '../types.js'
@@ -112,7 +113,7 @@ export function PublicSocialDirectory({ accountScope, mode, currentUserId, profi
         </article>)}
         {hasMore && <button type="button" style={s.button} disabled={loading} onClick={() => load(cursor)}>{tr(loading ? '加载中…' : '加载更多')}</button>}
       </div>
-      {(selectedGroup || selectedPerson) && <aside style={s.detail} aria-label={tr('公开资料详情')}><button type="button" style={{ ...s.button, float: 'right' }} onClick={() => setSelected(undefined)} aria-label={tr('关闭详情')}>×</button>
+      {(selectedGroup || selectedPerson) && <aside style={s.detail} aria-label={tr('公开资料详情')}><ArkmeCloseButton type="button" style={{ ...s.button, float: 'right' }} onClick={() => setSelected(undefined)} aria-label={tr('关闭详情')} />
         {selectedGroup ? <><h2 style={s.name}>{selectedGroup.title}</h2><p style={s.description}>{selectedGroup.introduction || tr('暂无群介绍')}</p><p style={s.secondary}>{tr(selectedGroup.joinMode === 2 ? '加入此群需要审批' : '此群允许直接加入')}</p>{groupAction(selectedGroup)}{selectedGroup.joinRequest?.status === 1 && <p style={s.secondary}>{tr('申请正在等待审批，刷新后可查看最新状态。')}</p>}</> : selectedPerson && <><h2 style={s.name}>{selectedPerson.displayName || tr('即我用户')}</h2><p style={s.description}>{selectedPerson.introduction || tr('愿意认识新朋友')}</p><div style={s.actions}>{onOpenWorld && <button type="button" style={s.button} onClick={() => onOpenWorld(selectedPerson)}>{tr('看看 TA 的世界')}</button>}{personAction(selectedPerson)}<IdentityCopyLinkButton accountScope={accountScope} target={{ kind: 'person', userId: selectedPerson.userId }} label="复制个人链接" /></div></>}
       </aside>}
     </div>
@@ -122,16 +123,22 @@ export function PublicSocialDirectory({ accountScope, mode, currentUserId, profi
 
 export function PublicWorldGroups({ accountScope, userId, onOpen }: { accountScope: string; userId: number; onOpen(chatSessionUid?: string): void }) {
   useArkmeLocale()
-  const [page, setPage] = useState<PublicGroupPage>(), [error, setError] = useState(''), [revision, setRevision] = useState(0)
+  const [result, setResult] = useState<{ accountScope: string; userId: number; page?: PublicGroupPage; error?: string }>()
+  const [revision, setRevision] = useState(0)
   useEffect(() => {
-    const controller = new AbortController(); setPage(undefined); setError('')
-    void callArkme<PublicGroupPage>('social.groups.query', { accountScope, userId }, controller.signal).then(value => { if (!controller.signal.aborted) setPage(value) }).catch(e => { if (!controller.signal.aborted) setError(errorText(e)) })
+    const controller = new AbortController(); setResult(undefined)
+    void callArkme<PublicGroupPage>('social.groups.query', { accountScope, userId }, controller.signal)
+      .then(page => { if (!controller.signal.aborted) setResult({ accountScope, userId, page }) })
+      .catch(error => { if (!controller.signal.aborted) setResult({ accountScope, userId, error: errorText(error) }) })
     return () => controller.abort()
   }, [accountScope, userId, revision])
+  const current = result?.accountScope === accountScope && result.userId === userId ? result : undefined
+  if (current?.error) return <div role="alert" aria-label={tr('公开群聊读取失败')} style={{ ...s.secondary, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+    <span title={current.error}>{tr('暂时无法读取公开群聊')}</span><button type="button" style={s.button} onClick={() => setRevision(v => v + 1)}>{tr('重试')}</button>
+  </div>
+  const page = current?.page
+  if (!page?.items.length) return null
   return <section style={s.shelf} aria-label={tr('公开群聊')}><header style={{ ...s.header, marginBottom: 8 }}><h2 style={s.name}>{tr('公开群聊')}</h2><button type="button" style={{ ...s.button, marginLeft: 'auto' }} onClick={() => onOpen()}>{tr('查看全部')}</button></header>
-    {!page && !error && <p role="status" style={s.secondary}>{tr('正在读取公开群聊…')}</p>}
-    {error && <p role="alert" style={s.secondary}>{error} <button type="button" style={s.button} onClick={() => setRevision(v => v + 1)}>{tr('重试')}</button></p>}
-    {page && page.items.length === 0 && <p style={s.secondary}>{tr('暂时没有可展示的公开群聊')}</p>}
-    {page?.items.slice(0, 3).map(group => <button type="button" key={group.chatSessionUid} style={{ ...s.button, display: 'block', width: '100%', textAlign: 'left', marginTop: 8 }} onClick={() => onOpen(group.chatSessionUid)}>{group.title}</button>)}
+    {page.items.slice(0, 3).map(group => <button type="button" key={group.chatSessionUid} style={{ ...s.button, display: 'block', width: '100%', textAlign: 'left', marginTop: 8 }} onClick={() => onOpen(group.chatSessionUid)}>{group.title}</button>)}
   </section>
 }

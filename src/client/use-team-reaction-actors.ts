@@ -12,9 +12,9 @@ export function useTeamReactionActors(accountKey: string, people: readonly TeamI
   const userId = Number(accountKey.split(':').at(-1))
   useEffect(() => {
     const abort = new AbortController()
-    void callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, abort.signal)
+    void callArkme<ArkmeUserProfileSnapshot>('user.profile', undefined, abort.signal, { priority: 'background' })
       .then(async snapshot => snapshot.profile === null
-        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, abort.signal) : snapshot)
+        ? await callArkme<ArkmeUserProfileSnapshot>('user.profile.refresh', undefined, abort.signal, { priority: 'background' }) : snapshot)
       .then(snapshot => {
         if (!abort.signal.aborted && snapshot.profile?.userId === userId) setLoaded({ accountKey, profile: snapshot.profile })
       }).catch(() => { /* Keep known names; presentation cannot block reactions. */ })

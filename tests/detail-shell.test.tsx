@@ -143,3 +143,14 @@ it('retains hidden content without owning Escape, focus or resize observers', as
   expect(close).toHaveBeenCalledOnce()
   trigger.remove()
 })
+
+it('lets a shared modal own backdrop interaction without dismissing its underlying detail', async () => {
+  const outside=vi.fn()
+  await act(async()=>root.render(<ArkmeDetailShell title="详情" label="详情" onClose={()=>{}} onPointerDownOutside={outside}>正文</ArkmeDetailShell>))
+  const backdrop=document.createElement('div');backdrop.setAttribute('data-arkme-confirm-dialog-backdrop','true');document.body.append(backdrop)
+  backdrop.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,button:0}))
+  expect(outside).not.toHaveBeenCalled()
+  backdrop.remove()
+  document.body.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,button:0}))
+  expect(outside).toHaveBeenCalledOnce()
+})

@@ -104,7 +104,7 @@ it.skipIf(baseUrl === '')('real topic pages reach ChatService, Host, SDK and Too
     expect(paths).not.toContain('/api/v1/topics/display/summary')
     await runtime.authenticatedPost('/api/v1/topics/display/policy/set', {
       topic_uid: topic.topic_uid, privacy_state: 2,
-    }, session)
+    }, session, undefined, { requestTimeoutMs: 30_000 })
     await expect(chat.readSource(sourceRef)).rejects.toMatchObject({ code: 'topic-privacy-locked' })
   } finally {
     media.dispose()

@@ -81,7 +81,19 @@ describe('OpenAI generation', () => {
     expect(result.notes).toBe('1. 新增聊天记录导出。')
     const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).toBe('https://api.openai.com/v1/responses')
-    expect(JSON.parse(init.body as string)).toMatchObject({ model: 'configured-model', store: false, text: { format: { type: 'json_schema', strict: true } } })
+    expect(JSON.parse(init.body as string)).toMatchObject({ model: 'configured-model', store: false, reasoning: { effort: 'none' }, text: { format: { type: 'json_schema', strict: true } } })
+  })
+
+  it('allows two minutes per request within the five-minute generation deadline', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    try {
+      const fetchImpl = vi.fn(async () => modelResponse({ items }))
+      const result = await generateNotes(evidence, { apiKey: 'key', model: 'gpt-6-luna', fetchImpl })
+      expect(result.reason).toBe('generated')
+      expect(timeout.mock.calls.map(([milliseconds]) => milliseconds)).toEqual([300_000, 120_000])
+    } finally {
+      timeout.mockRestore()
+    }
   })
 
   it('regenerates overlong items instead of truncating them', async () => {
@@ -102,7 +114,9 @@ describe('OpenAI generation', () => {
   it('retries transient failures twice and falls back without leaking service errors', async () => {
     const fetchImpl = vi.fn(async () => new Response('secret error detail', { status: 429 }))
     const warn = vi.fn(), sleep = vi.fn()
-    expect((await generateNotes(evidence, { apiKey: 'key', model: 'model', fetchImpl, warn, sleep })).notes).toBe(fallbackNotes)
+    const result = await generateNotes(evidence, { apiKey: 'key', model: 'model', fetchImpl, warn, sleep })
+    expect(result).toMatchObject({ notes: fallbackNotes, failure: { stage: 'batch 1/1', detail: 'OpenAI HTTP 429' } })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('OpenAI HTTP 429'))
     expect(fetchImpl).toHaveBeenCalledTimes(3)
     expect(sleep).toHaveBeenCalledTimes(2)
     expect(JSON.stringify(warn.mock.calls)).not.toContain('secret error detail')
@@ -119,6 +133,26 @@ describe('OpenAI generation', () => {
     expect(result.candidates).toHaveLength(3)
   })
 
+  it('recovers validated candidates in release order when the merge returns no items', async () => {
+    const fix = { ...items[0], kind: 'fix', text: '修复转发入口。' }
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(modelResponse({ items: [fix] }))
+      .mockResolvedValueOnce(modelResponse({ items: [fix, ...items] }))
+      .mockResolvedValueOnce(modelResponse({ items: [] }))
+    const result = await generateNotes([{ ...evidence[0], text: 'x'.repeat(40000) }], { apiKey: 'key', model: 'model', fetchImpl })
+    expect(result).toMatchObject({ notes: '1. 新增聊天记录导出。\n2. 修复转发入口。', items: [...items, fix], reason: 'empty-merge-used-candidates' })
+    expect(result.candidates).toHaveLength(3)
+  })
+
+  it('identifies malformed model JSON at the merge stage without exposing its content', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(modelResponse({ items }))
+      .mockResolvedValueOnce(modelResponse({ items }))
+      .mockResolvedValueOnce(Response.json({ status: 'completed', output: [{ content: [{ type: 'output_text', text: 'private' }] }] }))
+    const result = await generateNotes([{ ...evidence[0], text: 'x'.repeat(40000) }], { apiKey: 'key', model: 'model', fetchImpl })
+    expect(result.failure).toEqual({ stage: 'merge', detail: 'Invalid model output JSON' })
+  })
+
   it('uses the fallback for empty changes, missing config and incomplete responses', async () => {
     const fetchImpl = vi.fn(async () => modelResponse({ items }, 'incomplete'))
     for (const options of [{}, { apiKey: 'key', model: 'model', fetchImpl }]) {
@@ -126,6 +160,55 @@ describe('OpenAI generation', () => {
     }
     expect((await generateNotes([], { fetchImpl })).notes).toBe(fallbackNotes)
     expect(fetchImpl).toHaveBeenCalledOnce()
+  })
+})
+
+describe('evidence budgets', () => {
+  it('keeps large unchanged context without charging it to the changed-code budget', async () => {
+    const project = await fixture()
+    for (let i = 0; i < 7; i++) await writeFile(join(project.root, `src/context${i}.ts`), 'x'.repeat(100000) + '\nold\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'context baseline')
+    const baseSHA = await git(project.root, 'rev-parse', 'HEAD')
+    for (let i = 0; i < 7; i++) await writeFile(join(project.root, `src/context${i}.ts`), 'x'.repeat(100000) + '\nnew\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'change short lines')
+    const onStats = vi.fn()
+    const result = await collectEvidence({ cwd: project.root, baseSHA, sourceSHA: await git(project.root, 'rev-parse', 'HEAD'), onStats })
+    expect(result.reduce((sum, item) => sum + item.text.length, 0)).toBeGreaterThan(600000)
+    expect(onStats).toHaveBeenCalledWith(expect.objectContaining({ files: 7, addedLines: 7, deletedLines: 7, changedCharacters: 56, contextCharacters: 700007 }))
+  })
+
+  it('rejects actual changed content above 600000 characters and reports its size', async () => {
+    const project = await fixture()
+    for (let i = 0; i < 7; i++) await writeFile(join(project.root, `src/large${i}.ts`), 'x'.repeat(90000) + '\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'large changes')
+    const onStats = vi.fn()
+    await expect(collectEvidence({ cwd: project.root, baseSHA: project.baseSHA, sourceSHA: await git(project.root, 'rev-parse', 'HEAD'), onStats })).rejects.toThrow('Changed product content exceeds limit')
+    expect(onStats).toHaveBeenCalledWith(expect.objectContaining({ changedCharacters: expect.any(Number) }))
+  })
+
+  it('accepts exactly 600000 changed characters including content that starts with +++', async () => {
+    const project = await fixture()
+    await writeFile(join(project.root, 'src/boundary.ts'), '++' + 'x'.repeat(599997) + '\n')
+    await git(project.root, 'add', '.')
+    await git(project.root, 'commit', '-m', 'boundary')
+    const onStats = vi.fn()
+    await collectEvidence({ cwd: project.root, baseSHA: project.sha, sourceSHA: await git(project.root, 'rev-parse', 'HEAD'), onStats })
+    expect(onStats).toHaveBeenCalledWith(expect.objectContaining({ changedCharacters: 600000, addedLines: 1 }))
+  })
+
+  it('scales the deadline with complete-text batches while retaining the request timeout', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    try {
+      const fetchImpl = vi.fn(async () => modelResponse({ items: [] }))
+      const result = await generateNotes([{ id: 'large', text: 'x'.repeat(200000) }], { apiKey: 'key', model: 'model', fetchImpl })
+      expect(result.generationStats).toEqual({ batches: 10, deadlineMs: 1200000 })
+      expect(timeout.mock.calls[0]).toEqual([1200000])
+      expect(timeout.mock.calls.slice(1).every(([ms]) => ms === 120000)).toBe(true)
+      expect(fetchImpl).toHaveBeenCalledTimes(10)
+    } finally { timeout.mockRestore() }
   })
 })
 
@@ -148,6 +231,20 @@ describe('release range and durable recovery', () => {
     expect(second.notes).toBe(first.notes)
     expect(fetchImpl).toHaveBeenCalledOnce()
     expect(await readFile(join(project.directory, 'notes.txt'), 'utf8')).toBe(first.notes)
+  })
+
+  it('persists the failure detail on disk and on a retry after Backend creation', async () => {
+    const project = await fixture()
+    const backend = async (id: string) => id === runtimeVersionID('0.1.0')
+      ? { ...activated, id, version: '0.1.0', source_revision: project.baseSHA } : undefined
+    const options = { cwd: project.root, directory: project.directory, version, sourceSHA: project.sha, backend, github: async () => [],
+      modelOptions: { apiKey: 'key', model: 'model', fetchImpl: async () => new Response('private', { status: 403 }) } }
+    await prepareRelease(options)
+    const readFailure = async () => JSON.parse(await readFile(join(project.directory, 'record.json'), 'utf8')).failure
+    const expected = { stage: 'batch 1/1', detail: 'OpenAI HTTP 403' }
+    expect(await readFailure()).toEqual(expected)
+    await prepareRelease({ ...options, backend: async () => ({ ...activated, notes: fallbackNotes, source_revision: project.sha }) })
+    expect(await readFailure()).toEqual(expected)
   })
 
   it('rejects a conflicting Tag before generating or publishing anything', async () => {

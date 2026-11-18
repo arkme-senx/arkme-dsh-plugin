@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { IdentityShareActionResult, IdentityShareCard } from '../identity-share-contract.js'
 import { callArkme } from './api.js'
@@ -155,7 +156,7 @@ function IdentityCard({ accountScope, url }: { accountScope: string; url: string
       {card && <>
         <p style={{ margin: 0, color: t.secondary }}>{tr('群主：')}{card.creatorDisplayName}</p>
         <p style={{ margin: 0, color: t.secondary }}>{tr(card.hasJoined ? '你已在此群聊中' : card.joinMode === 2 ? '加入此群需要审批' : '点击加入后即可进入群聊')}</p>
-        <p style={{ margin: 0, fontSize: 12, color: t.secondary }}>{tr('邀请有效期至：')}{new Date(card.expireAtMillis).toLocaleString()}</p>
+        <p style={{ margin: 0, fontSize: 12, color: t.secondary }}>{tr('邀请有效期至：')}{formatArkmeDateTime(card.expireAtMillis)}</p>
         <button type="button" style={smallButton} disabled={busy} aria-label={tr('复制群聊链接')} onClick={() => { void copyGroupLink() }}>{tr(copied ? '链接已复制' : '复制群聊链接')}</button>
       </>}
       {!loading && <button type="button" style={smallButton} disabled={busy || refreshing} onClick={() => { void read() }}>{tr('刷新名片')}</button>}

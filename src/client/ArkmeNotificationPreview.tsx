@@ -1,6 +1,6 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArkmeNotificationCenter } from './ArkmeNotificationCenter.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import { arkmeTheme } from './arkme-theme.js'
@@ -32,8 +32,8 @@ export function ArkmeNotificationPreview({ onClose, onOpen }: { onClose(): void;
           else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog.current)) { event.preventDefault(); first?.focus() }
         }
       }}>
-      <ArkmeNotificationCenter preview headerAction={<button type="button" aria-label={tr('关闭通知预览')} onClick={onClose}
-        style={{ justifySelf: 'end', display: 'flex', border: 0, padding: 6, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' }}><X size={20} /></button>} />
+      <ArkmeNotificationCenter preview headerAction={<ArkmeCloseButton type="button" aria-label={tr('关闭通知预览')} onClick={onClose}
+        style={{ justifySelf: 'end', display: 'flex', border: 0, padding: 6, background: 'transparent', color: arkmeTheme.secondary, cursor: 'pointer' }} />} />
       <footer style={{ flexShrink: 0, padding: '8px 16px', borderTop: `1px solid ${arkmeTheme.borderSoft}`, textAlign: 'right' }}>
         <button type="button" onClick={() => { onClose(); onOpen() }} style={{ border: 0, padding: '6px 8px', background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', fontSize: 13 }}>{tr('打开通知')}</button>
       </footer>

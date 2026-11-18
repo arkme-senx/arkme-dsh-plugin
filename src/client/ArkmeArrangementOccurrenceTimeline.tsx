@@ -1,3 +1,5 @@
+import { FileText } from '@phosphor-icons/react/dist/icons/FileText'
+import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ArkmeArrangementItem } from '../types.js'
 import type {
@@ -76,7 +78,7 @@ export function ArkmeArrangementOccurrenceTimeline({
   return (
     <section className="arkme-occurrence-timeline" aria-label={tr('识别记录')}>
       <style>{css}</style>
-      <h3>{tr('识别记录')}</h3>
+      <h3><FileText className="arkme-arrangement-section-icon" size={18} aria-hidden />{tr('识别记录')}</h3>
       {!events.length && (
         <p className="arkme-occurrence-muted">
           {tr('历史安排尚未记录实际识别时间，以下原文时间不代表识别时间。')}
@@ -86,7 +88,7 @@ export function ArkmeArrangementOccurrenceTimeline({
         <article key={event.id}>
           <header>
             <strong>{tr(sourceLabels[event.source] ?? event.source)}</strong>
-            <span>
+            <span data-disposition={event.disposition}>
               {tr(
                 event.disposition === 'new'
                   ? '首次识别'
@@ -119,7 +121,7 @@ export function ArkmeArrangementOccurrenceTimeline({
             }}
           >
             <summary>
-              {tr('识别来源')} ({event.evidence_ids.length})
+              <CaretRight className="arkme-arrangement-disclosure-icon" size={16} aria-hidden />{tr('识别来源')} ({event.evidence_ids.length})
             </summary>
             {expanded.has(event.id) &&
               event.evidence_ids

@@ -38,3 +38,22 @@ it('rejects a removed clip and a canceled read without returning the saved excer
     expect(f.post).toHaveBeenCalledTimes(1)
   } finally { f.service.dispose() }
 })
+
+it('prepares a paged UI selection once using Audio owner offsets, keeping the persisted locator format', async () => {
+  const {createHash}=await import('node:crypto')
+  const {quoteSourceContent,quoteCanonicalText}=await import('../../src/message-quote.js')
+  const {matchExcerptOriginal}=await import('../../src/services/excerpt-original.js')
+  const fragment='  相同 😀 相同文字  ',prefix='前文 😀\n',text=prefix+fragment+'后文',f=fixture(text)
+  const start=Array.from(prefix).length
+  vi.spyOn(f.service as any,'openRecordingItemRef').mockResolvedValue({sessionId:recordingId,childId,asrItemIndex:0,transcriptSource:'system',dateStamp:f.at,startAtMillis:f.at,endAtMillis:f.at+1000,textStartOffset:start,textEndOffset:start+Array.from(fragment).length})
+  const canonical=quoteCanonicalText({textContent:fragment}),selected='相同文字',offset=canonical.indexOf(selected)
+  const quote={version:1 as const,sourceLabel:'录音',senderName:'作者',sourceAtMillis:f.at,text:selected,sourceSelection:{projection:'arkme-text-v1' as const,source_digest:createHash('sha256').update(quoteSourceContent({textContent:fragment})).digest('hex'),start:offset,end:offset+selected.length}}
+  try {
+    const prepared=await f.service.prepareExcerptSelection('opaque-item',quote)
+    expect(prepared.source.segment_uid).toBe(f.ref)
+    expect(prepared.sourceSelection?.source_digest).toBe(createHash('sha256').update(quoteSourceContent({textContent:text})).digest('hex'))
+    const original=matchExcerptOriginal({title:'录音',text},{...quote,sourceSelection:prepared.sourceSelection} as never)
+    expect(quoteCanonicalText({textContent:text}).slice(original.selection!.start,original.selection!.end)).toBe(selected)
+    expect(f.post).toHaveBeenCalledOnce()
+  } finally { f.service.dispose() }
+})

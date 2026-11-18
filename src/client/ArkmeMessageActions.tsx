@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Globe } from '@phosphor-icons/react/dist/icons/Globe'
 import type { WorldPublishOrigin } from '../world-publish-source.js'
 import { openWorldPublish } from './world-publish-entry.js'
@@ -436,7 +437,7 @@ export function useArkmeMessageActions(input: {
     {status !== '' && <div style={styles.status} role="status">{status}</div>}
     {picker !== undefined && <div style={styles.backdrop} onMouseDown={event => { if (event.target === event.currentTarget && busy !== 'forward') setPicker(undefined) }}>
       <section style={styles.dialog} role="dialog" aria-modal="true" aria-label={tr("选择转发对象")}>
-        <header style={styles.dialogHeader}><h3 style={styles.dialogTitle}>{tr("转发给")}</h3><button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭转发对象选择")} style={styles.closeButton} disabled={busy === 'forward'} onClick={() => { setPicker(undefined) }}><MessageActionIcon kind="close" size={16} /></button></header>
+        <header style={styles.dialogHeader}><h3 style={styles.dialogTitle}>{tr("转发给")}</h3><ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭转发对象选择")} style={styles.closeButton} disabled={busy === 'forward'} onClick={() => { setPicker(undefined) }} /></header>
         <div style={styles.searchWrap}>
           <ArkmeForwardSearch value={picker.keyword} disabled={busy === 'forward'} onChange={event => { setPicker({ ...picker, keyword: event.target.value }) }} />
         </div>

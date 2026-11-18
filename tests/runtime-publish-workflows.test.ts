@@ -55,8 +55,23 @@ describe('Arkme runtime publish workflow boundaries', () => {
       ? ['pnpm install --frozen-lockfile --ignore-scripts', 'pnpm install --frozen-lockfile']
       : ['pnpm install --frozen-lockfile'])
     const build = commands.indexOf('pnpm run build')
-    const pack = commands.findIndex(line => /^(pnpm run pack:runtime|npm pack)/.test(line))
+    const pack = commands.findIndex(line => /^(pnpm (?:--config\.\S+ )*(?:run pack:runtime|pack)|npm pack)/.test(line))
     if (pack !== -1) expect(pack).toBeGreaterThan(build)
+  })
+
+  it('uses the locked pnpm packer for bundled dependencies and preserves npm provenance/integrity publishing', async () => {
+    const source = await workflow('publish-plugin-release.yml')
+    const definition = parse(source)
+    const prepare = definition.jobs.prepare.steps.map((step: any) => step.run ?? '').join('\n')
+    const publish = definition.jobs.publish.steps.map((step: any) => step.run ?? '').join('\n')
+    const pack = 'pnpm --config.verifyDepsBeforeRun=warn --config.ignore-scripts=true pack --pack-destination "$pack_directory"'
+    expect(prepare).toContain(pack)
+    expect(publish).toContain(pack)
+    expect(source).not.toMatch(/\bnpm pack\b/)
+    expect(publish).toContain('npm publish "$RELEASE_TARBALL" --access public --provenance')
+    expect(publish).toContain('registry_integrity')
+    expect(publish).toContain('RELEASE_INTEGRITY')
+    expect(prepare.indexOf('pnpm run build')).toBeLessThan(prepare.indexOf(pack))
   })
 
   it.each(['publish-plugin-release.yml', 'prepare-plugin-release.yml'])(
@@ -111,6 +126,9 @@ describe('Arkme runtime publish workflow boundaries', () => {
     expect(JSON.stringify(dispatchJob)).not.toMatch(/needs\.publish|secrets\./)
     const production = parse(await workflow('publish-production-runtime.yml'))
     expect(production.on.repository_dispatch.types).toContain('arkme-plugin-release-prepared')
+    expect(dispatch.env.BUILD_CREATOR).toBe('${{ github.event.pull_request.merged_by.login }}')
+    expect(dispatch.run).toContain('build_creator: $build_creator')
+    expect(production['run-name']).toContain('github.event.client_payload.build_creator')
     expect(dispatch.run).toContain('arkme-plugin-release-prepared')
   })
 

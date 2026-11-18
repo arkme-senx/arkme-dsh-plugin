@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { ArkmeLongArticleDialog, ArkmeLongArticleSnapshotDialog } from './ArkmeLongArticleDialog.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeTheme as theme } from './arkme-theme.js'
@@ -6,6 +6,8 @@ import { longArticleAccountKey, longArticleWindowBridge, type LongArticleWindowT
 import { ArkmeBrowseWindow } from './ArkmeBrowseWindow.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { connectLongArticleRealtime } from './long-article-realtime.js'
+
+const TeamArticleWindowContent = lazy(async () => ({ default: (await import('./TeamArticleWindowContent.js')).TeamArticleWindowContent }))
 
 export function ArkmeLongArticleWindow() {
   useArkmeLocale()
@@ -16,8 +18,8 @@ export function ArkmeLongArticleWindow() {
   const eventAccount = !invalidated && target?.surface !== 'location' ? target?.accountKey : undefined
   useEffect(() => {
     if (!eventAccount) return
-    return connectLongArticleRealtime(() => longArticleAccountKey() === eventAccount)
-  }, [eventAccount])
+    return connectLongArticleRealtime(() => longArticleAccountKey() === eventAccount, target?.article?.teamRead ? eventAccount : undefined)
+  }, [eventAccount, !!target?.article?.teamRead])
   useEffect(() => {
     if (!bridge) { setError('当前客户端不支持独立长文窗口'); return }
     let active = true
@@ -58,6 +60,9 @@ export function ArkmeLongArticleWindow() {
     {error && <button onClick={() => { void bridge?.close() }}>{tr('关闭')}</button>}
   </div>
   if (target.surface) return <ArkmeBrowseWindow target={target} invalidated={invalidated} />
+  if (target.article?.teamRead) return <Suspense fallback={<p role="status">{tr('正在加载长文…')}</p>}>
+    <TeamArticleWindowContent target={target} article={target.article.teamRead} windowMode={mode} onClose={() => { void bridge?.close() }} />
+  </Suspense>
   if (target.article?.mode === 'snapshot') return <ArkmeLongArticleSnapshotDialog standalone windowMode={mode} item={target.article.item} onClose={() => { void bridge?.close() }} />
   return <ArkmeLongArticleDialog key={JSON.stringify([target.accountKey, target.sourceKey, target.composition])} sourceRef={target.sourceRef}
     draftScope={target.composition?.draftScope} representation={target.composition?.representation} windowMode={mode} sendOnConfirm={!target.autoPublish} {...(target.article ? { item: target.article.item } : {})}

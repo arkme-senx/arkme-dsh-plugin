@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -47,7 +48,7 @@ export function ArkmeCallVideoPlayer({ clip, onClose }: { clip: ArkmeCallVideoPe
   const content = <div role="dialog" aria-modal="true" aria-label={tr("通话录像播放")} data-arkme-video-overlay="true" onClick={event => { if (event.target === event.currentTarget) onClose() }} style={{ position: 'fixed', inset: 0, zIndex: 2147483647, background: 'rgba(0,0,0,.6)', display: 'grid', placeItems: 'center' }}>
     <div ref={panel} style={{ position: 'relative', width: 'min(920px, calc(100vw - 48px))', height: 'min(640px, calc(100dvh - 80px))', overflow: 'hidden', borderRadius: 12, background: '#000', color: '#fff' }}>
       <video ref={video} playsInline preload="metadata" src={clip.videoUrl} poster={clip.posterUrl} aria-label={tr("通话录像")} onClick={toggle} onPlay={() => { setPlaying(true); setError(false) }} onPause={() => { setPlaying(false) }} onEnded={() => { setPlaying(false) }} onError={() => { setError(true) }} onTimeUpdate={event => { setPosition(event.currentTarget.currentTime) }} onDurationChange={event => { setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0) }} style={{ display: 'block', width: '100%', height: '100%', objectFit: 'contain' }} />
-      <button ref={close} type="button" aria-label={tr("关闭录像")} title={tr("关闭录像")} onClick={onClose} style={{ ...iconButton, position: 'absolute', top: 12, right: 12 }}><XIcon size={18} /></button>
+      <ArkmeCloseButton ref={close} type="button" aria-label={tr("关闭录像")} title={tr("关闭录像")} onClick={onClose} style={{ ...iconButton, position: 'absolute', top: 12, right: 12 }} />
       {!playing && <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', display: 'grid', justifyItems: 'center', gap: 12 }}>
         <button type="button" aria-label={tr("播放录像")} title={tr("播放")} onClick={toggle} style={{ ...iconButton, width: 52, height: 52, borderRadius: '50%', background: 'rgba(0,0,0,.6)' }}><PlayIcon size={26} weight="fill" /></button>
         <span style={{ fontSize: 16, fontWeight: 600, whiteSpace: 'nowrap' }}>{clock(position)} / {clock(duration)}</span>

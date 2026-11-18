@@ -1,9 +1,9 @@
+import { WorldSubscriberNoticeActions } from './WorldSubscriptions.js'
 import { useEffect, useState } from 'react'
 import type { ArkmeArrangementDetail } from '../types.js'
 import type { ArkmeNotificationItem, ArkmeNotificationKind } from './ArkmeNotificationCenter.js'
 import officialIcon from '../../assets/notification-icons/verify-linear.svg'
 import arrangementIcon from '../../assets/notification-icons/calendar-linear.svg'
-import reactionIcon from '../../assets/notification-icons/emoji-happy-linear.svg'
 import worldIcon from '../../assets/notification-icons/global-linear.svg'
 import aiIcon from '../../assets/notification-icons/sms-linear.svg'
 import recordingIcon from '../../assets/notification-icons/microphone-linear.svg'
@@ -17,8 +17,8 @@ import { tr } from './locale.js'
 
 // Keep the sender identities aligned with Flutter's MobileUnifiedNotificationPage.
 const notificationIcons: Record<ArkmeNotificationKind, string> = {
-  official: officialIcon, arrangement: arrangementIcon, reaction: reactionIcon,
-  world: worldIcon, ai: aiIcon, recording: recordingIcon,
+  official: officialIcon, arrangement: arrangementIcon,
+  world: worldIcon, subscription: worldIcon, ai: aiIcon, recording: recordingIcon,
 }
 
 function NotificationAvatar({ kind }: { kind: ArkmeNotificationKind }) {
@@ -71,11 +71,12 @@ export function ArkmeNotificationMessage({ item, scope, category, timeLabel, onO
           <h3><ArkmeRichText text={item.title} /></h3>
           {item.sourceLabel && <div className="arkme-notification-source">{item.sourceLabel}</div>}
           {item.recording ? <ArkmeRecordingNotificationDetail notice={item.recording} embedded readOnly={readOnly} /> : <>
-            {item.preview !== item.title && !(item.kind === 'official' && expanded) && <div className={`arkme-notification-text${item.kind === 'reaction' ? ' arkme-notification-original' : ''}${long && !expanded ? ' arkme-notification-text--collapsed' : ''}`}><ArkmeRichText text={item.preview} /></div>}
+            {item.preview !== item.title && !(item.kind === 'official' && expanded) && <div className={`arkme-notification-text${long && !expanded ? ' arkme-notification-text--collapsed' : ''}`}><ArkmeRichText text={item.preview} /></div>}
             {item.kind === 'official' && expanded && <ArkmeOfficialNotificationDetail id={item.id.slice('official:'.length)} scope={scope} embedded />}
             {item.arrangement && expanded && !readOnly && <ArrangementNoticeContent arrangementRef={item.arrangement.arrangementRef} />}
             {canExpand && <button type="button" className="arkme-notification-link" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? tr('收起') : item.kind === 'arrangement' && !readOnly ? tr('查看安排') : tr('展开全文')}</button>}
-            {!readOnly && (item.kind === 'world' || item.kind === 'reaction') && <div><button type="button" className="arkme-notification-link" disabled={busy} onClick={() => onOpen(item)}>{item.kind === 'world' ? tr('查看互动') : tr('查看原消息')} →</button></div>}
+            {!readOnly && (item.kind === 'world' || item.kind === 'subscription' && (item.subscription?.kind === 'subscriber' || item.subscription?.publication)) && <div><button type="button" className="arkme-notification-link" disabled={busy} onClick={() => onOpen(item)}>{item.subscription ? tr(item.subscription.kind === 'subscriber' ? '查看订阅者' : '查看公开内容') : tr('查看互动')} →</button></div>}
+            {!readOnly && item.subscription?.kind === 'subscriber' && <WorldSubscriberNoticeActions account={scope} notice={item.subscription} />}
           </>}
         </div>
       </div>

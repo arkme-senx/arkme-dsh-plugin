@@ -77,3 +77,24 @@ it('retains local storage for unrelated built-in and notification entries',async
  expect(notificationDirectoryPreferences.read('prod:77')).toBe(true)
  expect(vi.mocked(callArkme).mock.calls.filter(([op])=>op==='directory.preferences.set')).toHaveLength(2)
 })
+
+it('retries a read that was still pending at reconnect without replaying writes', async () => {
+  let failRead!: (error: Error) => void
+  const transport = vi.fn()
+    .mockImplementationOnce(() => new Promise((_resolve, reject) => { failRead = reject }))
+    .mockResolvedValueOnce({ 'builtin:self': pin })
+    .mockRejectedValueOnce(new Error('disk full'))
+  const store = new LocalDirectoryPreferenceStore(transport)
+  const failed = store.hydrate('test:3016').catch(() => {})
+  await vi.waitFor(() => expect(failRead).toBeTypeOf('function'))
+  const signal = new AbortController().signal
+  const recovered = store.recoverRead('test:3016', signal)
+  failRead(new Error('offline'))
+  await Promise.all([failed, recovered])
+  expect(store.read('test:3016')['builtin:self']).toEqual(pin)
+  await expect(store.set('test:3016', 'builtin:self', unpin)).rejects.toThrow('保存未确认')
+  await store.recoverRead('test:3016', signal)
+  expect(transport.mock.calls.map(([operation]) => operation)).toEqual([
+    'directory.preferences.read', 'directory.preferences.read', 'directory.preferences.set',
+  ])
+})

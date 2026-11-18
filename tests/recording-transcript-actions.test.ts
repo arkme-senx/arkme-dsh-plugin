@@ -236,11 +236,11 @@ describe('recording copy-link common pipeline', () => {
     const signal = new AbortController().signal
     await service.copyRecordingLink(view.system.items.map(item => item.itemRef).reverse(), signal)
     expect(chatPost).toHaveBeenCalledWith('/api/v1/chats/messages/copy-link/get-or-create', { sources: [{
-      kind: 'audio_session', session_id: '100000000000000000000001', selection: { kind: 'long_recording_segments', segments: [
+      kind: 'audio_session', include_audio: true, session_id: '100000000000000000000001', selection: { kind: 'long_recording_segments', segments: [
         { child_id: '200000000000000000000001', asr_item_index: 0, transcript_source: 'system' },
         { child_id: '200000000000000000000001', asr_item_index: 1, transcript_source: 'system' },
       ] },
-    }] }, session, signal)
+    }] }, session, signal, { requestTimeoutMs: 135_000 })
     expect(JSON.stringify(chatPost.mock.calls)).not.toContain('系统第一段')
     await service.copyRecordingLink([view.doubao.items[0]!.itemRef])
     expect(chatPost.mock.calls.at(-1)?.[1]).toMatchObject({ sources: [{ selection: { segments: [{ transcript_source: 'doubao' }] } }] })

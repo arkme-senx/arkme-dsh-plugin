@@ -78,6 +78,7 @@ it('does not describe a failed speaker index as still processing', async () => {
   mocks.call.mockImplementation(async (op, input) => op === 'people.list' ? { source: input.source, items: input.source === 'speakers' ? [speaker] : [] } : { state: 'failed', dayCount: 0, items: [], lastSeenAt: 0 })
   await act(async () => root.render(<PeopleSurface accountScope="failed-index" onBack={() => {}}/>))
   await act(async () => (host.querySelector('.people-row') as HTMLButtonElement).click())
+  expect(host.textContent).not.toContain('用于录音标记')
   await click('查看录音')
   expect(host.textContent).toContain('录音出现记录读取失败')
   expect(host.textContent).not.toContain('录音出现记录仍在整理')
@@ -89,6 +90,8 @@ it('publishes each relation page, retains partial results on a later error and r
     : input.cursor ? new Promise(resolve => { finish = resolve }) : { source: 'relations', items: [relation], nextCursor: 'second-page' })
   await act(async () => root.render(<PeopleSurface accountScope="paged" onBack={() => {}}/>))
   expect(host.querySelectorAll('.people-row')).toHaveLength(1)
+  expect(mocks.call.mock.calls.some(([op, p]) => op === 'people.list' && p.cursor === 'second-page')).toBe(false)
+  await click('加载更多人物')
   expect(host.textContent).toContain('关系人物 · 1 加载中')
   expect(mocks.call.mock.calls.some(([op, p]) => op === 'people.list' && p.cursor === 'second-page')).toBe(true)
   await act(async () => finish({ source: 'relations', items: [{...relation, key: 'e2', personKey: 'u2', name:'第二位'}] }))
@@ -155,3 +158,75 @@ it('resumes a page interrupted by new identity facets and retries the actual fai
   expect(mocks.call.mock.lastCall?.[1].cursor).toBe('page-two')
   expect(host.textContent).toContain('原文第一页');expect(host.textContent).toContain('原文第二页')
 })
+
+it('previews relation-only recording identity and only creates it after confirmation', async () => {
+  const choose = vi.fn()
+  const unbound = { ...relation, key: 'unbound', personKey: 'unbound', name: '张老师', accountLinked: false, personRef: 'person-ref' }
+  mocks.call.mockImplementation(async (op, input) => op === 'people.list' ? { source: input.source, items: input.source === 'relations' ? [unbound] : [] }
+    : input.action === 'binding-preview' ? { state: 'create_required', commandRef: 'binding-command' } : { speakerRef: 'new-speaker' })
+  await act(async () => root.render(<PersonPicker accountScope="binding" onClose={() => {}} onChoose={choose}/>))
+  await act(async () => (host.querySelector('.people-picker-list button') as HTMLButtonElement).click())
+  expect(document.querySelector('[aria-modal="true"]')?.textContent).toContain('无需对方注册账号')
+  expect(choose).not.toHaveBeenCalled()
+  expect(mocks.call.mock.calls.some(([, p]) => p.action === 'binding-apply')).toBe(false)
+  await click('确认并继续标记')
+  expect(choose).toHaveBeenCalledWith({ label: '张老师', speakerRef: 'new-speaker' })
+})
+
+it('replaces cached parent-scoped record keys with a fresh full page and shows one canonical card across merged facets',async()=>{
+ const second={...relation,key:'e-merged',relation:{...relation.relation!,key:'e-merged',ref:'merged-ref'}}
+ let fresh=false
+ mocks.call.mockImplementation(async(op,input)=>{
+  if(op==='people.list')return {source:input.source,items:input.source==='relations'?[relation,second]:[]}
+  const key=fresh?'canonical-source':`legacy-${input.ref}`
+  return {evidence:[{key,text:'同一条合并原文',label:'来源',date:1,speaker:'',anchor:false,mentions:[{start:input.ref==='merged-ref'?3:0,end:input.ref==='merged-ref'?4:1,text:'人'}]}]}
+ })
+ await act(async()=>root.render(<PeopleSurface accountScope="canonical-refresh" onBack={()=>{}}/>))
+ await act(async()=>(host.querySelector('.people-row') as HTMLButtonElement).click())
+ expect(host.querySelectorAll('.explore-evidence')).toHaveLength(2)
+ await act(async()=>root.render(<div/>))
+ const now=Date.now();vi.spyOn(Date,'now').mockReturnValue(now+31_000);fresh=true
+ await act(async()=>root.render(<PeopleSurface accountScope="canonical-refresh" onBack={()=>{}}/>))
+ expect(host.querySelectorAll('.explore-evidence')).toHaveLength(1)
+ expect(host.textContent).toContain('此原文提及 2 处')
+})
+it('filters explicit person record roles without promoting mentions to speech and preserves distinct times',async()=>{
+ mocks.call.mockImplementation(async(op,input)=>op==='people.list'?{source:input.source,items:input.source==='relations'?[relation]:[]}:{evidence:[
+  {key:'mention',text:'别人提到了他',date:1000,label:'录音',roles:['mentioned']},
+  {key:'author',text:'他发出的消息',date:2000,label:'聊天',roles:['author'],uploadedAt:3000,recognizedAt:4000},
+  {key:'unknown',text:'未确定角色',date:5000,label:'记录'}]})
+ await act(async()=>root.render(<PeopleSurface accountScope="role-filter" onBack={()=>{}}/>))
+ await act(async()=>(host.querySelector('.people-row') as HTMLButtonElement).click())
+ await click('作者')
+ expect(host.textContent).toContain('他发出的消息');expect(host.textContent).not.toContain('别人提到了他')
+ await click('录音发言');expect(host.textContent).not.toContain('别人提到了他')
+ expect(host.textContent).toContain('已加载记录中没有此角色')
+})
+
+ it('opens new-person confirmation from the search input and returns a draft without writing', async () => {
+  const create = vi.fn()
+  mocks.call.mockImplementation(async (_op, p) => ({ source: p.source, items: [] }))
+  await act(async () => root.render(<PersonPicker accountScope="create-draft" onClose={() => {}} onChoose={() => {}} onCreate={create}/>))
+  expect([...document.querySelectorAll('button')].some(b=>b.textContent==='新建人物')).toBe(false)
+  await act(async () => {
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="搜索人物档案"]')!
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '新人物示例')
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+  await click('新建人物')
+  expect(document.querySelector('[aria-modal="true"]')?.textContent).toContain('保存标记时')
+  expect(create).not.toHaveBeenCalled()
+  await click('确认并继续标记')
+  expect(create).toHaveBeenCalledWith('新人物示例')
+  expect(mocks.call.mock.calls.every(([op]) => op==='people.list')).toBe(true)
+ })
+
+it.each([true,false])('creates an independent same-name draft with root=%s without selecting an existing person', async hasRoot => {
+ const create=vi.fn(); const existing={...relation,personKey:'independent',accountLinked:false,name:'同名人物',...(hasRoot?{personRef:'existing-root'}:{})};
+ mocks.call.mockImplementation(async (_op,p)=>({source:p.source,items:p.source==='relations'?[existing]:[]}));
+ await act(async()=>root.render(<PersonPicker accountScope={'duplicate-'+hasRoot} onClose={()=>{}} onChoose={()=>{}} onCreate={create}/>));
+ await act(async()=>{const input=document.querySelector<HTMLInputElement>('input[aria-label="搜索人物档案"]')!;Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(input,'同名人物');input.dispatchEvent(new Event('input',{bubbles:true}));});
+ await click('新建人物'); await click('确认并继续标记');
+ expect(create).toHaveBeenCalledWith('同名人物');
+ expect(mocks.call.mock.calls.every(([op])=>op==='people.list')).toBe(true);
+});

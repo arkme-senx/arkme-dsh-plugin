@@ -83,7 +83,7 @@ describe('speaker removal interaction', () => {
     expect(mocks.call.mock.calls.some(([operation]) => operation === 'recordings.speaker.unassign-item'
       || operation === 'recordings.speaker.assign-item')).toBe(false)
     expect(onUpdated).toHaveBeenCalledOnce()
-    expect(renderer.root.findAllByType('button').some(button => button.children.join('') === '撤销这次纠错')).toBe(true)
+    expect(renderer.root.findAllByType('button').some(button => button.children.join('') === '预览撤销')).toBe(true)
   })
 
   it('keeps the dialog and error on failure, and never sends duplicate writes', async () => {

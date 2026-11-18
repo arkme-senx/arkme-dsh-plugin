@@ -34,3 +34,48 @@ it('recovers a session beyond the old twenty-session cutoff even when the synced
  expect(filterEvents).toHaveBeenCalledTimes(21)
  expect(filterEvents).toHaveBeenLastCalledWith('s0', [{ kind: 'type', values: ['user/message'] }])
 })
+
+it.each(['sessions', 'events'] as const)('honors the existing deadline while %s ignores cancellation and ignores late results', async stage => {
+ const deadline = new AbortController()
+ const timeout = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal)
+ let finish!: () => void
+ const waiting = new Promise<void>(resolve => { finish = resolve })
+ const row = { recordUid: dshAgentInputRecordUid('slow', 9), creationSource: 3 } as ArkmeSearchRecordItem
+ const provider = {
+  listSessions: vi.fn(async () => { if(stage === 'sessions') await waiting; return [{header:{id:'slow',cwd:'/workspace'}}, {header:{id:'next',cwd:'/workspace'}}] }),
+  filterEvents: vi.fn(async () => { await waiting; return [{sessionId:'slow',seq:9,type:'user/message',surface:'current'}] }),
+ }
+ const reading = resolveDshSearchOrigins(provider, [row])
+ try {
+  await new Promise<void>(resolve => setImmediate(resolve))
+  expect(stage === 'sessions' ? provider.listSessions : provider.filterEvents).toHaveBeenCalledOnce()
+  let settled = false
+  void reading.then(() => { settled = true })
+  deadline.abort(new DOMException('Timed out', 'TimeoutError'))
+  await new Promise<void>(resolve => setImmediate(resolve))
+  expect(settled).toBe(true)
+  const result = await reading
+  expect(result).toEqual([{...row,dshOriginUnverified:true}])
+  expect(timeout).toHaveBeenCalledWith(5000)
+  finish(); await Promise.resolve(); await Promise.resolve()
+  expect(result[0]?.dshOrigin).toBeUndefined()
+  expect(provider.filterEvents).toHaveBeenCalledTimes(stage === 'sessions' ? 0 : 1)
+ } finally { finish(); await reading; timeout.mockRestore() }
+})
+
+it('releases a cancelled search without waiting for an uncancellable event read', async () => {
+ let finish!: () => void
+ const waiting = new Promise<void>(resolve => { finish = resolve })
+ const controller = new AbortController()
+ const provider = {listSessions:async()=>[{header:{id:'slow',cwd:'/workspace'}}],filterEvents:vi.fn(async()=>{await waiting;return []})}
+ const reading = resolveDshSearchOrigins(provider, [{recordUid:'unknown',creationSource:3} as ArkmeSearchRecordItem],controller.signal)
+ let rejected = false
+ const checked = expect(reading).rejects.toMatchObject({name:'AbortError'}).then(()=>{rejected=true})
+ try {
+  await new Promise<void>(resolve => setImmediate(resolve))
+  expect(provider.filterEvents).toHaveBeenCalledOnce()
+  controller.abort()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  expect(rejected).toBe(true)
+ } finally {finish();await checked}
+})

@@ -285,13 +285,13 @@ span.arkme-forward-search {
 }
 .arkme-forward-search input::placeholder { color: var(--dsw-alias-label-secondary, #61666b); }
 .arkme-redesign-route-chats .arkme-conversation-records { width: 100% !important; gap: 0 !important; }
-.arkme-conversation-records-reveal { animation: arkme-conversation-records-reveal 120ms ease-out both; }
-@keyframes arkme-conversation-records-reveal {
-  from { opacity: 0; }
-  to { opacity: 1; }
+.arkme-message-send-spinner {
+  flex: none;
+  opacity: .55;
+  animation: arkme-harness-running 1.1s linear 150ms infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .arkme-conversation-records-reveal { animation: none; }
+  .arkme-message-send-spinner { animation: none; }
 }
 .arkme-redesign-route-chats [data-arkme-content-presentation="bubble"] p { font-size: 14px; line-height: 1.62; }
 .arkme-redesign-route-chats .arkme-conversation-composer { padding: 0 24px 20px !important; }
@@ -379,8 +379,26 @@ span.arkme-forward-search {
 [data-arkme-owned="persistent-sidebar"] :is([data-arkme-directory-mode="conversations"], [data-arkme-directory-mode="web-locked"]) { min-width: 120px !important; }
 /* Only the search label condenses. Conversation rows retain their left anchor
    and continuously truncate text instead of switching to an avatar-only layout. */
+.arkme-directory-search-control { position: relative; display: flex; flex: 1; min-width: 40px; }
+[data-arkme-directory-compact="true"] .arkme-directory-search-control { flex: none; }
 [data-arkme-directory-compact="true"] [data-arkme-directory-search] { flex: none !important; width: 40px; padding: 0 !important; justify-content: center; }
 [data-arkme-directory-compact="true"] [data-arkme-directory-search-label] { display: none !important; }
+[data-arkme-directory-sync-row] { flex: 0 0 24px; min-width: 0; }
+[data-arkme-directory-sync-row] > span { width: 100%; }
+[data-arkme-directory-sync-row] button[aria-haspopup="menu"] {
+  display: flex; align-items: center; justify-content: space-between; gap: 4px;
+  width: 100%; height: 24px; padding: 0 10px; border: 0; cursor: pointer;
+  background: transparent; color: var(--dsw-alias-label-secondary, #68707c);
+  font-size: 11px; white-space: nowrap;
+}
+[role="menu"]:has(.arkme-directory-sync-item) { min-width: min(220px, calc(100vw - 24px)); }
+[role="menuitem"]:has(.arkme-directory-sync-item) > span { flex: 1; min-width: 0; }
+.arkme-directory-sync-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%;
+}
+.arkme-directory-sync-item > span:last-child {
+  flex: none; color: var(--dsw-alias-label-secondary, #68707c);
+}
 
 [data-arkme-harness-summary] { min-width: 0; display: flex; flex-wrap: nowrap; overflow: hidden; gap: 2px 8px; font-size: 11px; line-height: 16px; }
 [data-arkme-harness-status] { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -1763,6 +1781,22 @@ body[data-ds-dark-theme] .arkme-contact-directory-surface { background: var(--ds
 .arkme-team-features-container { width:min(100%,760px); min-width:0; margin:0 auto; }
 .arkme-team-features h2 { margin:0 0 12px; font-size:13px; font-weight:500; color:var(--dsw-alias-label-secondary,#68707c); }
 .arkme-team-feature-list { display:flex; flex-wrap:wrap; gap:10px; }
+.arkme-team-features-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.arkme-team-features-heading h2 { margin:0; }
+.arkme-team-feature.arkme-team-custom-feature { padding:0; gap:0; }
+.arkme-team-custom-feature a { display:flex; align-items:center; min-width:0; gap:10px; padding:8px 12px; color:inherit; text-decoration:none; }
+.arkme-team-custom-feature-copy { display:flex; flex-direction:column; min-width:0; gap:3px; }
+.arkme-team-custom-feature-copy span,.arkme-team-custom-feature-copy small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:240px; }
+.arkme-team-custom-feature-copy small { font-size:11px; color:var(--dsw-alias-label-secondary,#68707c); }
+.arkme-team-feature-menu { display:grid; place-items:center; border:0; background:transparent; color:inherit; width:30px; min-height:36px; margin-right:4px; border-radius:6px; cursor:pointer; }
+.arkme-team-feature-menu:hover { background:var(--arkme-hover); }
+.arkme-team-feature-status { margin:10px 0 0; font-size:12px; color:var(--dsw-alias-label-secondary,#68707c); }
+.arkme-team-feature-status button { border:0; background:transparent; color:var(--dsw-alias-state-business-primary,#4b75eb); cursor:pointer; font:inherit; }
+.arkme-team-feature-editor { width:min(420px,calc(100vw - 32px)); box-sizing:border-box; border:1px solid var(--arkme-line,#e7e7e9); border-radius:16px; padding:24px; color:var(--dsw-alias-label-primary,#17191c); background:var(--dsw-alias-bg-layer-1,#fff); }
+.arkme-team-feature-editor::backdrop { background:rgba(0,0,0,.28); }
+.arkme-team-feature-editor h3 { margin:0 0 20px; font-size:18px; }
+.arkme-team-feature-editor label { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; font-size:13px; }
+.arkme-team-feature-editor input { width:100%; box-sizing:border-box; padding:10px 12px; border:1px solid var(--arkme-line); border-radius:8px; color:inherit; background:transparent; font:inherit; }
 .arkme-team-feature { display:inline-flex; align-items:center; gap:10px; min-width:0; max-width:100%; min-height:48px; padding:8px 12px; border:1px solid var(--arkme-line); border-radius:10px; background:var(--dsw-alias-bg-layer-1,#fff); color:inherit; font:inherit; font-size:14px; cursor:pointer; }
 .arkme-team-feature-icon { flex:none; display:grid; place-items:center; color:var(--dsw-alias-label-primary,#17191c); }
 .arkme-team-feature-arrow { margin-left:18px; color:var(--dsw-alias-label-tertiary,#9097a1); }
@@ -2249,6 +2283,7 @@ body[data-ds-dark-theme] .arkme-detail-extension-input-shell {
   background: #2b2b2b !important;
 }
 [data-arkme-message-direction]:focus-visible,
+[data-arkme-excerpt-original]:focus-visible,
 [data-arkme-note-detail] button:focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary, #8295e8);
   outline-offset: 2px;

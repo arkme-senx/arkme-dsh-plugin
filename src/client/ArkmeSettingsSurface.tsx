@@ -1,9 +1,11 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { Toast, IconCheckOutlineMedium } from '@deepseek-ai/dsh-client-ui-primitives'
 import { ArkmeAccountCancellation } from './ArkmeAccountCancellation.js'
 import {ArkmeScreenshotShortcutSetting} from './ArkmeScreenshotShortcutSetting.js'
 import { ArkmeSettingsToggleRow } from './ArkmeSettingsToggleRow.js'
 import { ArkmeReactionHistoryLock } from './ArkmeReactionHistorySettings.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { useArkmeBrand } from './product-brand.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react'
 import { CaretRight } from '@phosphor-icons/react/CaretRight'
 import { CircleNotch } from '@phosphor-icons/react/CircleNotch'
@@ -16,7 +18,6 @@ import { AppleLogo } from '@phosphor-icons/react/AppleLogo'
 import { GoogleLogo } from '@phosphor-icons/react/GoogleLogo'
 import { DeviceMobile } from '@phosphor-icons/react/DeviceMobile'
 import { EnvelopeSimple } from '@phosphor-icons/react/EnvelopeSimple'
-import { X } from '@phosphor-icons/react/X'
 import qrcode from 'qrcode-generator'
 import type {
   ArkmeAuthSnapshot,
@@ -304,7 +305,7 @@ function SettingsDialog({
     <section className="arkme-account-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={event => { event.stopPropagation() }}>
       <header>
         <h3>{title}</h3>
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose}><X size={20} aria-hidden /></button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭")} onClick={onClose} />
       </header>
       {children}
     </section>
@@ -739,7 +740,7 @@ export function arkmeNotificationPermissionLabel(permission: ArkmeDesktopNotific
 }
 
 export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 'general' | 'about' } = {}) {
-  useArkmeLocale()
+  const brand = useArkmeBrand()
   const surfaceRef = useRef<HTMLDivElement>(null)
   const authState = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const [profile, setProfile] = useState<ArkmeUserProfile>()
@@ -1126,8 +1127,8 @@ export function ArkmeSettingsSurface({ view = 'account' }: { view?: 'account' | 
       {view === 'about' && <>
       <ArkmeAboutProduct />
       <SettingsGroup id="arkme-settings-about">
-        <SettingsRow title={tr("用户协议")} description={tr("查看 Arkme 用户协议")} href="https://www.arkme.ai/article/user-aggrement-v1.html" />
-        <SettingsRow title={tr("隐私条款")} description={tr("查看 Arkme 隐私条款")} href="https://www.arkme.ai/article/privacy-aggrement-v1.html" />
+        <SettingsRow title={tr("用户协议")} description={tr("查看 {v0} 用户协议", { v0: brand.name })} href={brand.userAgreementUrl} />
+        <SettingsRow title={tr("隐私条款")} description={tr("查看 {v0} 隐私条款", { v0: brand.name })} href={brand.privacyPolicyUrl} />
       </SettingsGroup>
       <ArkmeAboutDetails accountScope={authenticatedAccountKey} />
       </>}

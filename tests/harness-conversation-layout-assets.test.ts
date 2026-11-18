@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
-import { JSDOM } from 'jsdom'
-import { act, create } from 'react-test-renderer'
-import { createElement } from 'react'
+import { installedHarnessBrowser, installMeasuredViewport } from './helpers/installed-harness-browser.js'
 import { exposeHarnessConversationLayout, harnessConversationLayoutAsset, readHarnessConversationLayout } from '../src/harness-conversation-layout-assets.js'
 import { HARNESS_LAYOUT_MODULES } from '../src/harness-conversation-layout-contract.js'
 
@@ -61,14 +59,20 @@ describe('optional native conversation layout export bridge', () => {
   })
 
   // Explicit opt-in: checks the actual installed runtime without editing it.
-  it.skipIf(!process.env.ARKME_TEST_DSH_BIN)('loads current official factories and their CSS without plugin apply', () => {
+  // Run with ARKME_TEST_DSH_BIN=<official CLI> NODE_OPTIONS=--experimental-vm-modules.
+  it.skipIf(!process.env.ARKME_TEST_DSH_BIN)('loads current official factories and their CSS without plugin apply', async () => {
     const bin = process.env.ARKME_TEST_DSH_BIN!
     const runtime = createRequire(bin)
     const local = createRequire(import.meta.url)
-    const dom = new JSDOM('<html><head></head><body></body></html>')
+    const { dom, builtins } = await installedHarnessBrowser(bin)
+    installMeasuredViewport(dom.window)
+    const { createElement } = builtins.react
+    const { createRoot } = builtins['react-dom/client']
+    const { flushSync } = builtins['react-dom']
     const cache = new Map<string, unknown>()
     const nativeRequire = (id: string): any => {
       if (cache.has(id)) return cache.get(id)
+      if (id in builtins && !['@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-client-ui-primitives'].includes(id)) return builtins[id]
       if (['react', 'react-dom', 'react/jsx-runtime'].includes(id) || id === '@deepseek-ai/cordis') return local(id)
       // Browser-only virtual store module has no Node package. No store is
       // needed by these two presentation components, nor may the bridge start one.
@@ -97,23 +101,34 @@ describe('optional native conversation layout export bridge', () => {
       expect(results.every(result => !result.apply && !result.inject)).toBe(true)
       expect(dom.window.document.querySelectorAll('style[data-plugin-css]').length).toBeGreaterThan(2)
       // Validate our additive avatar content against the real native preview,
-      // including focus navigation. No replacement tooltip or native source edits.
+      // including focus and pointer previews. No replacement tooltip or native source edits.
       const question = createElement('span', { 'data-test-speaker': 'self' }, 'question')
       const answer = createElement('span', { 'data-test-speaker': 'arko' }, 'answer')
-      let renderer: ReturnType<typeof create> | undefined
+      const onNavigate = vi.fn()
+      const host = dom.window.document.createElement('div')
+      dom.window.document.body.append(host)
+      const root = createRoot(host)
       try {
-        act(() => { renderer = create(createElement(results[1].TurnNavigator, {
+        flushSync(() => { root.render(createElement(results[1].TurnNavigator, {
           items: [
             { turn: 1, prompt: question, response: answer, anchor: { kind: 'loaded', key: 'a' } },
             { turn: 2, prompt: 'second', response: '', anchor: { kind: 'loaded', key: 'b' } },
-          ], activeTurn: 1, busyTurn: null, onNavigate: () => {}, t: (key: string) => key,
+          ], activeTurn: 1, busyTurn: null, onNavigate, t: (key: string) => key,
         })) })
-        act(() => { renderer!.root.findAllByType('button')[0]!.props.onFocus() })
-        const tooltip = renderer!.root.findByProps({ role: 'tooltip' })
-        expect(tooltip.findAllByProps({ 'data-test-speaker': 'self' })).toHaveLength(1)
-        expect(tooltip.findAllByProps({ 'data-test-speaker': 'arko' })).toHaveLength(1)
-        expect(tooltip.props.className).toBe(results[1].classes.preview)
-      } finally { act(() => renderer?.unmount()) }
+        await vi.waitFor(() => expect(host.querySelectorAll('button')).toHaveLength(2))
+        flushSync(() => { host.querySelector('button')!.focus() })
+        await vi.waitFor(() => expect(host.querySelector('[role="tooltip"]')).not.toBeNull())
+        const tooltip = host.querySelector('[role="tooltip"]')!
+        expect(tooltip.querySelectorAll('[data-test-speaker="self"]')).toHaveLength(1)
+        expect(tooltip.querySelectorAll('[data-test-speaker="arko"]')).toHaveLength(1)
+        expect(tooltip.className).toBe(results[1].classes.preview)
+        flushSync(() => { host.querySelector('button')!.blur() })
+        await vi.waitFor(() => expect(host.querySelector('[role="tooltip"]')).toBeNull())
+        flushSync(() => { host.querySelector('button')!.dispatchEvent(new dom.window.Event('pointermove', { bubbles: true })) })
+        await vi.waitFor(() => expect(host.querySelector('[role="tooltip"] [data-test-speaker="arko"]')).not.toBeNull())
+        flushSync(() => { host.querySelector('button')!.click() })
+        expect(onNavigate).toHaveBeenCalledWith(expect.objectContaining({ turn: 1, prompt: question, response: answer }))
+      } finally { flushSync(() => root.unmount()); host.remove() }
     } finally { dom.window.close() }
   })
 })

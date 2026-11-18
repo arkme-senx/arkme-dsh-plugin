@@ -1,3 +1,4 @@
+import type { ModelExecutionMetadata } from './model-execution.js'
 import type { ArkmeRecordingSearchIdentity, ArkmeRecordingWorkbenchItem, ArkmeSourceItem, ArkmeTimelineItem } from './types.js'
 
 export const EXPLORE_MODULES = ['profile', 'relations', 'events', 'goals', 'anniversaries'] as const
@@ -45,6 +46,10 @@ export interface ExplorePage {
   needsEnrichment?: boolean
 }
 export interface ExploreEvidence {
+  personSourceRef?: string
+  uploadedAt?: number
+  recognizedAt?: number
+  roles?: Array<'author' | 'speaker' | 'mentioned' | 'participant'>
   key: string
   label: string
   speaker: string
@@ -80,12 +85,13 @@ export interface ExploreQuery {
 }
 export interface ExploreMutation { ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
 export type ExploreSource =
+  | { kind: 'call-ref'; callRef: string; participantUserId: number }
   | { kind: 'record'; item: ArkmeTimelineItem }
   | { kind: 'conversation'; source: ArkmeSourceItem; itemUid: string; sendAtMillis: number }
   | { kind: 'recording'; dateStamp: number; focusItemId: string; items: ArkmeRecordingWorkbenchItem[]; playbackTargets?: Array<{itemId:string;item:ArkmeRecordingWorkbenchItem}>; segment?: ArkmeRecordingSearchIdentity }
 export interface ExploreSettings {
   ref: string
   accountScope?: string
-  models: Array<{ key?: string; ref: string; label: string; selected: boolean; provider?: string; routeKey?: string }>
+  models: Array<ModelExecutionMetadata & { key?: string; ref: string; label: string; selected: boolean; provider?: string; routeKey?: string }>
   sources: Array<{ key: string; label: string; description: string; enabled: boolean }>
 }

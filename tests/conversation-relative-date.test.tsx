@@ -2,7 +2,9 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { setArkmeDisplayTimeZone } from '../src/client/display-time-zone.js'
 import { ArkmeConversationDate } from '../src/client/ArkmeConversationDate.js'
+import { ArkmeMessageTimestamp } from '../src/client/ArkmeMessageTimestamp.js'
 
 let root: Root, host: HTMLDivElement
 beforeEach(() => {
@@ -14,6 +16,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   act(() => root.unmount())
+  setArkmeDisplayTimeZone('system')
   host.remove()
   vi.useRealTimers()
   vi.unstubAllGlobals()
@@ -42,4 +45,21 @@ it('refreshes after the app sleeps across several days', () => {
   vi.setSystemTime(new Date(2026, 9, 18, 9))
   act(() => document.dispatchEvent(new Event('visibilitychange')))
   expect(host.textContent).toBe('今年 10月15日')
+})
+
+it('updates the open transcript and its civil date together while preserving the message instant', () => {
+  const at = Date.parse('2026-11-16T16:30:00Z')
+  vi.setSystemTime(Date.parse('2026-11-17T10:00:00Z'))
+  setArkmeDisplayTimeZone('America/Los_Angeles')
+  act(() => root.render(<><ArkmeConversationDate at={at} /><ArkmeMessageTimestamp at={at} /></>))
+  const message = host.querySelector<HTMLTimeElement>('.arkme-message-timestamp')!
+  const separator = host.querySelector('time')!
+  expect(message.textContent).toBe('08:30')
+  expect(separator.dateTime).toBe('2026-11-16')
+  expect(separator.textContent).toBe('昨天')
+  act(() => setArkmeDisplayTimeZone('Asia/Shanghai'))
+  expect(message.dateTime).toBe('2026-11-16T16:30:00.000Z')
+  expect(message.textContent).toBe('00:30')
+  expect(separator.dateTime).toBe('2026-11-17')
+  expect(separator.textContent).toBe('今天')
 })

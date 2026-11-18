@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type { ArkmeLongArticleBrowseScope, ArkmeSearchRecordItem, ArkmeSourceItem } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -113,7 +113,7 @@ function LibraryContent({ onClose, returnFocusRef, standalone }: LibraryProps) {
       }}>
       <header className="arkme-article-library-header"><h2>{tr('长文')}</h2>
         <button type="button" disabled={preparing} aria-busy={preparing} onClick={() => { void create() }}><Plus size={16} aria-hidden />{tr(preparing ? '准备中…' : '新建长文')}</button>
-        {!standalone && <button type="button" aria-label={tr('关闭长文库')} onClick={onClose}><X size={20} aria-hidden /></button>}
+        {!standalone && <ArkmeCloseButton type="button" aria-label={tr('关闭长文库')} onClick={onClose} />}
       </header>
       {error && <p className="arkme-article-library-error" role="alert" style={{ color: arkmeTheme.danger }}>{error}</p>}
       <div className="arkme-article-library-tabs" role="tablist" aria-label={tr('长文分类')}>

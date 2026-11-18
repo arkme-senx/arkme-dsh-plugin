@@ -1,3 +1,4 @@
+import { executionMetadata } from './model-execution.js'
 import type {
   ArkmeRecordingSummaryModelConfig,
   ArkmeRecordingTimelineDialoguePoint,
@@ -78,7 +79,7 @@ export function projectRecordingSummaryModelConfig(value: unknown): ArkmeRecordi
     const provider = stringValue(option.provider).trim()
     const modelKey = stringValue(option.model_key ?? option.modelKey).trim()
     const displayName = stringValue(option.display_name ?? option.displayName).trim() || modelKey || routeKey
-    return [{ routeKey, provider, modelKey, displayName }]
+    return [{ routeKey, provider, modelKey, displayName, ...executionMetadata(option) }]
   })
   const personalRouteKey = stringValue(item.personal_route_key ?? item.personalRouteKey).trim()
   return {
@@ -374,10 +375,13 @@ export function projectRecordingVersions(
     if (kind === 'timeline' && rawStatus === 2 && !snapshotValid) status = 'failed'
     const timelineEvents = kind === 'timeline' && status === 'done' ? parseRecordingTimeline(content) : []
     const selectable = status === 'done' && content !== '' && (kind === 'summary' || timelineEvents.length > 0)
+    const sourceState = objectValue(version.source_state).state
     versions.push({
+      sourceState: sourceState === 'current' || sourceState === 'stale' ? sourceState : 'unknown',
       id: stringValue(version.id ?? version.summary_id).trim() || `version-${sourceIndex}`,
       status,
       selectable,
+      ...(version.continuation_available === true ? { continuationAvailable: true } : {}),
       generationStage: numberValue(version.generation_stage ?? version.stage),
       generatedAtMillis: displayVersionTimestamp(version.update_at) ?? displayVersionTimestamp(version.create_at) ?? 0,
       modelDisplayName: stringValue(version.model_display_name ?? version.model_name).trim(),

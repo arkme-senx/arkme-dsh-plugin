@@ -14,6 +14,7 @@ import type {
 } from '../types.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 import { SourceService } from './source-service.js'
+import { GROUP_AI_POLISH_MEMBERSHIP_REQUIRED } from '../group-ai-polish-access.js'
 
 export interface ArkmeAiPolishConfigSnapshot {
   enabled: boolean
@@ -171,7 +172,20 @@ export class GroupAiPolishService {
       if (source.kind !== 'group_chat') {
         throw new ArkmePluginError('group-ai-polish-source-invalid', 'AI 表达润色仅支持群聊', false)
       }
-      const config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal)
+      if (source.groupDelegation) await this.source.authorizeGroupDelegation(source, session, options.signal)
+      let config: ArkmeAiPolishConfigSnapshot
+      try {
+        config = await this.queryGroupAiPolishConfig(source.ownerRef, session, options.signal)
+      } catch (error) {
+        // The team frame proves the group exists and is accessible. This read
+        // separately requires the viewer's own active human membership.
+        if (source.groupDelegation && error instanceof ArkmePluginError && error.code === 'arkme-code-2001') {
+          await this.source.authorizeGroupDelegation(source, session, options.signal)
+          throw new ArkmePluginError(GROUP_AI_POLISH_MEMBERSHIP_REQUIRED, 'AI 润色设置需要本人具有真人群成员资格', false, 403, { cause: error })
+        }
+        throw error
+      }
+      if (source.groupDelegation) await this.source.authorizeGroupDelegation(source, session, options.signal)
       return this.groupAiPolishSnapshot(sourceRef, source.displayName, config)
     }
   

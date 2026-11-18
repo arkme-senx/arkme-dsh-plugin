@@ -7,11 +7,16 @@ import { installHarnessSessionSummary } from './harness-session-summary.js'
 import { installProjectedConversation } from './harness-projected-conversation.js'
 import { installHarnessActivityReporter } from './harness-activity-reporter.js'
 import { installHarnessSettings } from './harness-settings.js'
+import { installNativeModelSettings, nativeModelSettingsRequested } from './native-model-settings.js'
 
 export const inject = ['slots', 'locale', 'sessions']
 
 /** The outer Arkme shell owns authentication and the avatar settings entry. */
 export function apply(ctx: ClientContext): void {
+  if (nativeModelSettingsRequested()) {
+    ctx.effect(() => installNativeModelSettings(ctx), 'arkme: native model settings surface')
+    return
+  }
   ctx.effect(() => {
     const surface = window.frameElement?.parentElement
     if (surface?.getAttribute('data-arkme-owned') !== 'deepseek-harness-surface') return () => undefined

@@ -1,16 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createArkmeSdk } from '../sdk/index.js'
+import { tr } from './locale.js'
 import type { TeamConversation, TeamExtensionPage, TeamMessage } from '../team-app-contract.js'
 import { subscribeTeamMessageChanges } from './team-messaging-events.js'
-import { invalidateTeamMessageRead, teamChangeAffectsSource } from './team-source-read.js'
+import { invalidateTeamMessageRead, teamChangeAffectsSource, teamChangeInConversation } from './team-source-read.js'
 
 export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConversation,'ref'|'key'>,message:TeamMessage) {
  const conversationRef=conversation.ref,conversationKey=conversation.key
- const [page,setPage]=useState<TeamExtensionPage>()
- const [error,setError]=useState(''),[loading,setLoading]=useState(false),[invalidated,setInvalidated]=useState(false)
- const saved=useRef(new Map<string,TeamExtensionPage>()),pageScope=useRef('')
  const scope=`${accountKey}:${conversationKey}:${message.key}`
- const pending=useRef<AbortController>(),state=useRef<TeamExtensionPage>(),mounted=useRef(true)
+ const owner=useRef(`${accountKey}:${conversationKey}`)
+ // The timeline already authorized this material; only extension discovery waits for I/O.
+ const seed=():TeamExtensionPage|undefined=>owner.current===`${accountKey}:${conversationKey}`&&message.state==='published'&&message.version>0&&message.contentStatus==='available'&&!message.historyPreview
+  ? {message,items:[],totalCount:0,hasMore:false,nextSeq:0,throughSeq:0}:undefined
+ const [page,setPage]=useState<TeamExtensionPage|undefined>(seed)
+ const [error,setError]=useState(''),[loading,setLoading]=useState(false),[invalidated,setInvalidated]=useState(false)
+ const saved=useRef(new Map<string,TeamExtensionPage>()),pageScope=useRef(scope)
+ const pending=useRef<AbortController>(),state=useRef<TeamExtensionPage|undefined>(page),mounted=useRef(true)
  const load=useCallback(async(more=false)=>{
   pending.current?.abort();const controller=new AbortController();pending.current=controller
   setLoading(true);setError('')
@@ -40,7 +45,7 @@ export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConver
  },[conversationRef,message.ref,message.key,scope])
  useEffect(()=>{
   mounted.current=true
-  if(pageScope.current!==scope){state.current=undefined;setPage(undefined);setInvalidated(false)}
+  if(pageScope.current!==scope){state.current=seed();pageScope.current=scope;setPage(state.current);setInvalidated(false)}
   else if(state.current&&state.current.message.version!==message.version){
    const change={kind:'team.message.changed',messageKey:message.key}
    state.current={...state.current,message:invalidateTeamMessageRead(state.current.message,change,conversationKey),items:state.current.items.map(row=>invalidateTeamMessageRead(row,change,conversationKey))}
@@ -50,8 +55,16 @@ export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConver
   return ()=>{mounted.current=false;pending.current?.abort()}
  },[load,message.version,scope,conversationKey])
  useEffect(()=>subscribeTeamMessageChanges((account,receiptOnly,change)=>{
-  if(account!==accountKey||receiptOnly||!teamChangeAffectsSource(change,{conversationKey}))return
-  if(change?.kind==='team.message.changed'&&change.messageKey){
+  if(account!==accountKey||receiptOnly||!teamChangeInConversation(change,conversationKey))return
+  if(change?.kind==='team.message.published'){
+   // Reopen the snapshot boundary on the next read, including saved parent
+   // pages reached later via Back. Keep their authorized text while loading.
+   for(const [key,value] of saved.current)saved.current.set(key,{...value,throughSeq:0})
+   void load()
+   return
+  }
+  if(!teamChangeAffectsSource(change,{conversationKey}))return
+  if(change?.kind==='team.message.changed'&&(change.messageKey||change.messageKeys?.length)){
    const project=(value:TeamExtensionPage):TeamExtensionPage=>({...value,
     message:invalidateTeamMessageRead(value.message,change,conversationKey),
     items:value.items.map(row=>invalidateTeamMessageRead(row,change,conversationKey)),throughSeq:0})
@@ -60,6 +73,12 @@ export function useTeamExtensions(accountKey:string,conversation:Pick<TeamConver
   }else{
    // Unknown/reconnect and access changes still remove every stale snapshot.
    saved.current.clear();state.current=undefined;setPage(undefined);setInvalidated(true)
+   if(change?.kind==='team.access.revoked'){
+    pending.current?.abort()
+    setLoading(false)
+    setError(tr('你已无权访问该团队消息，请刷新列表'))
+    return
+   }
   }
   void load()
  }),[accountKey,conversationKey,load])

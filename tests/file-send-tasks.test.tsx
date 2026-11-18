@@ -1,10 +1,14 @@
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeFileSendTask } from '../src/file-transfer-contract.js'
-import { useArkmeFileSendTasks } from '../src/client/file-send-tasks.js'
+import { useArkmeFileSendTasks, wakeArkmeFileTask } from '../src/client/file-send-tasks.js'
+import { fileSendPolicy, resetFileSendPolicy } from '../src/client/file-send-admission.js'
+import { ArkmeClientError } from '../src/client/api.js'
 
 const api = vi.hoisted(() => ({ call: vi.fn() }))
-vi.mock('../src/client/api.js', () => ({ callArkme: api.call }))
+vi.mock('../src/client/api.js', async original => ({
+  ...(await original<typeof import('../src/client/api.js')>()), callArkme: api.call,
+}))
 
 function task(state: ArkmeFileSendTask['state']): ArkmeFileSendTask {
   return {
@@ -15,12 +19,192 @@ function task(state: ArkmeFileSendTask['state']): ArkmeFileSendTask {
 }
 
 afterEach(() => {
+  resetFileSendPolicy(undefined)
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
 
+it('shares a capability probe, times out stalled reads and retries without falling back', async () => {
+  vi.useFakeTimers()
+  const policy = { version: 1, textMessagesVersion: 1, admissionRecoveryVersion: 1 }
+  api.call.mockReset().mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue(policy)
+  const first = fileSendPolicy('test:7')
+  expect(fileSendPolicy('test:7')).toBe(first)
+  const timedOut = expect(first).rejects.toThrow('读取超时')
+  await vi.advanceTimersByTimeAsync(30_000)
+  await timedOut
+  await expect(fileSendPolicy('test:7')).resolves.toBe(policy)
+  await expect(fileSendPolicy('test:7')).resolves.toBe(policy)
+  expect(api.call).toHaveBeenCalledTimes(2)
+  resetFileSendPolicy('test:8')
+  await expect(fileSendPolicy('test:8')).resolves.toBe(policy)
+  expect(api.call).toHaveBeenCalledTimes(3)
+})
+
+it.each(['operation-unknown', 'file-flow-unavailable'])('keeps the legacy send path for an explicit %s capability response', async code => {
+  api.call.mockReset().mockRejectedValue(new ArkmeClientError({ code, message: '不支持本地发送', retryable: false }))
+  await expect(fileSendPolicy('test:7')).resolves.toBeUndefined()
+  await expect(fileSendPolicy('test:7')).resolves.toBeUndefined()
+  expect(api.call).toHaveBeenCalledTimes(1)
+})
+
 describe('file send task polling', () => {
+  it('applies persisted event receipts without admission or completion queries and releases recovery timers', async () => {
+    vi.useFakeTimers()
+    api.call.mockReset().mockResolvedValue([])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      const queued = { ...task('queued'), revision: 1 }
+      await act(async () => { value.accept(queued) })
+      expect(api.call).toHaveBeenCalledOnce()
+      await act(async () => { wakeArkmeFileTask(7, queued.taskRef, { ...queued, state: 'sent', revision: 3 }) })
+      expect(value.tasks[0]).toMatchObject({ state: 'sent', revision: 3 })
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(api.call).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('retains a receipt delivered before admission returns and ignores an older in-flight snapshot', async () => {
+    vi.useFakeTimers()
+    let finish!: (tasks: ArkmeFileSendTask[]) => void
+    api.call.mockReset().mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      const queued = { ...task('queued'), revision: 1 }
+      await act(async () => { wakeArkmeFileTask(8, queued.taskRef, { ...queued, state: 'sent', revision: 99 }) })
+      expect(value.tasks).toHaveLength(0)
+      await act(async () => { wakeArkmeFileTask(7, queued.taskRef, { ...queued, state: 'sent', revision: 3 }) })
+      await act(async () => { value.accept(queued); finish([{ ...queued, state: 'sending', revision: 2 }]) })
+      expect(value.tasks[0]).toMatchObject({ state: 'sent', revision: 3 })
+      expect(value.activeTaskKeys.has(queued.taskRef)).toBe(true)
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(api.call).toHaveBeenCalledOnce()
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('recovers a stuck read through the existing deadline without accepting its late snapshot', async () => {
+    vi.useFakeTimers()
+    let late!: (tasks: ArkmeFileSendTask[]) => void
+    api.call.mockReset().mockImplementationOnce(() => new Promise(resolve => { late = resolve }))
+      .mockResolvedValue([task('sent')])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      const signal = api.call.mock.calls[0]![2] as AbortSignal
+      await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+      expect(signal.aborted).toBe(true)
+      await act(async () => { await vi.advanceTimersByTimeAsync(750) })
+      expect(api.call).toHaveBeenCalledTimes(2)
+      expect(value.tasks[0]?.state).toBe('sent')
+      await act(async () => { late([task('sending')]) })
+      expect(value.tasks[0]?.state).toBe('sent')
+    } finally { act(() => renderer.unmount()) }
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it('retains burst admissions across an older in-flight snapshot without restarting the owner', async () => {
+    vi.useFakeTimers()
+    let finish!: (tasks: ArkmeFileSendTask[]) => void
+    const first = task('queued'), second = { ...first, taskRef: 'task-2', recordUid: 'record-2' }
+    api.call.mockReset().mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      .mockResolvedValue([{ ...first, state: 'sent' }, { ...second, state: 'sent' }])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      const initialSignal = api.call.mock.calls[0]![2] as AbortSignal
+      await act(async () => { value.accept(first); value.accept(second); wakeArkmeFileTask(7, 'task-1') })
+      expect(initialSignal.aborted).toBe(false)
+      expect(api.call).toHaveBeenCalledOnce()
+      expect(value.tasks.map(task => task.taskRef)).toEqual(['task-1', 'task-2'])
+      await act(async () => { finish([]) })
+      expect(api.call).toHaveBeenCalledTimes(2)
+      expect(value.tasks.map(task => task.state)).toEqual(['sent', 'sent'])
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(api.call).toHaveBeenCalledTimes(2)
+    } finally { act(() => renderer.unmount()) }
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('replaces a stalled delta on explicit recovery and coalesces repeated refreshes', async () => {
+    vi.useFakeTimers()
+    let finish!: (tasks: ArkmeFileSendTask[]) => void
+    api.call.mockReset().mockResolvedValueOnce([task('sending')])
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      .mockResolvedValue([task('sent')])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      await act(async () => { wakeArkmeFileTask(7, 'task-1') })
+      const signal = api.call.mock.calls[1]![2] as AbortSignal
+      await act(async () => { value.refresh(); value.refresh() })
+      expect(api.call).toHaveBeenCalledTimes(3)
+      expect(signal.aborted).toBe(true)
+      await act(async () => { finish([task('sending')]) })
+      expect(api.call).toHaveBeenCalledTimes(3)
+      expect(api.call.mock.calls[2]![1]).toEqual({ sourceRef: 'source-1' })
+      expect(value.tasks[0]?.state).toBe('sent')
+    } finally { act(() => renderer.unmount()) }
+  })
+  it.each(['sending', 'sent'] as const)('coalesces in-flight completion hints when the pending response is %s and cleans up', async pendingState => {
+    vi.useFakeTimers()
+    let finish!: (tasks: ArkmeFileSendTask[]) => void
+    api.call.mockReset().mockResolvedValueOnce([task('sending')])
+      .mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      .mockResolvedValue([task('sent')])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    await act(async () => { wakeArkmeFileTask(7, 'task-1') })
+    await act(async () => { for (let index = 0; index < 20; index++) wakeArkmeFileTask(7, 'task-1') })
+    expect(api.call).toHaveBeenCalledTimes(2)
+    await act(async () => { finish([task(pendingState)]) })
+    const expectedCalls = pendingState === 'sent' ? 2 : 3
+    expect(api.call).toHaveBeenCalledTimes(expectedCalls)
+    expect(value.tasks[0]?.state).toBe('sent')
+    act(() => renderer.unmount())
+    wakeArkmeFileTask(7, 'task-1')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(api.call).toHaveBeenCalledTimes(expectedCalls)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+  it.each([true, false])('settles text promptly with a notification=%s and retains bounded polling recovery', async notify => {
+    vi.useFakeTimers()
+    let state: ArkmeFileSendTask['state'] = 'sending'
+    api.call.mockReset().mockImplementation(async () => [task(state)])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(120) })
+      state = 'sent'
+      if (notify) {
+        await act(async () => { wakeArkmeFileTask(7, 'task-1') })
+        expect(value.tasks[0]?.state).toBe('sent')
+      } else {
+        expect(value.tasks[0]?.state).toBe('sending')
+        await act(async () => { await vi.advanceTimersByTimeAsync(630) })
+        expect(value.tasks[0]?.state).toBe('sent')
+      }
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+      expect(api.call).toHaveBeenCalledTimes(2)
+      expect(vi.getTimerCount()).toBe(0)
+    } finally { act(() => renderer.unmount()) }
+  })
   it('distinguishes restored sent receipts from active sends without extra polling or cross-scope retention', async () => {
     vi.useFakeTimers()
     const old = { ...task('sent'), taskRef: 'old' }
@@ -39,6 +223,24 @@ describe('file send task polling', () => {
       api.call.mockResolvedValue([])
       act(() => { renderer.update(<Harness source="source-2" />) })
       expect(value.activeTaskKeys.size).toBe(0)
+    } finally { act(() => renderer.unmount()) }
+  })
+
+  it('reads the active task immediately on a matching Host hint and stops polling after settlement', async () => {
+    vi.useFakeTimers()
+    api.call.mockResolvedValueOnce([task('uploading')]).mockResolvedValue([task('sent')])
+    let value!: ReturnType<typeof useArkmeFileSendTasks>
+    function Harness() { value = useArkmeFileSendTasks('source-1', 7); return null }
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<Harness />) })
+    try {
+      await act(async () => { wakeArkmeFileTask(8, 'task-1') })
+      expect(api.call).toHaveBeenCalledTimes(1)
+      await act(async () => { wakeArkmeFileTask(7, 'task-1') })
+      expect(value.tasks[0]?.state).toBe('sent')
+      await act(async () => { wakeArkmeFileTask(7, 'task-1'); wakeArkmeFileTask(7, 'task-1') })
+      await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
+      expect(api.call).toHaveBeenCalledTimes(2)
     } finally { act(() => renderer.unmount()) }
   })
 

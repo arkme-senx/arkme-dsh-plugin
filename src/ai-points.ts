@@ -31,7 +31,7 @@ export interface ArkmeAiPointsPage {
   items: ArkmeAiPointsConsumption[]
   nextBeforeId: string
 }
-export interface ArkmeAiPointsQuery { month: string; beforeId?: string }
+export interface ArkmeAiPointsQuery { month: string; beforeId?: string; limit?: number }
 
 export function pointsUnits(value: string): bigint {
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,7})?$/.test(value)) throw new TypeError('Invalid exact AI points')
@@ -64,7 +64,7 @@ export function nanoCnyToPoints(value: string): string {
 export function groupPointsConsumption(items: ArkmeAiPointsConsumption[]) {
   const groups = new Map<string, ArkmeAiPointsConsumption[]>()
   for (const item of items) {
-    const key = item.businessCode === 'agent' && item.operationUid ? `agent:${item.operationUid}` : `request:${item.requestUid}`
+    const key = ['agent', 'call_summary', 'asen_call'].includes(item.businessCode) && item.operationUid ? `${item.businessCode}:${item.operationUid}` : `request:${item.requestUid}`
     const calls = groups.get(key) ?? []; calls.push(item); groups.set(key, calls)
   }
   return [...groups].map(([key, calls]) => ({ key, calls, chargedPoints: nanoCnyToPoints(calls.reduce((sum, call) => sum + pointsUnits(call.chargedPoints), 0n).toString()) }))

@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from 'react'
 import jsQRModule from 'jsqr'
@@ -167,7 +168,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
       if (revision === requestRevision.current) {
         setCandidate(current => current === undefined ? current : { ...current, team: { ...team, state: result.state } })
         teamRequestUid.current = undefined
-        if (result.state === 'joined') { arkmeContactsTab.refresh(); if (accountKey) invalidateTeamMessages(accountKey) }
+        if (result.state === 'joined') { arkmeContactsTab.refresh(); if (accountKey) invalidateTeamMessages(accountKey, false, {kind:'team.directory.changed'}) }
       }
     } catch (caught) { if (revision === requestRevision.current) setError(errorMessage(caught)) }
     finally { if (revision === requestRevision.current) setBusy(false) }
@@ -348,7 +349,7 @@ export function ArkmeContactAddSurface({ shareWebsite, onSourceActivated, compac
     {scannerOpen && <div style={styles.scannerBackdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closeScanner() }}><section style={styles.scannerDialog} role="dialog" aria-modal="true" aria-label={tr("识别联系人二维码")}
       onPaste={event => { scanDroppedFiles(Array.from(event.clipboardData.items).flatMap(item => { const file = item.kind === 'file' ? item.getAsFile() : null; return file === null ? [] : [file] })) }}
       onDragOver={event => { event.preventDefault() }} onDrop={event => { event.preventDefault(); scanDroppedFiles(event.dataTransfer.files) }}>
-      <div style={styles.scannerHeader}><h2 style={styles.scannerTitle}>{cameraActive ? '摄像头扫描' : tr("识别联系人二维码")}</h2><button data-arkme-feedback="neutral" type="button" style={styles.scannerClose} aria-label={tr("关闭二维码识别")} onClick={closeScanner}>×</button></div>
+      <div style={styles.scannerHeader}><h2 style={styles.scannerTitle}>{cameraActive ? '摄像头扫描' : tr("识别联系人二维码")}</h2><ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.scannerClose} aria-label={tr("关闭二维码识别")} onClick={closeScanner} /></div>
       {cameraActive ? <><div style={styles.cameraFrame}><video ref={videoRef} style={styles.video} autoPlay muted playsInline /><div style={styles.scanGuide} /></div><p style={styles.scannerHint}>{tr("将好友的个人二维码置于框内")}</p></>
         : <div style={styles.imageDropzone}>
           <svg viewBox="0 0 48 48" width="52" height="52" aria-hidden><rect x="5" y="5" width="38" height="38" rx="8" fill="none" stroke="currentColor" strokeWidth="2" opacity=".7" /><path d="M14 31l8-8 6 6 4-4 7 7M32 16h.01" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>

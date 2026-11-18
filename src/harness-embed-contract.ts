@@ -1,5 +1,8 @@
 export const ARKME_HARNESS_EMBED_PATH = '/arkme-self/harness-frame'
 export const HARNESS_DOCUMENT_STARTED = 'arkme:harness-document-started'
+export const HARNESS_MODELS_SETTINGS_QUERY = 'arkme-model-settings'
+export const HARNESS_MODELS_SETTINGS_OPEN = 'arkme:models-settings-open'
+export const HARNESS_MODELS_SETTINGS_CLOSE = 'arkme:models-settings-close'
 
 export const HARNESS_SESSION_CLIENT_ID = '@senguoyun/dsh-arkme/harness-session'
 export const HARNESS_SESSION_CLIENT_PATH = '/arkme-self/harness-session-client.js'

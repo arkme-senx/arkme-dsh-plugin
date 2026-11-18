@@ -25,8 +25,9 @@ const day = (marked: boolean, pending = false): ArkmeRecordingDay => ({
   summary: { state: pending ? 'processing' : 'empty', items: [] }, timeline: { state: 'empty', items: [] },
 })
 
-// Rendering and editing 1,442 transcript rows can exceed the default 5s on shared CI runners.
-describe('speaker update in a long recording transcript', { timeout: 15_000 }, () => {
+// This checks identity and cleanup across 1,442 rendered rows, not a wall-clock
+// performance SLA. Leave shared CI enough time for the complete interactions.
+describe('speaker update in a long recording transcript', { timeout: 60_000 }, () => {
   let renderer: ReactTestRenderer
   let initial: ArkmeRecordingDay, updated: ArkmeRecordingDay
   let reads: number, resolvePoll: (value: ArkmeRecordingDay) => void

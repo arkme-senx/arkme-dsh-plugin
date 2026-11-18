@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { ArkmeAccountUsage, ArkmeAccountUsageDetails, ArkmeAccountUsageDialog, formatCompactTokens, formatUsageBytes, formatUsageSeconds, usageLevel } from '../src/client/ArkmeAccountUsage.js'
 import { installArkmeRedesignStyles } from '../src/client/redesign/styles.js'
+import { arkmeUi } from '../src/client/ui-controller.js'
 import { connectArkmeLocale } from '../src/client/locale.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -38,6 +39,17 @@ async function openGiftDetails() {
 const retry = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === '重试')!
 
 describe('account points and independent usage', () => {
+  it('routes available models to the unified settings entrance without opening a second dialog',async()=>{
+    await render()
+    const open=vi.fn(), unbind=arkmeUi.bindSettingsOpener(open)
+    try {
+      const trigger=host.querySelector<HTMLButtonElement>('.arkme-models-disclosure')!
+      await act(async()=>trigger.click())
+      expect(open).toHaveBeenCalledExactlyOnceWith('arkme-models')
+      expect(document.querySelector('dialog.arkme-model-catalog-dialog')).toBeNull()
+      expect(mocks.call.mock.calls.some(call=>call[0]==='models.directory')).toBe(false)
+    } finally { unbind() }
+  })
   it('toggles gift details, dismisses outside or Escape, and stays inside the owning modal', async () => {
     const onClose = vi.fn()
     await act(async () => root.render(<ArkmeAccountUsageDialog accountScope="prod:11" onViewMembership={onViewMembership} onClose={onClose} />))
@@ -135,13 +147,15 @@ describe('account points and independent usage', () => {
     expect(mocks.call.mock.calls.some(call => call[0] === 'account.points.consumption')).toBe(false)
     let signal: AbortSignal | undefined
     mocks.call.mockImplementation((_operation, _params, value) => { signal = value; return new Promise(() => {}) })
-    const toggle = () => host.querySelector<HTMLButtonElement>('[aria-controls][aria-expanded]')!
+    const toggle = () => host.querySelector<HTMLButtonElement>('.arkme-points-disclosure')!
     await act(async () => toggle().click())
-    expect(host.querySelector('[data-usage-detail="points"]')).not.toBeNull()
-    expect(mocks.call.mock.calls.at(-1)?.[0]).toBe('account.points.consumption')
-    await act(async () => toggle().click())
+    expect(document.querySelector('dialog.arkme-points-history-dialog[open]')).not.toBeNull()
+    expect(host.querySelector('.arkme-points-history-dialog')).toBeNull()
+    expect(document.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('统计')
+    expect(mocks.call.mock.calls.at(-1)?.[0]).toBe('account.points.statistics')
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="关闭消费记录"]')!.click())
     expect(signal?.aborted).toBe(true)
-    expect(host.querySelector('[data-usage-detail="points"]')).toBeNull()
+    expect(document.querySelector('.arkme-points-history-dialog')).toBeNull()
   })
   it('shows one point unit and distinct funding, retaining storage and voice units', async () => {
     await render()
@@ -154,7 +168,7 @@ describe('account points and independent usage', () => {
     expect(host.textContent).not.toContain('优先使用')
     expect(host.textContent).not.toContain('1 元 = 100 积分')
     expect(host.querySelector('[data-usage-kind="ai-points"] .arkme-usage-label')?.textContent).not.toContain('消费记录')
-    expect(host.querySelector('.arkme-points-disclosure')?.getAttribute('aria-expanded')).toBe('false')
+    expect(host.querySelector('.arkme-points-disclosure')?.getAttribute('aria-haspopup')).toBe('dialog')
     expect(host.textContent).not.toMatch(/暂占|使用中/)
     expect(host.textContent).toContain('已用 1 GB / 共 10 GB')
     expect(host.textContent).toContain('已用 5 分 / 剩余 1 小时 55 分')

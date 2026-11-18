@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr } from './locale.js'
 import type { CSSProperties, ReactNode, Ref } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react/dist/icons/ArrowLeft'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { arkmeTheme } from './arkme-theme.js'
 
 const styles: Record<string, CSSProperties> = {
@@ -43,7 +43,7 @@ export function ArkmeRightPanelHeader({ title, titleId, heading, subtitle, actio
       {subtitle !== undefined && subtitle !== null && subtitle !== '' && <div style={styles.subtitle}>{subtitle}</div>}
     </div>
     {actions !== undefined && <div style={styles.actions}>{actions}</div>}
-    <button data-arkme-feedback="neutral" ref={closeRef} type="button" className="arkme-right-panel-header-button" style={styles.button}
-      aria-label={closeLabel} title={tr("关闭")} disabled={closeDisabled} onClick={onClose}><X size={18} aria-hidden /></button>
+    <ArkmeCloseButton data-arkme-feedback="neutral" ref={closeRef} type="button" className="arkme-right-panel-header-button" style={styles.button}
+      aria-label={closeLabel} title={tr("关闭")} disabled={closeDisabled} onClick={onClose} />
   </header>
 }

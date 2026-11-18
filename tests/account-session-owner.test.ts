@@ -386,3 +386,10 @@ describe('Arkme account session owner', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
+
+test('captures the attested account synchronously without a keychain read',async()=>{
+ const {owner,store}=fixture(credentials(11));expect(owner.readyAccountUserId()).toBeUndefined();await owner.start();const reads=vi.mocked(store.read).mock.calls.length
+ expect(owner.readyAccountUserId()).toBe(11);expect(vi.mocked(store.read)).toHaveBeenCalledTimes(reads)
+ await owner.write(credentials(22));expect(owner.readyAccountUserId()).toBe(22)
+ await owner.delete();expect(owner.readyAccountUserId()).toBeUndefined()
+})

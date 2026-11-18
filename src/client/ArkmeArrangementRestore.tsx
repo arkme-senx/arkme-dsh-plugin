@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { ArkmeArrangementItem, ArkmeArrangementRestoreInput, ArkmeArrangementRestoreResult, ArkmeDeletedArrangementItem } from '../types.js'
 import { callArkme } from './api.js'
@@ -42,7 +43,7 @@ export function ArkmeArrangementRestore({ item, disabled, onRestored, onRefresh 
   }
   const capability = item.restore
   const status = capability ? ({ identified: '已识别', following: '跟进中', completed: '已完成' })[capability.targetStatus] : ''
-  const due = item.dueAtMillis ? new Intl.DateTimeFormat(arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short' }).format(item.dueAtMillis) : tr('未设置')
+  const due = item.dueAtMillis ? formatArkmeDateTime(item.dueAtMillis, arkmeIntlLocale(), { dateStyle: 'medium', timeStyle: 'short' }) : tr('未设置')
   return <>
     <button type="button" disabled={disabled || busy || !capability} onClick={() => {
       if (!capability) return

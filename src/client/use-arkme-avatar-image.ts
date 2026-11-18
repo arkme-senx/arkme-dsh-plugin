@@ -10,9 +10,13 @@ export function useArkmeAvatarImage(imageRef: string | undefined, element?: RefO
   useEffect(() => {
     const target = element?.current
     if (!target || !deferred) return
-    const observer = new IntersectionObserver(entries => { setVisible(entries.some(entry => entry.isIntersecting)) })
+    const fallback = globalThis.setTimeout(() => setVisible(true), 250)
+    const observer = new IntersectionObserver(entries => {
+      globalThis.clearTimeout(fallback)
+      setVisible(entries.some(entry => entry.isIntersecting))
+    }, { rootMargin: '160px 0px' })
     observer.observe(target)
-    return () => { observer.disconnect() }
+    return () => { globalThis.clearTimeout(fallback); observer.disconnect() }
   }, [element, deferred])
   const normalizedRef = !deferred || visible ? imageRef?.trim() ?? '' : ''
   const cacheKey = normalizedRef ? options?.cacheKey?.trim() || normalizedRef : ''

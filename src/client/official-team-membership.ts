@@ -28,7 +28,7 @@ export function startOfficialTeamMembership(key: string): () => void {
     try {
       const value = await withArkmeReadDeadline(signal => callArkme<TeamOfficialMembership>('team.app.official.membership', {
         expectedAccountKey: key,
-      }, signal), controller.signal)
+      }, signal, { priority: 'background' }), controller.signal)
       if (!value || typeof value.jotmoId !== 'string' || !value.jotmoId.trim() || typeof value.isMember !== 'boolean') throw new Error('Invalid official membership')
       if (!controller.signal.aborted && account === key && !again) { snapshot = { state: 'ready', value }; emit() }
     } catch {

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../display-time-zone.js'
 import { PeopleSurface } from './PeopleSurface.js'
 import { ArkmeAutomaticAiSettings } from '../ArkmeAutomaticAiSettings.js'
 import { ExploreSettingsDialog } from './ExploreSettingsDialog.js'
@@ -21,7 +22,7 @@ import { isRelationView, relationViewCache } from './relation-view-cache.js'
 import { exploreIcons } from './ExploreNavigation.js'
 
 const message=(e:unknown)=>e instanceof Error?e.message:tr('加载失败，请重试')
-const date=(value:number)=>value>0?new Intl.DateTimeFormat(arkmeIntlLocale(),{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(value):''
+const date=(value:number)=>value>0?formatArkmeDateTime(value, arkmeIntlLocale(), {year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):''
 interface ExploreViewMemory { filter:string; query:string; page:ExplorePage|undefined; selected:ExploreItem|undefined; listTop:number; detailTop:number; savedAt:number }
 const remembered=new Map<string,ExploreViewMemory>()
 let memoryScope=''
@@ -159,7 +160,7 @@ export function ExploreSurface({module,accountScope}:{module:ExploreModule;accou
       <div className="explore-header-actions">{EXPLORE_MODEL_MODULES.includes(module as ExploreModelModule)&&<ExploreModelControl key={`${accountScope}:${module}`} module={module as ExploreModelModule} accountScope={accountScope} onChanged={message=>{setNotice(message);void load();if(selected)void readDetail(selected)}}/>}<span className="explore-muted">{page?`${page.total}`:''}</span><button className="explore-icon" aria-label={tr('刷新内容')} title={tr('刷新内容')} disabled={loading} onClick={()=>{void load();if(selected)void readDetail(selected)}}><ArrowClockwise size={18}/></button>
       {(!!page?.actions.length||module!=='relations')&&<div ref={menuRoot} style={{position:'relative'}}><button className="explore-icon" aria-label={tr('更多操作')} aria-expanded={actionMenu} onClick={()=>setActionMenu(v=>!v)}><DotsThree size={23}/></button>{actionMenu&&<div style={{position:'absolute',right:0,top:'100%',zIndex:3,padding:6,minWidth:150,borderRadius:8,background:'var(--dsw-alias-bg-layer-3, #ffffff)',boxShadow:'0 4px 20px #0002'}}>{managedAnalysis&&<button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} onClick={()=>{setActionMenu(false);setCapabilities(true)}}>{tr('自动使用额度')}</button>}{module==='profile'&&<button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} onClick={()=>{setActionMenu(false);setSettings(true)}}>{tr('数据范围')}</button>}{page?.actions.map(a=><button className="explore-icon" style={{display:'block',width:'100%',textAlign:'left',padding:10}} key={a.id} onClick={()=>startAction(a,page!.contextRef)}>{tr(a.label)}</button>)}</div>}</div>}</div>
     </header>
-    {managedAnalysis&&page&&page.analysisEnabled!==true&&<div className="explore-notice" role="status"><span>{tr(page.analysisEnabled===false?'尚未开启分析':'暂时无法确认分析设置')}</span><button className="explore-source-link" onClick={()=>setCapabilities(true)}>{tr('自动使用额度')}</button></div>}
+    {managedAnalysis&&page&&page.analysisEnabled!==true&&<div className="explore-notice" role="status"><span>{tr(page.analysisEnabled===false?(module==='goals'?'尚未开启自动分析，仍可手动重新分析':'尚未开启分析'):'暂时无法确认分析设置')}</span><button className="explore-source-link" onClick={()=>setCapabilities(true)}>{tr('自动使用额度')}</button></div>}
     {page?.progress&&<div className="explore-notice" role="status"><span>{tr(page.progress.label)}</span>{page.progress.total!==undefined&&page.progress.total>0&&<span>{page.progress.completed} / {page.progress.total}</span>}{page.progress.updatedAt>0&&<span>{tr('更新于')} {date(page.progress.updatedAt)}</span>}</div>}
     {notice&&<div className="explore-notice" role="status">{notice}</div>}
     <div className="explore-workspace" data-selected={!!selected}>

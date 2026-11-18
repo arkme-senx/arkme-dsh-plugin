@@ -1,10 +1,11 @@
 import {recordOwnerId, type RecordOwnerId} from '../record-owner-id.js'
+import { EncryptedReferenceCodec } from '../encrypted-reference.js'
 import { arkmeChatActivityPreview, retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { SharedReadGroup } from '../shared-read-group.js'
 import { arkmePeerMemberType } from '../peer-membership.js'
 import { patchChatPolicy, type ChatPolicySnapshot } from './chat-policy.js'
 import { readTopicRecordPage } from './topic-record-page.js'
-import { readTopicMetadata } from './topic-metadata.js'
+import { readTopicMetadata, type TopicMetadata } from './topic-metadata.js'
 import { arkmeRecordTextFormat, arkmeMarkdownPlainText } from '../markdown.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -49,10 +50,18 @@ export interface ArkmeSourceRefPayload {
   kind: ArkmeSourceKind
   ownerRef: string
   displayName: string
+  /** Host-only source authority. Never serialize an opened payload to consumers. */
+  groupDelegation?: GroupDelegation
   botGroupTarget?: ArkmeGroupBotBindingTarget
   sidebarSubjectUid?: string
   conversationListActivityAtMillis?: number
   conversationListLatestSequence?: number
+}
+
+export interface GroupDelegation {
+  accessRef:string;teamId:string;membershipKind:'owner'|'member';membershipRevision:number
+  groupMembershipUid:string;groupMembershipRevision:number;visibleFromSeq:number
+  workspace?:{ref:string;jotmoId:string}
 }
 
 export interface ArkmeGroupBotBindingTarget {
@@ -323,6 +332,13 @@ export function arkmeChatConversationPreview(raw: Record<string, unknown>, viewe
   const callPreview = callRecordConversationPreview(raw, viewerUserId)
   if (callPreview !== undefined) return callPreview
   const values = conversationPreviewObjects(raw)
+  for (const value of values) {
+    const forward = objectValue(value.forward_records ?? value.forwardRecords ?? value)
+    if (stringValue(forward.render_kind ?? forward.renderKind) === 'forward_records'
+      || ['team_message', 'quick_records'].includes(stringValue(forward.source_type))) {
+      return arkmeForwardConversationPreview(stringValue(forward.title).trim() || '转发消息')
+    }
+  }
   const text = normalizedConversationText(values)
   let marker = conversationMediaMarker(values)
   if (marker === '[表情]' && arkmeHasKnownEmojiToken(text)) marker = ''
@@ -332,7 +348,15 @@ export function arkmeChatConversationPreview(raw: Record<string, unknown>, viewe
     ? '[卡片]' : ''
 }
 
-export function arkmeTimelineConversationPreview(item: ArkmeTimelineItem): string {
+export function arkmeForwardConversationPreview(title: string): string {
+  return arkmeEmojiTokenSafePrefix(`[转发] ${title.replace(/\s+/gu, ' ').trim()}`, 300)
+}
+
+export function arkmeTimelineConversationPreview(
+  item: Pick<ArkmeTimelineItem, 'conversationPreview' | 'contentBlocks' | 'forwardRecords' | 'textFormat' | 'textContent' | 'title' | 'templateKind'>,
+  fallback = '非文本内容',
+): string {
+  if (item.forwardRecords !== undefined) return arkmeForwardConversationPreview(item.forwardRecords.title)
   const projected = item.conversationPreview?.trim()
   if (projected !== undefined && projected !== '') return projected
   const text = ((item.textFormat === 'markdown' ? arkmeMarkdownPlainText(item.textContent) : item.textContent.trim()) || item.title.trim()).replace(/\s+/gu, ' ')
@@ -341,10 +365,10 @@ export function arkmeTimelineConversationPreview(item: ArkmeTimelineItem): strin
   let marker = kinds.has('file') ? '[文件]'
     : kinds.has('video') ? '[视频]'
       : kinds.has('image') ? '[图片]'
-        : kinds.has('audio') ? '[语音]'
+        : kinds.has('audio') || item.templateKind === 3 || item.templateKind === 4 ? '[语音]'
           : blocks.some(block => block.renderRole === 3) ? '[表情]' : ''
   if (marker === '[表情]' && arkmeHasKnownEmojiToken(text)) marker = ''
-  return `${marker}${text}` || '非文本内容'
+  return arkmeEmojiTokenSafePrefix(`${marker}${text}`, 300) || fallback
 }
 
 function chunksOf<T>(values: readonly T[], size: number): T[][] {
@@ -563,28 +587,46 @@ export class SourceService {
     return { items, hasMore: page.hasMore, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) }
   }
 
-  /** Resolve a bounded set in one directory walk, reusing viewer-scoped source projections. */
+  /** Resolve only missing identities, without scanning or hydrating unrelated directory pages. */
   async chatSourcesBySessionUids(uids: readonly string[], signal?: AbortSignal): Promise<Map<string, ArkmeSourceItem>> {
     const session = await this.runtime.requireSession()
+    const assertCurrent = async () => {
+      signal?.throwIfAborted()
+      const current = await this.runtime.requireSession()
+      signal?.throwIfAborted()
+      if (current.userId !== session.userId) throw new ArkmePluginError('read-account-changed', '登录账号已变化，请重新读取', false, 409)
+    }
     const pending = new Set(uids.filter(uid => uid.trim() !== ''))
     const result = new Map<string, ArkmeSourceItem>()
-    const collect = () => {
-      for (const uid of pending) {
-        const source = this.chatSourceCache.get(`${String(session.userId)}:${uid}`)
-        if (source !== undefined) { result.set(uid, source); pending.delete(uid) }
+    for (const uid of pending) {
+      const cached = this.cachedChatSource(session.userId, uid)
+      if (cached !== undefined) { result.set(uid, cached); pending.delete(uid) }
+    }
+    for (const batch of chunksOf([...pending].sort(), 50)) {
+      await assertCurrent()
+      const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
+        '/api/v1/chats/display-snapshots', { chat_session_uids: batch }, session, signal, { lane: 'interactive-read' },
+      )
+      await assertCurrent()
+      const seen = new Set<string>()
+      const invalid = () => new ArkmePluginError('chat-display-snapshot-invalid', '会话展示信息不完整，请重试', true, 502)
+      if (!Array.isArray(data.items) || data.items.length > batch.length) throw invalid()
+      const bundles = data.items.map(raw => {
+        const bundle = objectValue(raw), uid = stringValue(objectValue(bundle.session).chat_session_uid).trim()
+        if (!batch.includes(uid) || seen.has(uid)) throw invalid()
+        seen.add(uid)
+        return { uid, bundle }
+      })
+      const resolved = new Map<string, ArkmeSourceItem>()
+      for (const { uid, bundle } of bundles) resolved.set(uid,
+        await this.chatSourceFromBundle(bundle, session, this.cachedChatSource(session.userId, uid), []))
+      await assertCurrent()
+      for (const [uid, source] of resolved) {
+        this.setChatSource(session.userId, uid, source)
+        result.set(uid, this.cachedChatSource(session.userId, uid)!)
       }
     }
-    collect()
-    let cursor: string | undefined
-    for (let pageIndex = 0; pending.size > 0 && pageIndex < 20; pageIndex += 1) {
-      if (signal?.aborted) throw signal.reason
-      const page = await this.listSources('root', { limit: 50,
-        ...(cursor === undefined ? {} : { cursor }), ...(signal === undefined ? {} : { signal }),
-      })
-      collect()
-      if (!page.hasMore || page.nextCursor === undefined) break
-      cursor = page.nextCursor
-    }
+    await assertCurrent()
     return result
   }
 
@@ -895,6 +937,33 @@ export class SourceService {
       sourceRef: await this.sealSourceRef(session.userId, 'topic', topic.ownerRef, title),
       displayName: title,
     }
+  }
+
+  /** Resolve the hidden system destination without loading its records or directory. */
+  async hiddenTopicSource(sourceRef: string, signal?: AbortSignal): Promise<ArkmeSourceItem | null> {
+    const session = await this.runtime.requireSession()
+    const topic = await this.openSourceRef(sourceRef, session.userId)
+    if (topic.kind !== 'topic') return null
+    let metadata: TopicMetadata
+    try {
+      metadata = await readTopicMetadata(this.runtime, session, topic.ownerRef, signal)
+    } catch (error) {
+      signal?.throwIfAborted()
+      if (error instanceof ArkmePluginError && (!error.retryable || error.httpStatus === 403 || error.httpStatus === 404)) return null
+      throw error
+    }
+    signal?.throwIfAborted()
+    if (metadata.topicKind !== ARKME_DSH_INPUT_TOPIC_KIND || metadata.privacyState === 2) return null
+    const source = {
+      ...await this.sourceItem(topic),
+      topicKind: metadata.topicKind,
+      displayName: arkmeTopicDisplayName(topic.displayName, metadata.topicKind),
+    }
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) {
+      throw new ArkmePluginError('source-account-changed', '账号已切换，请重新打开主题', true, 409)
+    }
+    return source
   }
 
   /** Reuse the record owner's topic policy, without replaying title/privacy defaults. */
@@ -1528,7 +1597,7 @@ export class SourceService {
         ), undefined)
       const defaultLatestPreview = defaultLatestRecord === undefined
         ? ''
-        : (defaultLatestRecord.textContent.trim() || defaultLatestRecord.title.trim())
+        : arkmeTimelineConversationPreview(defaultLatestRecord, '')
       const defaultCategory: ArkmeSourceItem = {
         sourceRef: await this.sealSourceRef(session.userId, 'default_category', 'uncategorized', '未分类'),
         kind: 'default_category',
@@ -1730,7 +1799,12 @@ export class SourceService {
           || cached?.displayName || stringValue(counterpart.visible_phone).trim()
         : stringValue(chatSession.title)).trim() || '未命名会话'
       const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
-      const preview = activity.latestPreview ?? arkmeChatConversationPreview(latestRecord, session.userId)
+      const previewUnavailable = latestRecord.status === 3 || latestRecord.status === 'unavailable'
+      const previewMissing = latestRecord.status === 2 || latestRecord.status === 4 || latestRecord.status === 'missing'
+      const latestSequence = numberValue(unread.session_last_seq ?? chatSession.last_seq)
+      const preview = activity.latestPreview ?? (previewUnavailable
+        ? cached?.latestSequence === latestSequence ? cached.latestPreview ?? '' : ''
+        : previewMissing ? '' : arkmeChatConversationPreview(latestRecord, session.userId))
       const unreadCount = attention.unreadCount
       const latestRelation = objectValue(latestPreview.relation)
       const latestSenderUserId = integerLikeValue(latestRelation.sender_user_id ?? latestRelation.senderUserId)
@@ -1776,6 +1850,7 @@ export class SourceService {
           : {}),
         ...activity,
         ...(preview === '' ? {} : { latestPreview: preview }),
+        latestPreviewUnavailable: previewUnavailable && preview === '',
         activeAtMillis: arkmeChatSortActiveAt(bundle, chatSession),
         ...attention,
         ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
@@ -1983,14 +2058,15 @@ export class SourceService {
       const item = items[index]
       if (item === undefined) continue
       // Avatar profile caches must not overwrite Chat's current-name projection.
-      if (profiles.get(targetUserId)?.avatarUrl === undefined) {
+      const avatarUrl = profiles.get(targetUserId)?.avatarUrl
+      if (avatarUrl === undefined) {
         // The profile request completed and explicitly produced no usable
         // avatar, so the full directory baseline owns removal.
         delete item.avatarRef
         continue
       }
       try {
-        item.avatarRef = await this.profile.sealProfileImageRef(session.userId, targetUserId)
+        item.avatarRef = await this.profile.sealProfileImageRef(session.userId, targetUserId, avatarUrl)
       } catch (error) {
         // Keep a seeded last-known-good avatar when sealing is temporarily
         // unavailable; this is not a server-owned deletion either.
@@ -2013,6 +2089,43 @@ export class SourceService {
     }
   }
 
+  /** Revalidate the frozen frame through the existing metadata-only scope owner.
+   * A successful current identity must never silently upgrade an old admission. */
+  async authorizeGroupDelegation(source:ArkmeSourceRefPayload,session:ArkmeSessionCredentials,signal?:AbortSignal):Promise<void> {
+    const frame=source.groupDelegation
+    if(!frame)return
+    const raw=objectValue(await this.runtime.authenticatedChatPost('/api/v1/chats/team-group/access',{
+      chat_session_uid:source.ownerRef,
+    },session,signal,{chatAccessRef:frame.accessRef,bypassCache:true,cacheMs:0,lane:'interactive-read'}))
+    const selection=objectValue(raw.representation)
+    // The signed access frame and its immutable admission UID/revision bind the
+    // history floor; current authority comes from the registered access owner.
+    if(raw.state!=='ready'||raw.access_kind!=='team_delegation'||raw.membership_policy!=='independent'
+      ||selection.group_membership_uid!==frame.groupMembershipUid||selection.group_membership_revision!==frame.groupMembershipRevision||String(selection.team_id)!==frame.teamId
+      ||selection.membership_kind!==frame.membershipKind||selection.membership_revision!==frame.membershipRevision)throw new ArkmePluginError('team-source-access-changed','团队群资格已变化，请重新打开',false,403)
+    signal?.throwIfAborted()
+    const current=await this.runtime.requireSession()
+    if(current.userId!==session.userId||current.refreshToken!==session.refreshToken)throw new ArkmePluginError('team-account-changed','登录账号已变化，请重新打开',false,409)
+  }
+
+  async groupDirectoryAvatars(
+    items: readonly {source: ArkmeSourceItem; snapshot: ArkmeGroupAvatarSnapshotProjection}[],
+    viewerUserId: number, signal?: AbortSignal,
+  ): Promise<ArkmeSourceItem[]> {
+    const session = await this.runtime.requireSession()
+    if (session.userId !== viewerUserId) throw new ArkmePluginError('team-account-changed', '登录账号已变化，请重新打开团队消息', false, 409)
+    const ids = [...new Set(items.flatMap(item => item.snapshot.memberIds))]
+    const profiles = await this.profile.publicProfileSummariesByUserIds(ids, session, signal)
+    const result = await Promise.all(items.map(async ({source, snapshot}) => {
+      const groupAvatar = await this.groupAvatarPresentation(snapshot, profiles, viewerUserId)
+      return {...source, groupAvatar, avatarRefs: groupAvatar.slots.flatMap(slot => slot.avatarRef === undefined ? [] : [slot.avatarRef])}
+    }))
+    signal?.throwIfAborted()
+    const current = await this.runtime.requireSession()
+    if (current.userId !== session.userId || current.refreshToken !== session.refreshToken) throw new ArkmePluginError('team-account-changed', '登录账号已变化，请重新打开团队消息', false, 409)
+    return result
+  }
+
   async groupAvatarPresentation(
     snapshot: ArkmeGroupAvatarSnapshotProjection,
     profiles: ReadonlyMap<number, ArkmePublicProfile>,
@@ -2025,7 +2138,7 @@ export class SourceService {
       slots: await Promise.all(snapshot.memberIds.slice(0, 5).map(async userId => {
         const profile = profiles.get(userId)
         if (profile?.avatarUrl !== undefined) {
-          return { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, userId) }
+          return { avatarRef: await this.profile.sealProfileImageRef(viewerUserId, userId, profile.avatarUrl) }
         }
         return { fallback: profile?.avatarFallback ?? { kind: 'default' } }
       })),
@@ -2079,18 +2192,24 @@ export class SourceService {
       botGroupTarget?: ArkmeGroupBotBindingTarget
       chatDirectoryMetadata?: ArkmeChatDirectoryMetadata
       omitDirectoryActivity?: boolean
+      groupDelegation?: GroupDelegation
     } = {},
   ): Promise<string> {
     const botGroupTarget = kind === 'group_chat' ? sanitizeGroupBotBindingTarget(options.botGroupTarget) : undefined
     const chatDirectoryMetadata = kind === 'private_chat' || kind === 'group_chat'
       ? options.chatDirectoryMetadata
       : undefined
+    const delegation = options.groupDelegation
+    if (delegation && kind !== 'group_chat') throw new ArkmePluginError('source-ref-invalid', '代理来源必须是群聊', false, 400)
+    const groupDelegationRef = delegation ? await new EncryptedReferenceCodec(() => this.runtime.stateStore.uniqueCode(), () => new ArkmePluginError('source-ref-invalid', '团队群来源已失效，请重新打开', false, 403))
+      .seal('arkme-group-delegation-v1', { ...delegation, viewer:userId, environment:this.runtime.config.environment, group:ownerRef }) : undefined
     const payload = encodeOpaqueJson({
       version: 1,
       userId,
       kind,
       ownerRef,
       displayName,
+      ...(groupDelegationRef ? { groupDelegationRef } : {}),
       ...(botGroupTarget === undefined ? {} : { botGroupTarget }),
       ...(chatDirectoryMetadata === undefined ? {} : {
         ...(chatDirectoryMetadata.subjectUid === undefined ? {} : {
@@ -2101,7 +2220,7 @@ export class SourceService {
           conversationListLatestSequence: chatDirectoryMetadata.latestSequence,
         }),
       }),
-    } satisfies ArkmeSourceRefPayload)
+    })
     const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
     return `arkme-source-v1.${payload}.${signature}`
   }
@@ -2147,12 +2266,34 @@ export class SourceService {
       || result.ownerRef === '' || result.displayName === '') {
       throw new ArkmePluginError('source-ref-invalid', 'Arkme 数据源引用与当前账号不匹配', false, 403)
     }
+    if (parsed.groupDelegationRef !== undefined) {
+      const v = await new EncryptedReferenceCodec(() => this.runtime.stateStore.uniqueCode(), () => new ArkmePluginError('source-ref-invalid', '团队群来源已失效，请重新打开', false, 403))
+        .open('arkme-group-delegation-v1', stringValue(parsed.groupDelegationRef))
+      if (kind !== 'group_chat' || v.viewer !== expectedUserId || v.environment !== this.runtime.config.environment || v.group !== result.ownerRef
+        || !stringValue(v.accessRef) || !/^[1-9][0-9]*$/.test(stringValue(v.teamId)) || !['owner','member'].includes(stringValue(v.membershipKind))
+        || !Number.isSafeInteger(v.membershipRevision) || Number(v.membershipRevision)<0 || v.membershipKind==='owner'&&v.membershipRevision!==0
+        || !stringValue(v.groupMembershipUid) || !Number.isSafeInteger(v.groupMembershipRevision) || Number(v.groupMembershipRevision)<1
+        || !Number.isSafeInteger(v.visibleFromSeq) || Number(v.visibleFromSeq)<1) throw new ArkmePluginError('source-ref-invalid', '团队群来源已失效，请重新打开', false, 403)
+      result.groupDelegation = {accessRef:stringValue(v.accessRef),teamId:stringValue(v.teamId),membershipKind:v.membershipKind as 'owner'|'member',membershipRevision:Number(v.membershipRevision),groupMembershipUid:stringValue(v.groupMembershipUid),groupMembershipRevision:Number(v.groupMembershipRevision),visibleFromSeq:Number(v.visibleFromSeq)}
+      if(v.workspace!==undefined) {
+        const workspace=objectValue(v.workspace)
+        if(!stringValue(workspace.ref)||!stringValue(workspace.jotmoId))throw new ArkmePluginError('source-ref-invalid','团队工作区引用无效',false,403)
+        result.groupDelegation.workspace={ref:stringValue(workspace.ref),jotmoId:stringValue(workspace.jotmoId)}
+      }
+    }
     return result
+  }
+
+  async sourceScopeKey(source: ArkmeSourceRefPayload): Promise<string> {
+    const base = await this.chatDirectorySourceKey(source.userId, source.ownerRef)
+    if (!source.groupDelegation) return base
+    const d=source.groupDelegation
+    return `arkme-group-scope-v1.${createHmac('sha256',await this.runtime.stateStore.uniqueCode()).update(JSON.stringify([this.runtime.config.environment,source.userId,source.ownerRef,'team_delegation',d.teamId,d.membershipKind,d.membershipRevision,d.groupMembershipUid,d.groupMembershipRevision])).digest('base64url')}`
   }
 
   async sourceItem(source: ArkmeSourceRefPayload): Promise<ArkmeSourceItem> {
     const sourceKey = source.kind === 'private_chat' || source.kind === 'group_chat'
-      ? await this.chatDirectorySourceKey(source.userId, source.ownerRef)
+      ? await this.sourceScopeKey(source)
       : undefined
     return {
       sourceRef: await this.sealSourceRef(
@@ -2161,6 +2302,7 @@ export class SourceService {
         source.ownerRef,
         source.displayName,
         {
+          ...(source.groupDelegation ? {groupDelegation:source.groupDelegation} : {}),
           ...(source.botGroupTarget === undefined ? {} : { botGroupTarget: source.botGroupTarget }),
           chatDirectoryMetadata: {
             ...(source.sidebarSubjectUid === undefined ? {} : { subjectUid: source.sidebarSubjectUid }),
@@ -2173,6 +2315,8 @@ export class SourceService {
       ...(source.kind === 'topic' ? { topicHierarchyKey: await this.topicHierarchyKey(source.userId, source.ownerRef) } : {}),
       kind: source.kind,
       displayName: source.displayName,
+      ...(source.groupDelegation?{accessKind:'team_delegation' as const,canonicalChatSourceKey:await this.chatDirectorySourceKey(source.userId,source.ownerRef)}:{}),
+      ...(source.groupDelegation?.workspace?{teamWorkspace:source.groupDelegation.workspace}:{}),
       activeAtMillis: source.conversationListActivityAtMillis ?? 0,
       unreadCount: 0,
       ...((source.conversationListLatestSequence ?? 0) > 0
@@ -2215,12 +2359,10 @@ export class SourceService {
     const previewSnapshot = options.previewSnapshot === true && snapshotSequence >= Math.max(cached?.latestSequence ?? 0, latestItem?.sequence ?? 0)
     let latestPreview = latestItem === undefined
       ? cached?.latestPreview
-      : latestItem.forwardRecords === undefined
-        ? arkmeTimelineConversationPreview(latestItem)
-        : `[转发] ${latestItem.forwardRecords.title}`
+      : arkmeTimelineConversationPreview(latestItem)
     if (previewSnapshot) {
       const record = objectValue(objectValue(bundle.latest_preview).record)
-      if (record.status !== 'unavailable') latestPreview = record.status === 'missing'
+      if (record.status !== 'unavailable' && record.status !== 3) latestPreview = record.status === 'missing' || record.status === 2 || record.status === 4
         ? '' : arkmeChatConversationPreview(record, session.userId)
     }
     const activity = kind === 'group_chat' ? arkmeChatActivityPreview(bundle, session.userId) : {}
@@ -2229,7 +2371,7 @@ export class SourceService {
     if (!previewSnapshot && latestItem !== undefined && latestItemAt > 0 && latestItemAt >= (activity.latestActivityAtMillis ?? 0)) {
       activity.latestActivityAtMillis = latestItemAt
       activity.latestActivityKind = 'record'
-      latestPreview = latestItem.forwardRecords === undefined ? arkmeTimelineConversationPreview(latestItem) : `[转发] ${latestItem.forwardRecords.title}`
+      latestPreview = arkmeTimelineConversationPreview(latestItem)
     }
     const latestSequence = Math.max(
       numberValue(unread.session_last_seq ?? chatSession.last_seq),
@@ -2281,6 +2423,7 @@ export class SourceService {
         latestItem?.sendAtMillis ?? 0,
       ),
       ...attention,
+      ...(Number.isSafeInteger(unread.read_seq) && Number(unread.read_seq) >= 0 ? { readSequence: Number(unread.read_seq) } : {}),
       ...(hasUnreadMention === undefined ? {} : { hasUnreadMention }),
       isPinned,
       chatPolicyUpdatedAtMillis: numberValue(currentPolicy.update_at),

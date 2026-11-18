@@ -1,3 +1,4 @@
+import { formatArkmeTime } from '../display-time-zone.js'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from '@phosphor-icons/react/dist/icons/X'
@@ -60,6 +61,7 @@ export function RecordingComparisonColumn({ title, kind, actions, children }: {
 type ComparisonPagination = {
   cursor?: string | undefined
   loading: boolean
+  updating?: boolean
   error: string
   next(): Promise<unknown>
 }
@@ -71,7 +73,7 @@ export function RecordingComparisonPane({ pagination, children }: { pagination?:
   const latest = useRef(pagination); latest.current = pagination
   const fill = () => {
     const element = pane.current, page = latest.current
-    if (!element || element.clientHeight <= 0 || !page?.cursor || page.loading || page.error || requested.current === page.cursor) return
+    if (!element || element.clientHeight <= 0 || !page?.cursor || page.loading || page.updating || page.error || requested.current === page.cursor) return
     if (element.scrollHeight - element.scrollTop - element.clientHeight >= 400) return
     // A pending page may return the same cursor. Do not busy-loop that cursor;
     // the result owner refreshes it when processing advances, or the user retries.
@@ -88,6 +90,7 @@ export function RecordingComparisonPane({ pagination, children }: { pagination?:
   return <div ref={pane} onScroll={fill} style={{ overflowY: 'auto', overflowWrap: 'anywhere', minWidth: 0, minHeight: 0, flex: 1, overscrollBehavior: 'contain', padding: '12px 20px 24px' }}>
     {children}
     {pagination?.loading && <p role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr('正在加载…')}</p>}
+    {pagination?.updating && <div role="status" style={{ color: colors.secondary, fontSize: 12 }}>{tr('录音内容正在更新')} <RecordingTranscriptButton disabled={pagination.loading} onClick={() => { requested.current = undefined; void pagination.next().catch(() => undefined) }}>{tr('继续加载')}</RecordingTranscriptButton></div>}
     {pagination?.error && <div role="alert" style={{ color: colors.danger, fontSize: 12 }}>{pagination.error} <RecordingTranscriptButton disabled={pagination.loading} onClick={() => { requested.current = undefined; void pagination.next().catch(() => undefined) }}>{tr('重试')}</RecordingTranscriptButton></div>}
   </div>
 }
@@ -95,7 +98,7 @@ export function RecordingComparisonPane({ pagination, children }: { pagination?:
 export function RecordingComparisonRow({ speaker, colorIndex, startAtMillis, endAtMillis, text, active, background, playLabel, onPlay }: {
   speaker: string; colorIndex: number; startAtMillis: number; endAtMillis: number; text: string; active: boolean; background?: boolean; playLabel: string; onPlay(): void
 }) {
-  const time = new Date(startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour12: false })
+  const time = formatArkmeTime(startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })
   const duration = Math.max(0, (endAtMillis - startAtMillis) / 1000)
   return <div role="button" tabIndex={0} aria-label={playLabel} title={tr('双击播放')} data-transcript-time={startAtMillis}
     onDoubleClick={onPlay} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onPlay() } }}

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { callArkme } from '../../api.js'
 import type { TeamCodexState } from '../../../team-codex-contract.js'
 import { readCodexActivity, type CodexActivitySnapshot } from './codex-activity.js'
+import { mergeCodexActivityTasks } from './codex-task-status.js'
 
 /** The directory owns this poller, so changing the open conversation cannot stop it. */
 export function useCodexActivity(accountKey: string | undefined, userId: number | undefined, active: boolean) {
@@ -32,7 +33,10 @@ export function useCodexActivity(accountKey: string | undefined, userId: number 
           return state
         },request.signal)
         request.signal.throwIfAborted()
-        setValue({accountKey,snapshot})
+        // An incomplete refresh cannot prove that previously confirmed history disappeared.
+        // A complete authoritative read can still remove deleted/excluded conversations.
+        setValue(current=>({accountKey,snapshot:!snapshot.complete && current?.accountKey===accountKey
+          ? {...snapshot,tasks:mergeCodexActivityTasks([...current.snapshot.tasks,...snapshot.tasks])} : snapshot}))
       } catch {
         if (!controller.signal.aborted) setValue(current=>({accountKey,snapshot:{
           tasks:current?.accountKey===accountKey?current.snapshot.tasks:[],complete:false,checkedAt:Date.now(),

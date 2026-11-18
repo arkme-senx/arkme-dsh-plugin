@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
-import { measureConversationRead } from '../src/conversation-read-diagnostics.js'
+import { measureConversationRead, measureConversationReadPhase, recordConversationReadPhase } from '../src/conversation-read-diagnostics.js'
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); vi.useRealTimers() })
 
@@ -27,4 +27,25 @@ it('bounds diagnostics and preserves failures without logging error text or unkn
   vi.advanceTimersByTime(60_001)
   await measureConversationRead('source.members.page', async () => 1)
   expect(log).toHaveBeenCalledTimes(121)
+})
+
+
+it('keeps concurrent read spans separate and reports phases even on a cache miss', async () => {
+  vi.stubEnv('ARKME_CHAT_NOTIFICATION_DIAGNOSTICS', '1')
+  vi.spyOn(console, 'info').mockImplementation(() => {})
+  const first = vi.fn(), second = vi.fn()
+  const miss = new Error('cache miss')
+  await Promise.all([
+    expect(measureConversationRead('source.timeline', () => measureConversationReadPhase('projection', async () => {
+      await Promise.resolve()
+      recordConversationReadPhase('sqlite', 7)
+      throw miss
+    }), first)).rejects.toBe(miss),
+    measureConversationRead('source.timeline', async () => {
+      recordConversationReadPhase('worker-queue', 42)
+    }, second),
+  ])
+  expect(first.mock.calls[0]![0]).toContain('arkme-sqlite;dur=7.0')
+  expect(first.mock.calls[0]![0]).not.toContain('worker-queue')
+  expect(second).toHaveBeenCalledWith('arkme-worker-queue;dur=42.0')
 })

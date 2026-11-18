@@ -15,6 +15,79 @@ const page = (text = 'body'): ArkmeTimelinePage => ({ source: { sourceRef: 'opaq
     sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: 'ready', itemCount: 0 })), complete: true, windowTokens: ['opaque'], olderHasMore: false, newerHasMore: false, hasMore: false } })
 
 describe('timeline cache and tokens', () => {
+  it.each(['原消息未找到', '此消息受隐私保护', '关联内容未找到', '关联内容受隐私保护', '内容已不可用', '此消息已无法查看'])(
+    'hides legacy %s notices while preserving authority and recall rows across restart', text => {
+      const path = mkdtempSync(join(tmpdir(), 'arkme hidden status ')); directories.push(path)
+      const store = new UnifiedTimelineCache(path)
+      const legacy = page(text)
+      legacy.unified!.events[0]!.contentStatus = 'unavailable'
+      legacy.unified!.events.push({ ...legacy.unified!.events[0]!, source: 'messages', eventId: 'recall', kind: 'notice', text: '对方撤回了一条消息' })
+      store.write('scope', 'old', legacy)
+      store.close()
+      const restored = new UnifiedTimelineCache(path)
+      try {
+        const events = restored.read('scope', 'old')!.unified!.events
+        expect(events).toHaveLength(2)
+        expect(events[0]).toMatchObject({ contentStatus: 'unavailable', hidden: true })
+        expect(events[1]).toMatchObject({ text: '对方撤回了一条消息' })
+        expect(events[1]).not.toHaveProperty('hidden')
+      } finally { restored.close() }
+    })
+  it('fences an older high-version response behind a newer canonical access restriction', () => {
+    const path = mkdtempSync(join(tmpdir(), 'arkme restricted body order ')); directories.push(path)
+    const store = new UnifiedTimelineCache(path)
+    const message = (version: number, restricted = false): ArkmeTimelinePage => {
+      const value = page()
+      value.unified!.events = [{ ...value.unified!.events[0]!, source: 'messages', kind: 'message',
+        contentStatus: restricted ? 'unavailable' : 'available', item: { itemUid: 'record', timelineItemKey: 'relation',
+          recordVersion: version, status: restricted ? 0 : 1, textContent: restricted ? '此消息受隐私保护' : 'private body' } as never }]
+      return value
+    }
+    try {
+      store.write('scope', 'first', message(9))
+      const stale = store.reserve()
+      store.write('scope', 'restricted', message(0, true))
+      store.write('scope', 'late', message(10), { ticket: stale })
+      expect(store.read('scope', 'late')?.items[0]).toMatchObject({ status: 0, textContent: '此消息受隐私保护' })
+      store.write('scope', 'fresh', message(10))
+      expect(store.read('scope', 'fresh')?.items[0]).toMatchObject({ status: 1, textContent: 'private body' })
+    } finally { store.close() }
+  })
+  it('keeps a retryable linked-content notice partial and stale without losing readable content', () => {
+    const path = mkdtempSync(join(tmpdir(), 'arkme partial read state ')); directories.push(path)
+    const store = new UnifiedTimelineCache(path)
+    try {
+      const partial = page('readable')
+      partial.unified!.events.push({ eventId: 'pending', kind: 'notice', source: 'wechat_import', occurredAtMillis: 20,
+        orderTie: 'pending', contentStatus: 'unavailable', text: '关联内容加载失败', retryable: true })
+      store.write('scope', 'partial', partial)
+      const restored = store.read('scope', 'partial')!
+      expect(restored.unified?.events).toHaveLength(2)
+      expect(restored.unified?.events[0]).toMatchObject({ text: 'readable' })
+      expect(restored.unified?.events[1]).toMatchObject({ text: '关联内容加载失败', retryable: true })
+      expect(restored.unified?.complete).toBe(false)
+      expect(restored.cache?.stale).toBe(true)
+    } finally { store.close() }
+  })
+  it.each(['message', 'notice'] as const)('revalidates legacy generic %s placeholders while retaining readable cached content', kind => {
+    const path = mkdtempSync(join(tmpdir(), 'arkme legacy read state ')); directories.push(path)
+    const store = new UnifiedTimelineCache(path)
+    try {
+      const legacy = page('readable')
+      legacy.unified!.events.push({ eventId: 'legacy', source: 'messages', occurredAtMillis: 20, orderTie: 'legacy', contentStatus: 'unavailable',
+        ...(kind === 'message' ? { kind, item: { itemUid: 'legacy', status: 0, textContent: '内容暂时不可用' } as never }
+          : { kind, text: '内容暂时不可用' }) })
+      store.write('scope', 'old', legacy, { latest: true })
+      const restored = store.read('scope', 'old')!
+      expect(restored.unified?.events).toHaveLength(1)
+      expect(restored.unified?.events[0]).toMatchObject({ text: 'readable' })
+      expect(restored.unified?.sources.find(source => source.source === 'messages')?.status).toBe('gap')
+      expect(restored.unified?.complete).toBe(false)
+      expect(restored.cache?.stale).toBe(true)
+      store.write('empty', 'old', { ...legacy, unified: { ...legacy.unified!, events: legacy.unified!.events.slice(1) } })
+      expect(store.read('empty', 'old')).toBeUndefined()
+    } finally { store.close() }
+  })
   it('keeps tokens confidential, stable and bound to environment/account/session/purpose', () => {
     const codec = new TimelineTokenCodec('secret', 'test/account/session')
     const token = codec.seal('upstream-private-cursor', 'older')
@@ -91,7 +164,7 @@ describe('canonical events and commit fences', () => {
       expect(store.write('scope', 'initial', message(4, 'late secret'), { ticket: late })).toBe(false)
       store.close(); store = new UnifiedTimelineCache(path)
       expect(store.read('scope', 'initial')?.items).toEqual([])
-      expect(store.read('scope', 'initial')?.unified?.events[0]).toMatchObject({ contentStatus: 'unavailable' })
+      expect(store.read('scope', 'initial')?.unified?.events[0]).toMatchObject({ contentStatus: 'unavailable', text: '此消息已无法查看', hidden: true })
       expect(store.read('scope', 'initial')?.cache?.stale).toBe(true)
     } finally { store.close() }
   })

@@ -53,7 +53,8 @@ describe('official DSH client adapter', () => {
     }
 
     expect(inject).not.toHaveBeenCalled()
-    expect(effect).not.toHaveBeenCalled()
+    expect(effect).toHaveBeenCalledTimes(1)
+    expect(effect.mock.calls[0]?.[1]).toBe('dsh-arkme: modal pointer and close interactions')
     expect(register).not.toHaveBeenCalled()
     expect(registered).toEqual([])
   })

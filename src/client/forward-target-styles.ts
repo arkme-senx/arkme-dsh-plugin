@@ -27,6 +27,11 @@ export const forwardTargetStyles:Record<string,CSSProperties>={
   forwardTargetSearchWrap: {
     margin: '4px 18px 12px', height: 38, flex: 'none',
   },
+  forwardTargetNavigation: { flex: 'none', padding: '0 18px 8px', boxSizing: 'border-box', background: arkmeTheme.base },
+  forwardTargetBack: {
+    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 4px', border: 0, borderRadius: 6,
+    background: 'transparent', color: colors.text, cursor: 'pointer', font: 'inherit', fontSize: 13, lineHeight: '18px',
+  },
   forwardTargetBody: { flex: 1, minHeight: 0, overflowY: 'auto' },
   forwardTargetList: { margin: 0, padding: '4px 18px 18px', listStyle: 'none' },
   forwardTargetRow: {

@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { arkmeTheme as c } from './arkme-theme.js'
@@ -34,7 +35,7 @@ export function ReactionPhraseDialog({ text, emoji, colorId, error, notice, disa
     style={{ position: 'fixed', inset: 0, margin: 'auto', width: 'min(360px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 32px)', boxSizing: 'border-box', padding: 0, border: `1px solid ${c.border}`, borderRadius: 14, background: c.menu, color: c.text, boxShadow: c.shadow, fontSize: 14 }}>
     <div style={{ padding: '16px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: `1px solid ${c.border}` }}>
       <strong style={{ fontSize: 16 }}>自定义短语</strong>
-      <button type="button" aria-label="关闭自定义短语" onClick={onClose} style={{ border: 0, background: 'transparent', color: c.secondary, cursor: 'pointer', width: 28, height: 28, fontSize: 22, lineHeight: 1 }}>×</button>
+      <ArkmeCloseButton type="button" aria-label="关闭自定义短语" onClick={onClose} style={{ border: 0, background: 'transparent', color: c.secondary, cursor: 'pointer', width: 28, height: 28, fontSize: 22, lineHeight: 1 }} />
     </div>
     <form onSubmit={event => { event.preventDefault(); if (!blocked) onSave(false) }} style={{ padding: 20 }}>
       <div style={{ display: 'flex', gap: 8 }}>

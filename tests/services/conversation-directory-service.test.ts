@@ -12,7 +12,7 @@ const row = (id: number, extra: Partial<ArkmeSourceItem> = {}): ArkmeSourceItem 
 const page = (items: ArkmeSourceItem[], nextCursor?: string): ArkmeSourceList => ({ directory: 'root', items, hasMore: nextCursor !== undefined, ...(nextCursor === undefined ? {} : { nextCursor }) })
 const owners: ConversationDirectoryService[] = []
 afterEach(() => { for (const owner of owners.splice(0)) owner.reset(); vi.useRealTimers() })
-function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: ArkmeSourceList, restoreBots?: (items: import('../../src/types.js').ArkmeBotSummary[], userId: number) => Promise<import('../../src/types.js').ArkmeBotSummary[]>) {
+function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: ArkmeSourceList, restoreBots?: (items: import('../../src/types.js').ArkmeBotSummary[], userId: number) => Promise<import('../../src/types.js').ArkmeBotSummary[]>, readLocalTimeline?: (sourceRef: string, signal: AbortSignal) => Promise<import('../../src/types.js').ArkmeTimelinePage>) {
   let userId = 1
   const write = vi.fn(async (_userId: number, _page: ArkmeSourceList) => undefined)
   const emitted: ArkmeSourceList[] = []
@@ -25,12 +25,72 @@ function setup(load: (cursor?: string) => Promise<ArkmeSourceList>, cached?: Ark
   const runtime = { authenticatedChatPost: vi.fn(async (_path: string, body: { chat_session_uids: string[] }) => ({ items: body.chat_session_uids.map(uid => ({ session: { chat_session_uid: uid }, current_policy: { user_id: userId, pin_state: 2, update_at: 20 } })) })), requireSession: async () => ({ userId }), accountScopedSession: async () => ({ userId }), stateStore: { readDirectoryCache: async () => cached, writeDirectoryCache: write } }
   const readBots = vi.fn(async () => ({ items: [] as import('../../src/types.js').ArkmeBotSummary[] }))
   const warmAvatar = vi.fn(async () => undefined)
-  const owner = new ConversationDirectoryService(runtime as unknown as ServiceRuntime, source as unknown as SourceService, preferences as unknown as ConversationDirectoryVisibilityService, readBots, warmAvatar, value => { emitted.push(value) }, restoreBots)
+  const owner = new ConversationDirectoryService(runtime as unknown as ServiceRuntime, source as unknown as SourceService, preferences as unknown as ConversationDirectoryVisibilityService, readBots, warmAvatar, value => { emitted.push(value) }, restoreBots, readLocalTimeline)
   owners.push(owner)
   return { owner, source, write, emitted, preferences, runtime, readBots, warmAvatar, switchUser: (id: number) => { userId = id; owner.reset() } }
 }
 
 describe('local-first directory', () => {
+  it('recovers only the matching latest preview before displaying the cached directory', async () => {
+    const cached = [row(1, { latestSequence: 7, latestPreviewUnavailable: true }), row(2, { latestSequence: 8, latestPreviewUnavailable: true })]
+    const remote = gate<ArkmeSourceList>()
+    const test = setup(() => remote.promise, page(cached), undefined, async ref => ({
+      source: cached.find(source => source.sourceRef === ref)!,
+      items: [{ itemUid: 'video', sequence: 7, title: '', textContent: '', conversationPreview: '[视频]说明',
+        senderName: '同事', isMe: false, status: 1, sendAtMillis: 10 }],
+      hasMore: false,
+    }))
+    const first = await test.owner.read()
+    expect(first.items[0]).toMatchObject({ latestPreview: '[视频]说明', latestPreviewUnavailable: false })
+    expect(first.items[1]?.latestPreview).toBeUndefined()
+    remote.resolve(page(cached))
+    await test.owner.settled()
+  })
+  it('keeps a same-sequence media preview on temporary failure and replaces it after opening the latest message', async () => {
+    let current = row(1, {latestSequence:7,latestPreview:'[图片]说明'})
+    const test = setup(async () => page([current]))
+    await test.owner.read()
+    await test.owner.settled()
+    current = row(1, {latestSequence:7,latestPreviewUnavailable:true})
+    await test.owner.read(true)
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]?.latestPreview).toBe('[图片]说明')
+    current = row(1, {latestSequence:8,latestPreviewUnavailable:true})
+    await test.owner.read(true)
+    await test.owner.settled()
+    expect((await test.owner.read()).items[0]?.latestPreview).toBeUndefined()
+    const source = (await test.owner.read()).items[0]!
+    test.owner.rememberTimelinePreview(1, {source,items:[{
+      itemUid:'video',sequence:8,title:'',textContent:'视频说明',senderName:'同事',isMe:false,status:1,sendAtMillis:10,
+      contentBlocks:[{kind:'video',mediaRef:'video',fileName:'clip.mp4',mimeType:'video/mp4',size:1,sortOrder:0}],
+    }],hasMore:false})
+    expect((await test.owner.read()).items[0]).toMatchObject({latestPreview:'[视频]视频说明',latestPreviewUnavailable:false})
+  })
+  it.each([false, true])('refreshes only the affected unread row and respects a concurrent read (read=%s)', async read => {
+    const current = row(1, { latestSequence: 4, readSequence: 4, latestPreview: 'previous' })
+    const test = setup(async () => page([current, row(2)]))
+    await test.owner.read()
+    await test.owner.settled()
+    const snapshot = gate<{ items: Array<{ session: { chat_session_uid: string }; current_policy: { user_id: number; pin_state: number; update_at: number }; unread_snapshot: { session_last_seq: number; read_seq: number; unread_count: number } }> }>()
+    test.runtime.authenticatedChatPost.mockImplementationOnce(() => snapshot.promise)
+    const signal = new AbortController().signal
+    const request = test.owner.refreshSyncedUnread({ userId: 1, accessToken: '', refreshToken: '' }, [{
+      uid: '1', sourceKey: current.sourceKey!, sequence: 7,
+      item: { itemUid: 'm', senderName: 'peer', isMe: false, sendAtMillis: 10, title: '', textContent: 'committed', status: 1 },
+    }], signal)
+    if (read) await test.owner.accept({ type: 'read-ack', revision: 1, sourceRef: current.sourceRef, sourceKey: current.sourceKey, effectiveReadSequence: 7, unreadCount: 0 })
+    snapshot.resolve({ items: [{ session: { chat_session_uid: '1' }, current_policy: { user_id: 1, pin_state: 1, update_at: 1 },
+      unread_snapshot: { session_last_seq: 7, read_seq: 4, unread_count: 3 } }] })
+    await request
+    expect(test.runtime.authenticatedChatPost).toHaveBeenCalledWith('/api/v1/chats/display-snapshots',
+      { chat_session_uids: ['1'] }, expect.anything(), signal, expect.objectContaining({ lane: 'background-read' }))
+    expect((await test.owner.read()).items.find(item => item.sourceKey === 'key-1')).toMatchObject({
+      unreadCount: read ? 0 : 3, latestPreview: read ? 'previous' : 'committed',
+      activeAtMillis: read ? 1 : 10,
+    })
+    expect(test.source.listSources).toHaveBeenCalledTimes(1)
+  })
+
   it('allows a current nickname page through a concurrent read acknowledgement', async () => {
     const remote = gate<ArkmeSourceList>()
     const initial = row(1, { displayName: '旧名字', privateNickname: '旧名字', latestSequence: 7 })
@@ -114,6 +174,89 @@ describe('local-first directory', () => {
     await test.owner.read(); await test.owner.settled()
     expect(test.source.listSources).toHaveBeenCalledTimes(12)
     expect((await test.owner.read()).items).toHaveLength(240)
+  })
+
+  it('retains its first page and joins repeated refreshes while a rate-limited cursor waits', async () => {
+    const limited = gate<number>()
+    const attempts: (string | undefined)[] = []
+    const starts: number[] = []
+    const test = setup(async cursor => {
+      attempts.push(cursor)
+      starts.push(performance.now())
+      if (cursor === undefined) return page([row(1)], 'next')
+      if (attempts.length === 2) {
+        limited.resolve(performance.now())
+        throw new ArkmePluginError('arkme-code-1002', '请求较频繁', true, 502,
+          { failureKind: 'rate_limited', retryAfterMillis: 1150 })
+      }
+      return page([row(2)])
+    })
+    expect((await test.owner.read()).items).toEqual([row(1)])
+    const failureAt = await limited.promise
+    const baseline = test.owner.complete()
+    const repeated = await Promise.all([test.owner.read(true), test.owner.read(true)])
+    expect(repeated.map(value => value.items.map(item => item.sourceKey))).toEqual([['key-1'], ['key-1']])
+    expect(attempts).toEqual([undefined, 'next'])
+    expect((await baseline).items).toEqual([row(1), row(2)])
+    await test.owner.settled()
+    expect(attempts).toEqual([undefined, 'next', 'next'])
+    expect(starts[2]! - failureAt).toBeGreaterThanOrEqual(1145)
+    expect(test.emitted.every(value => value.projection?.phase !== 'failed')).toBe(true)
+    expect(test.emitted.at(-1)?.projection?.phase).toBe('complete')
+  })
+
+  it('cancels a pending cursor retry when the account changes', async () => {
+    const limited = gate<void>()
+    const test = setup(async cursor => {
+      if (cursor === undefined) return page([row(1)], 'next')
+      limited.resolve()
+      throw new ArkmePluginError('arkme-http-error', 'too many requests', true, 502,
+        { upstreamStatus: 429, retryAfterMillis: 10_000 })
+    })
+    await test.owner.read()
+    await limited.promise
+    const baseline = test.owner.complete()
+    const settled = test.owner.settled()
+    // Let complete join the old account's scan before changing the account.
+    await new Promise<void>(resolve => setImmediate(resolve))
+    test.switchUser(2)
+    await expect(baseline).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(settled).rejects.toMatchObject({ name: 'AbortError' })
+    expect(test.source.listSources).toHaveBeenCalledTimes(2)
+    expect(test.emitted.every(value => value.projection?.phase !== 'failed')).toBe(true)
+  })
+
+  it('leaves cached pages usable after a long rate limit without an automatic full rescan', async () => {
+    vi.useFakeTimers()
+    const test = setup(async cursor => {
+      if (cursor === undefined) return page([row(1)], 'next')
+      throw new ArkmePluginError('arkme-code-1002', '请求较频繁', true, 502,
+        { failureKind: 'rate_limited', retryAfterMillis: 60_000 })
+    })
+    await test.owner.read()
+    const settled = expect(test.owner.settled()).rejects.toMatchObject({ failureKind: 'rate_limited' })
+    await vi.advanceTimersByTimeAsync(120_000)
+    await settled
+    expect(await test.owner.read()).toMatchObject({ items: [row(1)], projection: { phase: 'failed' } })
+    expect(test.source.listSources).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses one scan when manual retry supersedes scheduled full recovery', async () => {
+    vi.useFakeTimers()
+    const cached = { ...page([row(1)]), projection: { revision: 1, phase: 'cached' as const, cachedAtMillis: 1, bots: [], visibility: [] } }
+    let available = false
+    const test = setup(async () => {
+      if (!available) throw new Error('offline')
+      return page([row(1)])
+    }, cached)
+    await test.owner.read()
+    await expect(test.owner.settled()).rejects.toThrow('offline')
+    available = true
+    await test.owner.read(true)
+    await vi.advanceTimersByTimeAsync(2000)
+    await test.owner.settled()
+    expect(test.source.listSources).toHaveBeenCalledTimes(2)
+    expect(test.emitted.at(-1)?.projection?.phase).toBe('complete')
   })
 
   it('joins notification and browser reads in one scan', async () => {

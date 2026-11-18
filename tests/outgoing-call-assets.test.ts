@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -64,7 +65,9 @@ describe('outgoing call assets', () => {
     expect(document).toContain('channel: "jotmo-desktop-call"')
     expect(document).toContain('const payload = typeof message === "string" ? message : JSON.stringify(message);')
     expect(document).toContain('message: payload')
-    expect(document).toContain('const bundleUrl = `./bundle.js?callRequestId=${encodeURIComponent(context.callRequestId || "idle")}`;')
+    const { bundleSha256 } = JSON.parse(await readFile(join(assetDirectory, 'manifest.json'), 'utf8'))
+    expect(document).toContain(`rel="modulepreload" href="./bundle.js?v=${bundleSha256}"`)
+    expect(document).toContain('const bundleUrl = document.getElementById("call-engine-module").href;')
     expect(document).toContain('import(bundleUrl)')
     expect(document).toContain('message: error instanceof Error ? error.message : "呼叫界面加载失败"')
     expect(document).not.toContain('payload: { message: error')
@@ -168,7 +171,7 @@ describe('outgoing call assets', () => {
   it('posts terminal events to the DSH web iframe parent when native bridges are unavailable', async () => {
     const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
     const bridge = bundle.slice(bundle.indexOf('function resolveWebHostCallRequestId()'), bundle.indexOf('function escapeHtml(value)'))
-    const post = bundle.slice(bundle.indexOf('function postToFlutter(type, extra = {})'), bundle.indexOf('function setStatusText(text)'))
+    const post = bundle.slice(bundle.indexOf('function postToFlutter('), bundle.indexOf('function setStatusText(text)'))
 
     expect(bridge).toContain('JSON.parse(String(window.name || "{}"))')
     expect(bridge).toContain('channel: "jotmo-desktop-call"')
@@ -186,10 +189,10 @@ describe('outgoing call assets', () => {
     expect(bridge).toContain('message: payload')
   })
 
-  it('cache-busts the iframe document from the host using each call request id', async () => {
+  it('keeps the iframe URL stable for the shared communication runtime', async () => {
     const host = await readFile(join(import.meta.dirname, '..', 'src', 'client', 'ArkmeOutgoingCallHost.tsx'), 'utf8')
 
-    expect(host).toContain("const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`")
+    expect(host).toContain("const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.frameId || snapshot.callRequestId || 'idle')}`")
     expect(host).toContain('src={callFrameUrl}')
     expect(host).toContain('const attachCallFrame = useCallback(')
   })
@@ -206,4 +209,21 @@ describe('outgoing call assets', () => {
     expect(hint).toContain('diagLog("local_terminal_web_host_hint"')
     expect(bundle).not.toContain('getElapsedLabel')
   })
+})
+
+
+it('passes only explicit suppression to the vendor SDK while preserving push metadata', async () => {
+  const bundle = await readFile(join(assetDirectory, 'bundle.js'), 'utf8')
+  const source = bundle.slice(bundle.indexOf('function buildOfflinePushInfo('), bundle.indexOf('function resolveRoomId('))
+  const build = runInNewContext(source + '; buildOfflinePushInfo', {
+    safeString: (value: unknown) => typeof value === 'string' ? value : '',
+    CALL_MEDIA: { audio: 'audio', video: 'video' }, IOS_OFFLINE_PUSH_TYPE_VOIP: 1,
+  })
+  for (const value of [undefined, false, true, 'true']) {
+    const result = build({ offlinePushInfo: { isDisablePush: value, title: 'Caller', extension: 'context' } })
+    expect(result.isDisablePush).toBe(value === true)
+    expect(result.title).toBe('Caller')
+    expect(result.extension).toBe('context')
+    expect(result.iOSPushType).toBe(1)
+  }
 })

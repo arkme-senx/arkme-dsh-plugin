@@ -1,5 +1,5 @@
 import type { DatabaseSync, StatementSync } from 'node:sqlite'
-import type { ArkmeMessageSyncProgress, ChatSyncCommand, ChatSyncLocalPage, ChatSyncPlan, ChatSyncProjection, ChatSyncSession, ChatSyncWork } from './chat-message-sync.js'
+import type { ArkmeMessageSyncProgress, ChatSyncCommand, ChatSyncLocalPage, ChatSyncPlan, ChatSyncProjection, ChatSyncUnreadPreview, ChatSyncSession, ChatSyncWork } from './chat-message-sync.js'
 import type { ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
 const MAX_WORK = 100_000
@@ -33,7 +33,8 @@ export class ChatMessageSyncStore {
       CREATE INDEX IF NOT EXISTS message_sync_pending ON message_sync_work(account,retry_at,uid,sequence) WHERE pending=1;
       CREATE INDEX IF NOT EXISTS message_sync_fair ON message_sync_work(account,uid,retry_at,sequence) WHERE pending=1;
       CREATE INDEX IF NOT EXISTS message_sync_pin ON message_sync_work(scope,event_id);
-      CREATE INDEX IF NOT EXISTS message_sync_local ON message_sync_work(scope,sequence DESC) WHERE pending=0 AND state='available';
+      DROP INDEX IF EXISTS message_sync_local;
+      CREATE INDEX IF NOT EXISTS message_sync_cached ON message_sync_work(scope,sequence DESC) WHERE stored_version>=0 AND state IN ('available','pending','missing');
       CREATE INDEX IF NOT EXISTS message_sync_item ON message_sync_work(scope,item_key);
       CREATE TRIGGER IF NOT EXISTS sync_account_added AFTER INSERT ON message_sync_accounts BEGIN UPDATE cache_stats SET bytes=bytes+length(CAST(NEW.checkpoint AS BLOB))+128 WHERE id=1; END;
       CREATE TRIGGER IF NOT EXISTS sync_account_changed AFTER UPDATE OF checkpoint ON message_sync_accounts BEGIN UPDATE cache_stats SET bytes=bytes+length(CAST(NEW.checkpoint AS BLOB))-length(CAST(OLD.checkpoint AS BLOB)) WHERE id=1; END;
@@ -104,15 +105,20 @@ export class ChatMessageSyncStore {
     }
     if (command.action === 'pending') {
       this.assert(account, command.epoch)
-      const cursor = String(this.get(account).dispatch_uid)
-      const select = this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid>? AND retry_at<=? ORDER BY uid LIMIT ?`)
-      let sessions = select.all(account, cursor, command.now, 50)
-      if (sessions.length < 50) sessions = sessions.concat(this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid<=? AND retry_at<=? ORDER BY uid LIMIT ?`).all(account, cursor, command.now, 50 - sessions.length))
+      let sessions: Row[]
+      if (command.uid !== undefined) {
+        sessions = [{ uid: command.uid }]
+      } else {
+        const cursor = String(this.get(account).dispatch_uid)
+        const select = this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid>? AND retry_at<=? ORDER BY uid LIMIT ?`)
+        sessions = select.all(account, cursor, command.now, 50)
+        if (sessions.length < 50) sessions = sessions.concat(this.prepare(`SELECT DISTINCT uid FROM message_sync_work WHERE account=? AND pending=1 AND uid<=? AND retry_at<=? ORDER BY uid LIMIT ?`).all(account, cursor, command.now, 50 - sessions.length))
+      }
       const rows: Row[] = [], quota = Math.max(1, Math.floor(Math.min(400, command.limit) / Math.max(1, sessions.length)))
       const pending = this.prepare(`SELECT w.*,s.kind,s.membership FROM message_sync_work w JOIN message_sync_sessions s ON s.account=w.account AND s.uid=w.uid
         WHERE w.account=? AND w.uid=? AND w.pending=1 AND w.retry_at<=? AND s.accessible=1 ORDER BY w.sequence LIMIT ?`)
       for (const session of sessions) rows.push(...pending.all(account, String(session.uid), command.now, quota))
-      if (sessions.length) this.prepare('UPDATE message_sync_accounts SET dispatch_uid=? WHERE account=?').run(String(sessions.at(-1)!.uid), account)
+      if (command.uid === undefined && sessions.length) this.prepare('UPDATE message_sync_accounts SET dispatch_uid=? WHERE account=?').run(String(sessions.at(-1)!.uid), account)
       const bySession = new Map<string, { uid: string; kind: number; membership: number; work: ChatSyncWork[] }>()
       for (const r of rows) {
         const uid = String(r.uid), entry = bySession.get(uid) ?? { uid, kind: Number(r.kind), membership: Number(r.membership), work: [] }
@@ -143,6 +149,8 @@ export class ChatMessageSyncStore {
       return { resume, cached }
     }
     const projections: ChatSyncProjection[] = []
+    const unreadPreviews: ChatSyncUnreadPreview[] = []
+    const committedGroupBodies: Record<string, string[]> = Object.create(null)
     this.db.exec('BEGIN IMMEDIATE')
     try {
       if (command.action === 'begin') {
@@ -165,7 +173,7 @@ export class ChatMessageSyncStore {
         if (command.action === 'manifest' || command.action === 'commit') {
           if (row.checkpoint !== command.expectedCheckpoint || (command.action === 'manifest') !== command.page.manifest) throw new Error('message-sync-checkpoint-stale')
           for (const session of command.page.sessions) {
-            const projection = this.applySession(command, session, row)
+            const projection = this.applySession(command, session, row, unreadPreviews, committedGroupBodies)
             if (projection.reset || projection.changes.length) projections.push(projection)
           }
           if (command.action === 'manifest') this.prepare('UPDATE message_sync_accounts SET checkpoint=? WHERE account=?').run(command.page.checkpoint, account)
@@ -181,10 +189,11 @@ export class ChatMessageSyncStore {
       this.enforceBudget()
       const result = this.status(account)
       this.db.exec('COMMIT')
-      return projections.length ? { ...result, projections } : result
+      return { ...result, ...(projections.length ? { projections } : {}), ...(unreadPreviews.length ? { unreadPreviews } : {}),
+        ...(Object.keys(committedGroupBodies).length ? { committedGroupBodies } : {}) }
     } catch (error) { this.db.exec('ROLLBACK'); throw error }
   }
-  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row): ChatSyncProjection {
+  private applySession(command: Extract<ChatSyncCommand, { action: 'manifest' | 'commit' }>, session: ChatSyncSession, accountRow: Row, unreadPreviews: ChatSyncUnreadPreview[], committedGroupBodies: Record<string, string[]>): ChatSyncProjection {
     const { account, ticket, now } = command
     const scope = session.scope!, sourceKey = session.sourceKey!
     if (!scope || !sourceKey) throw new Error('message-sync-scope-missing')
@@ -215,12 +224,13 @@ export class ChatMessageSyncStore {
       if (!accountRow.discovering) this.prepare('UPDATE message_sync_accounts SET completed=completed+?,terminal=terminal+? WHERE account=?').run(Number(unsettled.n), Number(unsettled.n), account)
       return projection
     }
+    let latestUnread: ChatSyncUnreadPreview | undefined
     for (let work of session.work) {
       const old = this.prepare('SELECT * FROM message_sync_work WHERE account=? AND uid=? AND id=?').get(account, session.uid, work.id)
       const terminal = work.state === 'removed' || work.state === 'restricted'
       const eventId = work.eventId!, itemKey = work.itemKey!
       if (!eventId || !itemKey) throw new Error('message-sync-identity-missing')
-      const exists = this.prepare("SELECT version,ticket,json_extract(payload,'$.contentStatus') AS content_status FROM contents WHERE scope=? AND event_id=?").get(scope, eventId)
+      const exists = this.prepare("SELECT version,ticket,json_extract(payload,'$.contentStatus') AS content_status, json_extract(payload,'$.item.messageActionsV2') AS message_actions_v2 FROM contents WHERE scope=? AND event_id=?").get(scope, eventId)
       const unread = (command.action === 'commit' && old ? old.unread === 1 : work.unread) && work.sequence > readThrough
       if (!unread && !old && !exists) {
         // A browser can still be displaying a realtime body that never reached SQLite.
@@ -239,11 +249,19 @@ export class ChatMessageSyncStore {
         // version that was never committed to canonical contents.
         if (exists && Number(exists.ticket) > ticket && (exists.content_status !== 'available' || Number(exists.version) < work.version)) throw new Error('message-sync-stale')
         if (!exists || Number(exists.ticket) <= ticket && Number(exists.version) <= work.version) {
+          // Sync bodies omit the capability previously confirmed by the timeline.
+          const item = work.event.item.messageActionsV2 === undefined && exists?.message_actions_v2 === 1
+            ? { ...work.event.item, messageActionsV2: true } : work.event.item
+          const event = item === work.event.item ? work.event : { ...work.event, item }
           this.prepare(`INSERT INTO contents(scope,event_id,source,payload,version,ticket) VALUES (?,?,'messages',?,?,?) ON CONFLICT(scope,event_id) DO UPDATE SET
-            payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(work.event), work.version, ticket)
+            payload=excluded.payload,version=excluded.version,ticket=excluded.ticket`).run(scope, eventId, JSON.stringify(event), work.version, ticket)
+          if (session.kind === 2) (committedGroupBodies[session.uid] ??= []).push(work.id)
+          if (unread && work.unread && work.sequence > (latestUnread?.sequence ?? 0)) {
+            latestUnread = { uid: session.uid, sourceKey, sequence: work.sequence, item }
+          }
           // Newly downloaded tails already use the committed-body wakeup.
           if (exists || Number(old?.stored_revision ?? -1) >= 0) {
-            projection.changes.push({ itemKey, revision: work.revision, version: work.version, item: work.event.item })
+            projection.changes.push({ itemKey, revision: work.revision, version: work.version, item })
           }
         }
         committed = true
@@ -265,6 +283,7 @@ export class ChatMessageSyncStore {
         Number(accountRow.cycle), counted, committed && counted ? 1 : done, committed ? 0 : 1, attempts, retry)
       if (committed && counted && !done && !accountRow.discovering) this.prepare('UPDATE message_sync_accounts SET completed=completed+1,terminal=terminal+? WHERE account=?').run(terminal ? 1 : 0, account)
     }
+    if (latestUnread) unreadPreviews.push(latestUnread)
     if (Number(this.prepare('SELECT COUNT(*) AS n FROM message_sync_work').get()!.n) > MAX_WORK || Number(this.prepare('SELECT COUNT(*) AS n FROM message_sync_sessions').get()!.n) > MAX_SESSIONS) throw new Error('message-sync-capacity')
     return projection
   }
@@ -285,16 +304,16 @@ export class ChatMessageSyncStore {
       // with JSON extraction otherwise scans every retained body in the chat.
       // CROSS JOIN keeps the selective record lookup ahead of the retention join.
       anchor = this.prepare(`SELECT w.sequence FROM message_sync_work w JOIN contents c ON c.scope=w.scope AND c.event_id=w.event_id
-        WHERE w.scope=? AND w.event_id=? AND w.pending=0 AND w.state='available' LIMIT 1`).get(scope, anchorId)
+        WHERE w.scope=? AND w.event_id=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' LIMIT 1`).get(scope, anchorId)
         ?? this.prepare(`SELECT w.sequence FROM message_sync_work w JOIN contents c ON c.scope=w.scope AND c.event_id=w.event_id
-          WHERE w.scope=? AND w.item_key=? AND w.pending=0 AND w.state='available' LIMIT 1`).get(scope, anchorId)
+          WHERE w.scope=? AND w.item_key=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' LIMIT 1`).get(scope, anchorId)
         ?? this.prepare(`SELECT w.sequence FROM contents c CROSS JOIN message_sync_work w ON w.scope=c.scope AND w.event_id=c.event_id
-          WHERE c.scope=? AND c.source='messages' AND json_extract(c.payload,'$.item.itemUid')=? AND w.pending=0 AND w.state='available' LIMIT 1`).get(scope, anchorId)
+          WHERE c.scope=? AND c.source='messages' AND json_extract(c.payload,'$.item.itemUid')=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' LIMIT 1`).get(scope, anchorId)
       if (!anchor) return undefined
     }
     const upper = before ?? (anchor ? Number(anchor.sequence) + Math.floor(limit / 2) + 1 : Number.MAX_SAFE_INTEGER)
     const rows = this.prepare(`SELECT c.payload,w.sequence,c.ticket FROM message_sync_work w JOIN contents c ON c.scope=w.scope AND c.event_id=w.event_id
-      WHERE w.scope=? AND w.pending=0 AND w.state='available' AND w.sequence<? ORDER BY w.sequence DESC LIMIT ?`).all(scope, upper, limit + 1)
+      WHERE w.scope=? AND w.stored_version>=0 AND w.state IN ('available','pending','missing') AND json_extract(c.payload,'$.contentStatus')='available' AND w.sequence<? ORDER BY w.sequence DESC LIMIT ?`).all(scope, upper, limit + 1)
     if (!rows.length) return undefined
     const selected: Row[] = []; let bytes = 0
     for (const row of rows.slice(0, limit)) {

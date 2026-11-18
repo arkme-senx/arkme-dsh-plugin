@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import { arrangementEvidence, exactSummaryEvidence, projectEvidence, sourceDigest } from '../src/arrangement-provenance.js'
 
 describe('arrangement source provenance',()=>{
+  it('keeps team quotes and raw source locators out of cached display evidence',()=>{
+    const evidence=arrangementEvidence({source_type:2,source_provenance:{version:1,items:[{id:'team-source',kind:'team_message',role:'initial',text:'受保护原句',team_conversation_uid:'raw-conversation',team_message_uid:'raw-message',team_side:'team',record_uid:'raw-record',record_version:7}]}})[0]!
+    expect(projectEvidence(evidence)).toMatchObject({kind:'team_message',text:'',canOpen:true,readOnExpand:true})
+    expect(JSON.stringify(projectEvidence(evidence))).not.toContain('raw-')
+    expect(JSON.stringify(projectEvidence(evidence))).not.toContain('受保护原句')
+  })
   it('retains an explicitly identified legacy summary version',()=>{
     const evidence=arrangementEvidence({uid:'a',source_type:5,source_text:'原文',recording_source:{kind:'daily-summary',summary_id:'old-version',date_stamp:1791734400000,tz_offset:28800000}})
     expect(projectEvidence(evidence[0]!)).toMatchObject({canOpen:true,sourceDate:'2026-10-12'})

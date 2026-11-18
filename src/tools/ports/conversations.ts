@@ -12,9 +12,16 @@ import type {
 } from '../../types.js'
 
 export interface ArkmeConversationToolPort {
+ prepareSelectedText(input:{expectedAccountKey:string;quote:unknown},signal?:AbortSignal):Promise<import('../../selected-text-note.js').SelectedTextNoteQuote>
+ forwardSelectedText(input:import('../../selected-text-note.js').SelectedTextForwardInput,signal?:AbortSignal):Promise<ArkmeSourceSendResult>
+ excerptOriginal(recordUid:string,signal?:AbortSignal,occurrence?:{sourceRef:string;messageActionRef:string}):Promise<import('../../record-excerpt.js').RecordExcerptOriginal>
+ sourceMessageExtensionSummaries(sourceRef: string, actionRefs: readonly string[], signal?: AbortSignal): Promise<import('../../message-extension-summary.js').ArkmeMessageExtensionSummaryItem[]>
+
  teamOutboundOpen(teamRef:string,recipient:import('../../team-outbound-contract.js').TeamOutboundRecipient,requestUid:string,signal?:AbortSignal):Promise<import('../../team-outbound-contract.js').TeamOutboundOpenResult>
 
   groupIdentityContext(sourceRef:string,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamGroupContext>
+  teamGroups(request:import('../../team-group-contract.js').TeamGroupRequest,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamGroupResponse>
+  teamWorkspace(request:import('../../team-group-contract.js').TeamWorkspaceRequest,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamWorkspaceResponse>
   teamPublicCard(jotmoId:string,signal?:AbortSignal):Promise<import('../../team-group-contract.js').TeamPublicCard>
   personRecordsPage(sourceRef: string, memberRef: string, options?: { cursor?: string; limit?: number; knownEventRefs?: readonly string[]; validateOnly?: boolean; signal?: AbortSignal }): Promise<import('../../person-records.js').PersonRecordsPage>
   sourceUnderlineCapabilities(sourceRef: string, signal?: AbortSignal): Promise<import('../../message-annotations.js').MessageUnderlineCapabilities>
@@ -32,7 +39,7 @@ export interface ArkmeConversationToolPort {
   nativeAnnotations(request: import('../../native-annotations.js').NativeAnnotationRequest, signal?: AbortSignal): Promise<unknown>
   messageSyncStatus(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
   retryMessageSync(signal?: AbortSignal): Promise<import('../../chat-message-sync.js').ArkmeMessageSyncProgress>
-  sharedRecordingDetail(detailRef: string, options?: { signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSharedRecordingPreview>
+  sharedRecordingDetail(detailRef: string, options?: { sourceRef?: string; signal?: AbortSignal }): Promise<import('../../types.js').ArkmeSharedRecordingPreview>
   reactions(input: import('../../reaction-contract.js').ReactionRequest, signal?: AbortSignal): Promise<unknown>
   privateInteractionSummary(sourceRef: string, options?: Pick<import('../../types.js').ArkmePrivateInteractionQueryOptions, 'expectedVersion' | 'signal'>): Promise<import('../../types.js').ArkmePrivateInteractionSummary>
   queryPrivateInteractions(options?: import('../../types.js').ArkmePrivateInteractionQueryOptions): Promise<import('../../types.js').ArkmePrivateInteractionPage>
@@ -91,6 +98,7 @@ export interface ArkmeConversationToolPort {
     options?: {
       recordUid?: string
       relationUid?: string
+      teamMentions?:readonly import('../../types.js').ArkmeTeamMentionInput[]
       botRefs?: readonly string[]
       signal?: AbortSignal
       representation?: TeamRepresentationSelection; sendAtMillis?: number; agentAuthored?: boolean
@@ -129,12 +137,13 @@ export interface ArkmeConversationToolPort {
   reportMessage(
     messageRef: string,
     reportType: 1 | 2 | 3 | 4,
-    options?: { reason?: string; requestUid?: string; signal?: AbortSignal },
+    options?: { sourceRef?:string;reason?: string; requestUid?: string; signal?: AbortSignal },
   ): Promise<ArkmeMessageReportResult>
+  changeChatMessage(sourceRef: string, actionRef: string, action: 'delete' | 'recall', signal?: AbortSignal): Promise<import('../../chat-message-actions.js').ChatMessageActionResult>
   /** Withdraw one other member's group message after an explicit owner request. */
   withdrawGroupMessage(
     messageWithdrawalRef: string,
-    options?: { signal?: AbortSignal },
+    options?: {sourceRef?:string;signal?:AbortSignal},
   ): Promise<ArkmeMessageWithdrawalResult>
   inspectGroupAiPolishByName(
     groupName: string,

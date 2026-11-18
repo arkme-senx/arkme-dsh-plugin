@@ -10,7 +10,7 @@ import { RecordingTranscriptSelectionBar } from '../src/client/recordings/Record
 const RecordingTranscriptCopyLink = (props: { items: ArkmeRecordingWorkbenchItem[]; scope: string; onNotice(text: string): void }) => <RecordingTranscriptSelectionBar {...props} playing={false} onCopy={() => {}} onPlay={() => {}} onForward={() => {}} onExit={() => {}} />
 import { CopyLinkSnapshotContent } from '../src/client/CopyLinkSnapshotContent.js'
 
-const item = (id = 'one', sessionKey = 'session') => ({ itemId: id, itemRef: `sealed-${id}`, sessionKey, transcriptSource: 'system' }) as ArkmeRecordingWorkbenchItem
+const item = (id = 'one', sessionKey = 'session') => ({ itemId: id, itemRef: `sealed-${id}`, sessionKey, transcriptSource: 'system', startAtMillis: 1000, endAtMillis: 2000 }) as ArkmeRecordingWorkbenchItem
 const result = { sid: 'abcdefghijklmnop', url: 'https://jotmo.com/s/abcdefghijklmnop' }
 let renderer: ReactTestRenderer
 beforeEach(() => { mocks.call.mockReset(); mocks.copy.mockReset(); mocks.call.mockResolvedValue(result); mocks.copy.mockResolvedValue(undefined) })
@@ -28,6 +28,15 @@ describe('recording copy-link interaction', () => {
     expect(mocks.call).toHaveBeenCalledWith('recordings.copy-link', { itemRefs: ['sealed-one'] }, expect.any(AbortSignal))
     expect(mocks.copy).toHaveBeenLastCalledWith(result.url)
     expect(button().props['aria-label']).toBe('已复制链接')
+  })
+  it('enforces the selected audio duration without creating a share', async () => {
+    const notice = vi.fn(); const selected = item(); selected.endAtMillis = selected.startAtMillis + 600_001
+    await act(async () => { renderer = create(<RecordingTranscriptCopyLink items={[selected]} scope="test:42:day" onNotice={notice} />) })
+    expect(button().props.disabled).toBe(true)
+    expect(mocks.call).not.toHaveBeenCalled()
+    selected.endAtMillis = selected.startAtMillis + 600_000
+    await act(async () => renderer.update(<RecordingTranscriptCopyLink items={[{ ...selected }]} scope="test:42:day" onNotice={notice} />))
+    expect(button().props.disabled).toBe(false)
   })
   it('keeps a failed selection retryable and disables invalid cross-session selections', async () => {
     const notice = vi.fn(); mocks.call.mockRejectedValueOnce(new Error('审核未通过'))
@@ -62,7 +71,7 @@ describe('recording copy-link read projection', () => {
   function reader(data: ReturnType<typeof raw>) {
     const post = vi.fn(async () => data)
     const media = { forwardContentBlocks: vi.fn(() => []) }
-    const service = new ChatService({ requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as never, {} as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
+    const service = new ChatService({ config: { chatBaseUrl: 'https://chat.jotmo.cc' }, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as never, {} as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
     return { service, post }
   }
   it('retains only authorized segments and renders their speakers and offsets in the common detail', async () => {
@@ -78,5 +87,21 @@ describe('recording copy-link read projection', () => {
   it('rejects malformed segment ranges instead of showing invented timestamps', async () => {
     const data = raw(); data.items[0]!.structured_content.long_recording_segments[0]!.end_millis = -1
     await expect(reader(data).service.resolveMessageCopyLink(result.sid)).rejects.toThrow()
+  })
+  it.each([
+    [`/api/public/v1/chats/messages/copy-link/${result.sid}/audio`, 12000, true],
+    [`/api/public/v1/chats/messages/copy-link/${result.sid}/audio`, 13000, false],
+    ['https://example.org/original.wav', 12000, false],
+  ] as const)('only plays the approved audio endpoint for the same link and selection duration', async (url, duration, playable) => {
+    const data = raw()
+    const source = data.items[0]!
+    source.title = 'original-recording.wav'
+    Object.assign(source.structured_content, { recording_audio: { url, duration_millis: duration } })
+    const { items: [shared] } = await reader(data).service.resolveMessageCopyLink(result.sid)
+    expect(shared?.structuredContent?.recordingAudioUrl).toBe(playable ? `https://chat.jotmo.cc${url}` : undefined)
+    const html = renderToStaticMarkup(<CopyLinkSnapshotContent item={shared!} snapshot={{ itemUid: 'snapshot' } as ArkmeTimelineItem} shareWebsite="https://jotmo.com" />)
+    expect(html.includes('preload="none"')).toBe(playable)
+    expect(html.includes('aria-label="播放 · 乙')).toBe(playable)
+    expect(html).not.toContain('original-recording.wav')
   })
 })

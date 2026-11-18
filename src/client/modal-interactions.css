@@ -1,0 +1,25 @@
+/* Electron hit regions are independent of ordinary DOM hit testing. A modal
+   must exclude the native caption underneath it, not just paint above it. */
+:is([role="dialog"], [role="alertdialog"]),
+:is([role="dialog"], [role="alertdialog"]) * {
+  -webkit-app-region: no-drag !important;
+}
+:root:has(:is([role="dialog"], [role="alertdialog"]):not([hidden]):not([aria-hidden="true"])) [data-arkme-window-drag-region] {
+  -webkit-app-region: no-drag !important;
+}
+:root:has(:is([role="dialog"], [role="alertdialog"]):not([hidden]):not([aria-hidden="true"])) #arkme-mac-window-drag-region {
+  display: none !important;
+  -webkit-app-region: no-drag !important;
+}
+.arkme-close-button {
+  -webkit-app-region: no-drag !important;
+  touch-action: manipulation;
+}
+.arkme-close-button > svg { flex: none; pointer-events: none; }
+.arkme-close-button:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover, #f3f4f6) !important; }
+.arkme-close-button:not(:disabled):active { background: var(--dsw-alias-interactive-bg-active, #e9ebee) !important; }
+.arkme-close-button:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #3964fe);
+  outline-offset: 2px;
+}
+.arkme-close-button:disabled { opacity: .45; cursor: default !important; }

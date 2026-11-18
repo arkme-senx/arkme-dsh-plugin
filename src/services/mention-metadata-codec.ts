@@ -14,13 +14,17 @@ export interface BotMentionMetadata {
   length: number
 }
 
+export interface TeamMentionMetadata {team_id:string;display_name_snapshot?:string;start_index:number;length:number}
+
 export interface MentionMetadataEntries {
+  teams?:TeamMentionMetadata[]
   humans: HumanMentionMetadata[]
   bots: BotMentionMetadata[]
 }
 
 // New identities must carry a current snapshot; historical Record entries may lack it.
 export interface ResolvedMentions {
+  teams?:Array<TeamMentionMetadata & {display_name_snapshot:string}>
   humans: Array<HumanMentionMetadata & { display_name_snapshot: string }>
   bots: Array<BotMentionMetadata & { display_name_snapshot: string }>
 }
@@ -30,10 +34,12 @@ export function encodeMentionMetadata(text: string, mentions: MentionMetadataEnt
   const checksum = {
     text_content: text,
     human_mentions: mentions.humans.map(m => ({ user_id: m.user_id, start_index: m.start_index, length: m.length })),
+    ...(mentions.teams?.length?{team_mentions:mentions.teams.map(m=>({team_id:m.team_id,start_index:m.start_index,length:m.length}))}:{}),
     bot_mentions: mentions.bots.map(m => ({ bot_uid: m.bot_uid, start_index: m.start_index, length: m.length })),
   }
   return {
     schema_version: 1,
+    ...(mentions.teams?.length?{team_mentions:mentions.teams}:{}),
     source_checksum: createHash('sha256').update(JSON.stringify(checksum)).digest('hex'),
     ...(mentions.humans.length ? { human_mentions: mentions.humans } : {}),
     ...(mentions.bots.length ? { bot_mentions: mentions.bots } : {}),

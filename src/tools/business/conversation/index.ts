@@ -18,7 +18,7 @@ import { relatedRecordingsToolModule } from './related-recordings.js'
 import { sharedRecordingDetailToolModule } from './shared-recording-detail.js'
 import { userBanToolModules } from './user-ban.js'
 import { reportMessageToolModule } from './report-message.js'
-import { withdrawMessageToolModule } from './withdraw-message.js'
+import { chatMessageActionToolModule, withdrawMessageToolModule } from './withdraw-message.js'
 import { sendDirectTextToolModule } from './send-direct-text.js'
 import { sendTextToolModule } from './send-text.js'
 import { startCallToolModule } from './start-call.js'
@@ -42,6 +42,7 @@ export const conversationBusinessToolModules: readonly ArkmeToolModule[] = [
   conversationMarkReadToolModule,
   reportMessageToolModule,
   withdrawMessageToolModule,
+  chatMessageActionToolModule,
   relatedRecordingsToolModule,
   sharedRecordingDetailToolModule,
   ...userBanToolModules,

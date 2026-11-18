@@ -5,7 +5,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, expect, it, vi } from 'vitest'
 import { arkmeAuthStore } from '../src/client/auth-store.js'
 import { TeamConversationPane } from '../src/client/TeamMessagingPanel.js'
-import type { TeamConversation } from '../src/team-app-contract.js'
+import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
+import { openedTeamConversations } from '../src/client/team-opened-conversations.js'
+import type { TeamConversation, TeamMessage } from '../src/team-app-contract.js'
 const mocks = vi.hoisted(() => ({ call: vi.fn(), stage: vi.fn(), policy: vi.fn() }))
 vi.mock('../src/client/social-action-guard.js', () => ({requirePhoneForSocialAction: async()=>{}, isSocialBindingRequired:()=>false}))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call }))
@@ -32,12 +34,81 @@ beforeEach(async () => {
   localStorage.clear(); mocks.call.mockReset(); mocks.stage.mockReset()
   mocks.policy.mockReset().mockResolvedValue({maxAttachments:9,maxImageBytes:1024,maxFileBytes:2048})
   mocks.stage.mockImplementation(()=>new Promise((resolve,reject)=>{finish=resolve;fail=reject}))
-  mocks.call.mockImplementation(async (op:string, params:any)=>op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}
+  mocks.call.mockImplementation(async (op:string, params:any)=>op==='arrangements.conversation.recognition.get'
+    ?{accountScope:params.expectedAccountScope,enabled:true,version:0,enabledAt:0,effectiveEnabled:true,blockedReason:''}
+    :op==='arrangements.conversation.list'?{items:[],hasMore:false,nextCursor:''}
+    :op==='team.app.timeline'?{conversation,messages:[],hasMore:false,beforeSeq:0}
     :op==='team.app.send.enqueue'?{...params,taskRef:'task',conversationKey:'key',createdAtMillis:Date.now(),state:'queued',files:[local],attempts:0,nextAttemptAt:0}:[])
   host=document.createElement('div');document.body.append(host);root=createRoot(host)
-  await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" onChanged={()=>{}} /></>))
+  await act(async()=>root.render(<><button data-outside>其他位置</button><TeamConversationPane conversation={conversation} accountKey="test:7777" /></>))
 })
 afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals()})
+it.each([false,true])('source customer explicit contact shares directory restoration only on success (failure=%s)',async failure=>{
+  const direct={...conversation,side:'team' as const,sourceOnly:false,memberInitiated:true}
+  const sourceOnly={...direct,sourceOnly:true,memberInitiated:false}
+  const restore=vi.spyOn(teamDirectoryPreferences,'restoreTarget').mockResolvedValue(undefined)
+  openedTeamConversations.reset()
+  const previous=mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation(async(op:string,params:any)=>{
+    if(op==='team.app.outbound.open'){
+      if(failure)throw new Error('联系失败')
+      return {state:'ready',conversation:direct}
+    }
+    if(op==='team.app.timeline')return {conversation:direct,messages:[],hasMore:false,beforeSeq:0}
+    return previous(op,params)
+  })
+  try{
+    await act(async()=>root.render(<TeamConversationPane conversation={sourceOnly} accountKey="test:7777"/>))
+    expect(restore).not.toHaveBeenCalled()
+    await act(async()=>[...host.querySelectorAll('button')].find(b=>b.textContent==='改为私信此用户')!.click())
+    expect(restore).toHaveBeenCalledTimes(failure?0:1)
+    if(!failure){
+      expect(restore).toHaveBeenCalledWith('test:7777',{kind:'conversation',conversation:direct})
+      expect(openedTeamConversations.read('test:7777')).toContainEqual(direct)
+      expect(host.querySelector('[data-team-composer="message"]')).not.toBeNull()
+    }
+    expect(mocks.call.mock.calls.some(([op])=>op==='team.app.send.enqueue')).toBe(false)
+    expect(direct.lastSeq).toBe(0);expect(direct.unread).toBe(0)
+  }finally{restore.mockRestore();openedTeamConversations.reset()}
+})
+it('focuses the end of a Team message when its edit menu action opens', async () => {
+  const text = '原团队消息😀'
+  const message: TeamMessage = {
+    ref: 'owned', key: 'owned', seq: 1, revision: 1, version: 1, side: 'team',
+    sender: { nickname: '成员' }, own: true, state: 'published', createdAt: 1,
+    canEdit: true, canDelete: true, content: { text_content: text, template_kind: 1 }, contentStatus: 'available', media: [],
+  }
+  const team = { ...conversation, side: 'team' as const }
+  const original = mocks.call.getMockImplementation()!
+  mocks.call.mockImplementation((op: string, ...args: unknown[]) => op === 'team.app.timeline'
+    ? Promise.resolve({ conversation: team, messages: [message], hasMore: false, beforeSeq: 0 })
+    : original(op, ...args))
+  await act(async () => root.render(<TeamConversationPane key="edit" conversation={team} accountKey="test:7777" />))
+  // Let the timeline publish its initial scroll position before opening the menu.
+  await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())) })
+  const bubble = host.querySelector('[data-team-message-key="owned"] [aria-label="消息操作"]')!
+  await act(async () => {
+    bubble.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+  })
+  const action = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(node => node.textContent?.trim() === '重新编辑')!
+  expect(action).toBeDefined()
+  await act(async () => action.click())
+
+  const range = document.getSelection()!.getRangeAt(0)
+  const before = range.cloneRange()
+  before.selectNodeContents(editor())
+  before.setEnd(range.startContainer, range.startOffset)
+  expect(document.activeElement).toBe(editor())
+  expect(range.collapsed).toBe(true)
+  expect(before.toString()).toBe(text)
+})
+
+it('places related arrangements above the team composer and hides it while editing',async()=>{
+  const shortcuts=host.querySelector<HTMLElement>('[data-arkme-composer-shortcuts]')!
+  expect(shortcuts).not.toBeNull();expect(shortcuts.textContent).toContain('相关安排');expect(shortcuts.hidden).toBe(false)
+  await act(async()=>editor().focus());expect(shortcuts.hidden).toBe(true)
+  await act(async()=>host.querySelector<HTMLButtonElement>('[data-outside]')!.focus());expect(shortcuts.hidden).toBe(false)
+})
 it('keeps existing composer tools before dictation, with the microphone directly after screenshot',()=>{
   const tools=[...host.querySelectorAll<HTMLButtonElement>('[data-arkme-composer-footer="tools"] button')].map(button=>button.getAttribute('aria-label'))
   const screenshot=tools.indexOf('截屏'), microphone=tools.indexOf('语音输入')

@@ -48,6 +48,8 @@ function renderedText(node: ReactTestInstance): string {
   return node.children.map(child => typeof child === 'string' ? child : renderedText(child)).join('')
 }
 beforeEach(() => {
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 0))
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout)
     vi.stubGlobal('window', Object.assign(new EventTarget(), { setTimeout, clearTimeout, setInterval, clearInterval }))
   state.askRun.mockReset(); state.askBusy = false; state.askStatus = ''
   state.callArkme.mockReset()
@@ -58,6 +60,7 @@ beforeEach(() => {
     if (operation === 'provider.instance') return { instanceId: 'marquee-test-provider' }
     if (operation === 'sources.list') return { items: [source], hasMore: false }
     if (operation === 'sources.self-target') return selfTarget
+    if (operation === 'team.app.conversations') return { items: [], hasMore: false }
     if (operation === 'source.interwoven-moments') return { state: 'disabled', moments: [], preparedAtMillis: 1 }
     if (operation === 'user.profile' || operation === 'user.profile.refresh') return { profile: null, cachedAtMillis: 1, revision: 1 }
     if (operation === 'source.long-article.draft.get') return undefined
@@ -153,8 +156,9 @@ it('opens the existing forward picker and suspends marquee until the picker clos
   await render(); await select('occurrence-0', 'occurrence-1')
   await act(async () => action('转发').props.onClick({ currentTarget: {} }))
   const dialog = renderer.root.findByProps({ 'aria-labelledby': 'arkme-forward-target-title' })
-  const targets = dialog.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('button')
+  const targets = dialog.findByProps({ 'aria-label': '转发对象列表' }).findAllByType('button').filter(button => button.props['aria-pressed'] !== undefined)
   expect(targets).toHaveLength(2)
+  expect(dialog.findAllByProps({ 'aria-label': '选择本人主题' })).toHaveLength(1)
   expect(targets.some(button => renderedText(button).includes('发给自己'))).toBe(true)
   expect(targets.some(button => renderedText(button).includes('框选会话'))).toBe(true)
   expect(targets.every(button => button.props.disabled !== true)).toBe(true)

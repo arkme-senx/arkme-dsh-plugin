@@ -1,6 +1,6 @@
 import { expect,it,vi } from 'vitest'
 import type { TeamCodexState,TeamCodexTask } from '../src/team-codex-contract.js'
-import { readCodexActivity,codexActivityPresentation } from '../src/client/redesign/contacts/codex-activity.js'
+import { readCodexActivity,codexActivityPresentation,codexActivityAtMillis } from '../src/client/redesign/contacts/codex-activity.js'
 import { codexTaskStatus,mergeCodexActivityTasks } from '../src/client/redesign/contacts/codex-task-status.js'
 
 const now = 100_000
@@ -9,6 +9,16 @@ const teams = [{teamRef:'a',name:'A',jotmoId:'a'},{teamRef:'b',name:'B',jotmoId:
 const task = (id:string,patch:Partial<TeamCodexTask>={}):TeamCodexTask => ({id,title:id,member:self,status:'active',state:'working',updatedAt:1,eventCount:1,...patch})
 const page = (tasks:TeamCodexTask[],more=false):TeamCodexState => ({self,localOnly:false,installations:[],tasks,cloud:{status:'ready',pending:0,blocked:0,page:1,hasMore:more}})
 const signal = () => new AbortController().signal
+
+it('uses conversation events across all tasks, independently of status polling, selection or title changes', () => {
+  const snapshot = {complete:true,checkedAt:now,tasks:[task('running',{updatedAt:200}),task('finished',{state:'finished',updatedAt:300}),
+    task('empty',{updatedAt:900,eventCount:0}),task('excluded',{updatedAt:800,excluded:true}),
+    task('internal',{updatedAt:700,classification:{version:1,kind:'background',evidence:'internal'}})]}
+  expect(codexActivityAtMillis(snapshot)).toBe(300)
+  expect(codexActivityAtMillis({...snapshot,checkedAt:now+30_000,complete:false})).toBe(300)
+  expect(codexActivityAtMillis(undefined)).toBe(0)
+  expect(codexActivityAtMillis({...snapshot,tasks:[task('bad',{updatedAt:NaN})]})).toBe(0)
+})
 
 it('counts later pages, merges repeated ids by latest event, and ignores other members',async()=>{
   const read = vi.fn(async(_team:string,p:number)=>p===1?page([task('same'),task('old',{state:'finished'})],true):page([

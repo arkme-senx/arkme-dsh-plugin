@@ -40,11 +40,11 @@ export function useArkmeRecordInputPolicy(authenticatedAccountKey: string|undefi
       }
       void Promise.all([
         retryArkmeRead(
-          () => callArkme<ArkmeProviderCapabilities>('provider.capabilities', {}, requestController.signal),
+          () => callArkme<ArkmeProviderCapabilities>('provider.capabilities', {}, requestController.signal, { priority: 'background' }),
           { signal: requestController.signal, retryDelays: [250, 750] },
         ).catch(() => undefined),
         retryArkmeRead(
-          () => callArkme<ArkmeBackgroundSoundPreference>('settings.background-sound.get', undefined, requestController.signal),
+          () => callArkme<ArkmeBackgroundSoundPreference>('settings.background-sound.get', undefined, requestController.signal, { priority: 'background' }),
           { signal: requestController.signal, retryDelays: [250, 750] },
         ).catch(() => undefined),
       ]).then(([capabilities, preference]) => {

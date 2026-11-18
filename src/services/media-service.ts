@@ -1,3 +1,4 @@
+import { OriginalFileStore, originalFileKey } from './original-file-store.js'
 import { recordingPlaybackPath, recordingPlaybackRef, recordingPlaybackLocator, sameRecordingPlaybackLocation, type RecordingPlaybackLocator, type RecordingPlaybackRef } from '../recording-playback-ref.js'
 import { createHash, randomUUID } from 'node:crypto'
 import { avatarReferenceDiagnostic, logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
@@ -18,6 +19,7 @@ import { ProfileService } from './profile-service.js'
 import { SelfRoleAvatarStore, MAX_SELF_ROLE_AVATAR_BYTES } from '../self-role-avatar-store.js'
 import { isRecordDynamicPhotoMotion, recordDynamicPhotoGroups } from './dynamic-photo.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
+import type {RecordOwnerId} from '../record-owner-id.js'
 
 export interface ArkmeWorldImageEntry {
   viewerUserId: number
@@ -53,7 +55,8 @@ export interface ArkmeUnmarkedSpeakerSegmentResolver {
 }
 
 export interface ArkmeMediaDescriptor {
-  purpose?: 'original'
+  sourceBound?:boolean
+  purpose?: 'original' | 'thumbnail'
   viewerUserId: number
   mimeType: string
   fileName: string
@@ -62,7 +65,9 @@ export interface ArkmeMediaDescriptor {
   stableKey?: string
 }
 
-type MediaSource = { remoteUrl: string; recordingClip?: never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never }
+export interface ArkmeChatMediaSource {accessRef:string;chatSessionUid:string;relationUid:string;recordOwnerUserId:RecordOwnerId;recordUid:string;version:number;audienceKey:string}
+type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;worldSound?:never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;worldSound?:never;recordingClip?:never}
+
 type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
 type IssuableMediaDescriptor = Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'> & MediaSource
 
@@ -81,7 +86,7 @@ export interface ArkmeUploadCompletion {
 }
 export interface ArkmeUploadCompletionRecovery {
   read(): ArkmeUploadCompletion | undefined
-  save(completion: ArkmeUploadCompletion): void
+  save(completion: ArkmeUploadCompletion): void | Promise<void>
 }
 
 interface ArkmePreparedUpload {
@@ -301,10 +306,11 @@ function imageMediaType(data: Uint8Array): ArkmeImageMediaType | undefined {
 }
 
 function cloneImageBytes(value: ArkmeImageBytes): ArkmeImageBytes {
-  return { mediaType: value.mediaType, bytes: value.bytes, data: value.data.slice() }
+  return { ...value, data: value.data.slice() }
 }
 
 export class MediaService {
+  private readonly originalFiles: OriginalFileStore
   private readonly mediaRefs = new Map<string, StoredMediaDescriptor>()
   private readonly stableMediaRefs = new Map<string, string>()
   private readonly imageCache = new Map<string, CacheEntry<ArkmeImageBytes>>()
@@ -324,7 +330,7 @@ export class MediaService {
     private readonly recordIdentity: ArkmeRecordIdentity,
     private readonly botImages?: ArkmeBotImageReader,
     private readonly selfRoleAvatars?: SelfRoleAvatarStore,
-  ) {}
+  ) { this.originalFiles = new OriginalFileStore(runtime) }
 
   dispose(): void {
     this.imageGeneration += 1
@@ -375,7 +381,7 @@ export class MediaService {
   async uploadLocalFile(
     filePath: string,
     metadata: { size: number; sha256: string; mimeType: string; fileName: string; fileKind: 1 | 2 | 3 | 4 },
-    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal; completionRecovery?: ArkmeUploadCompletionRecovery } = {},
+    options: { onProgress?: (progress: ArkmeFileProgress) => void; expectedUserId?: number; signal?: AbortSignal; completionRecovery?: ArkmeUploadCompletionRecovery; progressiveTarget?: import('./progressive-attachments.js').ProgressiveTarget } = {},
   ): Promise<ArkmeUploadedAsset> {
     if (this.runtime.config.richMediaSendEnabled === false) {
       throw new ArkmePluginError('rich-content-disabled', '文件上传已被插件配置关闭', false, 403)
@@ -394,6 +400,7 @@ export class MediaService {
     const pendingCompletion = options.completionRecovery?.read()
     let completionPersisted = pendingCompletion !== undefined
     const prepared = pendingCompletion === undefined ? await this.runtime.authenticatedPost<ArkmePreparedUpload>('/api/v1/files/prepare-upload', {
+      ...(options.progressiveTarget === undefined ? {} : { progressive_media: options.progressiveTarget }),
       planned_size: metadata.size,
       file_hash: metadata.sha256,
       mime_type: metadata.mimeType || 'application/octet-stream',
@@ -403,6 +410,8 @@ export class MediaService {
     }, session, options.signal) : undefined
     const uploadSessionUid = pendingCompletion?.upload_session_uid ?? stringValue(prepared?.upload_session_uid).trim()
     if (uploadSessionUid === '') throw new ArkmePluginError('upload-prepare-invalid', '上传准备响应无效', true, 502)
+    const uploadStartedAt = Date.now()
+    let uploadPhase = pendingCompletion === undefined ? 'storage' : 'completing'
     try {
       let storageETag = pendingCompletion?.storage_etag ?? ''
       const completedParts: Array<{ part_number: number; etag: string }> = pendingCompletion?.multipart_parts ?? []
@@ -457,6 +466,7 @@ export class MediaService {
           } finally { await handle.close() }
         }
       }
+      uploadPhase = 'completing'
       if (options.expectedUserId !== undefined
         && (await this.runtime.requireSession()).userId !== options.expectedUserId) {
         throw new ArkmePluginError('file-account-changed', '账号已切换，本次上传已取消', false, 409)
@@ -467,7 +477,7 @@ export class MediaService {
         storage_etag: storageETag, multipart_parts: completedParts,
       }
       if (options.completionRecovery !== undefined && !completionPersisted) {
-        options.completionRecovery.save(completion)
+        await options.completionRecovery.save(completion)
         completionPersisted = true
       }
       const completed = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/files/complete-upload', { ...completion }, session, options.signal)
@@ -486,8 +496,31 @@ export class MediaService {
         fileKind: metadata.fileKind,
       }
     } catch (error) {
+      // Raw fetch errors can contain signed URLs; retain only known transport/file codes.
+      const safeCodes = new Set(['UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'EPIPE', 'ENOENT', 'EACCES', 'EPERM', 'ABORT_ERR'])
+      const causeCodes: string[] = []
+      let cause: unknown = error
+      for (let depth = 0; cause !== undefined && depth < 3; depth++) {
+        const value = objectValue(cause)
+        if (typeof value.code === 'string' && safeCodes.has(value.code)) causeCodes.push(value.code)
+        cause = value.cause
+      }
+      console.warn('dsh-arkme: file_upload_failed', JSON.stringify({
+        phase: uploadPhase, elapsedMillis: Date.now() - uploadStartedAt,
+        cancelled: options.signal?.aborted === true, causeCodes, completionPersisted,
+      }))
       if (!completionPersisted) await this.runtime.authenticatedPost('/api/v1/files/abort-upload', { upload_session_uid: uploadSessionUid }, session).catch(() => undefined)
       throw error
+    }
+  }
+
+  private sourceThumbnailResponse(descriptor: StoredMediaDescriptor, image: ArkmeImageBytes) {
+    const { chatSource: _private, ...presentation } = descriptor
+    return {
+      response: new Response(Buffer.from(image.data), { headers: {
+        'content-type': image.mediaType, 'content-length': String(image.bytes), 'cache-control': 'private, no-store',
+      } }),
+      descriptor: presentation,
     }
   }
 
@@ -508,6 +541,29 @@ export class MediaService {
     if (originalOnly && descriptor.purpose !== 'original') {
       throw new ArkmePluginError('original-unavailable', '原文件不可用，请刷新后重试；不会用预览图代替原文件', false, 404)
     }
+    if(descriptor.chatSource!==undefined) {
+      if (descriptor.purpose === 'thumbnail' && method === 'GET' && range === undefined && descriptor.stableKey) {
+        const key = `source-thumbnail:${descriptor.stableKey}`
+        const cached = this.cachedImage(key)
+        try {
+          const value = await this.runtime.authenticatedRecordSourceThumbnail(descriptor.chatSource, session.userId, key, cached?.etag, signal)
+          const bytes = value.data
+          if (bytes && imageMediaType(bytes) === 'image/webp') {
+            const image = { data: bytes, bytes: bytes.byteLength, mediaType: 'image/webp' as const, etag: value.etag }
+            this.cacheImage(key, image)
+            return this.sourceThumbnailResponse(descriptor, image)
+          }
+          if (!bytes && cached) return this.sourceThumbnailResponse(descriptor, cached)
+        } catch (error) {
+          signal?.throwIfAborted()
+          if (!(error instanceof ArkmePluginError && [404, 415, 502].includes(error.upstreamStatus ?? error.httpStatus))) throw error
+        }
+      }
+
+      const response=await this.runtime.authenticatedRecordSourceStream(descriptor.chatSource,{expectedUserId:session.userId,method,...(range===undefined?{}:{range}),...(signal?{signal}:{})})
+      const {chatSource:_private,...presentation}=descriptor
+      return {response,descriptor:presentation}
+    }
     if (descriptor.recordingClip !== undefined) {
       const response = await this.runtime.authenticatedAudioStream(recordingPlaybackPath(descriptor.recordingClip), {
         expectedUserId: session.userId, method, ...(range === undefined ? {} : { range }),
@@ -520,8 +576,14 @@ export class MediaService {
       || url.port !== '' || url.hash !== ''
       || !(allowedSignedImageHost(this.runtime.config.environment, url.hostname)
         || allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
-        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname))) {
+        || allowedSignedCallAudioHost(this.runtime.config.environment, url.hostname)
+        || descriptor.worldSound === true && this.worldSoundMediaURL(url.toString()) !== undefined)) {
       throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
+    }
+    const key = this.runtime.config.fileStateDirectory && descriptor.purpose === 'original' ? originalFileKey(this.runtime.config.environment,session.userId,url) : undefined
+    if (key && range === undefined && method === 'GET') {
+      const cached=await this.originalFiles.read(session.userId,key,descriptor.size)
+      if(cached)return {response:this.originalFiles.response(cached,descriptor.mimeType),descriptor}
     }
     const response = await this.runtime.fetchImpl(url, {
       headers: range === undefined ? {} : { Range: range },
@@ -530,6 +592,10 @@ export class MediaService {
     })
     if (!response.ok && response.status !== 206) {
       throw new ArkmePluginError('media-fetch-failed', `媒体读取失败（${String(response.status)}）`, true, 502)
+    }
+    if(key && range===undefined && method==='GET' && response.status===200) {
+      const captured=await this.originalFiles.capture(session.userId,key,response,descriptor.size,signal).catch(()=>response)
+      return {response:captured,descriptor}
     }
     return { response, descriptor }
   }
@@ -546,6 +612,28 @@ export class MediaService {
       fileName: worldVoiceprintFileName(mimeType),
       size: 0,
     })
+  }
+
+  private worldSoundMediaURL(raw: string): URL | undefined {
+    try {
+      const url = new URL(raw), origin = new URL(this.runtime.config.worldBaseUrl)
+      if (url.protocol !== 'https:' || url.origin !== origin.origin || url.port || url.username || url.password || url.hash
+        || url.pathname !== '/api/public/v1/public-record/media' || url.searchParams.get('kind') !== 'sound'
+        || !/^[a-f0-9]{64}$/.test(url.searchParams.get('version') ?? '')
+        || !/^world-sound-[a-f0-9]{64}$/.test(url.searchParams.get('record_uid') ?? '')
+        || !/^\d{1,3}$/.test(url.searchParams.get('index') ?? '') || Number(url.searchParams.get('index')) >= 150
+        || [...url.searchParams.keys()].length !== 4) return undefined
+      return url
+    } catch { return undefined }
+  }
+
+  issueWorldSoundMediaRef(viewerUserId: number, raw: string, expected: { recordUID: string; index: number }): string {
+    const url = this.worldSoundMediaURL(raw)
+    if (!url || url.searchParams.get('record_uid') !== expected.recordUID || url.searchParams.get('index') !== String(expected.index)) {
+      throw new ArkmePluginError('world-sound-media-invalid', '声音摘录地址无效', false, 502)
+    }
+    // The World proxy supplies the actual audio MIME, including call formats.
+    return this.issueMediaRef(viewerUserId, { remoteUrl: url.toString(), worldSound: true, mimeType: 'application/octet-stream', fileName: '声音摘录', size: 0 })
   }
 
   async issueUnmarkedSpeakerMediaRef(
@@ -666,6 +754,14 @@ export class MediaService {
     return this.issueRecordingClip(session.userId, locator.child_id, current)
   }
 
+  async verifyRecordingPlayback(input: { viewerUserId: number; locator: RecordingPlaybackLocator }, signal?: AbortSignal): Promise<void> {
+    const mediaRef = await this.issueRecordingPlaybackMediaRef(input, signal)
+    const { response } = await this.fetchMedia(mediaRef, undefined, signal, false, 'HEAD')
+    try {
+      if (!response.ok) throw new ArkmePluginError('recording-material-unavailable', '原音暂不可回听，请恢复原音后再预览纠错', true, response.status)
+    } finally { await response.body?.cancel() }
+  }
+
   private issueRecordingClip(userId: number, childId: string, clip: RecordingPlaybackRef): string {
     if (clip.child_id !== childId) {
       throw new ArkmePluginError('recording-media-invalid', '录音媒体不属于当前片段', false, 502)
@@ -684,8 +780,8 @@ export class MediaService {
     const session = await this.runtime.requireSession()
     const assetMatch = /^file_asset:\/\/([A-Za-z0-9_-]{8,128})$/.exec(imageRef.trim())
     if (assetMatch !== null) return await this.readFileAssetImage(session, assetMatch[1]!, options, generation)
-    if (options.cacheOnly) throw new ArkmePluginError('image-cache-miss', '本地没有可用的资产头像', false, 404)
     const isProfileImage = imageRef.trim().startsWith('arkme-profile-image-v1.')
+    if (options.cacheOnly && !isProfileImage) throw new ArkmePluginError('image-cache-miss', '本地没有可用的头像', false, 404)
     const isBotImage = imageRef.trim().startsWith('arkme-bot-image-v1.')
     const isSelfRoleImage = imageRef.trim().startsWith('arkme-self-role-image-v1.')
     const isAvatar = isProfileImage || isBotImage
@@ -694,11 +790,13 @@ export class MediaService {
     const byteLimit = Math.min(maximumBytes, Math.max(1, Math.trunc(options.maxBytes ?? maximumBytes)))
     const cacheKey = `${String(session.userId)}:${String(byteLimit)}:${imageRef.trim()}`
     if (isProfileImage) await this.profile.openProfileImageRef(imageRef, session.userId)
-    const persisted = isAvatar ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef).catch(() => undefined) : undefined
+    const persisted = isAvatar ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef, isProfileImage ? 24 * 60 * 60_000 : undefined).catch(() => undefined) : undefined
     if (persisted !== undefined && options.refresh !== true && persisted.bytes <= byteLimit) {
-      this.cacheImage(cacheKey, persisted)
+      if (isProfileImage) await this.assertImageAccount(session, generation)
+      if (!options.cacheOnly) this.cacheImage(cacheKey, persisted)
       return cloneImageBytes(persisted)
     }
+    if (options.cacheOnly) throw new ArkmePluginError('image-cache-miss', '本地没有可用的头像', false, 404)
     if (isBotImage) {
       try {
         if (this.botImages === undefined) throw new ArkmePluginError('bot-image-ref-invalid', 'Bot 头像引用不可用', false, 403)
@@ -713,19 +811,34 @@ export class MediaService {
     if (cached !== undefined) return cached
     const existing = this.imageInFlight.get(cacheKey)
     if (existing !== undefined) return cloneImageBytes(await existing)
+    const expiredProfile = isProfileImage && persisted === undefined
+      ? await this.runtime.stateStore.readAvatarCache?.(session.userId, imageRef, Infinity).catch(() => undefined)
+      : undefined
+    const inFlight = this.imageInFlight.get(cacheKey)
+    if (inFlight !== undefined) return cloneImageBytes(await inFlight)
     const startedAtMillis = Date.now()
     const pending = this.withImageDownloadPermit(
-      async () => await this.readImageUncached(session, imageRef, byteLimit, options.signal),
+      async () => await this.readImageUncached(session, imageRef, byteLimit, options.signal, isProfileImage && (options.refresh === true || expiredProfile !== undefined)),
     )
     this.imageInFlight.set(cacheKey, pending)
     try {
       const value = await pending
+      if (isProfileImage) await this.assertImageAccount(session, generation)
       this.cacheImage(cacheKey, value)
       if (isAvatar) await this.runtime.stateStore.writeAvatarCache?.(session.userId, imageRef, value).catch(() => { console.warn('dsh-arkme: avatar_cache_write_failed') })
       return cloneImageBytes(value)
     } catch (error) {
       options.signal?.throwIfAborted()
-      if (persisted !== undefined && persisted.bytes <= byteLimit) return cloneImageBytes(persisted)
+      if (isProfileImage && error instanceof ArkmePluginError && ['image-ref-unavailable', 'image-ref-invalid'].includes(error.code)) {
+        const previous = this.imageCache.get(cacheKey)
+        if (previous && this.imageCache.delete(cacheKey)) this.imageCacheBytes -= previous.value.bytes
+        await this.runtime.stateStore.deleteAvatarCache?.(session.userId, imageRef).catch(() => undefined)
+        throw error
+      }
+      if (isProfileImage) await this.assertImageAccount(session, generation)
+      const fallback = persisted ?? expiredProfile
+      const transient = !(error instanceof ArkmePluginError) || error.httpStatus >= 500 || error.httpStatus === 429
+      if (fallback !== undefined && fallback.bytes <= byteLimit && (!isProfileImage || transient)) return cloneImageBytes(fallback)
       if (isProfileImage) logArkmeAvatarDiagnostic('image_read_failed', {
         environment: this.runtime.config.environment, viewerUserId: session.userId,
         ...avatarReferenceDiagnostic(imageRef), durationMillis: Math.max(0, Date.now() - startedAtMillis),
@@ -928,6 +1041,7 @@ export class MediaService {
     imageRef: string,
     byteLimit: number,
     signal?: AbortSignal,
+    refreshProfile = false,
   ): Promise<ArkmeImageBytes> {
     if (imageRef.trim().startsWith('arkme-self-role-image-v1.')) {
       if (this.selfRoleAvatars === undefined) throw new ArkmePluginError('self-role-avatar-missing', '本地角色头像不可用', false, 404)
@@ -952,12 +1066,13 @@ export class MediaService {
     }
     if (imageRef.trim().startsWith('arkme-profile-image-v1.')) {
       const reference = await this.profile.openProfileImageRef(imageRef, session.userId)
-      if (reference.targetUserId === session.userId) {
+      if (reference.targetUserId === session.userId && reference.imageVersion === undefined) {
         let snapshot = await this.runtime.stateStore.cachedProfile(session.userId)
-        if ((snapshot.profile?.avatarRef.trim() ?? '') === '') {
+        if (refreshProfile || (snapshot.profile?.avatarRef.trim() ?? '') === '') {
           try {
             snapshot = await this.profile.refreshProfileForSession(session)
-          } catch {
+          } catch (error) {
+            if (refreshProfile) throw error
             // A missing current-user profile may still fall back to the public profile below.
           }
         }
@@ -987,13 +1102,20 @@ export class MediaService {
           })
         }
       }
-      const cachedAvatarUrl = this.profile.cachedPublicProfileAvatar(session.userId, reference.targetUserId)
+      if (!refreshProfile && this.profile.cachedPublicProfileAvatar(session.userId, reference.targetUserId) === undefined) {
+        await this.profile.waitForTimelineAvatar(session.userId, reference.targetUserId, signal)
+        signal?.throwIfAborted()
+      }
+      const cachedAvatarUrl = refreshProfile ? undefined : this.profile.cachedPublicProfileAvatar(session.userId, reference.targetUserId)
       let avatarUrl = cachedAvatarUrl
       if (avatarUrl === undefined) {
-        avatarUrl = (await this.profile.publicProfilesByUserIds([reference.targetUserId], session, signal))
+        avatarUrl = (await (refreshProfile
+          ? this.profile.publicProfileSummariesByUserIds([reference.targetUserId], session, signal, 0)
+          : this.profile.publicProfilesByUserIds([reference.targetUserId], session, signal)))
           .get(reference.targetUserId)?.avatarUrl
       }
       if (avatarUrl === undefined) throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', true, 404)
+      await this.profile.assertProfileImageVersion(reference, avatarUrl)
       try {
         return await this.downloadSignedImage(
           trustedSignedImageUrl(this.runtime.config.environment, avatarUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
@@ -1004,7 +1126,8 @@ export class MediaService {
         await this.profile.invalidatePublicProfile(session.userId, reference.targetUserId)
         const refreshedUrl = (await this.profile.publicProfileSummariesByUserIds([reference.targetUserId], session, signal, 0))
           .get(reference.targetUserId)?.avatarUrl
-        if (refreshedUrl === undefined) throw error
+        if (refreshedUrl === undefined) throw new ArkmePluginError('image-ref-unavailable', 'Arkme头像当前不可用', false, 404)
+        await this.profile.assertProfileImageVersion(reference, refreshedUrl)
         return await this.downloadSignedImage(
           trustedSignedImageUrl(this.runtime.config.environment, refreshedUrl), byteLimit, signal, this.runtime.requestScope(session.userId),
         )
@@ -1246,9 +1369,12 @@ export class MediaService {
   async hydrateRecordSnapshotMediaPage(
     snapshots: Record<string, unknown>[],
     session: ArkmeSessionCredentials,
-    chat?: { chatSessionUid: string; recordUid: string; recordOwnerUserId: number | string; relationUid: string },
+    chat?: { chatAccessRef?: string; chatSessionUid: string; recordUid: string; recordOwnerUserId: number | string; relationUid: string },
     signal?: AbortSignal,
   ): Promise<unknown[][]> {
+    // Team history uses source-bound descriptors. A personal member or file
+    // lookup cannot grant historical media, including the author's own files.
+    if(chat?.chatAccessRef)return snapshots.map(()=>[])
     const refsBySnapshot = snapshots.map(snapshot => this.recordMediaRefs(snapshot))
     if (this.runtime.config.richMediaRenderEnabled === false) return snapshots.map(() => [])
     const refs = [...new Map(refsBySnapshot.flat().map(ref => [stringValue(ref.file_asset_uid), ref])).values()]
@@ -1259,7 +1385,7 @@ export class MediaService {
       for (const raw of items) {
         const item = objectValue(raw)
         const uid = stringValue(item.file_asset_uid)
-        if (expected.has(uid) && stringValue(item.preview_url ?? item.download_url).trim() !== '') displays.set(uid, item)
+        if (expected.has(uid) && (stringValue(item.preview_url).trim() || stringValue(item.download_url).trim()) !== '') displays.set(uid, item)
       }
     }
     for (const snapshot of snapshots) accept(listValue(snapshot.media_display_items))
@@ -1347,7 +1473,7 @@ export class MediaService {
         displayItemsByRecordUid.set(recordUid, items)
         const hasDeliverableItem = items.some(rawItem => {
           const item = objectValue(rawItem)
-          return stringValue(item.preview_url ?? item.download_url).trim() !== ''
+          return (stringValue(item.preview_url).trim() || stringValue(item.download_url).trim()) !== ''
         })
         if (!hasDeliverableItem) unavailableRecordUids.add(recordUid)
       }
@@ -1362,7 +1488,7 @@ export class MediaService {
   }
 
   /** Only the already-authorized received snapshot is used; never hydrate its source IDs. */
-  forwardContentBlocks(files: unknown[], viewerUserId: number, options: { longArticle?: boolean } = {}): ArkmeContentBlock[] {
+  forwardContentBlocks(files: unknown[], viewerUserId: number, options: { longArticle?: boolean; source?: ArkmeChatMediaSource | undefined } = {}): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
     const displayItems = (options.longArticle ? files : files.slice(0, 32)).map(objectValue).flatMap((file, index) => {
       if (numberValue(file.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND) return []
@@ -1379,6 +1505,7 @@ export class MediaService {
       return [{
         // Only item-local aliases are exposed, never source asset IDs.
         ...(options.longArticle ? { inline_alias: /^arkme-asset:media-\d+$/.test(stringValue(file.inline_ref)) ? stringValue(file.inline_ref).slice('arkme-asset:'.length) : `media-${index}` } : {}),
+        ...(options.source ? { source_attachment_ref: stringValue(file.source_attachment_ref) } : {}),
         file_name: stringValue(file.name ?? file.file_name ?? file.fileName),
         file_kind: numberValue(file.type ?? file.file_kind ?? file.fileKind),
         mime_type: stringValue(file.mime_type ?? file.mimeType),
@@ -1388,7 +1515,7 @@ export class MediaService {
         ...(previewUrl === undefined ? {} : { preview_url: previewUrl }),
       }]
     })
-    const blocks = this.richContentBlocks({}, viewerUserId, displayItems)
+    const blocks = this.richContentBlocks({}, viewerUserId, displayItems, options.source)
     // Aliases only join this snapshot's Markdown to its authorized media. They
     // must not be used as global cache identities across unrelated snapshots.
     return options.longArticle ? blocks.map(block => {
@@ -1407,7 +1534,7 @@ export class MediaService {
 
   favoriteStickerMediaRef(raw: unknown, viewerUserId: number): string | undefined {
     const item = objectValue(raw)
-    const remoteUrl = stringValue(item.preview_url ?? item.download_url).trim()
+    const remoteUrl = (stringValue(item.preview_url).trim() || stringValue(item.download_url).trim())
     if (remoteUrl === '') return undefined
     const fileAssetUid = stringValue(item.file_asset_uid).trim()
     const fileName = stringValue(item.file_name).trim() || '收藏表情'
@@ -1466,7 +1593,31 @@ export class MediaService {
       .filter(ref => numberValue(ref.content_file_role) === RECORD_CONTENT_FILE_ROLE_BACKGROUND_SOUND)
   }
 
-  richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = []): ArkmeContentBlock[] {
+  private issuePhotoThumbnail(
+    source: ArkmeChatMediaSource | undefined, viewerUserId: number, item: Record<string, unknown> | undefined,
+    attachmentUid: string, fileName: string,
+  ): string | undefined {
+    if (!item || !attachmentUid || item.preview_for_attachment_uid !== attachmentUid || item.mime_type !== 'image/webp') return undefined
+    const size = numberValue(item.size)
+    if (!Number.isSafeInteger(size) || size <= 0 || size > 512 * 1024) return undefined
+    const mimeType = 'image/webp'
+    if (!source) {
+      const remoteUrl = stringValue(item.download_url ?? item.preview_url).trim()
+      if (!remoteUrl) return undefined
+      return this.issueMediaRef(viewerUserId, { remoteUrl, mimeType, fileName, size }, `photo-thumbnail:${stringValue(item.file_asset_uid)}`)
+    }
+    const attachment = stringValue(item.source_attachment_ref)
+    if (!attachment || !source.accessRef || !source.chatSessionUid || !source.relationUid || !source.recordUid
+      || !source.recordOwnerUserId || !source.audienceKey || !Number.isSafeInteger(source.version) || source.version < 1) return undefined
+    const chatSource = {
+      access_ref: source.accessRef, chat_session_uid: source.chatSessionUid, relation_uid: source.relationUid,
+      record_owner_user_id: source.recordOwnerUserId, record_uid: source.recordUid, version: source.version, attachment,
+    }
+    const identity = JSON.stringify(['source-thumbnail', source.audienceKey, source.relationUid, source.recordUid, source.version, attachment])
+    return this.issueMediaRef(viewerUserId, { chatSource, sourceBound: true, purpose: 'thumbnail', mimeType, fileName, size }, identity)
+  }
+
+  richContentBlocks(raw: unknown, viewerUserId: number, hydratedDisplayItems: unknown[] = [], source?: ArkmeChatMediaSource): ArkmeContentBlock[] {
     if (this.runtime.config.richMediaRenderEnabled === false) return []
     const root = objectValue(raw)
     const record = objectValue(root.record)
@@ -1488,7 +1639,10 @@ export class MediaService {
     const mediaRefs = this.recordMediaRefs(raw)
     const candidates = mediaRefs.length > 0
       ? mediaRefs.map(ref => ({ ...(displayByAsset.get(stringValue(ref.file_asset_uid).trim()) ?? {}), ...ref }))
-      : displayItems
+      : displayItems.filter(item => !item.preview_for_attachment_uid)
+    // Pending slots are metadata, never a download grant or an asset-query key.
+    candidates.push(...listValue(contentPayload.media_refs).map(objectValue).filter(ref =>
+      ['pending', 'failed'].includes(stringValue(objectValue(ref.upload).state)) && !stringValue(ref.file_asset_uid)))
     const projected = candidates.filter(item => {
       // content_file_role=4 is ambient background sound captured while writing a record.
       // It is author-only record metadata, not an attachment that belongs in a chat bubble.
@@ -1496,11 +1650,33 @@ export class MediaService {
     }).flatMap((item, index): ArkmeContentBlock[] => {
       const fileAssetUid = stringValue(item.file_asset_uid).trim()
       const fileName = stringValue(item.file_name).trim() || `附件-${String(index + 1)}`
+      const upload = objectValue(item.upload)
+      const width = numberValue(upload.width), height = numberValue(upload.height)
+      const inlinePhotoPreview = stringValue(upload.inline_preview)
+      const photoPresentation = [width, height].every(value => Number.isInteger(value) && value > 0 && value <= 65535)
+        ? { imageDimensions: { width, height }, ...(inlinePhotoPreview.length <= 2048 && /^\/9j\/[A-Za-z0-9+/]+={0,2}$/.test(inlinePhotoPreview) ? { inlinePhotoPreview } : {}) }
+        : {}
+      if (['pending', 'failed'].includes(stringValue(upload.state)) && stringValue(upload.attachment_uid)) {
+        return [{ kind: this.mediaKind(numberValue(upload.kind), arkmeNormalizedFileMimeType(stringValue(item.mime_type), fileName), fileName),
+          ...photoPresentation, mediaRef: '', attachmentUid: stringValue(upload.attachment_uid), attachmentState: upload.state as 'pending' | 'failed',
+          fileName, mimeType: arkmeNormalizedFileMimeType(stringValue(item.mime_type), fileName), size: Math.max(0, numberValue(upload.size)), sortOrder: numberValue(item.sort_order ?? index) }]
+      }
       const fileKind = Math.trunc(numberValue(item.file_kind))
       const declaredMimeType = stringValue(item.mime_type).trim().toLowerCase()
       const mimeType = arkmeNormalizedFileMimeType(declaredMimeType, fileName)
       const kind = this.mediaKind(fileKind, mimeType, fileName)
-      const remoteUrl = stringValue(kind === 'image' ? item.preview_url ?? item.download_url : item.download_url).trim()
+      const thumbnailRef = kind === 'image'
+        ? this.issuePhotoThumbnail(source, viewerUserId, displayByAsset.get(stringValue(upload.preview_asset_uid)), stringValue(upload.attachment_uid), fileName)
+        : undefined
+      if(source) {
+        const attachment=stringValue(item.source_attachment_ref)
+        if(!attachment||!source.accessRef||!source.chatSessionUid||!source.relationUid||!source.recordUid||!source.recordOwnerUserId||source.version<1||!Number.isSafeInteger(source.version)||!source.audienceKey)return []
+        const chatSource={access_ref:source.accessRef,chat_session_uid:source.chatSessionUid,relation_uid:source.relationUid,record_owner_user_id:source.recordOwnerUserId,record_uid:source.recordUid,version:source.version,attachment}
+        const stableIdentity=JSON.stringify(['source-media',source.audienceKey,source.relationUid,source.recordUid,source.version,attachment])
+        const ref=this.issueMediaRef(viewerUserId,{chatSource,sourceBound:true,purpose:'original',mimeType,fileName,size:Math.max(0,Math.trunc(numberValue(item.size)))},stableIdentity)
+        return [{kind,...(kind === 'image' ? photoPresentation : {}),...(thumbnailRef ? { thumbnailRef } : {}),mediaRef:ref,originalRef:ref,...(stringValue(upload.attachment_uid)===''?{}:{attachmentUid:stringValue(upload.attachment_uid)}),...(fileAssetUid?{fileAssetUid}:{}),fileName,mimeType,size:Math.max(0,Math.trunc(numberValue(item.size))),sortOrder:Math.trunc(numberValue(item.sort_order??index)),...(numberValue(item.duration_sec)>0?{durationSec:numberValue(item.duration_sec)}:{}),...([1,3].includes(Math.trunc(numberValue(item.render_role)))?{renderRole:Math.trunc(numberValue(item.render_role)) as 1|3}:{})}]
+      }
+      const remoteUrl = (kind === 'image' ? stringValue(item.preview_url).trim() : '') || stringValue(item.download_url).trim()
       if (remoteUrl === '') return []
       const originalUrl = stringValue(item.download_url).trim()
       const originalRef = originalUrl === '' ? undefined : this.issueMediaRef(viewerUserId, {
@@ -1508,10 +1684,16 @@ export class MediaService {
       }, fileAssetUid === '' ? undefined : `original\0${fileAssetUid}`)
       return [{
         kind,
+        ...(kind === 'image' ? photoPresentation : {}),
+        ...(thumbnailRef ? { thumbnailRef } : {}),
+        ...(stringValue(upload.attachment_uid) === '' ? {} : { attachmentUid: stringValue(upload.attachment_uid) }),
         ...(originalRef === undefined ? {} : { originalRef }),
         mediaRef: this.issueMediaRef(viewerUserId, {
           remoteUrl, mimeType, fileName, size: Math.max(0, Math.trunc(numberValue(item.size))),
-        }, kind === 'image' && fileAssetUid !== '' ? fileAssetUid : undefined),
+        }, fileAssetUid === '' ? undefined : kind === 'image' ? fileAssetUid : kind === 'video' ? `video\0${fileAssetUid}` : undefined,
+        // Refresh the grant in place so timeline refreshes do not restart video decoding.
+        // Preserve the existing video lifetime despite now having a stable identity.
+        kind === 'video' ? 30 * 60_000 : undefined),
         ...(fileAssetUid === '' ? {} : { fileAssetUid }),
         fileName,
         mimeType,

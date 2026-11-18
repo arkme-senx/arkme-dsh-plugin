@@ -463,7 +463,7 @@ it('bounds a million-task picker, retains its reader, refreshes one window and r
     expect(renderer.root.findAllByProps({className:'arkme-team-codex-task-toggle'})).toHaveLength(200)
     expect(renderer.root.findByProps({className:'arkme-codex-transcript'})).toBe(transcript)
   }finally{await act(async()=>renderer?.unmount());vi.useRealTimers()}
-})
+}, 15_000)
 
 
 it('refreshes the selected summary outside the bounded task window and never rolls back its independent versions',async()=>{

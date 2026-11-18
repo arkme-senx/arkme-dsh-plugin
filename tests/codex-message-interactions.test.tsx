@@ -9,7 +9,7 @@ import { CodexMessageBody } from '../src/client/redesign/contacts/TeamCodexConve
 import { callArkme } from '../src/client/api.js'
 import { copyText } from '../src/client/clipboard-text.js'
 import type { TeamCodexEvent,TeamCodexTask } from '../src/team-codex-contract.js'
-vi.mock('../src/client/api.js',()=>({callArkme:vi.fn(async(op)=>op.endsWith('capabilities')?{supported:true,maxLength:2000,storage:'local'}:[])}))
+vi.mock('../src/client/api.js',()=>({callArkme:vi.fn(async(op,params)=>op==='selected-text.prepare'?params!.quote:op.endsWith('capabilities')?{supported:true,maxLength:2000,storage:'local'}:[])}))
 vi.mock('../src/client/local-snapshot-forward.js',()=>({openLocalSnapshotForward:vi.fn(async()=>({sent:0}))}))
 vi.mock('../src/client/clipboard-text.js',()=>({copyText:vi.fn(async()=>{})}))
 vi.mock('../src/client/ArkmeDshMenu.js',()=>({ArkmeActionMenu:({actions}:any)=><div role="menu">{actions.map((a:any)=><button key={a.id} onClick={a.onSelect}>{a.label}</button>)}</div>}))

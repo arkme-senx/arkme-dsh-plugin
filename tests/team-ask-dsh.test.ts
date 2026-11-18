@@ -37,11 +37,16 @@ it('uses the exact Team original grant, retains attachment completeness checks a
 it('exports complete forward bodies and each authorized original without alias collisions between long articles',async()=>{
  const media=(key:string)=>({key,ref:`team-app-media.${key}`,url:'/team/media',name:`${key}.png`,mimeType:'image/png',size:3,kind:1})
  const fresh:TeamMessage={...message('转发摘要'),media:[media('one'),media('two')],forwardRecords:{title:'合并转发',createdAtMillis:1,summaryLines:['摘要'],items:['one','two'].map(key=>({senderName:'原作者',sendAtMillis:1,title:key,textContent:`${key}完整正文 ![图](arkme-asset:media-0)`,textFormat:'markdown',displayKind:1,sourceType:'team_message',contentBlocks:[{kind:'image',mediaRef:`team-app-media.${key}`,fileAssetUid:'media-0',fileName:`${key}.png`,mimeType:'image/png',size:3,sortOrder:0}]}))}}
+ const nestedRow=fresh.forwardRecords!.items[1]!
+ fresh.forwardRecords!.items[1]={senderName:'转发者',sendAtMillis:1,title:'',textContent:'',forwardRecords:{
+  title:'内层卡片',createdAtMillis:1,summaryLines:[],items:[nestedRow],
+ }}
  const original=vi.fn(async()=>new Blob(['abc'],{type:'image/png'}))
  const files=await prepareTeamAskDshNotes('conversation',[message('旧摘要')],'团队',new AbortController().signal,undefined,{preflight:async()=>[fresh],original})
  expect(files.map(file=>file.name)).toEqual(['快记摘录.md','one.png','two.png'])
  const markdown=await text(files[0]!)
  expect(markdown).toContain('one完整正文 ![图](one.png)');expect(markdown).toContain('two完整正文 ![图](two.png)')
+ expect(markdown).toContain('转发标题：内层卡片');expect(markdown).toContain('原消息 2.1')
  expect(markdown).not.toContain('旧摘要');expect(markdown).not.toContain('arkme-asset:')
  expect(original.mock.calls.map(call=>call[0].originalRef)).toEqual(['team-app-media.one','team-app-media.two'])
 })

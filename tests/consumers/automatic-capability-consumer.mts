@@ -8,7 +8,7 @@ const assert = {
  }
 }
 import { createArkmeSdk, type ArkmeCapabilitySettings, type ArkmeCapabilityUpdate } from '@senguoyun/dsh-arkme/sdk'
-const state: ArkmeCapabilitySettings = { accountScope: 'prod:7', settings: [{key:'record_thought',title:'快记建议',enabled:false,version:0,enabledAt:0}] }
+const state: ArkmeCapabilitySettings = { accountScope: 'prod:7', settings: [{key:'record_entity',title:'快记实体识别',enabled:false,version:0,enabledAt:0}] }
 const calls: Array<{operation:string;params:Record<string,unknown>}> = []
 const sdk = createArkmeSdk({ fetchImpl: async (_, init) => {
   if(init?.signal?.aborted) throw new DOMException('Aborted','AbortError')
@@ -16,7 +16,7 @@ const sdk = createArkmeSdk({ fetchImpl: async (_, init) => {
   return new Response(JSON.stringify({ok:true,value:request.operation==='provider.capabilities'?{contractVersion:1,features:{automaticCapabilitiesV1:true}}:state}))
 } })
 assert.equal((await sdk.automaticCapabilities('prod:7')).settings[0]?.enabled,false)
-const update: ArkmeCapabilityUpdate = {key:'recording_voice_trigger',enabled:true,expectedVersion:0,billingConsent:true}
+const update: ArkmeCapabilityUpdate = {key:'record_entity',enabled:true,expectedVersion:0,billingConsent:true}
 await sdk.updateAutomaticCapability('prod:7',update)
 assert.deepEqual(calls.at(-1),{operation:'account.capabilities.update',params:{expectedAccountScope:'prod:7',...update}})
 let unsupportedWrites = 0

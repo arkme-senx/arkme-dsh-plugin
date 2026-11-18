@@ -1,3 +1,4 @@
+import {ArkmeTeamAvatar} from './ArkmeTeamAvatar.js'
 import { tr } from './locale.js'
 import type { CSSProperties } from 'react'
 import { RobotIcon } from '@phosphor-icons/react/dist/csr/Robot'
@@ -5,6 +6,7 @@ import mentionAiThoughtBase64 from '../../assets/mention/icon_ai_thought.svg'
 import mentionAllAvatarDarkBase64 from '../../assets/mention/image_at_all_member_dark.png'
 import mentionAllAvatarLightBase64 from '../../assets/mention/image_at_all_member_light.png'
 import { ArkmeUserAvatar } from './ArkmeAvatar.js'
+import { teamAvatarImages } from './team-avatar-image-runtime.js'
 import { arkmeMentionCandidateIsReservedAsen, arkmeMentionCandidatePrimaryText, type ArkmeMentionCandidate } from './mention-candidates.js'
 import { arkmeTheme } from './arkme-theme.js'
 
@@ -62,6 +64,7 @@ function ArkmeMentionSuggestionAvatar({ candidate, styles }: {
   candidate: ArkmeMentionCandidate
   styles: Pick<ArkmeMentionSuggestionRowStyles, 'botAvatar'>
 }) {
+  if(candidate.kind==='team')return <ArkmeTeamAvatar name={candidate.displayName} size={28}/>
   if (candidate.kind === 'all') {
     return <span className="arkme-mention-all-avatar" style={{ width: '100%', height: '100%', display: 'block' }}>
       <img data-arkme-theme-image="light" src={allMemberLightUrl} alt="" style={themeImageStyle} />
@@ -76,7 +79,7 @@ function ArkmeMentionSuggestionAvatar({ candidate, styles }: {
       ? <span style={styles.botAvatar}><RobotIcon size={14} weight="fill" /></span>
       : <ArkmeUserAvatar avatarRef={candidate.avatarRef} size={28} label={candidate.displayName} />
   }
-  return <ArkmeUserAvatar {...(candidate.avatarRef === undefined ? {} : { avatarRef: candidate.avatarRef })} size={28} label={candidate.displayName} />
+  return <ArkmeUserAvatar {...(candidate.teamImage ? {avatarRef: candidate.teamImage.ref, imageKey: candidate.teamImage.key, imagePort: teamAvatarImages} : {avatarRef: candidate.avatarRef})} size={28} label={candidate.displayName} />
 }
 
 export function ArkmeMentionSuggestionRow({ candidate, active, disabled = false, styles, onActive, onSelect }: {
@@ -89,7 +92,7 @@ export function ArkmeMentionSuggestionRow({ candidate, active, disabled = false,
 }) {
   const primary = arkmeMentionCandidatePrimaryText(candidate)
   const reservedAgent = arkmeMentionCandidateIsReservedAsen(candidate)
-  const secondary = candidate.kind === 'bot' && !reservedAgent ? (candidate.secondaryName ?? 'Bot').trim() : ''
+  const secondary = candidate.kind==='team'?(candidate.secondaryName??'团队'):candidate.kind === 'bot' && !reservedAgent ? (candidate.secondaryName ?? 'Bot').trim() : ''
   return <button
     type="button"
     role="option"

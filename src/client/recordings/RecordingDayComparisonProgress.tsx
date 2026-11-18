@@ -1,3 +1,4 @@
+import { formatArkmeTime } from '../display-time-zone.js'
 import type { RecordingStrategy } from '../../recording-strategy-contract.js'
 import { comparisonSourceState, type DayComparisonSource } from './recording-comparison-day.js'
 import type { SourcePage } from './useRecordingDayStrategyPages.js'
@@ -30,7 +31,7 @@ export function RecordingDayComparisonProgress({ sources, selection, pages }: {
       <summary>处理详情</summary>
       <div className="recording-day-progress-list">
         {rows.map(({ source, status, text }) => <div className="recording-day-progress-file" key={source.sourceRef}>
-          <time>{new Date(source.startAtMillis).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })}</time>
+          <time>{formatArkmeTime(source.startAtMillis, 'zh-CN', { hourCycle: 'h23', hour: '2-digit', minute: '2-digit' })}</time>
           <span className="recording-day-file-name" title={source.fileName}>{source.fileName || '录音'}</span>
           <span className="recording-day-file-status" data-status={status}>{text}</span>
         </div>)}

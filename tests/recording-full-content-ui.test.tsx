@@ -121,7 +121,8 @@ describe('full-content workbench actions', () => {
       const gridItems = detail.children.filter(child => typeof child !== 'string')
       expect(gridItems).toHaveLength(3)
       const overview = renderer.root.findByProps({ 'data-recording-day-overview': true })
-      expect(overview.findAllByProps({ 'data-recording-overview-notices': true })).toHaveLength(1)
+      const notices = overview.findByProps({ 'data-recording-overview-notices': true })
+      expect(notices.props.style.minHeight).toBeUndefined()
       expect((gridItems[2] as typeof detail).findAllByProps({ 'aria-label': '录音内容' })).toHaveLength(1)
     }
     for (const tab of ['总结', '时间轴', '音频文件', '转写']) {
@@ -181,5 +182,23 @@ describe('full-content workbench actions', () => {
     expect(click).not.toHaveBeenCalled()
     expect(JSON.stringify(renderer.toJSON())).toContain('完整转写读取失败')
     expect(JSON.stringify(renderer.toJSON())).toContain('汉🎙')
+  })
+
+  it('continues an early day search when the first body page arrives after typing', async () => {
+    const initial = Promise.withResolvers<unknown>()
+    const implementation = calls.read.getMockImplementation()!
+    calls.read.mockImplementation(async (op, params) => op === 'recordings.day' && params.part === 'transcript'
+      ? initial.promise : implementation(op, params))
+    await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+    await act(async () => { renderer.root.findAllByType('button').find(button => button.props['aria-label'] === '搜索')!.props.onClick() })
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '搜索当天转写' }).props.onChange({ target: { value: '尾部' } })
+    })
+    await act(async () => { await vi.advanceTimersByTimeAsync(251) })
+    expect(calls.read.mock.calls.some(([operation]) => operation === 'recordings.transcript.page')).toBe(false)
+    const request = calls.read.mock.calls.find(([operation, params]) => operation === 'recordings.day' && params.part === 'transcript')!
+    await act(async () => { initial.resolve(await implementation('recordings.day', request[1])) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(251) })
+    expect(JSON.stringify(renderer.root.findByProps({ 'aria-label': '搜索命中数' }).children)).toContain('1/1')
   })
 })

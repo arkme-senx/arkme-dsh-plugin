@@ -1,3 +1,5 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useRef, type ReactNode } from 'react'
@@ -48,7 +50,7 @@ function epochMillis(value: number): number { return Number.isFinite(value) && v
 function sentAtLabel(value: number, explicitMillis = false): string {
   const timestamp = explicitMillis ? (Number.isFinite(value) && value > 0 ? value : 0) : epochMillis(value)
   if (timestamp === 0) return tr("未记录")
-  return new Date(timestamp).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  return formatArkmeDateTime(timestamp, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 export function arkmeMessageSnapshotDurationLabel(value: number): string {
   const seconds = Math.max(0, Math.floor(value / 1000))
@@ -173,7 +175,7 @@ export function ArkmeMessageSnapshotDialog({ item, detail, previewText, metadata
   return createPortal(
     <div style={styles.backdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}>
       <section role="dialog" aria-modal="true" aria-label={tr("快记详情")} style={styles.dialog}>
-        <button data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭快记详情")} style={styles.close} onClick={onClose}><X size={22} weight="bold" /></button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" ref={closeRef} type="button" aria-label={tr("关闭快记详情")} style={styles.close} onClick={onClose} />
         <div style={styles.body}><ArkmeMessageSnapshotDialogContent {...(onRetry?{onRetry}:{})} item={item} historical={historical} {...(previewText === undefined ? {} : { previewText })} metadataUnavailable={metadataUnavailable} createdAtMillis={createdAtMillis} {...(detail === undefined ? {} : { detail })} loading={loading} {...(loadError === undefined ? {} : { loadError })} backgroundSoundEnabled={backgroundSoundEnabled} backgroundSoundSupported={backgroundSoundSupported} backgroundSoundEligibilityReason={backgroundSoundEligibilityReason} {...(onEnableBackgroundSound === undefined ? {} : { onEnableBackgroundSound })} /></div>
       </section>
     </div>,

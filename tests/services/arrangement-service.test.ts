@@ -94,6 +94,20 @@ it('discards recognition configuration returned after an account switch', async 
   runtime=deletedService(() => {runtime.switchAccount();return {contract_version:1,sources:[],models:[],revision:'r'}})
   await expect(runtime.service.recognitionRequest('settings/get','test:42',{})).rejects.toMatchObject({code:'arrangement-account-changed'})
 })
+it('saves the Team model through the authenticated host and uses the server readback', async () => {
+  const {service,fetchImpl}=deletedService((path,body)=>{
+    expect(path).toBe('https://intelligent.test/api/v1/arrangements/recognition/settings/set')
+    expect(body).toEqual({source:'team',route_key:'dashscope/qwen3.8-flash'})
+    return {contract_version:1,revision:'saved-team-policy',sources:[{source:'team',label:'团队对话',personal_route_key:'dashscope/qwen3.8-flash',effective_route_key:'dashscope/qwen3.8-flash',inherited:false,prompts:[],rules:[],pipeline:[]}],models:[]}
+  })
+  await expect(service.recognitionRequest('settings/set','test:42',{source:'team',routeKey:'dashscope/qwen3.8-flash'})).resolves.toMatchObject({accountScope:'test:42',revision:'saved-team-policy',sources:[{source:'team',effective_route_key:'dashscope/qwen3.8-flash'}]})
+  expect(fetchImpl).toHaveBeenCalledOnce()
+})
+it.each(['unknown','constructor','__proto__','toString'])('rejects unsupported recognition source %s before cloud IO', async source => {
+  const {service,fetchImpl}=deletedService(()=>({}))
+  await expect(service.recognitionRequest('settings/set','test:42',{source,routeKey:'dashscope/qwen-flash'})).rejects.toMatchObject({code:'invalid-params'})
+  expect(fetchImpl).not.toHaveBeenCalled()
+})
 it('does not project internal owner IDs from a recognition trace',async () => {
   const {service}=deletedService(path => path.endsWith('/list') ? {list:[{uid:'secret-owner',status:1}],total:1} : {state:'ready',trace:{id:'trace',route_key:'dashscope/qwen-flash',rules:[],pipeline:[],record_uids:['private-record'],outcomes:[{uid:'secret-owner',title:'title',description:'',due_at:0}]}})
   const ref=(await service.listArrangements()).items[0]!.arrangementRef
@@ -197,4 +211,34 @@ it('discards restoration responses when the account changes',async()=>{
  fixture=restoreService(()=>{fixture.switchAccount();return restoredResponse()})
  const ref=(await fixture.service.deletedArrangements()).items[0]!.arrangementRef
  await expect(fixture.service.restoreArrangement({arrangementRef:ref,requestId:'restore-once',expectedVersion:10})).rejects.toMatchObject({code:'arrangement-account-changed'})
+})
+
+it('edits title through the versioned owner endpoint without sending reminder or due facts',async()=>{
+ const {service,fetchImpl}=deletedService((path,body)=>path.endsWith('/edit')
+  ? {state:'applied',item:{uid:body.uid,title:body.title,status:2,version:11,remind_at:8000,reminder_enabled:false}}
+  : {list:[{uid:'a',title:'before',status:2,version:10}],total:1})
+ const item=(await service.listArrangements()).items[0]!
+ const result=await service.editArrangement({arrangementRef:item.arrangementRef,expectedVersion:item.version!,title:'after'})
+ expect(result).toMatchObject({state:'applied',item:{title:'after',version:11,remindAtMillis:8000,reminderEnabled:false}})
+ expect(JSON.parse(String(vi.mocked(fetchImpl).mock.calls.at(-1)?.[1]?.body))).toEqual({uid:'a',expected_version:10,title:'after'})
+})
+it('keeps owner conflict facts and rejects invalid edit input before network IO',async()=>{
+ const {service,fetchImpl}=deletedService((path)=>path.endsWith('/edit')
+  ? {state:'conflict',item:{uid:'a',title:'remote',status:2,version:12}}
+  : {list:[{uid:'a',title:'before',status:2,version:10}],total:1})
+ const ref=(await service.listArrangements()).items[0]!.arrangementRef
+ expect(await service.editArrangement({arrangementRef:ref,expectedVersion:10,title:'mine'})).toMatchObject({state:'conflict',item:{title:'remote'}})
+ const count=vi.mocked(fetchImpl).mock.calls.length
+ await expect(service.editArrangement({arrangementRef:ref,expectedVersion:10,title:' '})).rejects.toMatchObject({code:'arrangement-edit-invalid'})
+ await expect(service.editArrangement({arrangementRef:ref,expectedVersion:10,remindAtMillis:NaN})).rejects.toMatchObject({code:'arrangement-edit-invalid'})
+ expect(vi.mocked(fetchImpl).mock.calls.length).toBe(count)
+})
+it('never accepts a mismatched owner or cross-account reference during editing',async()=>{
+ const {service,switchAccount}=deletedService(path=>path.endsWith('/edit')
+  ? {state:'applied',item:{uid:'other',title:'after',status:2,version:11}}
+  : {list:[{uid:'a',title:'before',status:2,version:10}],total:1})
+ const ref=(await service.listArrangements()).items[0]!.arrangementRef
+ await expect(service.editArrangement({arrangementRef:ref,expectedVersion:10,title:'after'})).rejects.toMatchObject({code:'arrangement-contract-invalid'})
+ switchAccount()
+ await expect(service.editArrangement({arrangementRef:ref,expectedVersion:10,title:'after'})).rejects.toThrow()
 })

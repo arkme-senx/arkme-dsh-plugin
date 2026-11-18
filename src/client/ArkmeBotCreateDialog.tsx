@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { CheckCircleIcon } from '@phosphor-icons/react/dist/csr/CheckCircle'
@@ -254,7 +255,7 @@ export function ArkmeBotCreateDialog({ onClose, onBotCreated, onBusyChange }: {
     <section role="dialog" aria-modal="true" aria-labelledby="arkme-add-bot-title" style={styles.dialog}>
       <header style={styles.header}>
         <h2 id="arkme-add-bot-title" style={styles.heading}>{tr("创建 Bot")}</h2>
-        <button data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭")} disabled={busy} onClick={onClose}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" style={styles.close} aria-label={tr("关闭")} disabled={busy} onClick={onClose} />
       </header>
       <div style={styles.body}>
         <input

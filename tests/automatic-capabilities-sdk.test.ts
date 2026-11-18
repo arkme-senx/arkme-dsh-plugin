@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest'
 import { createArkmeSdk } from '../src/sdk/index.js'
 import { dispatchArkmeHostOperation } from '../src/host-api.js'
 
-it('SDK and Host share one account and version contract', async () => {
+it.each(['recording_voice_trigger', 'record_entity', 'call_summary'] as const)('SDK and Host share one account and version contract for %s', async key => {
   const owner = {
     automaticCapabilities: vi.fn(async () => ({ accountScope: 'prod:7', settings: [] })),
     updateAutomaticCapability: vi.fn(async () => ({ accountScope: 'prod:7', settings: [] })),
@@ -14,7 +14,7 @@ it('SDK and Host share one account and version contract', async () => {
     return new Response(JSON.stringify({ ok: true, value }))
   } })
   await sdk.automaticCapabilities('prod:7')
-  const input = { key: 'recording_voice_trigger' as const, enabled: true, expectedVersion: 2, billingConsent: true }
+  const input = { key, enabled: true, expectedVersion: 2, billingConsent: true }
   await sdk.updateAutomaticCapability('prod:7', input)
   expect(owner.automaticCapabilities).toHaveBeenCalledWith('prod:7', undefined)
   expect(owner.updateAutomaticCapability).toHaveBeenCalledWith(input, 'prod:7', undefined)

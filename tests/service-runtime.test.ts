@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ArkmeSessionCredentials, ArkmeSessionStore } from '../src/keychain-store.js'
 import { patchChatPolicy } from '../src/services/chat-policy.js'
 import { ArkmeRequestQueueOverflowError } from '../src/request-coordinator.js'
+import { ReactionService } from '../src/services/reaction-service.js'
 import { ContactDirectoryService } from '../src/services/contact-directory-service.js'
 import { ProfileService } from '../src/services/profile-service.js'
+import { LoginDevicesService } from '../src/services/login-devices-service.js'
 import {
   ArkmePluginError,
   ServiceRuntime,
@@ -47,7 +49,125 @@ function runtimeFixture(
 
 afterEach(() => { vi.useRealTimers() })
 
+it.each([
+  ['chat', '/api/v1/conversation-list/preferences/query'], ['chat', '/api/v1/chats/read-receipts/summary-list'],
+  ['record', '/api/v1/records/annotations/list'], ['record', '/api/v1/records/annotations/capabilities'],
+  ['record', '/api/v1/topics/display/list'], ['record', '/api/v1/topics/hierarchy/relations/list'],
+  ['record', '/api/v1/records/uncategorized/query'], ['record', '/api/v1/records/uncategorized/summary'],
+  ['bot', '/api/v1/bot/group/list'],
+])('admits %s %s as an independent read without adding cache or coalescing', async (service, route) => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const fetcher = vi.fn(async () => { await gate; return new Response(JSON.stringify({ code: 200, data: {} })) })
+  const runtime = runtimeFixture(fetcher)
+  const base = config[`${service}BaseUrl` as 'chatBaseUrl']
+  try {
+    const read = () => runtime.post(base, route, {}, 'token', [200])
+    const first = read(), second = read()
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
+    const owner = service === 'bot' ? 'other' : service
+    expect(runtime.requestStats()[`interactive-read:${owner}`]?.started).toBe(2)
+    expect(runtime.requestStats()[`write:${owner}`]?.started ?? 0).toBe(0)
+    release(); await Promise.all([first, second]); await read()
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  } finally { release(); runtime.dispose() }
+})
+
+it('keeps query failures one-shot and leaves writes independent of their cooldown', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(new Response('', { status: 503 }))
+    .mockResolvedValue(new Response(JSON.stringify({ code: 200, data: {} })))
+  const runtime = runtimeFixture(fetcher)
+  try {
+    await expect(runtime.post(config.chatBaseUrl, '/api/v1/conversation-list/preferences/query', {}, 'token', [200])).rejects.toMatchObject({ upstreamStatus: 503 })
+    expect(fetcher).toHaveBeenCalledOnce()
+    await expect(runtime.post(config.chatBaseUrl, '/api/v1/chats/records/send', {}, 'token', [200])).resolves.toEqual({})
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  } finally { runtime.dispose() }
+})
+
+it('recognizes query routes when services share a gateway base URL', async () => {
+  const unified = { ...config, chatBaseUrl: config.recordBaseUrl, botBaseUrl: config.recordBaseUrl }
+  const runtime = new ServiceRuntime(unified, sessions, {} as StateStore,
+    vi.fn(async () => new Response(JSON.stringify({ code: 200, data: {} }))))
+  try {
+    await runtime.post(unified.recordBaseUrl, '/api/v1/topics/display/list', {}, 'token', [200])
+    await runtime.post(unified.botBaseUrl, '/api/v1/bot/group/list', {}, 'token', [200])
+    expect(runtime.requestStats()['interactive-read:chat']?.started).toBe(2)
+    expect(runtime.requestStats()['write:chat']?.started ?? 0).toBe(0)
+  } finally { runtime.dispose() }
+})
+
+it.each(['/api/v1/records/annotations/create', '/api/v1/records/annotations/remove', '/api/v1/bot/private-chat/open'])('preserves mutation admission and independent writes for %s', async route => {
+  const runtime = runtimeFixture(vi.fn(async () => new Response(JSON.stringify({ code: 200, data: {} }))))
+  const base = route.startsWith('/api/v1/bot/') ? config.botBaseUrl : config.recordBaseUrl
+  try {
+    await Promise.all([runtime.post(base, route, {}, 'token', [200]), runtime.post(base, route, {}, 'token', [200])])
+    expect(runtime.requestStats()[`write:${base === config.botBaseUrl ? 'other' : 'record'}`]?.started).toBe(2)
+  } finally { runtime.dispose() }
+})
+
+it('admits a message before an earlier queued presence cancellation using the same write rate budget', async () => {
+  vi.useFakeTimers()
+  const order: string[] = []
+  const runtime = runtimeFixture(vi.fn(async (url: string | URL | Request) => {
+    order.push(String(url)); return new Response(JSON.stringify({ code: 200, data: {} }))
+  }))
+  try {
+    for (let index = 0; index < 8; index++) await runtime.post(config.chatBaseUrl, '/api/v1/chats/records/send', { index }, 'token', [200])
+    order.length = 0
+    const presence = runtime.post(config.chatBaseUrl, '/api/v1/chats/messages/preparing/cancel', {}, 'token', [200])
+    const send = runtime.post(config.chatBaseUrl, '/api/v1/chats/records/send', {}, 'token', [200])
+    await vi.advanceTimersByTimeAsync(200)
+    await send
+    expect(order).toEqual([`${config.chatBaseUrl}/api/v1/chats/records/send`])
+    await vi.advanceTimersByTimeAsync(200); await presence
+    expect(order[1]).toBe(`${config.chatBaseUrl}/api/v1/chats/messages/preparing/cancel`)
+    expect(runtime.requestStats()['write:chat']?.started).toBe(10)
+  } finally { runtime.dispose() }
+})
+
+it('coalesces login device reads without caching and keeps the remaining observer alive', async () => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let transportSignal: AbortSignal | undefined
+  const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    transportSignal = init?.signal ?? undefined
+    await gate
+    return new Response(JSON.stringify({ code: 200, data: { items: [], total: 0, count_complete: false, next_client_id: 0, server_time: 1, capabilities: {} } }))
+  })
+  const runtime = runtimeFixture(fetcher, { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} })
+  try {
+    const devices = new LoginDevicesService(runtime), controller = new AbortController()
+    const input = { action: 'list' as const, accountScope: 'test:42' }
+    const first = devices.execute(input, controller.signal), second = devices.execute(input)
+    const cancelled = expect(first).rejects.toBeDefined()
+    await vi.waitFor(() => expect(runtime.requestStats()['interactive-read:auth']?.joined).toBe(1))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    controller.abort()
+    await cancelled
+    expect(transportSignal?.aborted).toBe(false)
+    release()
+    await expect(second).resolves.toMatchObject({ total: 0 })
+    await devices.execute(input)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  } finally { release(); runtime.dispose() }
+})
+
 describe('registered owner read recovery', () => {
+ it('recovers a transient speaker lookup 503 but never automatically replays correction writes',async()=>{
+  vi.useFakeTimers()
+  const viewer={userId:510,accessToken:'synthetic',refreshToken:'synthetic'}
+  const fetcher=vi.fn().mockResolvedValueOnce(new Response('',{status:503})).mockResolvedValueOnce(new Response(JSON.stringify({code:200,data:{state:'ready'}})))
+  const runtime=runtimeFixture(fetcher,{async read(){return viewer},async write(){},async delete(){}})
+  const read=runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/similar',{},viewer)
+  const checked=expect(read).resolves.toEqual({state:'ready'})
+  await vi.advanceTimersByTimeAsync(3000);await checked;expect(fetcher).toHaveBeenCalledTimes(2)
+  fetcher.mockClear().mockResolvedValue(new Response('',{status:503}))
+  const write=runtime.authenticatedAudioPost('/api/v1/audio/speaker-corrections/apply',{},viewer)
+  const rejected=expect(write).rejects.toMatchObject({upstreamStatus:503})
+  await vi.advanceTimersByTimeAsync(3000);await rejected;expect(fetcher).toHaveBeenCalledOnce()
+  runtime.dispose()
+ })
   it.each([false, true])('finishes profile recovery before contact degradation and preserves known names: exhausted=%s', async exhausted => {
     vi.useFakeTimers()
     let profileAttempts = 0
@@ -131,6 +251,19 @@ describe('registered owner read recovery', () => {
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
   const busy = (error?: object) => new Response(JSON.stringify({ code: 1002, message: '服务器繁忙', data: {}, ...(error ? { error } : {}) }))
   const ok = () => new Response(JSON.stringify({ code: 200, data: { items: [] } }))
+  it.each(['workspace/folders/query', 'entry-preferences/list', 'entry-preferences/v2/list',
+    'entry-preferences/query', 'entry-preferences/v2/query'])('recovers a connection reset during Team directory read %s', async route => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn().mockRejectedValueOnce(new TypeError('fetch failed')).mockImplementation(ok)
+    const runtime = new ServiceRuntime({ ...config, teamBaseUrl: 'https://team.test' }, sessions,
+      { async uniqueCode() { return 'synthetic-key' } } as StateStore, fetcher)
+    try {
+      const check = expect(runtime.authenticatedTeamPost(`/api/v1/team/${route}`, {}, session, undefined, true))
+        .resolves.toEqual({ items: [] })
+      await Promise.all([vi.advanceTimersByTimeAsync(2000), check])
+      expect(fetcher).toHaveBeenCalledTimes(2)
+    } finally { runtime.dispose() }
+  })
   it('silently recovers public profile reads without retrying profile mutations', async () => {
     vi.useFakeTimers()
     const fetcher = vi.fn().mockImplementationOnce(() => busy()).mockImplementationOnce(() => busy()).mockImplementation(ok)
@@ -151,6 +284,28 @@ describe('registered owner read recovery', () => {
     await expect(result).resolves.toEqual({ items: [] })
     expect(fetcher).toHaveBeenCalledTimes(3)
     runtime.dispose()
+  })
+  it('paces foreground and background chat list reads through the same account budget', async () => {
+    vi.useFakeTimers()
+    const requests: Array<{ limit: number; at: number }> = []
+    const fetcher = vi.fn(async (_input, init) => {
+      requests.push({ limit: JSON.parse(String(init?.body)).limit, at: Date.now() })
+      return ok()
+    })
+    const runtime = runtimeFixture(fetcher)
+    const initial = Date.now()
+    try {
+      const reads = [
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 20 }, session, undefined, { lane: 'interactive-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 21 }, session, undefined, { lane: 'background-read' }),
+        runtime.authenticatedChatPost('/api/v1/chats/list', { limit: 22 }, { ...session, userId: 43 }),
+      ]
+      await vi.advanceTimersByTimeAsync(249)
+      expect(requests).toEqual([{ limit: 20, at: initial }, { limit: 22, at: initial }])
+      await vi.advanceTimersByTimeAsync(1)
+      await Promise.all(reads)
+      expect(requests[2]).toEqual({ limit: 21, at: initial + 250 })
+    } finally { runtime.dispose() }
   })
   it.each([60_000, 2_147_483_647, 3_000_000_000])('owns exhausted recovery without timer overflow for retry hint %s', async retryAfter => {
     vi.useFakeTimers()
@@ -604,6 +759,36 @@ describe('ServiceRuntime', () => {
 
 describe('reaction request scheduling', () => {
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
+  it('promotes an explicit deferred query already queued behind passive reads without duplicating the owner request', async () => {
+    vi.useFakeTimers()
+    let release!: () => void
+    const blocker = new Promise<void>(resolve => { release = resolve })
+    const paths: string[] = []
+    const fetcher = vi.fn(async (url: string | URL | Request) => {
+      const path = new URL(String(url)).pathname; paths.push(path)
+      if (path.startsWith('/occupied/')) await blocker
+      return new Response(JSON.stringify({ code: 0, data: { items: [] } }))
+    })
+    const runtime = runtimeFixture(fetcher, { read: async () => session, write: async () => {}, delete: async () => {} })
+    const service = new ReactionService(runtime, async () => ({ record_uid: 'record', owned: true }))
+    const query = { action: 'query' as const, accountKey: 'test:42', targets: [{ id: 'clicked', sourceRef: 'source', messageActionRef: 'message' }], actorPresentation: 'deferred' as const }
+    const pending: Promise<unknown>[] = [0, 1].map(index => runtime.authenticatedPost(`/occupied/${index}`, {}, session, undefined, { lane: 'background-read' }))
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(paths).toHaveLength(2)
+      pending.push(service.request(query))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(paths).toHaveLength(2)
+      pending.push(service.request({ ...query, readPriority: 'interactive' }))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(paths.filter(path => path === '/api/v1/reactions/query')).toHaveLength(1)
+      await Promise.all(pending.slice(2))
+      expect(runtime.requestCoordinator.snapshotStats()['interactive-read:record']?.started).toBe(1)
+    } finally {
+      release(); await vi.advanceTimersByTimeAsync(1000)
+      await Promise.allSettled(pending); runtime.dispose()
+    }
+  })
   it('shares identical reads, isolates accounts, and keeps notification polling off the write lane', async () => {
     vi.useFakeTimers()
     let finish!: () => void
@@ -651,26 +836,34 @@ it('removes a shared queued reaction read when its final consumer disconnects', 
   const session = { userId: 42, accessToken: 'access', refreshToken: 'refresh' }
   const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 0, data: {} })))
   const runtime = runtimeFixture(fetcher), path = '/api/v1/reactions/query', body = { targets: [] }
-  await runtime.authenticatedPost(path, body, session) // Consume the route burst token.
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  fetcher.mockImplementation(async () => { await held; return new Response(JSON.stringify({ code: 0, data: {} })) })
+  const occupied = Promise.all(Array.from({ length: 4 }, (_, index) =>
+    runtime.authenticatedPost(path, { index }, session)))
+  await vi.advanceTimersByTimeAsync(0)
   const a = new AbortController(), b = new AbortController()
   const first = runtime.authenticatedPost(path, body, session, a.signal)
   const second = runtime.authenticatedPost(path, body, session, b.signal)
   const firstRejected = expect(first).rejects.toMatchObject({ name: 'AbortError' })
   const secondRejected = expect(second).rejects.toMatchObject({ name: 'AbortError' })
   a.abort(); await firstRejected
-  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(fetcher).toHaveBeenCalledTimes(4)
   b.abort(); await secondRejected
   await vi.advanceTimersByTimeAsync(1000)
-  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(fetcher).toHaveBeenCalledTimes(4)
+  release(); await occupied
   runtime.dispose()
 })
 
 describe('speaker directory HTTP contract', () => {
   it.each([[2, 45000], [60, 2000]])('honors both Retry-After and retry_after_ms: %s seconds, %s ms', async (seconds, milliseconds) => {
+    vi.useFakeTimers()
     const fetcher = vi.fn(async () => new Response(JSON.stringify({ code: 429, data: { error_code: 'directory_rate_limited', retry_after_ms: milliseconds } }), { status: 429, headers: { 'Retry-After': String(seconds) } }))
     const runtime = runtimeFixture(fetcher)
-    await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
+    const checked = expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
       .rejects.toMatchObject({ upstreamStatus: 429, retryAfterMillis: Math.max(seconds * 1000, milliseconds) })
+    await vi.advanceTimersByTimeAsync(5001);await checked
     expect(fetcher).toHaveBeenCalledTimes(1); runtime.dispose()
   })
   it.each([0, 1001, 1002])('does not treat HTTP 200 business code %s as success', async code => {
@@ -678,5 +871,27 @@ describe('speaker directory HTTP contract', () => {
     await expect(runtime.authenticatedAudioPost('/api/v1/audio/speaker-directory/list', {}, { userId: 7, accessToken: 'access', refreshToken: 'refresh' }))
       .rejects.toMatchObject({ code: `arkme-code-${code}` })
     runtime.dispose()
+  })
+})
+
+describe('device revocation response compatibility', () => {
+  it.each(['business-denied', 'unavailable', 'revoked', 'refresh-unavailable'] as const)('keeps extension auth and business errors separate: %s', async mode => {
+    let stored: ArkmeSessionCredentials | undefined = { userId: 42, accessToken: 'active', refreshToken: 'refresh' }
+    const removed = vi.fn(async () => { stored = undefined })
+    const calls: string[] = []
+    const runtime = new ServiceRuntime({ ...config, extensionPublishBaseUrl: 'https://extensions.test' }, {
+      async read() { return stored }, async write(value) { stored = value }, delete: removed,
+    }, {} as StateStore, vi.fn(async input => {
+      const url = String(input); calls.push(url)
+      if (url.includes('/auth/new-short')) return new Response('', { status: mode === 'refresh-unavailable' ? 503 : 403, headers: mode === 'refresh-unavailable' ? {} : { 'X-Jotmo-Auth-Failure': 'session_ended' } })
+      return new Response('', { status: mode === 'unavailable' ? 503 : 403, headers: mode === 'revoked' || mode === 'refresh-unavailable' ? { 'X-Jotmo-Auth-Failure': 'session_ended' } : {} })
+    }))
+    try {
+      await expect(runtime.extensionPost('/api/v1/extensions/mine', {})).rejects.toMatchObject({ code: mode === 'revoked' ? 'login-expired' : 'arkme-http-error' })
+      expect(calls.filter(url => url.includes('/auth/new-short'))).toHaveLength(mode === 'revoked' || mode === 'refresh-unavailable' ? 1 : 0)
+      expect(removed).toHaveBeenCalledTimes(mode === 'revoked' ? 1 : 0)
+      expect(stored === undefined).toBe(mode === 'revoked')
+      expect(calls.filter(url => url.includes('/extensions/mine'))).toHaveLength(1)
+    } finally { runtime.dispose() }
   })
 })

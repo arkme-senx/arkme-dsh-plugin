@@ -1,4 +1,5 @@
 import { installArkmeSettingsDialog } from './ArkmeSettingsDialog.js'
+import { installModalInteractions } from './modal-interactions.js'
 import { ArkmeLogoutFailureToast } from './ArkmeLogoutFailureToast.js'
 import { OfflineContextPreview, offlineContextPreviewRequested } from './offline-context/OfflineContextPreview.js'
 import { bindScreenshotAskDsh } from './screenshot-ask-dsh.js'
@@ -42,6 +43,8 @@ import {
   arkmeNotificationActivation, type ArkmeNotificationActivationSnapshot,
 } from './notification-activation-store.js'
 import { arkmeUi } from './ui-controller.js'
+import { WorkspaceCrashDiagnostics, WorkspaceNavigationTrace } from './workspace-crash-diagnostics.js'
+import type { ComponentProps } from 'react'
 import { observeExtensionShareDeepLinks } from './extension-share-deeplink.js'
 import { deepSeekHarnessEmbedRequested, openEmbeddedDshSession } from './DeepSeekHarnessSurface.js'
 import { installArkmeRedesignStyles } from './redesign/styles.js'
@@ -103,6 +106,7 @@ function logNotificationActivation(
 
 /** Keep Arkme's shell resident and embed the native DSH client only in its conversation region. */
 export function apply(ctx: ClientContext): void {
+  ctx.effect(installModalInteractions, 'dsh-arkme: modal pointer and close interactions')
   // Only the main top frame is authorized by the desktop to register this capability.
   void nativeScreenshotBridge()?.enableStandaloneEditor?.('reset-v1').catch(() => {})
   // Explicit loopback-only review surface; never inject synthetic events into a real chat.
@@ -312,19 +316,27 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-arkme: install redesign visual system')
 
   ctx.effect(() => {
+    const trace = new WorkspaceNavigationTrace()
+    const recordNavigation = () => { trace.record(arkmeUi.getSnapshot()) }
+    recordNavigation()
+    const disposeTrace = arkmeUi.subscribe(recordNavigation)
+    function DiagnosticWorkspace(props: ComponentProps<typeof ArkmePersistentWorkspace>) {
+      return <WorkspaceCrashDiagnostics trace={trace}><ArkmePersistentWorkspace {...props} /></WorkspaceCrashDiagnostics>
+    }
     const disposeConversation = ctx.slots.inject('main', () => ctx.slots.register({
       name: 'main',
       key: 'conversation',
       priority: -100,
       locale: ARKME_LOGIN_LOCALE_NAMESPACE,
       inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
-    }, ArkmePersistentWorkspace))
+    }, DiagnosticWorkspace))
     const disposeDetails = ctx.slots.inject('rightbar', () => ctx.slots.register({
       name: 'rightbar',
       priority: -100,
       inject: () => ({ closeDetails: () => { closeLayoutDetails(ctx.layout) } }),
     }, ArkmePersistentDetails))
     return () => {
+      disposeTrace()
       disposeConversation()
       disposeDetails()
     }

@@ -11,11 +11,14 @@ function setup(transport = (input: ReactionRequest) => reactionFixture.call('rea
 it('keeps an in-flight message read when notification warming joins its subscription', async () => {
  vi.useFakeTimers()
  let finish!: (value: unknown) => void
- const store = setup(() => new Promise(resolve => { finish = resolve }))
+ const transport = vi.fn(() => new Promise(resolve => { finish = resolve }))
+ const store = setup(transport)
  const reading = store.refresh()
  const release = store.watch('test:a', { ...target, sourceRef: 'latest-source' })
  finish(await reactionFixture.call('reactions', { action: 'query', accountKey: 'test:a', targets: [target] }))
  await reading
+ await vi.advanceTimersByTimeAsync(40)
+ expect(transport).toHaveBeenCalledOnce()
  expect(store.snapshot(target.id)).toBeDefined()
  release()
  expect(store.snapshot(target.id)).toBeDefined()
@@ -310,4 +313,43 @@ it('cancels an abandoned conversation read only after its last consumer leaves',
  await reading; await vi.advanceTimersByTimeAsync(40)
  expect(store.snapshot(next.id)).toBeDefined()
  expect(store.error(target.id)).toBeUndefined()
+})
+
+it('sends a cold click after interactive facts without waiting for actor presentation', async () => {
+ vi.useFakeTimers()
+ let release!: () => void
+ const presentation = new Promise<void>(resolve => { release = resolve })
+ const calls: ReactionRequest[] = []
+ const store = new ReactionPreviewStore(async input => {
+  calls.push(input)
+  if (input.action === 'query' && input.actorPresentation !== 'deferred') await presentation
+  return reactionFixture.call('reactions', input)
+ })
+ stores.push(store); store.setScope('test:a')
+ let accepted = false
+ const clicking = store.toggle('test:a', target, '收到').then(value => { accepted = value })
+ try {
+  for (let n = 0; n < 10; n++) await Promise.resolve()
+  expect(accepted).toBe(true)
+  expect(calls[0]).toMatchObject({ action: 'query', actorPresentation: 'deferred', readPriority: 'interactive' })
+  expect(calls.some(call => call.action === 'set')).toBe(true)
+ } finally { release(); await clicking }
+})
+
+it('promotes a notification-warmed target once when its message becomes visible', async () => {
+ vi.useFakeTimers()
+ let finish!: (value: unknown) => void
+ const pending = new Promise(resolve => { finish = resolve })
+ const transport = vi.fn(async () => pending)
+ const store = new ReactionPreviewStore(transport); stores.push(store); store.setScope('test:a')
+ const warming = store.prepare('test:a', [target], new AbortController().signal)
+ expect(transport).toHaveBeenCalledTimes(1)
+ const first = store.watch('test:a', target)
+ const second = store.watch('test:a', target)
+ expect(transport).toHaveBeenCalledTimes(2)
+ expect(transport.mock.calls[1]?.[0]).toMatchObject({ action: 'query', readPriority: 'interactive', actorPresentation: 'deferred' })
+ finish(await reactionFixture.call('reactions', { action: 'query', accountKey: 'test:a', targets: [target] }))
+ await warming
+ expect(store.snapshot(target.id)).toBeDefined()
+ first(); second()
 })

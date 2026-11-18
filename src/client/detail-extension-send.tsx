@@ -21,6 +21,7 @@ export interface DetailExtensionSend {
   relationUid: string
   textContent: string
   textFormat?: 'plain' | 'markdown' | undefined
+  teamMentions?:import('../types.js').ArkmeTeamMentionInput[]|undefined
   humanMentions?: ArkmeHumanMentionInput[] | undefined
   botMentions?: ArkmeBotMentionInput[] | undefined
   fileRefs: string[]
@@ -112,6 +113,7 @@ export class DetailExtensionSendQueue {
       const result = await callArkme<ArkmeSourceMessageExtendResult>('source.message-extension.extend', {
         sourceRef: task.sourceRef, messageActionRef: task.messageActionRef, textContent: task.textContent,
         ...(task.textFormat === undefined ? {} : { textFormat: task.textFormat }),
+        ...(task.teamMentions?.length?{teamMentions:task.teamMentions}:{}),
         ...(task.humanMentions?.length ? { humanMentions: task.humanMentions } : {}),
         ...(task.botMentions?.length ? { botMentions: task.botMentions } : {}),
         recordUid: task.recordUid, relationUid: task.relationUid,

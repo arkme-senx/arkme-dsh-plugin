@@ -41,7 +41,8 @@ export class CalendarMonthCache {
   constructor(
     private readonly load: (query: CalendarMonthQuery, signal: AbortSignal, background: boolean) => Promise<ArkmeCalendarBucketPage>
       = (query, signal, background) => { const { scopeKey: _, ...params } = query; return withArkmeReadDeadline(
-        requestSignal => callArkme(query.timezoneOffsetMillis === undefined ? 'calendar.buckets' : 'calendar.chat-statistics', { ...params, background }, requestSignal), signal) },
+        requestSignal => callArkme(query.timezoneOffsetMillis === undefined ? 'calendar.buckets' : 'calendar.chat-statistics', { ...params, background }, requestSignal,
+          background ? { priority: 'background' } : undefined), signal) },
     private readonly getStorage: () => Storage | undefined = storage,
     private readonly now = Date.now,
   ) {}

@@ -62,6 +62,19 @@ describe('ArkoService', () => {
     expect(await runtime.stateStore.arkoPendingTurns(10001)).toHaveLength(0)
   })
 
+  it('rejects an oversized image definitively and releases the pending request', async () => {
+    const { service, runtime, calls } = imageFixture()
+    const original = calls.getMockImplementation()!
+    calls.mockImplementation(async (path, body) => {
+      if (path.endsWith('/new-msg-v3')) throw new ArkmePluginError('arkme-code-1207', '请调整图片后重试', true)
+      return original(path, body)
+    })
+    await expect(service.arkoAsk('', { sessionId: 88, imageFileRefs: [imageRef] }))
+      .rejects.toMatchObject({ code: 'arkme-code-1207', retryable: false })
+    expect(calls.mock.calls.find(([path]) => path.endsWith('/new-msg-v3'))?.[1]).not.toHaveProperty('model_route_key')
+    expect(await runtime.stateStore.arkoPendingTurns(10001)).toHaveLength(0)
+  })
+
   it('returns the accepted receipt even if clearing local recovery fails', async () => {
     const { service, runtime } = imageFixture()
     vi.spyOn(runtime.stateStore, 'acknowledgeArkoTurn').mockRejectedValue(new Error('disk unavailable'))
@@ -94,6 +107,7 @@ describe('ArkoService', () => {
     expect(upload).toHaveBeenCalledWith(refs, undefined)
     expect(calls.mock.calls.find(([path]) => path.endsWith('/new-msg-v3'))?.[1]).toMatchObject({
       content: '', client_turn_uid: '11111111-1111-4111-8111-111111111111', attachments_protocol_version: 1, client_capabilities: ['dsh.arko.v1', 'dsh.arko.images.v1'],
+      model_route_key: 'deepseek/flash',
       attachments: [{ type: 'image', file_asset_uid: 'asset-0' }, { type: 'image', file_asset_uid: 'asset-1' }],
     })
     expect(JSON.stringify(calls.mock.calls)).not.toContain('arkme-file-v1')

@@ -8,6 +8,7 @@ import { sharePreviewAccountKey, sharePreviewClient } from './share-preview-clie
 import { tr, useArkmeLocale } from './locale.js'
 import { identityShareTarget } from '../identity-share-link.js'
 import { identityShareUi } from './identity-share-ui.js'
+import { recordingShareTitle } from '../recording-forward-presentation.js'
 
 const stateLabels = { unavailable: '分享内容暂不可用', expired: '分享已失效', auditing: '分享内容审核中', restricted: '请打开链接确认访问权限' }
 
@@ -18,6 +19,7 @@ export function sharePreviewInlineLabel(target: ShareLinkTarget, preview?: Share
     const stateLabel = preview && stateLabels[preview.state as keyof typeof stateLabels]
     return stateLabel ? `${label} · ${tr(stateLabel)}` : label
   }
+  if (kind === 'recording' && preview.count) return recordingShareTitle(preview.author ?? '', preview.count)
   const author = preview.authorIsMe ? tr('我') : preview.author
   const content = previewText(preview.summary, 100)
   const byAuthor = (value: string) => author ? `${author}：${value}` : value

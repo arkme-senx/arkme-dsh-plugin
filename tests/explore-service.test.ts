@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ExploreService } from '../src/services/explore-service.js'
 import type { ServiceRuntime } from '../src/services/service.js'
 import type { ExploreModule } from '../src/explore-contract.js'
+import { mergeExploreEvidence } from '../src/explore-evidence.js'
 import { profileProgress } from '../src/services/explore-projection.js'
 
 const disposers:Array<()=>void>=[]
@@ -9,7 +10,7 @@ afterEach(()=>disposers.splice(0).forEach(fn=>fn()))
 function fixture(){
   let user=11,epochCallback=()=>{}
   const writes:Array<{path:string;body:Record<string,unknown>}>=[],calls:Array<{path:string;body:Record<string,unknown>}>=[]
-  const state={modelRoute:'private-model-a',ignoreModelWrite:false,removeModelB:false,analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
+  const state={relationRecords:undefined as Array<Record<string,unknown>>|undefined,modelRoute:'private-model-a',ignoreModelWrite:false,removeModelB:false,analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
   const fact=()=>({fact_key:'private-fact',predicate_label:'偏好',value:state.factValue,state:'active',support_count:1,evidence:[{record_uid:'private-record',event_at:1000,speaker_role:'self'}]})
   const home=()=>({activated:true,state:'processing',snapshot:{snapshot_id:state.version,sections:[{section_id:'identity',title:'我是谁',total_count:state.factDeleted?0:1}]},processing:{phase:state.progress,rebuild_run_id:'private-run',can_resume:state.progress==='paused',can_pause:state.progress==='running',planning_complete:true,processed_units:5,total_units:10},sources:[{source:'personal_record',display_name:'个人记录',enabled:true},{source:'native_chat',display_name:'聊天',enabled:false},{source:'wechat_import',display_name:'微信导入',enabled:true}]})
   const anniversary=()=>({id:'private-anniversary',title:'生日',status:'pending',calendar_type:'solar',date_label:'10月28日',why:'明确提到日期',evidences:[{message_id:'private-message',content:'10月28日',source_type:6,owner_ref:{provider:'audio',container_id:'private-audio'},is_anchor:true}]})
@@ -17,7 +18,7 @@ function fixture(){
     calls.push({path,body});state.afterRead()
     if(path.endsWith('/capabilities/query')) {
       if(state.capabilityFailure)throw new Error('设置暂不可用')
-      return ['personal_profile','goal_insight'].map(key=>({key,title:key,enabled:state.analysisEnabled,version:1,enabled_at:1}))
+      return ['personal_profile','goal_insight','event_insight'].map(key=>({key,title:key,enabled:state.analysisEnabled,version:1,enabled_at:1}))
     }
     if(path.includes('/override')||path.endsWith('/follow')||path.endsWith('/delete')||path.endsWith('/activate')||path.endsWith('/resume')||path.endsWith('/pause')||path.endsWith('/set')||path.endsWith('/reclassify')){
       if(state.failWrite)throw new Error('服务暂不可用')
@@ -26,11 +27,12 @@ function fixture(){
       if(path.endsWith('/override')){if(body.action==='delete')state.factDeleted=true;else state.factValue=String(body.value)}
       return {}
     }
+    if(path.endsWith('/refresh')) {writes.push({path,body});return {accepted:true}}
     if(path.endsWith('/experience/home'))return home()
     if(path.endsWith('/section/get'))return {snapshot_id:state.version,items:state.factDeleted?[]:[fact()],has_more:false}
     if(path.startsWith('/api/v1/relation/list'))return {entities:state.entities,private_chats:[]}
     if(path.endsWith('/detail-full')||path==='/api/v1/entity/detail')return state.entities.find(x=>x.entity_id===body.entity_id)!
-    if(path.endsWith('/entity/records/list'))return {records:[{record_uid:'private-record',content:'来源文字',created_at:1000,sender_is_self:true}],has_more:false,total:1}
+    if(path.endsWith('/entity/records/list'))return {records:state.relationRecords??[{record_uid:'private-record',content:'来源文字',created_at:1000,sender_is_self:true}],has_more:false,total:1}
     if(path.endsWith('/event/stream'))return {items:[{event_record_id:'private-event-record',event_id:'study',event_name:'学习',summary:'学习了新内容',occurred_at:1000}],total:1,user_progress:{active:false,can_trigger:true}}
     if(path.endsWith('/event/plaza'))return {all:[{event_id:'study',event_name:'学习'},{event_id:'exercise',event_name:'运动'}]}
     if(path.endsWith('/event/detail'))return {event_id:'study',event_name:'学习',records:[{event_record_id:'private-event-record',source_record_uid:'private-record',summary:'事件整理',occurred_at:1000,fields:{reflection:'新的思考'}}]}
@@ -40,7 +42,7 @@ function fixture(){
     if(path.endsWith('/evidence/open'))return {available:state.available,owner_ref:{provider:'audio',container_id:'private-audio',transcript_source:'doubao'}}
     if(path.endsWith('/section-summary'))return {sections:[]}
     if(path.endsWith('/model/list')||path.endsWith('/event-model/list')||path.endsWith('/model-panel/get')) {
-      const items=[{route_key:'private-model-a',display_name:'模型 A',provider:'dashscope'},{route_key:'private-model-b',display_name:'模型 B',provider:'managed-ai'}].filter(x=>!state.removeModelB||x.route_key!=='private-model-b')
+      const items=[{route_key:'private-model-a',display_name:'模型 A',provider:'dashscope'},{route_key:'private-model-b',display_name:'模型 B',provider:'managed-ai'}].filter(x=>!state.removeModelB||x.route_key!=='private-model-b').map((x,i)=>({...x,available:true,binding:{catalog_release_id:'1',offering_revision_id:String(i+1),public_model_code:x.route_key},execution:{available:true,binding:{catalog_release_id:'1',offering_revision_id:String(i+1),public_model_code:x.route_key}}}))
       return path.endsWith('/model-panel/get')?{config:{effective_route_key:state.modelRoute,allowed_route_options:items}}:{effective_route_key:state.modelRoute,items}
     }
     if(path.endsWith('/records/detail'))return {record_core:{record_uid:'private-record',status:1,content_access_state:1,origin_kind:1}}
@@ -213,7 +215,7 @@ describe('Explore model selection',()=>{
   ] as const)('activates %s through its existing owner and confirms the effective selection',async(module,path)=>{
     const f=fixture(),settings=await f.service.settings(module,undefined,{part:'models'})
     const result=await f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})
-    expect(f.writes).toEqual([{path,body:{route_key:'private-model-b',...(module==='goals'?{trigger_refresh:true}:{})}}])
+    expect(f.writes).toEqual([{path,body:{route_key:'private-model-b',model_binding:{catalog_release_id:'1',offering_revision_id:'2',public_model_code:'private-model-b'},...(module==='goals'?{trigger_refresh:true}:{})}}])
     expect(result).toMatchObject({saved:true,settings:{accountScope:'prod:11',models:[{selected:false},{selected:true}]}})
     expect(result.message).not.toContain('分析完成')
   })
@@ -236,7 +238,7 @@ describe('Explore model selection',()=>{
     await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).rejects.toThrow('暂时无法确认生效状态')
     expect(f.writes).toHaveLength(1)
   })
-  it.each(['profile','goals'] as const)('retains %s choices while disabled but does not bypass automatic AI authorization on activation',async module=>{
+  it.each(['profile','events'] as const)('retains %s choices while disabled but does not bypass automatic AI authorization on activation',async module=>{
     const f=fixture();f.state.analysisEnabled=false
     const settings=await f.service.settings(module,undefined,{part:'models'})
     expect(settings.models).toHaveLength(2)
@@ -250,13 +252,18 @@ describe('Explore automatic AI authorization',()=>{
     const f=fixture();f.state.analysisEnabled=false
     const page=await f.service.page({module})
     expect(page.items).toHaveLength(1);expect(page.analysisEnabled).toBe(false)
-    expect(page.actions.some(x=>['activate','resume','refresh'].includes(x.id))).toBe(false)
+    expect(page.actions.some(x=>['activate','resume','refresh'].includes(x.id))).toBe(module==='goals')
     expect(page.progress).toBeUndefined();expect(f.writes).toHaveLength(0)
     f.state.capabilityFailure=true
     const unavailable=await f.service.page({module})
     expect(unavailable.items).toHaveLength(1);expect(unavailable.analysisEnabled).toBeNull()
-    await expect(f.service.mutate({ref:page.contextRef,action:'refresh'})).rejects.toThrow('设置暂不可用')
-    expect(f.writes).toHaveLength(0)
+    if(module==='profile') {
+      await expect(f.service.mutate({ref:page.contextRef,action:'refresh'})).rejects.toThrow('设置暂不可用')
+      expect(f.writes).toHaveLength(0)
+    } else {
+      await expect(f.service.mutate({ref:page.contextRef,action:'refresh'})).resolves.toMatchObject({saved:true})
+      expect(f.writes).toHaveLength(1)
+    }
   })
   it.each(['activate','refresh','resume'] as const)('rechecks permission before %s and never changes consent',async action=>{
     const f=fixture(),page=await f.service.page({module:'profile'})
@@ -278,4 +285,30 @@ describe('Explore automatic AI authorization',()=>{
     await expect(f.service.saveSettings({ref:settings.ref,sources:['native_chat']})).rejects.toThrow('自动使用额度')
     expect(f.writes).toHaveLength(0)
   })
+})
+
+it('manual Goal selection remains available when continuous analysis is disabled',async()=>{
+ const f=fixture();f.state.analysisEnabled=false
+ const settings=await f.service.settings('goals',undefined,{part:'models'})
+ await expect(f.service.saveSettings({ref:settings.ref,modelRef:settings.models[1]!.ref})).resolves.toMatchObject({saved:true})
+ expect(f.writes.at(-1)?.path).toBe('/api/v1/insight/goal/model/activate')
+})
+
+it('deduplicates canonical relation sources across different person parents, normalizes core fallback, and preserves provider boundaries',async()=>{
+ const f=fixture(),page=await f.service.page({module:'relations'})
+ const record={record_uid:'shared-record',content:'甲和乙提到了同一原文',created_at:1000}
+ f.state.relationRecords=[{...record,roles:['mentioned'],mentions:[{start_position:0,end_position:1,mention_text:'甲'}]}]
+ const first=await f.service.detail(page.items[0]!.ref,undefined,undefined,'records')
+ f.state.relationRecords=[{...record,source_identity:{provider:'core_record'},roles:['speaker'],mentions:[{start_position:2,end_position:3,mention_text:'乙'}]}]
+ const second=await f.service.detail(page.items[1]!.ref,undefined,undefined,'records')
+ expect(first.evidence[0]!.key).toBe(second.evidence[0]!.key)
+ expect(first.evidence[0]!.ref).toBeTruthy();expect(second.evidence[0]!.ref).toBeTruthy()
+ const merged=mergeExploreEvidence(first.evidence,second.evidence)
+ expect(merged).toHaveLength(1);expect(merged[0]!.mentions?.map(m=>m.text)).toEqual(['甲','乙'])
+ expect(merged[0]!.roles).toEqual(['mentioned','speaker'])
+ f.state.relationRecords=[{...record,source_identity:{provider:'external_archive'}}]
+ const foreign=await f.service.detail(page.items[1]!.ref,undefined,undefined,'records')
+ expect(foreign.evidence[0]!.key).not.toBe(first.evidence[0]!.key)
+ expect(foreign.evidence[0]!.ref).toBeUndefined()
+ expect(mergeExploreEvidence(merged,foreign.evidence)).toHaveLength(2)
 })

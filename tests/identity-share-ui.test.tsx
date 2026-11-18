@@ -2,8 +2,14 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const api = vi.hoisted(() => ({ call: vi.fn(), upsert: vi.fn() }))
-vi.mock('../src/client/api.js', async original => ({ ...await original<object>(), callArkme: api.call }))
+const api = vi.hoisted(() => ({ call: vi.fn(), upsert: vi.fn(), subscriptionState: vi.fn() }))
+vi.mock('../src/client/api.js', async original => ({ ...await original<object>(), callArkme: (operation: string, ...args: any[]) => {
+  if (operation === 'world.subscriptions' && args[0]?.action === 'state') {
+    const auth = arkmeAuthStore.getSnapshot().auth
+    return api.subscriptionState(...args, auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : '')
+  }
+  return api.call(operation, ...args)
+} }))
 vi.mock('../src/client/chat-directory-store.js', () => ({ arkmeChatDirectory: { upsert: api.upsert } }))
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { ArkmeMemberProfileCard } from '../src/client/ArkmeChatMemberActions.js'
@@ -30,6 +36,7 @@ const mount = async (content: React.ReactNode) => { await act(async () => root.r
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(v => v.textContent === label || v.getAttribute('aria-label') === label)!
 const click = async (element: Element) => { await act(async () => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))) }
 beforeEach(() => {
+  api.subscriptionState.mockReset().mockResolvedValue({ subscribed: false })
   teamContactTeams.reset()
   globalThis.IS_REACT_ACT_ENVIRONMENT = true
   node = document.createElement('div'); document.body.append(node); root = createRoot(node)
@@ -40,6 +47,12 @@ beforeEach(() => {
 })
 afterEach(async () => {
   await act(async () => { root.unmount(); identityShareUi.close(); arkmeAuthStore.setAuth({ status: 'logged-out', environment: 'prod' }); arkmeUi.authChanged(false, true) })
+  for (const [params, signal, account] of api.subscriptionState.mock.calls) {
+    expect(account).not.toBe('')
+    expect(params).toMatchObject({ accountKey: account, action: 'state' })
+    expect(signal).toBeInstanceOf(AbortSignal)
+  }
+  expect(api.call.mock.calls.filter(([op]) => op === 'world.subscriptions')).toHaveLength(0)
   vi.useRealTimers(); node.remove(); clipboard.mockClear(); api.call.mockReset(); api.upsert.mockReset(); vi.restoreAllMocks()
 })
 
@@ -388,4 +401,18 @@ it('copies the received URL even when its profile read is still pending', async 
   expect(api.call.mock.calls.map(([op])=>op).filter(op=>op!=='team.app.teams')).toEqual(['identity.share.read'])
   expect(button('发消息').disabled).toBe(true)
   await click(button('关闭'));await act(async()=>finish(person))
+})
+
+it.each([false,true])('keeps the image reader paired with its avatar source (Team avatar available: %s)', async hasTeamAvatar => {
+ const publicRef='arkme-profile-image-v1.person-card', teamRef='team-app-image.person-card'
+ const publicUrl='data:image/png;base64,cHVibGlj', teamUrl='data:image/png;base64,dGVhbQ=='
+ const teamPort={activateScope:vi.fn(),current:vi.fn(()=>teamUrl),load:vi.fn(async()=>teamUrl),subscribe:vi.fn(()=>()=>{}),revalidateActive:vi.fn(async()=>{})}
+ const publicLoad=vi.spyOn(arkmeAvatarImages,'load').mockResolvedValue(publicUrl)
+ vi.spyOn(arkmeAvatarImages,'current').mockImplementation(key=>key===publicRef?publicUrl:undefined)
+ api.call.mockImplementation(async op=>op==='identity.person.read'?{...person,avatarRef:publicRef}:op==='team.app.teams'?[]:{})
+ await mount(<ArkmeMemberProfileCard copyLinkTarget={{kind:'team-person',conversationRef:'conversation-ref',personRef:'person-ref'}}
+  member={{displayName:'同事',...(hasTeamAvatar?{avatarRef:teamRef}:{})}} imagePort={teamPort} imageKey="team-image-key" busy={false} onClose={()=>{}} onSend={()=>{}} />)
+ expect(document.querySelector('.arkme-person-identity [data-arkme-avatar] img')?.getAttribute('src')).toBe(hasTeamAvatar?teamUrl:publicUrl)
+ if(hasTeamAvatar){expect(teamPort.load).toHaveBeenCalledWith(teamRef,'team-image-key');expect(publicLoad).not.toHaveBeenCalled()}
+ else {expect(publicLoad).toHaveBeenCalledWith(publicRef,publicRef);expect(teamPort.load).not.toHaveBeenCalled()}
 })

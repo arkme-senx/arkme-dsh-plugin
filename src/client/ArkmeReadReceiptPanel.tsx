@@ -1,3 +1,4 @@
+import { arkmeCivilDay, arkmeWallClockIso } from './display-time-zone.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { tr } from './locale.js'
@@ -103,14 +104,10 @@ export const readReceiptStyles: Record<string, CSSProperties> = {
   },
 }
 
-function startOfDay(value: Date): Date {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate())
-}
-
 function readAtLabel(milliseconds: number): string {
-  const value = new Date(milliseconds)
-  const now = new Date()
-  const today = startOfDay(now)
+  const value = arkmeCivilDay(milliseconds)
+  const today = arkmeCivilDay(Date.now())
+  const now = today
   const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1)
   const dayBeforeYesterday = new Date(today); dayBeforeYesterday.setDate(today.getDate() - 2)
   const startOfWeek = new Date(today); startOfWeek.setDate(today.getDate() - ((now.getDay() + 6) % 7))
@@ -122,16 +119,16 @@ function readAtLabel(milliseconds: number): string {
   const startOfYearBeforeLast = new Date(now.getFullYear() - 2, 0, 1)
   const month = String(value.getMonth() + 1).padStart(2, '0')
   const day = String(value.getDate()).padStart(2, '0')
-  if (value > today) return `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`
-  if (value > yesterday) return tr("昨天")
-  if (value > dayBeforeYesterday) return tr("前天")
-  if (value > startOfWeek) return tr("本周")
-  if (value > startOfLastWeek) return tr("上周")
-  if (value > startOfMonth) return tr("本月")
-  if (value > startOfLastMonth) return tr("上月")
-  if (value > startOfYear) return `${month}/${day}`
-  if (value > startOfLastYear) return `去年/${month}/${day}`
-  if (value > startOfYearBeforeLast) return `前年/${month}/${day}`
+  if (value >= today) return arkmeWallClockIso(milliseconds).slice(11, 16)
+  if (value >= yesterday) return tr("昨天")
+  if (value >= dayBeforeYesterday) return tr("前天")
+  if (value >= startOfWeek) return tr("本周")
+  if (value >= startOfLastWeek) return tr("上周")
+  if (value >= startOfMonth) return tr("本月")
+  if (value >= startOfLastMonth) return tr("上月")
+  if (value >= startOfYear) return `${month}/${day}`
+  if (value >= startOfLastYear) return `去年/${month}/${day}`
+  if (value >= startOfYearBeforeLast) return `前年/${month}/${day}`
   return `${value.getFullYear()}/${month}/${day}`
 }
 

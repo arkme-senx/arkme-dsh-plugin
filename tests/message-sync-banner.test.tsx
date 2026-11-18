@@ -81,3 +81,13 @@ it('never mounts a slot for a short sync', () => {
   })
   expect(renderer!.toJSON()).toBeNull()
 })
+
+it('never mounts a badge for normal realtime work even when it is slow', () => {
+  vi.useFakeTimers()
+  arkmeMessageSync.activateAccount('test:7001', true)
+  act(() => { renderer = create(<ArkmeMessageSyncBanner />) })
+  act(() => { arkmeMessageSync.apply({ ...progress, trigger: 'realtime' }); vi.advanceTimersByTime(10_000) })
+  expect(renderer!.toJSON()).toBeNull()
+  act(() => { arkmeMessageSync.apply({ ...progress, trigger: 'realtime', phase: 'paused', revision: 2, reason: 'network' }); vi.advanceTimersByTime(300) })
+  expect(renderer!.root.findAllByProps({ role: 'progressbar' })).toHaveLength(1)
+})

@@ -1,3 +1,5 @@
+import { recordingZonedWindow } from '../recording-time.js'
+import { getArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { TeamHistoryAction, TeamHistoryOptions, TeamHistoryResponse } from '../team-history-contract.js'
 import type { TeamIdentity, TeamMessage } from '../team-app-contract.js'
@@ -30,25 +32,21 @@ export async function prepareHistory(conversationRef: string, accountKey: string
     result = await historyCall(conversationRef, accountKey, result.resultRef ? (action.startsWith('exports/') ? 'exports/state' : 'analysis/state') : action, { ...options, ...(result.resultRef ? { resultRef: result.resultRef } : {}) }, signal)
   }
 }
-export const historyTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai'
-export function localDateWindow(from: string, through: string) {
-  const date = (v: string) => { const [y, m, d] = v.split('-').map(Number); return new Date(y!, m! - 1, d!) }
-  const start = from ? date(from) : undefined, end = through ? date(through) : undefined
-  if (end) end.setDate(end.getDate() + 1)
-  return { ...(start ? { fromAt: start.getTime() } : {}), ...(end ? { untilAt: end.getTime() } : {}), timezone: historyTimezone() }
+export const historyTimezone = getArkmeEffectiveTimeZone
+export function localDateWindow(from: string, through: string, timezone = historyTimezone()) {
+  return {
+    ...(from ? { fromAt: recordingZonedWindow(from, timezone).dateStamp } : {}),
+    ...(through ? { untilAt: recordingZonedWindow(through, timezone).endStamp } : {}),
+    timezone,
+  }
 }
 export function historyMonthWindow(month: string): TeamHistoryOptions {
   if (!month) return { timezone: historyTimezone() }
   if (!/^\d{4}-(0[1-9]|1[0-2])$/u.test(month)) throw new Error('分析月份无效')
   const [year, value] = month.split('-').map(Number)
   if (!year) throw new Error('分析月份无效')
-  const boundary = (monthIndex: number) => {
-    const date = new Date(0)
-    date.setFullYear(year!, monthIndex, 1)
-    date.setHours(0, 0, 0, 0)
-    return date.getTime()
-  }
-  return { fromAt: boundary(value! - 1), untilAt: boundary(value!), timezone: historyTimezone() }
+  const lastDay = new Date(Date.UTC(year, value!, 0)).getUTCDate()
+  return localDateWindow(`${month}-01`, `${month}-${lastDay}`)
 }
 
 type PageState = { key: string; page?: TeamHistoryResponse; loading: boolean; error: string; windowed: boolean }

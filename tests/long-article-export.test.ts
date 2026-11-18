@@ -31,3 +31,10 @@ describe('portable long article exports', () => {
     expect(() => articleBoundImage('arkme-asset:other', [image])).toThrow('附件')
   })
 })
+
+it('places a safe primary topic after article time without changing Markdown body', () => {
+  const text = articleExportMarkdown({ title: '长文', sendAtMillis: 1, selfTopic: { topicHierarchyKey: 'topic', title: '<&> [x]\n# next' }, textContent: '**正文**', textFormat: 'markdown' })
+  expect(text).toContain('主题：&lt;&amp;&gt; \\[x\\] \\# next\n\n**正文**')
+  expect(text.indexOf(new Date(1).toLocaleString())).toBeLessThan(text.indexOf('主题：'))
+  expect(articleExportMarkdown({ title: '', textContent: '', selfTopic: { topicHierarchyKey: 'topic' } })).toContain('主题：未命名主题')
+})

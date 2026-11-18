@@ -32,7 +32,7 @@ export function ArkmeMentionSuggestions({ session, style, rowStyles, loading, er
         styles={rowStyles} onActive={() => session.activate(row.key)} onSelect={() => { if (row.available) onSelect(row.candidate) }} />)}
     </div>
     <div role="status" style={{ flex: '0 0 22px', fontSize: 11, lineHeight: '22px', paddingLeft: 8, opacity: .7 }}>
-      {error ? <>{tr('Bot 加载失败，仍可选择已有对象')} · <button type="button" onMouseDown={event => event.preventDefault()} onClick={onRetry} style={{ border: 0, background: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>{tr('重试')}</button></>
+      {error ? <>{tr('部分候选加载失败，仍可选择已有对象')} · <button type="button" onMouseDown={event => event.preventDefault()} onClick={onRetry} style={{ border: 0, background: 'none', color: 'inherit', cursor: 'pointer', padding: 0 }}>{tr('重试')}</button></>
         : loading ? tr('正在补充候选…') : null}
     </div>
   </div>

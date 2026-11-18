@@ -12,6 +12,13 @@ const CLIENT_EXTERNALS = [
 
 export default defineConfig([
   {
+    name: '@senguoyun/dsh-arkme/game', entry: {game: 'src/client/game/standalone.tsx'},
+    outDir: 'lib', format: 'iife', platform: 'browser', target: 'es2022', fixedExtension: false,
+    dts: false, clean: false, minify: true, deps: {alwaysBundle: () => true},
+    define: {'process.env.NODE_ENV': JSON.stringify('production')},
+    outputOptions: {codeSplitting: false, entryFileNames: 'game.js'},
+  },
+  {
     name: '@senguoyun/dsh-arkme/screenshot-editor',
     entry: { 'screenshot-editor': 'src/client/screenshot-standalone.tsx' },
     outDir: 'lib', format: 'iife', platform: 'browser', target: 'es2022',
@@ -40,6 +47,7 @@ export default defineConfig([
     outDir: 'lib',
     format: 'esm',
     platform: 'node',
+    define: { '__ARKME_LOCAL_HISTORY_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_HISTORY_TIMING === '1') },
     target: 'es2024',
     fixedExtension: false,
     dts: false,
@@ -76,6 +84,7 @@ export default defineConfig([
     noExternal: (id: string) => CLIENT_EXTERNALS.includes(id) ? undefined : true,
     define: {
       'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
+      '__ARKME_LOCAL_HISTORY_TIMING__': JSON.stringify(process.env.ARKME_LOCAL_HISTORY_TIMING === '1'),
     },
     outputOptions: {
       // DSH registers one factory per browser entry; relative chunks have no module-table entry.

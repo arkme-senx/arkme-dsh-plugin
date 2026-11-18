@@ -13,8 +13,12 @@ export function mergeBotDirectoryActivity(
   const refreshedByKey = new Map(refreshed.map(bot => [bot.directoryKey?.trim() || bot.botRef, bot]))
   let changed = false
   const next = current.map(bot => {
-    const latest = refreshedByKey.get(bot.directoryKey?.trim() || bot.botRef)
-      ?.conversationListActivityAtMillis ?? 0
+    const incoming = refreshedByKey.get(bot.directoryKey?.trim() || bot.botRef)
+    if (incoming?.conversationAccessDenied) {
+      changed = true
+      return { ...bot, conversationAccessDenied: true as const, latestMessagePreview: '', directChatAvailable: false, privateChatOutboundEnabled: false }
+    }
+    const latest = incoming?.conversationListActivityAtMillis ?? 0
     if (latest <= (bot.conversationListActivityAtMillis ?? 0)) return bot
     changed = true
     return { ...bot, conversationListActivityAtMillis: latest }
@@ -74,7 +78,7 @@ export function mergeBotDirectorySnapshots(current: readonly ArkmeBotSummary[], 
   for (const bot of incoming) {
     const key = bot.directoryKey ?? bot.botRef
     const previous = byKey.get(key)
-    byKey.set(key, previous !== undefined && (previous.latestMessageAtMillis ?? 0) > (bot.latestMessageAtMillis ?? 0)
+    byKey.set(key, !bot.conversationAccessDenied && previous !== undefined && (previous.latestMessageAtMillis ?? 0) > (bot.latestMessageAtMillis ?? 0)
       ? { ...bot, latestMessageAtMillis: previous.latestMessageAtMillis!, latestMessagePreview: previous.latestMessagePreview ?? '',
         conversationListActivityAtMillis: Math.max(previous.conversationListActivityAtMillis ?? 0, bot.conversationListActivityAtMillis ?? 0) }
       : bot)

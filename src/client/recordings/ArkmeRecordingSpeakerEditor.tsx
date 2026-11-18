@@ -116,7 +116,7 @@ export interface RecordingSpeakerUpdateFeedback {
 export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewItems, anchor, initialBatchUpdate = false, initialReview = false, onUpdated, onClose, onPlay }: {
   items?: readonly ArkmeRecordingWorkbenchItem[]
   loadReviewItems?(signal: AbortSignal): Promise<readonly ArkmeRecordingWorkbenchItem[]>
-  onPlay?(item: ArkmeRecordingWorkbenchItem): void
+  onPlay?(item: ArkmeRecordingWorkbenchItem, range?: { startOffsetMillis: number; endOffsetMillis: number }): void
   item: ArkmeRecordingWorkbenchItem
   anchor?: RecordingSpeakerPopoverAnchor
   initialBatchUpdate?: boolean
@@ -151,6 +151,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
   const viewGeneration = useRef(0)
   const [selected, setSelected] = useState('')
   const [query, setQuery] = useState('')
+  const [explicitNewPerson, setExplicitNewPerson] = useState(false)
   const [batch, setBatch] = useState(initialBatchUpdate)
   const [mutationError, setMutationError] = useState('')
   const [removing, setRemoving] = useState(false)
@@ -163,7 +164,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
 
   useEffect(() => {
     selectionTouched.current = false
-    setPickedPerson(undefined); setPickerOpen(false); setSelected(''); setQuery(''); setBatch(initialBatchUpdate); setMutationError(''); setRemoving(false)
+    setExplicitNewPerson(false); setPickedPerson(undefined); setPickerOpen(false); setSelected(''); setQuery(''); setBatch(initialBatchUpdate); setMutationError(''); setRemoving(false)
     return () => { viewGeneration.current += 1 }
   }, [initialBatchUpdate, key])
 
@@ -224,7 +225,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
     setMutationError('')
     try {
       const result = pickedPerson ? await savePerson(item.canBindSpeaker && batch ? 'speaker' : 'item', pickedPerson.speakerRef) : await save(item.canBindSpeaker && batch ? 'speaker' : 'item',
-        target === undefined ? { newSpeakerName } : { optionKey: target.optionKey },
+        target === undefined ? { newSpeakerName, ...(explicitNewPerson ? { explicitNewPerson: true } : {}) } : { optionKey: target.optionKey },
 
       )
       if (result === undefined) return
@@ -237,7 +238,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
   }
 
   const choose = (option: ArkmeRecordingSpeakerOption) => {
-    setPickedPerson(undefined)
+    setExplicitNewPerson(false); setPickedPerson(undefined)
     if (pending || removing) return
     selectionTouched.current = true
     setSelected(current => current === option.optionKey ? '' : option.optionKey)
@@ -264,7 +265,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
   const canBatch = item.canBindSpeaker
   const selectedCurrent = options.some(option => option.currentAssignment && option.optionKey === selected)
   const canSubmit = optionsReady && !pending && !removing && !selectedCurrent
-    && (!!pickedPerson || options.some(option => option.optionKey === selected) || (newSpeakerName !== '' && !exactMatch))
+    && (!!pickedPerson || options.some(option => option.optionKey === selected) || (newSpeakerName !== '' && (!exactMatch || explicitNewPerson)))
   const position = recordingSpeakerPopoverPosition(
     anchor ?? { left: 8, right: 40, top: 8, bottom: 40 },
     typeof window === 'undefined' ? { width: 1_024, height: 768 } : { width: window.innerWidth, height: window.innerHeight },
@@ -294,7 +295,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
       <button type="button" style={{ ...styles.unassign, fontSize: 12, color: desktop.secondary }} disabled={pending} onClick={() => { openCorrection('source') }}>{tr('声音来源 / 纠错')}</button>
       <button type="button" aria-label={tr('查看声音一致性')} style={{ ...styles.unassign, fontSize: 12, color: desktop.blue }} disabled={pending || removing} onClick={() => setReviewOpen(true)}>{tr('声音一致性')} · {tr(recordingConsistencyLabel(consistency.groups[0], consistency.error))}</button>
     </div>
-    <input ref={inputRef} style={styles.field} aria-label={tr("说话人名称")} disabled={pending || removing} value={query} maxLength={50} onChange={event => { selectionTouched.current = true; setQuery(event.target.value); setSelected(''); setPickedPerson(undefined) }} placeholder={tr("输入名称")} />
+    <input ref={inputRef} style={styles.field} aria-label={tr("说话人名称")} disabled={pending || removing} value={query} maxLength={50} onChange={event => { selectionTouched.current = true; setExplicitNewPerson(false); setQuery(event.target.value); setSelected(''); setPickedPerson(undefined) }} placeholder={tr("输入名称")} />
     <button type="button" style={{ ...styles.unassign, color: desktop.blue, padding: '7px 4px', textAlign: 'left', fontSize: 12 }} disabled={pending || removing || !accountScope} onClick={() => setPickerOpen(true)}>{tr('从人物档案选择')} ↗</button>
     {pickedPerson && <div style={styles.current}><span style={styles.optionLabel}>{tr('已选择')}：{pickedPerson.label}</span><button type="button" style={styles.unassign} onClick={() => setPickedPerson(undefined)}>{tr('取消选择')}</button></div>}
     {loading ? <div role="status" style={{ padding: 12, color: desktop.secondary, fontSize: 12 }}>{tr("正在读取候选…")}</div> : <div ref={listRef} style={{ ...styles.list, ...(item.assignedSpeakerOptionKey ? { maxHeight: 248 } : {}) }} data-speaker-options-list>
@@ -302,7 +303,7 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
       <SpeakerSection title={tr("已添加说话人")} options={categories.speakers} selected={selected} disabled={pending || removing} onSelect={choose} />
       <SpeakerSection title={tr("Arkme 用户")} options={categories.users} selected={selected} disabled={pending || removing} onSelect={choose} />
     </div>}
-    {newSpeakerName !== '' && !exactMatch && <button data-arkme-feedback="neutral" type="button" aria-label={tr("添加新说话人")} style={styles.add} disabled={!optionsReady || pending} onClick={() => { void mutate() }}><Plus size={15} />{tr("添加“")}{newSpeakerName}{tr("”为说话人")}</button>}
+    {newSpeakerName !== '' && (!exactMatch || explicitNewPerson) && <button data-arkme-feedback="neutral" type="button" aria-label={tr("添加新说话人")} style={styles.add} disabled={!optionsReady || pending} onClick={() => { void mutate() }}><Plus size={15} />{tr("添加“")}{newSpeakerName}{tr("”为说话人")}</button>}
     {optionsError !== '' && <div role="alert" style={styles.error}>{optionsError} <button data-arkme-feedback="neutral" type="button" aria-label={tr("重试读取说话人候选")} style={styles.unassign} onClick={refresh}>{tr("重试")}</button></div>}
     {mutationError !== '' && <div role="alert" style={styles.error}>{mutationError}</div>}
     {canBatch && <div role="group" aria-label={tr('应用范围')} style={styles.scope}>
@@ -315,6 +316,6 @@ export function ArkmeRecordingSpeakerEditor({ item, items = [item], loadReviewIt
       <button data-arkme-feedback="primary" type="button" style={{ ...styles.confirm, ...(!canSubmit ? { background: desktop.avatar, color: desktop.tertiary, cursor: 'default' } : {}) }} disabled={!canSubmit} onClick={() => { void mutate() }}>{pending ? tr("保存中…") : tr("保存标记")}</button>
     </div>
     </>}
-  </div>{pickerOpen && accountScope && <PersonPicker accountScope={accountScope} onClose={() => setPickerOpen(false)} onChoose={value => { selectionTouched.current = true; setPickedPerson(value); setSelected(''); setPickerOpen(false) }}/>}</>
+  </div>{pickerOpen && accountScope && <PersonPicker onCreate={name => { setExplicitNewPerson(true); selectionTouched.current = true; setPickedPerson(undefined); setSelected(''); setQuery(name); setPickerOpen(false) }} accountScope={accountScope} onClose={() => setPickerOpen(false)} onChoose={value => { setExplicitNewPerson(false); selectionTouched.current = true; setPickedPerson(value); setSelected(''); setPickerOpen(false) }}/>}</>
   return typeof document === 'undefined' || document.body === undefined ? layer : createPortal(layer, document.body)
 }

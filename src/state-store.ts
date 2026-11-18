@@ -36,10 +36,13 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  recordingDeletionPermissions?: Record<string, import('./recording-deletion-contract.js').RecordingDeletionPermission>
+ transcriptViewAttempts?: unknown
   recordingVoiceDrafts?: unknown
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
   teamMemberAdditions?: unknown
   recordingToolBatches?: unknown
+  recordingImportTasksByAccount?: Record<string, Record<string, import("./recording-import-task-outbox.js").ImportTask>> | undefined
   recordingImportStrategiesByAccount?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
@@ -170,6 +173,8 @@ function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | und
   const itemUid = typeof source.itemUid === 'string' && source.itemUid.trim() !== '' ? source.itemUid.trim() : undefined
   return {
     sourceRef: source.sourceRef,
+    ...(typeof source.editAtMillis === 'number' && Number.isSafeInteger(source.editAtMillis) && source.editAtMillis > 0 ? { editAtMillis: source.editAtMillis } : {}),
+    ...(typeof source.revisionUid === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(source.revisionUid) ? { revisionUid: source.revisionUid } : {}),
     ...(typeof source.sendAtMillis==='number'&&Number.isSafeInteger(source.sendAtMillis)&&source.sendAtMillis>0?{sendAtMillis:source.sendAtMillis}:{}),
     ...(typeof source.draftScope==='string'&&source.draftScope.length<=256?{draftScope:source.draftScope}:{}),
     ...(source.autoPublish === true ? { autoPublish: true } : {}),
@@ -388,6 +393,7 @@ function parseState(raw: string): PersistedState {
       ? source.uniqueCode
       : randomUUID(),
     ...(validCancellationCompletion(source.cancellationCompletion) ? { cancellationCompletion: source.cancellationCompletion } : {}),
+    transcriptViewAttempts:source.transcriptViewAttempts,
     offlineContextJournal:source.offlineContextJournal,
  ...(source.teamOutboundByAccount === undefined ? {} : {teamOutboundByAccount:source.teamOutboundByAccount as NonNullable<PersistedState['teamOutboundByAccount']>}),
     pendingByUser,
@@ -402,9 +408,11 @@ function parseState(raw: string): PersistedState {
     recordingImportJobsByUser,
     recordingToolBatches: source.recordingToolBatches,
     recordingImportStrategiesByAccount: source.recordingImportStrategiesByAccount,
+    recordingImportTasksByAccount: source.recordingImportTasksByAccount as PersistedState['recordingImportTasksByAccount'],
     dayReviewPending: source.dayReviewPending ?? {},
     teamMemberAdditions: source.teamMemberAdditions,
     recordingVoiceDrafts: source.recordingVoiceDrafts,
+    ...(source.recordingDeletionPermissions === undefined ? {} : { recordingDeletionPermissions: source.recordingDeletionPermissions as NonNullable<PersistedState['recordingDeletionPermissions']> }),
   }
 }
 
@@ -440,6 +448,9 @@ function recordReeditSubmissionEntries(state: PersistedState, userId: number): R
 function validRecordReeditSubmission(raw: unknown, userId: number, key: string): raw is ArkmeRecordReeditSubmission {
   if (!raw || typeof raw !== 'object') return false
   const job = raw as ArkmeRecordReeditSubmission
+  if (job.revisionUid !== undefined && (typeof job.revisionUid !== 'string' || job.revisionUid !== job.submissionId)) return false
+  if (job.editorSnapshot !== undefined && (!job.editorSnapshot || typeof job.editorSnapshot !== 'object'
+    || Object.entries(job.editorSnapshot).some(([key, value]) => !['avatar', 'nickname'].includes(key) || typeof value !== 'string' || value.length > (key === 'avatar' ? 4096 : 640)))) return false
   const draft = normalizedRecordReeditDraft(job.draft)
   if (!draft || typeof job.submissionId !== 'string' || job.submissionId === '' || !job.context
     || job.context.expectedUserId !== userId || job.context.itemUid !== draft.itemUid
@@ -470,7 +481,8 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
   if (job.expectedCommittedFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(job.expectedCommittedFingerprint)) return false
   switch (job.state) {
     case 'committed': return job.result?.status === 'committed' && job.result.itemUid === draft.itemUid
-      && job.result.version === draft.baseVersion + 1 && typeof job.result.revisionUid === 'string'
+      && Number.isSafeInteger(job.result.version) && job.result.version > 0 && typeof job.result.revisionUid === 'string'
+      && (job.result.appliedToCurrent === undefined || typeof job.result.appliedToCurrent === 'boolean')
     case 'committing':
     case 'uncertain': return typeof job.expectedCommittedFingerprint === 'string' && job.result === undefined
     case 'pending':
@@ -480,6 +492,32 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
 }
 
 export class ArkmeStateStore {
+  async recordingDeletionPermission(scope: string, change?: { enabled?: boolean; timeZone: string }, signal?: AbortSignal) {
+    if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw new Error('录音删除设置账号无效')
+    const read = (state: PersistedState) => {
+      const value = state.recordingDeletionPermissions?.[scope]
+      return typeof value?.generation === 'string' && typeof value.timeZone === 'string' ? value : undefined
+    }
+    if (!change) return await this.read(read)
+    if (change.enabled === undefined) {
+      const previous = await this.read(read)
+      if (!previous || previous.timeZone === change.timeZone) return previous
+    }
+    let result: ReturnType<typeof read>
+    await this.update(state => {
+      const previous = read(state)
+      if (change.enabled === false) {
+        delete state.recordingDeletionPermissions?.[scope]
+        return
+      }
+      if (!previous && change.enabled !== true) return
+      result = previous?.timeZone === change.timeZone ? previous : { generation: randomUUID(), timeZone: change.timeZone }
+      const grants = state.recordingDeletionPermissions ??= {}
+      grants[scope] = result
+    }, signal)
+    return result
+  }
+
   async recordingVoiceDraft(scope: string, change?: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('./recording-voice-trigger-contract.js').RecordingVoiceDraft> {
     const { defaultRecordingVoiceRule, recordingVoiceRules } = await import('./recording-voice-trigger-contract.js')
     if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw new Error('语音触发账号无效')
@@ -627,6 +665,24 @@ export class ArkmeStateStore {
     return await this.read(state => state.uniqueCode)
   }
 
+  async transcriptViewAttempt(scope:string,key:string,value?:import('./transcript-view-contract.js').TranscriptViewAttempt|null,acknowledgedAttempt?:import('./transcript-view-contract.js').TranscriptViewAttempt):Promise<import('./transcript-view-contract.js').TranscriptViewAttempt|undefined> {
+    const access=(state:PersistedState)=>{
+      if(!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)||!/^[a-f0-9]{64}$/u.test(key))throw new Error('转写恢复记录作用域无效')
+      if(state.transcriptViewAttempts===undefined)state.transcriptViewAttempts={}
+      const all=state.transcriptViewAttempts
+      if(!all||typeof all!=='object'||Array.isArray(all))throw new Error('转写恢复记录损坏，原信息已保留')
+      const scoped=all as Record<string,unknown>
+      if(!Object.hasOwn(scoped,scope))scoped[scope]={}
+      const rows=scoped[scope]
+      if(!rows||typeof rows!=='object'||Array.isArray(rows))throw new Error('转写恢复记录损坏，原信息已保留')
+      for(const raw of Object.values(rows)){const row=raw as import('./transcript-view-contract.js').TranscriptViewAttempt;if(!row||typeof row.fingerprint!=='string'||!row.target||!row.command?.operation_id)throw new Error('转写恢复记录损坏，原信息已保留')}
+      return rows as Record<string,import('./transcript-view-contract.js').TranscriptViewAttempt>
+    }
+    if(value===undefined)return this.read(state=>{const rows=access(state);return rows[key]?structuredClone(rows[key]):undefined})
+    let result:import('./transcript-view-contract.js').TranscriptViewAttempt|undefined
+    await this.update(state=>{const rows=access(state);if(value===null){if(!acknowledgedAttempt)throw new Error('转写回执身份无效');if(rows[key]?.command.operation_id===acknowledgedAttempt.command.operation_id&&rows[key]?.fingerprint===acknowledgedAttempt.fingerprint)delete rows[key];return};if(rows[key]&&JSON.stringify(rows[key])!==JSON.stringify(value))throw new Error('上次转写更正仍待确认');if(!rows[key]&&Object.keys(rows).length>=64)throw new Error('请先核对尚未确认的转写更正');rows[key]=structuredClone(value);result=structuredClone(value)})
+    return result
+  }
   async readOfflineContextJournal(scope: string): Promise<Record<string, OfflineContextJournalEntry>> {
     return this.read(state => structuredClone(offlineContextJournalScope(state,scope)))
   }
@@ -800,6 +856,23 @@ export class ArkmeStateStore {
       removed = true
     })
     return removed
+  }
+
+  async importTasks(scope: string, mutate?: (tasks: Record<string, import('./recording-import-task-outbox.js').ImportTask>) => void): Promise<Record<string, import('./recording-import-task-outbox.js').ImportTask>> {
+    if (!/^[a-z_-]+:[1-9][0-9]*$/.test(scope)) throw new Error('录音任务账号无效')
+    if (!mutate) return this.read(state => structuredClone(state.recordingImportTasksByAccount?.[scope] ?? {}))
+    let result = {}
+    await this.update(state => {
+      const accounts = state.recordingImportTasksByAccount ??= {}
+      const tasks = accounts[scope] ??= {}
+      mutate(tasks)
+      for (const id of Object.keys(tasks)) {
+        const created = Number.parseInt(id.slice(0, 8) + id.slice(9, 13), 16)
+        if (created < Date.now() - 90 * 86400_000) delete tasks[id]
+      }
+      result = structuredClone(tasks)
+    })
+    return result
   }
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {

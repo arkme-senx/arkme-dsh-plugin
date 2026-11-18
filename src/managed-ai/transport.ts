@@ -869,6 +869,7 @@ export class ManagedAiTransport {
           headers: {
             Authorization: `Bearer ${bearer}`,
             ...(operationUid === undefined ? {} : { 'X-Arkme-Turn-ID': operationUid }),
+            'X-Arkme-Model-Intent': 'explicit-official',
             Accept: 'text/event-stream',
             'Content-Type': 'application/json',
             ...attributionHeaders(),

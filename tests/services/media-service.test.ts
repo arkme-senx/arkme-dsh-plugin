@@ -17,6 +17,20 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('MediaService', () => {
+  it.each(['', '   ', undefined])('uses the original when the image preview is %j', async preview => {
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' } }, async write() {}, async delete() {} }
+    const fetchImpl = vi.fn(async () => new Response('image', { headers: { 'content-type': 'image/jpeg' } }))
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+    const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+    const original = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/photo.jpg'
+    const raw = { content_payload: { media_refs: [{ file_asset_uid: 'photo', file_kind: 1, file_name: 'photo.jpg',
+      mime_type: 'image/jpeg', preview_url: preview, download_url: original }] } }
+    const blocks = media.richContentBlocks(raw, 42)
+    expect(blocks).toHaveLength(1)
+    expect(media.recordMediaUnavailable(raw, blocks)).toBe(false)
+    expect(await (await media.fetchMedia(blocks[0]!.mediaRef)).response.text()).toBe('image')
+    expect(fetchImpl).toHaveBeenCalledExactlyOnceWith(new URL(original), expect.anything())
+  })
   it('resolves a private locator on demand and does not cache its mutable revision', async () => {
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'fixture', refreshToken: 'fixture' } },
@@ -510,6 +524,27 @@ describe('MediaService', () => {
 
 
 describe('durable avatar availability', () => {
+  it('keeps signed URL renewals on the same avatar version and evicts a replaced version', async () => {
+    const base = 'https://jotmo-userfiles-test.oss-cn-hangzhou.aliyuncs.com/avatar/a.png'
+    const bytes = { mediaType: 'image/png' as const, bytes: 8, data: new Uint8Array([137,80,78,71,13,10,26,10]) }
+    const state = { uniqueCode: async () => 'device', readAvatarCache: vi.fn(async () => bytes), deleteAvatarCache: vi.fn(async () => {}) }
+    const fetcher = vi.fn<typeof fetch>()
+    const runtime = new ServiceRuntime(config, { read: async () => ({ userId: 42, accessToken: 'a', refreshToken: 'r' }), write: async () => {}, delete: async () => {} }, state as unknown as StateStore, fetcher)
+    try {
+      const profile = new ProfileService(runtime)
+      const ref = await profile.sealProfileImageRef(42, 88, `${base}?v=1&Signature=first`)
+      expect(await profile.sealProfileImageRef(42, 88, `${base}?Signature=renewed&v=1`)).toBe(ref)
+      expect(await profile.sealProfileImageRef(42, 88, `${base}?v=2`)).not.toBe(ref)
+      vi.spyOn(profile, 'publicProfileSummariesByUserIds').mockResolvedValue(new Map([[88, { userId: 88, displayName: 'User', nickname: 'User', avatarUrl: `${base}?v=2` }]]))
+      const media = new MediaService(runtime, profile, {} as never, { recordUid: () => '' })
+      await expect(media.readImage(ref, { cacheOnly: true })).resolves.toMatchObject({ bytes: 8 })
+      await expect(media.readImage(await profile.sealProfileImageRef(99, 88), { cacheOnly: true })).rejects.toMatchObject({ code: 'image-ref-invalid' })
+      await expect(media.readImage(ref, { refresh: true })).rejects.toMatchObject({ code: 'image-ref-unavailable' })
+      expect(state.deleteAvatarCache).toHaveBeenCalledWith(42, ref)
+      expect(fetcher).not.toHaveBeenCalled()
+    } finally { runtime.dispose() }
+  })
+
   it.each(['read', 'write'])('keeps the downloaded profile avatar usable when cache %s fails', async failure => {
     const state = { uniqueCode: async () => 'device', readAvatarCache: vi.fn(async () => { if (failure === 'read') throw new Error('disk unavailable'); return undefined }),
       writeAvatarCache: vi.fn(async () => { if (failure === 'write') throw new Error('disk full') }) }
@@ -560,4 +595,49 @@ it('does not treat hidden rich media as a complete original-attachment export', 
   expect(media.recordMediaUnavailable(raw, [])).toBe(false)
   expect(media.recordMediaUnavailable(raw, [], true)).toBe(true)
   expect(media.recordMediaUnavailable({ payload: {} }, [], true)).toBe(false)
+})
+
+it('projects remote pending/failed slots without URLs, grants or missing-asset queries', () => {
+  const media = new MediaService({ config: {} } as ServiceRuntime, {} as never, {} as never, {} as never)
+  const raw = { content_payload: { media_refs: [
+    { file_asset_uid: '', file_name: 'photo.png', sort_order: 0, upload: { attachment_uid: 'photo', kind: 1, size: 5, state: 'pending' } },
+    { file_asset_uid: '', file_name: 'movie.mp4', sort_order: 1, upload: { attachment_uid: 'video', kind: 3, size: 50, state: 'failed' } },
+    { file_asset_uid: '', file_name: 'paper.pdf', sort_order: 2, upload: { attachment_uid: 'file', kind: 4, size: 10, state: 'pending' } },
+  ] } }
+  const blocks = media.richContentBlocks(raw, 42)
+  expect(blocks.map(block => [block.kind, block.attachmentState, block.mediaRef])).toEqual([
+    ['image', 'pending', ''], ['video', 'failed', ''], ['file', 'pending', ''],
+  ])
+  expect(media.recordMediaUnavailable(raw, blocks)).toBe(false)
+})
+
+it.each(['image/png', 'video/mp4'])('retains the real logical slot as a %s attachment becomes ready', mimeType => {
+  const media = new MediaService({config:{}} as ServiceRuntime, {} as never, {} as never, {} as never)
+  const kind=mimeType.startsWith('image/')?1:3
+  const name=kind===1?'same.png':'same.mp4'
+  const pendingRefs=['slot-a','slot-b'].map((uid,sort_order)=>({file_asset_uid:'',file_name:name,sort_order,
+    upload:{attachment_uid:uid,generation:1,state:'pending',kind,size:10}}))
+  const pending=media.richContentBlocks({content_payload:{media_refs:pendingRefs}},42)
+  // The owner may complete either same-named slot first; file name or position
+  // cannot establish which pending attachment acquired this asset.
+  const readyRefs=pendingRefs.map((ref,index)=>({...ref,file_asset_uid:`asset-${index}`,upload:{...ref.upload,state:'ready'}}))
+  const display=readyRefs.map(ref=>({file_asset_uid:ref.file_asset_uid,file_kind:kind,mime_type:mimeType,size:10,
+    preview_url:`https://fixture.invalid/${ref.file_asset_uid}`,download_url:`https://fixture.invalid/${ref.file_asset_uid}`}))
+  const ready=media.richContentBlocks({record_core:{content_payload:{media_refs:readyRefs}}},42,display)
+  expect(pending.map(block=>block.attachmentUid)).toEqual(['slot-a','slot-b'])
+  expect(ready.map(block=>block.attachmentUid)).toEqual(['slot-a','slot-b'])
+  expect(ready.map(block=>block.fileAssetUid)).toEqual(['asset-0','asset-1'])
+  expect(ready.map(block=>block.sortOrder)).toEqual([0,1])
+  for(const block of ready){
+    expect(block.mediaRef).toMatch(/^arkme-media-v1\./)
+    expect(block).not.toHaveProperty('attachmentState')
+  }
+})
+
+it.each([undefined,{}, {state:'ready'}, {state:'ready',attachment_uid:''}])('does not synthesize a slot for a ready attachment without one: %j', upload => {
+  const media=new MediaService({config:{}} as ServiceRuntime,{} as never,{} as never,{} as never)
+  const blocks=media.richContentBlocks({content_payload:{media_refs:[{file_asset_uid:'real-asset',file_name:'same.png',
+    ...(upload===undefined?{}:{upload})}]}},42,[{file_asset_uid:'real-asset',file_kind:1,mime_type:'image/png',preview_url:'https://fixture.invalid/image'}])
+  expect(blocks).toHaveLength(1)
+  expect(blocks[0]).not.toHaveProperty('attachmentUid')
 })

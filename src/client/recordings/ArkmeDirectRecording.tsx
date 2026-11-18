@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -105,7 +106,7 @@ export function ArkmeDirectRecordingStatus({ floating = false, onShowTasks }: { 
     {!floating && state.phase === 'idle' && state.pending.length > 0 && <div style={{ marginTop: 8 }}>
       <div style={{ color: theme.secondary }}>{tr("待提交录音（仅当前浏览器保存）")}</div>
       {state.pending.map(record => <div key={record.id} style={{ paddingTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-        <span style={{ flex: '1 1 140px', minWidth: 0, overflowWrap: 'anywhere' }}>{new Date(record.startedAt).toLocaleString(arkmeIntlLocale())} · {recordingClock(record.bytes / (record.sampleRate * 2) * 1000)}{!record.finished ? ' · 恢复的录音' : ''}</span>
+        <span style={{ flex: '1 1 140px', minWidth: 0, overflowWrap: 'anywhere' }}>{formatArkmeDateTime(record.startedAt, arkmeIntlLocale(), { hourCycle: 'h23' })} · {recordingClock(record.bytes / (record.sampleRate * 2) * 1000)}{!record.finished ? ' · 恢复的录音' : ''}</span>
         <button type="button" style={button} onClick={() => { void store.upload(record.id) }}>{tr("重试上传")}</button>
         <button type="button" style={button} onClick={() => { void download(record.id) }}>{tr("下载备份")}</button>
       </div>)}

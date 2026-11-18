@@ -4,6 +4,7 @@ import type { CallHistoryService } from './call-history-service.js'
 import type { ArkmePrivacyVisibilityService } from './privacy-visibility.js'
 import type { RecordService } from './record-service.js'
 import type { SourceService } from './source-service.js'
+import type { TeamAppService } from './team-app-service.js'
 import { ArkmePluginError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 /** Resolves saved arrangement evidence against the current source owner's access rules. */
@@ -15,11 +16,18 @@ export class ArrangementSourceService {
     private readonly record: Pick<RecordService, 'personalRecordDetail'>,
     private readonly callHistory: Pick<CallHistoryService, 'arrangementCallDetail'>,
     private readonly source: Pick<SourceService, 'searchTargetSource'>,
+    private readonly team?: Pick<TeamAppService, 'arrangementSource'>,
   ) {}
 
   async arrangementSourceRead(arrangementRef: string, evidenceId: string, signal?: AbortSignal): Promise<ArkmeArrangementSourceRead> {
     try {
       const evidence = await this.arrangement.sourceEvidence(arrangementRef, evidenceId, signal)
+      if (evidence.kind === 'team_message') {
+        if (!this.team) throw new ArkmePluginError('arrangement-source-unavailable', '当前客户端暂不支持团队来源',false,503)
+        const teamConversation = await this.team.arrangementSource(String(evidence.team_conversation_uid ?? ''),String(evidence.team_message_uid ?? ''),String(evidence.team_side ?? ''),Number(evidence.record_version),signal)
+        if (!teamConversation.message.content?.text_content.includes(evidence.text)) throw new ArkmePluginError('arrangement-source-unavailable','原团队消息内容已变化',false,404)
+        return {evidenceId,state:'ready',text:evidence.text,teamConversation}
+      }
       if (evidence.kind === 'record' && typeof evidence.record_uid === 'string') {
         const session = await this.runtime.requireSession()
         const raw = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/detail', { record_uid: evidence.record_uid }, session, signal, { lane: 'interactive-read', bypassCache: true })
@@ -52,7 +60,11 @@ export class ArrangementSourceService {
     const session = await this.runtime.requireSession()
     const e = await this.arrangement.sourceEvidence(arrangementRef, evidenceId, signal)
     let result: ArkmeArrangementSourceTarget
-    if (e.kind === 'audio_summary' && typeof e.summary_id === 'string' && typeof e.date_stamp === 'number' && typeof e.tz_offset === 'number') {
+    if (e.kind === 'team_message') {
+      if (!this.team) throw new ArkmePluginError('arrangement-source-unavailable','当前客户端暂不支持团队来源',false,503)
+      const team = await this.team.arrangementSource(String(e.team_conversation_uid ?? ''),String(e.team_message_uid ?? ''),String(e.team_side ?? ''),Number(e.record_version),signal)
+      result = {kind:'team_conversation',...team}
+    } else if (e.kind === 'audio_summary' && typeof e.summary_id === 'string' && typeof e.date_stamp === 'number' && typeof e.tz_offset === 'number') {
       // Re-read the owned day before opening a historical version.
       const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/summary/list-timeline-by-range', { from_stamp:e.date_stamp, to_stamp:e.date_stamp+86400000, date_stamp:e.date_stamp, kind:2 }, session, signal, { lane:'interactive-read', bypassCache:true })
       if (!Array.isArray(data.audio_summary_ls) || !data.audio_summary_ls.some(s => objectValue(s).id === e.summary_id)) throw new ArkmePluginError('arrangement-source-deleted', '原录音总结已删除或当前无权查看', false, 404)

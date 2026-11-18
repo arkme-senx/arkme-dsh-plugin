@@ -2,13 +2,14 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import type { TeamMessage } from '../team-app-contract.js'
 import { callArkme } from './api.js'
 import { captureMessageDeletion, type MessageDeletionMotion } from './message-deletion-feedback.js'
+import { invalidateTeamMessageKeys } from './team-messaging-events.js'
 
 export const teamMessageSelectable = (message: TeamMessage) => message.state === 'published' && message.contentStatus === 'available'
 
 /** Selection is keyed by message identity, never by rotating authorization references. */
 export function useTeamMessageSelection(input: {
-  accountKey: string; messages: readonly TeamMessage[]; viewport: RefObject<HTMLElement>
-  signal: AbortSignal; refresh(): Promise<unknown>; onChanged(): void
+  accountKey: string; conversationKey: string; conversationRef: string; messages: readonly TeamMessage[]; viewport: RefObject<HTMLElement>
+  signal: AbortSignal
 }) {
   const [ids, setIds] = useState<Set<string>>()
   const [confirm, setConfirm] = useState<TeamMessage[]>()
@@ -16,7 +17,7 @@ export function useTeamMessageSelection(input: {
   const [busy, setBusy] = useState(false), [status, setStatus] = useState(''), [error, setError] = useState('')
   const lock = useRef(false), motion = useRef<MessageDeletionMotion>()
   const current = useRef(input); current.current = input
-  const keeps = (message: TeamMessage) => !removed.has(message.key) || message.contentStatus !== 'deleted' && message.version > removed.get(message.key)!
+  const keeps = (message: TeamMessage) => !removed.has(message.key)
   const available = input.messages.filter(message => teamMessageSelectable(message) && keeps(message))
   const selected = available.filter(message => ids?.has(message.key))
   useEffect(() => {
@@ -64,7 +65,7 @@ export function useTeamMessageSelection(input: {
       for (const message of batch) {
         if (input.signal.aborted) return
         try {
-          await callArkme('team.app.delete', { messageRef: message.ref, version: message.version, expectedAccountKey: input.accountKey }, input.signal)
+          await callArkme('team.app.delete', { conversationRef: input.conversationRef, messageRef: message.ref, expectedAccountKey: input.accountKey }, input.signal)
           deleted++
         } catch {
           if (input.signal.aborted) return
@@ -76,11 +77,10 @@ export function useTeamMessageSelection(input: {
       if (failed.length) {
         motion.current?.cancel()
         setStatus(deleted ? `已删除 ${deleted} 条，另 ${failed.length} 条未确认` : '删除结果尚未确认')
-        setError('未确认的消息已恢复显示，请刷新核对后再操作')
+        setError('请刷新核对未确认的消息后再操作')
         setIds(new Set(failed))
       } else setStatus(`已删除 ${deleted} 条消息`)
-      await current.current.refresh()
-      if (!input.signal.aborted) current.current.onChanged()
+      invalidateTeamMessageKeys(input.accountKey, input.conversationKey, [...keys])
     } finally {
       lock.current = false
       if (!input.signal.aborted) setBusy(false)

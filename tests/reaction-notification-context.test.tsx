@@ -1,8 +1,5 @@
-import { renderToStaticMarkup } from 'react-dom/server'
 import { expect, it, vi } from 'vitest'
 import { ArkmeService } from '../src/arkme-service.js'
-import { reactionItem } from '../src/client/ArkmeNotificationCenter.js'
-import { ArkmeNotificationMessage } from '../src/client/ArkmeNotificationMessage.js'
 import type { ReactionNotificationPage } from '../src/reaction-contract.js'
 import type { ArkmeSourceItem } from '../src/types.js'
 
@@ -68,19 +65,4 @@ it('does not swallow cancellation as an optional presentation failure', async ()
   const controller = new AbortController()
   owner.profile.publicProfileSummariesByUserIds.mockImplementation(async () => { controller.abort(new Error('cancelled')); throw new Error('offline') })
   await expect(read(controller.signal)).rejects.toThrow('cancelled')
-})
-
-it('renders who reacted, the chat type and name, then the original content with the actual reaction', async () => {
-  const { read } = fixture()
-  const page = await read()
-  for (const [index, sourceLabel] of [[0, '群聊 · 项目群'], [2, '私聊 · 私聊备注']] as const) {
-    const item = reactionItem(page.items[index]!)
-    expect(item.title).toContain(`收到${page.items[index]!.actorName}的表态`)
-    expect(item.title).toContain('[jm_emoji:ok_hand] 收到')
-    expect(item.sourceLabel).toBe(sourceLabel)
-    const html = renderToStaticMarkup(<ArkmeNotificationMessage item={item} scope="test:7" category="表态" timeLabel="" onOpen={() => {}} busy={false} />)
-    expect(html.indexOf('收到')).toBeLessThan(html.indexOf(sourceLabel))
-    expect(html.indexOf(sourceLabel)).toBeLessThan(html.indexOf('原消息内容'))
-    expect(html).toContain('查看原消息')
-  }
 })

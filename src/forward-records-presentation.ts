@@ -1,6 +1,6 @@
 import { projectTeamForward } from './team-forward-presentation.js'
 import type { ArkmeForwardRecordsPreview, ArkmeForwardRecordPreviewItem, ArkmeForwardTranscriptSegment } from './types.js'
-import type { MediaService } from './services/media-service.js'
+import type { ArkmeChatMediaSource, MediaService } from './services/media-service.js'
 import type { ProfileService } from './services/profile-service.js'
 import { objectValue, stringValue } from './services/service.js'
 import { arkmeRecordTextFormat } from './markdown.js'
@@ -17,7 +17,7 @@ function listValue(value: unknown): unknown[] {
 
 export async function projectForwardRecordsWithAvatars(
   contentPayload: Record<string, unknown>, viewerUserId: number, fallbackCreatedAtMillis: number,
-  media: Pick<MediaService, 'forwardContentBlocks'>, profile: Pick<ProfileService, 'sealProfileImageRef'>,
+  media: Pick<MediaService, 'forwardContentBlocks'>, profile: Pick<ProfileService, 'sealProfileImageRef'>, source?: ArkmeChatMediaSource,
 ): Promise<ArkmeForwardRecordsPreview | undefined> {
   const senders = new Map<number, ArkmeForwardRecordPreviewItem[]>()
   const preview = projectForwardRecordsPreview(contentPayload, viewerUserId, fallbackCreatedAtMillis, media,
@@ -25,7 +25,7 @@ export async function projectForwardRecordsWithAvatars(
       const items = senders.get(userId) ?? []
       items.push(item)
       senders.set(userId, items)
-    })
+    }, source)
   for (const [userId, items] of senders) {
     const avatarRef = await profile.sealProfileImageRef(viewerUserId, userId)
     for (const item of items) item.avatarRef = avatarRef
@@ -40,38 +40,39 @@ export function projectForwardRecordsPreview(
   fallbackCreatedAtMillis: number,
   media: Pick<MediaService, 'forwardContentBlocks'>,
   onSender?: (item: ArkmeForwardRecordPreviewItem, userId: number) => void,
+  source?: ArkmeChatMediaSource,
 ): ArkmeForwardRecordsPreview | undefined {
   const nested = objectValue(contentPayload.forward_records ?? contentPayload.forwardRecords)
   const payload = Object.keys(nested).length > 0 ? nested : contentPayload
   if (payload.source_type === 'team_message') {
     return projectTeamForward({ forward_records: payload },
-      (files, longArticle) => media.forwardContentBlocks(files, viewerUserId, { longArticle }))
+      (files, longArticle) => media.forwardContentBlocks(files, viewerUserId, { longArticle, source }))
   }
   if (stringValue(payload.render_kind ?? payload.renderKind).trim() !== 'forward_records') return undefined
 
-  const projectedItems: ArkmeForwardRecordPreviewItem[] = []
-  let truncated = false
+  let remainingItems = 100
   let remainingSegments = 2_000
   const epochMillis = (value: unknown): number => {
     const time = numberValue(value)
     return Number.isFinite(time) && time > 0 && time < 8.64e15
       ? Math.trunc(time < 1e12 ? time * 1000 : time) : 0
   }
-  const appendItems = (values: unknown[], depth: number): void => {
-    if (values.length > 100) truncated = true
-    const sorted = values.slice(0, 100).map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
+  const projectCard = (node: Record<string, unknown>, depth: number, fallbackAt: number, fallbackTitle = '转发快记', teamSnapshot = false): ArkmeForwardRecordsPreview => {
+    const projectedItems: ArkmeForwardRecordPreviewItem[] = []
+    const values = listValue(node.items)
+    let truncated = values.length > 100 || depth > 4
+    const createdAtMillis = epochMillis(node.created_at ?? node.createdAt) || epochMillis(fallbackAt)
+    const ownerBlind = teamSnapshot || (node.source_type ?? node.sourceType) === 'team_message'
+    const sorted = (depth <= 4 ? values.slice(0, 100) : []).map((value, index) => ({ value, index, order: numberValue(objectValue(value).item_order) }))
       .sort((left, right) => (left.order || left.index) - (right.order || right.index))
     for (const entry of sorted) {
-      if (projectedItems.length >= 100) { truncated = true; return }
+      if (remainingItems === 0) { truncated = true; break }
+      remainingItems--
       const item = objectValue(entry.value)
       const nestedForward = objectValue(item.forward_records ?? item.forwardRecords)
-      if (depth < 4
-        && stringValue(nestedForward.render_kind ?? nestedForward.renderKind).trim() === 'forward_records') {
-        appendItems(listValue(nestedForward.items), depth + 1)
-        continue
-      }
-      if (depth >= 4 && Object.keys(nestedForward).length > 0) truncated = true
-      const sourceTypeValue = stringValue(item.source_type ?? item.sourceType ?? payload.source_type ?? payload.sourceType)
+      const isForward = stringValue(nestedForward.render_kind ?? nestedForward.renderKind).trim() === 'forward_records'
+        || Array.isArray(nestedForward.items)
+      const sourceTypeValue = stringValue(item.source_type ?? item.sourceType ?? node.source_type ?? node.sourceType ?? payload.source_type ?? payload.sourceType)
       const rawType = sourceTypeValue === 'quick_records'
         ? stringValue(item.source_chat_session_uid ?? item.sourceChatSessionUid).trim() ? 'chat_record' : 'record'
         : sourceTypeValue
@@ -80,23 +81,33 @@ export function projectForwardRecordsPreview(
         && numberValue(sourceSender) === 0 && stringValue(item.source_avatar_kind ?? item.sourceAvatarKind) === 'deepseek'
       // Chat omits the zero AI speaker ID; content ownership must not turn that reply into a human speaker.
       const isCodexReply=rawType==='codex'&&numberValue(sourceSender)===0
-      const senderUserId = isDeepSeekReply||isCodexReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
+      const senderUserId = ownerBlind || rawType === 'team_message' || isDeepSeekReply || isCodexReply ? 0 : numberValue(sourceSender ?? item.owner_id ?? item.ownerId)
       const senderName = isCodexReply?'Codex':isDeepSeekReply ? 'DeepSeek Harness' : stringValue(
         item.owner_name ?? item.ownerName ?? item.source_display_name ?? item.sourceDisplayName,
       ).trim() || 'Arkme用户'
+      const title = stringValue(item.title).trim()
+      const sendAtMillis = epochMillis(item.send_at ?? item.sendAt)
+      if (isForward) {
+        const row: ArkmeForwardRecordPreviewItem = {
+          senderName, sendAtMillis, title, textContent: '',
+          forwardRecords: projectCard(nestedForward, depth + 1, sendAtMillis || createdAtMillis, title || '转发快记', ownerBlind),
+        }
+        projectedItems.push(row)
+        if (senderUserId > 0) onSender?.(row, senderUserId)
+        continue
+      }
       // Agent forward snapshots use render_format; ordinary Record text_format has a separate contract.
       const textFormat = (rawType === 'agent'||rawType==='codex')
         && stringValue(item.render_format ?? item.renderFormat) === 'markdown' ? 'markdown' : arkmeRecordTextFormat(item)
       const rawText = stringValue(item.text ?? item.text_preview ?? item.textPreview)
       let textContent = textFormat === 'markdown' ? rawText : rawText.trim()
       const displayKind = numberValue(item.display_kind ?? item.displayKind)
-      const title = stringValue(item.title).trim()
       const sourceType: ArkmeForwardRecordPreviewItem['sourceType'] =
         rawType === 'record' || rawType === 'chat_record' || rawType === 'long_recording_segments'
           || rawType === 'agent' || rawType === 'codex' || rawType === 'ai_letter' ? rawType : 'unknown'
       const files = listValue(item.files)
       const longArticle = displayKind === 1
-      const contentBlocks = media.forwardContentBlocks(files, viewerUserId, { longArticle })
+      const contentBlocks = media.forwardContentBlocks(files, viewerUserId, { longArticle, source })
       if (longArticle && textFormat === 'markdown') {
         const aliases = new Map(files.map((value, index) => [`arkme-asset:${stringValue(objectValue(value).file_asset_uid)}`, `arkme-asset:media-${index}`]))
         textContent = remapLongArticleAssets(textContent, aliases)
@@ -119,7 +130,7 @@ export function projectForwardRecordsPreview(
         const segmentMedia = audioUrl === '' ? [] : media.forwardContentBlocks([{
           type: 2, name: '通话片段', mime_type: 'audio/wav', download_url: audioUrl,
           duration_sec: (endMillis - startMillis) / 1000,
-        }], viewerUserId)
+        }], viewerUserId, { source })
         return {
           speakerName, textContent: stringValue(segment.text ?? segment.text_content ?? segment.textContent), startMillis, endMillis,
           ...(segmentMedia.length === 0 ? {} : { contentBlocks: segmentMedia }),
@@ -145,7 +156,7 @@ export function projectForwardRecordsPreview(
         // Only a resolved other account gets an actionable identity; the
         // viewer's own id and unresolved senders stay off the wire.
         ...(senderUserId > 0 && senderUserId !== viewerUserId ? { senderUserId } : {}),
-        sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : epochMillis(item.send_at ?? item.sendAt),
+        sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : sendAtMillis,
         title,
         textContent,
         textFormat,
@@ -155,22 +166,19 @@ export function projectForwardRecordsPreview(
         ...(contentBlocks.length === 0 ? {} : { contentBlocks }),
         ...(files.length > contentBlocks.length ? { mediaUnavailable: true } : {}),
         ...(segments.length === 0 ? {} : { segments }),
+        ...(recordingSegments.length === 0 ? {} : { segmentCount: recordingSegments.length }),
         ...(segmentValues.length < rawSegments.length || (!longArticle && files.length > 32) ? { truncated: true } : {}),
         ...(contentLabel === undefined ? {} : { contentLabel }),
       })
       if (senderUserId > 0) onSender?.(projectedItems[projectedItems.length - 1]!, senderUserId)
     }
+    return {
+      title: stringValue(node.title).trim() || fallbackTitle,
+      createdAtMillis,
+      summaryLines: listValue(node.summary_lines ?? node.summaryLines).map(value => stringValue(value).trim()).filter(Boolean),
+      items: projectedItems,
+      ...(truncated ? { truncated: true } : {}),
+    }
   }
-  appendItems(listValue(payload.items), 0)
-
-  const summaryLines = listValue(payload.summary_lines ?? payload.summaryLines)
-    .map(value => stringValue(value).trim()).filter(value => value !== '')
-  const createdAtMillis = epochMillis(payload.created_at ?? payload.createdAt) || epochMillis(fallbackCreatedAtMillis)
-  return {
-    title: stringValue(payload.title).trim() || '转发快记',
-    createdAtMillis,
-    summaryLines,
-    items: projectedItems,
-    ...(truncated ? { truncated: true } : {}),
-  }
+  return projectCard(payload, 0, fallbackCreatedAtMillis)
 }

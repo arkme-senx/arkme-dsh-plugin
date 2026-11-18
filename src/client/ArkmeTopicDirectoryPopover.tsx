@@ -1,5 +1,6 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
-import type { ArkmeArchiveState } from '../archive-contract.js'
+import { retainedTopicSelection } from './retained-topic-selection.js'
 import { withArkmeReadDeadline } from './read-deadline.js'
 import {
   useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties,
@@ -222,12 +223,13 @@ export function ArkmeTopicDirectoryPopover({
       } else if (reconciliation.status === 'invalid') {
         // Directory absence is not deletion: an archived UID remains a valid
         // content destination, and must not clear the open scene or its draft.
-        const states = currentSelected?.kind === 'topic'
-          ? await withArkmeReadDeadline(signal => callArkme<ArkmeArchiveState[]>('archives.state', { sourceRefs: [currentSelected.sourceRef] }, signal), controller.signal)
-          : []
+        const retained = currentSelected === undefined ? undefined
+          : await withArkmeReadDeadline(signal => retainedTopicSelection(currentSelected, signal), controller.signal)
         if (controller.signal.aborted || selectedSourceRef.current?.sourceRef !== currentSelected?.sourceRef) return
-        if (states[0]?.ownerAvailable === true && states[0].effectiveArchived) {
-          persist(loaded, currentSelected!.sourceRef)
+        if (retained !== undefined) {
+          selectedSourceRef.current = retained
+          if (retained !== currentSelected) onSelectionRefreshed(retained)
+          persist(loaded, retained.sourceRef)
         } else {
           selectedSourceRef.current = undefined
           onSelectionInvalidated()
@@ -403,7 +405,7 @@ export function ArkmeTopicDirectoryPopover({
           setSourceSort(value)
           setHoveredSourceRef(undefined)
         }} />
-        <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭主题")} style={styles.close} onClick={() => { setOpen(false) }}>×</button>
+        <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭主题")} style={styles.close} onClick={() => { setOpen(false) }} />
       </div>
       <label style={styles.search}>
         <svg aria-hidden viewBox="0 0 16 16" width="14" height="14" fill="none">

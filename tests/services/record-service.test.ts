@@ -115,6 +115,7 @@ describe('RecordService', () => {
       updatedAtMillis: 100,
     })
     const source = {
+      async topicHierarchyKey() { return 'opaque-topic' },
       async openSourceRef(sourceRef: string) {
         return {
           version: 1 as const,
@@ -129,7 +130,8 @@ describe('RecordService', () => {
       config: { richMediaSendEnabled: true },
       stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost() {
+      async authenticatedPost(path: string) {
+        if (path.endsWith('/metadata')) return { topic_core: { topic_uid: 'topic-1', kind: 1, privacy_state: 1, show_in_home: true } }
         return {
           record_core: {
             record_uid: 'record-1', template_kind: 1, display_kind: 1,
@@ -151,7 +153,7 @@ describe('RecordService', () => {
     })
   })
 
-  it('prepares and commits a record re-edit while preserving owner-controlled content fields', async () => {
+  it.each([undefined, 0, 3])('preserves owner-controlled fields when editing with group epoch %s', async editEpoch => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-'))
     const stateStore = new ArkmeStateStore(root)
     const calls: Array<{ path: string; body: Record<string, unknown> }> = []
@@ -170,6 +172,7 @@ describe('RecordService', () => {
       },
       record_duration_millis: 3_200, edit_duration_millis: 800, send_at: 123_000,
       status: 1, version: 7, content_access_state: 1,
+      ...(editEpoch === undefined ? {} : { edit_protocol_version: 2, edit_epoch: editEpoch }),
     }
     const runtime = {
       config: { maxTextLength: 20_000, richMediaSendEnabled: true },
@@ -181,7 +184,7 @@ describe('RecordService', () => {
         if (path === '/api/v1/records/update') {
           return {
             record_core: { ...structuredClone(originalCore), title: '新标题', text_content: '新正文', version: 8 },
-            revision_uid: 'revision-1',
+            revision_uid: body.revision_uid,
           }
         }
         throw new Error(`unexpected path: ${path}`)
@@ -205,7 +208,7 @@ describe('RecordService', () => {
     })
 
     await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({
-      status: 'committed', itemUid: 'record-1', version: 8, revisionUid: 'revision-1',
+      status: 'committed', itemUid: 'record-1', version: 8, revisionUid: expect.any(String),
     })
     expect(calls.map(call => call.path)).toEqual([
       '/api/v1/records/detail', '/api/v1/records/detail', '/api/v1/records/update',
@@ -220,7 +223,7 @@ describe('RecordService', () => {
           duration_sec: 7, file_name: '示例.mp4',
         }],
       },
-      record_duration_millis: 3_200, edit_duration_millis: 800, version: 7,
+      edit_duration_known: false, revision_uid: expect.any(String), edit_at: expect.any(Number),
     })
     await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
@@ -244,7 +247,7 @@ describe('RecordService', () => {
         if (path === '/api/v1/records/detail') return { record_core: structuredClone(originalCore) }
         if (path === '/api/v1/records/update') {
           updateBody = structuredClone(body)
-          return { record_core: { ...originalCore, ...body, version: 2 }, revision_uid: 'revision-1' }
+          return { record_core: { ...originalCore, ...body, version: 2 }, revision_uid: body.revision_uid }
         }
         throw new Error(`unexpected path: ${path}`)
       },
@@ -369,7 +372,7 @@ describe('RecordService', () => {
 
   })
 
-  it('keeps the draft when the owner version changes before commit', async () => {
+  it('submits by completion time when the owner version changes before commit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-conflict-'))
     const stateStore = new ArkmeStateStore(root)
     let detailReads = 0
@@ -377,8 +380,8 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
-        if (path === '/api/v1/records/update') { updateCalls += 1; return {} }
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
+        if (path === '/api/v1/records/update') { updateCalls += 1; return { record_core: { record_uid: 'record-1', version: 12 }, revision_uid: body.revision_uid } }
         detailReads += 1
         return { record_core: {
           record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42, origin_kind: 1, template_kind: 1,
@@ -395,14 +398,12 @@ describe('RecordService', () => {
     const service = new RecordService(runtime as never, {} as never, source)
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '我的草稿' })
 
-    await expect(service.commitRecordReedit(prepared)).rejects.toMatchObject({ code: 'record-reedit-conflict' })
-    expect(updateCalls).toBe(0)
-    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toMatchObject({
-      textContent: '我的草稿', draftRevision: prepared.draftRevision,
-    })
+    await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({ status: 'committed', version: 12 })
+    expect(updateCalls).toBe(1)
+    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
 
-  it('does not rebase a browser editor candidate when the owner changes after the editor opens', async () => {
+  it('keeps the explicit candidate when another edit changes the owner after opening', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-editor-cas-'))
     const stateStore = new ArkmeStateStore(root)
     let version = 7
@@ -411,10 +412,10 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
         if (path === '/api/v1/records/update') {
           updateCalls += 1
-          return { record_core: { record_uid: 'record-1', version: version + 1 }, revision_uid: 'revision-1' }
+          return { record_core: { record_uid: 'record-1', version: version + 1 }, revision_uid: body.revision_uid }
         }
         return { record_core: {
           record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42, origin_kind: 1, template_kind: 1,
@@ -435,11 +436,9 @@ describe('RecordService', () => {
       { sourceRef: 'source-ref', itemUid: 'record-1', newText: '本机候选' },
       { expectedBaseVersion: editor.version },
     )
-    await expect(service.commitRecordReedit(prepared)).rejects.toMatchObject({ code: 'record-reedit-conflict' })
-    expect(updateCalls).toBe(0)
-    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toMatchObject({
-      textContent: '本机候选', baseVersion: 7,
-    })
+    await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({ status: 'committed', version: 9 })
+    expect(updateCalls).toBe(1)
+    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
 
   it('rejects a stale confirmation after the candidate draft changes', async () => {
@@ -470,7 +469,7 @@ describe('RecordService', () => {
     expect(updateCalls).toBe(0)
   })
 
-  it('reconciles an unknown write outcome from owner detail without replaying the update', async () => {
+  it('reconciles an unknown write by its accepted revision after a later edit without replay', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-reconcile-'))
     const stateStore = new ArkmeStateStore(root)
     let detailReads = 0
@@ -478,7 +477,8 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
+        if (path === '/api/v1/records/receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: true, accepted_version: 8, current_version: 9 }
         if (path === '/api/v1/records/update') {
           updateCalls += 1
           throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })
@@ -501,13 +501,13 @@ describe('RecordService', () => {
 
     await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({ status: 'committed', version: 8 })
     expect(updateCalls).toBe(1)
-    expect(detailReads).toBe(3)
+    expect(detailReads).toBe(2)
     await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
 
   it.each([
     { current: { text_content: '原正文', version: 7 }, code: 'record-reedit-outcome-unknown' },
-    { current: { text_content: '第三种正文', version: 8 }, code: 'record-reedit-conflict' },
+    { current: { text_content: '第三种正文', version: 8 }, code: 'record-reedit-outcome-unknown' },
   ])('keeps the candidate draft when an unknown write reconciles as $code', async ({ current, code }) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-unknown-'))
     const stateStore = new ArkmeStateStore(root)
@@ -516,7 +516,8 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
+        if (path === '/api/v1/records/receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: false, accepted_version: 0, current_version: current.version }
         if (path === '/api/v1/records/update') {
           updateCalls += 1
           throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })
@@ -1354,4 +1355,21 @@ it('does not cancel a concurrent authorized write when a DSH user input is persi
     finish()
     expect(await pending).toEqual({ value: 'confirmed' })
   } finally { finish(); await pending; runtime.dispose() }
+})
+
+it.each([
+  ['send_to_self', { topic_uid: 't', title: '当前名' }, 42, '当前名'],
+  ['topic', { topic_uid: 't', title: '' }, 42, ''],
+  ['send_to_self', undefined, 42, undefined],
+  ['send_to_self', { topic_uid: 't', title: '私密', privacy_state: 2 }, 42, undefined],
+  ['private_chat', { topic_uid: 't', title: '私人主题' }, 42, undefined],
+  ['group_chat', { topic_uid: 't', title: '他人私人主题' }, 99, undefined],
+])('projects only visible owned personal topics for long article export: %s %j', async (kind, topic, owner, title) => {
+  const post = vi.fn(async (path: string) => path.endsWith('/metadata') ? { topic_core: { topic_uid: 't', kind: 1, privacy_state: 1, show_in_home: true } } : ({ record_core: { record_uid: 'r', template_kind: 8, owner_user_id: owner,
+    origin_container_ref: 't', status: 1, title: '长文', text_content: '正文', content_payload: {} }, topic_core: topic }))
+  const service = new RecordService({ requireSession: async () => ({ userId: 42 }), authenticatedPost: post, stateStore: {} } as never, { richContentBlocks: () => [], recordMediaUnavailable: () => false } as never,
+    { openSourceRef: async () => ({ kind, ownerRef: 't' }), topicHierarchyKey: async () => 'opaque-topic' } as never)
+  const detail = await service.longArticleDetail('source', 'r')
+  expect(detail.actionItem?.selfTopic).toEqual(title === undefined ? undefined : { topicHierarchyKey: 'opaque-topic', title })
+  expect(post).toHaveBeenCalledTimes(title === undefined ? 1 : 2)
 })

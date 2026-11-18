@@ -1,9 +1,12 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { retainNewerArkmeChatActivity } from '../chat-activity-preview.js'
 import { projectArkmeConversationAttention } from '../conversation-attention.js'
-import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList } from '../types.js'
+import type { ArkmeBotSummary, ArkmeChatClientEvent, ArkmeConversationDirectoryVisibilityItem, ArkmeSourceItem, ArkmeSourceList, ArkmeTimelinePage } from '../types.js'
 import { projectArkmeChatAttentionFromMuted } from '../chat-attention.js'
 import { retainNewerArkmeChatPolicy } from '../chat-policy-projection.js'
-import type { SourceService } from './source-service.js'
+import type { ChatSyncUnreadPreview } from '../chat-message-sync.js'
+import type { ArkmeSessionCredentials } from '../keychain-store.js'
+import { arkmeTimelineConversationPreview, type SourceService } from './source-service.js'
 import type { ConversationDirectoryVisibilityService } from './conversation-directory-visibility-service.js'
 import { ArkmePluginError, objectValue, type ServiceRuntime } from './service.js'
 import type { ArkmeChatPolicyUpdatedHint, ArkmeConversationListPreferenceUpdatedHint } from '../chat-realtime.js'
@@ -14,9 +17,35 @@ type PendingDirectoryChange = { entityKind: 1 | 2; entityUid: string; revision: 
 const MAX_PENDING_CHANGES = 1_000
 const CHANGE_BATCH_SIZE = 50
 const MAX_REFRESH_RETRIES = 5
+const MAX_PAGE_RATE_LIMIT_RETRIES = 2
+const MAX_PAGE_RATE_LIMIT_DELAY_MS = 30_000
 const PAGE_SIZE = 20
 const MAX_ROWS = 20_000
 const keyOf = (source: ArkmeSourceItem) => source.sourceKey ?? source.sourceRef
+
+function recoverTimelinePreview(source: ArkmeSourceItem, page: ArkmeTimelinePage): ArkmeSourceItem {
+  if (!source.latestSequence || !source.latestPreviewUnavailable || keyOf(source) !== keyOf(page.source)) return source
+  const item = page.items.find(item => item.sequence === source.latestSequence)
+  if (!item || item.status !== 1 || item.sendAtMillis < (source.latestActivityAtMillis ?? 0)) return source
+  return { ...source, latestPreview: arkmeTimelineConversationPreview(item), latestPreviewUnavailable: false }
+}
+
+function directoryFailureDetails(error: unknown) {
+  if (!(error instanceof ArkmePluginError)) return { code: 'unexpected' }
+  return {
+    code: /^[a-z][a-z0-9-]{0,63}$/.test(error.code) ? error.code : 'unknown',
+    retryable: error.retryable,
+    httpStatus: error.httpStatus,
+    upstreamStatus: error.upstreamStatus,
+    failureKind: error.failureKind,
+    retryAfterMillis: error.retryAfterMillis,
+  }
+}
+
+function isDirectoryRateLimit(error: unknown): error is ArkmePluginError {
+  return error instanceof ArkmePluginError && error.retryable
+    && (error.failureKind === 'rate_limited' || error.upstreamStatus === 429)
+}
 
 /** Merge pages and live changes without interpreting page absence as removal. */
 export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, incoming: ArkmeSourceItem, keepLive = false, keepLiveName = false): ArkmeSourceItem {
@@ -30,7 +59,12 @@ export function mergeDirectorySource(previous: ArkmeSourceItem | undefined, inco
       if (previous[field] !== undefined) Object.assign(merged, { [field]: previous[field] })
     }
   }
-  if (!stale && incoming.latestPreview === undefined) delete merged.latestPreview
+  if (!stale && incoming.latestPreview === undefined) {
+    if (incoming.latestPreviewUnavailable && incoming.latestSequence === previous.latestSequence && previous.latestPreview) {
+      merged.latestPreview = previous.latestPreview
+      merged.latestPreviewUnavailable = false
+    } else delete merged.latestPreview
+  }
   // A page started before a live mutation cannot roll a current name back.
   if (keepLiveName) {
     merged.displayName = previous.displayName
@@ -67,6 +101,7 @@ function projectReadAck(source: ArkmeSourceItem, ack: { effectiveReadSequence: n
 
 /** One account lifecycle owns cache restoration, a twenty-row scan, and directory deltas. */
 export class ConversationDirectoryService {
+  onChatPageAvailable?: () => void
   private userId: number | undefined
   private disposed = false
   private generation = 0
@@ -103,6 +138,8 @@ export class ConversationDirectoryService {
   private readonly pendingChanges = new Map<string, PendingDirectoryChange>()
   private changeWork: Promise<void> | undefined
   private recoveryScan = false
+  private pageRateLimitExhausted = false
+  private syncedUnreadFlight: Promise<unknown> | undefined
   private refreshTimer: ReturnType<typeof setTimeout> | undefined
   private refreshRetries = 0
   private refreshError: string | undefined
@@ -115,6 +152,7 @@ export class ConversationDirectoryService {
     private readonly warmAvatar: (ref: string, signal: AbortSignal) => Promise<unknown>,
     private readonly emit: (page: ArkmeSourceList) => void,
     private readonly restoreBots: (items: ArkmeBotSummary[], userId: number) => Promise<ArkmeBotSummary[]> = async items => items,
+    private readonly readLocalTimeline?: (sourceRef: string, signal: AbortSignal) => Promise<ArkmeTimelinePage>,
   ) {}
 
   dispose(): void { this.disposed = true; this.reset() }
@@ -122,7 +160,7 @@ export class ConversationDirectoryService {
   reset(): void {
     if (this.refreshTimer !== undefined) clearTimeout(this.refreshTimer)
     this.refreshTimer = undefined; this.changeWork = undefined; this.pendingChanges.clear()
-    this.recoveryScan = false; this.refreshRetries = 0; this.refreshError = undefined
+    this.recoveryScan = false; this.pageRateLimitExhausted = false; this.refreshRetries = 0; this.refreshError = undefined
     this.controller.abort()
     this.controller = new AbortController()
     this.generation++
@@ -144,7 +182,9 @@ export class ConversationDirectoryService {
         // References are validated by the current Host before they can reach a consumer.
         if (cached.items[0] !== undefined) await this.source.openSourceRef(cached.items[0].sourceRef, userId)
         if (generation !== this.generation) return
-        for (const item of cached.items) this.sources.set(keyOf(item), item)
+        const items = await this.recoverLocalPreviews(cached.items, this.controller.signal)
+        if (generation !== this.generation) return
+        for (const item of items) this.sources.set(keyOf(item), item)
         this.cachedAtMillis = cached.projection?.cachedAtMillis ?? 0
         for (const item of cached.projection?.visibility ?? []) this.visibility.set(`${item.entryKind}:${item.entryRef}`, item)
         const cachedBots = cached.projection?.bots ?? []
@@ -182,14 +222,42 @@ export class ConversationDirectoryService {
     })
   }
 
+  private async recoverLocalPreviews(items: ArkmeSourceItem[], signal: AbortSignal): Promise<ArkmeSourceItem[]> {
+    const read = this.readLocalTimeline
+    if (!read) return items
+    const pending = items.filter(item => item.latestPreviewUnavailable && !item.latestPreview && item.accessKind !== 'team_delegation'
+      && (item.kind === 'private_chat' || item.kind === 'group_chat'))
+      .sort((a, b) => b.activeAtMillis - a.activeAtMillis).slice(0, 8)
+    if (!pending.length) return items
+    const timeoutMillis = 120
+    const budget = AbortSignal.any([signal, AbortSignal.timeout(timeoutMillis)])
+    const recovery = Promise.all(pending.map(async item => {
+      const page = await read(item.sourceRef, budget).catch(() => undefined)
+      return [keyOf(item), page && !budget.aborted ? recoverTimelinePreview(item, page) : item] as const
+    })).then(entries => {
+      const recovered = new Map(entries)
+      return items.map(item => recovered.get(keyOf(item)) ?? item)
+    })
+    return await Promise.race([recovery, delay(timeoutMillis, items, { signal, ref: false }).catch(() => items)])
+  }
+
+  rememberTimelinePreview(userId: number, page: ArkmeTimelinePage): void {
+    if (this.disposed || userId !== this.userId) return
+    const current = this.sources.get(keyOf(page.source))
+    if (!current) return
+    const recovered = recoverTimelinePreview(current, page)
+    if (recovered !== current) this.apply([recovered])
+  }
+
   private async readSnapshot(force: boolean): Promise<ArkmeSourceList> {
     await this.activate()
     const generation = this.generation
-    if (force) this.resumeChanges()
     const cached = this.snapshot()
     const hasCache = cached.items.length > 0 || cached.projection!.bots.length > 0
-    if (this.scan === undefined && (force || this.phase === 'cached' || this.phase === 'failed' && this.refreshTimer === undefined && this.refreshRetries < MAX_REFRESH_RETRIES)) this.startScan()
-    if (force && this.scan !== undefined && cached.projection?.phase === 'syncing') this.rescanRequested = true
+    const canRecover = this.phase === 'failed' && !this.pageRateLimitExhausted
+      && this.refreshTimer === undefined && this.refreshRetries < MAX_REFRESH_RETRIES
+    if (this.scan === undefined && (force || this.phase === 'cached' || canRecover)) this.startScan()
+    if (force) this.resumeChanges()
     if (hasCache) return structuredClone(cached)
     await this.firstPage
     if (generation !== this.generation) throw new ArkmePluginError('login-context-changed', '账号已切换', false, 409)
@@ -202,8 +270,8 @@ export class ConversationDirectoryService {
     // A completed raw baseline must not be reused by a later connection while Bot discovery is pending.
     if (this.rawBaselineComplete && this.scan !== undefined) await this.scan.catch(() => undefined)
     await this.activate()
-    this.resumeChanges()
     if (this.scan === undefined) this.startScan()
+    this.resumeChanges()
     return structuredClone(await this.rawBaseline!)
   }
 
@@ -231,11 +299,31 @@ export class ConversationDirectoryService {
 
   async settled(): Promise<void> { while (this.scan !== undefined) await this.scan; while (this.avatarWork !== undefined) await this.avatarWork; while (this.diskWriting) await this.persistence }
 
+  private async readScanPage(cursor: string | undefined, signal: AbortSignal): Promise<ArkmeSourceList> {
+    const options = { limit: PAGE_SIZE, refresh: true, firstPaint: true, background: cursor !== undefined,
+      ...(cursor === undefined ? {} : { cursor }), signal }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.source.listSources('root', options)
+      } catch (error) {
+        signal.throwIfAborted()
+        if (!isDirectoryRateLimit(error) || attempt >= MAX_PAGE_RATE_LIMIT_RETRIES) throw error
+        const wait = Math.max(error.retryAfterMillis ?? 0, 1000 * 2 ** attempt)
+        if (!(wait <= MAX_PAGE_RATE_LIMIT_DELAY_MS)) throw error
+        // The transport has exhausted its short retry budget. Keep the scan's
+        // cursor, accepted pages and baseline waiters while we cool this page.
+        await delay(wait, undefined, { signal })
+      }
+    }
+  }
+
   private startScan(): void {
     const generation = this.generation
     const userId = this.userId!
     const signal = this.controller.signal
     this.phase = 'loading'; this.error = undefined; this.rawBaselineComplete = false
+    this.recoveryScan = false
+    this.pageRateLimitExhausted = false
     let ready!: () => void
     let failed!: (error: unknown) => void
     this.firstPage = new Promise<void>((resolve, reject) => { ready = resolve; failed = reject })
@@ -245,23 +333,29 @@ export class ConversationDirectoryService {
     void this.rawBaseline.catch(() => undefined)
     const rawSources = new Map<string, ArkmeSourceItem>()
     void this.firstPage.catch(() => undefined)
+    let stage = 'source-page'
     const pending = (async () => {
       let cursor: string | undefined
       const visited = new Set<string>()
       let first = true
       let visibilityFailed = false
       do {
+        stage = 'source-page'
         signal.throwIfAborted()
         if (visited.size >= MAX_ROWS / PAGE_SIZE) throw new Error("Directory page budget exceeded; synchronization incomplete")
         const atRevision = this.revision
-        const page = await this.source.listSources('root', { limit: PAGE_SIZE, refresh: true, firstPaint: true, background: !first, ...(cursor === undefined ? {} : { cursor }), signal })
+        const page = await this.readScanPage(cursor, signal)
+        if (first) page.items = await this.recoverLocalPreviews(page.items, signal)
         if (generation !== this.generation || (await this.runtime.requireSession()).userId !== userId) throw new DOMException('Account changed', 'AbortError')
+        this.onChatPageAvailable?.()
         if (page.hasMore && (page.nextCursor === undefined || visited.has(page.nextCursor))) throw new ArkmePluginError('directory-cursor-invalid', '会话目录分页未完成：游标无效', true, 502)
         for (const item of page.items) rawSources.set(keyOf(item), item)
         if (!page.hasMore) { this.rawBaselineComplete = true; baselineReady({ directory: 'root', items: [...rawSources.values()], hasMore: false }) }
         const visibleCandidates = page.items.map(item => mergeDirectorySource(this.sources.get(keyOf(item)), item, (this.mutations.get(keyOf(item)) ?? 0) > atRevision))
+        stage = 'source-visibility'
         const visibility = await this.preferences.query(visibleCandidates.map(item => item.sourceRef), [], signal).catch(error => {
           if (signal.aborted || (error instanceof ArkmePluginError && !error.retryable && [401, 403, 409].includes(error.httpStatus))) throw error
+          if (!visibilityFailed) console.warn('dsh-arkme: directory_scan_degraded', { stage, ...directoryFailureDetails(error) })
           visibilityFailed = true
           this.refreshError = '会话列表状态同步失败，等待重试'
           return { items: visibleCandidates.map(item => ({ entryKind: 'source' as const, entryRef: item.sourceRef, hidden: this.visibility.get(`source:${item.sourceRef}`)?.hidden ?? false })) }
@@ -278,12 +372,18 @@ export class ConversationDirectoryService {
         await new Promise<void>(resolve => { setTimeout(resolve, 0) })
       } while (true)
       // Bot discovery is independent of the ordinary first page.
+      stage = 'bot-directory'
       const bots = await this.readBots(signal)
       if (generation !== this.generation) return
+      stage = 'bot-visibility'
       await this.rememberBots(bots.items, userId)
       if (generation !== this.generation) return
       this.phase = visibilityFailed ? 'failed' : 'complete'
       if (visibilityFailed) this.recoveryScan = true
+      if (!this.recoveryScan && this.pendingChanges.size === 0) {
+        this.refreshError = undefined
+        this.refreshRetries = 0
+      }
       this.apply([])
       // Image bytes share the decoration lifecycle, never the notification baseline wait.
       const refs = new Set(this.bots.flatMap(bot => bot.avatarRef ? [bot.avatarRef] : []))
@@ -302,7 +402,11 @@ export class ConversationDirectoryService {
       this.avatarWork = avatarWork
     })().catch(error => {
       if (generation === this.generation) {
-        this.recoveryScan = true
+        if (!signal.aborted) console.warn('dsh-arkme: directory_scan_failed', { stage, ...directoryFailureDetails(error) })
+        // Replaying the entire directory after a sustained rate limit would
+        // multiply the traffic that just hit the quota.
+        this.pageRateLimitExhausted = stage === 'source-page' && isDirectoryRateLimit(error)
+        if (!this.pageRateLimitExhausted) this.recoveryScan = true
         this.phase = 'failed'; this.error = error instanceof Error ? error.message : '目录同步失败'
         this.refreshError = this.error
         this.publish([])
@@ -374,6 +478,18 @@ export class ConversationDirectoryService {
     }
     this.publish(changed, acceptedVisibility)
     if (this.recoveryScan) this.scheduleChanges(1_000)
+  }
+
+  interactionSourceKeys(userId: number, peerUserIds: readonly number[]): string[] | undefined {
+    if (this.userId !== userId) return undefined
+    const remaining = new Set(peerUserIds)
+    const keys: string[] = []
+    for (const [key, source] of this.sources) {
+      if (source.kind !== 'private_chat' || source.peerUserId === undefined || !remaining.delete(source.peerUserId)) continue
+      if (!this.visibility.get(`source:${source.sourceRef}`)?.hidden) keys.push(key)
+      if (remaining.size === 0) break
+    }
+    return remaining.size === 0 || this.phase === 'complete' && !this.recoveryScan ? keys : undefined
   }
 
   private snapshot(items = [...this.sources.values()], visibility = [...this.visibility.values()]): ArkmeSourceList {
@@ -616,11 +732,13 @@ export class ConversationDirectoryService {
   private flushChanges(): void {
     const generation = this.generation
     const signal = this.controller.signal
+    let stage = 'session'
     const pending = (async () => {
       const session = await this.runtime.requireSession()
       if (generation !== this.generation) return
       if (session.userId !== this.userId) { this.reset(); return }
       if (this.recoveryScan) {
+        stage = 'recovery-scan'
         this.recoveryScan = false
         if (this.scan === undefined) this.startScan()
         else this.rescanRequested = true
@@ -629,6 +747,7 @@ export class ConversationDirectoryService {
       }
       let reconciledMissing = false
       while (this.pendingChanges.size > 0) {
+        stage = 'source-lookup'
         signal.throwIfAborted()
         const batch = [...this.pendingChanges.entries()].slice(0, CHANGE_BATCH_SIZE)
         const atRevision = this.revision
@@ -645,6 +764,7 @@ export class ConversationDirectoryService {
         const matched = new Set<string>()
         const visible: ArkmeConversationDirectoryVisibilityItem[] = []
         if (expected.size > 0) {
+          stage = 'preference-query'
           const result = await this.preferences.queryAffected(sources.map(row => row.sourceRef),
             this.bots.map(bot => bot.botRef), expected, signal)
           visible.push(...result.items)
@@ -653,6 +773,7 @@ export class ConversationDirectoryService {
         const policyChanges = batch.filter(([, change]) => change.policyUpdatedAtMillis > 0)
         const pins: Array<{ row: ArkmeSourceItem; pinned: boolean; updatedAt: number }> = []
         if (policyChanges.length > 0) {
+          stage = 'pin-snapshot'
           const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>('/api/v1/chats/display-snapshots',
             { chat_session_uids: policyChanges.map(([, change]) => change.entityUid) }, session, signal,
             { lane: 'interactive-read', bypassCache: true })
@@ -673,6 +794,7 @@ export class ConversationDirectoryService {
             pins.push({ row, pinned: policy.pin_state === 2, updatedAt: updatedAt as number })
           }
         }
+        stage = 'session'
         const currentSession = await this.runtime.accountScopedSession()
         if (generation !== this.generation) return
         if (currentSession?.userId !== session.userId) { this.reset(); return }
@@ -694,6 +816,7 @@ export class ConversationDirectoryService {
         const unknown = visibilityChanges.some(([key]) => !matched.has(key))
           || policyChanges.some(([, change]) => !sourceByUid.has(change.entityUid))
         if (unknown && !reconciledMissing) {
+          stage = 'recovery-scan'
           if (this.scan === undefined) this.startScan()
           else this.rescanRequested = true
           while (this.scan !== undefined) await this.scan
@@ -712,7 +835,10 @@ export class ConversationDirectoryService {
       if (generation !== this.generation || signal.aborted) return
       this.refreshError = error instanceof Error ? error.message : '会话列表状态同步失败'
       this.refreshRetries++
-      console.warn('dsh-arkme: directory_refresh_failed', { attempt: this.refreshRetries, pending: this.pendingChanges.size, fullScan: this.recoveryScan })
+      console.warn('dsh-arkme: directory_refresh_failed', {
+        stage, ...directoryFailureDetails(error),
+        attempt: this.refreshRetries, pending: this.pendingChanges.size, fullScan: this.recoveryScan,
+      })
       this.publish([])
     }).finally(() => {
       if (this.changeWork !== pending) return
@@ -720,6 +846,53 @@ export class ConversationDirectoryService {
       this.scheduleChanges(Math.min(30_000, 1_000 * 2 ** this.refreshRetries))
     })
     this.changeWork = pending
+  }
+
+  async refreshSyncedUnread(session: ArkmeSessionCredentials, previews: ChatSyncUnreadPreview[], signal: AbortSignal): Promise<void> {
+    if (session.userId !== this.userId || this.disposed || signal.aborted || this.syncedUnreadFlight) return
+    const generation = this.generation
+    const atRevision = this.revision
+    const targets = new Map(previews.flatMap(entry => {
+      const current = this.sources.get(entry.sourceKey)
+      if (!current || this.sourceRemovals.has(entry.sourceKey) || entry.sequence <= (current.readSequence ?? 0)
+        || entry.sequence <= (current.latestSequence ?? 0) && (current.unreadCount ?? 0) > 0
+          && entry.item.sendAtMillis < current.activeAtMillis) return []
+      return [[entry.uid, entry] as const]
+    }))
+    if (!targets.size) return
+    const flight = this.runtime.authenticatedChatPost<Record<string, unknown>>(
+      '/api/v1/chats/display-snapshots', { chat_session_uids: [...targets.keys()] }, session, signal,
+      { lane: 'background-read', traffic: 'message-sync', bypassCache: true },
+    )
+    this.syncedUnreadFlight = flight
+    const data = await flight.finally(() => {
+      if (this.syncedUnreadFlight === flight) this.syncedUnreadFlight = undefined
+    })
+    if (signal.aborted || this.disposed || generation !== this.generation || session.userId !== this.userId) return
+    if (!Array.isArray(data.items) || data.items.length > targets.size) return
+    const rows: ArkmeSourceItem[] = []
+    for (const raw of data.items) {
+      const bundle = objectValue(raw)
+      const uid = objectValue(bundle.session).chat_session_uid
+      const target = typeof uid === 'string' ? targets.get(uid) : undefined
+      if (!target) continue
+      const { sourceKey, sequence, item } = target
+      const current = this.sources.get(sourceKey)
+      if (!current || this.sourceRemovals.has(sourceKey)) continue
+      const unread = objectValue(bundle.unread_snapshot)
+      const { session_last_seq: latest, read_seq: read, unread_count: count } = unread
+      if (typeof latest !== 'number' || !Number.isSafeInteger(latest) || latest < Math.max(sequence, current.latestSequence ?? 0)
+        || typeof read !== 'number' || !Number.isSafeInteger(read) || read < (current.readSequence ?? 0) || read > latest
+        || typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0) continue
+      const currentActivity = Math.max(current.activeAtMillis, current.latestActivityAtMillis ?? 0)
+      const preview = latest === sequence && item.sendAtMillis >= currentActivity
+        ? { activeAtMillis: item.sendAtMillis, latestActivityAtMillis: item.sendAtMillis, latestActivityKind: 'record' as const,
+            latestPreview: arkmeTimelineConversationPreview(item) }
+        : {}
+      rows.push({ ...current, ...preview, latestSequence: latest, readSequence: read,
+        ...projectArkmeChatAttentionFromMuted(count, current.isMuted === true) })
+    }
+    if (rows.length) this.apply(rows, [], atRevision)
   }
 
   async accept(event: ArkmeChatClientEvent): Promise<void> {

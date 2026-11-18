@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { basename, join, posix, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { assertRecorderRuntimeDependencies } from './recorder-runtime-dependencies.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -217,8 +218,10 @@ async function writeDeterministicTar(packageDirectory, outputPath) {
 export async function createRuntimeArchive({ packageDirectory, outputDirectory }) {
   const canonicalPackageDirectory = resolve(packageDirectory)
   const canonicalOutputDirectory = resolve(outputDirectory)
-  const manifest = validatePackageManifest(JSON.parse(await readFile(join(canonicalPackageDirectory, 'package.json'), 'utf8')))
+  const packageManifest = JSON.parse(await readFile(join(canonicalPackageDirectory, 'package.json'), 'utf8'))
+  const manifest = validatePackageManifest(packageManifest)
   const inspection = await inspectPackageDirectory(canonicalPackageDirectory)
+  await assertRecorderRuntimeDependencies(canonicalPackageDirectory, packageManifest)
   await mkdir(canonicalOutputDirectory, { recursive: true })
   const temporaryDirectory = await mkdtemp(join(canonicalOutputDirectory, '.arkme-runtime-archive-'))
   const rawTarPath = join(temporaryDirectory, 'artifact.tar')

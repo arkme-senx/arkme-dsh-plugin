@@ -46,6 +46,41 @@ function htmlWithGraph(
 }
 
 describe('core-only DeepSeek Harness iframe route', () => {
+  it('projects a standalone native model page without the settings shell or session/onboarding bridges', async () => {
+    const full = graph()
+    const base='@deepseek-ai/dsh-client-ui-settings'
+    const general='@deepseek-ai/dsh-client-ui-settings-general'
+    const models='@deepseek-ai/dsh-client-ui-settings-models'
+    full.entries.push(...[base,general,models,'@deepseek-ai/dsh-client-ui-sidebar'].map(id=>({id,url:`/${id.split('/').pop()}.js`,rev:'native',inject:id===base?[]:[base]})))
+    full.batches=[{phase:'application',url:'/native.js',rev:'native',entries:full.entries.map(entry=>entry.id)}]
+    const original=JSON.stringify(full)
+    const response=responseDouble()
+    const sidebarClient={id:'@senguoyun/dsh-arkme/harness-sidebar',url:'/sidebar-client.js',rev:'sidebar'}
+    await createHarnessEmbedRouteHandler({getGraph:()=>full,installedPackageNames:()=>[],readRootHtml:async()=>htmlWithGraph(full),sidebarClient,
+      onboardingClient:{id:'onboarding',url:'/onboarding.js',rev:'1'},sessionClient:{revision:'1',defaultWorkspacePath:'/workspace',apiPath:'/api/session'},
+    })({method:'GET',url:'/arkme-self/harness-frame?arkme-model-settings=1'} as IncomingMessage,response.value)
+    expect(response.status()).toBe(200)
+    const projected=projectHarnessBootGraph(full,[],undefined,undefined,sidebarClient,true)
+    expect(projected.entries.map(entry=>entry.id)).toContain(models)
+    expect(projected.entries.map(entry=>entry.id)).not.toContain(general)
+    expect(projected.batches?.flatMap(batch=>batch.entries)).not.toContain(general)
+    expect(response.body()).toContain(bootAssignment(projected,'dsh-v0.1.1-rc.2'))
+    expect(response.body()).not.toContain('data-arkme-session-restore')
+    expect(response.body()).not.toContain('data-arkme-native-transport')
+    expect(response.body()).not.toContain('/onboarding.js')
+    expect(JSON.stringify(full)).toBe(original)
+    expect(projectHarnessBootGraph(full,[]).entries.map(entry=>entry.id)).toContain(general)
+    const legacy=projectHarnessBootGraph(full,[],undefined,undefined,sidebarClient)
+    expect(legacy.entries.map(entry=>entry.id)).not.toContain(models)
+    expect(legacy.entries.map(entry=>entry.id)).toContain(general)
+    expect(legacy.entries.map(entry=>entry.id)).toContain(sidebarClient.id)
+  })
+  it('fails explicitly if the native model feature or rendering adapter is unavailable', async()=>{
+    const full=graph(), response=responseDouble()
+    await createHarnessEmbedRouteHandler({getGraph:()=>full,installedPackageNames:()=>[],readRootHtml:async()=>htmlWithGraph(full)})({method:'GET',url:'/?arkme-model-settings=1'} as IncomingMessage,response.value)
+    expect(response.status()).toBe(503)
+    expect(response.body()).toContain('role="alert"')
+  })
   it('rebases the 0.2 relative document base and resources when embedded under arkme-self', async () => {
     const full = graph()
     const response = responseDouble()

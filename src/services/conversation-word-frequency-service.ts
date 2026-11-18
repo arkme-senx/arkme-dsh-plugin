@@ -4,7 +4,7 @@ import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type { SourceService } from './source-service.js'
 import { ArkmePluginError, type ServiceRuntime } from './service.js'
 
-/** Proposed Chat-owner adapter. Never scan the current UI timeline or individual profiles. */
+/** Chat-owner adapter. Never scan the current UI timeline or individual profiles. */
 export class ConversationWordFrequencyService {
   private epoch = 0
   private readonly unsubscribe: () => void
@@ -25,13 +25,13 @@ export class ConversationWordFrequencyService {
       throw new ArkmePluginError('chat-words-scope-invalid', '词频范围不是有效的私聊或群聊', false, 400)
     return { q, session, source, guard, body: conversationWordsEnvelope(q, source.ownerRef) }
   }
-  private request(path: string, body: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal, write = false) {
+  private request(path: string, body: Record<string, unknown>, session: ArkmeSessionCredentials, signal?: AbortSignal, write = false, chatAccessRef?: string) {
     return this.runtime.authenticatedChatPost<unknown>(`/api/v1/chats/word-frequency/${path}`, body, session, signal,
-      { lane: write ? 'write' : 'interactive-read', cacheMs: 0, bypassCache: true })
+      { lane: write ? 'write' : 'interactive-read', cacheMs: 0, bypassCache: true, ...(chatAccessRef ? { chatAccessRef } : {}) })
   }
-  private async supported(session: ArkmeSessionCredentials, signal?: AbortSignal) {
+  private async supported(session: ArkmeSessionCredentials, signal?: AbortSignal, chatAccessRef?: string) {
     let value: unknown
-    try { value = await this.request('capabilities', { schema_version: 1, scope: 'conversation_words' }, session, signal) }
+    try { value = await this.request('capabilities', { schema_version: 1, scope: 'conversation_words' }, session, signal, false, chatAccessRef) }
     catch (e) { if (e instanceof ArkmePluginError && [404, 501].includes(e.upstreamStatus ?? e.httpStatus)) return false; throw e }
     const v = wordObject(value)
     if (v.supported === false) return false
@@ -41,17 +41,17 @@ export class ConversationWordFrequencyService {
     return true
   }
   async state(input: unknown, signal?: AbortSignal) {
-    const c = await this.context(input, signal), supported = await this.supported(c.session, signal); await c.guard()
+    const c = await this.context(input, signal), supported = await this.supported(c.session, signal, c.source.groupDelegation?.accessRef); await c.guard()
     if (!supported) return unavailableConversationWords()
-    const value = await this.request('state', c.body, c.session, signal); await c.guard()
+    const value = await this.request('state', c.body, c.session, signal, false, c.source.groupDelegation?.accessRef); await c.guard()
     return parseConversationWordsState(value, c.q, c.source.ownerRef)
   }
   async create(input: unknown, signal?: AbortSignal) {
     const c = await this.context(input, signal), requestId = wordText(wordObject(input).requestId, 100)
     if (!/^[a-zA-Z0-9-]{16,100}$/.test(requestId)) throw new Error('词频分析请求标识无效')
-    if (!await this.supported(c.session, signal)) throw new ArkmePluginError('chat-words-unavailable', '对话词频服务尚未接通', false, 501)
+    if (!await this.supported(c.session, signal, c.source.groupDelegation?.accessRef)) throw new ArkmePluginError('chat-words-unavailable', '对话词频服务尚未接通', false, 501)
     await c.guard()
-    const value = await this.request('create', { ...c.body, request_id: requestId }, c.session, signal, true); await c.guard()
+    const value = await this.request('create', { ...c.body, request_id: requestId }, c.session, signal, true, c.source.groupDelegation?.accessRef); await c.guard()
     const state = parseConversationWordsState(value, c.q, c.source.ownerRef)
     if (wordObject(value).request_id !== requestId || (!state.job && !state.result)) throw new Error('分析提交尚未确认，请核对同一次请求')
     return state
@@ -59,7 +59,7 @@ export class ConversationWordFrequencyService {
   async participants(input: unknown, signal?: AbortSignal) {
     const c = await this.context(input, signal), v = wordObject(input)
     const search = typeof v.search === 'string' && v.search.length <= 200 ? v.search.trim() : ''
-    const value = await this.request('participants', { ...c.body, search, cursor: v.cursor == null ? null : wordText(v.cursor, 4096), limit: 50 }, c.session, signal); await c.guard()
+    const value = await this.request('participants', { ...c.body, search, cursor: v.cursor == null ? null : wordText(v.cursor, 4096), limit: 50 }, c.session, signal, false, c.source.groupDelegation?.accessRef); await c.guard()
     const response = wordObject(value)
     if (response.search !== search) throw new Error('发言者搜索结果已变化，请重试')
     return parseConversationWordParticipants(value, c.q, c.source.ownerRef)
@@ -67,12 +67,12 @@ export class ConversationWordFrequencyService {
   async messages(input: unknown, signal?: AbortSignal) {
     const c = await this.context(input, signal), v = wordObject(input), resultId = wordText(v.resultId), wordKey = wordText(v.wordKey)
     const value = await this.request('messages', { ...c.body, result_id: resultId, word_key: wordKey,
-      cursor: v.cursor == null ? null : wordText(v.cursor, 4096), limit: 50 }, c.session, signal); await c.guard()
+      cursor: v.cursor == null ? null : wordText(v.cursor, 4096), limit: 50 }, c.session, signal, false, c.source.groupDelegation?.accessRef); await c.guard()
     return parseConversationWordMessages(value, c.q, c.source.ownerRef, resultId, wordKey)
   }
   async source(input: unknown, signal?: AbortSignal) {
     const c = await this.context(input, signal), v = wordObject(input), resultId = wordText(v.resultId), sourceRef = wordText(v.messageSourceRef, 4096)
-    const data = wordObject(await this.request('source', { ...c.body, result_id: resultId, source_ref: sourceRef }, c.session, signal)); await c.guard()
+    const data = wordObject(await this.request('source', { ...c.body, result_id: resultId, source_ref: sourceRef }, c.session, signal, false, c.source.groupDelegation?.accessRef)); await c.guard()
     assertConversationWordsEnvelope(data, c.q, c.source.ownerRef)
     const owner = recordOwnerId(data.record_owner_user_id)
     if (owner === 0 || data.available !== true || data.result_id !== resultId || data.source_ref !== sourceRef || typeof data.send_at !== 'number' || !Number.isSafeInteger(data.send_at) || data.send_at <= 0)

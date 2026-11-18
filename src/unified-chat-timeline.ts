@@ -1,6 +1,6 @@
 import type { ArkmeConversationMemberJoinEvent, ArkmeConversationMemberJoinPerson, ArkmeInterwovenMention, ArkmeMemberEvent, ArkmeTimelineItem } from './types.js'
 
-export const CHAT_TIMELINE_SOURCES = ['messages', 'interwoven', 'group_metadata', 'member_left', 'ai_polish', 'world_public', 'wechat_import', 'offline_context'] as const
+export const CHAT_TIMELINE_SOURCES = ['messages', 'interwoven', 'group_metadata', 'member_left', 'ai_polish', 'world_public', 'wechat_import', 'offline_context','team_membership'] as const
 export type ArkmeTimelineSource = typeof CHAT_TIMELINE_SOURCES[number]
 export type ArkmeTimelineMode = 'initial' | 'older' | 'newer' | 'around' | 'refresh'
 export interface ArkmeUnifiedTimelineQuery {
@@ -29,6 +29,8 @@ export interface ArkmeTimelineSourceStatus {
 export interface ArkmeTimelineEventOrder {
   /** Stable account-bound event identity, distinct from a Record identity. */
   eventId: string
+  /** Host-issued locator for system rows supported by the around endpoint. */
+  systemRef?: string
   source: ArkmeTimelineSource
   occurredAtMillis: number
   orderTie: string
@@ -47,7 +49,7 @@ export type ArkmeUnifiedTimelineEvent = ArkmeTimelineEventOrder & (
   | { kind: 'moment'; item: ArkmeInterwovenMention }
   | { kind: 'member-event'; item: ArkmeMemberEvent }
   | { kind: 'member-join'; item: ArkmeTimelineMemberJoinEvent }
-  | { kind: 'notice'; text: string }
+  | { kind: 'notice'; text: string; retryable?: true; hidden?: true; recallSender?: Pick<ArkmeTimelineItem, 'senderName' | 'memberRef' | 'isMe'> }
   | { kind: 'external'; title: string; text: string }
   | { kind: 'world-public'; recordRef: string; authorName: string }
   | { kind: 'offline-context'; entryRef: string; revision: string; title: string; summary: string }

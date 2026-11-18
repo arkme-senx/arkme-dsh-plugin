@@ -6,9 +6,9 @@ import type { RecordingTotalsProgress } from './recording-total-scan.js'
 import { useRecordingMonthTotals } from './use-recording-month-totals.js'
 
 /** Statistics publish progressively without rendering the reading pane again. */
-export function RecordingTotalMetricsLoader({ account, active, refreshRevision, monthStamp }: { account: string; active: boolean; refreshRevision: string; monthStamp: number }) {
-  const totals = useRecordingMonthTotals(account, monthStamp, active, refreshRevision)
-  return <RecordingTotalMetrics monthStamp={monthStamp} metrics={totals.progress?.metrics} loading={!totals.progress || ['discovering', 'calculating'].includes(totals.progress.phase)}
+export function RecordingTotalMetricsLoader({ account, active, refreshRevision, monthStamp, timeZone }: { account: string; active: boolean; refreshRevision: string; monthStamp: number; timeZone?: string | undefined }) {
+  const totals = useRecordingMonthTotals(account, monthStamp, active, refreshRevision, timeZone)
+  return <RecordingTotalMetrics monthStamp={monthStamp} timeZone={timeZone} metrics={totals.progress?.metrics} loading={!totals.progress || ['discovering', 'calculating'].includes(totals.progress.phase)}
     error={totals.progress?.phase === 'error'} progress={totals.progress} onRetry={totals.retry} />
 }
 
@@ -19,10 +19,10 @@ function metricLabel(value: number | null | undefined, state: RecordingMetricSta
     : `${label}${state === 'ready' ? '' : tr('（已确认）')}`
 }
 
-export function RecordingTotalMetrics({ metrics, loading, error = false, progress, onRetry, monthStamp = Date.now() }: { metrics?: Metrics | undefined; loading: boolean; error?: boolean; progress?: RecordingTotalsProgress | undefined; onRetry?: (() => void) | undefined; monthStamp?: number }) {
+export function RecordingTotalMetrics({ metrics, loading, error = false, progress, onRetry, monthStamp = Date.now(), timeZone }: { metrics?: Metrics | undefined; loading: boolean; error?: boolean; progress?: RecordingTotalsProgress | undefined; onRetry?: (() => void) | undefined; monthStamp?: number; timeZone?: string | undefined }) {
   useArkmeLocale()
   const hint = tr('按当前月份每天详情中的云端录音存储和转写输入时长累加。转写输入包含已记录的系统模型重试，不包含豆包。')
-  const updated = metrics ? `${tr('更新于')} ${new Intl.DateTimeFormat(arkmeIntlLocale(), { dateStyle: 'short', timeStyle: 'short' }).format(metrics.asOfMillis)}` : ''
+  const updated = metrics ? `${tr('更新于')} ${new Intl.DateTimeFormat(arkmeIntlLocale(), { hourCycle: 'h23', dateStyle: 'short', timeStyle: 'short', timeZone }).format(metrics.asOfMillis)}` : ''
   const labels = [
     [tr('云端录音存储'), metrics?.storage.bytes == null ? metricLabel(null, metrics?.storage.state, recordingBytesLabel) : recordingBytesLabel(metrics.storage.bytes) + tr(metrics.storage.state === 'ready' ? '（已记录）' : '（部分已记录）')],
     [tr('转写输入时长'), metrics?.asrInput.durationMillis == null && (metrics?.asrInput.missingHistoryCount ?? 0) > 0 ? tr('历史计量缺失') : metricLabel(metrics?.asrInput.durationMillis, metrics?.asrInput.state, recordingInputDurationLabel, metrics?.asrInput.estimated)],

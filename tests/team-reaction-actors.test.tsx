@@ -14,6 +14,7 @@ it('uses current profile and Team remarks without waiting for each reaction row 
   expect(actors.resolveActor({ userId: 8, displayName: '用户', teamPersonKey: 'peer', presentationPending: true })).toMatchObject({ displayName: '私人备注', presentationPending: false })
   expect(actors.resolveActor({ userId: 9, displayName: '用户' })).toBeUndefined()
   expect(callArkme).toHaveBeenCalledTimes(1)
+  expect(vi.mocked(callArkme).mock.calls[0]?.[3]).toEqual({priority:'background'})
   await act(async () => ui.unmount())
 })
 it('does not reuse a late self profile after switching accounts', async () => {

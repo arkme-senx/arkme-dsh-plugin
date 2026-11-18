@@ -65,17 +65,18 @@ it('mounts bounded rows around a restored anchor and disconnects observers on un
   vi.stubGlobal('IntersectionObserver', class { observe = observe; disconnect = disconnect; constructor(public callback: unknown) {} })
   vi.stubGlobal('ResizeObserver', class { observe = vi.fn(); disconnect = disconnect })
   const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+  const renderRow = vi.fn((index: number) => <li key={index} data-row={`row-${index}`} />)
   function Fixture() {
     const body = useRef<HTMLDivElement>(null)
     const rows = Array.from({ length: 2000 }, (_, index) => ({ id: `row-${index}` }))
-    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body} anchorId="row-1005">
-      {rows.map(row => <li key={row.id} data-row={row.id}>{row.id}</li>)}
-    </WindowedTimelineRows></ul></div>
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}
+      anchorId="row-1005" renderRow={renderRow} /></ul></div>
   }
   try {
     await act(async () => root.render(<Fixture />))
     expect(host.querySelector('[data-row="row-1005"]')).not.toBeNull()
     expect(host.querySelectorAll('[data-row]')).toHaveLength(40)
+    expect(renderRow.mock.calls.flat()).toEqual(Array.from({ length: 40 }, (_, index) => 1000 + index))
     expect(observe).toHaveBeenCalledTimes(50)
     await act(async () => root.unmount())
     expect(disconnect).toHaveBeenCalled()
@@ -167,4 +168,32 @@ it('locates a system event by its signed row identity, never by an unrelated rec
  host.innerHTML = '<li data-arkme-message-item-uid="chat-event:signed-system"></li><li data-arkme-conversation-row="chat-event:signed-system"></li>'
  expect(arkmeConversationTargetRow(host, target)).toBe(host.children[1])
  expect(arkmeConversationTargetRow(host, { ...target, itemUid: 'missing' })).toBeUndefined()
+})
+
+it('records deferred media heights without an extra React commit for measurement alone', async () => {
+  const { Profiler } = await import('react')
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('IntersectionObserver', class { observe() {}; disconnect() {} })
+  const resize: ResizeObserverCallback[] = []
+  vi.stubGlobal('ResizeObserver', class { observe() {}; disconnect() {}; constructor(callback: ResizeObserverCallback) { resize.push(callback) } })
+  let height = 4000
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => ({ height }) as DOMRect)
+  const commit = vi.fn()
+  function Fixture() {
+    const body = useRef<HTMLDivElement>(null)
+    const rows = Array.from({ length: 2000 }, (_, n) => ({ id: `row-${n}` }))
+    return <div ref={body}><ul><WindowedTimelineRows rowIds={rows} scrollport={body}>
+      {rows.map(row => <li key={row.id}>{row.id}</li>)}
+    </WindowedTimelineRows></ul></div>
+  }
+  const host = document.createElement('div'); const root = createRoot(host)
+  try {
+    await act(async () => root.render(<Profiler id="timeline" onRender={commit}><Fixture /></Profiler>))
+    const before = commit.mock.calls.length
+    for (let n = 0; n < 50; n++) {
+      height += 20
+      await act(async () => resize.forEach(callback => callback([], {} as ResizeObserver)))
+    }
+    expect(commit.mock.calls.length).toBe(before)
+  } finally { await act(async () => root.unmount()); vi.restoreAllMocks(); vi.unstubAllGlobals() }
 })

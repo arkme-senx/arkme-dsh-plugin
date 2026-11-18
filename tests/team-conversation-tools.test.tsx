@@ -3,6 +3,7 @@ import { act } from 'react'
 import { Simulate } from 'react-dom/test-utils'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { invalidateTeamMessageKeys, subscribeTeamMessageChanges } from '../src/client/team-messaging-events.js'
 import { TeamConversationTools } from '../src/client/TeamConversationTools.js'
 import { findSelectedMessageText } from '../src/client/message-selection-search.js'
 import type { TeamConversation, TeamIdentity, TeamMessage } from '../src/team-app-contract.js'
@@ -198,7 +199,10 @@ it('invalidates displayed summaries when source location loses access and keeps 
   await act(async()=>host.querySelector<HTMLButtonElement>('[data-team-history-hit]')!.click())
   const row=host.querySelector<HTMLButtonElement>('[data-team-history-hit]')!
   expect(row.disabled).toBe(true);expect(row.textContent).toContain('正在定位…')
-  await act(async()=>fail(new Error('原消息无权访问')))
+  await act(async()=>{
+    invalidateTeamMessageKeys('prod:11', conversation.key, ['m20'])
+    fail(new Error('原消息无权访问'))
+  })
   expect(host.querySelector('[data-team-history-hit]')).toBeNull();expect(host.textContent).toContain('原消息无权访问')
 })
 
@@ -210,4 +214,16 @@ it('keeps personal remarks ahead of the existing current-name resolver in the or
   call.mockImplementation(async(op,p,signal)=>op==='team.app.people.remarks'?{items:[{personKey:'p',remark:'个人备注'}]}:implementation(op,p,signal))
   await act(async()=>window.dispatchEvent(new Event('focus')))
   expect([...host.querySelectorAll('select option')].map(option=>option.textContent)).toContain('个人备注')
+})
+
+it('shows a locate timeout without revoking mounted message reads',async()=>{
+  const changed=vi.fn(),stop=subscribeTeamMessageChanges(changed)
+  try {
+    locate.mockRejectedValue(new Error('定位网络超时'))
+    await act(async()=>mount())
+    await act(async()=>{findSelectedMessageText('team-ref','关键词')})
+    await act(async()=>host.querySelector<HTMLButtonElement>('[data-team-history-hit="m20"]')!.click())
+    expect(host.textContent).toContain('定位网络超时')
+    expect(changed).not.toHaveBeenCalled()
+  } finally {stop()}
 })

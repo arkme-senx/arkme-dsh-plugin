@@ -9,6 +9,9 @@ vi.mock('../src/client/api.js', async importOriginal => ({
 
 import { ArkmeRecordingSurface } from '../src/client/ArkmeRecordingSurface.js'
 
+const maxBinding = { catalogReleaseId: '11', offeringRevisionId: '21', publicModelCode: 'max' }
+const glmBinding = { catalogReleaseId: '11', offeringRevisionId: '22', publicModelCode: 'glm' }
+
 const tick = async () => { await Promise.resolve(); await Promise.resolve() }
 
 function renderedText(node: ReactTestInstance): string {
@@ -30,8 +33,9 @@ describe('recording summary and timeline generation', () => {
       if (operation === 'recordings.summary-model-config') return {
         defaultRouteKey: 'dashscope/qwen3-max', effectiveRouteKey: 'dashscope/qwen3-max',
         options: [
-          { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max' },
-          { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5' },
+          { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max', available:true, binding:maxBinding },
+          { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5', available:true, binding:glmBinding },
+          { routeKey: 'dashscope/unavailable', provider: 'dashscope', modelKey: 'unavailable', displayName: '不可用模型', available: false },
         ],
       }
       if (operation === 'recordings.summary-model-config.set') return { effectiveRouteKey: String(params?.routeKey) }
@@ -49,8 +53,9 @@ describe('recording summary and timeline generation', () => {
         summary: { state: 'empty', message: '暂无已生成内容', items: [] },
         timeline: { state: 'empty', message: '暂无已生成内容', items: [] },
       }
-      if (operation === 'recordings.generate') {
-        return { state: 'processing', message: '内容仍在生成', items: [] }
+      if (operation === 'recordings.analysis' && params?.action === 'select') return {accountScope:'',effectiveRouteKey:params.routeKey}
+      if (operation === 'recordings.analysis') {
+        return {accountScope:'',section:{ state: 'processing', message: '内容仍在生成', items: [] }}
       }
       throw new Error(`unexpected operation: ${String(operation)}`)
     })
@@ -60,6 +65,22 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { renderer?.unmount(); await tick() })
     vi.useRealTimers()
     vi.restoreAllMocks()
+  })
+
+  it('generates a scene-approved account model without fabricating an official points binding', async () => {
+    const routeKey = 'user-api/019a4c10-0000-7000-8000-000000000001'
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => operation === 'recordings.summary-model-config'
+      ? { defaultRouteKey: routeKey, effectiveRouteKey: routeKey, options: [{ routeKey, provider: 'user-api', modelKey: 'own', displayName: '自己的模型', available: true }] }
+      : original(operation, params, signal))
+    await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />); await tick() })
+    await act(async () => { button(renderer, '总结').props.onClick(); await tick() })
+    await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick() })
+    await act(async () => { button(renderer, '确认并生成').props.onClick(); await tick() })
+    const requests = mocks.callArkme.mock.calls.filter(([operation, params]) => operation === 'recordings.analysis' && params?.action === 'generate')
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.[1]).toMatchObject({ routeKey, kind: 'summary' })
+    expect(requests[0]?.[1]).not.toHaveProperty('binding')
   })
 
   it('polls received transcript work independently of incomplete capture and completed analysis', async () => {
@@ -125,7 +146,7 @@ describe('recording summary and timeline generation', () => {
     await advancePoll(1)
     expect(dayReads).toBe(93)
     expect(renderedText(renderer.root)).toContain('生成未完成，请重试或选择其他模型。')
-    expect(button(renderer, '选择模型并重试')).toBeDefined()
+    expect(button(renderer, '选择模型并生成新版本')).toBeDefined()
     await advancePoll(60_000)
     expect(dayReads).toBe(93)
   }, 15_000)
@@ -255,18 +276,21 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { button(renderer, kind === 'summary' ? '总结' : '时间轴').props.onClick(); await tick() })
     expect(renderedText(renderer.root)).toContain('模型请求失败，请稍后重试或选择其他模型。')
     expect(renderedText(renderer.root)).toContain('模型：DeepSeek V4 Flash')
-    await act(async () => { button(renderer, '选择模型并重试').props.onClick(); await tick() })
+    await act(async () => { button(renderer, '选择模型并生成新版本').props.onClick(); await tick() })
     await act(async () => { renderer.root.findByProps({ 'aria-label': '关闭模型面板' }).props.onClick(); await tick() })
-    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.generate' || op === 'recordings.summary-model-config.set')).toHaveLength(0)
-    await act(async () => { button(renderer, '选择模型并重试').props.onClick(); await tick() })
-    const options = renderer.root.findByProps({ 'aria-label': '全部已接入模型' })
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.analysis' || op === 'recordings.summary-model-config.set')).toHaveLength(0)
+    await act(async () => { button(renderer, '选择模型并生成新版本').props.onClick(); await tick() })
+    const options = renderer.root.findByProps({ 'aria-label': '当前场景可用模型' })
+    expect(renderedText(options)).not.toContain('不可用模型')
     await act(async () => {
       options.findAll(node => node.type === 'button' && renderedText(node).includes('GLM-5'))[0]!.props.onClick()
       await tick()
     })
     await act(async () => { button(renderer, '确认并生成').props.onClick(); await tick() })
-    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.generate', {
-      dateStamp: expect.any(Number), kind, routeKey: 'dashscope/glm-5',
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.summary-model-config', { kind }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.analysis', { action:'select',accountScope:'',kind, routeKey: 'dashscope/glm-5' }, expect.any(AbortSignal))
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.analysis', {
+      action:'generate', accountScope:'', dateStamp: expect.any(Number), kind, routeKey: 'dashscope/glm-5', binding:glmBinding,
     }, expect.any(AbortSignal))
   })
 
@@ -280,8 +304,8 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick() })
     await act(async () => { button(renderer, '确认并生成').props.onClick(); await tick() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.generate', {
-      dateStamp: expect.any(Number), kind: 'summary', routeKey: 'dashscope/qwen3-max',
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.analysis', {
+      action:'generate',accountScope:'',dateStamp: expect.any(Number), kind: 'summary', routeKey: 'dashscope/qwen3-max', binding:maxBinding,
     }, expect.any(AbortSignal))
     expect(renderedText(renderer.root)).toContain('生成总结中...')
     expect(renderer.root.findAll(node => node.type === 'button' && renderedText(node) === '点击生成总结')).toHaveLength(0)
@@ -290,8 +314,8 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { button(renderer, '点击生成时间轴').props.onClick(); await tick() })
     await act(async () => { button(renderer, '确认并生成').props.onClick(); await tick() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.generate', {
-      dateStamp: expect.any(Number), kind: 'timeline', routeKey: 'dashscope/qwen3-max',
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.analysis', {
+      action:'generate',accountScope:'',dateStamp: expect.any(Number), kind: 'timeline', routeKey: 'dashscope/qwen3-max', binding:maxBinding,
     }, expect.any(AbortSignal))
     expect(renderedText(renderer.root)).toContain('生成时间轴中...')
   })
@@ -301,7 +325,7 @@ describe('recording summary and timeline generation', () => {
     const summaryResponse = new Promise(resolve => { finishSummary = resolve })
     const originalImplementation = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
-      if (operation === 'recordings.generate' && params?.kind === 'summary') return await summaryResponse
+      if (operation === 'recordings.analysis' && params?.kind === 'summary') return await summaryResponse
       return await originalImplementation(operation, params, signal)
     })
     await act(async () => {
@@ -323,14 +347,14 @@ describe('recording summary and timeline generation', () => {
       await tick()
     })
     expect(mocks.callArkme.mock.calls.filter(([operation, params]) => (
-      operation === 'recordings.generate' && params?.kind === 'summary'
+      operation === 'recordings.analysis' && params?.kind === 'summary'
     ))).toHaveLength(1)
     await act(async () => { button(renderer, '时间轴').props.onClick(); await tick() })
     await act(async () => { button(renderer, '点击生成时间轴').props.onClick(); await tick() })
     await act(async () => { button(renderer, '确认并生成').props.onClick(); await tick() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.generate', {
-      dateStamp: expect.any(Number), kind: 'timeline', routeKey: 'dashscope/qwen3-max',
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.analysis', {
+      action:'generate',accountScope:'',dateStamp: expect.any(Number), kind: 'timeline', routeKey: 'dashscope/qwen3-max', binding:maxBinding,
     }, expect.any(AbortSignal))
 
     await act(async () => {
@@ -343,7 +367,7 @@ describe('recording summary and timeline generation', () => {
     let attempts = 0
     const originalImplementation = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
-      if (operation === 'recordings.generate' && params?.kind === 'summary') {
+      if (operation === 'recordings.analysis' && params?.kind === 'summary') {
         attempts += 1
         if (attempts === 1) throw new Error('生成服务暂时不可用')
       }
@@ -371,7 +395,7 @@ describe('recording summary and timeline generation', () => {
     let requestSignal: AbortSignal | undefined
     const originalImplementation = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params, signal) => {
-      if (operation === 'recordings.generate' && params?.kind === 'summary') {
+      if (operation === 'recordings.analysis' && params?.kind === 'summary') {
         requestSignal = signal
         return await new Promise(() => undefined)
       }
@@ -462,18 +486,18 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { button(renderer, '重新生成').props.onClick(); await tick() })
 
     const dialog = renderer.root.findByProps({ 'aria-label': '选择总结生成模型' })
-    const modelOptions = dialog.findByProps({ 'aria-label': '全部已接入模型' })
+    const modelOptions = dialog.findByProps({ 'aria-label': '当前场景可用模型' })
     await act(async () => {
       modelOptions.findAll(node => node.type === 'button' && renderedText(node).includes('GLM-5'))[0]!.props.onClick()
       await tick()
     })
     await act(async () => { button(renderer, '确认并生成').props.onClick(); await tick() })
 
-    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.summary-model-config.set', {
-      routeKey: 'dashscope/glm-5',
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.analysis', {
+      action:'select',accountScope:'',kind: 'summary', routeKey: 'dashscope/glm-5',
     }, expect.any(AbortSignal))
-    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.generate', {
-      dateStamp: expect.any(Number), kind: 'summary', routeKey: 'dashscope/glm-5',
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.analysis', {
+      action:'generate',accountScope:'',dateStamp: expect.any(Number), kind: 'summary', routeKey: 'dashscope/glm-5', binding:glmBinding,
     }, expect.any(AbortSignal))
   })
 
@@ -495,7 +519,31 @@ describe('recording summary and timeline generation', () => {
     await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick(); await tick() })
     expect(reads).toBe(2)
     expect(renderer.root.findByProps({ 'aria-label': '选择总结生成模型' })).toBeDefined()
-    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.generate')).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.analysis')).toHaveLength(0)
+  })
+
+  it('reloads a previously ready directory and asks for a new choice after the saved route is removed', async () => {
+    const original = mocks.callArkme.getMockImplementation()!
+    let reads = 0
+    mocks.callArkme.mockImplementation(async (operation, params, signal) => {
+      const value = await original(operation, params, signal)
+      if (operation !== 'recordings.summary-model-config' || ++reads === 1) return value
+      return { ...value, options: value.options
+        .filter((option: { routeKey: string }) => option.routeKey !== value.effectiveRouteKey)
+        .map((option: { routeKey: string }) => reads === 2 ? { ...option, available: false } : option) }
+    })
+    await act(async () => {
+      renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />)
+      await tick()
+    })
+    await act(async () => { button(renderer, '总结').props.onClick(); await tick() })
+    await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick() })
+    expect(renderedText(renderer.root)).toContain('暂无可用生成模型，请稍后重试。')
+    expect(renderer.root.findAllByProps({ 'aria-label': '选择总结生成模型' })).toHaveLength(0)
+    await act(async () => { button(renderer, '点击生成总结').props.onClick(); await tick() })
+    expect(button(renderer, '确认并生成').props.disabled).toBe(true)
+    expect(renderedText(renderer.root)).toContain('请选择模型')
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'recordings.analysis')).toHaveLength(0)
   })
 
   it('does not reopen a model dialog for another day after a slow configuration retry', async () => {
@@ -524,7 +572,7 @@ describe('recording summary and timeline generation', () => {
       await tick()
     })
     expect(renderer.root.findAllByProps({ 'aria-label': '选择总结生成模型' })).toHaveLength(0)
-    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.generate')).toHaveLength(0)
+    expect(mocks.callArkme.mock.calls.filter(([op]) => op === 'recordings.analysis')).toHaveLength(0)
     expect(button(renderer, '点击生成总结').props.disabled).toBe(false)
   })
 

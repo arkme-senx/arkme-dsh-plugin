@@ -16,15 +16,16 @@ export function useMentionBots(account: string | undefined, kind: string | undef
         if (auth?.status !== 'authenticated' || `${auth.environment}:${String(auth.userId)}` !== account) throw new Error('Account changed')
       }
       assertAccount()
+      const priority = opened || force ? undefined : { priority: 'background' as const }
       const data = kind === 'group_chat'
-        ? { group: (await callArkme<ArkmeGroupBotCandidateList>('group.bots', { sourceRef })).items, private: [] }
-        : { group: [], private: (await callArkme<ArkmeBotList>('bots.list')).items }
+        ? { group: (await callArkme<ArkmeGroupBotCandidateList>('group.bots', { sourceRef }, undefined, priority)).items, private: [] }
+        : { group: [], private: (await callArkme<ArkmeBotList>('bots.list', undefined, undefined, priority)).items }
       assertAccount()
       return data
     }, force)
-  }, [account, key, kind, sourceRef])
+  }, [account, key, kind, sourceRef, opened])
   // Prefetch on entry; reopening @ only revalidates stale data, never clears rows.
-  useEffect(() => { load() }, [load, opened])
+  useEffect(() => { load() }, [load])
   useEffect(() => kind !== 'group_chat' || !key ? undefined : subscribeGroupBotChanges(account, sourceRef, removed => {
     mentionBotCache.invalidate(key, removed)
     load()

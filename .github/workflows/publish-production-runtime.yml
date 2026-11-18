@@ -1,5 +1,5 @@
 name: 构建并发布 Arkme 插件生产 Runtime
-run-name: 发布 Arkme 生产 Runtime v${{ github.event.client_payload.version }}
+run-name: 发布 Arkme 生产 Runtime v${{ github.event.client_payload.version }}${{ github.event.client_payload.build_creator && format('（构建创建人：{0}）', github.event.client_payload.build_creator) || '' }}
 
 on:
   repository_dispatch:

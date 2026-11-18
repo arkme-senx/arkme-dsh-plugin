@@ -9,7 +9,7 @@ function fixture() {
   let fail = false
   const store = <T>(getSnapshot: () => T) => ({ getSnapshot, subscribe: () => () => {} })
   const conversation: DraftConversation = {
-    input: { for: scope => ({ state: store(() => inputs.get((scope as { id: string }).id)!), addAttachments: ids => { inputs.get((scope as { id: string }).id)!.attachmentIds.push(...ids); return true } }) },
+    input: { for: scope => ({ state: store(() => inputs.get((scope as { id: string }).id)!), setDraft: text => { const input = inputs.get((scope as { id: string }).id)!; input.draft = text; input.draftRev++ }, addAttachments: ids => { inputs.get((scope as { id: string }).id)!.attachmentIds.push(...ids); return true } }) },
     createDrafts: (_id, batch) => batch.map(file => { const id = String(++seq); const draft: NativeDraft = { id, kind: file.type === 'image/png' ? 'image' : 'file', file }; files.set(id, draft); uploads[id] = { status: fail ? 'error' : 'ready', message: '上传失败' }; return draft }),
     releaseDraftAttachments: drafts => { for (const draft of drafts) files.delete(draft.id) },
     fileUploads: store(() => uploads),
@@ -140,4 +140,54 @@ it.each(['abort', 'dispose', 'failure', 'navigation'] as const)('releases owners
   expect(f.files.size).toBe(0)
   expect(f.current()).toBe(kind === 'navigation' ? 'user-selected' : 'old')
   if (kind === 'abort' || kind === 'dispose') gate.reject(new Error('late failure'))
+})
+
+it('fills diagnostics in a fresh native text draft, preserves existing input and retries idempotently', async () => {
+  const f = fixture()
+  const req = { ...request(), files: [], text: '诊断\n@local/test: loading' }
+  const result = await f.bridge.prepare(req)
+  expect(f.inputs.get(result.sessionId)).toMatchObject({ draft: req.text, attachmentIds: [] })
+  expect(f.inputs.get('old')?.draft).toBe('原有草稿')
+  expect(f.files.size).toBe(0)
+  expect(await f.bridge.prepare(req)).toEqual(result)
+  expect(f.created()).toBe(1)
+})
+
+it('does not report success if the native text input rejects the draft; retry uses the same session', async () => {
+  const f = fixture()
+  const originalScope = f.sessions.scope.bind(f.sessions)
+  let reject = true
+  f.sessions.scope = id => {
+    const scope = originalScope(id)
+    if (!scope) return scope
+    const conversation = scope.get('conversation') as DraftConversation
+    return { ...scope, get: () => ({ ...conversation, input: { for: (s: unknown) => {
+      const input = conversation.input.for(s)
+      return { ...input, setDraft: (text: string) => { if (!reject) input.setDraft!(text) } }
+    } } }) }
+  }
+  const req = { ...request(), files: [], text: '诊断信息' }
+  await expect(f.bridge.prepare(req)).rejects.toThrow('输入框')
+  expect(f.current()).toBe('old')
+  reject = false
+  const result = await f.bridge.prepare(req)
+  expect(f.inputs.get(result.sessionId)?.draft).toBe(req.text)
+  expect(f.created()).toBe(1)
+})
+
+it('rejects native inputs lacking text capability without changing their draft', async () => {
+  const f = fixture()
+  const originalScope = f.sessions.scope.bind(f.sessions)
+  f.sessions.scope = id => {
+    const scope = originalScope(id)
+    if (!scope) return scope
+    const conversation = scope.get('conversation') as DraftConversation
+    return { ...scope, get: () => ({ ...conversation, input: { for: (s: unknown) => {
+      const { setDraft: _setDraft, ...input } = conversation.input.for(s)
+      return input
+    } } }) }
+  }
+  await expect(f.bridge.prepare({ ...request(), files: [], text: 'diagnostics' })).rejects.toThrow('不支持')
+  expect(f.current()).toBe('old')
+  expect([...f.inputs.values()].filter(input => input.draft === 'diagnostics')).toHaveLength(0)
 })

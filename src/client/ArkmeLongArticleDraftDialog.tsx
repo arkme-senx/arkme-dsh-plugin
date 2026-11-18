@@ -1,3 +1,5 @@
+import { arkmeWallClockIso } from './display-time-zone.js'
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, type CSSProperties } from 'react'
 import type { ArkmeContentBlock, ArkmeLongArticleDraft } from '../types.js'
 import { createArkmeSdk } from '../sdk/index.js'
@@ -28,8 +30,7 @@ export function ArkmeLongArticleDraftDialog({ draft, blocks = [], preview, onPre
   }, [preview])
   const date = new Date(draft.updatedAtMillis)
   const validDate = draft.updatedAtMillis > 0 && Number.isFinite(date.getTime())
-  const two = (value: number) => String(value).padStart(2, '0')
-  const savedTime = validDate ? `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}` : tr('保存时间未知')
+  const savedTime = validDate ? arkmeWallClockIso(date.getTime()).slice(0, 19).replace('T', ' ') : tr('保存时间未知')
   return <div style={{ position: 'fixed', inset: 0, zIndex: 1300, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(0,0,0,.52)' }}>
     <section role="dialog" aria-modal="true" aria-label={tr(preview ? '草稿预览' : '发现未发布的草稿')} onKeyDown={event => {
       if (event.key !== 'Tab') return
@@ -39,7 +40,7 @@ export function ArkmeLongArticleDraftDialog({ draft, blocks = [], preview, onPre
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
     }} style={{ position: 'relative', width: preview ? 'min(760px, 90vw)' : 'min(440px, 90vw)', maxHeight: '80vh', display: 'flex', flexDirection: 'column', padding: 24, boxSizing: 'border-box', borderRadius: 16, background: theme.base, color: theme.text, boxShadow: theme.shadow }}>
       <h3 style={{ margin: '0 32px 16px 0', fontSize: 18 }}>{tr(preview ? '草稿预览' : '发现未发布的草稿')}</h3>
-      <button ref={closeRef} autoFocus type="button" aria-label={tr(preview ? '关闭草稿预览' : '关闭草稿恢复弹窗')} style={{ ...button, position: 'absolute', top: 12, right: 12, fontSize: 26 }} onClick={() => preview ? onPreview(false) : onClose()}>×</button>
+      <ArkmeCloseButton ref={closeRef} autoFocus type="button" aria-label={tr(preview ? '关闭草稿预览' : '关闭草稿恢复弹窗')} style={{ ...button, position: 'absolute', top: 12, right: 12, fontSize: 26 }} onClick={() => preview ? onPreview(false) : onClose()} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 14 }}>
         <span style={{ color: theme.secondary }}>{tr('保存时间：')}</span>
         <time dateTime={validDate ? date.toISOString() : undefined} style={{ color: theme.info }}>{savedTime}</time>

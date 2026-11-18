@@ -4,7 +4,7 @@ import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { FileTransfers, type FileTransferPorts } from '../src/services/file-transfers.js'
 import { arkmeCanInlineLocalFile, arkmePickedFileKind, arkmeVisibleUploadFraction } from '../src/file-transfer-contract.js'
-import { fileTaskTimelineItem } from '../src/client/file-send-tasks.js'
+import { fileTaskTimelineItem, bindSentFileTaskLocals } from '../src/client/file-send-tasks.js'
 import { createArkmeFileTransfers } from '../src/file-transfer-owner.js'
 import { ArkmePluginError } from '../src/services/service.js'
 import { ArkmeStateStore } from '../src/state-store.js'
@@ -35,7 +35,182 @@ async function fixture() {
 }
 const input = (fileRefs: string[]) => ({ sourceRef: 'source', recordUid: '00000000-0000-4000-8000-000000000001', relationUid: '00000000-0000-4000-8000-000000000002', fileRefs, content: { textContent: 'hello' } })
 
+it.each(['sent', 'failed', 'uncertain'] as const)('notifies a text-only %s outcome after persistence without resending', async state => {
+  const f = await fixture()
+  if (state === 'failed') f.send.mockResolvedValue({ kind: 'owner_not_accepted', message: 'rejected', retryable: false })
+  if (state === 'uncertain') f.send.mockResolvedValue({ kind: 'owner_outcome_unknown' })
+  let persisted: Promise<string> | undefined
+  const notify = vi.fn(() => { persisted = readFile(join(f.directory, '42', 'text-sends.json'), 'utf8') })
+  f.ports.onProgressChange = notify
+  const request = input([])
+  const task = await f.owner.enqueue(request)
+  await f.owner.settled()
+  expect(notify).toHaveBeenCalledExactlyOnceWith(42, task.taskRef, expect.objectContaining({ taskRef: task.taskRef, state, revision: 3 }))
+  expect(JSON.parse(await persisted!).tasks[0].state).toBe(state)
+  expect((await f.owner.tasks())[0]!.state).toBe(state)
+  expect(f.send).toHaveBeenCalledOnce()
+  if (state === 'sent') {
+    await f.owner.enqueue(request); await f.owner.settled()
+    expect(f.send).toHaveBeenCalledOnce()
+    expect(notify).toHaveBeenCalledOnce()
+  }
+  f.owner.dispose()
+})
+
+it('does not notify a text completion before its final disk write succeeds', async () => {
+  const f = await fixture()
+  const accepted = f.send.getMockImplementation()!
+  let complete!: () => void
+  const gate = new Promise<void>(resolve => { complete = resolve })
+  f.send.mockImplementation(async (...args) => { await gate; return accepted(...args) })
+  const notify = vi.fn(); f.ports.onProgressChange = notify
+  await f.owner.enqueue(input([]))
+  await vi.waitFor(() => expect(f.send).toHaveBeenCalledOnce())
+  expect(notify).not.toHaveBeenCalled()
+  const path = join(f.directory, '42', 'text-sends.json')
+  await rm(path); await mkdir(path)
+  complete(); await expect(f.owner.settled()).rejects.toMatchObject({ code: 'EISDIR' })
+  expect(notify).not.toHaveBeenCalled()
+  f.owner.dispose()
+})
+
+it('keeps a text receipt readable when its notification listener fails', async () => {
+  const f = await fixture()
+  f.ports.onProgressChange = () => { throw new Error('disconnected listener') }
+  await f.owner.enqueue(input([])); await f.owner.settled()
+  expect((await f.owner.tasks())[0]!.state).toBe('sent')
+  expect(f.send).toHaveBeenCalledOnce()
+  f.owner.dispose()
+})
+
+it('lets another conversation send while preserving the first conversation queue', async () => {
+  const f = await fixture()
+  const accepted = f.send.getMockImplementation()!
+  const release = new Map<string, () => void>(), started: string[] = []
+  f.send.mockImplementation(async (...args) => {
+    const id = args[0].recordUid
+    started.push(id)
+    await new Promise<void>(resolve => { release.set(id, resolve) })
+    return accepted(...args)
+  })
+  const make = (i: number, sourceRef: string) => ({ ...input([]), sourceRef,
+    recordUid: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` })
+  const a = make(10, 'a'), nextA = make(11, 'a'), b = make(12, 'b')
+  try {
+    await f.owner.enqueue(a); await f.owner.enqueue(nextA); await f.owner.enqueue(b)
+    await vi.waitFor(() => expect(started).toEqual([a.recordUid, b.recordUid]))
+    release.get(a.recordUid)!()
+    await vi.waitFor(() => expect(started).toContain(nextA.recordUid))
+    release.get(nextA.recordUid)!(); release.get(b.recordUid)!()
+    await f.owner.settled()
+    expect((await f.owner.tasks()).every(task => task.state === 'sent')).toBe(true)
+  } finally { for (const done of release.values()) done(); f.owner.dispose() }
+})
+
+it('hands at most five queued text bodies to the ordered owner and retains every durable receipt', async () => {
+  const f = await fixture(), accepted = f.send.getMockImplementation()!
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  f.send.mockImplementationOnce(async (...args) => { await gate; return accepted(...args) })
+  f.validateSource.mockImplementation(async () => 'private_chat:chat')
+  f.ports.orderedSendsReady = () => true
+  const sizes: number[] = []
+  f.ports.runOrderedSends = async actions => { sizes.push(actions.length); await Promise.all(actions.map(action => action())) }
+  try {
+    for (let i = 10; i < 20; i++) await f.owner.enqueue({ ...input([]), recordUid: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` })
+    release(); await f.owner.settled()
+    expect(sizes).toEqual([5, 4])
+    expect(f.send).toHaveBeenCalledTimes(10)
+    expect((await f.owner.tasks()).every(task => task.state === 'sent' && (task.revision ?? 0) >= 3)).toBe(true)
+  } finally { release(); f.owner.dispose() }
+})
+
+it.each([false, true])('holds an unattempted suffix behind an unknown receipt, including restart=%s', async restart => {
+  const f = await fixture(), accepted = f.send.getMockImplementation()!
+  f.validateSource.mockImplementation(async () => 'private_chat:chat')
+  f.ports.orderedSendsReady = () => true
+  f.ports.runOrderedSends = async actions => { await Promise.all(actions.map(action => action())) }
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let suffixCalls = 0
+  f.send.mockImplementation(async (...args) => {
+    const id = args[0].recordUid
+    if (id.endsWith('000000000010')) { await gate; return accepted(...args) }
+    if (id.endsWith('000000000011')) return { kind: 'owner_outcome_unknown' }
+    if (suffixCalls++ === 0) return { kind: 'owner_not_accepted', code: 'send-order-unattempted', message: 'not submitted', retryable: true }
+    return accepted(...args)
+  })
+  let owner = f.owner
+  try {
+    for (let i = 10; i < 13; i++) await owner.enqueue({ ...input([]), recordUid: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` })
+    release()
+    await vi.waitFor(async () => expect((await owner.tasks()).map(task => task.state)).toEqual(['sent', 'uncertain', 'queued']))
+    expect(suffixCalls).toBe(1)
+    if (restart) {
+      owner.dispose(); owner = new FileTransfers(f.directory, f.ports, 1000)
+      await owner.resume()
+      expect((await owner.tasks()).map(task => task.state)).toEqual(['sent', 'uncertain', 'queued'])
+    }
+    expect(suffixCalls).toBe(1)
+    const uncertain = (await owner.tasks()).find(task => task.state === 'uncertain')!
+    f.ports.reconcile = async task => ({ sourceRef: task.sourceRef, itemUid: task.recordUid, status: 1, localState: 'synced' })
+    await owner.reconcile(uncertain.taskRef); await owner.settled()
+    expect(suffixCalls).toBe(2)
+    expect((await owner.tasks()).every(task => task.state === 'sent')).toBe(true)
+    expect(await owner.tasks()).not.toContainEqual(expect.objectContaining({ orderedPipeline: true }))
+  } finally { release(); owner.dispose(); f.owner.dispose() }
+})
+
+it.each([false, true, 'without-resume'] as const)('waits for every unknown ordered predecessor, including restart=%s', async restart => {
+  const f = await fixture(), accepted = f.send.getMockImplementation()!
+  f.validateSource.mockImplementation(async () => 'group_chat:chat')
+  f.ports.orderedSendsReady = () => true
+  f.ports.runOrderedSends = async actions => { await Promise.all(actions.map(action => action())) }
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const started: number[] = []
+  f.send.mockImplementation(async (...args) => {
+    const id = Number(args[0].recordUid.slice(-12)); started.push(id)
+    if (id === 10) await gate
+    if (id === 11 || id === 12) return { kind: 'owner_outcome_unknown' }
+    return accepted(...args)
+  })
+  let owner = f.owner
+  const make = (i: number) => ({ ...input([]), recordUid: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}` })
+  try {
+    for (let i = 10; i <= 12; i++) await owner.enqueue(make(i))
+    release()
+    await vi.waitFor(async () => expect((await owner.tasks()).map(task => task.state)).toEqual(['sent', 'uncertain', 'uncertain']))
+    if (restart) {
+      owner.dispose(); owner = new FileTransfers(f.directory, f.ports, 1000)
+      if (restart !== 'without-resume') await owner.resume()
+    }
+    await owner.enqueue(make(13))
+    f.ports.reconcile = async task => ({ sourceRef: task.sourceRef, itemUid: task.recordUid, status: 1, localState: 'synced' })
+    await owner.reconcile((await owner.tasks())[1]!.taskRef)
+    expect(started).toEqual([10, 11, 12])
+    await owner.reconcile((await owner.tasks())[2]!.taskRef)
+    await owner.settled()
+    expect(started).toEqual([10, 11, 12, 13])
+    expect((await owner.tasks()).every(task => task.state === 'sent')).toBe(true)
+  } finally { release(); owner.dispose(); f.owner.dispose() }
+})
+
 describe('account-bound file lifecycle', () => {
+  it('stores oriented image dimensions with the staged file and restores them after restart', async () => {
+    const f = await fixture()
+    const { default: sharp } = await import('sharp')
+    const image = await sharp({ create: { width: 80, height: 40, channels: 3, background: '#fff' } })
+      .jpeg().withMetadata({ orientation: 6 }).toBuffer()
+    const file = await f.owner.stageBytes(image.toString('base64'), { fileName: 'rotated.jpg', mimeType: 'image/jpeg' })
+    expect(file.imageDimensions).toEqual({ width: 40, height: 80 })
+    expect(file.inlinePhotoPreview!.length).toBeLessThanOrEqual(2048)
+    const thumbnail = await sharp(Buffer.from(file.inlinePhotoPreview!, 'base64')).metadata()
+    expect(thumbnail).toMatchObject({ format: 'jpeg', width: 16, height: 32 })
+    const restarted = new FileTransfers(f.directory, f.ports, 1000)
+    await expect(restarted.readLocal(file.fileRef)).resolves.toMatchObject({ file })
+  })
+
   it('reclaims expired reference-managed staging after receipts release it, including after restart', async () => {
     const f = await fixture()
     const file = await f.stage('edit.pdf', 'references')
@@ -604,8 +779,8 @@ describe('account-bound file lifecycle', () => {
     const owner = createArkmeFileTransfers({
       directory,
       maxUploadBytes: 1_000,
-      runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [] } } as never,
-      source: { openSourceRef: async () => ({ kind: 'private_chat' }) } as never,
+      runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [] } } as never,
+      source: { openSourceRef: async () => ({ kind: 'private_chat' }), sourceScopeKey: async () => 'private' } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
       }) } as never,
@@ -647,8 +822,8 @@ describe('account-bound file lifecycle', () => {
     const owner = createArkmeFileTransfers({
       directory,
       maxUploadBytes: 1_000,
-      runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [] } } as never,
-      source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
+      runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [] } } as never,
+      source: { openSourceRef: async () => ({ kind: 'send_to_self' }), sourceScopeKey: async () => 'self' } as never,
       media: { uploadLocalFile: async (_path: string, metadata: { fileName: string }) => ({
         ...metadata, fileAssetUid: `asset-${metadata.fileName}`,
       }) } as never,
@@ -964,8 +1139,8 @@ it('preserves cloud and local attachment order through the durable file owner', 
   const directory = await mkdtemp(join(tmpdir(), 'arkme mixed composer ')); directories.push(directory)
   const sendSourceRich = vi.fn(async (_ref: string, _content: unknown, options: { recordUid: string }) => ({ sourceRef: 'source', itemUid: options.recordUid, status: 1, localState: 'synced' as const }))
   const owner = createArkmeFileTransfers({ directory, maxUploadBytes: 1000,
-    runtime: { requireSession: async () => ({ userId: 42 }), stateStore: { recordReeditFileRefs: async () => [], arkoFileRefs: async () => [] } } as never,
-    source: { openSourceRef: async () => ({ kind: 'send_to_self' }) } as never,
+    runtime: { requireSession: async () => ({ userId: 42 }), authenticatedPost: async () => { throw new ArkmePluginError('unsupported', 'old server', false, 404) }, stateStore: { recordReeditFileRefs: async () => [], arkoFileRefs: async () => [] } } as never,
+    source: { openSourceRef: async () => ({ kind: 'send_to_self' }), sourceScopeKey: async () => 'self' } as never,
     media: { uploadLocalFile: async (_path: string, metadata: object) => ({ ...metadata, fileAssetUid: 'uploaded-local' }) } as never,
     chat: { sendSourceRich, readSource: async () => ({ items: [] }) } as never,
   })!
@@ -975,4 +1150,33 @@ it('preserves cloud and local attachment order through the durable file owner', 
   await owner.enqueue(command); await owner.settled()
   expect(sendSourceRich).toHaveBeenCalledWith('source', expect.objectContaining({ assets: [expect.objectContaining({ fileAssetUid: 'uploaded-local' }), cloud] }), expect.anything())
   await expect(owner.enqueue({ ...command, attachmentOrder: [...command.attachmentOrder].reverse() })).rejects.toMatchObject({ code: 'file-send-conflict' })
+})
+
+it('retains local previews for both pending and ready blocks as progressive uploads settle', async () => {
+  const f = await fixture(), file = await f.stage('paper.pdf')
+  const task = await f.owner.enqueue(input([file.fileRef])); await f.owner.settled()
+  const finished = (await f.owner.tasks())[0]!
+  finished.delivery = 'progressive'
+  finished.files[0]!.attachmentUid = 'slot'
+  const item = { ...fileTaskTimelineItem(finished), contentBlocks: [
+    { kind: 'file' as const, mediaRef: '', attachmentUid: 'slot', attachmentState: 'pending' as const, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder: 0 },
+    { kind: 'file' as const, mediaRef: 'remote', fileAssetUid: finished.files[0]!.asset!.fileAssetUid, fileName: file.fileName, mimeType: file.mimeType, size: file.size, sortOrder: 1 },
+  ] }
+  expect(bindSentFileTaskLocals(item, [finished]).contentBlocks?.map(block => block.localFileRef)).toEqual([file.fileRef, file.fileRef])
+  expect(bindSentFileTaskLocals(item, [])).toBe(item)
+})
+
+it('binds same-name pending previews by attachment identity after remote reordering', async () => {
+  const f = await fixture(), a = await f.stage('same.pdf'), b = await f.stage('same.pdf')
+  await f.owner.enqueue(input([a.fileRef, b.fileRef])); await f.owner.settled()
+  const task = (await f.owner.tasks())[0]!
+  task.delivery = 'progressive'
+  Object.assign(task.files[0]!, { attachmentUid: 'slot-a' })
+  Object.assign(task.files[1]!, { attachmentUid: 'slot-b' })
+  const item = { ...fileTaskTimelineItem(task), contentBlocks: [
+    { kind: 'file' as const, mediaRef: '', attachmentUid: 'slot-b', attachmentState: 'pending' as const, fileName: b.fileName, mimeType: b.mimeType, size: b.size, sortOrder: 0 },
+  ] }
+  const block = bindSentFileTaskLocals(item, [task]).contentBlocks![0]!
+  expect(block.localFileRef).toBe(b.fileRef)
+  expect(block.sortOrder).toBe(0)
 })

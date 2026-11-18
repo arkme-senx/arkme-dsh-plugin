@@ -78,9 +78,14 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
       : undefined
     const initialFocus = cancelRef.current ?? dialogRef.current
     initialFocus?.focus({ preventScroll: true })
+    const dialog = dialogRef.current
     return () => {
       const previousFocus = previousFocusRef.current
-      if (previousFocus?.isConnected === true) previousFocus.focus({ preventScroll: true })
+      const active = document.activeElement
+      // A completed action may deliberately focus its destination before cleanup.
+      if (previousFocus?.isConnected === true && (active === document.body || active === null || dialog?.contains(active))) {
+        previousFocus.focus({ preventScroll: true })
+      }
     }
   }, [])
 
@@ -112,7 +117,7 @@ export function ArkmeConfirmDialog(props: ArkmeDialogProps) {
     }
     if (event.key !== 'Tab' || typeof document === 'undefined') return
     const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])',
     )
     if (focusable === undefined || focusable.length === 0) {
       event.preventDefault()

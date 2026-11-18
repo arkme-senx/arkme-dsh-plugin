@@ -1,3 +1,4 @@
+import { recordHistoryToolModule } from './history.js'
 import type { ArkmeToolModule } from '../../contract/module.js'
 import { createRecordToolModule } from './create.js'
 import { listImagesToolModule } from './images.js'
@@ -11,4 +12,5 @@ export const recordBusinessToolModules: readonly ArkmeToolModule[] = [
   listImagesToolModule,
   createRecordToolModule,
   reeditRecordToolModule,
+  recordHistoryToolModule,
 ]

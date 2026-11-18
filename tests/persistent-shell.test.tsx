@@ -241,6 +241,27 @@ describe('Arkme persistent DSH shell', () => {
     arkmeUi.showConversations()
   })
 
+  it('lets inline workspace modals share the global overlay layer while inactive pages stay inaccessible', () => {
+    const props = {
+      useSessions: (select: (state: { ids: string[]; byId: Record<string, never> }) => unknown) => select({ ids: [], byId: {} }),
+      closeDetails: vi.fn(),
+    } as never
+    arkmeUi.showConversations()
+    const active = renderToStaticMarkup(<ArkmePersistentWorkspace {...props} />)
+    const layerStyle = (markup: string) => markup.match(/data-arkme-owned="arkme-conversation-layer" style="([^"]*)"/)?.[1]
+    expect(layerStyle(active)).toContain('visibility:visible')
+    expect(layerStyle(active)).not.toContain('z-index:')
+    arkmeUi.showContacts()
+    const contacts = renderToStaticMarkup(<ArkmePersistentWorkspace {...props} />)
+    expect(layerStyle(contacts)).toContain('visibility:hidden')
+    expect(layerStyle(contacts)).toContain('pointer-events:none')
+    expect(layerStyle(contacts)).toContain('z-index:0')
+    const contactStyle = contacts.match(/data-arkme-contacts-workspace="true" style="([^"]*)"/)?.[1]
+    expect(contactStyle).toContain('position:absolute')
+    expect(contactStyle).not.toContain('z-index:')
+    arkmeUi.showConversations()
+  })
+
   it('embeds the core-only native DSH client inside the current conversation region', () => {
     arkmeUi.showHarness()
     const markup = renderToStaticMarkup(<ArkmePersistentWorkspace {...({

@@ -152,6 +152,8 @@ export function ArkmeActionMenu(props: {
   point?: { x: number; y: number }
   /** Coordinates may originate in a same-origin embedded Harness document. */
   pointDocument?: Document
+  /** Keep a live message's pointer menu through automatic scrolling while its bubble is visible. */
+  pointAnchor?: HTMLElement
   getAnchorRect?: () => DOMRect | null
   selectedIds?: readonly string[]
   align?: 'start' | 'end'
@@ -260,22 +262,43 @@ export function ArkmeActionMenu(props: {
       // A scroll queued before opening can arrive after the menu mounts. It
       // describes the position already used by the pointer anchor, not a move.
       if (event.timeStamp < openedAt) return
-      // Scrolling a long native menu is allowed; scrolling its source dismisses
-      // the pointer anchor rather than leaving commands over unrelated content.
+      // Scrolling a long native menu is allowed. By default a moving source
+      // dismisses; a live message can opt in while its bubble remains visible.
       if (event.target && menu.current?.contains(event.target as Node)) return
+      const anchor = props.pointAnchor
+      const target = event.target
+      if (anchor?.isConnected && target instanceof Node && target.contains(anchor)) {
+        const rect = anchor.getBoundingClientRect()
+        const viewport = target instanceof Element ? target.getBoundingClientRect() : undefined
+        const view = doc.defaultView
+        if (rect.bottom > Math.max(0, viewport?.top ?? 0)
+          && rect.top < Math.min(view?.innerHeight ?? Infinity, viewport?.bottom ?? Infinity)
+          && rect.right > Math.max(0, viewport?.left ?? 0)
+          && rect.left < Math.min(view?.innerWidth ?? Infinity, viewport?.right ?? Infinity)) return
+      }
       closeRef.current()
     }
     const close = () => closeRef.current()
+    // Scroll events do not identify their source. Explicit user input still
+    // dismisses; only an opted-in, visible bubble survives automatic layout.
+    const closeOnInput = (event: Event) => {
+      if (event.target && menu.current?.contains(event.target as Node)) return
+      if (event instanceof KeyboardEvent && !['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) return
+      close()
+    }
     const visibility = () => { if (doc.visibilityState !== 'visible') close() }
     doc.addEventListener('scroll', closeOnScroll, true)
+    const inputs = props.pointAnchor ? ['wheel', 'touchmove', 'keydown'] : []
+    for (const type of inputs) doc.addEventListener(type, closeOnInput, true)
     doc.addEventListener('visibilitychange', visibility)
     doc.defaultView?.addEventListener('resize', close)
     return () => {
       doc.removeEventListener('scroll', closeOnScroll, true)
+      for (const type of inputs) doc.removeEventListener(type, closeOnInput, true)
       doc.removeEventListener('visibilitychange', visibility)
       doc.defaultView?.removeEventListener('resize', close)
     }
-  }, [open, props.point !== undefined, props.pointDocument])
+  }, [open, props.point !== undefined, props.pointDocument, props.pointAnchor])
   useEffect(() => {
     const anchor = props.hoverAnchor
     if (!open || !anchor || typeof document === 'undefined') return
@@ -331,10 +354,9 @@ export function ArkmeActionMenu(props: {
     ...(action.disabled === undefined ? {} : { disabled: action.disabled }),
     ...(action.danger === undefined ? {} : { danger: action.danger }),
   }))
-  // The native Menu still renders an empty inline-flex anchor when anchor=null.
-  // Keep pointer-only anchors out of flow so a menu cannot add a line to its list.
+  // Native Menu creates an empty anchor; externally positioned menus must not add flex gaps.
   return <span ref={root} style={props.anchor ? { display: 'inline-flex' }
-    : props.point ? { position: 'fixed', width: 0, height: 0, display: 'block' } : { display: 'contents' }}
+    : props.point || props.getAnchorRect ? { position: 'fixed', width: 0, height: 0, display: 'block' } : { display: 'contents' }}
     data-arkme-command-menu={props.label}
     onContextMenu={event => { if (menu.current?.contains(event.target as Node)) event.preventDefault() }}
     onKeyDown={event => {

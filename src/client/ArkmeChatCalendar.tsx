@@ -1,3 +1,5 @@
+import { recordingBatchOffset } from '../recording-time.js'
+import { useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useMemo, useRef, useState } from 'react'
 import { CalendarBlank } from '@phosphor-icons/react/dist/icons/CalendarBlank'
@@ -19,8 +21,8 @@ export function ArkmeChatCalendar({ sourceRef, scopeKey, accountScope, getReadin
   useArkmeLocale()
   const [open, setOpen] = useState(false)
   const anchor = useRef<HTMLButtonElement>(null)
-  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local'
-  const offset = -new Date().getTimezoneOffset() * 60_000
+  const timezone = useArkmeEffectiveTimeZone()
+  const offset = recordingBatchOffset(Date.now(), timezone)
   const base = useCalendarMonth({ sourceRef, scopeKey, timezone, startDate: '0001-01-01', endDate: '9999-12-31',
     timezoneOffsetMillis: offset }, true, accountScope)
   const value = useMemo(() => interactions ? mergeConversationCalendar(base.value, interactions.moments, offset) : base.value,

@@ -23,11 +23,14 @@ it('discovers and invokes the unified owner through an official DSH session, pre
     switch (command.kind) {
       case 'reserve': return cache.reserve() as T
       case 'read': return cache.read(command.scope, command.request, command.anchorId, command.latest) as T
-      case 'write': return cache.write(command.scope, command.request, command.page, command.options) as T
+      case 'write': {
+        const accepted = cache.write(command.scope, command.request, command.page, command.options)
+        return (accepted && command.readBack ? cache.read(command.scope, command.request) : accepted) as T
+      }
       default: return undefined as T
     }
   }, close() {} }
-  const post = vi.fn(async () => ({ protocol_version: 2, chat_session_uid: 'internal-chat', timeline_items: [],
+  const post = vi.fn(async () => ({ protocol_version: 3, chat_session_uid: 'internal-chat', timeline_items: [],
     sources: CHAT_TIMELINE_SOURCES.map(source => ({ source, status: source === 'interwoven' ? 'gap' : 'ready', item_count: 0 })),
     complete: false, window_token: 'upstream-secret', older_has_more: false, newer_has_more: false, has_more: false }))
   const owner = new UnifiedChatTimelineService({ config: { environment: 'test', fileStateDirectory: directory }, requireSession: async () => ({ userId: 1 }),
@@ -69,5 +72,10 @@ it('discovers and invokes the unified owner through an official DSH session, pre
     expect(readWorldRecord).toHaveBeenCalledWith('public-ref', controller.signal)
     expect(post.mock.calls).toHaveLength(2)
     expect(readSource).toHaveBeenCalledWith('opaque-source', expect.objectContaining({ cursor: { unified: { mode: 'initial' } }, signal: expect.any(AbortSignal) }))
+    const forward = await ctx.tools.execute({ callId: CallId('forward-read'), agent: agent as never,
+      signal: controller.signal, name: 'arkme_source_read', arguments: { source_ref: 'opaque-source', cursor: { afterSequence: 0 } } })
+    expect(forward.isError).toBe(false)
+    expect(readSource).toHaveBeenCalledWith('opaque-source', expect.objectContaining({ cursor: { afterSequence: 0 }, signal: expect.any(AbortSignal) }))
+
   } finally { owner.dispose(); cache.close(); rmSync(directory, { recursive: true, force: true }); await ctx.fiber.dispose() }
 })

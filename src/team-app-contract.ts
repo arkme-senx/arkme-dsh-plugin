@@ -11,18 +11,23 @@ export type TeamAppOperation = `team.app.${
   | 'snapshot.capabilities' | 'snapshot.seal' | 'snapshot.read' | 'snapshot.receipt'
   | 'history' | 'history.chunk' | 'extensions' | 'copy-link' | 'report' | 'preflight' | 'locate' | 'send.enqueue' | 'send.tasks' | 'send.retry-task' | 'send.cancel-task' | 'send' | 'send.status' | 'edit' | 'delete' | 'recall' | 'cancel' | 'home.visibility' | 'read' | 'receipts' | 'receipt-summaries' | 'read-states' | 'block'
   | 'profile.get' | 'profile.update' | 'profile.status' | 'profile.avatar.upload' | 'profile.avatar.abort'
+  | 'feature-links.get' | 'feature-links.save'
   | 'notification-policy.get' | 'notification-policy.set' | 'notification.open'
   | 'entries.cached' | 'entries.query' | 'entries.list' | 'entries.change'
-  | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image'
+  | 'attention' | 'join.status' | 'applications' | 'application.decide' | 'image' | 'image-cache.batch' | 'image-manifest'
   | 'mark.capabilities' | 'mark.list' | 'mark.change' | 'official.membership'
   | 'visitor.private.open' | 'person.private.open' | 'visitor.world-target' | 'person.world-target' | 'people.remarks' | 'outbound.open'
-  | 'group.context' | 'group.join' | 'group.directory'
+  | 'group.context' | 'group.join' | 'group.directory' | 'group.request' | 'group.join-context' | 'group.command' | 'group.status' | 'group.participants' | 'group.approvals'
+  | 'workspace' | 'workspace.folders' | 'workspace.request' | 'sources.cards' | 'sources.occurrences' | 'sources.locate'
   | 'internal-group.prepare'
   | 'public-card' | 'member-candidates' | 'members.add' | 'members.add-recover' | 'members.add-retry' | 'members.add-ack'
   | 'world.view'
   | 'local-mark.capabilities' | 'local-mark.list' | 'local-mark.change'
 }`
 export type TeamSide = 'team' | 'external'
+export const TEAM_AVATAR_CACHE_BATCH_SIZE = 8
+export interface TeamAvatarCacheHit { base64: string; mimeType: string; imageKey: string }
+export interface TeamAvatarDescriptor { ref: string; key: string }
 /** Presentation-only status; current membership is resolved against the official target by the Host. */
 export interface TeamOfficialMembership { jotmoId: string; isMember: boolean }
 export interface TeamIdentity {
@@ -42,12 +47,19 @@ export interface TeamChannel {
   canPause?: boolean
 }
 export interface TeamConversation {
+  sourceOnly?:boolean
+  hasGroupSources?:boolean
+	/** Backend-confirmed member contact, independent of first publication. */
+	memberInitiated?: boolean
   entryKey?: string
   ref: string; key: string; channel: TeamChannel; visitor?: TeamIdentity; side: TeamSide
   lastSeq: number; latestTeamReplySeq: number; myReadSeq: number; unread: number; needsReply: boolean
   notificationPolicy?: TeamNotificationPolicy; attentionUnread?: number
   blocked: boolean; revision: number; updatedAt: number
-  preview?: { text: string; status: string; hasMedia: boolean; templateKind?: number }
+  preview?: { text: string; summary?: string; status: string; hasMedia: boolean; templateKind?: number }
+}
+export function hasTeamDirectEntry(conversation: TeamConversation): boolean {
+  return conversation.lastSeq > 0 || conversation.side === 'team' && conversation.memberInitiated === true
 }
 export interface TeamMention { personRef: string; displayName: string; startIndex: number; length: number }
 export interface TeamContent { mentions?: TeamMention[]; text_content: string; title?: string; template_kind: number; display_kind?: number; content_payload?: Record<string, unknown> }
@@ -85,8 +97,10 @@ export interface TeamReceipts {
   members: TeamReceiptMember[]
 }
 export interface TeamMembers {
+  /** Present only for an authorized Team-side conversation-scoped read. */
+  visitor?: TeamIdentity
   membershipRevision: number; canAddMembers: boolean
-  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
+  team: ArkmeTeam; items: Array<ArkmeTeamMember & { key: string; canRemove: boolean; codexSync?: TeamMemberCodexSync; personKey?: string; personRef?: string; isMe?: boolean }>; totalCount: number; hasMore: boolean; nextPageCursor?: string
   /** Optional presentation has its own lifecycle; unavailable is not an empty avatar. */
   avatarState?: 'pending' | 'ready' | 'unavailable'
 }
@@ -116,10 +130,12 @@ export interface TeamExtensionPage { message: TeamMessage; items: TeamMessage[];
 
 /** A scoped invalidation hint, never a read grant or raw backend locator. */
 export interface TeamMessageChangeHint {
+  canonicalChatSourceKey?:string
   kind: string
   messageRevision?: number
   conversationRevision?: number
   sequence?: number
   messageKey?: string
+  messageKeys?: readonly string[]
   conversationKeys?: string[]
 }

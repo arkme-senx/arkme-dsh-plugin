@@ -168,10 +168,10 @@ describe('SourceService', () => {
     expect((await service.chatSourceFromBundle(bundle, session, cached, [], { previewSnapshot: true })).latestPreview).toBe('新消息')
     const item = { itemUid: 'new', title: '', textContent: '更新消息', senderName: '同事', isMe: false, status: 1, sendAtMillis: 101, sequence: 11 }
     expect((await service.chatSourceFromBundle(bundle, session, cached, [item], { previewSnapshot: true })).latestPreview).toBe('更新消息')
-    for (const status of ['unavailable', 'missing']) {
+    for (const status of ['unavailable', 'missing', 3, 2, 4]) {
       const updated = await service.chatSourceFromBundle({ ...bundle, session: { ...bundle.session, last_seq: 10 },
         latest_preview: { record: { status, payload: { text_content: '不得使用的正文' } } } }, session, cached, [], { previewSnapshot: true })
-      expect(updated.latestPreview ?? '').toBe(status === 'missing' ? '' : '新消息')
+      expect(updated.latestPreview ?? '').toBe(status === 'unavailable' || status === 3 ? '新消息' : '')
     }
   })
 
@@ -1101,7 +1101,8 @@ describe('SourceService', () => {
           sendAtMillis: item.send_at,
           title: '',
           textContent: item.record_core.text_content,
-          templateKind: 1,
+          templateKind: 2,
+          contentBlocks: [{ kind: 'video', mediaRef: 'video', fileName: 'clip.mp4', mimeType: 'video/mp4', size: 1, sortOrder: 0 }],
           status: 1,
           version: 1,
         }
@@ -1112,11 +1113,11 @@ describe('SourceService', () => {
     const defaultCategory = result.items.find(item => item.kind === 'default_category')
     expect(result.items.some(item => item.topicKind === 3)).toBe(false)
     expect(result.items.filter(item => item.kind === 'topic')).toMatchObject([{ displayName: 'DSH Agent Input', recordCount: 1 }])
-    expect(result.items[0]).toMatchObject({ latestPreview: '普通发给自己', activeAtMillis: 190 })
+    expect(result.items[0]).toMatchObject({ latestPreview: '[视频]普通发给自己', activeAtMillis: 190 })
 
     expect(defaultCategory).toMatchObject({
       displayName: '未分类',
-      latestPreview: '普通发给自己',
+      latestPreview: '[视频]普通发给自己',
       activeAtMillis: 190,
     })
   })

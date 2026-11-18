@@ -318,7 +318,8 @@ export class CalendarService {
       throw new ArkmePluginError('calendar-timezone-invalid', '时区偏移无效', false, 400)
     }
     // Preserve Flutter's fixed timezone-offset contract, including historical buckets.
-    const key = JSON.stringify(['chat-calendar', session.userId, source.ownerRef, timezone, offset])
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,options.signal)
+    const key = JSON.stringify(['chat-calendar', session.userId, source.groupDelegation?await this.source.sourceScopeKey(source):source.ownerRef, timezone, offset])
     const revision = () => String(this.runtime.readRevision?.(`user:${session.userId}`) ?? 0)
     const version = revision()
     const cached = this.months.get(key)
@@ -327,7 +328,8 @@ export class CalendarService {
       const data = await this.runtime.authenticatedChatPost<Record<string, unknown>>(
         '/api/v1/chats/session/statistics',
         { chat_session_uid: source.ownerRef, tz_offset_millis: offset }, session, signal,
-        { lane: options.background === true ? 'background-read' : 'interactive-read', key: `calendar:chat:${source.ownerRef}:${offset}`, cancelWhenUnobserved: true },
+        { lane: options.background === true ? 'background-read' : 'interactive-read', key: `calendar:chat:${source.ownerRef}:${offset}`, cancelWhenUnobserved: true,
+          ...(source.groupDelegation?{chatAccessRef:source.groupDelegation.accessRef,bypassCache:true,cacheMs:0}:{}) },
       )
       if (!Array.isArray(data.daily_data)) {
         throw new ArkmePluginError('calendar-statistics-invalid', '会话日历数据不完整，请重试', true, 502)
@@ -350,6 +352,7 @@ export class CalendarService {
       const value: ArkmeCalendarBucketPage = { scope: source.kind as 'private_chat' | 'group_chat',
         startDate: '0001-01-01', endDate: '9999-12-31', timezone, refreshedAtMillis: Date.now(),
         days, totalDayCount: days.length }
+      if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
       signal.throwIfAborted()
       if (isCurrent() && revision() === version) {
         this.months.delete(key)

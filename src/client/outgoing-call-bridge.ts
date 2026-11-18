@@ -5,6 +5,7 @@ export const DESKTOP_CALL_CHANNEL = `jot${'mo'}-desktop-call`
 const DESKTOP_CALL_HOST_KEY = `__JOT${'MO'}_DESKTOP_CALL_HOST__`
 
 const BRIDGE_EVENT_TYPES = new Set([
+  'im_ready', 'im_kicked',
   'ready', 'state', 'incoming', 'calling', 'begin', 'end', 'user_reject', 'user_no_response',
   'user_line_busy', 'not_connected', 'permission_denied', 'fatal_error',
   'toggle_fullscreen_request', 'toggle_compact_mode_request', 'hide_window_request',
@@ -17,6 +18,7 @@ const HOST_COMMAND_TYPES = new Set([
 
 export interface DesktopCallBridgeEvent {
   type: string
+  registrationId?: string
   callerName?: string
   requestId?: string
   roomId?: string
@@ -53,10 +55,14 @@ export function parseDesktopCallBridgeEvent(
   if (event.data === null || typeof event.data !== 'object' || Array.isArray(event.data)) return undefined
   const envelope = event.data as Record<string, unknown>
   if (envelope.channel !== DESKTOP_CALL_CHANNEL || envelope.callRequestId !== context.callRequestId) return undefined
-  if (typeof envelope.message !== 'string' || envelope.message.length > 65_536) return undefined
+  return parseCallMessage(envelope.message)
+}
+
+export function parseCallMessage(payload: unknown): DesktopCallBridgeEvent | undefined {
+  if (typeof payload !== 'string' || payload.length > 65_536) return undefined
 
   let raw: unknown
-  try { raw = JSON.parse(envelope.message) } catch { return undefined }
+  try { raw = JSON.parse(payload) } catch { return undefined }
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined
   const message = raw as Record<string, unknown>
   if (typeof message.type !== 'string' || !BRIDGE_EVENT_TYPES.has(message.type)) return undefined
@@ -75,6 +81,7 @@ export function parseDesktopCallBridgeEvent(
   const callerName = safeString(message.callerName ?? caller.name, 120)
   return {
     type: message.type,
+    ...(typeof message.registrationId === 'string' ? { registrationId: safeString(message.registrationId, 128)! } : {}),
     ...(callerName === undefined ? {} : { callerName }),
     ...(requestId === undefined ? {} : { requestId }),
     ...(roomId === undefined ? {} : { roomId }),
@@ -94,12 +101,17 @@ export function parseDesktopCallBridgeEvent(
 
 type DesktopCallFrameWindow = Window & Record<string, { onHostMessage?: (message: string) => void } | undefined>
 
+export interface NativeCallEndpoint {
+  sendCommand(type: string, payload: Record<string, unknown>): boolean
+}
+
 export function sendDesktopCallCommand(
-  frame: HTMLIFrameElement,
+  frame: HTMLIFrameElement | NativeCallEndpoint,
   type: 'bootstrap' | 'media_permission_result' | 'call' | 'hangup' | 'terminate' | 'logout',
   payload: Record<string, unknown> = {},
 ): boolean {
   if (!HOST_COMMAND_TYPES.has(type)) return false
+  if ('sendCommand' in frame) return frame.sendCommand(type, payload)
   const host = (frame.contentWindow as DesktopCallFrameWindow | null)?.[DESKTOP_CALL_HOST_KEY]
   if (typeof host?.onHostMessage !== 'function') return false
   host.onHostMessage(JSON.stringify({ type, payload }))

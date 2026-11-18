@@ -14,7 +14,9 @@ export function useRecordingTranscriptCopyLinkAction({ items, scope, onNotice }:
   const receipt = useRef<{ key: string; value: ArkmeMessageCopyLinkResult }>()
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
-  const valid = items.length > 0 && items.length <= 150 && items.every(item => item.itemRef && item.sessionKey === items[0]!.sessionKey && item.transcriptSource === items[0]!.transcriptSource)
+  const duration = items.reduce((total, item) => total + Math.max(0, item.endAtMillis - item.startAtMillis), 0)
+  const withinAudioLimit = duration > 0 && duration <= 600_000
+  const valid = withinAudioLimit && items.length > 0 && items.length <= 150 && items.every(item => item.itemRef && item.sessionKey === items[0]!.sessionKey && item.transcriptSource === items[0]!.transcriptSource)
   useEffect(() => {
     setBusy(false); setCopied(false); receipt.current = undefined
     return () => { request.current?.abort(); request.current = undefined }
@@ -22,7 +24,7 @@ export function useRecordingTranscriptCopyLinkAction({ items, scope, onNotice }:
   const copy = async () => {
     if (!valid || request.current) return
     const controller = new AbortController(); request.current = controller
-    const timeout = setTimeout(() => controller.abort(), 30_000)
+    const timeout = setTimeout(() => controller.abort(), 140_000)
     const isCurrent = () => !controller.signal.aborted && current.current === key
     setBusy(true); setCopied(false); onNotice('')
     try {
@@ -46,7 +48,7 @@ export function useRecordingTranscriptCopyLinkAction({ items, scope, onNotice }:
   return {
     id: 'link', label: busy ? '正在生成…' : copied ? '已复制链接' : '复制链接',
     icon: <ArkmeSelectActionIcon kind="link" />, disabled: !valid || busy,
-    reason: !valid ? '请选择同一次录音、同一转写来源的 1–150 个片段' : '复制所选录音片段的分享链接',
+    reason: !withinAudioLimit && items.length > 0 ? '所选音频总时长需在 10 分钟内，请减少片段后重试' : !valid ? '请选择同一次录音、同一转写来源的 1–150 个片段' : '复制所选录音片段的分享链接',
     onSelect: () => { void copy() },
   }
 }

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { subscribeMessageQuoteInvalidations } from './message-quote-invalidations.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react'
@@ -27,7 +28,7 @@ function identity(item: ArkmeSearchRecordItem): string {
 
 function articleDate(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return ''
-  return new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+  return formatArkmeDateTime(value, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit' })
 }
 
 /** Browse the same long-article scene as Flutter, without turning it into an unfiltered keyword search. */

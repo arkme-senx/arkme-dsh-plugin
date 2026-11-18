@@ -18,6 +18,10 @@ function messagePresentation(item: ArkmeTimelineItem): Pick<PresentedMessage, ty
 export function conversationMessageRenderKey(item: ArkmeTimelineItem): string {
   return (item as PresentedMessage)[presentationKey] ?? `message:${item.timelineEventId ?? item.itemUid}`
 }
+export function retainFileMessageRenderKey(item: ArkmeTimelineItem): ArkmeTimelineItem {
+  if (!item.timelineEventId || (item as PresentedMessage)[presentationKey] !== undefined) return item
+  return { ...item, [presentationKey]: `message:${item.itemUid}` } as PresentedMessage
+}
 export function conversationMessageSendFailure(item: ArkmeTimelineItem): SendFailure | undefined {
   return (item as PresentedMessage)[sendFailure]
 }

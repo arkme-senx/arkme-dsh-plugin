@@ -11,6 +11,8 @@ import type {
 } from '../../record-reedit-contract.js'
 
 export interface ArkmeRecordToolPort {
+  recordEditHistoryPage(sourceRef: string, messageActionRef: string, cursorVersion?: number, signal?: AbortSignal): Promise<import('../../record-edit-history.js').ArkmeRecordEditHistoryPage>
+  recordRevisionSnapshot(sourceRef: string, messageActionRef: string, revisionUid: string, signal?: AbortSignal): Promise<import('../../record-edit-history.js').ArkmeRecordRevisionSnapshot>
   refreshLatest(): Promise<void>
   syncHistory(maxPages?: number, signal?: AbortSignal): Promise<{ pages: number; complete: boolean }>
   queryCached(options: {
@@ -19,12 +21,14 @@ export interface ArkmeRecordToolPort {
     beforeMillis?: number
   }): Promise<ArkmeCachedQueryResult>
   searchRemote(options: {
+    sourceRef?: string
     query: string
     limit: number
     cursor?: string
     signal?: AbortSignal
   }): Promise<ArkmeRecordSearchResult>
   searchScene(options: {
+    sourceRef?: string
     scene: ArkmeSearchSceneKind
     articleScope?: import('../../types.js').ArkmeLongArticleBrowseScope
     limit: number

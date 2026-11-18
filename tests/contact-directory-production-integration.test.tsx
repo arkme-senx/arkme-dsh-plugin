@@ -139,8 +139,10 @@ describe('production sibling Contacts tab', () => {
       'aria-hidden': true,
       style: expect.objectContaining({ visibility: 'hidden', pointerEvents: 'none', zIndex: 0 }),
     })
-    expect(renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).props.style)
-      .toEqual(expect.objectContaining({ position: 'absolute', inset: 0, zIndex: 2 }))
+    const contactsWorkspaceStyle = renderer.root.findByProps({ 'data-arkme-contacts-workspace': true }).props.style
+    expect(contactsWorkspaceStyle).toEqual(expect.objectContaining({ position: 'absolute', inset: 0 }))
+    // Inline dialogs must share the global overlay layer above sidebar chrome.
+    expect(contactsWorkspaceStyle.zIndex).toBeUndefined()
 
     await act(async () => { button(renderer, '对话').props.onClick(); await Promise.resolve() })
     expect(renderer.root.findByProps({ 'data-test-conversation-surface': true })).toBe(conversationSurface)

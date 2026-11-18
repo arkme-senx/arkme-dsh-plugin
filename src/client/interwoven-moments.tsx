@@ -1,3 +1,4 @@
+import { arkmeDayDelta, arkmeWallClockIso, formatArkmeDateTime } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { compareTimelineMessages } from './timeline-message-order.js'
@@ -17,11 +18,12 @@ import {
 import { useArkmeAvatarImage } from './use-arkme-avatar-image.js'
 import { ArkmeInterwovenReadReceipt, useArkmeInterwovenReadReceipt } from './ArkmeInterwovenReadReceipt.js'
 import { ArkmeCalendarDateTooltip } from './ArkmeCalendarDateTooltip.js'
+import { ArkmeDirectorySourceAvatar } from './ArkmeAvatar.js'
 
 export type ArkmeConversationRow =
   | { kind: 'message'; id: string; occurredAtMillis: number; item: ArkmeTimelineItem }
   | { kind: 'moment'; id: string; occurredAtMillis: number; item: ArkmeInterwovenMention }
-  | { kind: 'member-event'; id: string; occurredAtMillis: number; item: ArkmeMemberEvent }
+  | { kind: 'member-event'; id: string; occurredAtMillis: number; item: ArkmeMemberEvent; systemRef?: string }
 
 /** Pure deterministic merge; each authority keeps its own identity and duplicate policy. */
 export function mergeConversationRows(
@@ -87,25 +89,20 @@ export function ArkmeInterwovenPrelude({ moments, onOpen }: {
 
 export function interwovenTimeLabel(value: number, now = Date.now()): string {
   const date = new Date(value)
-  const current = new Date(now)
-  const time = new Intl.DateTimeFormat(arkmeIntlLocale(), {
+  const time = formatArkmeDateTime(date, arkmeIntlLocale(), {
     hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date)
-  const dayStart = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime()
-  const targetStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  if (targetStart === dayStart) return time
-  if (targetStart === dayStart - 24 * 60 * 60 * 1000) return tr("昨天 {v0}", { v0: time })
-  const day = new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' }).format(date)
+  })
+  const distance = arkmeDayDelta(value, now)
+  if (distance === 0) return time
+  if (distance === -1) return tr("昨天 {v0}", { v0: time })
+  const day = formatArkmeDateTime(date, arkmeIntlLocale(), { month: '2-digit', day: '2-digit' })
   return `${day} ${time}`
 }
 
 export function interwovenDetailTimeLabel(value: number): string {
-  const date = new Date(value)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hour = String(date.getHours()).padStart(2, '0')
-  const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${month}月${day}日 ${hour}:${minute}`
+  if (!Number.isFinite(new Date(value).getTime())) return ''
+  const wall = arkmeWallClockIso(value)
+  return `${wall.slice(5, 7)}月${wall.slice(8, 10)}日 ${wall.slice(11, 16)}`
 }
 
 export interface InterwovenContentPart {
@@ -280,6 +277,7 @@ export function ArkmeInterwovenDetailAside({
   onClose,
   onRetry,
   onOpenGroup,
+  groupTarget,
   onOpenRelated,
   onSelectRelated,
   onBackRelated,
@@ -295,6 +293,7 @@ export function ArkmeInterwovenDetailAside({
   onClose: () => void
   onRetry: () => void
   onOpenGroup?: () => void
+  groupTarget?: ArkmeSourceItem
   onOpenRelated?: () => void
   onSelectRelated?: (item: ArkmeRelatedQuickNoteItem) => void
   onBackRelated?: () => void
@@ -376,10 +375,10 @@ export function ArkmeInterwovenDetailAside({
             data-arkme-interwoven-group-target={state.detail.groupName}
             onClick={onOpenGroup}
           >
-            <svg viewBox="0 0 16 16" style={styles.groupTagIcon} aria-hidden>
+            {groupTarget ? <ArkmeDirectorySourceAvatar source={groupTarget} size={16} /> : <svg viewBox="0 0 16 16" style={styles.groupTagIcon} aria-hidden>
               <path d="M3 2.5h8.5a2 2 0 0 1 2 2V11a2 2 0 0 1-2 2H3a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1Z" fill="none" stroke="currentColor" strokeWidth="1.4" />
               <path d="M5 5.5h5M5 8h3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-            </svg>
+            </svg>}
             <span style={styles.groupTagText}>{state.detail.groupName}</span>
             <span style={styles.groupTagChevron} aria-hidden>›</span>
           </button>

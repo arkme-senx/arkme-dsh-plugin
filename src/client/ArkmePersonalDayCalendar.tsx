@@ -1,3 +1,5 @@
+import { useConversationCivilDay } from './ArkmeConversationDate.js'
+import { arkmeDayKey, recordingDisplayWindow, useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -36,11 +38,14 @@ export function ArkmePersonalDayCalendar(props: { initialDate?: string | undefin
 
 function PersonalDayCalendar({ accountScope = '', initialDate, onClose }: { initialDate?: string | undefined; accountScope?: string | undefined; onClose(): void }) {
   useArkmeLocale()
-  const [today] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), now.getDate()) })
+  const timezone = useArkmeEffectiveTimeZone()
+  const todayKey = useConversationCivilDay()
+  const today = useMemo(() => new Date(`${todayKey}T00:00:00`), [todayKey])
   const [initial] = useState(() => initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate) ? new Date(`${initialDate}T00:00:00`) : today)
   const [visibleMonth, setVisibleMonth] = useState(() => new Date(initial.getFullYear(), initial.getMonth(), 1))
-  const [query, setQuery] = useState<DayActivityQuery>(() => ({ accountScope, bucketDate: personalDateKey(initial),
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, kind: 'all', mode: 'activities', includeBackground: false }))
+  const [selection, setQuery] = useState<DayActivityQuery>(() => ({ accountScope, bucketDate: personalDateKey(initial),
+    timezone, kind: 'all', mode: 'activities', includeBackground: false }))
+  const query = useMemo<DayActivityQuery>(() => ({ ...selection, timezone }), [selection, timezone])
   const [revision, setRevision] = useState(0)
   const [hardRevision, setHardRevision] = useState(0)
   const [monthRevision, setMonthRevision] = useState(0)
@@ -64,7 +69,7 @@ function PersonalDayCalendar({ accountScope = '', initialDate, onClose }: { init
   const nextMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 1).getTime()
   const month = useCalendarMonth({ scopeKey: 'global', timezone: query.timezone,
     startDate: personalDateKey(visibleMonth), endDate: personalDateKey(monthEnd) }, !!accountScope && hasHistoryMonth, accountScope)
-  const monthKey = `${accountScope}:${visibleMonth.getTime()}:${monthRevision}`
+  const monthKey = `${accountScope}:${timezone}:${visibleMonth.getTime()}:${monthRevision}`
   const [audioIndex, setAudioIndex] = useState<{ key: string; dates: Set<string>; error: boolean }>()
   const selected = query.bucketDate.split('-').map(Number)
   const selectedDate = new Date(selected[0]!, selected[1]! - 1, selected[2]!)
@@ -82,13 +87,17 @@ function PersonalDayCalendar({ accountScope = '', initialDate, onClose }: { init
   useEffect(() => {
     if (!accountScope || !hasHistoryMonth || !isRecordingLocalDateOnOrAfterMinimum(visibleMonth.getTime())) return
     const controller = new AbortController()
-    void withArkmeReadDeadline(requestSignal => callArkme<ArkmeRecordingCalendarMonth>('recordings.calendar', { fromStamp: visibleMonth.getTime(), toStamp: nextMonth }, requestSignal), controller.signal)
+    void withArkmeReadDeadline(requestSignal => callArkme<ArkmeRecordingCalendarMonth>('recordings.calendar', {
+      fromStamp: recordingDisplayWindow(visibleMonth, timezone)!.dateStamp,
+      toStamp: recordingDisplayWindow(new Date(nextMonth), timezone)!.dateStamp,
+      timeZone: timezone,
+    }, requestSignal), controller.signal)
       .then(value => {
         if (!controller.signal.aborted) setAudioIndex({ key: monthKey, error: false,
-          dates: new Set(value.days.filter(day => day.hasRecording).map(day => personalDateKey(new Date(day.dateStamp)))) })
+          dates: new Set(value.days.filter(day => day.hasRecording).map(day => arkmeDayKey(day.dateStamp, timezone))) })
       }).catch(() => { if (!controller.signal.aborted) setAudioIndex({ key: monthKey, error: true, dates: new Set() }) })
     return () => controller.abort()
-  }, [accountScope, monthKey, nextMonth, visibleMonth, hasHistoryMonth])
+  }, [accountScope, monthKey, nextMonth, visibleMonth, hasHistoryMonth, timezone])
   const refreshMonth = () => { if (hasHistoryMonth) void month.retry(); setMonthRevision(value => value + 1); setRichDetail(undefined) }
 
   const markerDays = new Map(documentedMonth.markers)

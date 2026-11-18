@@ -1,12 +1,21 @@
-export type ArrangementRecognitionSource =
-  | 'default'
-  | 'note'
-  | 'private'
-  | 'group'
-  | 'audio'
-  | 'call'
-  | 'manual'
-  | 'other'
+// Shared by settings navigation, execution labels and the host write boundary.
+export const arrangementRecognitionSourceNames = {
+  default: '默认模型',
+  note: '个人快记',
+  private: '私聊',
+  group: '群聊',
+  audio: '录音',
+  call: '通话',
+  manual: '手动创建',
+  other: '其他来源',
+  team: '团队对话',
+} as const
+
+export type ArrangementRecognitionSource = keyof typeof arrangementRecognitionSourceNames
+
+export function isArrangementRecognitionSource(value: unknown): value is ArrangementRecognitionSource {
+  return typeof value === 'string' && Object.hasOwn(arrangementRecognitionSourceNames, value)
+}
 export interface ArrangementRecognitionSettings {
   accountScope: string
   contract_version: 1

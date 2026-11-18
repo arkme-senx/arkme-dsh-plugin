@@ -45571,9 +45571,42 @@ var require_call_engine_lite_js = __commonJS({
 });
 
 // src/index.js
-var import_call_engine_lite_js = __toESM(require_call_engine_lite_js(), 1);
+var import_basic = __toESM(require_basic(), 1);
 
-// src/tuicallkit-icons.js
+// src/im-bridge.js
+function createIMBridge(Chat, sdkAppId, userId, emit) {
+  const chat = Chat.create({ SDKAppID: sdkAppId });
+  let disposed = false;
+  const listeners = [];
+  const on = (event, callback) => {
+    chat.on(event, callback);
+    listeners.push([event, callback]);
+  };
+  on(Chat.EVENT.SDK_READY, () => {
+    if (disposed || chat.getLoginUser() !== userId) return;
+    emit("im_ready", { registrationId: userId });
+  });
+  on(Chat.EVENT.KICKED_OUT, () => {
+    emit("im_kicked", { reason: "kicked_out" });
+  });
+  return {
+    chat,
+    async dispose() {
+      if (disposed) return;
+      disposed = true;
+      for (const [event, callback] of listeners) chat.off(event, callback);
+      await chat.destroy();
+    }
+  };
+}
+function imBridgePayload(type, extra) {
+  if (type !== "im_ready" || typeof extra.registrationId !== "string") return {};
+  return { registrationId: extra.registrationId };
+}
+
+// src/index.js
+var import_call_engine_lite_js = __toESM(require_call_engine_lite_js(), 1);
+var sharedIM;
 var TUICALLKIT_ICONS = {
   accept: String.raw`<svg width="30" height="30" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g clip-path="url(#clip0_22_1697)">
@@ -45621,8 +45654,6 @@ var TUICALLKIT_ICONS = {
 <path d="M9.4967 4.71716V9.4486H4.74146" stroke="white" stroke-width="1.53846" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`
 };
-
-// src/index.js
 var root = document.getElementById("app");
 var LOCAL_VIDEO_ID = "desktop-call-local-video";
 var REMOTE_VIDEO_ID = "desktop-call-remote-video";
@@ -46393,6 +46424,7 @@ function buildOfflinePushInfo(payload = {}, mediaType = CALL_MEDIA.audio) {
   const extension = safeString(rawInfo.extension ?? rawInfo.ext) || safeString(payload.userData);
   const rawIOSPushType = Number(rawInfo.iOSPushType);
   return {
+    isDisablePush: rawInfo.isDisablePush === true,
     title,
     description,
     extension,
@@ -46452,6 +46484,7 @@ function postToFlutter(type, extra = {}) {
   const statePayload = buildFlutterStatePayload(extra);
   const payload = safeJsonStringify({
     type,
+    ...imBridgePayload(type, extra),
     roomId: statePayload.roomId,
     callId: statePayload.callId,
     mediaType: statePayload.mediaType,
@@ -46525,6 +46558,7 @@ function postLocalTerminalToWebHost(type, message) {
     message: safeString(message)
   });
   const posted = postToWebHostBridge(payload);
+  if (!posted && window.arkmeCallTransport) window.arkmeCallTransport.emit(payload);
   diagLog("local_terminal_web_host_hint", {
     type,
     posted,
@@ -49171,6 +49205,10 @@ async function destroyEngine({ preserveBootstrap = false } = {}) {
   diagLog("destroy_engine_done", {
     preserveBootstrap
   });
+  if (sharedIM) {
+    await sharedIM.dispose();
+    sharedIM = void 0;
+  }
   state.engine = null;
   state.initialized = preserveBootstrap && state.initialized;
   if (!preserveBootstrap) {
@@ -49849,7 +49887,7 @@ async function bootstrap(payload = {}) {
     await configureTRTCAutoplayHandling();
     diagLog("bootstrap_reuse_existing_engine", {
       userId: safeString(payload.userId),
-      signature
+      reused: true
     });
     setStatusText("\u5DF2\u521D\u59CB\u5316\uFF0C\u7B49\u5F85\u6765\u7535\u6216\u53D1\u8D77\u547C\u53EB");
     render();
@@ -49865,8 +49903,10 @@ async function bootstrap(payload = {}) {
     type: typeof callEngineExport.value
   });
   await waitForCallEngineReady(callEngineExport);
+  sharedIM = createIMBridge(import_basic.default, safeNumber(payload.sdkAppId), safeString(payload.userId), postToFlutter);
   const engine = callEngineExport.value.createInstance({
-    SDKAppID: safeNumber(payload.sdkAppId)
+    SDKAppID: safeNumber(payload.sdkAppId),
+    tim: sharedIM.chat
   });
   diagLog("bootstrap_engine_created", {
     engineExportSource: callEngineExport.source,
@@ -49891,60 +49931,60 @@ async function bootstrap(payload = {}) {
   state.bootstrapSignature = signature;
   if (payload.outgoingOnly !== true) {
     bindEngineEvent(import_call_engine_lite_js.TUICallEvent.ON_CALL_RECEIVED, async (eventPayload) => {
-    diagLog("incoming_event_handler_enter", {
-      payload: summarizeDiagPayload(eventPayload)
-    });
-    updateCallIdentity(eventPayload);
-    if (state.phase === CALL_PHASE.outgoing || state.phase === CALL_PHASE.connected) {
-      const incomingCallerProfile = await resolveIncomingCallerProfile(eventPayload);
-      diagLog("incoming_event_forward_existing_session", {
+      diagLog("incoming_event_handler_enter", {
+        payload: summarizeDiagPayload(eventPayload)
+      });
+      updateCallIdentity(eventPayload);
+      if (state.phase === CALL_PHASE.outgoing || state.phase === CALL_PHASE.connected) {
+        const incomingCallerProfile = await resolveIncomingCallerProfile(eventPayload);
+        diagLog("incoming_event_forward_existing_session", {
+          payload: summarizeDiagPayload(eventPayload),
+          callerId: incomingCallerProfile.id,
+          callerName: incomingCallerProfile.name
+        });
+        postToFlutter("incoming", {
+          roomId: resolveRoomId(eventPayload),
+          callId: safeString(eventPayload.callId),
+          mediaType: resolveMediaType(eventPayload.callMediaType),
+          userData: incomingCallerProfile.userData,
+          callerName: incomingCallerProfile.name,
+          callerAvatar: incomingCallerProfile.avatar
+        });
+        return;
+      }
+      state.connectionRole = "incoming";
+      state.phase = CALL_PHASE.incoming;
+      state.callStartedAt = Date.now();
+      state.activeDevicePopover = "";
+      state.remoteVideoObserved = false;
+      state.remoteAudioObserved = false;
+      state.remoteVideoAvailable = false;
+      state.remoteAudioAvailable = false;
+      state.preferredAudioEnabled = true;
+      state.preferredVideoEnabled = state.activeMediaType === CALL_MEDIA.video;
+      state.cameraPermissionDenied = false;
+      state.microphonePermissionDenied = false;
+      clearSessionNotice();
+      await updateCallerFromIncoming(eventPayload);
+      setStatusText("\u6536\u5230\u65B0\u7684\u6765\u7535\u9080\u8BF7");
+      render();
+      diagLog("incoming_event_emit_flutter", {
         payload: summarizeDiagPayload(eventPayload),
-        callerId: incomingCallerProfile.id,
-        callerName: incomingCallerProfile.name
+        callerName: state.caller.name,
+        callerAvatar: trimDiagText(state.caller.avatar)
       });
       postToFlutter("incoming", {
         roomId: resolveRoomId(eventPayload),
         callId: safeString(eventPayload.callId),
         mediaType: resolveMediaType(eventPayload.callMediaType),
-        userData: incomingCallerProfile.userData,
-        callerName: incomingCallerProfile.name,
-        callerAvatar: incomingCallerProfile.avatar
+        userData: state.lastUserData,
+        callerName: state.caller.name,
+        callerAvatar: state.caller.avatar
       });
-      return;
-    }
-    state.connectionRole = "incoming";
-    state.phase = CALL_PHASE.incoming;
-    state.callStartedAt = Date.now();
-    state.activeDevicePopover = "";
-    state.remoteVideoObserved = false;
-    state.remoteAudioObserved = false;
-    state.remoteVideoAvailable = false;
-    state.remoteAudioAvailable = false;
-    state.preferredAudioEnabled = true;
-    state.preferredVideoEnabled = state.activeMediaType === CALL_MEDIA.video;
-    state.cameraPermissionDenied = false;
-    state.microphonePermissionDenied = false;
-    clearSessionNotice();
-    await updateCallerFromIncoming(eventPayload);
-    setStatusText("\u6536\u5230\u65B0\u7684\u6765\u7535\u9080\u8BF7");
-    render();
-    diagLog("incoming_event_emit_flutter", {
-      payload: summarizeDiagPayload(eventPayload),
-      callerName: state.caller.name,
-      callerAvatar: trimDiagText(state.caller.avatar)
-    });
-    postToFlutter("incoming", {
-      roomId: resolveRoomId(eventPayload),
-      callId: safeString(eventPayload.callId),
-      mediaType: resolveMediaType(eventPayload.callMediaType),
-      userData: state.lastUserData,
-      callerName: state.caller.name,
-      callerAvatar: state.caller.avatar
-    });
-    if (state.activeMediaType === CALL_MEDIA.video) {
-      const incomingSessionKey = resolveCallSessionKey(eventPayload);
-      void prepareIncomingVideoPreview(incomingSessionKey);
-    }
+      if (state.activeMediaType === CALL_MEDIA.video) {
+        const incomingSessionKey = resolveCallSessionKey(eventPayload);
+        void prepareIncomingVideoPreview(incomingSessionKey);
+      }
     });
   }
   bindEngineEvent(import_call_engine_lite_js.TUICallEvent.USER_ACCEPT, async (eventPayload) => {
@@ -50088,6 +50128,7 @@ async function bootstrap(payload = {}) {
     render();
   });
   bindEngineEvent(import_call_engine_lite_js.TUICallEvent.KICKED_OUT, async () => {
+    postToFlutter("im_kicked", { reason: "kicked_out" });
     diagLog("engine_kicked_out", {
       userId: safeString(payload.userId)
     });

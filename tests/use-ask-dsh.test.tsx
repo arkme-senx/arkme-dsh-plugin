@@ -81,3 +81,31 @@ it('preserves the native iframe error message across JavaScript realms', async (
   expect(state.status).toBe('目标对话草稿已被编辑，请重新选择快记后操作')
   expect(state.busy).toBe(false); expect(done).not.toHaveBeenCalled()
 })
+
+it('prepares diagnostics as text only and shows Harness after acknowledgement', async () => {
+  const prepare = vi.fn(async () => ({ sessionId: 'diagnostics' }))
+  environment(prepare)
+  const done = vi.fn()
+  await act(async () => { renderer = create(<Harness done={done} />) })
+  await act(async () => { await state.runText('receipt', '诊断原文') })
+  expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ files: [], text: '诊断原文' }))
+  expect(mocks.call).not.toHaveBeenCalled()
+  expect(done).toHaveBeenCalledOnce()
+})
+
+it('guards double clicks and retains text operation identity after a failed preparation', async () => {
+  const pending = Promise.withResolvers<{sessionId: string}>()
+  const prepare = vi.fn().mockImplementationOnce(() => pending.promise).mockResolvedValue({sessionId:'new'})
+  environment(prepare)
+  const done = vi.fn()
+  await act(async () => { renderer = create(<Harness done={done} />) })
+  let run!: Promise<void>
+  await act(async () => { run = state.runText('receipt', '诊断'); await state.runText('receipt', '诊断') })
+  expect(prepare).toHaveBeenCalledOnce()
+  await act(async () => { pending.reject(new Error('连接失败')); await run })
+  expect(state.status).toBe('连接失败')
+  expect(done).not.toHaveBeenCalled()
+  await act(async () => { await state.runText('receipt', '诊断') })
+  expect(prepare.mock.calls[1][0].operationId).toBe(prepare.mock.calls[0][0].operationId)
+  expect(done).toHaveBeenCalledOnce()
+})

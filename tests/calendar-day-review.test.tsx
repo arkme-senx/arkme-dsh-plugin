@@ -5,6 +5,7 @@ import { DAY_REVIEW_SOURCES, parseDayReviewQuery, parseDayReviewResult, parseDay
 import { ArkmeCalendarDayReview } from '../src/client/ArkmeCalendarDayReview.js'
 import { callArkme } from '../src/client/api.js'
 import { ArkmeClientError } from '../src/sdk/index.js'
+vi.mock('../src/client/use-unified-models.js', () => ({ useUnifiedModels: () => ({ loading: false, refresh: async () => {} }) }))
 vi.mock('../src/client/api.js', () => ({ callArkme: vi.fn() }))
 vi.mock('../src/client/explore/ExploreSurface.js', () => ({ ExploreRecordingSource: () => null }))
 vi.mock('../src/client/ArkmeNoteDetails.js', () => ({ ArkmeTimelineDetailDrawer: () => null }))
@@ -64,7 +65,7 @@ describe('calendar review interaction', () => {
     await mount()
     await act(async () => button('更新回顾').props.onClick())
     vi.mocked(callArkme).mockRejectedValueOnce(new ArkmeClientError({ code: 'day-review-human-required', message: '确认页未打开，本次操作尚未提交', retryable: false }))
-    await act(async () => button('确认').props.onClick())
+    await act(async () => button('确认并生成').props.onClick())
     expect(content()).toContain('本次操作尚未提交')
     expect(content()).not.toContain('提交结果尚未确认')
     expect(content()).not.toContain('核对提交')
@@ -172,7 +173,7 @@ describe('calendar review interaction', () => {
     await mount()
     await act(async () => button('更新回顾').props.onClick())
     vi.mocked(callArkme).mockRejectedValueOnce(new Error('网络断开'))
-    await act(async () => button('确认').props.onClick())
+    await act(async () => button('确认并生成').props.onClick())
     const first = vi.mocked(callArkme).mock.calls.find(x => x[0] === 'calendar.day-review.create')![1]
     expect(content()).toContain('讨论了录音存储方案')
     expect(content()).toContain('提交结果尚未确认')
@@ -399,7 +400,7 @@ describe('calendar review interaction', () => {
       await act(async () => view!.update(<ArkmeCalendarDayReview query={query} view="summary" refreshVersion={1} />))
     } else {
       await act(async () => button(action === 'generate' ? '更新回顾' : '继续生成').props.onClick())
-      if (action === 'generate') await act(async () => button('确认').props.onClick())
+      if (action === 'generate') await act(async () => button('确认并生成').props.onClick())
       await act(async () => vi.advanceTimersByTimeAsync(5000))
     }
     expect(reads()).toBe(before + 1)
@@ -419,10 +420,10 @@ it('opens the existing model dialog, cancels without billing, and defaults to of
  await act(async()=>button('更新回顾').props.onClick())
  expect(content()).toContain('DeepSeek V4.1 Flash（官方）')
  expect(vi.mocked(callArkme).mock.calls.filter(c=>c[0]==='calendar.day-review.create')).toHaveLength(0)
- await act(async()=>button('取消').props.onClick())
+ await act(async()=>view!.root.findByProps({'aria-label':'关闭模型面板'}).props.onClick())
  expect(vi.mocked(callArkme).mock.calls.filter(c=>c[0]==='calendar.day-review.create')).toHaveLength(0)
  await act(async()=>button('更新回顾').props.onClick())
- await act(async()=>button('确认').props.onClick())
+ await act(async()=>button('确认并生成').props.onClick())
  expect(vi.mocked(callArkme).mock.calls.find(c=>c[0]==='calendar.day-review.create')?.[1]).toMatchObject({modelCode:'deepseek-v4-flash'})
 })
 it('a model catalog failure keeps the prior result and does not create an uncertain payment', async()=>{
@@ -435,16 +436,35 @@ it('requires an explicit choice when the default model is unavailable', async()=
  await mount()
  vi.mocked(callArkme).mockResolvedValueOnce({...modelCatalog,models:modelCatalog.models.filter(m=>m.code!=='deepseek-v4-flash')})
  await act(async()=>button('更新回顾').props.onClick())
- expect(content()).toContain('请选择模型')
- expect(button('确认').props.disabled).toBe(true)
+ expect(button('确认并生成').props.disabled).toBe(true)
  expect(vi.mocked(callArkme).mock.calls.filter(c=>c[0]==='calendar.day-review.create')).toHaveLength(0)
 })
-it.each(['qwen-flash','qwen3.8-flash'])('submits the user-selected %s through the shared model dropdown', async code=>{
+it.each(['qwen-flash','qwen3.8-flash'])('submits the user-selected %s through the unified model picker', async code=>{
  await mount()
  await act(async()=>button('更新回顾').props.onClick())
- await act(async()=>view!.root.findByProps({'aria-label':'选择生成模型'}).props.onClick({currentTarget:{getBoundingClientRect:()=>({left:0,right:280,top:0,bottom:36})}}))
  const label=modelCatalog.models.find(m=>m.code===code)!.displayName
- await act(async()=>view!.root.findAllByProps({role:'option'}).find(option=>option.props.title===label)!.props.onClick())
- await act(async()=>button('确认').props.onClick())
+ await act(async()=>view!.root.findAllByProps({role:'option'}).find(option=>option.findAllByType('span').some(span => span.children.includes(label)))!.props.onClick())
+ await act(async()=>button('确认并生成').props.onClick())
  expect(vi.mocked(callArkme).mock.calls.find(c=>c[0]==='calendar.day-review.create')?.[1]).toMatchObject({modelCode:code})
+})
+
+const userAlias = 'user-api/019a4c10-0000-7000-8000-000000000001'
+const userRoute = `${userAlias}/019a4c10-0000-7000-8000-000000000002`
+it.each(['summary', 'timeline'] as const)('uses the shared picker and frozen account route from %s', async mode => {
+ vi.mocked(callArkme).mockImplementation(async op => op === 'calendar.day-review.models' ? {
+   unified: true, defaultCode: 'deepseek-v4-flash', defaultRoute: userRoute,
+   models: [{code: userAlias, displayName: '我的 API', route: userRoute, catalogRoute: userAlias, origin: 'user-provided'}],
+ } : current())
+ await act(async () => { view = create(<ArkmeCalendarDayReview query={query} view={mode}/>) })
+ await act(async () => button('更新回顾').props.onClick())
+ expect(view!.root.findByProps({role: 'dialog'}).props['aria-label']).toBe('选择日回顾生成模型')
+ expect(content()).toContain('日历日回顾')
+ expect(content()).toContain('用户自提供')
+ expect(view!.root.findAllByProps({role:'option'})[0]!.props['aria-selected']).toBe(true)
+ expect(vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')).toHaveLength(0)
+ await act(async () => button('确认并生成').props.onClick())
+ const submissions = vi.mocked(callArkme).mock.calls.filter(c => c[0] === 'calendar.day-review.create')
+ expect(submissions).toHaveLength(1)
+ expect(submissions[0]?.[1]).toMatchObject({modelRoute: userRoute})
+ expect(submissions[0]?.[1]).not.toHaveProperty('modelCode')
 })

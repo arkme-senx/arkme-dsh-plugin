@@ -20,20 +20,20 @@ export function ArkmeTeamNameAvatar({ name, size = 44 }: { name: string; size?: 
   }}>{teamNameAvatarText(name)}</span>
 }
 
-export function ArkmeTeamAvatar({ avatar, name, size = 44, label = '团队头像' }: {
-  avatar?: Avatar | undefined; name: string; size?: number; label?: string;
+export function ArkmeTeamAvatar({ avatar, name, size = 44, label = '团队头像', lazy = false }: {
+  avatar?: Avatar | undefined; name: string; size?: number; label?: string; lazy?: boolean;
 }) {
   const fallback = <ArkmeTeamNameAvatar name={name} size={size}/>
   return avatar?.mode === 'custom'
     ? <ArkmeUserAvatar avatarRef={avatar.imageRef} imageKey={avatar.key} imagePort={teamAvatarImages}
-        size={size} label={label} fallbackContent={fallback}/>
+        size={size} label={label} fallbackContent={fallback} lazy={lazy}/>
     : fallback
 }
 
 /** The channel override and the current Team profile have separate owners. */
-export function ArkmeTeamChannelAvatar({channel,size=44}:{channel:TeamChannel;size?:number}) {
+export function ArkmeTeamChannelAvatar({channel,size=44,lazy=false}:{channel:TeamChannel;size?:number;lazy?:boolean}) {
   return channel.imageRef
     ? <ArkmeUserAvatar avatarRef={channel.imageRef} imageKey={channel.imageKey} imagePort={teamAvatarImages}
-        size={size} label="团队头像" fallbackContent={<ArkmeTeamNameAvatar name={channel.name} size={size}/>}/>
-    : <ArkmeTeamAvatar avatar={channel.avatar} name={channel.name} size={size}/>
+        size={size} label="团队头像" fallbackContent={<ArkmeTeamNameAvatar name={channel.name} size={size}/>} lazy={lazy}/>
+    : <ArkmeTeamAvatar avatar={channel.avatar} name={channel.name} size={size} lazy={lazy}/>
 }

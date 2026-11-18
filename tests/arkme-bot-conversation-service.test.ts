@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { ArkmeService, type ArkmeServiceConfig } from '../src/arkme-service.js'
 import type { ArkmeSessionCredentials } from '../src/keychain-store.js'
+import { BotConversationService } from '../src/services/bot-conversation-service.js'
 
 class SessionStore {
   constructor(private session: ArkmeSessionCredentials | undefined) {}
@@ -23,6 +24,16 @@ function json(data: unknown): Response {
 }
 
 describe('BotConversationService', () => {
+  it('reads the owner directory with summaries without opening or projecting any bot history', async () => {
+    let reads = 0
+    const items = Array.from({ length: 50 }, (_, i) => ({ botRef: `bot-${i}`, latestMessagePreview: `summary-${i}` }))
+    const service = new BotConversationService({} as never, {
+      listBots: async () => { reads++; return { items } as never },
+      openBotRef: async () => { throw new Error('directory must not open bots') },
+    }, {} as never, async () => {})
+    expect(await service.directory()).toEqual({ items })
+    expect(reads).toBe(1)
+  })
   it.each(['chat', 'subject'])('calendar history never creates a conversation for %s ownership', async owner => {
     const requests: string[] = []
     const service = new ArkmeService(config, new SessionStore({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }),

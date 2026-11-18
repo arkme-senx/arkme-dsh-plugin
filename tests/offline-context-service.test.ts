@@ -237,3 +237,13 @@ it('filters linked entries by scoped message references and binds pagination to 
   await expect(f.service.offlineContext(request)).rejects.toThrow()
   f.service.dispose()
 })
+
+it('rejects delegated sources for personal association reads and coverage without using personal membership',async()=>{
+ const f=await fixture()
+ const delegatedSource={...source,openSourceRef:async()=>({version:1 as const,userId:7,kind:'group_chat' as const,ownerRef:'chat',displayName:'群',groupDelegation:{accessRef:'frame',teamId:'42',membershipKind:'member' as const,membershipRevision:1,groupMembershipUid:'epoch',groupMembershipRevision:1,visibleFromSeq:5}})}
+ const service=new OfflineContextService(f.runtime,delegatedSource)
+ try{
+  for(const operation of ['list','coverage'] as const)await expect(service.offlineContext({operation,sourceRef:'delegated'})).rejects.toMatchObject({code:'offline-context-source-unsupported'})
+  expect(f.post.mock.calls.every(([path])=>path.endsWith('/capability'))).toBe(true)
+ }finally{service.dispose()}
+})

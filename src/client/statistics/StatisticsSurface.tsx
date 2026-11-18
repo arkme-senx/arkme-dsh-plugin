@@ -1,3 +1,4 @@
+import { arkmeCivilDay, arkmeDayKey, arkmeWallClockIso, useArkmeEffectiveTimeZone, formatArkmeDateTime, formatArkmeDate } from '../display-time-zone.js'
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { ChartBar } from '@phosphor-icons/react/dist/icons/ChartBar'
 import { CaretLeft } from '@phosphor-icons/react/dist/icons/CaretLeft'
@@ -39,13 +40,14 @@ export function StatisticsSurface({ accountScope, initialMonth, embedded = false
   const userId = Number(accountScope.split(':').at(-1)), membership = useMembership(accountScope, userId, false)
   const memberReady = membership.state.status === 'ready', paid = membership.state.status === 'ready' && membership.state.value.memberType > 0
   const enabled = !month || paid
-  const query = useMemo(() => statisticsQuery(accountScope, month), [accountScope, month, revision])
+  const timezone = useArkmeEffectiveTimeZone()
+  const query = useMemo(() => statisticsQuery(accountScope, month, new Date(), timezone), [accountScope, month, revision, timezone])
   const overview = useStatistics<StatisticsDetail>('detail', query, enabled, revision)
   const keywords = useStatistics<import('../../analytics-contract.js').PersonalKeywordSummary>('keywords', query, enabled, revision)
   const active = useStatistics<StatisticsPoint[]>('active', query, enabled, revision)
   const records = useStatistics<StatisticsRecordPage>('long', query, enabled, revision)
-  const currentMonth = statisticsDateKey(new Date()).slice(0, 7)
-  const earliest = overview.value?.firstRecordAt ? statisticsDateKey(new Date(overview.value.firstRecordAt)).slice(0, 7) : undefined
+  const currentMonth = arkmeDayKey(Date.now(), timezone).slice(0, 7)
+  const earliest = overview.value?.firstRecordAt ? arkmeDayKey(overview.value.firstRecordAt, timezone).slice(0, 7) : undefined
   const retry = () => setRevision(v => v + 1)
   const selectMonth = (value: string) => { if (value && (!/^\d{4}-(0[1-9]|1[0-2])$/.test(value) || value > currentMonth)) return
     sourceRequest.current?.abort(); setMonth(value); setKeyword(undefined); setShowKeywordList(false); setShowAll(false); setDetail(undefined); setSourceError(''); setOpening('') }
@@ -94,12 +96,14 @@ export function StatisticsSurface({ accountScope, initialMonth, embedded = false
 }
 
 function StatisticsHeatmap({ accountScope, month, revision, firstRecordAt }: { accountScope: string; month: string; revision: number; firstRecordAt: number | null }) {
-  const [year, setYear] = useState(new Date().getFullYear()), [retry, setRetry] = useState(0)
-  const key = `${accountScope}:${month}:${year}:${revision}:${retry}`
+  const timezone = useArkmeEffectiveTimeZone()
+  const currentYear = arkmeCivilDay(Date.now(), timezone).getFullYear()
+  const [year, setYear] = useState(currentYear), [retry, setRetry] = useState(0)
+  const key = `${accountScope}:${month}:${year}:${revision}:${retry}:${timezone}`
   const [result, setResult] = useState<{ key: string; counts: Map<string, number>; pending: boolean; error: string }>()
   const start = month ? new Date(`${month}-01T00:00:00`) : new Date(year, 0, 1)
   const end = month ? new Date(start.getFullYear(), start.getMonth() + 1, 0) : new Date(year, 11, 31)
-  const today = statisticsDateKey(new Date()), startKey = statisticsDateKey(start), endKey = statisticsDateKey(end)
+  const today = arkmeDayKey(Date.now(), timezone), startKey = statisticsDateKey(start), endKey = statisticsDateKey(end)
   useEffect(() => {
     const c = new AbortController(), counts = new Map<string, number>()
     setResult({ key, counts, pending: true, error: '' })
@@ -108,7 +112,7 @@ function StatisticsHeatmap({ accountScope, month, revision, firstRecordAt }: { a
     void Promise.all(Array.from({ length: Math.min(3, months.length) }, async () => {
       while (cursor < months.length) {
         const date = months[cursor++]!
-        const page = await withArkmeReadDeadline(signal => callArkme<ArkmeCalendarBucketPage>('calendar.buckets', { startDate: statisticsDateKey(date), endDate: statisticsDateKey(new Date(date.getFullYear(), date.getMonth() + 1, 0)), timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }, signal), c.signal)
+        const page = await withArkmeReadDeadline(signal => callArkme<ArkmeCalendarBucketPage>('calendar.buckets', { startDate: statisticsDateKey(date), endDate: statisticsDateKey(new Date(date.getFullYear(), date.getMonth() + 1, 0)), timezone }, signal), c.signal)
         for (const day of page.days) counts.set(day.bucketDate, day.count)
       }
     })).then(() => { if (!c.signal.aborted) setResult({ key, counts, pending: false, error: '' }) }).catch(error => { if (!c.signal.aborted) { setResult({ key, counts: new Map(), pending: false, error: statisticsError(error) }); c.abort() } })
@@ -117,7 +121,7 @@ function StatisticsHeatmap({ accountScope, month, revision, firstRecordAt }: { a
   const days: string[] = []
   for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) days.push(statisticsDateKey(d))
   const state = result?.key === key ? result : undefined, max = Math.max(1, ...state?.counts.values() ?? [])
-  return <section className="stats-card"><header><div><h2>{tr('记录情况')}</h2><small>{month || `${year} 年`} · {tr('颜色越深，快记越多')}</small></div><div className="stats-controls">{!month && <><button aria-label={tr('上一年')} disabled={!!firstRecordAt && year <= new Date(firstRecordAt).getFullYear()} onClick={() => setYear(y => y - 1)}><CaretLeft/></button><span>{year}</span><button aria-label={tr('下一年')} disabled={year >= new Date().getFullYear()} onClick={() => setYear(y => y + 1)}><CaretRight/></button></>}<button onClick={() => arkmeUi.openCalendarDate(month ? `${month}-01` : today)}>{tr('进入日历')}</button></div></header>
+  return <section className="stats-card"><header><div><h2>{tr('记录情况')}</h2><small>{month || `${year} 年`} · {tr('颜色越深，快记越多')}</small></div><div className="stats-controls">{!month && <><button aria-label={tr('上一年')} disabled={!!firstRecordAt && year <= arkmeCivilDay(firstRecordAt, timezone).getFullYear()} onClick={() => setYear(y => y - 1)}><CaretLeft/></button><span>{year}</span><button aria-label={tr('下一年')} disabled={year >= currentYear} onClick={() => setYear(y => y + 1)}><CaretRight/></button></>}<button onClick={() => arkmeUi.openCalendarDate(month ? `${month}-01` : today)}>{tr('进入日历')}</button></div></header>
     {!state || state.pending ? <p className="stats-status" role="status">{tr('正在读取日期分布…')}</p> : state.error ? <p className="stats-status" role="alert">{state.error}<button onClick={() => setRetry(v => v + 1)}>{tr('重试')}</button></p> : <>
       {month && <div className="stats-weekday-labels">{['一', '二', '三', '四', '五', '六', '日'].map(d => <span key={d}>{tr(d)}</span>)}</div>}
       <div className={`stats-heatmap ${month ? 'is-month' : ''}`} style={{ '--stats-weeks': Math.ceil((days.length + (start.getDay() + 6) % 7) / 7) } as CSSProperties} aria-label={tr('每日快记数量')}>
@@ -133,13 +137,13 @@ function ActivityChart({ points, weekly }: { points: StatisticsPoint[]; weekly: 
   if (!points.length) return <p className="stats-status">{tr('此范围暂无记录活动')}</p>
   const max = Math.max(1, ...points.map(p => p.costSec)), plot = (rows: StatisticsPoint[], height: number) => <svg viewBox={`0 0 600 ${height}`} role="img" aria-label={tr('记录用时分布')}>
     {[0, 6, 12, 18, 24].map(hour => <line key={hour} x1={hour * 25} x2={hour * 25} y1="0" y2={height} stroke="currentColor" opacity=".08"/>)}
-    {rows.map((p, i) => { const date = new Date(p.stamp), x = (date.getHours() + date.getMinutes() / 60) * 25, y = height - 6 - p.costSec / max * (height - 12)
-      return <circle key={`${p.stamp}:${i}`} cx={Math.max(3, Math.min(597, x))} cy={y} r="3" fill="var(--stats-accent)" opacity=".55"><title>{date.toLocaleString(arkmeIntlLocale())} · {statisticsDuration(p.costSec)}</title></circle> })}
+    {rows.map((p, i) => { const clock = arkmeWallClockIso(p.stamp), x = (Number(clock.slice(11, 13)) + Number(clock.slice(14, 16)) / 60) * 25, y = height - 6 - p.costSec / max * (height - 12)
+      return <circle key={`${p.stamp}:${i}`} cx={Math.max(3, Math.min(597, x))} cy={y} r="3" fill="var(--stats-accent)" opacity=".55"><title>{formatArkmeDateTime(p.stamp, arkmeIntlLocale())} · {statisticsDuration(p.costSec)}</title></circle> })}
   </svg>
-  return <div className="stats-chart"><small>{tr('最长记录用时')} {statisticsDuration(max)}</small>{weekly ? [1, 2, 3, 4, 5, 6, 7].map(day => <div className="stats-week" key={day}><span>{tr(['周一', '周二', '周三', '周四', '周五', '周六', '周日'][day - 1]!)}</span>{plot(points.filter(p => p.weekday === day), 35)}</div>) : plot(points, 180)}<div className="stats-axis">{['00:00', '06:00', '12:00', '18:00', '24:00'].map(h => <span key={h}>{h}</span>)}</div></div>
+  return <div className="stats-chart"><small>{tr('最长记录用时')} {statisticsDuration(max)}</small>{weekly ? [1, 2, 3, 4, 5, 6, 7].map(day => <div className="stats-week" key={day}><span>{tr(['周一', '周二', '周三', '周四', '周五', '周六', '周日'][day - 1]!)}</span>{plot(points.filter(p => (arkmeCivilDay(p.stamp).getDay() || 7) === day), 35)}</div>) : plot(points, 180)}<div className="stats-axis">{['00:00', '06:00', '12:00', '18:00', '24:00'].map(h => <span key={h}>{h}</span>)}</div></div>
 }
 function RecordRows({ items, opening, onOpen }: { items: StatisticsRecord[]; opening: string; onOpen(uid: string): void }) {
-  return !items.length ? <p className="stats-status">{tr('此范围暂无记录')}</p> : <div className="stats-records">{items.map(item => <button key={item.uid} onClick={() => onOpen(item.uid)} disabled={opening === item.uid}><span>{item.title || item.text || tr('查看快记原文')}{item.title && item.text && <small>{item.text}</small>}</span><time>{new Date(item.sendAt).toLocaleDateString(arkmeIntlLocale())}</time><strong>{opening === item.uid ? tr('读取中…') : statisticsDuration(item.costSec)}</strong><CaretRight size={14}/></button>)}</div>
+  return !items.length ? <p className="stats-status">{tr('此范围暂无记录')}</p> : <div className="stats-records">{items.map(item => <button key={item.uid} onClick={() => onOpen(item.uid)} disabled={opening === item.uid}><span>{item.title || item.text || tr('查看快记原文')}{item.title && item.text && <small>{item.text}</small>}</span><time>{formatArkmeDate(item.sendAt, arkmeIntlLocale())}</time><strong>{opening === item.uid ? tr('读取中…') : statisticsDuration(item.costSec)}</strong><CaretRight size={14}/></button>)}</div>
 }
 function LongRecords({ query, initial, opening, sourceError, onOpen, onClose }: { query: ReturnType<typeof statisticsQuery>; initial: StatisticsRecordPage | undefined; opening: string; sourceError: string; onOpen(uid: string): void; onClose(): void }) {
   const [page, setPage] = useState(initial), [loading, setLoading] = useState(false), [error, setError] = useState(''), controller = useRef<AbortController>()
@@ -160,5 +164,5 @@ function KeywordRecords({ keyword, query, sourceError, onClose, onBack, onOpen }
     return () => c.abort()
   }, [keyword.keywordId, keyword.snapshotId, revision])
   const items = result?.items ?? []
-  return <ArkmeDetailShell title={keyword.text} label={tr('关键词相关快记')} onClose={onClose} {...(onBack ? { onBack } : {})} backLabel={tr('返回词频列表')} style={{ top: 0 }}><p className="stats-status">{tr('当前时间范围内的个人快记搜索结果')}<small className="stats-keyword-note">{tr('搜索结果条数与词语出现次数不同。')}</small></p>{items.map(item => <button className="stats-keyword-record" key={item.recordUid} onClick={() => onOpen(item.recordUid)}>{item.title || item.textContent}<small>{new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale())}</small></button>)}{!loading && !error && !items.length && <p>{tr('当前已检索记录中暂无匹配')}</p>}{(error || sourceError) && <p role="alert">{error || sourceError}</p>}{(loading || error || result?.hasMore) && <button className="stats-more" disabled={loading} onClick={() => setRevision(v => v + 1)}>{tr(loading ? '正在读取…' : error ? '重试' : '继续查找')}</button>}</ArkmeDetailShell>
+  return <ArkmeDetailShell title={keyword.text} label={tr('关键词相关快记')} onClose={onClose} {...(onBack ? { onBack } : {})} backLabel={tr('返回词频列表')} style={{ top: 0 }}><p className="stats-status">{tr('当前时间范围内的个人快记搜索结果')}<small className="stats-keyword-note">{tr('搜索结果条数与词语出现次数不同。')}</small></p>{items.map(item => <button className="stats-keyword-record" key={item.recordUid} onClick={() => onOpen(item.recordUid)}>{item.title || item.textContent}<small>{formatArkmeDateTime(item.sendAtMillis, arkmeIntlLocale())}</small></button>)}{!loading && !error && !items.length && <p>{tr('当前已检索记录中暂无匹配')}</p>}{(error || sourceError) && <p role="alert">{error || sourceError}</p>}{(loading || error || result?.hasMore) && <button className="stats-more" disabled={loading} onClick={() => setRevision(v => v + 1)}>{tr(loading ? '正在读取…' : error ? '重试' : '继续查找')}</button>}</ArkmeDetailShell>
 }

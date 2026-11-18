@@ -22,6 +22,7 @@ export interface RecordingSpeakerEdit {
   start: number; end: number; revision: string; formalSpeakerId: string; sourceNumber: number; assignmentNumber: number; partitionId: string
 }
 export interface RecordingOwnerFragment {
+ privateViewVersion?: string
   speakerEdit?: RecordingSpeakerEdit
   soundSource?: 'unknown' | 'in_person' | 'playback'
   containsPlayback?: boolean
@@ -141,6 +142,9 @@ function compare(a: RecordingOwnerFragment, b: RecordingOwnerFragment): number {
 function validateWindow(window: RecordingReadWindow): void {
   integer(window.startAt); integer(window.endAt, window.startAt + 1)
 }
+function locationRangeTooDense(): never {
+  throw new ArkmePluginError('recording-location-range-too-dense', '该时段转写过多，请在当天转写中继续查找', true, 422)
+}
 
 /** Authenticated, cancellable consumption of Audio's semantic read contract.
  * No OSS path, speaker-number inference, or full-day fallback belongs here. */
@@ -163,12 +167,14 @@ export class RecordingReadOwner {
     return result
   }
 
-  async recordings(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingOwnerFact[]> {
+  async recordings(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal, maxRecordings = Infinity): Promise<RecordingOwnerFact[]> {
     validateWindow(window)
     const facts: RecordingOwnerFact[] = []
     const seen = new Set<string>(), cursors = new Set<string>()
     let cursor = '', metadataBatch = true
+    let remainingPages = Number.isFinite(maxRecordings) ? 2 : Infinity
     do {
+      if (remainingPages-- <= 0) return locationRangeTooDense()
       const row = record(await this.read('/api/v1/audio/recordings/query', {
         start_at: window.startAt, end_at: window.endAt, order: 'asc', limit: 50, ...(cursor === '' ? {} : { page_cursor: cursor }),
       }, session, signal))
@@ -182,6 +188,7 @@ export class RecordingReadOwner {
         seen.add(fact.recording_uid); facts.push(fact)
       }
       cursor = nextCursor(row)
+      if (facts.length > maxRecordings || cursor && facts.length === maxRecordings) return locationRangeTooDense()
       // Bounded owner scans may filter every candidate in a page. A changing
       // cursor still makes progress; only a repeated cursor is invalid.
       if (cursor !== '' && cursors.has(cursor)) return invalid()
@@ -297,7 +304,7 @@ export class RecordingReadOwner {
       if (item.sound_source !== undefined && !['unknown', 'in_person', 'playback'].includes(String(item.sound_source))) return invalid()
       if (item.contains_playback !== undefined && typeof item.contains_playback !== 'boolean') return invalid()
       const edit = speakerEdit(item.speaker_edit)
-      return { ...(edit === undefined ? {} : { speakerEdit: edit }), ...(item.sound_source === undefined ? {} : { soundSource: item.sound_source as 'unknown' | 'in_person' | 'playback' }), ...(item.contains_playback === undefined ? {} : { containsPlayback: item.contains_playback as boolean }), ...(item.search_version === undefined ? {} : { searchVersion: revision(item.search_version) }), recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
+      return { ...(item.private_view_version === undefined ? {} : {privateViewVersion: revision(item.private_view_version)}), ...(edit === undefined ? {} : { speakerEdit: edit }), ...(item.sound_source === undefined ? {} : { soundSource: item.sound_source as 'unknown' | 'in_person' | 'playback' }), ...(item.contains_playback === undefined ? {} : { containsPlayback: item.contains_playback as boolean }), ...(item.search_version === undefined ? {} : { searchVersion: revision(item.search_version) }), recordingId, revision: version, locator, index: integer(item.utterance_index), startAt: start, endAt: end, text: body, event: item.event === undefined ? '' : text(item.event), isBackground: item.is_background === true, textStart: begin, textEnd: finish, textTotal: total, speaker: identity }
     })
     if (items.reduce((sum, item) => sum + item.textEnd - item.textStart, 0) > 20_000) return invalid()
     for (let index = 1; index < items.length; index++) follows(items[index - 1]!, items[index]!)
@@ -341,12 +348,12 @@ export class RecordingReadOwner {
   }
 
   /** Old servers expose metrics on a small text page. Never follow its cursor. */
-  async calendarDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal) {
-    return await this.readDayMetrics(window, session, signal, true)
+  async calendarDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal?: AbortSignal, facts?: readonly RecordingOwnerFact[]) {
+    return await this.readDayMetrics(window, session, signal, true, facts)
   }
 
-  private async readDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal: AbortSignal | undefined, allowLegacy: boolean) {
-    const facts = await this.recordings(window, session, signal)
+  private async readDayMetrics(window: RecordingReadWindow, session: ArkmeSessionCredentials, signal: AbortSignal | undefined, allowLegacy: boolean, readFacts?: readonly RecordingOwnerFact[]) {
+    const facts = readFacts ?? await this.recordings(window, session, signal)
     // Older owners keep supplying metrics on the first text page. Do not add
     // another body scan solely to make the loading indicator disappear.
     if (!this.metadataBatch && !allowLegacy) return undefined
@@ -376,11 +383,11 @@ export class RecordingReadOwner {
     return projectRecordingDailyMetrics(storage, [], input)
   }
 
-  async dayPage(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, continuation?: RecordingDayReadCursor, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
+  async dayPage(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, continuation?: RecordingDayReadCursor, signal?: AbortSignal, maxRecordings = Infinity): Promise<RecordingOwnerDayPage> {
     validateWindow(window)
     if (continuation !== undefined && (continuation.startAt !== window.startAt || continuation.endAt !== window.endAt || continuation.source !== source)) return stale()
     const state: RecordingDayReadCursor = continuation === undefined
-      ? { ...window, source, positions: (await this.recordings(window, session, signal)).map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false })) }
+      ? { ...window, source, positions: (await this.recordings(window, session, signal, maxRecordings)).map(fact => ({ fact, revision: '', cursor: '', skip: 0, limit: 1, done: false })) }
       : structuredClone(continuation)
     if (this.metadataBatch) {
       const metadata = await this.batchMetadata(state.positions, window, source, session, signal)
@@ -598,8 +605,8 @@ export class RecordingReadOwner {
 
   /** Explicit full-content consumer. No caller can mistake an initial page for
    * a full transcript when generating, searching or exporting a day. */
-  async completeDay(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal): Promise<RecordingOwnerDayPage> {
-    return this.completeWindow(window, source, session, signal)
+  async completeDay(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal, maxPages = Infinity): Promise<RecordingOwnerDayPage> {
+    return this.completeWindow(window, source, session, signal, undefined, maxPages)
   }
 
   /** Entity evidence selects recordings by day but addresses exact source rows,
@@ -611,11 +618,13 @@ export class RecordingReadOwner {
     return this.completeWindow(window, source, session, signal, cursor)
   }
 
-  private async completeWindow(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal, cursor?: RecordingDayReadCursor): Promise<RecordingOwnerDayPage> {
+  private async completeWindow(window: RecordingReadWindow, source: RecordingReadSource, session: ArkmeSessionCredentials, signal?: AbortSignal, cursor?: RecordingDayReadCursor, maxPages = Infinity): Promise<RecordingOwnerDayPage> {
     const items: RecordingOwnerFragment[] = []
+    const maxRecordings = Number.isFinite(maxPages) ? 32 : Infinity
     let page: RecordingOwnerDayPage
     do {
-      page = await this.dayPage(window, source, session, cursor, signal)
+      if (maxPages-- <= 0) return locationRangeTooDense()
+      page = await this.dayPage(window, source, session, cursor, signal, maxRecordings)
       for (const fragment of page.items) {
         const last = items.at(-1)
         if (last !== undefined && last.recordingId === fragment.recordingId && last.index === fragment.index) {

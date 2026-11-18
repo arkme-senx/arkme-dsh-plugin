@@ -1,3 +1,4 @@
+import { WorldSubscribeButton, WorldSubscriptionManager } from './WorldSubscriptions.js'
 import { ArkmeMemberProfileCard } from './ArkmeChatMemberActions.js'
 import { TeamWorldManagement } from './TeamWorldManagement.js'
 import { TeamWorldActivity } from './TeamWorldActivity.js'
@@ -63,6 +64,10 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
   }
   const refresh = useCallback(() => setRevision(value => value + 1), [])
   useEffect(() => {
+    window.addEventListener('arkme-world-publications-changed', refresh)
+    return () => window.removeEventListener('arkme-world-publications-changed', refresh)
+  }, [refresh])
+  useEffect(() => {
     const controller = new AbortController()
     pageRequest.current?.abort(); setPaging(false)
     setState(current => ({ ...current, loading: true }))
@@ -95,12 +100,15 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
   }, [accountKey, target.jotmoId, revision])
   useEffect(() => { window.addEventListener('focus', refresh); window.addEventListener('arkme-reaction-policy-changed', refresh); return () => { window.removeEventListener('focus', refresh); window.removeEventListener('arkme-reaction-policy-changed', refresh) } }, [refresh])
   const team = { ...target, ...state.value?.team }
+  const [subscribers, setSubscribers] = useState(false)
   const capabilities = state.value?.context.capabilities
   return <main ref={scrollRoot} aria-label={tr('团队的世界')} style={{ display: 'flex', flex: 1, minHeight: 0, overflowY: 'auto', background: arkmeTheme.base }}>
     <section style={{ width: '100%', maxWidth: 640, minWidth: 0, borderRight: `1px solid ${arkmeTheme.borderSoft}`, boxSizing: 'border-box' }}>
       <header style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 10, padding: '18px 20px', borderBottom: `1px solid ${arkmeTheme.borderSoft}` }}>
         <button type="button" style={icon} aria-label={tr('返回')} onClick={onBack}><ArrowLeft size={20} /></button>
         <h2 style={{ flex: 1, fontSize: 18, margin: 0, overflowWrap: 'anywhere' }}>{tr('{v0}的世界', { v0: team.name })}</h2>
+        <WorldSubscribeButton target={{ kind: 'team', jotmoId: team.jotmoId }} />
+        {capabilities?.manage && <button type="button" style={button} onClick={() => setSubscribers(true)}>{tr('订阅者')}</button>}
         <button type="button" style={icon} aria-label={tr('刷新团队世界')} disabled={state.loading} onClick={refresh}><ArrowClockwise size={19} /></button>
         {state.value?.memberTeam && capabilities?.publish && <button type="button" style={button} onClick={() => setPublishing(true)}>{tr('发布')}</button>}
         {state.value?.memberTeam && <ArkmeActionMenu open={more} onClose={() => setMore(false)} label={tr('团队世界操作')} align="end"
@@ -121,6 +129,7 @@ function ScopedTeamWorld({ accountKey, target, onBack }: Parameters<typeof TeamW
         </div>}
       </div>
     </section>
+    {subscribers && <WorldSubscriptionManager account={accountKey} initialTeam={team.jotmoId} onClose={() => setSubscribers(false)} />}
     {feedbackOpen && state.value?.context.capabilities.feedback && <ArkmeDetailShell style={{ top: 0 }} bodyRef={feedbackBody} title={tr('反馈记录')} label={tr('反馈记录')} onClose={() => setFeedbackOpen(false)}>
       <TeamWorldFeedback scrollRootRef={feedbackBody} accountKey={accountKey} context={state.value.context} onOpen={(item, commentRef) => { setFeedbackOpen(false); void open(item, commentRef) }} refreshKey={feedbackVersion} />
     </ArkmeDetailShell>}

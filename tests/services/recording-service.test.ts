@@ -1,6 +1,8 @@
 import { readCompleteRecordingTranscript } from '../../src/recording-transcript-page.js'
+import { recordingSearchIdentityHash, recordingSearchVersion } from '../../src/recording-search-version.js'
 import { recordingOwnerResponse, type OwnerTestRecording, recordingId, childId, recordingRevision, speakerReference } from '../fixtures/recording-owner.js'
 import { recordingImportBatchID } from '../../src/recording-workflow-contract.js'
+import { recordingZonedWindow } from '../../src/recording-time.js'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +27,7 @@ import type { RecordingImportGateway } from '../../src/recording-import-coordina
 const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
 beforeEach(() => {
   vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
+    if (path === '/api/v1/audio/import-batches/capabilities') return { supported: false }
     if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
     return originalAudioPost.call(this, path, body, session, ...rest)
   })
@@ -41,6 +44,217 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  it('batches calendar reads at daylight saving boundaries and combines the long day once', async () => {
+    const zone = 'America/Los_Angeles'
+    const first = recordingZonedWindow('2026-11-01', zone)
+    const last = recordingZonedWindow('2026-11-04', zone)
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const calls: unknown[] = []
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, async (input, init) => {
+      expect(new URL(String(input)).pathname).toBe('/api/v1/audio/get-calender-summary')
+      const body = JSON.parse(String(init?.body))
+      calls.push(body)
+      const data = calls.length === 1
+        ? { duration_ls: [100, 25], un_click_session_ids_per_day: [['crossing'], ['crossing', 'late']] }
+        : { duration_ls: [50, 75], un_click_session_ids_per_day: [[], ['last']] }
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      const result = await service.recordingCalendar(first.dateStamp, last.dateStamp, undefined, zone)
+      expect(calls).toEqual([
+        { from_stamp: first.dateStamp, to_stamp: first.endStamp },
+        { from_stamp: first.endStamp, to_stamp: last.dateStamp },
+      ])
+      expect(result.days.map(day => [day.dateStamp, day.durationMillis, day.unreviewedCount])).toEqual([
+        [first.dateStamp, 125, 2], [first.endStamp, 50, 0], [first.endStamp + 86_400_000, 75, 1],
+      ])
+      await expect(service.recordingCalendar(first.dateStamp + 1, last.dateStamp, undefined, zone)).rejects.toMatchObject({ code: 'recording-range-invalid' })
+      expect(calls).toHaveLength(2)
+    } finally { service.dispose() }
+  })
+
+  it('locates and reads a Beijing clip before the host midnight using the same day window', async () => {
+    const window = recordingZonedWindow('2026-11-17', 'Asia/Shanghai')
+    const stamp = new Date(2026, 10, 17).getTime()
+    const startAt = window.dateStamp + 12_000, endAt = startAt + 1000
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const calls: Record<string, unknown>[] = []
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'zoned-transcript' } as StateStore, async (input, init) => {
+      const body = JSON.parse(String(init?.body))
+      calls.push(body)
+      const data = recordingOwnerResponse(new URL(String(input)).pathname, body, [{
+        startAt, duration: 8_000, items: [{ text: '跨时区验收', start: 0, end: 1000, ordinal: 7 }],
+      }])
+      if (!data) throw new Error('Unexpected read')
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    const hash = recordingSearchIdentityHash({ sessionId: recordingId, childId, itemIndex: 7, transcriptSource: 'system' })
+    try {
+      const located = await service.locateTranscript(stamp, startAt, hash, '', undefined, window)
+      expect(located?.items[0]).toMatchObject({ startAtMillis: startAt, text: '跨时区验收' })
+      const context = await service.transcriptContext(stamp, startAt - 1, endAt + 1, undefined, window)
+      expect(context.items[0]?.itemId).toBe(located?.focusItemId)
+      const before = calls.length
+      await expect(service.transcriptContext(stamp, window.dateStamp - 1, endAt, undefined, window)).rejects.toMatchObject({ code: 'recording-context-input-invalid' })
+      await expect(service.locateTranscript(stamp, startAt, hash, '', undefined, { ...window, endStamp: window.endStamp + 1 })).rejects.toMatchObject({ code: 'recording-window-invalid' })
+      expect(calls).toHaveLength(before)
+    } finally { service.dispose() }
+  })
+
+  it('locates an exact original in a bounded day window and rejects stale versions', async () => {
+    const day = new Date(2026, 10, 16).getTime()
+    const startAt = day + 2 * 3_600_000
+    const startAtMillis = startAt + 1000
+    const text = '郭老师'
+    const identity = { sessionId: recordingId, childId, itemIndex: 7, transcriptSource: 'system' }
+    const hash = recordingSearchIdentityHash(identity)
+    const version = recordingSearchVersion({ ...identity, asrItemIndex: 7, startAtMillis, endAtMillis: startAtMillis + 1000, text })
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = []
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'located-transcript' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? '{}'))
+      calls.push({ path, body })
+      const data = recordingOwnerResponse(path, body, [{ startAt, duration: 40_000, items: [
+        { text, start: 1000, end: 2000, ordinal: 7 },
+        { text, start: 2000, end: 3000, ordinal: 8 },
+        { text: '远处的转写', start: 30_000 },
+      ] }])
+      if (!data) throw new Error(`Unexpected read ${path}`)
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      const located = await service.locateTranscript(day, startAtMillis, hash, version)
+      expect(located?.items).toHaveLength(2)
+      expect(located?.items.find(item => item.itemId === located.focusItemId)).toMatchObject({ text, searchIdentityHash: hash })
+      expect(JSON.stringify(located)).not.toContain(recordingId)
+      expect(calls.every(({body}) => Number(body.end_at) - Number(body.start_at) <= 30_000)).toBe(true)
+      await expect(service.locateTranscript(day, startAtMillis, hash, 'stale')).resolves.toBeNull()
+      await expect(service.locateTranscript(day, startAtMillis + 1000, hash, version)).resolves.toBeNull()
+      const before = calls.length
+      await expect(service.locateTranscript(day, day - 1, hash, version)).rejects.toMatchObject({ code: 'recording-location-input-invalid' })
+      expect(calls).toHaveLength(before)
+    } finally { service.dispose() }
+  })
+
+  it('locates corrected text while keeping the original search identity', async () => {
+    const day = new Date(2026, 10, 16).getTime()
+    const startAt = day + 3_600_000
+    const text = '周三开会', corrected = '周五培训', privateViewVersion = 'b'.repeat(64)
+    const identity = { sessionId: recordingId, childId, itemIndex: 7, transcriptSource: 'system' }
+    const hash = recordingSearchIdentityHash(identity)
+    const version = recordingSearchVersion({ ...identity, asrItemIndex: 7, startAtMillis: startAt, endAtMillis: startAt + 1000, text })
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    let stale = false
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'corrected-transcript' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? '{}'))
+      const target = { kind: 'recording', source_uid: recordingId, segment_uid: `${childId}:primary:7` }
+      if (path.endsWith('/transcript-views/read')) {
+        expect(body.targets).toEqual([target])
+        const data = { items: [{ ...target, original_version: stale ? 'c'.repeat(64) : privateViewVersion, complete: true, revision: 1, text: corrected }] }
+        return new Response(JSON.stringify({ code: 200, data }))
+      }
+      const data = recordingOwnerResponse(path, body, [{ startAt, duration: 10_000, items: [{ text, start: 0, end: 1000, ordinal: 7, privateViewVersion }] }])
+      if (!data) throw new Error(`Unexpected read ${path}`)
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      const located = await service.locateTranscript(day, startAt, hash, version)
+      expect(located?.items[0]).toMatchObject({ text: corrected, searchIdentityHash: hash, itemId: located?.focusItemId })
+      expect(JSON.stringify(located)).not.toContain(recordingId)
+      stale = true
+      await expect(service.locateTranscript(day, startAt, hash, version)).rejects.toMatchObject({ code: 'recording-view-changed' })
+    } finally { service.dispose() }
+  })
+
+  it('scopes accelerated search to the day, rejects a replaced session, and exposes no Audio IDs', async () => {
+    const day = new Date(2026, 10, 16).getTime()
+    let userId = 42, replace = false
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const read = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      expect(new URL(String(input)).pathname).toBe('/api/v1/audio/transcripts/search')
+      expect(JSON.parse(String(init?.body))).toEqual({ start_at: day, keyword: '郭老师', transcript_source: 'system', limit: 50 })
+      const row = { session_id: recordingId, child_id: childId, item_index: 7, transcript_source: 'system', start_at: day + 10, snippet: '郭老师' }
+      if (replace) userId++
+      return new Response(JSON.stringify({ code: 200, data: { item_ls: [row, { ...row, start_at: day - 1 }, { ...row, item_index: -1 }] } }))
+    })
+    const service = new RecordingService(new ServiceRuntime(config, sessions, {} as StateStore, read), dependencies())
+    try {
+      const items = await service.searchDayTranscript(day, ' 郭老师 ')
+      expect(items).toHaveLength(1)
+      expect(items[0]).toMatchObject({ startAtMillis: day + 10, snippet: '郭老师' })
+      expect(JSON.stringify(items)).not.toContain(recordingId)
+      await expect(service.searchDayTranscript(day, '字'.repeat(65))).rejects.toMatchObject({ code: 'recording-day-search-input-invalid' })
+      expect(read).toHaveBeenCalledOnce()
+      replace = true
+      await expect(service.searchDayTranscript(day, '郭老师')).rejects.toThrow('账号')
+    } finally { service.dispose() }
+  })
+
+  it('reads only the requested context interval, assigns overlaps once and discards a changed account', async () => {
+    const day = new Date(2026, 10, 16).getTime(), recording = day + 60_000
+    let userId = 42, replace = false
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const start = recording + 2000, end = recording + 4000
+    const read = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body))
+      expect(body).toMatchObject({ start_at: start, end_at: end })
+      const data = recordingOwnerResponse(path, body, [{ startAt: recording, duration: 60_000, items: [
+        { text: '跨入区间的旧句', start: 1000, end: 2500 },
+        { text: '前沿句', start: 2000, end: 3000 },
+        { text: '区间内的后句', start: 3000, end: 4000 },
+        { text: '下一页首句', start: 4000, end: 5000 },
+      ] }])
+      if (!data) throw new Error(`Unexpected read ${path}`)
+      if (replace) userId++
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'context' } as StateStore, read)
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      for (const [from, to] of [[day - 1, end], [end, start], [start, start + 3_600_001]] as const) {
+        await expect(service.transcriptContext(day, from, to)).rejects.toMatchObject({ code: 'recording-context-input-invalid' })
+      }
+      await expect(service.transcriptContext(day + 1, start, end)).rejects.toMatchObject({ code: 'recording-date-invalid' })
+      expect(read).not.toHaveBeenCalled()
+      const signal = new AbortController()
+      signal.abort()
+      await expect(service.transcriptContext(day, start, end, signal.signal)).rejects.toMatchObject({ name: 'AbortError' })
+      expect(read).not.toHaveBeenCalled()
+      const context = await service.transcriptContext(day, start, end)
+      expect(context.items.map(item => item.text)).toEqual(['前沿句', '区间内的后句'])
+      expect(context.revisions).toEqual({ [context.items[0]!.sessionKey]: recordingRevision })
+      expect(JSON.stringify(context)).not.toContain(recordingId)
+      expect(read.mock.calls.length).toBeLessThanOrEqual(3)
+      replace = true
+      await expect(service.transcriptContext(day, start, end)).rejects.toThrow()
+    } finally { service.dispose() }
+  })
+
+  it('reads cloud delivery without inspecting or resuming local imports and discards account changes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-delivery-read-'))
+    let userId = 42
+    const sessions = { read: async () => ({ userId, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const store = new ArkmeStateStore(root), gateway = gatewayNoop()
+    const owner = await gateway.loadOwnerSession({ viewerUserId: 42, sessionId: 'session' })
+    gateway.listOwnerTasks = vi.fn(async () => ownerPage([owner]))
+    const listLocal = vi.spyOn(store, 'listRecordingImportJobs').mockRejectedValue(new Error('must not inspect local jobs'))
+    const service = new RecordingService(new ServiceRuntime(config, sessions, store), dependencies(gateway))
+    const query = { scope: 'active' as const, toMillis: 1800000000000, limit: 20, offset: 0 }
+    try {
+      const result = await service.recordingDeliveryPage(query)
+      expect(result.items).toHaveLength(1)
+      expect(result.items[0]).toMatchObject({ fileName: 'owner.wav', progress: null })
+      expect(result.items[0]).not.toHaveProperty('sessionId')
+      expect(listLocal).not.toHaveBeenCalled()
+      gateway.listOwnerTasks = vi.fn(async () => { userId = 43; return ownerPage([owner]) })
+      await expect(service.recordingDeliveryPage(query)).rejects.toThrow('账号已变化')
+    } finally { service.dispose(); await rm(root, { recursive: true, force: true }) }
+  })
+
   it('accepts native uploads without the new header using the registered strategy after Host restart', async () => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-native-strategy-host-'))
     const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
@@ -317,7 +531,7 @@ describe('RecordingService', () => {
       if (path.endsWith('/get-speaker-ls')) data = { spk_ls: state.rows }
       if (path.endsWith('/speaker-presence/list')) data = state.presence
       if (path.endsWith('/speaker-presence/detail')) data = state.members
-      if (path.endsWith('/create-speaker')) data = { speaker_id: 'created' }
+      if (path.endsWith('/speakers/create-idempotent')) data = { speaker_id: 'created', creation_key: JSON.parse(String(init?.body ?? '{}')).creation_key }
       if (state.presenceMissing && path.endsWith('/get-calender-summary')) data = {
         duration_ls: [0, 0, 0, 0, 0, 0, 1_000], un_click_session_ids_per_day: [[], [], [], [], [], [], []],
       }
@@ -684,7 +898,7 @@ describe('RecordingService', () => {
       fixture.state.failWrite = true
       await expect(fixture.service.assignRecordingSpeaker({ itemRef: day.transcript.items[0]!.itemRef,
         newSpeakerName: '新说话人', scope: 'item' })).rejects.toThrow()
-      expect(fixture.calls.filter(path => path.endsWith('/create-speaker'))).toHaveLength(1)
+      expect(fixture.calls.filter(path => path.endsWith('/speakers/create-idempotent'))).toHaveLength(1)
       expect(fixture.calls.filter(path => path.endsWith('/recordings/transcript/speaker/assign'))).toHaveLength(1)
       expect(await fixture.service.cachedRecordingSpeakerOptions()).toBeNull()
     } finally { await fixture.close() }
@@ -888,15 +1102,15 @@ describe('RecordingService', () => {
       defaultRouteKey: 'dashscope/qwen3-max', effectiveRouteKey: 'dashscope/glm-5',
       personalRouteKey: 'dashscope/glm-5',
       options: [
-        { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max' },
-        { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5' },
+        { routeKey: 'dashscope/qwen3-max', provider: 'dashscope', modelKey: 'qwen3-max', displayName: 'Qwen3 Max', available:false, unavailableReason:'catalog_unavailable' },
+        { routeKey: 'dashscope/glm-5', provider: 'dashscope', modelKey: 'glm-5', displayName: 'GLM-5', available:false, unavailableReason:'catalog_unavailable' },
       ],
     })
     await expect(service.setRecordingSummaryModelRoute(' dashscope/qwen3-max ')).resolves.toEqual({
       effectiveRouteKey: 'dashscope/qwen3-max',
     })
     expect(requests.at(-1)).toEqual({
-      path: '/api/v1/audio-summary/model-config/set', body: { route_key: 'dashscope/qwen3-max' },
+      path: '/api/v1/audio-summary/model-config/set', body: { route_key: 'dashscope/qwen3-max', kind:2 },
     })
   })
 
@@ -1453,7 +1667,7 @@ describe('RecordingService', () => {
     expect(current).toHaveLength(2)
     expect(current).toContainEqual(expect.objectContaining({
       kind: 'owner',
-      fileName: 'processing.m4a', status: 'uploading', statusDetail: '上传中',
+      fileName: 'processing.m4a', status: 'waiting', statusDetail: '接收状态待确认',
       startAtMillis, endAtMillis: startAtMillis + 60_000,
       importProgress: expect.objectContaining({ totalDurationMillis: 18_000 }),
       sessionRef: expect.stringMatching(/^arkme-recording-import-session-v1\./),
@@ -1677,7 +1891,7 @@ describe('RecordingService', () => {
     })
   })
 
-  it('keeps an owner-completed task available when optional processing details are unavailable', async () => {
+  it.each([false, true])('preserves settled outcome when optional details are unavailable (failed=%s)', async hasFailedChildren => {
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-completed-progress-unavailable-'))
     const sessions: ArkmeSessionStore = {
       async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
@@ -1689,7 +1903,7 @@ describe('RecordingService', () => {
       fileSize: 16_044, parsedSize: 16_044, durationMillis: 1_000,
       startAtMillis: 1_725_000_000_000, endAtMillis: 1_725_000_001_000,
       createdAtMillis: 1_725_000_000_000, updatedAtMillis: 1_725_000_002_000,
-      hasFinishedUpload: true,
+      hasFinishedUpload: true, hasFailedChildren,
     }, processingCompleted: true, progress: {
       displayStatus: 'unavailable',
     } }], total: 1, hasMore: false }))
@@ -1702,7 +1916,7 @@ describe('RecordingService', () => {
       toMillis: 1_725_100_000_000, limit: 50, offset: 0,
     })
     expect(history).toEqual(expect.objectContaining({
-      items: [expect.objectContaining({ status: 'completed' })],
+      items: [expect.objectContaining({ status: hasFailedChildren ? 'failed' : 'completed' })],
     }))
     expect(history.items[0]).not.toHaveProperty('importProgress')
   })
@@ -1903,7 +2117,7 @@ describe('RecordingService', () => {
 
     expect(current).toEqual([expect.objectContaining({
       kind: 'owner', fileName: 'still-processing.wav',
-      status: 'uploading', statusDetail: '上传中',
+      status: 'waiting', statusDetail: '接收状态待确认',
     })])
   })
 
@@ -1966,6 +2180,109 @@ describe('RecordingService', () => {
     await expect(store.listRecordingImportJobs(42)).resolves.toHaveLength(21)
     await vi.waitFor(() => { expect(gateway.ensureSession).toHaveBeenCalledTimes(2) })
     service.dispose()
+  })
+
+  it.each(['account', 'dispose'] as const)('does not recreate heartbeat timers after %s changes during registration', async reason => {
+    const root=await mkdtemp(join(tmpdir(),'arkme-recording-scope-')),store=new ArkmeStateStore(root)
+    let userId=42,release!:()=>void
+    const sessions:ArkmeSessionStore={async read(){return {userId,accessToken:'a',refreshToken:'r'}},async write(){},async delete(){}}
+    const runtime=new ServiceRuntime(config,sessions,store)
+    const post=vi.fn(async(path:string)=>{if(path.endsWith('/capabilities')){await new Promise<void>(resolve=>{release=resolve});return {import_tasks_supported:true,import_tasks_contract_version:1}}throw new Error('Unexpected task request')})
+    runtime.authenticatedAudioPost=post as typeof runtime.authenticatedAudioPost
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+    const service=new RecordingService(runtime,dependencies(gatewayNoop()))
+    try {
+      const pending=service.registerRecordingImportTasks([{task_id:recordingImportBatchID(),file_name:'scope.wav',file_size:1,start_at:1,duration_ms:1,belong_user_id:42,item_index:0,item_count:1}],42)
+      const rejected=expect(pending).rejects.toBeDefined()
+      await vi.waitFor(()=>expect(release).toBeDefined())
+      if(reason==='dispose')service.dispose();else{userId=43;await runtime.requireSession()}
+      release();await rejected
+      await vi.advanceTimersByTimeAsync(30000)
+      expect(vi.getTimerCount()).toBe(0);expect(post).toHaveBeenCalledTimes(1)
+    }finally{service.dispose();vi.useRealTimers();await rm(root,{recursive:true,force:true})}
+  })
+
+  it.each(['uploading', 'finalizing'] as const)('recovers startup %s after bind outage using the heartbeat alone', async phase => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-startup-'))
+    const store = new ArkmeStateStore(root)
+    const sessions: ArkmeSessionStore = { async read() { return { userId:42, accessToken:'access', refreshToken:'refresh' } }, async write() {}, async delete() {} }
+    const runtime = new ServiceRuntime(config, sessions, store), gateway = gatewayNoop()
+    vi.spyOn(gateway, 'ensureSession')
+    let binds = 0
+    runtime.authenticatedAudioPost = vi.fn(async (path, body) => {
+      if (path.endsWith('/capabilities')) return {import_tasks_supported:true,import_tasks_contract_version:1}
+      if (path.endsWith('/register') || path.endsWith('/sync')) return {items:body.items}
+      if (path.endsWith('/bind')) { if (++binds === 1) throw new Error('offline'); return body }
+      throw new Error(`Unexpected ${path}`)
+    }) as typeof runtime.authenticatedAudioPost
+    const job = {...failedImportJob(0,Date.now()),phase,clientTaskId:recordingImportBatchID(),sessionId:'existing-session',childId:'existing-child'}
+    await store.putRecordingImportJob(42,job)
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+    const service = new RecordingService(runtime,dependencies(gateway))
+    try {
+      await service.resumeRecordingImports()
+      expect((await store.getRecordingImportJob(42,job.jobId))?.phase).toBe(phase)
+      await vi.advanceTimersByTimeAsync(15000)
+      await vi.waitFor(async () => expect((await store.getRecordingImportJob(42,job.jobId))?.phase).toBe('accepted'))
+      expect(gateway.ensureSession).not.toHaveBeenCalled()
+      expect(binds).toBeGreaterThanOrEqual(2)
+    } finally { service.dispose(); vi.useRealTimers(); await new Promise(resolve=>setTimeout(resolve,20)); await rm(root,{recursive:true,force:true}) }
+  })
+
+  it('does not freeze task metadata when an older server explicitly lacks task support', async () => {
+    const root=await mkdtemp(join(tmpdir(),'arkme-recording-legacy-')), store=new ArkmeStateStore(root)
+    const sessions:ArkmeSessionStore={async read(){return {userId:42,accessToken:'a',refreshToken:'r'}},async write(){},async delete(){}}
+    const service=new RecordingService(new ServiceRuntime(config,sessions,store),dependencies(gatewayNoop()))
+    try {
+      const task={task_id:recordingImportBatchID(),file_name:'legacy.wav',file_size:100,start_at:1,duration_ms:1000,belong_user_id:42,item_index:0,item_count:1}
+      expect(await service.registerRecordingImportTasks([task],42)).toEqual({supported:false,registered:false})
+      expect(await service.registerRecordingImportTasks([{...task,start_at:2,belong_user_id:0}],42)).toEqual({supported:false,registered:false})
+      expect(await store.importTasks('test:42')).toEqual({})
+      await service.cancelRecordingImportTask(task.task_id,42)
+    } finally {service.dispose();await rm(root,{recursive:true,force:true})}
+  })
+
+  it('registers the complete fifteen-file manifest before creating only two owner sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-manifest-'))
+    const store = new ArkmeStateStore(root)
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const runtime = new ServiceRuntime(config, sessions, store)
+    const registered: string[] = []
+    runtime.authenticatedAudioPost = vi.fn(async (path, body) => {
+      if (path.endsWith('/capabilities')) return { import_tasks_supported: true, import_tasks_contract_version: 1 }
+      if (path.endsWith('/register')) {
+        const items = body.items as Array<{ task_id: string; revision: number }>
+        expect(Object.keys(await store.importTasks('test:42'))).toHaveLength(15)
+        registered.push(...items.map(item => item.task_id))
+        return { items }
+      }
+      if (path.endsWith('/sync')) return { items: body.items }
+      if (path.endsWith('/bind')) return body
+      throw new Error(`Unexpected ${path}`)
+    }) as typeof runtime.authenticatedAudioPost
+    const gateway = gatewayNoop(), started: string[] = []
+    gateway.ensureSession = vi.fn(async job => { expect(registered).toHaveLength(15); return `session-${job.fileName}` })
+    gateway.upload = vi.fn(async (job, _progress, signal) => {
+      started.push(job.fileName)
+      await new Promise<void>((_, reject) => { signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }); if (signal!.aborted) reject(signal!.reason) })
+    })
+    const service = new RecordingService(runtime, dependencies(gateway, {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: async () => {} },
+    }))
+    try {
+      const manifest = Array.from({length:15}, (_, i) => ({task_id:recordingImportBatchID(),file_name:`${i}.wav`,file_size:100,start_at:1_725_000_000_000+i,duration_ms:1000,belong_user_id:42,item_index:i,item_count:15}))
+      expect(await service.registerRecordingImportTasks(manifest,42)).toEqual({supported:true,registered:true})
+      expect(gateway.ensureSession).not.toHaveBeenCalled()
+      for (const task of manifest) await service.acceptRecordingImport('/private/local-only', {
+        clientTaskId:task.task_id,fileName:task.file_name,fileSize:100,mimeType:'audio/wav',sha256:'a'.repeat(64),startAtMillis:task.start_at,belongUserId:42,
+      },42)
+      await vi.waitFor(() => expect(started).toHaveLength(2))
+      expect(gateway.ensureSession).toHaveBeenCalledTimes(2)
+      const saved = await store.listRecordingImportJobs(42)
+      expect(saved.filter(job => job.sessionId === undefined)).toHaveLength(13)
+      expect(Object.keys(await new ArkmeStateStore(root).importTasks('test:42'))).toHaveLength(15)
+      expect(JSON.stringify(vi.mocked(runtime.authenticatedAudioPost).mock.calls)).not.toContain('/private/local-only')
+    } finally { service.dispose(); await new Promise(resolve => setTimeout(resolve,30)); await rm(root,{recursive:true,force:true}) }
   })
 
   it('persists the backlog, limits uploads to two, cancels queued work and resumes the rest after restart', async () => {
@@ -2367,6 +2684,84 @@ describe('RecordingService', () => {
     })).rejects.toMatchObject({ code: 'recording-speaker-name-conflict' })
     expect(calls.some(path => path.endsWith('/create-speaker'))).toBe(false)
     expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(false)
+  })
+
+  it('creates a distinct speaker only when same-name creation was explicitly confirmed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-speaker-name-conflict-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const calls: string[] = []
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push(path)
+      let data: Record<string, unknown> = {}
+      data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
+      }]) ?? data
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ id: 'speaker-existing', nick_name: '林老师' }] }
+      if (path.endsWith('/speakers/create-idempotent')) { expect(body.nick_name).toBe('林老师'); expect(body.creation_key).toMatch(/^[a-f0-9]{64}$/); data = { speaker_id: 'speaker-created', creation_key: body.creation_key } }
+      if (path.endsWith('/speaker/assign')) { expect(body.target_speaker_uid).toBe('speaker-created'); data = { changed_clusters:0, changed_items:1 } }
+      if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    const service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
+
+    await expect(service.assignRecordingSpeaker({
+      itemRef: day.transcript.items[0]!.itemRef,
+      newSpeakerName: ' 林老师 ', explicitNewPerson: true,
+      scope: 'item',
+    })).resolves.toBeDefined()
+    expect(calls.some(path => path.endsWith('/speakers/create-idempotent'))).toBe(true)
+    expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(true)
+  })
+
+  it.each(['creation-response','assignment'] as const)('replays creation after %s failure and Host restart', async fault => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-speaker-name-conflict-'))
+    const sessions: ArkmeSessionStore = {
+      async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
+      async write() {}, async delete() {},
+    }
+    const calls: string[] = []; const createdKeys=new Set<string>(); let failed=false
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const path = new URL(typeof input === 'string' || input instanceof URL ? input : input.url).pathname
+      const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
+      calls.push(path)
+      let data: Record<string, unknown> = {}
+      data = recordingOwnerResponse(path, body, [{ startAt: new Date(2024, 7, 29).setHours(1, 0, 0, 0),
+        items: [{ edit:{s:1000,e:2000,revision:recordingRevision,source_number:1,assignment_number:1,formal_speaker_uid:'345678901234567890123456'}, text: '项目复盘', start: 1000, end: 2000 }],
+      }]) ?? data
+      if (path.endsWith('/get-speaker-ls')) data = { spk_ls: [{ id: 'speaker-existing', nick_name: '林老师' }] }
+      if (path.endsWith('/speakers/create-idempotent')) { createdKeys.add(String(body.creation_key)); if(fault==='creation-response'&&!failed){failed=true;throw new Error('response lost after commit')}  expect(body.nick_name).toBe('林老师'); expect(body.creation_key).toMatch(/^[a-f0-9]{64}$/); data = { speaker_id: 'speaker-created', creation_key: body.creation_key } }
+      if (path.endsWith('/speaker/assign')) { if(fault==='assignment'&&!failed){failed=true;throw new Error('assignment unavailable')}  expect(body.target_speaker_uid).toBe('speaker-created'); data = { changed_clusters:0, changed_items:1 } }
+      if (path.endsWith('/list-timeline-by-range')) data = { audio_summary_ls: [] }
+      return new Response(JSON.stringify({ code: 200, data }), {
+        status: 200, headers: { 'content-type': 'application/json' },
+      })
+    }) as typeof fetch
+    let service = new RecordingService(
+      new ServiceRuntime(config, sessions, new ArkmeStateStore(root), fetchImpl),
+      dependencies(),
+    )
+    const day = await service.recordingDay(new Date(2024, 7, 29).setHours(0, 0, 0, 0))
+
+    await expect(service.assignRecordingSpeaker({itemRef:day.transcript.items[0]!.itemRef,newSpeakerName:' 林老师 ',explicitNewPerson:true,scope:'item'})).rejects.toThrow();
+    service.dispose(); service = new RecordingService(new ServiceRuntime(config,sessions,new ArkmeStateStore(root),fetchImpl),dependencies());
+    await expect(service.assignRecordingSpeaker({
+      itemRef: day.transcript.items[0]!.itemRef,
+      newSpeakerName: ' 林老师 ', explicitNewPerson: true,
+      scope: 'item',
+    })).resolves.toBeDefined()
+    expect(calls.some(path => path.endsWith('/speakers/create-idempotent'))).toBe(true)
+    expect(calls.some(path => path.endsWith('/speaker/assign'))).toBe(true); expect(createdKeys.size).toBe(1); expect(calls.filter(path=>path.endsWith('/speakers/create-idempotent'))).toHaveLength(2); service.dispose()
   })
 
   it('validates batch eligibility before creating a speaker that could not be assigned', async () => {
@@ -2830,4 +3225,53 @@ describe('recording import admission boundary', () => {
       expect(await store.listRecordingImportJobs(42)).toEqual([])
     } finally { service.dispose() }
   })
+})
+
+it('requires the published model binding before recording generation reads material or writes', async()=>{
+ const post=vi.fn()
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId:11,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:post}
+ const service=new RecordingService(runtime as never,dependencies())
+ await expect(service.recordingAnalysis({action:'generate',kind:'summary',accountScope:'test:11',routeKey:'dashscope/chosen',dateStamp:0} as never)).rejects.toMatchObject({code:'recording-analysis-invalid'})
+ expect(post).not.toHaveBeenCalled()
+})
+
+it.each([{provider:'user-api',available:true,allowed:true},{provider:'user-api',available:false,allowed:false},{provider:'dashscope',available:true,allowed:false}])('accepts an unbound account route only when its scene owner confirms user-api execution ($provider/$available)', async ({provider,available,allowed}) => {
+ const routeKey='user-api/019a4c10-0000-7000-8000-000000000001'
+ const post=vi.fn(async()=>({allowed_route_options:[{route_key:routeKey,provider,available}]}))
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId:11,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:post}
+ const service=new RecordingService(runtime as never,dependencies())
+ const generate=vi.spyOn(service,'generateRecordingProjection').mockResolvedValue({state:'processing',items:[]})
+ try {
+  const request=service.recordingAnalysis({action:'generate',kind:'timeline',accountScope:'test:11',routeKey,dateStamp:0} as never)
+  if(allowed) {
+   await expect(request).resolves.toMatchObject({accountScope:'test:11',section:{state:'processing'}})
+   expect(generate).toHaveBeenCalledExactlyOnceWith(0,'timeline',routeKey,undefined,undefined,undefined,'test:11')
+  } else {
+   await expect(request).rejects.toMatchObject({code:'recording-analysis-invalid'})
+   expect(generate).not.toHaveBeenCalled()
+  }
+ } finally {service.dispose()}
+})
+
+it('rejects account-model generation when the account changes during the catalog read',async()=>{
+ let userId=11
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:async()=>{
+  userId=22
+  return {allowed_route_options:[{route_key:'user-api/owned',provider:'user-api'}]}
+ }}
+ const service=new RecordingService(runtime as never,dependencies())
+ const generate=vi.spyOn(service,'generateRecordingProjection')
+ try {
+  await expect(service.recordingAnalysis({action:'generate',kind:'summary',accountScope:'test:11',routeKey:'user-api/owned',dateStamp:0})).rejects.toMatchObject({code:'recording-analysis-account-changed'})
+  expect(generate).not.toHaveBeenCalled()
+ } finally {service.dispose()}
+})
+
+it.each(['select','generate'] as const)('recording %s never writes to an account that changed between owner and adapter',async action=>{
+ let reads=0
+ const post=vi.fn()
+ const runtime={subscribeAccountScope:()=>()=>{},config:{...config,recordingWorkbenchEnabled:true},requireSession:async()=>({userId:++reads===1?11:22,accessToken:'synthetic',refreshToken:'synthetic'}),authenticatedAudioPost:post}
+ const service=new RecordingService(runtime as never,dependencies())
+ await expect(service.recordingAnalysis({action,kind:'summary',accountScope:'test:11',routeKey:'dashscope/chosen',binding:{catalogReleaseId:'11',offeringRevisionId:'22',publicModelCode:'chosen'},dateStamp:new Date(2026,10,4).getTime()})).rejects.toMatchObject({code:'recording-analysis-account-changed'})
+ expect(post).not.toHaveBeenCalled()
 })

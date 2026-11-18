@@ -1,3 +1,6 @@
+import { useConversationCivilDay } from './ArkmeConversationDate.js'
+import { formatArkmeDateTime, useArkmeEffectiveTimeZone } from './display-time-zone.js'
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeCalendarMonthHeader } from './ArkmeCalendarMonthHeader.js'
 import { TeamRecordSource, TeamRecordSourceScope } from './TeamRecordSource.js'
 import { tr, useArkmeLocale, arkmeIntlLocale, calendarWeekdays, getArkmeLocale } from './locale.js'
@@ -6,7 +9,6 @@ import { createPortal } from 'react-dom'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { ChatCircle } from '@phosphor-icons/react/dist/icons/ChatCircle'
 import { NotePencil } from '@phosphor-icons/react/dist/icons/NotePencil'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeCalendarBucketDay,
   ArkmeCalendarDayRecordPage,
@@ -203,7 +205,7 @@ function selectedDayLabel(date: Date, today: Date): string {
 
 function timeLabel(value: number): string {
   return Number.isFinite(value) && value > 0
-    ? new Intl.DateTimeFormat(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value))
+    ? formatArkmeDateTime(new Date(value), arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
     : ''
 }
 
@@ -522,8 +524,9 @@ export function ArkmeSelfCalendarPopover({
   getReadingDate?: (() => string | undefined) | undefined
 }) {
   useArkmeLocale()
-  const today = useMemo(() => startOfLocalDay(new Date()), [])
-  const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
+  const timezone = useArkmeEffectiveTimeZone()
+  const todayKey = useConversationCivilDay()
+  const today = useMemo(() => new Date(`${todayKey}T00:00:00`), [todayKey])
   const panel = useRef<HTMLElement>(null)
   const { layout, resizing, resizeProps } = useCalendarPopoverLayout(open, anchor, panel, accountScope)
   const [selectionStatus, setSelectionStatus] = useState('')
@@ -759,8 +762,9 @@ function ArkmeCalendarSurfaceBody({
   onClose, anchor = 'directory', accountScope,
 }: { onClose?: () => void; anchor?: 'directory' | 'product-rail'; accountScope?: string | undefined } = {}) {
   useArkmeLocale()
-  const today = useMemo(() => startOfLocalDay(new Date()), [])
-  const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'local', [])
+  const timezone = useArkmeEffectiveTimeZone()
+  const todayKey = useConversationCivilDay()
+  const today = useMemo(() => new Date(`${todayKey}T00:00:00`), [todayKey])
   const [visibleMonth, setVisibleMonth] = useState(() => monthStart(today))
   const [selectedDate, setSelectedDate] = useState(today)
   const [detailsOpen, setDetailsOpen] = useState(true)
@@ -931,7 +935,7 @@ function ArkmeCalendarSurfaceBody({
           <h2 style={styles.recordsTitle}>{selectedDayLabel(selectedDate, today)}</h2>
           <button data-arkme-feedback="neutral" type="button" aria-label={tr("刷新当天快记")} disabled={recordsLoading} style={{ ...styles.iconButton, width: 'auto', fontSize: 12 }}
             onClick={() => arkmeCalendarInvalidations.publish({ dateKey: selectedDateKey })}>{tr("刷新")}</button>
-          <button data-arkme-feedback="neutral" type="button" aria-label={tr("关闭当天内容")} title={tr("关闭")} style={styles.iconButton} onClick={() => { setDetailsOpen(false); setSelectedRecord(undefined) }}><X size={20} aria-hidden /></button>
+          <ArkmeCloseButton data-arkme-feedback="neutral" type="button" aria-label={tr("关闭当天内容")} title={tr("关闭")} style={styles.iconButton} onClick={() => { setDetailsOpen(false); setSelectedRecord(undefined) }} />
         </header>
         {recordsError !== '' && <div style={{ ...styles.status, ...styles.error }} role="alert">{recordsError}</div>}
         {recordsError === '' && recordsLoading && records !== undefined && <div style={styles.loadingStatus} role="status">{tr("正在更新…")}</div>}

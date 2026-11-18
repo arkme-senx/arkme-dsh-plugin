@@ -42,9 +42,22 @@ describe('unified timeline local sends', () => {
   it('does not revive a confirmed receipt omitted by a later complete read', () => {
     expect(unifiedTimelineSendOverlay(window([item(1882), item(1884)]), [item(1883)])).toEqual([])
   })
-  it('keeps an unconfirmed send when there is a source gap', () => {
+  it('keeps confirmed sends outside an incomplete local slice until message coverage is ready', () => {
     const page = window(); page.complete = false; page.sources[0]!.status = 'gap'
-    expect(unifiedTimelineSendOverlay(page, [item(1834), item(1850), item(1883)])).toEqual([item(1850), item(1883)])
+    expect(unifiedTimelineSendOverlay(page, [item(1834), item(1850), item(1883)])).toEqual([item(1834), item(1850), item(1883)])
+  })
+  it('retains the two accepted sends preceding the sparse peer body cache observed on a new device', () => {
+    const page = window([item(42165, { isMe: false }), item(42167, { isMe: false })])
+    page.complete = false; page.windowTokens = []; page.sources[0]!.status = 'gap'
+    const sent = [item(42163), item(42164)]
+    expect(unifiedTimelineSendOverlay(page, sent)).toEqual(sent)
+    const canonical = window([...sent, item(42165, { isMe: false }), item(42167, { isMe: false })])
+    expect(unifiedTimelineSendOverlay(canonical, sent)).toEqual([])
+  })
+  it('does not infer omitted legacy receipts from the first timestamp of an incomplete slice', () => {
+    const page = window(); page.complete = false; page.sources[0]!.status = 'gap'
+    const sent = item(1834, { sequence: undefined })
+    expect(unifiedTimelineSendOverlay(page, [sent])).toEqual([sent])
   })
   it('does not attach a disconnected successful send to a history window', () => {
     const page = window(); page.newerHasMore = true

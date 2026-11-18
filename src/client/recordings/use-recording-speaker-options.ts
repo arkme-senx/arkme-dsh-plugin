@@ -4,7 +4,7 @@ import { arkmeAuthStore } from '../auth-store.js'
 import { useResource } from '../use-resource.js'
 import { assignRecordingSpeaker, unassignRecordingSpeaker, recordingSpeakerAccount, recordingSpeakerOptions, recordingSpeakerItemContexts } from './recording-speaker-options-store.js'
 
-export type RecordingSpeakerChoice = { optionKey: string; newSpeakerName?: never } | { newSpeakerName: string; optionKey?: never }
+export type RecordingSpeakerChoice = { optionKey: string; newSpeakerName?: never } | { newSpeakerName: string; explicitNewPerson?: boolean; optionKey?: never }
 
 export function useRecordingSpeakerOptions(item: ArkmeRecordingWorkbenchItem) {
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
@@ -26,7 +26,7 @@ export function useRecordingSpeakerOptions(item: ArkmeRecordingWorkbenchItem) {
     const current = recordingSpeakerOptions.get(account)
     if (current.value === undefined || current.stale || current.error !== undefined) return undefined
     if (choice.optionKey === undefined) {
-      return await assignRecordingSpeaker(key, binding, { scope, newSpeakerName: choice.newSpeakerName })
+      return await assignRecordingSpeaker(key, binding, { scope, newSpeakerName: choice.newSpeakerName, ...(choice.explicitNewPerson ? { explicitNewPerson: true } : {}) })
     }
     const candidate = current.value.find(option => option.optionKey === choice.optionKey)
     if (candidate === undefined) return undefined

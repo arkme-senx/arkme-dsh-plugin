@@ -91,11 +91,59 @@ describe('navigate to a newly created self topic', () => {
     vi.mocked(callArkme).mockImplementation(async method => {
       if (method === 'sources.list') return { items: [self, uncategorized], hasMore: false }
       if (method === 'archives.state') return [{ ownerAvailable: false }]
+      if (method === 'topic.hidden-source') return null
       throw new Error(`Unexpected API: ${method}`)
     })
     await act(async () => { await selfTopicDirectory(10001, 'prod').ensure(true) })
     await act(async () => renderer!.update(<ArkmeTopicDirectoryPopover {...props} selectedSource={parent} />))
     expect(props.onSelectionInvalidated).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an authorized hidden DSH selection and pending locate through directory refresh without adding a menu row', async () => {
+    const target = { ...parent, sourceRef: 'hidden', topicHierarchyKey: 'hidden-key', displayName: 'DSH Agent Input' }
+    const confirmed = { ...target, topicKind: 3, displayName: '发给 DSH 的消息' }
+    arkmeUi.showConversationTarget(target, 'synced-record', 123)
+    const pending = arkmeUi.getSnapshot().conversationTarget
+    const onInvalidated = vi.fn()
+    const refresh = vi.fn((source: ArkmeSourceItem) => { arkmeUi.updateSelectedSourceProjection(source) })
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return { items: [self, uncategorized], hasMore: false }
+      if (method === 'archives.state') return [{ ownerAvailable: false, effectiveArchived: false }]
+      if (method === 'topic.hidden-source') return confirmed
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover userId={10001} selectedSource={target}
+      onSelect={vi.fn()} onSelectionRefreshed={refresh} onSelectionInvalidated={onInvalidated}
+      onCreateWarning={vi.fn()} onSelfSourcesResolution={vi.fn()} retryRevision={0} />) })
+    expect(refresh).toHaveBeenCalledWith(confirmed)
+    expect(onInvalidated).not.toHaveBeenCalled()
+    expect(arkmeUi.getSnapshot().selectedSource).toEqual(confirmed)
+    expect(arkmeUi.getSnapshot().conversationTarget).toBe(pending)
+    expect(readNavigationCache(10001)?.sources.send_to_self).toEqual([self, uncategorized])
+    const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
+    await act(async () => renderer!.update(<ArkmeTopicDirectoryPopover {...props} selectedSource={confirmed} retryRevision={1} />))
+    expect(onInvalidated).not.toHaveBeenCalled()
+    expect(arkmeUi.getSnapshot().conversationTarget).toBe(pending)
+    expect(readNavigationCache(10001)?.selectedSourceRef).toBe(target.sourceRef)
+  })
+
+  it('ignores a hidden-source response after selection changes', async () => {
+    let complete!: (source: ArkmeSourceItem) => void
+    const refresh = vi.fn(), invalid = vi.fn()
+    vi.mocked(callArkme).mockImplementation(async method => {
+      if (method === 'sources.list') return { items: [self, uncategorized], hasMore: false }
+      if (method === 'archives.state') return [{ ownerAvailable: false }]
+      if (method === 'topic.hidden-source') return new Promise(resolve => { complete = resolve })
+      throw new Error(`Unexpected API: ${method}`)
+    })
+    await act(async () => { renderer = create(<ArkmeTopicDirectoryPopover userId={10001} selectedSource={parent}
+      onSelect={vi.fn()} onSelectionRefreshed={refresh} onSelectionInvalidated={invalid}
+      onCreateWarning={vi.fn()} onSelfSourcesResolution={vi.fn()} retryRevision={0} />) })
+    const props = renderer!.root.findByType(ArkmeTopicDirectoryPopover).props
+    await act(async () => renderer!.update(<ArkmeTopicDirectoryPopover {...props} selectedSource={undefined} />))
+    await act(async () => complete({ ...parent, topicKind: 3 }))
+    expect(refresh).not.toHaveBeenCalled()
+    expect(invalid).not.toHaveBeenCalled()
   })
 
   it('revalidates a created topic directory membership when an ancestor was archived before its reply', async () => {

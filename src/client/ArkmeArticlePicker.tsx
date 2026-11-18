@@ -1,3 +1,5 @@
+import { formatArkmeDate } from './display-time-zone.js'
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
@@ -138,7 +140,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, composition, onClose, on
               .catch(caught => { if (mounted.current) setOpenError(caught instanceof Error ? caught.message : '无法打开文档编辑器') })
               .finally(() => { if (mounted.current) setOpening(false) })
           }}>{tr("＋新建文档")}</button>
-          <button type="button" style={styles.button} aria-label={tr("关闭即我文档")} onClick={close}>×</button></header>
+          <ArkmeCloseButton type="button" style={styles.button} aria-label={tr("关闭即我文档")} onClick={close} /></header>
         <input ref={search} style={styles.search} value={query} aria-label={tr("搜索我的文档")} placeholder={tr("搜索我的文档")} onChange={event => setQuery(event.target.value)} />
         <div style={styles.list}>
           {page?.items.map(item => <div key={item.recordUid} data-arkme-article-choice={item.recordUid} style={{ ...styles.row, background: selected === item.recordUid ? theme.accentSoft : theme.base }}>
@@ -146,7 +148,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, composition, onClose, on
               <span aria-hidden="true" style={{ color: selected === item.recordUid ? theme.accent : theme.secondary }}>{selected === item.recordUid ? '◉' : '○'}</span>
               <span style={{ minWidth: 0, flex: 1 }}><span style={styles.title}><ArkmeRichText text={item.title || '无标题文档'} presentation="preview" /></span>
                 <span style={styles.summary}><ArkmeRichText text={arkmeMarkdownPlainText(item.snippet || item.textContent)} presentation="preview" /></span>
-                <span style={styles.meta}>{item.sendAtMillis > 0 ? new Date(item.sendAtMillis).toLocaleDateString(arkmeIntlLocale()) : ''}</span></span>
+                <span style={styles.meta}>{item.sendAtMillis > 0 ? formatArkmeDate(item.sendAtMillis, arkmeIntlLocale()) : ''}</span></span>
             </button>
             <button type="button" style={styles.button} aria-label={tr("预览{v0}", { v0: item.title || tr("文档") })} disabled={opening} onClick={() => { void resolveArticle(item.recordUid, false) }}>{tr("预览")}</button>
           </div>)}

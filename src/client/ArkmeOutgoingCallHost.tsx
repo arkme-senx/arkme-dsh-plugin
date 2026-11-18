@@ -5,6 +5,7 @@ import type { ArkmeClientConfig } from '../types.js'
 import { callArkme } from './api.js'
 import { arkmeAvatarImages } from './avatar-image-runtime.js'
 import { OutgoingCallRuntime } from './outgoing-call-runtime.js'
+import { connectNativeCallWindow, nativeCallWindow } from './native-call-window.js'
 import { arkmeAuthStore } from './auth-store.js'
 
 export function outgoingCallModalLayout(compact: boolean, fullscreen: boolean): CSSProperties {
@@ -47,13 +48,14 @@ export function ArkmeOutgoingCallHost() {
   const scope = userId === undefined ? undefined : `${authState.auth?.environment}:${userId}`
   const snapshot = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot)
   const attachCallFrame = useCallback((node: HTMLIFrameElement | null) => { runtime.attachFrame(node) }, [runtime])
-  const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.callRequestId || 'idle')}`
+  const callFrameUrl = `${snapshot.assetBasePath}/index.html?callRequestId=${encodeURIComponent(snapshot.frameId || snapshot.callRequestId || 'idle')}`
 
   useEffect(() => {
+    const disconnect = nativeCallWindow && connectNativeCallWindow(runtime, nativeCallWindow)
     runtime.configureReceiver(userId, scope)
     runtime.mount()
     const onMessage = (event: MessageEvent) => { runtime.handleWindowMessage(event) }
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && runtime.getSnapshot().visible) runtime.cancel() }
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape' && !nativeCallWindow && runtime.getSnapshot().visible) runtime.cancel() }
     window.addEventListener('message', onMessage)
     window.addEventListener('keydown', onKeyDown)
     void callArkme<ArkmeClientConfig>('auth.config')
@@ -63,9 +65,11 @@ export function ArkmeOutgoingCallHost() {
       window.removeEventListener('message', onMessage)
       window.removeEventListener('keydown', onKeyDown)
       runtime.dispose()
+      disconnect?.()
     }
   }, [runtime, userId, scope])
 
+  if (nativeCallWindow) return null
   if ((!snapshot.visible && !snapshot.retainFrame) || typeof document === 'undefined') return null
   const compact = snapshot.compact && !snapshot.fullscreen
   const retainedFrame = !snapshot.visible && snapshot.retainFrame
@@ -98,10 +102,10 @@ export function ArkmeOutgoingCallHost() {
           }}
         >{tr("关闭")}</button></div>
       </div> : <iframe
-        key={snapshot.callRequestId}
+        key={snapshot.frameId ?? snapshot.callRequestId}
         ref={attachCallFrame}
         src={callFrameUrl}
-        name={JSON.stringify({ callRequestId: snapshot.callRequestId })}
+        name={JSON.stringify({ callRequestId: snapshot.frameId ?? snapshot.callRequestId })}
         title={tr("与{v0}通话", { v0: snapshot.displayName })}
         allow="camera; microphone; autoplay"
         sandbox="allow-scripts allow-same-origin"

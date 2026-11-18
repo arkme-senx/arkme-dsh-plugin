@@ -39,6 +39,16 @@ await arkme.search('keyword', { limit: 20, syncAll: false })
 await arkme.createText('content')
 await arkme.outbox()
 await arkme.retry(recordUid)
+// The durable message queue reports local acceptance separately from delivery.
+if ((await arkme.fileCapabilities()).textMessagesVersion === 1) {
+  const task = await arkme.sendFiles({ sourceRef: selfSources.items[0].sourceRef,
+    recordUid: crypto.randomUUID(), relationUid: crypto.randomUUID(), fileRefs: [],
+    content: { textContent: '待发送文字' } })
+  // Inspect fileSendTasks or subscribeFileSends. Keep task.taskRef for
+  // retryFileSend or reconcileFileSend; never replace the original send IDs.
+  // A confirmed text receipt carries IDs and status. Read the timeline for the visible body.
+  console.log(task.state)
+}
 const mine = await arkme.myExtensions()
 const publishable = mine.items.find(item => item.publish.allowed)
 if (publishable?.publish.allowed === true) showPublishRoute(

@@ -39,3 +39,8 @@ export class ArkmePluginError extends Error {
     if (options?.writeOutcomeUnknown === true) this.writeOutcomeUnknown = true
   }
 }
+
+/** Only a missing route establishes that an optional backend capability is absent. */
+export function isBackendRouteUnavailable(error: unknown): boolean {
+  return error instanceof ArkmePluginError && [404, 405].includes(error.upstreamStatus ?? 0)
+}

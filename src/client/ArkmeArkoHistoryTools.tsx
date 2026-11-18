@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkoReplyManager } from './ArkoReplyManager.js'
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type RefObject } from 'react'
@@ -160,7 +161,7 @@ export function ArkmeArkoHistoryTools({ accountScope, name, host, disabled, clea
       {searchError && <p role="alert" style={{ color: arkmeTheme.danger }}>{searchError}<button type="button" style={button} onClick={() => { void search(page.nextCursor) }}>{tr('重试')}</button></p>}
       {page.items.map(item => <button type="button" key={item.messageKey} data-arko-search-hit={item.messageRef} onClick={() => { void locate(item.messageRef) }}
         style={{ display: 'block', width: '100%', textAlign: 'left', padding: '12px 0', border: 0, borderBottom: `1px solid ${arkmeTheme.borderSoft}`, background: 'transparent', color: arkmeTheme.text, cursor: 'pointer', font: 'inherit' }}>
-        <span style={{ display: 'block', color: arkmeTheme.secondary, fontSize: 12, marginBottom: 6 }}>{item.role === 'user' ? tr('我') : name} · {new Date(item.createdAtMillis).toLocaleString()}</span>
+        <span style={{ display: 'block', color: arkmeTheme.secondary, fontSize: 12, marginBottom: 6 }}>{item.role === 'user' ? tr('我') : name} · {formatArkmeDateTime(item.createdAtMillis)}</span>
         <span style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere', fontSize: 14, lineHeight: 1.6 }}><ArkmeRichText text={item.role === 'assistant' ? arkmeMarkdownPlainText(item.snippet) : item.snippet} presentation="preview" /></span>
       </button>)}
       {page.hasMore && <button type="button" data-arko-search-more disabled={searching} style={button} onClick={() => { void search(page.nextCursor) }}>{page.items.length ? tr('显示更多结果') : tr('继续查找')}</button>}

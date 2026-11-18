@@ -67,7 +67,7 @@ it('does not carry membership or late results across accounts', async () => {
   await vi.waitFor(() => expect(readOfficialTeamMembership('new').state).toBe('ready'))
   expect(readOfficialTeamMembership('new').value?.isMember).toBe(false)
   expect(readOfficialTeamMembership('old').value).toBeUndefined()
-  expect(call).toHaveBeenLastCalledWith('team.app.official.membership', { expectedAccountKey: 'new' }, expect.any(AbortSignal))
+  expect(call).toHaveBeenLastCalledWith('team.app.official.membership', { expectedAccountKey: 'new' }, expect.any(AbortSignal), { priority: 'background' })
 })
 
 it('reuses only a visible official conversation and restores the shortcut when that row is hidden', () => {

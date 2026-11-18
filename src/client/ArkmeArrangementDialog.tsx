@@ -1,6 +1,6 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { tr } from './locale.js'
 import css from './arrangement-recognition.css?inline'
 
@@ -81,9 +81,7 @@ export function ArkmeArrangementDialog({
             <h2 id={headingId}>{tr(title)}</h2>
             <p>{tr(description)}</p>
           </div>
-          <button type="button" aria-label={tr('关闭')} disabled={busy} onClick={onClose}>
-            <X size={20} />
-          </button>
+          <ArkmeCloseButton type="button" aria-label={tr('关闭')} disabled={busy} onClick={onClose} />
         </header>
         {children}
       </section>

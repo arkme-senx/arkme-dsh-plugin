@@ -9,7 +9,7 @@ export interface RecordingPlaybackController {
   isPlaying: boolean
   isLoading: boolean
   error: string
-  playItem(item: ArkmeRecordingWorkbenchItem, seekAtMillis?: number): Promise<void>
+  playItem(item: ArkmeRecordingWorkbenchItem, seekAtMillis?: number, stopAtMillis?: number): Promise<void>
   playAt(items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number): Promise<void>
   selectAt(items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number): Promise<void>
   pause(): void
@@ -59,7 +59,7 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
 
   useEffect(() => stop, [stop])
 
-  const openItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis: number) => {
+  const openItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis: number, stopAtMillis?: number) => {
     const requestRevision = ++requestRevisionRef.current
     requestAbortRef.current?.abort()
     const requestController = new AbortController()
@@ -75,6 +75,8 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
         requestController.signal,
       )
       if (requestRevisionRef.current !== requestRevision) return
+      const mediaEnd = stopAtMillis === undefined ? playback.endOffsetMillis : Math.min(playback.endOffsetMillis,
+        playback.startOffsetMillis + stopAtMillis - item.startAtMillis)
       const audio = new Audio(`${mediaPath}?ref=${encodeURIComponent(playback.playbackRef)}`)
       audioRef.current = { audio, item, playback }
       const relativeSeekMillis = Math.min(
@@ -87,7 +89,7 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
         if (audioRef.current?.audio !== audio) return
         const mediaPositionMillis = audio.currentTime * 1_000
         setPositionAtMillis(item.startAtMillis + mediaPositionMillis - playback.startOffsetMillis)
-        if (!audio.paused && mediaPositionMillis >= playback.endOffsetMillis) void continueQueue()
+        if (!audio.paused && mediaPositionMillis >= mediaEnd) void continueQueue()
       }
       const onPlay = () => { if (audioRef.current?.audio === audio) setIsPlaying(true) }
       const onPause = () => { if (audioRef.current?.audio === audio) setIsPlaying(false) }
@@ -188,9 +190,13 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
     }
   }, [currentItems, stop])
 
-  const playItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis = item.startAtMillis) => {
+  const playItem = async (item: ArkmeRecordingWorkbenchItem, seekAtMillis = item.startAtMillis, stopAtMillis?: number) => {
+    if (stopAtMillis !== undefined && (!Number.isFinite(stopAtMillis) || !Number.isFinite(seekAtMillis)
+      || seekAtMillis < item.startAtMillis || stopAtMillis > item.endAtMillis || stopAtMillis <= seekAtMillis)) {
+      stop(); setError('试听范围无效'); return
+    }
     queueRef.current = { items: [item], index: 0, continuePages: false }
-    await openItem(item, seekAtMillis)
+    await openItem(item, seekAtMillis, stopAtMillis)
   }
 
   const playAt = async (items: readonly ArkmeRecordingWorkbenchItem[], selectedAtMillis: number) => {

@@ -96,6 +96,28 @@ it('empty navigation never restores, while an explicit restore supports a zero w
   await f.store.restoreTarget('a', folder)
   expect(teamEntryHidden(f.store.read('a'), folder)).toBe(false)
 })
+
+it('explicit navigation restores a backend-confirmed silent member contact and its folder', async () => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
+  f.rows.set('conversation-ref', snapshot('conversation', { dismissed: true, version: 2, activitySeq: 0 }))
+  const silent = { ...conversation, lastSeq: 0, memberInitiated: true }
+  await f.store.restoreNavigation('a', async () => ({ kind: 'conversation', conversation: silent }))
+  expect(f.transport.mock.calls.filter(([op]) => op.endsWith('.change')).at(-1)?.[1].changes).toHaveLength(2)
+  expect(teamEntryHidden(f.store.read('a'), { kind: 'conversation', conversation: silent })).toBe(false)
+  expect(teamEntryHidden(f.store.read('a'), { kind: 'folder', group: groupTeamConversations([silent])[0]! })).toBe(false)
+})
+
+it.each([false, true])('restores a group-only folder according to its published activity (%s)', async hasPublished => {
+  const f = fixture()
+  f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
+  const { latest: _latest, ...group } = folder.kind === 'folder' ? folder.group : groupTeamConversations([conversation])[0]!
+  const target: TeamEntryTarget = { kind: 'folder', group: { ...group, conversations: [], hasPublished, groupCount: 1 } }
+  await f.store.restoreNavigation('a', async () => target)
+  const changes = f.transport.mock.calls.filter(([op]) => op.endsWith('.change'))
+  expect(changes).toHaveLength(hasPublished ? 1 : 0)
+  if (hasPublished) expect(teamEntryHidden(f.store.read('a'), target)).toBe(false)
+})
 it('explicit historical navigation restores a zero-counter folder and its child atomically', async () => {
   const f = fixture()
   f.rows.set('team-ref', snapshot('folder', { dismissed: true, version: 1, activitySeq: 0 }))
@@ -183,4 +205,51 @@ it('a slow reconciliation in one account does not block another account', async 
   complete(page([snapshot('conversation'), snapshot('folder')]))
   await read
   expect(teamEntryPinned(f.store.read('a'), direct)).toBe(false)
+})
+
+it('accepts ordered workspace projections with unchanged private sequence and restores a group independently of private pins',async()=>{
+  const f=fixture(),original=f.transport.getMockImplementation()!
+  let dismissed=true
+  f.transport.mockImplementation(async(op,p)=>{
+    const response=await original(op,p)
+    return {...response,schemaVersion:2,items:response.items.map(row=>({...row,activitySeq:0,version:2,dismissed}))}
+  })
+  await f.store.reconcile('workspace',[conversation],new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('workspace'),direct)).toBe(true)
+  dismissed=false
+  await f.store.reconcile('workspace',[conversation],new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('workspace'),direct)).toBe(false)
+  dismissed=true // A source withdrawal removes the new activity without increasing the preference version.
+  await f.store.reconcile('workspace',[conversation],new AbortController().signal)
+  expect(teamEntryHidden(f.store.read('workspace'),direct)).toBe(true)
+})
+
+it('binds queued private commands to their original protocol when workspace becomes available', async () => {
+  const { store, transport } = fixture()
+  const command = store.pin('a', direct, true)
+  store.setWorkspaceAvailable('a', true)
+  const hydration = store.hydrate('a')
+  await Promise.all([command, hydration])
+  const operations = transport.mock.calls.map(([op,p]) => [op,p.scope])
+  expect(operations).toEqual([['team.app.entries.query',undefined],['team.app.entries.change',undefined],['team.app.entries.cached','workspace'],['team.app.entries.list','workspace']])
+  expect(transport.mock.calls.at(-1)![1].scope).toBe('workspace')
+  expect(teamEntryPinned(store.read('a'), direct)).toBe(true)
+  store.setWorkspaceAvailable('a', false)
+  expect(teamEntryPinned(store.read('a'), direct)).toBe(true)
+  await store.pin('b', direct, true)
+  expect(transport.mock.calls.at(-1)![1].scope).toBeUndefined()
+})
+
+it('restores a confirmed zero-message contact and its folder but never promotes a passive relationship', async () => {
+  const { store, rows, transport } = fixture()
+  const empty = { ...conversation, memberInitiated: true, lastSeq: 0, unread: 0, needsReply: false }
+  rows.set('team-ref', snapshot('folder', {dismissed:true,activitySeq:0}))
+  rows.set('conversation-ref', snapshot('conversation', {dismissed:true,activitySeq:0}))
+  await store.restoreNavigation('a', async () => ({kind:'conversation',conversation:empty}))
+  expect(teamEntryHidden(store.read('a'),{kind:'conversation',conversation:empty})).toBe(false)
+  expect(teamEntryHidden(store.read('a'),{kind:'folder',group:groupTeamConversations([empty])[0]!})).toBe(false)
+  const writes=transport.mock.calls.filter(([op])=>op.endsWith('.change')).length
+  await store.restoreNavigation('a',async()=>({kind:'conversation',conversation:{...empty,memberInitiated:false}}))
+  expect(transport.mock.calls.filter(([op])=>op.endsWith('.change'))).toHaveLength(writes)
+  expect(empty.unread).toBe(0);expect(empty.lastSeq).toBe(0)
 })

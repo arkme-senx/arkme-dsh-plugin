@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -42,7 +43,7 @@ function ArkmeWebLoginOverlayContent({ t }: ArkmeWebLoginOverlayProps) {
     aria-modal="true"
     aria-label={tr("Arkme 登录")}
   >
-    <button ref={closeRef} type="button" style={styles.close} aria-label={tr("关闭登录")} onClick={() => { arkmeUi.closeWebLoginDialog() }}>×</button>
+    <ArkmeCloseButton ref={closeRef} type="button" style={styles.close} aria-label={tr("关闭登录")} onClick={() => { arkmeUi.closeWebLoginDialog() }} />
     <ArkmeLogin {...flow.loginProps} />
   </div>
 

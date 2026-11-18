@@ -40,7 +40,7 @@ export function useAskDsh(scopeKey: string, onComplete: () => void) {
     setStatus(''); setBusy(false); attempt.current = undefined
     return () => { running.current?.abort(); running.current = undefined }
   }, [scopeKey])
-  const runPrepared = async (identity: string, prepare: AskDshPreparation) => {
+  const runPrepared = async (identity: string, prepare: AskDshPreparation, text?: string) => {
     if (running.current) return
     const auth = arkmeAuthStore.getSnapshot().auth
     if (auth?.status !== 'authenticated' || !auth.userId) { setStatus('请先登录'); return }
@@ -61,16 +61,16 @@ export function useAskDsh(scopeKey: string, onComplete: () => void) {
     const stopAuth = arkmeAuthStore.subscribe(() => { if (!sameAccount()) controller.abort() })
     const key = JSON.stringify([scopeKey, identity])
     if (attempt.current?.key !== key) attempt.current = { key, id: crypto.randomUUID() }
-    setBusy(true); setStatus('正在准备快记及附件…')
+    setBusy(true); setStatus(text === undefined ? '正在准备快记及附件…' : '正在准备诊断信息…')
     try {
       const files = await prepare(signal, setStatus)
       signal.throwIfAborted()
       if (!sameAccount()) throw new Error('账号已切换，请重试')
-      await bridge.prepare({ operationId: attempt.current.id, files, signal, progress: setStatus })
+      await bridge.prepare({ operationId: attempt.current.id, files, ...(text === undefined ? {} : { text }), signal, progress: setStatus })
       signal.throwIfAborted()
       if (!sameAccount()) throw new Error('账号已切换，请重试')
       attempt.current = undefined
-      setStatus('附件已准备好，请输入问题后发送')
+      setStatus(text === undefined ? '附件已准备好，请输入问题后发送' : '诊断信息已填入，请确认后发送')
       complete.current()
       // Visibility changes in React before the next frame; focus only the native editor.
       requestAnimationFrame(() => {
@@ -94,5 +94,6 @@ export function useAskDsh(scopeKey: string, onComplete: () => void) {
       original: readAskDshOriginal,
     }, signal, progress),
   )
-  return { busy, status, run, runPrepared }
+  const runText = (identity: string, text: string) => runPrepared(identity, async () => [], text)
+  return { busy, status, run, runPrepared, runText }
 }

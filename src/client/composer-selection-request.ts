@@ -1,7 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 
-/** A one-shot caret request tied to the exact externally edited draft. */
-export interface ArkmeComposerSelectionRequest {
+interface ArkmeComposerSelectionRange {
   text: string
   start: number
   end: number
@@ -9,11 +8,14 @@ export interface ArkmeComposerSelectionRequest {
   canApply?: () => boolean
 }
 
+/** One-shot selection of an exact draft range or the end of the mounted draft. */
+export type ArkmeComposerSelectionRequest = ArkmeComposerSelectionRange | { atEnd: true }
+
 export function useComposerSelectionRequest(
   request: ArkmeComposerSelectionRequest | undefined,
   value: string,
   disabled: boolean,
-  apply: (request: ArkmeComposerSelectionRequest) => boolean,
+  apply: (request: ArkmeComposerSelectionRange) => boolean,
 ): void {
   const consumed = useRef<ArkmeComposerSelectionRequest>()
   // Run after the editor's document-sync layout effect, including delayed editor
@@ -21,7 +23,9 @@ export function useComposerSelectionRequest(
   useLayoutEffect(() => {
     if (request === undefined || consumed.current === request) return
     consumed.current = request
-    if (disabled || value !== request.text || request.canApply?.() === false) return
-    if (!apply(request)) consumed.current = undefined
+    if (disabled) return
+    const range = 'atEnd' in request ? { text: value, start: value.length, end: value.length } : request
+    if (value !== range.text || range.canApply?.() === false) return
+    if (!apply(range)) consumed.current = undefined
   })
 }

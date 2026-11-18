@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
 import { ARKME_CONVERSATION_HEADER_HEIGHT } from './arkme-layout.js'
@@ -6,7 +7,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { createPortal } from 'react-dom'
 import { CaretDown } from '@phosphor-icons/react/dist/icons/CaretDown'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import type {
   ArkmeRelatedRecordingItem, ArkmeRelatedRecordingMonthBucket, ArkmeRelatedRecordingPageState,
 } from '../types.js'
@@ -549,7 +549,7 @@ export function RelatedRecordingDetail(props: RelatedRecordingDetailProps) {
             <h2 style={styles.modalTitle}>{detailItem.title || '未命名录音'}</h2>
             {timeText !== '' && <span style={styles.modalTitleTime}>{timeText}</span>}
           </div>
-          <button type="button" style={styles.iconButton} onClick={props.onClose} aria-label={tr("关闭录音详情")}><X size={25} aria-hidden /></button>
+          <ArkmeCloseButton type="button" style={styles.iconButton} onClick={props.onClose} aria-label={tr("关闭录音详情")} />
         </header>
         <div className={ARKME_RELATED_RECORDING_MODAL_BODY_CLASS} style={styles.modalBody}>
           <h3 style={styles.sectionLabel}><span style={styles.sectionIcon} aria-hidden="true">📝</span><span>{tr("时段总结")}</span></h3>

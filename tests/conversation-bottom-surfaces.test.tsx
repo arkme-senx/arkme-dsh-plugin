@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { arkoTimelineMemory } from '../src/client/arko-timeline-memory.js'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -35,7 +36,7 @@ const button = (label: string) => host.querySelector<HTMLButtonElement>(`button[
 const scroll = async (top: number) => { await act(async () => { view().scrollTop = top; view().dispatchEvent(new Event('scroll', { bubbles: true })) }) }
 const flushFrames = async () => { await act(async () => { const pending = frames.splice(0); for (const frame of pending) frame(performance.now()) }) }
 async function mount(kind: 'arko' | 'team') {
-  await act(async () => { root.render(kind === 'arko' ? <ArkmeArkoSurface /> : <TeamConversationPane conversation={conversation} accountKey="test:10001" onChanged={() => {}} />) })
+  await act(async () => { root.render(kind === 'arko' ? <ArkmeArkoSurface /> : <TeamConversationPane conversation={conversation} accountKey="test:10001" />) })
   await flushFrames()
 }
 async function loadEarlier() {
@@ -46,6 +47,7 @@ async function resized() {
   await act(async () => { for (const observer of resize) observer.callback([], {} as ResizeObserver) })
 }
 beforeEach(() => {
+ arkoTimelineMemory.clear()
   frames = []; resize = []; intersections = []; growth = 0
   scrollIntoView = vi.fn()
   Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView })

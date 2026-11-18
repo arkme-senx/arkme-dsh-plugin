@@ -11,6 +11,23 @@ function deferred<T>() {
 afterEach(() => { vi.useRealTimers() })
 
 describe('ArkmeRequestCoordinator', () => {
+  it('gives background continuations bounded preference within the same budget', async () => {
+    const coordinator = new ArkmeRequestCoordinator({ maxConcurrent: 1,
+      laneLimits: { 'background-read': { maxConcurrent: 1, burst: 10 } } })
+    const gate = deferred<void>()
+    const order: string[] = []
+    const base = { scope: 'user:1', service: 'chat' as const }
+    const start = (name: string, continuation = false, lane: 'background-read' | 'interactive-read' = 'background-read') =>
+      coordinator.run({ ...base, lane, continuation, operation: async () => { order.push(name) } })
+    const blocker = coordinator.run({ ...base, lane: 'background-read', operation: () => gate.promise })
+    const jobs = [start('optional'), start('page-1', true), start('page-2', true),
+      start('page-3', true), start('foreground', false, 'interactive-read')]
+    gate.resolve()
+    await Promise.all([blocker, ...jobs])
+    expect(order).toEqual(['foreground', 'page-1', 'page-2', 'optional', 'page-3'])
+    coordinator.dispose()
+  })
+
   it('stream headers do not release admission or coalesce separate readers', async () => {
     const coordinator = new ArkmeRequestCoordinator({ defaultServiceLimit: { maxConcurrent: 1 } })
     const firstFinished = deferred<void>()
@@ -516,4 +533,53 @@ it('bounds the aggregate queue across services and frees cancelled admission wit
     await expect(next).resolves.toBe('admitted')
     expect(queuedOperation).not.toHaveBeenCalled()
   } finally { held.resolve('first'); await first; coordinator.dispose() }
+})
+
+it('reserves service capacity for foreground reads and lets another service progress', async () => {
+  vi.useFakeTimers()
+  const unpaced = { ratePerSecond: Number.MAX_SAFE_INTEGER, burst: Number.MAX_SAFE_INTEGER }
+  const coordinator = new ArkmeRequestCoordinator({
+    maxConcurrent: 6,
+    laneLimits: { 'background-read': { ...unpaced, maxConcurrent: 4 }, 'interactive-read': { ...unpaced, maxConcurrent: 4 } },
+    defaultServiceLimit: { ...unpaced, maxConcurrent: 4, maxBackgroundConcurrent: 2 },
+  })
+  const held = deferred<void>(), started: string[] = []
+  const pending: Promise<unknown>[] = []
+  const read = (id: string, service: 'record' | 'team', lane: 'interactive-read' | 'background-read') => {
+    const result = coordinator.run({ scope: 'account', service, lane,
+      operation: async () => { started.push(id); await held.promise } })
+    pending.push(result)
+    return result
+  }
+  try {
+    read('record-1', 'record', 'background-read')
+    read('record-2', 'record', 'background-read')
+    read('record-queued', 'record', 'background-read')
+    read('team-1', 'team', 'background-read')
+    read('foreground', 'record', 'interactive-read')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(started).toEqual(['record-1', 'record-2', 'team-1', 'foreground'])
+    held.resolve()
+    await Promise.all(pending)
+    expect(started.at(-1)).toBe('record-queued')
+  } finally { held.resolve(); await Promise.allSettled(pending); coordinator.dispose() }
+})
+
+it('promotes a shared read out of its service background quota without a duplicate transport', async () => {
+  vi.useFakeTimers()
+  const coordinator = new ArkmeRequestCoordinator({
+    defaultServiceLimit: { maxConcurrent: 4, maxBackgroundConcurrent: 1 },
+  })
+  const held = deferred<void>(), transport = vi.fn(async () => 'facts')
+  const base = { scope: 'account', service: 'record' as const, lane: 'background-read' as const }
+  const blocker = coordinator.run({ ...base, operation: () => held.promise })
+  const queued = coordinator.run({ ...base, key: 'same-query', operation: transport })
+  try {
+    await vi.advanceTimersByTimeAsync(0)
+    expect(transport).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+    const foreground = coordinator.run({ ...base, lane: 'interactive-read', key: 'same-query', operation: transport })
+    await expect(Promise.all([queued, foreground])).resolves.toEqual(['facts', 'facts'])
+    expect(transport).toHaveBeenCalledOnce()
+  } finally { held.resolve(); await blocker; coordinator.dispose() }
 })

@@ -1,15 +1,14 @@
 import { decodeString } from 'micromark-util-decode-string'
 import { arkmeEmojiTextRuns } from '../arkme-emoji-text.js'
 import { arkmeEscapeMarkdownText, arkmeMarkdownTree } from '../markdown.js'
-import { quoteCanonicalText, quoteMatchesCanonical, type ArkmeMessageQuote, type ArkmeQuoteSource } from '../message-quote.js'
+import { MESSAGE_QUOTE_LIMIT, quoteCanonicalText, quoteContext, quoteMatchesCanonical, type ArkmeMessageQuote, type ArkmeQuoteSource } from '../message-quote.js'
 import type { ArkmeRecordReeditMention } from '../record-reedit-contract.js'
 
 interface Unit { char: string; start: number; end: number; leaf: number }
 export interface MessageTextReplacement { start: number; end: number; original: string; markdown: boolean }
 const mismatch = () => new Error('原文或选区已变化，请重新选择')
 
-/** Map rendered UTF-16 positions back to wire text, never search for the first matching word. */
-export function resolveMessageTextReplacement(item: ArkmeQuoteSource, quote: ArkmeMessageQuote): MessageTextReplacement {
+function replacementUnits(item: ArkmeQuoteSource) {
   const source = item.textContent
   const markdown = item.textFormat === 'markdown' || item.senderKind === 'bot'
   const units: Unit[] = []
@@ -66,6 +65,14 @@ export function resolveMessageTextReplacement(item: ArkmeQuoteSource, quote: Ark
     } else normalized.push(unit)
   }
   if (normalized.at(-1)?.char === ' ') normalized.pop()
+  return normalized
+}
+
+/** Map rendered UTF-16 positions back to wire text, never search for the first matching word. */
+export function resolveMessageTextReplacement(item: ArkmeQuoteSource, quote: ArkmeMessageQuote): MessageTextReplacement {
+  const source = item.textContent
+  const markdown = item.textFormat === 'markdown' || item.senderKind === 'bot'
+  const normalized = replacementUnits(item)
   const text = normalized.map(unit => unit.char).join('')
   if (text !== quoteCanonicalText(item) || !quoteMatchesCanonical(quote, text)) throw mismatch()
   const first = normalized[quote.start], last = normalized[quote.end - 1]
@@ -76,6 +83,38 @@ export function resolveMessageTextReplacement(item: ArkmeQuoteSource, quote: Ark
   // Do not split a decoded entity or emoji token.
   if (normalized[quote.start - 1]?.start === first.start || normalized[quote.end]?.end === last.end) throw mismatch()
   return { start: first.start, end: last.end, original: source.slice(first.start, last.end), markdown }
+}
+
+/** Keep the replacement on the changed span so edits to long rows and existing marks use the same quote contract. */
+export function preparePlainTextReplacement(source: string, draft: string, sourceDigest: string) {
+  const before = Array.from(source), after = Array.from(draft)
+  let first = 0, last = before.length, nextLast = after.length
+  while (first < last && first < nextLast && before[first] === after[first]) first++
+  while (last > first && nextLast > first && before[last - 1] === after[nextLast - 1]) { last--; nextLast-- }
+  const prefixLength = before.slice(0, first).join('').length
+  const suffixLength = before.slice(last).join('').length
+  const item = { textContent: source, textFormat: 'plain' as const }
+  const units = replacementUnits(item)
+  const canonical = units.map(unit => unit.char).join('')
+  const start = units.findIndex(unit => unit.end > prefixLength)
+  const end = units.findLastIndex(unit => unit.start < source.length - suffixLength)
+  // An insertion must still quote at least one existing unit. Widen over
+  // normalized spaces and complete emoji tokens where the wire range needs it.
+  let left = Math.min(start === -1 ? units.length - 1 : start, Math.max(0, end))
+  let right = Math.max(left, end)
+  while (left > 0 && (units[left]!.char === ' ' || /[\uDC00-\uDFFF]/u.test(units[left]!.char) || units[left - 1]!.start === units[left]!.start)) left--
+  while (right + 1 < units.length && (units[right]!.char === ' ' || /[\uD800-\uDBFF]/u.test(units[right]!.char) || units[right + 1]!.end === units[right]!.end)) right++
+  if (left < 0 || units[left]!.start > prefixLength || units[right]!.end < source.length - suffixLength) {
+    throw new Error('请保留转写片段首尾的原有空白')
+  }
+  const text = canonical.slice(left, right + 1)
+  if (text.length > MESSAGE_QUOTE_LIMIT) throw new Error('单次改动范围过长，请分次修改')
+  const anchor: ArkmeMessageQuote = { version: 1, projection: 'arkme-text-v1', sourceDigest,
+    start: left, end: right + 1, text, ...quoteContext(canonical, left, right + 1) }
+  const range = resolveMessageTextReplacement(item, anchor)
+  const replacement = draft.slice(range.start, draft.length - (source.length - range.end))
+  if (applyMessageTextReplacement(source, range, replacement).text !== draft) throw mismatch()
+  return { anchor, replacement }
 }
 
 export function applyMessageTextReplacement(source: string, range: MessageTextReplacement, value: string, mentions: readonly ArkmeRecordReeditMention[] = []) {

@@ -43,3 +43,23 @@ it('quote reply Tool preserves explicit Team selection and original time on the 
   await expect(tool.execute({source_ref:'s',message_action_ref:'m',start:0,end:2,text:'body',representation:{...selection,team_id:'7'}},exec)).rejects.toMatchObject({code:'team-identity-invalid'})
   expect(extendSourceMessage).toHaveBeenCalledTimes(1)
 })
+
+it('discovers full summaries, shares the Host read owner and rejects an older provider', async () => {
+ const summary = [{actionRef:'m',summary:{accessible:true,complete:true,commentCount:125,quoteCount:125,sourceRecordVersion:1,anchors:[anchor]}}]
+ const sourceMessageExtensionSummaries=vi.fn(async()=>summary)
+ const tool=createArkmeCoreToolDefinitions({sourceMessageExtensionSummaries} as never).find(t=>t.name==='arkme_message_comments_summary')!
+ const signal=new AbortController().signal
+ await tool.execute({source_ref:'s',message_action_ref:'m'},{callId:'summary',signal} as never)
+ expect(sourceMessageExtensionSummaries).toHaveBeenCalledExactlyOnceWith('s',['m'],signal)
+ const requests: Record<string,unknown>[]=[]
+ let supported=true
+ const sdk=createArkmeSdk({fetchImpl:async(_url,init)=>{
+  const request=JSON.parse(String(init?.body)); requests.push(request)
+  return new Response(JSON.stringify({ok:true,value:request.operation==='provider.capabilities'?{contractVersion:ARKME_PROVIDER_CONTRACT_VERSION,features:supported?{messageExtensionSummariesV1:true}:{}}:summary}),{headers:{'content-type':'application/json'}})
+ }})
+ await expect(sdk.sourceMessageExtensionSummaries('s',['m'],signal)).resolves.toEqual(summary)
+ expect(requests.at(-1)).toMatchObject({operation:'source.message-extension.summaries',params:{sourceRef:'s',actionRefs:['m']}})
+ supported=false;requests.length=0
+ await expect(sdk.sourceMessageExtensionSummaries('s',['m'])).rejects.toMatchObject({body:{code:'CAPABILITY_UNSUPPORTED'}})
+ expect(requests).toEqual([{operation:'provider.capabilities'}])
+})

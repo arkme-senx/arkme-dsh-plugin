@@ -130,6 +130,22 @@ describe('desktop extension quarantine', () => {
     fixture.store.close()
   })
 
+  it('reports receipt time and resolves only local source locations against the Web Profile', async () => {
+    const fixture = await setup()
+    const name = '@local/arkme-arrangement-line'
+    for (const [spec, expected] of [
+      ['link:../arrangement', { kind: 'directory', path: join(fixture.dshHome, 'profiles', 'arrangement') }],
+      ['file:./build/arrangement.tgz', { kind: 'archive', path: join(fixture.dshHome, 'profiles', 'web', 'build', 'arrangement.tgz') }],
+      ['1.0.0', undefined],
+    ] as const) {
+      await writeReceipt(fixture.dshHome, receipt({ entries: [{ packageName: name, dependencySpec: spec, originalBundleIndex: 2 }] }))
+      const status = await fixture.quarantine.status()
+      expect(status.createdAtMillis).toBe(receipt().createdAtMillis)
+      expect(status.entries[0]?.localSource).toEqual(expected)
+    }
+    fixture.store.close()
+  })
+
   it('keeps receipt-only local extensions visible and requires explicit re-enable plus restart', async () => {
     const fixture = await setup()
     const receiptPath = await writeReceipt(fixture.dshHome, receipt({

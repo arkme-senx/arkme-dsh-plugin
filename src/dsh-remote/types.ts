@@ -91,6 +91,10 @@ export interface DshRemoteResponse {
     message: string
     retryable: boolean
     trace_ref: string
+    /** Explicit DSH rejection; absent when the transport outcome is uncertain. */
+    dsh_rejected?: true
+    /** A terminal ledger receipt exists for this request, including on replay. */
+    command_settled?: true
   }
 }
 

@@ -11,9 +11,9 @@ const cache = new Map<string, Page>()
 const emptyBranch = (): Branch => ({ items: [], loading: false, error: false })
 const emptyPage = (key: string, view: ArrangementView): Page => ({ key, branches: Object.fromEntries(arrangementViewStatuses(view).map(status => [status, emptyBranch()])) })
 
-export function useArrangementWorkspace(scope: string, view: ArrangementView, now: number) {
-  const range = arrangementViewRange(view, now)
-  const key = JSON.stringify([scope, view, range?.dueStartAtMillis])
+export function useArrangementWorkspace(scope: string, view: ArrangementView, now: number, timeZone?: string) {
+  const range = arrangementViewRange(view, now, timeZone)
+  const key = JSON.stringify([scope, view, range?.dueStartAtMillis, range?.dueEndAtMillis])
   const [page, setPage] = useState<Page>(() => cache.get(key) ?? emptyPage(key, view))
   const current = page.key === key ? page : cache.get(key) ?? emptyPage(key, view)
   const live = useRef(current); live.current = current
@@ -47,7 +47,7 @@ export function useArrangementWorkspace(scope: string, view: ArrangementView, no
           status === 'deleted' ? 'arrangements.deleted.list' : 'arrangements.list',
           { ...(status === 'deleted' ? {} : { status, ...range }), limit: 50, offset }, signal), controller.signal)
         if (controller.signal.aborted || activeKey.current !== key) return
-        if (!Array.isArray(result.items) || result.items.some(item => item.status !== status || !arrangementMatchesView(item, view, now))) throw new Error('Arrangement view response mismatch')
+        if (!Array.isArray(result.items) || result.items.some(item => item.status !== status || !arrangementMatchesView(item, view, now, timeZone))) throw new Error('Arrangement view response mismatch')
         for (const item of result.items) items.set(item.arrangementRef, item)
         const nextOffset = result.hasMore && result.nextOffset !== undefined && result.nextOffset > offset ? result.nextOffset : undefined
         if (result.hasMore && nextOffset === undefined) throw new Error('Arrangement pagination did not advance')
@@ -60,7 +60,7 @@ export function useArrangementWorkspace(scope: string, view: ArrangementView, no
     } catch {
       if (!controller.signal.aborted && activeKey.current === key) write(status, { ...before, loading: false, error: true }, key)
     }
-  }, [scope, key, view, range?.dueStartAtMillis, range?.dueEndAtMillis, write])
+  }, [scope, key, view, range?.dueStartAtMillis, range?.dueEndAtMillis, timeZone, write])
 
   useEffect(() => {
     const controller = new AbortController(); lifetime.current = controller
@@ -76,7 +76,7 @@ export function useArrangementWorkspace(scope: string, view: ArrangementView, no
     for (const status of arrangementViewStatuses(view)) {
       const before = live.current.branches[status] ?? emptyBranch()
       const had = before.items.some(row => row.arrangementRef === item.arrangementRef)
-      const belongs = item.status === status && arrangementMatchesView(item, view, now)
+      const belongs = item.status === status && arrangementMatchesView(item, view, now, timeZone)
       if (!had && !belongs) continue
       requests.current.get(status)?.abort()
       const items = before.items.filter(row => row.arrangementRef !== item.arrangementRef)

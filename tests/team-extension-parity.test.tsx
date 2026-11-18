@@ -32,7 +32,7 @@ it('parity: whole-message parent text remains visible in Team reading details', 
   const conversation = {ref:'conversation',key:'key',side:'team',channel:{name:'测试团队'},visitor:{nickname:'访客'}} as TeamConversation
   try {
     await act(async () => root.render(<TeamMessageDetail accountKey="test:11" message={message} conversation={conversation} avatar={null}
-      onClose={() => {}} onLocate={() => {}} onLocateReply={() => {}} />))
+      onClose={() => {}} onLocate={() => {}} />))
     expect(host.querySelector('[data-arkme-quote-preview], [data-arkme-extension-parent-preview]')?.textContent).toContain(message.reply!.text)
   } finally {
     await act(async () => root.unmount())
@@ -60,7 +60,7 @@ it('parity: a retained Team reply keeps its parent on its local failure bubble',
   let renderer: ReturnType<typeof createRenderer> | undefined
   try {
     await rendererAct(async () => {
-      renderer = createRenderer(<TeamConversationPane conversation={conversation} accountKey="test:11" onChanged={() => {}} />,
+      renderer = createRenderer(<TeamConversationPane conversation={conversation} accountKey="test:11" />,
         {createNodeMock: node => typeof node.type === 'string' ? document.createElement(node.type) : null})
       await Promise.resolve(); await Promise.resolve()
     })

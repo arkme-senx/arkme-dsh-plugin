@@ -1,3 +1,7 @@
+import { createArkmeCoreToolDefinitions } from '../src/tools/index.js'
+import { AudioRecordingImportGateway } from '../src/services/recording-import-gateway.js'
+import { ArkmeStateStore } from '../src/state-store.js'
+import { ArkmeService } from '../src/arkme-service.js'
 import { importStagedRecording, importStagedRecordingBatch } from '../src/recording-tool-import.js'
 import { planRecordingToolBatch } from '../src/recording-tool-batch.js'
 import { createHash } from 'node:crypto'
@@ -231,14 +235,12 @@ describe('staged multi-file workflow', () => {
   })
 })
 
+// Load the facade during collection, as the real Profile does at boot; the test
+// budget measures the durable operation rather than cold module transformation.
 // Full in-process path: tool -> facade -> FileTransfers -> RecordingService -> coordinator.
 // Only the remote Audio gateway is replaced; no real account data is written.
 describe('recording import tool integration', () => {
   it('reuses an in-flight task and retries a failed upload through its durable checkpoints', async () => {
-    const { ArkmeService } = await import('../src/arkme-service.js')
-    const { ArkmeStateStore } = await import('../src/state-store.js')
-    const { AudioRecordingImportGateway } = await import('../src/services/recording-import-gateway.js')
-    const { createArkmeCoreToolDefinitions } = await import('../src/tools/index.js')
     const f = await fixture()
     const root = await mkdtemp(join(tmpdir(), 'arkme-recording-integration-')); directories.push(root)
     let userId = 42

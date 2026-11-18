@@ -93,7 +93,7 @@ it.skipIf(!process.env.ARKME_OFFLINE_CONTEXT_NATIVE_HOST)('executes the existing
     await act(async () => { renderer.root.findByProps({ 'aria-label': '线下交流更多操作' }).props.onClick() })
     await click('撤回已分享消息')
     await click('确认撤回')
-    await until(() => !button('确认撤回'))
+    await until(() => renderer.root.findAllByProps({ role: 'dialog' }).length === 0)
     const final = await sdk.offlineContext({ operation: 'read', entryRef: initial.id }) as OfflineContextEntry
     expect(final.hasSharedSnapshot).toBe(false)
     expect(final.state).toBe('linked')

@@ -40,7 +40,8 @@ export class RecordReeditSubmissions {
       if (previous.draft.draftRevision === candidate.draft.draftRevision) return recordReeditSubmissionView(previous)
       throw new ArkmePluginError('record-reedit-in-progress', '这条快记仍在保存或核对，请稍后再编辑；其他消息不受影响', false, 409)
     }
-    const job: ArkmeRecordReeditSubmission = { ...structuredClone(candidate), submissionId: randomUUID(), state: 'pending' }
+    const revisionUid = candidate.revisionUid ?? randomUUID()
+    const job: ArkmeRecordReeditSubmission = { ...structuredClone(candidate), revisionUid, submissionId: revisionUid, state: 'pending' }
     await this.ports.put(userId, job, previous?.submissionId)
     const receipt = recordReeditSubmissionView(job)
     this.start(job, false)
@@ -70,7 +71,8 @@ export class RecordReeditSubmissions {
     if (previous && ['pending', 'committing', 'uncertain'].includes(previous.state)) {
       throw new ArkmePluginError('record-reedit-in-progress', '这条快记仍在保存或核对，请稍后再编辑', false, 409)
     }
-    const job: ArkmeRecordReeditSubmission = { ...structuredClone(candidate), submissionId: randomUUID(), state: 'committing', expectedCommittedFingerprint: fingerprint }
+    const revisionUid = candidate.revisionUid ?? randomUUID()
+    const job: ArkmeRecordReeditSubmission = { ...structuredClone(candidate), revisionUid, submissionId: revisionUid, state: 'committing', expectedCommittedFingerprint: fingerprint }
     const work = (async () => {
       await this.ports.put(userId, job, previous?.submissionId)
       if (this.closed) throw new ArkmePluginError('record-reedit-unavailable', '插件已停止，提交等待核对', false, 409)
@@ -103,8 +105,8 @@ export class RecordReeditSubmissions {
 
   private async run(initial: ArkmeRecordReeditSubmission, reconcile: boolean): Promise<void> {
     let job = initial
-    const { context, draft, attachments, voiceFileAssetUid, voiceBlock, submissionId } = initial
-    const candidate = { context, draft, attachments, submissionId, ...(voiceFileAssetUid ? { voiceFileAssetUid } : {}), ...(voiceBlock ? { voiceBlock } : {}) }
+    const { context, draft, attachments, voiceFileAssetUid, voiceBlock, submissionId, revisionUid, editorSnapshot } = initial
+    const candidate = { context, draft, attachments, submissionId, ...(revisionUid ? { revisionUid } : {}), ...(editorSnapshot ? { editorSnapshot } : {}), ...(voiceFileAssetUid ? { voiceFileAssetUid } : {}), ...(voiceBlock ? { voiceBlock } : {}) }
     const save = () => this.ports.put(job.context.expectedUserId, job, job.submissionId)
     const outcome = reconcile
         ? await this.ports.reconcile(job)
@@ -118,8 +120,8 @@ export class RecordReeditSubmissions {
   }
 
   private async finish(initial: ArkmeRecordReeditSubmission, outcome: RecordReeditExecutionOutcome): Promise<void> {
-    const { context, draft, attachments, voiceFileAssetUid, voiceBlock, submissionId } = initial
-    const candidate = { context, draft, attachments, submissionId, ...(voiceFileAssetUid ? { voiceFileAssetUid } : {}), ...(voiceBlock ? { voiceBlock } : {}) }
+    const { context, draft, attachments, voiceFileAssetUid, voiceBlock, submissionId, revisionUid, editorSnapshot } = initial
+    const candidate = { context, draft, attachments, submissionId, ...(revisionUid ? { revisionUid } : {}), ...(editorSnapshot ? { editorSnapshot } : {}), ...(voiceFileAssetUid ? { voiceFileAssetUid } : {}), ...(voiceBlock ? { voiceBlock } : {}) }
     const checkpoint = initial.expectedCommittedFingerprint
     let job: ArkmeRecordReeditSubmission
     if (outcome.kind === 'committed') {

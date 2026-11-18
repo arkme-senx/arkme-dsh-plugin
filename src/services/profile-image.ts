@@ -47,3 +47,18 @@ export async function readProfileImage(path: string, signal?: AbortSignal): Prom
     }
     return Buffer.concat(chunks, size);
 }
+
+// Signing credentials authorize a download; they do not identify its pixels.
+// Preserve content/version/processing parameters so a real avatar change still
+// invalidates the presentation. The original URL remains inside the access ref.
+export function imagePresentationIdentity(raw: string): string {
+  try {
+    const url = new URL(raw)
+    const authorization = new Set(['ossaccesskeyid', 'expires', 'signature', 'security-token',
+      'x-oss-signature', 'x-oss-signature-version', 'x-oss-credential', 'x-oss-date',
+      'x-oss-expires', 'x-oss-security-token', 'x-oss-additional-headers'])
+    for (const key of [...url.searchParams.keys()]) if (authorization.has(key.toLowerCase())) url.searchParams.delete(key)
+    url.searchParams.sort()
+    return url.toString()
+  } catch { return raw }
+}

@@ -1,25 +1,32 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { UserCircle } from '@phosphor-icons/react/UserCircle'
+import { Cube } from '@phosphor-icons/react/Cube'
+import { HARNESS_MODELS_SETTINGS_OPEN, HARNESS_MODELS_SETTINGS_CLOSE } from '../harness-embed-contract.js'
+import { ArkmeModelSettings, type ModelSettingsTab } from './ArkmeModelSettings.js'
 import { ChartBar } from '@phosphor-icons/react/ChartBar'
 import { Database } from '@phosphor-icons/react/Database'
 import { Gear } from '@phosphor-icons/react/Gear'
 import { Info } from '@phosphor-icons/react/Info'
-import { X } from '@phosphor-icons/react/X'
 import { ArkmeSettingsSurface } from './ArkmeSettingsSurface.js'
 import { ArkmeAccountUsageSettings } from './ArkmeAccountUsageSettings.js'
 import { ArkmeDataManagementSettings } from './ArkmeDataManagementSettings.js'
 import { arkmeUi, type ArkmeSettingsSection } from './ui-controller.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { tr, useArkmeLocale } from './locale.js'
+import { setArkmeDisplayTimeZone, useArkmeDisplayTimeZone, useArkmeEffectiveTimeZone } from './display-time-zone.js'
+import { RECORDING_DELETION_SETTINGS_QUERY } from '../recording-deletion-contract.js'
+import { callArkme } from './api.js'
 import settingsCss from './settings-dialog.css?inline'
 
 type Section = ArkmeSettingsSection | 'general' | 'about'
 const sections = [
   { id: 'arkme-account', label: '我的账户', Icon: UserCircle },
+  { id: 'arkme-models', label: '模型', Icon: Cube },
   { id: 'arkme-usage', label: '用量与额度', Icon: ChartBar },
   { id: 'arkme-data', label: '数据管理', Icon: Database },
   { id: 'general', label: '通用设置', Icon: Gear },
@@ -30,6 +37,8 @@ type Preferences = Pick<Context, 'locale' | 'theme' | 'on'>
 /** Use the existing global preference owners, never a second settings file. */
 function CommonPreferences({ preferences }: { preferences: Preferences }) {
   const language = useSyncExternalStore(fn => preferences.locale.subscribe(fn), () => preferences.locale.getSnapshot())
+  const timeZone = useArkmeDisplayTimeZone()
+  const timeZones = Intl.supportedValuesOf('timeZone').filter(value => value !== 'Asia/Shanghai')
   const [appearance, setAppearance] = useState(() => preferences.theme.getTheme())
   useEffect(() => {
     setAppearance(preferences.theme.getTheme())
@@ -42,6 +51,17 @@ function CommonPreferences({ preferences }: { preferences: Preferences }) {
         {language.locales.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
       </select>
     </label>
+    <label className="arkme-settings-preference"><span>{tr('显示时区')}</span>
+      <select aria-label={tr('显示时区')} value={timeZone ?? 'system'} onChange={event => setArkmeDisplayTimeZone(event.target.value)}>
+        <option value="system">{tr('跟随系统')}</option>
+        <option value="Asia/Shanghai">{tr('中国（北京时间 UTC+08:00）')}</option>
+        <optgroup label={tr('其他时区')}>
+          <option value="UTC">UTC</option>
+          {timeZone && timeZone !== 'UTC' && timeZone !== 'Asia/Shanghai' && !timeZones.includes(timeZone) && <option value={timeZone}>{timeZone}</option>}
+          {timeZones.map(value => <option key={value} value={value}>{value.replaceAll('_', ' ')}</option>)}
+        </optgroup>
+      </select>
+    </label>
     <div className="arkme-settings-preference"><span>{tr('外观')}</span><div role="group" aria-label={tr('外观')}>
       {([['light', '浅色'], ['dark', '深色'], ['system', '跟随系统']] as const).map(([id, label]) =>
         <button key={id} type="button" data-arkme-feedback="neutral" aria-pressed={appearance.preference === id}
@@ -50,8 +70,8 @@ function CommonPreferences({ preferences }: { preferences: Preferences }) {
   </div>
 }
 
-export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect }: {
-  section: Section; preferences: Preferences; onClose(): void; onSelect(section: Section): void
+export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect, modelTab = 'official' }: {
+  section: Section; preferences: Preferences; onClose(): void; onSelect(section: Section): void; modelTab?: ModelSettingsTab
 }) {
   useArkmeLocale()
   const content = useRef<HTMLDivElement>(null)
@@ -65,10 +85,11 @@ export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect }:
         data-arkme-feedback="neutral" aria-current={section === item.id ? 'page' : undefined}
         data-modal-autofocus={section === item.id ? '' : undefined} onClick={() => onSelect(item.id)}><Icon size={20} aria-hidden /><span>{tr(item.label)}</span></button>)}</div></nav>
       <div className="arkme-settings-main">
-        <div className="arkme-settings-toolbar"><button type="button" className="arkme-settings-close" aria-label={tr('关闭')}
-          data-arkme-feedback="neutral" onClick={onClose}><X size={20} aria-hidden /></button></div>
+        <div className="arkme-settings-toolbar"><ArkmeCloseButton type="button" className="arkme-settings-close" aria-label={tr('关闭')}
+          data-arkme-feedback="neutral" onClick={onClose} /></div>
         <div className="arkme-settings-dialog-content" ref={content}>
         {section === 'arkme-account' && <ArkmeSettingsSurface />}
+        {section === 'arkme-models' && <ArkmeModelSettings initialTab={modelTab} />}
         {section === 'arkme-usage' && <ArkmeAccountUsageSettings />}
         {section === 'arkme-data' && <ArkmeDataManagementSettings />}
         {section === 'general' && <><CommonPreferences preferences={preferences} /><ArkmeSettingsSurface view="general" /></>}
@@ -81,12 +102,40 @@ export function ArkmeSettingsDialog({ section, preferences, onClose, onSelect }:
 
 function SettingsHost({ preferences }: { preferences: Preferences }) {
   const [section, setSection] = useState<Section>()
+  const [modelTab, setModelTab] = useState<ModelSettingsTab>('official')
   const auth = useSyncExternalStore(arkmeAuthStore.subscribe, arkmeAuthStore.getSnapshot, arkmeAuthStore.getSnapshot)
   const account = auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined
-  useEffect(() => arkmeUi.bindSettingsOpener(next => setSection(next ?? 'arkme-account')), [])
+  const timeZone = useArkmeEffectiveTimeZone()
+  useEffect(() => arkmeUi.bindSettingsOpener(next => { setModelTab('official'); setSection(next ?? 'arkme-account') }), [])
+  useEffect(() => {
+    const open = (event: Event) => {
+      if ((event as CustomEvent<{accountScope?: string}>).detail?.accountScope !== account || !account) return
+      setModelTab('custom'); setSection('arkme-models')
+    }
+    const close = (event: Event) => {
+      if ((event as CustomEvent<{accountScope?: string}>).detail?.accountScope === account && account) setSection(undefined)
+    }
+    document.addEventListener(HARNESS_MODELS_SETTINGS_OPEN, open)
+    document.addEventListener(HARNESS_MODELS_SETTINGS_CLOSE, close)
+    return () => { document.removeEventListener(HARNESS_MODELS_SETTINGS_OPEN, open); document.removeEventListener(HARNESS_MODELS_SETTINGS_CLOSE, close) }
+  }, [account])
   useEffect(() => { setSection(undefined) }, [account])
+  useEffect(() => {
+    if (!account) return
+    const url = new URL(window.location.href)
+    if (url.searchParams.get(RECORDING_DELETION_SETTINGS_QUERY) !== '1') return
+    url.searchParams.delete(RECORDING_DELETION_SETTINGS_QUERY)
+    window.history.replaceState(window.history.state, '', url)
+    setSection('arkme-data')
+  }, [account])
+  useEffect(() => {
+    if (!account) return
+    const controller = new AbortController()
+    void callArkme('recordings.ai-deletion.settings', { accountScope: account, timeZone }, controller.signal).catch(() => undefined)
+    return () => controller.abort()
+  }, [account, timeZone])
   return section === undefined ? null : <ArkmeSettingsDialog section={section} preferences={preferences}
-    onSelect={setSection} onClose={() => setSection(undefined)} />
+    modelTab={modelTab} onSelect={next => { setModelTab('official'); setSection(next) }} onClose={() => setSection(undefined)} />
 }
 
 export function installArkmeSettingsDialog(ctx: Context): () => void {

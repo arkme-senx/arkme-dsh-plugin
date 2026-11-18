@@ -11,6 +11,19 @@ const fixtures = JSON.parse(readFileSync(new URL('./fixtures/quick-note-markdown
 }
 
 describe('shared quick-note Markdown corpus', () => {
+  it('uses HTTPS for bare www links and retains explicit URL schemes', () => {
+    const source = 'www.google.com、WWW.EXAMPLE.COM/path?q=1\n\n'
+      + '[原文](http://www.google.com) <http://example.com>\n\n'
+      + '`www.google.com`\n\n```\nwww.example.com\n```'
+    const html = renderToStaticMarkup(<ArkmeMarkdownBody text={source} />)
+    expect([...html.matchAll(/<a href="([^"]+)"/gu)].map(match => match[1])).toEqual([
+      'https://www.google.com', 'https://WWW.EXAMPLE.COM/path?q=1',
+      'http://www.google.com', 'http://example.com',
+    ])
+    expect(html).toContain('<code>www.google.com</code>')
+    expect(html).toContain('<code>www.example.com\n</code>')
+  })
+
   it('renders emoji in prose while keeping code and URL tokens literal', () => {
     const token = '[jm_emoji:angry_face]'
     const href = `https://example.com/?value=${token}`

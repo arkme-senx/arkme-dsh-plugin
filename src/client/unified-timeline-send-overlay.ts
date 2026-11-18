@@ -20,14 +20,12 @@ export function unifiedTimelineSendOverlay(
   historicalFileIds: ReadonlySet<string> = new Set(),
 ): ArkmeTimelineItem[] {
   const ids = new Set<string>()
-  let firstSequence = Infinity
   let lastSequence = 0
   for (const event of window.events) {
     if (event.kind !== 'message') continue
     ids.add(event.item.itemUid)
     const sequence = event.item.sequence ?? 0
     if (sequence > 0) {
-      firstSequence = Math.min(firstSequence, sequence)
       lastSequence = Math.max(lastSequence, sequence)
     }
   }
@@ -38,15 +36,16 @@ export function unifiedTimelineSendOverlay(
     // Preserve uploading, failed and uncertain sends, including their retry UI.
     if (item.status !== 1) return true
     const sequence = item.sequence ?? 0
+    // A sparse body cache proves neither a lower bound nor an omitted send.
     if (sequence > 0 && lastSequence > 0) {
-      if (sequence < firstSequence || messagesReady && sequence <= lastSequence) return false
-    } else if (firstMillis !== undefined && item.sendAtMillis < firstMillis) return false
+      if (messagesReady && sequence <= lastSequence) return false
+    } else if (messagesReady && firstMillis !== undefined && item.sendAtMillis < firstMillis) return false
     // A history window must not acquire a second, disconnected latest tail.
     return !window.newerHasMore || !historicalFileIds.has(item.itemUid)
   })
 }
 
-/** Stable linear merge: keep authoritative order and row identities intact. */
+/** Keep event identities/cursors intact; native sequence orders equal-time chat message slots. */
 export function mergeTimelineSendRows<T extends { occurredAtMillis: number }, U extends { occurredAtMillis: number }>(
   canonical: readonly T[],
   sending: readonly U[],
@@ -60,5 +59,23 @@ export function mergeTimelineSendRows<T extends { occurredAtMillis: number }, U 
     rows.push(row)
   }
   while (index < sending.length) rows.push(sending[index++]!)
+  for (let start = 0; start < rows.length;) {
+    let end = start + 1
+    while (end < rows.length && rows[end]!.occurredAtMillis === rows[start]!.occurredAtMillis) end++
+    const slots: number[] = []
+    const messages: Array<{ row: T | U; sequence: number }> = []
+    for (let slot = start; slot < end; slot++) {
+      const row = rows[slot]!
+      const message = row as { kind?: string; item?: { sequence?: number } }
+      const sequence = message.item?.sequence
+      if (message.kind === 'message' && sequence !== undefined && Number.isSafeInteger(sequence) && sequence > 0) {
+        slots.push(slot); messages.push({ row, sequence })
+      }
+    }
+    // Only permute message slots; mixing seq and opaque event ties in one comparator is not transitive.
+    messages.sort((a, b) => a.sequence - b.sequence)
+    slots.forEach((slot, offset) => { rows[slot] = messages[offset]!.row })
+    start = end
+  }
   return rows
 }

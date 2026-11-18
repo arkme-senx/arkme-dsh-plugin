@@ -1,5 +1,5 @@
 /** One owner coalesces hints, visibility recovery and fallback reconciliation. */
-export function startMessageMarkRefresh(options: {
+export function startMessageProjectionRefresh(options: {
   read(): Promise<void>
   visible(): boolean
   subscribe?(invalidate: () => void): () => void

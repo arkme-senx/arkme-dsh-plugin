@@ -14,12 +14,21 @@ export interface TeamSourceReadTarget {
   revision?: number
 }
 
+export function isTeamAccessDenied(error: unknown): boolean {
+  return /^(team-not_accessible$|team-account-changed$|login-)/.test(String((error as {body?: {code?: string}})?.body?.code))
+}
+
+export function teamChangeInConversation(change: TeamMessageChangeHint | undefined, key: string): boolean {
+  return !change?.conversationKeys?.length || change.conversationKeys.includes(key)
+}
+
 /** Delivery metadata is only a relevance hint. The existing Host preflight grants reads. */
 export function teamChangeAffectsSource(change:TeamMessageChangeHint|undefined,target:Pick<TeamSourceReadTarget,'conversationKey'|'messageKey'|'revision'>):boolean {
   if (!change) return true // Reconnects must recheck facts missed while disconnected.
-  if (['team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
-  if (change.conversationKeys?.length && target.conversationKey && !change.conversationKeys.includes(target.conversationKey)) return false
+  if (['team.directory.changed','team.entry-preference.changed','team.notification-policy.changed','team.receipt.changed','team.reaction.changed','team.annotation.changed','team.profile.changed','team.channel.changed','team.message.published'].includes(change.kind)) return false
+  if (target.conversationKey && !teamChangeInConversation(change, target.conversationKey)) return false
   if (change.messageKey && target.messageKey && change.messageKey !== target.messageKey) return false
+  if (change.messageKeys?.length && target.messageKey && !change.messageKeys.includes(target.messageKey)) return false
   if(change.kind==='team.message.changed'&&change.messageKey===target.messageKey&&change.messageRevision&&change.messageRevision>0&&target.revision!==undefined&&target.revision>=change.messageRevision)return false
   return true
 }
@@ -51,13 +60,17 @@ export class TeamSendReadFence {
   }
   invalidate(change: TeamMessageChangeHint | undefined): void {
     if (!teamChangeAffectsSource(change, {conversationKey: this.conversationKey})) return
-    if (change?.kind !== 'team.message.changed' || !change.messageKey) { this.generation++; return }
-    const previous = this.changes.get(change.messageKey)
-    if (previous && (!(previous.messageRevision! > 0) || (change.messageRevision! > 0 && previous.messageRevision! >= change.messageRevision!))) return
-    this.changes.delete(change.messageKey); this.changes.set(change.messageKey, change)
-    if (this.changes.size > 64) {
-      this.changes.delete(this.changes.keys().next().value!)
-      this.generation++
+    const keys = change?.kind === 'team.message.changed' ? change.messageKey ? [change.messageKey] : change.messageKeys : undefined
+    if (!change || !keys?.length) { this.generation++; return }
+    for (const key of keys) {
+      const previous = this.changes.get(key)
+      if (previous && (!(previous.messageRevision! > 0) || (change.messageRevision! > 0 && previous.messageRevision! >= change.messageRevision!))) continue
+      this.changes.delete(key)
+      this.changes.set(key, {...change, messageKey:key})
+      if (this.changes.size > 64) {
+        this.changes.delete(this.changes.keys().next().value!)
+        this.generation++
+      }
     }
   }
   /** Only an authorized read past its stale-IO check may release a source fence. */
@@ -82,29 +95,49 @@ export class TeamSendReadFence {
 }
 
 /** One authority check lifetime, shared by frozen local references and independent previews. */
-export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:ArkmeMediaReadState)=>void):()=>void {
+export function watchTeamSourceRead(target:TeamSourceReadTarget,listener:(state:ArkmeMediaReadState)=>void,onMessage?:(message:TeamMessage)=>void):()=>void {
   const controller=new AbortController()
-  let generation=0,available=false
+  let generation=0,available=false,checking=false
+  let request:AbortController|undefined
   const validate=()=>{
     if(controller.signal.aborted)return
     const token=++generation
+    request?.abort()
+    request=new AbortController()
+    checking=true
     available=false
     listener({status:'checking'})
-    if (!target.accountKey || !target.conversationRef || target.version<=0) { listener({status:'revoked'}); return }
-    void callArkme('team.app.preflight',{conversationRef:target.conversationRef,selections:[{messageRef:target.messageRef,version:target.version}],expectedAccountKey:target.accountKey},controller.signal)
-      .then(()=>{if(!controller.signal.aborted&&token===generation){available=true;listener({status:'available'})}})
+    if (!target.accountKey || !target.conversationRef || target.version<=0) { checking=false;listener({status:'revoked'}); return }
+    void callArkme<TeamMessage[]>('team.app.preflight',{conversationRef:target.conversationRef,selections:[{messageRef:target.messageRef,version:target.version}],expectedAccountKey:target.accountKey},request.signal)
+      .then(rows=>{
+        if(controller.signal.aborted||token!==generation)return
+        if(onMessage && (!rows?.[0] || rows[0].key!==target.messageKey || rows[0].version!==target.version || rows[0].contentStatus!=='available')) {
+          checking=false;listener({status:'revoked'});return
+        }
+        checking=false;available=true
+        if(onMessage)onMessage(rows[0]!)
+        listener({status:'available'})
+      })
       .catch(error=>{
         if(controller.signal.aborted||token!==generation)return
+        checking=false
         const code=(error as {body?:{code?:string}})?.body?.code
         if (['team-message_recalled','team-not_accessible','team-version_conflict','team-reference-invalid','team-account-changed','login-required'].includes(code??'')) listener({status:'revoked'})
         else listener({status:'unavailable',retry:validate})
       })
   }
   const stop=subscribeTeamMessageChanges((account,receiptOnly,change)=>{
-    if(account===target.accountKey&&!receiptOnly&&teamChangeAffectsSource(change,target))validate()
+    if(account!==target.accountKey||receiptOnly||!teamChangeAffectsSource(change,target))return
+    if(change?.kind==='team.access.revoked') {
+      ++generation
+      request?.abort()
+      available=false
+      checking=false
+      listener({status:'revoked'})
+    } else validate()
   })
-  const recover=()=>{if(!available)validate()}
+  const recover=()=>{if(!available&&!checking)validate()}
   window.addEventListener('online',validate);window.addEventListener('focus',recover)
   validate()
-  return ()=>{++generation;controller.abort();stop();window.removeEventListener('online',validate);window.removeEventListener('focus',recover)}
+  return ()=>{++generation;controller.abort();request?.abort();stop();window.removeEventListener('online',validate);window.removeEventListener('focus',recover)}
 }

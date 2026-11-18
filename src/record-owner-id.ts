@@ -20,9 +20,11 @@ export function parseOwnerJson(text: string): unknown {
 }
 
 /** Keep the owner API's numeric wire contract without rounding decimal identifiers. */
-export function stringifyOwnerJson(value: unknown): string {
+export function stringifyOwnerJson(value: unknown, stringIdFields:readonly string[]=[]): string {
   const json = JSON as typeof JSON & { rawJSON(text: string): unknown }
   return JSON.stringify(value, function (key, item: unknown) {
+    if(this===value&&stringIdFields.includes(key))return item
+    if(key==='team_id'&&Number.isSafeInteger(this?.start_index)&&Number.isSafeInteger(this?.length))return item
     if (key === 'external_user_id' && typeof item === 'string') return item
     if ((key === 'user_ids' || key === 'userIds') && Array.isArray(item)) return item.map(id => typeof id === 'string' && typeof recordOwnerId(id) === 'string' ? json.rawJSON(id) : id)
     // Publication attribution has an explicit decimal-string Team ID contract.

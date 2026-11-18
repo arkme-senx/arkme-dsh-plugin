@@ -35,7 +35,7 @@ it('uses a shared icon-only header action with active-day tooltip and multi-mont
   expect(button().style.height).toBe('28px')
   expect(button().getAttribute('aria-haspopup')).toBe('dialog')
   expect(button().getAttribute('data-arkme-feedback')).toBe('neutral')
-  expect(api.call).toHaveBeenCalledWith('calendar.chat-statistics', expect.objectContaining({ sourceRef: 'group', timezoneOffsetMillis: expect.any(Number) }), expect.any(AbortSignal))
+  expect(api.call).toHaveBeenCalledWith('calendar.chat-statistics', expect.objectContaining({ sourceRef: 'group', timezoneOffsetMillis: expect.any(Number) }), expect.any(AbortSignal), undefined)
   await act(async () => button().click())
   expect(document.querySelectorAll('[data-calendar-month]').length).toBeGreaterThan(1)
   expect(document.querySelector('[data-calendar-month="2020-01"]')).not.toBeNull()

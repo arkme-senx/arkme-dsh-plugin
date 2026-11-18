@@ -1,3 +1,4 @@
+import { recordExportTopicMarkdown } from '../record-export-topic.js'
 import type { Readable } from 'node:stream'
 import { createReadStream } from 'node:fs'
 import { createHash } from 'node:crypto'
@@ -153,6 +154,7 @@ export class RecordExportService {
                 let content = date === day ? '' : `## [[${day}]]\n`
                 date = day
                 content += `### ${at.getFullYear()}年${at.getMonth() + 1}月${at.getDate()}日 ${at.toTimeString().slice(0, 8)}\n\n`
+                content += recordExportTopicMarkdown(item.topic_core)
                 const title = text(item.title ?? '').trim(), body = text(item.text ?? '').trim()
                 content += [title && title !== body ? title : '', body].filter(Boolean).join('\n\n').replaceAll('```', '') + '\n\n'
                 for (const ref of rows(item.file_refs, 100)) {

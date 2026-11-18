@@ -1,4 +1,4 @@
-import { startMessageMarkRefresh } from './message-mark-refresh.js'
+import { startMessageProjectionRefresh } from './message-projection-refresh.js'
 import { useEffect, useId, useMemo, useReducer, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { openMarkedMessageSelection, registeredMessageTargets, messageSelectionReference, type MessageSelectionTarget } from './ArkmeMessageTextSelection.js'
@@ -95,7 +95,7 @@ export function UnderlineLayer({ session, revision }: { session: MessageUnderlin
   const requestRead = useRef<(() => void) | undefined>(undefined)
   useEffect(() => {
     if (!session.capability?.supported) return
-    const refresh = startMessageMarkRefresh({
+    const refresh = startMessageProjectionRefresh({
       read: async () => await session.read(registeredMessageTargets(session.sourceRef).filter(({ element }) => visibleBox(element)).map(({ target }) => target)),
       visible: () => !document.hidden,
       subscribe: invalidate => {

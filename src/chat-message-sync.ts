@@ -1,6 +1,8 @@
 import type { ArkmeTimelineItem } from './types.js'
 import type { ArkmeUnifiedTimelineEvent } from './unified-chat-timeline.js'
 
+export const CHAT_MESSAGE_SYNC_SESSION_ROUTE = '/api/v1/chat/sync/session'
+
 /** Public facts. Counts describe one frozen cohort, never read acknowledgements. */
 export interface ArkmeMessageSyncProgress {
   accountKey: string
@@ -13,6 +15,8 @@ export interface ArkmeMessageSyncProgress {
   terminal: number
   retryAtMillis?: number
   reason?: 'network' | 'storage' | 'authentication' | 'upstream' | 'capacity'
+  /** Why the current Host pump runs; normal realtime cache maintenance need not interrupt the UI. */
+  trigger?: 'realtime' | 'catchup'
 }
 
 export type ChatSyncState = 'available' | 'removed' | 'restricted' | 'pending' | 'missing'
@@ -37,9 +41,14 @@ export interface ChatSyncProjection {
   reset?: 'accessible' | 'restricted'
   changes: Array<{ itemKey: string; revision: number; version: number; item?: ArkmeTimelineItem }>
 }
+export interface ChatSyncUnreadPreview {
+  uid: string; sourceKey: string; sequence: number; item: ArkmeTimelineItem
+}
 export interface ChatSyncPlan {
   progress: ArkmeMessageSyncProgress; checkpoint: string; epoch: number; active: boolean
   projections?: ChatSyncProjection[]
+  unreadPreviews?: ChatSyncUnreadPreview[]
+  committedGroupBodies?: Record<string, string[]>
 }
 export interface ChatSyncBatch { uid: string; kind: number; membership: number; work: ChatSyncWork[] }
 export interface ChatSyncLocalPage { events: ArkmeUnifiedTimelineEvent[]; before?: number; revision: number }
@@ -49,7 +58,7 @@ export type ChatSyncCommand =
   | { action: 'ack'; account: string; sourceKey: string; through: number }
   | { action: 'manifest' | 'commit'; account: string; epoch: number; expectedCheckpoint: string; page: Omit<ChatSyncPage, 'bodies'>; ticket: number; now: number }
   | { action: 'freeze' | 'finish'; account: string; epoch: number }
-  | { action: 'pending'; account: string; epoch: number; now: number; limit: number }
+  | { action: 'pending'; account: string; epoch: number; now: number; limit: number; uid?: string }
   | { action: 'ranges'; account: string; epoch: number }
   | { action: 'read'; scope: string; anchorId?: string; limit: number; before?: number }
 

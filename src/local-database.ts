@@ -1,8 +1,9 @@
 import { publicPersonSnapshot, PUBLIC_PERSON_MAX_ENTRIES, type PublicPersonSnapshot } from './public-person-cache.js'
 import {readRecordExcerpt,type RecordExcerpt} from './record-excerpt.js'
-import { changeLocalTranscript, type LocalTranscriptEntry, type LocalTranscriptChange } from './local-transcript-state.js'
+import type { LocalTranscriptEntry } from './local-transcript-state.js'
 import { normalizeLocalDirectoryPreferences, type LocalDirectoryPreferences } from './local-directory-preferences.js'
 import { LocalMessageMarkStore } from './local-message-marks.js'
+import { LocalPersonImpactStore } from './local-person-impact.js'
 import { LocalSelfNoteQuotes } from './local-self-note-quotes.js'
 import { LocalWorldReactions } from './local-world-reactions.js'
 import { SelfRoleSyncStore } from './self-role-sync-store.js'
@@ -14,6 +15,7 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { CommonGroupDatabase } from './common-group-database.js'
+import type { BotDisplayCacheEntry } from './chat-sender-display.js'
 import type { ArkmeStateStore } from './state-store.js'
 import type {
   ArkmeCachedSnapshot,
@@ -138,6 +140,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   readonly selfNoteQuotes: LocalSelfNoteQuotes
   readonly worldReactions: LocalWorldReactions
   readonly messageMarks: LocalMessageMarkStore
+  readonly personImpact: LocalPersonImpactStore
   readonly selfRoleSync: SelfRoleSyncStore
   readonly commonGroups: CommonGroupDatabase
   private readonly path: string
@@ -191,6 +194,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
         PRIMARY KEY(environment, viewer_id, target_id)
       );
       CREATE INDEX IF NOT EXISTS public_person_cache_age ON public_person_cache(environment, viewer_id, updated_at_millis DESC);
+      CREATE TABLE IF NOT EXISTS bot_display_cache (
+        scope TEXT PRIMARY KEY, payload TEXT NOT NULL, updated_at_millis INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS conversation_member_cache (
         user_id INTEGER NOT NULL,
         group_key TEXT NOT NULL,
@@ -292,6 +298,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       }
     })
     this.messageMarks = new LocalMessageMarkStore(this.database, work => this.transaction(work))
+    this.personImpact = new LocalPersonImpactStore(this.database, work => this.transaction(work))
     this.selfNoteQuotes = new LocalSelfNoteQuotes(this.database)
     this.worldReactions = new LocalWorldReactions(this.database, work => this.transaction(work))
     this.commonGroups = new CommonGroupDatabase(this.database, work => this.transaction(work))
@@ -335,6 +342,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     await this.operationalState.writeCancellationCompletion(completion)
   }
 
+  async transcriptViewAttempt(...args: Parameters<ArkmeStateStore['transcriptViewAttempt']>) {return this.operationalState.transcriptViewAttempt(...args)}
   async readOfflineContextJournal(scope: string) {
     return await this.operationalState.readOfflineContextJournal(scope)
   }
@@ -560,11 +568,19 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       .get(userId, fileAssetUid) as { local_ref: string } | undefined)?.local_ref
   }
 
-  async readAvatarCache(userId: number, imageRef: string): Promise<ArkmeImageBytes | undefined> {
-    const row = this.database.prepare('SELECT media_type, data FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array } | undefined
+  async readAvatarCache(userId: number, imageRef: string, maxAgeMillis?: number): Promise<ArkmeImageBytes | undefined> {
+    const row = this.database.prepare('SELECT media_type, data, touched_at FROM avatar_cache WHERE user_id=? AND image_ref=?').get(userId, imageRef) as { media_type: ArkmeImageBytes['mediaType']; data: Uint8Array; touched_at: number } | undefined
     if (row === undefined) return undefined
-    this.database.prepare('UPDATE avatar_cache SET touched_at=? WHERE user_id=? AND image_ref=?').run(Date.now(), userId, imageRef)
+    if (maxAgeMillis !== undefined) {
+      if (Date.now() - row.touched_at >= maxAgeMillis) return undefined
+    } else {
+      this.database.prepare('UPDATE avatar_cache SET touched_at=? WHERE user_id=? AND image_ref=?').run(Date.now(), userId, imageRef)
+    }
     return { mediaType: row.media_type, data: row.data, bytes: row.data.byteLength }
+  }
+
+  async deleteAvatarCache(userId: number, imageRef: string): Promise<void> {
+    this.database.prepare('DELETE FROM avatar_cache WHERE user_id=? AND image_ref=?').run(userId, imageRef)
   }
 
   async writeAvatarCache(userId: number, imageRef: string, image: ArkmeImageBytes): Promise<void> {
@@ -683,6 +699,29 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
       cachedAtMillis: row?.updated_at_millis ?? 0,
       revision: await this.revision(userId),
     }
+  }
+
+  async readBotDisplayCache(scope: string): Promise<readonly BotDisplayCacheEntry[]> {
+    const row = this.database.prepare('SELECT payload FROM bot_display_cache WHERE scope = ?').get(scope) as { payload: string } | undefined
+    if (!row || Buffer.byteLength(row.payload) > 1_000_000) return []
+    try {
+      const entries = JSON.parse(row.payload) as BotDisplayCacheEntry[]
+      if (!Array.isArray(entries) || entries.length > 512) return []
+      return entries.filter(entry => entry && typeof entry.uid === 'string' && entry.uid.length > 0 && entry.uid.length <= 512
+        && Number.isSafeInteger(entry.observedAt) && entry.observedAt > 0
+        && (entry.profile === undefined || entry.profile && typeof entry.profile.displayName === 'string'
+          && (entry.profile.avatarUrl === undefined || typeof entry.profile.avatarUrl === 'string')))
+    } catch { return [] }
+  }
+
+  async writeBotDisplayCache(scope: string, entries: readonly BotDisplayCacheEntry[]): Promise<void> {
+    const payload = JSON.stringify(entries)
+    if (entries.length > 512 || Buffer.byteLength(payload) > 1_000_000) return
+    this.database.prepare(`INSERT INTO bot_display_cache(scope,payload,updated_at_millis) VALUES(?,?,?)
+      ON CONFLICT(scope) DO UPDATE SET payload=excluded.payload, updated_at_millis=excluded.updated_at_millis`)
+      .run(scope, payload, Date.now())
+    this.database.prepare(`DELETE FROM bot_display_cache WHERE scope IN
+      (SELECT scope FROM bot_display_cache ORDER BY updated_at_millis DESC, scope LIMIT -1 OFFSET 128)`).run()
   }
 
   async clearPublicPeople(environment: string, viewer: number, target?: number): Promise<void> {
@@ -891,6 +930,18 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     this.secureDatabaseFiles()
   }
 
+  async discardPending(userId: number, pending: ArkmePendingWrite): Promise<void> {
+    await this.ensureMigrated(userId)
+    const result = this.database.prepare(`
+      DELETE FROM record_cache
+      WHERE user_id = ? AND record_uid = ? AND sync_state IN ('pending', 'failed')
+        AND send_at_millis = ? AND text_content = ? AND content_payload_json IS ?
+    `).run(userId, pending.recordUid, pending.sendAtMillis, pending.textContent,
+      pending.excerpt ? JSON.stringify({excerpt: pending.excerpt}) : null)
+    if (Number(result.changes) > 0) this.bumpRevision(userId)
+    this.secureDatabaseFiles()
+  }
+
   async listExtensionReviewOperations(userId: number): Promise<ArkmeExtensionReviewOperation[]> {
     await this.ensureMigrated(userId)
     const rows = this.database.prepare(`
@@ -1017,6 +1068,9 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
   async teamMemberAddition(scope: string, teamId: string, change?: {put: import('./team-member-add-contract.js').TeamMemberAdditionAttempt} | {ack: string}) { return this.operationalState.teamMemberAddition(scope, teamId, change) }
   async readDayReviewPending(scope: string, day: string) { return this.operationalState.readDayReviewPending(scope, day) }
   async recordingVoiceDraft(scope: string, change?: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft) { return this.operationalState.recordingVoiceDraft(scope, change) }
+  async recordingDeletionPermission(scope: string, change?: { enabled?: boolean; timeZone: string }, signal?: AbortSignal) {
+    return await this.operationalState.recordingDeletionPermission(scope, change, signal)
+  }
   async prepareDayReview(scope: string, day: string, request: Record<string, unknown>) { return this.operationalState.prepareDayReview(scope, day, request) }
   async acknowledgeDayReview(scope: string, day: string, requestId: string) { return this.operationalState.acknowledgeDayReview(scope, day, requestId) }
 
@@ -1046,6 +1100,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return await this.operationalState.removeRecordReeditDraft(
       userId, sourceIdentityKey, itemUid, expectedRevision, expectedCandidate,
     )
+  }
+
+  async importTasks(...args: Parameters<ArkmeStateStore['importTasks']>) {
+    return await this.operationalState.importTasks(...args)
   }
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
@@ -1098,7 +1156,7 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const result = this.database.prepare(`
       UPDATE record_cache
       SET sync_state = 'failed', attempts = attempts + 1, last_error = ?, updated_at_millis = ?
-      WHERE user_id = ? AND record_uid = ?
+      WHERE user_id = ? AND record_uid = ? AND sync_state IN ('pending', 'failed')
     `).run(error.slice(0, 500), Date.now(), userId, recordUid)
     if (Number(result.changes) > 0) this.bumpRevision(userId)
     this.secureDatabaseFiles()
@@ -1161,9 +1219,14 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     const captureContextJson = pending.captureContext === undefined ? null : JSON.stringify(pending.captureContext)
     const contentPayloadJson = pending.excerpt ? JSON.stringify({excerpt:pending.excerpt}) : null
     if (pending.excerpt && !readRecordExcerpt(pending.excerpt,pending.textContent)) throw new Error('摘录待发送数据无效')
-    const existing = this.database.prepare('SELECT text_content,content_payload_json,sync_state FROM record_cache WHERE user_id=? AND record_uid=?').get(userId,pending.recordUid)
+    const existing = this.database.prepare('SELECT text_content,content_payload_json,sync_state,send_at_millis FROM record_cache WHERE user_id=? AND record_uid=?').get(userId,pending.recordUid)
+    // A receipt retry must leave a confirmed cache projection intact.
+    if (existing?.sync_state === 'synced' && pending.excerpt?.kind === 'forward') return
     if (existing && existing.sync_state !== 'synced' && (pending.excerpt || existing.content_payload_json)) {
-      if (existing.text_content !== pending.textContent || existing.content_payload_json !== contentPayloadJson) throw new Error('发送内容已冻结，请使用原内容重试')
+      if (existing.text_content !== pending.textContent || existing.content_payload_json !== contentPayloadJson
+        || (pending.excerpt?.kind === 'forward' && existing.send_at_millis !== pending.sendAtMillis)) {
+        throw new Error('发送内容已冻结，请使用原内容重试')
+      }
       return
     }
     this.database.prepare(`
@@ -1278,15 +1341,11 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     return this.readRecentEmojiIds(accountKey)
   }
 
-  async localTranscriptEntries(account: string, scope: string, ids: string[], change?: LocalTranscriptChange): Promise<Record<string, LocalTranscriptEntry>> {
+  async localTranscriptEntries(account: string, scope: string, ids: string[]): Promise<Record<string, LocalTranscriptEntry>> {
     const read = (id: string): LocalTranscriptEntry | undefined => {
       const row = this.database.prepare('SELECT payload FROM local_transcript_edits WHERE account_key=? AND scope=? AND item_id=?').get(account, scope, id) as { payload: string } | undefined
       return row ? JSON.parse(row.payload) as LocalTranscriptEntry : undefined
     }
-    if (change) this.transaction(() => {
-      const entry = changeLocalTranscript(read(change.id), change, Number(account.split(':').at(-1)))
-      this.database.prepare('INSERT OR REPLACE INTO local_transcript_edits(account_key,scope,item_id,payload) VALUES (?,?,?,?)').run(account, scope, change.id, JSON.stringify(entry))
-    })
     const result: Record<string, LocalTranscriptEntry> = Object.create(null)
     for (const id of ids) { const entry = read(id); if (entry) result[id] = entry }
     return result
@@ -1315,6 +1374,20 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     }
     const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as {payload: string} | undefined
     return row ? JSON.parse(row.payload) : {}
+  }
+
+  async teamAvatarManifest(accountKey: string, side: import('./team-app-contract.js').TeamSide, images?: readonly import('./team-app-contract.js').TeamAvatarDescriptor[]): Promise<readonly import('./team-app-contract.js').TeamAvatarDescriptor[]> {
+    const key = `team-avatar-manifest:v1:${side}`
+    if (images !== undefined) {
+      this.database.prepare('INSERT OR REPLACE INTO local_directory_preferences(account_key,entry_key,payload) VALUES (?,?,?)')
+        .run(accountKey, key, JSON.stringify(images.slice(0, 8)))
+      return []
+    }
+    const row = this.database.prepare('SELECT payload FROM local_directory_preferences WHERE account_key=? AND entry_key=?').get(accountKey, key) as { payload: string } | undefined
+    if (!row || row.payload.length > 128 * 1024) return []
+    const value: unknown = JSON.parse(row.payload)
+    return Array.isArray(value) ? value.slice(0, 8).filter(item => typeof item?.ref === 'string' && item.ref.startsWith('team-app-image.')
+      && item.ref.length <= 8192 && typeof item.key === 'string' && /^[a-f0-9]{64}$/.test(item.key)) : []
   }
 
   async readConversationViewports(accountKey: string, surface: string): Promise<ConversationViewportEntries> {

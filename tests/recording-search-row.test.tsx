@@ -12,7 +12,7 @@ describe('recording search rows',()=>{
     expect(html.match(/<time/g)).toHaveLength(1)
     expect(html).toContain('data-recording-search-group-time="true"')
     expect(html.indexOf('data-recording-search-group-time')).toBeLessThan(html.indexOf('data-recording-search-segment'))
-    expect(html).toContain(new Date(item.startAtMillis).toLocaleString())
+    expect(html).toContain(new Date(item.startAtMillis).toLocaleString(undefined, { hourCycle: 'h23' }))
     expect(html).toContain('张三');expect(html).toContain('李四');expect(html).toContain('王五')
     expect(html).toContain(item.next!.text)
     expect(html).toMatch(/😀<mark[^>]*>命中<\/mark>/)
@@ -25,5 +25,12 @@ describe('recording search rows',()=>{
     row.props.onClick()
     expect(show).toHaveBeenCalledExactlyOnceWith(0,2000,item.match)
     show.mockRestore()
+  })
+  it.each([[0, '00:05:13'], [12, '12:05:13'], [23, '23:05:13']])('displays local hour %i in 24-hour time', (hour, clock) => {
+    const startAtMillis = new Date(2026, 10, 16, hour, 5, 13).getTime()
+    const html = renderToStaticMarkup(<RecordingSearchRow item={{ ...item, startAtMillis }} />)
+    const label = html.match(/<time[^>]*>([^<]*)<\/time>/)?.[1]
+    expect(label).toContain(clock)
+    expect(label).not.toMatch(/\b(?:AM|PM)\b|上午|下午/i)
   })
 })

@@ -25,4 +25,15 @@ export const aiPointsConsumptionToolModule = defineArkmeCoreToolModule({
     },
   }),
 })
-export const aiPointsToolModules = [aiPointsAccountToolModule, aiPointsConsumptionToolModule]
+
+const periodParameters={fromDate:{type:'string' as const,required:true as const,description:'Inclusive Beijing date YYYY-MM-DD'},untilDate:{type:'string' as const,required:true as const,description:'Exclusive Beijing date YYYY-MM-DD'}}
+export const aiPointsStatisticsToolModule=defineArkmeCoreToolModule({
+ meta:{id:'business.account.ai-points-statistics.v1',toolName:'arkme_ai_points_statistics',kind:'business',phase:'core',effect:'read',profiles:['business','hybrid']},
+ create:ports=>defineTool({name:'arkme_ai_points_statistics',description:'Read exact settled AI points grouped by day, Monday week or month. Keep observedAt as settledBefore when drilling into details. Excludes non-billed telemetry.',parameters:{...periodParameters,grain:{type:'string',enum:['day','week','month'],required:true}},output:TEXT_OUTPUT,isConcurrencySafe:()=>true,execute:async(args,exec)=>{const {accountScope:_scope,...result}=await ports.aiPointsStatistics({...args,timezone:'Asia/Shanghai'},undefined,exec.signal);return taggedJSON('积分统计',result)}}),
+})
+export const aiPointsRangeToolModule=defineArkmeCoreToolModule({
+ meta:{id:'business.account.ai-points-range.v1',toolName:'arkme_ai_points_consumption_range',kind:'business',phase:'core',effect:'read',profiles:['business','hybrid']},
+ create:ports=>defineTool({name:'arkme_ai_points_consumption_range',description:'Read whole-operation settled points for the summary period at the same observedAt cutoff. Preserve filters and settledBefore across beforeId pages; refresh if totals change.',parameters:{...periodParameters,settledBefore:{type:'number',required:true,description:'observedAt from statistics'},beforeId:{type:'string'},businessCode:{type:'string'}},output:TEXT_OUTPUT,isConcurrencySafe:()=>true,execute:async(args,exec)=>{const {accountScope:_scope,...result}=await ports.aiPointsConsumptionRange({fromDate:args.fromDate,untilDate:args.untilDate,timezone:'Asia/Shanghai',settledBefore:args.settledBefore,...(args.beforeId?{beforeId:args.beforeId}:{}),...(args.businessCode?{businessCodes:[args.businessCode]}:{})},undefined,exec.signal);return taggedJSON('积分时段明细',result)}}),
+})
+
+export const aiPointsToolModules=[aiPointsAccountToolModule,aiPointsConsumptionToolModule,aiPointsStatisticsToolModule,aiPointsRangeToolModule]

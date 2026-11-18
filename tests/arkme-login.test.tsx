@@ -49,6 +49,19 @@ function darkLoginCss(patch: Partial<ArkmeLoginProps> = {}): string {
 }
 
 describe('ArkmeLogin', () => {
+  it.each([
+    ['zh', 'jiwo.cc'],
+    ['zh-Hant', 'jiwo.cc'],
+    ['en', 'arkme.ai'],
+  ])('opens the same product agreements as Settings in %s', (locale, domain) => {
+    selectLocale(locale)
+    const html = renderLogin()
+    for (const kind of ['user', 'privacy']) {
+      expect(html).toContain(`href="https://www.${domain}/article/${kind}-aggrement-v1.html" target="_blank" rel="noreferrer"`)
+    }
+    expect(html).not.toContain(`https://www.${domain === 'jiwo.cc' ? 'arkme.ai' : 'jiwo.cc'}/article/`)
+  })
+
   it('keeps the password entry below phone sign-in, away from QR and required binding', () => {
     const text = (html: string) => html.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, '')
     const phone = text(renderLogin({ mode: 'phone' }))

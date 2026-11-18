@@ -1,4 +1,5 @@
 import { useTranscriptInteractions, type TranscriptInteractionRow } from './TranscriptInteractions.js'
+import {WorldSoundPublishDialog} from './WorldSoundPublishDialog.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArrowClockwise } from '@phosphor-icons/react/dist/icons/ArrowClockwise'
@@ -87,6 +88,8 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
   useArkmeLocale()
   const selectedIsSample = selectedItem.callRef.startsWith('sample-')
   const [samplePerspective, setSamplePerspective] = useState<SamplePerspective>('primary')
+  const [soundSelection,setSoundSelection]=useState<string[]>()
+  useEffect(()=>setSoundSelection(undefined),[selectedItem.callRef,active])
   const [playingVideoKey, setPlayingVideoKey] = useState('')
   const [videoPlaying, setVideoPlaying] = useState(false)
   const [videoCurrentTime, setVideoCurrentTime] = useState(0)
@@ -99,11 +102,12 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
     for (const video of videoRefs.current.values()) video.pause()
     standaloneVideo.current?.pause()
   })
-  const interactionRows: TranscriptInteractionRow[] = (detail?.transcriptSegments ?? []).map(segment => ({ id: segment.segmentId, text: segment.text, speaker: segment.speakerDisplayName, at: detail!.startedAtMillis + segment.startMillis, playable: !!segment.audioUrl,...(detail?.callRef&&segment.sourceSegmentId?{excerptOrigin:{kind:'call' as const,itemRef:JSON.stringify([detail.callRef,segment.sourceSegmentId])}}:{}) }))
+  const interactionRows: TranscriptInteractionRow[] = (detail?.transcriptSegments ?? []).map(segment => ({ id: segment.segmentId, ...(detail?.callRef&&segment.privateViewTarget&&segment.privateViewVersion?{viewRef:JSON.stringify({kind:"call",callRef:detail.callRef,target:segment.privateViewTarget}),sourceVersion:segment.privateViewVersion}:{}), text: segment.text, speaker: segment.speakerDisplayName, at: detail!.startedAtMillis + segment.startMillis, playable: !!segment.audioUrl,...(detail?.callRef&&segment.sourceSegmentId?{excerptOrigin:{kind:'call' as const,itemRef:JSON.stringify([detail.callRef,segment.sourceSegmentId])}}:{}) }))
   const transcriptInteraction = useTranscriptInteractions({ scope: `call:${detail?.stableId ?? ''}`, rows: interactionRows,
     enabled: active && !selectedIsSample && !!detail?.stableId,
     playing: !!transcriptPlayback.state && transcriptPlayback.state.status !== 'failed', onStop: transcriptPlayback.stop,
     onPlay: ids => transcriptPlayback.playItems((detail?.transcriptSegments ?? []).filter(segment => ids.includes(segment.segmentId)).sort((a,b) => a.startMillis - b.startMillis)),
+    onPublish:ids=>{transcriptPlayback.stop();setSoundSelection(ids)},
   })
   const stopTranscript = transcriptPlayback.stop
   useEffect(() => {
@@ -346,6 +350,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
   }
 
   return <div data-arkme-call-detail-content="true" style={{ ...styles.detailBody, ...(compact ? { padding: '8px 16px 24px' } : {}) }}>
+    {soundSelection&&<WorldSoundPublishDialog selection={{kind:'call',callRef:selectedItem.callRef,segmentIds:soundSelection}} playing={!!transcriptPlayback.state&&transcriptPlayback.state.status!=='failed'} onPreview={()=>{if(transcriptPlayback.state&&transcriptPlayback.state.status!=='failed'){transcriptPlayback.stop();return}transcriptPlayback.playItems((detail?.transcriptSegments??[]).filter(s=>soundSelection.includes(s.segmentId)).sort((a,b)=>a.startMillis-b.startMillis))}} onClose={()=>{transcriptPlayback.stop();setSoundSelection(undefined)}}/>}
     {transcriptInteraction.host}
           <section style={styles.card} data-arkme-call-tour-target={tourSample ? 'summary' : undefined}>
             <h3 style={styles.cardTitle}>{tr("AI 摘要")}</h3>
@@ -388,7 +393,7 @@ export function ArkmeCallDetailContent({ active = true, selectedItem, detail, de
                 />}
                 <span style={{ ...styles.segmentStack, ...(mine ? styles.segmentStackMine : {}) }}>
                   <span aria-pressed={segment.audioUrl ? highlighted : undefined} aria-busy={segment.audioUrl ? playback === 'loading' : undefined} role={segment.audioUrl ? 'button' : undefined} tabIndex={segment.audioUrl ? 0 : undefined}
-                    aria-label={segment.audioUrl ? `${highlighted ? '停止' : playback === 'failed' ? '重试播放' : tr('播放')}${segment.speakerDisplayName}的录音片段：${segment.text}` : undefined}
+                    aria-label={segment.audioUrl ? `${highlighted ? '停止' : playback === 'failed' ? '重试播放' : tr('播放')}${segment.speakerDisplayName}的录音片段：${transcriptInteraction.text(interactionRows[index]!)}` : undefined}
                     onClick={() => { if (segment.audioUrl && !transcriptInteraction.selected && (typeof document === 'undefined' || !document.getSelection()?.toString())) transcriptPlayback.toggle(segment) }}
                     onKeyDown={event => { if (event.target === event.currentTarget && segment.audioUrl && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); if (!transcriptInteraction.selected) transcriptPlayback.toggle(segment) } }}
                     data-arkme-call-tour-target={tourSample && segment.segmentId === 'sample-video-1' ? 'utterance' : undefined}

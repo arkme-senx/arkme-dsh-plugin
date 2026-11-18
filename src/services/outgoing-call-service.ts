@@ -1,3 +1,4 @@
+import { DeviceRegistrationService } from './device-registration-service.js'
 import { ArkmeOutgoingCallBroker } from '../outgoing-call-broker.js'
 import type {
   ArkmeOutgoingCallIntentClaim,
@@ -23,20 +24,44 @@ function callDiag(label: string, detail: Record<string, unknown>): void {
 }
 
 export class OutgoingCallService {
+  private readonly devices: DeviceRegistrationService
+  private readonly stopDeviceScope: () => void
+  private deviceScopeRevision = 0
   constructor(
     private readonly runtime: ServiceRuntime,
     private readonly source: SourceService,
     private readonly profile: ProfileService,
     private readonly broker = new ArkmeOutgoingCallBroker(),
-  ) {}
+    devices?: DeviceRegistrationService,
+  ) {
+    this.devices = devices ?? new DeviceRegistrationService(runtime)
+    this.stopDeviceScope = runtime.subscribeAccountScope(() => {
+      const revision = ++this.deviceScopeRevision
+      void runtime.accountScopedSession().then(session => {
+        if (revision !== this.deviceScopeRevision) return
+        if (session) this.devices.start(session)
+        else this.devices.dispose()
+      }).catch(() => undefined)
+    })
+  }
+  async reportIMReady(accountUserId: number, registrationId: string): Promise<void> {
+    await this.devices.ready(accountUserId, registrationId)
+  }
+  reportDeviceActivity(): void { this.devices.activity() }
+
 
   clearUser(userId: number, reason: string): void {
     callDiag('clear_user', { userId, reason })
+    this.deviceScopeRevision += 1
+    this.devices.clearUser(userId)
     this.broker.clearUser(userId, reason)
   }
 
   dispose(): void {
     callDiag('dispose', {})
+    this.deviceScopeRevision += 1
+    this.stopDeviceScope()
+    this.devices.dispose()
     this.broker.dispose()
   }
 
@@ -66,6 +91,7 @@ export class OutgoingCallService {
 
   async prepareCallReceiver(): Promise<ArkmeCallReceiverPrepareResult> {
     const session = await this.runtime.requireSession()
+    this.devices.start(session)
     const profile = (await this.profile.refreshProfile()).profile
     if (profile === null) throw new ArkmePluginError('profile-contract-invalid', '无法读取当前账号资料', true, 502)
     const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>('/api/v1/trtc/credentials', {}, session)
@@ -187,19 +213,19 @@ export class OutgoingCallService {
         supplement.remark ?? supplement.counterpart_name_snapshot ?? counterpart.display_name_snapshot
         ?? supplement.pending_name ?? counterpart.visible_phone,
       ).trim()
-      const callerProfile = (await this.profile.refreshProfile()).profile
+      const [caller, publicProfiles, credentials] = await Promise.all([
+        this.profile.refreshProfileForSession(session),
+        this.profile.publicProfilesByUserIds([counterpartUserId], session, input.signal),
+        this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
+          '/api/v1/trtc/credentials', {}, session, input.signal,
+        ),
+      ])
+      const callerProfile = caller.profile
       if (callerProfile === null) {
         throw new ArkmePluginError('profile-contract-invalid', 'Arkme 个人资料响应不完整', false, 502)
       }
-      const publicProfiles = await this.profile.publicProfilesByUserIds([counterpartUserId], session, input.signal)
       const peerProfile = publicProfiles.get(counterpartUserId)
       const displayName = detailDisplayName || peerProfile?.displayName || source.displayName || 'Arkme 用户'
-      const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>(
-        '/api/v1/trtc/credentials',
-        {},
-        session,
-        input.signal,
-      )
       const sdkAppId = numberValue(credentials.sdk_app_id)
       const trtcUserId = stringValue(credentials.user_id).trim()
       const userSig = stringValue(credentials.user_sig).trim()
@@ -214,6 +240,7 @@ export class OutgoingCallService {
           shared_topic_id: 0,
           chat_session_uid: source.ownerRef,
           callee_user_ids: [counterpartUserId],
+          include_call_notification_policy: true,
           call_media_type: input.mediaType === 'video' ? 1 : 0,
           caller_name: callerName,
           ...(callerAvatarRef === '' ? {} : {
@@ -242,9 +269,11 @@ export class OutgoingCallService {
         calleeCount: calleeAccounts.length,
       })
       const sharedTopicId = numberValue(room.shared_topic_id)
+      const mutedCalleeAccounts = calleeAccounts.filter(account => listValue(room.call_push_disabled_accounts).includes(account))
       const userData = JSON.stringify({
         sharedTopicId: sharedTopicId > 0 ? sharedTopicId : 0,
         sourceTag: 'arkme-private-chat-header',
+        ...(mutedCalleeAccounts.length === 0 ? {} : { arkmeCallNotification: { version: 1, roomId, mutedAccounts: mutedCalleeAccounts } }),
         callerName,
         callerAvatar: '',
       })
@@ -274,6 +303,7 @@ export class OutgoingCallService {
           timeoutSec: 30,
           userData,
           offlinePushInfo: {
+            isDisablePush: mutedCalleeAccounts.length === calleeAccounts.length,
             title: callerName,
             description,
             extension: userData,

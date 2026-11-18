@@ -45,6 +45,30 @@ afterEach(() => {
 })
 
 describe('composite owner reads with the real runtime', () => {
+  it('shares identical directory page transports only within an account', async () => {
+    vi.useFakeTimers()
+    const held = gate()
+    const fetcher = vi.fn<typeof fetch>(async () => {
+      await held.promise
+      return ok({ items: [] }, 200)
+    })
+    const { runtime } = fixture(fetcher)
+    const path = '/api/v1/chats/interwoven/directory/query'
+    const body = { limit: 100, cursor: 'next', expected_version: 'a'.repeat(64) }
+    const session = { userId: 42, accessToken: 'fixture-access', refreshToken: 'fixture-refresh' }
+    const one = new AbortController()
+    const first = runtime.authenticatedChatPost(path, body, session, one.signal, { lane: 'background-read' })
+    const shared = runtime.authenticatedChatPost(path, body, session, undefined, { lane: 'interactive-read' })
+    const otherAccount = runtime.authenticatedChatPost(path, body, { ...session, userId: 43 }, undefined, { lane: 'interactive-read' })
+    const firstResult = expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    one.abort()
+    await firstResult
+    held.resolve()
+    await expect(Promise.all([shared, otherAccount])).resolves.toEqual([{ items: [] }, { items: [] }])
+  })
+
   it.each(['list', 'states'] as const)('admits a Team read while notification and archive %s transports are still pending', async archiveRead => {
     vi.useFakeTimers()
     const notification = gate(), archive = gate(), starts: string[] = []
@@ -127,10 +151,10 @@ describe('composite owner reads with the real runtime', () => {
       init?.signal?.throwIfAborted()
       return emptyNotices()
     })
-    const occupied = Promise.allSettled(Array.from({ length: 4 }, (_, index) =>
+    const occupied = Promise.allSettled(Array.from({ length: 6 }, (_, index) =>
       f.runtime.authenticatedPost(`/occupied/${index}`, {}, undefined, undefined, { lane: 'interactive-read' })))
     await vi.advanceTimersByTimeAsync(0)
-    expect(starts).toHaveLength(4)
+    expect(starts).toHaveLength(6)
     const read = f.notices.list()
     const check = expect(read).rejects.toMatchObject({ code: 'arkme-timeout' })
     await vi.advanceTimersByTimeAsync(config.requestTimeoutMs)
@@ -162,8 +186,9 @@ describe('composite owner reads with the real runtime', () => {
     let reads = 0
     const f = fixture(async input => {
       if (new URL(String(input)).pathname.endsWith('/read-all')) return ok({ total: 0, unread_count: 0 })
-      if (++reads === 1) await held.promise
-      return ok({ items: [], next_cursor: reads === 1 ? 'before-write' : '' })
+      const page = ++reads
+      if (page === 1) await held.promise
+      return ok({ items: [], next_cursor: page === 1 ? 'before-write' : '' })
     })
     const before = f.notices.list()
     await vi.advanceTimersByTimeAsync(0)
@@ -171,7 +196,7 @@ describe('composite owner reads with the real runtime', () => {
     const after = f.notices.list()
     const results = Promise.all([before, after])
     await vi.advanceTimersByTimeAsync(300)
-    expect(reads).toBe(1) // The route still serializes the detached and replacement flight.
+    expect(reads).toBe(2) // A post-write read has its own flight and need not wait for stale data.
     held.resolve()
     await vi.advanceTimersByTimeAsync(0)
     expect(await results).toEqual([{ items: [], nextCursor: 'before-write' }, { items: [], nextCursor: '' }])
@@ -218,7 +243,7 @@ describe('composite owner reads with the real runtime', () => {
     vi.useFakeTimers()
     const held = gate()
     const f = fixture(async () => { await held.promise; return emptyNotices() })
-    const occupied = Promise.all(Array.from({ length: 4 }, (_, index) =>
+    const occupied = Promise.all(Array.from({ length: 6 }, (_, index) =>
       f.runtime.authenticatedPost(`/occupied/${index}`, {}, undefined, undefined, { lane: 'interactive-read' })))
     await vi.advanceTimersByTimeAsync(0)
     const directTransport = vi.fn(async () => 'openapi-result')
@@ -242,7 +267,7 @@ describe('isolated message synchronization admission', () => {
     expect(Object.keys(f.runtime.requestStats())).toEqual(['interactive-read:chat'])
   })
 
-  it.each(['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2'])('admits %s and its required profile projection while unrelated background reads are held', async route => {
+  it.each(['/api/v1/chat/timeline/unified', '/api/v1/chat/timeline/unified/v2','/api/v1/chat/timeline/unified/v3'])('admits %s and its required profile projection while unrelated background reads are held', async route => {
     vi.useFakeTimers()
     const held = gate(), starts: string[] = []
     const f = fixture(async (input, init) => {
@@ -327,4 +352,35 @@ it('keeps live tail admission available during two account body reads and bounds
     expect(starts).toEqual(['/api/v1/chat/sync/account','/api/v1/chat/sync/account','/api/v1/chat/timeline/tail'])
     process.stdout.write(`ACCOUNT_SYNC_FOREGROUND_ADMISSION ${JSON.stringify({backgroundActive:2,liveTailMillis:performance.now()-before})}\n`)
   } finally {waiting.resolve();await Promise.all(reads)}
+})
+
+it('propagates caller read priority through composite owners and keeps writes on their own lane', async () => {
+  const f = fixture(async () => ok({ items: [] }))
+  await f.runtime.runWithReadPriority('background-read', () =>
+    f.runtime.runCompositeOwnerRead('read-priority-check', {}, async signal => {
+      await f.runtime.authenticatedPost('/api/v1/reactions/query', { targets: [] }, undefined, signal)
+    }))
+  await f.runtime.runWithReadPriority('interactive-read', () =>
+    f.runtime.authenticatedPost('/api/v1/reactions/query', { targets: [] }, undefined, undefined, { lane: 'background-read' }))
+  await f.runtime.runWithReadPriority('background-read', () =>
+    f.runtime.authenticatedPost('/api/v1/reactions/set', {}))
+  expect(f.runtime.requestCoordinator.snapshotStats()).toMatchObject({
+    'background-read:record': { started: 1 },
+    'interactive-read:record': { started: 1 },
+    'write:record': { started: 1 },
+  })
+})
+
+it('does not impose an unrelated two-per-second limit on independent read queries', async () => {
+  vi.useFakeTimers()
+  const starts: string[] = []
+  const f = fixture(async input => {
+    starts.push(String(input))
+    return ok({ items: [] })
+  })
+  const requests = Array.from({ length: 8 }, (_, index) => f.runtime.runWithReadPriority('background-read', () =>
+    f.runtime.authenticatedPost('/api/v1/reactions/query', { index })))
+  await vi.advanceTimersByTimeAsync(0)
+  await Promise.all(requests)
+  expect(starts).toHaveLength(8)
 })

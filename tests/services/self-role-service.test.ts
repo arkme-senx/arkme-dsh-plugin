@@ -46,7 +46,7 @@ it('uploads an avatar once and recovers the exact role after lost response plus 
  await db.updateSelfRole(7,role.roleId,'改名')
  await f.owner.refresh()
  expect(f.media.uploadLocalFile).toHaveBeenCalledTimes(1)
- expect(f.post).toHaveBeenCalledWith('/api/v1/records/self-role/fill',{record_uid:'record-1',self_role_snapshot:{role_id:role.roleId,name:'发送名',avatar_file_asset_uid:'avatar-asset-1'}},expect.objectContaining({userId:7}))
+ expect(f.post).toHaveBeenCalledWith('/api/v1/records/self-role/fill',{record_uid:'record-1',self_role_snapshot:{role_id:role.roleId,name:'发送名',avatar_file_asset_uid:'avatar-asset-1'}},expect.objectContaining({userId:7}),expect.any(AbortSignal))
  expect(f.roles.get(role.roleId)?.name).toBe('改名')
  expect(db.selfRoleSync.pendingBindings(7)).toEqual([])
 })
@@ -58,7 +58,9 @@ it('creates content atomically with the frozen role even after its directory ent
  expect(db.selfRoleSync.pendingBindings(7)).toEqual([])
 })
 it('unadorned content does not wait for or call role APIs',async()=>{
+ const claim=vi.spyOn(db.selfRoleSync,'claimBinding')
  const f=fixture();await f.records.createPersonalRecord('/api/v1/records/create',{record_uid:'old-client',text_content:'正文'})
+ expect(claim).not.toHaveBeenCalled()
  expect(f.post).toHaveBeenCalledTimes(1)
  expect(f.post.mock.calls[0]?.[1]).not.toHaveProperty('self_role_snapshot')
 })

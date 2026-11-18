@@ -33,6 +33,57 @@ function clientSourceFiles(directory: URL, prefix = ''): Array<{ name: string; s
 }
 
 describe('InMemoryArkmeAvatarImageStore', () => {
+  it('serves a visible mutable avatar from disk while a download and a prewarm are queued', async () => {
+    const download = deferred<ReturnType<typeof imagePayload>>()
+    const warming = deferred<undefined>()
+    const reader = vi.fn(() => download.promise)
+    const cachedReader = vi.fn(async (ref: string) => ref === 'visible' ? imagePayload('disk') : undefined)
+    const warmReader = vi.fn().mockReturnValueOnce(warming.promise).mockResolvedValue(undefined)
+    const store = new InMemoryArkmeAvatarImageStore({ reader, cachedReader, warmReader, canProbeCache: () => true, concurrency: 1 })
+    store.activateScope('test:1')
+    const cold = store.load('miss')
+    await vi.waitFor(() => expect(reader).toHaveBeenCalledOnce())
+    const warm = store.warmFromDisk('test:1', 'warm', 'warm')
+    const queuedWarm = store.warmFromDisk('test:1', 'queued-warm', 'queued-warm')
+    const visible = store.load('visible')
+    warming.resolve(undefined)
+    await expect(visible).resolves.toBe(imageDataUrl('disk'))
+    expect(cachedReader.mock.invocationCallOrder[1]).toBeLessThan(warmReader.mock.invocationCallOrder[1]!)
+    expect(reader).toHaveBeenCalledOnce()
+    download.resolve(imagePayload('network'))
+    await Promise.all([warm, queuedWarm, cold])
+  })
+
+  it('warms only from disk and drops in-flight warmups on account change', async () => {
+    const disk = deferred<ReturnType<typeof imagePayload>>()
+    const reader = vi.fn(async () => imagePayload('network'))
+    const warmReader = vi.fn().mockResolvedValueOnce(imagePayload('disk')).mockReturnValueOnce(disk.promise)
+    const store = new InMemoryArkmeAvatarImageStore({ reader, warmReader })
+    store.activateScope('test:1')
+    await store.warmFromDisk('test:1', 'grant-a', 'avatar-a')
+    await expect(store.load('new-grant-a', 'avatar-a')).resolves.toBe(imageDataUrl('disk'))
+    const warming = store.warmFromDisk('test:1', 'grant-b', 'avatar-b')
+    store.activateScope('test:2')
+    disk.resolve(imagePayload('old-account'))
+    await warming
+    expect(store.current('avatar-a')).toBeUndefined()
+    expect(store.current('avatar-b')).toBeUndefined()
+    expect(reader).not.toHaveBeenCalled()
+  })
+
+  it('forces a targeted mutable refresh and removes a revoked image', async () => {
+    const revoked = new Error('revoked')
+    const reader = vi.fn().mockResolvedValueOnce(imagePayload('disk')).mockRejectedValueOnce(revoked)
+    const store = new InMemoryArkmeAvatarImageStore({ reader, invalidateOnError: error => error === revoked })
+    await store.load('profile')
+    const listener = vi.fn()
+    const stop = store.subscribe('profile', listener)
+    await store.revalidateActive(['profile'])
+    expect(reader).toHaveBeenLastCalledWith('profile', true)
+    expect(store.current('profile')).toBeUndefined()
+    expect(listener).toHaveBeenLastCalledWith(undefined)
+    stop()
+  })
   it('shares twenty rotating Team grants by display identity and revalidates with the latest grant', async () => {
     const pending = deferred<ReturnType<typeof imagePayload>>()
     const reader = vi.fn().mockImplementationOnce(() => pending.promise).mockResolvedValue(imagePayload('new'))

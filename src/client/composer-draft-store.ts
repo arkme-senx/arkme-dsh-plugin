@@ -37,6 +37,7 @@ export function arkmeAttachmentsPending(attachments: readonly ArkmeComposerAttac
 export interface ArkmeComposerMention {
   originalIndex?: number
   mentionRef?: string
+  teamMentionRef?:string
   botRef?: string
   all?: boolean
   displayName: string
@@ -296,7 +297,7 @@ export function arkmeComposerAtomicDeletion(
 
 export function insertArkmeComposerMentionToken(
   snapshot: Pick<ArkmeComposerDraftSnapshot, 'text' | 'mentions' | 'emojis'>,
-  mention: Pick<ArkmeComposerMention, 'mentionRef' | 'botRef' | 'all'>,
+  mention: Pick<ArkmeComposerMention, 'mentionRef' | 'botRef' | 'teamMentionRef' | 'all'>,
   displayName: string,
   selectionStart: number,
   selectionEnd = selectionStart,
@@ -305,10 +306,12 @@ export function insertArkmeComposerMentionToken(
   const normalizedDisplayName = displayName.trim()
   const normalizedMentionRef = mention.mentionRef?.trim()
   const normalizedBotRef = mention.botRef?.trim()
+  const normalizedTeamRef=mention.teamMentionRef?.trim()
   if (normalizedDisplayName === '') return undefined
   if (mention.all !== true
     && (normalizedMentionRef === undefined || normalizedMentionRef === '')
-    && (normalizedBotRef === undefined || normalizedBotRef === '')) return undefined
+    && (normalizedBotRef === undefined || normalizedBotRef === '')
+    && (normalizedTeamRef===undefined||normalizedTeamRef==='')) return undefined
   const start = Math.max(0, Math.min(snapshot.text.length, Math.trunc(selectionStart)))
   const end = Math.max(start, Math.min(snapshot.text.length, Math.trunc(selectionEnd)))
   const token = textFormat === 'markdown' ? arkmeEscapeMarkdownText(`@${normalizedDisplayName}`) : `@${normalizedDisplayName}`
@@ -321,6 +324,8 @@ export function insertArkmeComposerMentionToken(
       : item)
   if (mention.all === true) {
     mentions.push({ all: true, displayName: normalizedDisplayName, startIndex: start, length: token.length })
+  } else if(normalizedTeamRef) {
+    mentions.push({teamMentionRef:normalizedTeamRef,displayName:normalizedDisplayName,startIndex:start,length:token.length})
   } else if (normalizedBotRef !== undefined && normalizedBotRef !== '') {
     mentions.push({ botRef: normalizedBotRef, displayName: normalizedDisplayName, startIndex: start, length: token.length })
   } else {
@@ -509,7 +514,7 @@ export class ArkmeComposerDraftStore {
 
   private insertMentionToken(
     key: string | undefined,
-    mention: Pick<ArkmeComposerMention, 'mentionRef' | 'botRef' | 'all'>,
+    mention: Pick<ArkmeComposerMention, 'mentionRef' | 'botRef' | 'teamMentionRef' | 'all'>,
     displayName: string,
     selectionStart: number,
     selectionEnd = selectionStart,
@@ -524,6 +529,9 @@ export class ArkmeComposerDraftStore {
     return inserted.caretIndex
   }
 
+  insertTeamMention(key:string|undefined,teamMentionRef:string,displayName:string,start:number,end=start) {
+    return this.insertMentionToken(key,{teamMentionRef},displayName,start,end)
+  }
   insertMention(
     key: string | undefined,
     mentionRef: string,

@@ -27,7 +27,10 @@ describe('shared Arkme interaction feedback', () => {
       onBack={vi.fn()} closeDisabled />))
     const buttons = [...dom.window.document.querySelectorAll('button')]
     expect(buttons).toHaveLength(2)
-    expect(buttons.every(button => button.dataset.arkmeFeedback === 'neutral' && button.style.width === '30px')).toBe(true)
+    expect(buttons.every(button => button.dataset.arkmeFeedback === 'neutral')).toBe(true)
+    expect(buttons[0]!.style.width).toBe('30px')
+    expect(buttons[1]!.style.width).toBe('36px')
+    expect(buttons[1]!.hasAttribute('data-arkme-dialog-close')).toBe(true)
     expect(buttons[0]!.disabled).toBe(false)
     expect(buttons[1]!.disabled).toBe(true)
     expect(dom.window.document.querySelector('style')!.textContent).toContain(':not([data-arkme-feedback]):not(:disabled):hover')

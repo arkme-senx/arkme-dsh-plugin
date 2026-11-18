@@ -22,9 +22,11 @@ it('splits a long article into bounded 840px images and numbers every page', asy
   const context = { font: '', fillStyle: '', scale: vi.fn(), fillRect: vi.fn(), drawImage: vi.fn(), measureText: (text: string) => ({ width: Array.from(text).length * 17 }), fillText: (text: string) => { labels.push(text) } }
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as any)
   vi.spyOn(HTMLCanvasElement.prototype, 'toBlob').mockImplementation(function(this: HTMLCanvasElement, callback) { dimensions.push([this.width, this.height]); callback(new Blob(['png'], { type: 'image/png' })) })
-  const files = await exportArticleImages({ title: '多页', textContent: '每一行都要完整保留\n'.repeat(250), textFormat: 'plain' }, new AbortController().signal, () => {})
+  const files = await exportArticleImages({ title: '多页', sendAtMillis: 1, selfTopic: { topicHierarchyKey: 'topic', title: '<&> [x]\n# next' }, textContent: '每一行都要完整保留\n'.repeat(250), textFormat: 'plain' }, new AbortController().signal, () => {})
   expect(files.length).toBeGreaterThan(2)
   expect(dimensions.every(([width, height]) => width === 840 && height! <= 4800)).toBe(true)
+  expect(labels).toContain('主题：<&> [x] # next')
+  expect(labels.indexOf(new Date(1).toLocaleString())).toBeLessThan(labels.indexOf('主题：<&> [x] # next'))
   expect(labels).toContain(`1 / ${files.length}`)
   expect(labels).toContain(`${files.length} / ${files.length}`)
   expect(labels.filter(value => value === '每一行都要完整保留')).toHaveLength(250)

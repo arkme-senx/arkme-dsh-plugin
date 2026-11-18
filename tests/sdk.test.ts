@@ -33,6 +33,18 @@ function success(value: unknown): Response {
 afterEach(() => { vi.useRealTimers() })
 
 describe('Arkme SDK', () => {
+  it('routes login device requests through the capability-gated public SDK', async () => {
+    const calls: unknown[] = [], signal = new AbortController().signal
+    const sdk = createArkmeSdk({ fetchImpl: async (_url, init) => {
+      expect(init?.signal).toBe(signal)
+      const request = JSON.parse(String(init?.body)); calls.push(request)
+      return success(request.operation === 'provider.capabilities' ? { contractVersion: 1, features: { loginDevicesV1: true } } : { accountScope: 'test:7', items: [], countComplete: false })
+    } })
+    await expect(sdk.loginDevices({ action: 'list', accountScope: 'test:7' }, signal)).resolves.toMatchObject({ countComplete: false })
+    expect(calls).toEqual([{ operation: 'provider.capabilities' }, { operation: 'account.devices', params: { action: 'list', accountScope: 'test:7' } }])
+    const old = createArkmeSdk({ fetchImpl: async () => success({ contractVersion: 1, features: {} }) })
+    await expect(old.loginDevices({ action: 'list', accountScope: 'test:7' })).rejects.toThrow('当前服务不支持登录设备管理')
+  })
   it('discovers recording paging support and forwards opaque source/cursor through the public SDK', async () => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const signal = new AbortController().signal
@@ -949,22 +961,23 @@ describe('Arkme SDK', () => {
     ])
   })
 
-  it.each([7, '6690025278483443577'])('requests an exact chat timeline window around a record for %s', async (ownerId) => {
+  it.each([7, '6690025278483443577'].flatMap(ownerId => [false, true].map(deferBotProfiles => ({ownerId, deferBotProfiles}))))('requests an exact chat timeline window around a record for %s', async ({ownerId, deferBotProfiles}) => {
     const calls: Array<{ operation: string; params?: Record<string, unknown> }> = []
     const sdk = createArkmeSdk({ fetchImpl: async (_input, init) => {
       calls.push(JSON.parse(String(init?.body)))
       return success({
         source: { sourceRef: 'source-1', kind: 'private_chat', displayName: '小林', activeAtMillis: 0, unreadCount: 0 },
         items: [], anchorItemUid: 'record-1', anchorSequence: 11, anchorIndex: 0,
+        cache: { origin: 'network', persistence: 'deferred', stale: true },
         olderHasMore: false, newerHasMore: false,
       })
     } })
 
-    await expect(sdk.readSourceAround('source-1', 'record-1', ownerId, { beforeLimit: 20, afterLimit: 30 }))
-      .resolves.toMatchObject({ anchorItemUid: 'record-1' })
+    await expect(sdk.readSourceAround('source-1', 'record-1', ownerId, { beforeLimit: 20, afterLimit: 30, deferBotProfiles }))
+      .resolves.toMatchObject({ anchorItemUid: 'record-1', cache: { origin: 'network', persistence: 'deferred', stale: true } })
     expect(calls).toEqual([{
       operation: 'source.timeline-around',
-      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: ownerId, beforeLimit: 20, afterLimit: 30 },
+      params: { sourceRef: 'source-1', itemUid: 'record-1', recordOwnerUserId: ownerId, beforeLimit: 20, afterLimit: 30, ...(deferBotProfiles ? {deferBotProfiles: true} : {}) },
     }])
   })
 
@@ -1281,4 +1294,21 @@ it('discovers account recording preferences separately from comparisons and rout
   ])
   const old = createArkmeSdk({ fetchImpl: async () => success({ contractVersion: 1, features: { recordingStrategiesV1: true } }) })
   await expect(old.recordingStrategies({ action: 'preference' })).rejects.toThrow('不支持')
+})
+
+it('exposes source-scoped search and scenes through the public SDK contract',async()=>{
+ const calls:Array<{operation:string;params:unknown}>=[],signal=new AbortController().signal
+ const sdk=createArkmeSdk({fetchImpl:async(_input,init)=>{
+  const call=JSON.parse(String(init?.body));calls.push(call)
+  return success(call.operation==='provider.capabilities'?{contractVersion:1,features:{remoteRecordSearch:true}}:{items:[],sourceAggregates:[],hasMore:false,queryGuard:{state:'complete'}})
+ }})
+ await sdk.searchRemote('复盘',{sourceRef:'opaque-team-source',cursor:'same-query-page',signal})
+ await sdk.searchScene('file',{sourceRef:'opaque-team-source',limit:20,signal})
+ expect(calls.filter(c=>c.operation!=='provider.capabilities')).toEqual([
+  {operation:'search.records',params:{query:'复盘',sourceRef:'opaque-team-source',cursor:'same-query-page'}},
+  {operation:'search.scene',params:{scene:'file',sourceRef:'opaque-team-source',limit:20}},
+ ])
+ await expect(sdk.searchScene('wrong' as never)).rejects.toThrow('Unknown record search scene')
+ const old=createArkmeSdk({fetchImpl:async()=>success({contractVersion:1,features:{}})})
+ await expect(old.searchScene('file')).rejects.toThrow('不支持远端快记搜索')
 })

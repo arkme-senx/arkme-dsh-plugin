@@ -22,7 +22,7 @@ export function useTeamPersonNames(conversation: TeamConversation, accountKey: s
       for (let i = 0; i < refs.length && !abort.signal.aborted; i += 50) {
         const result = await callArkme<{ items: Array<{ personKey: string; remark: string }> }>('team.app.people.remarks', {
           conversationRef: current.current.conversation.ref, expectedAccountKey: accountKey, personRefs: refs.slice(i, i + 50),
-        }, abort.signal)
+        }, abort.signal, { priority: 'background' })
         if (abort.signal.aborted) return
         setState(old => ({ scope, names: { ...(old.scope === scope ? old.names : {}),
           ...Object.fromEntries(result.items.map(item => [item.personKey, item.remark.trim()])) } }))

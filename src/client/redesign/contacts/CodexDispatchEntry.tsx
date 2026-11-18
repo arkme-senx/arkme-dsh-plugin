@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from '../../ArkmeCloseButton.js'
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { tr, useArkmeLocale } from '../../locale.js'
@@ -38,7 +39,7 @@ function CodexHelperGuide({ onClose }: { onClose(): void }) {
       aria-labelledby={`${id}-title`} aria-describedby={`${id}-description`} onKeyDown={keyDown}>
       <header className="arkme-contact-remark-header">
         <h2 id={`${id}-title`}>{tr('连接 Codex 助手')}</h2>
-        <button type="button" className="arkme-contact-remark-close" aria-label={tr('关闭')} onClick={onClose}>×</button>
+        <ArkmeCloseButton type="button" className="arkme-contact-remark-close" aria-label={tr('关闭')} onClick={onClose} />
       </header>
       <p id={`${id}-description`}>{tr('无需修改 Arkme 客户端。后续由独立安装的本机助手，代你向 Codex 输入需求并加入队列。')}</p>
       <p className="arkme-codex-helper-pending" role="status">{tr('助手派发功能接入中，暂不可发送')}</p>

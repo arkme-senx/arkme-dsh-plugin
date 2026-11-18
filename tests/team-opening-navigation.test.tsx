@@ -6,7 +6,7 @@ import type { TeamConversation, TeamMessage, TeamOpen } from '../src/team-app-co
 import { TeamConversationDirectory } from '../src/client/TeamConversationDirectory.js'
 import { TeamMessagingMount, TeamMessagingPanel } from '../src/client/TeamMessagingPanel.js'
 import { refreshTeamDirectory } from '../src/client/team-conversation-directory.js'
-import { openTeamMessages } from '../src/client/team-messaging-events.js'
+import { invalidateTeamWorkspace, openTeamMessages } from '../src/client/team-messaging-events.js'
 import { arkmeUi } from '../src/client/ui-controller.js'
 import { teamDirectoryPreferences } from '../src/client/team-directory-preferences.js'
 
@@ -28,6 +28,8 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
+
+function workspacePage(items:TeamConversation[],hasMore=false,nextCursor?:string){return {items:items.map(conversation=>({kind:'customer',key:conversation.key,activityAt:conversation.updatedAt,conversation})),hasMore,complete:true,resetRequired:false,unavailableSources:[],...(nextCursor?{nextCursor}:{})}}
 
 it.each([false, true])('opens immediately and never restores from mounting/navigation effects (account switch: %s)', async switchAccount => {
   const channel = { teamRef: 'save-race', name: '测试团队', jotmoId: 'save_race', publicRef: 'a'.repeat(32), link: '', enabled: true, revision: 1, canManage: true }
@@ -97,6 +99,12 @@ it('keeps an opened empty member inbox stable while focus refresh waits for the 
     if (op === 'team.app.official') return channel
     if (op === 'team.app.open') return { channel, openInbox: true }
     if (op === 'team.app.attention') return { team: false, external: false, applications: false }
+    if (op === 'team.app.workspace.request') return []
+    if (op === 'team.app.workspace') {
+      if(phase==='initial')return initial.then(()=>workspacePage([]))
+      if(phase==='refresh')return refresh.then(()=>workspacePage([]))
+      return workspacePage([])
+    }
     if (op === 'team.app.conversations') {
       if (params.side === 'external' && phase === 'initial') return initial
       if (params.side === 'external' && phase === 'refresh') return refresh
@@ -127,6 +135,8 @@ it('returns to the same team after replying, switches visitors and keeps each dr
   mocks.call.mockImplementation(async (op: string, params: { side?: string; conversationRef?: string; clientUid?: string; content?: { text_content: string } }) => {
     if (op === 'team.app.attention') return {team: false, external: false, applications: false}
     if (op === 'team.app.channel') return {...channel, teamRef:'fresh-encrypted-channel-reference'}
+    if (op === 'team.app.workspace.request') return []
+    if (op === 'team.app.workspace') return workspacePage([first,second])
     if (op === 'team.app.conversations') return {items: params.side === 'team' ? [first, second, elsewhere] : [], hasMore: false}
     if (op === 'team.app.timeline') return {conversation: params.conversationRef === first.ref ? first : second, messages: params.conversationRef === first.ref ? messages : [], hasMore: false, beforeSeq: 0}
     if (op === 'team.app.send.enqueue') {
@@ -139,7 +149,9 @@ it('returns to the same team after replying, switches visitors and keeps each dr
     throw new Error(op)
   })
   const click = async (label: string) => {
-    const target = [...host.querySelectorAll<HTMLButtonElement>('button')].find(node => node.getAttribute('aria-label') === label || node.textContent?.includes(label))
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')]
+    const target = buttons.find(node => node.getAttribute('aria-label') === label || node.textContent === label)
+      ?? buttons.find(node => node.textContent?.includes(label))
     expect(target, label).toBeDefined()
     await act(async () => { target!.click(); await tick() })
   }
@@ -178,18 +190,21 @@ it('returns to the same team after replying, switches visitors and keeps each dr
   expect(mocks.call.mock.calls.some(([op]) => op === 'team.app.block')).toBe(false)
 })
 
-it('finds a selected team on later pages without marking it read or opening a visitor', async () => {
+it('opens the selected team directly when it is outside the global private page without marking it read or opening a visitor', async () => {
   const channel={teamRef:'late',name:'分页团队',jotmoId:'late',publicRef:'',link:'',enabled:true,revision:1,canManage:false}
   const target: TeamConversation={key:'late-visitor',ref:'late-visitor',side:'team',channel,visitor:{nickname:'后页访客'},lastSeq:3,latestTeamReplySeq:0,myReadSeq:0,unread:3,needsReply:true,blocked:false,revision:1,updatedAt:10}
   mocks.call.mockImplementation(async (op:string,params:{side?:string;cursor?:string})=>{
     if(op==='team.app.attention') return {team:false,external:false,applications:false}
+    if(op==='team.app.workspace.request')return []
+    if(op==='team.app.workspace')return workspacePage([target])
     if(op==='team.app.conversations') return params.side==='external'?{items:[],hasMore:false}:params.cursor?{items:[target],hasMore:false}:{items:[],hasMore:true,nextCursor:'page2'}
     throw new Error(op)
   })
   await act(async()=>{root.render(<Workspace/>);openTeamMessages({kind:'team',teamRef:channel.teamRef,channel});await tick()})
   expect(host.textContent).toContain('后页访客')
   expect(host.textContent).toContain('选择一个对话')
-  expect(mocks.call.mock.calls.some(([op,p])=>op==='team.app.conversations'&&p.cursor==='page2')).toBe(true)
+  expect(mocks.call.mock.calls.some(([op,p])=>op==='team.app.workspace'&&p.teamRef===channel.teamRef)).toBe(true)
+  expect(mocks.call.mock.calls.some(([op,p])=>op==='team.app.conversations'&&p.cursor==='page2')).toBe(false)
   expect(mocks.call.mock.calls.some(([op])=>op==='team.app.read'||op==='team.app.timeline')).toBe(false)
 })
 it('background list reorder and failure retain selection, scroll and readable cached rows', async () => {
@@ -199,6 +214,8 @@ it('background list reorder and failure retain selection, scroll and readable ca
   mocks.call.mockImplementation(async(op:string,params:{side?:string})=>{
     if(op==='team.app.attention')return {team:false,external:false,applications:false}
     if(op==='team.app.conversations') {if(failed)throw new Error('暂时离线');return {items:params.side==='team'?rows:[],hasMore:false}}
+    if(op==='team.app.workspace.request')return []
+    if(op==='team.app.workspace'){if(failed)throw new Error('暂时离线');return workspacePage(rows)}
     if(op==='team.app.timeline')return {conversation:first,messages:[],hasMore:false,beforeSeq:0}
     return []
   })
@@ -206,16 +223,34 @@ it('background list reorder and failure retain selection, scroll and readable ca
   const viewport=host.querySelector<HTMLDivElement>('[data-arkme-overlay-scroll-viewport]')!
   await act(async()=>{viewport.scrollTop=120;viewport.dispatchEvent(new Event('scroll'));await tick()})
   rows=[first,{...rows[1]!,updatedAt:30}]
-  await act(async()=>{await refreshTeamDirectory('navigation-test');await tick()})
+  await act(async()=>{invalidateTeamWorkspace('navigation-test');await tick()})
   expect([...host.querySelectorAll('[role="treeitem"]')].map(node=>node.textContent?.startsWith('乙'))).toEqual([true,false])
   expect(host.querySelector('[role="treeitem"][aria-selected="true"]')?.textContent).toContain('甲')
   expect(viewport.scrollTop).toBe(120)
   failed=true
-  await act(async()=>{await refreshTeamDirectory('navigation-test');await tick()})
+  await act(async()=>{invalidateTeamWorkspace('navigation-test');await tick()})
   expect(host.textContent).toContain('暂时离线')
   expect(host.querySelectorAll('[role="treeitem"]')).toHaveLength(2)
   await act(async()=>{arkmeUi.closeTeamDirectory();await tick()})
   await act(async()=>{openTeamMessages({kind:'team',teamRef:channel.teamRef,channel});await tick()})
   expect(host.querySelector<HTMLDivElement>('[data-arkme-overlay-scroll-viewport]')?.scrollTop).toBe(120)
   expect(arkmeUi.getSnapshot().teamIntent).toMatchObject({kind:'conversation',conversation:{key:'a'}})
+})
+
+it('uses the original paged private directory when the workspace server route is absent',async()=>{
+ const channel={teamRef:'old-team',name:'旧团队',jotmoId:'old-team',publicRef:'',link:'',enabled:true,revision:1,canManage:false}
+ const target:TeamConversation={key:'old-visitor',ref:'old-visitor',side:'team',channel,visitor:{nickname:'旧版访客'},lastSeq:3,latestTeamReplySeq:0,myReadSeq:0,unread:3,needsReply:true,blocked:false,revision:1,updatedAt:10}
+ mocks.call.mockImplementation(async(op:string,p:{side?:string;cursor?:string})=>{
+  if(op==='team.app.workspace.request')throw Object.assign(new Error('unsupported'),{body:{code:'team-workspace-unsupported'}})
+  if(op==='team.app.attention')return {team:false,external:false,applications:false}
+  if(op.startsWith('team.app.entries.'))return {schemaVersion:1,items:[],hasMore:false}
+  if(op==='team.app.conversations')return p.side==='external'?{items:[],hasMore:false}:p.cursor?{items:[target],hasMore:false}:{items:[],hasMore:true,nextCursor:'old-page-2'}
+  throw new Error(op)
+ })
+ await act(async()=>{root.render(<Workspace/>);openTeamMessages({kind:'team',teamRef:channel.teamRef,channel});await tick()})
+ await act(async()=>{await tick()})
+ expect(host.textContent).toContain('旧版访客')
+ expect(host.textContent).not.toContain('unsupported')
+ expect(mocks.call.mock.calls.some(([op,p])=>op==='team.app.conversations'&&p.cursor==='old-page-2')).toBe(true)
+ expect(mocks.call.mock.calls.some(([op])=>op==='team.app.workspace')).toBe(false)
 })

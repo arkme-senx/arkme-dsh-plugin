@@ -25,6 +25,7 @@ import type { TeamHistoryResponse } from '../team-history-contract.js'
 import { outgoingCallUi } from './outgoing-call-ui-controller.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr } from './locale.js'
+import { useConversationRecognitionAction } from './ConversationRecognitionControl.js'
 
 type Panel = 'calendar' | 'search' | 'analysis' | 'menu'
 const button: CSSProperties = { border: 0, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', padding: '5px 8px', font: 'inherit', fontSize: 12 }
@@ -37,6 +38,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   resolveIdentity(identity: TeamIdentity): TeamIdentity; getReadingDate(): string | undefined
 }) {
   const [open, setOpen] = useState<Panel>()
+  const recognitionAction = useConversationRecognitionAction(accountKey, conversation.ref, 'team', open === 'menu')
   const input = useRef<HTMLInputElement>(null)
   const calendar = useRef<HTMLButtonElement>(null), search = useRef<HTMLButtonElement>(null), analysis = useRef<HTMLButtonElement>(null), menu = useRef<HTMLButtonElement>(null)
   const lifetime=useRef(new AbortController()),reader=useRef<AbortController>()
@@ -97,7 +99,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
   }
   useSelectedMessageSearch(conversation.ref, text => {onOpenPanel();setQuery(text);setOpen('search');requestAnimationFrame(()=>input.current?.focus({preventScroll:true}))})
   const loadCalendarMonth = async (range:{startDate:string;endDate:string;timezone:string},signal:AbortSignal) => {
-    const options={...localDateWindow(range.startDate,range.endDate),timezone:range.timezone,requestId:crypto.randomUUID()}
+    const options={...localDateWindow(range.startDate,range.endDate,range.timezone),requestId:crypto.randomUUID()}
     const manifest=await prepareHistory(conversation.ref,accountKey,'dates',options,signal)
     const page=await historyCall(conversation.ref,accountKey,'dates',{resultRef:manifest.resultRef!,limit:100},signal)
     if(page.hasMore)throw new Error(tr('日期索引不完整，请重新读取'))
@@ -112,7 +114,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     if (locateLock.current) return
     locateLock.current = true; setOpening(message.key); setNotice('')
     try { await onLocate(message, lifetime.current.signal); if (!lifetime.current.signal.aborted) setOpen(undefined) }
-    catch (e) { if (!lifetime.current.signal.aborted) { setNotice(errorText(e)); invalidateTeamMessages(accountKey) } }
+    catch (e) { if (!lifetime.current.signal.aborted) setNotice(errorText(e)) }
     finally { locateLock.current = false; if (!lifetime.current.signal.aborted) setOpening('') }
   }
   const openPrivate = async (mediaType?: 'audio' | 'video') => {
@@ -154,6 +156,7 @@ export function TeamConversationTools({ conversation, accountKey, host, onOpenPa
     <ArkmeConversationHeaderIconButton label={tr('对话分析')} buttonRef={analysis} hasPopup="dialog" expanded={open === 'analysis'} onClick={() => toggle('analysis')}><ChartBar size={22}/></ArkmeConversationHeaderIconButton>
     <ArkmePrivateCallMenu displayName={title} personalIdentity busy={privateBusy} onStart={mediaType => void openPrivate(mediaType)}/>
     <ConversationActionsMenu anchor={menu} label={tr('更多团队对话操作')} trigger={{ open: open === 'menu', onOpenChange: value => value ? toggle('menu') : setOpen(undefined) }} onClose={() => setOpen(undefined)} items={[
+      recognitionAction,
       {
         id: 'message-dnd', label: tr('消息免打扰'), icon: <BellSlash size={20} aria-hidden />,
         keepOpenOnSelect: true,

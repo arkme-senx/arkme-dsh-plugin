@@ -70,6 +70,7 @@ export interface ArkmeOutgoingCallPrepareResult {
     timeoutSec: 30
     userData: string
     offlinePushInfo: {
+      isDisablePush?: boolean
       title: string
       description: string
       extension: string

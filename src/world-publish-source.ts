@@ -9,6 +9,7 @@ export function canPublishSelfNote(source: ArkmeSourceItem | undefined, item: Ar
 export interface WorldPublishSource { sourceRef: string; itemUid: string }
 export type WorldPublishOrigin = WorldPublishSource & (
   | { kind?: 'record' }
+  | { kind: 'suggestion' }
   | { kind: 'arko'; sessionId: number; messageId: number }
   | { kind: 'action'; actionRef: string; hasAttachments: boolean }
   /** Local input snapshot, never a cloud ownership or provenance assertion. */

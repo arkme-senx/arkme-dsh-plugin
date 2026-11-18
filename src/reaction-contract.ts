@@ -28,7 +28,7 @@ export type ReactionResponse<R extends ReactionRequest> = R extends { action: 'n
 export type ReactionRequest = { accountKey: string; traceId?: string } & (
  | { action: 'notifications'; after_id?: string; limit: number; include_read?: boolean }
  | { action: 'notifications-read'; items: { id: string; revision: number }[] }
- | { action: 'query'; targets: ReactionTargetRef[]; actorPresentation?: 'deferred' }
+ | { action: 'query'; targets: ReactionTargetRef[]; actorPresentation?: 'deferred'; readPriority?: 'interactive' }
  | { action: 'set'; target: ReactionTargetRef; expression: ReactionExpression; active: boolean; expected_revision: number; request_id: string }
  | { action: 'actors'; target: ReactionTargetRef; key: string; after_user_id: number; limit: number }
  | { action: 'groups'; target: ReactionTargetRef; after_key: string; limit: number }

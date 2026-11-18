@@ -141,7 +141,8 @@
 .arkme-recording-breakdown th, .arkme-recording-breakdown td { text-align: right; padding: 8px 6px; border-bottom: 1px solid var(--dsw-alias-border-l2, #e1e3e6); font-weight: 400; }
 .arkme-recording-breakdown th:first-child { text-align: left; white-space: nowrap; }
 .arkme-usage-summary-row[data-usage-kind="ai-points"] { grid-template-columns: minmax(0, 1fr) auto; }
-.arkme-account-usage .arkme-points-disclosure { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.arkme-account-usage :is(.arkme-points-disclosure,.arkme-models-disclosure) { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.arkme-account-usage .arkme-points-links { display:flex; align-items:center; justify-content:space-between; gap:20px; flex-wrap:wrap; }
 .arkme-usage-breakdown[data-usage-detail="points"] { margin-top: 8px; }
 .arkme-points-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
 .arkme-points-toolbar > span { color: var(--dsw-alias-label-secondary, #68707c); }

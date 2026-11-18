@@ -41,6 +41,7 @@ export class TeamReceiptStore {
     return () => { this.owners--; queueMicrotask(() => { if (!this.owners) this.dispose() }) }
   }
   constructor(private accountKey: string) {}
+  get inactive() { return this.controller.signal.aborted }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   subscribeAccessLost = (listener: () => void) => { this.accessListeners.add(listener); return () => { this.accessListeners.delete(listener) } }
   subscribeReadState = (listener: (state: {lastSeq:number; myReadSeq:number; unread:number; notificationPolicy?:TeamNotificationPolicy}) => void) => { this.readListeners.add(listener); return () => { this.readListeners.delete(listener) } }
@@ -100,7 +101,7 @@ export class TeamReceiptStore {
         await this.enqueue(async () => {
           if (this.controller.signal.aborted) return
           try {
-            const result = await callArkme<TeamReceiptSummaryBatch>('team.app.receipt-summaries', {messageRefs:batch.map(m => m.ref), expectedAccountKey:this.accountKey},this.controller.signal)
+            const result = await callArkme<TeamReceiptSummaryBatch>('team.app.receipt-summaries', {messageRefs:batch.map(m => m.ref), expectedAccountKey:this.accountKey},this.controller.signal,{priority:'background'})
             if (this.controller.signal.aborted) return
             const byKey = new Map(result.items.map(item => [item.key,item]))
             if (byKey.size !== batch.length || batch.some(m => !byKey.has(m.key))) throw new Error('阅读状态返回不完整')

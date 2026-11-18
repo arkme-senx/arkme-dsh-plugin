@@ -1,3 +1,5 @@
+import { isBackendRouteUnavailable } from './service-error.js'
+import { readTopicMetadata } from './topic-metadata.js'
 import { thoughtReplyFromWire } from '../thought-reply.js'
 import { readRecordExcerpt, recordExcerptPresentation, type RecordExcerpt } from '../record-excerpt.js'
 import { projectForwardRecordsPreview, projectForwardRecordsWithAvatars } from '../forward-records-presentation.js'
@@ -14,7 +16,7 @@ import { arkmeEmojiTokenSafePrefix } from '../arkme-emoji-text.js'
 import { isDshAgentInputRawRecord } from '../dsh-agent-input-source.js'
 import { projectCallRecord } from '../call-record-presentation.js'
 import { arkmeRecordTextFormat, arkmeMarkdownHashTagRanges } from '../markdown.js'
-import { createHash, createHmac } from 'node:crypto'
+import { createHash, createHmac, randomUUID } from 'node:crypto'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
 import type {
   ArkmeRecordReeditAttachmentSelection,
@@ -60,11 +62,14 @@ import type {
 import { arkmeHashTagContentPayload, arkmeHashTagPayload } from '../hashtag.js'
 import { projectRecordRecordingForward } from '../recording-forward-presentation.js'
 import { MediaService } from './media-service.js'
-import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord } from './privacy-visibility.js'
+import { ArkmePrivacyVisibilityService, arkmePrivacyLockedRecord, arkmePrivacyLockedTopic } from './privacy-visibility.js'
 import type { ArkmeSourceRefPayload } from './source-service.js'
 import { ArkmePluginError, ArkmeUpstreamResponseError, ServiceRuntime, objectValue, stringValue } from './service.js'
 
 export interface ArkmeRecordSourceReader {
+  sourceScopeKey(source:ArkmeSourceRefPayload):Promise<string>
+  authorizeGroupDelegation(source:ArkmeSourceRefPayload,session:ArkmeSessionCredentials,signal?:AbortSignal):Promise<void>
+  topicHierarchyKey(userId: number, topicUid: string): Promise<string>
   openSourceRef(sourceRef: string, expectedUserId: number): Promise<ArkmeSourceRefPayload>
 }
 
@@ -251,7 +256,11 @@ function recordReeditContentPayloadForWrite(
     else output.mention_metadata = mentions.metadata
   }
   if (nextText !== currentText) {
-    const hashTags = arkmeHashTagPayload(nextText)
+    const excerpt=readRecordExcerpt(contentPayload?.excerpt,currentText)
+    const ownStart=excerpt?.kind==='forward'
+      ? excerpt.quote_end+(nextText.slice(excerpt.quote_end).startsWith('\n\n附言\n')?'\n\n附言\n'.length:0)
+      : excerpt?.note_start??0
+    const hashTags = arkmeHashTagPayload(nextText.slice(ownStart)).map(tag=>({...tag,start_index:tag.start_index+ownStart}))
     if (hashTags.length > 0) output.hash_tags = hashTags
     else delete output.hash_tags
   }
@@ -318,6 +327,10 @@ function normalizedRecordCaptureContext(input: ArkmeRecordCaptureContext | undef
   return Object.keys(normalized).length === 0 ? undefined : normalized
 }
 
+function isRecordCreateRejection(error: unknown): boolean {
+  return error instanceof ArkmeUpstreamResponseError && error.code === 'arkme-code-40001' && !error.writeOutcomeUnknown
+}
+
 export class RecordService {
   private readonly reeditEditors = new Map<string, { owner: RecordReeditOwnerSnapshot; view: ArkmeRecordReeditEditorSnapshot }>()
   private readonly submissions: RecordReeditSubmissions
@@ -331,7 +344,7 @@ export class RecordService {
     const uid = String(body.record_uid ?? '')
     const snapshot = await this.selfRoles?.prepare(account, uid)
     const result = await this.runtime.authenticatedPost<T>(path, { ...body, ...(snapshot === undefined ? {} : { self_role_snapshot: snapshot }) }, account, signal, options)
-    if (snapshot !== undefined) this.selfRoles?.acknowledge(account, uid)
+    if (snapshot !== undefined) await this.selfRoles?.acknowledge(account, uid, snapshot)
     return result
   }
 
@@ -344,7 +357,7 @@ export class RecordService {
     onReeditCommitted?: () => Promise<void>,
     private readonly resolveReeditMentions?: (
       source: ArkmeSourceRefPayload, text: string, humans: ArkmeHumanMentionInput[], bots: ArkmeBotMentionInput[],
-      session: ArkmeSessionCredentials, textFormat: 'plain' | 'markdown',
+      session: ArkmeSessionCredentials, textFormat: 'plain' | 'markdown',teams?:import('../types.js').ArkmeTeamMentionInput[],
     ) => Promise<ResolvedMentions>,
     private readonly currentSenderSnapshot?: (session: ArkmeSessionCredentials) => Promise<{ avatar?: string; nickname?: string } | undefined>,
     private readonly forwardProfiles?: Pick<ProfileService, 'sealProfileImageRef'>,
@@ -382,7 +395,7 @@ export class RecordService {
           if (session.userId !== job.context.expectedUserId || !job.expectedCommittedFingerprint) {
             return { kind: 'uncertain', message: '请切回原账号后核对提交结果' }
           }
-          return { kind: 'committed', result: await this.reconcileRecordReeditUnknownOutcome(session, job.context, job.expectedCommittedFingerprint) }
+          return { kind: 'committed', result: await this.reconcileRecordReeditUnknownOutcome(session, job.context, job.expectedCommittedFingerprint, job.revisionUid) }
         } catch (error) { return this.recordReeditExecutionFailure(error, true, true) }
       },
     })
@@ -437,7 +450,6 @@ export class RecordService {
     if (previous && ['pending', 'committing', 'uncertain'].includes(previous.state)) {
       if ((input.newText === undefined || input.newText === previous.draft.textContent)
         && (input.newTitle === undefined || input.newTitle.trim() === previous.draft.title)
-        && input.expectedVersion === previous.context.baseVersion
         && (input.mentions === undefined || JSON.stringify(input.mentions) === JSON.stringify(previous.draft.mentions))
         && (input.attachments === undefined || JSON.stringify(input.attachments) === JSON.stringify(previous.draft.attachments))) {
         return recordReeditSubmissionView(previous)
@@ -454,7 +466,8 @@ export class RecordService {
     const attachments = await this.recordReeditAttachmentViews(owner, selections, view.attachments.flatMap(item => item.block ? [item.block] : []))
     if ((await this.runtime.requireSession()).userId !== context.expectedUserId) throw new ArkmePluginError('record-reedit-account-changed', '账号已切换，请重新打开', false, 409)
     const voiceFileAssetUid = stringValue(objectValue(owner.contentPayload?.voice).source_file_asset_uid)
-    return await this.submissions.accept({ context, draft, attachments,
+    const editorSnapshot = await this.currentSenderSnapshot?.(session)
+    return await this.submissions.accept({ context, draft, attachments, ...(editorSnapshot ? { editorSnapshot } : {}),
       ...(voiceFileAssetUid ? { voiceFileAssetUid } : {}), ...(view.voiceBlock ? { voiceBlock: view.voiceBlock } : {}) })
   }
 
@@ -504,15 +517,7 @@ export class RecordService {
     const sourceRef = input.sourceRef.trim()
     const itemUid = input.itemUid.trim()
     let editor = this.reeditEditors.get(this.reeditBaselineKey(session.userId, sourceRef, itemUid))
-    if (!editor) {
-      if (!Number.isSafeInteger(input.expectedVersion) || (input.expectedVersion ?? 0) <= 0) {
-        throw new ArkmePluginError('record-reedit-version-invalid', '恢复编辑上下文需要原快记版本，请重新读取后确认', false, 409)
-      }
-      editor = await this.loadRecordReeditEditor(sourceRef, itemUid, session)
-    }
-    if (input.expectedVersion !== undefined && editor.owner.version !== input.expectedVersion) {
-      throw new ArkmePluginError('record-reedit-conflict', '快记已在其他位置更新，草稿已保留，请检查后重新确认', false, 409)
-    }
+    if (!editor) editor = await this.loadRecordReeditEditor(sourceRef, itemUid, session)
     await this.source.openSourceRef(sourceRef, session.userId)
     const context = await this.prepareRecordReeditCandidate({ ...input, sourceRef, itemUid }, editor.owner, session, draftOnly)
     return { context, ...editor }
@@ -520,8 +525,8 @@ export class RecordService {
 
   private reeditMentionResolver(owner: RecordReeditOwnerSnapshot, text: string, session: ArkmeSessionCredentials): NewMentionResolver | undefined {
     const resolve = this.resolveReeditMentions
-    return resolve === undefined ? undefined : (humans, bots) => resolve(
-      owner.source, text, humans, bots, session, arkmeRecordTextFormat(owner.contentPayload),
+    return resolve === undefined ? undefined : (humans, bots,teams) => resolve(
+      owner.source, text, humans, bots, session, arkmeRecordTextFormat(owner.contentPayload),teams,
     )
   }
 
@@ -547,12 +552,6 @@ export class RecordService {
         || input.expectedDraftRevision !== (previous?.draftRevision ?? 0))) {
       throw new ArkmePluginError('record-reedit-draft-changed', '重新编辑草稿已变化，请重新打开后确认', false, 409)
     }
-    if (input.attachments !== undefined && expectedBaseVersion === undefined) {
-      throw new ArkmePluginError('record-reedit-version-invalid', '修改附件需要读取时的快记版本', false, 409)
-    }
-    if (input.attachments !== undefined && expectedBaseVersion !== owner.version) {
-      throw new ArkmePluginError('record-reedit-conflict', '快记已在其他位置更新，草稿已保留，请重新读取附件后确认', false, 409)
-    }
     const attachments = input.attachments === undefined ? previous?.attachments
       : recordReeditAttachmentSelection(input.attachments, owner.contentPayload)
     if (owner.displayKind === 1 && (attachments?.length ?? 0) > 0) {
@@ -571,9 +570,6 @@ export class RecordService {
     const mentions = input.mentions === undefined ? previous?.mentions : input.mentions.map(mention => ({
       ...mention, startIndex: mention.startIndex - (arkmeRecordTextFormat(owner.contentPayload) === 'markdown' ? 0 : leadingTrim),
     }))
-    if (mentions !== undefined && (expectedBaseVersion ?? previous?.baseVersion) !== owner.version) {
-      throw new ArkmePluginError('record-reedit-conflict', '快记已变化，请重新打开编辑', false, 409)
-    }
     if (mentions !== undefined) {
       const prepared = prepareRecordReeditMentions(owner.contentPayload, owner.textContent, textContent, mentions,
         owner.source.kind === 'group_chat', arkmeRecordTextFormat(owner.contentPayload))
@@ -733,7 +729,8 @@ export class RecordService {
     if (active) throw new ArkmePluginError('record-reedit-in-progress', '该快记已有提交正在保存或核对，请稍后重新确认', false, 409)
     const draft = await this.runtime.stateStore.getRecordReeditDraft(session.userId, context.sourceIdentityKey, context.itemUid)
     if (!draft || draft.draftRevision !== context.draftRevision) throw new ArkmePluginError('record-reedit-draft-changed', '重新编辑草稿已变化，请重新确认', false, 409)
-    const command = structuredClone({ context, draft })
+    const editorSnapshot = await this.currentSenderSnapshot?.(session)
+    const command = structuredClone({ context, draft, revisionUid: randomUUID(), ...(editorSnapshot ? { editorSnapshot } : {}) })
     return await this.executeRecordReeditCommand(command, async (fingerprint, owner, write) => {
       const selections = draft.attachments ?? recordReeditMediaGroups(owner.contentPayload).map(group => ({ fileAssetUid: group.fileAssetUid }))
       const blocks = await this.recordReeditMediaBlocks(owner, session)
@@ -783,9 +780,6 @@ export class RecordService {
       throw new ArkmePluginError('record-reedit-draft-changed', '重新编辑草稿已变化，请重新确认', false, 409)
     }
     const owner = await this.recordReeditOwnerSnapshot(context.sourceRef, context.itemUid, session, source)
-    if (owner.version !== context.baseVersion || owner.fingerprint !== context.baseContentFingerprint) {
-      throw new ArkmePluginError('record-reedit-conflict', '快记已在其他位置更新，草稿已保留，请检查后重新确认', false, 409)
-    }
     if (draft.textContent.trim() === ''
       && stringValue(objectValue(owner.contentPayload?.voice).source_file_asset_uid) === ''
       && (draft.attachments === undefined ? !recordReeditHasAttachments(owner.contentPayload) : draft.attachments.length === 0)) {
@@ -797,6 +791,11 @@ export class RecordService {
       this.reeditMentionResolver(owner, draft.textContent, session),
     ) }
     const body = this.recordReeditUpdateBody(owner, draft.title, draft.textContent, mentionUpdate)
+    if (command.revisionUid) body.revision_uid = command.revisionUid
+    body.edit_at = draft.capture?.completedAtMillis ?? draft.updatedAtMillis
+    if (command.editorSnapshot) body.editor_snapshot = command.editorSnapshot
+    delete body.edit_duration_millis
+    body.edit_duration_known = draft.capture?.durationMillis !== undefined
     if (draft.attachments !== undefined) {
       const selection = recordReeditAttachmentSelection(draft.attachments, owner.contentPayload)
       const fileRefs = selection.flatMap(item => item.fileRef === undefined ? [] : [item.fileRef])
@@ -821,7 +820,11 @@ export class RecordService {
           ...(point.accuracyMeters === undefined ? {} : { accuracy_meters: point.accuracyMeters }),
           ...(point.altitudeMeters === undefined ? {} : { alt: point.altitudeMeters }),
           ...(point.speedMetersPerSecond === undefined ? {} : { speed: point.speedMetersPerSecond }) } } : {}) }
-      body.edit_duration_millis = owner.editDurationMillis + (capture.durationMillis ?? 0)
+      if (capture.durationMillis !== undefined) {
+        const total = owner.editDurationMillis + capture.durationMillis
+        if (!Number.isSafeInteger(total)) throw new ArkmePluginError('record-reedit-duration-invalid', '编辑时长超出范围', false, 400)
+        body.edit_duration_millis = total
+      }
       const payload: Record<string, unknown> = { payload_kind: 1, schema_version: 1, text_state: draft.textContent ? 1 : 3, ...objectValue(body.content_payload) }
       const refs = listValue(payload.media_refs).map(objectValue).filter(ref => numberValue(ref.content_file_role) !== 4)
       const assets = capture.backgroundSound ? await this.recordReeditFiles().uploadRefs(capture.backgroundSound.fileRefs) : []
@@ -840,7 +843,7 @@ export class RecordService {
       templateKind: numberValue(body.template_kind),
       ...(committedContentPayload === undefined ? {} : { contentPayload: committedContentPayload }),
       version: owner.version + 1,
-      editDurationMillis: numberValue(body.edit_duration_millis),
+      editDurationMillis: body.edit_duration_millis === undefined ? owner.editDurationMillis : numberValue(body.edit_duration_millis),
     })
     if ((await this.runtime.requireSession()).userId !== session.userId) {
       throw new ArkmePluginError('record-reedit-account-changed', '当前账号已变化，请切回原账号后重新确认', false, 409)
@@ -848,15 +851,16 @@ export class RecordService {
     return await atWrite(expectedCommittedFingerprint, owner, async () => {
       if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('record-reedit-account-changed', '账号已切换，请恢复编辑后重新确认', false, 409)
       this.assertReeditActive()
+      if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session)
       try {
         const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
           '/api/v1/records/update', body, session, undefined, { trackWriteOutcome: true },
         )
-        return this.recordReeditCommitResult(context, data)
+        return this.recordReeditCommitResult(context, data, command.revisionUid, body)
       } catch (error) {
         if (!(error instanceof ArkmePluginError) || error.writeOutcomeUnknown !== true) throw error
         return await this.reconcileRecordReeditUnknownOutcome(
-          session, context, expectedCommittedFingerprint,
+          session, context, expectedCommittedFingerprint, command.revisionUid,
         )
       }
     })
@@ -949,11 +953,13 @@ export class RecordService {
   async longArticleDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeLongArticleDetail> {
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(sourceRef, session.userId)
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const uid = itemUid.trim()
     if (uid === '') throw new ArkmePluginError('long-article-item-invalid', '长文记录标识无效', false)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/detail', { record_uid: uid }, session, signal,
     )
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const core = objectValue(data.record_core)
     const recordUid = stringValue(core.record_uid).trim()
     const templateKind = numberValue(core.template_kind)
@@ -976,8 +982,15 @@ export class RecordService {
     })()
     const recordDurationMillis = Math.max(0, Math.trunc(numberValue(core.record_duration_millis)))
     const editDurationMillis = Math.max(0, Math.trunc(numberValue(core.edit_duration_millis)))
+    const topic = objectValue(data.topic_core), topicUid = stringValue(topic.topic_uid).trim()
+    const personalTopic = numberValue(core.owner_user_id) === session.userId
+      && source.kind !== 'private_chat' && source.kind !== 'group_chat'
+      && topicUid && !arkmePrivacyLockedTopic(data)
+    const metadata = personalTopic ? await readTopicMetadata(this.runtime, session, topicUid, signal) : undefined
+    const selfTopic = metadata?.topicKind === 1 && metadata.privacyState === 1
+      ? { topicHierarchyKey: await this.source.topicHierarchyKey(session.userId, topicUid), title: stringValue(topic.title) } : undefined
     return {
-      actionItem: { ...this.recordTimelineItemFromRaw(data, session.userId), contentBlocks,
+      actionItem: { ...this.recordTimelineItemFromRaw(data, session.userId, { selfTopic }), contentBlocks,
         recordOwnerUserId: numberValue(core.owner_user_id) },
       ...(numberValue(core.create_at ?? core.created_at) > 0 ? { createdAtMillis: numberValue(core.create_at ?? core.created_at) } : {}),
       sourceRef,
@@ -1001,6 +1014,8 @@ export class RecordService {
     itemUid: string,
     input: import('../types.js').ArkmeLongArticleUpdateInput & { assets?: import('../types.js').ArkmeUploadedAsset[] },
   ): Promise<ArkmeLongArticleDetail> {
+    const editAt = input.editAtMillis ?? Date.now(), revisionUid = input.revisionUid ?? randomUUID()
+    if (!Number.isSafeInteger(editAt) || editAt <= 0 || !/^[a-zA-Z0-9._:-]{1,128}$/.test(revisionUid)) throw new ArkmePluginError('long-article-update-invalid', '编辑时间或标识无效', false)
     if (this.runtime.config.richMediaSendEnabled === false) {
       throw new ArkmePluginError('rich-content-disabled', '长文编辑已被插件配置关闭', false, 403)
     }
@@ -1017,10 +1032,10 @@ export class RecordService {
     const assets = input.assets ?? []
     const editDurationMillis = Math.max(0, Math.trunc(input.editDurationMillis))
     if (!detail.editable) throw new ArkmePluginError('long-article-not-editable', '只能编辑自己发布的长文', false, 403)
-    if (title === '' || title.length > 100 || textContent === '' || textContent.length > 40000
-      || !Number.isSafeInteger(input.version) || input.version <= 0 || input.version !== detail.version) {
-      throw new ArkmePluginError('long-article-update-invalid', '长文内容或版本无效，请刷新后重试', false, 409)
+    if (title === '' || title.length > 100 || textContent === '' || textContent.length > 40000) {
+      throw new ArkmePluginError('long-article-update-invalid', '长文内容无效', false, 409)
     }
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session)
     try {
     await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/update', {
       record_uid: detail.itemUid,
@@ -1030,17 +1045,15 @@ export class RecordService {
       display_kind: 1,
       title,
       text_content: textContent,
-      record_duration_millis: detail.recordDurationMillis,
       edit_duration_millis: editDurationMillis,
-      version: detail.version,
+      edit_at: editAt,
+      revision_uid: revisionUid,
     }, session, undefined, { trackWriteOutcome: true })
     } catch (error) {
       if (error instanceof ArkmePluginError && error.writeOutcomeUnknown) {
         try {
-          const confirmed = await this.longArticleDetail(sourceRef, itemUid)
-          const expectedAssets = assets.map(asset => asset.fileAssetUid).sort().join(',')
-          const actualAssets = (confirmed.contentBlocks ?? []).map(block => block.fileAssetUid).filter(Boolean).sort().join(',')
-          if (confirmed.version === detail.version + 1 && confirmed.title === title && confirmed.textContent === textContent && confirmed.textFormat === textFormat && expectedAssets === actualAssets) return confirmed
+          await this.recordReeditAcceptedReceipt(session, itemUid, revisionUid)
+          return await this.longArticleDetail(sourceRef, itemUid)
         } catch { /* A failed reconciliation must retain the original uncertain outcome. */ }
       }
       throw error
@@ -1079,6 +1092,8 @@ export class RecordService {
   }
 
   async putLongArticleDraft(draft: ArkmeLongArticleDraft): Promise<void> {
+    if (draft.editAtMillis !== undefined && (!Number.isSafeInteger(draft.editAtMillis) || draft.editAtMillis <= 0)
+      || draft.revisionUid !== undefined && !/^[a-zA-Z0-9._:-]{1,128}$/.test(draft.revisionUid)) throw new ArkmePluginError('long-article-draft-invalid', '编辑时间或标识无效', false)
     const session = await this.runtime.requireSession()
     const source = await this.source.openSourceRef(draft.sourceRef, session.userId)
     if(draft.draftScope!==undefined&&(draft.draftScope.length>256||draft.draftScope.includes('\u0000')))throw new ArkmePluginError('article-draft-scope-invalid','草稿身份无效',false,400)
@@ -1146,6 +1161,7 @@ export class RecordService {
   }
 
   private async recordReeditSourceIdentityKey(source: ArkmeSourceRefPayload): Promise<string> {
+    if(source.groupDelegation)return `arkme-record-reedit-source-v1.${createHmac('sha256',await this.runtime.stateStore.uniqueCode()).update(JSON.stringify(['delegated-reedit',this.runtime.config.environment,source.userId,await this.source.sourceScopeKey(source)])).digest('base64url')}`
     const digest = createHmac('sha256', await this.runtime.stateStore.uniqueCode())
       .update(`record-reedit-source-v1:${String(source.userId)}:${source.kind}:${source.ownerRef}`)
       .digest('base64url')
@@ -1184,9 +1200,11 @@ export class RecordService {
     signal?: AbortSignal,
   ): Promise<RecordReeditOwnerSnapshot> {
     const source = openedSource ?? await this.source.openSourceRef(sourceRef, session.userId)
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(
       '/api/v1/records/detail', { record_uid: itemUid }, session, signal,
     )
+    if(source.groupDelegation)await this.source.authorizeGroupDelegation(source,session,signal)
     const core = objectValue(data.record_core)
     if (stringValue(core.record_uid).trim() !== itemUid) {
       throw new ArkmePluginError('record-reedit-not-found', '未找到可重新编辑的快记', false, 404)
@@ -1305,34 +1323,70 @@ export class RecordService {
       title,
       text_content: textContent,
       ...(contentPayload === undefined ? {} : { content_payload: contentPayload }),
-      record_duration_millis: owner.recordDurationMillis,
       edit_duration_millis: owner.editDurationMillis,
-      version: owner.version,
     }
   }
 
   private recordReeditCommitResult(
     context: ArkmeRecordReeditPreparedContext,
     data: Record<string, unknown>,
+    expectedRevisionUid?: string,
+    submittedBody?: Record<string, unknown>,
   ): ArkmeRecordReeditCommitResult {
     const core = objectValue(data.record_core)
     const itemUid = stringValue(core.record_uid).trim()
-    const version = Math.trunc(numberValue(core.version))
+    const version = Number(core.version)
     const revisionUid = stringValue(data.revision_uid).trim()
-    if (itemUid !== context.itemUid || version !== context.baseVersion + 1 || revisionUid === '') {
+    if (itemUid !== context.itemUid || (!Number.isSafeInteger(version) || version <= 0) || revisionUid === '' || expectedRevisionUid !== undefined && revisionUid !== expectedRevisionUid) {
       throw new ArkmePluginError(
         'record-reedit-response-invalid', '快记更新响应不完整，正在等待状态确认', false, 502,
         { writeOutcomeUnknown: true },
       )
     }
-    return { status: 'committed', itemUid, version, revisionUid, projectionState: 'pending' }
+    const media = (payload: unknown) => {
+      const value = objectValue(payload)
+      return JSON.stringify([stringValue(objectValue(value.voice).source_file_asset_uid),
+        listValue(value.media_refs).map(objectValue).map(ref => [ref.file_asset_uid, ref.render_role ?? 1])])
+    }
+    const appliedToCurrent = submittedBody && typeof core.text_content === 'string'
+      ? core.text_content === submittedBody.text_content && stringValue(core.title) === submittedBody.title
+        && (core.template_kind === undefined || core.template_kind === submittedBody.template_kind)
+        && (core.content_payload === undefined || media(core.content_payload) === media(submittedBody.content_payload))
+      : undefined
+    return { status: 'committed', itemUid, version, revisionUid, projectionState: 'pending',
+      ...(appliedToCurrent === undefined ? {} : { appliedToCurrent }) }
+  }
+
+  private async recordReeditAcceptedReceipt(session: ArkmeSessionCredentials, itemUid: string, revisionUid: string): Promise<ArkmeRecordReeditCommitResult> {
+    let data: Record<string, unknown>
+    try {
+      const read = (route: string) => this.runtime.authenticatedPost<Record<string, unknown>>(route, {
+        record_uid: itemUid, revision_uid: revisionUid,
+      }, session)
+      try { data = await read('/api/v1/records/receipt/get') }
+      catch (error) {
+        if (!isBackendRouteUnavailable(error)) throw error
+        data = await read('/api/v1/records/write-receipt/get')
+      }
+    } catch (cause) {
+      throw new ArkmePluginError('record-reedit-outcome-unknown', '编辑回执暂时不可用，请稍后核对', false, 409, { cause })
+    }
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('record-reedit-account-changed', '账号已切换，请切回原账号核对', false, 409)
+    if (data.record_uid !== itemUid || data.revision_uid !== revisionUid || typeof data.accepted !== 'boolean') throw new ArkmePluginError('record-reedit-outcome-unknown', '编辑回执身份不匹配，请稍后核对', false, 409)
+    const currentVersion = Number(data.current_version)
+    const version = Number(data.accepted_version)
+    if (data.accepted !== true || !Number.isSafeInteger(currentVersion) || !Number.isSafeInteger(version) || version <= 0 || version > currentVersion) throw new ArkmePluginError('record-reedit-outcome-unknown', '提交结果待确认，草稿已保留，请勿重复提交', false, 409)
+    return { status: 'committed', itemUid, version, revisionUid, projectionState: 'pending', appliedToCurrent: false }
   }
 
   private async reconcileRecordReeditUnknownOutcome(
     session: ArkmeSessionCredentials,
     context: ArkmeRecordReeditPreparedContext,
     expectedCommittedFingerprint: string,
+    revisionUid?: string,
   ): Promise<ArkmeRecordReeditCommitResult> {
+    if (revisionUid) return await this.recordReeditAcceptedReceipt(session, context.itemUid, revisionUid)
+    // Legacy persisted jobs lack revision identity; keep their conservative fingerprint recovery.
     let current: RecordReeditOwnerSnapshot
     try {
       current = await this.recordReeditOwnerSnapshot(context.sourceRef, context.itemUid, session)
@@ -1554,7 +1608,7 @@ export class RecordService {
   async createText(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number; signal?:AbortSignal } = {},
   ): Promise<ArkmeCreateTextResult> {
     const session = await this.runtime.requireSession()
     if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) {
@@ -1578,11 +1632,16 @@ export class RecordService {
     const excerpt = readRecordExcerpt(options.excerpt,normalizedText)
     if(options.excerpt && !excerpt)throw new ArkmePluginError('self-note-invalid','摘录结构无效，未发送',false,400)
     const previous=(await this.runtime.stateStore.listPending(session.userId)).find(p=>p.recordUid===normalizedUid)
+    options.signal?.throwIfAborted()
     if(previous){
-      if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt))throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
+      const changedExcerptTime = excerpt !== undefined && options.sendAtMillis !== undefined
+        && previous.sendAtMillis !== options.sendAtMillis
+      if(previous.textContent!==normalizedText || JSON.stringify(previous.excerpt)!==JSON.stringify(excerpt) || changedExcerptTime) {
+        throw new ArkmePluginError('record-intent-conflict','发送内容已冻结，请核对原请求',false,409)
+      }
       return this.sendPending(session,previous)
     }
-    const now = Date.now()
+    const now = options.sendAtMillis ?? Date.now()
     const recordDurationMillis = Math.max(0, Math.trunc(options.recordDurationMillis ?? 0))
     const captureContext = normalizedRecordCaptureContext(options.captureContext)
     const pending: ArkmePendingWrite = {
@@ -1602,12 +1661,13 @@ export class RecordService {
   async createTextForConversation(
     recordUid: string,
     textContent: string,
-    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt } = {},
+    options: { expectedUserId?: number; recordDurationMillis?: number; captureContext?: ArkmeRecordCaptureContext; excerpt?:RecordExcerpt; sendAtMillis?:number; signal?:AbortSignal } = {},
   ): Promise<ArkmeConversationWriteResult> {
     try {
       const result = await this.createText(recordUid, textContent, options)
       return { ...result, localState: 'synced' }
     } catch (error) {
+      if (options.excerpt && error instanceof ArkmePluginError && error.code === 'record-intent-conflict') throw error
       const session = await this.runtime.requireSession()
       if (options.expectedUserId !== undefined && options.expectedUserId !== session.userId) throw error
       const pending = (await this.runtime.stateStore.listPending(session.userId))
@@ -1857,9 +1917,9 @@ export class RecordService {
         },
         session,
       ) } catch(error) {
-        // A Host/UI receipt may be lost after the durable outbox was acknowledged.
-        // Reconcile the exact immutable excerpt with its real owner; never recreate or overwrite it.
-        if(!pending.excerpt||!(error instanceof ArkmeUpstreamResponseError)||error.code!=='arkme-code-40001'||error.writeOutcomeUnknown)throw error
+        // Legacy notes lack a Record create anchor. Forwarded excerpts must
+        // use the owner's immutable command receipt, including its send time.
+        if (!pending.excerpt || pending.excerpt.kind === 'forward' || !isRecordCreateRejection(error)) throw error
         const existing=await this.runtime.authenticatedPost<Record<string,unknown>>('/api/v1/records/detail',{record_uid:pending.recordUid},session,undefined,{bypassCache:true,cacheMs:0,lane:'interactive-read'})
         const core=objectValue(existing.record_core),excerpt=readRecordExcerpt(objectValue(core.content_payload).excerpt,stringValue(core.text_content))
         if(core.record_uid!==pending.recordUid||Number(core.owner_user_id)!==session.userId||Number(core.status)!==1||Number(core.content_access_state??existing.content_access_state)!==1||arkmePrivacyLockedRecord(existing)||core.text_content!==pending.textContent||JSON.stringify(excerpt)!==JSON.stringify(pending.excerpt))throw error
@@ -1876,7 +1936,11 @@ export class RecordService {
       await this.runtime.stateStore.markSynced(session.userId, pending.recordUid, result.status)
       return result
     } catch (error) {
-      await this.runtime.stateStore.markAttempt(session.userId, pending.recordUid, safeFailureMessage(error))
+      if (pending.excerpt?.kind === 'forward' && isRecordCreateRejection(error)) {
+        await this.runtime.stateStore.discardPending(session.userId, pending)
+      } else {
+        await this.runtime.stateStore.markAttempt(session.userId, pending.recordUid, safeFailureMessage(error))
+      }
       throw error
     }
   }

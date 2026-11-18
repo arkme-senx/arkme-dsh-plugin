@@ -126,17 +126,30 @@ export function parseDayReviewState(value: unknown, q: DayReviewQuery): DayRevie
     freshness: ['changed', 'unchanged', 'unknown'].includes(String(v.freshness)) ? v.freshness as DayReviewState['freshness'] : invalid(), versions }
 }
 
-export interface DayReviewCreateInput extends DayReviewQuery { requestId: string; modelCode?: string; sourceKinds: DayReviewSource[]; promptConfig?: import('./calendar-day-review-prompts.js').ReviewPromptConfig; reuseResultId?: string }
+export interface DayReviewCreateInput extends DayReviewQuery { requestId: string; modelCode?: string; modelRoute?: string; sourceKinds: DayReviewSource[]; promptConfig?: import('./calendar-day-review-prompts.js').ReviewPromptConfig; reuseResultId?: string }
 export interface DayReviewEvidenceQuery extends DayReviewQuery { resultId: string; sourceRef: string }
 export interface DayReviewOriginalEvidence { ref: string; resultId: string; kind: DayReviewSource; subtype: string; label: string; text: string; startAtMillis: number | null; endAtMillis: number | null }
 
-export interface DayReviewModels { defaultCode: string; models: Array<{ code: string; displayName: string }> }
+export interface DayReviewModels {
+  defaultCode: string; defaultRoute?: string; unified?: boolean
+  models: Array<{ code: string; displayName: string; route?: string; catalogRoute?: string; origin?: 'official' | 'user-provided' }>
+}
+const reviewUUID = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
+const reviewUserRoute = new RegExp(`^user-api/${reviewUUID}/${reviewUUID}$`)
+export const validDayReviewModelRoute = (route: string): boolean => /^managed-ai\/[a-z0-9][a-z0-9._-]{0,127}$/.test(route) || reviewUserRoute.test(route)
 export function parseDayReviewModels(value: unknown, q: DayReviewQuery): DayReviewModels {
   const v = reviewObject(value); assertDayReviewEnvelope(v, q)
-  const models = array(v.models, 20).map(raw => {
+  const unified = v.unified_models_v1 === true
+  const models = array(v.models, unified ? 288 : 20).map((raw): DayReviewModels['models'][number] => {
     const m = reviewObject(raw)
-    return { code: reviewText(m.code, 100), displayName: reviewText(m.display_name, 200) }
+    const base = { code: reviewText(m.code, 128), displayName: reviewText(m.display_name, 200) }
+    if (!unified) return base
+    const route = reviewText(m.route, 256), catalogRoute = reviewText(m.catalog_route, 256)
+    if (m.origin !== 'official' && m.origin !== 'user-provided') return invalid()
+    if (m.origin === 'official' ? !/^managed-ai\/[a-z0-9][a-z0-9._-]{0,127}$/.test(route) || route !== `managed-ai/${base.code}` || catalogRoute !== base.code
+      : !reviewUserRoute.test(route) || !route.startsWith(`${catalogRoute}/`) || catalogRoute !== base.code) return invalid()
+    return { ...base, route, catalogRoute, origin: m.origin }
   })
   if (!models.length || new Set(models.map(m => m.code)).size !== models.length) invalid()
-  return { defaultCode: reviewText(v.default_code, 100), models }
+  return { defaultCode: reviewText(v.default_code, 128), models, ...(unified ? { unified: true, defaultRoute: typeof v.default_route === 'string' && v.default_route.length <= 256 ? v.default_route : invalid() } : {}) }
 }

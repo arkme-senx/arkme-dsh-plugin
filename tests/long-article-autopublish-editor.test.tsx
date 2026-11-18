@@ -11,8 +11,9 @@ let element: HTMLDivElement, root: Root
 const detail = { sourceRef: 'self', itemUid: 'article', title: '标题', textContent: '# 标题\n\n原始正文', textFormat: 'markdown', version: 1, editable: true, sendAtMillis: 1, editDurationMillis: 0 }
 beforeEach(() => {
   vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('scrollBy', () => {})
+  let serverVersion = 1
   mocks.call.mockReset().mockImplementation(async (op, p) => op === 'provider.capabilities' ? { features: { markdownLongArticles: true } }
-    : op === 'source.long-article.detail' ? detail : op === 'source.long-article.update' ? { ...detail, ...p, version: p.version + 1 } : undefined)
+    : op === 'source.long-article.detail' ? detail : op === 'source.long-article.update' ? { ...detail, ...p, version: ++serverVersion } : undefined)
   element = document.createElement('div'); document.body.append(element); root = createRoot(element)
 })
 afterEach(async () => { await act(async () => root.unmount()); element.remove(); vi.useRealTimers(); vi.unstubAllGlobals() })
@@ -29,12 +30,12 @@ it('does not submit Markdown normalization alone and preserves the exact editor,
   const selection = editor.state.selection.toJSON()
   await act(async () => vi.advanceTimersByTimeAsync(5_000))
   expect(writes()).toHaveLength(1)
-  expect(writes()[0]![1]).toMatchObject({ textFormat: 'markdown', version: 1 })
+  expect(writes()[0]![1]).toMatchObject({ textFormat: 'markdown', editAtMillis: expect.any(Number) })
   expect(element.querySelector('.ProseMirror')).toBe(textbox); expect(editor.isDestroyed).toBe(false)
   expect(editor.state.selection.toJSON()).toEqual(selection); expect(document.activeElement).toBe(textbox)
   expect(element.querySelector('[data-arkme-article-publication]')?.textContent).toBe('已发布')
   act(() => editor.commands.undo()); expect(textbox.textContent).not.toContain('新增内容')
-  await act(async () => vi.advanceTimersByTimeAsync(5_000)); expect(writes()[1]![1].version).toBe(2)
+  await act(async () => vi.advanceTimersByTimeAsync(5_000)); expect(writes()[1]![1]).not.toHaveProperty('version')
 })
 it('does not publish a temporary edit that was fully undone before the idle deadline', async () => {
   const textbox = await mount(), editor = textbox.editor

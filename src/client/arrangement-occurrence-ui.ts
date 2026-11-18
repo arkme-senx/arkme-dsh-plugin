@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import type { ArkmeArrangementStatus } from '../types.js'
 import { tr } from './locale.js'
 
@@ -5,7 +6,7 @@ export const OCCURRENCE_CHANGED = 'arkme-arrangement-occurrences-changed'
 export const OCCURRENCE_INSPECT_TRACE = 'arkme-arrangement-inspect-trace'
 
 export function occurrenceTime(value?: number) {
-  return value && value > 0 ? new Date(value).toLocaleString() : tr('未记录')
+  return value && value > 0 ? formatArkmeDateTime(value) : tr('未记录')
 }
 
 export function occurrenceFailure(error: unknown) {

@@ -5,6 +5,7 @@ import { MediaService } from '../src/services/media-service.js'
 import { ForwardRecordsDetail } from '../src/client/ArkmeNoteDetails.js'
 import { ArkmeMessageContent } from '../src/client/ArkmeRichContent.js'
 import { projectForwardRecordsWithAvatars } from '../src/forward-records-presentation.js'
+import { sharedForwardPreview } from '../src/team-external-chat-presentation.js'
 
 const createdAt = 1_792_565_000_000
 const core = {
@@ -76,6 +77,33 @@ describe('ordinary Record forward snapshots', () => {
     expect(profile.sealProfileImageRef).toHaveBeenCalledExactlyOnceWith(42, 43)
     expect(result!.items.map(item => item.avatarRef)).toEqual(['avatar:42:43', 'avatar:42:43', undefined, undefined])
     expect(result!.items[3]).toMatchObject({ avatarKind: 'deepseek' })
+  })
+
+  it('retains nested snapshot rows without resolving source identities inside a Team card', async () => {
+    const profile = { sealProfileImageRef: vi.fn(async () => 'sealed-avatar') }
+    const payload = { forward_records: { render_kind: 'forward_records', source_type: 'quick_records', items: [
+      { owner_name: '转发者', owner_id: 43, forward_records: { render_kind: 'forward_records', source_type: 'team_message',
+        title: '内层团队卡片', items: [{ owner_name: '团队成员', owner_id: 77, text: '内层原文' }] } },
+      { owner_name: '普通作者', text: '同级原文' },
+    ] } }
+    const result = await projectForwardRecordsWithAvatars(payload, 42, createdAt, { forwardContentBlocks: () => [] }, profile)
+    expect(result?.items).toHaveLength(2)
+    expect(result?.items[0]).toMatchObject({senderName:'转发者',avatarRef:'sealed-avatar',
+      forwardRecords:{title:'内层团队卡片',items:[{senderName:'团队成员',textContent:'内层原文'}]}})
+    expect(result?.items[0]?.forwardRecords?.items[0]).not.toHaveProperty('senderUserId')
+    expect(result?.items[1]?.textContent).toBe('同级原文')
+    expect(profile.sealProfileImageRef).toHaveBeenCalledExactlyOnceWith(42, 43)
+  })
+
+  it('removes actionable author IDs throughout an externally shared nested card', () => {
+    const payload = { forward_records: { render_kind: 'forward_records', items: [
+      { owner_id: 43, forward_records: { render_kind: 'forward_records', items: [{ owner_id: 44, text: '冻结内文' }] } },
+    ] } }
+    const preview = sharedForwardPreview({ content_payload: payload }, [], [], 42, createdAt)
+    const row = preview?.items[0]
+    expect(row?.forwardRecords?.items[0]?.textContent).toBe('冻结内文')
+    expect(row?.forwardRecords?.items[0]).not.toHaveProperty('senderUserId')
+    expect(row).not.toHaveProperty('senderUserId')
   })
 })
 

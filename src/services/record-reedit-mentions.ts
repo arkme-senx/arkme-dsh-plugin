@@ -1,16 +1,17 @@
+import {recordOwnerId} from '../record-owner-id.js'
 import { arkmeMarkdownPlainText, arkmeMarkdownTextRanges } from '../markdown.js'
 import { parseArkmeRecordReeditMentions, type ArkmeRecordReeditMention } from '../record-reedit-contract.js'
-import type { ArkmeHumanMentionInput, ArkmeBotMentionInput } from '../types.js'
+import type { ArkmeHumanMentionInput, ArkmeBotMentionInput,ArkmeTeamMentionInput } from '../types.js'
 import { ArkmePluginError, objectValue, stringValue } from './service.js'
 import { encodeMentionMetadata, type ResolvedMentions, type MentionMetadataEntries } from './mention-metadata-codec.js'
 
 export type NewMentionResolver = (
-  humans: ArkmeHumanMentionInput[], bots: ArkmeBotMentionInput[],
+  humans: ArkmeHumanMentionInput[], bots: ArkmeBotMentionInput[],teams?:ArkmeTeamMentionInput[],
 ) => Promise<ResolvedMentions>
 
 function originalMentions(payload: Record<string, unknown> | undefined) {
   const metadata = objectValue(payload?.mention_metadata)
-  return (['human_mentions', 'bot_mentions'] as const).flatMap(kind => {
+  return (['human_mentions', 'bot_mentions','team_mentions'] as const).flatMap(kind => {
     const entries = metadata[kind]
     return Array.isArray(entries) ? entries.map(raw => ({ kind, value: objectValue(raw) })) : []
   })
@@ -39,7 +40,8 @@ export function prepareRecordReeditMentions(
   const originals = originalMentions(payload)
   const humans: ArkmeHumanMentionInput[] = []
   const bots: ArkmeBotMentionInput[] = []
-  const existing: MentionMetadataEntries = { humans: [], bots: [] }
+  const teams:ArkmeTeamMentionInput[]=[]
+  const existing: MentionMetadataEntries = { humans: [], bots: [],teams:[] }
   const used = new Set<number>()
   const visible = (span: string) => textFormat === 'markdown' ? arkmeMarkdownPlainText(span) : span
   const textRanges = textFormat === 'markdown' ? arkmeMarkdownTextRanges(text) : undefined
@@ -71,6 +73,10 @@ export function prepareRecordReeditMentions(
           throw new ArkmePluginError('record-reedit-mention-invalid', '原 @ 身份无效，请移除该引用后重新选择', false, 409)
         }
         existing.humans.push({ ...span, user_id: userId })
+      } else if(original.kind==='team_mentions') {
+        const id=original.value.team_id
+        if(typeof id!=='string'||!recordOwnerId(id))throw new ArkmePluginError('record-reedit-mention-invalid','原团队 @ 身份无效，请重新选择',false,409)
+        existing.teams!.push({...span,team_id:id})
       } else {
         const botUid = original.value.bot_uid
         if (typeof botUid !== 'string' || botUid.trim() === '' || botUid !== botUid.trim()) {
@@ -79,6 +85,9 @@ export function prepareRecordReeditMentions(
         existing.bots.push({ ...span, bot_uid: botUid })
       }
       used.add(mention.originalIndex)
+    } else if(mention.teamMentionRef!==undefined) {
+      if(!allowHumanMentions)throw new ArkmePluginError('mention-chat-required','团队 @ 只能添加到群聊',false)
+      teams.push({teamMentionRef:mention.teamMentionRef,startIndex:mention.startIndex,length:mention.length})
     } else if (mention.botRef !== undefined) {
       bots.push({ botRef: mention.botRef, startIndex: mention.startIndex, length: mention.length })
     } else {
@@ -87,23 +96,24 @@ export function prepareRecordReeditMentions(
         : { mentionRef: mention.mentionRef!, startIndex: mention.startIndex, length: mention.length })
     }
   }
-  return { existing, humans, bots }
+  return { existing, humans, bots,teams }
 }
 
 export async function recordReeditMentionMetadata(
   text: string, prepared: ReturnType<typeof prepareRecordReeditMentions>, resolve?: NewMentionResolver,
 ): Promise<Record<string, unknown> | undefined> {
-  const { existing, humans, bots } = prepared
+  const { existing, humans, bots,teams } = prepared
   let added: ResolvedMentions = { humans: [], bots: [] }
-  if (humans.length || bots.length) {
+  if (humans.length || bots.length||teams.length) {
     if (!resolve) throw new ArkmePluginError('record-reedit-mention-unavailable', '@ 校验暂不可用，请稍后重试', true)
-    added = await resolve(humans, bots)
+    added = await resolve(humans, bots,teams)
   }
   const mentions = {
+    teams:[...(existing.teams??[]),...(added.teams??[])].sort((a,b)=>a.start_index-b.start_index),
     humans: [...existing.humans, ...added.humans].sort((a, b) => a.start_index - b.start_index),
     bots: [...existing.bots, ...added.bots].sort((a, b) => a.start_index - b.start_index),
   }
-  return mentions.humans.length || mentions.bots.length ? encodeMentionMetadata(text, mentions) : undefined
+  return mentions.humans.length || mentions.bots.length || mentions.teams.length ? encodeMentionMetadata(text, mentions) : undefined
 }
 
 /** shortcut: Without editor ranges, retain only provably unchanged spans; use exact edit ranges for multi-part edits. */

@@ -353,6 +353,7 @@ describe('CallHistoryService', () => {
       nextCursor: 'next-1',
       items: [{
         peerDisplayName: 'Arkme 用户 77',
+        connectedUserIds: [77, 42],
         peerUserId: 77,
         mediaType: 'audio',
         durationSeconds: 60,

@@ -2,6 +2,7 @@
 export interface Snapshot<T> { getSnapshot(): T; subscribe(listener: () => void): () => void }
 export interface DraftInput {
   state: Snapshot<{ draft: string; draftRev: number; attachmentIds: readonly string[]; phase: string }>
+  setDraft?(text: string): void
   addAttachments(ids: readonly string[]): boolean
 }
 export interface NativeDraft { id: string; kind: 'image' | 'file'; file: File; width?: number; height?: number }
@@ -22,6 +23,7 @@ export interface DraftSessions {
 export interface DraftRequest {
   operationId: string
   files: readonly File[]
+  text?: string
   signal: AbortSignal
   progress?: (text: string) => void
 }
@@ -113,6 +115,7 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
         conversation = scope?.get('conversation') as DraftConversation | undefined
         if (!scope || !conversation?.createDrafts || !conversation.fileUploads || !conversation.input?.for) throw unsupported()
         const input = conversation.input.for(scope)
+        if (request.text !== undefined && typeof input.setDraft !== 'function') throw unsupported()
         const initial = input.state.getSnapshot()
         if (initial.draft !== '' || initial.attachmentIds.length || initial.phase !== 'plain'
           || (attempt.revision !== undefined && attempt.revision !== initial.draftRev)) throw new Error('目标对话草稿已被编辑，请重新选择快记后操作')
@@ -156,7 +159,11 @@ export function createHarnessDraftBridge(sessions: DraftSessions, isCurrentAccou
           await abortableDelay(signal)
         }
         current()
-        if (!input.addAttachments(drafts.map(draft => draft.id))) throw new Error('DSH 输入框正忙，请重试')
+        if (drafts.length && !input.addAttachments(drafts.map(draft => draft.id))) throw new Error('DSH 输入框正忙，请重试')
+        if (request.text !== undefined) {
+          input.setDraft!(request.text)
+          if (input.state.getSnapshot().draft !== request.text) throw new Error('DSH 输入框未接受诊断信息，请重试')
+        }
         attempt.complete = true
         return { sessionId: attempt.id }
       } catch (error) {

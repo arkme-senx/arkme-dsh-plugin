@@ -1,6 +1,7 @@
 import { PUBLIC_PERSON_FRESH_MS, publicPersonSnapshot, type ArkmePublicProfile, type PublicPersonSnapshot } from '../public-person-cache.js'
 import { measureReaction } from '../reaction-host-diagnostics.js'
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { imagePresentationIdentity } from './profile-image.js'
 import { logArkmeAvatarDiagnostic } from '../avatar-diagnostics.js'
 import { currentProfileRecordSnapshot } from '../record-sender-snapshot.js'
 import type { ArkmeSessionCredentials } from '../keychain-store.js'
@@ -29,6 +30,7 @@ export interface ArkmeProfileImageRefPayload {
   version: 1
   viewerUserId: number
   targetUserId: number
+  imageVersion?: string
 }
 
 interface CacheEntry<T> {
@@ -183,6 +185,7 @@ export class ProfileService {
   private readonly publicInvalidations = new Map<string, Promise<void>>()
   private readonly publicProfileCache = new Map<string, CacheEntry<ArkmePublicProfile | null>>()
   private readonly publicProfileAvatarCache = new Map<string, { avatarUrl: string; expiresAtMillis: number }>()
+  private readonly timelineAvatarBatches = new Map<string, Promise<void>>()
   private readonly avatarRevisions = new Map<number, number>()
   private readonly mutations = new Set<number>()
 
@@ -196,6 +199,7 @@ export class ProfileService {
       this.profileInFlight.clear()
       this.publicProfileCache.clear()
       this.publicProfileAvatarCache.clear()
+      this.timelineAvatarBatches.clear()
       return
     }
     void this.runtime.stateStore?.clearPublicPeople?.(this.runtime.config.environment, userId).catch(() => undefined)
@@ -204,6 +208,43 @@ export class ProfileService {
     const prefix = `${String(userId)}:`
     for (const key of this.publicProfileCache.keys()) if (key.startsWith(prefix)) this.publicProfileCache.delete(key)
     for (const key of this.publicProfileAvatarCache.keys()) if (key.startsWith(prefix)) this.publicProfileAvatarCache.delete(key)
+    for (const key of this.timelineAvatarBatches.keys()) if (key.startsWith(prefix)) this.timelineAvatarBatches.delete(key)
+  }
+
+  prefetchTimelineAvatars(userIds: Iterable<number>, session: ArkmeSessionCredentials): void {
+    const viewer = session.userId
+    const ids = [...new Set(userIds)].filter(id => !this.timelineAvatarBatches.has(`${viewer}:${id}`)
+      && this.cachedPublicProfileAvatar(viewer, id) === undefined)
+      .slice(0, Math.max(0, 256 - this.timelineAvatarBatches.size))
+    if (ids.length === 0) return
+    const budget = AbortSignal.timeout(2_500)
+    const pending = new Promise<void>(resolve => {
+      const done = () => { budget.removeEventListener('abort', done); resolve() }
+      budget.addEventListener('abort', done, { once: true })
+      void this.publicProfilesByUserIds(ids, session, budget).then(done, done)
+    })
+    for (const id of ids) this.timelineAvatarBatches.set(`${viewer}:${id}`, pending)
+    void pending.then(() => {
+      for (const id of ids) {
+        const key = `${viewer}:${id}`
+        if (this.timelineAvatarBatches.get(key) === pending) this.timelineAvatarBatches.delete(key)
+      }
+    })
+  }
+
+  pendingTimelineAvatar(viewer: number, userId: number): Promise<void> | undefined {
+    return this.timelineAvatarBatches.get(`${viewer}:${userId}`)
+  }
+
+  async waitForTimelineAvatar(viewer: number, userId: number, signal?: AbortSignal): Promise<void> {
+    const pending = this.pendingTimelineAvatar(viewer, userId)
+    if (!pending || !signal) return await pending
+    signal.throwIfAborted()
+    await new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+      void pending.then(() => { signal.removeEventListener('abort', abort); resolve() })
+    })
   }
 
   cachedPublicProfileAvatar(viewerUserId: number, targetUserId: number): string | undefined {
@@ -857,12 +898,24 @@ export class ProfileService {
     return profiles
   }
 
-  async sealProfileImageRef(viewerUserId: number, targetUserId: number): Promise<string> {
+  async sealProfileImageRef(viewerUserId: number, targetUserId: number, avatarUrl?: string): Promise<string> {
     const reference: ArkmeProfileImageRefPayload = { version: 1, viewerUserId, targetUserId }
     const revision = this.avatarRevisions.get(targetUserId)
-    const payload = encodeOpaqueJson({ ...reference, ...(revision === undefined ? {} : { revision }) })
-    const signature = createHmac('sha256', await this.runtime.stateStore.uniqueCode()).update(payload).digest('base64url')
+    const secret = await this.runtime.stateStore.uniqueCode()
+    const imageVersion = avatarUrl === undefined ? undefined : this.profileImageVersion(avatarUrl, secret)
+    const payload = encodeOpaqueJson({ ...reference, ...(revision === undefined ? {} : { revision }), ...(imageVersion === undefined ? {} : { imageVersion }) })
+    const signature = createHmac('sha256', secret).update(payload).digest('base64url')
     return `arkme-profile-image-v1.${payload}.${signature}`
+  }
+
+  private profileImageVersion(url: string, secret: string): string {
+    return createHmac('sha256', secret).update(imagePresentationIdentity(url)).digest('base64url')
+  }
+
+  async assertProfileImageVersion(reference: ArkmeProfileImageRefPayload, url: string): Promise<void> {
+    if (reference.imageVersion && reference.imageVersion !== this.profileImageVersion(url, await this.runtime.stateStore.uniqueCode())) {
+      throw new ArkmePluginError('image-ref-unavailable', '头像已变更，请刷新会话', false, 404)
+    }
   }
 
   async openProfileImageRef(
@@ -888,6 +941,7 @@ export class ProfileService {
       version: 1,
       viewerUserId: numberValue(parsed.viewerUserId),
       targetUserId: numberValue(parsed.targetUserId),
+      ...(typeof parsed.imageVersion === 'string' ? { imageVersion: parsed.imageVersion } : {}),
     }
     if (parsed.version !== 1 || result.viewerUserId !== expectedViewerUserId
       || !Number.isSafeInteger(result.targetUserId) || result.targetUserId <= 0) {

@@ -99,15 +99,15 @@ describe('private message admission UI lifecycle', () => {
     expect(latest.admission).toEqual(allowed)
     expect(latest.error).toBe('')
   })
-  it('optional send preflight allows unavailable status but preserves cancellation', async () => {
+  it('keeps the social guard and cancellation without an optional network refusal query before forwarding', async () => {
     const source = { sourceRef: 'source', kind: 'private_chat' as const, displayName: 'Peer', activeAtMillis: 0, unreadCount: 0, directMessageAdmissionApplicable: true }
-    mocks.call.mockRejectedValue(new Error('offline'))
+    mocks.call.mockResolvedValue(denied)
     await expect(requireDirectMessageSendAllowed(source)).resolves.toBeUndefined()
+    expect(mocks.call).not.toHaveBeenCalled()
     const abort = new AbortController()
     abort.abort()
     await expect(requireDirectMessageSendAllowed(source, abort.signal)).rejects.toBeDefined()
-    mocks.call.mockResolvedValue(denied)
-    await expect(requireDirectMessageSendAllowed(source)).rejects.toThrow('你已拒收对方的消息')
+    await expect(requireDirectMessageSendAllowed({ ...source, kind: 'send_to_self' }, abort.signal)).rejects.toBeDefined()
   })
   it('coalesces same-frame repeated mutations', async () => {
     let finish!: (value: ArkmeDirectMessageAdmission) => void

@@ -1,7 +1,7 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import type { ArkmeMembershipCatalog } from '../types.js'
 import { callArkme } from './api.js'
@@ -66,7 +66,7 @@ export function ArkmeMembershipDialog({ userId, state, onRefresh, onClose, retur
       const rect = event.currentTarget.getBoundingClientRect()
       if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose()
     }}>
-    <header><div><h2>{tr("即我会员")}</h2><p>{tr("让记录、整理与协作更从容")}</p></div><button type="button" autoFocus className="arkme-member-icon" aria-label={tr("关闭会员窗口")} onClick={onClose}><X size={20} /></button></header>
+    <header><div><h2>{tr("即我会员")}</h2><p>{tr("让记录、整理与协作更从容")}</p></div><ArkmeCloseButton type="button" autoFocus className="arkme-member-icon" aria-label={tr("关闭会员窗口")} onClick={onClose} /></header>
     <div className="arkme-member-current" aria-live="polite"><div><strong>{membershipLabel(state)}</strong><span>{membershipDescription(state)}</span></div><button type="button" onClick={onRefresh} disabled={state.status === 'loading'}>{state.status === 'loading' ? tr("读取中…") : tr("刷新状态")}</button></div>
     <div className="arkme-member-tabs" aria-label={tr("会员等级")}>
       {([1, 2] as const).map(value => <button type="button" key={value} aria-pressed={tier === value} onClick={() => { setTier(value); setGuidance(false) }}>{value === 1 ? 'VIP' : 'SVIP'}</button>)}

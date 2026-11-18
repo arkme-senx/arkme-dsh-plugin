@@ -296,6 +296,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
     const disabledRef = useRef(disabled)
     const selectionRef = useRef<ComposerSelection>({ start: value.length, end: value.length })
     const pendingSelectionRef = useRef<ComposerSelection>()
+    const composingRef = useRef(false)
     const [editorHasContent, setEditorHasContent] = useState(value !== '')
     valueRef.current = value
     disabledRef.current = disabled
@@ -352,10 +353,15 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
 
     useLayoutEffect(() => {
       const root = editorRef.current
-      if (root === null) return
+      // The browser owns the provisional text and its range until the IME commits.
+      if (root === null || composingRef.current) return
       const active = document.activeElement === root
-      const nextSelection = pendingSelectionRef.current
+      let nextSelection = pendingSelectionRef.current
         ?? (active ? editorSelection(root, selectionRef.current) : selectionRef.current)
+      if (active && !pendingSelectionRef.current && selectionRequest && 'atEnd' in selectionRequest
+        && nextSelection.start === nextSelection.end && nextSelection.end === nodeSemanticLength(root)) {
+        nextSelection = { start: value.length, end: value.length }
+      }
       const activeHashTagStart = arkmeHashTagTrigger(value, nextSelection.start, nextSelection.end)?.startIndex
       // Native plain-text edits already have the right DOM and selection. Replacing
       // those nodes on each key also destroys the browser's editing/undo context.
@@ -371,9 +377,9 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
       pendingSelectionRef.current = undefined
       selectionRef.current = nextSelection
       if (active) applySelection(nextSelection.start, nextSelection.end)
-    }, [value, mentions, emojis, textFormat])
+    }, [value, mentions, emojis, textFormat, selectionRequest])
 
-    useComposerSelectionRequest(selectionRequest, value, disabled, request => {
+    useComposerSelectionRequest(selectionRequest, value, disabled || composingRef.current, request => {
       const root = editorRef.current
       if (root === null) return false
       root.focus({ preventScroll: true })
@@ -440,7 +446,9 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
         style={{ ...style, ...styles.editor, position: 'relative', zIndex: 1 }}
         data-arkme-rich-composer="true"
         data-arkme-composer-editor-box="true"
+        onCompositionStart={() => { composingRef.current = true }}
         onCompositionEnd={event => {
+          composingRef.current = false
           const text = editorSemanticText(event.currentTarget)
           setEditorHasContent(text !== '')
           commitDom(event.currentTarget, text)
@@ -448,8 +456,10 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
         onInput={event => {
           const text = editorSemanticText(event.currentTarget)
           setEditorHasContent(text !== '')
-          if (!(event.nativeEvent as InputEvent).isComposing) commitDom(event.currentTarget, text)
-          else onInputActivity?.(text)
+          if (composingRef.current || (event.nativeEvent as InputEvent).isComposing) {
+            composingRef.current = true
+            onInputActivity?.(text)
+          } else commitDom(event.currentTarget, text)
         }}
         onFocus={onFocus}
         onBlur={onBlur}
@@ -462,6 +472,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
           insertPastedText(event.currentTarget, text)
         }}
         onKeyDown={event => {
+          if (composingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
           onKeyDown?.(event)
           if (!event.defaultPrevented && event.key === 'Enter' && event.shiftKey) {
             event.preventDefault()
@@ -469,6 +480,7 @@ const ArkmePlainComposerInput = forwardRef<ArkmeRichComposerHandle, ArkmeRichCom
           }
         }}
         onKeyUp={event => {
+          if (composingRef.current) return
           selectionRef.current = editorSelection(event.currentTarget, selectionRef.current)
           onSelectionChange?.(editorSemanticText(event.currentTarget), selectionRef.current.start, selectionRef.current.end)
         }}

@@ -1,3 +1,4 @@
+import {readTeamMentionInputs} from '../../../services/group-team-mention.js'
 import {readTeamRepresentationSelection} from '../../../services/group-representation.js'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { defineArkmeCoreToolModule } from '../../contract/module.js'
@@ -23,6 +24,7 @@ export const sendTextToolModule = defineArkmeCoreToolModule({
         text: { type: 'string', required: true, description: 'Final plain-text content explicitly authorized for this destination.' },
         representation: {type:'json',description:'Only after the human explicitly selects this team: unchanged selection returned by arkme_group_identities. This does not invite teammates or share group access.'},
         send_at_millis: {type:'integer',description:'Original send time, frozen with this operation. Required when representing a team.'},
+        team_mentions:{type:'json',description:'Optional exact @Team selections from arkme_team_groups_read participants. Array of {teamMentionRef,startIndex,length}; UTF16 offsets in the final text. This is independent of Bot mentions and representation.'},
         bot_refs: { type: 'array', items: { type: 'string' }, description: 'Optional account-bound bot_ref values to mention in a group chat.' },
       },
       output: TEXT_OUTPUT,
@@ -33,6 +35,7 @@ export const sendTextToolModule = defineArkmeCoreToolModule({
           ...(args.send_at_millis===undefined?{}:{sendAtMillis:Number(args.send_at_millis)}),
           recordUid: stableUidForToolCall('source-record', callId),
           relationUid: stableUidForToolCall('source-relation', callId),
+          ...(args.team_mentions===undefined?{}:{teamMentions:readTeamMentionInputs(args.team_mentions)}),
           ...(args.bot_refs === undefined ? {} : { botRefs: args.bot_refs }),
           signal: exec.signal,
           agentAuthored: true,

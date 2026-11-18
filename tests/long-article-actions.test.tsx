@@ -4,7 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ArkmeLongArticleActions } from '../src/client/ArkmeLongArticleActions.js'
 import type { ArkmeLongArticleDetail } from '../src/types.js'
-const mocks = vi.hoisted(() => ({ call: vi.fn(), copy: vi.fn(), auth: { auth: { status: 'authenticated', userId: 42, environment: 'prod' } } }))
+const mocks = vi.hoisted(() => ({ call: vi.fn(), copy: vi.fn(), md: vi.fn(async () => new Blob()), image: vi.fn(async () => []), auth: { auth: { status: 'authenticated', userId: 42, environment: 'prod' } } }))
+vi.mock('../src/client/long-article-export.js', async importOriginal => ({ ...await importOriginal<typeof import('../src/client/long-article-export.js')>(), exportArticleMarkdown: mocks.md, exportArticleImages: mocks.image, downloadArticleBlob: vi.fn() }))
 vi.mock('../src/client/api.js', () => ({ callArkme: mocks.call, ArkmeClientError: class extends Error {} }))
 vi.mock('../src/client/clipboard-text.js', () => ({ copyText: mocks.copy }))
 vi.mock('../src/client/auth-store.js', () => ({ arkmeAuthStore: { subscribe: () => () => {}, getSnapshot: () => mocks.auth } }))
@@ -16,7 +17,7 @@ const detail = (uid = 'one', own = true): ArkmeLongArticleDetail => ({ sourceRef
   actionItem: { itemUid: uid, title: `长文${uid}`, textContent: '正文', senderName: own ? '我' : '对方', isMe: own, sendAtMillis: 1, status: 1,
     messageActionRef: `action-${uid}`, ...(own ? { recordDeletionRef: `delete-${uid}` } : {}) } })
 const button = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent === label || node.getAttribute('aria-label') === label)!
-beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); mocks.call.mockReset(); mocks.copy.mockReset(); host = document.createElement('div'); document.body.append(host); root = createRoot(host) })
+beforeEach(() => { vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); mocks.call.mockReset(); mocks.copy.mockReset(); mocks.md.mockClear(); mocks.image.mockClear(); host = document.createElement('div'); document.body.append(host); root = createRoot(host) })
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals() })
 async function mount(value = detail(), onDeleted = vi.fn()) { await act(async () => root.render(<ArkmeLongArticleActions key={value.itemUid} sourceRef={value.sourceRef} detail={value} dismissRef={dismissRef} onDeleted={onDeleted}/>)); await act(async () => button('长文更多操作').click()); return onDeleted }
 it('shows the six operations for an owned article, requires confirmation and uses the signed current version', async () => {
@@ -82,4 +83,19 @@ it('opens the menu without publishing an incomplete edit and retains the guard f
   expect(beforeAction).toHaveBeenCalledOnce()
   expect(mocks.call).not.toHaveBeenCalled()
   expect(mocks.copy).not.toHaveBeenCalled()
+})
+
+it.each(['Markdown（.md）', '图片（手机阅读）'])('passes refreshed topic metadata to %s without reviving removed topics', async label => {
+  const initial = detail(); initial.actionItem!.selfTopic = { topicHierarchyKey: 'old', title: '旧名' }
+  const current = detail(); current.actionItem!.selfTopic = { topicHierarchyKey: 'new', title: '新名' }
+  const beforeAction = vi.fn(async () => current)
+  await act(async () => root.render(<ArkmeLongArticleActions sourceRef="self-one" detail={initial} dismissRef={dismissRef} beforeAction={beforeAction} onDeleted={()=>{}}/>))
+  const execute = async () => { await act(async () => button('长文更多操作').click()); await act(async () => button('导出 ›').click()); await act(async () => button(label).click()) }
+  await execute()
+  const exportCall = label === 'Markdown（.md）' ? mocks.md : mocks.image
+  expect(exportCall).toHaveBeenLastCalledWith(expect.objectContaining({ selfTopic: { topicHierarchyKey: 'new', title: '新名' }, sendAtMillis: 1 }), expect.any(AbortSignal), ...(label === 'Markdown（.md）' ? [] : [expect.any(Function)]))
+  if (label !== 'Markdown（.md）') await act(async () => button('关闭长文操作弹窗').click())
+  delete current.actionItem!.selfTopic
+  await execute()
+  expect(exportCall.mock.calls.at(-1)?.[0]).toHaveProperty('selfTopic', undefined)
 })

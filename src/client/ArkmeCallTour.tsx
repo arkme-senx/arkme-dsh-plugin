@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { tr } from './locale.js'
 import TourModule, { type TourProps } from '@rc-component/tour'
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
@@ -262,7 +263,7 @@ export function useCallTour({ root, auth, active, ready, blocked, explicitEntry,
     <Tour open current={0} prefixCls="arkme-home-tour" getPopupContainer={false} mask={false} disabledInteraction={false} keyboard={false} scrollIntoViewOptions={false} arrow={{ pointAtCenter: true }} placement={placement} builtinPlacements={placements} zIndex={100100}
       steps={[{ ...steps[current]!, target, scrollIntoViewOptions: false }]}
       renderPanel={() => <section className="arkme-home-tour-panel" data-arkme-call-tour-panel role="region" aria-label={tr("通话体验引导")} style={{ pointerEvents: 'auto', maxWidth: 'calc(100vw - 24px)' }}>
-        <div className="arkme-home-tour-header"><span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / 6</span><button type="button" className="arkme-home-tour-close" aria-label={tr("关闭通话引导")} onClick={() => finish()}>×</button></div>
+        <div className="arkme-home-tour-header"><span className="arkme-home-tour-progress" aria-live="polite">{current + 1} / 6</span><ArkmeCloseButton type="button" className="arkme-home-tour-close" aria-label={tr("关闭通话引导")} onClick={() => finish()} /></div>
         <h2>{steps[current]!.title}</h2><p>{steps[current]!.description}</p>
         <div className="arkme-home-tour-actions"><button type="button" className="arkme-home-tour-skip" onClick={() => finish()}>{tr("跳过引导")}</button><div className="arkme-home-tour-navigation">{current > 0 && <button type="button" onClick={() => change(current - 1)}>{tr("上一步")}</button>}<button ref={focusButton} type="button" className="arkme-home-tour-primary" onClick={() => current === 5 ? finish() : change(current + 1)}>{current === 5 ? '完成引导' : tr("下一步")}</button></div></div>
       </section>} />

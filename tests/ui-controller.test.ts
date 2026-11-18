@@ -12,6 +12,25 @@ it('directory invalidation retains the content revision and stable view snapshot
 })
 
 describe('ArkmeUiController', () => {
+  it('retains the selected team directory around an original group pane and restores ordinary navigation for a personal source',()=>{
+    const controller=new ArkmeUiController()
+    const channel={teamRef:'original-team-ref',jotmoId:'support',name:'Support'} as import('../src/team-app-contract.js').TeamChannel
+    controller.showTeamConversation({kind:'team',teamRef:channel.teamRef,channel})
+    const folder=controller.getSnapshot().teamDirectory
+    const source={kind:'group_chat' as const,sourceRef:'opaque-proxy',sourceKey:'proxy-scope',displayName:'客户群',accessKind:'team_delegation' as const,teamWorkspace:{ref:'rotated-team-ref',jotmoId:'support'},activeAtMillis:1,unreadCount:0}
+    controller.selectSource(source,true)
+    expect(controller.getSnapshot()).toMatchObject({mode:'source',selectedSource:source,teamDirectory:folder,composerFocusRevision:1})
+    expect(controller.getSnapshot().teamIntent).toBeUndefined()
+    controller.selectSource({...source,sourceRef:'personal-source',sourceKey:'personal-scope',accessKind:'personal_membership'})
+    expect(controller.getSnapshot().teamDirectory).toBeUndefined()
+    controller.showConversationTarget(source,'message',1)
+    expect(controller.getSnapshot().teamDirectory).toEqual({teamRef:'rotated-team-ref'})
+    controller.resolveTeamDirectory('rotated-team-ref',channel)
+    expect(controller.getSnapshot()).toMatchObject({mode:'source',teamDirectory:{channel},selectedSource:source})
+    controller.closeTeamDirectory()
+    expect(controller.getSnapshot().teamDirectory).toBeUndefined()
+})
+
   it('returns from personal and team worlds without replacing the original world page', () => {
     const controller = new ArkmeUiController()
     controller.showWorld('mine')
@@ -758,4 +777,18 @@ it('opens locations without leaving the current page and closes the overlay acro
   controller.openLocation()
   controller.authChanged(false)
   expect(controller.getViewSnapshot().locationOpen).toBeUndefined()
+})
+
+it.each(['same', 'different', 'explicit-normal'])('keeps only a confirmed same-topic read-only classification on repeated search navigation: %s', scenario => {
+  const controller = new ArkmeUiController()
+  const confirmed = { kind: 'topic' as const, topicKind: 3, sourceRef: 'old-reference', topicHierarchyKey: 'archive-owner', displayName: '发给 DSH 的消息' }
+  controller.showConversationTarget(confirmed, 'first-record', 1)
+  const previousTarget = controller.getSnapshot().conversationTarget!
+  const next = { kind: 'topic' as const, sourceRef: 'new-reference', topicHierarchyKey: scenario === 'different' ? 'another-owner' : 'archive-owner',
+    displayName: 'DSH Agent Input', ...(scenario === 'explicit-normal' ? { topicKind: 1 } : {}) }
+  controller.showConversationTarget(next, 'second-record', 2)
+  expect(controller.getSnapshot().selectedSource).toEqual(scenario === 'same' ? { ...next, topicKind: 3 } : next)
+  expect(controller.getSnapshot().selectedSource?.sourceRef).toBe('new-reference')
+  expect(controller.getSnapshot().conversationTarget).toMatchObject({ itemUid: 'second-record', sendAtMillis: 2 })
+  expect(controller.getSnapshot().conversationTarget!.revision).toBeGreaterThan(previousTarget.revision)
 })

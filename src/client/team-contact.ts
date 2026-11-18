@@ -4,6 +4,7 @@ import type { TeamOutboundPerson } from './team-outbound.js'
 import { callArkme } from './api.js'
 import { ResourceStore } from './resource-store.js'
 import { tr } from './locale.js'
+import { arkmeAuthStore } from './auth-store.js'
 
 export interface TeamContactContext { accountKey: string; person: TeamOutboundPerson }
 
@@ -35,11 +36,29 @@ export function contactTeamError(error: unknown, team: ArkmeTeam): string {
 }
 export async function openTeamContact(context: TeamContactContext, team: ArkmeTeam, requestUid: string, signal: AbortSignal) {
   signal.throwIfAborted()
-  const result = await callArkme<TeamOutboundOpenResult>('team.app.outbound.open', {
-    expectedAccountKey: context.accountKey, teamRef: team.teamRef, recipient: context.person.recipient, requestUid,
-  }, signal)
-  signal.throwIfAborted()
-  if (result.state !== 'ready' || !result.conversation?.ref || result.conversation.side !== 'team'
-    || result.conversation.channel?.jotmoId !== team.jotmoId) throw new Error(tr('团队会话返回异常，请重试'))
-  return result.conversation
+  const controller = new AbortController()
+  let accountChanged = false
+  const checkAccount = () => {
+    const auth = arkmeAuthStore.getSnapshot().auth
+    if (auth?.status !== 'authenticated' || `${auth.environment}:${auth.userId}` !== context.accountKey) {
+      accountChanged = true; controller.abort()
+    }
+  }
+  const abort = () => controller.abort()
+  signal.addEventListener('abort', abort, { once: true })
+  const stop = arkmeAuthStore.subscribe(checkAccount)
+  checkAccount()
+  try {
+    controller.signal.throwIfAborted()
+    const result = await callArkme<TeamOutboundOpenResult>('team.app.outbound.open', {
+      expectedAccountKey: context.accountKey, teamRef: team.teamRef, recipient: context.person.recipient, requestUid,
+    }, controller.signal)
+    controller.signal.throwIfAborted()
+    if (result.state !== 'ready' || !result.conversation?.ref || !result.conversation.key || result.conversation.side !== 'team'
+      || result.conversation.channel?.jotmoId !== team.jotmoId) throw new Error(tr('团队会话返回异常，请重试'))
+    return result.conversation
+  } catch (error) {
+    if (accountChanged) throw new Error(tr('登录账号已变化，请重新打开此窗口'))
+    throw error
+  } finally { stop(); signal.removeEventListener('abort', abort) }
 }

@@ -1,3 +1,5 @@
+import {selectedTextPrepareTool,selectedTextForwardTool,selectedTextOriginalTool} from './conversation/selected-text-forward.js'
+import { recordHistoryToolModule } from './records/history.js'
 import{codexImageTool}from'./conversation/codex-image.js'
 import{codexWorkRecordTools}from'./conversation/codex-work-records.js'
 import { publicSocialToolModules } from './groups/public-social.js'
@@ -5,14 +7,17 @@ import { recordExportToolModules } from './records/export.js'
 import {teamOutboundToolModule} from './conversation/team-outbound.js'
 import {teamMemberTools} from './contacts/team-members.js'
 import {groupIdentitiesToolModule,teamPublicCardToolModule} from './conversation/team-group-identity.js'
+import {teamGroupsReadTool,teamGroupsChangeTool,teamWorkspaceTool} from './conversation/team-groups.js'
 import { teamEntryTools } from './contacts/team-entries.js'
 import { teamWorldReadTool, teamWorldWriteTool } from './world/team-world.js'
+import {worldSoundReadTool,worldSoundWriteTool} from './world/sound-excerpts.js'
+import { worldSuggestionsReadTool, worldSuggestionsWriteTool } from './world/suggestions.js'
 import { worldReplyTool } from './world/reply.js'
 import { worldReactionReadTool, worldReactionWriteTool } from './world/reactions.js'
 import { realtimeDictationTool } from './recordings/realtime-dictation.js'
 import { articlesTool } from './records/articles.js'
 import {teamMessageTools} from './conversation/team-messages.js'
-import { readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
+import { readMessageExtensionsSummaryToolModule, readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule } from './conversation/message-marks-quotes.js'
 import { thoughtReplyToolModules } from './conversation/thought-replies.js'
 import {teamExternalChatTools} from './contacts/team-external-chat.js'
 import { analyticsToolModules } from './conversation/analytics.js'
@@ -43,7 +48,7 @@ import { copyLinkExtendToolModule } from './conversation/copy-link-extend.js'
 import { messageReadReceiptToolModules } from './conversation/read-receipts.js'
 import { personRecordsToolModule, sourceMemberRecordsToolModule, sourceMembersToolModule } from './conversation/member-records.js'
 import { reportMessageToolModule } from './conversation/report-message.js'
-import { withdrawMessageToolModule } from './conversation/withdraw-message.js'
+import { chatMessageActionToolModule, withdrawMessageToolModule } from './conversation/withdraw-message.js'
 import { relatedRecordingsToolModule } from './conversation/related-recordings.js'
 import { sharedRecordingDetailToolModule } from './conversation/shared-recording-detail.js'
 import { userBanToolModules } from './conversation/user-ban.js'
@@ -82,7 +87,7 @@ import { voiceprintToolModules } from './voiceprint/index.js'
 /** Stable model-facing order retained from the pre-catalog registration path. */
 export const businessToolModules: readonly ArkmeToolModule[] = [
   ...recordExportToolModules,
-  teamOutboundToolModule,groupIdentitiesToolModule,teamPublicCardToolModule,
+  teamOutboundToolModule,groupIdentitiesToolModule,teamPublicCardToolModule,teamGroupsReadTool,teamGroupsChangeTool,teamWorkspaceTool,
   realtimeDictationTool,
   ...nativeAnnotationTools,
   ...messageSyncToolModules,
@@ -108,9 +113,12 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listImagesToolModule,
   createRecordToolModule,
   reeditRecordToolModule,
+  recordHistoryToolModule,
   ...botToolModules,
   worldRecentToolModule,
   worldReactionReadTool, worldReactionWriteTool, teamWorldReadTool, teamWorldWriteTool, worldReplyTool,
+  worldSoundReadTool,worldSoundWriteTool,
+  worldSuggestionsReadTool, worldSuggestionsWriteTool,
   worldMineToolModule,
   worldUserToolModule,
   worldVoiceprintSocialContextToolModule,
@@ -143,6 +151,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   conversationMarkReadToolModule,
   reportMessageToolModule,
   withdrawMessageToolModule,
+  chatMessageActionToolModule,
   relatedRecordingsToolModule,
   sharedRecordingDetailToolModule,
   ...userBanToolModules,
@@ -152,7 +161,8 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   listFavoriteStickersToolModule,
   readReactionsToolModule,
   writeReactionsToolModule,
-  readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
+  selectedTextPrepareTool,selectedTextForwardTool,selectedTextOriginalTool,
+  readMessageExtensionsSummaryToolModule, readMessageMarksToolModule, writeMessageMarkToolModule, quoteMessageReplyToolModule,
   ...thoughtReplyToolModules,
   addFavoriteStickerToolModule,
   sendFavoriteStickerToolModule,

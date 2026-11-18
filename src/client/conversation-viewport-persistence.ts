@@ -113,7 +113,10 @@ export class ConversationViewportPersistence {
     this.touched.delete(source); this.touched.add(source)
     while (this.touched.size > 40) this.touched.delete(this.touched.values().next().value!)
     while (this.values.size > 40) this.values.delete(this.values.keys().next().value!)
-    if (this.timer === undefined) this.timer = setTimeout(() => this.flush(), 250)
+    // Keep in-memory geometry current while scrolling, serialize after it
+    // settles. Account switches/pagehide already flush the final snapshot.
+    clearTimeout(this.timer)
+    this.timer = setTimeout(() => this.flush(), 250)
   }
   flush = (): void => {
     clearTimeout(this.timer); this.timer = undefined

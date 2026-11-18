@@ -1,7 +1,8 @@
+import { formatArkmeDateTime } from '../display-time-zone.js'
+import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { DotsThree } from '@phosphor-icons/react/dist/icons/DotsThree'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { Plus } from '@phosphor-icons/react/dist/icons/Plus'
 import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { VOICE_TRIGGER_PENDING, defaultRecordingVoiceRule, prioritizeRecordingVoiceCandidates, recordingVoiceRules,
@@ -18,7 +19,7 @@ const button: CSSProperties = { border: `1px solid ${theme.border}`, borderRadiu
 const quiet: CSSProperties = { ...button, border: 0, background: 'transparent', color: theme.secondary }
 const input: CSSProperties = { width: '100%', boxSizing: 'border-box', border: `1px solid ${theme.border}`, borderRadius: 7, background: theme.input, color: theme.text, padding: '8px 10px', font: 'inherit', fontSize: 14 }
 const message = (error: unknown) => error instanceof Error ? error.message : tr('语音触发读取失败')
-const clock = (time: number) => new Date(time).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
+const clock = (time: number) => formatArkmeDateTime(time, 'zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
 /** No background work until this entry is opened. All recording sources share one owner. */
 export function RecordingVoiceTriggerEntry({ style, mediaPath }: { style?: CSSProperties | undefined; mediaPath: string }) {
@@ -130,7 +131,7 @@ export function RecordingVoiceTriggerDialog({ accountKey, mediaPath, onClose }: 
     }} style={{ width: 'min(760px, 100%)', maxHeight: 'calc(100dvh - 24px)', display: 'flex', flexDirection: 'column', borderRadius: 14, background: theme.base, color: theme.text, boxShadow: '0 12px 50px #0003', overflow: 'hidden' }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: `1px solid ${theme.border}` }}>
         <strong style={{ flex: 1 }}>{tr('语音触发')}</strong>
-        <button type="button" style={quiet} disabled={busy} onClick={close} aria-label={tr('关闭语音触发')}><X size={20} /></button>
+        <ArkmeCloseButton type="button" style={quiet} disabled={busy} onClick={close} aria-label={tr('关闭语音触发')} />
       </header>
       <div style={{ padding: '16px 20px', overflowY: 'auto', minHeight: 0, display: 'grid', gap: 14, fontSize: 13 }}>
         <p style={{ margin: 0, color: theme.secondary }}>{tr('上传音频、长录音、全天候录音统一识别。本人优先，其他声音命中也保留供确认。')}</p>

@@ -1,3 +1,4 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { SidebarSimple } from '@phosphor-icons/react/dist/icons/SidebarSimple'
 import { ListBullets } from '@phosphor-icons/react/dist/icons/ListBullets'
@@ -100,7 +101,7 @@ export function ArkmeLongArticleWorkspace({ initial, props, renderArticle, stand
     {entries.length > 0 && <button type="button" className="arkme-article-workspace-control" aria-label={tr(showRight ? '收起大纲' : '展开大纲')} title={tr(showRight ? '收起大纲' : '展开大纲')}
       aria-expanded={showRight} onClick={() => compact ? setMobile(showRight ? undefined : 'outline') : setRight(value => !value)}><ListBullets size={20} /></button>}
     {actions}
-    {!props.windowMode && <button type="button" className="arkme-article-workspace-control" aria-label={tr('关闭长文')} onClick={requestExit}><X size={22} /></button>}
+    {!props.windowMode && <ArkmeCloseButton type="button" className="arkme-article-workspace-control" aria-label={tr('关闭长文')} onClick={requestExit} />}
   </div>
   const frame: ArticleWorkspaceFrame = {
     bodyRef, registerClose, onLeaveFailed, closeTransient,

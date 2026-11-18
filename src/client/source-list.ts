@@ -1,4 +1,6 @@
-import { arkmeIntlLocale, tr } from './locale.js'
+import { arkmeDayDelta, arkmeDayKey } from './display-time-zone.js'
+import { formatConversationDate } from './conversation-date-format.js'
+import { tr } from './locale.js'
 import type { ArkmeSourceItem } from '../types.js'
 
 export type ArkmeSourceSort = 'default' | 'latest' | 'most'
@@ -21,7 +23,7 @@ export function isArkmeSelfWorkspaceSource(source: ArkmeSourceItem | undefined):
 
 /** Only real chats own rows in the left conversation directory. */
 export function isArkmeChatDirectorySource(source: ArkmeSourceItem): boolean {
-  return source.kind === 'private_chat' || source.kind === 'group_chat'
+  return source.accessKind !== 'team_delegation' && (source.kind === 'private_chat' || source.kind === 'group_chat')
 }
 
 /** The aggregate is a timeline target, not a category row inside the directory popover. */
@@ -58,25 +60,12 @@ export function arkmeSourceTimeLabel(value: number, nowMillis = Date.now()): str
   const date = new Date(value)
   const now = new Date(nowMillis)
   if (Number.isNaN(date.getTime()) || Number.isNaN(now.getTime())) return ''
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  if (day === today) {
-    return new Intl.DateTimeFormat(arkmeIntlLocale(), {
-      hour: '2-digit', minute: '2-digit', hour12: false,
-    }).format(date)
-  }
-  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime()
-  if (day === yesterday) {
-    const time = new Intl.DateTimeFormat(arkmeIntlLocale(), {
-      hour: '2-digit', minute: '2-digit', hour12: false,
-    }).format(date)
-    return tr("昨天 {v0}", { v0: time })
-  }
-  const sixDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6).getTime()
-  if (day >= sixDaysAgo && day < today) {
-    return new Intl.DateTimeFormat(arkmeIntlLocale(), { weekday: 'short' }).format(date)
-  }
-  return tr("{v0}月{v1}日", { v0: date.getMonth() + 1, v1: date.getDate() })
+  const daysAgo = -arkmeDayDelta(value, nowMillis)
+  if (daysAgo === 0) return formatConversationDate(date, 'time')
+  if (daysAgo === 1) return tr("昨天 {v0}", { v0: formatConversationDate(date, 'time') })
+  if (daysAgo > 1 && daysAgo <= 6) return formatConversationDate(date, 'weekday')
+  const [, month, day] = arkmeDayKey(value).split('-').map(Number)
+  return tr("{v0}月{v1}日", { v0: month!, v1: day! })
 }
 
 export function arkmeSendToSelfDirectoryPresentation(

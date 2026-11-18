@@ -1,8 +1,8 @@
+import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, useState, useSyncExternalStore, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArkmeRecordLocationObservation, ArkmeSearchRecordItem, ArkmeTimelineItem, ArkmeSourceItem } from '../types.js'
 import type { LocationDateFilter } from './day-location-cache.js'
-import { X } from '@phosphor-icons/react/dist/icons/X'
 import { ArkmeLocationQuickView } from './ArkmeLocationQuickView.js'
 import { ArkmeTimelineDetailDrawer } from './ArkmeNoteDetails.js'
 import { arkmeAuthStore } from './auth-store.js'
@@ -81,7 +81,7 @@ function LocationDialogContent({ initialSource, initialDate, initialLocation, on
           else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
         }
       }}>
-      {!standalone && <button className="arkme-location-dialog-close" type="button" aria-label={tr(initialDate ? '关闭当天位置' : '关闭位置')} title={tr('关闭位置')} style={detail ? { display: 'none' } : undefined} onClick={onClose}><X size={20}/></button>}
+      {!standalone && <ArkmeCloseButton className="arkme-location-dialog-close" type="button" aria-label={tr(initialDate ? '关闭当天位置' : '关闭位置')} title={tr('关闭位置')} style={detail ? { display: 'none' } : undefined} onClick={onClose} />}
       <div className="arkme-location-dialog-body" {...(detail ? { inert: '' } : {})} aria-hidden={detail ? true : undefined}>
       <ArkmeLocationQuickView {...(initialDate ? { initialDate } : {})}
         {...(initialSource ? { initialSource } : {})}

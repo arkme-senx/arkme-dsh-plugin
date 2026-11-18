@@ -370,6 +370,18 @@ export class CallHistoryService {
     return this.detailByRoomId(roomId, { version: 1, userId: session.userId, roomId, stableId: `trtc:${roomId}`, issuedAtMillis: Date.now() }, session, signal, true, source)
   }
 
+  async privateTranscriptSource(callRef:string){const session=await this.runtime.requireSession(),call=await this.openCallRef(callRef,session.userId);return {kind:'call' as const,source_uid:call.roomId}}
+  async validatePrivateTranscriptImport(callRef:string,target:import('../transcript-view-contract.js').TranscriptViewTarget,scope:string,id:string,signal?:AbortSignal){
+    await this.privateTranscriptTarget(callRef,target)
+    const detail=await this.callDetail(callRef,signal)
+    const segment=detail.transcriptSegments.find(row=>row.segmentId===id)
+    if(scope!==`call:${detail.stableId}`||!segment?.privateViewTarget||segment.privateViewTarget.kind!==target.kind||segment.privateViewTarget.source_uid!==target.source_uid||segment.privateViewTarget.segment_uid!==target.segment_uid)throw new ArkmePluginError('transcript-import-source-invalid','本机更正与所选通话片段不一致，原数据已保留',false,400)
+  }
+  async privateTranscriptTarget(callRef:string,target:import('../transcript-view-contract.js').TranscriptViewTarget) {
+    const session=await this.runtime.requireSession(),call=await this.openCallRef(callRef,session.userId)
+    if(target.kind!=='call'||target.source_uid!==call.roomId||!/^[a-f0-9]{64}$/.test(target.segment_uid))throw new ArkmePluginError('transcript-source-invalid','通话片段来源无效',false,400)
+    return target
+  }
   async excerptSource(callRef:string,segmentId:string):Promise<import('../record-excerpt.js').RecordExcerptSource> {
     const session=await this.runtime.requireSession(),target=await this.openCallRef(callRef,session.userId)
     if(!segmentId||segmentId.length>1024)throw new ArkmePluginError('excerpt-source-unavailable','通话缺少精确片段位置',false,404)
@@ -509,6 +521,7 @@ export class CallHistoryService {
       callRef,
       stableId: await this.publicStableId(stableId),
       peerDisplayName: displayName,
+      connectedUserIds: [...new Set([...connectedUserIds, ...(acceptedAtMillis > 0 && callerUserId > 0 ? [callerUserId] : [])])],
       ...(peerUserId > 0 ? { peerUserId } : {}),
       mediaType: callMediaType(firstValue(item, ['call_media_type', 'callMediaType', 'media_type', 'mediaType'])),
       startedAtMillis,
@@ -721,6 +734,7 @@ export class CallHistoryService {
       transcriptFailed: booleanValue(raw.transcript_failed ?? raw.transcriptFailed),
       ...(videoRecord === undefined ? {} : { videoRecord }),
       participants,
+      connectedUserIds: [...new Set([...numberList(raw.connected_user_ids ?? raw.connectedUserIds), ...(acceptedAtMillis > 0 && firstNumber(raw, ['caller_user_id', 'callerUserId']) > 0 ? [firstNumber(raw, ['caller_user_id', 'callerUserId'])] : [])])],
       ...(source ? {sourceQuoteState: matches.length === 1 ? 'exact' as const : matches.length > 1 ? 'ambiguous' as const : 'unlocated' as const} : {}),
       transcriptSegments: transcriptSegments.map(segment => {
         const speaker = participants.find(participant => participant.userId !== undefined && participant.userId === segment.speakerUserId)
@@ -788,6 +802,8 @@ export class CallHistoryService {
         const absoluteStart = start >= 100_000_000_000
         const absoluteEnd = end >= 100_000_000_000
         return {
+          ...(rawItem.private_view_target && typeof rawItem.private_view_target === 'object' ? {privateViewTarget:rawItem.private_view_target as import('../transcript-view-contract.js').TranscriptViewTarget}:{}),
+          ...(typeof rawItem.private_view_version === 'string' ? {privateViewVersion:rawItem.private_view_version}:{}),
           segmentId,
           ...(sourceSegmentId?{sourceSegmentId}:{}),
           ...(audioUrl ? { audioUrl } : {}),
@@ -817,6 +833,12 @@ export class CallHistoryService {
       .update(stableId)
       .digest('base64url')
     return `call-${signature.slice(0, 16)}`
+  }
+
+  async soundExcerptSelection(callRef:string,segmentIds:string[]):Promise<import('../world-sound-contract.js').WorldSoundOwnerSelection>{
+    const session=await this.runtime.requireSession(),call=await this.openCallRef(callRef,session.userId)
+    if(!Array.isArray(segmentIds)||!segmentIds.length||segmentIds.length>150||new Set(segmentIds).size!==segmentIds.length||segmentIds.some(id=>typeof id!=='string'||!/^[a-f0-9]{64}$/.test(id)))throw new ArkmePluginError('world-sound-call-unavailable','通话选段暂不支持公开声音，请刷新通话详情后重试',false,409)
+    return {source:'call',session_id:call.roomId,segments:segmentIds}
   }
 
   private async openCallRef(callRef: string, expectedUserId: number): Promise<ArkmeCallRefPayload> {
