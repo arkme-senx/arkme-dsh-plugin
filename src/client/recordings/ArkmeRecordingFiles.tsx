@@ -15,7 +15,7 @@ import { withArkmeReadDeadline } from '../read-deadline.js'
 import type { PublicRecordingImportCurrentSnapshot, PublicRecordingImportHistoryPage } from '../../recording-import-shared.js'
 import { recordingAudioDurationLabel } from './recording-audio-duration.js'
 import { recordingImportEndTimeError, recordingImportLocalInputValue } from './ArkmeRecordingImportDialog.js'
-import { recordingFileDisplayEnd, recordingFileExpectedBytes, mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, type RecordingFile } from './recording-day-files.js'
+import { recordingFileDisplayEnd, recordingFileExpectedBytes, mergeRecordingFiles, recordingFileDayBounds, recordingFileKey, recordingFileMatchesDay, recordingFileStatusLabel, recordingTaskStatusLabel, type RecordingFile } from './recording-day-files.js'
 
 export interface RecordingFilesCount {
   dateStamp: number
@@ -339,7 +339,7 @@ function RecordingFiles({ mediaPath, dateStamp, dayWindow, active, refreshRevisi
               <span>· {recordingAudioDurationLabel(file.durationMillis, 'delivery' in file ? file.delivery : undefined)}</span><span>· {size(recordingFileExpectedBytes(file))}</span>{'sessionRef' in file && storage.observations[file.sessionRef] && <span>· <RecordingFileStorageLabel value={storage.observations[file.sessionRef]} /></span>}<span>· {tr(file.ownership === 'self' ? '我的' : '他人')}</span>
             </div>
           </div>
-          {file.status !== 'completed' && <span title={file.statusDetail} style={{ flex: 'none', alignSelf: 'flex-start', marginTop: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
+          {file.status !== 'completed' && <span title={tr(recordingTaskStatusLabel(file))} style={{ flex: 'none', alignSelf: 'flex-start', marginTop: 3, padding: '1px 6px', borderRadius: 5, fontSize: 11, lineHeight: '20px', color: statusColor, background: statusBackground }}>{tr(recordingFileStatusLabel(file))}</span>}
           <button type="button" aria-haspopup="menu" aria-expanded={menu?.file === file} aria-label={tr('管理 {v0}', { v0: displayName })} disabled={busy} style={{ ...button, flex: 'none', alignSelf: 'flex-start', padding: 2, width: 28, minHeight: 28, display: 'grid', placeItems: 'center', border: 0, background: 'transparent', color: theme.secondary }} onClick={event => {
             if (menu?.file === file) { setMenu(undefined); return }
             const anchor = event.currentTarget, rect = anchor.getBoundingClientRect()

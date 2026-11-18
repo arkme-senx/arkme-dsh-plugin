@@ -509,3 +509,13 @@ it('uses the same name for unnamed recordings in the file list, menu and delete 
   expect(document.querySelector('dialog')?.querySelectorAll('p')[1]?.textContent).toBe('10/12 00:00 — 10/12 00:05')
   expect(completed[0]!.fileName).toBe('  ')
 })
+
+it('uses the same upload status on the file badge and on hover', async () => {
+  current = [file({
+    status: 'accepted', statusDetail: '已接收 0 个文件 / 共 1 个',
+    delivery: parseRecordingDelivery(fixture.awaiting_end)!,
+  })]
+  await render()
+  const badge = [...host.querySelectorAll('li span[title]')].find(item => item.textContent === '上传中')
+  expect(badge?.getAttribute('title')).toBe('上传中')
+})

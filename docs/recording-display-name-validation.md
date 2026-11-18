@@ -1,6 +1,6 @@
 # Recording names and upload-state presentation
 
-Baseline and PR target: `origin/dev` at `04b000d12a75d90c191358d4f635966a653ef6d1` (v3.0.64).
+Baseline and PR target: `origin/dev` at `6eff5fe3a1cd2c7b28b63d1df658b4cf19f253cc` (v3.0.67).
 Branch: `codex/c20261117-recording-display-name`.
 
 ## Behavior and ownership
@@ -8,7 +8,7 @@ Branch: `codex/c20261117-recording-display-name`.
 Device recording sessions can legitimately have an empty `orig_name` even when
 their source files have names. The client previously rendered that empty session
 name. The UI now preserves every nonblank name and otherwise displays a localized
-`Recording <local start date/time>` label. Invalid dates use `Unnamed recording`.
+`Recording <start date/time in the display zone>` label. Invalid dates use `Unnamed recording`.
 The label is shared by current imports, completed imports, audio files, action
 confirmations and accessible descriptions.
 
@@ -21,9 +21,9 @@ This is presentation only. It does not rename a source file or session, create a
 filename extension, infer a recording's device provenance, change deduplication
 keys, or write generated labels back to the Host. Mutations still use the original
 opaque session/import references. There is no new persistent state, per-record
-cache, query, dependency or configuration. Each render lazily creates at most one
-date formatter and shares a row's display label across its cells. A subsequent
-render uses the current language and timezone. Delete confirmation retains the
+cache, query, dependency or configuration. The label uses the plugin’s bounded
+date-formatter cache and shares the result across the row’s cells. A subsequent
+render uses the current language and display time zone. Delete confirmation retains the
 original task reference instead of a previously translated label.
 
 The display-name template uses the distinct `录音 {startTime}` translation key.
@@ -37,7 +37,7 @@ The existing calendar duration template `录音 {v0}` still translates to
 | Tools | N/A: no new Host capability; generated UI labels are not source data | Public Tools contracts unchanged |
 | SDK | N/A: no new Host capability; raw filename semantics must remain unchanged | Public SDK contracts unchanged |
 
-## Name-label validation (18d928922)
+## Earlier name-label validation (18d928922)
 
 - Focused regressions after rebase: 122 tests passed across five files, including
   blank/whitespace names, existing names, invalid dates, Chinese/English labels,
@@ -69,7 +69,7 @@ The existing calendar duration template `录音 {v0}` still translates to
 - No DSH source or resident profile was changed. No production deployment or
   Windows/Linux browser acceptance was performed.
 
-## Upload-state simplification and current acceptance
+## Upload-state acceptance on v3.0.64
 
 The service's `receivedBytes` counts fully acknowledged source files. It is not
 an in-flight byte counter: the session end can be known while the source file is
@@ -118,7 +118,7 @@ implementation, regression and validation files. It retains the baseline date/ti
 input, projected end boundaries, final-duration selection, backend size facts,
 mutation identities and recovery actions. No configuration or schema is added.
 
-## Name-formatting diagnostic
+## Name-formatting diagnostic on v3.0.64
 
 A local Node 24 diagnostic compared the reviewed implementation's eight date
 formatting calls per history row with the corrected path's two calls (row and
@@ -133,3 +133,23 @@ processing details), using one formatter per render. Median results over 12 runs
 These measurements cover name computation, not React rendering, browser layout or
 an end-to-end page speed guarantee. The regression test enforces bounded formatter
 allocation rather than a machine-dependent timing threshold.
+
+## Rebase and verification on v3.0.67
+
+The import dialog retains the dev queue feedback, accessibility labels and recovery
+actions. The day file list retains the dev display-zone day window. Unnamed
+sessions now use the same display-zone formatter as the rest of the plugin.
+Tests cover explicit zone changes across midnight, a system zone change,
+500 records sharing one formatter, and preservation of the original name and ID.
+
+A regression test reproduced the raw source count in the file status tooltip
+while its badge displayed “上传中”. Both now use the presentation status for
+receiving sessions. Other statuses keep their detailed explanation on hover.
+
+Node 24 typechecking and the package build passed. The four focused suites
+passed 122 tests. The packaged plugin also passed a Chrome run in a fresh
+official DSH 0.2.1-rc.2 profile with synthetic device sessions. The run checked
+current and completed rows, unknown size, confirmation of the selected session,
+day file names, and a display-zone change to Honolulu across the date boundary.
+
+The full Vitest run passed 18,574 tests in 1,615 files. The suite skipped 42 tests.
