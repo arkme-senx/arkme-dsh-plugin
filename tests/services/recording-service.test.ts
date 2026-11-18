@@ -623,6 +623,7 @@ describe('RecordingService', () => {
       expect(source.playbackTargets?.[0]?.item).toMatchObject({text:'系统原文',transcriptSource:'system'})
       await expect(fixture.service.exploreRecordingEvidence({...owner, transcript_source:'system'}, '十月二十八日')).rejects.toThrow('原转写已更新')
       await expect(fixture.service.exploreRecordingEvidence({...owner, child_id:'wrong'}, '十月二十八日')).rejects.toThrow('原转写已更新')
+      await expect(fixture.service.exploreRecordingEvidence({...owner, revision:'stale-speaker-or-source'}, '十月二十八日')).rejects.toThrow('原转写已更新')
       await expect(fixture.service.exploreRecordingEvidence({...owner, start_at:start+5000}, '十月二十八日')).rejects.toThrow('原转写已更新')
     } finally { await fixture.close() }
   })

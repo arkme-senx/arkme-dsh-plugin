@@ -3086,7 +3086,7 @@ export class RecordingService {
     const rows = await this.completeRecordingRows(date, source as ArkmeRecordingTranscriptSource, session, signal, window)
     const index = rows.findIndex(row => row.sessionId === owner.container_id && row.childId === owner.child_id && row.asrItemIndex === owner.item_ordinal)
     const row = rows[index]
-    if (!row || Math.abs(row.startAtMillis - start) > 2000 || quote.trim() && ![row.text, row.rawTranscriptText ?? ''].some(value => value.includes(quote.trim()))) {
+    if (!row || (owner.speaker_role === 'self' && row.isSelf !== true) || (typeof owner.revision === 'string' && owner.revision !== row.speakerRevision) || Math.abs(row.startAtMillis - start) > 2000 || quote.trim() && ![row.text, row.rawTranscriptText ?? ''].some(value => value.includes(quote.trim()))) {
       throw new ArkmePluginError('explore-source-changed', '原转写已更新或不可访问，未跳转到其他相似内容', false, 409)
     }
     const refKey = await this.recordingRefKey('arkme-recording-item-v1'), speakerKey = await this.recordingRefKey('arkme-recording-speaker-v1')
@@ -3248,7 +3248,7 @@ export class RecordingService {
       itemId: item.itemId,
       recordingBelongsToViewer: item.recordingBelongsToViewer === true,
       itemRef: this.sealRecordingRefWithKey('arkme-recording-item-v1', payload, refKey),
-      ...(item.transcriptSource !== 'system' || !item.searchVersion && (item.textStartOffset !== 0 || item.textEndOffset !== item.textTotalLength) ? {} : {
+      ...(!item.searchVersion && (item.textStartOffset !== 0 || item.textEndOffset !== item.textTotalLength) ? {} : {
         searchIdentityHash: recordingSearchIdentityHash({sessionId:item.sessionId,childId:item.childId,itemIndex:item.asrItemIndex,transcriptSource:item.transcriptSource}),
         searchVersion: item.searchVersion ?? recordingSearchVersion(item),
       }),

@@ -95,14 +95,16 @@ export function RecordingComparisonPane({ pagination, children }: { pagination?:
   </div>
 }
 
-export function RecordingComparisonRow({ speaker, colorIndex, startAtMillis, endAtMillis, text, active, background, playLabel, onPlay }: {
-  speaker: string; colorIndex: number; startAtMillis: number; endAtMillis: number; text: string; active: boolean; background?: boolean; playLabel: string; onPlay(): void
+export function RecordingComparisonRow({ speaker, colorIndex, startAtMillis, endAtMillis, text, active, located, background, playLabel, onPlay }: {
+  speaker: string; colorIndex: number; startAtMillis: number; endAtMillis: number; text: string; active: boolean; located?: boolean; background?: boolean; playLabel: string; onPlay(): void
 }) {
   const time = formatArkmeTime(startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })
+  const rowRef=useRef<HTMLDivElement>(null)
+  useEffect(()=>{if(located)rowRef.current?.scrollIntoView({block:'center'})},[located])
   const duration = Math.max(0, (endAtMillis - startAtMillis) / 1000)
-  return <div role="button" tabIndex={0} aria-label={playLabel} title={tr('双击播放')} data-transcript-time={startAtMillis}
+  return <div ref={rowRef} role="button" tabIndex={0} aria-label={playLabel} title={tr('双击播放')} data-transcript-time={startAtMillis}
     onDoubleClick={onPlay} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); onPlay() } }}
-    style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '4px 10px', marginBottom: 6, padding: 4, borderRadius: 6, background: active ? colors.active : 'transparent', cursor: 'default', fontSize: 14, lineHeight: '22px' }}>
+    style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: '4px 10px', marginBottom: 6, padding: 4, borderRadius: 6, background: located ? colors.accentSoft : active ? colors.active : 'transparent', cursor: 'default', fontSize: 14, lineHeight: '22px' }}>
     <span style={{ display: 'flex', gap: 8, flex: 'none', maxWidth: '100%', alignItems: 'flex-start' }}>
       <span aria-hidden style={{ width: 12, height: 12, flexShrink: 0, marginTop: 5, borderRadius: '50%', background: recordingSpeakerColor(colorIndex) }} />
       <span title={speaker} style={{ width: 78, minWidth: 0, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{speaker}</span>

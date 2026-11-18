@@ -856,6 +856,7 @@ export const actionEnglish: Record<string,string> = {
 
   "关闭用量与额度详情": "Close usage and limits details",
   "所属会话：": "Conversation: ",
+  "目标内容": "Goal content",
   "保存修改": "Save changes",
   "只读": "Read only",
   "关闭添加长文": "Close add an article",
