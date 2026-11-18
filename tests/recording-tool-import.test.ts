@@ -249,7 +249,7 @@ describe('recording import tool integration', () => {
     const network = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/v1/audio/processing-preference')) return Response.json({ code: 200, data: { user_id: userId, strategy: 'system-sd-asr/v1' } })
       if (!String(url).endsWith('/api/v1/audio/import-batches/capabilities')) throw new Error('unexpected network access')
-      return Response.json({ code: 200, data: { supported: true, contract_version: 2 } })
+      return Response.json({ code: 200, data: { supported: true, contract_version: 2, import_tasks_supported: false } })
     })
     const service = new ArkmeService({
       environment: 'test', authBaseUrl: 'https://auth.test', subjectBaseUrl: 'https://subject.test',
@@ -299,7 +299,8 @@ describe('recording import tool integration', () => {
       expect(finishChild).toHaveBeenCalledOnce()
       expect(finishSession).toHaveBeenCalledOnce()
       expect(await readFile((await service.fileReadLocal(file.fileRef)).path)).toEqual(f.bytes)
-      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/import-batches/capabilities'))).toHaveLength(2)
+      // Initial and repeated admission each check batch support and task registration support.
+      expect(network.mock.calls.filter(([url]) => String(url).endsWith('/import-batches/capabilities'))).toHaveLength(4)
       expect(network.mock.calls.filter(([url]) => String(url).endsWith('/processing-preference'))).toHaveLength(0)
       const jobs = await store.listRecordingImportJobs(42)
       expect(jobs[0]!.batch).toMatchObject({ itemCount: 1, itemIndex: 0 })
