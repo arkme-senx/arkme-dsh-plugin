@@ -102,8 +102,8 @@ async function launch(command: GameCommand): Promise<void> {
               return
             }
             if (!initialized) return
-            if (action === 'selected-room' && typeof body?.roomId === 'string') {
-              current!.command = { kind: 'join', roomId: body.roomId, token: '' }
+            if (action === 'selected-room' && (typeof body?.roomId === 'string' || body?.roomId === null)) {
+              current!.command = body.roomId === null ? { kind: 'create' } : { kind: 'join', roomId: body.roomId, token: '' }
               reply({})
               return
             }

@@ -13,7 +13,7 @@ export class GameService {
     const session = await this.runtime.requireSession()
     const account = `${session.userId}:${this.runtime.config.webrtcBaseUrl}`
     if (action === 'bootstrap') return { path: `${this.runtime.config.routePath}/game/index.html`, account }
-    if (account !== expectedAccount) throw new Error('游戏账号已变化，请关闭窗口后重试')
+    if (account !== expectedAccount) throw new ArkmePluginError('game-account-changed', '游戏账号已变化，请关闭窗口后重试', false)
     if (action === 'prepare') {
       this.deviceRegistration.start(session)
       const credentials = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>('/api/v1/trtc/credentials', {}, session)
@@ -21,8 +21,9 @@ export class GameService {
     }
     if (action === 'ready') {
       const expected = await this.runtime.authenticatedWebrtcPost<Record<string, unknown>>('/api/v1/trtc/credentials', {}, session)
-      if (body.registration_id !== expected.user_id) throw new Error('设备 IM 身份不匹配')
-      await this.deviceRegistration.waitUntilReady(session.userId, String(body.registration_id ?? ''))
+      if (body.registration_id !== expected.user_id) throw new ArkmePluginError('game-identity-mismatch', '设备 IM 身份不匹配，请关闭窗口后重新进入', false)
+      try { await this.deviceRegistration.waitUntilReady(session.userId, String(body.registration_id ?? '')) }
+      catch { throw new ArkmePluginError('game-device-not-ready', '设备 IM 登记尚未完成，请重试', true) }
       return {ok: true}
     }
     if (action === 'profiles') {
