@@ -496,10 +496,13 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
 
   async ensureSession(job: RecordingImportJob, signal?: AbortSignal): Promise<string> {
     assertRecordingImportBatchActive(job.batch)
-    const recovered = job.createRequestUID && !job.sessionId ? undefined : await this.recoverSession(job, signal)
+    const task = job.clientTaskId && this.runtime.stateStore?.importTasks
+      ? (await this.runtime.stateStore.importTasks(`${this.runtime.config.environment}:${job.userId}`))[job.clientTaskId] : undefined
+    const importTaskId = task?.registered ? task.task_id : undefined
+    const recovered = (importTaskId || job.createRequestUID) && !job.sessionId ? undefined : await this.recoverSession(job, signal)
     if (recovered !== undefined) return recovered.sessionId
 
-    const existingNames = job.createRequestUID ? [] : await this.findExistingFileNames({
+    const existingNames = (job.createRequestUID || task?.createStarted) ? [] : await this.findExistingFileNames({
       viewerUserId: job.userId, fileNames: [job.fileName], ...(signal === undefined ? {} : { signal }),
     })
     if (existingNames.length > 0) {
@@ -516,10 +519,17 @@ export class AudioRecordingImportGateway implements RecordingImportGateway, Reco
         throw new RecordingImportContractError('recording-strategy-unavailable', '服务器暂不支持所选录音策略，请稍后重试')
       }
     }
+    if (importTaskId && this.runtime.stateStore.importTasks) {
+      await this.runtime.stateStore.importTasks(`${this.runtime.config.environment}:${job.userId}`, tasks => {
+        const current = tasks[importTaskId]
+        if (current) current.createStarted = true
+      })
+    }
     const data = await this.runtime.authenticatedAudioPost<Record<string, unknown>>(
       job.batch ? '/api/v1/audio/import-batches/new-session' : '/api/v1/audio/new-session',
       {
         source: 2,
+        ...(importTaskId ? { import_task_id: importTaskId } : {}),
         ...(job.createRequestUID ? { create_request_uid: job.createRequestUID } : {}),
         ...(job.batch ? { import_batch: { contract_version: RECORDING_IMPORT_CONTRACT_VERSION, batch_id: job.batch.batchId, item_index: job.batch.itemIndex, item_count: job.batch.itemCount, time_zone: job.batch.timeZone, file_sha256: job.sha256, file_size: job.fileSize, ownership: job.belongUserId === job.userId ? 'self' : 'other' } } : {}),
         recording_kind: job.recordingKind,

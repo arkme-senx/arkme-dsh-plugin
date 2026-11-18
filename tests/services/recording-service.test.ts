@@ -26,6 +26,7 @@ import type { RecordingImportGateway } from '../../src/recording-import-coordina
 const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
 beforeEach(() => {
   vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
+    if (path === '/api/v1/audio/import-batches/capabilities') return { supported: false }
     if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
     return originalAudioPost.call(this, path, body, session, ...rest)
   })
@@ -2088,6 +2089,109 @@ describe('RecordingService', () => {
     await expect(store.listRecordingImportJobs(42)).resolves.toHaveLength(21)
     await vi.waitFor(() => { expect(gateway.ensureSession).toHaveBeenCalledTimes(2) })
     service.dispose()
+  })
+
+  it.each(['account', 'dispose'] as const)('does not recreate heartbeat timers after %s changes during registration', async reason => {
+    const root=await mkdtemp(join(tmpdir(),'arkme-recording-scope-')),store=new ArkmeStateStore(root)
+    let userId=42,release!:()=>void
+    const sessions:ArkmeSessionStore={async read(){return {userId,accessToken:'a',refreshToken:'r'}},async write(){},async delete(){}}
+    const runtime=new ServiceRuntime(config,sessions,store)
+    const post=vi.fn(async(path:string)=>{if(path.endsWith('/capabilities')){await new Promise<void>(resolve=>{release=resolve});return {import_tasks_supported:true,import_tasks_contract_version:1}}throw new Error('Unexpected task request')})
+    runtime.authenticatedAudioPost=post as typeof runtime.authenticatedAudioPost
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+    const service=new RecordingService(runtime,dependencies(gatewayNoop()))
+    try {
+      const pending=service.registerRecordingImportTasks([{task_id:recordingImportBatchID(),file_name:'scope.wav',file_size:1,start_at:1,duration_ms:1,belong_user_id:42,item_index:0,item_count:1}],42)
+      const rejected=expect(pending).rejects.toBeDefined()
+      await vi.waitFor(()=>expect(release).toBeDefined())
+      if(reason==='dispose')service.dispose();else{userId=43;await runtime.requireSession()}
+      release();await rejected
+      await vi.advanceTimersByTimeAsync(30000)
+      expect(vi.getTimerCount()).toBe(0);expect(post).toHaveBeenCalledTimes(1)
+    }finally{service.dispose();vi.useRealTimers();await rm(root,{recursive:true,force:true})}
+  })
+
+  it.each(['uploading', 'finalizing'] as const)('recovers startup %s after bind outage using the heartbeat alone', async phase => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-startup-'))
+    const store = new ArkmeStateStore(root)
+    const sessions: ArkmeSessionStore = { async read() { return { userId:42, accessToken:'access', refreshToken:'refresh' } }, async write() {}, async delete() {} }
+    const runtime = new ServiceRuntime(config, sessions, store), gateway = gatewayNoop()
+    vi.spyOn(gateway, 'ensureSession')
+    let binds = 0
+    runtime.authenticatedAudioPost = vi.fn(async (path, body) => {
+      if (path.endsWith('/capabilities')) return {import_tasks_supported:true,import_tasks_contract_version:1}
+      if (path.endsWith('/register') || path.endsWith('/sync')) return {items:body.items}
+      if (path.endsWith('/bind')) { if (++binds === 1) throw new Error('offline'); return body }
+      throw new Error(`Unexpected ${path}`)
+    }) as typeof runtime.authenticatedAudioPost
+    const job = {...failedImportJob(0,Date.now()),phase,clientTaskId:recordingImportBatchID(),sessionId:'existing-session',childId:'existing-child'}
+    await store.putRecordingImportJob(42,job)
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']})
+    const service = new RecordingService(runtime,dependencies(gateway))
+    try {
+      await service.resumeRecordingImports()
+      expect((await store.getRecordingImportJob(42,job.jobId))?.phase).toBe(phase)
+      await vi.advanceTimersByTimeAsync(15000)
+      await vi.waitFor(async () => expect((await store.getRecordingImportJob(42,job.jobId))?.phase).toBe('accepted'))
+      expect(gateway.ensureSession).not.toHaveBeenCalled()
+      expect(binds).toBeGreaterThanOrEqual(2)
+    } finally { service.dispose(); vi.useRealTimers(); await new Promise(resolve=>setTimeout(resolve,20)); await rm(root,{recursive:true,force:true}) }
+  })
+
+  it('does not freeze task metadata when an older server explicitly lacks task support', async () => {
+    const root=await mkdtemp(join(tmpdir(),'arkme-recording-legacy-')), store=new ArkmeStateStore(root)
+    const sessions:ArkmeSessionStore={async read(){return {userId:42,accessToken:'a',refreshToken:'r'}},async write(){},async delete(){}}
+    const service=new RecordingService(new ServiceRuntime(config,sessions,store),dependencies(gatewayNoop()))
+    try {
+      const task={task_id:recordingImportBatchID(),file_name:'legacy.wav',file_size:100,start_at:1,duration_ms:1000,belong_user_id:42,item_index:0,item_count:1}
+      expect(await service.registerRecordingImportTasks([task],42)).toEqual({supported:false,registered:false})
+      expect(await service.registerRecordingImportTasks([{...task,start_at:2,belong_user_id:0}],42)).toEqual({supported:false,registered:false})
+      expect(await store.importTasks('test:42')).toEqual({})
+      await service.cancelRecordingImportTask(task.task_id,42)
+    } finally {service.dispose();await rm(root,{recursive:true,force:true})}
+  })
+
+  it('registers the complete fifteen-file manifest before creating only two owner sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'arkme-recording-manifest-'))
+    const store = new ArkmeStateStore(root)
+    const sessions: ArkmeSessionStore = { async read() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } }, async write() {}, async delete() {} }
+    const runtime = new ServiceRuntime(config, sessions, store)
+    const registered: string[] = []
+    runtime.authenticatedAudioPost = vi.fn(async (path, body) => {
+      if (path.endsWith('/capabilities')) return { import_tasks_supported: true, import_tasks_contract_version: 1 }
+      if (path.endsWith('/register')) {
+        const items = body.items as Array<{ task_id: string; revision: number }>
+        expect(Object.keys(await store.importTasks('test:42'))).toHaveLength(15)
+        registered.push(...items.map(item => item.task_id))
+        return { items }
+      }
+      if (path.endsWith('/sync')) return { items: body.items }
+      if (path.endsWith('/bind')) return body
+      throw new Error(`Unexpected ${path}`)
+    }) as typeof runtime.authenticatedAudioPost
+    const gateway = gatewayNoop(), started: string[] = []
+    gateway.ensureSession = vi.fn(async job => { expect(registered).toHaveLength(15); return `session-${job.fileName}` })
+    gateway.upload = vi.fn(async (job, _progress, signal) => {
+      started.push(job.fileName)
+      await new Promise<void>((_, reject) => { signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }); if (signal!.aborted) reject(signal!.reason) })
+    })
+    const service = new RecordingService(runtime, dependencies(gateway, {
+      recordingImportSource: { inspect: async () => ({ kind: 'wav', durationMillis: 1000 }), discard: async () => {} },
+    }))
+    try {
+      const manifest = Array.from({length:15}, (_, i) => ({task_id:recordingImportBatchID(),file_name:`${i}.wav`,file_size:100,start_at:1_725_000_000_000+i,duration_ms:1000,belong_user_id:42,item_index:i,item_count:15}))
+      expect(await service.registerRecordingImportTasks(manifest,42)).toEqual({supported:true,registered:true})
+      expect(gateway.ensureSession).not.toHaveBeenCalled()
+      for (const task of manifest) await service.acceptRecordingImport('/private/local-only', {
+        clientTaskId:task.task_id,fileName:task.file_name,fileSize:100,mimeType:'audio/wav',sha256:'a'.repeat(64),startAtMillis:task.start_at,belongUserId:42,
+      },42)
+      await vi.waitFor(() => expect(started).toHaveLength(2))
+      expect(gateway.ensureSession).toHaveBeenCalledTimes(2)
+      const saved = await store.listRecordingImportJobs(42)
+      expect(saved.filter(job => job.sessionId === undefined)).toHaveLength(13)
+      expect(Object.keys(await new ArkmeStateStore(root).importTasks('test:42'))).toHaveLength(15)
+      expect(JSON.stringify(vi.mocked(runtime.authenticatedAudioPost).mock.calls)).not.toContain('/private/local-only')
+    } finally { service.dispose(); await new Promise(resolve => setTimeout(resolve,30)); await rm(root,{recursive:true,force:true}) }
   })
 
   it('persists the backlog, limits uploads to two, cancels queued work and resumes the rest after restart', async () => {

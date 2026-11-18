@@ -1,3 +1,5 @@
+import { ImportTaskOutbox, type ImportTask } from '../recording-import-task-outbox.js'
+import { recordingImportBatchID, recordingImportDeadline } from '../recording-workflow-contract.js'
 import { recordingDeliveryQuery, type RecordingDeliveryQuery, type RecordingDeliveryPage } from '../recording-delivery.js'
 import { recordingReceiptLabel } from '../recording-delivery.js'
 import { parseRecordingLearning } from '../recording-learning-contract.js'
@@ -277,6 +279,10 @@ export class RecordingService {
   private readonly importCommands = new Set<string>()
   private readonly importQueue = new RecordingImportQueue(RECORDING_IMPORT_UPLOAD_CONCURRENCY)
   private importDisposed = false
+  private taskSyncTimer: ReturnType<typeof setInterval> | undefined
+  private taskSyncAbort = new AbortController()
+  private taskSupport = new Map<number, boolean>()
+  private taskOutboxes = new Map<number, ImportTaskOutbox>()
   private readonly importRuns = new Map<string, {
     controller: AbortController
     promise: Promise<void>
@@ -298,6 +304,7 @@ export class RecordingService {
     this.readOwner = new RecordingReadOwner(runtime)
     this.overviewReadOwner = new RecordingReadOwner(runtime, 'background-read')
     this.unsubscribeSpeakerAccount = runtime.subscribeAccountScope(() => {
+      this.stopTaskSync()
       this.speakerCacheRevision++
       for (const run of this.importRuns.values()) run.controller.abort()
       for (const timer of this.importRetryTimers.values()) clearTimeout(timer)
@@ -310,7 +317,14 @@ export class RecordingService {
     this.recordingImportSource = dependencies.recordingImportSource
     this.recordingImportOwnerGateway = dependencies.recordingImportOwnerGateway
     this.recordingImports = new RecordingImportCoordinator(
-      runtime.stateStore,
+      {
+        getRecordingImportJob: (userId, jobId) => runtime.stateStore.getRecordingImportJob(userId, jobId),
+        replaceRecordingImportJob: async (userId, job, revision, signal) => {
+          const replaced = await runtime.stateStore.replaceRecordingImportJob(userId, job, revision, signal)
+          if (replaced && this.taskOutboxes.has(userId)) void this.syncImportTasks(userId, this.taskSyncAbort.signal).catch(() => undefined)
+          return replaced
+        },
+      },
       dependencies.recordingImportGateway,
       dependencies.recordingImportSource,
       async () => (await runtime.requireSession()).userId,
@@ -318,6 +332,7 @@ export class RecordingService {
   }
 
   dispose(): void {
+    this.stopTaskSync()
     this.importDisposed = true
     this.speakerCacheRevision++
     this.unsubscribeSpeakerAccount()
@@ -1524,6 +1539,127 @@ export class RecordingService {
     await this.requireRecordingImportSession(expectedUserId)
   }
 
+  private stopTaskSync(): void {
+    clearInterval(this.taskSyncTimer)
+    this.taskSyncTimer = undefined
+    this.taskSyncAbort.abort()
+    this.taskSyncAbort = new AbortController()
+    this.taskOutboxes.clear()
+    this.taskSupport.clear()
+  }
+
+  private taskOutbox(userId: number): ImportTaskOutbox | undefined {
+    if (this.importDisposed) return undefined
+    const store = this.runtime.stateStore
+    if (!store.importTasks) return undefined
+    let outbox = this.taskOutboxes.get(userId)
+    if (!outbox) {
+      outbox = new ImportTaskOutbox({ importTasks: store.importTasks.bind(store) }, `${this.runtime.config.environment}:${userId}`,
+        async (path, body, signal) => {
+          const session = await this.requireRecordingImportSession(userId)
+          return this.runtime.authenticatedAudioPost(path, body as Record<string, unknown>, session, signal, { lane: 'write', bypassCache: true })
+        })
+      this.taskOutboxes.set(userId, outbox)
+    }
+    if (!this.taskSyncTimer) {
+      const signal = this.taskSyncAbort.signal
+      this.taskSyncTimer = setInterval(() => { void this.syncImportTasks(userId, signal, true).catch(() => undefined) }, 15_000)
+      this.taskSyncTimer.unref?.()
+    }
+    return outbox
+  }
+
+  async failRecordingImportTask(taskId: string, expectedUserId: number): Promise<void> {
+    await this.requireRecordingImportSession(expectedUserId)
+    const ownerSignal = this.taskSyncAbort.signal
+    ownerSignal.throwIfAborted()
+    const job = (await this.runtime.stateStore.listRecordingImportJobs(expectedUserId)).find(job => job.clientTaskId === taskId)
+    if (job && job.phase !== 'failed') return
+    ownerSignal.throwIfAborted()
+    const outbox = this.taskOutbox(expectedUserId)
+    await outbox?.change(taskId, 'failed')
+    if (this.taskSupport.get(expectedUserId) === true) void outbox?.flush(ownerSignal).catch(() => undefined)
+  }
+
+  async cancelRecordingImportTask(taskId: string, expectedUserId: number): Promise<void> {
+    await this.requireRecordingImportSession(expectedUserId)
+    const ownerSignal = this.taskSyncAbort.signal
+    ownerSignal.throwIfAborted()
+    const jobs = await this.runtime.stateStore.listRecordingImportJobs(expectedUserId)
+    const job = jobs.find(job => job.clientTaskId === taskId)
+    if (job && !['accepted', 'cancelled'].includes(job.phase)) {
+      await this.cancelRecordingImport(await this.recordingImportRef(job), job.revision)
+    } else if (job?.phase === 'accepted') {
+      throw new Error('录音已交给云端处理，请从录音列表删除')
+    }
+    ownerSignal.throwIfAborted()
+    const outbox = this.taskOutbox(expectedUserId)
+    await outbox?.change(taskId, 'cancelled')
+    // Cancellation is durable even offline. Bound-session deletion above must succeed first.
+    if (this.taskSupport.get(expectedUserId) === true) void outbox?.flush(ownerSignal).catch(() => undefined)
+  }
+
+  async registerRecordingImportTasks(raw: unknown, expectedUserId: number, signal?: AbortSignal): Promise<{ supported: boolean; registered: boolean }> {
+    await this.requireRecordingImportSession(expectedUserId)
+    const ownerSignal = signal ? AbortSignal.any([signal, this.taskSyncAbort.signal]) : this.taskSyncAbort.signal
+    ownerSignal.throwIfAborted()
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 100) throw new Error('录音任务登记数量无效')
+    const tasks: ImportTask[] = raw.map(value => {
+      const row = value as ImportTask
+      if (!row || !validRecordingImportTaskId(row.task_id) || typeof row.file_name !== 'string' || !row.file_name.trim()
+        || /[\\/]/.test(row.file_name) || !Number.isSafeInteger(row.file_size) || row.file_size <= 0
+        || !Number.isSafeInteger(row.start_at) || row.start_at < 0 || !Number.isSafeInteger(row.duration_ms) || row.duration_ms <= 0
+        || ![0, expectedUserId].includes(row.belong_user_id) || !Number.isSafeInteger(row.item_index)
+        || !Number.isSafeInteger(row.item_count) || row.item_count < 1 || row.item_index < 0 || row.item_index >= row.item_count
+        || row.batch_id !== undefined && !recordingImportDeadline(row.batch_id)) throw new Error('录音任务登记参数无效')
+      return { task_id: row.task_id, file_name: row.file_name, file_size: row.file_size, start_at: row.start_at,
+        duration_ms: row.duration_ms, belong_user_id: row.belong_user_id, item_index: row.item_index, item_count: row.item_count,
+        ...(row.batch_id ? { batch_id: row.batch_id } : {}), phase: 'queued', revision: 1 }
+    })
+    const outbox = this.taskOutbox(expectedUserId)
+    if (!outbox) throw new Error('本地任务登记存储不可用')
+    const session = await this.requireRecordingImportSession(expectedUserId)
+    let capability: Record<string, unknown>
+    try {
+      capability = await this.runtime.authenticatedAudioPost('/api/v1/audio/import-batches/capabilities', {}, session, ownerSignal, { bypassCache: true })
+    } catch (error) {
+      ownerSignal.throwIfAborted()
+      if (error instanceof ArkmePluginError && [404, 501].includes(error.upstreamStatus ?? error.httpStatus)) { this.taskSupport.set(expectedUserId, false); return { supported: false, registered: false } }
+      await outbox.register(tasks)
+      throw error
+    }
+    ownerSignal.throwIfAborted()
+    const supported = capability.import_tasks_supported === true && capability.import_tasks_contract_version === 1
+    this.taskSupport.set(expectedUserId, supported)
+    if (!supported) return { supported: false, registered: false }
+    await outbox.register(tasks)
+    ownerSignal.throwIfAborted()
+    await outbox.flush(ownerSignal)
+    return { supported: true, registered: true }
+  }
+
+  private async syncImportTasks(userId: number, signal: AbortSignal, heartbeat = false): Promise<void> {
+    if (signal.aborted || this.importDisposed || this.taskSupport.get(userId) === false) return
+    const outbox = this.taskOutbox(userId)
+    if (!outbox) return
+    if (this.taskSupport.get(userId) !== true) {
+      const session = await this.requireRecordingImportSession(userId)
+      const capability = await this.runtime.authenticatedAudioPost<Record<string, unknown>>('/api/v1/audio/import-batches/capabilities', {}, session, signal, { bypassCache: true })
+      const supported = capability.import_tasks_supported === true && capability.import_tasks_contract_version === 1
+      this.taskSupport.set(userId, supported)
+      if (!supported) return
+    }
+    const jobs = await this.runtime.stateStore.listRecordingImportJobs(userId)
+    for (const job of jobs) {
+      if (!job.clientTaskId) continue
+      const phase = job.phase === 'prepared' ? (job.sessionId ? 'uploading' : 'queued') : job.phase === 'accepted' ? 'finalizing'
+        : job.phase
+      await outbox.change(job.clientTaskId, phase, job.phase === 'accepted', job.revision)
+    }
+    await outbox.flush(signal, heartbeat)
+    if (heartbeat && !signal.aborted) for (const job of jobs) if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
+  }
+
   async acceptRecordingImport(
     sourceHandle: string,
     metadata: {
@@ -1651,7 +1787,7 @@ export class RecordingService {
       )
     }
     const selected = admission.job
-    this.runRecordingImport(selected)
+    try { await this.prepareImportTask(selected, signal); this.runRecordingImport(selected) } catch { /* Durable admission is retried by the task heartbeat. */ }
     return toPublicRecordingImportJob(selected, importRef)
   }
 
@@ -1695,6 +1831,8 @@ export class RecordingService {
     const session = await this.runtime.requireSession()
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     for (const job of [...jobs].sort((a, b) => a.createdAtMillis - b.createdAtMillis)) {
+      if (job.createdAtMillis < Date.now() - 30 * 86400_000 || (job.clientTaskId && (recordingImportDeadline(job.clientTaskId) ?? 0) <= Date.now())) continue
+      try { await this.prepareImportTask(job) } catch { continue }
       if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
     }
     const newestFirst = (left: RecordingImportJob, right: RecordingImportJob) => right.createdAtMillis - left.createdAtMillis
@@ -1920,11 +2058,40 @@ export class RecordingService {
     }
   }
 
+  private async prepareImportTask(job: RecordingImportJob, signal?: AbortSignal): Promise<void> {
+    if (['accepted', 'cancelled'].includes(job.phase)) return
+    if ((job.batch && (recordingImportDeadline(job.batch.batchId) ?? 0) <= Date.now()) || job.createdAtMillis < Date.now() - 30 * 86400_000) return
+    if (!job.clientTaskId) {
+      job.clientTaskId = recordingImportBatchID(job.createdAtMillis)
+      await this.runtime.stateStore.putRecordingImportJob(job.userId, job)
+    }
+    if (!this.runtime.stateStore.importTasks) return
+    const known = (await this.runtime.stateStore.importTasks(`${this.runtime.config.environment}:${job.userId}`))[job.clientTaskId]
+    try {
+      const result = known?.registered ? { registered: true } : await this.registerRecordingImportTasks([known ?? { task_id: job.clientTaskId, file_name: job.fileName, file_size: job.fileSize,
+        start_at: job.startAtMillis, duration_ms: job.durationMillis, belong_user_id: job.belongUserId,
+        ...(job.batch ? { batch_id: job.batch.batchId } : {}), item_index: job.batch?.itemIndex ?? 0, item_count: job.batch?.itemCount ?? 1 }], job.userId, signal)
+      if (result.registered && job.sessionId) {
+        const session = await this.requireRecordingImportSession(job.userId)
+        await this.runtime.authenticatedAudioPost('/api/v1/audio/import-tasks/bind', { task_id: job.clientTaskId, session_id: job.sessionId }, session, signal)
+      }
+    } catch (error) { throw error }
+  }
+
   async resumeRecordingImports(): Promise<void> {
     if (this.runtime.config.recordingWorkbenchEnabled === false) return
     const session = await this.runtime.requireSession()
+    if (this.runtime.stateStore.importTasks) {
+      const tasks = await this.runtime.stateStore.importTasks(`${this.runtime.config.environment}:${session.userId}`)
+      if (Object.keys(tasks).length) {
+        this.taskOutbox(session.userId)
+        void this.syncImportTasks(session.userId, this.taskSyncAbort.signal, true).catch(() => undefined)
+      }
+    }
     const jobs = await this.runtime.stateStore.listRecordingImportJobs(session.userId)
     for (const job of [...jobs].sort((a, b) => a.createdAtMillis - b.createdAtMillis)) {
+      if (job.createdAtMillis < Date.now() - 30 * 86400_000 || (job.clientTaskId && (recordingImportDeadline(job.clientTaskId) ?? 0) <= Date.now())) continue
+      try { await this.prepareImportTask(job) } catch { continue }
       if (['prepared', 'uploading', 'finalizing'].includes(job.phase)) this.runRecordingImport(job)
       else this.scheduleRecordingImportRetry(job)
     }
@@ -1937,6 +2104,7 @@ export class RecordingService {
       job.jobId,
       job.revision,
       this.importQueue.run(async () => {
+        await this.prepareImportTask(job, controller.signal)
         const result = await this.recordingImports.run(job.userId, job.jobId, controller.signal)
         if (!controller.signal.aborted) this.scheduleRecordingImportRetry(result)
       }, controller.signal),

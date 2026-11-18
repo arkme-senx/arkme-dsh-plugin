@@ -1099,6 +1099,10 @@ export class ArkmeLocalDatabase implements RecentEmojiStore {
     )
   }
 
+  async importTasks(...args: Parameters<ArkmeStateStore['importTasks']>) {
+    return await this.operationalState.importTasks(...args)
+  }
+
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
     return await this.operationalState.listRecordingImportJobs(userId)
   }

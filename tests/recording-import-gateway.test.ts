@@ -1267,3 +1267,24 @@ it('does not silently create the default when an older Audio lacks the selected 
  await expect(new AudioRecordingImportGateway(runtime).ensureSession(input)).rejects.toMatchObject({code:'recording-strategy-unavailable'})
  expect(post.mock.calls).toHaveLength(1)
 })
+
+it('checks names once then replays a registered single-file task after losing the create reply', async () => {
+  const taskId = recordingImportBatchID()
+  const task = { task_id:taskId, registered:true, createStarted:false }
+  const tasks = { [taskId]: task }
+  let attempts = 0
+  const post = vi.fn(async (path: string) => {
+    if (path.endsWith('/check-exist-same-orig')) return {exist_names:[]}
+    if (path.endsWith('/new-session')) { if (++attempts === 1) throw new Error('reply lost'); return {session_id:'stable-session'} }
+    throw new Error(`Unexpected ${path}`)
+  })
+  const runtime = { config:{environment:'test'}, requireSession:async () => ({userId:42}), authenticatedAudioPost:post,
+    stateStore:{importTasks:async (_scope:string, mutate?: (tasks:unknown) => void) => { mutate?.(tasks); return structuredClone(tasks) }},
+  } as unknown as ServiceRuntime
+  const gateway = new AudioRecordingImportGateway(runtime), input = job({clientTaskId:taskId})
+  await expect(gateway.ensureSession(input)).rejects.toThrow('reply lost')
+  expect(task.createStarted).toBe(true)
+  expect(await gateway.ensureSession(input)).toBe('stable-session')
+  expect(post.mock.calls.filter(call => call[0].endsWith('/check-exist-same-orig'))).toHaveLength(1)
+  expect(post.mock.calls.filter(call => call[0].endsWith('/new-session'))).toHaveLength(2)
+})

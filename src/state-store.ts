@@ -41,6 +41,7 @@ interface PersistedState {
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
   teamMemberAdditions?: unknown
   recordingToolBatches?: unknown
+  recordingImportTasksByAccount?: Record<string, Record<string, import("./recording-import-task-outbox.js").ImportTask>> | undefined
   recordingImportStrategiesByAccount?: unknown
 arkoTurnsByUser?: unknown
   dayReviewPending?: unknown
@@ -404,6 +405,7 @@ function parseState(raw: string): PersistedState {
     recordingImportJobsByUser,
     recordingToolBatches: source.recordingToolBatches,
     recordingImportStrategiesByAccount: source.recordingImportStrategiesByAccount,
+    recordingImportTasksByAccount: source.recordingImportTasksByAccount as PersistedState['recordingImportTasksByAccount'],
     dayReviewPending: source.dayReviewPending ?? {},
     teamMemberAdditions: source.teamMemberAdditions,
     recordingVoiceDrafts: source.recordingVoiceDrafts,
@@ -823,6 +825,23 @@ export class ArkmeStateStore {
       removed = true
     })
     return removed
+  }
+
+  async importTasks(scope: string, mutate?: (tasks: Record<string, import('./recording-import-task-outbox.js').ImportTask>) => void): Promise<Record<string, import('./recording-import-task-outbox.js').ImportTask>> {
+    if (!/^[a-z_-]+:[1-9][0-9]*$/.test(scope)) throw new Error('录音任务账号无效')
+    if (!mutate) return this.read(state => structuredClone(state.recordingImportTasksByAccount?.[scope] ?? {}))
+    let result = {}
+    await this.update(state => {
+      const accounts = state.recordingImportTasksByAccount ??= {}
+      const tasks = accounts[scope] ??= {}
+      mutate(tasks)
+      for (const id of Object.keys(tasks)) {
+        const created = Number.parseInt(id.slice(0, 8) + id.slice(9, 13), 16)
+        if (created < Date.now() - 90 * 86400_000) delete tasks[id]
+      }
+      result = structuredClone(tasks)
+    })
+    return result
   }
 
   async listRecordingImportJobs(userId: number): Promise<RecordingImportJob[]> {
