@@ -1,0 +1,12 @@
+name: 未读会话修复全量验证
+on:
+  push:
+    branches: [codex/qa-c20261118-unread-conversation]
+permissions:
+  contents: read
+jobs:
+  tests:
+    uses: ./.github/workflows/test-shards.yml
+    with:
+      ref: '0958e822c656080f8ac47c4150c048cd31b5251f'
+      enabled: true
