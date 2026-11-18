@@ -1840,9 +1840,8 @@ export function ArkmeNavigation({
   }
   const selectSource = (source: ArkmeSourceItem) => {
     activateNativeEntry()
-    // Selection can restore history. Only the conversation viewport knows when
-    // it follows latest; its reading-intent owner controls optimistic badges/ACK.
-    arkmeUi.selectSource(source)
+    const seekUnread = source.unreadCount > 0 && (source.kind === 'private_chat' || source.kind === 'group_chat')
+    arkmeUi.selectSource(source, false, { seekUnread })
     persistCache({ directory, selectedSourceRef: source.sourceRef })
     onActivateSurface?.()
   }
