@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ArkmeRecordingTranscriptContext, ArkmeRecordingTranscriptLocation, ArkmeRecordingWorkbenchItem } from '../../types.js'
+import type { ArkmeRecordingTranscriptContext, ArkmeRecordingTranscriptLocation, ArkmeRecordingWorkbenchItem, ArkmeRecordingWindow } from '../../types.js'
 import { ArkmeClientError, callArkme } from '../api.js'
 import { withArkmeReadDeadline } from '../read-deadline.js'
 
@@ -9,6 +9,8 @@ type Edge = { boundary: number; span: number; status: EdgeStatus }
 type ContextRead = {
   seed: ArkmeRecordingTranscriptLocation
   controller: AbortController
+  dateStamp: number
+  dayWindow: ArkmeRecordingWindow | undefined
   start: number
   end: number
   items: ArkmeRecordingWorkbenchItem[]
@@ -23,7 +25,7 @@ const MAX_ATTEMPTS = 8
 
 /** Each side owns a non-overlapping continuation and at most one active load. */
 export function useRecordingTranscriptContext(seed: ArkmeRecordingTranscriptLocation | undefined, dateStamp: number,
-  beforePublish: () => void) {
+  beforePublish: () => void, dayWindow?: ArkmeRecordingWindow) {
   const current = useRef<ContextRead>()
   const live = useRef({ seed, beforePublish })
   live.current = { seed, beforePublish }
@@ -51,7 +53,7 @@ export function useRecordingTranscriptContext(seed: ArkmeRecordingTranscriptLoca
           let page: ArkmeRecordingTranscriptContext
           try {
             page = await callArkme<ArkmeRecordingTranscriptContext>('recordings.transcript.context', {
-              dateStamp: read.start, startAtMillis, endAtMillis,
+              dateStamp: read.dateStamp, startAtMillis, endAtMillis, ...(read.dayWindow ? { window: read.dayWindow } : {}),
             }, signal)
           } catch (error) {
             if (error instanceof ArkmeClientError && error.body.code === 'recording-location-range-too-dense' && endAtMillis - startAtMillis > 1) {
@@ -98,18 +100,18 @@ export function useRecordingTranscriptContext(seed: ArkmeRecordingTranscriptLoca
     if (!seed?.items.length || typeof window === 'undefined') return
     const end = new Date(dateStamp)
     end.setDate(end.getDate() + 1)
-    const start = Math.max(0, dateStamp), stop = end.getTime()
+    const start = Math.max(0, dayWindow?.dateStamp ?? dateStamp), stop = dayWindow?.endStamp ?? end.getTime()
     const controller = new AbortController()
     // Include all rows sharing the seed edge's millisecond on the first read.
     const before = Math.min(stop, seed.items[0]!.startAtMillis + 1)
     const after = Math.max(start, seed.items.at(-1)!.startAtMillis)
-    current.current = { seed, controller, start, end: stop, items: seed.items, revisions: new Map(Object.entries(seed.revisions ?? {})),
+    current.current = { seed, controller, dateStamp, dayWindow, start, end: stop, items: seed.items, revisions: new Map(Object.entries(seed.revisions ?? {})),
       before: { boundary: before, span: INITIAL_SPAN, status: before > start ? 'idle' : 'done' },
       after: { boundary: after, span: INITIAL_SPAN, status: after < stop ? 'idle' : 'done' } }
     void load('before')
     void load('after')
     return () => { controller.abort(); current.current = undefined }
-  }, [seed, dateStamp, load])
+  }, [seed, dateStamp, load, dayWindow])
 
   const value = snapshot?.seed === seed ? snapshot : undefined
   return { items: value?.items ?? seed?.items, before: value?.before ?? 'idle', after: value?.after ?? 'idle', load }

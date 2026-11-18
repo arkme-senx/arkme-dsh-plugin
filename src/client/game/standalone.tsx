@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
+import {GomokuView, gomokuColors} from './gomoku-view.js';
+import {gameName, playerCounts} from './game-types.js';
 import { GameRuntime } from "./runtime.js";
 import {
   cells,
@@ -70,7 +72,11 @@ function Avatar({url, name}: {url: string | undefined; name: string}) {
     ? <img src={url} alt="" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
     : <span>{Array.from(name)[0] || "人"}</span>}</span>;
 }
-function App() {
+function GameRoot() {
+  const [generation, setGeneration] = useState(0);
+  return <App key={generation} fresh={generation > 0} onReset={() => setGeneration(x => x + 1)} />;
+}
+function App({fresh, onReset}: {fresh: boolean; onReset: () => void}) {
   const [, render] = useState(0);
   useEffect(() => {
     const timer = setInterval(() => render((x) => x + 1), 1000);
@@ -97,6 +103,11 @@ function App() {
   }, [runtime.messages.at(-1)?.ID]);
   const [path, setPath] = useState<Cell[]>([]);
   const [notice, setNotice] = useState("");
+  useEffect(() => {
+    if (notice !== "房间钥匙已复制") return;
+    const timer = setTimeout(() => setNotice(""), 3000);
+    return () => clearTimeout(timer);
+  }, [notice]);
   const [copy, setCopy] = useState("");
   const [started, setStarted] = useState(false);
   const run = (fn: () => Promise<unknown>) => {
@@ -106,7 +117,7 @@ function App() {
     );
   };
   useEffect(() => {
-    void rpc<{ command: GameCommand }>("init").then(
+    void (fresh ? Promise.resolve({command: {kind: "create"} as GameCommand}) : rpc<{ command: GameCommand }>("init")).then(
       (v) => {
         setCommand(v.command);
         if (v.command.kind === "join") {
@@ -179,7 +190,7 @@ function App() {
     const m = room?.members.find((m) => m.membership_id === id);
     return `${profiles[id]?.name || (m ? String(m.user_id) : "已离开成员")}${id === me ? "（你）" : ""}`;
   };
-  const player = state?.players.includes(me) ?? false;
+  const player = (state?.players.includes(me) ?? false) && !board?.players.find(p => p.id === me)?.retired;
   const select = (cell: Cell) => {
     if (
       !board ||
@@ -259,12 +270,12 @@ function App() {
     <div className="game-app">
       <style>{gameStyles}</style>
       <header className="game-header">
-        <strong className="brand">✦ Arkme · 跳棋</strong>
+        <strong className="brand">✦ Arkme · {room ? gameName(runtime.gameType) : "游戏"}</strong>
         <span className="room-meta">
           {room ? `房间 ${room.room_id.slice(0, 8)}` : "一起玩一局，轻松一下"}
         </span>
         <span className="connection">
-          {runtime.online ? "● 已连接" : "○ 未连接"}
+          {runtime.closed ? "房间已结束" : runtime.reconnecting ? "正在重连…" : runtime.online ? "● 已连接" : "○ 未连接"}
         </span>
         {runtime.host && runtime.token && room?.status === "open" && (
           <button
@@ -287,12 +298,25 @@ function App() {
           {room ? "退出房间" : "取消进入"}
         </button>
       </header>
-      {(notice || runtime.error) && (
+      {(runtime.error || notice) && (
         <div className="notice" role="status">
-          {notice || runtime.error}
+          {runtime.error || notice}
         </div>
       )}
-      {runtime.initializationFailed && (
+      {runtime.closed ? (
+        <div className="actions"><button onClick={() => run(async () => {
+          await rpc("selected-room", {roomId: null});
+          onReset();
+        })}>返回游戏选择</button></div>
+      ) : room && !runtime.initializationFailed && (runtime.paused || runtime.connectionError) ? (
+        <div className="notice" role="status">
+          {runtime.reconnecting ? "正在尝试恢复连接…" : "连接异常，游戏操作已暂停"}
+          <button disabled={runtime.reconnecting} onClick={() => run(() => runtime.reconnect())}>
+            {runtime.reconnecting ? "重连中…" : "立即重连"}
+          </button>
+        </div>
+      ) : null}
+      {!runtime.closed && runtime.initializationFailed && (
         <div className="actions">
           <button onClick={() => run(() => runtime.retry())}>重试连接</button>
         </div>
@@ -312,8 +336,8 @@ function App() {
             <div className="card picker">
               <div className="eyebrow">ARKME GAME ROOM</div>
               <div className="picker-icon">✦</div>
-              <h2>下一步，跳出精彩</h2>
-              <p className="muted">经典六角星跳棋 · 好友对弈 · 实时聊天</p>
+              <h2>选择游戏，一起玩一局</h2>
+              <p className="muted">好友对弈 · 实时聊天</p>
               <button
                 className="primary"
                 onClick={() => {
@@ -323,23 +347,24 @@ function App() {
               >
                 跳棋 · 2 / 3 / 4 / 6 人
               </button>
+              <button className="primary" onClick={() => {setStarted(true);void runtime.enter(command, 'multiplayer_gomoku');}}>多人五子棋 · 2～6 人</button>
               <p className="muted">创建房间后，复制钥匙邀请朋友加入</p>
             </div>
           )}
-          {started && !state && (
+          {!runtime.closed && started && !state && (
             <div className="card picker">
               <div className="picker-icon">✦</div>
               <h2>{runtime.status || "等待房主同步…"}</h2>
               <p className="muted">连接成功后将自动进入房间</p>
             </div>
           )}
-          {state && !board && (
+          {!runtime.closed && state && !board && !state.gomoku && (
             <div className="card">
               <span className="status-tag">
                 {player ? "参与游戏" : "正在观战"} · 本局 {state.count} 人
               </span>
               <h2 style={{ marginTop: 16 }}>等待开局</h2>
-              <p className="muted">复制房间钥匙，邀请朋友一起跳棋</p>
+              <p className="muted">复制房间钥匙，邀请朋友一起游戏</p>
               {runtime.paused && (
                 <div role="status" className="notice">
                   连接恢复中，暂停操作
@@ -349,7 +374,7 @@ function App() {
                 <strong>本局人数</strong>
                 {runtime.host ? (
                   <div className="segmented" role="group" aria-label="本局人数">
-                    {[2, 3, 4, 6].map((n) => (
+                    {playerCounts(runtime.gameType).map((n) => (
                       <button
                         key={n}
                         aria-pressed={state.count === n}
@@ -364,6 +389,15 @@ function App() {
                   <span>{state.count} 人</span>
                 )}
               </div>
+              <div className="lobby-controls">
+                <strong>每回合时长</strong>
+                {runtime.host ? <div className="segmented" role="group" aria-label="每回合时长">
+                  {[30, 60, 90, 120].map(seconds => <button key={seconds}
+                    aria-pressed={(state.turnSeconds ?? 60) === seconds}
+                    disabled={runtime.paused || runtime.awaitingAction}
+                    onClick={() => run(() => runtime.act("duration", seconds))}>{seconds} 秒</button>)}
+                </div> : <span>{state.turnSeconds ?? 60} 秒</span>}
+              </div>
               <ol className="players">
                 {Array.from({ length: state.count }, (_, i) => {
                   const id = state.players[i];
@@ -373,7 +407,7 @@ function App() {
                         className="avatar"
                         style={{
                           background: id
-                            ? campColors[layouts[state.count]![i]!]
+                            ? runtime.gameType === "multiplayer_gomoku" ? gomokuColors[i] : campColors[layouts[state.count]![i]!]
                             : "#d8dfe5",
                         }}
                       >
@@ -398,7 +432,7 @@ function App() {
                 })}
               </ol>
               <div className="actions">
-                {player && (
+                {player && !runtime.host && (
                   <button
                     className={state.ready.includes(me) ? "" : "primary"}
                     disabled={runtime.paused || runtime.awaitingAction}
@@ -424,7 +458,8 @@ function App() {
               </p>
             </div>
           )}
-          {board && (
+          {!runtime.closed && state?.gomoku && <GomokuView board={state.gomoku} me={me} version={state.version} epoch={runtime.animationEpoch} paused={runtime.paused} pending={runtime.awaitingAction} now={runtime.now} host={runtime.host} name={name} identity={id=><Avatar name={name(id)} url={profiles[id]?.avatarUrl}/>} place={cell=>run(()=>runtime.act('place',cell))} next={()=>run(()=>runtime.act('next'))}/>}
+          {!runtime.closed && board && (
             <>
               <div
                 key={`${state?.round ?? ""}-${board.turn}-${runtime.paused}`}
@@ -839,7 +874,7 @@ else
           "已有游戏窗口，请回到该窗口继续";
         return;
       }
-      createRoot(document.getElementById("game")!).render(<App />);
+      createRoot(document.getElementById("game")!).render(<GameRoot />);
       await new Promise<void>((resolve) =>
         window.addEventListener("pagehide", () => resolve(), { once: true }),
       );

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime, formatArkmeTime } from '../display-time-zone.js'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { RecordingEntityDay, RecordingEntityOccurrence } from '../../recording-entity-contract.js'
 import { ArkmeDetailShell } from '../ArkmeDetailShell.js'
@@ -167,13 +168,13 @@ export function RecordingEntityPanel({ data, loading, error, paused, compact, op
                       .finally(() => { if (currentLocateScope.current === scope) setLocating(false) })
                   }}>
                   <time>{occurrence.target?.sourceText !== undefined
-                    ? new Date(occurrence.startAtMillis).toLocaleString(arkmeIntlLocale(), { hourCycle: 'h23' })
-                    : new Date(occurrence.startAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hourCycle: 'h23' })}</time>
+                    ? formatArkmeDateTime(occurrence.startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })
+                    : formatArkmeTime(occurrence.startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })}</time>
                   {occurrence.context && <small>{occurrence.context.speakerLabel && <>{occurrence.context.speakerLabel} · </>}{tr(entityOccurrenceSourceLabel(occurrence.context))}{occurrence.context.accuracy === 'needs_confirmation' && <> · {tr('待核实')}</>}</small>}
                   <span>{occurrence.text}</span>{!occurrence.target && <small>{tr('原文位置已不可用')}</small>}
                 </button>
                 {sourceKey === occurrence.key && occurrence.target?.sourceText !== undefined && <div className="arkme-entity-source" role="region" aria-label={tr('提及原文')}>
-                  <small>{tr('原文')} · {new Date(occurrence.startAtMillis).toLocaleString(arkmeIntlLocale(), { hourCycle: 'h23' })}</small>
+                  <small>{tr('原文')} · {formatArkmeDateTime(occurrence.startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })}</small>
                   <p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                     {Array.from(occurrence.target.sourceText).slice(0, occurrence.target.start).join('')}
                     <mark data-recording-entity-highlight>{Array.from(occurrence.target.sourceText).slice(occurrence.target.start, occurrence.target.start + occurrence.target.length).join('')}</mark>

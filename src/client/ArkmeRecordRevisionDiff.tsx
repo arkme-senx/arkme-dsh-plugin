@@ -1,3 +1,4 @@
+import { formatArkmeTime } from './display-time-zone.js'
 import { useMemo, useState } from 'react'
 import type { ArkmeRecordRevision } from '../record-edit-history.js'
 import { ArkmeMessageContent } from './ArkmeRichContent.js'
@@ -65,7 +66,7 @@ export function ArkmeRecordRevisionDiff({ revision, previous, orderUncertain = f
       <span>{diff ? summary || tr('文字、标题和可比较附件未变化')
         : orderUncertain || previous ? tr('版本先后顺序不明确，暂不对比')
         : hasMore ? tr('上一版本加载后显示差异') : tr('缺少上一版本，无法完整对比')}</span>
-      {diff && previous && <span style={hintStyle}>{tr('对比基准：{v0}', { v0: new Date(previous.editAtMillis).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
+      {diff && previous && <span style={hintStyle}>{tr('对比基准：{v0}', { v0: formatArkmeTime(previous.editAtMillis, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', hour12: false })
         + (previous.kind !== 'manual' && previous.kind !== 'original' ? ` · ${historyRevisionKindLabel(previous.kind)}` : '') })}</span>}
     </div>}
     {diff && <>

@@ -223,8 +223,7 @@ describe('RecordService', () => {
           duration_sec: 7, file_name: '示例.mp4',
         }],
       },
-      record_duration_millis: 3_200, edit_duration_known: false, revision_uid: expect.any(String), version: 7,
-      ...(editEpoch === undefined ? {} : { edit_protocol_version: 2, expected_edit_epoch: editEpoch }),
+      edit_duration_known: false, revision_uid: expect.any(String), edit_at: expect.any(Number),
     })
     await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
@@ -373,7 +372,7 @@ describe('RecordService', () => {
 
   })
 
-  it('keeps the draft when the owner version changes before commit', async () => {
+  it('submits by completion time when the owner version changes before commit', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-conflict-'))
     const stateStore = new ArkmeStateStore(root)
     let detailReads = 0
@@ -381,8 +380,8 @@ describe('RecordService', () => {
     const runtime = {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
-      async authenticatedPost(path: string) {
-        if (path === '/api/v1/records/update') { updateCalls += 1; return {} }
+      async authenticatedPost(path: string, body: Record<string, unknown>) {
+        if (path === '/api/v1/records/update') { updateCalls += 1; return { record_core: { record_uid: 'record-1', version: 12 }, revision_uid: body.revision_uid } }
         detailReads += 1
         return { record_core: {
           record_uid: 'record-1', owner_user_id: 42, creator_user_id: 42, origin_kind: 1, template_kind: 1,
@@ -399,14 +398,12 @@ describe('RecordService', () => {
     const service = new RecordService(runtime as never, {} as never, source)
     const prepared = await service.prepareRecordReedit({ sourceRef: 'source-ref', itemUid: 'record-1', newText: '我的草稿' })
 
-    await expect(service.commitRecordReedit(prepared)).rejects.toMatchObject({ code: 'record-reedit-conflict' })
-    expect(updateCalls).toBe(0)
-    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toMatchObject({
-      textContent: '我的草稿', draftRevision: prepared.draftRevision,
-    })
+    await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({ status: 'committed', version: 12 })
+    expect(updateCalls).toBe(1)
+    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
 
-  it('does not rebase a browser editor candidate when the owner changes after the editor opens', async () => {
+  it('keeps the explicit candidate when another edit changes the owner after opening', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-editor-cas-'))
     const stateStore = new ArkmeStateStore(root)
     let version = 7
@@ -439,11 +436,9 @@ describe('RecordService', () => {
       { sourceRef: 'source-ref', itemUid: 'record-1', newText: '本机候选' },
       { expectedBaseVersion: editor.version },
     )
-    await expect(service.commitRecordReedit(prepared)).rejects.toMatchObject({ code: 'record-reedit-conflict' })
-    expect(updateCalls).toBe(0)
-    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toMatchObject({
-      textContent: '本机候选', baseVersion: 7,
-    })
+    await expect(service.commitRecordReedit(prepared)).resolves.toMatchObject({ status: 'committed', version: 9 })
+    expect(updateCalls).toBe(1)
+    await expect(stateStore.getRecordReeditDraft(42, prepared.sourceIdentityKey, 'record-1')).resolves.toBeUndefined()
   })
 
   it('rejects a stale confirmation after the candidate draft changes', async () => {
@@ -483,7 +478,7 @@ describe('RecordService', () => {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async authenticatedPost(path: string, body: Record<string, unknown>) {
-        if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: true, accepted_version: 8, current_version: 9 }
+        if (path === '/api/v1/records/receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: true, accepted_version: 8, current_version: 9 }
         if (path === '/api/v1/records/update') {
           updateCalls += 1
           throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })
@@ -512,7 +507,7 @@ describe('RecordService', () => {
 
   it.each([
     { current: { text_content: '原正文', version: 7 }, code: 'record-reedit-outcome-unknown' },
-    { current: { text_content: '第三种正文', version: 8 }, code: 'record-reedit-conflict' },
+    { current: { text_content: '第三种正文', version: 8 }, code: 'record-reedit-outcome-unknown' },
   ])('keeps the candidate draft when an unknown write reconciles as $code', async ({ current, code }) => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-arkme-record-reedit-unknown-'))
     const stateStore = new ArkmeStateStore(root)
@@ -522,7 +517,7 @@ describe('RecordService', () => {
       config: { maxTextLength: 20_000 }, stateStore,
       async requireSession() { return { userId: 42, accessToken: 'access', refreshToken: 'refresh' } },
       async authenticatedPost(path: string, body: Record<string, unknown>) {
-        if (path === '/api/v1/records/write-receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: false, accepted_version: 0, current_version: current.version }
+        if (path === '/api/v1/records/receipt/get') return { record_uid: body.record_uid, revision_uid: body.revision_uid, accepted: false, accepted_version: 0, current_version: current.version }
         if (path === '/api/v1/records/update') {
           updateCalls += 1
           throw new ArkmePluginError('arkme-timeout', 'timeout', true, 504, { writeOutcomeUnknown: true })

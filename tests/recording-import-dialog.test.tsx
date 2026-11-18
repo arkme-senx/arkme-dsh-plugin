@@ -32,12 +32,14 @@ import { ArkmeRecordingImportDialog, type ArkmeRecordingImportDialogHandle } fro
 import { arkmeTheme } from '../src/client/arkme-theme.js'
 import deliveryFixture from './fixtures/recording-delivery.json'
 import { parseRecordingDelivery } from '../src/recording-delivery.js'
+import { connectArkmeLocale, useArkmeLocale } from '../src/client/locale.js'
 
 // File-selection tests exercise an opened panel, like the real toolbar action.
 // Hidden-page ownership and automatic recovery are tested with native Web Locks
 // in recording-import-ownership.test.tsx.
 function createOpenedDialog(element: ReactElement<{ ref?: Ref<ArkmeRecordingImportDialogHandle> }>, options?: Parameters<typeof create>[1]) {
   function OpenedDialog() {
+    useArkmeLocale()
     const ref = useRef<ArkmeRecordingImportDialogHandle>(null)
     useLayoutEffect(() => { ref.current!.open() }, [])
     return cloneElement(element, { ref })
@@ -98,6 +100,7 @@ describe('recording import dialog behavior', () => {
 
   afterEach(async () => {
     await act(async () => { renderer?.unmount(); await tick() })
+    connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} })()
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
@@ -184,7 +187,7 @@ describe('recording import dialog behavior', () => {
     }))
     vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
     await act(async () => {
-      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      renderer.root.findByProps({ 'aria-label': '选择音频文件' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
       await tick()
     })
     expect(pick).toHaveBeenCalledOnce()
@@ -253,7 +256,7 @@ describe('recording import dialog behavior', () => {
     }))
     vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible', hasFocus: () => true }))
     await act(async () => {
-      renderer.root.findByProps({ role: 'button' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
+      renderer.root.findByProps({ 'aria-label': '选择音频文件' }).props.onClick({ type: 'click', isTrusted: true, detail: 1 })
       await tick()
     })
     expect(browserPicker).not.toHaveBeenCalled()
@@ -447,12 +450,13 @@ describe('recording import dialog behavior', () => {
     await choose([new File(['a'], 'A.m4a', { type: 'audio/mp4' })])
 
     const table = renderer.root.findByProps({ 'aria-label': '待导入录音' })
-    expect(table.props.style).toMatchObject({ marginTop: 0, width: '100%' })
-    expect(table.findByProps({ 'aria-label': '录音文件列表' }).props.style).toMatchObject({
-      minHeight: 70,
-      maxHeight: 250,
-      overflowY: 'auto',
-    })
+    expect(table.props.style).toMatchObject({ width: '100%' })
+    const tableScroll = renderer.root.findByProps({ 'data-arkme-recording-import-table-scroll': true })
+    expect(tableScroll.props.style).toMatchObject({ minHeight: 0, overflow: 'auto' })
+    const header = table.findAllByProps({ role: 'row' })[0]!
+    expect(header.props.style).toMatchObject({ position: 'sticky', top: 0 })
+    expect(renderedText(header)).toContain('共 1 个 · 已选 1 个')
+    expect(header.findByProps({ 'aria-label': '全选' })).toBeDefined()
     const stagedRow = table.findAllByProps({ role: 'row' })[1]!
     expect(stagedRow.findAllByType(FileAudio)).toHaveLength(0)
     for (const index of [2, 3, 5]) {
@@ -462,12 +466,14 @@ describe('recording import dialog behavior', () => {
     expect((stagedRow.children[4] as ReactTestInstance).props.style)
       .toMatchObject({ display: 'grid', justifySelf: 'center' })
     expect((stagedRow.children[5] as ReactTestInstance).props.style)
-      .toMatchObject({ fontSize: 13, fontWeight: 500, textAlign: 'center' })
+      .toMatchObject({ fontSize: 12, fontWeight: 500, textAlign: 'center' })
     expect(renderer.root.findByProps({ 'aria-label': '选择 A.m4a' }).props.style).toMatchObject({
       width: 15,
       height: 15,
     })
     expect(button(renderer, '导入').findAllByType(UploadSimple)).toHaveLength(1)
+    expect(button(renderer, '导入').parent?.props['data-arkme-recording-dropzone']).toBe(true)
+    expect(renderer.root.findAllByType('footer')).toHaveLength(0)
   })
 
   it('keeps the desktop drop zone as the only empty upload entry while the owner read settles', async () => {
@@ -538,7 +544,7 @@ describe('recording import dialog behavior', () => {
   })
 
   it('uses the desktop drag overlay instead of only tinting the drop zone', async () => {
-    const dropzone = renderer.root.find(node => node.props?.role === 'button' && node.props?.['aria-disabled'] === false)
+    const dropzone = renderer.root.findByProps({ 'data-arkme-recording-dropzone': true })
 
     await act(async () => { dropzone.props.onDragEnter({ preventDefault: vi.fn() }); await tick() })
 
@@ -808,7 +814,7 @@ describe('recording import dialog behavior', () => {
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(3)
     expect(renderer.root.findByProps({ 'aria-label': '删除 retry.m4a' }).props.disabled).toBe(true)
     expect(renderer.root.findAllByProps({ 'aria-label': '选择 retry.m4a' })).toHaveLength(0)
-    expect(button(renderer, '导入').props.disabled).toBe(true)
+    expect(renderer.root.findAll(node => node.type === 'button' && renderedText(node) === '导入')).toHaveLength(0)
     await act(async () => { releaseRetry(); await tick() })
   })
 
@@ -884,7 +890,8 @@ describe('recording import dialog behavior', () => {
   it('does not create an empty remote batch when no files pass preparation', async () => {
     mocks.inspectArkmeRecordingSelection.mockRejectedValue(new Error('unreadable'))
     await choose([new File(['a'], 'cloud.m4a')])
-    await act(async () => { button(renderer, '导入').props.onClick(); await tick() })
+    expect(renderer.root.findAll(node => node.type === 'button' && renderedText(node) === '导入')).toHaveLength(0)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '重试 cloud.m4a' }).props.onClick(); await tick() })
     expect(mocks.uploadArkmeRecording).not.toHaveBeenCalled()
     expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'recordings.workflow')).toBe(false)
     expect(renderedText(renderer.root)).toContain('文件未能完成准备')
@@ -1117,6 +1124,86 @@ describe('recording import dialog behavior', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(2_000); await tick() })
 
     expect(renderer.root.findByProps({ 'aria-label': '处理耗时 14s' })).toBeDefined()
+  })
+
+  it('labels unnamed current and completed recordings without changing their owner identity', async () => {
+    const startAtMillis = new Date(2026, 10, 16, 18, 35, 12).getTime()
+    const name = '录音 2026/11/16 18:35:12'
+    vi.useFakeTimers(); vi.setSystemTime(startAtMillis + 12000)
+    const task = {
+      kind: 'owner', taskKey: 'unnamed-task', sessionRef: 'unnamed-session', ownership: 'self',
+      fileName: '', fileSize: 4096, parsedSize: 4096, durationMillis: 3000,
+      startAtMillis, endAtMillis: startAtMillis + 3000, createdAtMillis: startAtMillis,
+      updatedAtMillis: startAtMillis + 12000, progress: 0.5, status: 'accepted', statusDetail: '已接收 0 个文件 / 共 1 个',
+      delivery: { ...parseRecordingDelivery(deliveryFixture.awaiting_end)!,
+        captureStartAt: startAtMillis, displayEndAt: null, audioDurationMs: 65000,
+        durationFinal: false, receivedBytes: 1024, expectedBytes: null },
+      importProgress: {
+        status: 'processing', totalDurationMillis: 12000,
+        serverNowMillis: startAtMillis + 12000, observedAtMillis: startAtMillis + 12000,
+        rows: [{ code: 'upload', status: 'completed', startedAtMillis: startAtMillis,
+          endedAtMillis: startAtMillis + 12000, durationMillis: 12000,
+          provider: '', model: '', modelVersion: '', modelDurationMillis: 0,
+          nextRelation: 'continuous', relationDurationMillis: 0 }],
+      },
+    }
+    const original = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation(async (op, ...args) => {
+      if (op === 'recordings.import.list') return currentSnapshot([task])
+      if (op === 'recordings.import.history') return { items: [{ ...task, fileName: '  ', status: 'completed',
+        delivery: { ...task.delivery, coverage: 'complete', endReceived: true, intakeClosed: true,
+          captureEndAt: startAtMillis + 65000, displayEndAt: startAtMillis + 65000,
+          expectedSources: 1, registeredSources: 1, receivedSources: 1,
+          durationFinal: true, receivedBytes: 8192, expectedBytes: 8192 },
+      }], total: 1, offset: 0, hasMore: false }
+      return original(op, ...args)
+    })
+    await act(async () => {
+      renderer.unmount()
+      renderer = createOpenedDialog(<ArkmeRecordingImportDialog importPath="/import" defaultStartAtMillis={startAtMillis} currentUserId={42} onAccepted={() => {}} />)
+      await tick()
+    })
+    expect(renderer.root.findByProps({ title: name }).children).toEqual([name])
+    expect(renderer.root.findByProps({ 'aria-label': `${name}录音开始时间` })).toBeDefined()
+    expect(renderer.root.findByProps({ 'aria-label': `${name}录音结束时间` }).children).toEqual(['待确认'])
+    const currentRow = renderer.root.findByProps({ 'aria-label': '待导入录音' }).findAllByProps({ role: 'row' })[1]!
+    expect(renderedText(currentRow.children[2] as ReactTestInstance)).toBe('—')
+    expect(renderedText(currentRow.children[3] as ReactTestInstance)).toBe('—')
+    expect(renderedText(currentRow)).toContain('上传中')
+    expect(renderedText(currentRow)).not.toContain('已接收')
+    expect(currentRow.findAllByProps({ 'aria-label': '上传进度 50%' })).toHaveLength(0)
+    expect(currentRow.findAllByProps({ title: '上传中' })).toHaveLength(1)
+    await act(async () => {
+      renderer.root.findByProps({ 'aria-label': '处理耗时 12s' }).props.onClick({ currentTarget: { getBoundingClientRect: () => ({ left: 600, right: 648, top: 400, bottom: 428 }) } })
+      await tick()
+    })
+    expect(renderer.root.findByProps({ 'aria-label': `${name}处理耗时详情` })).toBeDefined()
+    await act(async () => { renderer.root.findByProps({ 'aria-label': `关闭 ${name}处理耗时详情` }).props.onClick(); await tick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': `删除 ${name}` }).props.onClick(); await tick() })
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '确认删除录音' }))).toContain(name)
+    await act(async () => {
+      connectArkmeLocale({ getLocale: () => ({ active: 'en' }), subscribe: () => () => {} })()
+      await tick()
+    })
+    expect(renderedText(renderer.root)).toContain('Recording 11/16/2026, 18:35:12')
+    expect(renderedText(renderer.root)).not.toContain(name)
+    await act(async () => {
+      connectArkmeLocale({ getLocale: () => ({ active: 'zh' }), subscribe: () => () => {} })()
+      await tick()
+    })
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '确认删除录音' }))).toContain(name)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '取消删除' }).props.onClick(); await tick() })
+    await act(async () => { button(renderer, '已完成').props.onClick(); await tick() })
+    const history = renderer.root.findByProps({ 'aria-label': '已完成录音导入' })
+    expect(history.findByProps({ title: name }).children).toEqual([name])
+    expect(history.findByProps({ 'aria-label': `${name}录音时长 1分5秒` })).toBeDefined()
+    expect(history.findByProps({ 'aria-label': `${name}录音结束时间` }).children).toEqual(['18:36:17'])
+    expect(renderedText(history)).toContain('8KB')
+    await act(async () => { history.findByProps({ 'aria-label': `删除 ${name}` }).props.onClick(); await tick() })
+    expect(renderedText(renderer.root.findByProps({ 'aria-label': '确认删除录音' }))).toContain(name)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': '确认删除' }).props.onClick(); await tick() })
+    expect(mocks.callArkme).toHaveBeenCalledWith('recordings.import.session.delete', { sessionRef: 'unnamed-session' })
+    expect(task.fileName).toBe('')
   })
 
   it('opens the desktop completed page and keeps terminal owner tasks out of the current list', async () => {
@@ -1832,8 +1919,7 @@ describe('recording import dialog behavior', () => {
     expect(renderedText(renderer.root)).not.toContain('已选择2个')
     expect(renderer.root.findAllByProps({ 'aria-label': '上传进度 0%' })).toHaveLength(1)
     expect(renderedText(renderer.root.findByProps({ 'aria-label': 'B.m4a数据归属' }).parent!)).toContain('排队中')
-    expect(button(renderer, '导入').props.disabled).toBe(true)
-    expect(button(renderer, '导入').props.style).toMatchObject({ cursor: 'default' })
+    expect(renderer.root.findAll(node => node.type === 'button' && renderedText(node) === '导入')).toHaveLength(0)
     expect(renderer.root.findByProps({ 'aria-label': 'B.m4a数据归属' }).findAllByType('button'))
       .toSatisfy(buttons => buttons.every(ownerButton => ownerButton.props.disabled === true))
     expect(renderer.root.findAllByProps({ 'aria-label': '全选' })).toHaveLength(0)
@@ -2034,7 +2120,7 @@ describe('recording import dialog behavior', () => {
   function stubBrowserPicker(choose: () => Promise<unknown[]>) {
     vi.stubGlobal('window', Object.assign(new EventTarget(), { showOpenFilePicker: choose }))
     vi.stubGlobal('document', Object.assign(new EventTarget(), { hasFocus: () => true, visibilityState: 'visible' }))
-    return renderer.root.findAll(node => node.type === 'div' && node.props.role === 'button')[0]!
+    return renderer.root.findByProps({ 'aria-label': '选择音频文件' })
   }
 
   it('renders an actionable toast for chooser failures without starting an upload', async () => {

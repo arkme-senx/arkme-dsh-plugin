@@ -5953,7 +5953,7 @@ describe('ArkmeService', () => {
     expect(requests.some(request => request.url.endsWith('/shared-recording'))).toBe(false)
     expect(requests.some(request => request.url.endsWith('/shared-recording/revoke'))).toBe(false)
   })
-  it('creates plain-text long articles and edits the same owner record with CAS duration facts', async () => {
+  it('creates plain-text long articles and edits the same owner record with time-ordered duration facts', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
     const state = new MemoryStateStore()
@@ -6004,8 +6004,7 @@ describe('ArkmeService', () => {
       title: '初始标题', text_content: '初始正文', record_duration_millis: 3200,
     })
 
-    // Pending automatic edits must keep their original CAS version, even if the
-    // server changes before the next opening. Never migrate them onto a newer base.
+    // Restored drafts retain their original editor metadata.
     await service.putLongArticleDraft({ sourceRef: source.sourceRef, itemUid: 'article-1', autoPublish: true,
       title: '待发布', textContent: '本地修改', textFormat: 'plain', baseVersion: 1, durationMillis: 50, updatedAtMillis: 1 })
     version = 2
@@ -6032,8 +6031,8 @@ describe('ArkmeService', () => {
     expect(openRecordDeletionRef(actionsAfter.recordDeletionRef!, await state.uniqueCode()).recordVersion).toBe(2)
     expect(actionsAfter.textContent).toBe('更新正文')
     expect(calls.find(call => call.url.endsWith('/api/v1/records/update'))?.body).toMatchObject({
-      record_uid: 'article-1', template_kind: 1, version: 1,
-      record_duration_millis: 3200, edit_duration_millis: 1400,
+      record_uid: 'article-1', template_kind: 1, edit_at: expect.any(Number), revision_uid: expect.any(String),
+      edit_duration_millis: 1400,
     })
     textFormat = 'markdown'
     textContent = '# 完整长文\n' + '**正文**'.repeat(5000)

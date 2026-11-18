@@ -1,3 +1,4 @@
+import { formatArkmeDateTime, useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeSearchRecordItem, ArkmeSourceItem } from '../types.js'
 import { locationSources, worldLocationViewport, type LocationMarkers, type LocationQuery, type LocationRecords, type LocationSource, type LocationViewport } from '../location-search.js'
@@ -18,7 +19,8 @@ export function ArkmeLocationQuickView({ onOpenRecord, initialDate, initialLocat
   const browser = useRef<HTMLDivElement>(null), focusDate = useRef(false)
   const [date, setDate] = useState(initialDate?.bucketDate ?? '')
   const [source, setSource] = useState(initialSource)
-  const timezone = initialDate?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+  const displayTimeZone = useArkmeEffectiveTimeZone()
+  const timezone = initialDate?.timezone ?? displayTimeZone
   const lastDate = useRef(initialDate?.bucketDate ?? '')
   const changeDate = (value: string) => { focusDate.current = true; if (value) lastDate.current = value; setDate(value) }
   useLayoutEffect(() => {
@@ -124,7 +126,7 @@ function LocationView({ account, browserAk, toolbar, onOpenRecord }: { account: 
           {displayed.map(item => <button className="arkme-location-record" key={item.key} type="button" onClick={() => onOpenRecord(item.record)}>
             <strong>{item.label}</strong>{item.address && item.address !== item.label && <small>{item.address}</small>}
             <p>{item.record.title || item.record.snippet || item.record.textContent || tr('位置记录')}</p>
-            <small>{item.record.sourceTitle ? `${item.record.sourceTitle} · ` : ''}{item.record.sendAtMillis > 0 ? new Intl.DateTimeFormat(arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(item.record.sendAtMillis) : ''}</small>
+            <small>{item.record.sourceTitle ? `${item.record.sourceTitle} · ` : ''}{item.record.sendAtMillis > 0 ? formatArkmeDateTime(item.record.sendAtMillis, arkmeIntlLocale(), { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : ''}</small>
           </button>)}
           {recordLoading && !displayed.length && <p className="arkme-location-message" role="status">{tr('正在加载位置记录…')}</p>}
           {recordError && <p className="arkme-location-message" role="alert">{recordError} <button type="button" onClick={() => { void loadRecords(records.items.length > 0 && records.hasMore, true) }}>{tr('重试')}</button></p>}

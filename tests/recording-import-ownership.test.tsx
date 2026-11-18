@@ -47,7 +47,7 @@ async function mount(accountKey: string, store: ImportJournal) {
   renderers.push(renderer)
   return { ref, renderer }
 }
-const picker = (renderer: ReactTestRenderer) => renderer.root.findByProps({ role: 'button' })
+const picker = (renderer: ReactTestRenderer) => renderer.root.findByProps({ 'aria-label': '选择音频文件' })
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)) }) }
 async function choose(renderer: ReactTestRenderer) {
   await act(async () => {
@@ -67,7 +67,7 @@ it('an idle mounted page does not block another window from selecting files', as
   const second = await mount(account, store)
   await act(async () => { second.ref.current!.open() })
   await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(false)
+  expect(picker(second.renderer).props.disabled).toBe(false)
   expect((await navigator.locks.query()).held?.filter(lock => lock.name === `arkme.recording-import:${account}`)).toHaveLength(1)
   expect(first.renderer.root.findByProps({ 'aria-label': '选择录音文件' }).props.disabled).toBe(true)
 })
@@ -80,10 +80,10 @@ it('closing an idle panel hands off to the waiting window without closing the pa
   const second = await mount(account, store)
   await act(async () => { second.ref.current!.open() })
   await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(true)
+  expect(picker(second.renderer).props.disabled).toBe(true)
   await act(async () => { first.ref.current!.close() })
   await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(false)
+  expect(picker(second.renderer).props.disabled).toBe(false)
 })
 
 it('hands off saved candidates and restores the latest queue on reopening without uploading', async () => {
@@ -94,10 +94,10 @@ it('hands off saved candidates and restores the latest queue on reopening withou
   expect(saved).toHaveLength(1)
   const second = await mount(account, store)
   await act(async () => { second.ref.current!.open(); first.ref.current!.close() }); await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(false)
+  expect(picker(second.renderer).props.disabled).toBe(false)
   expect(JSON.stringify(second.renderer.toJSON())).toContain('sample.wav')
   await act(async () => { second.ref.current!.close(); first.ref.current!.open() }); await settle()
-  expect(picker(first.renderer).props['aria-disabled']).toBe(false)
+  expect(picker(first.renderer).props.disabled).toBe(false)
   expect(await store.list(account)).toEqual(saved)
   expect(uploadArkmeRecording).not.toHaveBeenCalled()
 })
@@ -113,10 +113,10 @@ it('continues the active upload after close, then releases ownership when the Ho
   const signal = vi.mocked(uploadArkmeRecording).mock.calls[0]![4]!.signal!
   const second = await mount(account, store)
   await act(async () => { first.ref.current!.close(); second.ref.current!.open() }); await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(true)
+  expect(picker(second.renderer).props.disabled).toBe(true)
   expect(signal.aborted).toBe(false)
   await act(async () => { upload.resolve(response) }); await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(false)
+  expect(picker(second.renderer).props.disabled).toBe(false)
   expect(await store.list(account)).toEqual([])
   expect(uploadArkmeRecording).toHaveBeenCalledTimes(1)
 })
@@ -141,14 +141,14 @@ it('does not release unsaved candidates or overwrite them with a stale persisted
   await choose(first.renderer)
   const second = await mount(account, store)
   await act(async () => { first.ref.current!.close(); second.ref.current!.open() }); await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(true)
+  expect(picker(second.renderer).props.disabled).toBe(true)
   await act(async () => { first.ref.current!.open() }); await settle()
   expect(JSON.stringify(first.renderer.toJSON())).toContain('sample.wav')
   expect(JSON.stringify(first.renderer.toJSON())).toContain('队列尚未保存')
   change.mockRestore()
   await submit(first.renderer)
   await act(async () => { first.ref.current!.close() }); await settle()
-  expect(picker(second.renderer).props['aria-disabled']).toBe(false)
+  expect(picker(second.renderer).props.disabled).toBe(false)
   expect(uploadArkmeRecording).toHaveBeenCalledTimes(1)
 })
 
@@ -158,7 +158,7 @@ it('retries a failed journal read when the user reopens the dialog', async () =>
   const first = await mount(account, store); await settle()
   expect(JSON.stringify(first.renderer.toJSON())).toContain('队列存储暂不可用')
   await act(async () => { first.ref.current!.open() }); await settle()
-  expect(picker(first.renderer).props['aria-disabled']).toBe(false)
+  expect(picker(first.renderer).props.disabled).toBe(false)
 })
 
 it('cancels an unmounted waiter without letting it claim or rewrite the queue later', async () => {

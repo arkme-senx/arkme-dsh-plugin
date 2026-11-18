@@ -1,3 +1,4 @@
+import { formatArkmeDate } from './display-time-zone.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { useEffect, useRef, useState } from 'react'
 import type { ArkmeContentBlock, ArkmeRecordSearchResult, ArkmeSearchRecordItem } from '../types.js'
@@ -35,7 +36,7 @@ export function ArkmeFileQuickView({ query, onOpenRecord }: { query: string; onO
     {query.trim() !== '' && <p style={{ fontSize: 12, color: 'gray' }}>{tr("搜索关联快记中的文件")}</p>}
     {page?.items.flatMap(item => item.files.map((file, index) => <div key={`${item.recordUid}:${file.fileAssetUid}:${index}`} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid rgba(128,128,128,.18)' }}>
       <div style={{ flex: 1, minWidth: 0 }}><ArkmeFileCard block={{ kind: 'file', mediaRef: file.mediaRef ?? '', ...(file.mediaRef === undefined ? {} : { originalRef: file.mediaRef }), fileName: file.fileName || '文件', mimeType: file.mimeType || 'application/octet-stream', size: file.size ?? 0, sortOrder: index }} onOpen={setPreview} previewOpen={preview?.mediaRef === file.mediaRef} />
-        <small style={{ color: 'gray' }}>{new Date(item.sendAtMillis).toLocaleDateString()} · {item.sourceTitle || item.nickname || tr("快记")}</small>
+        <small style={{ color: 'gray' }}>{formatArkmeDate(item.sendAtMillis)} · {item.sourceTitle || item.nickname || tr("快记")}</small>
       </div>
       <button type="button" disabled={item.targetSource === undefined} onClick={() => onOpenRecord(item)}>{tr("查看来源")}</button>
     </div>))}

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -111,7 +112,7 @@ export function ArkmeOfficialNotificationDetail({
               </div>
               <h2>{notice.title}</h2>
               <time dateTime={new Date(notice.publishedAtMillis).toISOString()}>
-                {new Date(notice.publishedAtMillis).toLocaleString(arkmeIntlLocale(), {
+                {formatArkmeDateTime(notice.publishedAtMillis, arkmeIntlLocale(), {
                   year: 'numeric', month: 'long', day: 'numeric',
                   hour: '2-digit', minute: '2-digit', hour12: false,
                 })}

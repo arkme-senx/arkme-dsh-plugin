@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 import type { TeamWorldContext, TeamWorldFeedback as Feedback, TeamWorldResponse } from '../team-world-contract.js'
 import type { ArkmeWorldFeedItem } from '../types.js'
@@ -89,7 +90,7 @@ export function TeamWorldFeedback({ accountKey, context, onOpen, refreshKey, scr
                 {item.reaction && <ReactionLabel label={expressionLabel(item.reaction.expression)} />}
                 {!item.isMe && item.sequence > (page?.seenThrough ?? 0) && <small style={{ color: c.accent }}>{tr('未读')}</small>}
               </div>
-              <time style={{ display: 'block', color: c.secondary, fontSize: 11, marginTop: 4 }}>{new Date(item.at).toLocaleString()}</time>
+              <time style={{ display: 'block', color: c.secondary, fontSize: 11, marginTop: 4 }}>{formatArkmeDateTime(item.at)}</time>
               {item.comment && publication && <WorldInteractionPreviewContent item={publication} previewImages
                 items={[{ ...item.comment, interactionRef: item.comment.recordRef, parentRef: publication.recordRef, isSelf: item.isMe }]}
                 onOpen={() => onOpen(publication, item.comment!.recordRef)} />}

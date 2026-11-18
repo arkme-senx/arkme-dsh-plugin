@@ -7,6 +7,7 @@ import {readTeamMentionInputs} from './services/group-team-mention.js'
 import { ARRANGEMENT_OCCURRENCE_ACTIONS } from './arrangement-occurrence.js'
 import { exportSelection } from './services/record-export-range-service.js'
 import { DayReviewConfirmation } from './calendar-day-review-confirmation.js'
+import { RECORDING_DELETION_CONFIRMATION_QUERY } from './recording-deletion-contract.js'
 import {readTeamRepresentationSelection} from './services/group-representation.js'
 import { recordingStrategy } from './recording-strategy-contract.js'
 import type { RealtimeDictationRequest } from './realtime-dictation-contract.js'
@@ -256,6 +257,12 @@ function billingPaymentMethodParam(params: Record<string, unknown>): ArkmeBillin
     throw new ArkmePluginError('billing-payment-method-invalid', '支付方式无效', false, 400)
   }
   return value
+}
+
+function recordingWindowParam(value: unknown): import('./types.js').ArkmeRecordingWindow {
+  const params = objectValue(value)
+  return { dateStamp: numberParam(params, 'dateStamp', Number.NaN), endStamp: numberParam(params, 'endStamp', Number.NaN),
+    timeZone: stringParam(params, 'timeZone'), date: stringParam(params, 'date') }
 }
 
 function numberParam(params: Record<string, unknown>, key: string, fallback: number): number {
@@ -955,6 +962,13 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
     res.once('close', abortDisconnectedRequest)
     try {
       const confirmationUrl = new URL(req.url ?? '/', `http://localhost:${options.expectedPort}`)
+      if (confirmationUrl.searchParams.has(RECORDING_DELETION_CONFIRMATION_QUERY)) {
+        if (!isLoopback(req.socket.remoteAddress) || ![`localhost:${options.expectedPort}`, `127.0.0.1:${options.expectedPort}`].includes(req.headers.host ?? '')) {
+          throw new ArkmePluginError('loopback-required', '请在当前电脑上确认录音删除', false, 403)
+        }
+        await service.recordingDeletionConfirmations.handle(req, res, confirmationUrl.searchParams.get(RECORDING_DELETION_CONFIRMATION_QUERY)!, controller.signal)
+        return
+      }
       if (confirmationUrl.searchParams.has('dayReviewConfirmation')) {
         if (!isLoopback(req.socket.remoteAddress) || ![`localhost:${options.expectedPort}`, `127.0.0.1:${options.expectedPort}`].includes(req.headers.host ?? '')) throw new ArkmePluginError('loopback-required', '确认只能从当前本机页面打开', false, 403)
         const id = confirmationUrl.searchParams.get('dayReviewConfirmation')!
@@ -988,6 +1002,10 @@ export function createArkmeHostApi(service: ArkmeService, options: ArkmeHostApiO
       }
       const request = await readRequest(req)
       const params = request.params ?? {}
+      if (request.operation === 'recordings.ai-deletion.settings'
+        && (!isLoopback(req.socket.remoteAddress) || !origin || new URL(origin).host !== req.headers.host)) {
+        throw new ArkmePluginError('origin-required', '请从本机即我设置管理录音删除权限', false, 403)
+      }
       if (request.operation === 'private-interaction.directory' && traceReceivedAt !== undefined
         && isDirectoryTraceId(traceHeader) && isLoopback(req.socket.remoteAddress)) {
         directoryTraceSignals.set(controller.signal, traceHeader)
@@ -1751,11 +1769,13 @@ export async function dispatchArkmeHostOperation(
     )
     case 'recordings.totals.index': return await service.recordingTotalsIndex(stringParam(params, 'account'), numberParam(params, 'toMillis', Number.NaN), numberParam(params, 'offset', Number.NaN), requestSignal)
     case 'recordings.totals.bucket': return await service.recordingTotalsBucket(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
-    case 'recordings.totals.day': return await service.recordingTotalsDay(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal)
+    case 'recordings.totals.day': return await service.recordingTotalsDay(stringParam(params, 'account'), numberParam(params, 'dateStamp', Number.NaN), requestSignal,
+      ...(params.window === undefined ? [] as const : [recordingWindowParam(params.window)] as const))
     case 'recordings.calendar': return await service.recordingCalendar(
       numberParam(params, 'fromStamp', Number.NaN),
       numberParam(params, 'toStamp', Number.NaN),
       requestSignal,
+      ...(params.timeZone === undefined ? [] as const : [stringParam(params, 'timeZone')] as const),
     )
     case 'recordings.day.review': return await service.recordingDayReview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
     case 'recordings.day.overview': return await service.recordingDayOverview(numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'viewRef'), stringParam(params, 'cursor'), requestSignal)
@@ -1766,11 +1786,13 @@ export async function dispatchArkmeHostOperation(
       return await service.locateRecordingTranscript(
         numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
         stringParam(params, 'identityHash'), stringParam(params, 'version'), requestSignal,
+        ...(params.window === undefined ? [] as const : [recordingWindowParam(params.window)] as const),
       )
     }
     case 'recordings.transcript.context': return await service.recordingTranscriptContext(
       numberParam(params, 'dateStamp', Number.NaN), numberParam(params, 'startAtMillis', Number.NaN),
       numberParam(params, 'endAtMillis', Number.NaN), requestSignal,
+      ...(params.window === undefined ? [] as const : [recordingWindowParam(params.window)] as const),
     )
     case 'recordings.transcript.search': return await service.searchRecordingDayTranscript(
       numberParam(params, 'dateStamp', Number.NaN), stringParam(params, 'query'), requestSignal,
@@ -1782,7 +1804,7 @@ export async function dispatchArkmeHostOperation(
       }
       return await service.recordingTranscriptPage(numberParam(params, 'dateStamp', Number.NaN), {
         source, cursor: stringParam(params, 'cursor'), signal: requestSignal,
- ...(params.window === undefined ? {} : {window: {dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN), endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN), timeZone:stringParam(objectValue(params.window),'timeZone'), date:stringParam(objectValue(params.window),'date')}}),
+        ...(params.window === undefined ? {} : { window: recordingWindowParam(params.window) }),
       })
     }
     case 'recordings.entities.start': return await service.startRecordingEntities({
@@ -1813,12 +1835,7 @@ export async function dispatchArkmeHostOperation(
       undoRef: stringParam(params, 'undoRef'), requestId: stringParam(params, 'requestId'),
     }, requestSignal)
     case 'recordings.day': {
-      const window = params.window === undefined ? undefined : {
-        dateStamp: numberParam(objectValue(params.window), 'dateStamp', Number.NaN),
-        endStamp: numberParam(objectValue(params.window), 'endStamp', Number.NaN),
-        timeZone: stringParam(objectValue(params.window), 'timeZone'),
-        date: stringParam(objectValue(params.window), 'date'),
-      }
+      const window = params.window === undefined ? undefined : recordingWindowParam(params.window)
       const dateStamp = numberParam(params, 'dateStamp', Number.NaN)
       if (params.part !== undefined) {
         if (typeof params.part !== 'string' || !['transcript', 'coverage', 'metrics', 'summary', 'timeline'].includes(params.part)) throw new ArkmePluginError('recording-day-part-invalid', '录音读取分区无效', false, 400)
@@ -1884,6 +1901,14 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
     case 'offline-context': return await service.offlineContext(params as unknown as OfflineContextRequest,requestSignal)
     case 'recordings.delivery.page': return service.recordingDeliveryPage(recordingDeliveryQuery(params), requestSignal)
     case 'recordings.files.storage': return service.recordingFileStorage({ sessionRefs: params.sessionRefs as string[] }, requestSignal)
+    case 'recordings.ai-deletion.settings': {
+      if (params.enabled !== undefined && typeof params.enabled !== 'boolean' || params.enabled !== undefined && typeof params.timeZone !== 'string') {
+        throw new ArkmePluginError('invalid-params', '录音删除设置参数无效', false, 400)
+      }
+      return await service.recordingDeletionSettings(stringParam(params, 'accountScope'),
+        typeof params.timeZone === 'string' ? { timeZone: params.timeZone, ...(typeof params.enabled === 'boolean' ? { enabled: params.enabled } : {}) } : undefined,
+        requestSignal)
+    }
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,
@@ -3245,7 +3270,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         textContent: stringParam(params, 'textContent'),
         ...(params.textFormat === 'markdown' || params.textFormat === 'plain' ? { textFormat: params.textFormat } : {}),
         ...(params.images === undefined ? {} : { images: longArticleImagesParam(params)! }),
-        version: Math.trunc(numberParam(params, 'version', 0)),
+        ...(params.editAtMillis === undefined ? {} : { editAtMillis: numberParam(params, 'editAtMillis', 0) }),
+        ...(params.revisionUid === undefined ? {} : { revisionUid: stringParam(params, 'revisionUid') }),
         editDurationMillis: Math.max(0, Math.trunc(numberParam(params, 'editDurationMillis', 0))),
       },
     )
@@ -3255,6 +3281,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       stringParam(params,'draftScope') || undefined,
     )
     case 'source.long-article.draft.put': return await service.putLongArticleDraft({
+      ...(params.editAtMillis === undefined ? {} : { editAtMillis: numberParam(params, 'editAtMillis', 0) }),
+      ...(params.revisionUid === undefined ? {} : { revisionUid: stringParam(params, 'revisionUid') }),
       ...(params.sendAtMillis===undefined?{}:{sendAtMillis:numberParam(params,'sendAtMillis',0)}),
       ...(stringParam(params,'draftScope')?{draftScope:stringParam(params,'draftScope')} : {}),
       ...(params.autoPublish === true ? { autoPublish: true } : {}),
@@ -3290,7 +3318,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(params.newTitle === undefined ? {} : { newTitle: stringParam(params, 'newTitle') }),
         ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
         ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
-        expectedVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)),
+        ...(params.expectedVersion === undefined ? {} : { expectedVersion: Math.trunc(numberParam(params, 'expectedVersion', 0)) }),
       })
       return { saved: true, draftRevision: prepared.draftRevision }
     }
@@ -3314,9 +3342,8 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         ...(params.attachments === undefined ? {} : { attachments: parseArkmeRecordReeditAttachments(params.attachments) }),
         ...(params.expectedDraftRevision === undefined ? {} : { expectedDraftRevision: numberParam(params, 'expectedDraftRevision', -1) }),
       }
-      const expectedBaseVersion = Math.trunc(numberParam(params, 'expectedVersion', 0))
-      if (operation === 'source.record-reedit.submit') return await service.submitRecordReedit({ ...input, expectedVersion: expectedBaseVersion })
-      const prepared = await service.prepareRecordReedit(input, { expectedBaseVersion })
+      if (operation === 'source.record-reedit.submit') return await service.submitRecordReedit(input)
+      const prepared = await service.prepareRecordReedit(input)
       return await service.commitRecordReedit(prepared)
     }
     case 'source.record-reedit.draft.delete': {

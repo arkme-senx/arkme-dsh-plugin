@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import { arkoReplyScenes, arkoReplySceneInfo, type ArkoReplyScene } from '../arko-reply-management.js'
@@ -120,7 +121,7 @@ function ArkoReplyManagerBody({ accountScope, onClose }: { accountScope: string;
         <p style={note}>{tr('当前展示本次已读取并重新校验的快记与聊天回复，完整云端汇总待接通。')}</p>
         {history.warning && <p role="status" style={note}>{history.warning}<button type="button" style={{ ...quiet, marginLeft: 8 }} onClick={() => { void loadHistory() }}>{tr('重试')}</button></p>}
         {rows.map(row => <button key={row.key} type="button" className="arko-reply-row arko-reply-history-row" disabled={row.disabled || historyLoading} onClick={row.open}>
-          <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}><span>{tr(row.title)} · {row.source}</span><time style={{ color: theme.tertiary, whiteSpace: 'nowrap' }}>{new Date(row.at).toLocaleString(arkmeIntlLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time></span>
+          <span style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}><span>{tr(row.title)} · {row.source}</span><time style={{ color: theme.tertiary, whiteSpace: 'nowrap' }}>{formatArkmeDateTime(row.at, arkmeIntlLocale(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time></span>
           <div className="arko-reply-history-text">{arkmeMarkdownPlainText(row.content)}</div><small>{tr('查看原消息')} →</small>
         </button>)}
         {historyLoading && <p role="status" style={note}>{tr('正在校验并读取回复…')}</p>}

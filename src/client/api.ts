@@ -118,6 +118,7 @@ export async function lookupArkmeRecordingImport(importPath: string, taskId: str
 }
 
 type ArkmeUiOperation = ArkmePluginOperation | TeamAppOperation | RecordAppOperation
+  | 'recordings.ai-deletion.settings'
   | 'dictation.transcribe'
   | 'emoji.recent.list'
   | 'conversation.viewport.read'

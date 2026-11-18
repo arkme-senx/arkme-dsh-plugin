@@ -2,20 +2,21 @@ import { useSyncExternalStore } from 'react'
 import { dayLabel } from './conversation-message-presentation.js'
 import { formatConversationDate } from './conversation-date-format.js'
 import { useArkmeLocale } from './locale.js'
+import { arkmeDayKey, getArkmeEffectiveTimeZone, subscribeArkmeTimeZone } from './display-time-zone.js'
+import { recordingZonedWindow } from '../recording-time.js'
 
 const listeners = new Set<() => void>()
 let timer: ReturnType<typeof setTimeout> | undefined
-const localToday = () => {
-  const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-}
+let stopZone: (() => void) | undefined
+const localToday = () => arkmeDayKey(Date.now())
 
 function refreshDay() {
   if (timer !== undefined) clearTimeout(timer)
   for (const listener of listeners) listener()
-  const now = new Date()
-  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
-  timer = setTimeout(refreshDay, next.getTime() - now.getTime() + 50)
+  const timeZone = getArkmeEffectiveTimeZone()
+  const now = Date.now()
+  const next = recordingZonedWindow(arkmeDayKey(now, timeZone), timeZone).endStamp
+  timer = setTimeout(refreshDay, Math.max(50, next - now + 50))
 }
 
 function subscribeDay(listener: () => void) {
@@ -24,6 +25,7 @@ function subscribeDay(listener: () => void) {
   listeners.add(listener)
   if (listeners.size === 1) {
     refreshDay()
+    stopZone = subscribeArkmeTimeZone(refreshDay)
     view.addEventListener('focus', refreshDay)
     doc.addEventListener('visibilitychange', refreshDay)
   }
@@ -32,20 +34,26 @@ function subscribeDay(listener: () => void) {
     if (listeners.size === 0) {
       clearTimeout(timer)
       timer = undefined
+      stopZone?.()
+      stopZone = undefined
       view.removeEventListener('focus', refreshDay)
       doc.removeEventListener('visibilitychange', refreshDay)
     }
   }
 }
 
+export function useConversationCivilDay() {
+  return useSyncExternalStore(subscribeDay, localToday, localToday)
+}
+
 /** One midnight timer for all mounted separators; also refresh after sleep. */
 export function ArkmeConversationDate({ at }: { at: number }) {
   useArkmeLocale()
-  const today = useSyncExternalStore(subscribeDay, localToday, localToday)
-  const label = dayLabel(at, today)
+  useConversationCivilDay()
+  const label = dayLabel(at)
   if (!label) return null
   const date = new Date(at)
   const fullDate = formatConversationDate(date, 'calendarDate')
-  const isoDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  const isoDate = arkmeDayKey(at)
   return <time dateTime={isoDate} title={fullDate} aria-label={fullDate}>{label}</time>
 }

@@ -1,5 +1,7 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeRecordExportPanel } from './ArkmeRecordExportPanel.js'
 import { ArkmeArchiveManagementPanel } from './ArkmeArchive.js'
+import { ArkmeRecordingDeletionSettings } from './ArkmeRecordingDeletionSettings.js'
 import { ArkmeConfirmDialog, ArkmeConfirmDialogPreview } from './ArkmeConfirmDialog.js'
 import { readDeletedItems, deletedItemRecovery, type DeletedItem, type DeletedItemsPage } from './data-deleted-items.js'
 import { arkoLifecycleSync } from './arko-lifecycle-sync.js'
@@ -124,6 +126,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       <h2>{({ home: '数据管理', archived: '已归档主题', deleted: '最近删除', import: '导入数据', export: '导出数据' })[page]}</h2></header>
     {page === 'home' ? <>
       <p className="arkme-data-hint">{tr("管理、迁入和保留属于你的记录。")}</p>
+      <ArkmeRecordingDeletionSettings scope={scope} />
       <OpenPlatformEntry />
       <div className="arkme-data-entries">
         <button type="button" onClick={() => setPage('archived')}><Archive size={20} aria-hidden /><span>{tr("已归档主题")}</span><CaretRight size={15} aria-hidden /></button>
@@ -142,7 +145,7 @@ function DataManagement({ scope, close }: { scope: string; close?: (() => void) 
       {page === 'deleted' && deleted && <>
         <p className="arkme-data-hint">{deleted.items.length ? `本次显示 ${deleted.items.length} 条${deleted.mayHaveMore ? '，更多记录请在手机端查看' : ''}。` : deleted.unverifiedCount ? tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。') : deleted.mayHaveMore ? tr('本次读取范围内暂无可恢复记录，更多记录请在手机端查看。') : tr('暂无最近删除的记录。')}{deleted.items.length > 0 && !!deleted.unverifiedCount && tr('部分记录状态无法确认，已隐藏，请刷新或在手机端查看。')}{tr('浏览不会自动清除数据。')}</p>
         <ul className="arkme-data-deleted-list">{deleted.items.map(item => <li key={item.key}>
-          <details><summary>{item.title || item.text.slice(0, 80) || '无文字记录'}<small>{new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale())}</small></summary>
+          <details><summary>{item.title || item.text.slice(0, 80) || '无文字记录'}<small>{formatArkmeDateTime(item.sendAtMillis, arkmeIntlLocale())}</small></summary>
             <p>{item.text || '此记录无文字内容，附件请在恢复后查看。'}</p>
           </details>
           <button type="button" disabled={recovering || item.version <= 0} onClick={() => { setConfirm(item); recovery.current = undefined; setError('') }}>{tr("恢复")}</button>

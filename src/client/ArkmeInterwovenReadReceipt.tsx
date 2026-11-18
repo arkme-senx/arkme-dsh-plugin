@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { createContext, useContext, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import type { ArkmeInterwovenMention } from '../types.js'
 import { InterwovenReadReceiptStore } from './interwoven-read-receipt-store.js'
@@ -51,7 +52,7 @@ export function useArkmeInterwovenReadReceipt(moment: ArkmeInterwovenMention) {
     : moment.senderIsMe ? (status === 'read' ? tr('对方已阅读群内原消息') : tr('对方尚未阅读群内原消息'))
       : (status === 'read' ? tr('你已阅读群内原消息') : tr('你尚未阅读群内原消息'))
   const timestamp = status === 'read' && receipt?.readAtMillis && receipt.readAtMillis > 0
-    ? new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(receipt.readAtMillis) : ''
+    ? formatArkmeDateTime(receipt.readAtMillis, arkmeIntlLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : ''
   const text = timestamp ? `${label} · ${timestamp}` : label
   return { ref, enabled: store !== undefined, status, text }
 }

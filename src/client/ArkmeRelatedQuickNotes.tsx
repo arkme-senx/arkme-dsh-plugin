@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 import { CaretRight } from '@phosphor-icons/react/dist/icons/CaretRight'
 import type { CSSProperties } from 'react'
@@ -97,7 +98,7 @@ function dateTimeDisplay(value: number): { label: string; iso: string } | undefi
   if (time === 0 || time > 8_640_000_000_000_000) return undefined
   const date = new Date(time)
   return {
-    label: date.toLocaleString(arkmeIntlLocale(), {
+    label: formatArkmeDateTime(date, arkmeIntlLocale(), {
       month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
     }),
     iso: date.toISOString(),

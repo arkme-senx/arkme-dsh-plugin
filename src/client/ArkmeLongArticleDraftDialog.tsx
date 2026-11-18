@@ -1,3 +1,4 @@
+import { arkmeWallClockIso } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { useEffect, useRef, type CSSProperties } from 'react'
 import type { ArkmeContentBlock, ArkmeLongArticleDraft } from '../types.js'
@@ -29,8 +30,7 @@ export function ArkmeLongArticleDraftDialog({ draft, blocks = [], preview, onPre
   }, [preview])
   const date = new Date(draft.updatedAtMillis)
   const validDate = draft.updatedAtMillis > 0 && Number.isFinite(date.getTime())
-  const two = (value: number) => String(value).padStart(2, '0')
-  const savedTime = validDate ? `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}:${two(date.getSeconds())}` : tr('保存时间未知')
+  const savedTime = validDate ? arkmeWallClockIso(date.getTime()).slice(0, 19).replace('T', ' ') : tr('保存时间未知')
   return <div style={{ position: 'fixed', inset: 0, zIndex: 1300, display: 'grid', placeItems: 'center', padding: 24, background: 'rgba(0,0,0,.52)' }}>
     <section role="dialog" aria-modal="true" aria-label={tr(preview ? '草稿预览' : '发现未发布的草稿')} onKeyDown={event => {
       if (event.key !== 'Tab') return

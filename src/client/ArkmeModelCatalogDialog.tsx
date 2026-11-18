@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useModalLayer } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -75,6 +76,6 @@ export function ArkmeOfficialModels({scope,onClose,titleId}:{scope:string;onClos
         })}
       </>}
     </div>
-    <footer>{tr('模型目录会随官方开放情况更新')}{data&&<span>{tr('读取于 {v0}',{v0:new Intl.DateTimeFormat(arkmeIntlLocale(),{hour:'2-digit',minute:'2-digit'}).format(data.observedAt)})}</span>}</footer>
+    <footer>{tr('模型目录会随官方开放情况更新')}{data&&<span>{tr('读取于 {v0}',{v0:formatArkmeDateTime(data.observedAt, arkmeIntlLocale(), {hour:'2-digit',minute:'2-digit'})})}</span>}</footer>
   </div>
 }

@@ -1,3 +1,4 @@
+import { formatArkmeTime } from './display-time-zone.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 import type { ArkmeCallDetail } from '../types.js'
 import { PhoneDisconnectIcon } from '@phosphor-icons/react/dist/csr/PhoneDisconnect'
@@ -7,7 +8,7 @@ import { arkmeTheme } from './arkme-theme.js'
 export function callTranscriptClock(startMillis: number, startedAtMillis: number, spokenAtMillis?: number): string {
   const time = spokenAtMillis ?? (startedAtMillis > 0 ? startedAtMillis + startMillis : 0)
   if (!Number.isFinite(time) || time <= 0) return '--:--:--'
-  return new Date(time).toLocaleTimeString(arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+  return formatArkmeTime(time, arkmeIntlLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
 export function ArkmeCallTranscript({ detail }: { detail: ArkmeCallDetail }) {

@@ -1,3 +1,4 @@
+import { formatArkmeDateTime, formatArkmeDate, formatArkmeTime } from '../display-time-zone.js'
 import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -62,9 +63,9 @@ export function ArkmeRecordingHistoryDialog({ onClose }: { onClose: () => void }
           const state = stale ? 'stale' : item.state
           const labels = { recording: '录音中', paused: '已暂停', interrupted: '已中断', error: '录音异常', stopped: '已停止', stale: '状态待确认' }
           const cell = { padding: '14px 8px', borderBottom: `1px solid ${theme.border}`, verticalAlign: 'top' as const }
-          const confirmation = item.state === 'stopped' ? tr('服务端确认停止') + '：' + new Date(item.stoppedAt).toLocaleString(undefined, { hourCycle: 'h23' }) : tr('最后确认') + '：' + new Date(item.lastConfirmedAt).toLocaleString(undefined, { hourCycle: 'h23' })
+          const confirmation = item.state === 'stopped' ? tr('服务端确认停止') + '：' + formatArkmeDateTime(item.stoppedAt, undefined, { hourCycle: 'h23' }) : tr('最后确认') + '：' + formatArkmeDateTime(item.lastConfirmedAt, undefined, { hourCycle: 'h23' })
           return <tr key={item.recordingId}>
-            <td style={cell}><div>{new Date(item.startedAt).toLocaleDateString()}</div><div style={{ color: theme.secondary, marginTop: 4 }}>{new Date(item.startedAt).toLocaleTimeString(undefined, { hourCycle: 'h23' })}</div></td>
+            <td style={cell}><div>{formatArkmeDate(item.startedAt)}</div><div style={{ color: theme.secondary, marginTop: 4 }}>{formatArkmeTime(item.startedAt, undefined, { hourCycle: 'h23' })}</div></td>
             <td style={cell}><div title={item.deviceName} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.deviceName}</div><div style={{ color: theme.secondary, marginTop: 4, fontSize: 12 }}>{item.platform}</div></td>
             <td style={cell}>{tr(item.recordingMode === 'all_day' ? '全天候录音' : '长录音')}</td>
             <td style={{ ...cell, fontVariantNumeric: 'tabular-nums' }} title={confirmation}>{duration(item.elapsedMillis)}{stale && <div style={{ fontSize: 11, marginTop: 4, color: theme.secondary }}>{tr('最后确认')}</div>}</td>

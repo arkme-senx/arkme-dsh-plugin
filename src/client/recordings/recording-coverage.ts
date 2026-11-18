@@ -3,7 +3,7 @@ import type { ArkmeRecordingCoverageInterval } from '../../types.js'
 import { clipRecordingCoverage } from '../../recording-coverage.js'
 import { directRecordingStore, type DirectRecordingSnapshot } from './direct-recording-store.js'
 
-export function localRecordingCoverage(snapshot: DirectRecordingSnapshot, accountKey: string | undefined, dayStart: number): ArkmeRecordingCoverageInterval[] {
+export function localRecordingCoverage(snapshot: DirectRecordingSnapshot, accountKey: string | undefined, dayStart: number, endStamp?: number): ArkmeRecordingCoverageInterval[] {
   if (!accountKey || snapshot.accountKey !== accountKey) return []
   const dayEnd = new Date(dayStart); dayEnd.setDate(dayEnd.getDate() + 1)
   const ranges: ArkmeRecordingCoverageInterval[] = []
@@ -18,13 +18,13 @@ export function localRecordingCoverage(snapshot: DirectRecordingSnapshot, accoun
     ranges.push({ startAtMillis: snapshot.startedAt, endAtMillis: snapshot.startedAt + snapshot.elapsedMillis,
       sourceLabel: '本机直接录音', status: snapshot.phase === 'recording' ? 'recording' : 'local' })
   }
-  return ranges.flatMap(range => { const clipped = clipRecordingCoverage(range, dayStart, dayEnd.getTime()); return clipped ? [clipped] : [] })
+  return ranges.flatMap(range => { const clipped = clipRecordingCoverage(range, dayStart, endStamp ?? dayEnd.getTime()); return clipped ? [clipped] : [] })
 }
 
-export function useLocalRecordingCoverage(accountKey: string | undefined, dayStart: number, cloud: readonly ArkmeRecordingCoverageInterval[] | undefined) {
+export function useLocalRecordingCoverage(accountKey: string | undefined, dayStart: number, cloud: readonly ArkmeRecordingCoverageInterval[] | undefined, endStamp?: number) {
   const snapshot = useSyncExternalStore(directRecordingStore.subscribe, directRecordingStore.getSnapshot, directRecordingStore.getSnapshot)
   useEffect(() => { if (accountKey && cloud) directRecordingStore.confirmSubmittedCoverage(accountKey, cloud) }, [accountKey, cloud])
-  return localRecordingCoverage(snapshot, accountKey, dayStart)
+  return localRecordingCoverage(snapshot, accountKey, dayStart, endStamp)
 }
 
 export const coverageStatusLabel: Record<ArkmeRecordingCoverageInterval['status'], string> = {

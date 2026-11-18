@@ -1,6 +1,17 @@
 import type { ArkmeForwardRecordsPreview, ArkmeForwardTranscriptSegment } from './types.js'
 import { RECORDING_FORWARD_MAX_SEGMENTS } from './recording-forward-contract.js'
 
+export function recordingShareTitle(sharerName: string, segmentCount: number): string {
+  return `${sharerName.trim() || '即我用户'}的${segmentCount}段录音`
+}
+
+export function recordingForwardItem(forward: ArkmeForwardRecordsPreview | undefined) {
+  const item = forward?.items.length === 1 ? forward.items[0] : undefined
+  return item?.sourceType === 'long_recording_segments' && item.segments?.length
+    ? { ...item, segments: item.segments }
+    : undefined
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
@@ -47,6 +58,7 @@ export function projectRecordRecordingForward(raw: unknown): ArkmeForwardRecords
       sendAtMillis: milliseconds(item.send_at),
       title: stringValue(item.title),
       textContent: stringValue(item.text),
+      segmentCount: item.long_recording_segments.length,
       segments: item.long_recording_segments.slice(0, RECORDING_FORWARD_MAX_SEGMENTS).map(segment => projectForwardRecordingSegment(segment, senderName)),
       ...(item.long_recording_segments.length > RECORDING_FORWARD_MAX_SEGMENTS ? { truncated: true } : {}),
     }],

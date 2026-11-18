@@ -41,16 +41,20 @@ it.each(['pending', 'disabled', 'failed'])('does not publish restored image draf
   await act(async () => { publish.props.onClick(); await Promise.resolve() })
   expect(mocks.call.mock.calls.some(([operation]) => operation === 'source.send-rich' || operation === 'source.long-article.publish')).toBe(false)
 })
-it('keeps the original draft version and refuses to overwrite newer content', async () => {
-  mocks.call.mockImplementation(async (operation: string) => {
+it('restores an older draft and saves by completion time without a version precondition', async () => {
+  mocks.call.mockImplementation(async (operation: string, params?: Record<string, unknown>) => {
     if (operation === 'provider.capabilities') return { features: { markdownLongArticles: false } }
     if (operation === 'source.long-article.detail') return { itemUid: 'record', title: '新标题', textContent: '手机修改', textFormat: 'plain', editable: true, version: 2, editDurationMillis: 0 }
     if (operation === 'source.long-article.draft.get') return { title: '旧草稿', textContent: '旧正文', textFormat: 'plain', baseVersion: 1, durationMillis: 0 }
+    if (operation === 'source.long-article.update') return { itemUid: 'record', title: params?.title, textContent: params?.textContent, textFormat: 'plain', editable: true, version: 3, editDurationMillis: 0 }
   })
   await act(async () => { renderer = create(<ArkmeLongArticleDialog sourceRef="source" item={{ itemUid: 'record' } as never} onClose={() => {}} />) })
   const restore = renderer!.root.find(node => node.type === 'button' && node.children.includes('恢复草稿'))
   await act(async () => { restore.props.onClick() })
-  await act(async () => { await expect(renderer!.root.findByType(ArkmeLongArticleActions).props.beforeAction()).rejects.toThrow() })
-  expect(mocks.call.mock.calls.some(([operation]) => operation === 'source.long-article.update')).toBe(false)
-  expect(JSON.stringify(renderer!.toJSON())).toContain('长文已在其他位置更新')
+  await act(async () => { await expect(renderer!.root.findByType(ArkmeLongArticleActions).props.beforeAction()).resolves.toMatchObject({ title: '旧草稿', textContent: '旧正文', version: 3 }) })
+  const writes = mocks.call.mock.calls.filter(([operation]) => operation === 'source.long-article.update')
+  expect(writes).toHaveLength(1)
+  expect(writes[0]![1]).toMatchObject({ itemUid: 'record', title: '旧草稿', textContent: '旧正文', editAtMillis: expect.any(Number), revisionUid: expect.any(String) })
+  expect(writes[0]![1]).not.toHaveProperty('version')
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('长文已在其他位置更新')
 })

@@ -1,3 +1,4 @@
+import { arkmeDayKey } from './display-time-zone.js'
 import { recordOwnerId } from '../record-owner-id.js'
 import type { ArkmeUnifiedTimelineWindow } from '../unified-chat-timeline.js'
 import { cachedConversationUnreadCoverage } from './conversation-unread.js'
@@ -70,7 +71,7 @@ export function arkmeConversationViewport(root: HTMLDivElement, mode: 'auto' | '
 /** Read actual message/interaction rows only when opening a calendar; never count system notices. */
 export function arkmeConversationReadingDate(root: HTMLDivElement | null, rows: readonly {
   id: string; kind: string; occurredAtMillis: number
-}[]): string | undefined {
+}[], timeZone?: string): string | undefined {
   if (root === null || root.clientHeight <= 0) return undefined
   const messages = rows.filter(row => row.kind === 'message' || row.kind === 'moment')
   // Use the actual bottom, not the wider auto-follow threshold: nearby history must retain its date.
@@ -84,10 +85,7 @@ export function arkmeConversationReadingDate(root: HTMLDivElement | null, rows: 
   const anchorId = atBottom ? messages.at(-1)?.id : visible?.dataset.arkmeConversationRow
   const timestamp = messages.find(row => row.id === anchorId)?.occurredAtMillis
   if (timestamp === undefined || !Number.isFinite(timestamp) || timestamp <= 0) return undefined
-  const date = new Date(timestamp)
-  if (!Number.isFinite(date.getTime())) return undefined
-  return [String(date.getFullYear()).padStart(4, '0'), String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0')].join('-')
+  return arkmeDayKey(timestamp, timeZone) || undefined
 }
 
 export function arkmeConversationTargetScrollTop(root: HTMLDivElement, row: HTMLElement, align: 'start' | 'center'): number {

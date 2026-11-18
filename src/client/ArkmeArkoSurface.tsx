@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { parseArkoTimelineCache } from '../arko-timeline-cache.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
 import { subscribeThoughtInvalidation } from './thought-invalidations.js'
@@ -1609,13 +1610,13 @@ export function ArkmeArkoSurface() {
           <div style={styles.detailName}>{detailMessage.role === 'user' ? tr("我") : displayName}</div>
           {detailMessage.createdAtMillis !== undefined && detailMessage.createdAtMillis > 0
             && Number.isFinite(detailMessage.createdAtMillis) && detailMessage.createdAtMillis < 8.64e15 && <div style={{ ...styles.detailMeta, marginTop: 4 }}>
-              {new Date(detailMessage.createdAtMillis).toLocaleString(arkmeIntlLocale())}
+              {formatArkmeDateTime(detailMessage.createdAtMillis, arkmeIntlLocale())}
             </div>}
         </div>
       </div>}
     >
       {detailMessage.sourceType !== undefined && <p style={styles.detailMeta}>{tr('来源')}：{detailMessage.sourceType === 1 ? tr('历史助手') : 'Agent'}</p>}
-      {detailMessage.orderAtMillis !== undefined && detailMessage.orderAtMillis !== detailMessage.createdAtMillis && <p style={styles.detailMeta}>{tr('日历定位时间')}：{new Date(detailMessage.orderAtMillis).toLocaleString(arkmeIntlLocale())}</p>}
+      {detailMessage.orderAtMillis !== undefined && detailMessage.orderAtMillis !== detailMessage.createdAtMillis && <p style={styles.detailMeta}>{tr('日历定位时间')}：{formatArkmeDateTime(detailMessage.orderAtMillis, arkmeIntlLocale())}</p>}
       <ArkoMessageImages {...(detailMessage.contentBlocks === undefined ? {} : { blocks: detailMessage.contentBlocks })} />
       <ArkmeSelectableMessageText text={detailMessage.text} target={arkoMessageMarkTarget(detailMessage, markSourceRef)}>
       {detailMessage.role === 'assistant' ? <ArkmeMarkdownBody text={detailMessage.text || (detailMessage.status === 'sending' ? '等待回复' : '暂无消息内容')} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.7 }} />

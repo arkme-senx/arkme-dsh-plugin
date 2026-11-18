@@ -1,3 +1,4 @@
+import { formatArkmeTime } from '../display-time-zone.js'
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import { TextAlignLeft } from '@phosphor-icons/react/dist/icons/TextAlignLeft'
@@ -13,7 +14,7 @@ import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 import { RecordingDayComparisonProgress } from './RecordingDayComparisonProgress.js'
 import comparisonCss from './recording-day-comparison.css?inline'
 
-const clock = (time: number) => new Date(time).toLocaleTimeString('zh-CN', { hourCycle: 'h23', hour: '2-digit', minute: '2-digit' })
+const clock = (time: number) => formatArkmeTime(time, 'zh-CN', { hourCycle: 'h23', hour: '2-digit', minute: '2-digit' })
 
 /** A calendar comparison is a read view over all source-owned results, never a
  * replacement day result, merged speaker identity, or automatic reprocessing. */

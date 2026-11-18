@@ -2,6 +2,7 @@ import { readCompleteRecordingTranscript } from '../../src/recording-transcript-
 import { recordingSearchIdentityHash, recordingSearchVersion } from '../../src/recording-search-version.js'
 import { recordingOwnerResponse, type OwnerTestRecording, recordingId, childId, recordingRevision, speakerReference } from '../fixtures/recording-owner.js'
 import { recordingImportBatchID } from '../../src/recording-workflow-contract.js'
+import { recordingZonedWindow } from '../../src/recording-time.js'
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -43,6 +44,65 @@ const config: ArkmeServiceConfig = {
 }
 
 describe('RecordingService', () => {
+  it('batches calendar reads at daylight saving boundaries and combines the long day once', async () => {
+    const zone = 'America/Los_Angeles'
+    const first = recordingZonedWindow('2026-11-01', zone)
+    const last = recordingZonedWindow('2026-11-04', zone)
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const calls: unknown[] = []
+    const runtime = new ServiceRuntime(config, sessions, {} as StateStore, async (input, init) => {
+      expect(new URL(String(input)).pathname).toBe('/api/v1/audio/get-calender-summary')
+      const body = JSON.parse(String(init?.body))
+      calls.push(body)
+      const data = calls.length === 1
+        ? { duration_ls: [100, 25], un_click_session_ids_per_day: [['crossing'], ['crossing', 'late']] }
+        : { duration_ls: [50, 75], un_click_session_ids_per_day: [[], ['last']] }
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      const result = await service.recordingCalendar(first.dateStamp, last.dateStamp, undefined, zone)
+      expect(calls).toEqual([
+        { from_stamp: first.dateStamp, to_stamp: first.endStamp },
+        { from_stamp: first.endStamp, to_stamp: last.dateStamp },
+      ])
+      expect(result.days.map(day => [day.dateStamp, day.durationMillis, day.unreviewedCount])).toEqual([
+        [first.dateStamp, 125, 2], [first.endStamp, 50, 0], [first.endStamp + 86_400_000, 75, 1],
+      ])
+      await expect(service.recordingCalendar(first.dateStamp + 1, last.dateStamp, undefined, zone)).rejects.toMatchObject({ code: 'recording-range-invalid' })
+      expect(calls).toHaveLength(2)
+    } finally { service.dispose() }
+  })
+
+  it('locates and reads a Beijing clip before the host midnight using the same day window', async () => {
+    const window = recordingZonedWindow('2026-11-17', 'Asia/Shanghai')
+    const stamp = new Date(2026, 10, 17).getTime()
+    const startAt = window.dateStamp + 12_000, endAt = startAt + 1000
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    const calls: Record<string, unknown>[] = []
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'zoned-transcript' } as StateStore, async (input, init) => {
+      const body = JSON.parse(String(init?.body))
+      calls.push(body)
+      const data = recordingOwnerResponse(new URL(String(input)).pathname, body, [{
+        startAt, duration: 8_000, items: [{ text: '跨时区验收', start: 0, end: 1000, ordinal: 7 }],
+      }])
+      if (!data) throw new Error('Unexpected read')
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    const hash = recordingSearchIdentityHash({ sessionId: recordingId, childId, itemIndex: 7, transcriptSource: 'system' })
+    try {
+      const located = await service.locateTranscript(stamp, startAt, hash, '', undefined, window)
+      expect(located?.items[0]).toMatchObject({ startAtMillis: startAt, text: '跨时区验收' })
+      const context = await service.transcriptContext(stamp, startAt - 1, endAt + 1, undefined, window)
+      expect(context.items[0]?.itemId).toBe(located?.focusItemId)
+      const before = calls.length
+      await expect(service.transcriptContext(stamp, window.dateStamp - 1, endAt, undefined, window)).rejects.toMatchObject({ code: 'recording-context-input-invalid' })
+      await expect(service.locateTranscript(stamp, startAt, hash, '', undefined, { ...window, endStamp: window.endStamp + 1 })).rejects.toMatchObject({ code: 'recording-window-invalid' })
+      expect(calls).toHaveLength(before)
+    } finally { service.dispose() }
+  })
+
   it('locates an exact original in a bounded day window and rejects stale versions', async () => {
     const day = new Date(2026, 10, 16).getTime()
     const startAt = day + 2 * 3_600_000
@@ -76,6 +136,37 @@ describe('RecordingService', () => {
       const before = calls.length
       await expect(service.locateTranscript(day, day - 1, hash, version)).rejects.toMatchObject({ code: 'recording-location-input-invalid' })
       expect(calls).toHaveLength(before)
+    } finally { service.dispose() }
+  })
+
+  it('locates corrected text while keeping the original search identity', async () => {
+    const day = new Date(2026, 10, 16).getTime()
+    const startAt = day + 3_600_000
+    const text = '周三开会', corrected = '周五培训', privateViewVersion = 'b'.repeat(64)
+    const identity = { sessionId: recordingId, childId, itemIndex: 7, transcriptSource: 'system' }
+    const hash = recordingSearchIdentityHash(identity)
+    const version = recordingSearchVersion({ ...identity, asrItemIndex: 7, startAtMillis: startAt, endAtMillis: startAt + 1000, text })
+    const sessions = { read: async () => ({ userId: 42, accessToken: 'access', refreshToken: 'refresh' }), write: async () => {}, delete: async () => {} }
+    let stale = false
+    const runtime = new ServiceRuntime(config, sessions, { uniqueCode: async () => 'corrected-transcript' } as StateStore, async (input, init) => {
+      const path = new URL(String(input)).pathname, body = JSON.parse(String(init?.body ?? '{}'))
+      const target = { kind: 'recording', source_uid: recordingId, segment_uid: `${childId}:primary:7` }
+      if (path.endsWith('/transcript-views/read')) {
+        expect(body.targets).toEqual([target])
+        const data = { items: [{ ...target, original_version: stale ? 'c'.repeat(64) : privateViewVersion, complete: true, revision: 1, text: corrected }] }
+        return new Response(JSON.stringify({ code: 200, data }))
+      }
+      const data = recordingOwnerResponse(path, body, [{ startAt, duration: 10_000, items: [{ text, start: 0, end: 1000, ordinal: 7, privateViewVersion }] }])
+      if (!data) throw new Error(`Unexpected read ${path}`)
+      return new Response(JSON.stringify({ code: 200, data }))
+    })
+    const service = new RecordingService(runtime, dependencies())
+    try {
+      const located = await service.locateTranscript(day, startAt, hash, version)
+      expect(located?.items[0]).toMatchObject({ text: corrected, searchIdentityHash: hash, itemId: located?.focusItemId })
+      expect(JSON.stringify(located)).not.toContain(recordingId)
+      stale = true
+      await expect(service.locateTranscript(day, startAt, hash, version)).rejects.toMatchObject({ code: 'recording-view-changed' })
     } finally { service.dispose() }
   })
 

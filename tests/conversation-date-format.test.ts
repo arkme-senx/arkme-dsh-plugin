@@ -19,7 +19,7 @@ it('matches native local dates across locale, midnight, timezone changes and bot
     }
   }
 })
-it('constructs only three formatters for 3000 labels and replaces them when the locale changes', () => {
+it('constructs only three formatters for 3000 labels and reuses cached locales', () => {
   language.value = 'de-DE'
   const Original = Intl.DateTimeFormat
   const constructor = vi.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
@@ -28,6 +28,9 @@ it('constructs only three formatters for 3000 labels and replaces them when the 
   for (let i = 0; i < 1000; i++) for (const kind of ['time', 'weekday', 'day'] as const) formatConversationDate(new Date(1790000000000 + i * 60000), kind)
   expect(constructor).toHaveBeenCalledTimes(3)
   language.value = 'en-US'
+  formatConversationDate(new Date(), 'time')
+  expect(constructor).toHaveBeenCalledTimes(3)
+  language.value = 'fr-FR'
   formatConversationDate(new Date(), 'time')
   expect(constructor).toHaveBeenCalledTimes(4)
 })

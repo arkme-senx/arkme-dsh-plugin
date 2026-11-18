@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from '../display-time-zone.js'
 import { useEffect, useRef, useState } from 'react'
 import { createArkmeSdk } from '../../sdk/index.js'
 import type { ArkmeSourceItem, ArkmeTimelineItem } from '../../types.js'
@@ -54,7 +55,7 @@ export function OfflineContextMessagePicker({ selected, onSelect }: { selected: 
         const ref = event.target.value
         if (messages.some(item => item.offlineContextMessageRef === ref)) onSelect(ref)
       }}><option value="">{tr('选择消息')}</option>{messages.filter(item => item.offlineContextMessageRef).map(item => <option key={item.offlineContextMessageRef} value={item.offlineContextMessageRef}>
-        {new Date(item.sendAtMillis).toLocaleString()} · {(item.textContent || item.title || tr('附件消息')).slice(0, 240)}
+        {formatArkmeDateTime(item.sendAtMillis)} · {(item.textContent || item.title || tr('附件消息')).slice(0, 240)}
       </option>)}</select>
       {messageCursor && <button type="button" onClick={() => void loadMessages(source, messageCursor)}>{tr('更早消息')}</button>}
       {!busy && !messages.length && <p>{tr('当前页没有可选择的消息。')}</p>}

@@ -266,8 +266,9 @@ describe('record re-edit attachment UI', () => {
         items: [{ ...item, templateKind: 2, recordVersion: 4, textContent: '添加图片后', contentBlocks: attachments.map(view => view.block) }] }
       if (operation === 'source.record-reedit.acknowledge') return {}
       if (operation === 'source.record-reedit.submit') {
+        const baseVersion = submitted ? 4 : 3
+        expect(params).not.toHaveProperty('expectedVersion')
         submitted = true
-        const baseVersion = Number(params?.expectedVersion)
         return { submissionId: `image-edit-${baseVersion}`, state: 'committed', baseVersion, itemUid: item.itemUid,
           title: '', textContent: params?.newText, attachments,
           result: { status: 'committed', itemUid: item.itemUid, version: baseVersion + 1, revisionUid: `revision-${baseVersion}`, projectionState: 'pending' } }
@@ -284,7 +285,7 @@ describe('record re-edit attachment UI', () => {
     act(() => composer().props.onTextChange('添加图片后'))
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
     expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', expect.objectContaining({
-      attachments: [{ fileAssetUid: 'a' }, { fileRef: image.fileRef }], expectedVersion: 3,
+      attachments: [{ fileAssetUid: 'a' }, { fileRef: image.fileRef }],
     }))
     await act(async () => { arkmeChatTimelineDelta.publish([{ source, items: [delta!] }]); await flush() })
     const bubble = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
@@ -298,7 +299,7 @@ describe('record re-edit attachment UI', () => {
     expect(strip().props.attachments.map((view: typeof attachments[number]) => view.selection)).toEqual(attachments.map(view => view.selection))
     act(() => composer().props.onTextChange('再次编辑'))
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', expect.objectContaining({ newText: '再次编辑', expectedVersion: 4 }))
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', expect.objectContaining({ newText: '再次编辑' }))
   })
 
   it('shows submitted text and attachments in place while remote saving is still pending', async () => {
@@ -320,11 +321,68 @@ describe('record re-edit attachment UI', () => {
     expect(renderer!.root.findAllByProps({ 'aria-label': '保存重新编辑' })).toHaveLength(0)
     const row = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
     expect(JSON.stringify(renderer!.toJSON())).toContain('待保存新正文')
-    expect(row.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(1)
+    expect(row.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(0)
     expect(composer().props.value).toBe('普通发送草稿')
     expect(arkmeComposerDraftStore.get(normalKey).text).toBe('普通发送草稿')
     expect(JSON.stringify(renderer!.toJSON())).toContain('b.pdf')
     expect(renderer!.root.findAllByProps({ 'data-arkme-highlight-backdrop': 'true' })).toHaveLength(0)
+  })
+
+  it.each([false, true].flatMap(sync => [{ unified: false, editorVersion: 3, sync }, { unified: true, editorVersion: 3, sync }, { unified: true, editorVersion: 4, sync }]))('immediately previews an edit before draft persistence or acceptance (unified=$unified, editor=$editorVersion, sync=$sync)', async ({ unified, editorVersion, sync }) => {
+    snapshot.version = editorVersion
+    const saving = deferred<{ draftRevision: number }>()
+    const accepting = deferred<unknown>()
+    const visible = { ...item, version: 4, recordVersion: 4, timelineItemKey: 'visible-record', ...(sync ? { timelineEventId: 'visible-event' } : {}), textContent: '局部缓存正文' }
+    const base = mocks.callArkme.getMockImplementation()!
+    const pending = { submissionId: 'host-edit', state: 'pending', itemUid: item.itemUid, baseVersion: editorVersion,
+      title: '', textContent: '点击保存立即更新', attachments: [] }
+    mocks.callArkme.mockImplementation(async (operation, params) => {
+      if (operation === 'source.timeline') return { source, items: [visible], hasMore: false, ...(unified ? { unified: {
+        protocolVersion: 2, events: [{ kind: 'message', eventId: 'visible-event', source: 'messages', occurredAtMillis: 1,
+          orderTie: 'visible-event', contentStatus: 'available', item: { ...visible, textContent: '权威完整正文', timelineEventId: 'visible-event', sequence: 1 } }],
+        sources: [{ source: 'messages', status: 'ready', itemCount: 1 }], complete: true, windowTokens: ['window'],
+        hasMore: false, olderHasMore: false, newerHasMore: false,
+      } } : {}) }
+      if (operation === 'source.record-reedit.draft.put') return saving.promise
+      if (operation === 'source.record-reedit.submit') return accepting.promise
+      if (operation === 'source.record-reedit.submissions') return []
+      return base(operation, params)
+    })
+    await mount()
+    const synchronize = async (revision: number, value: ArkmeTimelineItem | undefined) => {
+      await act(async () => {
+        arkmeChatTimelineDelta.applySyncProjections([{ sourceKey: source.sourceKey!, changes: [
+          { itemKey: visible.timelineItemKey, revision, version: value?.recordVersion ?? 5, ...(value ? { item: value } : {}) },
+        ] }])
+        await flush()
+      })
+    }
+    if (sync) await synchronize(4, visible)
+    await open()
+    const beforeRow = renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
+    if (unified && !sync) expect(beforeRow.findAll(() => true).flatMap(node => node.children.filter(child => typeof child === 'string')).join('')).toContain('权威完整正文')
+    act(() => composer().props.onTextChange(pending.textContent))
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
+    const row = () => renderer!.root.findByProps({ 'data-arkme-message-item-uid': item.itemUid })
+    const rowText = () => row().findAll(() => true).flatMap(node => node.children.filter(child => typeof child === 'string')).join('')
+    expect(row()).toBe(beforeRow)
+    expect(rowText()).toContain(pending.textContent)
+    if (sync) {
+      await synchronize(5, { ...visible })
+      expect(rowText()).toContain(pending.textContent)
+    }
+    expect(mocks.callArkme.mock.calls.some(([op]) => op === 'source.record-reedit.submit')).toBe(false)
+    await act(async () => { saving.resolve({ draftRevision: 1 }); await flush() })
+    expect(rowText()).toContain(pending.textContent)
+    await act(async () => { accepting.resolve(pending); await flush() })
+    expect(rowText()).toContain(pending.textContent)
+    if (sync) {
+      await synchronize(6, { ...visible, version: 5, recordVersion: 5, textContent: '其他设备更新的正文' })
+      expect(rowText()).toContain('其他设备更新的正文')
+      expect(rowText()).not.toContain(pending.textContent)
+      await synchronize(7, undefined)
+      expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': item.itemUid })).toHaveLength(0)
+    }
   })
 
   it.each(['pending', 'committed'] as const)(
@@ -805,14 +863,16 @@ describe('record re-edit attachment UI', () => {
       && value.contentBlocks[0]?.mediaRef === blocks[0]!.mediaRef)).toBe(true)
   })
 
-  it.each(['committing', 'uncertain'] as const)('shows background delivery feedback: %s', async state => {
+  it.each(['pending', 'committing', 'failed', 'uncertain'] as const)('only shows edit feedback when recovery is needed: %s', async state => {
     const base = mocks.callArkme.getMockImplementation()!
     mocks.callArkme.mockImplementation(async (operation, params) => operation === 'source.record-reedit.submissions'
       ? [{ submissionId: 'feedback', baseVersion: 3, itemUid: item.itemUid, state,
         title: '', textContent: '提交候选', attachments: [] }]
       : base(operation, params))
     await mount()
-    expect(renderer!.root.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'aria-label': '重新编辑保存状态' })).toHaveLength(state === 'failed' || state === 'uncertain' ? 1 : 0)
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('保存中…')
+    if (state === 'failed') expect(renderer!.root.findAllByType('button').some(button => button.children.includes('恢复编辑'))).toBe(true)
     if (state === 'uncertain') expect(renderer!.root.findAllByType('button').some(button => button.children.includes('核对结果'))).toBe(true)
   })
 
@@ -1028,18 +1088,18 @@ describe('record re-edit attachment UI', () => {
     act(() => strip().props.onMove(1, 0))
     act(() => strip().props.onRemove(strip().props.attachments[1]))
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '关闭重新编辑' }).props.onClick(); await flush() })
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.draft.put', expect.objectContaining({ attachments: [{ fileAssetUid: 'b' }], expectedVersion: 3, expectedDraftRevision: 0 }))
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.draft.put', expect.objectContaining({ attachments: [{ fileAssetUid: 'b' }], expectedDraftRevision: 0 }))
     expect(arkmeComposerDraftStore.get(normalKey).attachments).toEqual([{ localFile: local }])
     expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'files.local.remove')).toHaveLength(0)
   })
 
-  it('restores Tool attachment candidates and submits against their base version and draft revision', async () => {
+  it('restores Tool attachment candidates and submits with local draft CAS without a record version', async () => {
     snapshot.draft = { title: '', textContent: '', attachments: [{ localFile: local, selection: { fileRef: local.fileRef } }], baseVersion: 2, draftRevision: 7, updatedAtMillis: 2 }
     await mount(); await open()
     expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(false)
     expect(strip().props.attachments[0].localFile).toEqual(local)
     await act(async () => { renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.onClick(); await flush() })
-    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', expect.objectContaining({ newText: '', attachments: [{ fileRef: local.fileRef }], expectedVersion: 2, expectedDraftRevision: 7 }))
+    expect(mocks.callArkme).toHaveBeenCalledWith('source.record-reedit.submit', expect.objectContaining({ newText: '', attachments: [{ fileRef: local.fileRef }], expectedDraftRevision: 7 }))
   })
 
   it('keeps ordinary draft staging outside Host reference-managed retention', async () => {
@@ -1271,7 +1331,7 @@ describe('record re-edit attachment UI', () => {
     expect(composer().props.value).toBe('重新打开后的新输入')
     if (initial === 'pending') expect(renderer!.root.findAllByType(ArkmeAttachmentStrip)).toHaveLength(0)
     else expect(strip().props.attachments).toHaveLength(2)
-    expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(initial === 'pending')
+    expect(renderer!.root.findByProps({ 'aria-label': '保存重新编辑' }).props.disabled).toBe(false)
     expect(arkmeComposerDraftStore.get(normalKey)).toMatchObject({ text: '保留普通发送正文', attachments: [{ localFile: local }] })
   })
 

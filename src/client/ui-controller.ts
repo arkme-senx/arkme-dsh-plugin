@@ -68,6 +68,7 @@ export interface ArkmeUiState {
   /** Forces a real conversation-surface commit for every native notification click, including the current source. */
   notificationActivationRevision?: number
   conversationUnreadJumpRevision?: number
+  conversationUnreadSelection?: { sourceKey: string }
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string; contextRef?: string; systemRef?: string; transientHighlight?: boolean; openDetail?: boolean; firstUnread?: boolean }
   recordingTarget?: ArkmeRecordingTarget
   recordingReturnDateStamp?: number
@@ -579,13 +580,27 @@ export class ArkmeUiController {
     this.publish(rest)
   }
 
-  selectSource(source: ArkmeSourceItem,focusComposer=false): void {
+  selectSource(source: ArkmeSourceItem, focusComposer = false, options?: { seekUnread: boolean }): void {
+    const sourceKey = arkmeSourceIdentityKey(source)
+    if (options?.seekUnread && (this.state.conversationUnreadSelection?.sourceKey === sourceKey
+      || this.state.conversationTarget?.firstUnread && this.state.selectedSource
+        && arkmeSourceIdentityKey(this.state.selectedSource) === sourceKey)) return
     this.leaveContacts()
     this.rememberSelfSource(source)
     this.lastConversationDestination = { kind: 'source', source }
-    const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget, productMode: _productMode, ...rest } = this.state
+    const { selectedBot: _selectedBot, calendarOpen: _calendarOpen, conversationTarget: _conversationTarget,
+      conversationUnreadSelection: _unreadSelection, productMode: _productMode, ...rest } = this.state
     const teamDirectory=this.directoryForSource(source)
-    this.publish({ ...rest, mode: 'source', selectedSource: source,...(teamDirectory?{teamDirectory}:{}),...(focusComposer?{composerFocusRevision:(this.state.composerFocusRevision??0)+1}:{}) })
+    this.publish({ ...rest, mode: 'source', selectedSource: source,
+      ...(options?.seekUnread ? { conversationUnreadSelection: { sourceKey } } : {}),
+      ...(teamDirectory ? { teamDirectory } : {}),
+      ...(focusComposer ? { composerFocusRevision: (this.state.composerFocusRevision ?? 0) + 1 } : {}) })
+  }
+
+  consumeConversationUnreadSelection(selection: ArkmeUiState['conversationUnreadSelection']): void {
+    if (selection === undefined || this.state.conversationUnreadSelection !== selection) return
+    const { conversationUnreadSelection: _selection, ...rest } = this.state
+    this.publish(rest)
   }
 
   private directoryForSource(source:ArkmeSourceItem):ArkmeUiState['teamDirectory'] {
@@ -682,6 +697,12 @@ export class ArkmeUiController {
   }
 
   private publish(next: ArkmeUiState): void {
+    if (next.conversationUnreadSelection && (next.authRevision !== this.state.authRevision || next.mode !== 'source'
+      || next.productMode === 'contacts' || next.conversationTarget || !next.selectedSource
+      || arkmeSourceIdentityKey(next.selectedSource) !== next.conversationUnreadSelection.sourceKey)) {
+      const { conversationUnreadSelection: _selection, ...rest } = next
+      next = rest
+    }
     if (next.mode !== 'team') {
       const {teamIntent:_intent,teamDirectory,...rest}=next
       next={...rest,...(next.mode==='source'&&next.selectedSource?.accessKind==='team_delegation'&&next.selectedSource.teamWorkspace&&teamDirectory?{teamDirectory}:{})}
@@ -703,6 +724,7 @@ export class ArkmeUiController {
       && next.calendarOpen === this.state.calendarOpen
       && next.notificationActivationRevision === this.state.notificationActivationRevision
       && next.conversationUnreadJumpRevision === this.state.conversationUnreadJumpRevision
+      && next.conversationUnreadSelection === this.state.conversationUnreadSelection
       && next.conversationTarget?.revision === this.state.conversationTarget?.revision
       && next.conversationTarget?.itemUid === this.state.conversationTarget?.itemUid
       && next.conversationTarget?.sendAtMillis === this.state.conversationTarget?.sendAtMillis

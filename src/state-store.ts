@@ -36,6 +36,7 @@ export interface ArkmeCancellationCompletion {
 }
 
 interface PersistedState {
+  recordingDeletionPermissions?: Record<string, import('./recording-deletion-contract.js').RecordingDeletionPermission>
  transcriptViewAttempts?: unknown
   recordingVoiceDrafts?: unknown
  teamOutboundByAccount?: Record<string, Record<string, import('./team-outbound-contract.js').TeamOutboundRecovery>>
@@ -172,6 +173,8 @@ function normalizedLongArticleDraft(value: unknown): ArkmeLongArticleDraft | und
   const itemUid = typeof source.itemUid === 'string' && source.itemUid.trim() !== '' ? source.itemUid.trim() : undefined
   return {
     sourceRef: source.sourceRef,
+    ...(typeof source.editAtMillis === 'number' && Number.isSafeInteger(source.editAtMillis) && source.editAtMillis > 0 ? { editAtMillis: source.editAtMillis } : {}),
+    ...(typeof source.revisionUid === 'string' && /^[a-zA-Z0-9._:-]{1,128}$/.test(source.revisionUid) ? { revisionUid: source.revisionUid } : {}),
     ...(typeof source.sendAtMillis==='number'&&Number.isSafeInteger(source.sendAtMillis)&&source.sendAtMillis>0?{sendAtMillis:source.sendAtMillis}:{}),
     ...(typeof source.draftScope==='string'&&source.draftScope.length<=256?{draftScope:source.draftScope}:{}),
     ...(source.autoPublish === true ? { autoPublish: true } : {}),
@@ -409,6 +412,7 @@ function parseState(raw: string): PersistedState {
     dayReviewPending: source.dayReviewPending ?? {},
     teamMemberAdditions: source.teamMemberAdditions,
     recordingVoiceDrafts: source.recordingVoiceDrafts,
+    ...(source.recordingDeletionPermissions === undefined ? {} : { recordingDeletionPermissions: source.recordingDeletionPermissions as NonNullable<PersistedState['recordingDeletionPermissions']> }),
   }
 }
 
@@ -477,7 +481,8 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
   if (job.expectedCommittedFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(job.expectedCommittedFingerprint)) return false
   switch (job.state) {
     case 'committed': return job.result?.status === 'committed' && job.result.itemUid === draft.itemUid
-      && job.result.version === draft.baseVersion + 1 && typeof job.result.revisionUid === 'string'
+      && Number.isSafeInteger(job.result.version) && job.result.version > 0 && typeof job.result.revisionUid === 'string'
+      && (job.result.appliedToCurrent === undefined || typeof job.result.appliedToCurrent === 'boolean')
     case 'committing':
     case 'uncertain': return typeof job.expectedCommittedFingerprint === 'string' && job.result === undefined
     case 'pending':
@@ -487,6 +492,32 @@ function validRecordReeditSubmission(raw: unknown, userId: number, key: string):
 }
 
 export class ArkmeStateStore {
+  async recordingDeletionPermission(scope: string, change?: { enabled?: boolean; timeZone: string }, signal?: AbortSignal) {
+    if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw new Error('录音删除设置账号无效')
+    const read = (state: PersistedState) => {
+      const value = state.recordingDeletionPermissions?.[scope]
+      return typeof value?.generation === 'string' && typeof value.timeZone === 'string' ? value : undefined
+    }
+    if (!change) return await this.read(read)
+    if (change.enabled === undefined) {
+      const previous = await this.read(read)
+      if (!previous || previous.timeZone === change.timeZone) return previous
+    }
+    let result: ReturnType<typeof read>
+    await this.update(state => {
+      const previous = read(state)
+      if (change.enabled === false) {
+        delete state.recordingDeletionPermissions?.[scope]
+        return
+      }
+      if (!previous && change.enabled !== true) return
+      result = previous?.timeZone === change.timeZone ? previous : { generation: randomUUID(), timeZone: change.timeZone }
+      const grants = state.recordingDeletionPermissions ??= {}
+      grants[scope] = result
+    }, signal)
+    return result
+  }
+
   async recordingVoiceDraft(scope: string, change?: import('./recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('./recording-voice-trigger-contract.js').RecordingVoiceDraft> {
     const { defaultRecordingVoiceRule, recordingVoiceRules } = await import('./recording-voice-trigger-contract.js')
     if (!/^[a-z_-]+:[1-9][0-9]*$/u.test(scope)) throw new Error('语音触发账号无效')

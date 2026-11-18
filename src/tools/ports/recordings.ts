@@ -9,6 +9,8 @@ export interface ArkmeRecordingToolPort extends RecordingEntityPort {
  recordingVoiceTriggers(action: 'settings' | 'save' | 'page' | 'detail' | 'decide', input: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>
   recordingDeliveryPage(input: import('../../recording-delivery.js').RecordingDeliveryQuery, signal?: AbortSignal): Promise<import('../../recording-delivery.js').RecordingDeliveryPage>
   recordingFileStorage(input: { sessionRefs: string[] }, signal?: AbortSignal): Promise<import('../../recording-file-storage.js').RecordingFileStoragePage>
+  recordingDeletionPlan(input: import('../../recording-deletion-contract.js').RecordingDeletionRequest, signal?: AbortSignal): ReturnType<import('../../recording-deletion-confirmation.js').RecordingDeletionConfirmations['prepare']>
+  recordingDeletionStatus(planRef: string, signal?: AbortSignal): ReturnType<import('../../recording-deletion-confirmation.js').RecordingDeletionConfirmations['status']>
   recordingSpeakerEvidenceQuery(query: import('../../recording-evidence-contract.js').RecordingEvidenceQuery, signal?: AbortSignal): Promise<import('../../recording-evidence-contract.js').RecordingEvidenceResult>
   previewRecordingSpeakerCorrection(input: ArkmeRecordingSpeakerCorrectionInput, signal?: AbortSignal): Promise<import('../../types.js').ArkmeRecordingSpeakerCorrectionPreview>
   recordingSpeakerCorrectionItems(query: { dateStamp: number; atMillis: number; transcriptSource: 'system' | 'doubao' }, signal?: AbortSignal): Promise<{ items: import('../../types.js').ArkmeRecordingWorkbenchItem[] }>

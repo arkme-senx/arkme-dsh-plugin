@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import fixture from './fixtures/recording-delivery.json'
 import { parseRecordingDelivery, recordingReceiptLabel } from '../src/recording-delivery.js'
-import { recordingFileMatchesDay, recordingFileDisplayEnd, recordingFileExpectedBytes, recordingFileStatusLabel } from '../src/client/recordings/recording-day-files.js'
+import { recordingFileMatchesDay, recordingFileDisplayEnd, recordingFileExpectedBytes, recordingFileStatusLabel, recordingTaskStatusLabel } from '../src/client/recordings/recording-day-files.js'
 import { recordingAudioDurationLabel } from '../src/client/recordings/recording-audio-duration.js'
 import type { PublicRecordingImportOwnerTask } from '../src/recording-import-shared.js'
 
@@ -33,7 +33,22 @@ describe('Audio receipt contract', () => {
     expect(recordingAudioDurationLabel(file.durationMillis, file.delivery)).toBe('—')
     expect(recordingFileDisplayEnd(file)).toBeNull()
     expect(recordingFileExpectedBytes(file)).toBeNull()
-    expect(recordingFileStatusLabel(file)).toContain('待确认')
+    expect(recordingFileStatusLabel(file)).toBe('上传中')
+  })
+  it('keeps receipt counts out of user-facing status while retaining actionable states', () => {
+    const file = { delivery: parseRecordingDelivery(fixture.awaiting_end), status: 'accepted',
+      statusDetail: '已接收 0 个文件 / 共 1 个' } as PublicRecordingImportOwnerTask
+    expect(recordingTaskStatusLabel(file)).toBe('上传中')
+    expect(recordingReceiptLabel(file.delivery!)).toContain('已接收')
+    for (const status of ['paused', 'partial', 'failed', 'waiting', 'unavailable'] as const) {
+      expect(recordingTaskStatusLabel({ ...file, status, statusDetail: '需要处理' })).toBe('需要处理')
+    }
+    expect(recordingTaskStatusLabel({ ...file, status: 'incomplete',
+      delivery: parseRecordingDelivery(fixture.incomplete) })).toBe('部分录音未收齐')
+    expect(recordingTaskStatusLabel({ ...file, status: 'transcribing', statusDetail: '转写中',
+      delivery: parseRecordingDelivery(fixture.complete) })).toBe('转写中')
+    expect(recordingFileExpectedBytes({ ...file, fileSize: 999 })).toBeNull()
+    expect(recordingFileExpectedBytes({ ...file, delivery: parseRecordingDelivery(fixture.empty) })).toBe(0)
   })
 })
 

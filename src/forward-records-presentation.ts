@@ -166,6 +166,7 @@ export function projectForwardRecordsPreview(
         ...(contentBlocks.length === 0 ? {} : { contentBlocks }),
         ...(files.length > contentBlocks.length ? { mediaUnavailable: true } : {}),
         ...(segments.length === 0 ? {} : { segments }),
+        ...(recordingSegments.length === 0 ? {} : { segmentCount: recordingSegments.length }),
         ...(segmentValues.length < rawSegments.length || (!longArticle && files.length > 32) ? { truncated: true } : {}),
         ...(contentLabel === undefined ? {} : { contentLabel }),
       })

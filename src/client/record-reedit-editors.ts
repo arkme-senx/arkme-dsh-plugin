@@ -31,15 +31,12 @@ export interface ArkmeRecordReeditComposerState extends RecordReeditScope {
 export function hydrateRecordReeditEditor(current: ArkmeRecordReeditComposerState, snapshot: ArkmeRecordReeditEditorSnapshot, preserveInput = false): ArkmeRecordReeditComposerState {
   if (current.snapshot === snapshot && !preserveInput) return current
   const edited = preserveInput || current.persisted.preserveInput || current.textContent !== current.item.textContent || current.title !== current.item.title
-  const changedRemotely = edited && (current.persisted.expectedVersion !== undefined && snapshot.version !== current.persisted.expectedVersion
-    || (snapshot.textContent !== current.item.textContent || snapshot.title !== current.item.title) && snapshot.draft === undefined)
   return { ...current, snapshot, loading: false,
     title: edited ? current.title : snapshot.draft?.title ?? snapshot.title,
     textContent: edited ? current.textContent : snapshot.draft?.textContent ?? snapshot.textContent,
     mentions: current.persisted.preserveInput ? current.mentions ?? [] : edited ? reconcileArkmeComposerMentions(snapshot.textContent, current.textContent, snapshot.mentions ?? [], snapshot.textFormat)
       : snapshot.draft?.mentions ?? snapshot.mentions ?? [],
     attachments: current.persisted.preserveInput ? current.attachments : snapshot.draft?.attachments ?? snapshot.attachments ?? [],
-    ...(changedRemotely ? { conflict: 'record', error: '快记已在其他位置更新，当前输入已保留，请检查后重新确认' } : {}),
   }
 }
 

@@ -1,3 +1,4 @@
+import { formatArkmeDate } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { ArkmeRichText } from './ArkmeRichText.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
@@ -147,7 +148,7 @@ export function ArkmeArticlePicker({ sourceRef, userId, composition, onClose, on
               <span aria-hidden="true" style={{ color: selected === item.recordUid ? theme.accent : theme.secondary }}>{selected === item.recordUid ? '◉' : '○'}</span>
               <span style={{ minWidth: 0, flex: 1 }}><span style={styles.title}><ArkmeRichText text={item.title || '无标题文档'} presentation="preview" /></span>
                 <span style={styles.summary}><ArkmeRichText text={arkmeMarkdownPlainText(item.snippet || item.textContent)} presentation="preview" /></span>
-                <span style={styles.meta}>{item.sendAtMillis > 0 ? new Date(item.sendAtMillis).toLocaleDateString(arkmeIntlLocale()) : ''}</span></span>
+                <span style={styles.meta}>{item.sendAtMillis > 0 ? formatArkmeDate(item.sendAtMillis, arkmeIntlLocale()) : ''}</span></span>
             </button>
             <button type="button" style={styles.button} aria-label={tr("预览{v0}", { v0: item.title || tr("文档") })} disabled={opening} onClick={() => { void resolveArticle(item.recordUid, false) }}>{tr("预览")}</button>
           </div>)}

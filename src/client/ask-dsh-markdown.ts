@@ -1,3 +1,5 @@
+import { recordingBatchOffset } from '../recording-time.js'
+import { arkmeWallClockIso, getArkmeEffectiveTimeZone } from './display-time-zone.js'
 import type { ArkmeContentBlock, ArkmeForwardRecordsPreview, ArkmeMessageSnapshotDetail, ArkmeTimelineItem } from '../types.js'
 import { walkForwardRecordItems } from '../forward-record-tree.js'
 
@@ -10,8 +12,10 @@ export function noteTime(value: number | undefined): string {
   if (!value || !Number.isFinite(value)) return ''
   const date = new Date(value)
   if (!Number.isFinite(date.getTime())) return ''
-  const offset = -date.getTimezoneOffset(), pad = (n: number) => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`
+  const timeZone = getArkmeEffectiveTimeZone()
+  const offset = Math.trunc(recordingBatchOffset(value, timeZone) / 60_000)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${arkmeWallClockIso(value, timeZone).slice(0, 19).replace('T', ' ')} ${offset < 0 ? '-' : '+'}${pad(Math.floor(Math.abs(offset) / 60))}:${pad(Math.abs(offset) % 60)}`
 }
 export function noteDuration(seconds: number | undefined): string {
   if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return ''

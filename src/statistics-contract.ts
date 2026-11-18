@@ -1,3 +1,4 @@
+import { recordingBatchOffset, recordingZonedWindow } from './recording-time.js'
 /** Record-owner analytics. Durations describe record creation, never recorded audio. */
 export interface StatisticsQuery {
   accountScope: string
@@ -37,14 +38,18 @@ export interface StatisticsRecordPage { items: StatisticsRecord[]; nextOffset: n
 export function statisticsDateKey(date: Date): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
 }
-export function statisticsQuery(accountScope: string, month: string, now = new Date()): StatisticsQuery {
-  const q: StatisticsQuery = { accountScope, fromStamp: 0, toStamp: now.getTime(), timezoneOffsetMinutes: -now.getTimezoneOffset() }
+export function statisticsQuery(accountScope: string, month: string, now = new Date(), timeZone?: string): StatisticsQuery {
+  const q: StatisticsQuery = { accountScope, fromStamp: 0, toStamp: now.getTime(), timezoneOffsetMinutes: timeZone ? Math.trunc(recordingBatchOffset(now.getTime(), timeZone) / 60_000) : -now.getTimezoneOffset() }
   if (!month) return q
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw new Error('统计月份无效')
   const [year, m] = month.split('-').map(Number)
   const start = new Date(year!, m! - 1, 1), end = new Date(year!, m!, 1)
-  return { ...q, fromStamp: start.getTime(), toStamp: Math.min(end.getTime() - 1, now.getTime()),
-    timezoneOffsetMinutes: -start.getTimezoneOffset(), previousFromStamp: new Date(year!, m! - 2, 1).getTime(), previousToStamp: start.getTime() - 1 }
+  const previous = new Date(year!, m! - 2, 1)
+  const boundary = (date: Date) => timeZone ? recordingZonedWindow(statisticsDateKey(date), timeZone).dateStamp : date.getTime()
+  const fromStamp = boundary(start)
+  return { ...q, fromStamp, toStamp: Math.min(boundary(end) - 1, now.getTime()),
+    timezoneOffsetMinutes: timeZone ? Math.trunc(recordingBatchOffset(fromStamp, timeZone) / 60_000) : -start.getTimezoneOffset(),
+    previousFromStamp: boundary(previous), previousToStamp: fromStamp - 1 }
 }
 export function statisticsDuration(seconds: number | null): string {
   if (seconds === null) return '—'

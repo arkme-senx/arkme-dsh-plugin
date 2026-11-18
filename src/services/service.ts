@@ -36,6 +36,7 @@ import type { ArkmeExtensionReviewOperation } from '../extensions/types.js'
 import type { RecordingImportAdmission, RecordingImportJob } from '../recording-import-contract.js'
 
 export interface StateStore extends RecentEmojiStore {
+  recordingDeletionPermission?(scope: string, change?: { enabled?: boolean; timeZone: string }, signal?: AbortSignal): Promise<import('../recording-deletion-contract.js').RecordingDeletionPermission | undefined>
  transcriptViewAttempt?(scope:string,key:string,value?:import("../transcript-view-contract.js").TranscriptViewAttempt|null,acknowledgedAttempt?:import("../transcript-view-contract.js").TranscriptViewAttempt):Promise<import("../transcript-view-contract.js").TranscriptViewAttempt|undefined>
   recordingVoiceDraft?(scope: string, change?: import('../recording-voice-trigger-contract.js').RecordingVoiceDraft): Promise<import('../recording-voice-trigger-contract.js').RecordingVoiceDraft>
  teamOutboundTarget(scope:string,requestUid:string):Promise<import('../team-outbound-contract.js').TeamOutboundRecovery|undefined>

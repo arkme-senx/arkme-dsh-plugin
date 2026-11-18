@@ -1,3 +1,5 @@
+import type { ArkmeRecordReeditPrepareInput, ArkmeRecordReeditEditorSnapshot, ArkmeRecordReeditSubmissionView } from '../record-reedit-contract.js'
+export type { ArkmeRecordReeditPrepareInput, ArkmeRecordReeditEditorSnapshot, ArkmeRecordReeditSubmissionView } from '../record-reedit-contract.js'
 import { recordingDeliveryQuery, type RecordingDeliveryQuery, type RecordingDeliveryPage } from '../recording-delivery.js'
 export type { RecordingDelivery, RecordingDeliveryQuery, RecordingDeliveryPage } from '../recording-delivery.js'
 import { readPriorityHeader, supportsBackgroundRead } from '../read-scheduling.js'
@@ -3397,6 +3399,25 @@ export class ArkmeSdk {
     }, options.signal)
   }
 
+  private async requireRecordReedit(signal?: AbortSignal): Promise<void> {
+    if ((await this.capabilities(signal)).features.recordReeditTimeOrderedV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持按完成时间编辑，请升级', retryable: false })
+  }
+  async recordReeditDetail(sourceRef: string, itemUid: string, signal?: AbortSignal): Promise<ArkmeRecordReeditEditorSnapshot> {
+    signal = this.scopedAccountSignal(signal); await this.requireRecordReedit(signal)
+    return await this.call('source.record-reedit.detail', { sourceRef, itemUid }, signal)
+  }
+  async submitRecordReedit(input: Omit<ArkmeRecordReeditPrepareInput, 'expectedVersion'>, signal?: AbortSignal): Promise<ArkmeRecordReeditSubmissionView> {
+    signal = this.scopedAccountSignal(signal); await this.requireRecordReedit(signal)
+    return await this.call('source.record-reedit.submit', input, signal)
+  }
+  async recordReeditSubmissions(sourceRef: string, signal?: AbortSignal): Promise<ArkmeRecordReeditSubmissionView[]> {
+    signal = this.scopedAccountSignal(signal); await this.requireRecordReedit(signal)
+    return await this.call('source.record-reedit.submissions', { sourceRef }, signal)
+  }
+  async resumeRecordReeditSubmissions(sourceRef: string, reconcile = false, signal?: AbortSignal): Promise<void> {
+    signal = this.scopedAccountSignal(signal); await this.requireRecordReedit(signal)
+    await this.call('source.record-reedit.resume', { sourceRef, reconcile }, signal)
+  }
   async recordEditHistory(sourceRef: string, messageActionRef: string, cursorVersion = 0, signal?: AbortSignal): Promise<import('../record-edit-history.js').ArkmeRecordEditHistoryPage> {
     const scoped = AbortSignal.any([this.requestLifetime.signal, ...(signal ? [signal] : [])])
     scoped.throwIfAborted()

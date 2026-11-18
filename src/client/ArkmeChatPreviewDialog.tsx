@@ -1,3 +1,4 @@
+import { formatArkmeDateTime } from './display-time-zone.js'
 import { ArkmeCloseButton } from './ArkmeCloseButton.js'
 import { OfflineContextConnected } from './offline-context/OfflineContextConnected.js'
 import { WindowedTimelineRows } from './WindowedTimelineRows.js'
@@ -77,7 +78,7 @@ export function ArkmeChatPreviewDialog({ source, onClose }: { source: ArkmeChatP
           const item = event.item
           return <Fragment key={event.eventId}>
           {source.kind === 'group_chat' && (index === 0 || Math.abs(item.sendAtMillis - rows[index - 1]!.occurredAtMillis) > 30 * 60 * 1000) && <div data-arkme-preview-time-marker style={status}>
-            {new Date(item.sendAtMillis).toLocaleString(arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+            {formatArkmeDateTime(item.sendAtMillis, arkmeIntlLocale(), { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
           </div>}
           <article data-arkme-conversation-row={`message:${item.itemUid}`}
           style={{ display: 'flex', flexDirection: item.isMe ? 'row-reverse' : 'row', alignItems: 'flex-start', gap: 8, marginTop: 14 }}>

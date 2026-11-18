@@ -1,3 +1,4 @@
+import { formatArkmeDateTime, formatArkmeDate } from '../../display-time-zone.js'
 import {fitCodexReadingWindow} from './codex-reading-window.js'
 import {codexAccessRevoked} from '../../../team-codex-access.js'
 import { arkmeAuthStore } from '../../auth-store.js'
@@ -32,7 +33,7 @@ export interface CodexReadingState {
 }
 export const newCodexReadingState = (): CodexReadingState => ({ items: [], loaded: false, scrollTop: 0, atBottom: true })
 export const codexReadingKey = (teamRef: string, task: TeamCodexTask): string => JSON.stringify([teamRef, task.cloud?.sourceId ?? 'local', task.cloud?.taskId ?? task.id])
-const stamp = (at: number) => new Date(at).toLocaleString(arkmeIntlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+const stamp = (at: number) => formatArkmeDateTime(at, arkmeIntlLocale(), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 const dayKey = (at: number) => { const date = new Date(at); return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}` }
 
 export function mergeCodexEvents(current: TeamCodexEvent[], incoming: TeamCodexEvent[]): TeamCodexEvent[] {
@@ -284,7 +285,7 @@ function CodexConversationReader({ teamRef, task, reading, inputName, children, 
         {error && <p role="alert">{error} <button type="button" onClick={() => { void load() }}>{tr('重试')}</button></p>}
         {!visibleItems.length && !currentPrompt && !error && <p className="arkme-codex-transcript-empty" role="status">{tr(busy ? '加载中…' : '收到这项任务的新输入或回答后，会显示在这里。')}</p>}
         {visibleItems.map((event, index) => <div key={event.eventId ?? event.sequence} data-codex-row={String(event.eventId??event.sequence)}>
-          {(index === 0 || dayKey(visibleItems[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{new Date(event.at).toLocaleDateString(arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
+          {(index === 0 || dayKey(visibleItems[index - 1]!.at) !== dayKey(event.at)) && <div className="arkme-codex-date">{formatArkmeDate(event.at, arkmeIntlLocale(), { year: 'numeric', month: 'long', day: 'numeric' })}</div>}
           {((event.kind==='Stop'&&event.timing?.state==='finished')||(event.kind==='Interrupt'&&event.timing?.state==='interrupted')) && <CodexTurnDuration timing={event.timing!} task={task}/>}
           <article onContextMenu={e=>interactions.contextMenu(event.sourceEvent,e)} onClick={e=>{if(interactions.selecting&&codexSelectable(event)&&!(e.target as Element).closest('button,a,input')&&!document.getSelection()?.toString()){interactions.toggle(event.sourceEvent)}}} style={interactions.selecting&&codexSelectable(event)?{display:'grid',gridTemplateColumns:'32px minmax(0,1fr)',gap:10,background:interactions.selected(event)?arkmeTheme.active:undefined}:undefined} className={`arkme-codex-message ${event.kind === 'UserPromptSubmit' ? 'is-user' : event.kind === 'Interrupt' ? 'is-interrupt' : 'is-assistant'}`} data-event-kind={event.kind} aria-label={event.kind === 'UserPromptSubmit' ? inputName : tr(event.kind === 'Stop' ? 'Codex 回答' : event.kind==='Progress'?'Codex 过程回复':'任务已中断')}>
             {interactions.check(event.sourceEvent)}<div style={{minWidth:0}}>

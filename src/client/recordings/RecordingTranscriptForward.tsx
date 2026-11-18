@@ -1,3 +1,4 @@
+import { formatArkmeDate } from '../display-time-zone.js'
 import { ArkmeCloseButton } from '../ArkmeCloseButton.js'
 import { requireDirectMessageSendAllowed } from '../direct-message-admission.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from '../locale.js'
@@ -193,7 +194,7 @@ export function RecordingTranscriptForward({ attempt, onClose, onComplete, maxCo
           <span style={{ position: 'relative', width: 20, height: 20 }}><input type="checkbox" aria-label={tr("选择发送对象 {v0}", { v0: target.displayName })} disabled={disabled} checked={checked} onChange={event => { toggleTarget(target, event.target.checked) }} style={{ appearance: 'none', margin: 0, width: 20, height: 20, borderRadius: '50%', border: `1px solid ${checked ? colors.text : colors.caption}`, background: checked ? colors.text : 'transparent', cursor: 'inherit', opacity: disabled && !sent ? .4 : 1 }} />{checked && <Check aria-hidden size={14} weight="bold" style={{ position: 'absolute', left: 3, top: 3, color: colors.base, pointerEvents: 'none' }} />}</span>
           <TargetAvatar target={target} size={36} />
           <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 14, fontWeight: 500 }}>{target.displayName}</span>{target.latestPreview && <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12, color: colors.secondary }}>{target.latestPreview}</span>}</span>
-          {sent ? <small>{tr("已转发")}</small> : target.activeAtMillis > 0 && <time style={{ fontSize: 12, color: colors.caption }}>{new Date(target.activeAtMillis).toLocaleDateString(arkmeIntlLocale(), { month: 'numeric', day: 'numeric' })}</time>}
+          {sent ? <small>{tr("已转发")}</small> : target.activeAtMillis > 0 && <time style={{ fontSize: 12, color: colors.caption }}>{formatArkmeDate(target.activeAtMillis, arkmeIntlLocale(), { month: 'numeric', day: 'numeric' })}</time>}
         </label>
         {target.kind === 'send_to_self' && directory === 'root' && <RecordingTranscriptButton aria-label={tr("选择自己和主题")} disabled={!recordSupported} onClick={() => { setDirectory('send_to_self') }} style={{ width: 28, border: 0, padding: 0, background: 'transparent' }}><CaretRight size={16} /></RecordingTranscriptButton>}
       </div>

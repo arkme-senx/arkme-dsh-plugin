@@ -1,3 +1,4 @@
+import { arkmeDayDelta, arkmeWallClockIso, formatArkmeDateTime } from './display-time-zone.js'
 import { tr, useArkmeLocale, arkmeIntlLocale } from './locale.js'
 import { ArkmeRightPanelHeader } from './ArkmeRightPanelHeader.js'
 import { compareTimelineMessages } from './timeline-message-order.js'
@@ -88,25 +89,20 @@ export function ArkmeInterwovenPrelude({ moments, onOpen }: {
 
 export function interwovenTimeLabel(value: number, now = Date.now()): string {
   const date = new Date(value)
-  const current = new Date(now)
-  const time = new Intl.DateTimeFormat(arkmeIntlLocale(), {
+  const time = formatArkmeDateTime(date, arkmeIntlLocale(), {
     hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date)
-  const dayStart = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime()
-  const targetStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
-  if (targetStart === dayStart) return time
-  if (targetStart === dayStart - 24 * 60 * 60 * 1000) return tr("昨天 {v0}", { v0: time })
-  const day = new Intl.DateTimeFormat(arkmeIntlLocale(), { month: '2-digit', day: '2-digit' }).format(date)
+  })
+  const distance = arkmeDayDelta(value, now)
+  if (distance === 0) return time
+  if (distance === -1) return tr("昨天 {v0}", { v0: time })
+  const day = formatArkmeDateTime(date, arkmeIntlLocale(), { month: '2-digit', day: '2-digit' })
   return `${day} ${time}`
 }
 
 export function interwovenDetailTimeLabel(value: number): string {
-  const date = new Date(value)
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  const hour = String(date.getHours()).padStart(2, '0')
-  const minute = String(date.getMinutes()).padStart(2, '0')
-  return `${month}月${day}日 ${hour}:${minute}`
+  if (!Number.isFinite(new Date(value).getTime())) return ''
+  const wall = arkmeWallClockIso(value)
+  return `${wall.slice(5, 7)}月${wall.slice(8, 10)}日 ${wall.slice(11, 16)}`
 }
 
 export interface InterwovenContentPart {
