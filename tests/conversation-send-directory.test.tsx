@@ -874,7 +874,7 @@ describe('conversation send directory projection', () => {
     expect(calendar().props.getReadingDate()).toBe('2026-09-18')
   })
 
-  async function mountBottomControl(history = false) {
+  async function mountBottomControl(history = false, directory = false) {
     const latest: ArkmeTimelineItem = { itemUid: 'bottom-latest', senderName: '同事', isMe: false,
       sendAtMillis: 50, textContent: '最新窗口', status: 1, sequence: 50 }
     timeline = [latest]
@@ -895,11 +895,11 @@ describe('conversation send directory projection', () => {
       })),
     }
     await act(async () => {
-      renderer = create(<ArkmeSurface productChrome={false} productNavigation={false} />, {
+      renderer = create(<ArkmeSurface productChrome={directory} productNavigation={false} />, {
         createNodeMock: element => element.props.className === 'arkme-conversation-body' ? body : null,
       })
     })
-    if (history) await act(async () => { arkmeUi.showConversationTarget(target, 'bottom-history', 11, 7) })
+    if (history) await act(async () => { arkmeUi.showConversationTarget(activeSource, 'bottom-history', 11, 7) })
     await act(async () => {
       body.scrollTop = 200
       renderer!.root.findByProps({ className: 'arkme-conversation-body' }).props.onScroll()
@@ -1457,6 +1457,54 @@ describe('conversation send directory projection', () => {
     expect(renderer!.root.findAllByProps({ 'data-arkme-unread-badge': true })).toHaveLength(0)
     expect(renderer!.root.findAllByProps({ 'data-arkme-unread-divider': 'true' })).toHaveLength(0)
     expect(body.scrollTop).toBe(300)
+  })
+
+  it.each(['seek', 'missing-boundary'] as const)('opens new group messages from the selected directory row (%s)', async mode => {
+    activeSource = { ...group, latestSequence: 11 }
+    arkmeChatDirectory.publish([activeSource])
+    arkmeUi.selectSource(activeSource)
+    const body = await mountBottomControl(true, true)
+    expect(body.scrollTop).toBe(200)
+    const unread = { ...group, latestSequence: 50, unreadCount: 1, ...(mode === 'seek' ? { readSequence: 49 } : {}) }
+    const latest = { ...timeline[0]!, recordOwnerUserId: 7 }
+    const seek = deferred<unknown>()
+    const base = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, params, signal) => {
+      if (operation === 'source.timeline' && params.cursor?.firstUnread) {
+        return seek.promise
+      }
+      if (operation === 'source.timeline-around' && params.itemUid === latest.itemUid) {
+        return Promise.resolve({ ...unifiedFixture(unread, [latest]), anchorItemUid: latest.itemUid,
+          anchorIndex: 0, anchorSequence: 50, olderHasMore: false, newerHasMore: false })
+      }
+      return base(operation, params, signal)
+    })
+    await act(async () => { arkmeChatDirectory.upsert(unread) })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': latest.itemUid })).toHaveLength(0)
+    const row = renderer!.root.findByProps({ role: 'treeitem', 'aria-label': `${group.displayName}，1 条未读` })
+    await act(async () => { row.props.onClick() })
+    if (mode === 'seek') {
+      await act(async () => { row.props.onClick() })
+      expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.mark-read')).toHaveLength(0)
+      await act(async () => { seek.resolve({ source: unread, items: [latest], hasMore: false }) })
+    }
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': latest.itemUid })).toHaveLength(1)
+    expect(body.scrollTop).toBe(mode === 'seek' ? 300 : 900)
+    expect(mocks.callArkme.mock.calls.filter(([operation, params]) => operation === 'source.timeline'
+      && params.cursor?.firstUnread)).toHaveLength(mode === 'seek' ? 1 : 0)
+    expect(mocks.callArkme.mock.calls.some(([operation]) => operation === 'source.mark-read')).toBe(false)
+  })
+
+  it('loads the known unread tail from the down button when the cached latest page is behind', async () => {
+    const body = await mountBottomControl()
+    const active = { ...target, latestSequence: 51, unreadCount: 1 }
+    await act(async () => { arkmeChatDirectory.upsert(active) })
+    timeline = [{ ...timeline[0]!, itemUid: 'unloaded-latest-message', sequence: 51, sendAtMillis: 51 }]
+    mocks.callArkme.mockClear()
+    await act(async () => { renderer!.root.findByProps({ 'aria-label': '向下浏览未读消息 · 1' }).props.onClick() })
+    expect(renderer!.root.findAllByProps({ 'data-arkme-message-item-uid': 'unloaded-latest-message' })).toHaveLength(1)
+    expect(body.scrollTop).toBe(900)
+    expect(mocks.callArkme.mock.calls.filter(([operation]) => operation === 'source.timeline')).toHaveLength(1)
   })
 
   it.each([false, true, 'durable-bottom'] as const)('starts at new unread without requesting latest first, including a previous bottom (saved=%s)', async savedBottom => {
