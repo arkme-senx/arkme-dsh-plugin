@@ -2845,6 +2845,9 @@ recordingAnalysisV1: true,
       ...(window.newerCursor ? { newerCursor: { unified: { mode: 'newer' as const, cursor: window.newerCursor } } } : {}),
     }, session.userId)
   }
+  async forwardRecordingPlayback(sourceRef: string, actionRef: string, forwardId: string, path: number[], signal?: AbortSignal) {
+    return this.chat.forwardRecordingPlayback(sourceRef, actionRef, forwardId, path, signal)
+  }
   async sharedRecordingDetail(detailRef: string, options: { sourceRef?: string; signal?: AbortSignal } = {}): Promise<ArkmeSharedRecordingPreview> {
     return await this.chat.sharedRecordingDetail(detailRef, options)
   }

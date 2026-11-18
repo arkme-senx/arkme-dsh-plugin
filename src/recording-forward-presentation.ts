@@ -49,11 +49,13 @@ export function projectRecordRecordingForward(raw: unknown): ArkmeForwardRecords
   if (!Array.isArray(item.long_recording_segments) || item.long_recording_segments.length === 0) return undefined
   const senderName = stringValue(item.owner_name).trim() || 'Arkme用户'
   return {
+    forwardId: stringValue(payload.forward_id),
     title: stringValue(payload.title).trim() || '录音片段',
     createdAtMillis: milliseconds(payload.created_at),
     summaryLines: Array.isArray(payload.summary_lines) ? payload.summary_lines.filter((value): value is string => typeof value === 'string' && value.trim() !== '') : [],
     items: [{
       sourceType: 'long_recording_segments',
+      ...(forwardRecordingAudioAvailable(item.recording_audio, item.long_recording_segments) ? { recordingAudioAvailable: true as const } : {}),
       senderName,
       sendAtMillis: milliseconds(item.send_at),
       title: stringValue(item.title),
@@ -63,4 +65,16 @@ export function projectRecordRecordingForward(raw: unknown): ArkmeForwardRecords
       ...(item.long_recording_segments.length > RECORDING_FORWARD_MAX_SEGMENTS ? { truncated: true } : {}),
     }],
   }
+}
+
+/** Only expose availability, not the server's immutable audio identity or storage grants. */
+export function forwardRecordingAudioAvailable(raw: unknown, rawSegments: unknown): boolean {
+ const audio = objectValue(raw)
+ if (!Array.isArray(rawSegments) || !rawSegments.length || rawSegments.length > RECORDING_FORWARD_MAX_SEGMENTS) return false
+ const total = rawSegments.reduce((sum: number, raw: unknown) => {
+   const segment = objectValue(raw)
+   const start = segment.start_millis ?? segment.startMillis, end = segment.end_millis ?? segment.endMillis
+   return Number.isSafeInteger(start) && Number.isSafeInteger(end) && Number(end) > Number(start) && Number(start) >= 0 ? sum + Number(end) - Number(start) : NaN
+ }, 0)
+ return total > 0 && total <= 600_000 && audio.duration_millis === total && Number.isSafeInteger(audio.size) && Number(audio.size) > 0 && Number(audio.size) <= 20 * 1024 * 1024
 }

@@ -1359,8 +1359,8 @@ function ForwardSenderAvatar({ name, avatarRef, avatarKey, senderUserId, onPriva
     ]} />
 }
 
-export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChatOpened, readStatus, pending = false }: {
-  item: ArkmeTimelineItem; onClose: () => void; sourceBadge?: ReactNode; readStatus?: ReactNode; pending?: boolean
+export function ForwardRecordsDetail({ item, onClose, sourceRef, sourceBadge, onPrivateChatOpened, readStatus, pending = false }: {
+  item: ArkmeTimelineItem; onClose: () => void; sourceRef?: string | undefined; sourceBadge?: ReactNode; readStatus?: ReactNode; pending?: boolean
   /** Opens a resolved snapshot sender's private chat, shared by every entry path. */
   onPrivateChatOpened?: ((source: ArkmeSourceItem) => void) | undefined
 }) {
@@ -1392,7 +1392,15 @@ export function ForwardRecordsDetail({ item, onClose, sourceBadge, onPrivateChat
       {!path.length && sourceBadge}
       {readStatus}
       <div data-arkme-forward-recording-detail>
-        <RecordingShareSegments segments={segments} />
+        <RecordingShareSegments key={`${item.itemUid}:${pathKey}`} segments={segments} unavailableText={tr("此转发未包含音频，请从原转写重新转发")}
+          loadAudio={recording.recordingAudioAvailable && sourceRef && item.messageActionRef && item.forwardRecords?.forwardId ? async signal => {
+            const result = await callArkme<{ mediaRef: string; durationMillis: number }>('source.forward-recording-playback', {
+              sourceRef, actionRef: item.messageActionRef, forwardId: item.forwardRecords!.forwardId, path,
+            }, signal)
+            const expected = segments.reduce((sum, segment) => sum + segment.endMillis - segment.startMillis, 0)
+            if (result.durationMillis !== expected || !result.mediaRef) throw new Error(tr('录音片段时长不匹配，请重新打开'))
+            return `/arkme-self/api/media?ref=${encodeURIComponent(result.mediaRef)}`
+          } : undefined} />
       </div>
       {!path.length && <RecordThoughtContent item={item} />}
       {(forward.truncated || recording.truncated) && <p style={styles.notice}>{tr("内容较多，当前展示部分转发记录")}</p>}

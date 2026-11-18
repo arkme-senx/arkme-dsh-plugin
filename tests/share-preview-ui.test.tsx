@@ -52,6 +52,39 @@ it('plays only the selected range of the assembled audio and stops at its end', 
   expect(audio.currentTime).toBe(5)
 })
 
+it('loads forward audio on click, cancels stale selection and permits retry', async () => {
+  let paused = true
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => { paused = false })
+  vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => { paused = true })
+  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
+  const waiting: { signal: AbortSignal; resolve: (url: string) => void; reject: (error: Error) => void }[] = []
+  const load = vi.fn((signal: AbortSignal) => new Promise<string>((resolve, reject) => { waiting.push({ signal, resolve, reject }) }))
+  await act(async () => root.render(<RecordingShareSegments loadAudio={load} segments={[
+    { speakerName: '甲', textContent: 'first', startMillis: 1000, endMillis: 3000 },
+    { speakerName: '乙', textContent: 'second', startMillis: 10000, endMillis: 13000 },
+  ]} />))
+  const audio = node.querySelector('audio')!
+  Object.defineProperties(audio, { duration: { value: 5 }, readyState: { value: 1 }, paused: { get: () => paused } })
+  expect(load).not.toHaveBeenCalled()
+  await act(async () => node.querySelectorAll('button')[0]!.click())
+  expect(node.querySelector('button')?.getAttribute('aria-busy')).toBe('true')
+  await act(async () => node.querySelectorAll('button')[1]!.click())
+  expect(waiting[0]!.signal.aborted).toBe(true)
+  await act(async () => waiting[0]!.resolve('/stale'))
+  expect(play).not.toHaveBeenCalled()
+  await act(async () => waiting[1]!.reject(new Error('storage unavailable')))
+  expect(node.querySelector('[role="alert"]')?.textContent).toBe('storage unavailable')
+  await act(async () => node.querySelectorAll('button')[1]!.click())
+  await act(async () => waiting[2]!.resolve('/authorized'))
+  expect(play).toHaveBeenCalledOnce()
+  expect(audio.getAttribute('src')).toBe('/authorized')
+  expect(audio.currentTime).toBe(2)
+  await act(async () => node.querySelectorAll('button')[0]!.click())
+  await act(async () => root.unmount())
+  expect(waiting[3]!.signal.aborted).toBe(true)
+  root = createRoot(node)
+})
+
 describe('inline share link labels', () => {
   it.each([
     ['发给自己', true, true, '小林', '我'],
