@@ -54,6 +54,8 @@ describe('recording import button feedback', () => {
     mocks.callArkme.mockReset().mockImplementation(async operation => {
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.workflow') return { supported: false }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.import.list') return { items, owner: { state: 'available' } }
       if (operation === 'recordings.import.preflight') return { duplicateFileNames: [] }
       if (operation === 'recordings.import.retry') { items = [job('uploading')]; return {} }
@@ -268,7 +270,14 @@ describe('recording import button feedback', () => {
     expect(renderer.root.findAllByProps({ 'aria-label': '删除 first.m4a' })).toHaveLength(1)
     expect(renderer.root.findAllByProps({ role: 'alert' })).toHaveLength(0)
 
-    mocks.callArkme.mockRejectedValueOnce(new Error('任务列表暂不可用'))
+    const callArkme = mocks.callArkme.getMockImplementation()!
+    mocks.callArkme.mockImplementation((operation, ...args) => {
+      if (operation === 'recordings.import.list') {
+        mocks.callArkme.mockImplementation(callArkme)
+        return Promise.reject(new Error('任务列表暂不可用'))
+      }
+      return callArkme(operation, ...args)
+    })
     await act(async () => { rejectSecond(new Error('第二个文件上传失败')); await tick() })
     expect(label()).toBe('2 个文件处理中')
     expect(mocks.uploadArkmeRecording).toHaveBeenCalledTimes(2)
@@ -343,6 +352,8 @@ describe('recording import button feedback', () => {
       if (operation === 'recordings.import.cancel') { items = []; return {} }
       if (operation === 'recordings.strategies') return { userId: 42, strategy: 'system-sd-asr/v1' }
       if (operation === 'recordings.workflow') return { supported: false }
+      if (operation === 'recordings.import.tasks.register') return { supported: false, registered: false }
+      if (operation === 'recordings.import.tasks.cancel' || operation === 'recordings.import.tasks.fail') return
       if (operation === 'recordings.import.list') return { items, owner: { state: 'available' } }
       throw new Error(String(operation))
     })
