@@ -2979,6 +2979,13 @@ export class RecordingService {
         textStartOffset: 0, textEndOffset: textLength, textTotalLength: textLength,
       }
     })
+    // Body availability is independent of the live media metrics. Leave
+    // storage/input unavailable until the separate day metrics read reports it.
+    const dailyMetrics = canonical?.dailyMetrics
+      ? { ...canonical.dailyMetrics, textCount: items.reduce((count, item) => count + recordingTextCount(item.text), 0) }
+      : !versionId && items.length
+        ? projectRecordingDailyMetrics({ bytes: 0, confirmed_count: 0, pending_count: 0, unknown_count: 1 }, items)
+        : undefined
     const viewRef = createHmac('sha256', pageKey).update(JSON.stringify([pageBinding, result.snapshot_id])).digest('base64url')
     return { generationItems, page: {
       dateStamp: date, transcriptSource: source, viewRef, retainedSnapshot: true,
@@ -2995,9 +3002,7 @@ export class RecordingService {
       message: items.length ? '' : canonical?.state === 'ready' ? '当天暂无转写' : canonical?.message ?? '该版本暂无转写',
       items, processingCount: canonical?.processingCount ?? 0, totalDurationMillis: canonical?.totalDurationMillis ?? 0,
       ...(canonical?.captureCoverage === undefined ? {} : { captureCoverage: canonical.captureCoverage }),
-      ...(canonical?.dailyMetrics === undefined ? {} : { dailyMetrics: {
-        ...canonical.dailyMetrics, textCount: items.reduce((count, item) => count + recordingTextCount(item.text), 0),
-      } }),
+      ...(dailyMetrics ? { dailyMetrics } : {}),
     } }
   }
 
