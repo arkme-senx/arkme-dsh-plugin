@@ -7,6 +7,7 @@ import { recordingCorrectionContextToolModule, recordingCorrectionWriteToolModul
 import { offlineContextTools } from './offline-context.js'
 import { recordingEntityToolModule, recordingEntityStartToolModule } from './entities.js'
 import { recordingAnalysisTools } from './analysis.js'
+import { recordingFavoriteTools } from './favorites.js'
 import { recordingWorkflowTools } from './workflow.js'
 import { speakerPresenceToolModule } from './speaker-presence.js'
 import { recordingImportToolModule } from './import.js'
@@ -15,4 +16,4 @@ import { recordingFileStorageTool } from './file-storage.js'
 import { recordingDeletionTool } from './deletion.js'
 
 // Local file acquisition stays in the plugin. Transcript/calendar reads belong to OpenAPI; speaker statistics share the directory Host owner.
-export const recordingToolModules = [...transcriptViewTools, recordingVoiceReadTool, recordingVoiceWriteTool, ...recordingAnalysisTools, recordingDeliveryTool, recordingFileStorageTool, recordingDeletionTool, ...recordingStrategyTools, ...offlineContextTools, recordingEvidenceReadToolModule, recordingEvidenceBuildToolModule, recordingCorrectionContextToolModule, recordingCorrectionWriteToolModule, recordingEntityToolModule, recordingEntityStartToolModule, ...recordingWorkflowTools, recordingImportToolModule, recordingImportFolderToolModule, speakerPresenceToolModule] as const
+export const recordingToolModules = [...transcriptViewTools, recordingVoiceReadTool, recordingVoiceWriteTool, ...recordingAnalysisTools, recordingDeliveryTool, recordingFileStorageTool, recordingDeletionTool, ...recordingStrategyTools, ...offlineContextTools, recordingEvidenceReadToolModule, recordingEvidenceBuildToolModule, recordingCorrectionContextToolModule, recordingCorrectionWriteToolModule, recordingEntityToolModule, recordingEntityStartToolModule, ...recordingWorkflowTools, ...recordingFavoriteTools, recordingImportToolModule, recordingImportFolderToolModule, speakerPresenceToolModule] as const

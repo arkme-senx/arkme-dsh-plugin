@@ -641,3 +641,23 @@ it.each([undefined,{}, {state:'ready'}, {state:'ready',attachment_uid:''}])('doe
   expect(blocks).toHaveLength(1)
   expect(blocks[0]).not.toHaveProperty('attachmentUid')
 })
+
+it('proxies favorite clips with fresh authorization, Range and no-store, rejecting private path forgery and account reuse', async () => {
+  let userId = 42
+  const sessions: ArkmeSessionStore = { async read() { return { userId, accessToken: 'fixture', refreshToken: 'fixture' } }, async write() {}, async delete() {} }
+  const fetchImpl = vi.fn(async () => new Response('ogg', { status: 206, headers: { 'content-type': 'audio/ogg', 'content-range': 'bytes 0-2/100', 'content-length': '3' } }))
+  const runtime = new ServiceRuntime(config, sessions, {} as StateStore, fetchImpl)
+  const media = new MediaService(runtime, new ProfileService(runtime), {} as never, {} as never)
+  const path = `/api/v1/chats/recording-favorites/${'a'.repeat(64)}/audio/1`
+  expect(() => media.issueChatRecordingMediaRef(42, '/api/internal/v1/secrets')).toThrow()
+  const ref = media.issueChatRecordingMediaRef(42, path)
+  expect(ref).not.toContain(path)
+  const result = await media.fetchMedia(ref, 'bytes=0-2')
+  expect(result.response.headers.get('cache-control')).toBe('private, no-store')
+  expect(JSON.stringify(result.descriptor)).not.toContain(path)
+  expect(await result.response.text()).toBe('ogg')
+  expect(String(fetchImpl.mock.calls[0]?.[0])).toBe(`https://chat.test${path}`)
+  userId = 43
+  await expect(media.fetchMedia(ref, 'bytes=0-2')).rejects.toThrow()
+  expect(fetchImpl).toHaveBeenCalledOnce()
+})

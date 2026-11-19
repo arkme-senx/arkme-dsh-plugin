@@ -14,6 +14,7 @@ import { registerGroupGovernanceConfirmation, type GroupGovernancePresentation }
 import { arkmeToolCatalog } from './catalog.js'
 
 const CORE_CONFIRMATION_TOOLS = new Set([
+  'arkme_recording_favorites_change',
   'arkme_transcript_view_change',
   'arkme_thought_reply',
  'arkme_codex_work_record_change','arkme_codex_image_read',
@@ -157,6 +158,7 @@ function coreConfirmationQuestion(name: string, args: Record<string, unknown>): 
   if (name === 'arkme_team_notification_policy_set') return `是否确认${args.muted === true ? '开启' : '关闭'}刚才选定团队对话的个人消息免打扰？消息和未读记录仍会保留。`;
   if (name === 'arkme_team_members_add') return '确认将选定的同事直接加入团队？他们将获得团队共享内容的访问权限。';
   if (name === 'arkme_team_profile_update') return `是否确认保存刚才选定的团队资料${typeof args.name === 'string' ? `，名称为“${cleanArgument(args.name, 64)}”` : ''}${args.avatar_action === 'default' ? '，恢复默认头像' : args.avatar_action === 'custom' ? '，使用所选图片作为头像' : ''}？`;
+  if (name === 'arkme_recording_favorites_change') return args.action === 'revoke' ? '是否撤销这份录音分享的授权？所有收藏者和历史通知都将无法播放，且无法恢复授权。' : args.action === 'remove' ? '是否取消这段录音的收藏？分享者的历史通知仍保留播放权限。' : args.action === 'read' ? '是否将刚才指定的收藏通知标记为已读？' : '是否收藏刚才指定的录音片段？分享者会收到首次收藏通知。'
   if (name === 'arkme_official_notifications_read') return args.all === true ? '是否将当前全部官方通知标记为已读？' : '是否将指定的官方通知标记为已读？'
   if (name === 'arkme_dsh_annotations_write') return '是否确认添加或取消刚才指定的 DSH 个人标记？该标记会在同账号设备同步，不修改原文。'
   if (name === 'arkme_team_world_write') {

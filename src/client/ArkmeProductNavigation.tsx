@@ -244,7 +244,7 @@ export function ArkmeProductNavigation({
     : ui.mode === 'world' ? 'world'
     : ui.mode === 'explore' || ui.mode === 'statistics' ? 'explore'
     : ui.mode === 'calls' ? 'calls'
-    : ui.mode === 'recordings' || ui.mode === 'recognized-speakers' || ui.mode === 'voiceprint' ? 'recordings'
+    : ui.mode === 'recordings' || ui.mode === 'recording-favorites' || ui.mode === 'recognized-speakers' || ui.mode === 'voiceprint' ? 'recordings'
       : ui.mode === 'source' && ui.productMode === 'contacts' ? 'contacts' : 'conversations'
   // Utility pages also highlight Conversations, but hide its directory/header.
   // Only relinquish the native fallback when the adapted conversation UI is active.

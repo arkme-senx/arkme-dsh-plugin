@@ -70,7 +70,7 @@ describe('recording copy-link read projection', () => {
   })
   function reader(data: ReturnType<typeof raw>) {
     const post = vi.fn(async () => data)
-    const media = { forwardContentBlocks: vi.fn(() => []) }
+    const media = { issueChatRecordingMediaRef: vi.fn(() => 'opaque-clip'), forwardContentBlocks: vi.fn(() => []) }
     const service = new ChatService({ config: { chatBaseUrl: 'https://chat.jotmo.cc' }, requireSession: async () => ({ userId: 42 }), authenticatedChatPost: post } as never, {} as never, {} as never, media as never, {} as never, {} as never, {} as never, {} as never, {} as never)
     return { service, post }
   }
@@ -100,8 +100,8 @@ describe('recording copy-link read projection', () => {
     const { items: [shared] } = await reader(data).service.resolveMessageCopyLink(result.sid)
     expect(shared?.structuredContent?.recordingAudioUrl).toBe(playable ? `https://chat.jotmo.cc${url}` : undefined)
     const html = renderToStaticMarkup(<CopyLinkSnapshotContent item={shared!} snapshot={{ itemUid: 'snapshot' } as ArkmeTimelineItem} shareWebsite="https://jotmo.com" />)
-    expect(html.includes('preload="none"')).toBe(playable)
-    expect(html.includes('aria-label="播放 · 乙')).toBe(playable)
+    expect(html).not.toContain('<audio') // No media request before an explicit play gesture.
+    expect(shared?.structuredContent?.recordingAudio?.clips.length === 1).toBe(playable)
     expect(html).not.toContain('original-recording.wav')
   })
 })

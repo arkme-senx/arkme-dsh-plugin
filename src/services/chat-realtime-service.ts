@@ -449,6 +449,13 @@ export class ChatRealtimeService {
       }).catch(() => undefined)
       return
     }
+    if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'recording_favorites') {
+      void this.runtime.accountScopedSession().then(session => {
+        if (!this.disposed && session?.userId === notice.connectionUserId && !notice.connectionSignal?.aborted)
+          this.emitChatClientEvent({ type: 'projection-invalidated', projection: 'recording_favorites', revision: this.nextChatClientRevision() })
+      }).catch(() => undefined)
+      return
+    }
     if (notice.cause === 'projection-invalidation' && notice.projectionInvalidation?.projection === 'official_notification') {
       void this.runtime.sessionStore.read().then(session => {
         if (!session || notice.connectionSignal?.aborted || (notice.connectionUserId !== undefined && notice.connectionUserId !== session.userId)) return

@@ -1,3 +1,5 @@
+import type { RecordingFavoriteRequest, RecordingFavoriteResult } from '../recording-favorite-contract.js'
+export type * from '../recording-favorite-contract.js'
 import type { ArkmeRecordReeditPrepareInput, ArkmeRecordReeditEditorSnapshot, ArkmeRecordReeditSubmissionView } from '../record-reedit-contract.js'
 export type { ArkmeRecordReeditPrepareInput, ArkmeRecordReeditEditorSnapshot, ArkmeRecordReeditSubmissionView } from '../record-reedit-contract.js'
 import { recordingDeliveryQuery, type RecordingDeliveryQuery, type RecordingDeliveryPage } from '../recording-delivery.js'
@@ -895,6 +897,15 @@ export class ArkmeSdk {
   async recordingAnalysis(input: import('../recording-analysis-contract.js').RecordingAnalysisInput, signal?: AbortSignal): Promise<import('../recording-analysis-contract.js').RecordingAnalysisResult> {
     if ((await this.capabilities(signal)).features.recordingAnalysisV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持录音模型执行与原任务继续，请升级', retryable: false })
     return this.call('recordings.analysis', input, signal)
+  }
+
+  async recordingFavorites<T extends RecordingFavoriteRequest>(input: T, signal?: AbortSignal): Promise<RecordingFavoriteResult<T>> {
+    signal = this.scopedAccountSignal(signal)
+    if ((await this.capabilities(signal)).features.recordingFavoritesV1 !== true) throw new ArkmeClientError({ code: 'CAPABILITY_UNSUPPORTED', message: '当前 Provider 不支持录音收藏，请升级', retryable: false })
+    signal.throwIfAborted()
+    const result = await this.call<RecordingFavoriteResult<T>>('recordings.favorites', input, signal)
+    signal.throwIfAborted()
+    return result
   }
 
   async recordingWorkflowCapabilities(signal?: AbortSignal): Promise<{ supported: boolean }> {
