@@ -4,7 +4,7 @@ import { Pause } from '@phosphor-icons/react/dist/icons/Pause'
 import type { PreparedRecordingComparison } from './prepare-recording-transcript-comparison.js'
 import { RecordingTranscriptButton } from './RecordingTranscriptButton.js'
 import { useEffect, useRef, useState } from 'react'
-import type { ArkmeRecordingComparison, ArkmeRecordingWorkbenchItem } from '../../types.js'
+import type { ArkmeRecordingComparison, ArkmeRecordingTarget, ArkmeRecordingWorkbenchItem } from '../../types.js'
 import { callArkme } from '../api.js'
 import { arkmeTheme as colors } from '../arkme-theme.js'
 import { useRecordingPlayback } from './useRecordingPlayback.js'
@@ -12,9 +12,10 @@ import { refreshRecordingTranscriptPage } from '../../recording-transcript-page.
 import { useRecordingTranscriptPages } from './useRecordingTranscriptPages.js'
 import { RecordingComparisonView, RecordingComparisonColumn, RecordingComparisonPane, RecordingComparisonRow } from './RecordingComparisonView.js'
 
-export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, onClose }: {
+export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, target, onClose }: {
   dateStamp: number
   mediaPath: string
+  target?: ArkmeRecordingTarget['enhancedItem']
   prepared: PreparedRecordingComparison
   onClose(): void
 }) {
@@ -31,6 +32,14 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
   const [revision, setRevision] = useState(0)
   const primaryPages = useRecordingTranscriptPages(data.system, String(dateStamp), page => setData(current => ({ ...current, system: page })))
   const enhancedPages = useRecordingTranscriptPages(data.doubao, String(dateStamp), page => setData(current => ({ ...current, doubao: page })))
+  const focusedItem=target && data.doubao.items.find(item=>item.itemId===target.itemId && item.searchVersion===target.version)
+  const { through }=enhancedPages
+  useEffect(()=>{
+    if(!target || focusedItem || !data.doubao.nextCursor) return
+    const controller=new AbortController()
+    void through(undefined,controller.signal).catch(()=>undefined)
+    return ()=>controller.abort()
+  },[target,focusedItem,data.doubao.viewRef,through])
   const player = useRecordingPlayback(mediaPath, async (last, signal) => {
     const pages = last.transcriptSource === 'system' ? primaryPages : enhancedPages
     return (await pages.through(last.startAtMillis, signal))?.items ?? []
@@ -80,6 +89,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
   return <RecordingComparisonView scope={`当天录音 · ${new Date(dateStamp).toLocaleDateString(arkmeIntlLocale())}`} onClose={onClose}
     description={<span>豆包对比覆盖当天录音，正式结果不变。</span>}
     notices={<>
+      {target && !focusedItem && !data.doubao.nextCursor && !pending && <p role="alert">{tr('来源暂不可定位')}</p>}
       {error && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{error}<RecordingTranscriptButton onClick={() => { setRevision(value => value + 1) }} disabled={loading}>{tr('重试')}</RecordingTranscriptButton></div>}
       {(playbackNotice || player.error) && <div role="alert" style={{ color: colors.danger, padding: '8px 20px' }}>{playbackNotice || player.error}</div>}
       {notice !== '' && <div role="status" style={{ color: colors.secondary, padding: '8px 20px' }}>{notice}</div>}
@@ -97,7 +107,7 @@ export function RecordingTranscriptComparison({ dateStamp, mediaPath, prepared, 
         error: source === 'system' ? primaryPages.error : enhancedPages.error,
         next: source === 'system' ? primaryPages.next : enhancedPages.next,
       }}>
-        {data[source].items.map(item => <RecordingComparisonRow key={item.itemId} speaker={item.speakerLabel} colorIndex={item.speakerColorIndex}
+        {data[source].items.map(item => <RecordingComparisonRow key={item.itemId} located={!!focusedItem && item===focusedItem} speaker={item.speakerLabel} colorIndex={item.speakerColorIndex}
           startAtMillis={item.startAtMillis} endAtMillis={item.endAtMillis} text={item.text} background={item.isBackground}
           active={player.activeItemRef === item.itemRef && player.positionAtMillis !== undefined && player.positionAtMillis >= item.startAtMillis && player.positionAtMillis < item.endAtMillis}
           playLabel={`播放${source === 'system' ? '系统' : '豆包'}片段 ${formatArkmeTime(item.startAtMillis, arkmeIntlLocale(), { hourCycle: 'h23' })}`} onPlay={() => play(item)} />)}

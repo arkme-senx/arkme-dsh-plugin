@@ -1432,6 +1432,7 @@ export interface ArkmeRecordingSearchSegment extends ArkmeRecordingSearchIdentit
 
 export interface ArkmeRecordingWindow { dateStamp: number; endStamp: number; timeZone: string; date: string }
 export interface ArkmeRecordingTarget {
+  enhancedItem?: { itemId: string; version: string }
   window?: ArkmeRecordingWindow
   revision?: number
   dateStamp: number

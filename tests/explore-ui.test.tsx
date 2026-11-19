@@ -61,6 +61,23 @@ describe('Explore interactions',()=>{
     expect(host.textContent).not.toContain('已保存')
     expect(host.textContent).toContain('真实保存的内容')
   })
+  it.each(['system','doubao','missing'])('opens the exact goal transcript with %s evidence',async(source)=>{
+    const navigate=vi.spyOn(arkmeUi,'showRecordingTarget')
+    await act(async()=>root.render(<ExploreSurface module="goals" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    await click('定位原文 ↗')
+    const segment={sessionId:'s',childId:'c',itemIndex:3,transcriptSource:'system',transcriptVersion:'v'}
+    await act(async()=>pendingSource!({kind:'recording',dateStamp:123,focusItemId:'focus',
+      items:[{itemId:'focus',startAtMillis:456,transcriptSource:source,searchVersion:'v'}],
+      ...(source==='system'?{segment}:{})}))
+    if(source==='system') expect(navigate).toHaveBeenCalledWith(123,456,segment)
+    if(source==='doubao') expect(navigate).toHaveBeenCalledWith(123,456,undefined,undefined,undefined,{itemId:'focus',version:'v'})
+    if(source==='missing') {
+      expect(navigate).not.toHaveBeenCalled()
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain('来源暂不可定位')
+    }
+    expect(host.querySelector('[role="dialog"]')).toBeNull()
+  })
   it('does not navigate to a late source response after selecting another result',async()=>{
     const navigate=vi.spyOn(arkmeUi,'showConversationTarget')
     await renderSurface();await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click());await click('定位原文 ↗')
@@ -240,4 +257,36 @@ it.each([0,60_000])('preserves the saved overview and renews only its reference 
     await act(async()=>{for(const r of pending)r.reject(new Error('离线'))})
     expect(host.querySelector('.explore-detail-summary')?.textContent).toBe(saved.summary)
   }
+})
+
+describe('approved minimal Goal operations',()=>{
+  it.each([['correct','纠正内容'],['complete','标记完成'],['abandon','放弃'],['ignore','忽略'],['undo','撤销最近操作']])('confirms %s and retries the same operation without optimistic success',async(action,label)=>{
+    let fail=true
+    mocks.call.mockImplementation(async(op,input)=>{
+      if(op==='explore.list')return {...page,module:'goals'}
+      if(op==='explore.detail')return {item:items[0],mutationRef:'current-revision-ref',fields:[],evidence:[],actions:[{id:action,label}]}
+      if(op==='explore.mutate'){
+        if(fail)throw Error('测试保存失败')
+        return {saved:true}
+      }
+    })
+    await act(async()=>root.render(<ExploreSurface module="goals" accountScope={'test:'+ ++scope}/>))
+    await act(async()=>host.querySelector<HTMLButtonElement>('.explore-row')!.click())
+    await click(label)
+    expect(mocks.call.mock.calls.filter(c=>c[0]==='explore.mutate')).toHaveLength(0)
+    if(action==='correct')expect(document.querySelector('textarea')?.value).toBe(items[0].title)
+    await click(action==='correct'?'保存修改':'确认')
+    expect(document.body.textContent).toContain('测试保存失败')
+    expect(host.textContent).not.toContain('已保存')
+    const first=mocks.call.mock.calls.find(c=>c[0]==='explore.mutate')![1]
+    expect(first).toMatchObject({ref:'current-revision-ref',action})
+    expect(first.requestId).toBeTruthy()
+    fail=false
+    await click(action==='correct'?'保存修改':'确认')
+    const writes=mocks.call.mock.calls.filter(c=>c[0]==='explore.mutate')
+    expect(writes).toHaveLength(2)
+    expect(writes[1][1].requestId).toBe(first.requestId)
+    expect(document.body.textContent).not.toContain('测试保存失败')
+    expect(mocks.call.mock.calls.filter(c=>c[0]==='explore.list').length).toBeGreaterThan(1)
+  })
 })

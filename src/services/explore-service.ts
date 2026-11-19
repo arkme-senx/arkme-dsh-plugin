@@ -159,7 +159,7 @@ export class ExploreService {
     if (!id) throw missing()
     const title = first(raw.predicate_label,raw.name,raw.title,doc(raw.summary_fields).title,doc(raw.fields).title,raw.event_name,'未命名')
     const summary = first(raw.value,raw.ai_summary,raw.latest_update_summary,raw.summary,raw.why)
-    return {key:await this.key(session,module,id),ref:await this.seal(session,{kind:'item',module,id,...extra}),title,summary,
+    return {key:await this.key(session,module,module==='goals'&&text(raw.stable_goal_id)?`${id}:${text(raw.stable_goal_id)}`:id),ref:await this.seal(session,{kind:'item',module,id,...extra,...(module==='goals'&&text(raw.stable_goal_id)?{stableGoalId:raw.stable_goal_id}:{})}),title,summary,
       category: module === 'relations' ? ENTITY_TYPES[number(raw.type)] ?? '其他' : first(raw.event_name,raw.type_label,raw.predicate_label),
       status: first(raw.status_label,module === 'anniversaries' ? raw.status === 'pending' ? '待确认' : '已确认' : undefined,raw.state === 'pending_confirm' ? '待确认' : undefined),
       date:number(raw.last_mention_at || raw.occurred_at || raw.latest_activity_at),
@@ -287,13 +287,14 @@ export class ExploreService {
       if (progress.active === true) page.progress={label:'正在整理事件',active:true,updatedAt:0,completed:number(progress.processed_count),total:number(progress.total_count)}
       page.actions=[action('create','创建事件'),...(progress.can_trigger === true ? [action('refresh','整理事件')] : [])]
     } else if (module === 'goals') {
-      const raw = await this.request(module,'/api/v1/insight/goal/list',{view:'full',limit:PAGE,offset,...(cursor.version ? {result_version:cursor.version} : {})},session,signal)
+      const raw = await this.request(module,'/api/v1/insight/goal/list',{view:filter==='all'?'all':'current',limit:PAGE,offset,...(cursor.version ? {result_version:cursor.version} : {})},session,signal)
       const version=text(doc(raw.snapshot).result_version)
       if (cursor.version && cursor.version !== version) throw missing()
       page.items=await Promise.all(list(raw.items).map(x=>this.item(module,x,session,{version})))
       page.total=number(raw.total); context={version}
       if(raw.has_more===true && number(raw.next_offset)>offset) next={offset:number(raw.next_offset),version}
       page.actions=[action('refresh','重新分析')]
+      page.filters=[{key:'',label:'当前目标'},{key:'all',label:'全部'}]
       page.notice='根据已有记录整理的目标与进展。'
     } else {
       const raw=await this.home(module,session,signal),version=first(raw.result_version,doc(raw.snapshot).result_version)
@@ -329,22 +330,26 @@ export class ExploreService {
   async personEvidenceKey(provider:string,uid:string) { const session=await this.runtime.requireSession(); return this.key(session,'relations',provider,uid) }
   private async evidence(module: ExploreModule, rows: Doc[], session: ArkmeSessionCredentials, parent: Doc): Promise<ExploreEvidence[]> {
     const result = await Promise.all(rows.map(async (row,index)=>{
-      const owner=doc(row.owner_ref),fields=doc(row.fields),sourceIdentity=doc(row.source_identity)
+      const owner=doc(row.owner_ref??row.source_ref),fields=doc(row.fields),sourceIdentity=doc(row.source_identity)
       const uid=first(row.record_uid,row.source_record_uid,owner.record_uid,strings(fields.record_uids)[0])
       const content=row.content_status==='unavailable'?'':first(row.content,row.text,row.summary,row.value)
       const date=number(row.event_at||row.send_at||row.created_at||row.occurred_at||owner.start_at)
       // The existing detail owner addresses core records only. An equal UID in
       // another provider must never fall through to that route.
-      const provider=first(sourceIdentity.provider,owner.provider,'core_record')
-      const canOpen=(!!uid && row.content_status!=='unavailable' && (!sourceIdentity.provider || sourceIdentity.provider==='core_record')) || module==='anniversaries' && !!row.message_id
+      const provider=first(sourceIdentity.provider,owner.provider,row.owner==='record'?'core_record':text(row.owner),'core_record')
+      const audioLocator=doc(row.audio_locator)
+      const profileAudio=module==='profile'&&provider==='audio'&&!!text(audioLocator.revision)&&!!text(audioLocator.session_id)
+      const goalAudio=module==='goals'&&provider==='audio'&&!!text(owner.revision)&&!!text(owner.container_id)
+      const eventAudio=module==='events'&&provider==='audio'&&!!text(owner.revision)&&!!text(owner.container_id)
+      const canOpen=profileAudio || eventAudio || goalAudio || (!!uid && row.content_status!=='unavailable' && provider==='core_record') || module==='anniversaries' && !!row.message_id
       // Merged person facets read the same canonical source scope. The card key
       // follows the source; its opaque open ref still retains the parent permission context.
       const identity=module==='relations'&&uid ? [provider,uid] : [first(row.event_record_id,row.message_id,uid)||`${date}:${number(parent.offset)+index}`]
       const start=number(row.start_position),end=number(row.end_position)
-      return {key:module==='relations'&&uid?await this.key(session,module,...identity):await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,owner.provider==='audio'?'录音':'来源记录'),
+      return {key:module==='relations'&&uid?await this.key(session,module,...identity):await this.key(session,module,parent.id,...identity),label:first(row.source_label,owner.container_title,row.time_label,provider==='audio'?'录音':'来源记录'),
         speaker:first(row.sender_label,row.speaker_name,row.sender_is_self===true||row.speaker_role==='self'?'你':''),text:content,date,...(number(row.uploaded_at)>0?{uploadedAt:number(row.uploaded_at)}:{}),...(number(row.recognized_at)>0?{recognizedAt:number(row.recognized_at)}:{}),anchor:row.is_anchor===true||row.is_primary_anchor===true,
         ...(module==='relations'?{roles:strings(row.roles).filter((role): role is 'author'|'speaker'|'mentioned'|'participant' => ['author','speaker','mentioned','participant'].includes(role)),...projectPersonReferences(row,content),mentions:Array.isArray(row.mentions)?list(row.mentions).map(m=>({start:number(m.start_position),end:number(m.end_position),text:text(m.mention_text)})):end>start&&start>=0?[{start,end,text:text(row.mention_text)}]:[]}:{}),
-        ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,provider:sourceIdentity.provider,uid,messageId:row.message_id,quote:content.slice(0,2000)})} : {unavailableReason:sourceIdentity.provider&&sourceIdentity.provider!=='core_record'?'此来源暂不支持打开详情':'这条结果尚未提供可定位的原文'})}
+        ...(canOpen ? {ref:await this.seal(session,{kind:'evidence',module,parentId:parent.id,version:parent.version,provider,uid,messageId:row.message_id,quote:content.slice(0,2000),...(profileAudio?{audioLocator:{...audioLocator,speaker_role:row.speaker_role},section:parent.section,page:parent.page}:eventAudio?{audioLocator:owner,eventId:parent.eventId,eventRecordId:row.event_record_id}:goalAudio?{audioLocator:owner}:{})})} : {unavailableReason:sourceIdentity.provider&&sourceIdentity.provider!=='core_record'?'此来源暂不支持打开详情':'这条结果尚未提供可定位的原文'})}
     }))
     return module==='relations'?mergeExploreEvidence(result):result
   }
@@ -365,7 +370,7 @@ export class ExploreService {
     if(module==='profile') {
       const page=await this.request(module,'/api/v1/personal-profile/v3/section/get',{snapshot_id:ref.version,section_id:ref.section,page:ref.page,page_size:PAGE},session,signal)
       if(page.snapshot_id!==ref.version)throw missing()
-      raw=list(page.items).find(x=>x.fact_key===ref.id)??{};evidence=list(raw.evidence)
+      raw=list(page.items).find(x=>x.fact_key===ref.id)??{};evidence=list(raw.evidence_refs??raw.evidence)
       fields=[{label:'整理内容',value:text(raw.value)},{label:'相关人物',value:text(raw.subject_display_name)},{label:'支持依据',value:`${number(raw.support_count)} 条`}]
       actions=[action('correct','纠正内容'),action('delete','删除这条档案',true)]
     } else if(module==='relations') {
@@ -389,6 +394,11 @@ export class ExploreService {
       const rows=list(data.records),anchor=rows.find(x=>x.event_record_id===ref.id)??rows[0]??{}
       raw={...anchor,event_record_id:ref.id,event_name:data.event_name,is_subscribed:data.is_subscribed}
       fields=Object.entries(doc(anchor.fields)).filter(([key,value])=>typeof value==='string' && !['session_key','occurred_at','source_record_uid','title'].includes(key)).map(([label,value])=>({label:({emotion:'情绪',reflection:'思考',summary:'总结'} as Record<string,string>)[label]??label,value:text(value)}))
+      if(!cursorValue&&!rows.some(x=>x.event_record_id===ref.id))throw new ArkmePluginError('explore-source-changed','这条事件依据已更新，请刷新列表',false,409)
+      if(doc(anchor.source_ref).provider==='audio') {
+        const basis=doc(anchor.time_basis),date=text(basis.date)|| (number(anchor.occurred_at)>0?new Date(number(anchor.occurred_at)).toLocaleDateString('zh-CN'):'')
+        fields.unshift({label:'发生时间',value:date+(basis.precision==='estimated_day'?'（根据录音时区估计）':basis.precision==='day'?'（精确到日期）':'')},{label:'录音时间',value:number(anchor.recorded_at)>0?new Date(number(anchor.recorded_at)).toLocaleString('zh-CN'):''},{label:'时间依据',value:text(basis.evidence)})
+      }
       evidence=rows.map(x=>({...x,is_anchor:x.event_record_id===ref.id}))
       if(data.has_more===true&&text(data.next_cursor))next={cursor:data.next_cursor}
       actions=[data.is_subscribed===true?action('unsubscribe','取消关注'):action('subscribe','关注事件'),action('supplement','补充内容'),action('reclassify','调整分类')]
@@ -399,12 +409,16 @@ export class ExploreService {
         }catch(error){signal?.throwIfAborted();actions=actions.filter(x=>x.id!=='reclassify');notice='分类列表暂不可用，可刷新后再调整分类。'}
       }
     } else if(module==='goals') {
-      const data=await this.request(module,'/api/v1/insight/goal/detail',{goal_id:ref.id,result_version:ref.version},session,signal)
+      const data=await this.request(module,'/api/v1/insight/goal/detail',{goal_id:ref.id,result_version:ref.version,...(ref.stableGoalId?{stable_goal_id:ref.stableGoalId}:{})},session,signal)
       if(ref.version && doc(data.snapshot).result_version!==ref.version)throw missing()
       raw=doc(data.item);if(raw.goal_id!==ref.id)throw missing()
       fields=[...strings(raw.analysis_bullets).map(value=>({label:'目标分析',value})),...list(raw.timeline).map(x=>({label:[text(x.occurred_date),text(x.stage_label),text(x.title)].filter(Boolean).join(' · '),value:text(x.summary)}))]
       evidence=list(raw.records)
-      notice='目标内容来自分析结果，可通过来源记录核对。'
+      notice=raw.identity_pending===true?'依据更新待核对，已保留你的决定。':'目标内容来自分析结果，可通过来源记录核对。'
+      if(text(raw.stable_goal_id)&&Number.isSafeInteger(raw.manual_revision)) {
+        actions=[action('correct','纠正内容'),action('complete','标记完成'),action('abandon','放弃'),action('ignore','忽略'),...(raw.can_undo===true?[action('undo','撤销最近操作')]:[])]
+        fields.unshift({label:'人工状态',value:({none:'未调整',completed:'你已标记完成',abandoned:'你已放弃',ignored:'你已忽略'} as Record<string,string>)[text(raw.manual_state)]??'未调整'})
+      }
     } else {
       const data=await this.request(module,'/api/v1/insight/anniversary/home',{source_type:0,result_version:ref.version},session,signal)
       if(ref.version&&first(data.result_version,doc(data.snapshot).result_version)!==ref.version)throw missing()
@@ -418,6 +432,7 @@ export class ExploreService {
     const result:ExploreDetail={item:await this.item(module,raw,session,Object.fromEntries(Object.entries(ref).filter(([k])=>!['kind','id','module','viewer','environment','expires'].includes(k)))),fields:fields.filter(x=>x.value),evidence:await this.evidence(module,evidence,session,{...ref,offset:number(cursor.offset)}),actions,...(notice?{notice}:{})}
     // Keep the originally selected identity even when a detail page contains a different chronological anchor.
     result.item.ref=itemRef
+    if(module==='goals'&&actions.length)result.mutationRef=await this.seal(session,{kind:'goal-command',module,id:ref.id,version:ref.version,stableGoalId:raw.stable_goal_id,revision:raw.manual_revision,operationId:raw.last_operation_id,canUndo:raw.can_undo===true})
     if(snapshot)result.snapshot=snapshot
     if(reclassifyTargets)result.reclassifyTargets=reclassifyTargets
     if(next)result.nextCursor=await this.seal(session,{kind:'detail-cursor',module,id:ref.id,...next})
@@ -426,7 +441,7 @@ export class ExploreService {
   }
   async mutate(input: ExploreMutation, signal?: AbortSignal): Promise<{saved:true}> {
     const session=await this.runtime.requireSession(),epoch=this.epoch
-    const raw=await this.codec.open(PREFIX,bounded(input.ref,16384,true)),kind=raw.kind==='context'?'context':'item'
+    const raw=await this.codec.open(PREFIX,bounded(input.ref,16384,true)),kind=raw.kind==='context'?'context':raw.kind==='goal-command'?'goal-command':'item'
     const ref=await this.open(input.ref,session,kind),module=this.module(ref.module)
     const request=async(path:string,body:Doc)=>{await this.guard(session,epoch,signal);return this.request(module,path,body,session,signal,true)}
     const value=()=>bounded(input.value,10000,true)
@@ -464,6 +479,12 @@ export class ExploreService {
     } else if(kind==='context'&&(module==='goals'||module==='anniversaries')&&['refresh','stop'].includes(input.action)) {
       const receipt=await request(input.action==='stop'?'/api/v1/insight/terminate':`/api/v1/insight/${module==='goals'?'goal':'anniversary'}/refresh`,input.action==='stop'?{section_type:module==='goals'?3:4}:{source_type:0})
       if(input.action==='refresh' && receipt.accepted!==true)throw new ArkmePluginError('explore-analysis-not-accepted',text(receipt.message)||'本次分析尚未接受，请查看当前任务',true,409)
+    } else if(module==='goals'&&kind==='goal-command'&&['correct','complete','abandon','ignore','undo'].includes(input.action)) {
+      const requestId=bounded(input.requestId,128,true)
+      if(!Number.isSafeInteger(ref.revision)||number(ref.revision)<0||!text(ref.stableGoalId))throw missing()
+      if(input.action==='undo'&&ref.canUndo!==true)throw missing()
+      const receipt=await this.request(module,'/api/v1/insight/goal/adjust',{goal_id:ref.id,result_version:ref.version,stable_goal_id:ref.stableGoalId,expected_revision:ref.revision,request_id:requestId,action:input.action,...(input.action==='correct'?{value:bounded(input.value,2000,true)}:{}),...(input.action==='undo'?{operation_id:ref.operationId}:{})},session,signal,true)
+      if(receipt.saved!==true||receipt.stable_goal_id!==ref.stableGoalId)throw new ArkmePluginError('explore-goal-unconfirmed','暂时无法确认保存结果，请保留当前操作重试或刷新核对。',true,409)
     } else if(module==='anniversaries'&&kind==='item'&&['confirm','dismiss'].includes(input.action)) {
       await this.detail(input.ref,undefined,signal)
       const body:Doc={candidate_id:ref.id}
@@ -543,7 +564,30 @@ export class ExploreService {
   async source(evidenceRef: string, signal?: AbortSignal): Promise<ExploreSource> {
     const session=await this.runtime.requireSession(),epoch=this.epoch,ref=await this.open(evidenceRef,session,'evidence'),module=this.module(ref.module)
     let uid=text(ref.uid),result:ExploreSource
-    if(ref.provider&&ref.provider!=='core_record')throw new ArkmePluginError('explore-source-unsupported','此来源暂不支持打开详情',false,400)
+    if(module==='profile'&&ref.provider==='audio') {
+      const current=await this.request(module,'/api/v1/personal-profile/v3/section/get',{snapshot_id:ref.version,section_id:ref.section,page:ref.page,page_size:PAGE},session,signal)
+      const fact=list(current.items).find(x=>x.fact_key===ref.parentId)
+      const locator=doc(ref.audioLocator)
+      const evidence=list(fact?.evidence_refs??fact?.evidence).find(x=>x.owner==='audio'&&x.record_uid===ref.uid&&doc(x.audio_locator).revision===locator.revision&&doc(x.audio_locator).session_id===locator.session_id&&doc(x.audio_locator).child_id===locator.child_id&&doc(x.audio_locator).item_ordinal===locator.item_ordinal&&doc(x.audio_locator).transcript_source===locator.transcript_source)
+      if(!evidence||current.snapshot_id!==ref.version)throw new ArkmePluginError('explore-source-changed','这条依据已更新，请刷新后重试',false,409)
+      result=await this.recording.exploreRecordingEvidence({...locator,container_id:locator.session_id},text(ref.quote),signal)
+      await this.guard(session,epoch,signal);return result
+    }
+    if(module==='events'&&ref.provider==='audio') {
+      const current=await this.request(module,'/api/v1/event/detail',{event_id:ref.eventId,anchor_event_record_id:ref.eventRecordId,range_key:'all',limit:30,include_aggregate:false},session,signal)
+      const row=list(current.records).find(x=>x.event_record_id===ref.eventRecordId),locator=doc(ref.audioLocator),latest=doc(row?.source_ref)
+      if(!row||current.event_id!==ref.eventId||latest.provider!=='audio'||['container_id','child_id','item_ordinal','transcript_source','revision','snapshot_version'].some(key=>latest[key]!==locator[key]))throw new ArkmePluginError('explore-source-changed','这条事件依据已更新，请刷新后重试',false,409)
+      result=await this.recording.exploreRecordingEvidence(locator,text(ref.quote),signal)
+      await this.guard(session,epoch,signal);return result
+    }
+    if(module==='goals'&&ref.provider==='audio') {
+      const current=await this.request(module,'/api/v1/insight/goal/detail',{goal_id:ref.parentId,result_version:ref.version},session,signal)
+      const item=doc(current.item),row=list(item.records).find(x=>x.record_uid===ref.uid),locator=doc(ref.audioLocator),latest=doc(row?.source_ref)
+      if(item.goal_id!==ref.parentId||!row||latest.provider!=='audio'||['container_id','child_id','item_ordinal','transcript_source','revision','snapshot_version'].some(key=>latest[key]!==locator[key]))throw new ArkmePluginError('explore-source-changed','这条目标依据已更新，请刷新后重试',false,409)
+      result=await this.recording.exploreRecordingEvidence(locator,text(ref.quote),signal)
+      await this.guard(session,epoch,signal);return result
+    }
+    if(module!=='anniversaries'&&ref.provider&&ref.provider!=='core_record')throw new ArkmePluginError('explore-source-unsupported','此来源暂不支持打开详情',false,400)
     if(module==='anniversaries') {
       const raw=await this.request(module,'/api/v1/insight/anniversary/evidence/open',{candidate_id:ref.parentId,message_id:ref.messageId,source_type:0,result_version:ref.version},session,signal)
       if(raw.available!==true)throw new ArkmePluginError('explore-source-unavailable','原文已删除或当前不可访问',false,404)

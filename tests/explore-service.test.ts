@@ -10,8 +10,8 @@ afterEach(()=>disposers.splice(0).forEach(fn=>fn()))
 function fixture(){
   let user=11,epochCallback=()=>{}
   const writes:Array<{path:string;body:Record<string,unknown>}>=[],calls:Array<{path:string;body:Record<string,unknown>}>=[]
-  const state={relationRecords:undefined as Array<Record<string,unknown>>|undefined,modelRoute:'private-model-a',ignoreModelWrite:false,removeModelB:false,analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
-  const fact=()=>({fact_key:'private-fact',predicate_label:'偏好',value:state.factValue,state:'active',support_count:1,evidence:[{record_uid:'private-record',event_at:1000,speaker_role:'self'}]})
+  const state={goalAudio:false,goalAudioRevision:"audio-v1",goalAudioDeleted:false,eventAudio:false,eventDeleted:false,eventRevision:"audio-v1",profileAudio:false,goalManual:false,relationRecords:undefined as Array<Record<string,unknown>>|undefined,modelRoute:'private-model-a',ignoreModelWrite:false,removeModelB:false,analysisEnabled:true,capabilityFailure:false,version:'v1',factValue:'喜欢散步',factDeleted:false,failWrite:false,available:true,progress:'paused',afterRead:()=>{},entities:Array.from({length:65},(_,i)=>({entity_id:`private-person-${i}`,name:`人物 ${i}`,linked_user_id:i===0?27:0,type:i<60?1:2,mention_count:2,last_mention_at:1000,ai_summary:'有依据的摘要'}))}
+  const fact=()=>({fact_key:'private-fact',predicate_label:'偏好',value:state.factValue,state:'active',support_count:1,...(state.profileAudio?{evidence_refs:[{owner:'audio',record_uid:'private-audio-material',event_at:1000,speaker_role:'self',audio_locator:{session_id:'private-audio',child_id:'private-child',item_ordinal:0,transcript_source:'system',revision:'audio-v1',start_at:1000,end_at:2000}}]}:{evidence:[{record_uid:'private-record',event_at:1000,speaker_role:'self'}]})})
   const home=()=>({activated:true,state:'processing',snapshot:{snapshot_id:state.version,sections:[{section_id:'identity',title:'我是谁',total_count:state.factDeleted?0:1}]},processing:{phase:state.progress,rebuild_run_id:'private-run',can_resume:state.progress==='paused',can_pause:state.progress==='running',planning_complete:true,processed_units:5,total_units:10},sources:[{source:'personal_record',display_name:'个人记录',enabled:true},{source:'native_chat',display_name:'聊天',enabled:false},{source:'wechat_import',display_name:'微信导入',enabled:true}]})
   const anniversary=()=>({id:'private-anniversary',title:'生日',status:'pending',calendar_type:'solar',date_label:'10月28日',why:'明确提到日期',evidences:[{message_id:'private-message',content:'10月28日',source_type:6,owner_ref:{provider:'audio',container_id:'private-audio'},is_anchor:true}]})
   const send=async(path:string,body:Record<string,unknown>={})=>{
@@ -35,9 +35,10 @@ function fixture(){
     if(path.endsWith('/entity/records/list'))return {records:state.relationRecords??[{record_uid:'private-record',content:'来源文字',created_at:1000,sender_is_self:true}],has_more:false,total:1}
     if(path.endsWith('/event/stream'))return {items:[{event_record_id:'private-event-record',event_id:'study',event_name:'学习',summary:'学习了新内容',occurred_at:1000}],total:1,user_progress:{active:false,can_trigger:true}}
     if(path.endsWith('/event/plaza'))return {all:[{event_id:'study',event_name:'学习'},{event_id:'exercise',event_name:'运动'}]}
-    if(path.endsWith('/event/detail'))return {event_id:'study',event_name:'学习',records:[{event_record_id:'private-event-record',source_record_uid:'private-record',summary:'事件整理',occurred_at:1000,fields:{reflection:'新的思考'}}]}
-    if(path.endsWith('/goal/list'))return {snapshot:{result_version:state.version},items:[{goal_id:'private-goal',title:'学习吉他',latest_update_summary:'每天练习'}],total:1,has_more:false}
-    if(path.endsWith('/goal/detail'))return {snapshot:{result_version:state.version},item:{goal_id:'private-goal',title:'学习吉他',records:[{record_uid:'private-record',text:'每天练习'}]}}
+    if(path.endsWith('/event/detail'))return {event_id:'study',event_name:'学习',records:state.eventDeleted?[]:[{event_record_id:'private-event-record',source_record_uid:'private-record',summary:'事件整理',occurred_at:1000,fields:{reflection:'新的思考'},...(state.eventAudio?{recorded_at:2000,time_basis:{date:'2026-11-15',precision:'estimated_day',evidence:'昨天'},source_ref:{provider:'audio',container_id:'private-audio',child_id:'private-child',item_ordinal:0,transcript_source:'system',revision:state.eventRevision,snapshot_version:'snapshot',speaker_role:'self'}}:{})}]}
+    if(path.endsWith('/goal/adjust')) { if(state.failWrite)throw new Error('服务暂不可用'); writes.push({path,body});return {saved:true,stable_goal_id:'private-stable-goal',revision:3} }
+    if(path.endsWith('/goal/list'))return {snapshot:{result_version:state.version},items:[{...(state.goalManual?{stable_goal_id:'private-stable-goal',manual_revision:2,manual_state:'completed',can_undo:true,last_operation_id:'private-operation'}:{}),goal_id:'private-goal',title:'学习吉他',latest_update_summary:'每天练习'}],total:1,has_more:false}
+    if(path.endsWith('/goal/detail'))return {snapshot:{result_version:state.version},item:{...(state.goalManual?{stable_goal_id:'private-stable-goal',manual_revision:2,manual_state:'completed',can_undo:true,last_operation_id:'private-operation'}:{}),goal_id:'private-goal',title:'学习吉他',records:state.goalAudioDeleted?[]:[{record_uid:'private-record',text:'每天练习',...(state.goalAudio?{source_ref:{provider:'audio',container_id:'private-audio',child_id:'private-child',item_ordinal:7,transcript_source:'system',revision:state.goalAudioRevision,snapshot_version:'goal-snapshot'}}:{})}]}}
     if(path.endsWith('/anniversary/home'))return {result_version:state.version,saved_anniversaries:[],pending_ai_discoveries:[anniversary()],material_coverage:{audio_unavailable_count:2}}
     if(path.endsWith('/evidence/open'))return {available:state.available,owner_ref:{provider:'audio',container_id:'private-audio',transcript_source:'doubao'}}
     if(path.endsWith('/section-summary'))return {sections:[]}
@@ -311,4 +312,71 @@ it('deduplicates canonical relation sources across different person parents, nor
  expect(foreign.evidence[0]!.key).not.toBe(first.evidence[0]!.key)
  expect(foreign.evidence[0]!.ref).toBeUndefined()
  expect(mergeExploreEvidence(merged,foreign.evidence)).toHaveLength(2)
+})
+
+
+describe('Goal manual decisions',()=>{
+  it('uses server-issued revision and stable identity for adjustment and undo',async()=>{
+    const f=fixture();f.state.goalManual=true
+    const page=await f.service.page({module:'goals'})
+    const detail=await f.service.detail(page.items[0]!.ref)
+    expect(detail.actions.map(x=>x.id)).toEqual(['correct','complete','abandon','ignore','undo'])
+    expect(detail.fields).toContainEqual({label:'人工状态',value:'你已标记完成'})
+    expect(detail.mutationRef).toBeTruthy()
+    await f.service.mutate({ref:detail.mutationRef!,action:'correct',value:'每天练习二十分钟',requestId:'retry-1'})
+    expect(f.writes.at(-1)?.body).toMatchObject({stable_goal_id:'private-stable-goal',expected_revision:2,request_id:'retry-1',action:'correct',value:'每天练习二十分钟'})
+    await f.service.mutate({ref:detail.mutationRef!,action:'undo',requestId:'undo-1'})
+    expect(f.writes.at(-1)?.body).toMatchObject({operation_id:'private-operation',expected_revision:2})
+  })
+  it('rejects missing operation identity, failed saves and cross-account commands',async()=>{
+    const f=fixture();f.state.goalManual=true
+    const page=await f.service.page({module:'goals'}),detail=await f.service.detail(page.items[0]!.ref)
+    await expect(f.service.mutate({ref:detail.mutationRef!,action:'complete'})).rejects.toThrow()
+    expect(f.writes).toHaveLength(0)
+    f.state.failWrite=true
+    await expect(f.service.mutate({ref:detail.mutationRef!,action:'complete',requestId:'retry'})).rejects.toThrow()
+    f.state.failWrite=false;f.switchAccount()
+    await expect(f.service.mutate({ref:detail.mutationRef!,action:'complete',requestId:'retry'})).rejects.toThrow()
+    expect(f.writes).toHaveLength(0)
+  })
+})
+
+
+it('opens typed profile audio evidence via its current fact and recording owner',async()=>{
+ const f=fixture();f.state.profileAudio=true
+ const page=await f.service.page({module:'profile'}),detail=await f.service.detail(page.items[0]!.ref)
+ expect(detail.evidence[0]?.label).toBe('录音')
+ expect(await f.service.source(detail.evidence[0]!.ref!)).toMatchObject({kind:'recording'})
+ expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledWith(expect.objectContaining({container_id:'private-audio',child_id:'private-child',revision:'audio-v1'}),'',undefined)
+ expect(f.records.personalRecordDetail).not.toHaveBeenCalled()
+ f.state.factDeleted=true
+ await expect(f.service.source(detail.evidence[0]!.ref!)).rejects.toThrow()
+ expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledTimes(1)
+})
+
+it('opens event audio through current event evidence and keeps occurrence separate from recording time',async()=>{
+ const f=fixture();f.state.eventAudio=true
+ const page=await f.service.page({module:'events'}),detail=await f.service.detail(page.items[0]!.ref)
+ expect(detail.fields).toEqual(expect.arrayContaining([expect.objectContaining({label:'发生时间',value:'2026-11-15（根据录音时区估计）'}),expect.objectContaining({label:'录音时间'}),{label:'时间依据',value:'昨天'}]))
+ await f.service.source(detail.evidence[0]!.ref!)
+ expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledWith(expect.objectContaining({container_id:'private-audio',revision:'audio-v1',speaker_role:'self'}),'事件整理',undefined)
+ expect(f.records.personalRecordDetail).not.toHaveBeenCalled()
+ f.state.eventRevision='audio-v2'
+ await expect(f.service.source(detail.evidence[0]!.ref!)).rejects.toThrow('依据已更新')
+ f.state.eventDeleted=true
+ await expect(f.service.source(detail.evidence[0]!.ref!)).rejects.toThrow('依据已更新')
+ expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledTimes(1)
+})
+
+it('revalidates goal audio evidence before opening the recording owner',async()=>{
+ const f=fixture();f.state.goalAudio=true
+ const page=await f.service.page({module:'goals'}),detail=await f.service.detail(page.items[0]!.ref)
+ await f.service.source(detail.evidence[0]!.ref!)
+ expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledWith(expect.objectContaining({container_id:'private-audio',item_ordinal:7,revision:'audio-v1'}),'每天练习',undefined)
+ expect(f.calls.filter(x=>x.path==='/api/v1/records/detail')).toHaveLength(0)
+ f.state.goalAudioRevision='audio-v2'
+ await expect(f.service.source(detail.evidence[0]!.ref!)).rejects.toThrow('依据已更新')
+ f.state.goalAudioDeleted=true
+ await expect(f.service.source(detail.evidence[0]!.ref!)).rejects.toThrow('依据已更新')
+ expect(f.recording.exploreRecordingEvidence).toHaveBeenCalledTimes(1)
 })

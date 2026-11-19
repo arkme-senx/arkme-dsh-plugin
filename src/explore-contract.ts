@@ -22,7 +22,7 @@ export interface ExploreItem {
 }
 export interface ExploreFilter { key: string; label: string; count?: number }
 export interface ExploreAction {
-  id: 'activate' | 'refresh' | 'pause' | 'resume' | 'correct' | 'delete' | 'confirm' | 'dismiss' | 'subscribe' | 'unsubscribe' | 'supplement' | 'create' | 'reclassify' | 'stop'
+  id: 'activate' | 'refresh' | 'pause' | 'resume' | 'correct' | 'delete' | 'confirm' | 'dismiss' | 'subscribe' | 'unsubscribe' | 'supplement' | 'create' | 'reclassify' | 'stop' | 'complete' | 'abandon' | 'ignore' | 'undo'
   label: string
   destructive?: boolean
 }
@@ -66,6 +66,7 @@ export interface ExploreEvidence {
 export interface ExploreEnrichment { items: Array<{ key: string; linkedContactName: string }> }
 export type ExploreDetailPart = 'overview' | 'records'
 export interface ExploreDetail {
+  mutationRef?: string
   snapshot?: string
   item: ExploreItem
   fields: Array<{ label: string; value: string }>
@@ -83,7 +84,7 @@ export interface ExploreQuery {
   includeCounts?: boolean
   module: ExploreModule; filter?: string; query?: string; cursor?: string
 }
-export interface ExploreMutation { ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
+export interface ExploreMutation { requestId?: string; ref: string; action: ExploreAction['id']; value?: string; title?: string; calendarType?: 'solar' | 'lunar'; year?: number; month?: number; day?: number; leapMonth?: boolean; targetRef?: string }
 export type ExploreSource =
   | { kind: 'call-ref'; callRef: string; participantUserId: number }
   | { kind: 'record'; item: ArkmeTimelineItem }
