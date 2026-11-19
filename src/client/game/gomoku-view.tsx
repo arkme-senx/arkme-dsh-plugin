@@ -1,18 +1,19 @@
 import React, {useEffect,useState} from 'react'
-import type {GomokuBoard} from './gomoku.js'
+import {GOMOKU_SIZE, gomokuWinLength, type GomokuBoard} from './gomoku.js'
 export const gomokuColors=['#303b4a','#c84b51','#317db0','#31836c','#885ab0','#bd7425']
 interface Props {
   board: GomokuBoard; me: string; version: number; epoch: number; paused: boolean; pending: boolean; now: number; host: boolean
   name: (id:string)=>string; identity: (id:string)=>React.ReactNode
   place: (cell:number)=>void; next: ()=>void
 }
-const xy=(cell:number)=>[29+(cell%15)*28,29+Math.floor(cell/15)*28] as const
+const margin=29, step=28, gridEnd=margin+(GOMOKU_SIZE-1)*step, extent=gridEnd+margin
+const xy=(cell:number)=>[margin+(cell%GOMOKU_SIZE)*step,margin+Math.floor(cell/GOMOKU_SIZE)*step] as const
 export function GomokuView({board:b,me,version,epoch,paused,pending,now,host,name,identity,place,next}:Props){
  const [selected,setSelected]=useState<number>()
  const mine=b.players[b.turn]?.id===me&&!b.players[b.turn]?.retired
  const enabled=mine&&!paused&&!pending&&!b.ended
  useEffect(()=>setSelected(undefined),[version,epoch,paused,b.ended])
- const end=b.winner?`${name(b.winner)} 五子连珠，获胜！`:b.endReason==='full'?'棋盘已满，本局无胜者':'参与者不足两人，本局无胜者'
+ const end=b.winner?`${name(b.winner)} ${gomokuWinLength(b)===5?'五':'四'}子连珠，获胜！`:b.endReason==='full'?'棋盘已满，本局无胜者':'参与者不足两人，本局无胜者'
  const seconds=Math.max(0,Math.ceil((b.deadline-now)/1000))
  return <div className="gomoku-play">
   <style>{`
@@ -27,15 +28,15 @@ export function GomokuView({board:b,me,version,epoch,paused,pending,now,host,nam
   <div className="gomoku-players">{b.players.map((p,i)=><div key={p.id} data-gomoku-player={p.id} className={`gomoku-player ${!b.ended&&i===b.turn?'current':''} ${p.retired?'retired':''}`} style={{'--stone':gomokuColors[i]} as React.CSSProperties}>
    {identity(p.id)}<span className="stone-key">{i+1}</span><span className="player-label" title={name(p.id)}>{name(p.id)}{p.retired?' · 已退赛':!b.ended&&i===b.turn?' · 当前回合':''}</span>
   </div>)}</div>
-  <svg className="gomoku-board" viewBox="0 0 450 450" role="group" aria-label="15×15 五子棋棋盘">
+  <svg className="gomoku-board" viewBox={`0 0 ${extent} ${extent}`} role="group" aria-label={`${GOMOKU_SIZE}×${GOMOKU_SIZE} 五子棋棋盘`}>
    <defs><linearGradient id="gomoku-wood" x2="1" y2="1"><stop stopColor="#f5dfb6"/><stop offset="1" stopColor="#e6c58e"/></linearGradient></defs>
-   <rect x="3" y="3" width="444" height="444" rx="15" fill="url(#gomoku-wood)" stroke="#8f693b" strokeWidth="5"/>
-   {Array.from({length:15},(_,i)=><g key={i} stroke="#92754b" strokeWidth=".8"><path d={`M29 ${29+i*28}H421`}/><path d={`M${29+i*28} 29V421`}/></g>)}
-   {[48,56,112,168,176].map(c=><circle key={c} cx={xy(c)[0]} cy={xy(c)[1]} r="2.8" fill="#72562f"/>)}
+   <rect x="3" y="3" width={extent-6} height={extent-6} rx="15" fill="url(#gomoku-wood)" stroke="#8f693b" strokeWidth="5"/>
+   {Array.from({length:GOMOKU_SIZE},(_,i)=><g key={i} stroke="#92754b" strokeWidth=".8"><path d={`M${margin} ${margin+i*step}H${gridEnd}`}/><path d={`M${margin+i*step} ${margin}V${gridEnd}`}/></g>)}
+   {[3, GOMOKU_SIZE-4].flatMap(y=>[3, GOMOKU_SIZE-4].map(x=>y*GOMOKU_SIZE+x)).map(c=><circle key={c} cx={xy(c)[0]} cy={xy(c)[1]} r="2.8" fill="#72562f"/>)}
    {b.cells.map((color,c)=>{const [x,y]=xy(c),preview=selected===c&&!color;return <g key={c}>
     {(!!color||preview)&&<><circle cx={x} cy={y} r="12" fill={gomokuColors[color?color-1:b.turn]} opacity={preview ? .5 : 1} stroke="#fff" strokeWidth=".7"/><text x={x} y={y+4} textAnchor="middle" fontSize="11" fill="white" pointerEvents="none" opacity={preview ? .6 : 1}>{color||b.turn+1}</text></>}
     {b.lastCell===c&&<circle cx={x} cy={y} r="14" fill="none" stroke="#fff" strokeWidth="2"/>}
-    <circle data-gomoku-cell={c} data-stone={color} data-preview={preview||undefined} cx={x} cy={y} r="13.5" fill="transparent" role="button" aria-label={`第${Math.floor(c/15)+1}行第${c%15+1}列${color?`，${color}号棋子`:'，空位'}`} aria-disabled={!enabled||!!color} tabIndex={enabled&&!color?0:-1} onClick={()=>{if(enabled&&!color)setSelected(c)}} onKeyDown={e=>{if((e.key==='Enter'||e.key===' ')&&enabled&&!color){e.preventDefault();setSelected(c)}}}/>
+    <circle data-gomoku-cell={c} data-stone={color} data-preview={preview||undefined} cx={x} cy={y} r="13.5" fill="transparent" role="button" aria-label={`第${Math.floor(c/GOMOKU_SIZE)+1}行第${c%GOMOKU_SIZE+1}列${color?`，${color}号棋子`:'，空位'}`} aria-disabled={!enabled||!!color} tabIndex={enabled&&!color?0:-1} onClick={()=>{if(enabled&&!color)setSelected(c)}} onKeyDown={e=>{if((e.key==='Enter'||e.key===' ')&&enabled&&!color){e.preventDefault();setSelected(c)}}}/>
    </g>})}
    {b.winningLine&&<polyline data-winning-line points={b.winningLine.map(c=>xy(c).join(',')).join(' ')} fill="none" stroke="#fff291" strokeWidth="4" strokeLinecap="round" pointerEvents="none"/>}
   </svg>
