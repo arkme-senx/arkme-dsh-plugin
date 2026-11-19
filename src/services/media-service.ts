@@ -66,9 +66,9 @@ export interface ArkmeMediaDescriptor {
 }
 
 export interface ArkmeChatMediaSource {accessRef:string;chatSessionUid:string;relationUid:string;recordOwnerUserId:RecordOwnerId;recordUid:string;version:number;audienceKey:string}
-type MediaSource = { remoteUrl: string; worldSound?: true; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;worldSound?:never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;worldSound?:never;recordingClip?:never}
+type MediaSource = { chatRecordingPath: string; remoteUrl?: never; worldSound?: never; recordingClip?: never; chatSource?: never } | { remoteUrl: string; worldSound?: true; recordingClip?: never;chatSource?:never } | { recordingClip: RecordingPlaybackRef; remoteUrl?: never;worldSound?:never;chatSource?:never } | {chatSource:Record<string,unknown>;remoteUrl?:never;worldSound?:never;recordingClip?:never}
 
-type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource
+type StoredMediaDescriptor = ArkmeMediaDescriptor & MediaSource & { chatRecordingPath?: string }
 type IssuableMediaDescriptor = Omit<ArkmeMediaDescriptor, 'viewerUserId' | 'expiresAtMillis' | 'stableKey'> & MediaSource
 
 /** Safe browser playback data issued from one verified record audio asset. */
@@ -541,6 +541,14 @@ export class MediaService {
     if (originalOnly && descriptor.purpose !== 'original') {
       throw new ArkmePluginError('original-unavailable', '原文件不可用，请刷新后重试；不会用预览图代替原文件', false, 404)
     }
+    if (descriptor.chatRecordingPath !== undefined) {
+      const response = await this.runtime.authenticatedChatRecordingStream(descriptor.chatRecordingPath, {
+        expectedUserId: session.userId, method, ...(range === undefined ? {} : { range }), ...(signal ? { signal } : {}),
+      })
+      response.headers.set('Cache-Control', 'private, no-store')
+      const { chatRecordingPath: _private, ...presentation } = descriptor
+      return { response, descriptor: presentation }
+    }
     if(descriptor.chatSource!==undefined) {
       if (descriptor.purpose === 'thumbnail' && method === 'GET' && range === undefined && descriptor.stableKey) {
         const key = `source-thumbnail:${descriptor.stableKey}`
@@ -571,6 +579,7 @@ export class MediaService {
       })
       return { response, descriptor }
     }
+    if (!descriptor.remoteUrl) throw new ArkmePluginError('media-host-rejected', '媒体来源不受信任', false, 403)
     const url = new URL(descriptor.remoteUrl)
     if (url.protocol !== 'https:' || url.username !== '' || url.password !== ''
       || url.port !== '' || url.hash !== ''
@@ -598,6 +607,19 @@ export class MediaService {
       return {response:captured,descriptor}
     }
     return { response, descriptor }
+  }
+
+  issueChatRecordingMediaRef(viewerUserId: number, path: string): string {
+    if (!/^\/api\/(?:v1\/chats\/recording-favorites\/[a-f0-9]{64}|public\/v1\/chats\/messages\/copy-link\/[A-Za-z0-9]{16})\/audio(?:\/(?:0|[1-9][0-9]{0,2}))?$/.test(path)) {
+      throw new ArkmePluginError('recording-media-path-invalid', '录音播放引用无效', false, 400)
+    }
+    return this.issueMediaRef(viewerUserId, { chatRecordingPath: path, mimeType: 'audio/ogg', fileName: '收藏录音', size: 0 }, `chat-recording:${path}`)
+  }
+
+  issueAvatarMediaRef(viewerUserId: number, raw: string): string | undefined {
+    const safe = safeHttpsUrl(raw)
+    if (!safe || !allowedSignedImageHost(this.runtime.config.environment, new URL(safe).hostname)) return undefined
+    return this.issueImageMediaRef(viewerUserId, { remoteUrl: safe, mimeType: 'image/jpeg', fileName: '头像', size: 0 }, `public-avatar:${safe}`)
   }
 
   issueWorldVoiceprintMediaRef(viewerUserId: number, input: { remoteUrl: string; mimeType: string }): string {

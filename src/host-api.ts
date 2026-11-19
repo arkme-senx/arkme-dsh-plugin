@@ -1909,6 +1909,7 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
         typeof params.timeZone === 'string' ? { timeZone: params.timeZone, ...(typeof params.enabled === 'boolean' ? { enabled: params.enabled } : {}) } : undefined,
         requestSignal)
     }
+    case 'recordings.favorites': return await service.recordingFavorites(params as unknown as import('./recording-favorite-contract.js').RecordingFavoriteRequest, requestSignal)
     case 'recordings.workflow': return await service.recordingWorkflow(params, requestSignal)
     case 'recordings.import.preflight': return await service.recordingImportPreflight(
       stringListParam(params, 'fileNames'), requestSignal,

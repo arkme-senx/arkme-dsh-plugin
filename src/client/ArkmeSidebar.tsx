@@ -1,3 +1,5 @@
+import { RecordingFavorites } from './RecordingFavorites.js'
+import { RecordingFavoriteAction } from './RecordingFavoriteAction.js'
 import { arkmeDayDelta, arkmeDayKey, arkmeWallClockIso, useArkmeEffectiveTimeZone } from './display-time-zone.js'
 import {parseGameCommand} from './game/command.js'
 import {openGame} from './game/window.js'
@@ -1718,6 +1720,7 @@ function CopyLinkDetailDrawer({
       actions={<button data-arkme-feedback="neutral" type="button" className="arkme-right-panel-header-button"
         style={{ ...styles.copyLinkDetailHeaderButton, width: 30, height: 30, marginTop: -3, opacity: shareDisabled ? .38 : 1, cursor: shareDisabled ? 'default' : 'pointer' }}
         disabled={shareDisabled} aria-label={tr("分享快记链接")} onClick={onShare}><ArkmeForwardSubmitIcon /></button>} />
+    {segments?.length && state.status === 'ready' ? <RecordingFavoriteAction sid={state.sid} /> : null}
     {state.status === 'loading' && <div role="status" style={styles.copyLinkDetailStatus}>{tr("正在加载链接内容...")}</div>}
     {state.status === 'error' && <div role="alert" style={styles.copyLinkDetailStatus}>
       <div style={styles.copyLinkDetailError}>
@@ -8325,7 +8328,7 @@ export function ArkmeSurface({
     [chatDirectory, detailState],
   )
   const showMessageAvatars = arkmeSourceShowsMessageAvatars(source)
-  const surfaceTitle = ui.mode === 'recordings' ? '全天候录音'
+  const surfaceTitle = ui.mode === 'recording-favorites' ? tr('我收藏的录音') : ui.mode === 'recordings' ? '全天候录音'
     : ui.mode === 'arrangements' ? tr('安排')
     : ui.mode === 'recognized-speakers' ? '已识别说话人'
     : ui.mode === 'calls' ? '通话'
@@ -8341,7 +8344,7 @@ export function ArkmeSurface({
     : 'Arkme'
   const arkoContentVisible = authView === 'content' && ui.mode === 'arko'
   const utilityContentVisible = authView === 'content'
-    && (ui.mode === 'statistics' || ui.mode === 'explore' || ui.mode === 'recordings' || ui.mode === 'arrangements' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
+    && (ui.mode === 'statistics' || ui.mode === 'explore' || ui.mode === 'recordings' || ui.mode === 'recording-favorites' || ui.mode === 'arrangements' || ui.mode === 'recognized-speakers' || ui.mode === 'world' || ui.mode === 'search' || ui.mode === 'extensions' || ui.mode === 'notifications'
       || ui.mode === 'voiceprint' || ui.mode === 'calls')
   const composerPlaceholder = arkmeComposerPlaceholderText(
     arkmeComposerPlaceholderTargetForSource(selectedSource, conversationMemberSnapshot.complete && conversationMemberSnapshot.error === undefined ? conversationMembers.length : 0),
@@ -9468,6 +9471,7 @@ export function ArkmeSurface({
           : ui.mode === 'arrangements' ? <ArkmeArrangementSurface initialArrangementRef={ui.arrangementTargetRef}
             accountScope={auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : ''}
           />
+          : ui.mode === 'recording-favorites' ? <RecordingFavorites key={`favorites:${authenticatedAccountKey}:${ui.recordingFavorite?.favoriteRef ?? 'list'}`} accountKey={authenticatedAccountKey ?? ''} mediaPath={authStoreSnapshot.config?.mediaPath ?? '/arkme-self/api/media'} initialRef={ui.recordingFavorite?.favoriteRef} fromNotifications={ui.recordingFavorite?.fromNotifications} />
           : ui.mode === 'recordings' ? <ArkmeRecordingSurface
             active={active}
             key={`recordings:${auth?.status ?? 'unknown'}:${auth?.environment ?? 'unknown'}:${String(auth?.userId ?? 0)}`}

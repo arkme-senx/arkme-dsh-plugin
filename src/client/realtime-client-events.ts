@@ -1,3 +1,4 @@
+import { favoriteChanges } from './recording-favorite-client.js'
 import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { wakeArkmeFileTask } from './file-send-tasks.js'
 import { publishThoughtInvalidation } from './thought-invalidations.js'
@@ -329,6 +330,7 @@ export function useArkmeRealtimeClientEvents(
           publishNativeAnnotationInvalidation(authenticatedAccountScope)
           void callArkme<ArkmeMessageSyncProgress>('chat.sync.status', {}).then(progress => { if (!stopped) arkmeMessageSync.apply(progress) }).catch(() => undefined)
           officialNotifications.invalidate(authenticatedAccountScope)
+          favoriteChanges.publish(authenticatedAccountScope)
           if (ownsMessagePreparing) arkmeMessagePreparing.reset()
           if (update.attentionSummary !== undefined) arkmeAttentionSummary.apply(update.attentionSummary)
           arkmeInterwovenInvalidation.invalidate(undefined, undefined, false, 'realtime-reconcile')
@@ -373,6 +375,7 @@ export function useArkmeRealtimeClientEvents(
           if (ownsNotifications) void arkmeDesktopNotifications.show(update.notification)
           return
         }
+        if (update.type === 'projection-invalidated' && update.projection === 'recording_favorites') { favoriteChanges.publish(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated' && update.projection === 'official_notification') { officialNotifications.invalidate(authenticatedAccountScope); return }
         if (update.type === 'projection-invalidated' && update.projection === 'chat_extensions') { invalidateMessageQuoteSources(); return }
         if (update.type === 'projection-invalidated' && update.projection === 'message_annotations') { invalidateMessageMarks(); return }

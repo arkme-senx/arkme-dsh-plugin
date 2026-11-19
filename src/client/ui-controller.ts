@@ -54,7 +54,7 @@ export interface ArkmeUiState {
   chatRevision: number
   recordRevision: number
   topicDirectoryRevision: number
-  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'arrangements' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
+  mode: 'login' | 'source' | 'bot' | 'calls' | 'recordings' | 'recording-favorites' | 'arrangements' | 'recognized-speakers' | 'world' | 'search' | 'extensions' | 'notifications' | 'voiceprint' | 'contact-add' | 'arko'
     | 'harness' | 'codex' | 'team' | 'explore' | 'statistics'
   statisticsMonth?: string
   calendarInitialDate?: string
@@ -71,6 +71,7 @@ export interface ArkmeUiState {
   conversationUnreadSelection?: { sourceKey: string }
   conversationTarget?: { revision: number; itemUid: string; sendAtMillis: number; recordOwnerUserId?: RecordOwnerId; momentId?: string; contextRef?: string; systemRef?: string; transientHighlight?: boolean; openDetail?: boolean; firstUnread?: boolean }
   recordingTarget?: ArkmeRecordingTarget
+  recordingFavorite?: { favoriteRef: string; fromNotifications: boolean } | undefined
   recordingReturnDateStamp?: number
   searchTarget?: { revision: number; query: string }
   extensionShareRef?: string
@@ -255,6 +256,18 @@ export class ArkmeUiController {
     this.leaveContacts()
     const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, recordingReturnDateStamp: _recordingReturnDateStamp, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
     this.publish({ ...rest, mode: 'recordings' })
+  }
+
+  showRecordingFavorites(favoriteRef?: string, fromNotifications = false): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, recordingTarget: _recordingTarget, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recording-favorites', recordingFavorite: favoriteRef ? { favoriteRef, fromNotifications } : undefined })
+  }
+
+  showRecordingFavoriteSource(atMillis: number, identityHash: string): void {
+    this.leaveContacts()
+    const { selectedSource: _selectedSource, calendarOpen: _calendarOpen, productMode: _productMode, ...rest } = this.state
+    this.publish({ ...rest, mode: 'recordings', recordingTarget: { dateStamp: atMillis, startAtMillis: atMillis, identityHash, revision: ++this.recordingTargetRevision } })
   }
 
   showCalls(): void {

@@ -45,6 +45,8 @@ import type { ExploreQuery, ExploreMutation } from './explore-contract.js'
 import { RecordingEntityService } from './services/recording-entity-service.js'
 import type { RecordingPersonReferencesQuery, RecordingEntityStartQuery, RecordingEntityQuery, RecordingEntityOccurrenceQuery, RecordingEntityFeedbackInput, RecordingEntityFeedbackUndoInput } from './recording-entity-contract.js'
 import type { ArkmeRecordingWindow } from './types.js'
+import { RecordingFavoriteService } from './services/recording-favorite-service.js'
+import type { RecordingFavoriteRequest, RecordingFavoriteResult } from './recording-favorite-contract.js'
 import { RecordingWorkflowService } from './services/recording-workflow-service.js'
 import type { RecordingImportBatch } from './recording-workflow-contract.js'
 import {readProfileImage} from './services/profile-image.js'
@@ -531,6 +533,7 @@ export class ArkmeService {
   private readonly privacy: ArkmePrivacyVisibilityService
   private readonly directory: ConversationDirectoryService
   private readonly offlineContexts: OfflineContextService
+  private readonly recordingFavoriteService: RecordingFavoriteService
   private readonly recordingWorkflowService: RecordingWorkflowService
   private readonly officialNotifications: OfficialNotificationService
   private readonly archives: ArchiveService
@@ -862,6 +865,7 @@ export class ArkmeService {
       isPrivacyLocked: raw => this.record.isPrivacyLocked(raw),
     }, this.privacy)
     this.offlineContexts = new OfflineContextService(this.runtime,this.source,this.media, async userId => await this.realtime.invalidateOfflineContextProjection(userId))
+    this.recordingFavoriteService = new RecordingFavoriteService(this.runtime, this.media)
     this.recordingWorkflowService = new RecordingWorkflowService(this.runtime)
     this.officialNotifications = new OfficialNotificationService(this.runtime)
     this.archives = new ArchiveService(this.runtime, this.source)
@@ -1559,6 +1563,7 @@ arkoImagesV1:true,
         recordingPersonReferences: true,
         recordingEntityStart: true,
         recordingWorkflowV2: true,
+        recordingFavoritesV1: true,
 recordingAnalysisV1: true,
         recordingStrategiesV1: true,
         recordingFileStorageV1: true,
@@ -2134,6 +2139,7 @@ recordingAnalysisV1: true,
 
   offlineContext(input: OfflineContextRequest,signal?:AbortSignal) { return this.offlineContexts.offlineContext(input,signal) }
   recordingAnalysis(input: import('./recording-analysis-contract.js').RecordingAnalysisInput, signal?: AbortSignal) { return this.recording.recordingAnalysis(input, signal) }
+  recordingFavorites<T extends RecordingFavoriteRequest>(input: T, signal?: AbortSignal): Promise<RecordingFavoriteResult<T>> { return this.recordingFavoriteService.request(input, signal) }
   recordingWorkflow(input: Record<string, unknown>, signal?: AbortSignal) { return this.recordingWorkflowService.request(input, signal) }
 
   listOfficialNotifications(cursor?: string, signal?: AbortSignal) { return this.officialNotifications.list(cursor, signal) }
