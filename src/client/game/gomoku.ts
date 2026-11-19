@@ -1,5 +1,8 @@
 export const GOMOKU_SIZE = 24
-export const GOMOKU_WIN_LENGTH = 4
+// Seats are frozen at round start; retirement does not change the win condition.
+export function gomokuWinLength(board: Pick<GomokuBoard, 'players'>): 4 | 5 {
+  return board.players.length === 2 ? 5 : 4
+}
 export const GOMOKU_CELLS = GOMOKU_SIZE * GOMOKU_SIZE
 export interface GomokuBoard {
   cells: number[]
@@ -9,7 +12,7 @@ export interface GomokuBoard {
   deadline: number
   ended: boolean
   winner?: string
-  endReason?: 'four' | 'full' | 'insufficient_players'
+  endReason?: 'five' | 'four' | 'full' | 'insufficient_players'
   lastCell?: number
   winningLine?: number[]
 }
@@ -34,7 +37,7 @@ export function place(board: GomokuBoard, id: string, cell: number, now: number)
       if(nx<0||nx>=GOMOKU_SIZE||ny<0||ny>=GOMOKU_SIZE||b.cells[ny*GOMOKU_SIZE+nx]!==color)break
       if(sign<0)line.unshift(ny*GOMOKU_SIZE+nx);else line.push(ny*GOMOKU_SIZE+nx)
     }
-    if(line.length>=GOMOKU_WIN_LENGTH){b.ended=true;b.winner=id;b.endReason='four';b.winningLine=line;return b}
+    if(line.length>=gomokuWinLength(b)){b.ended=true;b.winner=id;b.endReason=gomokuWinLength(b)===5?'five':'four';b.winningLine=line;return b}
   }
   if(b.cells.every(c=>c!==0)){b.ended=true;b.endReason='full';return b}
   finishOrAdvance(b,now);return b

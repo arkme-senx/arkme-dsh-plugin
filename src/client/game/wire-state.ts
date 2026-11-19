@@ -1,5 +1,5 @@
 import {cardState} from './doudizhu-wire.js';
-import {GOMOKU_SIZE, GOMOKU_CELLS, GOMOKU_WIN_LENGTH} from './gomoku.js';
+import {GOMOKU_SIZE, GOMOKU_CELLS, gomokuWinLength} from './gomoku.js';
 import { cells, key, type Cell } from "./checkers.js";
 import {isGameType, playerCounts, type GameType} from './game-types.js';
 import type { State } from "./authority.js";
@@ -34,7 +34,7 @@ export function decodeState(value: any, expected: GameType = 'chinese_checkers')
     const b=value.gomoku;
     if (typeof b.cells !== 'string' || (b.cells.length !== GOMOKU_CELLS || !/^[0-6]+$/.test(b.cells)) || !Array.isArray(b.players) || b.players.length !== value.count || b.players.length !== value.players.length || !b.players.every((p: any,i: number)=>p && p.id === value.players[i] && typeof p.retired === 'boolean' && Number.isInteger(p.timeouts) && p.timeouts >= 0) || !Number.isInteger(b.turn) || b.turn < 0 || b.turn >= b.players.length || !Number.isFinite(b.deadline) || b.turnSeconds !== value.turnSeconds || typeof b.ended !== 'boolean') throw Error('Invalid gomoku board');
     const cells = [...b.cells].map(Number);
-    if (cells.some(c=>c>b.players.length) || (b.lastCell !== undefined && (!Number.isInteger(b.lastCell) || b.lastCell<0 || b.lastCell>=GOMOKU_CELLS)) || (b.winner !== undefined && !value.players.includes(b.winner)) || (b.winningLine !== undefined && (!Array.isArray(b.winningLine) || b.winningLine.length<GOMOKU_WIN_LENGTH || b.winningLine.length>GOMOKU_SIZE || !b.winningLine.every((c: unknown)=>Number.isInteger(c) && Number(c)>=0 && Number(c)<GOMOKU_CELLS)))) throw Error('Invalid gomoku cells');
+    if (cells.some(c=>c>b.players.length) || (b.lastCell !== undefined && (!Number.isInteger(b.lastCell) || b.lastCell<0 || b.lastCell>=GOMOKU_CELLS)) || (b.winner !== undefined && !value.players.includes(b.winner)) || (b.winningLine !== undefined && (!Array.isArray(b.winningLine) || b.winningLine.length<gomokuWinLength(b) || b.winningLine.length>GOMOKU_SIZE || !b.winningLine.every((c: unknown)=>Number.isInteger(c) && Number(c)>=0 && Number(c)<GOMOKU_CELLS)))) throw Error('Invalid gomoku cells');
     return {...value, gomoku:{...b,cells}};
   }
   if (value.gomoku) throw Error('Wrong game board');

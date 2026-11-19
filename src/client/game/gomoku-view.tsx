@@ -1,5 +1,5 @@
 import React, {useEffect,useState} from 'react'
-import {GOMOKU_SIZE, type GomokuBoard} from './gomoku.js'
+import {GOMOKU_SIZE, gomokuWinLength, type GomokuBoard} from './gomoku.js'
 export const gomokuColors=['#303b4a','#c84b51','#317db0','#31836c','#885ab0','#bd7425']
 interface Props {
   board: GomokuBoard; me: string; version: number; epoch: number; paused: boolean; pending: boolean; now: number; host: boolean
@@ -13,7 +13,7 @@ export function GomokuView({board:b,me,version,epoch,paused,pending,now,host,nam
  const mine=b.players[b.turn]?.id===me&&!b.players[b.turn]?.retired
  const enabled=mine&&!paused&&!pending&&!b.ended
  useEffect(()=>setSelected(undefined),[version,epoch,paused,b.ended])
- const end=b.winner?`${name(b.winner)} 四子连珠，获胜！`:b.endReason==='full'?'棋盘已满，本局无胜者':'参与者不足两人，本局无胜者'
+ const end=b.winner?`${name(b.winner)} ${gomokuWinLength(b)===5?'五':'四'}子连珠，获胜！`:b.endReason==='full'?'棋盘已满，本局无胜者':'参与者不足两人，本局无胜者'
  const seconds=Math.max(0,Math.ceil((b.deadline-now)/1000))
  return <div className="gomoku-play">
   <style>{`

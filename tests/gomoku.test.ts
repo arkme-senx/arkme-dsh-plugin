@@ -5,16 +5,25 @@ for(const count of [2,3,4,5,6])it(`initializes ${count} numbered players`,()=>{
  expect(b.cells).toHaveLength(576);expect(b.players).toHaveLength(count);expect(b.deadline).toBe(91000)
  expect(place(b,'p0',112,2000).turn).toBe(1)
 })
-for(const [dx,dy] of [[1,0],[0,1],[1,1],[-1,1]])it(`wins along ${dx},${dy} only with four`,()=>{
- let b=createBoard(['a','b'],0)
+for(const count of [2,3,4,5,6])for(const [dx,dy] of [[1,0],[0,1],[1,1],[-1,1]])it(`${count} players win along ${dx},${dy} at the correct length`,()=>{
+ const ids=Array.from({length:count},(_,i)=>String(i)), needed=count===2?5:4
  const start=dx===-1?10:2
- for(let i=0;i<3;i++)b.cells[(2+i*dy!)*24+start+i*dx!]=1
- const win=place(b,'a',(2+3*dy!)*24+start+3*dx!,1)
- expect(win.winner).toBe('a');expect(win.ended).toBe(true);expect(win.winningLine).toHaveLength(4);expect(win.endReason).toBe('four')
- const snapshot={version:1,round:'r',count:2,turnSeconds:60,gameType:'multiplayer_gomoku' as const,players:['a','b'],ready:[],gomoku:win}
- expect(decodeState(encodeState(snapshot),'multiplayer_gomoku').gomoku?.winningLine).toHaveLength(4)
- b=createBoard(['a','b'],0);for(let i=0;i<2;i++)b.cells[30+i]=1
- expect(place(b,'a',32,1).ended).toBe(false)
+ const cell=(i:number)=>(2+i*dy!)*24+start+i*dx!
+ const b=createBoard(ids,0)
+ for(let i=0;i<needed-2;i++)b.cells[cell(i)]=1
+ expect(place(b,'0',cell(needed-2),1).ended).toBe(false)
+ b.cells[cell(needed-2)]=1
+ const win=place(b,'0',cell(needed-1),1)
+ expect(win.winner).toBe('0');expect(win.winningLine).toHaveLength(needed)
+ expect(win.endReason).toBe(count===2?'five':'four')
+ const snapshot={version:1,round:'r',count,turnSeconds:60,gameType:'multiplayer_gomoku' as const,players:ids,ready:[],gomoku:win}
+ expect(decodeState(encodeState(snapshot),'multiplayer_gomoku').gomoku?.winningLine).toHaveLength(needed)
+ if(count===2)expect(()=>decodeState(encodeState({...snapshot,gomoku:{...win,winningLine:win.winningLine!.slice(0,4)}}),'multiplayer_gomoku')).toThrow()
+})
+it('keeps four-in-row after a three-player round loses one player',()=>{
+ const b=retire(createBoard(['a','b','c'],0),'c',1)
+ b.cells[0]=1;b.cells[1]=1;b.cells[2]=1
+ expect(place(b,'a',3,2).endReason).toBe('four')
 })
 it('accepts long lines, rejects occupied/out-of-turn/invalid placements and row wrapping',()=>{
  const b=createBoard(['a','b'],0);for(const x of [0,1,2,4,5])b.cells[30+x]=1
