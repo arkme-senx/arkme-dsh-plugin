@@ -65,8 +65,10 @@ try {
   await popup.waitForFunction(()=>document.querySelector('[aria-label="每回合时长"] [aria-pressed=true]')?.textContent.includes('90'))
   await lobbyReady()
   await popup.getByRole('button',{name:'开始游戏'}).click()
-  await popup.getByRole('group',{name:'15×15 五子棋棋盘'}).waitFor()
-  if(await popup.locator('[data-gomoku-cell]').count()!==225)throw Error('wrong board size')
+  await popup.getByRole('group',{name:'24×24 五子棋棋盘'}).waitFor()
+  if(await popup.locator('[data-gomoku-cell]').count()!==576)throw Error('wrong board size')
+  const grid=await popup.locator('.gomoku-board g[stroke] path').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('d')))
+  if(grid.length!==48||grid.some(d=>!/^M[0-9.]+ [0-9.]+[HV]673$/.test(d)))throw Error('invalid 24x24 grid paths')
   const cell=n=>popup.locator(`[data-gomoku-cell="${n}"]`)
   await cell(112).click();await popup.locator('[data-preview=true][data-gomoku-cell="112"]').waitFor()
   await cell(113).click();await popup.locator('[data-preview=true][data-gomoku-cell="113"]').waitFor()
@@ -75,12 +77,12 @@ try {
   await popup.evaluate(()=>window.dispatchEvent(new Event('game-test-disconnect')))
   await popup.getByRole('button',{name:'立即重连',exact:true}).click()
   await popup.getByText('● 轮到你了',{exact:true}).waitFor()
-  for(let i=0;i<5;i++){
+  for(let i=0;i<4;i++){
     await cell(105+i).click()
     if(await cell(105+i).getAttribute('data-stone')!=='0')throw Error('preview submitted prematurely')
     await popup.getByRole('button',{name:'确认落子',exact:true}).click()
     await popup.waitForFunction(n=>document.querySelector(`[data-gomoku-cell="${n}"]`)?.getAttribute('data-stone')==='1',105+i)
-    if(i<4){
+    if(i<3){
       await popup.getByText('等待 小红 落子',{exact:true}).waitFor()
       if(await popup.getByRole('button',{name:'确认落子',exact:true}).isEnabled())throw Error('out-of-turn action enabled')
       await popup.waitForFunction(()=>window.__gameTestSnapshot?.gomoku?.turn===1)
@@ -88,7 +90,7 @@ try {
       await popup.getByText('● 轮到你了',{exact:true}).waitFor()
     }
   }
-  await popup.getByText('小明（你） 五子连珠，获胜！',{exact:true}).waitFor()
+  await popup.getByText('小明（你） 四子连珠，获胜！',{exact:true}).waitFor()
   await popup.locator('[data-winning-line]').waitFor({state:'attached'})
   await mkdir('test-results/game',{recursive:true})
   await popup.screenshot({path:'test-results/game/gomoku-win.png',fullPage:true})
@@ -107,7 +109,7 @@ try {
   if(!fits)throw Error('gomoku board or controls clipped at default window size')
   await popup.screenshot({path:'test-results/game/gomoku-five.png',fullPage:true})
   if(errors.length)throw Error(errors.join('\n'))
-  console.log('PASS: gomoku selection, 5 players, preview/cancel/confirm, reconnect, five-in-row, winning line, chat and next round')
+  console.log('PASS: gomoku selection, 5 players, preview/cancel/confirm, reconnect, four-in-row, winning line, chat and next round')
   await context.close()
 } finally {
   await browser.close()

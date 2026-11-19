@@ -2,26 +2,28 @@ import {it,expect} from 'vitest'
 import {createBoard,place,timeout,retire} from '../src/client/game/gomoku.js'
 for(const count of [2,3,4,5,6])it(`initializes ${count} numbered players`,()=>{
  const b=createBoard(Array.from({length:count},(_,i)=>`p${i}`),1000,90)
- expect(b.cells).toHaveLength(225);expect(b.players).toHaveLength(count);expect(b.deadline).toBe(91000)
+ expect(b.cells).toHaveLength(576);expect(b.players).toHaveLength(count);expect(b.deadline).toBe(91000)
  expect(place(b,'p0',112,2000).turn).toBe(1)
 })
-for(const [dx,dy] of [[1,0],[0,1],[1,1],[-1,1]])it(`wins along ${dx},${dy} only with five`,()=>{
+for(const [dx,dy] of [[1,0],[0,1],[1,1],[-1,1]])it(`wins along ${dx},${dy} only with four`,()=>{
  let b=createBoard(['a','b'],0)
  const start=dx===-1?10:2
- for(let i=0;i<4;i++)b.cells[(2+i*dy!)*15+start+i*dx!]=1
- const win=place(b,'a',(2+4*dy!)*15+start+4*dx!,1)
- expect(win.winner).toBe('a');expect(win.ended).toBe(true);expect(win.winningLine).toHaveLength(5)
- b=createBoard(['a','b'],0);for(let i=0;i<3;i++)b.cells[30+i]=1
- expect(place(b,'a',33,1).ended).toBe(false)
+ for(let i=0;i<3;i++)b.cells[(2+i*dy!)*24+start+i*dx!]=1
+ const win=place(b,'a',(2+3*dy!)*24+start+3*dx!,1)
+ expect(win.winner).toBe('a');expect(win.ended).toBe(true);expect(win.winningLine).toHaveLength(4);expect(win.endReason).toBe('four')
+ const snapshot={version:1,round:'r',count:2,turnSeconds:60,gameType:'multiplayer_gomoku' as const,players:['a','b'],ready:[],gomoku:win}
+ expect(decodeState(encodeState(snapshot),'multiplayer_gomoku').gomoku?.winningLine).toHaveLength(4)
+ b=createBoard(['a','b'],0);for(let i=0;i<2;i++)b.cells[30+i]=1
+ expect(place(b,'a',32,1).ended).toBe(false)
 })
 it('accepts long lines, rejects occupied/out-of-turn/invalid placements and row wrapping',()=>{
  const b=createBoard(['a','b'],0);for(const x of [0,1,2,4,5])b.cells[30+x]=1
  expect(place(b,'a',33,1).winningLine).toHaveLength(6)
- for(const cell of [-1,225,1.1,NaN])expect(()=>place(b,'a',cell,1)).toThrow()
+ for(const cell of [-1,576,1.1,NaN])expect(()=>place(b,'a',cell,1)).toThrow()
  expect(()=>place(b,'b',33,1)).toThrow();expect(()=>place(b,'a',30,1)).toThrow()
- const edge=createBoard(['a','b'],0);[13,14,15,16].forEach(x=>edge.cells[x]=1)
- expect(place(edge,'a',17,1).ended).toBe(false)
- edge.cells[16]=2;expect(place(edge,'a',17,1).ended).toBe(false)
+ const edge=createBoard(['a','b'],0);[22,23,24,25].forEach(x=>edge.cells[x]=1)
+ expect(place(edge,'a',26,1).ended).toBe(false)
+ edge.cells[25]=2;expect(place(edge,'a',26,1).ended).toBe(false)
 })
 it('keeps retired stones as obstacles and ends without winner with one survivor',()=>{
  const b=createBoard(['a','b','c'],0);b.cells[10]=2
@@ -37,9 +39,9 @@ it('skips timeouts, retires on third, resets streak after placement, obeys durat
  b.players[1]!.timeouts=2;b=place(b,'b',0,b.deadline-1);expect(b.players[1]!.timeouts).toBe(0)
  }
 })
-it('ends a full board without five as a draw',()=>{
+it('ends a full board without four as a draw',()=>{
  const b=createBoard(['a','b'],0)
- b.cells=Array.from({length:225},(_,i)=>((Math.floor(i/15)+Math.floor((i%15)/2))%2)+1)
+ b.cells=Array.from({length:576},(_,i)=>((Math.floor(i/24)+Math.floor((i%24)/2))%2)+1)
  b.cells[112]=0
  const end=place(b,'a',112,1);expect(end.ended).toBe(true);expect(end.endReason).toBe('full');expect(end.winner).toBeUndefined()
 })
@@ -62,14 +64,27 @@ it('keeps generic lobby semantics and resets gomoku next round',()=>{
 })
 it('encodes a full six-player board below 4 KiB and rejects cross-game or corrupt snapshots',()=>{
  const a=new Authority('member-0','multiplayer_gomoku');a.sync(members,0)
- a.state.count=6;a.sync(members,0);a.state.gomoku=createBoard(a.state.players,0)
- a.state.gomoku.cells=Array.from({length:225},(_,i)=>i%6+1)
+ a.state.count=6;a.sync(members,0)
+ a.state.players=a.state.players.map((_,i)=>String(i).padStart(32,'0'));a.state.ready=[a.state.players[0]!]
+ a.state.gomoku=createBoard(a.state.players,0)
+ a.state.gomoku.cells=Array.from({length:576},(_,i)=>i%6+1)
  const wire=encodeState(a.state)
  expect(new TextEncoder().encode(JSON.stringify({room_id:'r'.repeat(32),runtime_id:'x'.repeat(36),protocol_version:1,type:'snapshot',payload:wire})).length).toBeLessThan(4096)
  expect(decodeState(wire,'multiplayer_gomoku')).toEqual(a.state)
  expect(()=>decodeState(wire,'chinese_checkers')).toThrow()
- for(const cells of ['0'.repeat(224),'7'.repeat(225),Array(225).fill(0)])expect(()=>decodeState({...wire,gomoku:{...a.state.gomoku,cells}},'multiplayer_gomoku')).toThrow()
+ for(const cells of ['0'.repeat(225),'0'.repeat(575),'0'.repeat(577),'7'.repeat(576),Array(576).fill(0)])expect(()=>decodeState({...wire,gomoku:{...a.state.gomoku,cells}},'multiplayer_gomoku')).toThrow()
  expect(()=>decodeState({...wire,gameType:'unknown'},'multiplayer_gomoku')).toThrow()
  const legacy={version:1,round:'lobby',count:2,players:[],ready:[]}
  expect(decodeState(legacy)).toEqual(legacy)
+})
+
+it('plays at the bottom right corner and recognizes a full 24-stone line',()=>{
+ const b=createBoard(['a','b'],0)
+ expect(place(b,'a',575,1).cells[575]).toBe(1)
+ for(let c=552;c<575;c++)b.cells[c]=1
+ const end=place(b,'a',575,1)
+ expect(end.winner).toBe('a');expect(end.winningLine).toHaveLength(24)
+ const a=new Authority('a','multiplayer_gomoku')
+ a.state.players=['a','b'];a.state.gomoku=end
+ expect(decodeState(encodeState(a.state),'multiplayer_gomoku').gomoku?.winningLine).toHaveLength(24)
 })
