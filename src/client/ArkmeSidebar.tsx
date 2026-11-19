@@ -10232,6 +10232,7 @@ export function ArkmeSurface({
         {activeConversation && drawer === 'detail' && detailItem !== undefined && <>
           <ArkmeConversationDetailDismiss onClose={() => setDrawer(undefined)} />
           {detailItem.forwardRecords !== undefined && <ForwardRecordsDetail
+            sourceRef={source?.sourceRef}
             key={detailItem.itemUid}
             item={detailItem}
             sourceBadge={detailConversationBadge}

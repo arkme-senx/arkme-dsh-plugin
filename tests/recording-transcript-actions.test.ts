@@ -169,8 +169,8 @@ describe('recording destination owner contracts', () => {
     await expect(result.forward(selection, command, session)).resolves.toEqual({ recordUid: 'chat-record' })
     expect(chat).toHaveBeenCalledWith('/api/v1/chats/records/forward', {
       chat_session_uid: 'target-owner', client_request_id: command.requestId, send_at: date,
-      source_items: [{ source_type: 'long_recording_segments', source_identity_kind: 'audio_session', session_id: 'audio-source', segment_selection: { kind: 'long_recording_segments', segments: [{ child_id: '200000000000000000000001', asr_item_index: 2, transcript_source: 'system' }] } }],
-    }, session, undefined)
+      source_items: [{ require_recording_audio: true, source_type: 'long_recording_segments', source_identity_kind: 'audio_session', session_id: 'audio-source', segment_selection: { kind: 'long_recording_segments', segments: [{ child_id: '200000000000000000000001', asr_item_index: 2, transcript_source: 'system' }] } }],
+    }, session, undefined, { requestTimeoutMs: 125_000 })
     expect(record).not.toHaveBeenCalled()
   })
 
@@ -179,7 +179,7 @@ describe('recording destination owner contracts', () => {
     realtime.invalidateRecordProjection.mockRejectedValue(new Error('projection unavailable'))
     await expect(result.forward(selection, command, session)).resolves.toMatchObject({ recordUid: command.recordUid })
     expect(chat).not.toHaveBeenCalled()
-    expect(record.mock.calls[1]?.[1]).toMatchObject({ record_uid: command.recordUid, source: { identity_kind: 'audio_session', session_id: 'audio-source' }, ...(kind === 'topic' ? { topic_uid: 'target-owner' } : {}) })
+    expect(record.mock.calls[1]?.[1]).toMatchObject({ record_uid: command.recordUid, source: { require_recording_audio: true, identity_kind: 'audio_session', session_id: 'audio-source' }, ...(kind === 'topic' ? { topic_uid: 'target-owner' } : {}) })
   })
 
   it('passes Chat comments through its native contract without a separate text send', async () => {

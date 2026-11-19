@@ -2845,6 +2845,10 @@ params.kind === undefined ? 'summary' : recordingProjectionKindParam(params),
       },
     )
     }
+    case 'source.forward-recording-playback': {
+      if (!Array.isArray(params.path) || params.path.some(value => typeof value !== 'number')) throw new ArkmePluginError('forward-recording-input-invalid', '录音定位无效', false, 400)
+      return service.forwardRecordingPlayback(stringParam(params, 'sourceRef'), stringParam(params, 'actionRef'), stringParam(params, 'forwardId'), params.path as number[], requestSignal)
+    }
     case 'source.shared-recording-detail': return await service.sharedRecordingDetail(
       stringParam(params, 'detailRef'),
       { ...(stringParam(params, 'sourceRef') === '' ? {} : { sourceRef: stringParam(params, 'sourceRef') }), ...(requestSignal === undefined ? {} : { signal: requestSignal }) },

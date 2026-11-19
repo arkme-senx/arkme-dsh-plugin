@@ -5,7 +5,7 @@ import type { ProfileService } from './services/profile-service.js'
 import { objectValue, stringValue } from './services/service.js'
 import { arkmeRecordTextFormat } from './markdown.js'
 import { remapLongArticleAssets } from './long-article-content.js'
-import { projectForwardRecordingSegment } from './recording-forward-presentation.js'
+import { forwardRecordingAudioAvailable, projectForwardRecordingSegment } from './recording-forward-presentation.js'
 
 function numberValue(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
@@ -156,6 +156,7 @@ export function projectForwardRecordsPreview(
         // Only a resolved other account gets an actionable identity; the
         // viewer's own id and unresolved senders stay off the wire.
         ...(senderUserId > 0 && senderUserId !== viewerUserId ? { senderUserId } : {}),
+        ...(forwardRecordingAudioAvailable(item.recording_audio, recordingSegments) ? { recordingAudioAvailable: true as const } : {}),
         sendAtMillis: recordingSegments.length > 0 ? numberValue(item.send_at ?? item.sendAt) : sendAtMillis,
         title,
         textContent,
@@ -173,6 +174,7 @@ export function projectForwardRecordsPreview(
       if (senderUserId > 0) onSender?.(projectedItems[projectedItems.length - 1]!, senderUserId)
     }
     return {
+      forwardId: stringValue(node.forward_id),
       title: stringValue(node.title).trim() || fallbackTitle,
       createdAtMillis,
       summaryLines: listValue(node.summary_lines ?? node.summaryLines).map(value => stringValue(value).trim()).filter(Boolean),

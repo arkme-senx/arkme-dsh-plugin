@@ -2442,6 +2442,7 @@ export interface ArkmeMessageReadReceiptDetail extends ArkmeMessageReadReceiptQu
 }
 
 export interface ArkmeForwardRecordsPreview {
+  forwardId?: string
   title: string
   createdAtMillis: number
   summaryLines: string[]
@@ -2491,6 +2492,7 @@ export interface ArkmeForwardRecordPreviewItem {
   sourceType?: 'codex' | 'team_message' | 'record' | 'chat_record' | 'long_recording_segments' | 'agent' | 'ai_letter' | 'unknown'
   segments?: ArkmeForwardTranscriptSegment[]
   segmentCount?: number
+  recordingAudioAvailable?: true
   contentBlocks?: ArkmeContentBlock[]
   mediaUnavailable?: true
   truncated?: true
@@ -4926,6 +4928,7 @@ export type ArkmePluginOperation =
   | 'source.message-extension.context'
   | 'source.message-extension.parent'
   | 'source.message-extension.extend'
+  | 'source.forward-recording-playback'
   | 'source.shared-recording-detail'
   | 'source.message-snapshot.detail'
   | 'source.message-location.set'
@@ -5228,6 +5231,7 @@ export type ArkmeHostOperation = ArkmePluginOperation
   | 'source.interwoven-moments'
   | 'source.interwoven-detail'
   | 'source.interwoven-read-receipts'
+  | 'source.forward-recording-playback'
   | 'source.shared-recording-detail'
   | 'source.related-quick-notes.from-message'
   | 'source.related-quick-notes.from-moment'

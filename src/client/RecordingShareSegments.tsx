@@ -15,14 +15,18 @@ function recordingOffset(millis: number): string {
     .map(value => String(value).padStart(2, '0')).join(':')
 }
 
-export function RecordingShareSegments({ segments, audioUrl }: {
+export function RecordingShareSegments({ segments, audioUrl, loadAudio, unavailableText }: {
   segments: readonly ArkmeForwardTranscriptSegment[]
   audioUrl?: string | undefined
+  unavailableText?: string | undefined
+  loadAudio?: ((signal: AbortSignal) => Promise<string>) | undefined
 }) {
   const audio = useRef<HTMLAudioElement>(null)
   const selection = useRef<{ index: number; start: number; end: number }>()
   const pendingSeek = useRef(false)
   const attempt = useRef(0)
+  const request = useRef<AbortController>()
+  const [error, setError] = useState('')
   const [active, setActive] = useState<number>()
   const [status, setStatus] = useState<'idle' | 'loading' | 'playing' | 'error'>('idle')
   let offset = 0
@@ -37,6 +41,7 @@ export function RecordingShareSegments({ segments, audioUrl }: {
     const element = audio.current
     return () => {
       attempt.current++
+      request.current?.abort()
       element?.pause()
     }
   }, [audioUrl])
@@ -68,7 +73,7 @@ export function RecordingShareSegments({ segments, audioUrl }: {
     setStatus('error')
   }
   const seek = (element: HTMLAudioElement) => {
-    if (!selection.current || !pendingSeek.current) return
+    if (!selection.current || !pendingSeek.current || request.current) return
     if (!Number.isFinite(element.duration) || Math.abs(element.duration - duration) > 0.05) {
       fail(element)
       return
@@ -76,21 +81,39 @@ export function RecordingShareSegments({ segments, audioUrl }: {
     pendingSeek.current = false
     element.currentTime = selection.current.start
   }
-  const toggle = ({ index, start, end }: typeof rows[number]) => {
+  const toggle = async ({ index, start, end }: typeof rows[number]) => {
     const element = audio.current
     if (!element || end <= start) return
     const same = selection.current?.index === index
     const version = ++attempt.current
+    request.current?.abort()
     if (same && (status === 'loading' || !element.paused)) {
       pendingSeek.current = false
       element.pause()
       setStatus('idle')
       return
     }
+    if (!element.paused) element.pause()
     selection.current = { index, start, end }
+    setError('')
     setActive(index)
     setStatus('loading')
-    if (element.error) element.load()
+    if (loadAudio) {
+      const controller = new AbortController()
+      request.current = controller
+      try {
+        const url = await loadAudio(controller.signal)
+        if (attempt.current !== version || controller.signal.aborted) return
+        element.src = url
+        element.load()
+      } catch (cause) {
+        if (attempt.current === version && !controller.signal.aborted) {
+          setError(cause instanceof Error ? cause.message : tr('音频播放失败，请点击片段重试'))
+          fail(element)
+        }
+        return
+      } finally { if (request.current === controller) request.current = undefined }
+    } else if (element.error) element.load()
     pendingSeek.current = !same || element.currentTime < start || element.currentTime >= end || element.readyState < 1
     if (element.readyState >= 1) seek(element)
     if (attempt.current !== version) return
@@ -101,17 +124,17 @@ export function RecordingShareSegments({ segments, audioUrl }: {
     })
   }
   return <section aria-label={tr('已分享的录音片段')}>
-    {audioUrl && <audio ref={audio} src={audioUrl} preload="none"
+    {(audioUrl || loadAudio) && <audio ref={audio} src={audioUrl} preload="none"
       onLoadedMetadata={event => seek(event.currentTarget)}
       onTimeUpdate={event => stopAtBoundary(event.currentTarget)}
-      onPause={event => { if (event.currentTarget.paused) setStatus(value => value === 'error' ? value : 'idle') }}
+      onPause={event => { if (event.currentTarget.paused && !request.current && !pendingSeek.current) setStatus(value => value === 'error' ? value : 'idle') }}
       onEnded={() => setStatus('idle')}
-      onError={event => fail(event.currentTarget)} />}
-    {!audioUrl && <p style={{ margin: '4px 10px', fontSize: 12, color: arkmeTheme.secondary }}>{tr('音频暂不可用')}</p>}
+      onError={event => { if (!request.current) fail(event.currentTarget) }} />}
+    {!audioUrl && !loadAudio && <p style={{ margin: '4px 10px', fontSize: 12, color: arkmeTheme.secondary }}>{unavailableText ?? tr('音频暂不可用')}</p>}
     {rows.map(row => {
       const { segment, index, start, end } = row
       const selected = active === index
-      const playable = Boolean(audioUrl && end > start)
+      const playable = Boolean((audioUrl || loadAudio) && end > start)
       const playing = selected && status === 'playing'
       const loading = selected && status === 'loading'
       const body = <>
@@ -129,9 +152,9 @@ export function RecordingShareSegments({ segments, audioUrl }: {
         {playable ? <button type="button" aria-busy={loading || undefined}
           aria-label={`${tr(playing || loading ? '暂停' : '播放')} · ${segment.speakerName} · ${recordingOffset(segment.startMillis)}`}
           style={{ ...rowStyle, cursor: 'pointer', background: selected ? arkmeTheme.accentSoft : 'transparent' }}
-          onClick={() => toggle(row)}>{body}</button>
+          onClick={() => { void toggle(row) }}>{body}</button>
           : <div style={rowStyle}>{body}</div>}
-        {selected && status === 'error' && <span role="alert" style={{ marginLeft: 10, fontSize: 12, color: arkmeTheme.secondary }}>{tr('音频播放失败，请点击片段重试')}</span>}
+        {selected && status === 'error' && <span role="alert" style={{ marginLeft: 10, fontSize: 12, color: arkmeTheme.secondary }}>{error || tr('音频播放失败，请点击片段重试')}</span>}
       </div>
     })}
   </section>

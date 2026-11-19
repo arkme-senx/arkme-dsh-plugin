@@ -26,10 +26,10 @@ export class OwnerRecordingForwardGateway implements RecordingForwardGateway {
       const data = await postChatMessageCreation<Record<string, unknown>>(this.runtime, '/api/v1/chats/records/forward', {
         chat_session_uid: target.ownerRef,
         client_request_id: input.requestId,
-        source_items: [{ source_type: 'long_recording_segments', source_identity_kind: 'audio_session', session_id: selection.sessionId, segment_selection: { kind: 'long_recording_segments', segments } }],
+        source_items: [{ require_recording_audio: true, source_type: 'long_recording_segments', source_identity_kind: 'audio_session', session_id: selection.sessionId, segment_selection: { kind: 'long_recording_segments', segments } }],
         send_at: input.sendAtMillis,
         ...(input.commentText?.trim() ? { comment_text: input.commentText.trim() } : {}),
-      }, session, signal)
+      }, session, signal, { requestTimeoutMs: 125_000 })
       const itemUid = stringValue(data.record_uid).trim()
       if (itemUid === '') throw new ArkmePluginError('recording-forward-unconfirmed', '服务端未确认转发结果，请重试确认', true, 502)
       const sequence = typeof data.seq === 'number' && Number.isSafeInteger(data.seq) && data.seq >= 0 ? data.seq : 0
@@ -42,9 +42,9 @@ export class OwnerRecordingForwardGateway implements RecordingForwardGateway {
     const data = await this.runtime.authenticatedPost<Record<string, unknown>>(topic ? '/api/v1/topics/records/long-recording-forward/create' : '/api/v1/records/long-recording-forward/create', {
       record_uid: input.recordUid,
       ...(topic ? { topic_uid: target.ownerRef } : {}),
-      source: { identity_kind: 'audio_session', session_id: selection.sessionId, selection: { kind: 'long_recording_segments', segments } },
+      source: { require_recording_audio: true, identity_kind: 'audio_session', session_id: selection.sessionId, selection: { kind: 'long_recording_segments', segments } },
       send_at: input.sendAtMillis,
-    }, session, signal)
+    }, session, signal, { requestTimeoutMs: 125_000 })
     const core = objectValue(data.record_core)
     const itemUid = stringValue(core.record_uid).trim()
     if (itemUid !== input.recordUid) throw new ArkmePluginError('recording-forward-unconfirmed', '服务端未确认转发结果，请重试确认', true, 502)

@@ -600,6 +600,19 @@ export class MediaService {
     return { response, descriptor }
   }
 
+  issueForwardRecordingMediaRef(viewerUserId: number, raw: string, size: number): string {
+    let url: URL
+    let path: string
+    try { url = new URL(raw); path = decodeURIComponent(url.pathname) } catch { throw new ArkmePluginError('forward-recording-audio-invalid', '录音播放地址无效', false, 502) }
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash
+      || !allowedSignedAudioHost(this.runtime.config.environment, url.hostname)
+      || !/^\/world-excerpts\/\d+\/[a-f0-9]{64}\.flac$/.test(path)
+      || !Number.isSafeInteger(size) || size <= 0 || size > 20 * 1024 * 1024) {
+      throw new ArkmePluginError('forward-recording-audio-invalid', '录音播放地址不受信任', false, 502)
+    }
+    return this.issueMediaRef(viewerUserId, { remoteUrl: url.href, size, mimeType: 'audio/flac', fileName: '录音片段' }, undefined, 110_000)
+  }
+
   issueWorldVoiceprintMediaRef(viewerUserId: number, input: { remoteUrl: string; mimeType: string }): string {
     const remoteUrl = trustedWorldVoiceprintAudioUrl(this.runtime.config.environment, input.remoteUrl).toString()
     const mimeType = input.mimeType.trim() || 'audio/wav'

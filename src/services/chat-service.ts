@@ -6589,6 +6589,31 @@ nextPublic = next
     })
   }
 
+  async forwardRecordingPlayback(sourceRef: string, actionRef: string, forwardId: string, path: number[], signal?: AbortSignal): Promise<{ mediaRef: string; durationMillis: number }> {
+    if (!forwardId.trim() || forwardId.length > 200 || path.length > 8 || path.some(value => !Number.isSafeInteger(value) || value < 0 || value >= 150)) throw new ArkmePluginError('forward-recording-input-invalid', '转发录音定位无效', false, 400)
+    const session = await this.runtime.requireSession()
+    const source = await this.source.openSourceRef(sourceRef, session.userId)
+    const reference = await this.openMessageActionRef(actionRef, session.userId, source)
+    let data: Record<string, unknown>
+    try {
+      if (source.kind === 'private_chat' || source.kind === 'group_chat') {
+        data = await this.sourceChatPost<Record<string, unknown>>(source, '/api/v1/chats/records/forward/recording-playback', {
+          chat_session_uid: reference.chatSessionUid, rel_uid: reference.relationUid, forward_id: forwardId, path,
+        }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      } else if (['send_to_self', 'default_category', 'topic'].includes(source.kind)) {
+        data = await this.runtime.authenticatedPost<Record<string, unknown>>('/api/v1/records/long-recording-forward/playback', { record_uid: reference.recordUid, path }, session, signal, { lane: 'interactive-read', bypassCache: true })
+      } else throw new ArkmePluginError('forward-recording-source-unsupported', '当前对话暂不支持录音转发播放', false, 400)
+    } catch (error) {
+      if (error instanceof ArkmePluginError && [404, 405, 501].includes(error.upstreamStatus ?? error.httpStatus)) throw new ArkmePluginError('forward-recording-backend-unavailable', '服务端暂不支持转发录音播放，请稍后重试', true, 409)
+      throw error
+    }
+    signal?.throwIfAborted()
+    if ((await this.runtime.requireSession()).userId !== session.userId) throw new ArkmePluginError('account-changed', '账号已切换，请重新打开录音', false, 409)
+    const durationMillis = numberValue(data.duration_millis)
+    if (!Number.isSafeInteger(durationMillis) || durationMillis <= 0 || durationMillis > 600_000) throw new ArkmePluginError('forward-recording-audio-invalid', '录音时长无效', false, 502)
+    return { mediaRef: this.media.issueForwardRecordingMediaRef(session.userId, stringValue(data.audio_url), numberValue(data.size)), durationMillis }
+  }
+
   async sharedRecordingDetail(
     detailRef: string,
     options: { sourceRef?: string; signal?: AbortSignal } = {},
