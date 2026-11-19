@@ -1012,7 +1012,7 @@ describe('ArkmeService', () => {
       const authorization = new Headers(init?.headers).get('Authorization') ?? ''
       const body = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>
       requests.push({ url, authorization, body })
-      if (url.endsWith('/api/v1/audio/transcript-versions/query')) return json({}, 404)
+      if (url.endsWith('/api/v1/audio/transcripts/current/query')) return json({}, 404)
       if (url === 'https://audio.test/api/v1/audio/recordings/query' && !rejected) {
         rejected = true
         return json({}, 401)

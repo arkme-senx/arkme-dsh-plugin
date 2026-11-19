@@ -17,6 +17,7 @@ const sourceChild = '123456789012345678901237'
 const snapshotId = 'snapshot:owner:0820'
 const privateViewVersion = 'd'.repeat(64)
 const historicalId = 'snapshot:owner:0715'
+const currentPath = '/api/v1/audio/transcripts/current/query'
 const queryPath = '/api/v1/audio/transcript-versions/query'
 const listPath = '/api/v1/audio/transcript-versions/list'
 
@@ -40,7 +41,7 @@ function setup() {
   const issueRecordingPlaybackMediaRef = vi.fn(async () => 'opaque-media-ref')
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
     if (path === listPath) return { versions: [{ id: historicalId, created_at: startAt + 6000 }], next_cursor: '' }
-    if (path === queryPath) {
+    if (path === queryPath || path === currentPath) {
       if (routeFailure) throw routeFailure
       if (body.version_id) return { snapshot_id: nextHistoryId, items: [historical], next_cursor: '' }
       return body.cursor ? { snapshot_id: nextSnapshotId, items: [missing], next_cursor: '' }
@@ -76,7 +77,7 @@ describe('retained transcript Host projection', () => {
     expect(b.items[0]?.retainedPlaybackRef).toBeUndefined()
     expect(b.dailyMetrics).toMatchObject({ textCount: 7, archiveState: 'unavailable' })
     expect(JSON.stringify([a, b])).not.toMatch(/private-owner-next|snapshot:owner|123456789012345678901237|secret-access|secret-refresh/)
-    expect(fixture.post.mock.calls.filter(([path]) => path === queryPath).map(([, body]) => body)).toEqual([
+    expect(fixture.post.mock.calls.filter(([path]) => path === currentPath).map(([, body]) => body)).toEqual([
       { start_at: window.dateStamp, end_at: window.endStamp, tz_offset: 28_800_000, transcript_source: 'primary', limit: 100 },
       { start_at: window.dateStamp, end_at: window.endStamp, tz_offset: 28_800_000, transcript_source: 'primary', limit: 100, cursor: 'private-owner-next' },
     ])
@@ -124,7 +125,7 @@ describe('retained transcript Host projection', () => {
       ],
     })
     expect(current.items[0]?.retainedPlaybackRef).toBeUndefined()
-    expect(fixture.post.mock.calls.map(([path]) => path)).toEqual([queryPath])
+    expect(fixture.post.mock.calls.map(([path]) => path)).toEqual([currentPath])
     fixture.live.active_ranges_complete = false
     expect((await fixture.service.recordingTranscriptPage(date, { window })).items[0]).toMatchObject({ activeRangesComplete: false, playable: false })
     fixture.live.active_ranges[1]!.start_at = startAt + 100
@@ -162,6 +163,25 @@ describe('retained transcript Host projection', () => {
       expect(text).not.toContain('其中，没有发现我自己说的话')
       expect(text).not.toMatch(/已覆盖旧转写|覆盖前转写/)
     }
+  })
+
+  it('keeps current pages and summary/timeline available when history storage is unavailable', async () => {
+    const fixture = setup()
+    const original = fixture.post.getMockImplementation()!
+    const historyError = new ArkmePluginError('history-unavailable', '历史暂不可用', true, 503)
+    fixture.post.mockImplementation(async (path, body) => {
+      if (path === listPath || path === queryPath) throw historyError
+      return original(path, body)
+    })
+    await expect(fixture.service.recordingTranscriptVersions(date, { window })).rejects.toBe(historyError)
+    fixture.post.mockClear()
+    const current = await fixture.service.recordingTranscriptPage(date, { window })
+    expect(current.items[0]?.text).toBe('新转写')
+    for (const kind of ['summary', 'timeline'] as const) {
+      await fixture.service.generateRecordingProjection(date, kind, '', undefined, window)
+    }
+    expect(fixture.post.mock.calls.filter(([path]) => path === currentPath)).toHaveLength(5)
+    expect(fixture.post.mock.calls.some(([path]) => path === queryPath || path === listPath)).toBe(false)
   })
 
   it('falls back only for a missing endpoint and surfaces errors from an available owner', async () => {

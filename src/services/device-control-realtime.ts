@@ -59,7 +59,7 @@ export class DeviceControlRealtime {
         } else if (frame.type === 'service.registered' && frame.request_id === registerId && stage === 'registering') {
           stage = 'active'; clearTimeout(this.registrationTimer); this.registrationTimer = undefined; this.active = true; this.changed()
         } else if (frame.type === 'channel.event' && frame.module === 'device_control' && frame.namespace === 'device_control' && frame.channel_ref === String(userId)) {
-          this.changed()
+          if (this.active) this.changed()
         } else if (frame.type === 'error' || frame.type === 'connection.replaced') { socket.terminate(); stop() }
       } catch { socket.terminate(); stop() }
     })

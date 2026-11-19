@@ -27,7 +27,7 @@ import type { RecordingImportGateway } from '../../src/recording-import-coordina
 const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
 beforeEach(() => {
   vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
-    if (path.startsWith('/api/v1/audio/transcript-versions/')) throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
+    if (path.startsWith('/api/v1/audio/transcript-versions/') || path === '/api/v1/audio/transcripts/current/query') throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
     if (path === '/api/v1/audio/import-batches/capabilities') return { supported: false }
     if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
     return originalAudioPost.call(this, path, body, session, ...rest)

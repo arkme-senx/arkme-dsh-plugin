@@ -8,5 +8,24 @@ it('paginates pinned SDK history to fifty messages without unsupported count',as
 })
 it('isolates group traffic after admission and preserves online-only game/private push flags',async()=>{
  vi.useFakeTimers();const received=vi.fn(),im=new GameIM(1,'',received,()=>{});im.group='room';const handler=sdk.on.mock.calls.find(c=>c[0]==='message')![1];handler({data:[{to:'other',conversationType:'GROUP'},{to:'room',conversationType:'C2C'},{to:'room',conversationType:'GROUP'}]});expect(received).toHaveBeenCalledTimes(1)
- const sent=im.send({x:1});await vi.advanceTimersByTimeAsync(1);await sent;expect(sdk.sendMessage.mock.calls[0]![1]).toEqual({onlineUserOnly:true});await im.text('hello');expect(sdk.sendMessage.mock.calls[1]![1]).toEqual({offlinePushInfo:{disablePush:true}});await expect(im.send({text:'你'.repeat(2000)})).rejects.toThrow('大小限制');await im.destroy()
+ const sent=im.send({x:1});await vi.advanceTimersByTimeAsync(1);await sent;expect(sdk.sendMessage.mock.calls[0]![1]).toEqual({onlineUserOnly:true});const chat=im.text('hello');await vi.advanceTimersByTimeAsync(220);await chat;expect(sdk.sendMessage.mock.calls[1]![1]).toEqual({offlinePushInfo:{disablePush:true}});await expect(im.send({text:'你'.repeat(2000)})).rejects.toThrow('大小限制');await im.destroy()
+})
+
+it('prioritizes player traffic, coalesces spectator updates and spaces text and protocol messages together',async()=>{
+  vi.useFakeTimers()
+  const im=new GameIM(1,'group',()=>{},()=>{})
+  const times:number[]=[], order:string[]=[]
+  sdk.sendMessage.mockImplementation(async (m:any)=>{
+    times.push(Date.now())
+    order.push(m.payload.text ?? JSON.parse(m.payload.data).tag)
+    return {data:{message:m}}
+  })
+  const send=(tag:string,key?:string,observer=false)=>im.send({tag},{...(key&&{key}),observer})
+  const jobs=[send('initial'),send('old','viewer-A',true),send('viewer-B','viewer-B',true),
+    send('latest','viewer-A',true),send('snapshot'),im.text('chat'),send('player','seat'),send('ack'),send('digest')]
+  await vi.advanceTimersByTimeAsync(2200)
+  await Promise.all(jobs)
+  expect(order).toEqual(['initial','snapshot','chat','player','ack','digest','viewer-B','latest'])
+  for (const start of times) expect(times.filter(t=>t>=start && t<start+1000).length).toBeLessThanOrEqual(5)
+  await im.destroy()
 })

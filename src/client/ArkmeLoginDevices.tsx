@@ -16,6 +16,7 @@ import type { LoginDevice, LoginDevicePage, LoginEventPage, DeviceConfirmation, 
 import { callArkme } from './api.js'
 import { tr, arkmeIntlLocale, useArkmeLocale } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
+import { loginDeviceConnection, subscribeLoginDeviceChanges } from './login-device-events.js'
 
 const request = <T extends LoginDeviceResult>(input: LoginDeviceRequest, signal?: AbortSignal) => callArkme<T>('account.devices', input, signal)
 const date = (at: number | null) => at ? formatArkmeDateTime(at, arkmeIntlLocale()) : tr('活跃时间暂不可用')
@@ -25,6 +26,7 @@ const identifiable = (d: LoginDevice) => mobile(d) || computer(d) || d.platform 
   || !['', '设备', '未知设备', '未知', 'device', 'unknown'].includes(d.name.trim().toLowerCase())
 // Retain ten requested pages; returning to the first page restores newer history.
 const maxVisibleEvents = 500
+const deviceRefreshDelayMs = 100
 function DeviceIcon({ device }: { device: LoginDevice }) { return <span className="device-icon">{mobile(device) ? <DeviceMobile size={25} /> : computer(device) ? <Desktop size={25} /> : <Devices size={25} />}</span> }
 function Dialog({ label, onClose, children, className = '', returnFocusRef }: { label: string; onClose: () => void; children: ReactNode; className?: string; returnFocusRef?: RefObject<HTMLElement> }) {
   const ref = useRef<HTMLDialogElement>(null)
@@ -43,16 +45,30 @@ export function LoginDeviceEntry({ accountScope, onOpen }: { accountScope: strin
   return <button type="button" className="device-profile-entry" onClick={onOpen}><Devices size={19} /><span><strong>{summary?.accountScope === accountScope && summary.countComplete && summary.items.every(identifiable) ? tr('已在{count}台设备上登录', { count: summary.total }) : tr('登录设备管理')}</strong></span><CaretRight size={15} /></button>
 }
 function Notifications({ accountScope, device }: { accountScope: string; device: LoginDevice }) {
-  const [value, setValue] = useState<DeviceNotifications>(), [busy, setBusy] = useState(false), [error, setError] = useState(''), [revision, setRevision] = useState(0)
+  const [loaded, setLoaded] = useState<{ ref: string; value: DeviceNotifications }>()
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [revision, setRevision] = useState(0)
   const controller = useRef<AbortController>(), writing = useRef(false)
-  useEffect(() => { const c = new AbortController(); controller.current = c; setValue(undefined); setError(''); if (device.notificationsSupported) void request<DeviceNotifications>({ action: 'notifications', accountScope, ref: device.ref }, c.signal).then(v => { if (!c.signal.aborted) setValue(v) }).catch(() => { if (!c.signal.aborted) setError(tr('暂时无法确认设置，请刷新后重试。')) }); return () => c.abort() }, [accountScope, device.ref, device.notificationsSupported, revision])
+  const latestRef = useRef(device.ref)
+  useLayoutEffect(() => { latestRef.current = device.ref }, [device.ref])
+  useEffect(() => {
+    const c = new AbortController(), ref = latestRef.current
+    controller.current = c
+    setLoaded(undefined); setBusy(false); setError('')
+    // A presence refresh reissues the reference without changing these settings.
+    if (device.notificationsSupported) void request<DeviceNotifications>({ action: 'notifications', accountScope, ref }, c.signal)
+      .then(value => { if (!c.signal.aborted) setLoaded({ ref, value }) })
+      .catch(() => { if (!c.signal.aborted) setError(tr('暂时无法确认设置，请刷新后重试。')) })
+    return () => c.abort()
+  }, [accountScope, device.id, device.notificationsSupported, revision])
+  const value = loaded?.value
   const toggle = async (kind: 'messages' | 'calls') => {
-    if (!value?.supported || writing.current) return
+    if (!loaded?.value.supported || writing.current) return
+    const { ref, value } = loaded
     writing.current = true
     setBusy(true); setError('')
     const next = { ...value, [kind]: !value[kind] }, signal = controller.current?.signal
-    try { const result = await request<DeviceNotifications>({ action: 'set-notifications', accountScope, ref: device.ref, messages: next.messages, calls: next.calls, revision: value.revision, requestId: crypto.randomUUID() }, signal); if (!signal?.aborted) setValue(result) }
-    catch { if (!signal?.aborted) { setError(tr('设置结果待确认，请重新核实。')); setValue(undefined) } }
+    try { const result = await request<DeviceNotifications>({ action: 'set-notifications', accountScope, ref, messages: next.messages, calls: next.calls, revision: value.revision, requestId: crypto.randomUUID() }, signal); if (!signal?.aborted) setLoaded({ ref, value: result }) }
+    catch { if (!signal?.aborted) { setError(tr('设置结果待确认，请重新核实。')); setLoaded(undefined) } }
     finally { writing.current = false; if (!signal?.aborted) setBusy(false) }
   }
   return <div className="device-notifications"><p>{tr('仅控制这台手机的多端提醒，不改变手机系统权限。')}</p>
@@ -65,28 +81,87 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
   const [page, setPage] = useState<'list' | 'trusted' | 'events'>('list'), [cursor, setCursor] = useState<string>(), [refresh, setRefresh] = useState(0)
   const [result, setResult] = useState<{ page: string; cursor: string | undefined; value: LoginDevicePage | LoginEventPage }>()
   const [loading, setLoading] = useState(true), [failed, setFailed] = useState(false), [editing, setEditing] = useState(false), [expanded, setExpanded] = useState<string>()
+  const [liveStale, setLiveStale] = useState(() => loginDeviceConnection(accountScope) === false)
   const [confirmation, setConfirmation] = useState<DeviceConfirmation>(), [pending, setPending] = useState<DeviceOperation>(), [busy, setBusy] = useState(false), [feedback, setFeedback] = useState('')
   const busyRef = useRef(false)
+  const refreshCurrent = useRef<() => void>()
   const alive = useRef(true), writeController = useRef(new AbortController()), heading = useRef<HTMLHeadingElement>(null)
   useEffect(() => { alive.current = true; const controller = new AbortController(); writeController.current = controller; return () => { alive.current = false; controller.abort() } }, [])
   useEffect(() => {
-    const controller = new AbortController(); setLoading(true); setFailed(false)
-    void request<LoginDevicePage | LoginEventPage>({ action: page, accountScope, ...(cursor ? { cursor } : {}) }, controller.signal)
-      .then(value => { if (!controller.signal.aborted && value.accountScope === accountScope) setResult(previous => {
-        if (page === 'events' && cursor && previous?.page === page && previous.value.accountScope === accountScope && previous.value.cursor === cursor && 'coverageStart' in previous.value && 'coverageStart' in value) {
-          value = { ...value, items: [...new Map([...previous.value.items, ...value.items].map(event => [event.id, event])).values()].slice(-maxVisibleEvents), coverageStart: Math.max(previous.value.coverageStart, value.coverageStart) }
-        }
-        return { page, cursor, value }
-      }) })
-      .catch(() => { if (!controller.signal.aborted) setFailed(true) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => controller.abort()
+    const controller = new AbortController()
+    let running = false, pending = false
+    let connected = loginDeviceConnection(accountScope)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const schedule = () => {
+      if (!pending || running || timer !== undefined || controller.signal.aborted || document.visibilityState === 'hidden') return
+      timer = setTimeout(() => {
+        timer = undefined
+        if (document.visibilityState !== 'hidden') read(false)
+      }, deviceRefreshDelayMs)
+    }
+    const read = (interactive: boolean) => {
+      pending = false
+      running = true
+      if (interactive) setLoading(true)
+      void request<LoginDevicePage | LoginEventPage>({ action: page, accountScope, ...(cursor ? { cursor } : {}) }, controller.signal)
+        .then(value => {
+          if (controller.signal.aborted || value.accountScope !== accountScope) return
+          setFailed(false)
+          if (connected !== false && !pending) setLiveStale(false)
+          setResult(previous => {
+            if (page === 'events' && cursor && previous?.page === page && previous.value.accountScope === accountScope && previous.value.cursor === cursor && 'coverageStart' in previous.value && 'coverageStart' in value) {
+              value = { ...value, items: [...new Map([...previous.value.items, ...value.items].map(event => [event.id, event])).values()].slice(-maxVisibleEvents), coverageStart: Math.max(previous.value.coverageStart, value.coverageStart) }
+            }
+            return { page, cursor, value }
+          })
+        })
+        .catch(() => { if (!controller.signal.aborted) setFailed(true) })
+        .finally(() => {
+          running = false
+          if (!controller.signal.aborted && interactive) setLoading(false)
+          schedule()
+        })
+    }
+    setFailed(false)
+    setLiveStale(connected === false)
+    const unsubscribe = page === 'list' ? subscribeLoginDeviceChanges(accountScope, nextConnected => {
+      connected = nextConnected
+      if (connected === false) {
+        clearTimeout(timer)
+        timer = undefined
+        pending = false
+        setLiveStale(true)
+        return
+      }
+      pending = true
+      schedule()
+    }) : undefined
+    if (unsubscribe) document.addEventListener('visibilitychange', schedule)
+    refreshCurrent.current = () => {
+      if (running) { pending = true; return }
+      clearTimeout(timer)
+      timer = undefined
+      read(true)
+    }
+    read(true)
+    return () => {
+      refreshCurrent.current = undefined
+      controller.abort()
+      clearTimeout(timer)
+      unsubscribe?.()
+      if (unsubscribe) document.removeEventListener('visibilitychange', schedule)
+    }
   }, [accountScope, page, cursor, refresh])
   const value = result?.page === page && result.value.accountScope === accountScope && (result.cursor === cursor || page === 'events') ? result.value : undefined
   const devices = value && 'total' in value ? value : undefined, events = value && 'coverageStart' in value ? value : undefined
   const visibleDevices = devices?.items.filter(identifiable) ?? []
   const title = tr(page === 'trusted' ? '常用设备管理' : page === 'events' ? '登录日志' : '登录设备管理')
   const navigate = (next: typeof page) => { setPage(next); setCursor(undefined); setEditing(false); setExpanded(undefined); setFeedback('') }
-  const reload = () => { setCursor(undefined); setRefresh(v => v + 1) }
+  const reload = () => {
+    setExpanded(undefined)
+    if (cursor === undefined && refreshCurrent.current) refreshCurrent.current()
+    else { setCursor(undefined); setRefresh(v => v + 1) }
+  }
   const prepare = async (device: LoginDevice, kind: 'logout' | 'forget') => {
     if (busyRef.current || pending) return
     busyRef.current = true
@@ -123,6 +198,7 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
       {feedback && <div role="status" className="device-feedback">{feedback}</div>}
       {pending && <div className="device-pending"><WarningCircle size={18} /><span>{tr('请求结果待确认，请重新核实。')}</span><button disabled={busy} onClick={() => void submit(true)}>{tr('重新核实')}</button></div>}
       {failed && <div className="device-feedback" role="status">{tr('暂时无法刷新，请检查网络后重试。')}{devices && <span> {tr('上次读取：{time}', { time: date(devices.observedAt) })}</span>} <button onClick={reload}>{tr('重新加载')}</button></div>}
+      {page === 'list' && devices && !failed && liveStale && <p className="device-feedback" role="status">{tr('实时连接已断开，设备状态可能已过期。')}</p>}
       {!value && <div className="device-empty"><Devices size={36} /><h3>{tr(loading ? '读取中…' : '暂时无法读取设备列表')}</h3>{!loading && <p>{tr('这不代表你的设备已退出登录。')}</p>}</div>}
       {devices && <>
         {page === 'list' && devices.countComplete && visibleDevices.length === devices.items.length && <div className="device-summary"><span>{tr('{count} 台设备已登录', { count: devices.total })}</span></div>}
@@ -133,7 +209,7 @@ export function ArkmeLoginDevices({ accountScope, onClose, returnFocusRef }: { a
           return rows.length > 0 && <section className="device-section" key={group}>{group !== 'all' && <h3>{tr(group === 'phone' ? '手机与平板' : group === 'computer' ? '电脑' : '其他设备')}</h3>}<div className="device-card">{rows.map(d => <div className="device-row-wrap" key={d.id}>
             <div className="device-row"><DeviceIcon device={d} /><div className="device-info"><div className="device-name"><strong>{d.name}</strong>{page === 'list' && <span className={`device-status ${d.presence === 'online' ? 'online' : ''}`}>{tr(d.presence === 'online' ? '在线' : d.presence === 'offline' ? '离线' : '未知')}</span>}</div><small>{d.lastActiveAt ? tr('上次活跃：{time}', { time: date(d.lastActiveAt) }) : tr('活跃时间暂不可用')}</small></div>
             {page === 'trusted' && editing ? <button className="device-text-button danger" disabled={busy || !!pending || !d.canForget} onClick={() => void prepare(d, 'forget')}>{tr('移除')}</button> : d.isCurrent ? <span className="device-current">{tr('本机')}</span> : page === 'list' && <button className="device-text-button" disabled={busy || !!pending || !d.canLogout} onClick={() => void prepare(d, 'logout')}>{tr('退出登录')}</button>}</div>
-            {page === 'list' && mobile(d) && <><button className="device-expand" aria-expanded={expanded === d.ref} onClick={() => setExpanded(expanded === d.ref ? undefined : d.ref)}>{tr('通知设置')} <CaretDown size={14} style={{ transform: expanded === d.ref ? 'rotate(180deg)' : undefined }} /></button>{expanded === d.ref && <Notifications accountScope={accountScope} device={d} />}</>}
+            {page === 'list' && mobile(d) && <><button className="device-expand" aria-expanded={expanded === d.id} onClick={() => setExpanded(expanded === d.id ? undefined : d.id)}>{tr('通知设置')} <CaretDown size={14} style={{ transform: expanded === d.id ? 'rotate(180deg)' : undefined }} /></button>{expanded === d.id && <Notifications accountScope={accountScope} device={d} />}</>}
           </div>)}</div></section>
         })}
       </>}

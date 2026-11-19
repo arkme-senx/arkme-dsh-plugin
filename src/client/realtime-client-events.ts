@@ -37,6 +37,7 @@ import {
 import { arkmeChatSourceIdentityKey } from './source-identity.js'
 import { arkmeUi } from './ui-controller.js'
 import { connectArkmeRealtime } from './realtime-connection.js'
+import { publishLoginDeviceChange } from './login-device-events.js'
 
 export function arkmeSelectedBotAffectedByChatDelta(
   selectedBot: ArkmeBotSummary | undefined,
@@ -140,6 +141,7 @@ export function useArkmeRealtimeClientEvents(
     let initialConnection: Promise<void> | undefined
     let providerInstanceId: string | undefined
     let awaitingBaseline = false
+    let receivedBaseline = false
     let connectionGeneration = 0
     let handledInstanceGeneration = 0
     let localReconnectGap = false
@@ -249,10 +251,21 @@ export function useArkmeRealtimeClientEvents(
             }
             providerInstanceId = update.providerInstanceId
             awaitingBaseline = false
+            const deviceConnection = update.loginDevicesConnection
+            const connected = deviceConnection?.accountScope === authenticatedAccountScope && typeof deviceConnection.connected === 'boolean'
+              ? deviceConnection.connected : undefined
+            if (receivedBaseline || connected !== undefined) publishLoginDeviceChange(authenticatedAccountScope, connected)
+            receivedBaseline = true
           } else if (update.providerInstanceId !== providerInstanceId) { diagnoseAttention('old-instance', update); return }
         }
         if (observedRevision !== undefined && update.revision <= observedRevision) { diagnoseAttention('old-revision', update); return }
         observedRevision = update.revision
+        if (update.type === 'login-devices-changed') {
+          if (update.accountScope === authenticatedAccountScope && typeof update.connected === 'boolean') {
+            publishLoginDeviceChange(authenticatedAccountScope, update.connected)
+          }
+          return
+        }
         if (update.type === 'file-send-progress') {
           wakeArkmeFileTask(update.userId, update.taskRef, update.task)
           return
@@ -497,7 +510,11 @@ export function useArkmeRealtimeClientEvents(
       events = connectArkmeRealtime({
         onOpen: handleOpen,
         onMessage: handleMessage,
-        onDisconnect: () => { if (!stopped && ownsMessagePreparing) arkmeMessagePreparing.reset() },
+        onDisconnect: () => {
+          if (stopped) return
+          publishLoginDeviceChange(authenticatedAccountScope, false)
+          if (ownsMessagePreparing) arkmeMessagePreparing.reset()
+        },
       })
     }
     const handleVisibilityChange = () => {

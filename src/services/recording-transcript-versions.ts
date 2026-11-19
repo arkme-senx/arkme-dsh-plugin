@@ -92,7 +92,7 @@ export class RecordingTranscriptVersions {
     selection: { versionId?: string; cursor?: string; snapshotId?: string }, signal?: AbortSignal,
   ) {
     const page = await this.runtime.authenticatedAudioPost<RetainedTranscriptPage>(
-      '/api/v1/audio/transcript-versions/query', {
+      selection.versionId ? '/api/v1/audio/transcript-versions/query' : '/api/v1/audio/transcripts/current/query', {
         ...range, transcript_source: source, limit: 100,
         ...(selection.versionId ? { version_id: selection.versionId } : {}),
         ...(selection.cursor ? { cursor: selection.cursor } : {}),

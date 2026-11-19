@@ -705,6 +705,7 @@ export class ServiceRuntime {
     if (baseUrl === this.config.audioBaseUrl && new Set([
       '/api/v1/audio/unmarked-speakers/list', '/api/v1/audio/get-session-ls',
       '/api/v1/audio/transcript-versions/list', '/api/v1/audio/transcript-versions/query',
+      '/api/v1/audio/transcripts/current/query',
       '/api/v1/audio/speaker-directory/summary', '/api/v1/audio/speaker-directory/list',
       '/api/v1/audio/speaker-directory/similar', '/api/v1/audio/speaker-directory/voice-samples',
     ]).has(path)) return true

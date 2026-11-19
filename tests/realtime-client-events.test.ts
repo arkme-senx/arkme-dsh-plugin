@@ -22,6 +22,49 @@ import {
 } from '../src/client/realtime-client-events.js'
 import type { ArkmeAuthSnapshot, ArkmeBotSummary, ArkmeChatClientEvent } from '../src/types.js'
 import {subscribeTeamMessageChanges,subscribeTeamWorkspaceChanges} from '../src/client/team-messaging-events.js'
+import { subscribeLoginDeviceChanges } from '../src/client/login-device-events.js'
+
+it('routes device updates within the active account and accepts a same-revision reconnect snapshot', async () => {
+  let socket!: FakeWebSocket
+  class FakeWebSocket {
+    onopen: (() => void) | null = null
+    onclose: (() => void) | null = null
+    onmessage: ((event: MessageEvent<string>) => void) | null = null
+    constructor() { socket = this }
+    close() {}
+  }
+  vi.useFakeTimers()
+  vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.spyOn(arkmeAuthStore, 'refresh').mockResolvedValue()
+  vi.spyOn(clientApi, 'callArkme').mockResolvedValue({ items: [], hasMore: false })
+  function Harness() { useArkmeRealtimeClientEvents({ status: 'authenticated', userId: 42, environment: 'test' }, 1, false); return null }
+  const changed = vi.fn()
+  const stop = subscribeLoginDeviceChanges('test:42', changed)
+  let renderer!: ReactTestRenderer
+  const deliver = (event: object) => socket.onmessage?.({ data: JSON.stringify({ providerInstanceId: 'profile-host', ...event }) } as MessageEvent<string>)
+  const baseline = { type: 'reconcile', revision: 4, connected: true, loginDevicesConnection: { accountScope: 'test:42', connected: true } }
+  try {
+    await act(async () => { renderer = create(createElement(Harness)); })
+    await act(async () => { socket.onopen?.(); deliver(baseline) })
+    expect(changed.mock.calls).toEqual([[true]])
+    await act(async () => {
+      deliver({ type: 'login-devices-changed', revision: 5, accountScope: 'prod:42', connected: true })
+      deliver({ type: 'login-devices-changed', revision: 6, accountScope: 'test:42', connected: true })
+      socket.onclose?.()
+    })
+    expect(changed.mock.calls).toEqual([[true], [true], [false]])
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+      socket.onopen?.()
+      deliver({ ...baseline, revision: 6 })
+    })
+    expect(changed.mock.calls).toEqual([[true], [true], [false], [true]])
+  } finally {
+    stop()
+    await act(async () => renderer?.unmount())
+    vi.useRealTimers()
+  }
+})
 
 it('delivers opaque Team change scope and retains conservative reconnect invalidation',async()=>{
   let socket!:FakeWebSocket

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
+import {DoudizhuView} from './doudizhu-view.js';
 import {GomokuView, gomokuColors} from './gomoku-view.js';
 import {gameName, playerCounts} from './game-types.js';
 import { GameRuntime } from "./runtime.js";
@@ -348,6 +349,7 @@ function App({fresh, onReset}: {fresh: boolean; onReset: () => void}) {
                 跳棋 · 2 / 3 / 4 / 6 人
               </button>
               <button className="primary" onClick={() => {setStarted(true);void runtime.enter(command, 'multiplayer_gomoku');}}>多人五子棋 · 2～6 人</button>
+              <button className="primary" onClick={() => {setStarted(true);void runtime.enter(command, 'doudizhu');}}>斗地主 · 3 人</button>
               <p className="muted">创建房间后，复制钥匙邀请朋友加入</p>
             </div>
           )}
@@ -358,7 +360,7 @@ function App({fresh, onReset}: {fresh: boolean; onReset: () => void}) {
               <p className="muted">连接成功后将自动进入房间</p>
             </div>
           )}
-          {!runtime.closed && state && !board && !state.gomoku && (
+          {!runtime.closed && state && !board && !state.gomoku && !state.doudizhu && (
             <div className="card">
               <span className="status-tag">
                 {player ? "参与游戏" : "正在观战"} · 本局 {state.count} 人
@@ -372,7 +374,7 @@ function App({fresh, onReset}: {fresh: boolean; onReset: () => void}) {
               )}
               <div className="lobby-controls">
                 <strong>本局人数</strong>
-                {runtime.host ? (
+                {runtime.host && runtime.gameType !== "doudizhu" ? (
                   <div className="segmented" role="group" aria-label="本局人数">
                     {playerCounts(runtime.gameType).map((n) => (
                       <button
@@ -407,7 +409,7 @@ function App({fresh, onReset}: {fresh: boolean; onReset: () => void}) {
                         className="avatar"
                         style={{
                           background: id
-                            ? runtime.gameType === "multiplayer_gomoku" ? gomokuColors[i] : campColors[layouts[state.count]![i]!]
+                            ? runtime.gameType !== "chinese_checkers" ? gomokuColors[i] : campColors[layouts[state.count]![i]!]
                             : "#d8dfe5",
                         }}
                       >
@@ -458,6 +460,12 @@ function App({fresh, onReset}: {fresh: boolean; onReset: () => void}) {
               </p>
             </div>
           )}
+          {!runtime.closed && state?.doudizhu && <DoudizhuView
+            board={state.doudizhu} me={me} perspective={runtime.doudizhuPerspective} view={runtime.doudizhuView}
+            version={state.version} epoch={runtime.animationEpoch} paused={runtime.paused} pending={runtime.awaitingAction}
+            now={runtime.now} host={runtime.host} name={name} identity={id=><Avatar name={name(id)} url={profiles[id]?.avatarUrl}/>}
+            act={(kind,value)=>run(()=>runtime.act(kind,value))} watch={id=>run(()=>runtime.watch(id))} next={()=>run(()=>runtime.act('next'))}
+          />}
           {!runtime.closed && state?.gomoku && <GomokuView board={state.gomoku} me={me} version={state.version} epoch={runtime.animationEpoch} paused={runtime.paused} pending={runtime.awaitingAction} now={runtime.now} host={runtime.host} name={name} identity={id=><Avatar name={name(id)} url={profiles[id]?.avatarUrl}/>} place={cell=>run(()=>runtime.act('place',cell))} next={()=>run(()=>runtime.act('next'))}/>}
           {!runtime.closed && board && (
             <>
