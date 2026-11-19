@@ -19,7 +19,7 @@ function fixture() {
   }
   const state = { noEffect: false, conflict: false, invalid: false, reject: false }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
-    if (path.startsWith('/api/v1/audio/transcript-versions/')) throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
+    if (path.startsWith('/api/v1/audio/transcript-versions/') || path === '/api/v1/audio/transcripts/current/query') throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
     if (path.endsWith('/speaker/suggestion')) return {}
     if (path.includes('/recordings/')) return correctionOwnerResponse(path, body, data)
     if (path.endsWith('/get-speaker-ls')) return { spk_ls: [{ id: '345678901234567890123456', nick_name: '人物' }, { id: '456789012345678901234567', nick_name: '他人' }] }

@@ -37,7 +37,7 @@ const scenarios = [
 function fixture(rows: OwnerTestRecording[]) {
   const session = { userId: 42, accessToken: 'test-access', refreshToken: 'test-refresh' }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
-    if (path.startsWith('/api/v1/audio/transcript-versions/')) throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
+    if (path.startsWith('/api/v1/audio/transcript-versions/') || path === '/api/v1/audio/transcripts/current/query') throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
     return recordingOwnerResponse(path, body, rows) ?? {}
   })
   const runtime = {

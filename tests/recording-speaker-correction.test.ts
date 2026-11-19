@@ -14,7 +14,7 @@ function fixture(fixtureDate = date) {
   const state = { version: 'v1', unsupported: false, failContext: false, badContext: false, failWrite: false, partial: false, readFails: false, applied: false, loseResponse: false }
   const receipts = new Map<string, Record<string, unknown>>()
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
-    if (path.startsWith('/api/v1/audio/transcript-versions/')) throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
+    if (path.startsWith('/api/v1/audio/transcript-versions/') || path === '/api/v1/audio/transcripts/current/query') throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
     if (path.includes('/recordings/')) {
       if (state.readFails && state.applied) throw new Error('read failed')
       return correctionOwnerResponse(path, body, { session_ls: [{ id: '123456789012345678901234', belong_usr: 42, start_at: fixtureDate, end_at: fixtureDate + 86_400_000, spk_ls: [{ num: 1, spk_id: '345678901234567890123456' }] }], child_ls: [{ id: '234567890123456789012345', session_id: '123456789012345678901234', start_at: 0, asr: rows, doubao_asr: rows }] })

@@ -2870,7 +2870,7 @@ export class RecordingService {
     const source = options.source ?? 'system'
     if (options.versionRef && options.cursor && !options.cursor.startsWith('arkme-recording-retained-page-v1.')) throw new ArkmePluginError('recording-cursor-invalid', '转写版本分页引用无效', false, 400)
     if (!options.cursor || options.cursor.startsWith('arkme-recording-retained-page-v1.')) {
-      const retained = await this.readRetainedTranscriptPage(date, source, session, options)
+      const retained = await this.readCurrentOrHistoricalTranscriptPage(date, source, session, options)
       if (retained) return retained.page
     }
     const page = await this.readDayPage(date, session, options)
@@ -2916,7 +2916,7 @@ export class RecordingService {
     return raw
   }
 
-  private async readRetainedTranscriptPage(date: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, options: ArkmeRecordingTranscriptPageOptions): Promise<{ page: ArkmeRecordingTranscriptPage; generationItems: RecordingGenerationTranscriptItem[] } | undefined> {
+  private async readCurrentOrHistoricalTranscriptPage(date: number, source: ArkmeRecordingTranscriptSource, session: ArkmeSessionCredentials, options: ArkmeRecordingTranscriptPageOptions): Promise<{ page: ArkmeRecordingTranscriptPage; generationItems: RecordingGenerationTranscriptItem[] } | undefined> {
     const range = this.retainedTranscriptRange(date, options.window)
     const binding = { version: 1, viewerUserId: session.userId, environment: this.runtime.config.environment, ...range }
     const prefix = 'arkme-recording-retained-page-v1'
@@ -2933,8 +2933,9 @@ export class RecordingService {
     }, options.signal)
     if (!result) return undefined
 
-    // Existing owner metadata can restore editing and playback for an exact
-    // current row. The retained page alone owns text, ordering and membership.
+    // Current text/order/membership come directly from session/child through
+    // current/query. Only an explicit version reads the history collection.
+    // Existing owner metadata restores editing/playback for an exact live row.
     const canonical = versionId ? undefined : await this.retainedTranscriptEnrichment(result.items, range, wireSource, session, options.signal)
     const [pageKey, itemKey, speakerKey, playbackKey] = await Promise.all([
       this.recordingRefKey(prefix), this.recordingRefKey('arkme-recording-item-v1'),
@@ -3070,7 +3071,7 @@ export class RecordingService {
 
   private async recordingGenerationSource(date: number, session: ArkmeSessionCredentials, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
     const options = { ...(window ? { window } : {}), signal }
-    const first = await this.readRetainedTranscriptPage(date, 'system', session, options)
+    const first = await this.readCurrentOrHistoricalTranscriptPage(date, 'system', session, options)
     if (!first) return this.recordingTranscriptWithSession(date, session, signal, window)
     const items = first.generationItems
     let { page } = first
@@ -3079,7 +3080,7 @@ export class RecordingService {
     while (page.nextCursor) {
       if (cursors.has(page.nextCursor)) throw new ArkmePluginError('recording-cursor-invalid', '录音分页未前进', true, 502)
       cursors.add(page.nextCursor)
-      const next = await this.readRetainedTranscriptPage(date, 'system', session, { ...options, cursor: page.nextCursor })
+      const next = await this.readCurrentOrHistoricalTranscriptPage(date, 'system', session, { ...options, cursor: page.nextCursor })
       if (!next || next.page.viewRef !== first.page.viewRef) throw new ArkmePluginError('recording-view-changed', '转写内容已更新，请重新生成', true, 409)
       items.push(...next.generationItems)
       page = next.page
