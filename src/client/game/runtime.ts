@@ -1,7 +1,8 @@
+import {DoudizhuSession} from './doudizhu-session.js'
 import {isGameType, type GameType} from './game-types.js'
 import {encodeState,decodeState} from './wire-state.js'
 import { Authority, type State, type Action } from './authority.js'
-import { GameIM, type WireMessage } from './im.js'
+import { GameIM, type Delivery, type WireMessage } from './im.js'
 import type { Room, Reply, Request } from './contracts.js'
 import type { GameCommand } from './command.js'
 export class GameRuntime {
@@ -30,6 +31,31 @@ export class GameRuntime {
   private readmitting = false
   private command?: GameCommand
   private selectedGame: GameType = 'chinese_checkers'
+  private cards: DoudizhuSession | undefined
+  private latestHostVersion = 0
+  private needSnapshot = false
+  private async resetCards() {
+    if (this.gameType !== 'doudizhu' || !this.room) return
+    this.needSnapshot = !this.host
+    this.cards ??= new DoudizhuSession({
+      current:()=>({room:this.room!,me:this.me,state:this.state,authority:this.authority,now:this.now}),
+      send:(type,data,options)=>this.send(type,data,options),
+      cancel:key=>this.im?.cancel?.(key),
+      changed:this.changed,
+      acknowledge:commit=>this.enqueue(async()=>{
+        if (!this.paused && commit()) await this.snapshot()
+      }),
+      observeVersion:version=>this.observeHostVersion(version),
+      snapshot:()=>this.snapshot(),
+    })
+    await this.cards.reset()
+  }
+  get doudizhuView() { return this.cards?.view }
+  get doudizhuPerspective() { return this.cards?.perspective ?? this.me }
+  watch(member:string) {
+    if (!this.cards) return Promise.reject(Error('当前没有可观战的牌局'))
+    return this.cards.watch(member)
+  }
   private actionQueue: Promise<void> = Promise.resolve()
   get gameType(): GameType { return isGameType(this.room?.game_type) ? this.room.game_type : this.selectedGame }
   private timer?: ReturnType<typeof setInterval>
@@ -55,17 +81,28 @@ export class GameRuntime {
     return this.room?.host_membership_id === this.me
   }
   get paused() {
-    return this.closed || this.reconnecting || this.connectionError || !this.online || !this.state || this.now > this.leaseUntil || (!this.host && this.now - this.lastHost > 15000)
+    return this.needSnapshot || (!this.host && (this.state?.version ?? 0)<this.latestHostVersion) || this.closed || this.reconnecting || this.connectionError || !this.online || !this.state || this.now > this.leaseUntil || (!this.host && this.now - this.lastHost > 15000)
   }
   private body() {
     return { room_id: this.room?.room_id, membership_id: this.me, runtime_id: this.host ? this.runtime : undefined }
   }
-  private accept(r: Reply) {
+  private requestOrder = 0
+  private acceptedOrder = 0
+  private acceptedTime = 0
+  private accept(r: Reply, order=++this.requestOrder) {
+    if (this.room?.room_id===r.room.room_id) {
+      if (r.room.membership_version<this.room.membership_version) return false
+      if (r.room.membership_version===this.room.membership_version && (r.server_time<this.acceptedTime
+        || (r.server_time===this.acceptedTime && order<this.acceptedOrder))) return false
+    }
+    this.acceptedTime=r.server_time
+    this.acceptedOrder=order
     this.offset = r.server_time - Date.now()
     this.room = r.room
     this.me = r.membership_id
     this.leaseUntil = r.room.members.find((m) => m.membership_id === this.me)?.lease_expires_at ?? 0
     if (r.invite_token) this.token = r.invite_token
+    return true
   }
   async enter(command: GameCommand, gameType: GameType = this.selectedGame) {
     if (this.busy || this.disposed) return
@@ -91,7 +128,7 @@ export class GameRuntime {
           (m) => this.receive(m),
           (ready, kicked) => {
             if (this.disposed) return
-            if (!ready) this.animationEpoch++
+            if (!ready) { this.animationEpoch++; this.cards?.clear() }
             this.online = ready
             this.connectionError = !ready
             if (kicked) {
@@ -146,8 +183,10 @@ export class GameRuntime {
           const r = await this.api('invite/rotate', this.body())
           this.token = r.invite_token ?? ''
         }
+        await this.resetCards()
         await this.snapshot()
       } else {
+        await this.resetCards()
         this.status = '正在同步棋盘…'
         await this.sync()
       }
@@ -171,6 +210,7 @@ export class GameRuntime {
   async reconnect() {
     if (this.busy || this.reconnecting || this.disposed || !this.room) return
     this.reconnecting = true
+    if (this.cards) { this.cards.clear(); this.needSnapshot=!this.host }
     this.busy = true
     this.error = ''
     this.animationEpoch++
@@ -190,6 +230,8 @@ export class GameRuntime {
       if (this.disposed) return
       this.credentialExpires = c.expires_at
       this.online = true
+      this.pending = undefined
+      await this.resetCards()
       if (this.host) await this.snapshot()
       else { this.lastSync = 0; this.lastHost = 0; await this.sync() }
       await this.history()
@@ -226,6 +268,7 @@ export class GameRuntime {
     this.timer = setInterval(() => void this.tick(), 1000)
   }
   private async finish(message: string) {
+    this.cards?.clear()
     this.disposed = true
     this.closed = true
     this.online = false
@@ -240,15 +283,23 @@ export class GameRuntime {
   private envelope(type: string, payload: unknown) {
     return { protocol_version: 1, room_id: this.room!.room_id, runtime_id: this.room!.runtime_id, type, payload }
   }
-  private async send(type: string, payload: unknown) {
-    if (this.im && !this.disposed) await this.im.send(this.envelope(type, payload))
+  private async send(type: string, payload: unknown, options?:Delivery) {
+    if (this.im && !this.disposed) await this.im.send(this.envelope(type, payload),options)
   }
   private async snapshot() {
     if (!this.authority) return
     this.state = this.authority.state
+    this.cards?.published()
     this.lastSnapshot = this.now
-    await this.send('snapshot', encodeState(this.state))
+    await this.send('snapshot', encodeState(this.state),this.cards ? {key:'snapshot'} : undefined)
     this.changed()
+  }
+  private observeHostVersion(version:number) {
+    this.latestHostVersion=Math.max(this.latestHostVersion,version)
+    if (version>(this.state?.version ?? 0)) {
+      this.changed()
+      void this.sync().catch(()=>{})
+    }
   }
   private async sync() {
     if (this.now - this.lastSync < 2000) return
@@ -261,8 +312,9 @@ export class GameRuntime {
     try {
       await this.refresh()
       if (this.disposed) return
+      await this.resetCards()
       if (this.host) await this.snapshot()
-      else await this.sync()
+      else { this.lastSync = 0; await this.sync() }
       await this.history()
       this.error = ''
       this.connectionError = false
@@ -288,7 +340,9 @@ export class GameRuntime {
     if (this.messageIds.size > 1000) this.messageIds.delete(this.messageIds.values().next().value!)
     this.changed()
   }
-  private receive(m: WireMessage) {
+  private admissionRefresh:Promise<void>|undefined
+  private lastAdmissionRefresh = -Infinity
+  private receive(m: WireMessage, retryAdmission=true) {
     if (this.disposed || !this.room || m.to !== this.room.im_group_id) return
     if (m.type === 'TIMTextElem') {
       this.addText(m)
@@ -307,7 +361,7 @@ export class GameRuntime {
       return
     }
     if (
-      packet.protocol_version !== 1 ||
+      !packet || packet.protocol_version !== 1 ||
       packet.room_id !== this.room.room_id ||
       packet.runtime_id !== this.room.runtime_id
     )
@@ -315,9 +369,20 @@ export class GameRuntime {
     const sender = this.room.members.find(
       (x) => x.registration_id === m.from && x.status === 'active' && x.lease_expires_at > this.now,
     )
-    if (!sender) return
+    // A claimed membership is only a hint to refresh. Bind solely to the server row for the actual IM sender.
+    if (!sender || (packet.type==='ddz-hello' && packet.payload?.member!==sender.membership_id)) {
+      if (retryAdmission && this.host && this.cards && ['sync','ddz-hello'].includes(packet.type)) {
+        if (!this.admissionRefresh && this.now-this.lastAdmissionRefresh>2000) {
+          this.lastAdmissionRefresh=this.now
+          this.admissionRefresh=this.refresh().finally(()=>{this.admissionRefresh=undefined})
+        }
+        void this.admissionRefresh?.then(()=>this.receive(m,false)).catch(()=>{})
+      }
+      return
+    }
     if (sender.membership_id === this.room.host_membership_id) {
       this.lastHost = this.now
+      if (!this.host && this.cards && typeof packet.type==='string' && packet.type.startsWith('ddz-')) void this.cards.guestMessage(packet.type,packet.payload).catch(()=>{})
       if (packet.type === 'snapshot' && !this.host) {
         const s = packet.payload
         if (
@@ -330,10 +395,14 @@ export class GameRuntime {
         )
           return
         try { this.state = decodeState(s, this.gameType) } catch { return }
+        this.needSnapshot = false
         this.status = ''
+        void this.cards?.consume().catch(()=>{})
       }
-      if (packet.type === 'digest' && !this.host && packet.payload?.version !== (this.state?.version ?? 0))
-        void this.sync().catch(() => {})
+      if (packet.type === 'digest' && !this.host && Number.isSafeInteger(packet.payload?.version)) {
+        this.observeHostVersion(packet.payload.version)
+      }
+      if (packet.type==='ack' && this.leaveAck && packet.payload?.id===this.leaveAck.id && packet.payload?.member===this.me) this.leaveAck.done(packet.payload.error)
       if (
         packet.type === 'ack' &&
         packet.payload?.id === this.pending?.action.id &&
@@ -344,19 +413,24 @@ export class GameRuntime {
       }
     }
     if (this.host && this.online && this.now < this.leaseUntil) {
+      if (this.cards && sender.membership_id!==this.me && typeof packet.type==='string' && packet.type.startsWith('ddz-'))
+        void this.cards.hostMessage(sender.membership_id,packet.type,packet.payload).catch(()=>{})
       if (packet.type === 'sync' && this.now - this.lastSnapshot > 500) void this.snapshot().catch(() => {})
       if (packet.type === 'action') void this.handleAction(sender.membership_id, packet.payload).catch(() => { this.error = '操作确认发送失败，等待重试'; this.changed() })
     }
     this.changed()
   }
   private handleAction(sender: string, action: Action): Promise<void> {
-    const next = this.actionQueue.catch(() => {}).then(() => this.processAction(sender, action))
+    return this.enqueue(()=>this.processAction(sender,action))
+  }
+  private enqueue(task:()=>Promise<void>):Promise<void> {
+    const next = this.actionQueue.catch(() => {}).then(task)
     this.actionQueue = next
     return next
   }
   private async processAction(sender: string, action: Action) {
     if (!this.authority || !this.room || !action || this.paused) return
-    const error = this.authority.apply(sender, action, this.room.members, this.now)
+    const error = this.authority.apply(sender,action,this.room.members,this.now,this.cards?.canAct(sender,action) ?? true)
     this.state = this.authority.state
     await this.send('ack', { id: action.id, member: sender, error })
     await this.snapshot()
@@ -368,7 +442,12 @@ export class GameRuntime {
   }
   async act(kind: Action['kind'], value?: unknown) {
     if (this.paused || !this.state || this.pending) throw new Error('正在同步或等待操作确认')
-    if (kind === 'start') {
+    if (this.state.doudizhu && !this.state.players.includes(this.me) && ['bid','play','pass','withdraw'].includes(kind)) throw Error('观察者不能操作牌局')
+    if (this.state.doudizhu && ['bid','play','pass'].includes(kind) && (!this.doudizhuView || this.state.version<this.latestHostVersion)) {
+      await this.sync()
+      throw Error('正在同步最新手牌')
+    }
+    if (kind === 'start' || (kind === 'next' && this.cards)) {
       await this.refresh()
       if (this.authority?.sync(this.room!.members, this.now)) await this.snapshot()
     }
@@ -377,6 +456,8 @@ export class GameRuntime {
       round: this.state.round,
       version: this.state.version,
       kind,
+      ...(this.cards && kind==='withdraw' && {member:this.me}),
+      ...(this.cards?.proof && {proof:this.cards.proof}),
       value,
     }
     this.pending = { action, sent: this.now, attempts: 1 }
@@ -390,9 +471,9 @@ export class GameRuntime {
     }
   }
   private async refresh(publish = true) {
+    const order=++this.requestOrder
     const r = await this.api('heartbeat', this.body())
-    if (this.disposed) return
-    this.accept(r)
+    if (this.disposed || !this.accept(r,order)) return
     if (this.room?.status === 'closing' || this.room?.status === 'closed') {
       await this.finish('房间已结束')
       return
@@ -400,6 +481,7 @@ export class GameRuntime {
     if (!this.room?.members.some(m => m.membership_id === this.me && m.status === 'active' && m.lease_expires_at > this.now)) {
       throw new Error('房间或成员身份已失效，请退出后重新进入')
     }
+    this.cards?.prune()
     if (this.authority?.sync(r.room.members, this.now) && this.online && publish) await this.snapshot()
   }
   private ticking = false
@@ -433,12 +515,18 @@ export class GameRuntime {
         }
       }
       if (this.host && !this.paused) {
-        if (this.authority?.tick(now)) await this.snapshot()
+        await this.enqueue(async()=>{
+          if (this.authority?.tick(this.now)) {
+            if (this.cards && !this.state?.doudizhu) this.authority.sync(this.room!.members,this.now)
+            await this.snapshot()
+          }
+        })
         if (now - this.lastDigest >= 5000) {
           this.lastDigest = now
           await this.send('digest', { version: this.state?.version })
         }
-      } else if (!this.state || now - this.lastHost > 15000) await this.sync()
+      } else if (this.needSnapshot || !this.state || this.state.version<this.latestHostVersion || now - this.lastHost > 15000) await this.sync()
+      await this.cards?.retry()
       if (this.pending && now - this.pending.sent > 3000) {
         if (this.pending.attempts >= 4) {
           this.error = '操作未确认，请同步后重试'
@@ -469,12 +557,39 @@ export class GameRuntime {
     this.lastText = this.now
     this.addText(await this.im.text(text))
   }
-  async leave() {
+  private leaveAck:{id:string;done:(error?:string)=>void}|undefined
+  private leaving:Promise<void>|undefined
+  leave() {
+    this.leaving ??= this.leaveRoom().finally(()=>{this.leaving=undefined})
+    return this.leaving
+  }
+  private async leaveRoom() {
     if (this.disposed) return
+    if (!this.host && this.cards && this.online && this.state?.doudizhu && this.state.doudizhu.phase!=='ended' && this.state.players.includes(this.me)) {
+      // Wait for host confirmation while backend admission still authenticates this sender.
+      const id=crypto.randomUUID()
+      const error=await new Promise<string|undefined>(resolve=>{
+        const done=(message?:string)=>{
+          if (this.leaveAck?.id!==id) return
+          clearTimeout(timer)
+          this.leaveAck=undefined
+          resolve(message)
+        }
+        const timer=setTimeout(done,3500)
+        this.leaveAck={id,done}
+        void this.send('action',{id,round:this.state!.round,version:this.state!.version,kind:'withdraw',member:this.me}).catch(()=>done())
+      })
+      if (error) {
+        this.error=error
+        this.changed()
+        throw Error(error)
+      }
+    }
     const activeBoard = this.state?.gomoku ?? this.state?.board
     if (!this.host && this.room && this.online && this.state && activeBoard && !activeBoard.ended) {
       await this.send('action', {id: crypto.randomUUID(), round:this.state.round, version:this.state.version, kind:'withdraw'}).catch(() => {})
     }
+    this.cards?.clear()
     this.disposed = true
     this.closed = true
     clearInterval(this.timer)

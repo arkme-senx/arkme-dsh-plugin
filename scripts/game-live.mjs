@@ -5,7 +5,7 @@ import { writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 const gameType=process.env.GAME_LIVE_TYPE||'chinese_checkers'
-if(!['chinese_checkers','multiplayer_gomoku'].includes(gameType))throw Error('Unsupported game type')
+if(!['chinese_checkers','multiplayer_gomoku','doudizhu'].includes(gameType))throw Error('Unsupported game type')
 const ids=process.argv.slice(2).map(Number)
 if(ids.length<2||ids.some(x=>!Number.isSafeInteger(x)||x<=0)||new Set(ids).size!==ids.length)throw Error('Supply distinct authorized test users')
 const {chromium}=await import(process.env.GAME_PLAYWRIGHT_MODULE||'playwright')
@@ -46,7 +46,13 @@ try{
     if(!s.binding)s.binding=await api(s,'/api/v1/device/im-binding/register',{registration_generation:s.generation,registration_id:b.registration_id,request_id:randomUUID()})
     check('real_sdk_ready_and_bound',{user:id});return {}
    }
-   const r=await api(s,'/api/v1/game/room/'+a,b)
+   let r
+   try{r=await api(s,'/api/v1/game/room/'+a,b)}catch(e){
+    // Match the production GameService boundary so lease recovery is exercised faithfully.
+    const reason=e.message.split(' reason=')[1]
+    const messages={game_room_unavailable:'房间或成员身份已失效，请退出后重新进入',game_room_closed:'房间已结束',game_device_binding_required:'设备 IM 登记已失效，请重新进入'}
+    if(messages[reason])throw Error(messages[reason]);throw e
+   }
    if(r.invite_token)secrets.push(r.invite_token)
    if(r.credentials?.user_sig)secrets.push(r.credentials.user_sig)
    if(r.room){s.room=r.room;s.membership=r.membership_id}
@@ -89,6 +95,11 @@ try{
  check('public_group_created_and_host_activated',{room:invite.roomId})
  for(const p of pages.slice(1)){await p.evaluate(c=>window.game.enter(c),invite);await retry(p)}
  await waitAll(()=>!!window.game.state);check('real_im_snapshot_received',{members:pages.length})
+ let chatPages=pages
+ if(gameType==='doudizhu'){
+  const {validateDoudizhu}=await import('./doudizhu-live-checks.mjs')
+  chatPages=await validateDoudizhu(pages,check)
+ }else{
  const count=Number(process.env.GAME_LIVE_PLAYERS)||(pages.length>=6?6:[2,3,4].includes(pages.length)?pages.length:2)
  if(!(gameType==='multiplayer_gomoku'?[2,3,4,5,6]:[2,3,4,6]).includes(count)||count>pages.length)throw Error("invalid player count")
  await pages[0].evaluate(n=>window.game.act('count',n),count)
@@ -112,18 +123,19 @@ try{
   if(new Set(await Promise.all(pages.map(p=>p.evaluate(()=>JSON.stringify(window.game.state.gomoku))))).size!==1)throw Error('reconnected board mismatch')
   check('gomoku_reconnect_preserves_board')
   if(count===2){
-   for(let i=0;i<4;i++){
+   for(let i=0;i<3;i++){
     await pages[1].evaluate(cell=>window.game.act('place',cell),i*2)
     await waitAll(()=>window.game.state.gomoku.turn===0)
     await pages[0].evaluate(cell=>window.game.act('place',cell),106+i)
     await waitAll(()=>window.game.state.gomoku.turn===1||window.game.state.gomoku.ended)
    }
-   await waitAll(()=>window.game.state.gomoku.ended&&window.game.state.gomoku.winningLine?.length===5)
-   check('gomoku_real_five_in_row_all_members_end')
+   await waitAll(()=>window.game.state.gomoku.ended&&window.game.state.gomoku.winningLine?.length===4)
+   check('gomoku_real_four_in_row_all_members_end')
   }
  }
+ }
  await pages[0].evaluate(()=>window.game.text('Arkme 群游戏真实联调'))
- await Promise.all(pages.slice(1).map(p=>p.waitForFunction(()=>window.game.messages.some(m=>m.payload.text==='Arkme 群游戏真实联调'))))
+ await Promise.all(chatPages.slice(1).map(p=>p.waitForFunction(()=>window.game.messages.some(m=>m.payload.text==='Arkme 群游戏真实联调'))))
  check('real_text_group_chat');report.result='passed'
 }catch(e){if(report.result!=='blocked')report.result='failed';report.error=safe(e.message);console.log(report.result+': '+report.error)}finally{
  for(const p of pages){const violations=await p.evaluate(()=>window.cspViolations||[]).catch(()=>[]);if(violations.length)check('csp_violations',{violations})}

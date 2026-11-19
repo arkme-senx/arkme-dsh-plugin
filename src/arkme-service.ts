@@ -1106,7 +1106,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
       clearAccountState: userIds => { this.clearAccountState(userIds) },
     })
     this.loginDeviceService = new LoginDevicesService(this.runtime)
-    this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected))
+    this.deviceLock = new DeviceLockService(this.runtime, async expected => await this.auth.logout(expected), undefined, state => {
+      this.realtime.emitChatClientEvent({ type: 'login-devices-changed', revision: this.realtime.nextChatClientRevision(), ...state })
+    })
     this.backgroundSoundPreferenceOwner = new BackgroundSoundPreferenceService(
       this.runtime,
       new BackgroundSoundMembershipService(this.runtime),
@@ -1288,7 +1290,9 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
   }
 
   chatRealtimeInitialEvent(): ArkmeChatClientEvent {
-    return this.realtime.chatRealtimeInitialEvent()
+    const baseline = this.realtime.chatRealtimeInitialEvent()
+    const loginDevicesConnection = this.deviceLock.loginDevicesConnection()
+    return baseline.type === 'reconcile' && loginDevicesConnection ? { ...baseline, loginDevicesConnection } : baseline
   }
 
   private handleChatRealtimeNotice(notice: ArkmeChatRealtimeNotice): void {
