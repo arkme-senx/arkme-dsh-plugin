@@ -46,7 +46,6 @@ import { Check } from '@phosphor-icons/react/dist/icons/Check'
 import { ArrowCounterClockwise } from '@phosphor-icons/react/dist/icons/ArrowCounterClockwise'
 import { PencilSimple } from '@phosphor-icons/react/dist/icons/PencilSimple'
 import { Sparkle } from '@phosphor-icons/react/dist/icons/Sparkle'
-import { Microphone } from '@phosphor-icons/react/dist/icons/Microphone'
 import { Fingerprint } from '@phosphor-icons/react/dist/icons/Fingerprint'
 import { HourglassSimple } from '@phosphor-icons/react/dist/icons/HourglassSimple'
 import { UploadSimple } from '@phosphor-icons/react/dist/icons/UploadSimple'
@@ -72,7 +71,6 @@ import { callArkme, ArkmeClientError } from './api.js'
 import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { ArkmeRecordingImportTrigger, recordingImportLocalInputValue, type RecordingImportFeedback } from './recordings/ArkmeRecordingImportDialog.js'
-import { ArkmeRecordingMobileGuideDialog } from './recordings/ArkmeRecordingMobileGuideDialog.js'
 import { ArkmeDirectRecordingButton, ArkmeDirectRecordingStatus } from './recordings/ArkmeDirectRecording.js'
 import { useLocalRecordingCoverage } from './recordings/recording-coverage.js'
 import { ArkmeRecordingSpeakerEditor, type RecordingSpeakerPopoverAnchor, type RecordingSpeakerUpdateFeedback } from './recordings/ArkmeRecordingSpeakerEditor.js'
@@ -700,8 +698,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const surfaceRef = useRef<HTMLDivElement>(null)
   const tour = useRecordingTour({ root: surfaceRef, auth: auth.auth, active: active && ui.mode === 'recordings', blocked: auth.busy || ui.webLoginDialogOpen === true, deepLink: ui.recordingTarget !== undefined, notificationRevision: ui.notificationActivationRevision ?? 0 })
   const [sampleTab, setSampleTab] = useState<RecordingTab>('transcript')
-  const [mobileGuideOpen, setMobileGuideOpen] = useState(false)
-  const mobileGuideTrigger = useRef<HTMLButtonElement>(null)
   const workbenchEnabled = auth.config?.recordingWorkbenchEnabled !== false
   const recordingMediaPath = auth.config?.mediaPath ?? '/arkme-self/api/media'
   const timeZone = useArkmeDisplayTimeZone()
@@ -1002,10 +998,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   }
   const layoutMode = useSyncExternalStore(subscribeRecordingLayout, currentRecordingLayoutMode, () => 'wide')
   const entityDrawer = useSyncExternalStore(subscribeRecordingLayout, () => typeof window !== 'undefined' && window.innerWidth < 1440, () => false)
-
-  useEffect(() => {
-    if (!active || !workbenchEnabled) setMobileGuideOpen(false)
-  }, [active, workbenchEnabled])
 
   useEffect(() => {
     for (const controller of Object.values(generationAbortRef.current)) controller?.abort()
@@ -1865,7 +1857,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     ...(tour.sample && layoutMode === 'stacked' ? { gridTemplateRows: '420px minmax(460px,1fr)' } : {}),
   }} data-arkme-recording-layout={layoutMode}>
     {tour.panel}
-    {mobileGuideOpen && active && workbenchEnabled && <ArkmeRecordingMobileGuideDialog returnFocusRef={mobileGuideTrigger} onClose={() => { setMobileGuideOpen(false) }} />}
     <style data-arkme-recording-transcript-interactions>{`
       .arkme-recording-transcript-duration { position: absolute; right: 0; top: 0; width: max-content; visibility: hidden; }
       .arkme-recording-transcript-row:hover .arkme-recording-transcript-timestamp,
@@ -1919,8 +1910,6 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
       </section>
       <div style={styles.toolbar}>{workbenchEnabled && <>
         <ArkmeDirectRecordingButton onStart={() => { tour.finish(false); const now = recordingCalendarDate(Date.now(), timeZone); setVisibleMonth(monthStart(now)); setSelectedDate(now) }} />
-        <button data-arkme-feedback="neutral" ref={mobileGuideTrigger} type="button" style={styles.calendarActionButton} aria-haspopup="dialog" aria-expanded={mobileGuideOpen}
-          onClick={() => { tour.finish(false); setMobileGuideOpen(true) }}><Microphone size={16} style={{ flexShrink: 0 }} aria-hidden />{tr("全天候录音")}</button>
         <RecognizedSpeakerEntry style={styles.calendarActionButton}
           accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined}
           active={active && ui.mode === 'recordings'}
