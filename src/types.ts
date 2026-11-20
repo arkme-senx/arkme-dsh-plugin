@@ -1015,6 +1015,26 @@ export interface ArkmeArrangementCreateInput {
   dateContext?: ArkmeArrangementDateContext
 }
 
+/** One 安排 an Agent creates on the user's explicit request; `requestId` is the stable owner UID. */
+export interface ArkmeAgentArrangementCreateInput {
+  requestId: string
+  title: string
+  description?: string
+  /** Absent: no due time, so the owner schedules no push. */
+  dueAtMillis?: number
+}
+
+/** Owner receipt for an Agent-created 安排, including whether the phone push is armed. */
+export interface ArkmeAgentArrangementCreateResult {
+  arrangementRef: string
+  title: string
+  description: string
+  dueAtMillis?: number
+  remindAtMillis?: number
+  reminderEnabled: boolean
+  reminderState: string
+}
+
 /** Browser-safe Arrangement projection. Stable owner UIDs stay inside the Provider. */
 export interface ArkmeArrangementCreationSource {
   kind: 'quick-note' | 'input' | 'none'

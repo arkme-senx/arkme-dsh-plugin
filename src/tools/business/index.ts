@@ -37,6 +37,7 @@ import { readReactionsToolModule, writeReactionsToolModule } from './conversatio
 import { botToolModules } from './bots/index.js'
 import { callHistoryToolModules } from './calls/index.js'
 import { recordCalendarToolModules } from './calendar/index.js'
+import { arrangementToolModules } from './arrangements/create.js'
 import type { ArkmeToolModule } from '../contract/module.js'
 import { accountBusinessToolModules } from './account/index.js'
 import { listSourcesToolModule, pinBotDirectoryToolModule } from './conversation/list-sources.js'
@@ -110,6 +111,7 @@ export const businessToolModules: readonly ArkmeToolModule[] = [
   searchRecordsToolModule,
   ...recordCalendarToolModules,
   dayReviewReadTool, dayReviewWriteTool,
+  ...arrangementToolModules,
   listImagesToolModule,
   createRecordToolModule,
   reeditRecordToolModule,

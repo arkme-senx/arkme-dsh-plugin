@@ -17,6 +17,7 @@ import type { ArkmeSelfRolePort } from '../../self-role-contract.js'
 import type { ArkmeArchivePort } from '../../archive-contract.js'
 import type { ArkmeAiVideoToolPort } from './ai-video.js'
 import type { ArkmeArkoToolPort } from './arko.js'
+import type { ArkmeArrangementToolPort } from './arrangements.js'
 import type { ArkmeBotToolPort } from './bots.js'
 import type { ArkmeCalendarToolPort } from './calendar.js'
 import type { ArkmeCallHistoryToolPort } from './call-history.js'
@@ -57,6 +58,7 @@ export interface ArkmeCoreToolPorts extends
   ArkmeFileToolPort,
   ArkmeAiVideoToolPort,
   ArkmeArkoToolPort,
+  ArkmeArrangementToolPort,
   ArkmeBotToolPort,
   ArkmeCalendarToolPort,
   ArkmeCallHistoryToolPort,
