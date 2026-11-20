@@ -3827,6 +3827,9 @@ recordingAnalysisV1: true,
   async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal) {
     return this.arrangement.createArrangement(input, signal)
   }
+  async createAgentArrangement(input: import('./types.js').ArkmeAgentArrangementCreateInput, signal?: AbortSignal) {
+    return this.arrangement.createAgentArrangement(input, signal)
+  }
   async arrangementRecognition(refs: string[], signal?: AbortSignal) {
     return this.arrangement.arrangementRecognition(refs, signal)
   }

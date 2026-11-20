@@ -34,6 +34,8 @@ import type {
   ArkmeArrangementReminderWriteResult,
   ArkmeArrangementStatus,
   ArkmeArrangementCreateInput,
+  ArkmeAgentArrangementCreateInput,
+  ArkmeAgentArrangementCreateResult,
   ArkmeRecordingArrangementQuery,
   ArkmeRecordingArrangementPage,
 } from '../types.js'
@@ -442,6 +444,54 @@ export class ArrangementService {
       const items = await Promise.all(listValue(data.items).map(raw => this.arrangementItem(raw, session.userId)))
       if (!items.length) throw new ArkmePluginError('arrangement-create-uncertain', '未能确认创建结果，请重试核对', true, 502)
       return { items }
+    })
+  }
+
+  /**
+   * Creates one 安排 exactly as an Agent was asked to, without AI re-extraction.
+   * The stable `requestId` makes the owner write idempotent; a due time arms the owner's
+   * single 「安排到期提醒」 push, which reaches the phone whether or not this computer is on.
+   */
+  async createAgentArrangement(input: ArkmeAgentArrangementCreateInput, signal?: AbortSignal): Promise<ArkmeAgentArrangementCreateResult> {
+    const title = typeof input.title === 'string' ? input.title.trim() : ''
+    const description = typeof input.description === 'string' ? input.description.trim() : ''
+    const dueAtMillis = input.dueAtMillis ?? 0
+    if (!/^[a-zA-Z0-9_-]{1,64}$/.test(input.requestId) || !title || [...title].length > 200 || Buffer.byteLength(title) > 800
+      || [...description].length > 2000 || !Number.isSafeInteger(dueAtMillis) || dueAtMillis < 0 || dueAtMillis > 253402300799999) {
+      throw new ArkmePluginError('arrangement-create-invalid', '安排标题最多200字、说明最多2000字，时间必须有效', false, 400)
+    }
+    const session = await this.runtime.requireSession()
+    return this.withArrangementWrite(`agent-create:${input.requestId}`, session.userId, async () => {
+      const matches = (raw: Record<string, unknown>) => stringValue(raw.uid) === input.requestId && stringValue(raw.title).trim() === title
+        && stringValue(raw.description).trim() === description && Math.trunc(numberValue(raw.due_at)) === dueAtMillis
+      let data: Record<string, unknown>
+      try {
+        data = objectValue(await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/create', {
+          // source_type 4 is the owner's 「Agent 创建」: an assistant acting on the user's request, the same
+          // category Arko uses. No camellia session locator exists for DSH, so none is sent.
+          uid: input.requestId, title, description, topic_uid: '', source_type: 4, record_uids: [], due_at: dueAtMillis,
+        }, session, signal))
+      } catch (error) {
+        if (!isAmbiguousArrangementWriteError(error)) throw error
+        // Never replay an uncertain write: the stable UID lets the owner say whether it landed.
+        const listed = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>('/api/v1/arrangements/list',
+          { status: -1, uids: [input.requestId], limit: 1, offset: 0 }, session, undefined, { lane: 'interactive-read', bypassCache: true }).catch(() => undefined)
+        const landed = listValue(objectValue(listed).list).map(objectValue).find(matches)
+        if (!landed) throw error
+        data = landed
+      }
+      // An idempotent replay returns the existing owner row; never report it as this command if it differs.
+      if (!matches(data)) throw new ArkmePluginError('arrangement-create-uncertain', '未能确认安排按本次内容创建，请到安排列表核对', false, 502)
+      const remindAtMillis = Math.trunc(numberValue(data.remind_at))
+      return {
+        arrangementRef: await this.arrangementRef(session.userId, input.requestId),
+        title,
+        description,
+        ...(dueAtMillis > 0 ? { dueAtMillis } : {}),
+        ...(remindAtMillis > 0 ? { remindAtMillis } : {}),
+        reminderEnabled: booleanValue(data.reminder_enabled),
+        reminderState: stringValue(data.reminder_state),
+      }
     })
   }
 

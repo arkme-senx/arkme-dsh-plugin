@@ -415,6 +415,7 @@ describe('registerArkmeTools', () => {
       'arkme_record_calendar_days',
       'arkme_record_calendar_read',
       'arkme_day_review_read', 'arkme_day_review_generate',
+      'arkme_arrangement_create',
       'arkme_images_list',
       'arkme_record_create',
       'arkme_record_reedit',
