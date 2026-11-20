@@ -1,3 +1,5 @@
+import type { RecordingFavorite } from '../recording-favorite-contract.js'
+import { recordingFavoriteNotifications, useRecordingFavoriteNotifications } from './recording-favorite-notification-store.js'
 import { arkmeDayDelta, formatArkmeDateTime } from './display-time-zone.js'
 import type { WorldSubscriptionNotice, WorldSubscriptionNoticePage } from '../world-subscription-contract.js'
 import { recordingNotifications, useRecordingNotifications } from './recording-notification-store.js'
@@ -25,7 +27,7 @@ import { arkmeAuthStore } from './auth-store.js'
 import { arkmeUi } from './ui-controller.js'
 import { tr, arkmeIntlLocale } from './locale.js'
 
-export type ArkmeNotificationKind = 'official' | 'arrangement' | 'world' | 'ai' | 'recording' | 'subscription'
+export type ArkmeNotificationKind = 'official' | 'arrangement' | 'world' | 'ai' | 'recording' | 'recording-favorite' | 'subscription'
 
 export interface ArkmeNotificationItem {
   id: string
@@ -36,6 +38,7 @@ export interface ArkmeNotificationItem {
   atMillis: number
   unread: boolean
   arrangement?: ArkmeArrangementReminderEvent
+  favorite?: RecordingFavorite
   recording?: RecordingWorkflowNotice
   aiLetter?: ArkmeAiLetterItem
   subscription?: WorldSubscriptionNotice
@@ -361,6 +364,7 @@ function useNotificationItems(): {
   scope: string | undefined
   snapshot: NotificationSnapshot
   official: OfficialNotificationSnapshot
+  favorites: ReturnType<typeof useRecordingFavoriteNotifications>
   recording: ReturnType<typeof useRecordingNotifications>
   items: ArkmeNotificationItem[]
 } {
@@ -368,6 +372,7 @@ function useNotificationItems(): {
   const scope = auth?.status === 'authenticated' ? `${auth.environment}:${auth.userId}` : undefined
   const official = useOfficialNotifications(scope)
   const recording = useRecordingNotifications(scope)
+  const favorites = useRecordingFavoriteNotifications(scope)
   const storedSnapshot = useSyncExternalStore(arkmeNotificationStore.subscribe, arkmeNotificationStore.getSnapshot, arkmeNotificationStore.getSnapshot)
   const snapshot = storedSnapshot.scope === scope ? storedSnapshot : EMPTY_SNAPSHOT
   useEffect(() => {
@@ -379,25 +384,26 @@ function useNotificationItems(): {
   }, [scope])
   const items = useMemo(() => [
     ...official.items.map(item => ({ id: `official:${item.id}`, kind: 'official' as const, title: item.title, preview: item.summary, atMillis: item.publishedAtMillis, unread: item.readAtMillis === 0 })),
+    ...favorites.items.map(item => ({ id: `recording-favorite:${item.favoriteRef}`, kind: 'recording-favorite' as const, title: tr('{name} 收藏了你分享的录音', { name: item.collector?.name ?? tr('有人') }), preview: item.available ? item.preview : tr('该录音已不可访问'), atMillis: item.createdAtMillis, unread: item.readAtMillis === 0, favorite: item })),
     ...recording.items.map(item => ({ id: `recording:${item.id}`, kind: 'recording' as const, title: recordingNoticeTitle(item), preview: recordingNoticePreview(item), atMillis: item.atMillis, unread: item.readAtMillis === 0, recording: item })),
     ...snapshot.arrangementItems.map(arrangementItem),
     ...snapshot.subscriptionItems,
     ...snapshot.worldItems,
     ...snapshot.aiItems,
-  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, snapshot.subscriptionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems])
-  return { scope, snapshot, official, recording, items }
+  ].sort((left, right) => right.atMillis - left.atMillis), [official.items, recording.items, favorites.items, snapshot.subscriptionItems, snapshot.aiItems, snapshot.arrangementItems, snapshot.worldItems])
+  return { scope, snapshot, official, recording, favorites, items }
 }
 
 export function useArkmeNotificationSummary(): { ready: boolean; hasNotifications: boolean; unreadCount: number; preview: string; atMillis: number } {
-  const { items, snapshot, official, recording } = useNotificationItems()
-  const unread = items.filter(item => item.kind !== 'official' && item.kind !== 'recording' && item.kind !== 'subscription' && item.unread)
+  const { items, snapshot, official, recording, favorites } = useNotificationItems()
+  const unread = items.filter(item => item.kind !== 'official' && item.kind !== 'recording' && item.kind !== 'subscription' && item.kind !== 'recording-favorite' && item.unread)
   const officialLatest = official.summary.latest
   let latest = officialLatest !== undefined && officialLatest.publishedAtMillis > (items[0]?.atMillis ?? 0) ? { title: officialLatest.title, preview: officialLatest.summary, atMillis: officialLatest.publishedAtMillis } : items[0]
   if (recording.latest && recording.latest.atMillis > (latest?.atMillis ?? 0)) latest = { title: recordingNoticeTitle(recording.latest), preview: recordingNoticePreview(recording.latest), atMillis: recording.latest.atMillis }
   return {
     ready: snapshot.scope !== undefined && (snapshot.ready || official.ready || recording.ready),
     hasNotifications: recording.total > 0 || official.summary.total > 0 || items.length > 0 || snapshot.worldUnreadCount > 0 || snapshot.aiUnreadCount > 0,
-    unreadCount: recording.unreadCount + official.summary.unreadCount + unread.length + snapshot.subscriptionUnreadCount + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
+    unreadCount: favorites.unreadCount + recording.unreadCount + official.summary.unreadCount + unread.length + snapshot.subscriptionUnreadCount + snapshot.worldUnreadCount + snapshot.aiUnreadCount,
     preview: latest === undefined ? tr('官方、安排和互动通知') : `${latest.title}：${compactText(latest.preview)}`,
     atMillis: latest?.atMillis ?? 0,
   }
@@ -405,6 +411,7 @@ export function useArkmeNotificationSummary(): { ready: boolean; hasNotification
 
 function notificationKindLabel(kind: ArkmeNotificationKind): string {
   switch (kind) {
+    case 'recording-favorite': return tr('录音收藏')
     case 'recording': return tr('录音')
     case 'official': return tr('官方')
     case 'arrangement': return tr('安排')
@@ -415,7 +422,7 @@ function notificationKindLabel(kind: ArkmeNotificationKind): string {
 }
 
 const notificationFilterKinds: readonly (ArkmeNotificationKind | 'all')[] = [
-  'all', 'official', 'arrangement', 'world', 'subscription', 'ai', 'recording',
+  'all', 'official', 'arrangement', 'world', 'subscription', 'ai', 'recording', 'recording-favorite',
 ]
 
 function notificationFilterLabel(kind: ArkmeNotificationKind | 'all'): string {
@@ -428,7 +435,7 @@ export function ArkmeNotificationCenter({ preview = false, headerAction }: { pre
 }
 
 function NotificationConversation({ data, preview, headerAction }: { data: ReturnType<typeof useNotificationItems>; preview: boolean; headerAction?: ReactNode }) {
-  const { scope, snapshot, official, recording, items } = data
+  const { scope, snapshot, official, recording, favorites, items } = data
   const [actionError, setActionError] = useState('')
   const [busyId, setBusyId] = useState<string>()
   const [activeKind, setActiveKind] = useState<ArkmeNotificationKind | 'all'>('all')
@@ -442,7 +449,7 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     .sort((a, b) => a.atMillis - b.atMillis || a.id.localeCompare(b.id)), [items, activeKind])
   const viewKey = `${scope}:${activeKind}`
   const scroll = useNotificationScroll(listRef, filteredItems, viewKey)
-  const filterLoading = activeKind === 'recording' ? recording.loading && !recording.ready
+  const filterLoading = activeKind === 'recording-favorite' ? favorites.loading && !favorites.ready : activeKind === 'recording' ? recording.loading && !recording.ready
     : activeKind === 'official' ? official.loading && !official.ready : snapshot.loading || official.loading || (recording.loading && !recording.ready)
 
   useEffect(() => {
@@ -474,6 +481,8 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     for (const row of subscriptionRows) if (row.sequence > (newestByScope.get(row.scopeKey)?.sequence ?? 0)) newestByScope.set(row.scopeKey, row)
     const subscriptionBatch = [...newestByScope.values()]
     submit(subscriptionBatch.map(row => `subscription:${row.id}`), () => arkmeNotificationStore.markSubscriptionsRead(subscriptionBatch, scope, signal))
+    const favoriteRows = visible.flatMap(item => item.unread && item.favorite ? [item.favorite] : []).slice(0, 50)
+    submit(favoriteRows.map(item => `recording-favorite:${item.favoriteRef}`), () => recordingFavoriteNotifications.read(scope, favoriteRows, signal))
     const recordingRows = visible.flatMap(item => item.unread && item.recording ? [item.recording] : [])
     submit(recordingRows.map(item => `recording:${item.id}:${item.sequence}`), () => recordingNotifications.read(scope, recordingRows))
     const officialRows = visible.filter(item => item.kind === 'official' && item.unread)
@@ -497,7 +506,8 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
     if (preview || accountScope() !== scope) return
     setBusyId(item.id); setActionError('')
     try {
-      if (item.subscription) {
+      if (item.favorite) arkmeUi.showRecordingFavorites(item.favorite.favoriteRef, true)
+      else if (item.subscription) {
         const row = item.subscription
         if (row.kind === 'publication') { if (!row.publication) throw new Error(tr('这条内容已不可查看')); arkmeUi.showWorldInteraction(row.publication.recordRef) }
         else arkmeUi.showUserWorld({ userId: row.actor.userId, displayName: row.actor.name })
@@ -532,6 +542,7 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
       {headerAction}
     </header>
     {actionError && <div role="alert" className="arkme-notification-status">{actionError}</div>}
+    {favorites.error && (activeKind === 'all' || activeKind === 'recording-favorite') && <div role="status" className="arkme-notification-status">{favorites.error} <button onClick={() => { void recordingFavoriteNotifications.refresh() }}>{tr('重试')}</button></div>}
     {recording.error && (activeKind === 'all' || activeKind === 'recording') && <div role="status" className="arkme-notification-status">{tr('录音通知暂时不可用')} <button onClick={() => { void recordingNotifications.refresh() }}>{tr('重试录音通知')}</button></div>}
     {official.error && (activeKind === 'all' || activeKind === 'official') && <div role="status" className="arkme-notification-status">{tr('官方通知暂时不可用')} <button onClick={() => { void officialNotifications.refresh() }}>{tr('重试')}</button></div>}
     {snapshot.error && (activeKind === 'all' || activeKind === 'arrangement') && <div role="alert" className="arkme-notification-status">{snapshot.error}</div>}
@@ -544,6 +555,7 @@ function NotificationConversation({ data, preview, headerAction }: { data: Retur
         <div className="arkme-notification-messages">
           <div className="arkme-notification-history">
             {(activeKind === 'subscription' || activeKind === 'all') && snapshot.subscriptionCursor && <button type="button" className="arkme-notification-link" disabled={snapshot.subscriptionLoading} onClick={() => { void arkmeNotificationStore.refreshSubscriptions(scope, true) }}>{tr('加载更多订阅通知')}</button>}
+            {(activeKind === 'recording-favorite' || activeKind === 'all') && favorites.nextCursor && <button type="button" className="arkme-notification-link" disabled={favorites.loading} onClick={() => { void recordingFavoriteNotifications.refresh(true) }}>{tr('加载更多收藏通知')}</button>}
             {(activeKind === 'recording' || activeKind === 'all') && recording.nextCursor && <button type="button" className="arkme-notification-link" disabled={recording.loading} onClick={() => { void recordingNotifications.refresh(true) }}>{tr('加载更多录音通知')}</button>}
             {(activeKind === 'official' || activeKind === 'all') && official.nextCursor && <button type="button" className="arkme-notification-link" disabled={official.foregroundLoading} onClick={() => { void officialNotifications.more() }}>{tr('加载更多官方通知')}</button>}
           </div>

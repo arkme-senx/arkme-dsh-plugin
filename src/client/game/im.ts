@@ -26,12 +26,14 @@ export interface WireMessage {
   type: string
   payload: { text?: string; data?: string; extension?: string }
 }
+export interface Delivery { key?: string; observer?: boolean }
+interface Outgoing { options:Delivery; run:()=>Promise<void>; discard:()=>void; fail:(e:unknown)=>void }
 export class GameIM {
   private chat: ReturnType<typeof Chat.create>
   private listeners: Array<[string, (event: any) => void]> = []
   private next = 0
-  private queue = Promise.resolve()
-  private queued = 0
+  private queue:Outgoing[] = []
+  private draining = false
   private disposed = false
   constructor(
     app: number,
@@ -74,37 +76,63 @@ export class GameIM {
     }
   }
 
-  send(data: unknown): Promise<void> {
-    if (this.disposed || this.queued >= 32) return Promise.reject(new Error('游戏消息队列已满，请稍后同步'))
+  private schedule(options:Delivery, send:()=>Promise<void>) {
+    if (this.disposed) return Promise.reject(Error('游戏已退出'))
+    const same = options.key && this.queue.find(job=>job.options.key === options.key)
+    if (same) {
+      this.queue.splice(this.queue.indexOf(same),1)
+      same.discard()
+    }
+    if (this.queue.length >= 32) {
+      const observer = this.queue.findIndex(job=>job.options.observer)
+      if (observer < 0 || options.observer) return Promise.reject(Error('游戏消息队列已满，请稍后同步'))
+      this.queue.splice(observer,1)[0]!.discard()
+    }
+    return new Promise<void>((resolve,reject)=>{
+      this.queue.push({options,run:async()=>{ await send(); resolve() },discard:resolve,fail:reject})
+      void this.drain()
+    })
+  }
+  private async drain() {
+    if (this.draining) return
+    this.draining = true
+    try {
+      while (this.queue.length && !this.disposed) {
+        const delay = this.next-Date.now()
+        if (delay > 0) await new Promise(resolve=>setTimeout(resolve,delay))
+        if (this.disposed) break
+        const priority = this.queue.findIndex(job=>!job.options.observer)
+        const job = this.queue.splice(Math.max(0,priority),1)[0]
+        if (!job) continue
+        this.next = Date.now()+220
+        try { await job.run() } catch(e) { job.fail(e) }
+      }
+    } finally { this.draining = false }
+  }
+  cancel(key:string) {
+    const index=this.queue.findIndex(job=>job.options.key===key)
+    if (index>=0) this.queue.splice(index,1)[0]!.discard()
+  }
+  send(data: unknown, options:Delivery={}): Promise<void> {
     const text = JSON.stringify(data)
     if (new TextEncoder().encode(text).length > 4096) return Promise.reject(new Error('游戏消息超过大小限制'))
-    this.queued++
-    const work = this.queue
-      .catch(() => {})
-      .then(async () => {
-        await new Promise((r) => setTimeout(r, Math.max(0, this.next - Date.now())))
-        if (this.disposed) throw new Error('游戏已退出')
-        this.next = Date.now() + 220
-        const message = this.chat.createCustomMessage({
-          to: this.group,
-          conversationType: Chat.TYPES.CONV_GROUP,
-          payload: { data: text, description: '', extension: 'arkme.game.v1' },
-        })
-        await this.chat.sendMessage(message, { onlineUserOnly: true })
+    return this.schedule(options,async()=>{
+      const message = this.chat.createCustomMessage({
+        to:this.group, conversationType:Chat.TYPES.CONV_GROUP,
+        payload:{data:text,description:'',extension:'arkme.game.v1'},
       })
-    this.queue = work
-    return work.finally(() => {
-      this.queued--
+      await this.chat.sendMessage(message,{onlineUserOnly:true})
     })
   }
   async text(text: string) {
-    const message = this.chat.createTextMessage({
-      to: this.group,
-      conversationType: Chat.TYPES.CONV_GROUP,
-      payload: { text },
+    let sent:WireMessage | undefined
+    await this.schedule({}, async()=>{
+      const message = this.chat.createTextMessage({
+        to:this.group, conversationType:Chat.TYPES.CONV_GROUP, payload:{text},
+      })
+      sent = (await this.chat.sendMessage(message,{offlinePushInfo:{disablePush:true}})).data.message
     })
-    const result = await this.chat.sendMessage(message, { offlinePushInfo: { disablePush: true } })
-    return result.data.message as WireMessage
+    return sent!
   }
   async history(): Promise<WireMessage[]> {
     let messages: WireMessage[] = []
@@ -122,6 +150,7 @@ export class GameIM {
   }
   async destroy() {
     this.disposed = true
+    for (const job of this.queue.splice(0)) job.fail(Error('游戏已退出'))
     for (const [name, fn] of this.listeners) this.chat.off(name, fn)
     this.listeners = []
     await this.chat.destroy()

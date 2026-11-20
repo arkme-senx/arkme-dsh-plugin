@@ -682,6 +682,8 @@ export class ServiceRuntime {
     ]).has(path)) return true
     if (baseUrl === this.config.chatBaseUrl && new Set([
       '/api/v1/chats/extensions/summaries/batch', '/api/v1/chats/records/revisions/query',
+      '/api/v1/chats/recording-favorites/status', '/api/v1/chats/recording-favorites/page', '/api/v1/chats/recording-favorites/detail',
+      '/api/v1/chats/recording-favorites/notifications/page', '/api/v1/chats/recording-favorites/notifications/summary',
       '/api/v1/chats/members/records/aggregate', '/api/v1/chat/sync/account', '/api/v1/chats/list', '/api/v1/chats/display-snapshots', '/api/v1/chats/unread-snapshot', '/api/v1/chats/contacts/list', '/api/v1/chats/common-group/query',
     ]).has(path)) return true
     if (baseUrl === this.config.recordBaseUrl && new Set([
@@ -865,6 +867,8 @@ export class ServiceRuntime {
         headers: {
           ...(chatAccessRef ? { 'X-Chat-Access-Ref': chatAccessRef } : {}),
           ...(chatMessageActionsV2 ? { 'X-Arkme-Message-Actions': '2' } : {}),
+          ...(baseUrl === this.config.chatBaseUrl && (path === '/api/v1/chats/messages/copy-link/resolve' || ['/api/v1/chats/recording-favorites/save', '/api/v1/chats/recording-favorites/detail'].includes(path))
+            ? { Accept: 'application/json; recording-audio=clips' } : {}),
           ...(multipart ? {} : { 'Content-Type': 'application/json' }),
           'Accept-Language': 'zh-CN',
           Usersource: '3',
@@ -1508,6 +1512,17 @@ export class ServiceRuntime {
   }
 
   /** Binary service reads keep account scope and credentials in the Host. */
+  async authenticatedChatRecordingStream(path: string, options: {
+    expectedUserId: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'
+  }): Promise<Response> {
+    if (!/^\/api\/(?:v1\/chats\/recording-favorites\/[a-f0-9]{64}|public\/v1\/chats\/messages\/copy-link\/[A-Za-z0-9]{16})\/audio(?:\/(?:0|[1-9][0-9]{0,2}))?$/.test(path)) {
+      throw new ArkmePluginError('recording-media-path-invalid', '录音播放引用无效', false, 400)
+    }
+    // Chat exposes GET binary routes. The local HEAD response cancels this body
+    // after its headers; it never buffers the recording or needs a second proxy.
+    return this.authenticatedMediaStream('chat', path, { ...options, method: 'GET', maxBytes: 64 * 1024 * 1024 })
+  }
+
   async authenticatedAudioStream(path: string, options: {
     expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'
   }): Promise<Response> {
@@ -1546,7 +1561,7 @@ export class ServiceRuntime {
     })
   }
 
-  private async authenticatedMediaStream(service: 'audio' | 'record', path: string, options: {
+  private async authenticatedMediaStream(service: 'audio' | 'record' | 'chat', path: string, options: {
     expectedUserId: number; maxBytes?: number; range?: string; signal?: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean
   }): Promise<Response> {
     const session = await this.requireSession()
@@ -1563,10 +1578,10 @@ export class ServiceRuntime {
     } finally { clearTimeout(timer) }
   }
 
-  private async openMediaStream(service: 'audio' | 'record', path: string, options: {
+  private async openMediaStream(service: 'audio' | 'record' | 'chat', path: string, options: {
     expectedUserId: number; maxBytes?: number; range?: string; signal: AbortSignal; method?: 'GET' | 'HEAD'; body?: Record<string, unknown>;sourceAttachment?:boolean;thumbnail?:boolean;validator?:string
   }, initialSession: ArkmeSessionCredentials): Promise<{ value: Response; finished: Promise<void> }> {
-    const base = new URL(service === 'audio' ? this.config.audioBaseUrl : this.config.recordBaseUrl)
+    const base = new URL(service === 'audio' ? this.config.audioBaseUrl : service === 'chat' ? this.config.chatBaseUrl : this.config.recordBaseUrl)
     const url = new URL(path, base)
     if (!path.startsWith('/') || path.startsWith('//') || url.origin !== base.origin
       || url.username !== '' || url.password !== '' || url.hash !== ''
@@ -1672,7 +1687,7 @@ export class ServiceRuntime {
       }
       if (!/^\d+$/.test(lengthText) || !Number.isSafeInteger(length) || length < 0 || length===0&&!sourceAttachment
         || (options.maxBytes !== undefined && length > options.maxBytes)
-        || (options.sourceAttachment? !sourceAttachment||!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mime):!(service === 'audio' ? ['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'] : ['image/png', 'image/jpeg', 'image/webp']).includes(mime))
+        || (options.sourceAttachment? !sourceAttachment||!/^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/.test(mime):!(service !== 'record' ? ['audio/ogg', 'audio/flac', 'audio/mp4', 'audio/mpeg', 'audio/wav'] : ['image/png', 'image/jpeg', 'image/webp']).includes(mime))
         || (options.method !== 'HEAD' && response.body === null)) throw invalid()
       if (response.status === 206) {
         const returned = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range') ?? '')

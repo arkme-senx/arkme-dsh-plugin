@@ -18,7 +18,7 @@ import { tr } from './locale.js'
 // Keep the sender identities aligned with Flutter's MobileUnifiedNotificationPage.
 const notificationIcons: Record<ArkmeNotificationKind, string> = {
   official: officialIcon, arrangement: arrangementIcon,
-  world: worldIcon, subscription: worldIcon, ai: aiIcon, recording: recordingIcon,
+  world: worldIcon, subscription: worldIcon, ai: aiIcon, recording: recordingIcon, 'recording-favorite': recordingIcon,
 }
 
 function NotificationAvatar({ kind }: { kind: ArkmeNotificationKind }) {
@@ -76,6 +76,7 @@ export function ArkmeNotificationMessage({ item, scope, category, timeLabel, onO
             {item.arrangement && expanded && !readOnly && <ArrangementNoticeContent arrangementRef={item.arrangement.arrangementRef} />}
             {canExpand && <button type="button" className="arkme-notification-link" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? tr('收起') : item.kind === 'arrangement' && !readOnly ? tr('查看安排') : tr('展开全文')}</button>}
             {!readOnly && (item.kind === 'world' || item.kind === 'subscription' && (item.subscription?.kind === 'subscriber' || item.subscription?.publication)) && <div><button type="button" className="arkme-notification-link" disabled={busy} onClick={() => onOpen(item)}>{item.subscription ? tr(item.subscription.kind === 'subscriber' ? '查看订阅者' : '查看公开内容') : tr('查看互动')} →</button></div>}
+            {!readOnly && item.favorite && <div><button type="button" className="arkme-notification-link" disabled={busy} onClick={() => onOpen(item)}>{tr('查看收藏片段')} →</button></div>}
             {!readOnly && item.subscription?.kind === 'subscriber' && <WorldSubscriberNoticeActions account={scope} notice={item.subscription} />}
           </>}
         </div>

@@ -1,3 +1,4 @@
+import { projectRecordingShare } from './recording-share.js'
 import { isBackendRouteUnavailable } from './service-error.js'
 import { groupInteractionTrace, groupInteractionTraceKey, groupInteractionTraceEnabled } from '../group-interaction-diagnostics.js'
 import { readExtensionSummaryBatch } from '../message-extension-summary.js'
@@ -3449,16 +3450,15 @@ export class ChatService {
         const item = messageCopyLinkSnapshotItemFromData(raw)
         const structured = item.structuredContent
         if (structured?.longRecordingSegments?.length) {
-          const audio = objectValue(objectValue(objectValue(raw).structured_content).recording_audio)
           const path = `/api/public/v1/chats/messages/copy-link/${normalizedSid}/audio`
-          const duration = structured.longRecordingSegments.reduce((sum, segment) => sum + segment.endMillis - segment.startMillis, 0)
-          const url = audio.url === path && duration > 0 && audio.duration_millis === duration
-            ? new URL(path, this.runtime.config.chatBaseUrl).href
-            : undefined
-          return {
-            ...item,
-            mediaItems: [],
-            structuredContent: { ...structured, ...(url ? { recordingAudioUrl: url } : {}) },
+          try {
+            const projected = projectRecordingShare(objectValue(raw).structured_content, item.sendAtMillis, path, session.userId, this.media)
+            return { ...item, mediaItems: [], structuredContent: { ...structured, longRecordingSegments: projected.segments, recordingAudio: projected.audio,
+              recordingAudioUrl: new URL(path, this.runtime.config.chatBaseUrl).href } }
+          } catch (error) {
+            if (!(error instanceof ArkmePluginError) || error.code !== 'recording-favorite-invalid') throw error
+            // Older text-only shares remain readable; an invalid manifest never falls back to original audio.
+            return { ...item, mediaItems: [], structuredContent: structured }
           }
         }
         if (item.displayKind !== 1 && item.templateKind !== 8 && !(item.templateKind === 5 && item.structuredContent?.structuredKind === 1)) return item

@@ -9,5 +9,5 @@ export function CopyLinkSnapshotContent({ item, snapshot, shareWebsite }: {
   const segments = item.templateKind === 5 && item.structuredContent?.structuredKind === 1 ? item.structuredContent.longRecordingSegments : undefined
   if (!segments?.length) return <ArkmeMessageContent item={snapshot} presentation="detail" shareWebsite={shareWebsite} />
   const audio = item.structuredContent?.recordingAudioUrl
-  return <div data-arkme-copy-link-recording><RecordingShareSegments key={audio} segments={segments} audioUrl={audio} /></div>
+  return <div data-arkme-copy-link-recording><RecordingShareSegments key={audio} segments={segments} audioUrl={audio} media={item.structuredContent?.recordingAudio} /></div>
 }

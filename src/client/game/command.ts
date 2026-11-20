@@ -8,7 +8,7 @@ export function parseGameCommand(text: string): GameCommand | null {
   if (wrapped && join.test(wrapped[1]!)) return null
   const match = join.exec(value)
   if (match) return { kind: 'join', roomId: match[1]!, token: match[2]! }
-  if (/\/game\b/.test(value)) throw new Error('游戏口令格式不正确，请单独粘贴完整房间钥匙')
+  // Mentioning a command in ordinary text must not block sending a note.
   return null
 }
 export function invitation(roomId: string, token: string): string {

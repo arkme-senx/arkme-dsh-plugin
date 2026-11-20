@@ -26,20 +26,25 @@ async function render(text: string, onOpen = vi.fn(), format: 'plain' | 'markdow
     sendAtMillis: 1, status: 1, title: '', textContent: text, textFormat: format }} onMessageCopyLinkOpen={onOpen} />))
 }
 
-it('plays only the selected range of the assembled audio and stops at its end', async () => {
+it('loads audio on demand, plays only the selected range, and releases it at the end', async () => {
   let paused = true
-  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => { paused = false })
+  let audio!: HTMLAudioElement, frame!: FrameRequestCallback
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frame = callback; return 1 })
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  const createAudio = vi.fn(function () {
+    audio = document.createElement('audio')
+    Object.defineProperties(audio, { duration: { value: 5 }, paused: { get: () => paused } })
+    return audio
+  })
+  vi.stubGlobal('Audio', createAudio)
+  const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async function () { this.dispatchEvent(new Event('loadedmetadata')); paused = false })
   const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => { paused = true })
+  vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {})
   await act(async () => root.render(<RecordingShareSegments audioUrl="/authorized-excerpt" segments={[
     { speakerName: '甲', textContent: '第一段', startMillis: 20000, endMillis: 22000 },
     { speakerName: '乙', textContent: '第二段', startMillis: 81000, endMillis: 84000 },
   ]} />))
-  const audio = node.querySelector('audio')!
-  Object.defineProperties(audio, {
-    readyState: { value: 1 },
-    duration: { value: 5 },
-    paused: { get: () => paused },
-  })
+  expect(createAudio).not.toHaveBeenCalled()
   expect(play).not.toHaveBeenCalled()
   await act(async () => node.querySelectorAll('button')[1]!.click())
   expect(play).toHaveBeenCalledOnce()
@@ -47,9 +52,11 @@ it('plays only the selected range of the assembled audio and stops at its end', 
   await act(async () => {
     audio.currentTime = 5.1
     audio.dispatchEvent(new Event('timeupdate'))
+    frame(0)
   })
   expect(pause).toHaveBeenCalledOnce()
-  expect(audio.currentTime).toBe(5)
+  expect(audio.paused).toBe(true)
+  expect(audio.getAttribute('src')).toBeNull()
 })
 
 describe('inline share link labels', () => {
