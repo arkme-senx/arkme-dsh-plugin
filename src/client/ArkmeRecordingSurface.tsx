@@ -1,3 +1,4 @@
+import { BookmarkSimple } from '@phosphor-icons/react/dist/icons/BookmarkSimple'
 import { RecordingViewUpdating } from '../recording-transcript-page.js'
 import { RecordingVersionDetails } from './recordings/RecordingVersionDetails.js'
 import { RecordingSourceNotice } from './recordings/RecordingSourceNotice.js'
@@ -895,12 +896,12 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const historyOpen = showTranscriptVersions && historyScope === dayScope
   useEffect(() => { setHistoryScope('') }, [dayScope, showTranscriptVersions])
   const transcriptActive = active && activeTab === 'transcript'
-  const searchTarget = ui.recordingTarget?.segment && ui.recordingTarget.transcriptSearchQuery !== undefined ? ui.recordingTarget : undefined
+  const searchTarget = ui.recordingTarget?.identityHash || ui.recordingTarget?.segment && ui.recordingTarget.transcriptSearchQuery !== undefined ? ui.recordingTarget : undefined
   const searchOwner = useRef({ target: searchTarget, account: entityAccount })
   if (searchOwner.current.target !== searchTarget) searchOwner.current = { target: searchTarget, account: entityAccount }
   const fastTarget = searchOwner.current.account === entityAccount ? searchTarget : undefined
   const fastTargetDayStamp = fastTarget === undefined ? undefined
-    : timeZone ? recordingCalendarDate(fastTarget.startAtMillis, timeZone).getTime() : fastTarget.dateStamp
+    : timeZone ? recordingCalendarDate(fastTarget.startAtMillis, timeZone).getTime() : startOfLocalDay(new Date(fastTarget.dateStamp)).getTime()
   const location = useRecordingTranscriptLocation(`${pageScope}:${transcriptActive}:${retainedCurrent}:${fastTarget?.revision ?? ''}`)
   const located = location.state?.kind === 'ready' ? location.state.value : undefined
   const locating = location.state?.kind === 'loading'
@@ -947,8 +948,10 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
   const candidates = useRecordingDaySearchCandidates(pageScope, selectedDate.getTime(), dailyQuery,
     transcriptActive && !!entityAccount && workbenchEnabled && !dayWindow && !retainedCurrent)
   useEffect(() => {
-    if (!transcriptActive || retainedCurrent || fastTargetDayStamp !== selectedDate.getTime() || !fastTarget?.segment) return
-    void location.locate({ dateStamp: fastTargetDayStamp, startAtMillis: fastTarget.startAtMillis, target: fastTarget.segment, ...(dayWindow ? { window: dayWindow } : {}) })
+    // Explicit favorite-source navigation still resolves its canonical identity.
+    // Retained daily search keeps using the current transcript reader.
+    if (!transcriptActive || (retainedCurrent && !fastTarget?.identityHash) || fastTargetDayStamp !== selectedDate.getTime() || !fastTarget || !(fastTarget.segment || fastTarget.identityHash)) return
+    void location.locate({ dateStamp: fastTargetDayStamp, startAtMillis: fastTarget.startAtMillis, ...(fastTarget.identityHash ? { identityHash: fastTarget.identityHash } : { target: fastTarget.segment! }), ...(dayWindow ? { window: dayWindow } : {}) })
   }, [transcriptActive, fastTarget, fastTargetDayStamp, selectedDate, location.locate, dayWindow, retainedCurrent])
   const pages = useRecordingTranscriptPages(day?.transcript, pageScope, transcript => {
     if (!located && day?.transcript.viewRef !== transcript.viewRef) readingAnchor.current = captureRecordingScrollAnchor(transcriptRootRef.current)
@@ -1059,7 +1062,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     const target = ui.recordingTarget
     if (target === undefined || !isRecordingLocalDateOnOrAfterMinimum(target.dateStamp)) return
     const targetDate = target.window ? startOfLocalDay(new Date(`${target.window.date}T12:00:00`))
-      : timeZone && target.segment ? recordingCalendarDate(target.startAtMillis, timeZone) : startOfLocalDay(new Date(target.dateStamp))
+      : timeZone && (target.segment || target.identityHash) ? recordingCalendarDate(target.startAtMillis, timeZone) : startOfLocalDay(new Date(target.dateStamp))
     const targetScope = `${entityAccount}:${targetDate.getTime()}:${JSON.stringify(target.window ?? recordingDisplayWindow(targetDate, timeZone) ?? null)}`
     const restored = dayCache.get(targetScope, cacheAccount)?.view
     currentDayScope.current = targetScope
@@ -1298,7 +1301,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     }).catch(error => { if (!controller.signal.aborted) setExactVersion({ target, version: null, error: errorMessage(error) }) })
     return () => controller.abort()
   }, [ui.recordingTarget, auth.auth, exactVersionReadRevision])
-  const exactTargetActive = ui.recordingTarget !== undefined && (ui.recordingTarget.window ? dateKey(new Date(`${ui.recordingTarget.window.date}T12:00:00`)) : dateKey(timeZone && ui.recordingTarget.segment ? recordingCalendarDate(ui.recordingTarget.startAtMillis, timeZone) : new Date(ui.recordingTarget.dateStamp))) === dateKey(selectedDate)
+  const exactTargetActive = ui.recordingTarget !== undefined && (ui.recordingTarget.window ? dateKey(new Date(`${ui.recordingTarget.window.date}T12:00:00`)) : dateKey(timeZone && (ui.recordingTarget.segment || ui.recordingTarget.identityHash) ? recordingCalendarDate(ui.recordingTarget.startAtMillis, timeZone) : new Date(ui.recordingTarget.dateStamp))) === dateKey(selectedDate)
   const exactTargetVersion = exactTargetActive && exactVersion?.target === ui.recordingTarget ? exactVersion : undefined
 
   const calendarByDay = useMemo(() => new Map((calendar?.days ?? []).map(item => [dateKey(recordingCalendarDate(item.dateStamp, timeZone)), item])), [calendar, timeZone])
@@ -1438,7 +1441,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
     row?.scrollIntoView({ block: 'start' })
   }, [transcriptNavigation, activeTab, selectedDate])
   const preciseTarget = !searchTarget || retainedCurrent || fastTarget && location.state?.kind === 'unsupported' ? ui.recordingTarget?.segment : undefined
-  const preciseTargetDay = ui.recordingTarget !== undefined && (ui.recordingTarget.window ? dateKey(new Date(`${ui.recordingTarget.window.date}T12:00:00`)) : dateKey(timeZone && ui.recordingTarget.segment ? recordingCalendarDate(ui.recordingTarget.startAtMillis, timeZone) : new Date(ui.recordingTarget.dateStamp))) === dateKey(selectedDate)
+  const preciseTargetDay = ui.recordingTarget !== undefined && (ui.recordingTarget.window ? dateKey(new Date(`${ui.recordingTarget.window.date}T12:00:00`)) : dateKey(timeZone && (ui.recordingTarget.segment || ui.recordingTarget.identityHash) ? recordingCalendarDate(ui.recordingTarget.startAtMillis, timeZone) : new Date(ui.recordingTarget.dateStamp))) === dateKey(selectedDate)
   const [preciseResolution, setPreciseResolution] = useState<{ target: typeof preciseTarget; items: typeof transcriptItems; item?: ArkmeRecordingWorkbenchItem }>()
   useEffect(() => {
     let cancelled = false
@@ -1926,6 +1929,7 @@ export function ArkmeRecordingSurface({ onOpenRecordingImport, recordingRefreshR
           onClick={() => { tour.finish(false); arkmeUi.showVoiceprint() }}><Fingerprint size={16} aria-hidden />{tr("声纹管理")}<CaretRight size={12} aria-hidden /></button>
         <ArkmeRecordingImportTrigger fullWidth feedback={recordingImportFeedback} onClick={() => { tour.finish(false); onOpenRecordingImport(selectedDate.getTime()) }} />
         <RecordingVoiceTriggerEntry style={styles.calendarActionButton} mediaPath={recordingMediaPath} />
+        <button data-arkme-feedback="neutral" type="button" style={styles.calendarActionButton} onClick={() => arkmeUi.showRecordingFavorites()}><BookmarkSimple size={16} />{tr('我收藏的录音')}</button>
         <LocalRecorderEntry style={styles.calendarActionButton} accountKey={auth.auth?.status === 'authenticated' ? `${auth.auth.environment}:${auth.auth.userId}` : undefined} mediaPath={recordingMediaPath} onShowImports={() => onOpenRecordingImport(selectedDate.getTime())} />
       </>}</div>
       {workbenchEnabled && <RecordingTotalMetricsLoader account={entityAccount} monthStamp={visibleMonth.getTime()} timeZone={timeZone} active={active && workbenchEnabled && !tour.sample} refreshRevision={`${recordingRefreshRevision}:${fileRefreshRevision}`} />}

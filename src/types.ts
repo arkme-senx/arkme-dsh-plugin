@@ -1432,6 +1432,7 @@ export interface ArkmeRecordingSearchSegment extends ArkmeRecordingSearchIdentit
 
 export interface ArkmeRecordingWindow { dateStamp: number; endStamp: number; timeZone: string; date: string }
 export interface ArkmeRecordingTarget {
+  identityHash?: string
   window?: ArkmeRecordingWindow
   revision?: number
   dateStamp: number
@@ -1679,6 +1680,7 @@ arkoImagesV1?:true
     recordingEntities?: true
     recordingEntityStart?: true
     speakerPresence?: true
+    recordingFavoritesV1?: boolean
     recordingWorkflowV2?: true
 recordingAnalysisV1?: true
     recordingStrategiesV1?: true
@@ -2853,6 +2855,7 @@ export interface ArkmeMessageCopyLinkStructuredContent {
   durationMillis: number
   /** Only the server-authorized selection snapshot; never the full source session. */
   longRecordingSegments?: ArkmeForwardTranscriptSegment[]
+  recordingAudio?: import('./recording-favorite-contract.js').RecordingShareAudio
   recordingAudioUrl?: string
 }
 
@@ -4468,7 +4471,7 @@ export type ArkmeChatClientEvent = {
 } | {
   type: 'projection-invalidated'
   revision: number
-  projection: 'chat_extensions' | 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
+  projection: 'chat_extensions' | 'team_codex' | 'message_annotations' | 'dsh_annotations' | 'offline_context' | 'official_notification' | 'recording_favorites' | 'record' | 'self_role' | 'topic-directory' | 'chat.direct_message_admission'
   /** Confirmed content-only writes may retain visible topic counts while revalidating. */
   retainTopicCounts?: boolean
   /** The connection reconcile event already owns the group interaction refresh. */
@@ -4576,6 +4579,7 @@ export type ArkmePluginOperation =
   | 'recordings.person-references'
   | 'offline-context'
   | 'recordings.analysis'
+  | 'recordings.favorites'
   | 'recordings.workflow'
   | 'recordings.playback.open'
   | 'recordings.speaker.options'

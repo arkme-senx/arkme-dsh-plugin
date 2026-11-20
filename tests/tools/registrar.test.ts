@@ -458,6 +458,8 @@ describe('registerArkmeTools', () => {
       'arkme_recording_entities', 'arkme_recording_entities_start',
       'arkme_recording_notifications',
       'arkme_recording_notifications_read',
+      'arkme_recording_favorites',
+      'arkme_recording_favorites_change',
       'arkme_recording_import',
       'arkme_recording_import_folder',
       'arkme_speaker_presence',

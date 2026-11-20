@@ -11,11 +11,13 @@ describe('game keys', () => {
     expect(parseGameCommand(`/game join ${r}.${t}`)?.kind).toBe('join')
     expect(parseGameCommand(' /game ')).toEqual({ kind: 'create' })
   })
-  it('does not leak malformed keys as notes', () => {
-    expect(() => parseGameCommand('/game join broken')).toThrow()
-    expect(() => parseGameCommand('发送「/game join broken」到群聊加入游戏')).toThrow()
-    expect(() => parseGameCommand('text /game')).toThrow()
-    expect(parseGameCommand('hello')).toBe(null)
+  it('sends text that is not an exact game command as an ordinary note', () => {
+    const key = `${'a'.repeat(32)}.${'b'.repeat(64)}`
+    for (const text of ['text /game', '/game 你好', '/game\n一起玩', '说明：/game 打开游戏',
+      '/games', '/game join broken', '发送「/game join broken」到群聊加入游戏',
+      `/game join ${key} 一起玩`, `邀请 /game join ${key}`, 'hello']) {
+      expect(parseGameCommand(text)).toBeNull()
+    }
   })
 })
 describe('Chinese checkers', () => {

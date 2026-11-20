@@ -14,7 +14,7 @@ const expectedPublicMethods = [
   'loginDevices', 'gameRequest', 'reportDeviceActivity', 'reportIMReady',
   'savedTranscriptViews', 'transcriptViewReceipt', 'transcriptViewCapabilities', 'readTranscriptViews', 'changeTranscriptView', 'importLocalTranscriptView',
   'identityPersonProfile', 'identityShareLink', 'identityShareRead', 'identityShareOpen', 'identityShareJoin',
-  'recordingFileStorage', 'recordingDeliveryPage', 'recordingAnalysis',
+  'recordingFileStorage', 'recordingDeliveryPage', 'recordingAnalysis', 'recordingFavorites',
   'recordingDeletionSettings', 'recordingDeletionPlan', 'recordingDeletionStatus', // Built-in settings and local DSH read-only preparation and receipt.
   'privateGroupContext', 'privateGroupPeople', 'privateGroupMatches', 'createGroupFromPrivate',
   'chatThoughts', 'recordThoughts', // Upstream 3.0.43 thought readers.
@@ -162,6 +162,7 @@ const expectedPublicMethods = [
 ].sort()
 
 const expectedServiceFiles = [
+  'recording-favorite-service.ts', 'recording-share.ts',
   'game-service.ts', 'device-registration-service.ts',
   'login-devices-service.ts',
   'transcript-view-service.ts',

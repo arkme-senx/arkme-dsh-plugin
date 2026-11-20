@@ -19,6 +19,7 @@ const backgroundReadOperations = new Set([
 export function supportsBackgroundRead(operation: string, params?: Record<string, unknown>): boolean {
   if (operation === 'team.app.entries.list' || operation === 'team.app.entries.query') return params?.background === true
   if (operation === 'team.app.workspace.request') return (params?.request as { operation?: string } | undefined)?.operation === 'folders'
+  if (operation === 'recordings.favorites') return ['status', 'page', 'detail', 'notifications', 'summary', 'source'].includes(String(params?.action))
   if (operation === 'recordings.workflow') return params?.operation === 'query'
   if (operation === 'world.subscriptions' || operation === 'world.reactions') return params?.action === 'notifications'
   if (operation === 'reactions') return params?.action === 'notifications'
