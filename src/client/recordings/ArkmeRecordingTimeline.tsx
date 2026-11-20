@@ -302,7 +302,12 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   useArkmeLocale()
   const timeZone = useArkmeDisplayTimeZone()
   // Keep the transcript list available, but its timeline must share the coverage ownership scope.
-  const items = useMemo(() => allItems.filter(item => item.recordingBelongsToViewer !== false), [allItems])
+  const items = useMemo(() => allItems.filter(item => item.recordingBelongsToViewer !== false).flatMap(item => {
+    if (!item.activeRanges?.length) return [item]
+    return item.activeRanges.map((range, index) => ({
+      ...item, ...range, itemId: `${item.itemId}:active-range:${index}`, ...(index ? { textCount: 0 } : {}),
+    }))
+  }), [allItems])
   const hasRecording = items.length > 0 || coverage.length > 0
   const showEmptyState = !loading && !hasRecording && coverageState === 'ready' && (emptyState ?? true)
   const live = coverage.find(range => range.status === 'recording')
@@ -437,7 +442,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
     return [...speakers.values()].sort((left, right) => right.durationMillis - left.durationMillis)
   }, [items])
   const totalSpeakerDurationMillis = allDaySpeakers.reduce((sum, speaker) => sum + speaker.durationMillis, 0)
-  const consistency = useRecordingConsistency(loading ? [] : allDaySpeakers.map(speaker => speaker.items[0]!.itemRef))
+  const consistency = useRecordingConsistency(loading ? [] : allDaySpeakers.map(speaker => speaker.items[0]!.itemRef).filter(Boolean))
   const consistencyByRef = new Map(consistency.groups.map(group => [group.anchorRef, group]))
   const reviewSpeaker = (event: React.MouseEvent<HTMLButtonElement>, item: RecordingTimelineItem) => {
     event.preventDefault(); event.stopPropagation()
@@ -545,7 +550,7 @@ export function ArkmeRecordingTimeline({ items: allItems, coverage = [], coverag
   const overviewPlayheadVisible = playheadMillis !== undefined && playheadMillis >= bounds.start && playheadMillis < bounds.end
   const playheadVisible = playheadMillis !== undefined && playheadMillis >= windowStart && playheadMillis <= windowEnd
   const canPlayAtSelection = hasActivePlayback || playheadMillis !== undefined && items.some(item => (
-    playheadMillis >= item.startAtMillis && playheadMillis < item.endAtMillis
+    item.playable !== false && playheadMillis >= item.startAtMillis && playheadMillis < item.endAtMillis
   ))
   const playheadPercent = playheadVisible ? (playheadMillis - windowStart) / Math.max(1, windowEnd - windowStart) * 100 : 0
   const renderPlayheadControl = (percent: number, detail = false) => {

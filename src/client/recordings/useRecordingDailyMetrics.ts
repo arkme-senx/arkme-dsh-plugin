@@ -32,12 +32,14 @@ export function useRecordingDayOverview(page: ArkmeRecordingTranscriptPage | und
     }
     const controller = new AbortController()
     setResult(undefined)
-    const pending = first.nextCursor ? callArkme<RecordingDayOverview & { viewRef: string }>('recordings.day.overview', {
+    const pending = first.nextCursor && !first.retainedSnapshot ? callArkme<RecordingDayOverview & { viewRef: string }>('recordings.day.overview', {
       dateStamp: first.dateStamp, viewRef: first.viewRef, cursor: first.nextCursor,
     }, controller.signal, { priority: 'background' }).then(value => {
       if (value.viewRef !== first.viewRef || !Array.isArray(value.items)) throw new Error('全天概览版本不匹配，请重新读取')
       return value
-    }) : readRecordingDayOverview(first, async () => { throw new Error('完整转写不应继续翻页') }, controller.signal)
+    }) : readRecordingDayOverview(first, cursor => callArkme<ArkmeRecordingTranscriptPage>('recordings.transcript.page', {
+      dateStamp: first.dateStamp, source: first.transcriptSource, cursor, ...(first.window ? { window: first.window } : {}),
+    }, controller.signal, { priority: 'background' }), controller.signal)
     void pending.then(value => {
       if (!controller.signal.aborted) {
         cached?.cache.setOverview(scope, cached.account, key, first.viewRef, value)

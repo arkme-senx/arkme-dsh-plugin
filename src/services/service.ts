@@ -209,6 +209,8 @@ export interface ArkmeRemoteRequestOptions {
   /** Explicit Chat source frame; Host-only and never part of a consumer DTO. */
   chatAccessRef?: string
   chatMessageActionsV2?: boolean
+  /** Inspect structured owner errors at a feature compatibility boundary. */
+  preserveAudioHttpError?: boolean
   /** Reserved for realtime message projection; only exact read routes are eligible. */
   traffic?: 'message-sync'
   lane?: ArkmeRequestLane
@@ -704,6 +706,8 @@ export class ServiceRuntime {
     if (baseUrl === this.config.botBaseUrl && path === '/api/v1/bot/list') return true
     if (baseUrl === this.config.audioBaseUrl && new Set([
       '/api/v1/audio/unmarked-speakers/list', '/api/v1/audio/get-session-ls',
+      '/api/v1/audio/transcript-versions/list', '/api/v1/audio/transcript-versions/query',
+      '/api/v1/audio/transcripts/current/query',
       '/api/v1/audio/speaker-directory/summary', '/api/v1/audio/speaker-directory/list',
       '/api/v1/audio/speaker-directory/similar', '/api/v1/audio/speaker-directory/voice-samples',
     ]).has(path)) return true
@@ -1501,13 +1505,13 @@ export class ServiceRuntime {
     let session = initialSession ?? await this.requireSession()
     const requestOptions = () => this.authenticatedRequestOptions(session, 'audio', 'interactive-read', options)
     try {
-      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions(), options.preserveAudioHttpError)
     } catch (error) {
       if (!(error instanceof ArkmePluginError) || !['auth-http-401', 'auth-http-403'].includes(error.code)) {
         throw error
       }
       session = await this.refreshAccessToken(session, signal)
-      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions())
+      return await this.post<T>(this.config.audioBaseUrl, path, body, session.accessToken, [200], signal, false, requestOptions(), options.preserveAudioHttpError)
     }
   }
 

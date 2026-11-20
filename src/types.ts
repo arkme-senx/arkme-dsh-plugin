@@ -1764,6 +1764,7 @@ recordingAnalysisV1?: true
     /** Staged, account-bound recording import with resumable task status. */
     recordingFileImport?: true
     recordingTranscriptPages?: true
+    recordingTranscriptVersions?: true
     relatedRecordings?: true
     /** Optional additive capability so older Providers remain detectable by consumer plugins. */
     worldFeed?: true
@@ -3503,6 +3504,13 @@ export interface ArkmeRecordingTranscriptItem {
 
 /** Browser-safe day projection. Audio owner ids remain sealed in itemRef. */
 export interface ArkmeRecordingWorkbenchItem {
+  /** Opaque playback-only reference for a retained row without a current editable owner target. */
+  retainedPlaybackRef?: string
+  /** Boolean on retained rows. Legacy projections derive playback from itemRef. */
+  playable?: boolean
+  /** Effective absolute intervals of a retained utterance after partial overwrite. */
+  activeRanges?: Array<{ startAtMillis: number; endAtMillis: number }>
+  activeRangesComplete?: boolean
  privateViewVersion?: string
   /** Available only for complete projections; paged reads obtain counts when editing. */
   sameSpeakerItemCount?: number
@@ -3823,7 +3831,17 @@ export interface ArkmeRecordingTranscriptSection<T = ArkmeRecordingTranscriptIte
   captureCoverage?: { receiving: number; interrupted: number }
 }
 
+export interface ArkmeRecordingTranscriptVersionPage {
+  supported: boolean
+  versions: Array<{ versionRef: string; createdAtMillis: number }>
+  nextCursor: string
+}
+
 export interface ArkmeRecordingTranscriptPage extends ArkmeRecordingTranscriptSection<ArkmeRecordingWorkbenchItem> {
+  retainedSnapshot?: true
+  /** First-page display metadata can change while the transcript body is unchanged. */
+  presentationRef?: string
+  versionRef?: string
   /** Original civil-day window of import notifications; retained on refresh. */
   window?: ArkmeRecordingWindow
   dateStamp: number
@@ -3835,6 +3853,7 @@ export interface ArkmeRecordingTranscriptPage extends ArkmeRecordingTranscriptSe
 }
 
 export interface ArkmeRecordingTranscriptPageOptions {
+  versionRef?: string
   window?: ArkmeRecordingWindow
   source?: ArkmeRecordingTranscriptSource
   cursor?: string
@@ -3842,7 +3861,7 @@ export interface ArkmeRecordingTranscriptPageOptions {
 }
 
 export type ArkmeRecordingOverviewItem = Pick<ArkmeRecordingWorkbenchItem,
-  'itemId' | 'itemRef' | 'startAtMillis' | 'endAtMillis' | 'speakerKey' | 'speakerLabel' | 'speakerColorIndex' | 'speakerAvatarRef' | 'isBackground' | 'recordingBelongsToViewer'> & {
+  'itemId' | 'itemRef' | 'startAtMillis' | 'endAtMillis' | 'speakerKey' | 'speakerLabel' | 'speakerColorIndex' | 'speakerAvatarRef' | 'isBackground' | 'recordingBelongsToViewer' | 'playable' | 'activeRanges' | 'activeRangesComplete'> & {
     textPreview?: string
     textCount?: number
   }
@@ -4537,6 +4556,7 @@ export type ArkmePluginOperation =
   | 'recordings.strategies'
   | 'recordings.strategies.start'
   | 'recordings.strategies.preference.set'
+  | 'recordings.transcript.versions'
   | 'recordings.transcript.page'
   | 'recordings.transcript.locate'
   | 'recordings.transcript.context'

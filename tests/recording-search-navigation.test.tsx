@@ -92,3 +92,25 @@ describe('precise recording search navigation',()=>{
     expect(mocks.call.mock.calls.some(([operation])=>operation==='recordings.playback.open')).toBe(false)
   })
 })
+
+it('locates a favorite source after the retained current transcript has loaded', async () => {
+  const day = new Date(); day.setHours(0, 0, 0, 0)
+  const original = { itemId: 'favorite-source', itemRef: 'opaque', startAtMillis: day.getTime() + 1000, endAtMillis: day.getTime() + 2000,
+    text: '收藏原句', speakerColorIndex: 0, speakerLabel: '我', searchIdentityHash: 'favorite-identity' }
+  mocks.call.mockReset().mockImplementation(async operation => {
+    if (operation === 'recordings.calendar') return { days: [] }
+    if (operation === 'recordings.day') return { dateStamp: day.getTime(), transcript: { retainedSnapshot: true, state: 'ready', items: [original], nextCursor: '', viewRef: 'current-view' },
+      summary: { state: 'empty', items: [] }, timeline: { state: 'empty', items: [] } }
+    if (operation === 'recordings.transcript.versions') return { supported: true, versions: [], nextCursor: '' }
+    if (operation === 'recordings.transcript.locate') return { focusItemId: original.itemId, items: [original] }
+    throw new Error(`Unexpected ${operation}`)
+  })
+  arkmeUi.showRecordings()
+  await act(async () => { renderer = create(<ArkmeRecordingSurface onOpenRecordingImport={() => {}} recordingRefreshRevision={0} />) })
+  expect(renderer!.root.findByType(ArkmeRecordingTranscriptRow).props.item.text).toBe('收藏原句')
+  await act(async () => { arkmeUi.showRecordingFavoriteSource(original.startAtMillis, 'favorite-identity') })
+  expect(mocks.call.mock.calls.find(([op]) => op === 'recordings.transcript.locate')?.[1]).toEqual({
+    dateStamp: day.getTime(), startAtMillis: original.startAtMillis, identityHash: 'favorite-identity',
+  })
+  expect(renderer!.root.findByProps({ 'data-recording-located-transcript': true })).toBeDefined()
+})
