@@ -252,13 +252,13 @@ it('centers the selector with symmetric side tracks and a fixed product name on 
   expect(getComputedStyle(row).display).toBe('flex')
   expect(row.style.getPropertyValue('--arkme-header-utilities-width')).toBe('0px')
   const identity = row.querySelector<HTMLElement>('[data-arkme-session-identity]')!
-  expect(identity.textContent).toBe('DeepSeek Harness')
+  expect(identity.textContent).toBe('Arko · 本机')
   expect(row.firstElementChild).toBe(identity)
   expect(getComputedStyle(header.querySelector('[data-arkme-session-utilities-start]')!).marginLeft).toBe('auto')
   expect(trigger.textContent).toContain('测试')
   header.querySelector('[data-arkme-session-native-title]')!.textContent = '改名后的任务'
   await flush()
-  expect(identity.textContent).toBe('DeepSeek Harness')
+  expect(identity.textContent).toBe('Arko · 本机')
   expect(trigger.textContent).toContain('改名后的任务')
   cleanup!(); cleanup = undefined
   expect(document.querySelector('[data-arkme-session-identity]')).toBeNull()
@@ -270,7 +270,7 @@ it('keeps the product identity and a centered selector for the native blank head
   header.setAttribute('aria-hidden', 'true')
   await flush()
   const identity = document.querySelector<HTMLElement>('[data-arkme-session-identity]')!
-  expect(identity.textContent).toBe('DeepSeek Harness')
+  expect(identity.textContent).toBe('Arko · 本机')
   expect(identity.hasAttribute('data-arkme-session-fallback')).toBe(true)
   expect(getComputedStyle(trigger.parentElement!).left).toBe('50%')
   expect(trigger.textContent).toBe('新会话')
@@ -404,7 +404,7 @@ it('recognizes the 0.2 frame tracks, nested new-session button and resident blan
   cleanup = installHarnessSessionDropdown(document)
   // A native Tooltip wraps its child but preserves the button's actual handler.
   expect(document.querySelector('[data-arkme-session-trigger]')).not.toBeNull()
-  expect(document.querySelector('[data-arkme-session-identity]')?.textContent).toBe('DeepSeek Harness')
+  expect(document.querySelector('[data-arkme-session-identity]')?.textContent).toBe('Arko · 本机')
   expect(frame.hasAttribute('data-arkme-session-frame')).toBe(true)
   expect(document.querySelector('[data-arkme-session-trigger]')?.textContent).toBe('新会话')
 })
@@ -418,5 +418,23 @@ it('keeps the 0.2 plain-text crumb and selector stable through repeated observer
   const trigger = document.querySelector<HTMLButtonElement>('[data-arkme-session-trigger]')!
   expect(trigger.getAttribute('aria-label')).toBe('切换会话：会话 A')
   expect(trigger.closest('[data-arkme-session-native-title]')).toBeNull()
-  expect(header.textContent).toContain('DeepSeek Harness')
+  expect(header.textContent).toContain('Arko · 本机')
+})
+
+it('names the local agent after the renamed Arko and follows later renames', async () => {
+  const { arkmeArkoProfileStore } = await import('../src/client/arko-profile-store.js')
+  arkmeArkoProfileStore.activateUser(91)
+  arkmeArkoProfileStore.setProfile(91, { displayName: '小森', version: 3 })
+  try {
+    const { header } = mount()
+    header.setAttribute('aria-hidden', 'true')
+    await flush()
+    const identity = document.querySelector<HTMLElement>('[data-arkme-session-identity]')!
+    expect(identity.textContent).toBe('小森 · 本机')
+    arkmeArkoProfileStore.setProfile(91, { displayName: '阿森', version: 4 })
+    expect(identity.textContent).toBe('阿森 · 本机')
+    expect(identity.title).toBe('阿森 · 本机')
+  } finally {
+    arkmeArkoProfileStore.activateUser(undefined)
+  }
 })

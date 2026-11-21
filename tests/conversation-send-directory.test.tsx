@@ -4139,7 +4139,7 @@ describe('conversation send directory projection', () => {
     expect(mocks.callArkme.mock.calls.some(([op, params]) => op === 'sources.list' && params?.directory === 'send_to_self')).toBe(false)
     const targetButton = dialog.findAll(node => node.type === 'button' && typeof node.props['aria-pressed'] === 'boolean')[0]!
     await act(async () => { await targetButton.props.onClick() })
-    expect(renderedText(dialog)).toContain('我和DeepSeek Harness的快记')
+    expect(renderedText(dialog)).toContain('我和Arko · 本机的快记')
     snapshot.messages[0]!.text = '后续变化不能改快照'
     await act(async () => { dialog.findByProps({ 'aria-label': '发送转发' }).props.onClick() })
     await expect(result).resolves.toEqual({ completed: true })

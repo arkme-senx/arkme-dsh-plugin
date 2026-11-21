@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsLauncherOwnerProps, SettingsSectionOwnerProps } from '@deepseek-ai/dsh-client-ui-settings/client'
 import { HARNESS_MODELS_SETTINGS_OPEN } from '../harness-embed-contract.js'
+import { harnessConversationName } from './conversation-header-layout.js'
 
 export const HARNESS_SETTINGS_OPEN = 'arkme:harness-settings-open'
 export const HARNESS_SETTINGS_READY = 'data-arkme-harness-settings-ready'
@@ -42,7 +43,7 @@ export function installHarnessSettings(ctx: Context): () => void {
     }, SettingsLauncher)),
     ctx.slots.inject('settings.header', () => ctx.slots.register({
       name: 'settings.header', priority: -100,
-    }, () => 'DeepSeek Harness ' + (ctx.locale.getSnapshot().active === 'en' ? 'settings' : '设置'))),
+    }, () => harnessConversationName() + (ctx.locale.getSnapshot().active === 'en' ? ' settings' : ' 设置'))),
     // These global controls live in Arkme settings; the existing providers and
     // Host documents remain active and are shared with the embedded client.
     ...['language', 'appearance'].map(id => ctx.slots.inject('settings.general.item', () => ctx.slots.register({

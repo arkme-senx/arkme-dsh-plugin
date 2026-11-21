@@ -319,4 +319,7 @@ AI 额度 {v0}|AI allowance {v0}
 AI 额度充值流程|AI point purchase
 次调用|calls
 按用量扣积分 · 计费说明|Usage-based points · Pricing details
+{name} · 本机|{name} · This computer
+{name} 任务|{name} task
+在这台电脑上工作|Working on this computer
 `.trim().split('\n').map(line => { const p = line.indexOf('|'); return [line.slice(0, p), line.slice(p + 1)] }))

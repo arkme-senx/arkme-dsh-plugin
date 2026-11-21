@@ -251,6 +251,7 @@ import type {
   ArkmeArkoCancelResult,
   ArkmeArkoHistoryPage,
   ArkmeArkoModelCatalog,
+  ArkmeArkoPersona,
   ArkmeArkoProfile,
   ArkmeArkoRunStatus,
   ArkmeArkoSession,
@@ -1501,6 +1502,7 @@ withReferences: (refs,userId,persist)=>this.filesOwner().withReferences(refs,use
         ...(this.config.recordingWorkbenchEnabled !== false && this.config.recordingImportDirectory
           ? { recordingFileImport: true as const } : {}),
         recordingTranscriptPages: true,
+        recordingTranscriptVersions: true,
         authStatus: true,
         passwordLogin: true,
         realtimeDictationV1: true,
@@ -1851,6 +1853,7 @@ recordingAnalysisV1: true,
   async copyRecordingLink(itemRefs: readonly string[], signal?: AbortSignal) { return await this.recording.copyRecordingLink(itemRefs, signal) }
   async forwardRecording(input: RecordingForwardInput, signal?: AbortSignal) { return await this.recording.forwardRecording(input, signal) }
   async startRecordingComparison(dateStamp: number, signal?: AbortSignal) { return await this.recording.startRecordingComparison(dateStamp, signal) }
+  async recordingTranscriptVersions(dateStamp: number, options: Pick<ArkmeRecordingTranscriptPageOptions, 'cursor' | 'window' | 'source' | 'signal'> = {}) { return await this.recording.recordingTranscriptVersions(dateStamp, options) }
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}) { return await this.recording.recordingTranscriptPage(dateStamp, options) }
   async locateRecordingTranscript(dateStamp: number, startAtMillis: number, identityHash: string, version: string, signal?: AbortSignal, window?: ArkmeRecordingWindow) {
     return await this.recording.locateTranscript(dateStamp, startAtMillis, identityHash, version, signal, window)
@@ -1955,11 +1958,34 @@ recordingAnalysisV1: true,
     return await this.profile.invitationRewards(scope, signal)
   }
 
+  private readonly arkoProfileListeners = new Set<(userId: number, profile: ArkmeArkoProfile) => void>()
+
+  /** Every Arko profile this host reads, so the local agent can speak under the same name. */
+  onArkoProfile(listener: (userId: number, profile: ArkmeArkoProfile) => void): () => void {
+    this.arkoProfileListeners.add(listener)
+    return () => { this.arkoProfileListeners.delete(listener) }
+  }
+
+  private publishArkoProfile(userId: number, profile: ArkmeArkoProfile): void {
+    for (const listener of this.arkoProfileListeners) {
+      try { listener(userId, profile) } catch { /* A presentation listener never fails the read. */ }
+    }
+  }
+
   async arkoProfile(signal?: AbortSignal): Promise<ArkmeArkoProfile> {
     const { userId } = await this.runtime.requireSession()
     const profile = await this.arko.arkoProfile(signal)
     void this.directory.rememberSpecial({ arkoProfile: profile }, userId).catch(() => undefined)
+    this.publishArkoProfile(userId, profile)
     return profile
+  }
+
+  async arkoPersona(signal?: AbortSignal): Promise<ArkmeArkoPersona> {
+    const { userId } = await this.runtime.requireSession()
+    const persona = await this.arko.arkoPersona(signal)
+    void this.directory.rememberSpecial({ arkoProfile: persona.profile }, userId).catch(() => undefined)
+    this.publishArkoProfile(userId, persona.profile)
+    return persona
   }
 
   arkoLocalMarkCapabilities(sourceRef: string, signal?: AbortSignal) { return this.arko.localMarks.capabilities(sourceRef, signal) }
@@ -2032,7 +2058,13 @@ recordingAnalysisV1: true,
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeArkoAskResult> {
-    return await this.arko.arkoAsk(text, options)
+    // The run keeps the session it started with, so a reply that lands after an account
+    // switch belongs to the account that asked: capture it before sending.
+    const askingUserId = options.expectedUserId ?? (await this.runtime.requireSession().catch(() => undefined))?.userId
+    const result = await this.arko.arkoAsk(text, options)
+    // A rename made in conversation arrives on the run's final frame.
+    if (result.profile !== undefined && askingUserId !== undefined) this.publishArkoProfile(askingUserId, result.profile)
+    return result
   }
 
   async arkoPendingTurns(expectedUserId?:number) { return this.arko.arkoPendingTurns(expectedUserId) }
@@ -3824,6 +3856,9 @@ recordingAnalysisV1: true,
 
   async createArrangement(input: ArkmeArrangementCreateInput, signal?: AbortSignal) {
     return this.arrangement.createArrangement(input, signal)
+  }
+  async createAgentArrangement(input: import('./types.js').ArkmeAgentArrangementCreateInput, signal?: AbortSignal) {
+    return this.arrangement.createAgentArrangement(input, signal)
   }
   async arrangementRecognition(refs: string[], signal?: AbortSignal) {
     return this.arrangement.arrangementRecognition(refs, signal)

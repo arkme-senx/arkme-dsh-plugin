@@ -36,8 +36,8 @@ const item = (itemRef: string, startAtMillis: number): ArkmeRecordingWorkbenchIt
   isBackground: false,
 })
 
-function Harness({ expose, following }: { expose(value: RecordingPlaybackController): void; following?: (last: ArkmeRecordingWorkbenchItem, signal: AbortSignal) => Promise<readonly ArkmeRecordingWorkbenchItem[]> }) {
-  const playback = useRecordingPlayback('/arkme-self/api/media', following)
+function Harness({ expose, following, current }: { expose(value: RecordingPlaybackController): void; following?: (last: ArkmeRecordingWorkbenchItem, signal: AbortSignal) => Promise<readonly ArkmeRecordingWorkbenchItem[]>; current?: readonly ArkmeRecordingWorkbenchItem[] }) {
+  const playback = useRecordingPlayback('/arkme-self/api/media', following, current)
   useEffect(() => { expose(playback) }, [expose, playback])
   return <div>{playback.activeItemRef || 'none'}</div>
 }
@@ -89,6 +89,43 @@ describe('recording playback controller', () => {
     await act(async () => { pending.resolve([first, second]); await tick() })
     expect(playback.activeItemRef).toBe(second.itemRef)
     expect(audios).toHaveLength(2)
+  })
+
+  it('skips transcript-only rows on the next page and keeps playing', async () => {
+    const first = item('item-a', 100_000), gone = { ...item('item-gone', 150_000), playable: false }, second = item('item-b', 200_000)
+    const following = vi.fn(async () => [first, gone, second])
+    await act(async () => { renderer.update(<Harness expose={value => { playback = value }} following={following} />) })
+    await act(async () => { await playback.playAt([first], first.startAtMillis) })
+    await act(async () => { audios[0]!.emit('ended'); await tick() })
+    expect(playback.activeItemRef).toBe(second.itemRef)
+    expect(mocks.callArkme.mock.calls.map(call => call[1])).toEqual([{ itemRef: 'item-a' }, { itemRef: 'item-b' }])
+  })
+
+  it('reads past a page of only transcript-only rows, and stops quietly at the end', async () => {
+    const first = item('item-a', 100_000), gone = { ...item('item-gone', 150_000), playable: false }, second = item('item-b', 200_000)
+    const pages = [[first, gone], [first, gone, second]]
+    const following = vi.fn(async () => pages.shift() ?? [first, gone, second])
+    await act(async () => { renderer.update(<Harness expose={value => { playback = value }} following={following} />) })
+    await act(async () => { await playback.playAt([first], first.startAtMillis) })
+    await act(async () => { audios[0]!.emit('ended'); await tick(); await tick() })
+    expect(following.mock.calls.map(call => (call as unknown as [ArkmeRecordingWorkbenchItem])[0].itemId)).toEqual(['item-a', 'item-gone'])
+    expect(playback.activeItemRef).toBe(second.itemRef)
+
+    const last = vi.fn(async () => [second, { ...item('item-tail', 250_000), playable: false }])
+    await act(async () => { renderer.update(<Harness expose={value => { playback = value }} following={last} />) })
+    await act(async () => { audios[1]!.emit('ended'); await tick(); await tick() })
+    expect(last).toHaveBeenCalledTimes(2)
+    expect(playback.activeItemRef).toBe('')
+    expect(playback.error).toBe('')
+    expect(playback.isLoading).toBe(false)
+  })
+
+  it('skips a transcript-only row in the refreshed list instead of stopping there', async () => {
+    const first = item('item-a', 100_000), second = item('item-b', 200_000), gone = { ...item('item-gone', 150_000), playable: false }
+    await act(async () => { await playback.playAt([first, second], first.startAtMillis) })
+    await act(async () => { renderer.update(<Harness expose={value => { playback = value }} current={[first, gone, second]} />); await tick() })
+    await act(async () => { audios[0]!.emit('ended'); await tick() })
+    expect(playback.activeItemRef).toBe(second.itemRef)
   })
 
   it('pauses a pending queue continuation and does not play its late next item', async () => {

@@ -73,6 +73,7 @@ function fixture() {
   const session = { userId: 42, accessToken: 'test', refreshToken: 'test' }
   const state = { unavailable: false, fail: false, invalid: false, switchAccount: false }
   const post = vi.fn(async (path: string, body: Record<string, unknown>) => {
+    if (path.startsWith('/api/v1/audio/transcript-versions/') || path === '/api/v1/audio/transcripts/current/query') throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
     if (path.includes('/recordings/')) return correctionOwnerResponse(path, body, { session_ls: [{ id: '123456789012345678901234', belong_usr: 42, start_at: date, end_at: date + 86400000, spk_ls: [{ num: 1, spk_id: '345678901234567890123456' }] }],
       child_ls: [{ id: '234567890123456789012345', session_id: '123456789012345678901234', start_at: 0, asr: [{ s: 0, e: 4000, n: 1, t: '甲' }, { s: 5000, e: 9000, n: 1, t: '乙' }] }] })
     if (path.endsWith('/get-speaker-ls')) return { spk_ls: [{ id: '345678901234567890123456', nick_name: '周鹏' }] }

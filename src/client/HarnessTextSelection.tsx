@@ -7,6 +7,7 @@ import { createNativeTextMarkTransport } from './harness-text-marks.js'
 import { insertNativeQuote, observeNativeTextTargets, nativeTextRows, type NativeTextInputActions } from './harness-text-selection.js'
 import type { NativeChat } from './harness-native-selection.js'
 import { publishNativeAnnotationInvalidation } from './native-annotation-invalidation.js'
+import { useHarnessConversationName } from './conversation-header-layout.js'
 
 /** Rendered inside the native iframe, so selection/highlights share its document. */
 export function HarnessTextSelection({ sessionId, chat, doc, inputActions }: {
@@ -30,6 +31,7 @@ export function HarnessTextSelection({ sessionId, chat, doc, inputActions }: {
 function NativeTextSurface({ sessionId, chat, doc, inputActions, account }: {
   sessionId: string; chat: NativeChat; doc: Document; inputActions?: NativeTextInputActions | undefined; account: { id: number; scope: string }
 }) {
+  const harnessName = useHarnessConversationName()
   const sourceRef = JSON.stringify(['dsh-native', account.id, sessionId])
   const transport = useMemo(() => createNativeTextMarkTransport(account.scope), [account.scope, sessionId])
   const marks = useMessageUnderlines(`${account.scope}:${sessionId}`, sourceRef, account.id, transport)
@@ -56,7 +58,7 @@ function NativeTextSurface({ sessionId, chat, doc, inputActions, account }: {
   useSelectedMessageSearch(sourceRef, setQuery)
   return <>
     <style>{'[data-arkme-text-selection] { cursor: text; } [data-arkme-text-selection] a, [data-arkme-text-selection] button { cursor: pointer; }'}</style>
-    <ArkmeMessageTextSelectionToolbar selectionDomain="native" replySourceRef={sourceRef} replyLabel="引用" getViewport={getViewport} selfNote={{ sourceLabel: 'DeepSeek Harness', accountKey: account.scope }}
+    <ArkmeMessageTextSelectionToolbar selectionDomain="native" replySourceRef={sourceRef} replyLabel="引用" getViewport={getViewport} selfNote={{ sourceLabel: harnessName, accountKey: account.scope }}
       onUnderline={marks.mark} getMarks={marks.getMarks} onRemoveMark={marks.remove} markStorage={marks.storage}
       onReply={inputActions ? (target, quote) => {
         const editor = doc.querySelector<HTMLElement>('[contenteditable="true"][role="textbox"]')

@@ -27,6 +27,9 @@ export async function readRecordingDayOverview(first: ArkmeRecordingTranscriptPa
         speakerKey: item.speakerKey, speakerLabel: item.speakerLabel, speakerColorIndex: item.speakerColorIndex,
         ...(item.speakerAvatarRef === undefined ? {} : { speakerAvatarRef: item.speakerAvatarRef }),
         ...(item.recordingBelongsToViewer === undefined ? {} : { recordingBelongsToViewer: item.recordingBelongsToViewer }),
+        ...(item.playable === undefined ? {} : { playable: item.playable }),
+        ...(item.activeRanges === undefined ? {} : { activeRanges: item.activeRanges }),
+        ...(item.activeRangesComplete === undefined ? {} : { activeRangesComplete: item.activeRangesComplete }),
         isBackground: item.isBackground, textCount: (previous?.textCount ?? 0) + count,
         textPreview: Array.from((previous?.textPreview ?? '') + item.text).slice(0, 80).join(''),
       })
@@ -56,6 +59,6 @@ export async function readRecordingDayOverview(first: ArkmeRecordingTranscriptPa
 
 /** A visible-prefix text count is not a change to the underlying day snapshot. */
 export function recordingDayOverviewKey(page: ArkmeRecordingTranscriptPage | undefined, scope: string, refreshVersion: string | number = 0): string {
-  return JSON.stringify([scope, refreshVersion, page?.viewRef, page?.dateStamp, page?.transcriptSource, page?.window,
+  return JSON.stringify([scope, refreshVersion, page?.viewRef, page?.presentationRef, page?.dateStamp, page?.transcriptSource, page?.window,
     page?.state === 'error'])
 }

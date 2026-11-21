@@ -2,7 +2,7 @@ import { act, create } from 'react-test-renderer'
 import { expect, it, vi } from 'vitest'
 const boundary = vi.hoisted(() => ({ calls: [] as string[], finish: vi.fn(), playItem: vi.fn(), stop: vi.fn() }))
 vi.mock('../src/client/ArkmeRecordingTour.js', () => ({ useRecordingTour: () => ({ sample: false, panel: null, finish: boundary.finish }) }))
-vi.mock('../src/client/recordings/useRecordingPlayback.js', () => ({ useRecordingPlayback: () => ({ playItem: boundary.playItem, stop: boundary.stop, isPlaying: false, isLoading: false, error: '' }) }))
+vi.mock('../src/client/recordings/useRecordingPlayback.js', async original => ({ ...await original<typeof import('../src/client/recordings/useRecordingPlayback.js')>(), useRecordingPlayback: () => ({ playItem: boundary.playItem, stop: boundary.stop, isPlaying: false, isLoading: false, error: '' }) }))
 vi.mock('../src/client/api.js', async original => ({ ...await original<typeof import('../src/client/api.js')>(), callArkme: async (operation: string, params: { dateStamp: number }) => operation === 'recordings.day' ? {
  dateStamp: params.dateStamp, totalDurationMillis: 1000,
  transcript: { dateStamp:params.dateStamp, transcriptSource:'system', viewRef:'real-view', nextCursor:'', state: 'ready', message: '', processingCount: 0, items: [{ itemId:'real',itemRef:'real-ref',speakerKey:'speaker',speakerLabel:'我',speakerColorIndex:0,startAtMillis:1000,endAtMillis:2000,text:'真实转写' }] },

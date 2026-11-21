@@ -42,19 +42,19 @@ const render = async () => {
 it('uses the product conversation name instead of the current task on the first line', async () => {
   activity({ current: { id: 's1', title: '插件开发分支选择' } })
   await render()
-  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
-  expect(line('[data-arkme-harness-destination]')).toBe('你的 DeepSeek 智能助手')
-  expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-title]')).toBe('Arko · 本机')
+  expect(line('[data-arkme-harness-destination]')).toBe('在这台电脑上工作')
+  expect(row().getAttribute('aria-label')).toBe('Arko · 本机')
 })
 
 it('keeps the conversation name visible while a task is running', async () => {
   activity({ current: { id: 's1', title: '插件开发分支选择' }, running: [{ id: 's2', title: '另一个任务' }] })
   await render()
   // The running status must not push the conversation name out of the row.
-  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-title]')).toBe('Arko · 本机')
   expect(line('[data-arkme-harness-summary]')).toContain('1 进行中')
   expect(line('[data-arkme-harness-destination]')).toBe('')
-  expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness，1 进行中')
+  expect(row().getAttribute('aria-label')).toBe('Arko · 本机，1 进行中')
 })
 
 it('keeps pending and unread work as a badge-only signal without a running task', async () => {
@@ -62,31 +62,31 @@ it('keeps pending and unread work as a badge-only signal without a running task'
   await render()
   // Documented contract: only a running task claims the second line; pending and
   // unread stay on the avatar badge, and the name is now always on line one.
-  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-title]')).toBe('Arko · 本机')
   expect(line('[data-arkme-harness-summary]')).toBe('')
-  expect(line('[data-arkme-harness-destination]')).toBe('你的 DeepSeek 智能助手')
+  expect(line('[data-arkme-harness-destination]')).toBe('在这台电脑上工作')
   expect(host.querySelector('[data-arkme-harness-badge]')?.textContent).toBe('1')
 })
 
 it('falls back to the product name before the harness reports a session', async () => {  await render()
-  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
-  expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-title]')).toBe('Arko · 本机')
+  expect(row().getAttribute('aria-label')).toBe('Arko · 本机')
 })
 
 it('keeps the product name for a blank harness session and after session changes', async () => {
   activity({ current: null })
   await render()
-  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-title]')).toBe('Arko · 本机')
   await act(async () => activity({ current: { id: 's2', title: '新任务' } }))
-  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-title]')).toBe('Arko · 本机')
 })
 
 it('shows the latest conversation title only when idle and fully read, and updates without changing selection', async () => {
   activity({ current: { id: 'old', title: '当前看的旧会话' }, recent: { id: 'recent', title: '最新对话标题' } })
   await render()
-  expect(line('[data-arkme-harness-title]')).toBe('DeepSeek Harness')
+  expect(line('[data-arkme-harness-title]')).toBe('Arko · 本机')
   expect(line('[data-arkme-harness-destination]')).toBe('最新对话标题')
-  expect(row().getAttribute('aria-label')).toBe('DeepSeek Harness，最新对话标题')
+  expect(row().getAttribute('aria-label')).toBe('Arko · 本机，最新对话标题')
   expect(host.querySelector('[data-arkme-harness-destination]')?.getAttribute('title')).toBe('最新对话标题')
   await act(async () => activity({ current: { id: 'old', title: '另一个旧会话' }, recent: { id: 'recent', title: '最近对话已改名' } }))
   expect(line('[data-arkme-harness-destination]')).toBe('最近对话已改名')

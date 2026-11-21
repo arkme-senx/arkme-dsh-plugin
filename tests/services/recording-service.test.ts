@@ -11,7 +11,7 @@ import type { ArkmeSessionStore } from '../../src/keychain-store.js'
 import { LocalRecordingImportSource } from '../../src/recording-import-probe.js'
 import { RecordingService, type RecordingServiceDependencies } from '../../src/services/recording-service.js'
 import { ProfileService } from '../../src/services/profile-service.js'
-import { ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
+import { ArkmePluginError, ServiceRuntime, type ArkmeServiceConfig, type StateStore } from '../../src/services/service.js'
 import { ArkmeLocalDatabase } from '../../src/local-database.js'
 import { ArkmeStateStore } from '../../src/state-store.js'
 import {
@@ -27,6 +27,7 @@ import type { RecordingImportGateway } from '../../src/recording-import-coordina
 const originalAudioPost = ServiceRuntime.prototype.authenticatedAudioPost
 beforeEach(() => {
   vi.spyOn(ServiceRuntime.prototype, 'authenticatedAudioPost').mockImplementation(async function(path, body, session, ...rest) {
+    if (path.startsWith('/api/v1/audio/transcript-versions/') || path === '/api/v1/audio/transcripts/current/query') throw new ArkmePluginError('arkme-http-error', 'missing route', false, 502, { upstreamStatus: 404 })
     if (path === '/api/v1/audio/import-batches/capabilities') return { supported: false }
     if (path === '/api/v1/audio/processing-preference') return { user_id: session.userId, strategy: 'system-sd-asr/v1' }
     return originalAudioPost.call(this, path, body, session, ...rest)

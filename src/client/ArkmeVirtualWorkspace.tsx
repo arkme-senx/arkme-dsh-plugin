@@ -21,7 +21,7 @@ import { orderConversationDirectoryRows } from './conversation-directory-order.j
 import { subscribeTeamDirectory, readTeamDirectory, refreshTeamDirectory, mergeTeamDirectoryRows, groupTeamConversations } from './team-conversation-directory.js'
 import { openTeamMessages } from './team-messaging-events.js'
 import { openConversationWindow } from './conversation-window.js'
-import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
+import { useHarnessConversationName } from './conversation-header-layout.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { directorySearchLayout } from './directory-search-layout.js'
 import { ArkmeActionMenu } from './ArkmeDshMenu.js'
@@ -605,6 +605,7 @@ export function ArkmeArkoRow({
 }
 
 export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabled = true, onContextMenu, pinned = false }: { selected: boolean; onClick(): void; accountScope?: string | undefined; hoverEnabled?: boolean; pinned?: boolean; onContextMenu?: React.MouseEventHandler<HTMLElement> }) {
+  const harnessName = useHarnessConversationName()
   useArkmeLocale()
   const rowRef = useRef<HTMLButtonElement>(null)
   const activateRef = useRef(onClick)
@@ -623,9 +624,9 @@ export function DeepSeekHarnessRow({ selected, onClick, accountScope, hoverEnabl
   const running = (activity?.running.length ?? 0) > 0
   // This row identifies the conversation product; the centered header selector
   // owns the current task name. Task updates must never rename the directory row.
-  const heading = HARNESS_CONVERSATION_NAME
+  const heading = harnessName
   const recentTitle = total === 0 ? activity?.recent?.title.trim() : undefined
-  const idleHint = recentTitle || '你的 DeepSeek 智能助手'
+  const idleHint = recentTitle || tr('在这台电脑上工作')
   return <button
     ref={rowRef}
     type="button"
@@ -1011,6 +1012,7 @@ export function ArkmeNavigation({
   active = true, wide = true, compactDirectory = false, currentSessionId, embeddedProductShell = false, onClose, onActivateSurface, showHarnessEntry = false,
   lockedDirectory = false, sendToSelfSource, directoryLead, onCreateTask, searchDshMessages, onOpenDshSession, renderSlot,
 }: ArkmeNavigationProps) {
+  const harnessName = useHarnessConversationName()
   useArkmeLocale()
   const activeRef = useRef(active)
   activeRef.current = active
@@ -1309,7 +1311,7 @@ export function ArkmeNavigation({
   const arkoDraft = useConversationDraftPresentation('arko')
   if (selfDraft && selfDraft.activityAtMillis > (effectiveSelfSource?.activeAtMillis ?? 0)) sendToSelfPresentation.time = timeLabel(selfDraft.activityAtMillis)
   const builtinActions = useBuiltinEntryActions(currentAccountKey, active && directory === 'root', builtinPins,
-    { self: tr('发给自己'), arko: arkoPresentationName(arkoProfile), harness: 'DeepSeek Harness' },
+    { self: tr('发给自己'), arko: arkoPresentationName(arkoProfile), harness: harnessName },
     () => arkmeUi.getRememberedSelfSource() ?? effectiveSelfSource ?? sources.find(source => source.kind === 'send_to_self'))
 
   const stopCreatedHighlightAnimation = useCallback(() => {

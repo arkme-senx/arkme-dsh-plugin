@@ -30,7 +30,7 @@ import { recordingStorageSessionRefs, type RecordingFileStoragePage } from '../r
 export type { RecordingFileStorage, RecordingFileStoragePage } from '../recording-file-storage.js'
 import type { ArkmeRecordExportOptions, ArkmeRecordExport, ArkmeRecordExportProgress, ArkmeExportPreflight, ArkmeExportSelection, ArkmeRangeExportPreview } from '../data-management.js'
 export type * from '../data-management.js'
-export type { ArkmeRecordingPlayback } from '../types.js'
+export type { ArkmeRecordingPlayback, ArkmeRecordingTranscriptVersionPage } from '../types.js'
 export type { RecordingEvidenceSelection, RecordingEvidenceQuery, RecordingEvidenceResult, RecordingEvidenceGroup } from '../recording-evidence-contract.js'
 export type { TeamRecallResult } from '../team-message-contract.js'
 export type {TeamMemberManagementRequest, TeamMemberManagementResult, TeamMemberCandidatePage, TeamMemberAddResult, TeamMemberAdditionRecovery} from '../team-member-add-contract.js'
@@ -2965,12 +2965,23 @@ export class ArkmeSdk {
     signal?.throwIfAborted()
   }
 
+  async recordingTranscriptVersions(dateStamp: number, options: Pick<ArkmeRecordingTranscriptPageOptions, 'cursor' | 'window' | 'source' | 'signal'> = {}): Promise<import('../types.js').ArkmeRecordingTranscriptVersionPage> {
+    if (!Number.isSafeInteger(dateStamp) || (options.window ? dateStamp < -26 * 3600_000 : !isRecordingLocalDateOnOrAfterMinimum(dateStamp))) throw new TypeError('A recording date timestamp is required')
+    if ((await this.capabilities(options.signal)).features.recordingTranscriptVersions !== true) return { supported: false, versions: [], nextCursor: '' }
+    return this.call('recordings.transcript.versions', {
+      dateStamp, ...(options.source ? { source: options.source } : {}), ...(options.window ? { window: options.window } : {}), ...(options.cursor ? { cursor: options.cursor } : {}),
+    }, options.signal)
+  }
+
   async recordingTranscriptPage(dateStamp: number, options: ArkmeRecordingTranscriptPageOptions = {}): Promise<ArkmeRecordingTranscriptPage> {
     if (!Number.isSafeInteger(dateStamp) || (options.window ? dateStamp < -26 * 3600_000 : !isRecordingLocalDateOnOrAfterMinimum(dateStamp))) throw new TypeError('A recording date timestamp is required')
-    if ((await this.capabilities(options.signal)).features.recordingTranscriptPages !== true) throw new Error('当前 Provider 不支持录音分页读取')
+    const { features } = await this.capabilities(options.signal)
+    if (features.recordingTranscriptPages !== true) throw new Error('当前 Provider 不支持录音分页读取')
+    if (options.versionRef && features.recordingTranscriptVersions !== true) throw new Error('当前 Provider 不支持转写历史版本')
     return await this.call<ArkmeRecordingTranscriptPage>('recordings.transcript.page', {
       dateStamp, ...(options.window === undefined ? {} : {window: options.window}), ...(options.source === undefined ? {} : { source: options.source }),
       ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      ...(options.versionRef ? { versionRef: options.versionRef } : {}),
     }, options.signal)
   }
 

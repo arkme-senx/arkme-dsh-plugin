@@ -17,6 +17,7 @@ import type {
   ArkmeArkoHistoryPage,
   ArkmeArkoModelCatalog,
   ArkmeArkoModelOption,
+  ArkmeArkoPersona,
   ArkmeArkoProfile,
   ArkmeArkoRunProjection,
   ArkmeArkoRunStatus,
@@ -275,6 +276,20 @@ export class ArkoService {
     const profile = arkoProfileFromData(data)
     this.cacheArkoProfileDisplayName(session.userId, profile)
     return profile
+  }
+
+  /** The profile with the identity and preferences text the cloud renders for this computer. */
+  async arkoPersona(signal?: AbortSignal): Promise<ArkmeArkoPersona> {
+    const session = await this.runtime.requireSession()
+    const data = await this.runtime.authenticatedIntelligentPost<Record<string, unknown>>(
+      '/api/v1/agent/profile/query',
+      { prompt: 'desktop' },
+      session,
+      signal,
+    )
+    const profile = arkoProfileFromData(data)
+    this.cacheArkoProfileDisplayName(session.userId, profile)
+    return { profile, prompt: stringValue(data.persona_prompt), promptVersion: stringValue(data.persona_version) }
   }
 
   async arkoEnsureSession(signal?: AbortSignal): Promise<ArkmeArkoSession> {

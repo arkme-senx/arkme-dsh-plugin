@@ -11,7 +11,7 @@ describe('DeepSeekHarnessSurface', () => {
 
     expect(markup).toContain('data-arkme-owned="deepseek-harness-surface"')
     expect(markup).toContain('<iframe')
-    expect(markup).toContain('title="DeepSeek Harness"')
+    expect(markup).toContain('title="Arko · 本机"')
     expect(markup).toContain('src="/arkme-self/harness-frame?arkme-harness-embed=1"')
     expect(markup).toContain('loading="eager"')
     expect(markup).toContain('data-arkme-preload="true"')
