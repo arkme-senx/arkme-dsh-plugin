@@ -1,4 +1,5 @@
 import { NATIVE_FORWARD_MAX_MESSAGES, NATIVE_FORWARD_MAX_TEXT_BYTES, NATIVE_FORWARD_MAX_TOTAL_BYTES, type NativeChatSelectionSnapshot } from '../native-chat-selection-contract.js'
+import { harnessConversationName } from './conversation-header-layout.js'
 export interface NativeSelectionSnapshot {
   readonly active: boolean
   readonly keys: ReadonlySet<string>
@@ -102,6 +103,6 @@ export function nativeWorldPublishOrigin(chat: NativeChat, sessionId: string, ke
   const node = chat.nodes.get(key)
   if (!isSelectableNativeNode(node) || node.kind !== 'user' || !('data' in node) || !object(node.data)) throw new Error('只能公开自己发出的内容')
   const snapshot = nativeSelectionSnapshot(chat, sessionId, new Set([key]))
-  return { kind: 'local', sourceRef: `dsh:${sessionId}`, itemUid: key, sourceLabel: 'DeepSeek Harness', textContent: snapshot.messages[0]!.text,
+  return { kind: 'local', sourceRef: `dsh:${sessionId}`, itemUid: key, sourceLabel: harnessConversationName(), textContent: snapshot.messages[0]!.text,
     sendAtMillis: snapshot.messages[0]!.createdAtMillis, hasAttachments: Array.isArray(node.data.content) && node.data.content.some(block => !object(block) || block.type !== 'text') }
 }

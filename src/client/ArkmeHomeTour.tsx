@@ -7,12 +7,13 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 're
 import { createPortal } from 'react-dom'
 import type { ArkmeAuthSnapshot } from '../types.js'
 import { arkmeHomeTourSession, type ArkmeHomeTourSession } from './home-tour-session.js'
+import { harnessConversationName } from './conversation-header-layout.js'
 
 // NodeNext sees the package's CommonJS wrapper; browser bundlers unwrap its default export.
 const Tour = TourModule.default ?? TourModule
 
 const directorySteps = [
-  { id: 'harness', title: 'DeepSeek Harness', description: '使用原生 AI 工作台，与模型对话、处理任务和编写代码。' },
+  { id: 'harness', get title() { return harnessConversationName() }, description: '在这台电脑上工作的 Arko，可以处理文件、任务和代码。' },
   { id: 'arko', title: 'Arko', description: '你的个人 AI 助手，可以结合记录回答问题，帮你整理信息。' },
   { id: 'send-to-self', get title() { return tr("发给自己") }, description: '随手保存文字、图片和文件，把想法与重要内容留给自己。' },
   { id: 'official-author', get title() { return tr("联系作者") }, description: '遇到问题或有使用建议，可以在这里直接联系作者。' },

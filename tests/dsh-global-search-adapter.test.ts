@@ -18,7 +18,7 @@ describe('DSH global search adapter', () => {
 
   it('maps DSH snippets onto the live task summaries owned by the DSH session list', () => {
     expect(persistentShell).toContain('const summary = sessionState.byId[item.sessionId]')
-    expect(persistentShell).toContain("title: summary?.displayTitle ?? 'DeepSeek Harness 任务'")
+    expect(persistentShell).toContain("title: summary?.displayTitle ?? tr('{name} 任务', { name: harnessConversationName() })")
     expect(persistentShell).toContain('onOpenDshSession={sessionId => { openDshSession(sessionId); arkmeUi.showHarness() }}')
   })
 })

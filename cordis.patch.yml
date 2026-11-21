@@ -52,3 +52,14 @@
   config:
     path: ':memory:'
     openAt: first-search
+
+# 即我 states the agent's identity itself: the plugin's `arkme:arko-identity`
+# section names it Arko (the user's chosen name) in the harness identity slot.
+# Turn off the fixed "powered by DeepSeek Harness" line so the two never
+# disagree. A patch replaces the row's whole config, so the web app's persona
+# prefix is restated unchanged.
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    personaPrefix: >-
+      You are a coding agent powered by the {{model}} model.

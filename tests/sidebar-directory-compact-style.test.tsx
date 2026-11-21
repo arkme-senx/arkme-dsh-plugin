@@ -73,7 +73,7 @@ describe('compact conversation directory styles', () => {
   it.each([false, true])('keeps the compact rail background separate and marks only the selected conversation (compact=%s)', compactDirectory => {
     const markerRules = css.match(/[^{}]*\[data-arkme-selection-marker\][^{}]*\{[^{}]*\}/g) ?? []
     for (const [label, select] of [
-      ['DeepSeek Harness', () => arkmeUi.showHarness()],
+      ['Arko · 本机', () => arkmeUi.showHarness()],
       ['发给自己', () => arkmeUi.focusSendToSelf()],
       ['Arko', () => arkmeUi.showArko()],
       ['普通私聊', () => arkmeUi.selectSource(privateChat)],
@@ -181,7 +181,7 @@ describe('compact conversation directory styles', () => {
       expect(ordinary.getAttribute('aria-selected')).toBe('true')
       expect(ordinary.getAttribute('aria-label')).toContain(`${unreadCount} 条未读`)
       expect(ordinary.textContent).toContain('私聊摘要')
-      for (const label of ['DeepSeek Harness', '发给自己', 'Arko', '普通私聊', '免打扰群聊']) {
+      for (const label of ['Arko · 本机', '发给自己', 'Arko', '普通私聊', '免打扰群聊']) {
         const row = rows.find(row => row.textContent?.includes(label))!
         expect(row, label).toBeDefined()
         expect(row.getAttribute('aria-disabled')).not.toBe('true')

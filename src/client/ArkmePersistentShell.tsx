@@ -43,6 +43,7 @@ import { ARKME_LOGIN_LOCALE_NAMESPACE } from './arkme-login-locales.js'
 import { ArkmeExtensionRecoveryNotice } from './ArkmeExtensionRecoveryNotice.js'
 import { ARKME_NAVIGATION_WIDTH } from './arkme-layout.js'
 import { arkmeTheme } from './arkme-theme.js'
+import { harnessConversationName } from './conversation-header-layout.js'
 
 const styles: Record<string, CSSProperties> = {
   sidebar: {
@@ -312,7 +313,7 @@ export function ArkmePersistentSidebar({
         const summary = sessionState.byId[item.sessionId]
         return {
           sessionId: item.sessionId,
-          title: summary?.displayTitle ?? 'DeepSeek Harness 任务',
+          title: summary?.displayTitle ?? tr('{name} 任务', { name: harnessConversationName() }),
           snippet: item.snippet,
           updatedAtMillis: summary?.updatedAt ?? 0,
         }

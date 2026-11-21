@@ -1957,10 +1957,25 @@ recordingAnalysisV1: true,
     return await this.profile.invitationRewards(scope, signal)
   }
 
+  private readonly arkoProfileListeners = new Set<(userId: number, profile: ArkmeArkoProfile) => void>()
+
+  /** Every Arko profile this host reads, so the local agent can speak under the same name. */
+  onArkoProfile(listener: (userId: number, profile: ArkmeArkoProfile) => void): () => void {
+    this.arkoProfileListeners.add(listener)
+    return () => { this.arkoProfileListeners.delete(listener) }
+  }
+
+  private publishArkoProfile(userId: number, profile: ArkmeArkoProfile): void {
+    for (const listener of this.arkoProfileListeners) {
+      try { listener(userId, profile) } catch { /* A presentation listener never fails the read. */ }
+    }
+  }
+
   async arkoProfile(signal?: AbortSignal): Promise<ArkmeArkoProfile> {
     const { userId } = await this.runtime.requireSession()
     const profile = await this.arko.arkoProfile(signal)
     void this.directory.rememberSpecial({ arkoProfile: profile }, userId).catch(() => undefined)
+    this.publishArkoProfile(userId, profile)
     return profile
   }
 
@@ -2034,7 +2049,13 @@ recordingAnalysisV1: true,
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeArkoAskResult> {
-    return await this.arko.arkoAsk(text, options)
+    const result = await this.arko.arkoAsk(text, options)
+    // A rename made in conversation arrives on the run's final frame.
+    if (result.profile !== undefined) {
+      const userId = options.expectedUserId ?? (await this.runtime.requireSession().catch(() => undefined))?.userId
+      if (userId !== undefined) this.publishArkoProfile(userId, result.profile)
+    }
+    return result
   }
 
   async arkoPendingTurns(expectedUserId?:number) { return this.arko.arkoPendingTurns(expectedUserId) }

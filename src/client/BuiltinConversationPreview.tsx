@@ -14,6 +14,7 @@ import { arkmeTheme } from './arkme-theme.js'
 import { tr, useArkmeLocale } from './locale.js'
 import { suspendArkmeVisibleReadIntent } from './read-intent-visibility.js'
 import type { BuiltinConversation } from './builtin-directory-preferences.js'
+import { useHarnessConversationName } from './conversation-header-layout.js'
 
 const button = { border: 0, padding: '6px 8px', borderRadius: 6, background: 'transparent', color: arkmeTheme.accent, cursor: 'pointer', font: 'inherit', fontSize: 13 }
 const status = { padding: 16, color: arkmeTheme.secondary, fontSize: 13 }
@@ -103,6 +104,7 @@ function ArkoPreview({ name }: { name: string }) {
 }
 
 function HarnessHistory({ session }: { session: DshAccountSession }) {
+  const harnessName = useHarnessConversationName()
   const read = useCallback(async (cursor: string | undefined, signal: AbortSignal): Promise<Page<DshRemoteTimelineNode>> => {
     const page = await callArkme<DshAccountSessionHistory>('remote.session.read', { runtimeRef: session.runtimeRef, sessionRef: session.sessionRef,
       ...(cursor ? { cursor: JSON.parse(cursor) as DshSessionHistoryCursor } : {}) }, signal)
@@ -110,7 +112,7 @@ function HarnessHistory({ session }: { session: DshAccountSession }) {
   }, [session.runtimeRef, session.sessionRef, session.presence, session.capabilities])
   const state = useBuiltinPreviewPage(read, item => item.node_ref)
   return <PreviewPage state={state}>{[...state.page?.items ?? []].sort((a,b) => a.anchor_seq-b.anchor_seq || a.ordinal-b.ordinal).map(item =>
-    <Bubble key={item.node_ref} own={item.kind === 'user'} name={item.kind === 'user' ? tr('我') : item.kind === 'assistant' ? 'DeepSeek Harness' : item.presentation.title || tr('任务活动')} at={item.time}>
+    <Bubble key={item.node_ref} own={item.kind === 'user'} name={item.kind === 'user' ? tr('我') : item.kind === 'assistant' ? harnessName : item.presentation.title || tr('任务活动')} at={item.time}>
       <ArkmeMarkdownBody text={item.presentation.details || item.presentation.summary || item.presentation.title || tr('暂无文本内容')} highlightMentions={false} textStyle={{ fontSize: 14, lineHeight: 1.6 }} />
     </Bubble>)}</PreviewPage>
 }

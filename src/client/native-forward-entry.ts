@@ -1,6 +1,7 @@
 import type { NativeChatSelectionSnapshot } from '../native-chat-selection-contract.js'
 import type { ArkmeSourceItem, ArkmeSourceSendResult } from '../types.js'
 import { arkmeSourceIdentityKey } from './source-identity.js'
+import { harnessConversationName } from './conversation-header-layout.js'
 
 export interface NativeForwardResult { completed: boolean }
 export interface NativeForwardDelivery {
@@ -33,9 +34,10 @@ export function isNativeForwardCaller(host: Window, caller: Window): boolean {
 
 export function nativeForwardPreview(snapshot: NativeChatSelectionSnapshot) {
   const first = snapshot.messages[0]
+  const name = harnessConversationName()
   return {
-    title: `我和DeepSeek Harness的${snapshot.messages.length > 1 ? `${snapshot.messages.length}条` : ''}快记`,
-    subtitle: first ? `${first.role === 'user' ? '我' : 'DeepSeek Harness'}：${first.text.trim().replace(/\s+/g, ' ')}` : '',
+    title: `我和${name}的${snapshot.messages.length > 1 ? `${snapshot.messages.length}条` : ''}快记`,
+    subtitle: first ? `${first.role === 'user' ? '我' : name}：${first.text.trim().replace(/\s+/g, ' ')}` : '',
   }
 }
 

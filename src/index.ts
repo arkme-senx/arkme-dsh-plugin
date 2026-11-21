@@ -109,6 +109,7 @@ import { DshRemoteRuntimeSecretBroker } from './dsh-remote/runtime-secret-broker
 import { DshRemoteSessionOwnershipStore } from './dsh-remote/session-ownership-store.js'
 import { DshRemoteTurnUploadOutbox } from './dsh-remote/turn-upload-outbox.js'
 import type { DshRemoteHostFacade } from './dsh-remote/types.js'
+import { registerArkoIdentity } from './arko-identity.js'
 
 export interface Config {
   environment: ArkmeEnvironment
@@ -509,6 +510,15 @@ export function apply(ctx: Context, config: Config): void {
     })
   })
   registerDSHAgentInputRecordSync(ctx, service)
+  registerArkoIdentity(ctx as never, {
+    currentUserId: async () => {
+      await service.accountScope.start()
+      return (await service.accountScope.scopedSession())?.userId
+    },
+    readProfile: signal => service.arkoProfile(signal),
+    onProfile: listener => service.onArkoProfile(listener),
+    onAccountChange: listener => service.accountScope.subscribe(listener),
+  })
   registerArkmeTools(ctx, service, config.toolProfile, {
     currentAccount: async () => (await sessionStore.read())?.userId,
     withGroupMemberInvalidation: (groups, execute) => service.withGroupMemberInvalidation(groups, execute),
