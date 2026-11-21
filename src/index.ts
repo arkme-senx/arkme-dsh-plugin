@@ -515,7 +515,7 @@ export function apply(ctx: Context, config: Config): void {
       await service.accountScope.start()
       return (await service.accountScope.scopedSession())?.userId
     },
-    readProfile: signal => service.arkoProfile(signal),
+    readPersona: signal => service.arkoPersona(signal),
     onProfile: listener => service.onArkoProfile(listener),
     onAccountChange: listener => service.accountScope.subscribe(listener),
   })
