@@ -2049,12 +2049,12 @@ recordingAnalysisV1: true,
       signal?: AbortSignal
     } = {},
   ): Promise<ArkmeArkoAskResult> {
+    // The run keeps the session it started with, so a reply that lands after an account
+    // switch belongs to the account that asked: capture it before sending.
+    const askingUserId = options.expectedUserId ?? (await this.runtime.requireSession().catch(() => undefined))?.userId
     const result = await this.arko.arkoAsk(text, options)
     // A rename made in conversation arrives on the run's final frame.
-    if (result.profile !== undefined) {
-      const userId = options.expectedUserId ?? (await this.runtime.requireSession().catch(() => undefined))?.userId
-      if (userId !== undefined) this.publishArkoProfile(userId, result.profile)
-    }
+    if (result.profile !== undefined && askingUserId !== undefined) this.publishArkoProfile(askingUserId, result.profile)
     return result
   }
 

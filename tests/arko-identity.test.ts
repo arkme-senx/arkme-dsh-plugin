@@ -11,6 +11,7 @@ import {
   type ArkoIdentityPorts,
 } from '../src/arko-identity.js'
 import type { ArkmeArkoProfile } from '../src/types.js'
+import { ArkmeService } from '../src/arkme-service.js'
 
 interface Section { name: string; order: number; interpolate?: boolean; text: () => string }
 
@@ -187,5 +188,28 @@ describe('Arko identity in the real DSH system prompt', () => {
       expect(rendered).not.toContain('powered by DeepSeek Harness.')
       expect(rendered.indexOf('you are 小森')).toBeLessThan(rendered.indexOf('You are a coding agent'))
     } finally { await ctx.fiber.dispose() }
+  })
+})
+
+describe('Arko rename from a conversation reply', () => {
+  it('publishes the new name for the account that asked, even if the account switched mid-run', async () => {
+    let activeUserId = 10001
+    const service = Object.create(ArkmeService.prototype) as ArkmeService
+    Object.assign(service, {
+      arkoProfileListeners: new Set(),
+      runtime: { requireSession: async () => ({ userId: activeUserId }) },
+      arko: {
+        arkoAsk: async () => {
+          activeUserId = 20002 // The user switches account while the reply streams.
+          return { profile: { displayName: '小可', version: 3 } }
+        },
+      },
+    })
+    const published: Array<[number, ArkmeArkoProfile]> = []
+    service.onArkoProfile((userId, profile) => { published.push([userId, profile]) })
+
+    await service.arkoAsk('以后叫你小可')
+
+    expect(published).toEqual([[10001, { displayName: '小可', version: 3 }]])
   })
 })
