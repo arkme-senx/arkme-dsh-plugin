@@ -22,6 +22,16 @@ export interface RecordingPlaybackController {
   stop(): void
 }
 
+/** Pages of transcript-only rows a continuing queue reads through before it stops. */
+const MAX_SKIPPED_PAGES = 10
+
+function nextPlayableIndex(items: readonly ArkmeRecordingWorkbenchItem[], from: number): number {
+  for (let index = Math.max(0, from); index < items.length; index++) {
+    if (recordingItemPlaybackRef(items[index]!)) return index
+  }
+  return -1
+}
+
 export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: ArkmeRecordingWorkbenchItem, signal: AbortSignal) => Promise<readonly ArkmeRecordingWorkbenchItem[]>, currentItems?: readonly ArkmeRecordingWorkbenchItem[]): RecordingPlaybackController {
   const audioRef = useRef<{ audio: HTMLAudioElement; item: ArkmeRecordingWorkbenchItem; playback: ArkmeRecordingPlayback }>()
   const cleanupRef = useRef<() => void>()
@@ -135,8 +145,10 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
   const continueQueue = async () => {
     const queue = queueRef.current
     if (queue === undefined) return
-    let next = queue.items[queue.index + 1]
-    if (next === undefined && queue.continuePages && followingRef.current !== undefined) {
+    // Rows kept only for their transcript (audio deleted or overwritten) cannot play:
+    // skip them instead of ending the queue, here and on the pages loaded below.
+    let nextIndex = nextPlayableIndex(queue.items, queue.index + 1)
+    if (nextIndex < 0 && queue.continuePages && followingRef.current !== undefined) {
       const revision = ++requestRevisionRef.current
       const controller = new AbortController()
       requestAbortRef.current?.abort(); requestAbortRef.current = controller
@@ -144,16 +156,22 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
       // same media end cannot advance the queue twice.
       releaseMedia(false); setIsLoading(true)
       try {
-        const items = await followingRef.current(queue.items[queue.index]!, controller.signal)
-        controller.signal.throwIfAborted()
-        if (requestRevisionRef.current !== revision || queueRef.current !== queue) return
-        const index = items.findIndex(item => item.itemId === queue.items[queue.index]!.itemId)
-        if (index < 0) throw new Error('录音内容已更新，请重新选择播放位置')
-        next = items[index + 1]
-        if (next !== undefined) {
-          queueRef.current = { items, index: index + 1, continuePages: true }
-          await openItem(next, next.startAtMillis)
-          return
+        let anchor = queue.items[queue.index]!
+        for (let page = 0; page < MAX_SKIPPED_PAGES; page++) {
+          const items = await followingRef.current(anchor, controller.signal)
+          controller.signal.throwIfAborted()
+          if (requestRevisionRef.current !== revision || queueRef.current !== queue) return
+          const index = items.findIndex(item => item.itemId === anchor.itemId)
+          if (index < 0) throw new Error('录音内容已更新，请重新选择播放位置')
+          const found = nextPlayableIndex(items, index + 1)
+          if (found >= 0) {
+            queueRef.current = { items, index: found, continuePages: true }
+            await openItem(items[found]!, items[found]!.startAtMillis)
+            return
+          }
+          // Nothing playable after the anchor yet: read on from the last loaded row.
+          if (index === items.length - 1) break
+          anchor = items[items.length - 1]!
         }
       } catch (reason) {
         if (requestRevisionRef.current !== revision) return
@@ -165,12 +183,12 @@ export function useRecordingPlayback(mediaPath: string, loadFollowing?: (last: A
       }
       if (requestRevisionRef.current !== revision) return
     }
-    if (next === undefined) {
+    if (nextIndex < 0) {
       cancelRequest(); queueRef.current = undefined; releaseMedia()
       return
     }
-    queueRef.current = { ...queue, index: queue.index + 1 }
-    await openItem(next, next.startAtMillis)
+    queueRef.current = { ...queue, index: nextIndex }
+    await openItem(queue.items[nextIndex]!, queue.items[nextIndex]!.startAtMillis)
   }
 
   useEffect(() => {
