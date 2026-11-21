@@ -46,6 +46,8 @@ export class ArkoIdentityHolder {
   private userId: number | undefined
   private profile: ArkmeArkoProfile | undefined
   private persona: { version: number; prompt: string } | undefined
+  /** Profile version of the last cloud persona read, even when it carried no usable wording. */
+  private personaVersion = -1
 
   current(): string { return arkoIdentityName(this.profile) }
 
@@ -59,6 +61,9 @@ export class ArkoIdentityHolder {
   /** The version of the known profile for the active account; -1 before one arrives. */
   knownVersion(): number { return this.profile?.version ?? -1 }
 
+  /** Whether a persona read has already answered for the newest known profile. */
+  personaCurrent(): boolean { return this.profile !== undefined && this.personaVersion === this.profile.version }
+
   /** A different account starts from the default until its own profile arrives. */
   activate(userId: number | undefined): void {
     const next = userId !== undefined && Number.isSafeInteger(userId) && userId > 0 ? userId : undefined
@@ -66,6 +71,7 @@ export class ArkoIdentityHolder {
     this.userId = next
     this.profile = undefined
     this.persona = undefined
+    this.personaVersion = -1
   }
 
   /** Accepts a profile read for the active account; an older version never wins. */
@@ -81,6 +87,7 @@ export class ArkoIdentityHolder {
     if (!this.accept(userId, persona.profile)) return false
     const prompt = arkoPersonaPrompt(persona.prompt)
     this.persona = prompt === undefined ? undefined : { version: persona.profile.version, prompt }
+    this.personaVersion = persona.profile.version
     return true
   }
 }
@@ -143,6 +150,8 @@ export function registerArkoIdentity(
   ctx.effect(() => {
     let generation = 0
     let refreshing = false
+    // A newer profile seen while a read was in flight; that read may answer for an older version.
+    let newerDuringRead = false
     let lastRefreshAt = Number.NEGATIVE_INFINITY
     let controller: AbortController | undefined
     const refresh = async () => {
@@ -162,16 +171,26 @@ export function registerArkoIdentity(
           if (token === generation) holder.acceptPersona(userId, persona)
         } catch { /* Offline or signed out: keep the last known identity. */ }
       } finally {
-        if (token === generation) refreshing = false
+        if (token === generation) {
+          refreshing = false
+          // Read again only when the read that just ended did not cover the newest profile;
+          // the read's own publication matches what it returned, so it never loops.
+          if (newerDuringRead) {
+            newerDuringRead = false
+            if (holder.knownVersion() >= 0 && !holder.personaCurrent()) void refresh()
+          }
+        }
       }
     }
     onTurn = () => { if (Date.now() - lastRefreshAt >= turnRefreshMillis) void refresh() }
     // A newer profile seen elsewhere in this host (a rename in the cloud chat)
-    // applies at once; its cloud wording follows. The persona read itself also
-    // publishes the profile, so reads in flight never trigger another one.
+    // applies at once; its cloud wording follows. One seen while a read is in
+    // flight is read again once that read ends, unless the read already covered it.
     const stopProfile = ports.onProfile((userId, profile) => {
       const before = holder.knownVersion()
-      if (holder.accept(userId, profile) && profile.version > before && !refreshing) void refresh()
+      if (!holder.accept(userId, profile) || profile.version <= before) return
+      if (refreshing) newerDuringRead = true
+      else void refresh()
     })
     const stopAccount = ports.onAccountChange(() => { void refresh() })
     const timer = setInterval(() => { void refresh() }, refreshMillis)

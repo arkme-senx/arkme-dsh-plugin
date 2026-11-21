@@ -203,6 +203,43 @@ describe('Arko identity for the local agent', () => {
     fake.dispose()
   })
 
+  it('reads again when a newer profile arrives while a read is in flight', async () => {
+    const fake = fakeContext(-1000)
+    const port = ports()
+    const cloud = (name: string) => `In 即我 (Arkme) you are ${name}, the user's personal AI assistant.\n\n- Call the user: 老苏`
+    port.setProfile({ displayName: '小森', version: 4 }, cloud('小森'))
+    registerArkoIdentity(fake.ctx, port.value)
+    await settle()
+    const text = () => fake.sections[0]!.text()
+    expect(port.reads()).toBe(1)
+
+    // The next read answers for version 4 but is held while the cloud chat renames to version 5.
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const read = port.value.readPersona
+    port.value.readPersona = async signal => { const answer = await read(signal); await held; return answer }
+    port.switchAccount()
+    await settle()
+    expect(port.reads()).toBe(2)
+    port.value.readPersona = read
+    port.setProfile({ displayName: '阿森', version: 5 }, cloud('阿森'))
+    port.publish(7, { displayName: '阿森', version: 5 })
+    expect(text()).toBe(arkoIdentityPrompt('阿森'))
+
+    // The held read's older wording is dropped and one more read brings version 5's.
+    release()
+    await settle()
+    await settle()
+    expect(port.reads()).toBe(3)
+    expect(text()).toBe(cloud('阿森'))
+
+    // Covered now: republishing the same version reads nothing more.
+    port.publish(7, { displayName: '阿森', version: 5 })
+    await settle()
+    expect(port.reads()).toBe(3)
+    fake.dispose()
+  })
+
   it('re-reads the profile when a local turn starts, at most once per window', async () => {
     vi.useFakeTimers()
     const fake = fakeContext(-1000)
