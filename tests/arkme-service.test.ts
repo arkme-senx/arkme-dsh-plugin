@@ -4189,6 +4189,35 @@ describe('ArkmeService', () => {
     })
   })
 
+  it('reads the cloud-rendered Arko persona for this computer and publishes its profile', async () => {
+    const sessions = new MemorySessionStore()
+    sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }
+    const bodies: Array<Record<string, unknown>> = []
+    let withPrompt = true
+    const service = new ArkmeService(config, sessions, new MemoryStateStore(), async (input, init) => {
+      if (!String(input).endsWith('/api/v1/agent/profile/query')) return json({ code: 200, data: {} })
+      bodies.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
+      return json({ code: 200, data: {
+        display_name: '小森', version: 4, tone: 'concise', call_me: '老苏',
+        ...(withPrompt ? { persona_prompt: 'In 即我 (Arkme) you are 小森.', persona_version: 'persona-v1' } : {}),
+      } })
+    })
+    const published: Array<[number, unknown]> = []
+    service.onArkoProfile((userId, profile) => { published.push([userId, profile]) })
+
+    await expect(service.arkoPersona()).resolves.toEqual({
+      profile: { displayName: '小森', version: 4 },
+      prompt: 'In 即我 (Arkme) you are 小森.',
+      promptVersion: 'persona-v1',
+    })
+    expect(bodies).toEqual([{ prompt: 'desktop' }])
+    expect(published).toEqual([[10001, { displayName: '小森', version: 4 }]])
+
+    // A backend that does not render the persona yet still yields the profile.
+    withPrompt = false
+    await expect(service.arkoPersona()).resolves.toEqual({ profile: { displayName: '小森', version: 4 }, prompt: '', promptVersion: '' })
+  })
+
   it('sends Agent-authored direct text by recipient Jotmo ID through the Chat owner facade', async () => {
     const sessions = new MemorySessionStore()
     sessions.session = { userId: 10001, accessToken: 'access', refreshToken: 'refresh' }

@@ -251,6 +251,7 @@ import type {
   ArkmeArkoCancelResult,
   ArkmeArkoHistoryPage,
   ArkmeArkoModelCatalog,
+  ArkmeArkoPersona,
   ArkmeArkoProfile,
   ArkmeArkoRunStatus,
   ArkmeArkoSession,
@@ -1977,6 +1978,14 @@ recordingAnalysisV1: true,
     void this.directory.rememberSpecial({ arkoProfile: profile }, userId).catch(() => undefined)
     this.publishArkoProfile(userId, profile)
     return profile
+  }
+
+  async arkoPersona(signal?: AbortSignal): Promise<ArkmeArkoPersona> {
+    const { userId } = await this.runtime.requireSession()
+    const persona = await this.arko.arkoPersona(signal)
+    void this.directory.rememberSpecial({ arkoProfile: persona.profile }, userId).catch(() => undefined)
+    this.publishArkoProfile(userId, persona.profile)
+    return persona
   }
 
   arkoLocalMarkCapabilities(sourceRef: string, signal?: AbortSignal) { return this.arko.localMarks.capabilities(sourceRef, signal) }

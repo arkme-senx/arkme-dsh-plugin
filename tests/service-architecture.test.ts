@@ -109,7 +109,7 @@ const expectedPublicMethods = [
   'recordingSpeakerOptions', 'cachedRecordingSpeakerOptions', 'recordingSpeakerPresence', 'recordingSpeakerMembers', 'recordingSpeakerRecommendation', 'assignRecordingSpeaker',
   'previewRecordingSpeakerCorrection', 'recordingSpeakerEvidenceQuery', 'unassignRecordingSpeaker', 'recordingSpeakerCorrectionItems', 'recordingSpeakerCorrectionContext', 'recordingSpeakerCorrectionResult', 'applyRecordingSpeakerCorrection', 'undoRecordingSpeakerCorrection',
   'importRecordingFiles', 'importRecordingFile', 'prepareRecordingDirectory', 'importRecordingDirectory', 'acceptRecordingImport', 'recordingImportUserId', 'recordingImportPreflight', 'recordingImportStatus', 'recordingImportList', 'recordingImportHistory', 'retryRecordingImport', 'retryRecordingTranscription',
-  'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'onArkoProfile', 'arkoProfile',
+  'cancelRecordingImport', 'updateRecordingImportSessionStart', 'updateRecordingImportSessionOwnership', 'deleteRecordingImportSession', 'resumeRecordingImports', 'refreshProfile', 'onArkoProfile', 'arkoProfile', 'arkoPersona',
   'arkoEnsureSession', 'arkoCreateSession', 'arkoModelCatalog', 'arkoActivateModel', 'arkoHistoryPage', 'arkoInteractions', 'arkoInteractionOpen', 'arkoTimelineCache', 'arkoMessages', 'arkoSearch', 'arkoContext', 'arkoExport',
   'arkoPendingTurns', 'arkoPrepareTurn', 'arkoAcknowledgeTurn',
   'arkoLocalMarkCapabilities', 'arkoLocalMarks', 'changeArkoLocalMark',

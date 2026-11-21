@@ -4182,6 +4182,14 @@ export interface ArkmeArkoProfile {
   version: number
 }
 
+/** The Arko profile with the cloud-rendered identity and 「Arko 偏好」 text for the local agent. */
+export interface ArkmeArkoPersona {
+  profile: ArkmeArkoProfile
+  /** Empty when the cloud does not render it yet; the local identity wording is used instead. */
+  prompt: string
+  promptVersion: string
+}
+
 export interface ArkmeArkoSession {
   sessionId: number
   created: boolean
